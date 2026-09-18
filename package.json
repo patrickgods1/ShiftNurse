@@ -1,0 +1,36 @@
+{
+  "name": "shiftnurse",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nurse scheduling desktop app with union rule compliance, acuity-driven staffing and fairness scoring",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:packages": "npm run build -w @shiftnurse/core -w @shiftnurse/db",
+    "watch:packages": "concurrently -n core,db -c cyan,magenta \"npm run watch -w @shiftnurse/core\" \"npm run watch -w @shiftnurse/db\"",
+    "dev": "npm run build:packages && concurrently -n pkgs,app -c gray,green \"npm run watch:packages\" \"npm run dev -w @shiftnurse/desktop\"",
+    "build": "npm run build:packages && npm run build -w @shiftnurse/desktop",
+    "dist": "npm run build && npm run dist -w @shiftnurse/desktop",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --build --force && npm run typecheck -w @shiftnurse/desktop",
+    "format": "biome format --write .",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "check": "npm run lint && npm run typecheck && npm test",
+    "seed:demo": "npm run seed:demo -w @shiftnurse/db"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "@types/node": "^22.10.2",
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.2",
+    "vite": "^7.3.6",
+    "vitest": "^5.0.1"
+  }
+}

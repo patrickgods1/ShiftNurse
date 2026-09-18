@@ -1,0 +1,34 @@
+{
+  "name": "@shiftnurse/db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Persistence for ShiftNurse: Drizzle schema, migrations and repositories over better-sqlite3. Owned by the Electron main process; never imported by the renderer.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "drizzle"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "generate": "drizzle-kit generate",
+    "seed:demo": "npm run build && node dist/seed/run-demo-seed.js"
+  },
+  "dependencies": {
+    "@shiftnurse/core": "*",
+    "better-sqlite3": "~12.11.1",
+    "drizzle-orm": "^0.38.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "drizzle-kit": "^0.30.1"
+  }
+}

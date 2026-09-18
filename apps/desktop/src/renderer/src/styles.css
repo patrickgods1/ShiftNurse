@@ -1,0 +1,74 @@
+/*
+ * Design tokens as CSS variables, not Tailwind config — Tailwind v4 is CSS-first, and there is
+ * no tailwind.config.js in this repo. Tokens live on `:root`/`.dark` so a runtime theme toggle
+ * (see theme-toggle.tsx) can flip them without a rebuild, and `@theme inline` re-exposes them
+ * as Tailwind utilities so `bg-surface`, `text-muted`, etc. stay usable in JSX.
+ *
+ * Palette is deliberately a calm, clinical neutral-plus-blue, not a SaaS purple gradient: this
+ * is software a nurse manager reads for a full shift, not a marketing page.
+ */
+
+@import "tailwindcss";
+
+:root {
+  --color-bg: #f4f5f7;
+  --color-surface: #ffffff;
+  --color-border: #d8dce3;
+  --color-text: #1a1f28;
+  --color-text-muted: #5b6472;
+  --color-accent: #1f6f8b;
+  --color-danger: #b3261e;
+  --color-warn: #a5680a;
+  --color-success: #29774c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg: #14171c;
+    --color-surface: #1c2027;
+    --color-border: #2e333c;
+    --color-text: #e7e9ed;
+    --color-text-muted: #9aa2b1;
+    --color-accent: #6fb3cc;
+    --color-danger: #e0665e;
+    --color-warn: #d3a13c;
+    --color-success: #5cb583;
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-bg: #14171c;
+  --color-surface: #1c2027;
+  --color-border: #2e333c;
+  --color-text: #e7e9ed;
+  --color-text-muted: #9aa2b1;
+  --color-accent: #6fb3cc;
+  --color-danger: #e0665e;
+  --color-warn: #d3a13c;
+  --color-success: #5cb583;
+}
+
+@theme inline {
+  --color-bg: var(--color-bg);
+  --color-surface: var(--color-surface);
+  --color-border: var(--color-border);
+  --color-text: var(--color-text);
+  --color-text-muted: var(--color-text-muted);
+  --color-accent: var(--color-accent);
+  --color-danger: var(--color-danger);
+  --color-warn: var(--color-warn);
+  --color-success: var(--color-success);
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* A visible, consistent focus ring everywhere — this app is used with a keyboard as often as
+   a mouse during a busy shift handoff. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}

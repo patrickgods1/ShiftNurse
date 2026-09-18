@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Whole-repo typecheck target. Deliberately separate from the per-package build configs:
+  // those set `composite` and exclude *.test.ts so they emit clean .d.ts files, which means
+  // a build-only typecheck would never look at the tests. This one checks everything and
+  // emits nothing.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["packages/*/src/**/*.ts", "vitest.config.ts"],
+  "exclude": ["**/node_modules", "**/dist", "**/out"]
+}

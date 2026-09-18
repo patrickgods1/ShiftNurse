@@ -1,0 +1,22 @@
+node_modules/
+dist/
+out/
+release/
+*.tsbuildinfo
+.DS_Store
+*.log
+.env
+.env.local
+coverage/
+/data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Personal Claude Code overrides; .claude/settings.json IS committed so hooks are shared.
+.claude/settings.local.json
+
+# Vite / electron-vite
+apps/desktop/out/
+.vite/

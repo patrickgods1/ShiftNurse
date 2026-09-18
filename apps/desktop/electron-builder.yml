@@ -1,0 +1,23 @@
+# Packaging. Finalised in M14 (installers, signing, auto-update); enough here that `npm run
+# dist` produces a runnable app and the migrations travel with it.
+appId: com.shiftnurse.desktop
+productName: ShiftNurse
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+extraResources:
+  # `openDatabase` needs the SQL migrations at runtime; main resolves them from
+  # process.resourcesPath/drizzle in a packaged build (see src/main/database.ts).
+  - from: ../../packages/db/drizzle
+    to: drizzle
+asarUnpack:
+  - '**/*.node'
+mac:
+  category: public.app-category.business
+  target: [dmg]
+win:
+  target: [nsis]
