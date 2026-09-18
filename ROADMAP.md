@@ -158,12 +158,12 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
       `.claude/skills/`, with `web-design-guidelines` rewritten to read a local copy of its
       rules instead of fetching from GitHub `main` on every review
 
-### M4 — Roster & configuration
-- [ ] Nurse CRUD: FTE, seniority, role, employment type, charge/novice flags, contact
-- [ ] Credentials with expiry; preferences editor
-- [ ] Shift type editor (8h, 12h, on-call), coverage floors by weekday, holiday calendar
-- [ ] CSV import **and** export for the roster, reusing one parser
-- [ ] Verify: import 60 nurses from CSV, round-trip through export
+### M4 — Roster & configuration ✅
+- [x] Nurse CRUD: FTE, seniority, role, employment type, charge/novice flags, contact
+- [x] Credentials with expiry; preferences editor
+- [x] Shift type editor (8h, 12h, on-call), coverage floors by weekday, holiday calendar
+- [x] CSV import **and** export for the roster, reusing one parser
+- [x] Verify: import 60 nurses from CSV, round-trip through export
 
 ### M5 — Acuity & demand
 - [ ] Acuity tier editor, ratio rule table with citations, HPPD target

@@ -90,6 +90,13 @@ export function runSmoke(win: BrowserWindow): void {
           fail(`${route.hash} rendered no [data-testid=${route.testId}]; body: ${result.text}`);
         }
         console.log(`[smoke] ${route.hash} OK (${result.found} × ${route.testId})`);
+        // `--screenshot dir/` captures every route as dir/<route>.png for a visual check.
+        const shotDir = process.env.SHIFTNURSE_SMOKE_SCREENSHOT;
+        if (shotDir?.endsWith('/')) {
+          const image = await win.webContents.capturePage();
+          const name = route.hash === '#/' ? 'dashboard' : route.hash.slice(2);
+          writeFileSync(`${shotDir}${name}.png`, image.toPNG());
+        }
       }
 
       const write = (await win.webContents.executeJavaScript(WRITE_SCRIPT)) as {
@@ -102,7 +109,7 @@ export function runSmoke(win: BrowserWindow): void {
       console.log(`[smoke] write path OK (${write.before} -> ${write.after} nurses, CSV export)`);
 
       const shot = process.env.SHIFTNURSE_SMOKE_SCREENSHOT;
-      if (shot) {
+      if (shot && !shot.endsWith('/')) {
         await win.webContents.executeJavaScript(visitScript('#/', 'stat-card'));
         const image = await win.webContents.capturePage();
         writeFileSync(shot, image.toPNG());

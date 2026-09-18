@@ -19,9 +19,11 @@ interface DataTableProps<T> {
   rows: T[];
   rowKey: (row: T) => string;
   emptyLabel?: string;
+  /** When present, rows are clickable (e.g. to open a detail view) and keyboard-activatable. */
+  onRowClick?: (row: T) => void;
 }
 
-export function DataTable<T>({ columns, rows, rowKey, emptyLabel }: DataTableProps<T>) {
+export function DataTable<T>({ columns, rows, rowKey, emptyLabel, onRowClick }: DataTableProps<T>) {
   const [sort, setSort] = useState<{ key: string; direction: 1 | -1 } | undefined>(undefined);
 
   const sorted = useMemo(() => {
@@ -77,7 +79,25 @@ export function DataTable<T>({ columns, rows, rowKey, emptyLabel }: DataTablePro
         </thead>
         <tbody>
           {sorted.map((row) => (
-            <tr key={rowKey(row)} className="border-b border-border last:border-0">
+            <tr
+              key={rowKey(row)}
+              className={`border-b border-border last:border-0 ${
+                onRowClick !== undefined ? 'cursor-pointer hover:bg-bg' : ''
+              }`}
+              tabIndex={onRowClick !== undefined ? 0 : undefined}
+              role={onRowClick !== undefined ? 'button' : undefined}
+              onClick={onRowClick !== undefined ? () => onRowClick(row) : undefined}
+              onKeyDown={
+                onRowClick !== undefined
+                  ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onRowClick(row);
+                      }
+                    }
+                  : undefined
+              }
+            >
               {columns.map((column) => (
                 <td key={column.key} className="px-3 py-2 text-text">
                   {column.render(row)}

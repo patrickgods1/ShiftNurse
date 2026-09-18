@@ -17,7 +17,8 @@ self-service later becomes an intake surface rather than a new data model.
 **`packages/core`**, **`packages/db`** and **`apps/desktop`** exist and are green.
 
 - `packages/core` (M1, complete): `domain/time.ts`, `domain/entities.ts`, `acuity/demand.ts`,
-  `schedule/view.ts`, `rules/` (registry + 8 hard rules), `testing/fixtures.ts`.
+  `schedule/view.ts`, `rules/` (registry + 8 hard rules), `roster/csv.ts` (M4: the one CSV
+  parser/formatter), `testing/fixtures.ts`.
 - `packages/db` (M2, complete): 26-table Drizzle schema, generated migrations, `client.ts`
   (WAL, foreign keys ON, `transact`), `audit.ts`, `mappers.ts`, and repositories under
   `repositories/` — `roster`, `config`, `schedule`, `timeoff`, `operations`.
@@ -26,7 +27,10 @@ self-service later becomes an intake surface rather than a new data model.
   unit on first launch), implements the contract in `api.ts`, registers it in `ipc.ts`;
   `src/preload/` builds `window.shiftnurse` from the same channel table; `src/renderer/` is
   React 18 + TanStack Router (hash history, code-based routes) + TanStack Query + Tailwind v4
-  tokens. Pages are thin shells except the dashboard; M4+ fill them in.
+  tokens. Dashboard, Roster (CRUD, credentials, preferences, CSV import/export via native
+  dialogs in main) and Settings (shift types, coverage floors, holidays) are real (M3–M4);
+  Schedule and Requests are placeholders until M6/M10. Renderer hooks: `api.ts` (roster
+  side) and `api-config.ts` (unit configuration).
 
 ## Architecture
 
