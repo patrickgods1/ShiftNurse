@@ -23,6 +23,7 @@ export type { DbLike, OpenedDatabase, OpenOptions, ShiftNurseDb, ShiftNurseTx } 
 export { migrationsFolder, openDatabase, openTestDatabase, transact } from './client.js';
 export { ids, newId } from './ids.js';
 export * as mappers from './mappers.js';
+export * from './repositories/census.js';
 export * from './repositories/config.js';
 export * from './repositories/operations.js';
 export * from './repositories/roster.js';

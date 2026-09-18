@@ -2,6 +2,7 @@
 
 // Acuity-driven demand
 export * from './acuity/demand.js';
+export * from './acuity/forecast.js';
 export * from './domain/entities.js';
 export * from './domain/time.js';
 export * from './roster/csv.js';

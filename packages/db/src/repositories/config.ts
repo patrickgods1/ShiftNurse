@@ -361,6 +361,16 @@ export function deleteAcuityTier(db: DbLike, id: Id, actor: string): void {
 // Ratio rules
 // ---------------------------------------------------------------------------
 
+/** Every rule including deactivated ones — the editor shows history, the solver does not. */
+export function listRatioRulesForUnit(db: DbLike, unitId: Id): RatioRule[] {
+  return db
+    .select()
+    .from(ratioRuleTable)
+    .where(eq(ratioRuleTable.unitId, unitId))
+    .all()
+    .map(toRatioRule);
+}
+
 export function listActiveRatioRulesForUnit(db: DbLike, unitId: Id): RatioRule[] {
   return db
     .select()

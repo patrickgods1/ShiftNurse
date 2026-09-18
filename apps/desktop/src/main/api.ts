@@ -10,27 +10,37 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import {
   addDays,
+  backtest,
+  datesInRange,
+  deriveDemand,
   formatRosterCsv,
   type Id,
   type IsoDate,
   type Preference,
   parseRosterCsv,
+  proposeCensus,
   type SchedulePeriod,
   type ShiftType,
   today,
 } from '@shiftnurse/core';
 import {
+  createAcuityTier,
   createCredential,
   createHoliday,
   createNurse,
+  createRatioRule,
   createShiftType,
   credentialsExpiringBetween,
   deactivateNurse,
+  deactivateRatioRule,
   deactivateShiftType,
+  deleteAcuityTier,
+  deleteCensusForecast,
   deleteCoverageRequirement,
   deleteHoliday,
   exportRoster,
   getCurrentDraft,
+  getHppdTarget,
   getNurse,
   getNurseByEmployeeId,
   getUnit,
@@ -38,8 +48,12 @@ import {
   ids,
   importRoster,
   listActiveNursesForUnit,
+  listActiveRatioRulesForUnit,
+  listAcuityTiersForUnit,
   listAssignmentsForDate,
   listAssignmentsForPeriod,
+  listCensusForecastsInRange,
+  listCensusHistory,
   listCoverageRequirementsForUnit,
   listCredentials,
   listHolidaysForUnit,
@@ -48,17 +62,24 @@ import {
   listOpenCallOffs,
   listPeriodsForUnit,
   listPreferencesForNurse,
+  listRatioRulesForUnit,
   listShiftTypesForUnit,
   listTimeOffForUnit,
   listUnits,
+  recordActualCensus,
   replaceNursePreferences,
   revokeCredential,
   type ShiftNurseDb,
   transact,
+  updateAcuityTier,
   updateCredentialExpiry,
   updateNurse,
+  updateRatioRule,
   updateShiftType,
+  upsertCensusForecast,
+  upsertCensusForecasts,
   upsertCoverageRequirement,
+  upsertHppdTarget,
 } from '@shiftnurse/db';
 import { app, BrowserWindow, dialog } from 'electron';
 import type {
@@ -160,6 +181,18 @@ function exportToFile(db: ShiftNurseDb, unitId: Id): string | undefined {
   return path;
 }
 
+/** Everything `deriveDemand` needs for a unit, loaded once per call. */
+function demandInputs(db: ShiftNurseDb, unitId: Id, start: IsoDate, end: IsoDate) {
+  return {
+    shiftTypes: listShiftTypesForUnit(db, unitId),
+    acuityTiers: listAcuityTiersForUnit(db, unitId),
+    ratioRules: listActiveRatioRulesForUnit(db, unitId),
+    coverageRequirements: listCoverageRequirementsForUnit(db, unitId),
+    censusForecasts: listCensusForecastsInRange(db, unitId, start, end),
+    hppdTarget: getHppdTarget(db, unitId),
+  };
+}
+
 export function createApi(db: ShiftNurseDb): ShiftNurseApi {
   return {
     app: {
@@ -215,6 +248,36 @@ export function createApi(db: ShiftNurseDb): ShiftNurseApi {
       list: (unitId) => listHolidaysForUnit(db, unitId),
       create: (input) => createHoliday(db, input, ACTOR),
       delete: (id) => deleteHoliday(db, id, ACTOR),
+    },
+    acuity: {
+      tiers: (unitId) => listAcuityTiersForUnit(db, unitId),
+      createTier: (input) => createAcuityTier(db, input, ACTOR),
+      updateTier: (id, patch) => updateAcuityTier(db, id, patch, ACTOR),
+      deleteTier: (id) => deleteAcuityTier(db, id, ACTOR),
+      ratioRules: (unitId) => listRatioRulesForUnit(db, unitId),
+      createRatioRule: (input) => createRatioRule(db, input, ACTOR),
+      updateRatioRule: (id, patch) => updateRatioRule(db, id, patch, ACTOR),
+      deactivateRatioRule: (id) => deactivateRatioRule(db, id, ACTOR),
+      hppd: (unitId) => getHppdTarget(db, unitId),
+      setHppd: (unitId, targetHours) => upsertHppdTarget(db, unitId, targetHours, ACTOR),
+    },
+    census: {
+      list: (unitId, start, end) => listCensusForecastsInRange(db, unitId, start, end),
+      upsert: (input) => upsertCensusForecast(db, input, ACTOR),
+      upsertMany: (inputs) => transact(db, (tx) => upsertCensusForecasts(tx, inputs, ACTOR)),
+      recordActual: (id, actualCensus, actualAcuityMix) =>
+        recordActualCensus(db, id, actualCensus, actualAcuityMix, ACTOR),
+      delete: (id) => deleteCensusForecast(db, id, ACTOR),
+      propose: (unitId, start, end, options) => {
+        const shiftTypes = listShiftTypesForUnit(db, unitId).filter((s) => s.active && !s.isOnCall);
+        const targets = datesInRange(start, end).flatMap((date) =>
+          shiftTypes.map((s) => ({ date, shiftTypeId: s.id })),
+        );
+        return proposeCensus(listCensusHistory(db, unitId), targets, options);
+      },
+      backtest: (unitId, options) => backtest(listCensusHistory(db, unitId), options),
+      demand: (unitId, start, end) =>
+        deriveDemand(datesInRange(start, end), demandInputs(db, unitId, start, end)).all(),
     },
     roster: {
       pickImportFile: (unitId) => pickImportFile(db, unitId),

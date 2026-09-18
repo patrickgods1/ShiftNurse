@@ -12,18 +12,26 @@
  */
 
 import type {
+  AcuityTier,
   Assignment,
+  BacktestResult,
+  CensusForecast,
+  CensusProposal,
   CoverageRequirement,
   Credential,
+  ForecastOptions,
   Holiday,
+  HppdTarget,
   Id,
   IsoDate,
   Nurse,
   NurseCredential,
   Preference,
+  RatioRule,
   RosterCsvError,
   RosterCsvRow,
   SchedulePeriod,
+  ShiftDemand,
   ShiftType,
   TimeOffRequest,
   TimeOffStatus,
@@ -83,6 +91,22 @@ export type PreferenceInput = Preference extends infer P
   : never;
 
 export type CoverageRequirementInput = Omit<CoverageRequirement, 'id'> & { id?: Id };
+
+export type AcuityTierInput = Omit<AcuityTier, 'id'>;
+export type AcuityTierPatch = Partial<Omit<AcuityTier, 'id' | 'unitId'>>;
+export type RatioRuleInput = Omit<RatioRule, 'id'>;
+export type RatioRulePatch = Partial<Omit<RatioRule, 'id' | 'unitId' | 'citation'>> & {
+  citation?: string | null;
+};
+
+export interface CensusForecastInput {
+  unitId: Id;
+  date: IsoDate;
+  shiftTypeId: Id;
+  projectedCensus: number;
+  acuityMix: Record<Id, number>;
+  source: CensusForecast['source'];
+}
 
 export interface RosterImportPreview {
   /** Absolute path of the file the manager picked, for the confirmation screen. */
@@ -152,6 +176,31 @@ export interface ShiftNurseApi {
     create(input: Omit<Holiday, 'id'>): Holiday;
     delete(id: Id): void;
   };
+  acuity: {
+    tiers(unitId: Id): AcuityTier[];
+    createTier(input: AcuityTierInput): AcuityTier;
+    updateTier(id: Id, patch: AcuityTierPatch): AcuityTier;
+    deleteTier(id: Id): void;
+    ratioRules(unitId: Id): RatioRule[];
+    createRatioRule(input: RatioRuleInput): RatioRule;
+    updateRatioRule(id: Id, patch: RatioRulePatch): RatioRule;
+    deactivateRatioRule(id: Id): RatioRule;
+    hppd(unitId: Id): HppdTarget | undefined;
+    setHppd(unitId: Id, targetHours: number): HppdTarget;
+  };
+  census: {
+    list(unitId: Id, start: IsoDate, end: IsoDate): CensusForecast[];
+    upsert(input: CensusForecastInput): CensusForecast;
+    /** Accept a batch of proposals atomically. */
+    upsertMany(inputs: CensusForecastInput[]): CensusForecast[];
+    recordActual(id: Id, actualCensus: number, actualAcuityMix: Record<Id, number>): CensusForecast;
+    delete(id: Id): void;
+    /** Forecaster proposals for every active shift on every date in the range. */
+    propose(unitId: Id, start: IsoDate, end: IsoDate, options?: ForecastOptions): CensusProposal[];
+    backtest(unitId: Id, options?: ForecastOptions): BacktestResult;
+    /** Derived staffing demand with the binding constraint per role. */
+    demand(unitId: Id, start: IsoDate, end: IsoDate): ShiftDemand[];
+  };
   roster: {
     /** Opens a native file picker, parses the file, returns what an import would do. */
     pickImportFile(unitId: Id): RosterImportPreview | undefined;
@@ -193,6 +242,28 @@ export const API_CHANNELS = {
   shiftTypes: ['list', 'create', 'update', 'deactivate'],
   coverage: ['list', 'upsert', 'delete'],
   holidays: ['list', 'create', 'delete'],
+  acuity: [
+    'tiers',
+    'createTier',
+    'updateTier',
+    'deleteTier',
+    'ratioRules',
+    'createRatioRule',
+    'updateRatioRule',
+    'deactivateRatioRule',
+    'hppd',
+    'setHppd',
+  ],
+  census: [
+    'list',
+    'upsert',
+    'upsertMany',
+    'recordActual',
+    'delete',
+    'propose',
+    'backtest',
+    'demand',
+  ],
   roster: ['pickImportFile', 'importRows', 'exportToFile', 'exportCsv'],
   periods: ['list', 'assignments'],
   timeOff: ['list'],
