@@ -18,7 +18,7 @@ const ROUTES: readonly { hash: string; testId: string }[] = [
   { hash: '#/', testId: 'stat-card' },
   { hash: '#/roster', testId: 'roster-table' },
   { hash: '#/requests', testId: 'page-header' },
-  { hash: '#/schedule', testId: 'page-header' },
+  { hash: '#/schedule', testId: 'schedule-grid' },
   { hash: '#/demand', testId: 'demand-table' },
   { hash: '#/settings', testId: 'settings-tabs' },
 ];
@@ -79,6 +79,32 @@ const WRITE_SCRIPT = `
     };
   })()`;
 
+/**
+ * The M6 acceptance check at the data layer the grid reads from: a night shift followed by
+ * the next morning's day shift breaks minimum rest, and the validator must say so for that
+ * exact assignment. The grid turns a cell red from precisely this result.
+ */
+const REST_SCRIPT = `
+  (async () => {
+    const api = window.shiftnurse;
+    const [unit] = await api.units.list();
+    const draft = (await api.periods.list(unit.id)).find((p) => p.status === 'draft');
+    const types = await api.shiftTypes.list(unit.id);
+    const night = types.find((t) => t.isNight && t.durationHours === 12);
+    const day = types.find((t) => !t.isNight && !t.isOnCall && t.durationHours === 12);
+    const nurse = (await api.nurses.list(unit.id)).find((n) => n.active && n.role === 'RN');
+    const d1 = draft.startDate;
+    // Calendar maths through Date.UTC, as core does: a naive day+1 breaks at month end.
+    const [y, m, d] = d1.split('-').map(Number);
+    const d2 = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+    const before = (await api.schedule.validate(draft.id)).result.violations.length;
+    await api.schedule.createAssignment({ periodId: draft.id, nurseId: nurse.id, shiftTypeId: night.id, date: d1 });
+    const turnaround = await api.schedule.createAssignment({ periodId: draft.id, nurseId: nurse.id, shiftTypeId: day.id, date: d2 });
+    const v = (await api.schedule.validate(draft.id)).result.violations;
+    const hit = v.find((x) => x.code === 'insufficient_rest' && x.assignmentIds.includes(turnaround.id));
+    return { before, after: v.length, flagged: !!hit, message: hit ? hit.message : 'no insufficient_rest violation for ' + turnaround.id };
+  })()`;
+
 export function runSmoke(win: BrowserWindow): void {
   const timer = setTimeout(() => fail(`did not finish within ${TIMEOUT_MS}ms`), TIMEOUT_MS);
 
@@ -128,6 +154,44 @@ export function runSmoke(win: BrowserWindow): void {
       console.log(
         `[smoke] validate OK (${write.rules} rules, ${write.violations} violations, ${write.validateMs}ms)`,
       );
+
+      const rest = (await win.webContents.executeJavaScript(REST_SCRIPT)) as {
+        before: number;
+        after: number;
+        flagged: boolean;
+        message: string;
+      };
+      if (!rest.flagged) fail(`night-to-day turnaround not flagged: ${rest.message}`);
+      console.log(`[smoke] live validation OK — ${rest.message}`);
+      const shotDirAfter = process.env.SHIFTNURSE_SMOKE_SCREENSHOT;
+      if (shotDirAfter?.endsWith('/')) {
+        // The bridge writes above bypassed the renderer's mutation hooks, so its query cache
+        // still holds the empty assignment list. Reload: a cold start must show persisted state.
+        await new Promise<void>((resolve) => {
+          win.webContents.once('did-finish-load', () => resolve());
+          win.webContents.reload();
+        });
+        const chips = (await win.webContents.executeJavaScript(`
+          new Promise((resolve) => {
+            location.hash = '#/schedule';
+            const started = Date.now();
+            const tick = () => {
+              const chips = document.querySelectorAll('[data-testid="assignment-chip"]');
+              if (chips.length >= 2 || Date.now() - started > 10000) {
+                chips[0]?.scrollIntoView({ block: 'center' });
+                setTimeout(() => resolve(chips.length), 300);
+              } else setTimeout(tick, 100);
+            };
+            tick();
+          })`)) as number;
+        if (chips < 2)
+          fail(`expected the two smoke assignments as chips on the grid, saw ${chips}`);
+        writeFileSync(
+          `${shotDirAfter}schedule-after.png`,
+          (await win.webContents.capturePage()).toPNG(),
+        );
+        console.log(`[smoke] grid chips OK (${chips} rendered)`);
+      }
 
       const shot = process.env.SHIFTNURSE_SMOKE_SCREENSHOT;
       if (shot && !shot.endsWith('/')) {

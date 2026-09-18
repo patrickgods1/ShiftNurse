@@ -1,117 +1,117 @@
 /**
- * Period list plus a per-date assignment count for whichever period is selected. A full grid
- * (nurse × day) is a later milestone once the solver and rules UI exist; this keeps the page
- * honest about what data is actually available today rather than mocking a grid.
+ * Schedule grid entry point: pick a scheduling period (defaulting to the current draft), create
+ * a new one, and render the nurse x day grid for it. A published period renders read-only —
+ * `ScheduleBoard` disables drag and edits once `period.status !== 'draft'`, since dragging a
+ * shift around after publish would be silently invisible to whatever already went out to staff.
  */
 
-import type { SchedulePeriod } from '@shiftnurse/core';
-import { useState } from 'react';
-import { useAssignments, usePeriods } from '../api.js';
+import type { Id, SchedulePeriod } from '@shiftnurse/core';
+import { compareDates } from '@shiftnurse/core';
+import { useEffect, useMemo, useState } from 'react';
+import { usePeriods } from '../api.js';
 import { AsyncState } from '../components/async-state.js';
-import { type Column, DataTable } from '../components/data-table.js';
 import { PageHeader } from '../components/page-header.js';
-import { formatDate, formatDateWithWeekday } from '../format.js';
+import { formatDate } from '../format.js';
 import { useUnitId } from '../unit-context.js';
+import { ScheduleBoard } from './schedule/board.js';
+import { NewPeriodDialog } from './schedule/new-period-dialog.js';
 
-const periodColumns: Column<SchedulePeriod>[] = [
-  { key: 'name', header: 'Name', render: (period) => period.name, sortValue: (p) => p.name },
-  {
-    key: 'dates',
-    header: 'Dates',
-    render: (period) => `${formatDate(period.startDate)} – ${formatDate(period.endDate)}`,
-    sortValue: (p) => p.startDate,
-  },
-  { key: 'status', header: 'Status', render: (period) => period.status },
-];
+const STATUS_BADGE: Record<SchedulePeriod['status'], string> = {
+  draft: 'bg-text-muted/15 text-text-muted',
+  published: 'bg-success/15 text-success',
+  archived: 'bg-border text-text-muted',
+};
 
-function AssignmentsByDate({ periodId }: { periodId: string }) {
-  const assignmentsQuery = useAssignments(periodId);
-
-  if (assignmentsQuery.isPending) {
-    return <AsyncState status="loading" label="Loading assignments" />;
-  }
-  if (assignmentsQuery.isError) {
-    return (
-      <AsyncState
-        status="error"
-        label="Could not load assignments"
-        error={assignmentsQuery.error}
-      />
-    );
-  }
-
-  const counts = new Map<string, number>();
-  for (const assignment of assignmentsQuery.data) {
-    counts.set(assignment.date, (counts.get(assignment.date) ?? 0) + 1);
-  }
-  const dates = [...counts.keys()].sort();
-
-  if (dates.length === 0) {
-    return <p className="text-sm text-text-muted">No assignments in this period yet.</p>;
-  }
-
-  return (
-    <div className="grid grid-cols-4 gap-3">
-      {dates.map((date) => (
-        <div key={date} className="rounded-md border border-border bg-surface p-3">
-          <p className="text-sm text-text-muted">{formatDateWithWeekday(date)}</p>
-          <p className="mt-1 text-lg font-semibold text-text">{counts.get(date)}</p>
-        </div>
-      ))}
-    </div>
-  );
+/** The current draft if there is one — that's what a manager opens the schedule to work on —
+ * else the most recently started period of any status, so the page never renders empty when a
+ * unit has only published/archived history. */
+function defaultPeriod(periods: readonly SchedulePeriod[]): SchedulePeriod | undefined {
+  if (periods.length === 0) return undefined;
+  const drafts = periods.filter((p) => p.status === 'draft');
+  const pool = drafts.length > 0 ? drafts : periods;
+  return [...pool].sort((a, b) => compareDates(b.startDate, a.startDate))[0];
 }
 
 export default function SchedulePage() {
   const unitId = useUnitId();
   const periodsQuery = usePeriods(unitId);
-  const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
+  const periods = periodsQuery.data ?? [];
+  const [selectedId, setSelectedId] = useState<Id | undefined>(undefined);
+  const [newPeriodOpen, setNewPeriodOpen] = useState(false);
 
-  const selected =
-    selectedId !== undefined ? periodsQuery.data?.find((p) => p.id === selectedId) : undefined;
+  const fallback = useMemo(() => defaultPeriod(periods), [periods]);
+
+  useEffect(() => {
+    if (selectedId === undefined && fallback !== undefined) setSelectedId(fallback.id);
+  }, [selectedId, fallback]);
+
+  const selected = periods.find((p) => p.id === selectedId) ?? fallback;
 
   return (
     <div>
-      <PageHeader title="Schedule" description="Scheduling periods for this unit" />
+      <PageHeader
+        title="Schedule"
+        description="Build and review the shift schedule for a period"
+        actions={
+          <button
+            type="button"
+            data-testid="new-period"
+            onClick={() => setNewPeriodOpen(true)}
+            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white"
+          >
+            New period
+          </button>
+        }
+      />
+
       {periodsQuery.isPending ? (
         <AsyncState status="loading" label="Loading periods" />
       ) : periodsQuery.isError ? (
         <AsyncState status="error" label="Could not load periods" error={periodsQuery.error} />
+      ) : periods.length === 0 ? (
+        <AsyncState status="empty" label="No scheduling periods yet. Create one to start." />
       ) : (
         <>
-          <div className="mb-6">
-            <DataTable
-              columns={[
-                ...periodColumns,
-                {
-                  key: 'select',
-                  header: '',
-                  render: (period) => (
-                    <button
-                      type="button"
-                      className="text-sm text-accent underline underline-offset-2 hover:no-underline"
-                      onClick={() => setSelectedId(period.id)}
-                    >
-                      {selectedId === period.id ? 'Selected' : 'View'}
-                    </button>
-                  ),
-                },
-              ]}
-              rows={periodsQuery.data}
-              rowKey={(period) => period.id}
-              emptyLabel="No scheduling periods yet."
-            />
+          <div className="mb-4 flex items-center gap-3">
+            <label className="text-sm text-text-muted" htmlFor="period-select">
+              Period
+            </label>
+            <select
+              id="period-select"
+              data-testid="period-select"
+              value={selected?.id ?? ''}
+              onChange={(e) => setSelectedId(e.target.value)}
+              className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-text"
+            >
+              {periods.map((period) => (
+                <option key={period.id} value={period.id}>
+                  {period.name} · {formatDate(period.startDate)} – {formatDate(period.endDate)}
+                </option>
+              ))}
+            </select>
+            {selected !== undefined ? (
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${
+                  STATUS_BADGE[selected.status]
+                }`}
+              >
+                {selected.status}
+              </span>
+            ) : null}
           </div>
+
           {selected !== undefined ? (
-            <div>
-              <h2 className="mb-2 text-sm font-semibold text-text">
-                Assignments per date — {selected.name}
-              </h2>
-              <AssignmentsByDate periodId={selected.id} />
-            </div>
+            <ScheduleBoard key={selected.id} unitId={unitId} period={selected} />
           ) : null}
         </>
       )}
+
+      <NewPeriodDialog
+        open={newPeriodOpen}
+        onOpenChange={setNewPeriodOpen}
+        unitId={unitId}
+        onCreated={(period) => setSelectedId(period.id)}
+      />
     </div>
   );
 }

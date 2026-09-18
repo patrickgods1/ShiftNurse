@@ -7,7 +7,7 @@
  * and coverage edits can change.
  */
 
-import type { Holiday, Id } from '@shiftnurse/core';
+import type { Holiday, Id, RuleSet } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AcuityTierInput,
@@ -29,6 +29,7 @@ export const configKeys = {
   acuityTiers: (unitId: Id) => ['acuityTiers', unitId] as const,
   ratioRules: (unitId: Id) => ['ratioRules', unitId] as const,
   hppd: (unitId: Id) => ['hppd', unitId] as const,
+  rules: (unitId: Id) => ['rules', unitId] as const,
 };
 
 function dashboardKey(unitId: Id) {
@@ -262,6 +263,43 @@ export function useSetHppdTarget() {
     onSuccess: (saved) => {
       queryClient.invalidateQueries({ queryKey: configKeys.hppd(saved.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(saved.unitId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Rule sets
+//
+// `rules.save` always inserts a new, immutable version (see the "Rule set versions are
+// immutable" invariant in CLAUDE.md) — a published period snapshots the version it was solved
+// under, so this hook never mutates the loaded rule set in place, only replaces the cache
+// entry with whatever version the save call actually created.
+// ---------------------------------------------------------------------------
+
+export function useRuleSet(unitId: Id | undefined) {
+  return useQuery({
+    queryKey: configKeys.rules(unitId ?? ''),
+    queryFn: () => api.rules.getLatest(unitId as Id),
+    enabled: unitId !== undefined,
+  });
+}
+
+export function useSaveRuleSet() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      unitId,
+      name,
+      configs,
+      weekendDefinition,
+    }: {
+      unitId: Id;
+      name: string;
+      configs: RuleSet['configs'];
+      weekendDefinition: RuleSet['weekendDefinition'];
+    }) => api.rules.save(unitId, name, configs, weekendDefinition),
+    onSuccess: (saved) => {
+      queryClient.invalidateQueries({ queryKey: configKeys.rules(saved.unitId) });
     },
   });
 }

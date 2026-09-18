@@ -14,12 +14,14 @@ import { useUnitId } from '../unit-context.js';
 import AcuityPanel from './settings/acuity.js';
 import CoverageFloors from './settings/coverage-floors.js';
 import HolidaysPanel from './settings/holidays.js';
+import RulesPanel from './settings/rules.js';
 import ShiftTypesPanel from './settings/shift-types.js';
 
 const TABS = [
   { id: 'shift-types', label: 'Shift types' },
   { id: 'coverage', label: 'Coverage floors' },
   { id: 'acuity', label: 'Acuity' },
+  { id: 'rules', label: 'Rules' },
   { id: 'holidays', label: 'Holidays' },
   { id: 'about', label: 'About' },
 ] as const;
@@ -133,6 +135,8 @@ export default function SettingsPage() {
               <CoverageTab />
             ) : tab.id === 'acuity' ? (
               <AcuityPanel />
+            ) : tab.id === 'rules' ? (
+              <RulesPanel />
             ) : tab.id === 'holidays' ? (
               <HolidaysPanel />
             ) : (

@@ -173,12 +173,14 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
 - [x] Forecast-vs-actual back-test
 - [x] Verify: a high-acuity mix raises required staffing above the coverage floor
 
-### M6 — Schedule grid & live validation
-- [ ] Nurses × days grid, mixed shift lengths, colour-coded
-- [ ] Drag-and-drop assignment, cell locking
-- [ ] Live violation badges per cell, row and column, driven by the existing rule engine
-- [ ] Rules configuration screen: hard-rule params, soft weights, severity overrides
-- [ ] Verify: dragging a shift to break minimum rest turns the cell red immediately
+### M6 — Schedule grid & live validation ✅
+- [x] Nurses × days grid, mixed shift lengths, colour-coded
+- [x] Drag-and-drop assignment, cell locking
+- [x] Live violation badges per cell, row and column, driven by the existing rule engine
+- [x] Rules configuration screen: hard-rule params, soft weights, severity overrides
+      (params + enable/disable + severity overrides + weekend definition, versioned saves;
+      soft-rule *weights* land with M7 since every shipped rule is hard today)
+- [x] Verify: dragging a shift to break minimum rest turns the cell red immediately
 
 ### M7 — Fairness
 - [ ] `core/fairness`: per-nurse 0–100 composite with explainable component breakdown

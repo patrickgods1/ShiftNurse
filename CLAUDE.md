@@ -31,9 +31,11 @@ self-service later becomes an intake surface rather than a new data model.
   tokens. Dashboard, Roster (CRUD, credentials, preferences, CSV import/export via native
   dialogs in main), Settings (shift types, coverage floors, acuity tiers/ratios/HPPD,
   holidays) and Demand (census grid, forecaster proposals, derived demand with binding
-  constraint, back-test) are real (M3–M5); Schedule and Requests are placeholders until
-  M6/M10. Renderer hooks: `api.ts` (roster), `api-config.ts` (configuration),
-  `api-demand.ts` (census/demand).
+  constraint, back-test) and Schedule (M6: nurses × days grid, native HTML5 drag-and-drop,
+  lock/charge/OT popover, live violation badges from `schedule.validate`, Settings > Rules
+  versioned editor) are real; Requests is a placeholder until M10. Renderer hooks: `api.ts`
+  (roster), `api-config.ts` (configuration + rules), `api-demand.ts` (census/demand),
+  `api-schedule.ts` (grid mutations + validation).
 
 ## Architecture
 
@@ -159,6 +161,14 @@ violations of their own.
   strips it; for `npm run dev` in a VS Code terminal, `unset ELECTRON_RUN_AS_NODE` first.
 - **The preload is CommonJS** (`out/preload/index.cjs`) because a sandboxed preload has no ESM
   loader. Everything else in the app is ESM.
+- **`schedule.validate` judges a period by its own `ruleSetId` snapshot, never "latest".**
+  A full pass over a 6-week, 42-nurse draft takes ~14ms in main, so the grid re-validates
+  after every mutation via query invalidation rather than predicting violations client-side.
+- **Moving a shift is delete + create in one `transact`.** `nurseId` is immutable on an
+  assignment; the move carries `isCharge`/`isOvertime`/`notes` across and refuses locked rows.
+- **The smoke test creates data through the raw bridge**, which bypasses the renderer's
+  mutation hooks and their invalidation; it reloads the window before asserting on the grid.
+  Do not read that as a cache bug in the app.
 - **Adding an IPC method:** add it to `ShiftNurseApi` and `API_CHANNELS` in `shared/api.ts`,
   implement it in `main/api.ts`. Preload and renderer types follow; a missing implementation
   is a type error, not a runtime "no handler".
