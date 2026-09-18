@@ -99,6 +99,18 @@ violations of their own.
 | `npm run build` / `dist` | Production bundles into `apps/desktop/out`; `dist` then packages with electron-builder. |
 | `npm run smoke -w @shiftnurse/desktop` | Builds and boots the real app headlessly against a temp `userData`, asserts the preload bridge and dashboard rendered, exits non-zero otherwise. `--screenshot <png>` captures the window. Run this after touching main/preload/IPC — unit tests cannot see a wrong-ABI native module or a preload that never ran. |
 
+## Git hooks (`.githooks/`, wired by `npm install` via the `prepare` script)
+
+- **`pre-commit`** runs `npm run check`, then sends the staged diff to a headless Claude
+  reviewer (`claude -p`, Sonnet, read-only tools) briefed on this repo's invariants. A
+  `VERDICT: BLOCK` aborts the commit with the findings printed. Budget about 1½ minutes.
+  `SKIP_REVIEW=1` keeps the test gate but skips the review; `--no-verify` skips both.
+- **`prepare-commit-msg`** drafts a plain-English message from the staged diff for a bare
+  `git commit`; it never touches a message given with `-m`/`-F`. To commit non-interactively
+  with a drafted message: run `.githooks/prepare-commit-msg <file> ""` then `git commit -F <file>`.
+- The review fails *open* (no verdict → not blocked) so a flaky reviewer cannot wedge the
+  repo; the test gate fails closed.
+
 ## Conventions
 
 - **npm workspaces, not pnpm.** pnpm is not installed on this machine, and npm is the safer

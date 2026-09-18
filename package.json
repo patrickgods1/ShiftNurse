@@ -23,7 +23,8 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "check": "npm run lint && npm run typecheck && npm test",
-    "seed:demo": "npm run seed:demo -w @shiftnurse/db"
+    "seed:demo": "npm run seed:demo -w @shiftnurse/db",
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",

@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Drafts a commit message from the staged diff when none was supplied.
+#
+# Only runs for a bare `git commit` (no -m / -F / merge / squash / amend-with-message), so a
+# message you wrote yourself is never overwritten. The draft opens in your editor as usual;
+# edit or replace it before saving. Set SKIP_COMMIT_MSG=1 to get the plain template.
+
+set -euo pipefail
+msg_file="$1"
+source="${2:-}"
+
+[[ -n "$source" ]] && exit 0
+[[ "${SKIP_COMMIT_MSG:-0}" == "1" ]] && exit 0
+command -v claude >/dev/null 2>&1 || exit 0
+git diff --cached --quiet && exit 0
+
+cd "$(git rev-parse --show-toplevel)"
+diff=$(git diff --cached --no-color --stat -- . && echo && \
+       git diff --cached --no-color -- . ':(exclude)package-lock.json' ':(exclude)*.sql' | head -c 120000)
+
+prompt=$(cat <<PROMPT
+Write a git commit message for the staged changes below, for the ShiftNurse repository
+(a nurse-scheduling desktop app). Audience: a teammate skimming \`git log\` next month who
+has not seen this work.
+
+Format, exactly:
+- First line: a plain-English summary under 72 characters, imperative mood, no trailing
+  period, no conventional-commit prefix. Say what changed for the product, not which files.
+- Blank line.
+- A short body: 2–6 bullet points ("- ") explaining WHAT changed and WHY it matters. Name
+  user-facing behaviour, invariants added, and anything a reviewer would want flagged
+  (migrations, contract changes, behaviour changes). No bullet for pure formatting noise.
+- If the change is trivial, the first line alone is fine.
+
+Output only the message. No markdown fences, no commentary.
+
+$diff
+PROMPT
+)
+
+draft=$(claude -p "$prompt" --model sonnet --tools "" --no-session-persistence --output-format text 2>/dev/null) || exit 0
+[[ -z "$draft" ]] && exit 0
+
+{
+  printf '%s\n\n' "$draft"
+  printf 'Co-Authored-By: Claude <noreply@anthropic.com>\n\n'
+  printf '# --- Drafted from the staged diff by .githooks/prepare-commit-msg. Edit freely. ---\n'
+  cat "$msg_file"
+} > "$msg_file.tmp" && mv "$msg_file.tmp" "$msg_file"

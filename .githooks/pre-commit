@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# Pre-commit gate for ShiftNurse.
+#
+#   1. lint + format check, typecheck, tests  (npm run check)
+#   2. an AI code review of the staged diff by a headless Claude subagent
+#
+# Either failing blocks the commit. Escape hatches, for when you know better:
+#   SKIP_REVIEW=1 git commit ...   skips only the AI review (keeps the test gate)
+#   git commit --no-verify         skips everything
+#
+# The review reads the *staged* diff. The test gate runs against the working tree, which
+# is what you have in front of you; stage everything you intend to commit before running.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+bold=$'\e[1m'; red=$'\e[31m'; green=$'\e[32m'; dim=$'\e[2m'; reset=$'\e[0m'
+
+if git diff --cached --quiet; then
+  echo "${dim}pre-commit: nothing staged${reset}"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# 1. Mechanical gate
+# ---------------------------------------------------------------------------
+echo "${bold}pre-commit: lint + typecheck + tests${reset}"
+if ! out=$(npm run --silent check 2>&1); then
+  echo "$out" | tail -60
+  echo "${red}pre-commit: npm run check failed — commit blocked${reset}"
+  exit 1
+fi
+echo "${green}pre-commit: check passed${reset}"
+
+# ---------------------------------------------------------------------------
+# 2. AI review of the staged diff
+# ---------------------------------------------------------------------------
+if [[ "${SKIP_REVIEW:-0}" == "1" ]]; then
+  echo "${dim}pre-commit: SKIP_REVIEW=1, skipping AI review${reset}"
+  exit 0
+fi
+if ! command -v claude >/dev/null 2>&1; then
+  echo "${dim}pre-commit: claude CLI not found, skipping AI review${reset}"
+  exit 0
+fi
+
+full_diff=$(git diff --cached --no-color -- . ':(exclude)package-lock.json' ':(exclude)*.sql')
+diff=$(printf '%s' "$full_diff" | head -c 200000)
+truncated_note=""
+if [[ ${#full_diff} -gt 200000 ]]; then
+  truncated_note="NOTE: the diff was truncated at 200 KB of ${#full_diff} bytes. Files past the cut are NOT shown; read them from disk."
+fi
+files=$(git diff --cached --name-only)
+
+echo "${bold}pre-commit: AI review of $(echo "$files" | wc -l | tr -d ' ') staged file(s)…${reset}"
+
+prompt=$(cat <<PROMPT
+You are the pre-commit reviewer for ShiftNurse, a nurse-scheduling desktop app. Review the
+STAGED DIFF below. Read CLAUDE.md and .claude/skills/scheduling-review/SKILL.md first, and
+read any surrounding source you need to judge the change — the diff alone is not enough.
+
+Report only findings you have verified against the code. For each: file:line, what is
+wrong, and a concrete failure scenario. Classify each as:
+  BLOCKING  — a bug, a violated project invariant (core purity boundary, wall-clock time
+              model, audit-on-every-mutation, immutable rule sets, DbLike-first), a silent
+              scheduling error, a test that cannot fail, or a security hole in IPC/preload.
+  SUGGESTION — worth doing, not worth blocking a commit over.
+
+Do not comment on style Biome already enforces. Do not pad: if the change is fine, say so.
+Be concise. The very last line of your reply must be exactly one of:
+VERDICT: PASS
+VERDICT: BLOCK
+
+$truncated_note
+
+Staged files:
+$files
+
+Staged diff:
+$diff
+PROMPT
+)
+
+review=$(claude -p "$prompt" \
+  --model sonnet \
+  --tools Read,Grep,Glob \
+  --permission-mode plan \
+  --no-session-persistence \
+  --output-format text 2>&1) || {
+  echo "${dim}pre-commit: reviewer did not run (${review:0:200}); continuing without review${reset}"
+  exit 0
+}
+
+echo "$review" | sed 's/^/  /'
+verdict=$(echo "$review" | tr -d '\r' | grep -E '^VERDICT: (PASS|BLOCK)[[:space:]]*$' | tail -1 || true)
+
+case "$verdict" in
+  "VERDICT: PASS"*) echo "${green}pre-commit: review passed${reset}" ;;
+  "VERDICT: BLOCK"*)
+    echo "${red}pre-commit: review found blocking issues — commit blocked${reset}"
+    echo "${dim}Fix them, or bypass with SKIP_REVIEW=1 if you disagree.${reset}"
+    exit 1 ;;
+  *) echo "${dim}pre-commit: reviewer gave no verdict; not blocking${reset}" ;;
+esac
