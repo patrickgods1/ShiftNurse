@@ -202,6 +202,17 @@ export function listCredentials(db: DbLike): Credential[] {
   return db.select().from(credentialTable).all().map(toCredential);
 }
 
+/** Every nurse credential on a unit, for building a rule-evaluation context in one query. */
+export function listNurseCredentialsForUnit(db: DbLike, unitId: Id): NurseCredential[] {
+  return db
+    .select({ nurseCredential: nurseCredentialTable })
+    .from(nurseCredentialTable)
+    .innerJoin(nurseTable, eq(nurseCredentialTable.nurseId, nurseTable.id))
+    .where(eq(nurseTable.unitId, unitId))
+    .all()
+    .map((r) => toNurseCredential(r.nurseCredential));
+}
+
 export function listNurseCredentials(db: DbLike, nurseId: Id): NurseCredential[] {
   return db
     .select()

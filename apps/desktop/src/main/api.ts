@@ -11,8 +11,11 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import {
   addDays,
   backtest,
+  buildRuleContext,
   datesInRange,
+  defaultRuleSet,
   deriveDemand,
+  evaluateSchedule,
   formatRosterCsv,
   type Id,
   type IsoDate,
@@ -20,14 +23,17 @@ import {
   parseRosterCsv,
   proposeCensus,
   type SchedulePeriod,
+  ScheduleView,
   type ShiftType,
   today,
 } from '@shiftnurse/core';
 import {
   createAcuityTier,
+  createAssignment,
   createCredential,
   createHoliday,
   createNurse,
+  createPeriod,
   createRatioRule,
   createShiftType,
   credentialsExpiringBetween,
@@ -35,14 +41,19 @@ import {
   deactivateRatioRule,
   deactivateShiftType,
   deleteAcuityTier,
+  deleteAssignment,
   deleteCensusForecast,
   deleteCoverageRequirement,
   deleteHoliday,
   exportRoster,
+  getAssignment,
   getCurrentDraft,
   getHppdTarget,
+  getLatestRuleSet,
   getNurse,
   getNurseByEmployeeId,
+  getPeriod,
+  getRuleSet,
   getUnit,
   grantCredential,
   ids,
@@ -58,20 +69,26 @@ import {
   listCredentials,
   listHolidaysForUnit,
   listNurseCredentials,
+  listNurseCredentialsForUnit,
   listNursesForUnit,
   listOpenCallOffs,
   listPeriodsForUnit,
   listPreferencesForNurse,
   listRatioRulesForUnit,
+  listShiftCredentialRequirementsForUnit,
   listShiftTypesForUnit,
   listTimeOffForUnit,
   listUnits,
+  priorAssignmentsBefore,
   recordActualCensus,
   replaceNursePreferences,
   revokeCredential,
   type ShiftNurseDb,
+  saveRuleSet,
+  setLocked as setAssignmentLocked,
   transact,
   updateAcuityTier,
+  updateAssignment as updateAssignmentDb,
   updateCredentialExpiry,
   updateNurse,
   updateRatioRule,
@@ -86,6 +103,7 @@ import type {
   DashboardSummary,
   OnShiftView,
   RosterImportPreview,
+  ScheduleValidation,
   ShiftNurseApi,
 } from '../shared/api.js';
 import { databasePath } from './database.js';
@@ -193,6 +211,49 @@ function demandInputs(db: ShiftNurseDb, unitId: Id, start: IsoDate, end: IsoDate
   };
 }
 
+/** The full context and view the rule engine needs to score one period. Loaded once per call. */
+function buildScheduleValidation(db: ShiftNurseDb, periodId: Id): ScheduleValidation {
+  const period = getPeriod(db, periodId);
+  if (!period) throw new Error(`Unknown period ${periodId}`);
+  // The period's own snapshot, never "latest": a published schedule must stay judged by the
+  // rules it was solved under, or tightening a rest rule next month would retroactively
+  // make last month's schedule non-compliant.
+  const ruleSet = getRuleSet(db, period.ruleSetId);
+  if (!ruleSet) throw new Error(`Period ${periodId} cites unknown rule set ${period.ruleSetId}`);
+
+  const nurses = listNursesForUnit(db, period.unitId);
+  const shiftTypes = listShiftTypesForUnit(db, period.unitId);
+  const assignments = listAssignmentsForPeriod(db, periodId);
+  // Rest and consecutive-shift rules look back across the period boundary into the last
+  // published schedule, so a Monday shift can be judged against the Sunday night before it
+  // even though that Sunday belongs to a different (already-published) period.
+  const prior = priorAssignmentsBefore(db, period.unitId, period.startDate, 14);
+
+  const schedule = new ScheduleView({
+    period,
+    assignments,
+    priorAssignments: prior,
+    nurses,
+    shiftTypes,
+  });
+  const ctx = buildRuleContext({
+    unit: unitOrThrow(db, period.unitId),
+    demand: deriveDemand(
+      datesInRange(period.startDate, period.endDate),
+      demandInputs(db, period.unitId, period.startDate, period.endDate),
+    ),
+    nurses,
+    shiftTypes,
+    timeOff: listTimeOffForUnit(db, period.unitId),
+    credentials: listCredentials(db),
+    nurseCredentials: listNurseCredentialsForUnit(db, period.unitId),
+    shiftCredentialRequirements: listShiftCredentialRequirementsForUnit(db, period.unitId),
+    holidays: listHolidaysForUnit(db, period.unitId),
+    weekendDefinition: ruleSet.weekendDefinition,
+  });
+  return { ruleSet, result: evaluateSchedule(schedule, ruleSet, ctx) };
+}
+
 export function createApi(db: ShiftNurseDb): ShiftNurseApi {
   return {
     app: {
@@ -288,6 +349,67 @@ export function createApi(db: ShiftNurseDb): ShiftNurseApi {
     periods: {
       list: (unitId) => listPeriodsForUnit(db, unitId),
       assignments: (periodId) => listAssignmentsForPeriod(db, periodId),
+      create: ({ unitId, name, startDate, endDate }) => {
+        const ruleSet =
+          getLatestRuleSet(db, unitId) ?? saveRuleSet(db, defaultRuleSet(unitId), ACTOR);
+        return createPeriod(
+          db,
+          {
+            unitId,
+            name,
+            startDate,
+            endDate,
+            ruleSetId: ruleSet.id,
+            ruleSetVersion: ruleSet.version,
+          },
+          ACTOR,
+        );
+      },
+    },
+    schedule: {
+      validate: (periodId) => buildScheduleValidation(db, periodId),
+      createAssignment: (input) =>
+        createAssignment(db, { ...input, source: input.source ?? 'manual' }, ACTOR),
+      moveAssignment: ({ assignmentId, nurseId, shiftTypeId, date }) =>
+        transact(db, (tx) => {
+          const existing = getAssignment(tx, assignmentId);
+          if (!existing) throw new Error(`Assignment ${assignmentId} not found`);
+          if (existing.isLocked) throw new Error('Cannot move a locked assignment');
+          deleteAssignment(tx, assignmentId, ACTOR);
+          // Charge, overtime authorisation and notes describe the shift, not the cell it sits
+          // in; a move must carry them or the drop silently strips the charge nurse.
+          return createAssignment(
+            tx,
+            {
+              periodId: existing.periodId,
+              nurseId,
+              shiftTypeId,
+              date,
+              source: 'manual',
+              isCharge: existing.isCharge,
+              isOvertime: existing.isOvertime,
+              ...(existing.notes !== undefined ? { notes: existing.notes } : {}),
+            },
+            ACTOR,
+          );
+        }),
+      updateAssignment: (assignmentId, patch) => updateAssignmentDb(db, assignmentId, patch, ACTOR),
+      deleteAssignment: (assignmentId) => deleteAssignment(db, assignmentId, ACTOR),
+      setLocked: (assignmentId, locked) => setAssignmentLocked(db, assignmentId, locked, ACTOR),
+    },
+    rules: {
+      getLatest: (unitId) => getLatestRuleSet(db, unitId) ?? defaultRuleSet(unitId),
+      save: (unitId, name, configs, weekendDefinition) =>
+        saveRuleSet(
+          db,
+          {
+            ...(getLatestRuleSet(db, unitId) ?? defaultRuleSet(unitId)),
+            name,
+            configs,
+            weekendDefinition,
+          },
+          ACTOR,
+        ),
     },
     timeOff: {
       list: (unitId, status) => listTimeOffForUnit(db, unitId, status),

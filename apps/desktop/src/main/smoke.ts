@@ -63,7 +63,20 @@ const WRITE_SCRIPT = `
     });
     const after = (await api.nurses.list(unit.id)).length;
     const csv = await api.roster.exportCsv(unit.id);
-    return { before, after, id: created.id, csvHasNurse: csv.includes(created.employeeId) };
+    // Validate the seeded draft through the rule engine: proves the whole evaluation path
+    // (context build, lookback, demand derivation) runs end to end over real data.
+    const periods = await api.periods.list(unit.id);
+    const draft = periods.find((p) => p.status === 'draft');
+    const validation = draft ? await api.schedule.validate(draft.id) : undefined;
+    const t0 = performance.now();
+    if (draft) await api.schedule.validate(draft.id);
+    const validateMs = Math.round(performance.now() - t0);
+    return {
+      before, after, id: created.id, csvHasNurse: csv.includes(created.employeeId),
+      violations: validation?.result.violations.length ?? -1,
+      rules: validation?.ruleSet.configs.length ?? -1,
+      validateMs,
+    };
   })()`;
 
 export function runSmoke(win: BrowserWindow): void {
@@ -104,10 +117,17 @@ export function runSmoke(win: BrowserWindow): void {
         before: number;
         after: number;
         csvHasNurse: boolean;
+        violations: number;
+        rules: number;
+        validateMs: number;
       };
       if (write.after !== write.before + 1) fail(`nurse create: ${write.before} -> ${write.after}`);
       if (!write.csvHasNurse) fail('exported CSV does not contain the created nurse');
       console.log(`[smoke] write path OK (${write.before} -> ${write.after} nurses, CSV export)`);
+      if (write.rules < 0) fail('no draft period to validate');
+      console.log(
+        `[smoke] validate OK (${write.rules} rules, ${write.violations} violations, ${write.validateMs}ms)`,
+      );
 
       const shot = process.env.SHIFTNURSE_SMOKE_SCREENSHOT;
       if (shot && !shot.endsWith('/')) {

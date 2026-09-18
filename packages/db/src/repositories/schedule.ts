@@ -174,6 +174,11 @@ export function listAssignmentsForPeriod(db: DbLike, periodId: Id): Assignment[]
 }
 
 /** Inclusive on both ends, matching how `IsoDate` ranges are expressed everywhere else. */
+export function getAssignment(db: DbLike, assignmentId: Id): Assignment | undefined {
+  const row = db.select().from(assignment).where(eq(assignment.id, assignmentId)).get();
+  return row ? toAssignment(row) : undefined;
+}
+
 export function listAssignmentsForNurseInRange(
   db: DbLike,
   nurseId: Id,

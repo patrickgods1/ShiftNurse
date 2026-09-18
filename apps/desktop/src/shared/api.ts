@@ -14,11 +14,13 @@
 import type {
   AcuityTier,
   Assignment,
+  AssignmentSource,
   BacktestResult,
   CensusForecast,
   CensusProposal,
   CoverageRequirement,
   Credential,
+  EvaluationResult,
   ForecastOptions,
   Holiday,
   HppdTarget,
@@ -30,6 +32,7 @@ import type {
   RatioRule,
   RosterCsvError,
   RosterCsvRow,
+  RuleSet,
   SchedulePeriod,
   ShiftDemand,
   ShiftType,
@@ -106,6 +109,37 @@ export interface CensusForecastInput {
   projectedCensus: number;
   acuityMix: Record<Id, number>;
   source: CensusForecast['source'];
+}
+
+export interface CreateAssignmentInput {
+  periodId: Id;
+  nurseId: Id;
+  shiftTypeId: Id;
+  date: IsoDate;
+  source?: AssignmentSource;
+  isLocked?: boolean;
+  isCharge?: boolean;
+  isOvertime?: boolean;
+  notes?: string;
+}
+
+export type AssignmentPatch = Partial<
+  Pick<CreateAssignmentInput, 'shiftTypeId' | 'date' | 'isCharge' | 'isOvertime' | 'notes'>
+>;
+
+/** Move a shift from one nurse/date/type to another. Assignment identity (`nurseId`) is
+ * immutable, so a move is a delete-and-recreate, done in one transaction so the grid never
+ * observes a half-moved shift. */
+export interface MoveAssignmentInput {
+  assignmentId: Id;
+  nurseId: Id;
+  shiftTypeId: Id;
+  date: IsoDate;
+}
+
+export interface ScheduleValidation {
+  ruleSet: RuleSet;
+  result: EvaluationResult;
 }
 
 export interface RosterImportPreview {
@@ -214,6 +248,31 @@ export interface ShiftNurseApi {
   periods: {
     list(unitId: Id): SchedulePeriod[];
     assignments(periodId: Id): Assignment[];
+    create(input: {
+      unitId: Id;
+      name: string;
+      startDate: IsoDate;
+      endDate: IsoDate;
+    }): SchedulePeriod;
+  };
+  schedule: {
+    /** Every hard/soft violation for the period's current assignments, under its rule set. */
+    validate(periodId: Id): ScheduleValidation;
+    createAssignment(input: CreateAssignmentInput): Assignment;
+    moveAssignment(input: MoveAssignmentInput): Assignment;
+    updateAssignment(assignmentId: Id, patch: AssignmentPatch): Assignment;
+    deleteAssignment(assignmentId: Id): void;
+    setLocked(assignmentId: Id, locked: boolean): Assignment;
+  };
+  rules: {
+    getLatest(unitId: Id): RuleSet;
+    /** Always inserts a new, immutable version; never rewrites one a published period cites. */
+    save(
+      unitId: Id,
+      name: string,
+      configs: RuleSet['configs'],
+      weekendDefinition: RuleSet['weekendDefinition'],
+    ): RuleSet;
   };
   timeOff: {
     list(unitId: Id, status?: TimeOffStatus): TimeOffRequest[];
@@ -265,7 +324,16 @@ export const API_CHANNELS = {
     'demand',
   ],
   roster: ['pickImportFile', 'importRows', 'exportToFile', 'exportCsv'],
-  periods: ['list', 'assignments'],
+  periods: ['list', 'assignments', 'create'],
+  schedule: [
+    'validate',
+    'createAssignment',
+    'moveAssignment',
+    'updateAssignment',
+    'deleteAssignment',
+    'setLocked',
+  ],
+  rules: ['getLatest', 'save'],
   timeOff: ['list'],
 } as const satisfies { [R in keyof ShiftNurseApi]: readonly (keyof ShiftNurseApi[R])[] };
 
