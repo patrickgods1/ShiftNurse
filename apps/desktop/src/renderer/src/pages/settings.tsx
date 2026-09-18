@@ -11,6 +11,7 @@ import { AsyncState } from '../components/async-state.js';
 import { PageHeader } from '../components/page-header.js';
 import { ThemeToggle } from '../components/theme-toggle.js';
 import { useUnitId } from '../unit-context.js';
+import AcuityPanel from './settings/acuity.js';
 import CoverageFloors from './settings/coverage-floors.js';
 import HolidaysPanel from './settings/holidays.js';
 import ShiftTypesPanel from './settings/shift-types.js';
@@ -18,6 +19,7 @@ import ShiftTypesPanel from './settings/shift-types.js';
 const TABS = [
   { id: 'shift-types', label: 'Shift types' },
   { id: 'coverage', label: 'Coverage floors' },
+  { id: 'acuity', label: 'Acuity' },
   { id: 'holidays', label: 'Holidays' },
   { id: 'about', label: 'About' },
 ] as const;
@@ -129,6 +131,8 @@ export default function SettingsPage() {
               <ShiftTypesPanel />
             ) : tab.id === 'coverage' ? (
               <CoverageTab />
+            ) : tab.id === 'acuity' ? (
+              <AcuityPanel />
             ) : tab.id === 'holidays' ? (
               <HolidaysPanel />
             ) : (

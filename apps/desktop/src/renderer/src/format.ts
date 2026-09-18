@@ -5,10 +5,11 @@
  * in packages/core) — but *printing* an ISO string for a human is not arithmetic. This module
  * exists to draw that line: it only ever splits the string or uses `Date.UTC`, so it can never
  * accidentally introduce a timezone-dependent off-by-one into a rest or consecutive-hours
- * calculation elsewhere.
+ * calculation elsewhere. Anything beyond splitting the string — weekday, day distance — is
+ * delegated to `@shiftnurse/core`'s time helpers rather than re-derived.
  */
 
-import type { IsoDate } from '@shiftnurse/core';
+import { type IsoDate, isIsoDate, weekdayOf } from '@shiftnurse/core';
 
 const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = [
@@ -43,9 +44,10 @@ export function formatDateWithWeekday(date: IsoDate | string): string {
   const year = Number(parts[0]);
   const month = Number(parts[1]);
   const day = Number(parts[2]);
-  if (!year || !month || !day) return date;
-  const utcDay = Date.UTC(year, month - 1, day) / 86_400_000;
-  const weekday = WEEKDAY_NAMES[((utcDay % 7) + 7) % 7] ?? '?';
+  if (!year || !month || !day || !isIsoDate(date)) return date;
+  // Never re-derive weekday arithmetic here: day 0 of the epoch was a Thursday, so a naive
+  // `dayNumber % 7` is four days off. Core's `weekdayOf` is the single source of truth.
+  const weekday = WEEKDAY_NAMES[weekdayOf(date)] ?? '?';
   const name = MONTH_NAMES[month - 1] ?? '?';
   return `${weekday}, ${name} ${day}`;
 }

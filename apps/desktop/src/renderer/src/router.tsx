@@ -14,6 +14,7 @@ import {
 } from '@tanstack/react-router';
 import { ThemeToggle } from './components/theme-toggle.js';
 import DashboardPage from './pages/dashboard.js';
+import DemandPage from './pages/demand.js';
 import RequestsPage from './pages/requests.js';
 import RosterPage from './pages/roster.js';
 import SchedulePage from './pages/schedule.js';
@@ -23,6 +24,7 @@ import { UnitProvider, useUnit } from './unit-context.js';
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard' },
   { to: '/schedule', label: 'Schedule' },
+  { to: '/demand', label: 'Demand' },
   { to: '/roster', label: 'Roster' },
   { to: '/requests', label: 'Requests' },
   { to: '/settings', label: 'Settings' },
@@ -91,6 +93,12 @@ const scheduleRoute = createRoute({
   component: SchedulePage,
 });
 
+const demandRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/demand',
+  component: DemandPage,
+});
+
 const rosterRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/roster',
@@ -112,6 +120,7 @@ const settingsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   dashboardRoute,
   scheduleRoute,
+  demandRoute,
   rosterRoute,
   requestsRoute,
   settingsRoute,

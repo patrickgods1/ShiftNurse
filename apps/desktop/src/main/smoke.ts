@@ -19,6 +19,7 @@ const ROUTES: readonly { hash: string; testId: string }[] = [
   { hash: '#/roster', testId: 'roster-table' },
   { hash: '#/requests', testId: 'page-header' },
   { hash: '#/schedule', testId: 'page-header' },
+  { hash: '#/demand', testId: 'demand-table' },
   { hash: '#/settings', testId: 'settings-tabs' },
 ];
 

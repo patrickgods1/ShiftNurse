@@ -9,7 +9,15 @@
 
 import type { Holiday, Id } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { CoverageRequirementInput, ShiftTypeInput, ShiftTypePatch } from '../../shared/api.js';
+import type {
+  AcuityTierInput,
+  AcuityTierPatch,
+  CoverageRequirementInput,
+  RatioRuleInput,
+  RatioRulePatch,
+  ShiftTypeInput,
+  ShiftTypePatch,
+} from '../../shared/api.js';
 import { api, queryKeys } from './api.js';
 
 export const configKeys = {
@@ -18,6 +26,9 @@ export const configKeys = {
   shiftTypes: (unitId: Id) => queryKeys.shiftTypes(unitId),
   coverage: (unitId: Id) => ['coverage', unitId] as const,
   holidays: (unitId: Id) => ['holidays', unitId] as const,
+  acuityTiers: (unitId: Id) => ['acuityTiers', unitId] as const,
+  ratioRules: (unitId: Id) => ['ratioRules', unitId] as const,
+  hppd: (unitId: Id) => ['hppd', unitId] as const,
 };
 
 function dashboardKey(unitId: Id) {
@@ -137,6 +148,120 @@ export function useDeleteHoliday() {
     onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: configKeys.holidays(variables.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(variables.unitId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Acuity tiers, ratio rules and the HPPD target
+//
+// All three feed `acuity/demand.ts`'s derivation of per-shift staffing minimums, so any
+// edit here can change what the dashboard and solver think a shift needs — hence every
+// mutation also invalidates the dashboard summary, same as shift types and coverage above.
+// ---------------------------------------------------------------------------
+
+export function useAcuityTiers(unitId: Id | undefined) {
+  return useQuery({
+    queryKey: configKeys.acuityTiers(unitId ?? ''),
+    queryFn: () => api.acuity.tiers(unitId as Id),
+    enabled: unitId !== undefined,
+  });
+}
+
+export function useCreateAcuityTier() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AcuityTierInput) => api.acuity.createTier(input),
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: configKeys.acuityTiers(created.unitId) });
+      queryClient.invalidateQueries({ queryKey: dashboardKey(created.unitId) });
+    },
+  });
+}
+
+export function useUpdateAcuityTier() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: Id; patch: AcuityTierPatch }) =>
+      api.acuity.updateTier(id, patch),
+    onSuccess: (updated) => {
+      queryClient.invalidateQueries({ queryKey: configKeys.acuityTiers(updated.unitId) });
+      queryClient.invalidateQueries({ queryKey: dashboardKey(updated.unitId) });
+    },
+  });
+}
+
+export function useDeleteAcuityTier() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    // `acuity.deleteTier` returns void, so the unit id travels with the call, same pattern
+    // as `useDeleteCoverage`/`useDeleteHoliday`.
+    mutationFn: ({ id }: { id: Id; unitId: Id }) => api.acuity.deleteTier(id),
+    onSuccess: (_result, variables) => {
+      queryClient.invalidateQueries({ queryKey: configKeys.acuityTiers(variables.unitId) });
+      queryClient.invalidateQueries({ queryKey: dashboardKey(variables.unitId) });
+    },
+  });
+}
+
+export function useRatioRules(unitId: Id | undefined) {
+  return useQuery({
+    queryKey: configKeys.ratioRules(unitId ?? ''),
+    queryFn: () => api.acuity.ratioRules(unitId as Id),
+    enabled: unitId !== undefined,
+  });
+}
+
+export function useCreateRatioRule() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: RatioRuleInput) => api.acuity.createRatioRule(input),
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: configKeys.ratioRules(created.unitId) });
+      queryClient.invalidateQueries({ queryKey: dashboardKey(created.unitId) });
+    },
+  });
+}
+
+export function useUpdateRatioRule() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: Id; patch: RatioRulePatch }) =>
+      api.acuity.updateRatioRule(id, patch),
+    onSuccess: (updated) => {
+      queryClient.invalidateQueries({ queryKey: configKeys.ratioRules(updated.unitId) });
+      queryClient.invalidateQueries({ queryKey: dashboardKey(updated.unitId) });
+    },
+  });
+}
+
+export function useDeactivateRatioRule() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: Id) => api.acuity.deactivateRatioRule(id),
+    onSuccess: (deactivated) => {
+      queryClient.invalidateQueries({ queryKey: configKeys.ratioRules(deactivated.unitId) });
+      queryClient.invalidateQueries({ queryKey: dashboardKey(deactivated.unitId) });
+    },
+  });
+}
+
+export function useHppdTarget(unitId: Id | undefined) {
+  return useQuery({
+    queryKey: configKeys.hppd(unitId ?? ''),
+    queryFn: () => api.acuity.hppd(unitId as Id),
+    enabled: unitId !== undefined,
+  });
+}
+
+export function useSetHppdTarget() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ unitId, targetHours }: { unitId: Id; targetHours: number }) =>
+      api.acuity.setHppd(unitId, targetHours),
+    onSuccess: (saved) => {
+      queryClient.invalidateQueries({ queryKey: configKeys.hppd(saved.unitId) });
+      queryClient.invalidateQueries({ queryKey: dashboardKey(saved.unitId) });
     },
   });
 }

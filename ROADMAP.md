@@ -165,13 +165,13 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
 - [x] CSV import **and** export for the roster, reusing one parser
 - [x] Verify: import 60 nurses from CSV, round-trip through export
 
-### M5 — Acuity & demand
-- [ ] Acuity tier editor, ratio rule table with citations, HPPD target
-- [ ] Census forecast entry per date × shift, with acuity mix validation
-- [ ] Historical forecaster (day-of-week + seasonal moving average) proposing values
-- [ ] Derived-demand view showing which constraint binds each number
-- [ ] Forecast-vs-actual back-test
-- [ ] Verify: a high-acuity mix raises required staffing above the coverage floor
+### M5 — Acuity & demand ✅
+- [x] Acuity tier editor, ratio rule table with citations, HPPD target
+- [x] Census forecast entry per date × shift, with acuity mix validation
+- [x] Historical forecaster (day-of-week + seasonal moving average) proposing values
+- [x] Derived-demand view showing which constraint binds each number
+- [x] Forecast-vs-actual back-test
+- [x] Verify: a high-acuity mix raises required staffing above the coverage floor
 
 ### M6 — Schedule grid & live validation
 - [ ] Nurses × days grid, mixed shift lengths, colour-coded

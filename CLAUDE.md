@@ -18,7 +18,8 @@ self-service later becomes an intake surface rather than a new data model.
 
 - `packages/core` (M1, complete): `domain/time.ts`, `domain/entities.ts`, `acuity/demand.ts`,
   `schedule/view.ts`, `rules/` (registry + 8 hard rules), `roster/csv.ts` (M4: the one CSV
-  parser/formatter), `testing/fixtures.ts`.
+  parser/formatter), `acuity/forecast.ts` (M5: same-weekday moving average with seasonal
+  index, mix validation, back-test), `testing/fixtures.ts`.
 - `packages/db` (M2, complete): 26-table Drizzle schema, generated migrations, `client.ts`
   (WAL, foreign keys ON, `transact`), `audit.ts`, `mappers.ts`, and repositories under
   `repositories/` — `roster`, `config`, `schedule`, `timeoff`, `operations`.
@@ -28,9 +29,11 @@ self-service later becomes an intake surface rather than a new data model.
   `src/preload/` builds `window.shiftnurse` from the same channel table; `src/renderer/` is
   React 18 + TanStack Router (hash history, code-based routes) + TanStack Query + Tailwind v4
   tokens. Dashboard, Roster (CRUD, credentials, preferences, CSV import/export via native
-  dialogs in main) and Settings (shift types, coverage floors, holidays) are real (M3–M4);
-  Schedule and Requests are placeholders until M6/M10. Renderer hooks: `api.ts` (roster
-  side) and `api-config.ts` (unit configuration).
+  dialogs in main), Settings (shift types, coverage floors, acuity tiers/ratios/HPPD,
+  holidays) and Demand (census grid, forecaster proposals, derived demand with binding
+  constraint, back-test) are real (M3–M5); Schedule and Requests are placeholders until
+  M6/M10. Renderer hooks: `api.ts` (roster), `api-config.ts` (configuration),
+  `api-demand.ts` (census/demand).
 
 ## Architecture
 
@@ -146,6 +149,10 @@ violations of their own.
   the Electron-ABI prebuild on postinstall. The main bundle inlines `@shiftnurse/db` and
   aliases the import (see `electron.vite.config.ts`), so `db` itself knows nothing about it.
   Bumping Electron means checking that better-sqlite3 publishes a prebuild for its ABI.
+- **The renderer never re-derives time maths.** `renderer/src/format.ts` splits ISO strings
+  for display and calls core's `weekdayOf`/`dayNumber` for anything else. The first version
+  computed weekday as `dayNumber % 7` and labelled Sunday 2026-09-20 "Wed" — day 0 of the
+  epoch was a Thursday. Renderer unit tests live next to the code and run under `npm test`.
 - **`ELECTRON_RUN_AS_NODE` must be unset when launching Electron.** VS Code's integrated
   terminal exports it, and with it set the Electron binary is a bare Node runtime — the
   symptom is `'electron' does not provide an export named 'BrowserWindow'`. `scripts/smoke.mjs`
