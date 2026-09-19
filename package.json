@@ -15,7 +15,7 @@
     "watch:packages": "concurrently -n core,db -c cyan,magenta \"npm run watch -w @shiftnurse/core\" \"npm run watch -w @shiftnurse/db\"",
     "dev": "npm run build:packages && concurrently -n pkgs,app -c gray,green \"npm run watch:packages\" \"npm run dev -w @shiftnurse/desktop\"",
     "build": "npm run build:packages && npm run build -w @shiftnurse/desktop",
-    "dist": "npm run build && npm run dist -w @shiftnurse/desktop",
+    "dist": "npm run build && npm run dist -w @shiftnurse/desktop --",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --build --force && npm run typecheck -w @shiftnurse/desktop",

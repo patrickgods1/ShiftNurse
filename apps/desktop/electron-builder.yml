@@ -1,14 +1,27 @@
 # Packaging. Finalised in M14 (installers, signing, auto-update); enough here that `npm run
-# dist` produces a runnable app and the migrations travel with it.
+# dist` produces runnable mac (dmg, x64 + arm64) and Windows (nsis, x64) installers, and the
+# migrations travel with them.
+#
+# `npm run dist` from the repo root builds mac. Cross-building Windows from macOS needs the
+# workspace form so extra flags reach electron-builder: `npm run dist -w @shiftnurse/desktop
+# -- --win --x64` (root `npm run dist -- --win --x64` also forwards correctly through npm's
+# `--` passthrough).
 appId: com.shiftnurse.desktop
 productName: ShiftNurse
 directories:
   output: release
   buildResources: build
+# `dependencies` in package.json is the packaged runtime set: everything electron-vite already
+# bundled into out/ at build time (@shiftnurse/core, @shiftnurse/db, react, radix, tanstack) is
+# a devDependency instead, so it never rides along a second time inside the asar.
 files:
   - out/**
   - package.json
   - '!**/*.map'
+  # The sqlite amalgamation source and native sources aren't needed once the prebuilt binary
+  # (fetched per target by before-pack.mjs) is in place; asarUnpack below only needs the .node.
+  - '!node_modules/better-sqlite3-electron/deps/**'
+  - '!node_modules/better-sqlite3-electron/src/**'
 extraResources:
   # `openDatabase` needs the SQL migrations at runtime; main resolves them from
   # process.resourcesPath/drizzle in a packaged build (see src/main/database.ts).
@@ -16,8 +29,19 @@ extraResources:
     to: drizzle
 asarUnpack:
   - '**/*.node'
+# electron-builder's default native rebuild recompiles the *hoisted* better-sqlite3 for
+# Electron's ABI, which breaks `npm test`/the seeder on this machine (they need the Node ABI).
+# beforePack fetches the right prebuilt binary into better-sqlite3-electron per target instead
+# — see scripts/before-pack.mjs and scripts/rebuild-sqlite-for-electron.mjs.
+npmRebuild: false
+beforePack: scripts/before-pack.mjs
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 mac:
   category: public.app-category.business
-  target: [dmg]
+  target:
+    - target: dmg
+      arch: [x64, arm64]
 win:
-  target: [nsis]
+  target:
+    - target: nsis
+      arch: [x64]

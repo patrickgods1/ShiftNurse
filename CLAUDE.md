@@ -136,7 +136,7 @@ violations of their own.
 | `npm run seed:demo` | Builds and runs the demo seeder into a local SQLite file. |
 | `npm run dev` | Builds packages, then runs package watchers + `electron-vite dev` with HMR. |
 | `npm run build` / `dist` | Production bundles into `apps/desktop/out`; `dist` then packages with electron-builder. |
-| `npm run smoke -w @shiftnurse/desktop` | Builds and boots the real app headlessly against a temp `userData`, asserts the preload bridge and dashboard rendered, exits non-zero otherwise. `--screenshot <png>` captures the window. Run this after touching main/preload/IPC — unit tests cannot see a wrong-ABI native module or a preload that never ran. |
+| `npm run smoke -w @shiftnurse/desktop` / `npm run smoke:packaged -w @shiftnurse/desktop` | Builds and boots the real app headlessly against a temp `userData`, asserts the preload bridge and dashboard rendered, exits non-zero otherwise. `--screenshot <png>` captures the window. Run this after touching main/preload/IPC — unit tests cannot see a wrong-ABI native module or a preload that never ran. |
 
 ## Git hooks (`.githooks/`, wired by `npm install` via the `prepare` script)
 
@@ -185,6 +185,16 @@ violations of their own.
   the Electron-ABI prebuild on postinstall. The main bundle inlines `@shiftnurse/db` and
   aliases the import (see `electron.vite.config.ts`), so `db` itself knows nothing about it.
   Bumping Electron means checking that better-sqlite3 publishes a prebuild for its ABI.
+- **Packaging never lets electron-builder rebuild native modules.** `electron-builder.yml` sets
+  `npmRebuild: false`: its default rebuild walks `@shiftnurse/db → better-sqlite3` and recompiles
+  the *hoisted* copy for Electron, which breaks `npm test`. Instead `scripts/before-pack.mjs`
+  fetches the prebuild for each *target* platform/arch (a Windows installer built on a Mac must
+  not carry a darwin `.node`) and `scripts/dist.mjs` restores the host binary in a `finally`.
+  Electron is pinned to an exact version (electron-builder refuses a range). Everything
+  electron-vite bundles (`@shiftnurse/*`, react, radix, tanstack) is a **devDependency**;
+  `dependencies` is exactly the set the packaged main process loads from disk. `npm run
+  smoke:packaged` boots the built `.app`/`.exe` from `release/` in smoke mode — run it after any
+  packaging change; the dev-binary smoke cannot see a missing migration or wrong-ABI binary.
 - **The renderer never re-derives time maths.** `renderer/src/format.ts` splits ISO strings
   for display and calls core's `weekdayOf`/`dayNumber` for anything else. The first version
   computed weekday as `dayNumber % 7` and labelled Sunday 2026-09-20 "Wed" — day 0 of the

@@ -81,7 +81,7 @@ shiftnurse/
 
 ## Current state
 
-`packages/core`, `packages/db` and `apps/desktop` through M8 are green: **332 tests passing, typecheck clean.**
+`packages/core`, `packages/db` and `apps/desktop` through M14 are green: **496 tests passing, typecheck clean.**
 
 - [x] Monorepo scaffold (npm workspaces, TS project references, vitest)
 - [x] `domain/time.ts` — DST-safe wall-clock timeline, shift windows, configurable weekend definitions
@@ -320,10 +320,26 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
       the smoke test reports a call-off on the published demo period, checks the ranked list is
       eligible-only and tier-ordered, backfills the top candidate and reads the change log)
 
-### M14 — Packaging
-- [ ] electron-builder config for Windows 11 (NSIS) and macOS (dmg, x64 + arm64)
-- [ ] Native module rebuild for better-sqlite3 against the Electron ABI
-- [ ] Verify: install and launch the built artifact on both platforms
+### M14 — Packaging (built; macOS verified, Windows launch pending)
+- [x] electron-builder config for Windows 11 (NSIS) and macOS (dmg, x64 + arm64)
+      (`apps/desktop/electron-builder.yml`; `npm run dist` builds both mac dmgs, `npm run dist --
+      --win --x64` cross-builds the NSIS installer from macOS with no wine; Electron pinned exact
+      because electron-builder refuses a range; everything electron-vite bundles moved to
+      devDependencies so the asar carries only `better-sqlite3-electron`, `drizzle-orm` and
+      `@electron-toolkit/utils` — 23 MB → 8 MB)
+- [x] Native module rebuild for better-sqlite3 against the Electron ABI
+      (`npmRebuild: false` — electron-builder's own rebuild recompiled the *hoisted* copy and broke
+      `npm test`; `scripts/before-pack.mjs` fetches the prebuild for each *target* platform/arch
+      through the same `rebuild-sqlite-for-electron.mjs` postinstall uses, and `scripts/dist.mjs`
+      restores the host binary in a `finally` so `npm run dev` survives a dist run)
+- [x] Verify: install and launch the built artifact on macOS
+      (both dmgs mounted, `ShiftNurse.app` copied out and booted via `npm run smoke:packaged` —
+      arm64 passes the full smoke natively: migrations from `resources/`, native module, solver,
+      publish, PDFs; x64 under Rosetta renders every screen and runs the solver but exceeds the
+      smoke's 60 s budget under emulation)
+- [ ] Verify: install and launch the built artifact on Windows 11
+      (the NSIS installer builds from macOS and carries the win32-x64 `.node`, but no Windows
+      machine was available to install and launch it — needs real Windows 11 hardware)
 
 ---
 
