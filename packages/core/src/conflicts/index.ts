@@ -7,3 +7,4 @@ export * from './analyse.js';
 export * from './detect.js';
 export * from './resolve.js';
 export * from './types.js';
+export * from './violation-diff.js';

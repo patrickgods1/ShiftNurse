@@ -11,7 +11,7 @@
 import type { Id, IsoDate, SchedulePeriod, TimeOffRequest, TimeOffStatus } from '@shiftnurse/core';
 import { addDays, today } from '@shiftnurse/core';
 import { useEffect, useMemo, useState } from 'react';
-import { useNurses, usePeriods, useShiftTypes } from '../api.js';
+import { useAssignments, useNurses, usePeriods, useShiftTypes } from '../api.js';
 import {
   useCancelTimeOff,
   useConflictPolicy,
@@ -27,6 +27,7 @@ import { formatDate } from '../format.js';
 import { useUnitId } from '../unit-context.js';
 import { ConflictsPanel } from './requests/conflicts-panel.js';
 import { DecideDialog, nurseLabel } from './requests/decide-dialog.js';
+import { ExchangePanel } from './requests/exchange-panel.js';
 import { RequestHeatmap } from './requests/heatmap.js';
 import { bucketByDay } from './requests/heatmap-data.js';
 import { NewRequestDialog } from './requests/new-request-dialog.js';
@@ -63,6 +64,9 @@ export default function RequestsPage() {
   }, [selectedPeriodId, fallback]);
   const period: SchedulePeriod | undefined =
     periods.find((p) => p.id === selectedPeriodId) ?? fallback;
+  const assignmentsQuery = useAssignments(period?.id);
+
+  const [tab, setTab] = useState<'timeOff' | 'exchanges'>('timeOff');
 
   const range = useMemo(
     () => (period ? { start: period.startDate, end: period.endDate } : fallbackRange()),
@@ -194,97 +198,140 @@ export default function RequestsPage() {
         }
       />
 
-      <div className="grid grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)] gap-6">
-        <section aria-labelledby="queue-heading">
-          <div className="mb-3 flex items-center gap-3">
-            <h2 id="queue-heading" className="text-sm font-semibold text-text">
-              Queue
-            </h2>
-            <fieldset className="flex gap-2 border-0 p-0">
-              <legend className="sr-only">Filter by status</legend>
-              {FILTERS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  aria-pressed={filter === option.value}
-                  className={`rounded-md border border-border px-3 py-1 text-sm ${
-                    filter === option.value
-                      ? 'bg-accent text-white'
-                      : 'bg-surface text-text hover:bg-bg'
-                  }`}
-                  onClick={() => setFilter(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </fieldset>
-            {selectedDate !== undefined ? (
-              <button type="button" className={SMALL} onClick={() => setSelectedDate(undefined)}>
-                Touching {formatDate(selectedDate)} · clear
-              </button>
-            ) : null}
+      <fieldset className="mb-6 flex gap-2 border-0 p-0">
+        <legend className="sr-only">Requests or exchanges</legend>
+        {(
+          [
+            { value: 'timeOff', label: 'Time off' },
+            { value: 'exchanges', label: 'Exchanges' },
+          ] as const
+        ).map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={tab === option.value}
+            className={`rounded-md border border-border px-3 py-1.5 text-sm font-medium ${
+              tab === option.value ? 'bg-accent text-white' : 'bg-surface text-text hover:bg-bg'
+            }`}
+            onClick={() => setTab(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </fieldset>
+
+      {tab === 'exchanges' ? (
+        <ExchangePanel
+          unitId={unitId}
+          period={period}
+          nurses={nursesQuery.data ?? []}
+          assignments={assignmentsQuery.data ?? []}
+          nursesById={nursesById}
+          shiftTypesById={shiftTypesById}
+        />
+      ) : (
+        <>
+          <div className="grid grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)] gap-6">
+            <section aria-labelledby="queue-heading">
+              <div className="mb-3 flex items-center gap-3">
+                <h2 id="queue-heading" className="text-sm font-semibold text-text">
+                  Queue
+                </h2>
+                <fieldset className="flex gap-2 border-0 p-0">
+                  <legend className="sr-only">Filter by status</legend>
+                  {FILTERS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      aria-pressed={filter === option.value}
+                      className={`rounded-md border border-border px-3 py-1 text-sm ${
+                        filter === option.value
+                          ? 'bg-accent text-white'
+                          : 'bg-surface text-text hover:bg-bg'
+                      }`}
+                      onClick={() => setFilter(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </fieldset>
+                {selectedDate !== undefined ? (
+                  <button
+                    type="button"
+                    className={SMALL}
+                    onClick={() => setSelectedDate(undefined)}
+                  >
+                    Touching {formatDate(selectedDate)} · clear
+                  </button>
+                ) : null}
+              </div>
+              {rangeQuery.isPending || nursesQuery.isPending ? (
+                <AsyncState status="loading" label="Loading requests" />
+              ) : rangeQuery.isError ? (
+                <AsyncState
+                  status="error"
+                  label="Could not load requests"
+                  error={rangeQuery.error}
+                />
+              ) : (
+                <DataTable
+                  columns={columns}
+                  rows={rows}
+                  rowKey={(r) => r.id}
+                  emptyLabel={
+                    selectedDate !== undefined
+                      ? 'No requests touch that day.'
+                      : `No ${filter === 'all' ? '' : `${filter} `}requests between ${formatDate(range.start)} and ${formatDate(range.end)}.`
+                  }
+                />
+              )}
+            </section>
+
+            <section
+              aria-labelledby="heatmap-heading"
+              className="rounded-md border border-border bg-surface p-4"
+            >
+              <h2 id="heatmap-heading" className="mb-2 text-sm font-semibold text-text">
+                Who is off · {formatDate(range.start)} – {formatDate(range.end)}
+              </h2>
+              {rangeQuery.isPending ? (
+                <AsyncState status="loading" label="Loading calendar" />
+              ) : (
+                <RequestHeatmap
+                  days={days}
+                  selectedDate={selectedDate}
+                  onSelectDate={setSelectedDate}
+                />
+              )}
+            </section>
           </div>
-          {rangeQuery.isPending || nursesQuery.isPending ? (
-            <AsyncState status="loading" label="Loading requests" />
-          ) : rangeQuery.isError ? (
-            <AsyncState status="error" label="Could not load requests" error={rangeQuery.error} />
-          ) : (
-            <DataTable
-              columns={columns}
-              rows={rows}
-              rowKey={(r) => r.id}
-              emptyLabel={
-                selectedDate !== undefined
-                  ? 'No requests touch that day.'
-                  : `No ${filter === 'all' ? '' : `${filter} `}requests between ${formatDate(range.start)} and ${formatDate(range.end)}.`
-              }
-            />
-          )}
-        </section>
 
-        <section
-          aria-labelledby="heatmap-heading"
-          className="rounded-md border border-border bg-surface p-4"
-        >
-          <h2 id="heatmap-heading" className="mb-2 text-sm font-semibold text-text">
-            Who is off · {formatDate(range.start)} – {formatDate(range.end)}
-          </h2>
-          {rangeQuery.isPending ? (
-            <AsyncState status="loading" label="Loading calendar" />
-          ) : (
-            <RequestHeatmap
-              days={days}
-              selectedDate={selectedDate}
-              onSelectDate={setSelectedDate}
-            />
-          )}
-        </section>
-      </div>
-
-      <div className="mt-8">
-        {period === undefined ? (
-          <AsyncState
-            status="empty"
-            label="Create a scheduling period to see its conflicts here."
-          />
-        ) : conflictsQuery.isPending ? (
-          <AsyncState status="loading" label="Analysing the period…" />
-        ) : conflictsQuery.isError ? (
-          <AsyncState
-            status="error"
-            label="Could not analyse the period"
-            error={conflictsQuery.error}
-          />
-        ) : (
-          <ConflictsPanel
-            unitId={unitId}
-            period={period}
-            report={conflictsQuery.data}
-            policy={policyQuery.data}
-            nursesById={nursesById}
-          />
-        )}
-      </div>
+          <div className="mt-8">
+            {period === undefined ? (
+              <AsyncState
+                status="empty"
+                label="Create a scheduling period to see its conflicts here."
+              />
+            ) : conflictsQuery.isPending ? (
+              <AsyncState status="loading" label="Analysing the period…" />
+            ) : conflictsQuery.isError ? (
+              <AsyncState
+                status="error"
+                label="Could not analyse the period"
+                error={conflictsQuery.error}
+              />
+            ) : (
+              <ConflictsPanel
+                unitId={unitId}
+                period={period}
+                report={conflictsQuery.data}
+                policy={policyQuery.data}
+                nursesById={nursesById}
+              />
+            )}
+          </div>
+        </>
+      )}
 
       <NewRequestDialog
         open={newOpen}

@@ -26,6 +26,7 @@ export * as mappers from './mappers.js';
 export * from './repositories/census.js';
 export * from './repositories/config.js';
 export * from './repositories/conflicts.js';
+export * from './repositories/exchange.js';
 export * from './repositories/operations.js';
 export * from './repositories/roster.js';
 export * from './repositories/roster-io.js';

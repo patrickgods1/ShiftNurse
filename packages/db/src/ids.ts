@@ -23,6 +23,7 @@ export const ids = {
   credentialRequirement: () => newId('creq'),
   preference: () => newId('pref'),
   timeOff: () => newId('to'),
+  shiftSwap: () => newId('swp'),
   acuityTier: () => newId('tier'),
   ratioRule: () => newId('ratio'),
   hppdTarget: () => newId('hppd'),

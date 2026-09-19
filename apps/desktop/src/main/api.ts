@@ -26,6 +26,10 @@ import {
   defaultRuleSet,
   deriveCounters,
   deriveDemand,
+  type ExchangeApplication,
+  type ExchangeEvaluation,
+  type ExchangeProposal,
+  evaluateExchange,
   evaluateSchedule,
   type FairnessLedgerEntry,
   formatRosterCsv,
@@ -39,6 +43,7 @@ import {
   type Preference,
   parseHistoricalScheduleCsv,
   parseRosterCsv,
+  planExchange,
   proposeCensus,
   type Resolution,
   type RuleSet,
@@ -54,7 +59,9 @@ import {
 } from '@shiftnurse/core';
 import {
   applyResolution,
+  approveSwap,
   approveTimeOffAndLiftAssignments,
+  cancelSwap,
   cancelTimeOff,
   createAcuityTier,
   createAssignment,
@@ -81,6 +88,7 @@ import {
   deleteHoliday,
   deleteOvertimeRule,
   deletePayRate,
+  denySwap,
   denyTimeOff,
   exportRoster,
   getBudget,
@@ -92,6 +100,7 @@ import {
   getNurseByEmployeeId,
   getPeriod,
   getRuleSet,
+  getSwap,
   getUnit,
   grantCredential,
   ids,
@@ -124,11 +133,14 @@ import {
   listRatioRulesForUnit,
   listShiftCredentialRequirementsForUnit,
   listShiftTypesForUnit,
+  listSwapsForPeriod,
+  listSwapsForUnit,
   listTimeOffForUnit,
   listTimeOffOverlappingForUnit,
   listUnits,
   moveAssignment,
   priorAssignmentsBefore,
+  proposeSwap,
   recordActualCensus,
   replaceAssignments,
   replaceNursePreferences,
@@ -263,7 +275,7 @@ function exportToFile(db: ShiftNurseDb, unitId: Id): string | undefined {
 }
 
 /** Everything `deriveDemand` needs for a unit, loaded once per call. */
-function demandInputs(db: ShiftNurseDb, unitId: Id, start: IsoDate, end: IsoDate) {
+function demandInputs(db: DbLike, unitId: Id, start: IsoDate, end: IsoDate) {
   return {
     shiftTypes: listShiftTypesForUnit(db, unitId),
     acuityTiers: listAcuityTiersForUnit(db, unitId),
@@ -343,7 +355,7 @@ function counterContext(db: DbLike, unitId: Id, ruleSet: RuleSet): CounterContex
   };
 }
 
-function ledgerHistory(db: ShiftNurseDb, unitId: Id, before: IsoDate): FairnessLedgerEntry[] {
+function ledgerHistory(db: DbLike, unitId: Id, before: IsoDate): FairnessLedgerEntry[] {
   return ledgerSince(db, unitId, addDays(before, -LEDGER_LOOKBACK_DAYS)).filter(
     (e) => compareDates(e.periodStart, before) < 0,
   );
@@ -590,7 +602,7 @@ function buildSolveInput(db: ShiftNurseDb, periodId: Id): SolveInput {
  * late approval did to last week's schedule — while *applying* a resolution is refused for
  * anything but a draft inside `applyResolution` itself.
  */
-function buildConflictInput(db: ShiftNurseDb, periodId: Id): ConflictInput {
+function buildConflictInput(db: DbLike, periodId: Id): ConflictInput {
   const period = getPeriod(db, periodId);
   if (!period) throw new Error(`Unknown period ${periodId}`);
   const budget = getBudget(db, periodId);
@@ -598,7 +610,7 @@ function buildConflictInput(db: ShiftNurseDb, periodId: Id): ConflictInput {
 }
 
 /** Shared loader behind the solver and the conflict detector: one definition of "the period". */
-function loadPeriodInput(db: ShiftNurseDb, period: SchedulePeriod): SolveInput {
+function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput {
   const ruleSet = getRuleSet(db, period.ruleSetId);
   if (!ruleSet) throw new Error(`Period ${period.id} cites unknown rule set ${period.ruleSetId}`);
   const unitId = period.unitId;
@@ -894,6 +906,44 @@ export function createApi(
             applyResolution(tx, periodId, resolution, ACTOR, { auto: false, reason }).resolution,
         ),
       autoResolve: (periodId) => autoResolve(db, periodId),
+    },
+    exchange: {
+      list: (unitId, status) => listSwapsForUnit(db, unitId, status),
+      listForPeriod: (periodId, status) => listSwapsForPeriod(db, periodId, status),
+      evaluate: (periodId, proposal) =>
+        evaluateExchange({ ...buildConflictInput(db, periodId), proposal }),
+      propose: (periodId, proposal, reason) =>
+        proposeSwap(db, { ...proposal, periodId, reason }, ACTOR),
+      approve: (id, reason) =>
+        transact(db, (tx) => {
+          const swap = getSwap(tx, id);
+          if (!swap) throw new Error(`Shift swap ${id} not found`);
+          if (swap.status !== 'proposed') {
+            throw new Error(`Shift swap ${id} is ${swap.status}, not proposed; nothing to decide`);
+          }
+          const proposal: ExchangeProposal = {
+            kind: swap.kind,
+            requestingNurseId: swap.requestingNurseId,
+            counterpartyNurseId: swap.counterpartyNurseId,
+            offeredAssignmentId: swap.offeredAssignmentId,
+            requestedAssignmentId: swap.requestedAssignmentId,
+          };
+          // Re-evaluated from the stored swap, not from anything the renderer sent: a verdict
+          // is only trustworthy when it is computed here, against the period's current state,
+          // immediately before the write that acts on it.
+          const exchangeInput = { ...buildConflictInput(tx, swap.periodId), proposal };
+          const evaluation: ExchangeEvaluation = evaluateExchange(exchangeInput);
+          if (evaluation.verdict === 'blocked') {
+            throw new Error(
+              `Exchange blocked: ${evaluation.blockers.join('; ') || 'a hard rule would break'}`,
+            );
+          }
+          const overrode = evaluation.verdict === 'warn';
+          const application: ExchangeApplication = planExchange(exchangeInput);
+          return approveSwap(tx, id, application, ACTOR, { overrode, reason });
+        }),
+      deny: (id, reason) => denySwap(db, id, ACTOR, reason),
+      cancel: (id, reason) => cancelSwap(db, id, ACTOR, reason),
     },
   };
 }

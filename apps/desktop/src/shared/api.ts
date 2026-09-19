@@ -26,6 +26,8 @@ import type {
   Credential,
   Differential,
   EvaluationResult,
+  ExchangeEvaluation,
+  ExchangeProposal,
   FairnessLedgerEntry,
   FairnessReport,
   ForecastOptions,
@@ -48,6 +50,8 @@ import type {
   ScheduleCost,
   SchedulePeriod,
   ShiftDemand,
+  ShiftSwap,
+  ShiftSwapStatus,
   ShiftType,
   SolveProgress,
   SolveReport,
@@ -455,6 +459,22 @@ export interface ShiftNurseApi {
     /** Applies every resolution the unit's policy admits, each audited as `auto_resolve`. */
     autoResolve(periodId: Id): AutoResolveResult;
   };
+  exchange: {
+    list(unitId: Id, status?: ShiftSwapStatus): ShiftSwap[];
+    listForPeriod(periodId: Id, status?: ShiftSwapStatus): ShiftSwap[];
+    /** Judges the proposal against the period's own rule-set snapshot, live — never trust a
+     * renderer-computed verdict; this is what `approve` re-runs before writing anything. */
+    evaluate(periodId: Id, proposal: ExchangeProposal): ExchangeEvaluation;
+    propose(periodId: Id, proposal: ExchangeProposal, reason?: string): ShiftSwap;
+    /**
+     * Re-evaluates from the stored swap: `blocked` throws (the blockers, joined); `warn`
+     * requires `reason` and records the approval as an override; `ok` approves plainly.
+     */
+    approve(id: Id, reason?: string): ShiftSwap;
+    /** A denial without a reason is refused by the database, not just the form. */
+    deny(id: Id, reason: string): ShiftSwap;
+    cancel(id: Id, reason?: string): ShiftSwap;
+  };
 }
 
 type Promisify<T> = {
@@ -541,6 +561,7 @@ export const API_CHANNELS = {
     'impact',
   ],
   conflicts: ['analyse', 'policy', 'savePolicy', 'resolve', 'autoResolve'],
+  exchange: ['list', 'listForPeriod', 'evaluate', 'propose', 'approve', 'deny', 'cancel'],
 } as const satisfies { [R in keyof ShiftNurseApi]: readonly (keyof ShiftNurseApi[R])[] };
 
 export type ApiResource = keyof ShiftNurseApi;

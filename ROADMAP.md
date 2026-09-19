@@ -255,14 +255,22 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
 > byte-identical on rerun. The M5 follow-up (concurrent time-of-day coverage across
 > overlapping shift types) is still open — the detector reads demand per (date, shift type).
 
-### M11 — Shift exchange
-- [ ] `shift_swap` entity and repository
-- [ ] 1:1 trade and giveaway/pickup entry, manager-recorded
-- [ ] Re-validation of both nurses through the rule engine; hard breaches block with reason
-- [ ] Fairness and cost before/after preview; override path captures a reason
-- [ ] Audit entries for every proposal and decision
-- [ ] Verify: a trade breaking minimum rest is refused; a legal-but-unfair one warns and can
-      be approved with a logged reason
+### M11 — Shift exchange ✅
+- [x] `shift_swap` entity and repository (`core/exchange/types.ts` is the contract;
+      `db/repositories/exchange.ts` — the assignment ids carry no FK because an approval
+      replaces the original rows and the swap must keep pointing at the historical ids)
+- [x] 1:1 trade and giveaway/pickup entry, manager-recorded (Requests › Exchanges, with a live
+      evaluation panel in the proposal dialog)
+- [x] Re-validation of both nurses through the rule engine; hard breaches block with reason
+      (`evaluateExchange` simulates on the M10 `ConflictEngine`; `approve` re-evaluates
+      server-side and never trusts a renderer verdict)
+- [x] Fairness and cost before/after preview; override path captures a reason
+      (`warn` needs a reason and sets `overrode`; the audit entry is written before any row)
+- [x] Audit entries for every proposal and decision
+- [x] Verify: a trade breaking minimum rest is refused; a legal-but-unfair one warns and can
+      be approved with a logged reason (`core/exchange/evaluate.test.ts`; the smoke test
+      proposes a trade on the demo draft, approves the `warn` verdict with a reason, denies a
+      blocked one, and confirms a blank denial is refused)
 
 ### M12 — Publish & output
 - [ ] Draft → published lifecycle with diff against the previous published version

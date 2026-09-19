@@ -31,6 +31,8 @@ import type {
   PeriodStatus,
   PreferenceKind,
   RequestOrigin,
+  ShiftSwapKind,
+  ShiftSwapStatus,
   TimeOffStatus,
   TimeOffType,
 } from '@shiftnurse/core';
@@ -565,6 +567,54 @@ export const conflictPolicy = sqliteTable('conflict_policy', {
   maxCostDelta: real('max_cost_delta').notNull().default(0),
   maxFairnessDrop: real('max_fairness_drop').notNull().default(1),
 });
+
+// ---------------------------------------------------------------------------
+// Shift exchange
+// ---------------------------------------------------------------------------
+
+export const shiftSwap = sqliteTable(
+  'shift_swap',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    periodId: text('period_id')
+      .notNull()
+      .references(() => schedulePeriod.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    kind: text('kind').notNull().$type<ShiftSwapKind>(),
+    requestingNurseId: text('requesting_nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    counterpartyNurseId: text('counterparty_nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    // No FK: an approved swap deletes the original assignment rows (delete + create, same as
+    // a grid move), and the swap record must keep pointing at those historical ids so the
+    // audit trail and the decided swap can still say exactly which shift moved. A foreign key
+    // here would either cascade-null the very evidence the record exists to preserve, or block
+    // the approval's own delete.
+    offeredAssignmentId: text('offered_assignment_id').notNull().$type<Id>(),
+    /** Present for a trade, absent for a giveaway. Also no FK, for the same reason. */
+    requestedAssignmentId: text('requested_assignment_id').$type<Id>(),
+    status: text('status').notNull().default('proposed').$type<ShiftSwapStatus>(),
+    /** Always 'manager' in v1; the seam that lets nurse self-service reuse this table. */
+    enteredBy: text('entered_by').notNull().default('manager').$type<RequestOrigin>(),
+    submittedAt: timestamp('submitted_at').notNull(),
+    decidedAt: timestamp('decided_at'),
+    decidedBy: text('decided_by'),
+    reason: text('reason'),
+    /** Required on denial, and on an approval that overrides a warning. */
+    decisionReason: text('decision_reason'),
+    /** True when the approval went ahead despite warnings; `decisionReason` says why. */
+    overrode: bool('overrode').notNull().default(false),
+  },
+  (t) => [
+    index('shift_swap_period_status_idx').on(t.periodId, t.status),
+    index('shift_swap_requesting_nurse_idx').on(t.requestingNurseId),
+    index('shift_swap_counterparty_nurse_idx').on(t.counterpartyNurseId),
+  ],
+);
 
 // ---------------------------------------------------------------------------
 // Fairness history

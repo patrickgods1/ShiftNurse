@@ -35,6 +35,7 @@ import type {
   RatioRule,
   SchedulePeriod,
   ShiftCredentialRequirement,
+  ShiftSwap,
   ShiftType,
   TimeOffRequest,
   Unit,
@@ -201,6 +202,26 @@ export function toTimeOffRequest(r: typeof s.timeOffRequest.$inferSelect): TimeO
     decidedBy: opt(r.decidedBy),
     reason: opt(r.reason),
     decisionReason: opt(r.decisionReason),
+  };
+}
+
+export function toShiftSwap(r: typeof s.shiftSwap.$inferSelect): ShiftSwap {
+  return {
+    id: r.id,
+    periodId: r.periodId,
+    kind: r.kind,
+    requestingNurseId: r.requestingNurseId,
+    counterpartyNurseId: r.counterpartyNurseId,
+    offeredAssignmentId: r.offeredAssignmentId,
+    requestedAssignmentId: opt(r.requestedAssignmentId),
+    status: r.status,
+    enteredBy: r.enteredBy,
+    submittedAt: r.submittedAt,
+    decidedAt: opt(r.decidedAt),
+    decidedBy: opt(r.decidedBy),
+    reason: opt(r.reason),
+    decisionReason: opt(r.decisionReason),
+    overrode: r.overrode,
   };
 }
 

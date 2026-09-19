@@ -39,22 +39,21 @@ import type { Assignment, Id, NurseRole, TimeOffRequest } from '../domain/entiti
 import type { IsoDate } from '../domain/time.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import { hasValidCredential } from '../rules/coverage-rules.js';
-import { getRule } from '../rules/registry.js';
 import type { Violation } from '../rules/types.js';
 import { DEFAULT_OBJECTIVE_WEIGHTS, type ObjectiveWeights } from '../solver/types.js';
 import { ConflictEngine, type SimState } from './engine.js';
+import { costImpact, fairnessImpact } from './impact.js';
 import { dayLabel, dollars, leaveLabel, nurseName, plural, signed } from './text.js';
 import type {
   Conflict,
   ConflictInput,
-  CostImpact,
-  FairnessImpact,
   Resolution,
   ResolutionAction,
   ResolutionImpact,
   ResolutionKind,
   ResolutionOptions,
 } from './types.js';
+import { violationKey } from './violation-diff.js';
 
 const DEFAULT_MAX_PER_CONFLICT = 5;
 
@@ -241,65 +240,6 @@ function collectViolations(state: SimState, change: Change): Map<string, Violati
     for (const v of state.shiftViolations(date, shiftTypeId)) out.set(violationKey(v), v);
   }
   return out;
-}
-
-/**
- * Identity of a violation across two schedules. A shift-scope violation lists its whole roster
- * in `nurseIds`, so it is keyed by the shift and role instead — otherwise adding one nurse
- * would make a still-missing charge nurse read as both cleared and introduced.
- */
-function violationKey(v: Violation): string {
-  const d = v.details ?? {};
-  const who =
-    getRule(v.ruleId)?.scope === 'shift'
-      ? `${d.shiftTypeId ?? ''}|${d.role ?? ''}|${d.credentialId ?? ''}`
-      : [...v.nurseIds].sort().join(',');
-  return `${v.ruleId}|${v.code}|${v.dates.join(',')}|${who}`;
-}
-
-function fairnessImpact(before: SimState, after: SimState): FairnessImpact {
-  const a = before.fairness();
-  const b = after.fairness();
-  const affected: FairnessImpact['affected'] = [];
-  const ids = new Set([...a.byNurse.keys(), ...b.byNurse.keys()]);
-  for (const nurseId of [...ids].sort()) {
-    const x = a.byNurse.get(nurseId) ?? 0;
-    const y = b.byNurse.get(nurseId) ?? 0;
-    if (Math.abs(x - y) > 1e-9) affected.push({ nurseId, before: x, after: y });
-  }
-  return { unitScoreBefore: a.mean, unitScoreAfter: b.mean, delta: b.mean - a.mean, affected };
-}
-
-/**
- * Cost is priced per nurse, and a nurse's timeline is priced independently of everyone else's,
- * so only the touched nurses are re-costed: the period total moves by exactly their difference.
- */
-function costImpact(
-  engine: ConflictEngine,
-  before: SimState,
-  after: SimState,
-  touched: readonly Id[],
-): CostImpact {
-  if (!engine.costCtx) return { dollarsBefore: 0, dollarsAfter: 0, delta: 0, unpriced: true };
-  const dollarsBefore = before.costTotal();
-  let delta = 0;
-  let unpriced = false;
-  for (const nurseId of touched) {
-    const was = before.nurseCost(nurseId);
-    const is = after.nurseCost(nurseId);
-    delta += sum(is) - sum(was);
-    if ([...was, ...is].some((c) => c.rateSource === 'none')) unpriced = true;
-  }
-  delta = cents(delta);
-  return { dollarsBefore, dollarsAfter: cents(dollarsBefore + delta), delta, unpriced };
-}
-
-function sum(costs: readonly { total: number }[]): number {
-  return costs.reduce((acc, c) => acc + c.total, 0);
-}
-
-function cents(x: number): number {
-  return Math.round(x * 100) / 100;
 }
 
 /** Whether the world after the change no longer contains the conflict at all. */

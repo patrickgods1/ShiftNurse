@@ -25,7 +25,8 @@ self-service later becomes an intake surface rather than a new data model.
   incremental state + objective, `greedy.ts` the seed, `anneal.ts` the moves, `solver.ts` the
   entry point, `rng.ts` the seeded mulberry32 shared with the seeder), `conflicts/` (M10: `types.ts` is the
   contract, `engine.ts` the shared indexes + simulation state, `detect.ts`, `resolve.ts`,
-  `analyse.ts`), `testing/fixtures.ts`.
+  `analyse.ts`), `exchange/` (M11: `evaluateExchange` / `planExchange` — trade and giveaway
+  verdicts `ok | warn | blocked` simulated on the conflicts engine), `testing/fixtures.ts`.
 - `packages/db` (M2, complete): 26-table Drizzle schema, generated migrations, `client.ts`
   (WAL, foreign keys ON, `transact`), `audit.ts`, `mappers.ts`, and repositories under
   `repositories/` — `roster`, `config`, `schedule`, `timeoff`, `operations`.
@@ -50,7 +51,9 @@ self-service later becomes an intake surface rather than a new data model.
   solver uses; `db/repositories/conflicts.ts` holds the per-unit auto-resolve policy and
   `applyResolution`, which audits before it writes; the Requests page has the queue, entry
   dialog, overlap heatmap, decide-with-impact dialog and ranked resolution cards, and Settings >
-  Conflicts holds the auto-resolve policy, off by default) are real.
+  Conflicts holds the auto-resolve policy, off by default) and Exchanges (M11: Requests ›
+  Exchanges — proposal dialog with live verdict, decide dialog; `exchange.approve` re-evaluates
+  in main and requires an override reason on `warn`) are real.
   Renderer hooks: `api.ts` (roster), `api-config.ts` (configuration + rules), `api-demand.ts`
   (census/demand), `api-schedule.ts` (grid mutations + validation), `api-fairness.ts`
   (report/trend/import), `api-cost.ts` (pay config, cost report, budget).

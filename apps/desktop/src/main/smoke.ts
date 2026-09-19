@@ -304,6 +304,95 @@ const REQUESTS_SCRIPT = `
     };
   })()`;
 
+/**
+ * M11: propose a trade between two nurses who each hold a shift on a different day in the
+ * demo draft, evaluate it live, decide it (approve if the verdict allows, deny with a reason
+ * otherwise), and confirm a denial with a blank reason is refused on a second, freshly
+ * proposed swap — the same guarantee `timeOff.deny` gives, now for exchanges.
+ */
+const EXCHANGE_SCRIPT = `
+  (async () => {
+    const api = window.shiftnurse;
+    const [unit] = await api.units.list();
+    const periods = await api.periods.list(unit.id);
+    const draft = periods.find((p) => p.status === 'draft');
+    if (!draft) return { error: 'no draft period' };
+    const assignments = await api.periods.assignments(draft.id);
+    const byNurse = new Map();
+    // The solver smoke pinned one row earlier; a lock refuses to move, by design.
+    for (const a of assignments) {
+      if (a.isLocked) continue;
+      if (!byNurse.has(a.nurseId)) byNurse.set(a.nurseId, []);
+      byNurse.get(a.nurseId).push(a);
+    }
+    const candidates = [...byNurse.entries()].filter(([, list]) => list.length > 0);
+    if (candidates.length < 2) return { error: 'fewer than two nurses hold a shift in the draft' };
+    // Try a handful of pairs so the approval path runs when any legal trade exists; the
+    // first pair is often a same-day double-booking, which is a correct block, not a bug.
+    let proposal;
+    let evaluation;
+    outer: for (let i = 0; i < Math.min(candidates.length, 6); i++) {
+      for (let j = i + 1; j < Math.min(candidates.length, 8); j++) {
+        const [nurseAId, aAssignments] = candidates[i];
+        const [nurseBId, bAssignments] = candidates[j];
+        const worksOn = (list, date) => list.some((x) => x.date === date);
+        let offered;
+        let requested;
+        for (const a of aAssignments) {
+          const r = bAssignments.find(
+            (b) =>
+              b.date !== a.date &&
+              b.shiftTypeId === a.shiftTypeId &&
+              !worksOn(bAssignments, a.date) &&
+              !worksOn(aAssignments, b.date),
+          );
+          if (r) { offered = a; requested = r; break; }
+        }
+        if (!offered || !requested) continue;
+        const candidate = {
+          kind: 'trade',
+          requestingNurseId: nurseAId,
+          counterpartyNurseId: nurseBId,
+          offeredAssignmentId: offered.id,
+          requestedAssignmentId: requested.id,
+        };
+        const verdict = await api.exchange.evaluate(draft.id, candidate);
+        if (!proposal) { proposal = candidate; evaluation = verdict; }
+        if (verdict.verdict !== 'blocked') { proposal = candidate; evaluation = verdict; break outer; }
+      }
+    }
+    if (!proposal) return { error: 'no trade candidate found' };
+    const swap = await api.exchange.propose(draft.id, proposal, 'smoke trade');
+    let decided;
+    let decideError;
+    try {
+      decided =
+        evaluation.verdict === 'blocked'
+          ? await api.exchange.deny(swap.id, 'blocked by hard rule breach')
+          : await api.exchange.approve(swap.id, 'smoke approval');
+    } catch (e) {
+      decideError = String(e);
+    }
+
+    const secondSwap = await api.exchange.propose(draft.id, proposal, 'smoke trade 2');
+    let blankDenyRefused = false;
+    try {
+      await api.exchange.deny(secondSwap.id, '   ');
+    } catch {
+      blankDenyRefused = true;
+    }
+    await api.exchange.cancel(secondSwap.id, 'smoke cleanup');
+
+    return {
+      verdict: evaluation.verdict,
+      blockers: evaluation.blockers,
+      proposedStatus: swap.status,
+      decidedStatus: decided ? decided.status : undefined,
+      decideError,
+      blankDenyRefused,
+    };
+  })()`;
+
 export function runSmoke(win: BrowserWindow): void {
   const timer = setTimeout(() => fail(`did not finish within ${TIMEOUT_MS}ms`), TIMEOUT_MS);
 
@@ -481,6 +570,28 @@ export function runSmoke(win: BrowserWindow): void {
       if (!requests.denyWithoutReason) fail('a denial with a blank reason was accepted');
       console.log(
         `[smoke] requests OK (impact simulated, ${requests.conflicts} conflicts / ${requests.resolutions} options, auto-resolve off applied 0, blank denial refused)`,
+      );
+      const exchange = (await win.webContents.executeJavaScript(EXCHANGE_SCRIPT)) as {
+        error?: string;
+        verdict?: string;
+        blockers?: string[];
+        proposedStatus?: string;
+        decidedStatus?: string;
+        decideError?: string;
+        blankDenyRefused: boolean;
+      };
+      if (exchange.error) fail(`exchange: ${exchange.error}`);
+      if (typeof exchange.verdict !== 'string') fail('exchange.evaluate returned no verdict');
+      if (exchange.proposedStatus !== 'proposed') {
+        fail(`proposed exchange is ${exchange.proposedStatus}`);
+      }
+      if (exchange.decideError) fail(`exchange decision failed: ${exchange.decideError}`);
+      if (exchange.decidedStatus !== 'approved' && exchange.decidedStatus !== 'denied') {
+        fail(`exchange decision left status ${exchange.decidedStatus}`);
+      }
+      if (!exchange.blankDenyRefused) fail('a blank-reason exchange denial was accepted');
+      console.log(
+        `[smoke] exchange OK (verdict ${exchange.verdict}, decided ${exchange.decidedStatus}, blank denial refused${exchange.blockers?.length ? `; blockers: ${exchange.blockers.join(' | ')}` : ''})`,
       );
       const shotDirAfter = process.env.SHIFTNURSE_SMOKE_SCREENSHOT;
       if (shotDirAfter?.endsWith('/')) {

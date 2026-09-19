@@ -11,6 +11,8 @@ export * from './cost/rates.js';
 export * from './cost/types.js';
 export * from './domain/entities.js';
 export * from './domain/time.js';
+// Exchange
+export * from './exchange/index.js';
 // Fairness
 export * from './fairness/burden.js';
 export * from './fairness/distribution.js';

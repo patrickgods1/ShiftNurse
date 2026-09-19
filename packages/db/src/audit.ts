@@ -65,9 +65,24 @@ export function requiresReason(action: AuditAction): boolean {
   return REASON_REQUIRED.has(action);
 }
 
+export interface RecordAuditStrictOptions {
+  /**
+   * Force the reason check regardless of `requiresReason(action)`. Exists for actions like
+   * `'approve'` that only need a reason sometimes — an exchange approval that overrides a
+   * warning, but not a plain approval — so the blanket `REASON_REQUIRED` set (which would
+   * demand a reason on every approval everywhere) stays untouched.
+   */
+  requireReason?: boolean;
+}
+
 /** Record a change, refusing to proceed if this action demands a reason and none was given. */
-export function recordAuditStrict(db: DbLike, input: AuditInput): Id {
-  if (requiresReason(input.action) && !input.reason?.trim()) {
+export function recordAuditStrict(
+  db: DbLike,
+  input: AuditInput,
+  opts?: RecordAuditStrictOptions,
+): Id {
+  const required = opts?.requireReason ?? requiresReason(input.action);
+  if (required && !input.reason?.trim()) {
     throw new Error(
       `Audit action "${input.action}" on ${input.entityType} ${input.entityId} requires a reason. ` +
         'This text is what gets quoted if the decision is challenged.',
