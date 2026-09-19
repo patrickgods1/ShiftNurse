@@ -125,6 +125,7 @@ export function ShiftCard({ unitId, shift }: { unitId: Id; shift: TodayShiftView
       </ul>
 
       <ReportCallOffDialog
+        key={reporting?.assignment.id ?? 'closed'}
         unitId={unitId}
         entry={reporting}
         shiftType={shift.shiftType}

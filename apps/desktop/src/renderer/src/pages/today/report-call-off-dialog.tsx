@@ -1,12 +1,13 @@
 /**
  * Reporting a call-off is the entry point to the whole day-of flow, so it stays a one-field
  * confirmation — nurse, shift and date for context, an optional reason — built on the same
- * `ReasonDialog` the Requests screens use rather than a bespoke modal.
+ * `ReasonDialog` the Requests screens use rather than a bespoke modal. The caller keys it on
+ * the assignment id, so picking a different nurse remounts it with fresh mutation state — no
+ * effect has to reset a stale error by hand.
  */
 
 import type { RosterEntryView } from '@shared/api.js';
 import type { Id, IsoDate, ShiftType } from '@shiftnurse/core';
-import { useEffect } from 'react';
 import { useReportCallOff } from '../../api-dayof.js';
 import { formatDateWithWeekday } from '../../format.js';
 import { ReasonDialog } from '../requests/reason-dialog.js';
@@ -27,11 +28,6 @@ export function ReportCallOffDialog({
   onClose,
 }: ReportCallOffDialogProps) {
   const reportCallOff = useReportCallOff(unitId);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: fresh entry, fresh mutation state.
-  useEffect(() => {
-    reportCallOff.reset();
-  }, [entry?.assignment.id]);
 
   return (
     <ReasonDialog
