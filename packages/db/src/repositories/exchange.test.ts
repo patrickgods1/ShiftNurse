@@ -22,6 +22,7 @@ import {
   listSwapsForUnit,
   proposeSwap,
 } from './exchange.js';
+import { listChanges, publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
 import {
   createAssignment,
@@ -29,7 +30,7 @@ import {
   deleteAssignment,
   getAssignment,
   listAssignmentsForPeriod,
-  publishPeriod,
+  updatePeriodStatus,
 } from './schedule.js';
 
 const ACTOR = 'manager';
@@ -375,9 +376,48 @@ describe('approveSwap', () => {
     expect(getSwap(handle.db, swap.id)?.status).toBe('proposed');
   });
 
-  it('refuses to approve on a non-draft period', () => {
+  it('needs a reason on a published period and writes the moved shifts to the change log', () => {
     const { offered, swap } = proposeGiveaway();
-    publishPeriod(handle.db, periodId, ACTOR);
+    publishSchedule(handle.db, { periodId }, ACTOR);
+    const application = {
+      remove: [offered.id],
+      create: [
+        {
+          periodId,
+          nurseId: nurseBId,
+          shiftTypeId,
+          date: isoDate('2026-01-16'),
+          source: 'manual' as const,
+          isLocked: false,
+          isCharge: false,
+          isOvertime: false,
+        },
+      ],
+    };
+
+    expect(() =>
+      transact(handle.db, (tx) =>
+        approveSwap(tx, swap.id, application, ACTOR, { overrode: false }),
+      ),
+    ).toThrow(/requires a reason/);
+    expect(getSwap(handle.db, swap.id)?.status).toBe('proposed');
+
+    transact(handle.db, (tx) =>
+      approveSwap(tx, swap.id, application, ACTOR, {
+        overrode: false,
+        reason: 'Bo covers for Ann',
+      }),
+    );
+    const log = listChanges(handle.db, periodId);
+    expect(log.map((c) => [c.kind, c.source, c.reason])).toEqual([
+      ['added', 'exchange', 'Bo covers for Ann'],
+      ['removed', 'exchange', 'Bo covers for Ann'],
+    ]);
+  });
+
+  it('refuses to approve on an archived period', () => {
+    const { offered, swap } = proposeGiveaway();
+    updatePeriodStatus(handle.db, periodId, 'archived', ACTOR);
 
     expect(() =>
       transact(handle.db, (tx) =>
@@ -403,6 +443,6 @@ describe('approveSwap', () => {
           { overrode: false },
         ),
       ),
-    ).toThrow(/only be approved on a draft/);
+    ).toThrow(/archived/);
   });
 });

@@ -12,6 +12,7 @@ import { PageHeader } from '../components/page-header.js';
 import { ThemeToggle } from '../components/theme-toggle.js';
 import { useUnitId } from '../unit-context.js';
 import AcuityPanel from './settings/acuity.js';
+import BackupsPanel from './settings/backups.js';
 import ConflictsPanel from './settings/conflicts.js';
 import CoverageFloors from './settings/coverage-floors.js';
 import HolidaysPanel from './settings/holidays.js';
@@ -27,6 +28,7 @@ const TABS = [
   { id: 'pay', label: 'Pay' },
   { id: 'conflicts', label: 'Conflicts' },
   { id: 'holidays', label: 'Holidays' },
+  { id: 'backups', label: 'Backups' },
   { id: 'about', label: 'About' },
 ] as const;
 
@@ -147,6 +149,8 @@ export default function SettingsPage() {
               <ConflictsPanel />
             ) : tab.id === 'holidays' ? (
               <HolidaysPanel />
+            ) : tab.id === 'backups' ? (
+              <BackupsPanel />
             ) : (
               <AboutTab />
             )

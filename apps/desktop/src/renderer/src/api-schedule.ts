@@ -9,6 +9,10 @@
  * became illegal, and a stale price for a shift that just became overtime.
  * Invalidation runs in `onSettled`, not `onSuccess`, so a failed mutation still forces the grid
  * back to the server's truth instead of leaving an optimistic chip stranded.
+ *
+ * Every mutation carries an optional `reason`. On a published period main refuses the edit
+ * without one and writes it to the change log; on a draft it is ignored. The board collects it
+ * through a dialog before calling these, so the hooks stay reason-agnostic.
  */
 
 import type { Id, IsoDate } from '@shiftnurse/core';
@@ -20,6 +24,11 @@ import type {
 } from '../../shared/api.js';
 import { api, queryKeys } from './api.js';
 import { costKeys } from './api-cost.js';
+import { publishKeys } from './api-publish.js';
+
+export interface WithReason {
+  reason?: string;
+}
 
 export const scheduleKeys = {
   validation: (periodId: Id) => ['validation', periodId] as const,
@@ -40,6 +49,9 @@ function useInvalidateSchedule(periodId: Id | undefined, unitId: Id | undefined)
       void queryClient.invalidateQueries({ queryKey: queryKeys.assignments(periodId) });
       void queryClient.invalidateQueries({ queryKey: scheduleKeys.validation(periodId) });
       void queryClient.invalidateQueries({ queryKey: costKeys.report(periodId) });
+      void queryClient.invalidateQueries({ queryKey: publishKeys.preview(periodId) });
+      void queryClient.invalidateQueries({ queryKey: publishKeys.changes(periodId) });
+      void queryClient.invalidateQueries({ queryKey: publishKeys.alerts(periodId) });
     }
     if (unitId !== undefined) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });
@@ -50,7 +62,8 @@ function useInvalidateSchedule(periodId: Id | undefined, unitId: Id | undefined)
 export function useCreateAssignment(periodId: Id | undefined, unitId: Id | undefined) {
   const invalidate = useInvalidateSchedule(periodId, unitId);
   return useMutation({
-    mutationFn: (input: CreateAssignmentInput) => api.schedule.createAssignment(input),
+    mutationFn: ({ reason, ...input }: CreateAssignmentInput & WithReason) =>
+      api.schedule.createAssignment(input, reason),
     onSettled: invalidate,
   });
 }
@@ -58,7 +71,8 @@ export function useCreateAssignment(periodId: Id | undefined, unitId: Id | undef
 export function useMoveAssignment(periodId: Id | undefined, unitId: Id | undefined) {
   const invalidate = useInvalidateSchedule(periodId, unitId);
   return useMutation({
-    mutationFn: (input: MoveAssignmentInput) => api.schedule.moveAssignment(input),
+    mutationFn: ({ reason, ...input }: MoveAssignmentInput & WithReason) =>
+      api.schedule.moveAssignment(input, reason),
     onSettled: invalidate,
   });
 }
@@ -66,8 +80,12 @@ export function useMoveAssignment(periodId: Id | undefined, unitId: Id | undefin
 export function useUpdateAssignment(periodId: Id | undefined, unitId: Id | undefined) {
   const invalidate = useInvalidateSchedule(periodId, unitId);
   return useMutation({
-    mutationFn: ({ assignmentId, patch }: { assignmentId: Id; patch: AssignmentPatch }) =>
-      api.schedule.updateAssignment(assignmentId, patch),
+    mutationFn: ({
+      assignmentId,
+      patch,
+      reason,
+    }: { assignmentId: Id; patch: AssignmentPatch } & WithReason) =>
+      api.schedule.updateAssignment(assignmentId, patch, reason),
     onSettled: invalidate,
   });
 }
@@ -75,7 +93,8 @@ export function useUpdateAssignment(periodId: Id | undefined, unitId: Id | undef
 export function useDeleteAssignment(periodId: Id | undefined, unitId: Id | undefined) {
   const invalidate = useInvalidateSchedule(periodId, unitId);
   return useMutation({
-    mutationFn: (assignmentId: Id) => api.schedule.deleteAssignment(assignmentId),
+    mutationFn: ({ assignmentId, reason }: { assignmentId: Id } & WithReason) =>
+      api.schedule.deleteAssignment(assignmentId, reason),
     onSettled: invalidate,
   });
 }

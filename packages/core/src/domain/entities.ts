@@ -295,6 +295,58 @@ export interface Assignment {
   notes?: string;
 }
 
+/**
+ * One publication of a period. A period is published once and then republished after every
+ * batch of post-publish edits; each publication snapshots the assignments as they went out,
+ * so "what did the nurses actually receive on the 3rd" is answerable without replaying the
+ * audit log. `version` counts from 1 per period.
+ */
+export interface ScheduleVersion {
+  id: Id;
+  periodId: Id;
+  version: number;
+  publishedAt: Timestamp;
+  publishedBy: string;
+  /** Why this version went out — required on a republish, optional on the first. */
+  reason?: string;
+  /** The assignments exactly as published. */
+  assignments: Assignment[];
+  /** How this version differs from the one before it (all `added` for version 1). */
+  added: number;
+  removed: number;
+  changed: number;
+}
+
+export type ScheduleChangeKind = 'added' | 'removed' | 'changed';
+
+/** What produced a post-publish edit; the change log groups and explains by this. */
+export type ScheduleChangeSource = 'manual' | 'exchange' | 'time_off' | 'resolution' | 'backfill';
+
+/**
+ * One edit to a published schedule, with the manager's reason. A published schedule is a
+ * promise to the unit, so every change after it is a record in its own right — not just an
+ * audit row — carrying who was affected, what they had before and what they have now, and
+ * why. `version` is the publication the edit was made against; the next republish folds
+ * these into a new `ScheduleVersion`.
+ */
+export interface ScheduleChange {
+  id: Id;
+  periodId: Id;
+  version: number;
+  kind: ScheduleChangeKind;
+  source: ScheduleChangeSource;
+  nurseId: Id;
+  date: IsoDate;
+  shiftTypeId: Id;
+  /** The assignment id involved. No foreign key: a removal's row is gone. */
+  assignmentId: Id;
+  before?: Assignment;
+  after?: Assignment;
+  reason: string;
+  actor: string;
+  at: Timestamp;
+}
+
 // ---------------------------------------------------------------------------
 // Day-of operations
 // ---------------------------------------------------------------------------
@@ -430,7 +482,9 @@ export type AuditAction =
   | 'auto_resolve'
   | 'call_off'
   | 'backfill'
-  | 'import';
+  | 'import'
+  | 'backup'
+  | 'restore';
 
 export interface AuditLogEntry {
   id: Id;

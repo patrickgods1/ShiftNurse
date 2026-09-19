@@ -15,12 +15,14 @@ import {
   type BurdenCounters,
   backtest,
   buildRuleContext,
+  type ComplianceAlert,
   type ConflictInput,
   type ConflictReport,
   type CostContext,
   type CounterContext,
   compareDates,
   compareToBudget,
+  complianceAlerts,
   costSchedule,
   datesInRange,
   defaultRuleSet,
@@ -47,6 +49,8 @@ import {
   proposeCensus,
   type Resolution,
   type RuleSet,
+  type ScheduleChangeKind,
+  type ScheduleChangeSource,
   type SchedulePeriod,
   ScheduleView,
   type ShiftType,
@@ -63,6 +67,7 @@ import {
   approveTimeOffAndLiftAssignments,
   cancelSwap,
   cancelTimeOff,
+  changesSinceLastPublish,
   createAcuityTier,
   createAssignment,
   createCredential,
@@ -91,6 +96,7 @@ import {
   denySwap,
   denyTimeOff,
   exportRoster,
+  getAssignment,
   getBudget,
   getConflictPolicy,
   getCurrentDraft,
@@ -106,6 +112,7 @@ import {
   ids,
   importHistoricalLedger,
   importRoster,
+  latestVersion,
   ledgerPeriodsForUnit,
   ledgerSince,
   listActiveDifferentials,
@@ -117,6 +124,7 @@ import {
   listAssignmentsForPeriod,
   listCensusForecastsInRange,
   listCensusHistory,
+  listChanges,
   listCoverageRequirementsForUnit,
   listCredentials,
   listDifferentialsForUnit,
@@ -138,12 +146,17 @@ import {
   listTimeOffForUnit,
   listTimeOffOverlappingForUnit,
   listUnits,
+  listVersions,
   moveAssignment,
+  pendingDiff,
   priorAssignmentsBefore,
   proposeSwap,
+  publishSchedule,
   recordActualCensus,
+  recordScheduleChange,
   replaceAssignments,
   replaceNursePreferences,
+  requireChangeReason,
   revokeCredential,
   type ShiftNurseDb,
   saveConflictPolicy,
@@ -176,11 +189,15 @@ import type {
   HistoryImportSummary,
   OnShiftView,
   PeriodCostReport,
+  PublishOutcome,
+  PublishPreview,
   RosterImportPreview,
   ScheduleValidation,
   ShiftNurseApi,
 } from '../shared/api.js';
+import { createBackup, listBackups, restoreBackup } from './backups.js';
 import { databasePath } from './database.js';
+import { exportToFile as exportPeriodToFile, type OutputInput, renderCsv } from './output.js';
 import { SolverJobs } from './solver-jobs.js';
 
 /**
@@ -578,6 +595,182 @@ function costReport(db: ShiftNurseDb, periodId: Id): PeriodCostReport {
 }
 
 // ---------------------------------------------------------------------------
+// Publish, change log, output
+// ---------------------------------------------------------------------------
+
+/** How far a nurse may drift from contracted hours before the publish preview flags it. */
+const HOURS_DRIFT_TOLERANCE = 0.1;
+
+function periodOrThrow(db: DbLike, periodId: Id): SchedulePeriod {
+  const period = getPeriod(db, periodId);
+  if (!period) throw new Error(`Unknown period ${periodId}`);
+  return period;
+}
+
+function ruleSetFor(db: DbLike, period: SchedulePeriod): RuleSet {
+  const ruleSet = getRuleSet(db, period.ruleSetId);
+  if (!ruleSet) throw new Error(`Period ${period.id} cites unknown rule set ${period.ruleSetId}`);
+  return ruleSet;
+}
+
+/** The view every output and alert pass reads: the period's rows plus the lookback tail. */
+function scheduleViewFor(db: DbLike, period: SchedulePeriod): ScheduleView {
+  return new ScheduleView({
+    period,
+    assignments: listAssignmentsForPeriod(db, period.id),
+    priorAssignments: priorAssignmentsBefore(db, period.unitId, period.startDate, 14),
+    nurses: listNursesForUnit(db, period.unitId),
+    shiftTypes: listShiftTypesForUnit(db, period.unitId),
+  });
+}
+
+function alertsFor(db: DbLike, periodId: Id): ComplianceAlert[] {
+  const period = periodOrThrow(db, periodId);
+  const ruleSet = ruleSetFor(db, period);
+  const maxHours = ruleSet.configs.find((c) => c.ruleId === maxHoursRule.id);
+  const params = { ...maxHoursRule.defaultParams, ...(maxHours?.params ?? {}) } as MaxHoursParams;
+  return complianceAlerts({
+    schedule: scheduleViewFor(db, period),
+    credentials: listCredentials(db),
+    nurseCredentials: listNurseCredentialsForUnit(db, period.unitId),
+    demand: deriveDemand(
+      datesInRange(period.startDate, period.endDate),
+      demandInputs(db, period.unitId, period.startDate, period.endDate),
+    ).all(),
+    overtimeThresholdHours: params.overtimeThresholdHours,
+    workWeekStartsOn: params.workWeekStartsOn,
+    hoursDriftTolerance: HOURS_DRIFT_TOLERANCE,
+    payPeriodDays: unitOrThrow(db, period.unitId).payPeriodDays,
+  });
+}
+
+function publishPreview(db: ShiftNurseDb, periodId: Id): PublishPreview {
+  const period = periodOrThrow(db, periodId);
+  const latest = latestVersion(db, periodId);
+  const diff = pendingDiff(db, periodId);
+  const { result } = buildScheduleValidation(db, periodId);
+  return {
+    period,
+    latestVersion: latest,
+    diff,
+    pendingChanges: changesSinceLastPublish(db, periodId),
+    alerts: alertsFor(db, periodId),
+    hardViolations: result.hardViolations.length,
+    softViolations: result.softViolations.length,
+    nothingToPublish: latest !== undefined && diff.changes.length === 0,
+  };
+}
+
+/**
+ * Version, status, ledger and audit in one transaction; then the backup. The backup comes
+ * after the commit on purpose — a backup of a database that then rolled back would be a
+ * copy of a schedule nobody published — and a backup failure is reported, not fatal: the
+ * publish itself has already happened and must not be reported as failed.
+ */
+async function publish(db: ShiftNurseDb, periodId: Id, reason?: string): Promise<PublishOutcome> {
+  const committed = transact(db, (tx) => {
+    const period = periodOrThrow(tx, periodId);
+    const ruleSet = ruleSetFor(tx, period);
+    const nurses = listNursesForUnit(tx, period.unitId);
+    const schedule = new ScheduleView({
+      period,
+      assignments: listAssignmentsForPeriod(tx, periodId),
+      nurses,
+      shiftTypes: listShiftTypesForUnit(tx, period.unitId),
+    });
+    // The ledger takes what was actually scheduled, derived by the same `deriveCounters`
+    // that scores fairness and imports history, so all three agree on what a weekend is.
+    const present = new Set(schedule.assignments().map((v) => v.nurse.id));
+    const ledger: UpsertFairnessLedgerInput[] = [];
+    for (const [nurseId, counters] of deriveCounters(
+      schedule,
+      counterContext(tx, period.unitId, ruleSet),
+    )) {
+      if (!present.has(nurseId)) continue;
+      ledger.push({ nurseId, periodId, periodStart: period.startDate, ...counters });
+    }
+    return publishSchedule(tx, { periodId, reason, ledger }, ACTOR);
+  });
+  let backup: PublishOutcome['backup'];
+  try {
+    backup = await createBackup(
+      db,
+      'publish',
+      `${committed.period.name}-v${committed.version.version}`,
+    );
+  } catch (err) {
+    console.error(`[backup] publish backup failed: ${err instanceof Error ? err.message : err}`);
+  }
+  return { ...committed, backup };
+}
+
+/** Exported for the smoke test, which renders a real PDF in main without a save dialog. */
+export function outputInput(db: ShiftNurseDb, periodId: Id): OutputInput {
+  const period = periodOrThrow(db, periodId);
+  return {
+    schedule: scheduleViewFor(db, period),
+    ctx: {
+      unit: unitOrThrow(db, period.unitId),
+      version: latestVersion(db, periodId),
+      status: period.status,
+      alerts: alertsFor(db, periodId),
+    },
+  };
+}
+
+interface ChangeLogEntry {
+  kind: ScheduleChangeKind;
+  assignment: Assignment;
+  before?: Assignment;
+  after?: Assignment;
+}
+
+/**
+ * Run a grid edit inside one transaction and, when the period is published, write each
+ * touched shift to the change log under the manager's reason. On a draft `log` is a no-op
+ * and the reason is dropped; on an archived period the edit is refused before it starts.
+ */
+function editSchedule<T>(
+  db: ShiftNurseDb,
+  periodId: Id,
+  reason: string | undefined,
+  source: ScheduleChangeSource,
+  work: (tx: DbLike, log: (entry: ChangeLogEntry) => void) => T,
+): T {
+  return transact(db, (tx) => {
+    const period = periodOrThrow(tx, periodId);
+    const required = requireChangeReason(period, reason);
+    const log = (entry: ChangeLogEntry) => {
+      if (required === undefined) return;
+      const a = entry.assignment;
+      recordScheduleChange(
+        tx,
+        {
+          periodId,
+          kind: entry.kind,
+          source,
+          assignmentId: a.id,
+          nurseId: a.nurseId,
+          date: a.date,
+          shiftTypeId: a.shiftTypeId,
+          before: entry.before,
+          after: entry.after,
+          reason: required,
+        },
+        ACTOR,
+      );
+    };
+    return work(tx, log);
+  });
+}
+
+function assignmentOrThrow(db: DbLike, assignmentId: Id): Assignment {
+  const existing = getAssignment(db, assignmentId);
+  if (!existing) throw new Error(`Assignment ${assignmentId} not found`);
+  return existing;
+}
+
+// ---------------------------------------------------------------------------
 // Solver
 // ---------------------------------------------------------------------------
 
@@ -826,15 +1019,65 @@ export function createApi(
     },
     schedule: {
       validate: (periodId) => buildScheduleValidation(db, periodId),
-      createAssignment: (input) =>
-        createAssignment(db, { ...input, source: input.source ?? 'manual' }, ACTOR),
-      moveAssignment: ({ assignmentId, nurseId, shiftTypeId, date }) =>
-        transact(db, (tx) =>
-          moveAssignment(tx, assignmentId, { nurseId, shiftTypeId, date }, ACTOR),
-        ),
-      updateAssignment: (assignmentId, patch) => updateAssignmentDb(db, assignmentId, patch, ACTOR),
-      deleteAssignment: (assignmentId) => deleteAssignment(db, assignmentId, ACTOR),
+      createAssignment: (input, reason) =>
+        editSchedule(db, input.periodId, reason, 'manual', (tx, log) => {
+          const created = createAssignment(
+            tx,
+            { ...input, source: input.source ?? 'manual' },
+            ACTOR,
+            reason,
+          );
+          log({ kind: 'added', assignment: created, after: created });
+          return created;
+        }),
+      moveAssignment: ({ assignmentId, nurseId, shiftTypeId, date }, reason) => {
+        const existing = assignmentOrThrow(db, assignmentId);
+        return editSchedule(db, existing.periodId, reason, 'manual', (tx, log) => {
+          const moved = moveAssignment(
+            tx,
+            assignmentId,
+            { nurseId, shiftTypeId, date },
+            ACTOR,
+            'manual',
+            reason,
+          );
+          log({ kind: 'removed', assignment: existing, before: existing });
+          log({ kind: 'added', assignment: moved, after: moved });
+          return moved;
+        });
+      },
+      updateAssignment: (assignmentId, patch, reason) => {
+        const existing = assignmentOrThrow(db, assignmentId);
+        return editSchedule(db, existing.periodId, reason, 'manual', (tx, log) => {
+          const updated = updateAssignmentDb(tx, assignmentId, patch, ACTOR, reason);
+          log({ kind: 'changed', assignment: existing, before: existing, after: updated });
+          return updated;
+        });
+      },
+      deleteAssignment: (assignmentId, reason) => {
+        const existing = assignmentOrThrow(db, assignmentId);
+        editSchedule(db, existing.periodId, reason, 'manual', (tx, log) => {
+          deleteAssignment(tx, assignmentId, ACTOR, reason);
+          log({ kind: 'removed', assignment: existing, before: existing });
+        });
+      },
       setLocked: (assignmentId, locked) => setAssignmentLocked(db, assignmentId, locked, ACTOR),
+    },
+    publish: {
+      preview: (periodId) => publishPreview(db, periodId),
+      publish: (periodId, reason) => publish(db, periodId, reason),
+      versions: (periodId) => listVersions(db, periodId),
+      changes: (periodId) => listChanges(db, periodId),
+      alerts: (periodId) => alertsFor(db, periodId),
+    },
+    output: {
+      exportToFile: (periodId, format) => exportPeriodToFile(outputInput(db, periodId), format),
+      renderCsv: (periodId, format) => renderCsv(outputInput(db, periodId).schedule, format),
+    },
+    backups: {
+      list: () => listBackups(),
+      create: () => createBackup(db, 'manual', 'manual'),
+      restore: (fileName) => restoreBackup(db, fileName),
     },
     solver: {
       start: (periodId, options) => solverJobs.start(periodId, options),

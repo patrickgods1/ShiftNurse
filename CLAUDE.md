@@ -26,10 +26,14 @@ self-service later becomes an intake surface rather than a new data model.
   entry point, `rng.ts` the seeded mulberry32 shared with the seeder), `conflicts/` (M10: `types.ts` is the
   contract, `engine.ts` the shared indexes + simulation state, `detect.ts`, `resolve.ts`,
   `analyse.ts`), `exchange/` (M11: `evaluateExchange` / `planExchange` — trade and giveaway
-  verdicts `ok | warn | blocked` simulated on the conflicts engine), `testing/fixtures.ts`.
-- `packages/db` (M2, complete): 26-table Drizzle schema, generated migrations, `client.ts`
+  verdicts `ok | warn | blocked` simulated on the conflicts engine), `publish/` (M12: `diff.ts`
+  keyed on nurse/date/shift, `compliance.ts` alerts, `output.ts` grid/nurse-sheet projections
+  and CSV), `testing/fixtures.ts`.
+- `packages/db` (M2, complete): 28-table Drizzle schema, generated migrations, `client.ts`
   (WAL, foreign keys ON, `transact`), `audit.ts`, `mappers.ts`, and repositories under
-  `repositories/` — `roster`, `config`, `schedule`, `timeoff`, `operations`.
+  `repositories/` — `roster`, `config`, `schedule`, `timeoff`, `operations`, `publish` (M12:
+  `publishSchedule` writes a `schedule_version` + status + ledger; `requireChangeReason` /
+  `recordScheduleChange` are the post-publish change log).
 - `apps/desktop` (M3, complete): electron-vite. `src/shared/api.ts` is the IPC contract
   (`ShiftNurseApi`, `API_CHANNELS`); `src/main/` opens the DB in `userData` (seeding the demo
   unit on first launch), implements the contract in `api.ts`, registers it in `ipc.ts`;
@@ -53,7 +57,11 @@ self-service later becomes an intake surface rather than a new data model.
   dialog, overlap heatmap, decide-with-impact dialog and ranked resolution cards, and Settings >
   Conflicts holds the auto-resolve policy, off by default) and Exchanges (M11: Requests ›
   Exchanges — proposal dialog with live verdict, decide dialog; `exchange.approve` re-evaluates
-  in main and requires an override reason on `warn`) are real.
+  in main and requires an override reason on `warn`) and Publish (M12: `main/api.ts`
+  `editSchedule` wraps every grid mutation and logs reasoned edits on a published period;
+  `main/backups.ts` (publish/daily/manual/restore), `main/output.ts` + `print-html.ts` +
+  `xlsx.ts` for PDF/CSV/xlsx; Schedule › Publish dialog, change log, Export menu, reason dialog
+  on published-period edits; Settings › Backups) are real.
   Renderer hooks: `api.ts` (roster), `api-config.ts` (configuration + rules), `api-demand.ts`
   (census/demand), `api-schedule.ts` (grid mutations + validation), `api-fairness.ts`
   (report/trend/import), `api-cost.ts` (pay config, cost report, budget).
@@ -112,7 +120,7 @@ violations of their own.
 
 | Command | What it does |
 |---|---|
-| `npm test` | `vitest run` over `packages/*/src/**/*.test.ts`. The real gate. |
+| `npm test` | `vitest run` over `packages/*/src/**/*.test.ts`, renderer tests and `apps/desktop/src/main/**/*.test.ts`. The real gate. |
 | `npm run test:watch` | Vitest in watch mode. |
 | `npm run lint` | `biome check .` — format + lint, no writes. |
 | `npm run lint:fix` | Biome check with `--write`. |
@@ -217,6 +225,18 @@ violations of their own.
   rather than drawing them, forecasts only the 12-hour shifts, and contracts 12-hour nurses at
   72h (three 12s under a 40h overtime threshold). Changing floors, census or the roster mix means
   re-checking Generate on the demo fills every floor.
+- **A published period is editable, with a reason.** Only `archived` is read-only. Every
+  schedule mutation takes an optional `reason`; `requireChangeReason` throws on a published
+  period without one and `editSchedule` in main writes each touched shift to `schedule_change`.
+  A republish needs a reason and refuses an unchanged schedule. The diff is keyed on
+  nurse/date/shift, never row ids, so a regenerate that lands the same shifts is "no change".
+- **`contractedHoursPerPeriod` is per pay period, not per schedule period.** A six-week
+  period is three pay periods; anything comparing scheduled hours to the contract must scale by
+  `periodDays / unit.payPeriodDays` (compliance alerts do; the under-hours rule works per pay
+  period already).
+- **Backups use SQLite's online backup API**, never a file copy — a WAL database copied by
+  hand loses un-checkpointed pages. The smoke run builds core/db from `dist`, so rebuild packages
+  (`npm run build:packages`) after touching core before trusting a smoke result.
 - **Costing is never a silent zero.** A nurse with no resolvable pay rate makes their shifts
   *unpriced* (`rateSource: 'none'`, counted in `unpricedAssignments`) and every cost surface
   shows that count next to the total. Overtime is priced per nurse-week over the full timeline

@@ -7,9 +7,12 @@
  * failure, so "the app boots and the screens render" is something a script can assert.
  */
 
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import type { BrowserWindow } from 'electron';
 import { app } from 'electron';
+import { outputInput } from './api.js';
+import { getDb } from './database.js';
+import { renderOutput } from './output.js';
 
 const TIMEOUT_MS = 60_000;
 
@@ -393,6 +396,65 @@ const EXCHANGE_SCRIPT = `
     };
   })()`;
 
+/**
+ * The M12 acceptance check: publish, edit with a reason, and confirm the change log and the
+ * versions tell the full story. Runs last because it turns the demo draft into a published
+ * period, and everything before it needs a draft.
+ */
+const PUBLISH_SCRIPT = `
+  (async () => {
+    const api = window.shiftnurse;
+    const [unit] = await api.units.list();
+    const draft = (await api.periods.list(unit.id)).find((p) => p.status === 'draft');
+    if (!draft) return { error: 'no draft to publish' };
+    const preview = await api.publish.preview(draft.id);
+    const first = await api.publish.publish(draft.id);
+    const types = await api.shiftTypes.list(unit.id);
+    const day = types.find((t) => !t.isNight && !t.isOnCall && t.durationHours === 12);
+    const nurse = (await api.nurses.list(unit.id)).find((n) => n.active && n.employmentType === 'per_diem');
+    const taken = new Set((await api.periods.assignments(draft.id)).filter((a) => a.nurseId === nurse.id).map((a) => a.date));
+    const [y, m, d] = draft.endDate.split('-').map(Number);
+    let date = draft.endDate;
+    for (let back = 0; back < 14 && taken.has(date); back++) {
+      date = new Date(Date.UTC(y, m - 1, d - back - 1)).toISOString().slice(0, 10);
+    }
+    let refused = false;
+    try {
+      await api.schedule.createAssignment({ periodId: draft.id, nurseId: nurse.id, shiftTypeId: day.id, date });
+    } catch (e) { refused = /requires a reason/.test(String(e)); }
+    const added = await api.schedule.createAssignment(
+      { periodId: draft.id, nurseId: nurse.id, shiftTypeId: day.id, date },
+      'Smoke: cover a call-off',
+    );
+    const changes = await api.publish.changes(draft.id);
+    const second = await api.publish.preview(draft.id);
+    const republished = await api.publish.publish(draft.id, 'Smoke: republish after cover');
+    const versions = await api.publish.versions(draft.id);
+    const csv = await api.output.renderCsv(draft.id, 'csv-long');
+    const backups = await api.backups.list();
+    const period = (await api.periods.list(unit.id)).find((p) => p.id === draft.id);
+    return {
+      periodId: draft.id,
+      previewHard: preview.hardViolations,
+      alertKinds: preview.alerts.reduce((acc, a) => ({ ...acc, [a.kind]: (acc[a.kind] ?? 0) + 1 }), {}),
+      previewAdded: preview.diff.added,
+      firstVersion: first.version.version,
+      ledgerEntries: first.ledgerEntries,
+      firstBackup: first.backup ? first.backup.fileName : null,
+      refused,
+      changeReasons: changes.map((c) => c.kind + ':' + c.reason),
+      changeAssignment: changes[0] ? changes[0].assignmentId === added.id : false,
+      pendingChanges: second.pendingChanges.length,
+      diffAdded: second.diff.added,
+      diffRemoved: second.diff.removed,
+      secondVersion: republished.version.version,
+      versions: versions.map((v) => v.version + ':' + v.added + '/' + v.removed + '/' + v.changed),
+      csvHasNurse: csv.includes(nurse.employeeId + ',' + date + ',' + day.abbreviation),
+      publishBackups: backups.filter((b) => b.kind === 'publish').length,
+      status: period.status,
+    };
+  })()`;
+
 export function runSmoke(win: BrowserWindow): void {
   const timer = setTimeout(() => fail(`did not finish within ${TIMEOUT_MS}ms`), TIMEOUT_MS);
 
@@ -592,6 +654,67 @@ export function runSmoke(win: BrowserWindow): void {
       if (!exchange.blankDenyRefused) fail('a blank-reason exchange denial was accepted');
       console.log(
         `[smoke] exchange OK (verdict ${exchange.verdict}, decided ${exchange.decidedStatus}, blank denial refused${exchange.blockers?.length ? `; blockers: ${exchange.blockers.join(' | ')}` : ''})`,
+      );
+      const published = (await win.webContents.executeJavaScript(PUBLISH_SCRIPT)) as {
+        error?: string;
+        periodId: string;
+        previewHard: number;
+        alertKinds: Record<string, number>;
+        previewAdded: number;
+        firstVersion: number;
+        ledgerEntries: number;
+        firstBackup: string | null;
+        refused: boolean;
+        changeReasons: string[];
+        changeAssignment: boolean;
+        pendingChanges: number;
+        diffAdded: number;
+        diffRemoved: number;
+        secondVersion: number;
+        versions: string[];
+        csvHasNurse: boolean;
+        publishBackups: number;
+        status: string;
+      };
+      if (published.error) fail(`publish: ${published.error}`);
+      if (published.firstVersion !== 1)
+        fail(`first publish made version ${published.firstVersion}`);
+      if (published.previewAdded === 0) fail('publish preview showed nothing going out');
+      if (published.ledgerEntries === 0) fail('publish wrote no fairness ledger rows');
+      if (
+        !published.firstBackup ||
+        !existsSync(`${app.getPath('userData')}/backups/${published.firstBackup}`)
+      ) {
+        fail(`publish backup missing: ${published.firstBackup}`);
+      }
+      if (!published.refused)
+        fail('an edit to the published schedule without a reason was accepted');
+      if (published.changeReasons.join('|') !== 'added:Smoke: cover a call-off') {
+        fail(`change log reads ${JSON.stringify(published.changeReasons)}`);
+      }
+      if (!published.changeAssignment) fail('change log entry does not point at the added shift');
+      if (
+        published.pendingChanges !== 1 ||
+        published.diffAdded !== 1 ||
+        published.diffRemoved !== 0
+      ) {
+        fail(
+          `republish preview: ${published.pendingChanges} pending, +${published.diffAdded}/−${published.diffRemoved}`,
+        );
+      }
+      if (published.secondVersion !== 2) fail(`republish made version ${published.secondVersion}`);
+      if (published.versions[1] !== '2:1/0/0') fail(`versions: ${published.versions.join(', ')}`);
+      if (!published.csvHasNurse) fail('long CSV export lacks the added shift');
+      if (published.publishBackups < 2) fail(`${published.publishBackups} publish backups on disk`);
+      if (published.status !== 'published') fail(`period is ${published.status} after publish`);
+      const pdf = await renderOutput(outputInput(getDb(), published.periodId), 'pdf-grid');
+      if (pdf.subarray(0, 4).toString() !== '%PDF') fail('grid PDF did not render');
+      const sheets = await renderOutput(outputInput(getDb(), published.periodId), 'pdf-nurses');
+      if (sheets.subarray(0, 4).toString() !== '%PDF') fail('nurse-sheet PDF did not render');
+      const xlsx = await renderOutput(outputInput(getDb(), published.periodId), 'xlsx');
+      if (xlsx.subarray(0, 2).toString() !== 'PK') fail('xlsx export is not a zip');
+      console.log(
+        `[smoke] publish OK (v1 with ${published.previewHard} hard violations, alerts ${JSON.stringify(published.alertKinds)}, ${published.ledgerEntries} ledger rows, backup ${published.firstBackup}; reasonless edit refused; change log + republish v2 ${published.versions[1]}; grid PDF ${pdf.length}B, sheets PDF ${sheets.length}B, xlsx ${xlsx.length}B)`,
       );
       const shotDirAfter = process.env.SHIFTNURSE_SMOKE_SCREENSHOT;
       if (shotDirAfter?.endsWith('/')) {

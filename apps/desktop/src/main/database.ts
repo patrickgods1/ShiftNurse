@@ -45,6 +45,12 @@ export function getDb(): ShiftNurseDb {
   return opened.db;
 }
 
+/** The raw driver handle, for the online backup API. */
+export function getSqlite(): OpenedDatabase['sqlite'] {
+  if (!opened) throw new Error('Database not opened; call openAppDatabase() during app ready');
+  return opened.sqlite;
+}
+
 export function openAppDatabase(): ShiftNurseDb {
   if (opened) return opened.db;
   opened = openDatabase({ url: databasePath(), migrationsFolder: resolveMigrationsFolder() });

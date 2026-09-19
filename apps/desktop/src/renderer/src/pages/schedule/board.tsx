@@ -4,6 +4,10 @@
  * (which only owns period selection) so remounting on period change — via `key={period.id}` at
  * the call site — cleanly resets all of this component's local drag/pending state instead of
  * needing to reconcile it against a different period's data.
+ *
+ * A published period is still editable — that is what the change log exists for — but every
+ * edit first collects a reason through `ReasonDialog`, and the same reason is what main writes
+ * to `schedule_change` and refuses to proceed without. Only an archived period is read-only.
  */
 
 import type { Assignment, Id, IsoDate, SchedulePeriod, Violation } from '@shiftnurse/core';
@@ -27,13 +31,18 @@ import {
   useValidation,
 } from '../../api-schedule.js';
 import { AsyncState } from '../../components/async-state.js';
+import { ReasonDialog } from '../requests/reason-dialog.js';
+import { AlertsPanel } from './alerts-panel.js';
 import { AssignmentDialog } from './assignment-dialog.js';
+import { ChangeLog } from './change-log.js';
 import { CostSummary } from './cost-summary.js';
+import { ExportMenu } from './export-menu.js';
 import { GenerateDialog } from './generate-dialog.js';
 import type { GridColumn } from './grid.js';
 import { ScheduleGrid } from './grid.js';
 import { makePendingId } from './grid-utils.js';
 import { ShiftPalette } from './palette.js';
+import { PublishDialog } from './publish-dialog.js';
 import { ViolationSummary } from './violation-summary.js';
 
 interface ScheduleBoardProps {
@@ -71,12 +80,28 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const deleteAssignment = useDeleteAssignment(period.id, unitId);
   const setLocked = useSetLocked(period.id, unitId);
 
-  const readOnly = period.status !== 'draft';
+  const readOnly = period.status === 'archived';
+  const published = period.status === 'published';
 
   const [pendingIds, setPendingIds] = useState<ReadonlySet<Id>>(new Set());
   const [pendingCreates, setPendingCreates] = useState<readonly Assignment[]>([]);
   const [openAssignmentId, setOpenAssignmentId] = useState<Id | undefined>(undefined);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [changeLogOpen, setChangeLogOpen] = useState(false);
+  /** An edit waiting on its reason. Set only on a published period. */
+  const [pendingEdit, setPendingEdit] = useState<
+    { title: string; run: (reason: string | undefined) => void } | undefined
+  >(undefined);
+
+  // On a draft the edit runs at once; on a published period it waits for the reason dialog.
+  const withReason = useCallback(
+    (title: string, run: (reason: string | undefined) => void) => {
+      if (published) setPendingEdit({ title, run });
+      else run(undefined);
+    },
+    [published],
+  );
 
   const markPending = useCallback((id: Id) => {
     setPendingIds((prev) => {
@@ -124,30 +149,37 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const handleCreate = useCallback(
     (input: { nurseId: Id; date: IsoDate; shiftTypeId: Id }) => {
       if (readOnly) return;
-      const ghost = makeGhost(period.id, input);
-      setPendingCreates((prev) => [...prev, ghost]);
-      createAssignment.mutate(
-        { periodId: period.id, ...input },
-        { onSettled: () => setPendingCreates((prev) => prev.filter((g) => g.id !== ghost.id)) },
-      );
+      withReason('Add a shift to the published schedule', (reason) => {
+        const ghost = makeGhost(period.id, input);
+        setPendingCreates((prev) => [...prev, ghost]);
+        createAssignment.mutate(
+          { periodId: period.id, ...input, reason },
+          { onSettled: () => setPendingCreates((prev) => prev.filter((g) => g.id !== ghost.id)) },
+        );
+      });
     },
-    [readOnly, period.id, createAssignment],
+    [readOnly, period.id, createAssignment, withReason],
   );
 
   const handleMove = useCallback(
     (input: { assignmentId: Id; nurseId: Id; shiftTypeId: Id; date: IsoDate }) => {
       if (readOnly) return;
-      markPending(input.assignmentId);
-      const ghost = makeGhost(period.id, input);
-      setPendingCreates((prev) => [...prev, ghost]);
-      moveAssignment.mutate(input, {
-        onSettled: () => {
-          clearPending(input.assignmentId);
-          setPendingCreates((prev) => prev.filter((g) => g.id !== ghost.id));
-        },
+      withReason('Move a shift on the published schedule', (reason) => {
+        markPending(input.assignmentId);
+        const ghost = makeGhost(period.id, input);
+        setPendingCreates((prev) => [...prev, ghost]);
+        moveAssignment.mutate(
+          { ...input, reason },
+          {
+            onSettled: () => {
+              clearPending(input.assignmentId);
+              setPendingCreates((prev) => prev.filter((g) => g.id !== ghost.id));
+            },
+          },
+        );
       });
     },
-    [readOnly, period.id, moveAssignment, markPending, clearPending],
+    [readOnly, period.id, moveAssignment, markPending, clearPending, withReason],
   );
 
   const handleToggleLock = useCallback(
@@ -163,33 +195,42 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
 
   const handleToggleCharge = useCallback(
     (assignment: Assignment) => {
-      markPending(assignment.id);
-      updateAssignment.mutate(
-        { assignmentId: assignment.id, patch: { isCharge: !assignment.isCharge } },
-        { onSettled: () => clearPending(assignment.id) },
-      );
+      withReason('Change the charge nurse on the published schedule', (reason) => {
+        markPending(assignment.id);
+        updateAssignment.mutate(
+          { assignmentId: assignment.id, patch: { isCharge: !assignment.isCharge }, reason },
+          { onSettled: () => clearPending(assignment.id) },
+        );
+      });
     },
-    [updateAssignment, markPending, clearPending],
+    [updateAssignment, markPending, clearPending, withReason],
   );
 
   const handleToggleOvertime = useCallback(
     (assignment: Assignment) => {
-      markPending(assignment.id);
-      updateAssignment.mutate(
-        { assignmentId: assignment.id, patch: { isOvertime: !assignment.isOvertime } },
-        { onSettled: () => clearPending(assignment.id) },
-      );
+      withReason('Change overtime authorisation on the published schedule', (reason) => {
+        markPending(assignment.id);
+        updateAssignment.mutate(
+          { assignmentId: assignment.id, patch: { isOvertime: !assignment.isOvertime }, reason },
+          { onSettled: () => clearPending(assignment.id) },
+        );
+      });
     },
-    [updateAssignment, markPending, clearPending],
+    [updateAssignment, markPending, clearPending, withReason],
   );
 
   const handleRemove = useCallback(
     (assignment: Assignment) => {
-      markPending(assignment.id);
       setOpenAssignmentId(undefined);
-      deleteAssignment.mutate(assignment.id, { onSettled: () => clearPending(assignment.id) });
+      withReason('Remove a shift from the published schedule', (reason) => {
+        markPending(assignment.id);
+        deleteAssignment.mutate(
+          { assignmentId: assignment.id, reason },
+          { onSettled: () => clearPending(assignment.id) },
+        );
+      });
     },
-    [deleteAssignment, markPending, clearPending],
+    [deleteAssignment, markPending, clearPending, withReason],
   );
 
   const handleChipDelete = useCallback(
@@ -231,19 +272,48 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
     <div>
       <ViolationSummary result={violationResult} />
       <CostSummary report={costQuery.data} />
-      {!readOnly ? (
-        <div className="mb-3 flex items-start justify-between gap-3">
+      <AlertsPanel periodId={period.id} />
+      <div className="mb-3 flex items-start justify-between gap-3">
+        {!readOnly ? (
           <ShiftPalette shiftTypes={shiftTypesQuery.data} readOnly={false} />
-          <button
-            type="button"
-            data-testid="generate-open"
-            onClick={() => setGenerateOpen(true)}
-            className="shrink-0 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white"
-          >
-            Generate
-          </button>
+        ) : (
+          <p className="text-sm text-text-muted">This period is archived and read-only.</p>
+        )}
+        <div className="flex shrink-0 items-center gap-2">
+          <ExportMenu periodId={period.id} />
+          {published ? (
+            <button
+              type="button"
+              data-testid="change-log-open"
+              onClick={() => setChangeLogOpen((o) => !o)}
+              className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text hover:bg-bg"
+            >
+              {changeLogOpen ? 'Hide change log' : 'Change log'}
+            </button>
+          ) : null}
+          {period.status === 'draft' ? (
+            <button
+              type="button"
+              data-testid="generate-open"
+              onClick={() => setGenerateOpen(true)}
+              className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text hover:bg-bg"
+            >
+              Generate
+            </button>
+          ) : null}
+          {!readOnly ? (
+            <button
+              type="button"
+              data-testid="publish-open"
+              onClick={() => setPublishOpen(true)}
+              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white"
+            >
+              {published ? 'Publish changes' : 'Publish'}
+            </button>
+          ) : null}
         </div>
-      ) : null}
+      </div>
+      {published && changeLogOpen ? <ChangeLog periodId={period.id} /> : null}
       <ScheduleGrid
         nurses={nursesQuery.data}
         shiftTypes={shiftTypesQuery.data}
@@ -267,6 +337,30 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         shiftTypes={shiftTypesQuery.data}
         lockedCount={assignments.filter((a) => a.isLocked).length}
         unlockedCount={assignments.filter((a) => !a.isLocked).length}
+      />
+      <PublishDialog
+        open={publishOpen}
+        onOpenChange={setPublishOpen}
+        unitId={unitId}
+        period={period}
+        nurses={nursesQuery.data}
+        shiftTypes={shiftTypesQuery.data}
+      />
+      <ReasonDialog
+        open={pendingEdit !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setPendingEdit(undefined);
+        }}
+        title={pendingEdit?.title ?? 'Reason for this change'}
+        description="Staff already hold this schedule. The reason is written to the change log and the audit trail, and is what a nurse will be told."
+        confirmLabel="Apply change"
+        pending={false}
+        error={undefined}
+        onConfirm={(reason) => {
+          const edit = pendingEdit;
+          setPendingEdit(undefined);
+          edit?.run(reason);
+        }}
       />
       <AssignmentDialog
         assignment={openAssignment}

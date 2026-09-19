@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { app, BrowserWindow, shell } from 'electron';
 import { createApi, createSolverJobs } from './api.js';
+import { ensureDailyBackup } from './backups.js';
 import { closeAppDatabase, openAppDatabase } from './database.js';
 import { registerIpc } from './ipc.js';
 import { isSmokeRun, runSmoke } from './smoke.js';
@@ -59,6 +60,11 @@ app.whenReady().then(() => {
   const db = openAppDatabase();
   const solverJobs = createSolverJobs(db);
   registerIpc(createApi(db, solverJobs));
+  // The rolling daily copy. Off the startup path: a slow disk must not delay the window.
+  void ensureDailyBackup(db).then(
+    (b) => b && console.log(`[backup] daily backup written to ${b.path}`),
+    (err) => console.error(`[backup] daily backup failed: ${err}`),
+  );
   // Workers must not outlive the database handle they would write into.
   app.on('will-quit', () => solverJobs.dispose());
   const win = createWindow();

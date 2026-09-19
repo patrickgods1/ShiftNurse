@@ -272,6 +272,7 @@ export function createAssignment(
   db: DbLike,
   input: CreateAssignmentInput,
   actor: string,
+  reason?: string,
 ): Assignment {
   const id = ids.assignment();
   const row = {
@@ -294,6 +295,7 @@ export function createAssignment(
     action: 'create',
     actor,
     after: created,
+    reason,
   });
   return created;
 }
@@ -310,6 +312,7 @@ export function updateAssignment(
   assignmentId: Id,
   patch: UpdateAssignmentInput,
   actor: string,
+  reason?: string,
 ): Assignment {
   const beforeRow = db.select().from(assignment).where(eq(assignment.id, assignmentId)).get();
   if (!beforeRow) throw new Error(`Assignment ${assignmentId} not found`);
@@ -325,6 +328,7 @@ export function updateAssignment(
     actor,
     before,
     after,
+    reason,
   });
   return after;
 }
@@ -372,11 +376,12 @@ export function moveAssignment(
   target: MoveAssignmentTarget,
   actor: string,
   source: Assignment['source'] = 'manual',
+  reason?: string,
 ): Assignment {
   const existing = getAssignment(db, assignmentId);
   if (!existing) throw new Error(`Assignment ${assignmentId} not found`);
   if (existing.isLocked) throw new Error('Cannot move a locked assignment');
-  deleteAssignment(db, assignmentId, actor);
+  deleteAssignment(db, assignmentId, actor, reason);
   return createAssignment(
     db,
     {
@@ -390,6 +395,7 @@ export function moveAssignment(
       ...(existing.notes !== undefined ? { notes: existing.notes } : {}),
     },
     actor,
+    reason,
   );
 }
 

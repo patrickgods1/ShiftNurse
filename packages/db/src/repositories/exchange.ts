@@ -11,6 +11,7 @@
  */
 
 import type {
+  Assignment,
   ExchangeApplication,
   ExchangeProposal,
   Id,
@@ -23,6 +24,7 @@ import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import { toShiftSwap } from '../mappers.js';
 import { schedulePeriod, shiftSwap } from '../schema.js';
+import { recordScheduleChange, requireChangeReason } from './publish.js';
 import { createAssignment, deleteAssignment, getAssignment, getPeriod } from './schedule.js';
 
 export function listSwapsForPeriod(
@@ -166,8 +168,9 @@ export interface ApproveSwapOptions {
  *
  * Refuses:
  * - a swap that is not `proposed` (already decided, or withdrawn),
- * - a period that is not `draft` (a published schedule changes through the post-publish
- *   change log, not an exchange),
+ * - a published period without a reason: staff hold that schedule, so the exchange is a
+ *   post-publish edit and every shift it moves is written to the change log as `exchange`,
+ * - an archived period,
  * - any `application.remove` id that no longer exists — the evaluation that produced
  *   `application` is stale and the caller must re-evaluate,
  * - an override with no reason.
@@ -189,17 +192,16 @@ export function approveSwap(
   }
   const period = getPeriod(db, before.periodId);
   if (!period) throw new Error(`Unknown period ${before.periodId}`);
-  if (period.status !== 'draft') {
-    throw new Error(
-      `Period "${period.name}" is ${period.status}; an exchange can only be approved on a draft`,
-    );
-  }
+  const changeReason = requireChangeReason(period, opts.reason);
+  const removing: Assignment[] = [];
   for (const assignmentId of application.remove) {
-    if (!getAssignment(db, assignmentId)) {
+    const existing = getAssignment(db, assignmentId);
+    if (!existing) {
       throw new Error(
         `Assignment ${assignmentId} no longer exists; the exchange is stale — re-evaluate it`,
       );
     }
+    removing.push(existing);
   }
   const reason = opts.reason?.trim();
   if (opts.overrode && !reason) {
@@ -223,11 +225,28 @@ export function approveSwap(
     { requireReason: opts.overrode },
   );
 
-  for (const assignmentId of application.remove) {
-    deleteAssignment(db, assignmentId, actor, reason ?? `Shift exchange ${id}`);
+  for (const removed of removing) {
+    deleteAssignment(db, removed.id, actor, reason ?? `Shift exchange ${id}`);
+    if (changeReason !== undefined) {
+      recordScheduleChange(
+        db,
+        {
+          periodId: removed.periodId,
+          kind: 'removed',
+          source: 'exchange',
+          assignmentId: removed.id,
+          nurseId: removed.nurseId,
+          date: removed.date,
+          shiftTypeId: removed.shiftTypeId,
+          before: removed,
+          reason: changeReason,
+        },
+        actor,
+      );
+    }
   }
   for (const created of application.create) {
-    createAssignment(
+    const row = createAssignment(
       db,
       {
         periodId: created.periodId,
@@ -241,6 +260,23 @@ export function approveSwap(
       },
       actor,
     );
+    if (changeReason !== undefined) {
+      recordScheduleChange(
+        db,
+        {
+          periodId: row.periodId,
+          kind: 'added',
+          source: 'exchange',
+          assignmentId: row.id,
+          nurseId: row.nurseId,
+          date: row.date,
+          shiftTypeId: row.shiftTypeId,
+          after: row,
+          reason: changeReason,
+        },
+        actor,
+      );
+    }
   }
 
   const decidedAt = Date.now();

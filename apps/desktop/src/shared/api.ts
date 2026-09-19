@@ -21,6 +21,7 @@ import type {
   BudgetVariance,
   CensusForecast,
   CensusProposal,
+  ComplianceAlert,
   ConflictReport,
   CoverageRequirement,
   Credential,
@@ -47,8 +48,11 @@ import type {
   RosterCsvError,
   RosterCsvRow,
   RuleSet,
+  ScheduleChange,
   ScheduleCost,
+  ScheduleDiff,
   SchedulePeriod,
+  ScheduleVersion,
   ShiftDemand,
   ShiftSwap,
   ShiftSwapStatus,
@@ -251,6 +255,43 @@ export interface AutoResolveResult {
   report: ConflictReport;
 }
 
+/**
+ * What publishing now would send to staff, shown before the manager commits: the diff
+ * against the last version (everything is `added` on a first publish), the reasoned edits
+ * since then, the compliance alerts, and how many hard violations the rule engine still sees.
+ */
+export interface PublishPreview {
+  period: SchedulePeriod;
+  latestVersion: ScheduleVersion | undefined;
+  diff: ScheduleDiff;
+  pendingChanges: ScheduleChange[];
+  alerts: ComplianceAlert[];
+  hardViolations: number;
+  softViolations: number;
+  /** True when a republish would carry nothing — the button should say so. */
+  nothingToPublish: boolean;
+}
+
+export interface PublishOutcome {
+  period: SchedulePeriod;
+  version: ScheduleVersion;
+  diff: ScheduleDiff;
+  ledgerEntries: number;
+  /** The backup written on publish, if the file system allowed one. */
+  backup: BackupInfo | undefined;
+}
+
+export type OutputFormat = 'pdf-grid' | 'pdf-nurses' | 'csv-grid' | 'csv-long' | 'xlsx';
+
+export interface BackupInfo {
+  fileName: string;
+  path: string;
+  /** `publish`, `daily`, `manual` or `pre-restore`, from the file name. */
+  kind: string;
+  createdAt: number;
+  bytes: number;
+}
+
 export interface SolveJobOptions {
   /** Defaults to a stable hash of the period id, so regenerating unchanged inputs repeats itself. */
   seed?: number;
@@ -377,11 +418,43 @@ export interface ShiftNurseApi {
   schedule: {
     /** Every hard/soft violation for the period's current assignments, under its rule set. */
     validate(periodId: Id): ScheduleValidation;
-    createAssignment(input: CreateAssignmentInput): Assignment;
-    moveAssignment(input: MoveAssignmentInput): Assignment;
-    updateAssignment(assignmentId: Id, patch: AssignmentPatch): Assignment;
-    deleteAssignment(assignmentId: Id): void;
+    /**
+     * On a published period every one of these needs `reason` and writes the change log;
+     * on a draft the reason is ignored. Refused on an archived period.
+     */
+    createAssignment(input: CreateAssignmentInput, reason?: string): Assignment;
+    moveAssignment(input: MoveAssignmentInput, reason?: string): Assignment;
+    updateAssignment(assignmentId: Id, patch: AssignmentPatch, reason?: string): Assignment;
+    deleteAssignment(assignmentId: Id, reason?: string): void;
+    /** A lock is the manager's pin, invisible to staff: no reason, no change-log entry. */
     setLocked(assignmentId: Id, locked: boolean): Assignment;
+  };
+  publish: {
+    preview(periodId: Id): PublishPreview;
+    /**
+     * Freezes a version, flips the period to published, books the fairness ledger and writes
+     * a backup — the first three in one transaction. A republish requires `reason`.
+     */
+    publish(periodId: Id, reason?: string): Promise<PublishOutcome>;
+    versions(periodId: Id): ScheduleVersion[];
+    /** The post-publish change log, newest first. */
+    changes(periodId: Id): ScheduleChange[];
+    alerts(periodId: Id): ComplianceAlert[];
+  };
+  output: {
+    /** Opens a native save dialog and writes the period in `format`. Returns the path written. */
+    exportToFile(periodId: Id, format: OutputFormat): Promise<string | undefined>;
+    /** The CSV text itself, for the clipboard or tests. */
+    renderCsv(periodId: Id, format: 'csv-grid' | 'csv-long'): string;
+  };
+  backups: {
+    list(): BackupInfo[];
+    create(): Promise<BackupInfo>;
+    /**
+     * Replaces the live database with the named backup (after saving the live one as a
+     * `pre-restore` backup) and relaunches the app. The call returns before the relaunch.
+     */
+    restore(fileName: string): Promise<BackupInfo>;
   };
   solver: {
     /** Starts a solve for a draft period in a worker thread and returns immediately. */
@@ -478,7 +551,9 @@ export interface ShiftNurseApi {
 }
 
 type Promisify<T> = {
-  [K in keyof T]: T[K] extends (...args: infer A) => infer R ? (...args: A) => Promise<R> : never;
+  [K in keyof T]: T[K] extends (...args: infer A) => infer R
+    ? (...args: A) => Promise<Awaited<R>>
+    : never;
 };
 
 /** What `window.shiftnurse` looks like from the renderer. */
@@ -531,6 +606,9 @@ export const API_CHANNELS = {
     'deleteAssignment',
     'setLocked',
   ],
+  publish: ['preview', 'publish', 'versions', 'changes', 'alerts'],
+  output: ['exportToFile', 'renderCsv'],
+  backups: ['list', 'create', 'restore'],
   solver: ['start', 'status', 'cancel'],
   rules: ['getLatest', 'save'],
   fairness: ['report', 'history', 'trend', 'pickHistoryImportFile', 'importHistory'],

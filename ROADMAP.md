@@ -272,14 +272,30 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
       proposes a trade on the demo draft, approves the `warn` verdict with a reason, denies a
       blocked one, and confirms a blank denial is refused)
 
-### M12 — Publish & output
-- [ ] Draft → published lifecycle with diff against the previous published version
-- [ ] Change log with reasons for every post-publish edit
-- [ ] PDF unit grid + per-nurse schedule sheets
-- [ ] CSV/Excel export
-- [ ] Compliance alerts: credential expiry inside the period, FTE/OT drift, ratio-risk days
-- [ ] Automatic backups on publish, rolling daily backup, one-click restore
-- [ ] Verify: publish, edit, and confirm the change log and audit entries tell the full story
+### M12 — Publish & output ✅
+- [x] Draft → published lifecycle with diff against the previous published version
+      (`schedule_version` freezes the assignments per publication; `core/publish/diff.ts` keys
+      the diff on nurse/date/shift so a regenerate with new row ids is "no change"; a republish
+      needs a reason and refuses when nothing changed; publish also books the fairness ledger
+      through the same `deriveCounters` scoring and import use)
+- [x] Change log with reasons for every post-publish edit (`schedule_change`; main's
+      `editSchedule` wraps every grid mutation, refuses a published-period edit without a reason,
+      and exchange approvals on a published period log as `source: 'exchange'`; the board
+      collects the reason in a dialog before each edit)
+- [x] PDF unit grid + per-nurse schedule sheets (`core/publish/output.ts` projections →
+      `main/print-html.ts` → Chromium `printToPDF` in a sandboxed hidden window)
+- [x] CSV/Excel export (grid CSV, long CSV in the history-import format so an export re-imports,
+      and a dependency-free xlsx writer in `main/xlsx.ts`)
+- [x] Compliance alerts: credential expiry inside the period, FTE/OT drift, ratio-risk days
+      (`core/publish/compliance.ts`; contract hours scaled to the schedule length; ratio-risk only
+      where a patient ratio binds, not a coverage floor the solver fills to on purpose)
+- [x] Automatic backups on publish, rolling daily backup, one-click restore (`main/backups.ts`
+      via SQLite's online backup API; 14 dailies kept; restore saves a `pre-restore` copy and
+      relaunches; Settings › Backups)
+- [x] Verify: publish, edit, and confirm the change log and audit entries tell the full story
+      (`db/repositories/publish.test.ts`; the smoke test publishes the generated demo draft, sees
+      a reasonless edit refused, edits with a reason, reads the change log, republishes as v2 with
+      the +1/−0/~0 diff, and renders the grid PDF, nurse-sheet PDF and xlsx headlessly)
 
 ### M13 — Day-of console
 - [ ] "Today" screen: current and next shift, actual census entry, live ratio re-check

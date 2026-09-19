@@ -21,6 +21,8 @@ export * from './fairness/ledger.js';
 export * from './fairness/score.js';
 export * from './fairness/seniority.js';
 export * from './fairness/types.js';
+// Publish: diff, compliance alerts, printable projections
+export * from './publish/index.js';
 export * from './roster/csv.js';
 export * from './rules/availability-rules.js';
 export * from './rules/coverage-rules.js';

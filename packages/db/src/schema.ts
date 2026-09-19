@@ -31,6 +31,8 @@ import type {
   PeriodStatus,
   PreferenceKind,
   RequestOrigin,
+  ScheduleChangeKind,
+  ScheduleChangeSource,
   ShiftSwapKind,
   ShiftSwapStatus,
   TimeOffStatus,
@@ -446,6 +448,63 @@ export const assignment = sqliteTable(
     // A nurse cannot hold the same shift on the same day twice.
     uniqueIndex('assignment_unique_idx').on(t.nurseId, t.date, t.shiftTypeId),
   ],
+);
+
+/**
+ * One row per publication of a period. The assignments are stored as JSON rather than
+ * normalised: a version is a frozen document ("what went out"), never queried by nurse or
+ * date, and normalising it would invite someone to join it back to live rows that have since
+ * moved. `version` is 1-based per period.
+ */
+export const scheduleVersion = sqliteTable(
+  'schedule_version',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    periodId: text('period_id')
+      .notNull()
+      .references(() => schedulePeriod.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    version: integer('version').notNull(),
+    publishedAt: timestamp('published_at').notNull(),
+    publishedBy: text('published_by').notNull(),
+    reason: text('reason'),
+    assignments: text('assignments', { mode: 'json' }).notNull(),
+    added: integer('added').notNull().default(0),
+    removed: integer('removed').notNull().default(0),
+    changed: integer('changed').notNull().default(0),
+  },
+  (t) => [uniqueIndex('schedule_version_period_idx').on(t.periodId, t.version)],
+);
+
+/**
+ * The post-publish change log. `assignment_id` carries no foreign key on purpose: a removal
+ * deletes the row it points at, and the log must keep pointing at the historical id.
+ */
+export const scheduleChange = sqliteTable(
+  'schedule_change',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    periodId: text('period_id')
+      .notNull()
+      .references(() => schedulePeriod.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    version: integer('version').notNull(),
+    kind: text('kind').notNull().$type<ScheduleChangeKind>(),
+    source: text('source').notNull().default('manual').$type<ScheduleChangeSource>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    date: isoDate('date').notNull(),
+    shiftTypeId: text('shift_type_id').notNull().$type<Id>(),
+    assignmentId: text('assignment_id').notNull().$type<Id>(),
+    before: text('before', { mode: 'json' }),
+    after: text('after', { mode: 'json' }),
+    reason: text('reason').notNull(),
+    actor: text('actor').notNull(),
+    at: timestamp('at').notNull(),
+  },
+  (t) => [index('schedule_change_period_at_idx').on(t.periodId, t.at)],
 );
 
 // ---------------------------------------------------------------------------

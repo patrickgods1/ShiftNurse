@@ -28,6 +28,7 @@ export * from './repositories/config.js';
 export * from './repositories/conflicts.js';
 export * from './repositories/exchange.js';
 export * from './repositories/operations.js';
+export * from './repositories/publish.js';
 export * from './repositories/roster.js';
 export * from './repositories/roster-io.js';
 export * from './repositories/schedule.js';

@@ -33,7 +33,9 @@ import type {
   PayRate,
   Preference,
   RatioRule,
+  ScheduleChange,
   SchedulePeriod,
+  ScheduleVersion,
   ShiftCredentialRequirement,
   ShiftSwap,
   ShiftType,
@@ -222,6 +224,40 @@ export function toShiftSwap(r: typeof s.shiftSwap.$inferSelect): ShiftSwap {
     reason: opt(r.reason),
     decisionReason: opt(r.decisionReason),
     overrode: r.overrode,
+  };
+}
+
+export function toScheduleVersion(r: typeof s.scheduleVersion.$inferSelect): ScheduleVersion {
+  return {
+    id: r.id,
+    periodId: r.periodId,
+    version: r.version,
+    publishedAt: r.publishedAt,
+    publishedBy: r.publishedBy,
+    reason: opt(r.reason),
+    assignments: r.assignments as Assignment[],
+    added: r.added,
+    removed: r.removed,
+    changed: r.changed,
+  };
+}
+
+export function toScheduleChange(r: typeof s.scheduleChange.$inferSelect): ScheduleChange {
+  return {
+    id: r.id,
+    periodId: r.periodId,
+    version: r.version,
+    kind: r.kind,
+    source: r.source,
+    nurseId: r.nurseId,
+    date: r.date as ScheduleChange['date'],
+    shiftTypeId: r.shiftTypeId,
+    assignmentId: r.assignmentId,
+    before: (r.before as Assignment | null) ?? undefined,
+    after: (r.after as Assignment | null) ?? undefined,
+    reason: r.reason,
+    actor: r.actor,
+    at: r.at,
   };
 }
 
