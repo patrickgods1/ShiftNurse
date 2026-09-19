@@ -353,9 +353,21 @@ export interface ScheduleChange {
 
 export type CallOffStatus = 'open' | 'covered' | 'uncovered' | 'cancelled';
 
+/**
+ * A nurse reporting they cannot work a shift they hold. The shift is copied onto the row
+ * (`periodId`, `nurseId`, `shiftTypeId`, `date`) because a backfill *replaces* the absent
+ * nurse's assignment — the row `assignmentId` names is gone once someone covers it — and the
+ * call-off, with its call log, must still say whose shift it was and when. Same reason
+ * `ScheduleChange` carries the shift beside its assignment id.
+ */
 export interface CallOff {
   id: Id;
+  /** The assignment as it stood when reported. No foreign key: a backfill deletes that row. */
   assignmentId: Id;
+  periodId: Id;
+  nurseId: Id;
+  shiftTypeId: Id;
+  date: IsoDate;
   reportedAt: Timestamp;
   reason?: string;
   status: CallOffStatus;

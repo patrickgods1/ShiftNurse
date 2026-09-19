@@ -19,6 +19,7 @@ const TIMEOUT_MS = 60_000;
 /** Each route must render an element carrying this test id. */
 const ROUTES: readonly { hash: string; testId: string }[] = [
   { hash: '#/', testId: 'stat-card' },
+  { hash: '#/today', testId: 'today-page' },
   { hash: '#/roster', testId: 'roster-table' },
   { hash: '#/requests', testId: 'page-header' },
   { hash: '#/schedule', testId: 'schedule-grid' },
@@ -455,6 +456,151 @@ const PUBLISH_SCRIPT = `
     };
   })()`;
 
+/**
+ * The M13 check: the day-of console reads the published period, a call-off tags the roster row
+ * without removing it, the replacement finder ranks only eligible nurses straight-time before
+ * overtime before agency, a backfill writes the callout row and closes the call-off, and — since
+ * the period is published by this point — the swap lands in the change log as a removed/added
+ * pair with a `Call-off:` reason. Runs after `PUBLISH_SCRIPT` on purpose: only then is there a
+ * published period whose backfill must go through the change log rather than a bare edit.
+ */
+function dayOfScript(periodId: string): string {
+  return `
+  (async () => {
+    const api = window.shiftnurse;
+    const [unit] = await api.units.list();
+    const period = (await api.periods.list(unit.id)).find((p) => p.id === ${JSON.stringify(periodId)});
+    if (!period) return { error: 'published period not found' };
+    // The demo draft starts next Sunday, so today() is never inside it — always pass a date,
+    // computed the same way the other scripts do: Date.UTC on the split parts.
+    const [y, m, d] = period.startDate.split('-').map(Number);
+    const date = new Date(Date.UTC(y, m - 1, d + 3)).toISOString().slice(0, 10);
+
+    const summary = await api.dayOf.today(unit.id, date);
+    const shiftsCount = summary.shifts.length;
+    const hasStaffing = summary.shifts.every((s) => s.staffing && s.staffing.byRole.RN);
+    const periodMatches = !!summary.period && summary.period.id === period.id;
+    const rosterCount = summary.shifts.reduce((n, s) => n + s.roster.length, 0);
+
+    let absent;
+    for (const s of summary.shifts) {
+      if (!(s.shiftType.durationHours === 12 && !s.shiftType.isNight && !s.shiftType.isOnCall)) continue;
+      const entry = s.roster.find((r) => r.nurse.role === 'RN');
+      if (entry) { absent = entry; break; }
+    }
+    if (!absent) return { error: 'no 12h day RN rostered on ' + date };
+
+    const callOff = await api.dayOf.reportCallOff(absent.assignment.id, 'Smoke: sick');
+    let duplicateRefused = false;
+    try {
+      await api.dayOf.reportCallOff(absent.assignment.id, 'Smoke: sick again');
+    } catch (e) {
+      duplicateRefused = /already open/i.test(String(e));
+    }
+
+    const after = await api.dayOf.today(unit.id, date);
+    let taggedCallOff = false;
+    for (const s of after.shifts) {
+      const row = s.roster.find((r) => r.assignment.id === absent.assignment.id);
+      if (row && row.callOff && row.callOff.id === callOff.id) taggedCallOff = true;
+    }
+    const openCount = after.openCallOffs.length;
+    const openView = after.openCallOffs.find((v) => v.callOff.id === callOff.id);
+    const openViewOk =
+      !!openView && openView.attempts.length === 0 && !!openView.assignment &&
+      openView.nurse.id === absent.nurse.id;
+
+    const report = await api.dayOf.replacements(callOff.id);
+    const candidateCount = report.candidates.length;
+    const excludedCount = report.excluded.length;
+    const tiers = report.candidates.map((c) => c.payTier);
+    const ranks = report.candidates.map((c) => c.rank);
+    const nurses = await api.nurses.list(unit.id);
+    const nurseById = new Map(nurses.map((n) => [n.id, n]));
+    const sameRole =
+      report.absent.role === 'RN' &&
+      report.candidates.every((c) => nurseById.get(c.nurseId)?.role === 'RN');
+    const candidateIds = new Set(report.candidates.map((c) => c.nurseId));
+    const excludedIds = new Set(report.excluded.map((e) => e.nurseId));
+    const disjoint = [...candidateIds].every((id) => !excludedIds.has(id));
+    const absentNotListed = !candidateIds.has(absent.nurse.id) && !excludedIds.has(absent.nurse.id);
+    const excludedReasons = [...new Set(report.excluded.map((e) => e.reason.slice(0, 40)))];
+    const allCallout = report.candidates.every(
+      (c) => c.assignment.source === 'callout' && c.assignment.date === date,
+    );
+    if (candidateCount === 0) {
+      return { error: 'no eligible replacement candidates for ' + callOff.id, excludedCount, excludedReasons };
+    }
+
+    const attempt = await api.dayOf.logCall(callOff.id, report.candidates[0].nurseId, 'no_answer', 'smoke');
+    let acceptedRefused = false;
+    try {
+      await api.dayOf.logCall(callOff.id, report.candidates[0].nurseId, 'accepted');
+    } catch (e) {
+      acceptedRefused = true;
+    }
+
+    const result = await api.dayOf.backfill(callOff.id, report.candidates[0].nurseId, 'smoke pickup');
+    const covered =
+      result.callOff.status === 'covered' && result.callOff.replacementAssignmentId === result.assignment.id;
+    const calloutSource = result.assignment.source === 'callout';
+    const acceptedLogged = result.attempt.outcome === 'accepted';
+
+    const changes = await api.publish.changes(period.id);
+    const backfillEntries = changes.filter((c) => c.source === 'backfill');
+    const backfillChanges = backfillEntries.map((c) => c.kind);
+    const backfillReasonOk = backfillEntries.every(
+      (c) => !!c.reason && c.reason.startsWith('Call-off:'),
+    );
+
+    const log = await api.dayOf.callLog(callOff.id);
+    const logOutcomes = log.map((a) => a.outcome);
+
+    const assignmentsAfter = await api.periods.assignments(period.id);
+    const absentGone = !assignmentsAfter.some((a) => a.id === absent.assignment.id);
+    const replacementPresent = assignmentsAfter.some((a) => a.id === result.assignment.id);
+
+    const stillOpen = (await api.dayOf.today(unit.id, date)).openCallOffs.some(
+      (v) => v.callOff.id === callOff.id,
+    );
+    const viewAfter = (await api.dayOf.callOffs(unit.id, date, date)).find(
+      (v) => v.callOff.id === callOff.id,
+    );
+    const viewHasReplacement =
+      !!viewAfter && !!viewAfter.replacement && viewAfter.replacement.nurse.id === report.candidates[0].nurseId;
+    const viewAssignmentGone = !!viewAfter && viewAfter.assignment === undefined;
+
+    // Cancelling a second, unrelated call-off proves the blank-reason guard the same way
+    // timeOff.deny and exchange.deny do, without disturbing the covered one above.
+    let secondAbsent;
+    outer: for (const s of after.shifts) {
+      for (const r of s.roster) {
+        if (r.assignment.id !== absent.assignment.id && !r.callOff) { secondAbsent = r; break outer; }
+      }
+    }
+    if (!secondAbsent) return { error: 'no second roster entry to cancel a call-off against' };
+    const callOff2 = await api.dayOf.reportCallOff(secondAbsent.assignment.id, 'Smoke: cleanup target');
+    let cancelBlankRefused = false;
+    try {
+      await api.dayOf.cancelCallOff(callOff2.id, '   ');
+    } catch (e) {
+      cancelBlankRefused = true;
+    }
+    const cancelled = (await api.dayOf.cancelCallOff(callOff2.id, 'smoke cleanup')).status === 'cancelled';
+
+    return {
+      shiftsCount, hasStaffing, periodMatches, rosterCount,
+      duplicateRefused, taggedCallOff, openCount, openViewOk,
+      candidateCount, excludedCount, tiers, ranks, sameRole, disjoint, absentNotListed,
+      excludedReasons, allCallout,
+      acceptedRefused, covered, calloutSource, acceptedLogged,
+      backfillChanges, backfillReasonOk, logOutcomes,
+      absentGone, replacementPresent, stillOpen, viewHasReplacement, viewAssignmentGone,
+      cancelBlankRefused, cancelled, date,
+    };
+  })()`;
+}
+
 export function runSmoke(win: BrowserWindow): void {
   const timer = setTimeout(() => fail(`did not finish within ${TIMEOUT_MS}ms`), TIMEOUT_MS);
 
@@ -715,6 +861,95 @@ export function runSmoke(win: BrowserWindow): void {
       if (xlsx.subarray(0, 2).toString() !== 'PK') fail('xlsx export is not a zip');
       console.log(
         `[smoke] publish OK (v1 with ${published.previewHard} hard violations, alerts ${JSON.stringify(published.alertKinds)}, ${published.ledgerEntries} ledger rows, backup ${published.firstBackup}; reasonless edit refused; change log + republish v2 ${published.versions[1]}; grid PDF ${pdf.length}B, sheets PDF ${sheets.length}B, xlsx ${xlsx.length}B)`,
+      );
+      const dayOf = (await win.webContents.executeJavaScript(dayOfScript(published.periodId))) as {
+        error?: string;
+        shiftsCount: number;
+        hasStaffing: boolean;
+        periodMatches: boolean;
+        rosterCount: number;
+        duplicateRefused: boolean;
+        taggedCallOff: boolean;
+        openCount: number;
+        openViewOk: boolean;
+        candidateCount: number;
+        excludedCount: number;
+        tiers: string[];
+        ranks: number[];
+        sameRole: boolean;
+        disjoint: boolean;
+        absentNotListed: boolean;
+        excludedReasons: string[];
+        allCallout: boolean;
+        acceptedRefused: boolean;
+        covered: boolean;
+        calloutSource: boolean;
+        acceptedLogged: boolean;
+        backfillChanges: string[];
+        backfillReasonOk: boolean;
+        logOutcomes: string[];
+        absentGone: boolean;
+        replacementPresent: boolean;
+        stillOpen: boolean;
+        viewHasReplacement: boolean;
+        viewAssignmentGone: boolean;
+        cancelBlankRefused: boolean;
+        cancelled: boolean;
+        date: string;
+      };
+      if (dayOf.error) fail(`day-of: ${dayOf.error}`);
+      if (dayOf.shiftsCount === 0) fail('Today summary returned no shifts for the call-off date');
+      if (!dayOf.hasStaffing) fail('a shift on the call-off date has no RN staffing check');
+      if (!dayOf.periodMatches) fail('Today summary period does not match the published period');
+      if (!dayOf.duplicateRefused) fail('a second call-off on the same assignment was accepted');
+      if (!dayOf.taggedCallOff) fail('the roster row was not tagged with the new call-off');
+      if (dayOf.openCount < 1) fail('reported call-off did not appear among open call-offs');
+      if (!dayOf.openViewOk) fail('open call-off view is missing attempts/assignment/nurse');
+      if (dayOf.candidateCount === 0) fail('replacement finder found no eligible candidates');
+      const tierIndex: Record<string, number> = { straight: 0, overtime: 1, agency: 2 };
+      const expectedRanks = dayOf.tiers.map((_, i) => i + 1);
+      if (JSON.stringify(dayOf.ranks) !== JSON.stringify(expectedRanks)) {
+        fail(`replacement ranks ${JSON.stringify(dayOf.ranks)} are not 1..n`);
+      }
+      for (let i = 1; i < dayOf.tiers.length; i++) {
+        if (tierIndex[dayOf.tiers[i]!]! < tierIndex[dayOf.tiers[i - 1]!]!) {
+          fail(
+            `replacement list is not ordered straight/overtime/agency: ${dayOf.tiers.join(',')}`,
+          );
+        }
+      }
+      if (!dayOf.sameRole) fail('replacement list includes a non-RN candidate for an RN call-off');
+      if (!dayOf.disjoint) fail('a nurse appears in both the candidate and excluded lists');
+      if (!dayOf.absentNotListed)
+        fail('the absent nurse appears in the candidate or excluded list');
+      if (!dayOf.allCallout) fail('a candidate row is not a callout on the call-off date');
+      if (!dayOf.acceptedRefused) fail('logCall accepted an "accepted" outcome directly');
+      if (!dayOf.covered)
+        fail('backfill did not mark the call-off covered with a matching assignment');
+      if (!dayOf.calloutSource) fail('backfill assignment is not source: callout');
+      if (!dayOf.acceptedLogged) fail('backfill did not log the accepted attempt');
+      if (
+        JSON.stringify([...dayOf.backfillChanges].sort()) !== JSON.stringify(['added', 'removed'])
+      ) {
+        fail(`backfill change log entries: ${JSON.stringify(dayOf.backfillChanges)}`);
+      }
+      if (!dayOf.backfillReasonOk)
+        fail('backfill change log reasons are missing or not "Call-off: ..."');
+      if (JSON.stringify(dayOf.logOutcomes) !== JSON.stringify(['accepted', 'no_answer'])) {
+        fail(
+          `call log outcomes ${JSON.stringify(dayOf.logOutcomes)}, expected accepted then no_answer`,
+        );
+      }
+      if (!dayOf.absentGone) fail('the absent nurse’s assignment survived the backfill');
+      if (!dayOf.replacementPresent) fail('the replacement assignment is missing from the period');
+      if (dayOf.stillOpen) fail('the covered call-off still shows as open');
+      if (!dayOf.viewHasReplacement) fail('callOffs view does not show the replacement nurse');
+      if (!dayOf.viewAssignmentGone) fail('callOffs view still carries the old assignment');
+      if (!dayOf.cancelBlankRefused)
+        fail('a call-off cancellation with a blank reason was accepted');
+      if (!dayOf.cancelled) fail('call-off cancellation with a reason did not succeed');
+      console.log(
+        `[smoke] day-of OK (${dayOf.shiftsCount} shifts on ${dayOf.date}, ${dayOf.candidateCount} candidates [${dayOf.tiers.join(',')}], ${dayOf.excludedCount} excluded (${dayOf.excludedReasons.join(' | ')}), backfill via change log)`,
       );
       const shotDirAfter = process.env.SHIFTNURSE_SMOKE_SCREENSHOT;
       if (shotDirAfter?.endsWith('/')) {

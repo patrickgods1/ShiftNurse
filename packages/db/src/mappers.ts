@@ -359,6 +359,10 @@ export function toCallOff(r: typeof s.callOff.$inferSelect): CallOff {
   return {
     id: r.id,
     assignmentId: r.assignmentId,
+    periodId: r.periodId,
+    nurseId: r.nurseId,
+    shiftTypeId: r.shiftTypeId,
+    date: r.date,
     reportedAt: r.reportedAt,
     reason: opt(r.reason),
     status: r.status,

@@ -20,10 +20,12 @@ import RequestsPage from './pages/requests.js';
 import RosterPage from './pages/roster.js';
 import SchedulePage from './pages/schedule.js';
 import SettingsPage from './pages/settings.js';
+import TodayPage from './pages/today.js';
 import { UnitProvider, useUnit } from './unit-context.js';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard' },
+  { to: '/today', label: 'Today' },
   { to: '/schedule', label: 'Schedule' },
   { to: '/demand', label: 'Demand' },
   { to: '/fairness', label: 'Fairness' },
@@ -89,6 +91,12 @@ const dashboardRoute = createRoute({
   component: DashboardPage,
 });
 
+const todayRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/today',
+  component: TodayPage,
+});
+
 const scheduleRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/schedule',
@@ -127,6 +135,7 @@ const settingsRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   dashboardRoute,
+  todayRoute,
   scheduleRoute,
   demandRoute,
   fairnessRoute,

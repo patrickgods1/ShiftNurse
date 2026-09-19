@@ -19,6 +19,7 @@ import {
   deleteOvertimeRule,
   deletePayRate,
   effectiveRateForNurse,
+  getCallOff,
   getFairnessLedgerEntry,
   importFairnessLedgerEntries,
   importHistoricalLedger,
@@ -28,12 +29,15 @@ import {
   listActiveDifferentials,
   listActiveOvertimeRules,
   listCallAttempts,
+  listCallOffsForUnit,
   listDifferentialsForUnit,
   listOpenCallOffs,
   listOvertimeRulesForUnit,
   listPayRatesForUnit,
   logCallAttempt,
   markCallOffCovered,
+  markCallOffUncovered,
+  openCallOffForAssignment,
   reportCallOff,
   updateDifferential,
   updateOvertimeRule,
@@ -193,10 +197,130 @@ describe('call-offs', () => {
     const replacementNurse = mkNurse('Grace');
     const replacement = mkAssignment(replacementNurse, isoDate('2026-01-17'));
     markCallOffCovered(handle.db, toCover.id, replacement.id, ACTOR);
-    cancelCallOff(handle.db, toCancel.id, ACTOR);
+    cancelCallOff(handle.db, toCancel.id, ACTOR, 'Nurse turned up after all');
 
     const openList = listOpenCallOffs(handle.db);
     expect(openList.map((c) => c.id)).toEqual([open.id]);
+  });
+
+  it("lists a unit's call-offs by date range and status", () => {
+    const nurseId = mkNurse('Ada');
+    const a1 = mkAssignment(nurseId, isoDate('2026-01-16'));
+    const a2 = mkAssignment(nurseId, isoDate('2026-01-20'));
+    const a3 = mkAssignment(nurseId, isoDate('2026-01-25'));
+
+    const inRange1 = reportCallOff(handle.db, a1.id, ACTOR);
+    const inRange2 = reportCallOff(handle.db, a2.id, ACTOR);
+    const outOfRange = reportCallOff(handle.db, a3.id, ACTOR);
+    cancelCallOff(handle.db, inRange2.id, ACTOR, 'Logged in error');
+
+    const inRangeOpen = listCallOffsForUnit(handle.db, unitId, {
+      status: 'open',
+      start: isoDate('2026-01-15'),
+      end: isoDate('2026-01-21'),
+    });
+    expect(inRangeOpen.map((c) => c.id)).toEqual([inRange1.id]);
+
+    const wholeRange = listCallOffsForUnit(handle.db, unitId, {
+      start: isoDate('2026-01-15'),
+      end: isoDate('2026-01-21'),
+    });
+    expect(wholeRange.map((c) => c.id).sort()).toEqual([inRange1.id, inRange2.id].sort());
+
+    expect(listCallOffsForUnit(handle.db, unitId).map((c) => c.id)).not.toContain(undefined);
+    expect(
+      listCallOffsForUnit(handle.db, unitId)
+        .map((c) => c.id)
+        .sort(),
+    ).toEqual([inRange1.id, inRange2.id, outOfRange.id].sort());
+  });
+
+  it('refuses to cancel a call-off without a reason, and leaves it open for a real one', () => {
+    const nurseId = mkNurse('Ada');
+    const a = mkAssignment(nurseId, isoDate('2026-01-16'));
+    const co = reportCallOff(handle.db, a.id, ACTOR);
+    expect(() => cancelCallOff(handle.db, co.id, ACTOR, '')).toThrow(/requires a reason/);
+    // The blank attempt must not have flipped the status — otherwise the manager's very next
+    // try, this time with a real reason, would fail with "is cancelled, not open".
+    expect(getCallOff(handle.db, co.id)?.status).toBe('open');
+    expect(cancelCallOff(handle.db, co.id, ACTOR, 'Logged in error').status).toBe('cancelled');
+  });
+
+  it('refuses to log a call against a covered call-off', () => {
+    const nurseId = mkNurse('Ada');
+    const replacementNurse = mkNurse('Grace');
+    const a = mkAssignment(nurseId, isoDate('2026-01-16'));
+    const co = reportCallOff(handle.db, a.id, ACTOR);
+    const replacement = mkAssignment(replacementNurse, isoDate('2026-01-16'));
+    markCallOffCovered(handle.db, co.id, replacement.id, ACTOR);
+
+    expect(() => logCallAttempt(handle.db, co.id, replacementNurse, 'accepted', ACTOR)).toThrow(
+      /is covered, not open/,
+    );
+  });
+
+  it('refuses to mark a call-off uncovered without a reason, and leaves it open for a real one', () => {
+    const nurseId = mkNurse('Ada');
+    const a = mkAssignment(nurseId, isoDate('2026-01-16'));
+    const co = reportCallOff(handle.db, a.id, ACTOR);
+    expect(() => markCallOffUncovered(handle.db, co.id, ACTOR, '')).toThrow(/requires a reason/);
+    // Same guard as cancellation: a blank attempt must not have flipped the status, or a
+    // retry with a real reason would fail with "is uncovered, not open".
+    expect(getCallOff(handle.db, co.id)?.status).toBe('open');
+    expect(
+      markCallOffUncovered(handle.db, co.id, ACTOR, 'Nobody could be reached in time').status,
+    ).toBe('uncovered');
+  });
+
+  it('refuses to mark an already-cancelled call-off uncovered', () => {
+    const nurseId = mkNurse('Ada');
+    const a = mkAssignment(nurseId, isoDate('2026-01-16'));
+    const co = reportCallOff(handle.db, a.id, ACTOR);
+    cancelCallOff(handle.db, co.id, ACTOR, 'Logged in error');
+
+    expect(() =>
+      markCallOffUncovered(handle.db, co.id, ACTOR, 'Nobody could be reached in time'),
+    ).toThrow(/is cancelled, not open/);
+  });
+
+  it('refuses to mark an already-covered call-off uncovered', () => {
+    const nurseId = mkNurse('Ada');
+    const replacementNurse = mkNurse('Grace');
+    const a = mkAssignment(nurseId, isoDate('2026-01-16'));
+    const co = reportCallOff(handle.db, a.id, ACTOR);
+    const replacement = mkAssignment(replacementNurse, isoDate('2026-01-16'));
+    markCallOffCovered(handle.db, co.id, replacement.id, ACTOR);
+
+    expect(() =>
+      markCallOffUncovered(handle.db, co.id, ACTOR, 'Nobody could be reached in time'),
+    ).toThrow(/is covered, not open/);
+  });
+
+  it('refuses to mark an already-covered call-off covered again', () => {
+    const nurseId = mkNurse('Ada');
+    const replacementNurse = mkNurse('Grace');
+    const anotherNurse = mkNurse('Priya');
+    const a = mkAssignment(nurseId, isoDate('2026-01-16'));
+    const co = reportCallOff(handle.db, a.id, ACTOR);
+    const replacement = mkAssignment(replacementNurse, isoDate('2026-01-16'));
+    markCallOffCovered(handle.db, co.id, replacement.id, ACTOR);
+    const another = mkAssignment(anotherNurse, isoDate('2026-01-17'));
+
+    expect(() => markCallOffCovered(handle.db, co.id, another.id, ACTOR)).toThrow(
+      /is covered, not open/,
+    );
+  });
+
+  it('finds the open call-off for an assignment', () => {
+    const nurseId = mkNurse('Ada');
+    const a = mkAssignment(nurseId, isoDate('2026-01-16'));
+    expect(openCallOffForAssignment(handle.db, a.id)).toBeUndefined();
+
+    const co = reportCallOff(handle.db, a.id, ACTOR);
+    expect(openCallOffForAssignment(handle.db, a.id)?.id).toBe(co.id);
+
+    cancelCallOff(handle.db, co.id, ACTOR, 'Logged in error');
+    expect(openCallOffForAssignment(handle.db, a.id)).toBeUndefined();
   });
 });
 

@@ -297,14 +297,28 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
       a reasonless edit refused, edits with a reason, reads the change log, republishes as v2 with
       the +1/−0/~0 diff, and renders the grid PDF, nurse-sheet PDF and xlsx headlessly)
 
-### M13 — Day-of console
-- [ ] "Today" screen: current and next shift, actual census entry, live ratio re-check
-- [ ] Report a call-off against an assignment
-- [ ] Ranked replacement finder: eligibility → cost → fairness debt → recency of last call
-- [ ] Call log with outcomes, feeding the fairness ledger
-- [ ] Backfills flow through the published-schedule change log
-- [ ] Verify: the replacement list excludes rest-noncompliant and uncredentialed nurses and
-      orders straight-time before overtime before agency
+### M13 — Day-of console ✅
+- [x] "Today" screen: current and next shift, actual census entry, live ratio re-check
+      (`core/dayof/staffing.ts`: `shiftsAround` on the wall-clock timeline — a night shift
+      running at 03:00 is yesterday's slot — and `checkStaffing`, which swaps the actual census
+      into the same `deriveDemand` the Demand page uses; `dayOf.today` IPC; Today page)
+- [x] Report a call-off against an assignment (`call_off` now carries period/nurse/shift/date
+      beside the assignment id with no FK, migration 0005 — a backfill replaces that row and the
+      record must outlive it, as `schedule_change` does)
+- [x] Ranked replacement finder: eligibility → cost → fairness debt → recency of last call
+      (`core/dayof/replacements.ts` simulates every same-role nurse on the conflicts engine —
+      straight time first, authorised overtime only when that is all that stands in the way —
+      and orders lexicographically: pay tier, marginal cost, burden index, least-recently called;
+      the excluded list names the rule for each nurse ruled out)
+- [x] Call log with outcomes, feeding the fairness ledger (`call_attempt` per call; the backfill
+      row is `source: 'callout'`, which `deriveCounters` books as a call-out covered on publish)
+- [x] Backfills flow through the published-schedule change log (`dayOf.backfill` re-runs the
+      finder inside `editSchedule` before writing, logs `removed` + `added` as `source: 'backfill'`
+      with the absent nurse's call-off as the reason; uncovered/cancel audit before they write)
+- [x] Verify: the replacement list excludes rest-noncompliant and uncredentialed nurses and
+      orders straight-time before overtime before agency (`core/dayof/replacements.test.ts`;
+      the smoke test reports a call-off on the published demo period, checks the ranked list is
+      eligible-only and tier-ordered, backfills the top candidate and reads the change log)
 
 ### M14 — Packaging
 - [ ] electron-builder config for Windows 11 (NSIS) and macOS (dmg, x64 + arm64)

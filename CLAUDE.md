@@ -23,7 +23,9 @@ self-service later becomes an intake surface rather than a new data model.
   `costSchedule`, `marginalCost`, `compareToBudget` — the pay model is documented in
   `cost/types.ts`), `solver/` (M9: `types.ts` is the `Solver` contract, `model.ts` the
   incremental state + objective, `greedy.ts` the seed, `anneal.ts` the moves, `solver.ts` the
-  entry point, `rng.ts` the seeded mulberry32 shared with the seeder), `conflicts/` (M10: `types.ts` is the
+  entry point, `rng.ts` the seeded mulberry32 shared with the seeder), `dayof/` (M13:
+  `types.ts` contract, `replacements.ts`,
+  `staffing.ts`), `conflicts/` (M10: `types.ts` is the
   contract, `engine.ts` the shared indexes + simulation state, `detect.ts`, `resolve.ts`,
   `analyse.ts`), `exchange/` (M11: `evaluateExchange` / `planExchange` — trade and giveaway
   verdicts `ok | warn | blocked` simulated on the conflicts engine), `publish/` (M12: `diff.ts`
@@ -61,7 +63,10 @@ self-service later becomes an intake surface rather than a new data model.
   `editSchedule` wraps every grid mutation and logs reasoned edits on a published period;
   `main/backups.ts` (publish/daily/manual/restore), `main/output.ts` + `print-html.ts` +
   `xlsx.ts` for PDF/CSV/xlsx; Schedule › Publish dialog, change log, Export menu, reason dialog
-  on published-period edits; Settings › Backups) are real.
+  on published-period edits; Settings › Backups) and Today (M13: `core/dayof/` — `findReplacements`
+  ranks same-role nurses simulated on the conflicts engine, `checkStaffing`/`shiftsAround` for the
+  live census re-check; `dayOf` IPC in `main/api.ts`, `backfill` goes through `editSchedule` as
+  `'backfill'`; `pages/today.tsx` + `api-dayof.ts`) are real.
   Renderer hooks: `api.ts` (roster), `api-config.ts` (configuration + rules), `api-demand.ts`
   (census/demand), `api-schedule.ts` (grid mutations + validation), `api-fairness.ts`
   (report/trend/import), `api-cost.ts` (pay config, cost report, budget).
@@ -208,6 +213,12 @@ violations of their own.
   actually worked would let a nurse who works only nights "improve" by taking one more. Only
   a shift that honours none of a nurse's preferences is unambiguously worse — a day shift for
   a nurse avoiding nights raises their hit rate — so the property test excludes such pairs.
+- **`call_off` carries the shift (period/nurse/shift type/date) and no FK on `assignmentId`.** A
+  backfill deletes the absent nurse's row and writes a `source: 'callout'` one, so the call-off and
+  its call log must outlive the id they point at — the same reason `shift_swap` has no assignment
+  FK. Migration 0005 rebuilds `call_attempt` before dropping `call_off`: the drizzle migrator runs a
+  file inside one transaction, where `PRAGMA foreign_keys=OFF` is a no-op and a parent drop
+  cascades into its children.
 - **The ledger's `periodId` has no foreign key on purpose:** imported history uses synthetic
   `import:<start>` ids for pay periods that predate the app.
 - **Every rule declares a `scope`** (`'nurse'` or `'shift'`). The solver evaluates hard rules

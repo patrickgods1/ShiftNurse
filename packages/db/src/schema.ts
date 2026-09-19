@@ -27,6 +27,7 @@ import type {
   DifferentialKind,
   EmploymentType,
   Id,
+  IsoDate,
   NurseRole,
   PeriodStatus,
   PreferenceKind,
@@ -515,16 +516,35 @@ export const callOff = sqliteTable(
   'call_off',
   {
     id: text('id').primaryKey().$type<Id>(),
-    assignmentId: text('assignment_id')
+    /**
+     * No foreign key, for the same reason `shift_swap` carries none: a backfill replaces the
+     * absent nurse's row with the replacement's, and the call-off — with its call log — must
+     * keep pointing at the historical id rather than cascade away with it.
+     */
+    assignmentId: text('assignment_id').notNull().$type<Id>(),
+    periodId: text('period_id')
       .notNull()
-      .references(() => assignment.id, { onDelete: 'cascade' })
+      .references(() => schedulePeriod.id, { onDelete: 'cascade' })
       .$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    shiftTypeId: text('shift_type_id')
+      .notNull()
+      .references(() => shiftType.id)
+      .$type<Id>(),
+    date: text('date').notNull().$type<IsoDate>(),
     reportedAt: timestamp('reported_at').notNull(),
     reason: text('reason'),
     status: text('status').notNull().default('open').$type<CallOffStatus>(),
     replacementAssignmentId: text('replacement_assignment_id').$type<Id>(),
   },
-  (t) => [index('call_off_status_idx').on(t.status)],
+  (t) => [
+    index('call_off_status_idx').on(t.status),
+    index('call_off_assignment_idx').on(t.assignmentId),
+    index('call_off_period_date_idx').on(t.periodId, t.date),
+  ],
 );
 
 export const callAttempt = sqliteTable(

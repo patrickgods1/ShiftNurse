@@ -24,8 +24,8 @@ import type {
   PayRate,
 } from '@shiftnurse/core';
 import { dayNumber, MS_PER_DAY, resolvePayRate } from '@shiftnurse/core';
-import { and, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
-import { recordAudit } from '../audit.js';
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm';
+import { recordAudit, recordAuditStrict } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import {
@@ -46,7 +46,9 @@ import {
   nurse,
   overtimeRule,
   payRate,
+  schedulePeriod,
 } from '../schema.js';
+import { getAssignment } from './schedule.js';
 
 // ---------------------------------------------------------------------------
 // Call-offs
@@ -61,17 +63,63 @@ export function getCallOff(db: DbLike, id: Id): CallOff | undefined {
   return row ? toCallOff(row) : undefined;
 }
 
-/** Report a call-off against an existing assignment. The assignment itself is untouched. */
+/**
+ * A unit's call-offs, filterable by status and an inclusive date range, for the Today
+ * screen's history view. `call_off` has no unit column of its own, so it is scoped by joining
+ * through `schedule_period`, the same pattern `lastCalledAt` uses through `nurse`.
+ */
+export function listCallOffsForUnit(
+  db: DbLike,
+  unitId: Id,
+  opts: { status?: CallOffStatus; start?: IsoDate; end?: IsoDate } = {},
+): CallOff[] {
+  const conditions = [eq(schedulePeriod.unitId, unitId)];
+  if (opts.status !== undefined) conditions.push(eq(callOff.status, opts.status));
+  // IsoDate sorts lexically (see the schema header), so a plain text comparison is a valid
+  // date range — no date parsing needed.
+  if (opts.start !== undefined) conditions.push(gte(callOff.date, opts.start));
+  if (opts.end !== undefined) conditions.push(lte(callOff.date, opts.end));
+  return db
+    .select({ callOff })
+    .from(callOff)
+    .innerJoin(schedulePeriod, eq(callOff.periodId, schedulePeriod.id))
+    .where(and(...conditions))
+    .orderBy(callOff.date, callOff.reportedAt, sql`call_off.rowid`)
+    .all()
+    .map((r) => toCallOff(r.callOff));
+}
+
+/** The open call-off against an assignment, if one is currently in progress. */
+export function openCallOffForAssignment(db: DbLike, assignmentId: Id): CallOff | undefined {
+  const row = db
+    .select()
+    .from(callOff)
+    .where(and(eq(callOff.assignmentId, assignmentId), eq(callOff.status, 'open')))
+    .get();
+  return row ? toCallOff(row) : undefined;
+}
+
+/**
+ * Report a call-off against an existing assignment. The assignment itself is untouched here —
+ * it leaves the grid only when a backfill replaces it — but its shift is copied onto the
+ * call-off so the record outlives the row.
+ */
 export function reportCallOff(
   db: DbLike,
   assignmentId: Id,
   actor: string,
   reason?: string,
 ): CallOff {
+  const absent = getAssignment(db, assignmentId);
+  if (!absent) throw new Error(`Assignment ${assignmentId} not found`);
   const id = ids.callOff();
   const row = {
     id,
     assignmentId,
+    periodId: absent.periodId,
+    nurseId: absent.nurseId,
+    shiftTypeId: absent.shiftTypeId,
+    date: absent.date,
     reportedAt: Date.now(),
     reason: reason ?? null,
     status: 'open' as CallOffStatus,
@@ -99,6 +147,7 @@ export function markCallOffCovered(
 ): CallOff {
   const before = getCallOff(db, id);
   if (!before) throw new Error(`Call-off ${id} not found`);
+  if (before.status !== 'open') throw new Error(`Call-off ${id} is ${before.status}, not open`);
   db.update(callOff)
     .set({ status: 'covered', replacementAssignmentId })
     .where(eq(callOff.id, id))
@@ -116,40 +165,41 @@ export function markCallOffCovered(
   return after;
 }
 
-/** No replacement was found before the shift started. The shift ran short-staffed. */
-export function markCallOffUncovered(db: DbLike, id: Id, actor: string, reason?: string): CallOff {
+/**
+ * No replacement was found before the shift started. The shift ran short-staffed.
+ *
+ * A reason is required — same as `deny`/`resolve` elsewhere — because "we gave up looking"
+ * is exactly the fact a union representative will ask about later.
+ */
+export function markCallOffUncovered(db: DbLike, id: Id, actor: string, reason: string): CallOff {
   const before = getCallOff(db, id);
   if (!before) throw new Error(`Call-off ${id} not found`);
+  if (before.status !== 'open') throw new Error(`Call-off ${id} is ${before.status}, not open`);
+  const after: CallOff = { ...before, status: 'uncovered' };
+  // Audited before the write: a blank reason must not flip the status and leave no record —
+  // a retry with a real reason would then find the call-off already uncovered.
+  recordAuditStrict(
+    db,
+    { entityType: 'call_off', entityId: id, action: 'update', actor, before, after, reason },
+    { requireReason: true },
+  );
   db.update(callOff).set({ status: 'uncovered' }).where(eq(callOff.id, id)).run();
-  const after = getCallOff(db, id);
-  if (!after) throw new Error(`Call-off ${id} vanished during update`);
-  recordAudit(db, {
-    entityType: 'call_off',
-    entityId: id,
-    action: 'update',
-    actor,
-    before,
-    after,
-    reason,
-  });
   return after;
 }
 
-export function cancelCallOff(db: DbLike, id: Id, actor: string, reason?: string): CallOff {
+/** The nurse turned up after all, or the call-off was logged in error. Reason required. */
+export function cancelCallOff(db: DbLike, id: Id, actor: string, reason: string): CallOff {
   const before = getCallOff(db, id);
   if (!before) throw new Error(`Call-off ${id} not found`);
+  if (before.status !== 'open') throw new Error(`Call-off ${id} is ${before.status}, not open`);
+  const after: CallOff = { ...before, status: 'cancelled' };
+  // Audited before the write, same reasoning as `markCallOffUncovered` above.
+  recordAuditStrict(
+    db,
+    { entityType: 'call_off', entityId: id, action: 'update', actor, before, after, reason },
+    { requireReason: true },
+  );
   db.update(callOff).set({ status: 'cancelled' }).where(eq(callOff.id, id)).run();
-  const after = getCallOff(db, id);
-  if (!after) throw new Error(`Call-off ${id} vanished during cancellation`);
-  recordAudit(db, {
-    entityType: 'call_off',
-    entityId: id,
-    action: 'update',
-    actor,
-    before,
-    after,
-    reason,
-  });
   return after;
 }
 
@@ -165,6 +215,11 @@ export function logCallAttempt(
   actor: string,
   notes?: string,
 ): CallAttempt {
+  const against = getCallOff(db, callOffId);
+  if (!against) throw new Error(`Call-off ${callOffId} not found`);
+  if (against.status !== 'open') {
+    throw new Error(`Call-off ${callOffId} is ${against.status}, not open`);
+  }
   const id = ids.callAttempt();
   const row = {
     id,

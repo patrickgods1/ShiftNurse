@@ -19,6 +19,9 @@ import type {
   BacktestResult,
   Budget,
   BudgetVariance,
+  CallAttempt,
+  CallOff,
+  CallOutcome,
   CensusForecast,
   CensusProposal,
   ComplianceAlert,
@@ -44,6 +47,7 @@ import type {
   PayRate,
   Preference,
   RatioRule,
+  ReplacementReport,
   Resolution,
   RosterCsvError,
   RosterCsvRow,
@@ -54,6 +58,7 @@ import type {
   SchedulePeriod,
   ScheduleVersion,
   ShiftDemand,
+  ShiftStaffingCheck,
   ShiftSwap,
   ShiftSwapStatus,
   ShiftType,
@@ -324,6 +329,63 @@ export interface SolveJobStatus {
  * main process are synchronous (better-sqlite3 is synchronous); the renderer sees the
  * `Promise`-returning shape in {@link RendererApi} because IPC is asynchronous.
  */
+// ---------------------------------------------------------------------------
+// Day-of console (M13)
+// ---------------------------------------------------------------------------
+
+/** One nurse on one shift, with the open call-off against it when there is one. */
+export interface RosterEntryView {
+  assignment: Assignment;
+  nurse: Nurse;
+  callOff?: CallOff;
+}
+
+/** A shift as the Today screen shows it: who is on it, and whether it is staffed. */
+export interface TodayShiftView {
+  date: IsoDate;
+  shiftType: ShiftType;
+  /** The census row for this slot, if one exists (projected and, once entered, actual). */
+  census?: CensusForecast;
+  staffing: ShiftStaffingCheck;
+  roster: RosterEntryView[];
+  /** `current` when the wall clock is inside its window, `next` for the one starting soonest. */
+  status: 'current' | 'next' | 'other';
+}
+
+export interface DayOfSummary {
+  date: IsoDate;
+  /** Host wall-clock minute of `date`, read in main; the renderer never touches the clock. */
+  minuteOfDay: number;
+  /** The period whose assignments these are (published preferred over draft), if any covers `date`. */
+  period: SchedulePeriod | undefined;
+  /** Current and next slots first, then the rest of `date`'s shifts in sort order. */
+  shifts: TodayShiftView[];
+  /** Every open call-off on this unit, whatever the date, soonest shift first. */
+  openCallOffs: CallOffView[];
+}
+
+/** A call-off with everything the console needs to act on it, joined in main. */
+export interface CallOffView {
+  callOff: CallOff;
+  /** The absent nurse's row while it still exists; a backfill replaces it, so covered call-offs have none. */
+  assignment?: Assignment;
+  nurse: Nurse;
+  shiftType: ShiftType;
+  period: SchedulePeriod;
+  /** Newest first. */
+  attempts: CallAttempt[];
+  /** Present once covered. */
+  replacement?: { assignment: Assignment; nurse: Nurse };
+}
+
+export interface BackfillResult {
+  callOff: CallOff;
+  /** The `accepted` attempt that closed the search. */
+  attempt: CallAttempt;
+  /** The `source: 'callout'` row now on the schedule. */
+  assignment: Assignment;
+}
+
 export interface ShiftNurseApi {
   app: {
     info(): AppInfo;
@@ -548,6 +610,35 @@ export interface ShiftNurseApi {
     deny(id: Id, reason: string): ShiftSwap;
     cancel(id: Id, reason?: string): ShiftSwap;
   };
+  dayOf: {
+    /** The console's one read: shifts around now, their staffing, and the open call-offs. */
+    today(unitId: Id, date?: IsoDate): DayOfSummary;
+    /** Call-offs whose shift falls in the inclusive range, any status, soonest first. */
+    callOffs(unitId: Id, start: IsoDate, end: IsoDate): CallOffView[];
+    /** Records the call-off; the assignment stays on the grid until a backfill replaces it. */
+    reportCallOff(assignmentId: Id, reason?: string): CallOff;
+    /** Ranked, eligible-only replacements, simulated on the period's own rule-set snapshot. */
+    replacements(callOffId: Id): ReplacementReport;
+    /** Log a call that did not end the search. `accepted` goes through `backfill` instead. */
+    logCall(
+      callOffId: Id,
+      nurseId: Id,
+      outcome: Exclude<CallOutcome, 'accepted'>,
+      notes?: string,
+    ): CallAttempt;
+    /**
+     * The nurse said yes: logs the `accepted` attempt, replaces the absent assignment with a
+     * `source: 'callout'` row for `nurseId` (re-checked against the rule engine in main, never
+     * trusting the renderer's list), marks the call-off covered — one transaction. On a
+     * published period each shift touched is written to the change log as `source: 'backfill'`.
+     */
+    backfill(callOffId: Id, nurseId: Id, notes?: string): BackfillResult;
+    /** Nobody found before the shift started; the shift ran short. Reason required. */
+    markUncovered(callOffId: Id, reason: string): CallOff;
+    /** The nurse turned up after all, or it was logged in error. Reason required. */
+    cancelCallOff(callOffId: Id, reason: string): CallOff;
+    callLog(callOffId: Id): CallAttempt[];
+  };
 }
 
 type Promisify<T> = {
@@ -640,6 +731,17 @@ export const API_CHANNELS = {
   ],
   conflicts: ['analyse', 'policy', 'savePolicy', 'resolve', 'autoResolve'],
   exchange: ['list', 'listForPeriod', 'evaluate', 'propose', 'approve', 'deny', 'cancel'],
+  dayOf: [
+    'today',
+    'callOffs',
+    'reportCallOff',
+    'replacements',
+    'logCall',
+    'backfill',
+    'markUncovered',
+    'cancelCallOff',
+    'callLog',
+  ],
 } as const satisfies { [R in keyof ShiftNurseApi]: readonly (keyof ShiftNurseApi[R])[] };
 
 export type ApiResource = keyof ShiftNurseApi;

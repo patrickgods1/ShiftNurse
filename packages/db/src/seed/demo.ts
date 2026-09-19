@@ -70,7 +70,12 @@ import {
   type UpsertFairnessLedgerInput,
 } from '../repositories/operations.js';
 import { createNurse, grantCredential, replaceNursePreferences } from '../repositories/roster.js';
-import { createAssignment, createPeriod, publishPeriod } from '../repositories/schedule.js';
+import {
+  createAssignment,
+  createPeriod,
+  deleteAssignment,
+  publishPeriod,
+} from '../repositories/schedule.js';
 import { approveTimeOff, createTimeOffRequest, denyTimeOff } from '../repositories/timeoff.js';
 import * as s from '../schema.js';
 
@@ -928,6 +933,12 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
       if (outcome === 'accepted') coveredBy = t;
     }
     if (coveredBy) {
+      // The absent nurse's row must go before the replacement lands, exactly as a live
+      // backfill does — otherwise the fairness ledger and every downstream count still see
+      // the shift as worked by someone who called off it.
+      deleteAssignment(db, a.id, ACTOR, 'Called off');
+      const removedIndex = historicalAssignments.findIndex((x) => x.id === a.id);
+      if (removedIndex !== -1) historicalAssignments.splice(removedIndex, 1);
       const replacement = createAssignment(
         db,
         {
@@ -941,6 +952,9 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
         ACTOR,
       );
       bump('assignment');
+      // Back into the pool immediately: a later call-off in this same loop draws its cover
+      // from `historicalAssignments`, and this nurse is now busy on this date/shift too.
+      historicalAssignments.push(replacement);
       markCallOffCovered(db, co.id, replacement.id, ACTOR);
     }
   }

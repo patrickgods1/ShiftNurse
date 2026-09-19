@@ -9,6 +9,8 @@ export * from './conflicts/index.js';
 export * from './cost/cost.js';
 export * from './cost/rates.js';
 export * from './cost/types.js';
+// Day-of: call-off replacement finder, live staffing check
+export * from './dayof/index.js';
 export * from './domain/entities.js';
 export * from './domain/time.js';
 // Exchange
