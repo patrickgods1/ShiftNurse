@@ -15,11 +15,13 @@ import type {
   AcuityTier,
   Assignment,
   AssignmentSource,
+  AutoResolvePolicy,
   BacktestResult,
   Budget,
   BudgetVariance,
   CensusForecast,
   CensusProposal,
+  ConflictReport,
   CoverageRequirement,
   Credential,
   Differential,
@@ -39,6 +41,7 @@ import type {
   PayRate,
   Preference,
   RatioRule,
+  Resolution,
   RosterCsvError,
   RosterCsvRow,
   RuleSet,
@@ -48,8 +51,10 @@ import type {
   ShiftType,
   SolveProgress,
   SolveReport,
+  TimeOffImpact,
   TimeOffRequest,
   TimeOffStatus,
+  TimeOffType,
   Unit,
 } from '@shiftnurse/core';
 
@@ -220,6 +225,26 @@ export interface PeriodCostReport {
   cost: ScheduleCost;
   budget: Budget | undefined;
   variance: BudgetVariance | undefined;
+}
+
+export interface CreateTimeOffInput {
+  nurseId: Id;
+  startDate: IsoDate;
+  endDate: IsoDate;
+  type: TimeOffType;
+  reason?: string;
+}
+
+export interface TimeOffApproval {
+  request: TimeOffRequest;
+  lifted: Assignment[];
+  stillRostered: Assignment[];
+}
+
+/** What one auto-resolve pass did: the resolutions it applied, then the period re-analysed. */
+export interface AutoResolveResult {
+  applied: Resolution[];
+  report: ConflictReport;
 }
 
 export interface SolveJobOptions {
@@ -404,6 +429,31 @@ export interface ShiftNurseApi {
   };
   timeOff: {
     list(unitId: Id, status?: TimeOffStatus): TimeOffRequest[];
+    /** Every request touching the inclusive range, whatever its status — the heatmap's feed. */
+    listInRange(unitId: Id, start: IsoDate, end: IsoDate): TimeOffRequest[];
+    create(input: CreateTimeOffInput): TimeOffRequest;
+    /**
+     * Approves and, in the same transaction, lifts the nurse's assignments inside the range
+     * from every draft period. Shifts on a published period are left alone and returned as
+     * `stillRostered`; they surface as a `scheduled_on_leave` conflict.
+     */
+    approve(id: Id, reason?: string): TimeOffApproval;
+    /** A denial without a reason is refused by the database, not just the form. */
+    deny(id: Id, reason: string): TimeOffRequest;
+    cancel(id: Id, reason?: string): TimeOffRequest;
+    withdrawApproval(id: Id, reason: string): TimeOffRequest;
+    /** What approving or denying this request would do to the given period, before deciding. */
+    impact(periodId: Id, requestId: Id, decision: 'approved' | 'denied'): TimeOffImpact;
+  };
+  conflicts: {
+    /** Read-only: works on a published period too. */
+    analyse(periodId: Id): ConflictReport;
+    policy(unitId: Id): AutoResolvePolicy;
+    savePolicy(unitId: Id, policy: AutoResolvePolicy): AutoResolvePolicy;
+    /** Applies one resolution's actions atomically; the reason is required and audited. */
+    resolve(periodId: Id, resolution: Resolution, reason: string): Resolution;
+    /** Applies every resolution the unit's policy admits, each audited as `auto_resolve`. */
+    autoResolve(periodId: Id): AutoResolveResult;
   };
 }
 
@@ -480,7 +530,17 @@ export const API_CHANNELS = {
     'report',
     'setBudget',
   ],
-  timeOff: ['list'],
+  timeOff: [
+    'list',
+    'listInRange',
+    'create',
+    'approve',
+    'deny',
+    'cancel',
+    'withdrawApproval',
+    'impact',
+  ],
+  conflicts: ['analyse', 'policy', 'savePolicy', 'resolve', 'autoResolve'],
 } as const satisfies { [R in keyof ShiftNurseApi]: readonly (keyof ShiftNurseApi[R])[] };
 
 export type ApiResource = keyof ShiftNurseApi;

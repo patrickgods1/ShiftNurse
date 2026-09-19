@@ -240,13 +240,20 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
       test re-judged by the full engine; smoke test generates the demo draft twice in ~1s each with
       the locked row kept and byte-identical output; full budget on the demo unit fills every floor)
 
-### M10 — Time off & conflicts
-- [ ] Time-off request entry and queue; calendar heatmap of overlapping requests
-- [ ] Approve/deny showing projected staffing impact before deciding; denial reason required
-- [ ] `ConflictDetector`: understaffing, ratio breach, competing PTO, FTE, credentials, budget
-- [ ] `ResolutionGenerator`: each option simulated for coverage, fairness **and** dollar impact
-- [ ] Ranked resolution cards; auto-resolve threshold (off by default) with audit logging
-- [ ] Verify: over-approving PTO on one weekend surfaces ranked options with real deltas
+### M10 — Time off & conflicts ✅
+- [x] Time-off request entry and queue; calendar heatmap of overlapping requests
+- [x] Approve/deny showing projected staffing impact before deciding; denial reason required
+- [x] `ConflictDetector`: understaffing, ratio breach, competing PTO, FTE, credentials, budget
+- [x] `ResolutionGenerator`: each option simulated for coverage, fairness **and** dollar impact
+- [x] Ranked resolution cards; auto-resolve threshold (off by default) with audit logging
+- [x] Verify: over-approving PTO on one weekend surfaces ranked options with real deltas
+      (`core/conflicts/analyse.test.ts` asserts the scenario; the smoke test exercises
+      `timeOff.impact`, `conflicts.analyse` and a policy-off `autoResolve` on the demo draft)
+
+> **Note:** the smoke's conflict/option counts differ run to run because a fresh `userData`
+> mints a new demo period id and therefore a new solver seed; within a run analysis is
+> byte-identical on rerun. The M5 follow-up (concurrent time-of-day coverage across
+> overlapping shift types) is still open — the detector reads demand per (date, shift type).
 
 ### M11 — Shift exchange
 - [ ] `shift_swap` entity and repository

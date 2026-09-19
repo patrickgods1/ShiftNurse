@@ -3,6 +3,8 @@
 // Acuity-driven demand
 export * from './acuity/demand.js';
 export * from './acuity/forecast.js';
+// Conflicts
+export * from './conflicts/index.js';
 // Cost
 export * from './cost/cost.js';
 export * from './cost/rates.js';

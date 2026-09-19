@@ -260,6 +260,50 @@ const PAY_TAB_SCRIPT = `
     tick();
   })`;
 
+/**
+ * M10: file a pending request through the bridge, simulate approving it against the demo
+ * draft, analyse the draft's conflicts, and confirm auto-resolve applies nothing while the
+ * policy is off — the one guarantee the policy's default exists to give.
+ */
+const REQUESTS_SCRIPT = `
+  (async () => {
+    const api = window.shiftnurse;
+    const [unit] = await api.units.list();
+    const periods = await api.periods.list(unit.id);
+    const draft = periods.find((p) => p.status === 'draft');
+    if (!draft) return { error: 'no draft period' };
+    const nurses = await api.nurses.list(unit.id);
+    const nurse = nurses.find((n) => n.active);
+    const request = await api.timeOff.create({
+      nurseId: nurse.id,
+      startDate: draft.startDate,
+      endDate: draft.startDate,
+      type: 'pto',
+      reason: 'smoke',
+    });
+    const impact = await api.timeOff.impact(draft.id, request.id, 'approved');
+    const report = await api.conflicts.analyse(draft.id);
+    const policy = await api.conflicts.policy(unit.id);
+    const auto = await api.conflicts.autoResolve(draft.id);
+    let denyWithoutReason = false;
+    try {
+      await api.timeOff.deny(request.id, '   ');
+    } catch {
+      denyWithoutReason = true;
+    }
+    return {
+      status: request.status,
+      impactDecision: impact.decision,
+      competing: impact.competing.length,
+      hasSummary: typeof report.summary === 'object' && report.summary !== null,
+      conflicts: report.conflicts.length,
+      resolutions: report.resolutions.length,
+      policyEnabled: policy.enabled,
+      autoApplied: auto.applied.length,
+      denyWithoutReason,
+    };
+  })()`;
+
 export function runSmoke(win: BrowserWindow): void {
   const timer = setTimeout(() => fail(`did not finish within ${TIMEOUT_MS}ms`), TIMEOUT_MS);
 
@@ -412,6 +456,31 @@ export function runSmoke(win: BrowserWindow): void {
       }
       console.log(
         `[smoke] pay settings OK (${pay.rows} rates, ${pay.differentials} differentials)`,
+      );
+      const requests = (await win.webContents.executeJavaScript(REQUESTS_SCRIPT)) as {
+        error?: string;
+        status: string;
+        impactDecision: string;
+        competing: number;
+        hasSummary: boolean;
+        conflicts: number;
+        resolutions: number;
+        policyEnabled: boolean;
+        autoApplied: number;
+        denyWithoutReason: boolean;
+      };
+      if (requests.error) fail(`requests: ${requests.error}`);
+      if (requests.status !== 'pending') fail(`created request is ${requests.status}`);
+      if (requests.impactDecision !== 'approved')
+        fail('timeOff.impact returned the wrong decision');
+      if (!requests.hasSummary) fail('conflicts.analyse returned no summary');
+      if (requests.policyEnabled) fail('auto-resolve policy is on by default');
+      if (requests.autoApplied !== 0) {
+        fail(`auto-resolve applied ${requests.autoApplied} resolutions with the policy off`);
+      }
+      if (!requests.denyWithoutReason) fail('a denial with a blank reason was accepted');
+      console.log(
+        `[smoke] requests OK (impact simulated, ${requests.conflicts} conflicts / ${requests.resolutions} options, auto-resolve off applied 0, blank denial refused)`,
       );
       const shotDirAfter = process.env.SHIFTNURSE_SMOKE_SCREENSHOT;
       if (shotDirAfter?.endsWith('/')) {

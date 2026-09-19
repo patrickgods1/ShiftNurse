@@ -11,9 +11,12 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import {
   type Assignment,
   addDays,
+  analyseConflicts,
   type BurdenCounters,
   backtest,
   buildRuleContext,
+  type ConflictInput,
+  type ConflictReport,
   type CostContext,
   type CounterContext,
   compareDates,
@@ -37,6 +40,7 @@ import {
   parseHistoricalScheduleCsv,
   parseRosterCsv,
   proposeCensus,
+  type Resolution,
   type RuleSet,
   type SchedulePeriod,
   ScheduleView,
@@ -44,9 +48,14 @@ import {
   type SolveInput,
   type SolveReport,
   scoreFairness,
+  selectAutoResolutions,
+  timeOffImpact,
   today,
 } from '@shiftnurse/core';
 import {
+  applyResolution,
+  approveTimeOffAndLiftAssignments,
+  cancelTimeOff,
   createAcuityTier,
   createAssignment,
   createCredential,
@@ -58,6 +67,7 @@ import {
   createPeriod,
   createRatioRule,
   createShiftType,
+  createTimeOffRequest,
   credentialsExpiringBetween,
   type DbLike,
   deactivateNurse,
@@ -71,9 +81,10 @@ import {
   deleteHoliday,
   deleteOvertimeRule,
   deletePayRate,
+  denyTimeOff,
   exportRoster,
-  getAssignment,
   getBudget,
+  getConflictPolicy,
   getCurrentDraft,
   getHppdTarget,
   getLatestRuleSet,
@@ -114,13 +125,16 @@ import {
   listShiftCredentialRequirementsForUnit,
   listShiftTypesForUnit,
   listTimeOffForUnit,
+  listTimeOffOverlappingForUnit,
   listUnits,
+  moveAssignment,
   priorAssignmentsBefore,
   recordActualCensus,
   replaceAssignments,
   replaceNursePreferences,
   revokeCredential,
   type ShiftNurseDb,
+  saveConflictPolicy,
   saveRuleSet,
   setLocked as setAssignmentLocked,
   setBudget,
@@ -139,9 +153,11 @@ import {
   upsertCensusForecasts,
   upsertCoverageRequirement,
   upsertHppdTarget,
+  withdrawApproval,
 } from '@shiftnurse/db';
 import { app, BrowserWindow, dialog } from 'electron';
 import type {
+  AutoResolveResult,
   DashboardSummary,
   FairnessTrendPoint,
   HistoryImportPreview,
@@ -565,8 +581,26 @@ function buildSolveInput(db: ShiftNurseDb, periodId: Id): SolveInput {
   if (period.status !== 'draft') {
     throw new Error(`Period "${period.name}" is ${period.status}; only a draft can be generated`);
   }
+  return loadPeriodInput(db, period);
+}
+
+/**
+ * The same rows the solver sees, plus the budget, for conflict detection. Analysis is
+ * read-only, so a published period is fine here — the manager may want to know what a
+ * late approval did to last week's schedule — while *applying* a resolution is refused for
+ * anything but a draft inside `applyResolution` itself.
+ */
+function buildConflictInput(db: ShiftNurseDb, periodId: Id): ConflictInput {
+  const period = getPeriod(db, periodId);
+  if (!period) throw new Error(`Unknown period ${periodId}`);
+  const budget = getBudget(db, periodId);
+  return { ...loadPeriodInput(db, period), ...(budget ? { budget } : {}) };
+}
+
+/** Shared loader behind the solver and the conflict detector: one definition of "the period". */
+function loadPeriodInput(db: ShiftNurseDb, period: SchedulePeriod): SolveInput {
   const ruleSet = getRuleSet(db, period.ruleSetId);
-  if (!ruleSet) throw new Error(`Period ${periodId} cites unknown rule set ${period.ruleSetId}`);
+  if (!ruleSet) throw new Error(`Period ${period.id} cites unknown rule set ${period.ruleSetId}`);
   const unitId = period.unitId;
   const cost = costContext(db, unitId, ruleSet);
   return {
@@ -579,7 +613,7 @@ function buildSolveInput(db: ShiftNurseDb, periodId: Id): SolveInput {
       datesInRange(period.startDate, period.endDate),
       demandInputs(db, unitId, period.startDate, period.endDate),
     ).all(),
-    assignments: listAssignmentsForPeriod(db, periodId),
+    assignments: listAssignmentsForPeriod(db, period.id),
     priorAssignments: priorAssignmentsBefore(db, unitId, period.startDate, 14),
     timeOff: listTimeOffForUnit(db, unitId),
     credentials: listCredentials(db),
@@ -594,6 +628,38 @@ function buildSolveInput(db: ShiftNurseDb, periodId: Id): SolveInput {
       overtimeRules: cost.overtimeRules,
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Conflicts
+// ---------------------------------------------------------------------------
+
+function analyse(db: ShiftNurseDb, periodId: Id): ConflictReport {
+  return analyseConflicts(buildConflictInput(db, periodId));
+}
+
+/**
+ * Each resolution is applied in its own transaction and the period is re-analysed between
+ * them: applying one option can close (or change) a neighbouring conflict, and a stale option
+ * must be dropped rather than double-booked. The pass stops at the first refusal so a
+ * surprising state is left for the manager to see, not papered over.
+ */
+function autoResolve(db: ShiftNurseDb, periodId: Id): AutoResolveResult {
+  const period = getPeriod(db, periodId);
+  if (!period) throw new Error(`Unknown period ${periodId}`);
+  const policy = getConflictPolicy(db, period.unitId);
+  const applied: Resolution[] = [];
+  if (!policy.enabled) return { applied, report: analyse(db, periodId) };
+
+  const seen = new Set<string>();
+  for (;;) {
+    const report = analyse(db, periodId);
+    const next = selectAutoResolutions(report, policy).find((r) => !seen.has(r.id));
+    if (!next) return { applied, report };
+    seen.add(next.id);
+    transact(db, (tx) => applyResolution(tx, periodId, next, ACTOR, { auto: true }));
+    applied.push(next);
+  }
 }
 
 /** Write a finished solve into its period: unlocked rows replaced, locked rows untouched, audited. */
@@ -751,28 +817,9 @@ export function createApi(
       createAssignment: (input) =>
         createAssignment(db, { ...input, source: input.source ?? 'manual' }, ACTOR),
       moveAssignment: ({ assignmentId, nurseId, shiftTypeId, date }) =>
-        transact(db, (tx) => {
-          const existing = getAssignment(tx, assignmentId);
-          if (!existing) throw new Error(`Assignment ${assignmentId} not found`);
-          if (existing.isLocked) throw new Error('Cannot move a locked assignment');
-          deleteAssignment(tx, assignmentId, ACTOR);
-          // Charge, overtime authorisation and notes describe the shift, not the cell it sits
-          // in; a move must carry them or the drop silently strips the charge nurse.
-          return createAssignment(
-            tx,
-            {
-              periodId: existing.periodId,
-              nurseId,
-              shiftTypeId,
-              date,
-              source: 'manual',
-              isCharge: existing.isCharge,
-              isOvertime: existing.isOvertime,
-              ...(existing.notes !== undefined ? { notes: existing.notes } : {}),
-            },
-            ACTOR,
-          );
-        }),
+        transact(db, (tx) =>
+          moveAssignment(tx, assignmentId, { nurseId, shiftTypeId, date }, ACTOR),
+        ),
       updateAssignment: (assignmentId, patch) => updateAssignmentDb(db, assignmentId, patch, ACTOR),
       deleteAssignment: (assignmentId) => deleteAssignment(db, assignmentId, ACTOR),
       setLocked: (assignmentId, locked) => setAssignmentLocked(db, assignmentId, locked, ACTOR),
@@ -826,6 +873,27 @@ export function createApi(
     },
     timeOff: {
       list: (unitId, status) => listTimeOffForUnit(db, unitId, status),
+      listInRange: (unitId, start, end) => listTimeOffOverlappingForUnit(db, unitId, start, end),
+      create: (input) => createTimeOffRequest(db, input, ACTOR),
+      approve: (id, reason) =>
+        transact(db, (tx) => approveTimeOffAndLiftAssignments(tx, id, ACTOR, reason)),
+      deny: (id, reason) => denyTimeOff(db, id, ACTOR, reason),
+      cancel: (id, reason) => cancelTimeOff(db, id, ACTOR, reason),
+      withdrawApproval: (id, reason) => withdrawApproval(db, id, ACTOR, reason),
+      impact: (periodId, requestId, decision) =>
+        timeOffImpact(buildConflictInput(db, periodId), requestId, decision),
+    },
+    conflicts: {
+      analyse: (periodId) => analyse(db, periodId),
+      policy: (unitId) => getConflictPolicy(db, unitId),
+      savePolicy: (unitId, policy) => saveConflictPolicy(db, unitId, policy, ACTOR),
+      resolve: (periodId, resolution, reason) =>
+        transact(
+          db,
+          (tx) =>
+            applyResolution(tx, periodId, resolution, ACTOR, { auto: false, reason }).resolution,
+        ),
+      autoResolve: (periodId) => autoResolve(db, periodId),
     },
   };
 }

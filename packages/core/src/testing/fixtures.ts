@@ -12,6 +12,8 @@ import type {
   CensusForecast,
   CoverageRequirement,
   Credential,
+  Differential,
+  DifferentialKind,
   FairnessLedgerEntry,
   Holiday,
   HppdTarget,
@@ -19,6 +21,8 @@ import type {
   Nurse,
   NurseCredential,
   NurseRole,
+  OvertimeRule,
+  PayRate,
   Preference,
   RatioRule,
   SchedulePeriod,
@@ -493,5 +497,47 @@ export function credentialRequirement(
     role: options.role ?? null,
     credentialId: credential.id,
     minCount,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Pay
+// ---------------------------------------------------------------------------
+
+/** A role-default rate (`nurseId: null`) or, with `nurseId`, a per-nurse one, in force from 2025. */
+export function payRate(
+  hourlyRate: number,
+  options: { nurseId?: Id; role?: NurseRole; effectiveFrom?: string } = {},
+): PayRate {
+  const nurseId = options.nurseId ?? null;
+  return {
+    id: `rate-${nurseId ?? options.role ?? 'RN'}-${hourlyRate}`,
+    nurseId,
+    role: nurseId === null ? (options.role ?? 'RN') : null,
+    hourlyRate,
+    effectiveFrom: isoDate(options.effectiveFrom ?? '2025-01-01'),
+  };
+}
+
+export function differential(
+  kind: DifferentialKind,
+  mode: Differential['mode'],
+  amount: number,
+): Differential {
+  return { id: `diff-${kind}`, unitId: UNIT_ID, kind, mode, amount, active: true };
+}
+
+export function overtimeRule(
+  basis: OvertimeRule['basis'],
+  thresholdHours: number,
+  multiplier = 1.5,
+): OvertimeRule {
+  return {
+    id: `ot-${basis}-${thresholdHours}`,
+    unitId: UNIT_ID,
+    basis,
+    thresholdHours,
+    multiplier,
+    active: true,
   };
 }

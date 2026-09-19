@@ -38,6 +38,7 @@ export const ids = {
   differential: () => newId('diff'),
   overtimeRule: () => newId('ot'),
   budget: () => newId('bud'),
+  conflictPolicy: () => newId('cpol'),
   fairness: () => newId('fair'),
   audit: () => newId('aud'),
 } as const;

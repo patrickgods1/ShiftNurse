@@ -333,7 +333,12 @@ export function updateAssignment(
  * A deleted assignment leaves no other trace of itself, so the full row goes into `before` —
  * this audit entry is the only remaining record that the shift was ever scheduled.
  */
-export function deleteAssignment(db: DbLike, assignmentId: Id, actor: string): void {
+export function deleteAssignment(
+  db: DbLike,
+  assignmentId: Id,
+  actor: string,
+  reason?: string,
+): void {
   const beforeRow = db.select().from(assignment).where(eq(assignment.id, assignmentId)).get();
   if (!beforeRow) throw new Error(`Assignment ${assignmentId} not found`);
   const before = toAssignment(beforeRow);
@@ -344,7 +349,48 @@ export function deleteAssignment(db: DbLike, assignmentId: Id, actor: string): v
     action: 'delete',
     actor,
     before,
+    reason,
   });
+}
+
+export interface MoveAssignmentTarget {
+  nurseId: Id;
+  shiftTypeId: Id;
+  date: IsoDate;
+}
+
+/**
+ * Move a shift to another nurse, date or shift type. `nurseId` is immutable on an assignment,
+ * so a move is a delete and a create; callers run it inside `transact` so the grid never
+ * observes a half-moved shift. Charge, overtime authorisation and notes describe the shift,
+ * not the cell it sits in, so they travel with it — otherwise a drop silently strips the charge
+ * nurse. Locked rows refuse to move: the lock is the manager's pin.
+ */
+export function moveAssignment(
+  db: DbLike,
+  assignmentId: Id,
+  target: MoveAssignmentTarget,
+  actor: string,
+  source: Assignment['source'] = 'manual',
+): Assignment {
+  const existing = getAssignment(db, assignmentId);
+  if (!existing) throw new Error(`Assignment ${assignmentId} not found`);
+  if (existing.isLocked) throw new Error('Cannot move a locked assignment');
+  deleteAssignment(db, assignmentId, actor);
+  return createAssignment(
+    db,
+    {
+      periodId: existing.periodId,
+      nurseId: target.nurseId,
+      shiftTypeId: target.shiftTypeId,
+      date: target.date,
+      source,
+      isCharge: existing.isCharge,
+      isOvertime: existing.isOvertime,
+      ...(existing.notes !== undefined ? { notes: existing.notes } : {}),
+    },
+    actor,
+  );
 }
 
 /**

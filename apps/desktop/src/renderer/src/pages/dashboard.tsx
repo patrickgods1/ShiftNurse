@@ -5,6 +5,7 @@
  */
 
 import type { ExpiringCredentialView } from '@shared/api.js';
+import { Link } from '@tanstack/react-router';
 import { useDashboard, useNurses } from '../api.js';
 import { AsyncState } from '../components/async-state.js';
 import { PageHeader } from '../components/page-header.js';
@@ -114,11 +115,13 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-4 gap-4">
         <StatCard label="Active nurses" value={summary.activeNurses} />
-        <StatCard
-          label="Pending time off"
-          value={summary.pendingTimeOff}
-          tone={summary.pendingTimeOff > 0 ? 'warn' : 'neutral'}
-        />
+        <Link to="/requests" aria-label="Pending time off — open Requests" className="block">
+          <StatCard
+            label="Pending time off"
+            value={summary.pendingTimeOff}
+            tone={summary.pendingTimeOff > 0 ? 'warn' : 'neutral'}
+          />
+        </Link>
         <StatCard
           label="Open call-offs"
           value={summary.openCallOffs}

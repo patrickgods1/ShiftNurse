@@ -23,7 +23,9 @@ self-service later becomes an intake surface rather than a new data model.
   `costSchedule`, `marginalCost`, `compareToBudget` — the pay model is documented in
   `cost/types.ts`), `solver/` (M9: `types.ts` is the `Solver` contract, `model.ts` the
   incremental state + objective, `greedy.ts` the seed, `anneal.ts` the moves, `solver.ts` the
-  entry point, `rng.ts` the seeded mulberry32 shared with the seeder), `testing/fixtures.ts`.
+  entry point, `rng.ts` the seeded mulberry32 shared with the seeder), `conflicts/` (M10: `types.ts` is the
+  contract, `engine.ts` the shared indexes + simulation state, `detect.ts`, `resolve.ts`,
+  `analyse.ts`), `testing/fixtures.ts`.
 - `packages/db` (M2, complete): 26-table Drizzle schema, generated migrations, `client.ts`
   (WAL, foreign keys ON, `transact`), `audit.ts`, `mappers.ts`, and repositories under
   `repositories/` — `roster`, `config`, `schedule`, `timeoff`, `operations`.
@@ -43,7 +45,12 @@ self-service later becomes an intake surface rather than a new data model.
   running cost strip on the Schedule page) and Generate (M9: `main/solver-worker.ts` runs core's
   `solve` in a worker thread, `main/solver-jobs.ts` tracks jobs and applies the result, the
   renderer polls `solver.status` from `api-solver.ts` and shows `schedule/generate-dialog.tsx`)
-  are real; Requests is a placeholder until M10.
+  and Requests (M10: `core/conflicts` — `detectConflicts`, `generateResolutions`,
+  `analyseConflicts`, `selectAutoResolutions`, `timeOffImpact` over the same `SolveInput` the
+  solver uses; `db/repositories/conflicts.ts` holds the per-unit auto-resolve policy and
+  `applyResolution`, which audits before it writes; the Requests page has the queue, entry
+  dialog, overlap heatmap, decide-with-impact dialog and ranked resolution cards, and Settings >
+  Conflicts holds the auto-resolve policy, off by default) are real.
   Renderer hooks: `api.ts` (roster), `api-config.ts` (configuration + rules), `api-demand.ts`
   (census/demand), `api-schedule.ts` (grid mutations + validation), `api-fairness.ts`
   (report/trend/import), `api-cost.ts` (pay config, cost report, budget).

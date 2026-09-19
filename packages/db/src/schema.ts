@@ -546,6 +546,27 @@ export const budget = sqliteTable('budget', {
 });
 
 // ---------------------------------------------------------------------------
+// Conflicts
+// ---------------------------------------------------------------------------
+
+/**
+ * The unit's auto-resolve policy. One row per unit, absent until the manager first saves it —
+ * the repository returns core's `DEFAULT_AUTO_RESOLVE_POLICY` (off) for a missing row, so a
+ * unit can never auto-apply a change nobody opted into.
+ */
+export const conflictPolicy = sqliteTable('conflict_policy', {
+  id: text('id').primaryKey().$type<Id>(),
+  unitId: text('unit_id')
+    .notNull()
+    .unique()
+    .references(() => unit.id, { onDelete: 'cascade' })
+    .$type<Id>(),
+  enabled: bool('enabled').notNull().default(false),
+  maxCostDelta: real('max_cost_delta').notNull().default(0),
+  maxFairnessDrop: real('max_fairness_drop').notNull().default(1),
+});
+
+// ---------------------------------------------------------------------------
 // Fairness history
 // ---------------------------------------------------------------------------
 

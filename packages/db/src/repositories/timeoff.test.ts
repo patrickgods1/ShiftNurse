@@ -21,6 +21,7 @@ import {
   denyTimeOff,
   getTimeOffRequest,
   listTimeOffOverlapping,
+  listTimeOffOverlappingForUnit,
   withdrawApproval,
 } from './timeoff.js';
 
@@ -215,6 +216,56 @@ describe('listTimeOffOverlapping', () => {
     const req = request(nurseId, '2026-03-20', '2026-03-25');
     const result = listTimeOffOverlapping(handle.db, isoDate('2026-03-10'), isoDate('2026-03-20'));
     expect(result.map((r) => r.id)).toContain(req.id);
+  });
+});
+
+describe('listTimeOffOverlappingForUnit', () => {
+  it('returns pending and denied requests too, but only for this unit', () => {
+    const ada = mkNurse('Ada');
+    const pending = request(ada, '2026-03-05', '2026-03-06');
+    const denied = denyTimeOff(handle.db, request(ada, '2026-03-07', '2026-03-08').id, ACTOR, 'x');
+    const outside = request(ada, '2026-04-01', '2026-04-02');
+    const otherUnit = createUnit(
+      handle.db,
+      {
+        name: '5 East',
+        unitType: 'Telemetry',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    const stranger = createNurse(
+      handle.db,
+      {
+        unitId: otherUnit.id,
+        employeeId: 'E999999',
+        firstName: 'Zed',
+        lastName: 'Other',
+        role: 'RN',
+        employmentType: 'full_time',
+        fte: 1,
+        contractedHoursPerPeriod: 72,
+        seniorityDate: isoDate('2020-01-01'),
+        isChargeEligible: false,
+        isNovice: false,
+        isFloatEligible: true,
+        active: true,
+      },
+      ACTOR,
+    );
+    const foreign = request(stranger.id, '2026-03-05', '2026-03-06');
+
+    const ids = listTimeOffOverlappingForUnit(
+      handle.db,
+      unitId,
+      isoDate('2026-03-01'),
+      isoDate('2026-03-31'),
+    ).map((r) => r.id);
+    expect(ids).toContain(pending.id);
+    expect(ids).toContain(denied.id);
+    expect(ids).not.toContain(outside.id);
+    expect(ids).not.toContain(foreign.id);
   });
 });
 

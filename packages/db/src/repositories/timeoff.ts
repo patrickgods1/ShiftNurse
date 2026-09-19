@@ -7,13 +7,14 @@
  * visible before it becomes a staffing surprise). Both are served by one range query here.
  */
 
-import type { Id, IsoDate, TimeOffRequest, TimeOffStatus } from '@shiftnurse/core';
+import type { Assignment, Id, IsoDate, TimeOffRequest, TimeOffStatus } from '@shiftnurse/core';
 import { and, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import { toTimeOffRequest } from '../mappers.js';
 import { nurse, timeOffRequest } from '../schema.js';
+import { deleteAssignment, getPeriod, listAssignmentsForNurseInRange } from './schedule.js';
 
 /**
  * The table has no unit column — a request belongs to a nurse, who belongs to a unit — so
@@ -64,6 +65,32 @@ export function listTimeOffOverlapping(db: DbLike, start: IsoDate, end: IsoDate)
     .where(and(lte(timeOffRequest.startDate, end), gte(timeOffRequest.endDate, start)))
     .all()
     .map(toTimeOffRequest);
+}
+
+/**
+ * Every request for a unit touching `[start, end]` (inclusive), whatever its status. The
+ * heatmap and the competing-PTO detector both need the pending ones — a cluster of asks on one
+ * weekend is a staffing problem before any of them is approved.
+ */
+export function listTimeOffOverlappingForUnit(
+  db: DbLike,
+  unitId: Id,
+  start: IsoDate,
+  end: IsoDate,
+): TimeOffRequest[] {
+  return db
+    .select({ req: timeOffRequest })
+    .from(timeOffRequest)
+    .innerJoin(nurse, eq(timeOffRequest.nurseId, nurse.id))
+    .where(
+      and(
+        eq(nurse.unitId, unitId),
+        lte(timeOffRequest.startDate, end),
+        gte(timeOffRequest.endDate, start),
+      ),
+    )
+    .all()
+    .map((r) => toTimeOffRequest(r.req));
 }
 
 /**
@@ -160,6 +187,52 @@ export function approveTimeOff(db: DbLike, id: Id, actor: string, reason?: strin
     reason,
   });
   return after;
+}
+
+export interface ApprovalResult {
+  request: TimeOffRequest;
+  /** Draft assignments inside the range, removed as part of the approval. */
+  lifted: Assignment[];
+  /** Assignments inside the range on a published period, left in place and now a conflict. */
+  stillRostered: Assignment[];
+}
+
+/**
+ * Approval and the grid must agree in the same transaction. The decide dialog previews
+ * approval as "these shifts are displaced"; if approval only flipped the status the nurse would
+ * stay rostered through their own vacation and the hard `works_during_approved_time_off` rule
+ * would fire on the grid days later — the one outcome that makes a nurse stop trusting the
+ * schedule. So approval lifts the nurse's assignments inside the range from every *draft*
+ * period, locked ones included (approved leave outranks a manager's pin). Published periods
+ * are never edited silently: those shifts are reported back and surface as a
+ * `scheduled_on_leave` conflict for the manager to resolve deliberately.
+ */
+export function approveTimeOffAndLiftAssignments(
+  db: DbLike,
+  id: Id,
+  actor: string,
+  reason?: string,
+): ApprovalResult {
+  const request = approveTimeOff(db, id, actor, reason);
+  const lifted: Assignment[] = [];
+  const stillRostered: Assignment[] = [];
+  const periodStatus = new Map<Id, string | undefined>();
+  for (const a of listAssignmentsForNurseInRange(
+    db,
+    request.nurseId,
+    request.startDate,
+    request.endDate,
+  )) {
+    if (!periodStatus.has(a.periodId))
+      periodStatus.set(a.periodId, getPeriod(db, a.periodId)?.status);
+    if (periodStatus.get(a.periodId) === 'draft') {
+      deleteAssignment(db, a.id, actor, `Lifted for approved time off ${request.id}`);
+      lifted.push(a);
+    } else {
+      stillRostered.push(a);
+    }
+  }
+  return { request, lifted, stillRostered };
 }
 
 /**
