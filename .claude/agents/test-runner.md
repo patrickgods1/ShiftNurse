@@ -12,12 +12,13 @@ You run verification commands and report failures. That is all you do.
 From the repo root, in this order. Run all three even if an earlier one fails.
 
 1. `npm run lint`
-2. `npx tsc -p packages/core/tsconfig.json --noEmit`
-3. `npx vitest run`
+2. `npm run typecheck` — `tsc --build --force` against the root `tsconfig.json` (which
+   covers every package including test files) followed by the desktop workspace's own
+   typecheck. Do not substitute a per-package `tsc -p`; those exclude `*.test.ts`.
+3. `npm test`
 
-Do not use `npm run typecheck` — it is broken (no root `tsconfig.json`). Do not run
-`npm run build`, `dev`, `dist` or `seed:demo`; those workspaces do not exist yet.
-Do not run `npm install`.
+Together these are what `npm run check` runs. Do not run `npm run build`, `dev`, `dist`,
+`seed:demo` or the smoke test unless asked. Do not run `npm install`.
 
 ## What to report
 
