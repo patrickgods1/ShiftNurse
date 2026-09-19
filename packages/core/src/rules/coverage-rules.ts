@@ -62,6 +62,7 @@ export const coverageRule: Rule<CoverageParams> = {
     'nurse, satisfy credential requirements, and never consist entirely of novice nurses.',
   severity: 'hard',
   category: 'coverage',
+  scope: 'shift',
   defaultParams: {
     requireChargeNurse: true,
     minExperiencedPerShift: 1,
@@ -230,6 +231,7 @@ export const ratioComplianceRule: Rule<RatioParams> = {
     'acuity mix. A breach is a regulatory exposure, not a preference.',
   severity: 'hard',
   category: 'safety',
+  scope: 'shift',
   defaultParams: { skipShiftsWithoutForecast: true },
 
   evaluate(schedule, params, ctx): Violation[] {

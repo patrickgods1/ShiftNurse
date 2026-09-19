@@ -23,8 +23,8 @@ import type {
   OvertimeRule,
   PayRate,
 } from '@shiftnurse/core';
-import { compareDates, dayNumber, MS_PER_DAY } from '@shiftnurse/core';
-import { and, desc, eq, gte, sql } from 'drizzle-orm';
+import { dayNumber, MS_PER_DAY, resolvePayRate } from '@shiftnurse/core';
+import { and, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
@@ -253,12 +253,10 @@ export function listPayRatesForUnit(db: DbLike, unitId: Id): PayRate[] {
 }
 
 /**
- * The rate in effect for a nurse on a date.
- *
- * A per-nurse rate always wins over the role default — someone's individually negotiated
- * rate is never overridden by a blanket role rate. Among several candidates, the one with
- * the latest `effectiveFrom` that is not after `date` wins: rates are declared as of a date
- * and stay in effect until superseded, so "latest not-after" is exactly "currently in force".
+ * The rate in effect for a nurse on a date. The resolution rule itself — per-nurse beats the
+ * role default, latest `effectiveFrom` not after the date wins — lives in core's
+ * `resolvePayRate`, so the costing engine and this lookup can never disagree about what a
+ * nurse is paid.
  */
 export function effectiveRateForNurse(
   db: DbLike,
@@ -266,48 +264,221 @@ export function effectiveRateForNurse(
   role: NurseRole,
   date: IsoDate,
 ): PayRate | undefined {
-  const nurseRates = db.select().from(payRate).where(eq(payRate.nurseId, nurseId)).all();
-  const nurseRate = latestNotAfter(nurseRates, date);
-  if (nurseRate) return toPayRate(nurseRate);
-
-  const roleRates = db
+  const candidates = db
     .select()
     .from(payRate)
-    .where(and(eq(payRate.role, role)))
-    .all();
-  const roleRate = latestNotAfter(roleRates, date);
-  return roleRate ? toPayRate(roleRate) : undefined;
+    .where(or(eq(payRate.nurseId, nurseId), and(isNull(payRate.nurseId), eq(payRate.role, role))))
+    .all()
+    .map(toPayRate);
+  return resolvePayRate(candidates, { id: nurseId, role }, date)?.rate;
 }
 
-function latestNotAfter(
-  rows: readonly (typeof payRate.$inferSelect)[],
-  date: IsoDate,
-): typeof payRate.$inferSelect | undefined {
-  let best: typeof payRate.$inferSelect | undefined;
-  for (const row of rows) {
-    const effectiveFrom = row.effectiveFrom as IsoDate;
-    if (compareDates(effectiveFrom, date) > 0) continue;
-    if (!best || compareDates(effectiveFrom, best.effectiveFrom as IsoDate) > 0) best = row;
+export type PayRateInput = Omit<PayRate, 'id'>;
+
+/**
+ * A rate is scoped to exactly one of a nurse or a role. Both set would make "which rate wins"
+ * ambiguous; neither set would be a rate for nobody. Refusing here keeps the resolution rule
+ * simple enough to be provably right.
+ */
+function assertPayRateScope(input: Pick<PayRate, 'nurseId' | 'role'>): void {
+  if (input.nurseId === null && input.role === null) {
+    throw new Error('A pay rate must be scoped to a nurse or a role');
   }
-  return best;
+  if (input.nurseId !== null && input.role !== null) {
+    throw new Error('A pay rate is scoped to a nurse or a role, not both');
+  }
 }
 
-export function listActiveDifferentials(db: DbLike, unitId: Id): Differential[] {
+export function createPayRate(db: DbLike, input: PayRateInput, actor: string): PayRate {
+  assertPayRateScope(input);
+  const id = ids.payRate();
+  const row = {
+    id,
+    nurseId: input.nurseId,
+    role: input.role,
+    hourlyRate: input.hourlyRate,
+    effectiveFrom: input.effectiveFrom,
+  };
+  db.insert(payRate).values(row).run();
+  const created = toPayRate(row);
+  recordAudit(db, {
+    entityType: 'pay_rate',
+    entityId: id,
+    action: 'create',
+    actor,
+    after: created,
+  });
+  return created;
+}
+
+export type PayRatePatch = Partial<Pick<PayRate, 'hourlyRate' | 'effectiveFrom'>>;
+
+/** Correct a rate's amount or start date. Scope is fixed: re-scoping is a delete and a create. */
+export function updatePayRate(db: DbLike, id: Id, patch: PayRatePatch, actor: string): PayRate {
+  const row = db.select().from(payRate).where(eq(payRate.id, id)).get();
+  if (!row) throw new Error(`Pay rate ${id} not found`);
+  const before = toPayRate(row);
+  const values = {
+    ...(patch.hourlyRate !== undefined ? { hourlyRate: patch.hourlyRate } : {}),
+    ...(patch.effectiveFrom !== undefined ? { effectiveFrom: patch.effectiveFrom } : {}),
+  };
+  db.update(payRate).set(values).where(eq(payRate.id, id)).run();
+  const after: PayRate = { ...before, ...values };
+  recordAudit(db, { entityType: 'pay_rate', entityId: id, action: 'update', actor, before, after });
+  return after;
+}
+
+export function deletePayRate(db: DbLike, id: Id, actor: string): void {
+  const row = db.select().from(payRate).where(eq(payRate.id, id)).get();
+  if (!row) throw new Error(`Pay rate ${id} not found`);
+  const before = toPayRate(row);
+  db.delete(payRate).where(eq(payRate.id, id)).run();
+  recordAudit(db, { entityType: 'pay_rate', entityId: id, action: 'delete', actor, before });
+}
+
+export function listDifferentialsForUnit(db: DbLike, unitId: Id): Differential[] {
   return db
     .select()
     .from(differential)
-    .where(and(eq(differential.unitId, unitId), eq(differential.active, true)))
+    .where(eq(differential.unitId, unitId))
+    .orderBy(sql`rowid`)
     .all()
     .map(toDifferential);
 }
 
-export function listActiveOvertimeRules(db: DbLike, unitId: Id): OvertimeRule[] {
+export function listActiveDifferentials(db: DbLike, unitId: Id): Differential[] {
+  return listDifferentialsForUnit(db, unitId).filter((d) => d.active);
+}
+
+export type DifferentialInput = Omit<Differential, 'id'>;
+export type DifferentialPatch = Partial<Pick<Differential, 'kind' | 'mode' | 'amount' | 'active'>>;
+
+export function createDifferential(
+  db: DbLike,
+  input: DifferentialInput,
+  actor: string,
+): Differential {
+  const id = ids.differential();
+  const row = { id, ...input };
+  db.insert(differential).values(row).run();
+  const created = toDifferential(row);
+  recordAudit(db, {
+    entityType: 'differential',
+    entityId: id,
+    action: 'create',
+    actor,
+    after: created,
+  });
+  return created;
+}
+
+export function updateDifferential(
+  db: DbLike,
+  id: Id,
+  patch: DifferentialPatch,
+  actor: string,
+): Differential {
+  const row = db.select().from(differential).where(eq(differential.id, id)).get();
+  if (!row) throw new Error(`Differential ${id} not found`);
+  const before = toDifferential(row);
+  const merged = { ...row, ...compact(patch) };
+  db.update(differential).set(merged).where(eq(differential.id, id)).run();
+  const after = toDifferential(merged);
+  recordAudit(db, {
+    entityType: 'differential',
+    entityId: id,
+    action: 'update',
+    actor,
+    before,
+    after,
+  });
+  return after;
+}
+
+export function deleteDifferential(db: DbLike, id: Id, actor: string): void {
+  const row = db.select().from(differential).where(eq(differential.id, id)).get();
+  if (!row) throw new Error(`Differential ${id} not found`);
+  const before = toDifferential(row);
+  db.delete(differential).where(eq(differential.id, id)).run();
+  recordAudit(db, { entityType: 'differential', entityId: id, action: 'delete', actor, before });
+}
+
+export function listOvertimeRulesForUnit(db: DbLike, unitId: Id): OvertimeRule[] {
   return db
     .select()
     .from(overtimeRule)
-    .where(and(eq(overtimeRule.unitId, unitId), eq(overtimeRule.active, true)))
+    .where(eq(overtimeRule.unitId, unitId))
+    .orderBy(sql`rowid`)
     .all()
     .map(toOvertimeRule);
+}
+
+export function listActiveOvertimeRules(db: DbLike, unitId: Id): OvertimeRule[] {
+  return listOvertimeRulesForUnit(db, unitId).filter((r) => r.active);
+}
+
+export type OvertimeRuleInput = Omit<OvertimeRule, 'id'>;
+export type OvertimeRulePatch = Partial<
+  Pick<OvertimeRule, 'basis' | 'thresholdHours' | 'multiplier' | 'active'>
+>;
+
+export function createOvertimeRule(
+  db: DbLike,
+  input: OvertimeRuleInput,
+  actor: string,
+): OvertimeRule {
+  const id = ids.overtimeRule();
+  const row = { id, ...input };
+  db.insert(overtimeRule).values(row).run();
+  const created = toOvertimeRule(row);
+  recordAudit(db, {
+    entityType: 'overtime_rule',
+    entityId: id,
+    action: 'create',
+    actor,
+    after: created,
+  });
+  return created;
+}
+
+export function updateOvertimeRule(
+  db: DbLike,
+  id: Id,
+  patch: OvertimeRulePatch,
+  actor: string,
+): OvertimeRule {
+  const row = db.select().from(overtimeRule).where(eq(overtimeRule.id, id)).get();
+  if (!row) throw new Error(`Overtime rule ${id} not found`);
+  const before = toOvertimeRule(row);
+  const merged = { ...row, ...compact(patch) };
+  db.update(overtimeRule).set(merged).where(eq(overtimeRule.id, id)).run();
+  const after = toOvertimeRule(merged);
+  recordAudit(db, {
+    entityType: 'overtime_rule',
+    entityId: id,
+    action: 'update',
+    actor,
+    before,
+    after,
+  });
+  return after;
+}
+
+export function deleteOvertimeRule(db: DbLike, id: Id, actor: string): void {
+  const row = db.select().from(overtimeRule).where(eq(overtimeRule.id, id)).get();
+  if (!row) throw new Error(`Overtime rule ${id} not found`);
+  const before = toOvertimeRule(row);
+  db.delete(overtimeRule).where(eq(overtimeRule.id, id)).run();
+  recordAudit(db, { entityType: 'overtime_rule', entityId: id, action: 'delete', actor, before });
+}
+
+/** Drop `undefined` entries so a patch never overwrites a column with NULL by accident. */
+function compact<T extends object>(patch: T): Partial<T> {
+  const out: Partial<T> = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== undefined) (out as Record<string, unknown>)[key] = value;
+  }
+  return out;
 }
 
 export function getBudget(db: DbLike, periodId: Id): Budget | undefined {
@@ -496,4 +667,129 @@ export function importFairnessLedgerEntries(
     after: { count: created.length },
   });
   return created;
+}
+
+/**
+ * Period ids (with their start dates) already in the ledger for this unit's nurses.
+ *
+ * The historical-import screen needs this to warn a manager before they re-import a file that
+ * would replace periods already on record, rather than let `importHistoricalLedger` silently
+ * do the replacing.
+ */
+export function ledgerPeriodsForUnit(
+  db: DbLike,
+  unitId: Id,
+): { periodId: Id; periodStart: IsoDate }[] {
+  return db
+    .selectDistinct({
+      periodId: fairnessLedger.periodId,
+      periodStart: fairnessLedger.periodStart,
+    })
+    .from(fairnessLedger)
+    .innerJoin(nurse, eq(fairnessLedger.nurseId, nurse.id))
+    .where(eq(nurse.unitId, unitId))
+    .orderBy(fairnessLedger.periodStart)
+    .all()
+    .map((r) => ({ periodId: r.periodId, periodStart: r.periodStart as IsoDate }));
+}
+
+export interface LedgerImportResult {
+  written: number;
+  replaced: number;
+}
+
+/**
+ * Import a historical schedule's derived ledger rows, replacing rather than upserting.
+ *
+ * `importFairnessLedgerEntries` (above) inserts blindly and exists for a one-time initial
+ * seed. A CSV import is different: the manager may re-run it after fixing a typo in the
+ * spreadsheet, and re-running it must not pile up duplicate rows behind the
+ * `(nurseId, periodId)` unique index, nor leave some nurses on the old numbers and others on
+ * the new ones for what is supposed to be a single period's history. So every period id
+ * present in `entries` is cleared for this unit first — and only for this unit, so importing
+ * one unit's history can never erase another's — and the new rows are inserted in its place,
+ * all inside the caller's transaction (partial replacement is worse than none).
+ *
+ * Throws before making any change if an entry names a nurse who isn't on this unit: a ledger
+ * row for the wrong unit is a data-integrity bug, not a case to paper over.
+ */
+export function importHistoricalLedger(
+  db: DbLike,
+  unitId: Id,
+  entries: readonly UpsertFairnessLedgerInput[],
+  actor: string,
+): LedgerImportResult {
+  const unitNurseIds = new Set(
+    db
+      .select({ id: nurse.id })
+      .from(nurse)
+      .where(eq(nurse.unitId, unitId))
+      .all()
+      .map((r) => r.id),
+  );
+  for (const entry of entries) {
+    if (!unitNurseIds.has(entry.nurseId)) {
+      throw new Error(
+        `Cannot import a fairness ledger entry for nurse ${entry.nurseId}: not a nurse on unit ${unitId}.`,
+      );
+    }
+  }
+
+  const periodIds = [...new Set(entries.map((e) => e.periodId))];
+  const nurseIdList = [...unitNurseIds];
+  let replaced = 0;
+  for (const periodId of periodIds) {
+    const existing = db
+      .select({ id: fairnessLedger.id })
+      .from(fairnessLedger)
+      .where(
+        and(eq(fairnessLedger.periodId, periodId), inArray(fairnessLedger.nurseId, nurseIdList)),
+      )
+      .all();
+    if (existing.length > 0) {
+      db.delete(fairnessLedger)
+        .where(
+          inArray(
+            fairnessLedger.id,
+            existing.map((r) => r.id),
+          ),
+        )
+        .run();
+      replaced += existing.length;
+    }
+  }
+
+  let written = 0;
+  for (const input of entries) {
+    const row = {
+      id: ids.fairness(),
+      nurseId: input.nurseId,
+      periodId: input.periodId,
+      periodStart: input.periodStart,
+      nightShifts: input.nightShifts ?? 0,
+      weekendsWorked: input.weekendsWorked ?? 0,
+      holidaysWorked: input.holidaysWorked ?? 0,
+      onCallShifts: input.onCallShifts ?? 0,
+      undesirableShifts: input.undesirableShifts ?? 0,
+      requestsApproved: input.requestsApproved ?? 0,
+      requestsDenied: input.requestsDenied ?? 0,
+      callOutsCovered: input.callOutsCovered ?? 0,
+      totalHours: input.totalHours ?? 0,
+      overtimeHours: input.overtimeHours ?? 0,
+      preferenceHitRate: input.preferenceHitRate ?? 0,
+    };
+    db.insert(fairnessLedger).values(row).run();
+    written++;
+  }
+
+  recordAudit(db, {
+    entityType: 'fairness_ledger',
+    entityId: 'batch' as Id,
+    action: 'import',
+    actor,
+    before: { replaced, periodIds },
+    after: { written, periodIds },
+  });
+
+  return { written, replaced };
 }

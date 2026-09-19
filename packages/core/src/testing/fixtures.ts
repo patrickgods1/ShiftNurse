@@ -12,12 +12,14 @@ import type {
   CensusForecast,
   CoverageRequirement,
   Credential,
+  FairnessLedgerEntry,
   Holiday,
   HppdTarget,
   Id,
   Nurse,
   NurseCredential,
   NurseRole,
+  Preference,
   RatioRule,
   SchedulePeriod,
   ShiftCredentialRequirement,
@@ -29,6 +31,7 @@ import { datesInRange, type IsoDate, isoDate, type Weekday } from '../domain/tim
 import { buildRuleContext, defaultRuleSet } from '../rules/registry.js';
 import type { RuleContext, RuleSet } from '../rules/types.js';
 import { ScheduleView } from '../schedule/view.js';
+import type { SolveCostInput, SolveInput } from '../solver/types.js';
 
 export const UNIT_ID = 'unit-1';
 
@@ -310,6 +313,43 @@ export function scenario(options: ScenarioOptions = {}): Scenario {
     nurses,
     shiftTypes,
     dates,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Solver input
+// ---------------------------------------------------------------------------
+
+export interface SolveScenarioOptions extends ScenarioOptions {
+  preferences?: Preference[];
+  ledgerHistory?: FairnessLedgerEntry[];
+  cost?: SolveCostInput;
+  ruleSet?: RuleSet;
+}
+
+/**
+ * The same scenario, packaged as the plain-data `SolveInput` the solver takes. Built on top of
+ * `scenario()` so a solver test and a rule test describing the same unit agree on every row.
+ */
+export function solveInputFrom(options: SolveScenarioOptions = {}): SolveInput {
+  const s = scenario(options);
+  return {
+    unit: s.unit,
+    period: s.period,
+    ruleSet: options.ruleSet ?? s.ruleSet,
+    nurses: s.nurses,
+    shiftTypes: s.shiftTypes,
+    demand: s.ctx.demand.all(),
+    assignments: options.assignments ?? [],
+    priorAssignments: options.priorAssignments ?? [],
+    timeOff: options.timeOff ?? [],
+    credentials: testCredentials,
+    nurseCredentials: options.nurseCredentials ?? [],
+    shiftCredentialRequirements: options.shiftCredentialRequirements ?? [],
+    holidays: options.holidays ?? [],
+    preferences: options.preferences ?? [],
+    ledgerHistory: options.ledgerHistory ?? [],
+    ...(options.cost ? { cost: options.cost } : {}),
   };
 }
 

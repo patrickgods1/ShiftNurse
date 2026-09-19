@@ -37,6 +37,7 @@ export const minRestRule: Rule<MinRestParams> = {
     'the same day.',
   severity: 'hard',
   category: 'rest',
+  scope: 'nurse',
   defaultParams: { minRestHours: 10, onCallCountsAsWork: false },
 
   evaluate(schedule, params, ctx): Violation[] {
@@ -173,6 +174,7 @@ export const consecutiveShiftsRule: Rule<ConsecutiveShiftsParams> = {
     'requires days off after a maximum-length stretch.',
   severity: 'hard',
   category: 'rest',
+  scope: 'nurse',
   defaultParams: {
     maxConsecutiveShifts: 5,
     maxConsecutiveNights: 3,

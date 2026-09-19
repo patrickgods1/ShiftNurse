@@ -101,6 +101,7 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
     'to, per pay period. Reports both shortfalls and overages.',
   severity: 'hard',
   category: 'hours',
+  scope: 'nurse',
   defaultParams: {
     underToleranceHours: 4,
     overToleranceHours: 4,
@@ -136,6 +137,9 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
         }
 
         const target = nurse.contractedHoursPerPeriod;
+        // No contracted total (per-diem, agency) means nothing to be over or under: every shift
+        // such a nurse picks up would otherwise read as "over" a contract that was never made.
+        if (target <= 0) continue;
         const delta = hours - target;
 
         if (!exempt && delta < -params.underToleranceHours) {
@@ -216,6 +220,7 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
     'appearing by accident.',
   severity: 'hard',
   category: 'hours',
+  scope: 'nurse',
   defaultParams: {
     maxHoursPerWeek: 48,
     overtimeThresholdHours: 40,

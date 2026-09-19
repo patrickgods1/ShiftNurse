@@ -1,7 +1,7 @@
 /**
- * Unit configuration home: shift types, coverage floors and holidays feed the solver and the
- * schedule grid, so they live together as tabs of one "Settings" destination rather than as
- * separate nav entries. About keeps the existing app-info + theme content.
+ * Unit configuration home: shift types, coverage floors, pay and holidays feed the solver, the
+ * schedule grid and the cost engine, so they live together as tabs of one "Settings"
+ * destination rather than as separate nav entries. About keeps the existing app-info + theme content.
  */
 
 import { useState } from 'react';
@@ -14,6 +14,7 @@ import { useUnitId } from '../unit-context.js';
 import AcuityPanel from './settings/acuity.js';
 import CoverageFloors from './settings/coverage-floors.js';
 import HolidaysPanel from './settings/holidays.js';
+import PayPanel from './settings/pay.js';
 import RulesPanel from './settings/rules.js';
 import ShiftTypesPanel from './settings/shift-types.js';
 
@@ -22,6 +23,7 @@ const TABS = [
   { id: 'coverage', label: 'Coverage floors' },
   { id: 'acuity', label: 'Acuity' },
   { id: 'rules', label: 'Rules' },
+  { id: 'pay', label: 'Pay' },
   { id: 'holidays', label: 'Holidays' },
   { id: 'about', label: 'About' },
 ] as const;
@@ -137,6 +139,8 @@ export default function SettingsPage() {
               <AcuityPanel />
             ) : tab.id === 'rules' ? (
               <RulesPanel />
+            ) : tab.id === 'pay' ? (
+              <PayPanel />
             ) : tab.id === 'holidays' ? (
               <HolidaysPanel />
             ) : (

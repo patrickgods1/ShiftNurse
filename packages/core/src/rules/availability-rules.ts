@@ -32,6 +32,7 @@ export const timeOffRule: Rule<TimeOffParams> = {
     'revoking the approval explicitly, which is logged.',
   severity: 'hard',
   category: 'coverage',
+  scope: 'nurse',
   defaultParams: { nightShiftEndingOnLeaveCounts: true },
 
   evaluate(schedule, params, ctx): Violation[] {
@@ -133,6 +134,7 @@ export const overlapRule: Rule<OverlapParams> = {
     'A nurse cannot be in two places at once, including standby overlapping a worked shift.',
   severity: 'hard',
   category: 'coverage',
+  scope: 'nurse',
   defaultParams: { allowOnCallDuringShift: false },
 
   evaluate(schedule, params, ctx): Violation[] {

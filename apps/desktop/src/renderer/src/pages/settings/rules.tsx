@@ -11,10 +11,20 @@
  * lets the manager choose to create it.
  */
 
-import type { Rule, RuleConfig, RuleSeverity, Weekday, WeekendDefinition } from '@shiftnurse/core';
+import type {
+  FairnessWeights,
+  Rule,
+  RuleConfig,
+  RuleSeverity,
+  Weekday,
+  WeekendDefinition,
+} from '@shiftnurse/core';
 import {
   ALL_RULES,
+  DEFAULT_FAIRNESS_WEIGHTS,
   DEFAULT_WEEKEND,
+  FAIRNESS_COMPONENT_LABELS,
+  FAIRNESS_COMPONENTS,
   formatTimeOfDay,
   hoursToMinutes,
   minutesToHours,
@@ -368,6 +378,50 @@ function WeekendSection({
   );
 }
 
+/**
+ * The soft weights. These never make a schedule illegal — they decide how much each fairness
+ * component moves the 0–100 score and the solver's objective, so a unit that grieves holidays
+ * far more than nights can say so here.
+ */
+function FairnessWeightsSection({
+  value,
+  onChange,
+}: {
+  value: FairnessWeights;
+  onChange: (next: FairnessWeights) => void;
+}) {
+  return (
+    <section
+      data-testid="fairness-weights"
+      className="rounded-md border border-border bg-surface p-4"
+    >
+      <h2 className="text-sm font-semibold text-text">Fairness weights</h2>
+      <p className="mt-1 text-sm text-text-muted">
+        How much each component counts in the fairness score and the solver's objective. 0 removes
+        it from the score. Weights are relative to each other, so doubling every one changes
+        nothing.
+      </p>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {FAIRNESS_COMPONENTS.map((component) => (
+          <label key={component} className="flex flex-col gap-1 text-sm text-text">
+            {FAIRNESS_COMPONENT_LABELS[component]}
+            <input
+              type="number"
+              min={0}
+              step={0.5}
+              value={value[component]}
+              onChange={(event) =>
+                onChange({ ...value, [component]: Math.max(0, Number(event.target.value) || 0) })
+              }
+              className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+            />
+          </label>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Panel
 // ---------------------------------------------------------------------------
@@ -381,6 +435,7 @@ export default function RulesPanel() {
   const [name, setName] = useState('');
   const [configs, setConfigs] = useState<RuleConfig[]>([]);
   const [weekendDefinition, setWeekendDefinition] = useState<WeekendDefinition>(DEFAULT_WEEKEND);
+  const [fairnessWeights, setFairnessWeights] = useState<FairnessWeights>(DEFAULT_FAIRNESS_WEIGHTS);
   const [savedMessage, setSavedMessage] = useState<string | undefined>(undefined);
 
   const data = ruleSetQuery.data;
@@ -394,6 +449,7 @@ export default function RulesPanel() {
     setName(data.name);
     setConfigs(resolveConfigs(data));
     setWeekendDefinition(data.weekendDefinition);
+    setFairnessWeights(data.fairnessWeights);
     setSavedMessage(undefined);
   }
 
@@ -408,7 +464,8 @@ export default function RulesPanel() {
   const dirty =
     name !== data.name ||
     JSON.stringify(configs) !== JSON.stringify(baselineConfigs) ||
-    JSON.stringify(weekendDefinition) !== JSON.stringify(data.weekendDefinition);
+    JSON.stringify(weekendDefinition) !== JSON.stringify(data.weekendDefinition) ||
+    JSON.stringify(fairnessWeights) !== JSON.stringify(data.fairnessWeights);
   const nextVersion = data.version + 1;
 
   function updateConfig(ruleId: string, next: RuleConfig) {
@@ -419,12 +476,13 @@ export default function RulesPanel() {
     setName(data!.name);
     setConfigs(resolveConfigs(data!));
     setWeekendDefinition(data!.weekendDefinition);
+    setFairnessWeights(data!.fairnessWeights);
     setSavedMessage(undefined);
   }
 
   function save() {
     saveMutation.mutate(
-      { unitId, name, configs, weekendDefinition },
+      { unitId, name, configs, weekendDefinition, fairnessWeights },
       {
         onSuccess: (saved) => setSavedMessage(`Saved version ${saved.version}`),
       },
@@ -470,11 +528,7 @@ export default function RulesPanel() {
           <section key={id} className="flex flex-col gap-3">
             <h2 className="text-sm font-semibold text-text">{label}</h2>
             {id === 'equity' ? (
-              <p className="rounded-md border border-dashed border-border bg-surface p-3 text-sm text-text-muted">
-                Soft-rule weighting arrives with fairness scoring (M7) — there is nowhere yet to set
-                how heavily an equity concern should count against a schedule. No equity rules are
-                configurable here until then.
-              </p>
+              <FairnessWeightsSection value={fairnessWeights} onChange={setFairnessWeights} />
             ) : null}
             {rulesInCategory.map((rule) => {
               const config = configs.find((c) => c.ruleId === rule.id);

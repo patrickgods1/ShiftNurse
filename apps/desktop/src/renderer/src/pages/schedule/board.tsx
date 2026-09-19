@@ -17,6 +17,7 @@ import {
 } from '@shiftnurse/core';
 import { useCallback, useMemo, useState } from 'react';
 import { useAssignments, useNurses, useShiftTypes } from '../../api.js';
+import { useCostReport } from '../../api-cost.js';
 import {
   useCreateAssignment,
   useDeleteAssignment,
@@ -27,6 +28,8 @@ import {
 } from '../../api-schedule.js';
 import { AsyncState } from '../../components/async-state.js';
 import { AssignmentDialog } from './assignment-dialog.js';
+import { CostSummary } from './cost-summary.js';
+import { GenerateDialog } from './generate-dialog.js';
 import type { GridColumn } from './grid.js';
 import { ScheduleGrid } from './grid.js';
 import { makePendingId } from './grid-utils.js';
@@ -60,6 +63,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const shiftTypesQuery = useShiftTypes(unitId);
   const assignmentsQuery = useAssignments(period.id);
   const validationQuery = useValidation(period.id);
+  const costQuery = useCostReport(period.id);
 
   const createAssignment = useCreateAssignment(period.id, unitId);
   const moveAssignment = useMoveAssignment(period.id, unitId);
@@ -72,6 +76,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const [pendingIds, setPendingIds] = useState<ReadonlySet<Id>>(new Set());
   const [pendingCreates, setPendingCreates] = useState<readonly Assignment[]>([]);
   const [openAssignmentId, setOpenAssignmentId] = useState<Id | undefined>(undefined);
+  const [generateOpen, setGenerateOpen] = useState(false);
 
   const markPending = useCallback((id: Id) => {
     setPendingIds((prev) => {
@@ -225,7 +230,20 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   return (
     <div>
       <ViolationSummary result={violationResult} />
-      {!readOnly ? <ShiftPalette shiftTypes={shiftTypesQuery.data} readOnly={false} /> : null}
+      <CostSummary report={costQuery.data} />
+      {!readOnly ? (
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <ShiftPalette shiftTypes={shiftTypesQuery.data} readOnly={false} />
+          <button
+            type="button"
+            data-testid="generate-open"
+            onClick={() => setGenerateOpen(true)}
+            className="shrink-0 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white"
+          >
+            Generate
+          </button>
+        </div>
+      ) : null}
       <ScheduleGrid
         nurses={nursesQuery.data}
         shiftTypes={shiftTypesQuery.data}
@@ -240,6 +258,15 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         onCreate={handleCreate}
         onChipOpen={(a) => setOpenAssignmentId(a.id)}
         onChipDelete={handleChipDelete}
+      />
+      <GenerateDialog
+        open={generateOpen}
+        onOpenChange={setGenerateOpen}
+        unitId={unitId}
+        period={period}
+        shiftTypes={shiftTypesQuery.data}
+        lockedCount={assignments.filter((a) => a.isLocked).length}
+        unlockedCount={assignments.filter((a) => !a.isLocked).length}
       />
       <AssignmentDialog
         assignment={openAssignment}

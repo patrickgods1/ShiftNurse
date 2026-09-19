@@ -1,25 +1,24 @@
 /**
- * A small seeded pseudo-random number generator for the demo data seeder.
+ * A small seeded pseudo-random number generator, shared by the solver and the demo seeder.
  *
  * ## Why determinism matters here
  *
- * The demo dataset is not just a pile of plausible-looking rows — it is the fixture golden-file
- * solver tests run against, and it is what a developer stares at after making a change to ask
- * "did my change do that, or did the data just happen to look different this time?" `Math.random()`
- * answers neither question: two runs would produce different rosters, different historical
- * schedules and different census numbers, so a diff in solver output could never be attributed to
- * the code change versus the data change, and a golden file compared against yesterday's seed
- * would fail for no reason connected to a regression.
+ * The solver's contract is "re-run Generate on unchanged inputs and get the identical
+ * schedule". A manager who regenerates to see the effect of one locked cell must see only
+ * that effect, not a different random draw dressed up as a consequence; and a solver bug can
+ * only be reproduced from a bug report if the seed reproduces the run. `Math.random()` gives
+ * neither. The same argument holds for the demo dataset: it is the fixture golden-file tests
+ * run against, and a diff in solver output can only be attributed to a code change if the
+ * data did not also change underneath it.
  *
- * A seeded PRNG makes "run the seeder twice, get byte-identical output" true by construction. It
- * also means the *shape* of the randomness (which nurses become night-shift regulars, which
- * weekend gets the pending-request pile-up) is reviewable and reproducible rather than a fresh
- * roll every time someone runs `npm run seed:demo`.
+ * A seeded PRNG makes "same seed, same sequence" true by construction. Every call advances the
+ * state, so the *order* in which choices are made is part of what determinism captures —
+ * reordering the caller's logic changes its output even with the same seed, which is expected.
  *
  * This is mulberry32: a 32-bit state, integer-only, xorshift-style generator. It is not
  * cryptographically secure and must never be used for anything security-sensitive — it exists
  * solely to turn one integer seed into a long, well-distributed, exactly-repeatable sequence of
- * floats for building demo data.
+ * floats.
  */
 
 /** One float in `[0, 1)` from a 32-bit state, per call. */
@@ -43,13 +42,7 @@ export interface WeightedEntry<T> {
   readonly weight: number;
 }
 
-/**
- * A deterministic source of every random choice the seeder makes. Every call advances the
- * internal state, so the *order* choices are made in is part of what determinism captures —
- * reordering seeder logic changes the resulting dataset even with the same seed, which is
- * expected and is exactly why the seeder's structure, once settled, should not be reshuffled
- * casually.
- */
+/** A deterministic source of every random choice a caller makes. See the module header. */
 export class Rng {
   private readonly next: FloatSource;
 

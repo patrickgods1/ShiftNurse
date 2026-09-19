@@ -10,7 +10,7 @@
 import { join } from 'node:path';
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { app, BrowserWindow, shell } from 'electron';
-import { createApi } from './api.js';
+import { createApi, createSolverJobs } from './api.js';
 import { closeAppDatabase, openAppDatabase } from './database.js';
 import { registerIpc } from './ipc.js';
 import { isSmokeRun, runSmoke } from './smoke.js';
@@ -57,7 +57,10 @@ app.whenReady().then(() => {
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window));
 
   const db = openAppDatabase();
-  registerIpc(createApi(db));
+  const solverJobs = createSolverJobs(db);
+  registerIpc(createApi(db, solverJobs));
+  // Workers must not outlive the database handle they would write into.
+  app.on('will-quit', () => solverJobs.dispose());
   const win = createWindow();
   if (isSmokeRun()) runSmoke(win);
 

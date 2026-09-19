@@ -5,12 +5,13 @@
  */
 
 import type { ExpiringCredentialView } from '@shared/api.js';
-import { useDashboard } from '../api.js';
+import { useDashboard, useNurses } from '../api.js';
 import { AsyncState } from '../components/async-state.js';
 import { PageHeader } from '../components/page-header.js';
 import { StatCard } from '../components/stat-card.js';
 import { daysFromToday, formatDate } from '../format.js';
 import { useUnitId } from '../unit-context.js';
+import { CostPanel } from './dashboard/cost-panel.js';
 
 function credentialTone(expiresOn: string | undefined): 'neutral' | 'warn' | 'danger' {
   if (expiresOn === undefined) return 'neutral';
@@ -93,6 +94,7 @@ function ExpiringCredentialsTable({ rows }: { rows: ExpiringCredentialView[] }) 
 export default function DashboardPage() {
   const unitId = useUnitId();
   const dashboardQuery = useDashboard(unitId);
+  const nursesQuery = useNurses(unitId);
 
   if (dashboardQuery.isPending) {
     return <AsyncState status="loading" label="Loading dashboard" />;
@@ -103,6 +105,8 @@ export default function DashboardPage() {
     );
   }
   const summary = dashboardQuery.data;
+  // Price what the manager is working on; fall back to the last thing that went out.
+  const costPeriod = summary.currentDraft ?? summary.latestPublished;
 
   return (
     <div>
@@ -130,6 +134,15 @@ export default function DashboardPage() {
       <div className="mt-4 grid grid-cols-2 gap-4">
         <PeriodCard title="Current draft" period={summary.currentDraft} />
         <PeriodCard title="Latest published" period={summary.latestPublished} />
+      </div>
+
+      <div className="mt-6">
+        <h2 className="mb-2 text-sm font-semibold text-text">Cost</h2>
+        {costPeriod === undefined ? (
+          <p className="text-sm text-text-muted">No scheduling period to price yet.</p>
+        ) : (
+          <CostPanel period={costPeriod} nurses={nursesQuery.data ?? []} />
+        )}
       </div>
 
       <div className="mt-6">

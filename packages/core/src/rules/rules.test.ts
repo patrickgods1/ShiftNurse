@@ -220,6 +220,15 @@ describe('contracted hours', () => {
     expect(codes(s)).not.toContain('under_contracted_hours');
   });
 
+  it('does not call a per-diem nurse with no contracted hours "over hours" for picking up a shift', () => {
+    const nurse = makeNurse({ employmentType: 'per_diem', contractedHoursPerPeriod: 0 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, DAY_12, '2026-01-05'), assign(nurse.id, DAY_12, '2026-01-07')],
+    });
+    expect(codes(s)).not.toContain('over_contracted_hours');
+  });
+
   it('ignores a pay period only partly covered by the schedule', () => {
     const nurse = makeNurse({ contractedHoursPerPeriod: 72 });
     // One week only: the 14-day pay period is not fully inside it.

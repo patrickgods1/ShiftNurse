@@ -16,26 +16,38 @@ import type {
   Assignment,
   AssignmentSource,
   BacktestResult,
+  Budget,
+  BudgetVariance,
   CensusForecast,
   CensusProposal,
   CoverageRequirement,
   Credential,
+  Differential,
   EvaluationResult,
+  FairnessLedgerEntry,
+  FairnessReport,
   ForecastOptions,
+  HistoricalCsvError,
+  HistoricalShiftRow,
   Holiday,
   HppdTarget,
   Id,
   IsoDate,
   Nurse,
   NurseCredential,
+  OvertimeRule,
+  PayRate,
   Preference,
   RatioRule,
   RosterCsvError,
   RosterCsvRow,
   RuleSet,
+  ScheduleCost,
   SchedulePeriod,
   ShiftDemand,
   ShiftType,
+  SolveProgress,
+  SolveReport,
   TimeOffRequest,
   TimeOffStatus,
   Unit,
@@ -159,6 +171,84 @@ export interface RosterImportSummary {
   credentialsUpdated: number;
 }
 
+/** One ledger period's scores, for the trend chart: what each nurse's score *was* back then. */
+export interface FairnessTrendPoint {
+  periodId: Id;
+  periodStart: IsoDate;
+  /** nurseId → 0–100 composite at that period, judged against the history before it. */
+  scores: Record<Id, number>;
+  /** Unit-level Gini of the scores at that period. */
+  gini: number;
+}
+
+export interface HistoryImportPeriodPreview {
+  periodId: Id;
+  start: IsoDate;
+  end: IsoDate;
+  shifts: number;
+  nurses: number;
+  /** True when the ledger already holds rows for this period — the import will replace them. */
+  replacesExisting: boolean;
+}
+
+export interface HistoryImportPreview {
+  path: string;
+  rows: HistoricalShiftRow[];
+  errors: HistoricalCsvError[];
+  periods: HistoryImportPeriodPreview[];
+}
+
+export interface HistoryImportSummary {
+  periodsImported: number;
+  entriesWritten: number;
+  entriesReplaced: number;
+}
+
+export type PayRateInput = Omit<PayRate, 'id'>;
+/** Scope (nurse or role) is fixed once created; re-scoping is a delete and a create. */
+export type PayRatePatch = Partial<Pick<PayRate, 'hourlyRate' | 'effectiveFrom'>>;
+export type DifferentialInput = Omit<Differential, 'id'>;
+export type DifferentialPatch = Partial<Pick<Differential, 'kind' | 'mode' | 'amount' | 'active'>>;
+export type OvertimeRuleInput = Omit<OvertimeRule, 'id'>;
+export type OvertimeRulePatch = Partial<
+  Pick<OvertimeRule, 'basis' | 'thresholdHours' | 'multiplier' | 'active'>
+>;
+
+/** A period priced under its own rule-set snapshot, against its budget if one is set. */
+export interface PeriodCostReport {
+  period: SchedulePeriod;
+  cost: ScheduleCost;
+  budget: Budget | undefined;
+  variance: BudgetVariance | undefined;
+}
+
+export interface SolveJobOptions {
+  /** Defaults to a stable hash of the period id, so regenerating unchanged inputs repeats itself. */
+  seed?: number;
+  maxIterations?: number;
+}
+
+/**
+ * `running` while the worker solves; `applying` while the result is written; `done` once the
+ * draft holds the new schedule. A cancelled run is not applied — the manager said stop — but
+ * its best-so-far report is kept so they can see how far it got.
+ */
+export type SolveJobState = 'running' | 'applying' | 'done' | 'failed' | 'cancelled';
+
+export interface SolveJobStatus {
+  id: Id;
+  periodId: Id;
+  seed: number;
+  state: SolveJobState;
+  startedAt: number;
+  finishedAt?: number;
+  progress?: SolveProgress;
+  report?: SolveReport;
+  /** What `replaceAssignments` did once the run finished. */
+  applied?: { created: number; preservedLocked: number };
+  error?: string;
+}
+
 /**
  * Every operation the renderer can perform, grouped by resource. Implementations in the
  * main process are synchronous (better-sqlite3 is synchronous); the renderer sees the
@@ -264,6 +354,13 @@ export interface ShiftNurseApi {
     deleteAssignment(assignmentId: Id): void;
     setLocked(assignmentId: Id, locked: boolean): Assignment;
   };
+  solver: {
+    /** Starts a solve for a draft period in a worker thread and returns immediately. */
+    start(periodId: Id, options?: SolveJobOptions): SolveJobStatus;
+    status(jobId: Id): SolveJobStatus | undefined;
+    /** Asks a running solve to stop at its next check; the status flips once it has. */
+    cancel(jobId: Id): SolveJobStatus | undefined;
+  };
   rules: {
     getLatest(unitId: Id): RuleSet;
     /** Always inserts a new, immutable version; never rewrites one a published period cites. */
@@ -272,7 +369,38 @@ export interface ShiftNurseApi {
       name: string,
       configs: RuleSet['configs'],
       weekendDefinition: RuleSet['weekendDefinition'],
+      fairnessWeights: RuleSet['fairnessWeights'],
     ): RuleSet;
+  };
+  fairness: {
+    /** Per-nurse 0–100 scores with breakdown, plus unit distribution, for a period's draft. */
+    report(periodId: Id): FairnessReport;
+    /** Ledger rows for the unit's recent periods, oldest first. */
+    history(unitId: Id): FairnessLedgerEntry[];
+    /** Score snapshots per ledger period, oldest first. */
+    trend(unitId: Id): FairnessTrendPoint[];
+    /** Opens a native file picker for a historical schedule CSV and previews the import. */
+    pickHistoryImportFile(unitId: Id): HistoryImportPreview | undefined;
+    /** Derives ledger rows from previously previewed shifts and writes them atomically. */
+    importHistory(unitId: Id, rows: HistoricalShiftRow[]): HistoryImportSummary;
+  };
+  cost: {
+    payRates(unitId: Id): PayRate[];
+    createPayRate(input: PayRateInput): PayRate;
+    updatePayRate(id: Id, patch: PayRatePatch): PayRate;
+    deletePayRate(id: Id): void;
+    /** Every differential, active or not, so the editor can show paused ones. */
+    differentials(unitId: Id): Differential[];
+    createDifferential(input: DifferentialInput): Differential;
+    updateDifferential(id: Id, patch: DifferentialPatch): Differential;
+    deleteDifferential(id: Id): void;
+    overtimeRules(unitId: Id): OvertimeRule[];
+    createOvertimeRule(input: OvertimeRuleInput): OvertimeRule;
+    updateOvertimeRule(id: Id, patch: OvertimeRulePatch): OvertimeRule;
+    deleteOvertimeRule(id: Id): void;
+    /** Prices every assignment in the period and compares the total to its budget. */
+    report(periodId: Id): PeriodCostReport;
+    setBudget(periodId: Id, targetDollars: number): Budget;
   };
   timeOff: {
     list(unitId: Id, status?: TimeOffStatus): TimeOffRequest[];
@@ -333,7 +461,25 @@ export const API_CHANNELS = {
     'deleteAssignment',
     'setLocked',
   ],
+  solver: ['start', 'status', 'cancel'],
   rules: ['getLatest', 'save'],
+  fairness: ['report', 'history', 'trend', 'pickHistoryImportFile', 'importHistory'],
+  cost: [
+    'payRates',
+    'createPayRate',
+    'updatePayRate',
+    'deletePayRate',
+    'differentials',
+    'createDifferential',
+    'updateDifferential',
+    'deleteDifferential',
+    'overtimeRules',
+    'createOvertimeRule',
+    'updateOvertimeRule',
+    'deleteOvertimeRule',
+    'report',
+    'setBudget',
+  ],
   timeOff: ['list'],
 } as const satisfies { [R in keyof ShiftNurseApi]: readonly (keyof ShiftNurseApi[R])[] };
 

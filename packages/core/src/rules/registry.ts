@@ -18,6 +18,7 @@ import type {
   Unit,
 } from '../domain/entities.js';
 import { DEFAULT_WEEKEND, type IsoDate, type WeekendDefinition } from '../domain/time.js';
+import { DEFAULT_FAIRNESS_WEIGHTS } from '../fairness/types.js';
 import type { ScheduleView } from '../schedule/view.js';
 
 import { overlapRule, timeOffRule } from './availability-rules.js';
@@ -29,6 +30,7 @@ import type {
   Rule,
   RuleConfig,
   RuleContext,
+  RuleScope,
   RuleSet,
   RuleSeverity,
   Violation,
@@ -57,6 +59,24 @@ export function getRule(ruleId: string): Rule<never> | undefined {
   return RULES_BY_ID.get(ruleId);
 }
 
+/**
+ * Ids of the rules in a rule set that are enabled, hard under that rule set, and of the given
+ * scope. This is the list the solver hands to `evaluateSchedule`'s `only` option when it
+ * checks one nurse's timeline or one shift's roster in isolation; a soft rule never gates a
+ * move, and a rule of the other scope would give a nonsense answer on a partial view.
+ */
+export function hardRuleIdsByScope(ruleSet: RuleSet, scope: RuleScope): string[] {
+  const out: string[] = [];
+  for (const config of resolveConfigs(ruleSet)) {
+    if (!config.enabled) continue;
+    const rule = RULES_BY_ID.get(config.ruleId);
+    if (!rule || rule.scope !== scope) continue;
+    if ((config.severityOverride ?? rule.severity) !== 'hard') continue;
+    out.push(rule.id);
+  }
+  return out;
+}
+
 /** A rule set enabling every rule at its shipped defaults. The starting point for a new unit. */
 export function defaultRuleSet(unitId: Id, name = 'Default contract rules'): RuleSet {
   return {
@@ -65,6 +85,7 @@ export function defaultRuleSet(unitId: Id, name = 'Default contract rules'): Rul
     name,
     version: 1,
     weekendDefinition: DEFAULT_WEEKEND,
+    fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
     createdAt: Date.now(),
     configs: ALL_RULES.map<RuleConfig>((rule) => ({
       ruleId: rule.id,

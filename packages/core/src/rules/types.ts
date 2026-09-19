@@ -32,9 +32,27 @@ import type {
   Unit,
 } from '../domain/entities.js';
 import type { IsoDate, WeekendDefinition } from '../domain/time.js';
+import type { FairnessWeights } from '../fairness/types.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
 
 export type RuleSeverity = 'hard' | 'soft';
+
+/**
+ * What a rule's verdict depends on. The solver evaluates rules incrementally — one nurse's
+ * timeline after a candidate shift is added, or one shift's roster after it changes — and
+ * can only do that if every rule declares which of the two it reads:
+ *
+ * - `nurse`: the verdict for a nurse follows from that nurse's own timeline alone (rest,
+ *   consecutive shifts, hours, leave, double-booking). Evaluating it on a view holding only
+ *   that nurse gives the same answer as the full schedule.
+ * - `shift`: the verdict for a shift follows from who is on that shift (floors, ratios,
+ *   charge, skill mix, credentials). Evaluating it on a view holding only that date and
+ *   shift type gives the same answer as the full schedule.
+ *
+ * A rule that needed both at once could not be checked incrementally and would have to be
+ * priced by the solver as a full-schedule penalty; none of the shipped rules do.
+ */
+export type RuleScope = 'nurse' | 'shift';
 
 /** Machine-readable violation categories, so the UI can group and route them. */
 export type ViolationCode =
@@ -110,6 +128,8 @@ export interface Rule<P = Record<string, unknown>> {
   severity: RuleSeverity;
   /** Grouping for the configuration UI. */
   category: 'rest' | 'hours' | 'coverage' | 'safety' | 'equity';
+  /** Whether the verdict reads one nurse's timeline or one shift's roster. See {@link RuleScope}. */
+  scope: RuleScope;
   defaultParams: P;
   evaluate(schedule: ScheduleView, params: P, ctx: RuleContext): Violation[];
 }
@@ -134,6 +154,12 @@ export interface RuleSet {
   version: number;
   configs: RuleConfig[];
   weekendDefinition: WeekendDefinition;
+  /**
+   * The soft weights: how much each fairness component counts in the objective and the
+   * 0–100 score. Versioned with the rules for the same reason the rules are — a published
+   * period must stay explainable under the weights it was solved with.
+   */
+  fairnessWeights: FairnessWeights;
   createdAt: number;
 }
 

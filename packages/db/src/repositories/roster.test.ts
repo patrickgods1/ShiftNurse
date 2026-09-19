@@ -6,7 +6,7 @@
  * versions.
  */
 
-import { isoDate, type Nurse, type Preference } from '@shiftnurse/core';
+import { DEFAULT_FAIRNESS_WEIGHTS, isoDate, type Nurse, type Preference } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor, recentAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase } from '../client.js';
@@ -348,6 +348,7 @@ describe('rule set versioning', () => {
       unitId,
       name,
       weekendDefinition: weekend,
+      fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
       configs: [
         {
           ruleId: 'min-rest-between-shifts',
@@ -385,5 +386,20 @@ describe('rule set versioning', () => {
     expect(reloaded?.version).toBe(1);
     expect(reloaded?.name).toBe('Original');
     expect(reloaded?.configs[0]?.params).toMatchObject({ minRestHours: 10 });
+  });
+
+  it('keeps the fairness weights a rule set was saved with', () => {
+    const heavyWeekends = { ...DEFAULT_FAIRNESS_WEIGHTS, weekends: 5 };
+    const v1 = saveRuleSet(
+      handle.db,
+      { ...draft('Original', 10), fairnessWeights: heavyWeekends },
+      ACTOR,
+    );
+    // A later save with different weights must not alter the version already published under
+    // the old ones — the same immutability the rules themselves get, and for the same reason.
+    saveRuleSet(handle.db, draft('Revised', 12), ACTOR);
+
+    const reloaded = getRuleSet(handle.db, v1.id);
+    expect(reloaded?.fairnessWeights).toEqual(heavyWeekends);
   });
 });

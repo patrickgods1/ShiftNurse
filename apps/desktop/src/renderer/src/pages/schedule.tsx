@@ -6,11 +6,11 @@
  */
 
 import type { Id, SchedulePeriod } from '@shiftnurse/core';
-import { compareDates } from '@shiftnurse/core';
 import { useEffect, useMemo, useState } from 'react';
 import { usePeriods } from '../api.js';
 import { AsyncState } from '../components/async-state.js';
 import { PageHeader } from '../components/page-header.js';
+import { defaultPeriod } from '../default-period.js';
 import { formatDate } from '../format.js';
 import { useUnitId } from '../unit-context.js';
 import { ScheduleBoard } from './schedule/board.js';
@@ -21,16 +21,6 @@ const STATUS_BADGE: Record<SchedulePeriod['status'], string> = {
   published: 'bg-success/15 text-success',
   archived: 'bg-border text-text-muted',
 };
-
-/** The current draft if there is one — that's what a manager opens the schedule to work on —
- * else the most recently started period of any status, so the page never renders empty when a
- * unit has only published/archived history. */
-function defaultPeriod(periods: readonly SchedulePeriod[]): SchedulePeriod | undefined {
-  if (periods.length === 0) return undefined;
-  const drafts = periods.filter((p) => p.status === 'draft');
-  const pool = drafts.length > 0 ? drafts : periods;
-  return [...pool].sort((a, b) => compareDates(b.startDate, a.startDate))[0];
-}
 
 export default function SchedulePage() {
   const unitId = useUnitId();

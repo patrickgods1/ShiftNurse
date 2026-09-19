@@ -34,6 +34,7 @@ import type {
   TimeOffStatus,
   TimeOffType,
 } from '@shiftnurse/core';
+import { DEFAULT_FAIRNESS_WEIGHTS } from '@shiftnurse/core';
 import { relations, sql } from 'drizzle-orm';
 import {
   index,
@@ -353,6 +354,16 @@ export const ruleSet = sqliteTable(
     /** Bumped on every edit. A period snapshots the version it was solved under. */
     version: integer('version').notNull().default(1),
     weekendDefinition: text('weekend_definition', { mode: 'json' }).notNull(),
+    /**
+     * Soft weights for fairness scoring, versioned with the rules for the same reason: a
+     * published period must stay explainable under the weights it was solved with. Defaulted
+     * to the app's built-in weights so that existing databases migrate cleanly with no
+     * backfill — rows written before this column existed silently read as "the default
+     * weights were in force," which is true for every rule set saved before this column did.
+     */
+    fairnessWeights: text('fairness_weights', { mode: 'json' })
+      .notNull()
+      .default(DEFAULT_FAIRNESS_WEIGHTS),
     createdAt: timestamp('created_at').notNull(),
   },
   (t) => [uniqueIndex('rule_set_version_idx').on(t.unitId, t.version)],

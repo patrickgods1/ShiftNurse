@@ -45,7 +45,9 @@ if ! command -v claude >/dev/null 2>&1; then
 fi
 
 full_diff=$(git diff --cached --no-color -- . ':(exclude)package-lock.json' ':(exclude)*.sql')
-diff=$(printf '%s' "$full_diff" | head -c 200000)
+# A substring, not `head -c`: under `pipefail` a diff past the cap makes `head` close the pipe,
+# printf dies of SIGPIPE, and the whole hook aborts before the review runs — silently.
+diff=${full_diff:0:200000}
 truncated_note=""
 if [[ ${#full_diff} -gt 200000 ]]; then
   truncated_note="NOTE: the diff was truncated at 200 KB of ${#full_diff} bytes. Files past the cut are NOT shown; read them from disk."

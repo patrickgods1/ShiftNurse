@@ -11,6 +11,7 @@
 import type {
   AcuityTier,
   CoverageRequirement,
+  FairnessWeights,
   Holiday,
   HppdTarget,
   Id,
@@ -621,6 +622,7 @@ function assembleRuleSet(db: DbLike, row: typeof ruleSetTable.$inferSelect): Rul
     version: row.version,
     configs: configRows.map(toRuleConfig),
     weekendDefinition: row.weekendDefinition as WeekendDefinition,
+    fairnessWeights: row.fairnessWeights as FairnessWeights,
     createdAt: row.createdAt,
   };
 }
@@ -652,7 +654,7 @@ export function getLatestRuleSet(db: DbLike, unitId: Id): RuleSet | undefined {
  */
 export function saveRuleSet(
   db: DbLike,
-  draft: Pick<RuleSet, 'unitId' | 'name' | 'configs' | 'weekendDefinition'>,
+  draft: Pick<RuleSet, 'unitId' | 'name' | 'configs' | 'weekendDefinition' | 'fairnessWeights'>,
   actor: string,
 ): RuleSet {
   const latest = getLatestRuleSet(db, draft.unitId);
@@ -665,6 +667,7 @@ export function saveRuleSet(
     name: draft.name,
     version,
     weekendDefinition: draft.weekendDefinition,
+    fairnessWeights: draft.fairnessWeights,
     createdAt,
   };
   db.insert(ruleSetTable).values(row).run();
@@ -688,6 +691,7 @@ export function saveRuleSet(
     version,
     configs: draft.configs,
     weekendDefinition: draft.weekendDefinition,
+    fairnessWeights: draft.fairnessWeights,
     createdAt,
   };
   recordAudit(db, { entityType: 'rule_set', entityId: id, action: 'create', actor, after });

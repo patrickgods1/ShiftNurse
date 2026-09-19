@@ -19,7 +19,11 @@ self-service later becomes an intake surface rather than a new data model.
 - `packages/core` (M1, complete): `domain/time.ts`, `domain/entities.ts`, `acuity/demand.ts`,
   `schedule/view.ts`, `rules/` (registry + 8 hard rules), `roster/csv.ts` (M4: the one CSV
   parser/formatter), `acuity/forecast.ts` (M5: same-weekday moving average with seasonal
-  index, mix validation, back-test), `testing/fixtures.ts`.
+  index, mix validation, back-test), `fairness/` (M7), `cost/` (M8: `resolvePayRate`,
+  `costSchedule`, `marginalCost`, `compareToBudget` — the pay model is documented in
+  `cost/types.ts`), `solver/` (M9: `types.ts` is the `Solver` contract, `model.ts` the
+  incremental state + objective, `greedy.ts` the seed, `anneal.ts` the moves, `solver.ts` the
+  entry point, `rng.ts` the seeded mulberry32 shared with the seeder), `testing/fixtures.ts`.
 - `packages/db` (M2, complete): 26-table Drizzle schema, generated migrations, `client.ts`
   (WAL, foreign keys ON, `transact`), `audit.ts`, `mappers.ts`, and repositories under
   `repositories/` — `roster`, `config`, `schedule`, `timeoff`, `operations`.
@@ -33,9 +37,16 @@ self-service later becomes an intake surface rather than a new data model.
   holidays) and Demand (census grid, forecaster proposals, derived demand with binding
   constraint, back-test) and Schedule (M6: nurses × days grid, native HTML5 drag-and-drop,
   lock/charge/OT popover, live violation badges from `schedule.validate`, Settings > Rules
-  versioned editor) are real; Requests is a placeholder until M10. Renderer hooks: `api.ts`
-  (roster), `api-config.ts` (configuration + rules), `api-demand.ts` (census/demand),
-  `api-schedule.ts` (grid mutations + validation).
+  versioned editor incl. fairness weights) and Fairness (M7: unit distribution, per-nurse
+  breakdown with trend sparklines, history CSV import) and Cost (M8: Settings > Pay editor for
+  rates/differentials/OT rules, budget-vs-actual + overtime concentration on the Dashboard, a
+  running cost strip on the Schedule page) and Generate (M9: `main/solver-worker.ts` runs core's
+  `solve` in a worker thread, `main/solver-jobs.ts` tracks jobs and applies the result, the
+  renderer polls `solver.status` from `api-solver.ts` and shows `schedule/generate-dialog.tsx`)
+  are real; Requests is a placeholder until M10.
+  Renderer hooks: `api.ts` (roster), `api-config.ts` (configuration + rules), `api-demand.ts`
+  (census/demand), `api-schedule.ts` (grid mutations + validation), `api-fairness.ts`
+  (report/trend/import), `api-cost.ts` (pay config, cost report, budget).
 
 ## Architecture
 
@@ -174,6 +185,35 @@ violations of their own.
   is a type error, not a runtime "no handler".
 - Bad data throws loudly (`ScheduleView` throws on an unknown nurse id). Silently dropping a
   row hides corruption; in scheduling that becomes a grievance.
+- **Fairness fair-share is pinned to `contractedHoursPerPeriod`, never worked hours.** That is
+  what makes the score monotone (an extra night can never raise it); basing shares on hours
+  actually worked would let a nurse who works only nights "improve" by taking one more. Only
+  a shift that honours none of a nurse's preferences is unambiguously worse — a day shift for
+  a nurse avoiding nights raises their hit rate — so the property test excludes such pairs.
+- **The ledger's `periodId` has no foreign key on purpose:** imported history uses synthetic
+  `import:<start>` ids for pay periods that predate the app.
+- **Every rule declares a `scope`** (`'nurse'` or `'shift'`). The solver evaluates hard rules
+  incrementally on a view holding one nurse's timeline or one shift's roster, so a rule that
+  secretly reads more than its scope passes in the solver and fails on the grid. Nurse-scope hard
+  rules gate every addition (except `under_contracted_hours`, a floor the objective pushes toward);
+  shift-scope hard rules are priced, and what remains is the report's `unfilled` list.
+- **The solver is deterministic by construction.** All randomness comes from `Rng` seeded from
+  a hash of the period id; the iteration budget, not the clock, ends the run (the wall-clock limit
+  is a safety valve). Anything that depends on wall time in a solve path breaks "regenerate
+  unchanged inputs → identical schedule", which the smoke test asserts.
+- **`dayNumber`/`fromDayNumber` are memoised.** The rule engine on partial views converts the same
+  few dozen dates millions of times per solve; without the cache that was 60% of a run.
+- **Demo data must be staffable by construction.** The seeder deals roles and employment types
+  rather than drawing them, forecasts only the 12-hour shifts, and contracts 12-hour nurses at
+  72h (three 12s under a 40h overtime threshold). Changing floors, census or the roster mix means
+  re-checking Generate on the demo fills every floor.
+- **Costing is never a silent zero.** A nurse with no resolvable pay rate makes their shifts
+  *unpriced* (`rateSource: 'none'`, counted in `unpricedAssignments`) and every cost surface
+  shows that count next to the total. Overtime is priced per nurse-week over the full timeline
+  including the lookback tail, using the work-week start from the `max-hours-per-week` rule
+  params, so a shift can never be flagged as overtime by the rules and priced as straight time.
+  The DB's `effectiveRateForNurse` delegates to core's `resolvePayRate`; do not add a second
+  definition of "the rate in force".
 
 ## Development discipline
 

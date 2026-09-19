@@ -9,34 +9,57 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import {
+  type Assignment,
   addDays,
+  type BurdenCounters,
   backtest,
   buildRuleContext,
+  type CostContext,
+  type CounterContext,
+  compareDates,
+  compareToBudget,
+  costSchedule,
   datesInRange,
   defaultRuleSet,
+  deriveCounters,
   deriveDemand,
   evaluateSchedule,
+  type FairnessLedgerEntry,
   formatRosterCsv,
+  groupIntoPayPeriods,
+  type HistoricalShiftRow,
   type Id,
   type IsoDate,
+  type MaxHoursParams,
+  maxHoursRule,
+  type Nurse,
   type Preference,
+  parseHistoricalScheduleCsv,
   parseRosterCsv,
   proposeCensus,
+  type RuleSet,
   type SchedulePeriod,
   ScheduleView,
   type ShiftType,
+  type SolveInput,
+  type SolveReport,
+  scoreFairness,
   today,
 } from '@shiftnurse/core';
 import {
   createAcuityTier,
   createAssignment,
   createCredential,
+  createDifferential,
   createHoliday,
   createNurse,
+  createOvertimeRule,
+  createPayRate,
   createPeriod,
   createRatioRule,
   createShiftType,
   credentialsExpiringBetween,
+  type DbLike,
   deactivateNurse,
   deactivateRatioRule,
   deactivateShiftType,
@@ -44,9 +67,13 @@ import {
   deleteAssignment,
   deleteCensusForecast,
   deleteCoverageRequirement,
+  deleteDifferential,
   deleteHoliday,
+  deleteOvertimeRule,
+  deletePayRate,
   exportRoster,
   getAssignment,
+  getBudget,
   getCurrentDraft,
   getHppdTarget,
   getLatestRuleSet,
@@ -57,8 +84,13 @@ import {
   getUnit,
   grantCredential,
   ids,
+  importHistoricalLedger,
   importRoster,
+  ledgerPeriodsForUnit,
+  ledgerSince,
+  listActiveDifferentials,
   listActiveNursesForUnit,
+  listActiveOvertimeRules,
   listActiveRatioRulesForUnit,
   listAcuityTiersForUnit,
   listAssignmentsForDate,
@@ -67,13 +99,17 @@ import {
   listCensusHistory,
   listCoverageRequirementsForUnit,
   listCredentials,
+  listDifferentialsForUnit,
   listHolidaysForUnit,
   listNurseCredentials,
   listNurseCredentialsForUnit,
   listNursesForUnit,
   listOpenCallOffs,
+  listOvertimeRulesForUnit,
+  listPayRatesForUnit,
   listPeriodsForUnit,
   listPreferencesForNurse,
+  listPreferencesForUnit,
   listRatioRulesForUnit,
   listShiftCredentialRequirementsForUnit,
   listShiftTypesForUnit,
@@ -81,16 +117,22 @@ import {
   listUnits,
   priorAssignmentsBefore,
   recordActualCensus,
+  replaceAssignments,
   replaceNursePreferences,
   revokeCredential,
   type ShiftNurseDb,
   saveRuleSet,
   setLocked as setAssignmentLocked,
+  setBudget,
   transact,
+  type UpsertFairnessLedgerInput,
   updateAcuityTier,
   updateAssignment as updateAssignmentDb,
   updateCredentialExpiry,
+  updateDifferential,
   updateNurse,
+  updateOvertimeRule,
+  updatePayRate,
   updateRatioRule,
   updateShiftType,
   upsertCensusForecast,
@@ -101,12 +143,17 @@ import {
 import { app, BrowserWindow, dialog } from 'electron';
 import type {
   DashboardSummary,
+  FairnessTrendPoint,
+  HistoryImportPreview,
+  HistoryImportSummary,
   OnShiftView,
+  PeriodCostReport,
   RosterImportPreview,
   ScheduleValidation,
   ShiftNurseApi,
 } from '../shared/api.js';
 import { databasePath } from './database.js';
+import { SolverJobs } from './solver-jobs.js';
 
 /**
  * v1 has one user, the manager, and no login. Every audit entry is attributed to this actor;
@@ -160,7 +207,7 @@ function dashboardSummary(db: ShiftNurseDb, unitId: Id): DashboardSummary {
   };
 }
 
-function unitOrThrow(db: ShiftNurseDb, unitId: Id) {
+function unitOrThrow(db: DbLike, unitId: Id) {
   const unit = getUnit(db, unitId);
   if (!unit) throw new Error(`Unknown unit ${unitId}`);
   return unit;
@@ -254,7 +301,340 @@ function buildScheduleValidation(db: ShiftNurseDb, periodId: Id): ScheduleValida
   return { ruleSet, result: evaluateSchedule(schedule, ruleSet, ctx) };
 }
 
-export function createApi(db: ShiftNurseDb): ShiftNurseApi {
+// ---------------------------------------------------------------------------
+// Fairness
+// ---------------------------------------------------------------------------
+
+/**
+ * How far back the ledger is read. The burden window is 13 periods (~6 months of two-week
+ * periods) with decay, so a year of rows is more than enough and keeps the query bounded on
+ * a unit that has imported years of history.
+ */
+const LEDGER_LOOKBACK_DAYS = 400;
+
+function latestRuleSetOrDefault(db: DbLike, unitId: Id): RuleSet {
+  return getLatestRuleSet(db, unitId) ?? defaultRuleSet(unitId);
+}
+
+/** Everything `deriveCounters` needs for a unit under a given rule set, loaded once. */
+function counterContext(db: DbLike, unitId: Id, ruleSet: RuleSet): CounterContext {
+  return {
+    unit: unitOrThrow(db, unitId),
+    holidayDates: new Set<IsoDate>(listHolidaysForUnit(db, unitId).map((h) => h.date)),
+    weekendDefinition: ruleSet.weekendDefinition,
+    preferences: listPreferencesForUnit(db, unitId),
+    timeOff: listTimeOffForUnit(db, unitId),
+  };
+}
+
+function ledgerHistory(db: ShiftNurseDb, unitId: Id, before: IsoDate): FairnessLedgerEntry[] {
+  return ledgerSince(db, unitId, addDays(before, -LEDGER_LOOKBACK_DAYS)).filter(
+    (e) => compareDates(e.periodStart, before) < 0,
+  );
+}
+
+function fairnessReport(db: ShiftNurseDb, periodId: Id) {
+  const period = getPeriod(db, periodId);
+  if (!period) throw new Error(`Unknown period ${periodId}`);
+  // Same reasoning as validation: the weights and weekend definition the period was created
+  // under, not whatever the Rules screen says today.
+  const ruleSet = getRuleSet(db, period.ruleSetId);
+  if (!ruleSet) throw new Error(`Period ${periodId} cites unknown rule set ${period.ruleSetId}`);
+
+  const nurses = listNursesForUnit(db, period.unitId);
+  const schedule = new ScheduleView({
+    period,
+    assignments: listAssignmentsForPeriod(db, periodId),
+    nurses,
+    shiftTypes: listShiftTypesForUnit(db, period.unitId),
+  });
+  const ctx = counterContext(db, period.unitId, ruleSet);
+  // Only rows strictly before this period: if this period was published before, its own
+  // ledger row would otherwise be counted as history *and* as the current draft.
+  return scoreFairness({
+    nurses: nurses.filter((n) => n.active),
+    current: deriveCounters(schedule, ctx),
+    history: ledgerHistory(db, period.unitId, period.startDate),
+    preferences: ctx.preferences,
+    weights: ruleSet.fairnessWeights,
+  });
+}
+
+function countersFromEntry(entry: FairnessLedgerEntry): BurdenCounters {
+  const { id: _id, nurseId: _nurse, periodId: _period, periodStart: _start, ...counters } = entry;
+  return counters;
+}
+
+/**
+ * Re-score each ledger period as it would have looked at the time — judged against only the
+ * history before it — so the trend shows whether the unit is getting fairer, not a moving
+ * average smeared over the present.
+ */
+function fairnessTrend(db: ShiftNurseDb, unitId: Id): FairnessTrendPoint[] {
+  const entries = ledgerSince(db, unitId, addDays(today(), -LEDGER_LOOKBACK_DAYS));
+  const nurses = listActiveNursesForUnit(db, unitId);
+  const ruleSet = latestRuleSetOrDefault(db, unitId);
+  const preferences = listPreferencesForUnit(db, unitId);
+
+  const byPeriod = new Map<Id, { periodStart: IsoDate; rows: FairnessLedgerEntry[] }>();
+  for (const e of entries) {
+    const existing = byPeriod.get(e.periodId);
+    if (existing) existing.rows.push(e);
+    else byPeriod.set(e.periodId, { periodStart: e.periodStart, rows: [e] });
+  }
+  const periods = [...byPeriod.entries()].sort(
+    ([idA, a], [idB, b]) => compareDates(a.periodStart, b.periodStart) || idA.localeCompare(idB),
+  );
+
+  return periods.map(([periodId, { periodStart, rows }]) => {
+    const report = scoreFairness({
+      nurses,
+      current: new Map(rows.map((r) => [r.nurseId, countersFromEntry(r)])),
+      history: entries.filter((e) => compareDates(e.periodStart, periodStart) < 0),
+      preferences,
+      weights: ruleSet.fairnessWeights,
+    });
+    const scores: Record<Id, number> = {};
+    for (const s of report.scores) scores[s.nurseId] = s.score;
+    return { periodId, periodStart, scores, gini: report.distribution.score.gini };
+  });
+}
+
+function pickHistoryImportFile(db: ShiftNurseDb, unitId: Id): HistoryImportPreview | undefined {
+  const unit = unitOrThrow(db, unitId);
+  const win = BrowserWindow.getFocusedWindow();
+  const options: Electron.OpenDialogSyncOptions = {
+    title: 'Import historical schedule',
+    filters: [{ name: 'CSV', extensions: ['csv', 'txt'] }],
+    properties: ['openFile'],
+  };
+  const [path] =
+    (win ? dialog.showOpenDialogSync(win, options) : dialog.showOpenDialogSync(options)) ?? [];
+  if (!path) return undefined;
+  const text = readFileSync(path, 'utf8');
+  const { rows, errors } = parseHistoricalScheduleCsv(text, {
+    nurses: listNursesForUnit(db, unitId),
+    shiftTypes: listShiftTypesForUnit(db, unitId),
+  });
+  const existing = new Set(ledgerPeriodsForUnit(db, unitId).map((p) => p.periodId));
+  const periods = groupIntoPayPeriods(rows, unit).map((p) => ({
+    periodId: p.periodId,
+    start: p.start,
+    end: p.end,
+    shifts: p.rows.length,
+    nurses: new Set(p.rows.map((r) => r.employeeId)).size,
+    replacesExisting: existing.has(p.periodId),
+  }));
+  return { path, rows, errors, periods };
+}
+
+/**
+ * Turn imported shifts into ledger rows by running each pay period through the same
+ * `deriveCounters` a published period will use, so imported history and app-generated history
+ * are counted identically — a weekend is a weekend under the same definition either way.
+ */
+function importHistory(
+  db: ShiftNurseDb,
+  unitId: Id,
+  rows: readonly HistoricalShiftRow[],
+): HistoryImportSummary {
+  return transact(db, (tx) => {
+    const unit = unitOrThrow(tx, unitId);
+    const ruleSet = latestRuleSetOrDefault(tx, unitId);
+    const nurses = listNursesForUnit(tx, unitId);
+    const shiftTypes = listShiftTypesForUnit(tx, unitId);
+    const nurseByEmployeeId = new Map<string, Nurse>(nurses.map((n) => [n.employeeId, n]));
+    const shiftTypeByAbbreviation = new Map<string, ShiftType>(
+      shiftTypes.map((s) => [s.abbreviation.toLowerCase(), s]),
+    );
+    const ctx = counterContext(tx, unitId, ruleSet);
+
+    const entries: UpsertFairnessLedgerInput[] = [];
+    const periods = groupIntoPayPeriods(rows, unit);
+    for (const group of periods) {
+      const period: SchedulePeriod = {
+        id: group.periodId,
+        unitId,
+        name: `Imported ${group.start}`,
+        startDate: group.start,
+        endDate: group.end,
+        status: 'archived',
+        ruleSetId: ruleSet.id,
+        ruleSetVersion: ruleSet.version,
+      };
+      const assignments: Assignment[] = group.rows.map((r, i) => {
+        const nurse = nurseByEmployeeId.get(r.employeeId);
+        const shiftType = shiftTypeByAbbreviation.get(r.shiftAbbreviation.toLowerCase());
+        // The preview already validated these; a mismatch here means the roster changed
+        // between preview and import, which must not become a silently mis-attributed shift.
+        if (!nurse) throw new Error(`Unknown employee id ${r.employeeId}`);
+        if (!shiftType) throw new Error(`Unknown shift abbreviation ${r.shiftAbbreviation}`);
+        return {
+          id: `${group.periodId}:${i}`,
+          periodId: group.periodId,
+          nurseId: nurse.id,
+          shiftTypeId: shiftType.id,
+          date: r.date,
+          source: 'manual',
+          isLocked: false,
+          isCharge: false,
+          isOvertime: false,
+        };
+      });
+      const schedule = new ScheduleView({ period, assignments, nurses, shiftTypes });
+      const present = new Set(assignments.map((a) => a.nurseId));
+      for (const [nurseId, counters] of deriveCounters(schedule, ctx)) {
+        // Only nurses who appear in this period's file: a nurse absent from a period may not
+        // have been on the unit yet, and a zero row would read as "worked no nights" rather
+        // than "no record".
+        if (!present.has(nurseId)) continue;
+        entries.push({ nurseId, periodId: group.periodId, periodStart: group.start, ...counters });
+      }
+    }
+    const result = importHistoricalLedger(tx, unitId, entries, ACTOR);
+    return {
+      periodsImported: periods.length,
+      entriesWritten: result.written,
+      entriesReplaced: result.replaced,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Cost
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything `costSchedule` needs for a unit under a given rule set. The work-week start comes
+ * from the max-hours rule's parameters so weekly overtime is counted over the same week the
+ * rule engine polices — two different "weeks" would let a shift be flagged as overtime by the
+ * rules and priced as straight time, or the reverse.
+ */
+function costContext(db: DbLike, unitId: Id, ruleSet: RuleSet): CostContext {
+  const maxHours = ruleSet.configs.find((c) => c.ruleId === maxHoursRule.id);
+  const params = (maxHours?.params ?? maxHoursRule.defaultParams) as Partial<MaxHoursParams>;
+  return {
+    unit: unitOrThrow(db, unitId),
+    payRates: listPayRatesForUnit(db, unitId),
+    differentials: listActiveDifferentials(db, unitId),
+    overtimeRules: listActiveOvertimeRules(db, unitId),
+    holidayDates: new Set<IsoDate>(listHolidaysForUnit(db, unitId).map((h) => h.date)),
+    weekendDefinition: ruleSet.weekendDefinition,
+    workWeekStartsOn: params.workWeekStartsOn ?? maxHoursRule.defaultParams.workWeekStartsOn,
+  };
+}
+
+function costReport(db: ShiftNurseDb, periodId: Id): PeriodCostReport {
+  const period = getPeriod(db, periodId);
+  if (!period) throw new Error(`Unknown period ${periodId}`);
+  // The period's own snapshot: the weekend definition and work week it was solved under.
+  const ruleSet = getRuleSet(db, period.ruleSetId);
+  if (!ruleSet) throw new Error(`Period ${periodId} cites unknown rule set ${period.ruleSetId}`);
+
+  const schedule = new ScheduleView({
+    period,
+    assignments: listAssignmentsForPeriod(db, periodId),
+    // Weekly overtime can straddle the period boundary just as the rest rules do.
+    priorAssignments: priorAssignmentsBefore(db, period.unitId, period.startDate, 14),
+    nurses: listNursesForUnit(db, period.unitId),
+    shiftTypes: listShiftTypesForUnit(db, period.unitId),
+  });
+  const cost = costSchedule(schedule, costContext(db, period.unitId, ruleSet));
+  const budget = getBudget(db, periodId);
+  return {
+    period,
+    cost,
+    budget,
+    variance: budget ? compareToBudget(cost.totals.total, budget.targetDollars) : undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Solver
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything the solver needs for one draft period, as plain rows. Loaded the same way
+ * validation, fairness and costing load their inputs — the period's own rule-set snapshot,
+ * the 14-day lookback tail, ledger history strictly before the period — so the schedule the
+ * solver emits is judged by exactly the machinery that will judge it on screen.
+ */
+function buildSolveInput(db: ShiftNurseDb, periodId: Id): SolveInput {
+  const period = getPeriod(db, periodId);
+  if (!period) throw new Error(`Unknown period ${periodId}`);
+  if (period.status !== 'draft') {
+    throw new Error(`Period "${period.name}" is ${period.status}; only a draft can be generated`);
+  }
+  const ruleSet = getRuleSet(db, period.ruleSetId);
+  if (!ruleSet) throw new Error(`Period ${periodId} cites unknown rule set ${period.ruleSetId}`);
+  const unitId = period.unitId;
+  const cost = costContext(db, unitId, ruleSet);
+  return {
+    unit: unitOrThrow(db, unitId),
+    period,
+    ruleSet,
+    nurses: listNursesForUnit(db, unitId),
+    shiftTypes: listShiftTypesForUnit(db, unitId),
+    demand: deriveDemand(
+      datesInRange(period.startDate, period.endDate),
+      demandInputs(db, unitId, period.startDate, period.endDate),
+    ).all(),
+    assignments: listAssignmentsForPeriod(db, periodId),
+    priorAssignments: priorAssignmentsBefore(db, unitId, period.startDate, 14),
+    timeOff: listTimeOffForUnit(db, unitId),
+    credentials: listCredentials(db),
+    nurseCredentials: listNurseCredentialsForUnit(db, unitId),
+    shiftCredentialRequirements: listShiftCredentialRequirementsForUnit(db, unitId),
+    holidays: listHolidaysForUnit(db, unitId),
+    preferences: listPreferencesForUnit(db, unitId),
+    ledgerHistory: ledgerHistory(db, unitId, period.startDate),
+    cost: {
+      payRates: cost.payRates,
+      differentials: cost.differentials,
+      overtimeRules: cost.overtimeRules,
+    },
+  };
+}
+
+/** Write a finished solve into its period: unlocked rows replaced, locked rows untouched, audited. */
+function applySolveReport(db: ShiftNurseDb, periodId: Id, report: SolveReport) {
+  return transact(db, (tx) => {
+    const period = getPeriod(tx, periodId);
+    if (!period) throw new Error(`Unknown period ${periodId}`);
+    if (period.status !== 'draft') {
+      throw new Error(`Period "${period.name}" was ${period.status} before the solve finished`);
+    }
+    const proposed = report.assignments.filter((a) => !a.isLocked);
+    const written = replaceAssignments(
+      tx,
+      periodId,
+      proposed.map((a) => ({
+        periodId,
+        nurseId: a.nurseId,
+        shiftTypeId: a.shiftTypeId,
+        date: a.date,
+        source: 'solver' as const,
+        isCharge: a.isCharge,
+        isOvertime: a.isOvertime,
+      })),
+      ACTOR,
+    );
+    const preservedLocked = written.filter((a) => a.isLocked).length;
+    return { created: written.length - preservedLocked, preservedLocked };
+  });
+}
+
+export function createSolverJobs(db: ShiftNurseDb): SolverJobs {
+  return new SolverJobs({
+    loadInput: (periodId) => buildSolveInput(db, periodId),
+    apply: (periodId, report) => applySolveReport(db, periodId, report),
+  });
+}
+
+export function createApi(
+  db: ShiftNurseDb,
+  solverJobs: SolverJobs = createSolverJobs(db),
+): ShiftNurseApi {
   return {
     app: {
       info: () => ({
@@ -397,19 +777,52 @@ export function createApi(db: ShiftNurseDb): ShiftNurseApi {
       deleteAssignment: (assignmentId) => deleteAssignment(db, assignmentId, ACTOR),
       setLocked: (assignmentId, locked) => setAssignmentLocked(db, assignmentId, locked, ACTOR),
     },
+    solver: {
+      start: (periodId, options) => solverJobs.start(periodId, options),
+      status: (jobId) => solverJobs.status(jobId),
+      cancel: (jobId) => solverJobs.cancel(jobId),
+    },
     rules: {
-      getLatest: (unitId) => getLatestRuleSet(db, unitId) ?? defaultRuleSet(unitId),
-      save: (unitId, name, configs, weekendDefinition) =>
+      getLatest: (unitId) => latestRuleSetOrDefault(db, unitId),
+      save: (unitId, name, configs, weekendDefinition, fairnessWeights) =>
         saveRuleSet(
           db,
           {
-            ...(getLatestRuleSet(db, unitId) ?? defaultRuleSet(unitId)),
+            ...latestRuleSetOrDefault(db, unitId),
             name,
             configs,
             weekendDefinition,
+            fairnessWeights,
           },
           ACTOR,
         ),
+    },
+    fairness: {
+      report: (periodId) => fairnessReport(db, periodId),
+      history: (unitId) => ledgerSince(db, unitId, addDays(today(), -LEDGER_LOOKBACK_DAYS)),
+      trend: (unitId) => fairnessTrend(db, unitId),
+      pickHistoryImportFile: (unitId) => pickHistoryImportFile(db, unitId),
+      importHistory: (unitId, rows) => importHistory(db, unitId, rows),
+    },
+    cost: {
+      payRates: (unitId) => listPayRatesForUnit(db, unitId),
+      createPayRate: (input) => createPayRate(db, input, ACTOR),
+      updatePayRate: (id, patch) => updatePayRate(db, id, patch, ACTOR),
+      deletePayRate: (id) => deletePayRate(db, id, ACTOR),
+      differentials: (unitId) => listDifferentialsForUnit(db, unitId),
+      createDifferential: (input) => createDifferential(db, input, ACTOR),
+      updateDifferential: (id, patch) => updateDifferential(db, id, patch, ACTOR),
+      deleteDifferential: (id) => deleteDifferential(db, id, ACTOR),
+      overtimeRules: (unitId) => listOvertimeRulesForUnit(db, unitId),
+      createOvertimeRule: (input) => createOvertimeRule(db, input, ACTOR),
+      updateOvertimeRule: (id, patch) => updateOvertimeRule(db, id, patch, ACTOR),
+      deleteOvertimeRule: (id) => deleteOvertimeRule(db, id, ACTOR),
+      report: (periodId) => costReport(db, periodId),
+      setBudget: (periodId, targetDollars) => {
+        const period = getPeriod(db, periodId);
+        if (!period) throw new Error(`Unknown period ${periodId}`);
+        return setBudget(db, period.unitId, periodId, targetDollars, ACTOR);
+      },
     },
     timeOff: {
       list: (unitId, status) => listTimeOffForUnit(db, unitId, status),

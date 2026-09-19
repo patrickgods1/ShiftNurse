@@ -1,0 +1,1 @@
+ALTER TABLE `rule_set` ADD `fairness_weights` text DEFAULT '{"nights":2,"weekends":3,"holidays":3,"onCall":1.5,"undesirable":2,"overtime":0.5,"preferences":2,"timeOff":1.5}' NOT NULL;

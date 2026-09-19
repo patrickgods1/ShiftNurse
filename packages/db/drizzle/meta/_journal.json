@@ -8,6 +8,13 @@
       "when": 1789689281380,
       "tag": "0000_bouncy_captain_universe",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789765917770,
+      "tag": "0001_wise_thanos",
+      "breakpoints": true
     }
   ]
 }

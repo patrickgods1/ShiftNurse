@@ -24,10 +24,13 @@ import {
   type AcuityTier,
   type Assignment,
   addDays,
+  type CostContext,
   type CoverageRequirement,
+  costSchedule,
   DEFAULT_WEEKEND,
   datesInRange,
   defaultRuleSet,
+  type EmploymentType,
   type Id,
   type IsoDate,
   isoDate,
@@ -35,6 +38,8 @@ import {
   type Nurse,
   type NurseRole,
   type Preference,
+  Rng,
+  ScheduleView,
   type ShiftType,
   today,
   type Weekday,
@@ -55,16 +60,19 @@ import {
 } from '../repositories/config.js';
 import {
   importFairnessLedgerEntries,
+  listActiveDifferentials,
+  listActiveOvertimeRules,
+  listPayRatesForUnit,
   logCallAttempt,
   markCallOffCovered,
   reportCallOff,
+  setBudget,
   type UpsertFairnessLedgerInput,
 } from '../repositories/operations.js';
 import { createNurse, grantCredential, replaceNursePreferences } from '../repositories/roster.js';
 import { createAssignment, createPeriod, publishPeriod } from '../repositories/schedule.js';
 import { approveTimeOff, createTimeOffRequest, denyTimeOff } from '../repositories/timeoff.js';
 import * as s from '../schema.js';
-import { Rng } from './rng.js';
 
 const ACTOR = 'demo-seed';
 
@@ -265,18 +273,27 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
   const PALS = cred('PALS', 'Pediatric Advanced Life Support');
   const PRECEPTOR = cred('PRECEPTOR', 'Preceptor certified', false);
 
-  // Every night shift needs one ACLS RN; every shift needs one preceptor for the novices.
+  // Every night shift needs one ACLS RN; the two 12-hour shifts each need a preceptor for the
+  // novices. The 8-hour supplements overlap the 12s, so the preceptor on the 12 covers them.
   createShiftCredentialRequirement(
     db,
     { unitId: unit.id, shiftTypeId: NIGHT12.id, role: 'RN', credentialId: ACLS, minCount: 1 },
     ACTOR,
   );
-  createShiftCredentialRequirement(
-    db,
-    { unitId: unit.id, shiftTypeId: null, role: null, credentialId: PRECEPTOR, minCount: 1 },
-    ACTOR,
-  );
-  bump('shiftCredentialRequirement', 2);
+  for (const shiftType of [DAY12, NIGHT12]) {
+    createShiftCredentialRequirement(
+      db,
+      {
+        unitId: unit.id,
+        shiftTypeId: shiftType.id,
+        role: null,
+        credentialId: PRECEPTOR,
+        minCount: 1,
+      },
+      ACTOR,
+    );
+  }
+  bump('shiftCredentialRequirement', 3);
 
   // --- Acuity ---------------------------------------------------------------
   const tier = (name: string, level: number, careHoursPerPatientDay: number): AcuityTier =>
@@ -302,8 +319,10 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
   ratio('RN', ROUTINE.id, 5, 'Example: CA Title 22 §70217 med-surg 1:5');
   ratio('RN', MODERATE.id, 4, 'Example: telemetry 1:4');
   ratio('RN', HIGH.id, 2, 'Example: step-down 1:2');
-  ratio('LPN', null, 8);
-  bump('ratioRule', 4);
+  // No LPN ratio: on a med-surg unit LPNs work under RN supervision, so a per-LPN patient
+  // ceiling would make the demand model ask for a second full complement of nurses on every
+  // shift. LPN staffing is the coverage floor's business.
+  bump('ratioRule', 3);
   upsertHppdTarget(db, unit.id, 6.5, ACTOR);
   bump('hppdTarget');
 
@@ -333,10 +352,10 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
   };
   for (const wd of [0, 1, 2, 3, 4, 5, 6] as Weekday[]) {
     const weekend = wd === 0 || wd === 6;
-    floor(DAY12, 'RN', wd, weekend ? 5 : 4, weekend ? 6 : 5);
+    floor(DAY12, 'RN', wd, weekend ? 5 : 4, 5);
     floor(DAY12, 'LPN', wd, 1, 2);
     floor(DAY12, 'CNA', wd, 1, 2);
-    floor(NIGHT12, 'RN', wd, 4, 5);
+    floor(NIGHT12, 'RN', wd, 3, 4);
     floor(NIGHT12, 'LPN', wd, 1, 1);
     floor(NIGHT12, 'CNA', wd, 1, 1);
     if (!weekend) {
@@ -366,7 +385,13 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
   const base = defaultRuleSet(unit.id);
   const ruleSet = saveRuleSet(
     db,
-    { unitId: unit.id, name: base.name, configs: base.configs, weekendDefinition: DEFAULT_WEEKEND },
+    {
+      unitId: unit.id,
+      name: base.name,
+      configs: base.configs,
+      weekendDefinition: DEFAULT_WEEKEND,
+      fairnessWeights: base.fairnessWeights,
+    },
     ACTOR,
   );
   bump('ruleSet');
@@ -375,18 +400,25 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
   const traits: Trait[] = [];
   const firstNames = rng.shuffle(FIRST_NAMES);
   const lastNames = rng.shuffle(LAST_NAMES);
+  // The role mix is dealt, not drawn: the floors below need about ten RNs, two LPNs and two
+  // CNAs on the unit every day, and a random draw that lands on one CNA would make the demo
+  // unstaffable by construction rather than by any decision the solver could explain.
+  const roles = rng.shuffle<NurseRole>([
+    ...Array.from({ length: 30 }, () => 'RN' as const),
+    ...Array.from({ length: 7 }, () => 'LPN' as const),
+    ...Array.from({ length: 5 }, () => 'CNA' as const),
+  ]);
+  // Employment is dealt for the same reason: the contracted hours have to add up to the
+  // demand, and eight zero-hour RNs in one draw would not.
+  const employmentTypes = rng.shuffle<EmploymentType>([
+    ...Array.from({ length: 25 }, () => 'full_time' as const),
+    ...Array.from({ length: 10 }, () => 'part_time' as const),
+    ...Array.from({ length: 5 }, () => 'per_diem' as const),
+    ...Array.from({ length: 2 }, () => 'agency' as const),
+  ]);
   for (let i = 0; i < 42; i++) {
-    const role = rng.weightedPick<NurseRole>([
-      { value: 'RN', weight: 60 },
-      { value: 'LPN', weight: 25 },
-      { value: 'CNA', weight: 15 },
-    ]);
-    const employmentType = rng.weightedPick([
-      { value: 'full_time' as const, weight: 60 },
-      { value: 'part_time' as const, weight: 25 },
-      { value: 'per_diem' as const, weight: 12 },
-      { value: 'agency' as const, weight: 3 },
-    ]);
+    const role = roles[i]!;
+    const employmentType = employmentTypes[i]!;
     const fte =
       employmentType === 'full_time'
         ? 1
@@ -394,6 +426,10 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
           ? rng.pick([0.6, 0.8])
           : 0;
     const seniorityDate = addDays(now, -rng.nextInt(90, 20 * 365));
+    // A full-time 12-hour nurse works three 12s a week — 72 hours a period — which is what a
+    // 40-hour overtime threshold allows; only 8-hour nurses can reach 80 without overtime.
+    const shiftLength: 8 | 12 = rng.chance(0.8) ? 12 : 8;
+    const contractedHoursPerPeriod = Math.round(fte * (shiftLength === 12 ? 72 : 80));
     const isNovice = rng.chance(0.15) && employmentType !== 'agency';
     const nurse = createNurse(
       db,
@@ -405,12 +441,12 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
         role,
         employmentType,
         fte,
-        contractedHoursPerPeriod: Math.round(fte * 80),
+        contractedHoursPerPeriod,
         seniorityDate,
         isChargeEligible:
           role === 'RN' &&
           !isNovice &&
-          traits.filter((t) => t.nurse.isChargeEligible).length < 8 &&
+          traits.filter((t) => t.nurse.isChargeEligible).length < 20 &&
           rng.chance(0.5),
         isNovice,
         isFloatEligible: rng.chance(0.7),
@@ -420,8 +456,7 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
       ACTOR,
     );
     bump('nurse');
-    const shiftLength: 8 | 12 = rng.chance(0.7) ? 12 : 8;
-    const perPeriodHours = fte > 0 ? fte * 80 : rng.pick([24, 36]);
+    const perPeriodHours = fte > 0 ? contractedHoursPerPeriod : rng.pick([24, 36]);
     traits.push({
       nurse,
       shiftLength,
@@ -459,7 +494,7 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
       );
       bump('nurseCredential');
     }
-    if (!t.nurse.isNovice && rng.chance(0.3)) {
+    if (!t.nurse.isNovice && rng.chance(0.5)) {
       grantCredential(db, { nurseId: t.nurse.id, credentialId: PRECEPTOR }, ACTOR);
       bump('nurseCredential');
     }
@@ -590,10 +625,10 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
     const dayIndex = datesInRange(historyStart, date).length;
     // Weekday/weekend rhythm plus a slow seasonal drift.
     const seasonal = Math.round(3 * Math.sin(dayIndex / 30));
-    const base = (isWeekendDate(date) ? 22 : 26) + seasonal + (shiftType.isNight ? -2 : 0);
-    const projected = Math.max(12, base + rng.nextInt(-2, 2));
-    const high = rng.nextInt(1, 4);
-    const moderate = rng.nextInt(5, 9);
+    const base = (isWeekendDate(date) ? 14 : 16) + seasonal + (shiftType.isNight ? -2 : 0);
+    const projected = Math.max(10, base + rng.nextInt(-2, 2));
+    const high = rng.nextInt(1, 3);
+    const moderate = rng.nextInt(4, 7);
     const mix = {
       [ROUTINE.id]: projected - high - moderate,
       [MODERATE.id]: moderate,
@@ -685,6 +720,10 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
   };
 
   const shiftTypes = [DAY12, NIGHT12, DAY8, EVE8, NIGHT8, ONCALL];
+  // The 12-hour shifts carry the census. The 8-hour shifts overlap them as floor-staffed
+  // supplements: a forecast on each of them would make the ratio maths demand a full
+  // complement of nurses for the same patients three times over.
+  const forecastShiftTypes = [DAY12, NIGHT12];
   const floors: CoverageRequirement[] = db
     .select()
     .from(s.coverageRequirement)
@@ -701,13 +740,25 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
     }));
 
   const ledgerInputs: UpsertFairnessLedgerInput[] = [];
-  const holidayDates = new Set(
+  const holidayDates = new Set<IsoDate>(
     db
       .select({ d: s.holiday.date })
       .from(s.holiday)
       .all()
-      .map((r) => r.d),
+      .map((r) => r.d as IsoDate),
   );
+  const nurses = traits.map((t) => t.nurse);
+  const costContext: CostContext = {
+    unit,
+    payRates: listPayRatesForUnit(db, unit.id),
+    differentials: listActiveDifferentials(db, unit.id),
+    overtimeRules: listActiveOvertimeRules(db, unit.id),
+    holidayDates,
+    weekendDefinition: ruleSet.weekendDefinition,
+    workWeekStartsOn: 0,
+  };
+  const historyCosts: number[] = [];
+  const roundToThousand = (dollars: number) => Math.round(dollars / 1000) * 1000;
 
   for (let p = 0; p < historyPeriods; p++) {
     const start = addDays(historyStart, p * 14);
@@ -733,7 +784,7 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
       const busyToday = new Set<Id>();
       const wd = weekdayOf(date);
       for (const shiftType of shiftTypes) {
-        forecastFor(date, shiftType, true);
+        if (forecastShiftTypes.includes(shiftType)) forecastFor(date, shiftType, true);
         const chargeTaken = { done: false };
         for (const role of ['RN', 'LPN', 'CNA'] as const) {
           const f = floors.find(
@@ -755,6 +806,22 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
     }
     periodAssignments.push(...historicalAssignments.slice(startIndex));
     publishPeriod(db, period.id, ACTOR);
+
+    // Budgets sit a few percent either side of what the period actually cost, so the
+    // dashboard's budget-vs-actual shows both over and under without being wildly off.
+    const actual = costSchedule(
+      new ScheduleView({ period, assignments: periodAssignments, nurses, shiftTypes }),
+      costContext,
+    ).totals.total;
+    historyCosts.push(actual);
+    setBudget(
+      db,
+      unit.id,
+      period.id,
+      roundToThousand(actual * (0.97 + 0.07 * rng.nextFloat())),
+      ACTOR,
+    );
+    bump('budget');
 
     // Ledger derived from what was actually generated, so history and scoring agree.
     for (const t of traits) {
@@ -893,8 +960,13 @@ export function seedDemoUnit(db: DbLike, options: SeedOptions = {}): SeedResult 
   );
   bump('period');
   for (const date of datesInRange(draftStart, draftEnd)) {
-    for (const shiftType of shiftTypes) forecastFor(date, shiftType, false);
+    for (const shiftType of forecastShiftTypes) forecastFor(date, shiftType, false);
   }
+  // Six weeks is three pay periods; budget it at the recent run rate plus a little growth.
+  const recent = historyCosts.slice(-3);
+  const runRate = recent.reduce((sum, c) => sum + c, 0) / Math.max(1, recent.length);
+  setBudget(db, unit.id, draft.id, roundToThousand(runRate * 3 * 1.02), ACTOR);
+  bump('budget');
 
   // The deliberate conflict: six nurses want the same weekend off, three weeks in.
   const contestedSaturday = addDays(draftStart, 20);

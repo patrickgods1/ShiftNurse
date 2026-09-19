@@ -2,10 +2,11 @@
  * Schedule-grid data hooks: live rule validation for a period, and the mutations that create,
  * move, edit, lock and delete assignments.
  *
- * Every mutation invalidates the same three things — that period's assignments, its validation,
- * and the unit's dashboard summary (which shows the current draft) — because a schedule edit
- * without a validation refresh is exactly the failure mode the milestone brief calls out: the
- * grid would keep showing a stale "no violations" state for a shift that just became illegal.
+ * Every mutation invalidates the same four things — that period's assignments, its validation,
+ * its cost report, and the unit's dashboard summary (which shows the current draft) — because
+ * a schedule edit without a validation refresh is exactly the failure mode the milestone brief
+ * calls out: the grid would keep showing a stale "no violations" state for a shift that just
+ * became illegal, and a stale price for a shift that just became overtime.
  * Invalidation runs in `onSettled`, not `onSuccess`, so a failed mutation still forces the grid
  * back to the server's truth instead of leaving an optimistic chip stranded.
  */
@@ -18,6 +19,7 @@ import type {
   MoveAssignmentInput,
 } from '../../shared/api.js';
 import { api, queryKeys } from './api.js';
+import { costKeys } from './api-cost.js';
 
 export const scheduleKeys = {
   validation: (periodId: Id) => ['validation', periodId] as const,
@@ -37,6 +39,7 @@ function useInvalidateSchedule(periodId: Id | undefined, unitId: Id | undefined)
     if (periodId !== undefined) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.assignments(periodId) });
       void queryClient.invalidateQueries({ queryKey: scheduleKeys.validation(periodId) });
+      void queryClient.invalidateQueries({ queryKey: costKeys.report(periodId) });
     }
     if (unitId !== undefined) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });

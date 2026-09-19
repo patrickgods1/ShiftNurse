@@ -6,7 +6,7 @@
  * depends on to never clobber a manager's pinned decision.
  */
 
-import { addDays, type IsoDate, isoDate } from '@shiftnurse/core';
+import { addDays, DEFAULT_FAIRNESS_WEIGHTS, type IsoDate, isoDate } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase } from '../client.js';
@@ -113,6 +113,7 @@ beforeEach(() => {
       unitId,
       name: 'Default',
       weekendDefinition: weekendDefinition(),
+      fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
       configs: [
         {
           ruleId: 'min-rest-between-shifts',

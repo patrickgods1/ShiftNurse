@@ -11,7 +11,7 @@ import { writeFileSync } from 'node:fs';
 import type { BrowserWindow } from 'electron';
 import { app } from 'electron';
 
-const TIMEOUT_MS = 30_000;
+const TIMEOUT_MS = 60_000;
 
 /** Each route must render an element carrying this test id. */
 const ROUTES: readonly { hash: string; testId: string }[] = [
@@ -20,6 +20,7 @@ const ROUTES: readonly { hash: string; testId: string }[] = [
   { hash: '#/requests', testId: 'page-header' },
   { hash: '#/schedule', testId: 'schedule-grid' },
   { hash: '#/demand', testId: 'demand-table' },
+  { hash: '#/fairness', testId: 'fairness-table' },
   { hash: '#/settings', testId: 'settings-tabs' },
 ];
 
@@ -105,6 +106,160 @@ const REST_SCRIPT = `
     return { before, after: v.length, flagged: !!hit, message: hit ? hit.message : 'no insufficient_rest violation for ' + turnaround.id };
   })()`;
 
+/**
+ * The M7 acceptance check at the data layer the Fairness screen reads from: scoring runs over
+ * real seeded history, and handing a nurse one more night shift on a free day never raises
+ * their score. A small history import proves the CSV → ledger path without a file dialog.
+ */
+const FAIRNESS_SCRIPT = `
+  (async () => {
+    const api = window.shiftnurse;
+    const [unit] = await api.units.list();
+    const draft = (await api.periods.list(unit.id)).find((p) => p.status === 'draft');
+    const report = await api.fairness.report(draft.id);
+    const badScore = report.scores.find((s) => !(s.score >= 0 && s.score <= 100) || s.components.length !== 8);
+    const trend = await api.fairness.trend(unit.id);
+    const types = await api.shiftTypes.list(unit.id);
+    const night = types.find((t) => t.isNight && t.durationHours === 12);
+    const assigned = await api.periods.assignments(draft.id);
+    // A nurse for whom a weekday night honours nothing they asked for: no "prefer nights"
+    // (that would legitimately raise their hit rate) and no block-length preference (a lone
+    // shift on a free day is a new one-shift block). Weekend appetite is untouched by a
+    // weekday night, so it is fine either way.
+    let nurse;
+    for (const n of await api.nurses.list(unit.id)) {
+      if (!n.active || n.contractedHoursPerPeriod <= 0) continue;
+      const prefs = await api.preferences.forNurse(n.id);
+      const pure = prefs.every((p) =>
+        (p.kind === 'avoid_shift_type' && p.shiftTypeId === night.id) ||
+        p.kind === 'avoid_weekday' || p.kind === 'weekend_appetite');
+      if (pure) { nurse = n; break; }
+    }
+    if (!nurse) throw new Error('no demo nurse without prefer/block-length preferences');
+    // A date in the draft where this nurse has nothing the day before, on, or after, so the
+    // extra night is a pure burden rather than a rest violation.
+    const [y, m, d] = draft.startDate.split('-').map(Number);
+    const day = (k) => new Date(Date.UTC(y, m - 1, d + k)).toISOString().slice(0, 10);
+    const busy = new Set(assigned.filter((a) => a.nurseId === nurse.id).map((a) => a.date));
+    let k = 3;
+    while (busy.has(day(k - 1)) || busy.has(day(k)) || busy.has(day(k + 1))) k++;
+    const before = report.scores.find((s) => s.nurseId === nurse.id).score;
+    await api.schedule.createAssignment({ periodId: draft.id, nurseId: nurse.id, shiftTypeId: night.id, date: day(k) });
+    const after = (await api.fairness.report(draft.id)).scores.find((s) => s.nurseId === nurse.id).score;
+    const imported = await api.fairness.importHistory(unit.id, [
+      { employeeId: nurse.employeeId, date: '2020-01-06', shiftAbbreviation: night.abbreviation },
+      { employeeId: nurse.employeeId, date: '2020-01-07', shiftAbbreviation: night.abbreviation },
+    ]);
+    return {
+      scored: report.scores.length, badScore: badScore ? badScore.nurseId : null,
+      gini: report.distribution.score.gini, trendPoints: trend.length,
+      before, after, nurse: nurse.firstName + ' ' + nurse.lastName, imported,
+    };
+  })()`;
+
+/**
+ * The M8 check: seeded history prices to real dollars with nobody unpriced, budgets sit where
+ * the seeder put them, and adding a shift to the draft moves its total — the "dollar impact on
+ * every decision" promise at the layer the grid and dashboard read from.
+ */
+const COST_SCRIPT = `
+  (async () => {
+    const api = window.shiftnurse;
+    const [unit] = await api.units.list();
+    const periods = await api.periods.list(unit.id);
+    const published = periods.filter((p) => p.status === 'published').sort((a, b) => a.startDate < b.startDate ? 1 : -1)[0];
+    const history = await api.cost.report(published.id);
+    const draft = periods.find((p) => p.status === 'draft');
+    const before = await api.cost.report(draft.id);
+    const types = await api.shiftTypes.list(unit.id);
+    const day = types.find((t) => !t.isNight && !t.isOnCall && t.durationHours === 12);
+    const nurse = (await api.nurses.list(unit.id)).find((n) => n.active && n.role === 'RN' && n.employmentType === 'full_time');
+    const assigned = await api.periods.assignments(draft.id);
+    const busy = new Set(assigned.filter((a) => a.nurseId === nurse.id).map((a) => a.date));
+    const [y, m, d] = draft.startDate.split('-').map(Number);
+    const dateAt = (k) => new Date(Date.UTC(y, m - 1, d + k)).toISOString().slice(0, 10);
+    let k = 8;
+    while (busy.has(dateAt(k))) k++;
+    await api.schedule.createAssignment({ periodId: draft.id, nurseId: nurse.id, shiftTypeId: day.id, date: dateAt(k) });
+    const after = await api.cost.report(draft.id);
+    const budget = await api.cost.setBudget(draft.id, 123456);
+    const reread = await api.cost.report(draft.id);
+    return {
+      historyTotal: history.cost.totals.total, historyHours: history.cost.totals.hours,
+      historyUnpriced: history.cost.unpricedAssignments, historyRatio: history.variance ? history.variance.ratio : null,
+      historyOvertimeNurses: history.cost.overtime.nursesWithOvertime,
+      beforeTotal: before.cost.totals.total, afterTotal: after.cost.totals.total,
+      budgetSet: budget.targetDollars, budgetRead: reread.variance ? reread.variance.targetDollars : null,
+    };
+  })()`;
+
+/**
+ * The M9 check: Generate runs in a worker thread against the seeded draft, its result lands in
+ * the database with locked rows untouched, the grid's own validator finds no nurse-level hard
+ * violation in it, and running it again on unchanged inputs writes the identical schedule.
+ * A short iteration budget keeps this to a couple of seconds; the property is the same.
+ */
+const SOLVER_SCRIPT = `
+  (async () => {
+    const api = window.shiftnurse;
+    const [unit] = await api.units.list();
+    const draft = (await api.periods.list(unit.id)).find((p) => p.status === 'draft');
+    const before = await api.periods.assignments(draft.id);
+    const pin = before.find((a) => !a.isLocked);
+    const locked = pin ? await api.schedule.setLocked(pin.id, true) : undefined;
+    const run = async () => {
+      const job = await api.solver.start(draft.id, { maxIterations: 20000 });
+      const started = Date.now();
+      let status = job;
+      let progressSeen = 0;
+      while (status.state === 'running' || status.state === 'applying') {
+        await new Promise((r) => setTimeout(r, 100));
+        status = await api.solver.status(job.id);
+        if (status.progress) progressSeen++;
+        if (Date.now() - started > 40000) throw new Error('solve did not finish in 40s');
+      }
+      return { status, progressSeen };
+    };
+    const first = await run();
+    const after = await api.periods.assignments(draft.id);
+    const key = (a) => a.nurseId + '|' + a.date + '|' + a.shiftTypeId + '|' + (a.isCharge ? 'C' : '');
+    const firstKeys = after.map(key).sort();
+    const validation = await api.schedule.validate(draft.id);
+    const nurseLevel = validation.result.hardViolations.filter((v) =>
+      !['understaffed', 'ratio_breach', 'missing_charge_nurse', 'all_novice_shift', 'missing_credential',
+        'under_contracted_hours'].includes(v.code));
+    const second = await run();
+    const again = (await api.periods.assignments(draft.id)).map(key).sort();
+    return {
+      state: first.status.state, error: first.status.error, applied: first.status.applied,
+      progressSeen: first.progressSeen, seed: first.status.seed,
+      unfilled: first.status.report ? first.status.report.unfilled.length : -1,
+      hard: first.status.report ? first.status.report.hardViolations.length : -1,
+      elapsedMs: first.status.report ? first.status.report.stats.elapsedMs : -1,
+      written: after.length, lockedKept: locked ? after.some((a) => a.id === locked.id && a.isLocked) : null,
+      nurseLevel: nurseLevel.map((v) => v.message).slice(0, 3),
+      identical: second.status.state === 'done' && JSON.stringify(firstKeys) === JSON.stringify(again),
+      secondState: second.status.state,
+    };
+  })()`;
+
+/** Open Settings › Pay and wait for the seeded rates to render: a panel that throws on mount would
+ * otherwise pass the route check, which only sees the tab strip. */
+const PAY_TAB_SCRIPT = `
+  new Promise((resolve) => {
+    location.hash = '#/settings';
+    const started = Date.now();
+    const tick = () => {
+      const tab = document.getElementById('settings-tab-pay');
+      if (tab && tab.getAttribute('aria-selected') !== 'true') tab.click();
+      const rows = document.querySelectorAll('[data-testid="pay-rate-table"] tbody tr').length;
+      const differentials = document.querySelectorAll('[data-testid="differential-table"] tbody tr').length;
+      if ((rows > 1 && differentials > 1) || Date.now() - started > 10000) resolve({ rows, differentials });
+      else setTimeout(tick, 100);
+    };
+    tick();
+  })`;
+
 export function runSmoke(win: BrowserWindow): void {
   const timer = setTimeout(() => fail(`did not finish within ${TIMEOUT_MS}ms`), TIMEOUT_MS);
 
@@ -163,6 +318,101 @@ export function runSmoke(win: BrowserWindow): void {
       };
       if (!rest.flagged) fail(`night-to-day turnaround not flagged: ${rest.message}`);
       console.log(`[smoke] live validation OK — ${rest.message}`);
+
+      const fairness = (await win.webContents.executeJavaScript(FAIRNESS_SCRIPT)) as {
+        scored: number;
+        badScore: string | null;
+        gini: number;
+        trendPoints: number;
+        before: number;
+        after: number;
+        nurse: string;
+        imported: { periodsImported: number; entriesWritten: number; entriesReplaced: number };
+      };
+      if (fairness.scored === 0) fail('fairness report scored no nurses');
+      if (fairness.badScore)
+        fail(`fairness score out of range or incomplete for ${fairness.badScore}`);
+      if (fairness.trendPoints === 0) fail('fairness trend has no points from seeded history');
+      if (fairness.after > fairness.before + 1e-9) {
+        fail(
+          `an extra night raised ${fairness.nurse}'s score ${fairness.before} -> ${fairness.after}`,
+        );
+      }
+      if (fairness.imported.periodsImported !== 1 || fairness.imported.entriesWritten !== 1) {
+        fail(
+          `history import wrote ${JSON.stringify(fairness.imported)}, expected 1 period / 1 entry`,
+        );
+      }
+      console.log(
+        `[smoke] fairness OK (${fairness.scored} scored, gini ${fairness.gini.toFixed(3)}, ${fairness.trendPoints} trend points; ${fairness.nurse} ${fairness.before} -> ${fairness.after} after an extra night; import ${fairness.imported.entriesWritten} row)`,
+      );
+      const cost = (await win.webContents.executeJavaScript(COST_SCRIPT)) as {
+        historyTotal: number;
+        historyHours: number;
+        historyUnpriced: number;
+        historyRatio: number | null;
+        historyOvertimeNurses: number;
+        beforeTotal: number;
+        afterTotal: number;
+        budgetSet: number;
+        budgetRead: number | null;
+      };
+      if (!(cost.historyTotal > 0)) fail('published period priced to $0');
+      if (cost.historyUnpriced !== 0) fail(`${cost.historyUnpriced} seeded shifts unpriced`);
+      if (cost.historyRatio === null || cost.historyRatio < 0.9 || cost.historyRatio > 1.1) {
+        fail(`published period budget ratio ${cost.historyRatio} is not near the seeded budget`);
+      }
+      if (!(cost.afterTotal > cost.beforeTotal)) {
+        fail(`adding a shift left the draft total at ${cost.beforeTotal} -> ${cost.afterTotal}`);
+      }
+      if (cost.budgetRead !== cost.budgetSet) {
+        fail(`budget round-trip wrote ${cost.budgetSet} but read ${cost.budgetRead}`);
+      }
+      console.log(
+        `[smoke] cost OK (published $${Math.round(cost.historyTotal)} for ${cost.historyHours}h at ${(cost.historyRatio * 100).toFixed(1)}% of budget, ${cost.historyOvertimeNurses} nurses with OT; draft $${Math.round(cost.beforeTotal)} -> $${Math.round(cost.afterTotal)} after one shift)`,
+      );
+      const solved = (await win.webContents.executeJavaScript(SOLVER_SCRIPT)) as {
+        state: string;
+        error?: string;
+        applied?: { created: number; preservedLocked: number };
+        progressSeen: number;
+        seed: number;
+        unfilled: number;
+        hard: number;
+        elapsedMs: number;
+        written: number;
+        lockedKept: boolean | null;
+        nurseLevel: string[];
+        identical: boolean;
+        secondState: string;
+      };
+      if (solved.state !== 'done') fail(`solve ended ${solved.state}: ${solved.error ?? ''}`);
+      if (!solved.applied || solved.applied.created === 0) fail('solve wrote no assignments');
+      if (solved.progressSeen === 0) fail('no progress reports arrived from the solver worker');
+      if (solved.lockedKept === false) fail('the locked assignment did not survive Generate');
+      if (solved.nurseLevel.length > 0) {
+        fail(`generated schedule breaks a nurse-level rule: ${solved.nurseLevel.join(' | ')}`);
+      }
+      if (!solved.identical) {
+        fail(
+          `regenerating unchanged inputs changed the schedule (second run ${solved.secondState})`,
+        );
+      }
+      console.log(
+        `[smoke] solver OK (${solved.applied.created} shifts in ${solved.elapsedMs}ms, seed ${solved.seed}, ${solved.unfilled} unfilled, ${solved.hard} hard violations, locked kept: ${solved.lockedKept}, regenerate identical)`,
+      );
+      const pay = (await win.webContents.executeJavaScript(PAY_TAB_SCRIPT)) as {
+        rows: number;
+        differentials: number;
+      };
+      if (pay.rows < 2 || pay.differentials < 2) {
+        fail(
+          `Settings › Pay rendered ${pay.rows} rate rows and ${pay.differentials} differentials`,
+        );
+      }
+      console.log(
+        `[smoke] pay settings OK (${pay.rows} rates, ${pay.differentials} differentials)`,
+      );
       const shotDirAfter = process.env.SHIFTNURSE_SMOKE_SCREENSHOT;
       if (shotDirAfter?.endsWith('/')) {
         // The bridge writes above bypassed the renderer's mutation hooks, so its query cache

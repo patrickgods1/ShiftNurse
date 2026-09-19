@@ -3,7 +3,7 @@
  * rate resolution, and the fairness ledger.
  */
 
-import { type IsoDate, isoDate } from '@shiftnurse/core';
+import { DEFAULT_FAIRNESS_WEIGHTS, type IsoDate, isoDate } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor, recentAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase } from '../client.js';
@@ -12,16 +12,32 @@ import * as s from '../schema.js';
 import { createShiftType, createUnit, saveRuleSet } from './config.js';
 import {
   cancelCallOff,
+  createDifferential,
+  createOvertimeRule,
+  createPayRate,
+  deleteDifferential,
+  deleteOvertimeRule,
+  deletePayRate,
   effectiveRateForNurse,
   getFairnessLedgerEntry,
   importFairnessLedgerEntries,
+  importHistoricalLedger,
   lastCalledAt,
+  ledgerPeriodsForUnit,
   ledgerSince,
+  listActiveDifferentials,
+  listActiveOvertimeRules,
   listCallAttempts,
+  listDifferentialsForUnit,
   listOpenCallOffs,
+  listOvertimeRulesForUnit,
+  listPayRatesForUnit,
   logCallAttempt,
   markCallOffCovered,
   reportCallOff,
+  updateDifferential,
+  updateOvertimeRule,
+  updatePayRate,
   upsertFairnessLedgerEntry,
 } from './operations.js';
 import { createNurse } from './roster.js';
@@ -117,6 +133,7 @@ beforeEach(() => {
         durationMinutes: 2880,
         mode: 'starts_within',
       },
+      fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
       configs: [
         {
           ruleId: 'min-rest-between-shifts',
@@ -299,6 +316,150 @@ describe('effective pay rate', () => {
   });
 });
 
+describe('cost configuration', () => {
+  it('records a new pay rate with an audit entry and refuses one with no scope', () => {
+    const nurseId = mkNurse('Raised');
+    const rate = createPayRate(
+      handle.db,
+      { nurseId, role: null, hourlyRate: 52, effectiveFrom: isoDate('2026-02-01') },
+      ACTOR,
+    );
+    expect(listPayRatesForUnit(handle.db, unitId)).toEqual([rate]);
+    expect(auditHistoryFor(handle.db, 'pay_rate', rate.id)[0]).toMatchObject({
+      action: 'create',
+      after: rate,
+    });
+
+    expect(() =>
+      createPayRate(
+        handle.db,
+        { nurseId: null, role: null, hourlyRate: 40, effectiveFrom: isoDate('2026-02-01') },
+        ACTOR,
+      ),
+    ).toThrow(/nurse or a role/);
+    expect(() =>
+      createPayRate(
+        handle.db,
+        { nurseId, role: 'RN', hourlyRate: 40, effectiveFrom: isoDate('2026-02-01') },
+        ACTOR,
+      ),
+    ).toThrow(/not both/);
+  });
+
+  it('corrects a mistyped rate in place, keeping the old value in the audit trail', () => {
+    const rate = createPayRate(
+      handle.db,
+      { nurseId: null, role: 'RN', hourlyRate: 84, effectiveFrom: isoDate('2026-01-01') },
+      ACTOR,
+    );
+    const fixed = updatePayRate(handle.db, rate.id, { hourlyRate: 48 }, ACTOR);
+    expect(fixed).toEqual({ ...rate, hourlyRate: 48 });
+    expect(auditHistoryFor(handle.db, 'pay_rate', rate.id)[0]).toMatchObject({
+      action: 'update',
+      before: rate,
+      after: fixed,
+    });
+  });
+
+  it('deletes a pay rate and audits what was removed', () => {
+    const rate = createPayRate(
+      handle.db,
+      { nurseId: null, role: 'CNA', hourlyRate: 22, effectiveFrom: isoDate('2026-01-01') },
+      ACTOR,
+    );
+    deletePayRate(handle.db, rate.id, ACTOR);
+    expect(listPayRatesForUnit(handle.db, unitId)).toEqual([]);
+    expect(auditHistoryFor(handle.db, 'pay_rate', rate.id)[0]).toMatchObject({
+      action: 'delete',
+      before: rate,
+    });
+  });
+
+  it('lists every differential for the unit but only active ones for pricing', () => {
+    const night = createDifferential(
+      handle.db,
+      { unitId, kind: 'night', mode: 'flat', amount: 4.5, active: true },
+      ACTOR,
+    );
+    const weekend = createDifferential(
+      handle.db,
+      { unitId, kind: 'weekend', mode: 'flat', amount: 3, active: true },
+      ACTOR,
+    );
+    const paused = updateDifferential(handle.db, weekend.id, { active: false }, ACTOR);
+
+    expect(listDifferentialsForUnit(handle.db, unitId)).toEqual([night, paused]);
+    expect(listActiveDifferentials(handle.db, unitId)).toEqual([night]);
+    expect(auditHistoryFor(handle.db, 'differential', weekend.id)[0]).toMatchObject({
+      action: 'update',
+      before: weekend,
+      after: paused,
+    });
+
+    deleteDifferential(handle.db, night.id, ACTOR);
+    expect(listDifferentialsForUnit(handle.db, unitId)).toEqual([paused]);
+    expect(auditHistoryFor(handle.db, 'differential', night.id)[0]).toMatchObject({
+      action: 'delete',
+      before: night,
+    });
+  });
+
+  it('manages overtime rules the same way', () => {
+    const weekly = createOvertimeRule(
+      handle.db,
+      { unitId, basis: 'weekly', thresholdHours: 40, multiplier: 1.5, active: true },
+      ACTOR,
+    );
+    const daily = createOvertimeRule(
+      handle.db,
+      { unitId, basis: 'daily', thresholdHours: 12, multiplier: 1.5, active: false },
+      ACTOR,
+    );
+    expect(listOvertimeRulesForUnit(handle.db, unitId)).toEqual([weekly, daily]);
+    expect(listActiveOvertimeRules(handle.db, unitId)).toEqual([weekly]);
+
+    const doubled = updateOvertimeRule(handle.db, daily.id, { multiplier: 2, active: true }, ACTOR);
+    expect(listActiveOvertimeRules(handle.db, unitId)).toEqual([weekly, doubled]);
+    expect(auditHistoryFor(handle.db, 'overtime_rule', daily.id)[0]).toMatchObject({
+      action: 'update',
+      before: daily,
+      after: doubled,
+    });
+
+    deleteOvertimeRule(handle.db, weekly.id, ACTOR);
+    expect(listOvertimeRulesForUnit(handle.db, unitId)).toEqual([doubled]);
+    expect(auditHistoryFor(handle.db, 'overtime_rule', weekly.id)[0]).toMatchObject({
+      action: 'delete',
+      before: weekly,
+    });
+  });
+
+  it("does not list another unit's differentials or overtime rules", () => {
+    const other = createUnit(
+      handle.db,
+      {
+        name: 'ICU',
+        unitType: 'ICU',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    createDifferential(
+      handle.db,
+      { unitId: other.id, kind: 'night', mode: 'flat', amount: 9, active: true },
+      ACTOR,
+    );
+    createOvertimeRule(
+      handle.db,
+      { unitId: other.id, basis: 'daily', thresholdHours: 8, multiplier: 1.5, active: true },
+      ACTOR,
+    );
+    expect(listDifferentialsForUnit(handle.db, unitId)).toEqual([]);
+    expect(listOvertimeRulesForUnit(handle.db, unitId)).toEqual([]);
+  });
+});
+
 describe('fairness ledger', () => {
   it('upserts in place rather than creating a duplicate row', () => {
     const nurseId = mkNurse('Tracked');
@@ -352,5 +513,133 @@ describe('fairness ledger', () => {
     );
     expect(imports).toHaveLength(1);
     expect(imports[0]?.after).toMatchObject({ count: 2 });
+  });
+});
+
+describe('historical schedule import', () => {
+  it('re-importing the same period replaces the rows rather than duplicating them', () => {
+    const nurseId = mkNurse('Reimported');
+    const first = importHistoricalLedger(
+      handle.db,
+      unitId,
+      [
+        {
+          nurseId,
+          periodId: 'import:2025-06-01',
+          periodStart: isoDate('2025-06-01'),
+          nightShifts: 3,
+        },
+      ],
+      ACTOR,
+    );
+    // The manager fixed a typo in the spreadsheet and ran it again.
+    const second = importHistoricalLedger(
+      handle.db,
+      unitId,
+      [
+        {
+          nurseId,
+          periodId: 'import:2025-06-01',
+          periodStart: isoDate('2025-06-01'),
+          nightShifts: 4,
+        },
+      ],
+      ACTOR,
+    );
+
+    expect(first).toEqual({ written: 1, replaced: 0 });
+    expect(second).toEqual({ written: 1, replaced: 1 });
+    expect(handle.db.select().from(s.fairnessLedger).all()).toHaveLength(1);
+    expect(getFairnessLedgerEntry(handle.db, nurseId, 'import:2025-06-01')?.nightShifts).toBe(4);
+  });
+
+  it('leaves periods the new file does not mention untouched', () => {
+    const nurseId = mkNurse('Partial');
+    importHistoricalLedger(
+      handle.db,
+      unitId,
+      [
+        { nurseId, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') },
+        { nurseId, periodId: 'import:2025-06-15', periodStart: isoDate('2025-06-15') },
+      ],
+      ACTOR,
+    );
+    importHistoricalLedger(
+      handle.db,
+      unitId,
+      [{ nurseId, periodId: 'import:2025-06-15', periodStart: isoDate('2025-06-15') }],
+      ACTOR,
+    );
+    expect(ledgerPeriodsForUnit(handle.db, unitId).map((p) => p.periodId)).toEqual([
+      'import:2025-06-01',
+      'import:2025-06-15',
+    ]);
+  });
+
+  it('refuses a nurse from another unit before writing anything', () => {
+    const other = createUnit(
+      handle.db,
+      {
+        name: '5 East',
+        unitType: 'ICU',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    const stranger = createNurse(
+      handle.db,
+      {
+        unitId: other.id,
+        employeeId: 'X1',
+        firstName: 'Else',
+        lastName: 'Where',
+        role: 'RN',
+        employmentType: 'full_time',
+        fte: 1,
+        contractedHoursPerPeriod: 72,
+        seniorityDate: isoDate('2020-01-01'),
+        isChargeEligible: false,
+        isNovice: false,
+        isFloatEligible: true,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+    const local = mkNurse('Local');
+    expect(() =>
+      importHistoricalLedger(
+        handle.db,
+        unitId,
+        [
+          { nurseId: local, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') },
+          { nurseId: stranger, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') },
+        ],
+        ACTOR,
+      ),
+    ).toThrow(/not a nurse on unit/);
+    expect(handle.db.select().from(s.fairnessLedger).all()).toHaveLength(0);
+  });
+
+  it('records the import once in the audit log with what it replaced', () => {
+    const nurseId = mkNurse('Audited');
+    importHistoricalLedger(
+      handle.db,
+      unitId,
+      [{ nurseId, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') }],
+      ACTOR,
+    );
+    importHistoricalLedger(
+      handle.db,
+      unitId,
+      [{ nurseId, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') }],
+      ACTOR,
+    );
+    const imports = recentAudit(handle.db).filter(
+      (e) => e.entityType === 'fairness_ledger' && e.action === 'import',
+    );
+    expect(imports).toHaveLength(2);
+    expect(imports[0]?.before).toMatchObject({ replaced: 1 });
+    expect(imports[0]?.after).toMatchObject({ written: 1 });
   });
 });

@@ -74,18 +74,35 @@ export function isIsoDate(value: string): value is IsoDate {
   }
 }
 
+/**
+ * Both directions are memoised. A schedule touches a few dozen distinct dates, but the solver
+ * and the rule engine convert them millions of times per run (every `compareDates`, every
+ * `datesInRange` for a partial view); without the cache, parsing ISO strings was over half of
+ * a solve. The maps are bounded by the number of distinct dates ever seen, which is tiny.
+ */
+const DAY_NUMBER_CACHE = new Map<string, number>();
+const ISO_DATE_CACHE = new Map<number, IsoDate>();
+
 /** Whole days since 1970-01-01. The canonical integer form of a calendar date. */
 export function dayNumber(date: IsoDate): number {
+  const cached = DAY_NUMBER_CACHE.get(date);
+  if (cached !== undefined) return cached;
   const [y, m, d] = date.split('-').map(Number) as [number, number, number];
-  return Date.UTC(y, m - 1, d) / MS_PER_DAY;
+  const value = Date.UTC(y, m - 1, d) / MS_PER_DAY;
+  DAY_NUMBER_CACHE.set(date, value);
+  return value;
 }
 
 export function fromDayNumber(days: number): IsoDate {
+  const cached = ISO_DATE_CACHE.get(days);
+  if (cached !== undefined) return cached;
   const dt = new Date(days * MS_PER_DAY);
   const y = String(dt.getUTCFullYear()).padStart(4, '0');
   const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
   const d = String(dt.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${d}` as IsoDate;
+  const value = `${y}-${m}-${d}` as IsoDate;
+  ISO_DATE_CACHE.set(days, value);
+  return value;
 }
 
 export function addDays(date: IsoDate, days: number): IsoDate {

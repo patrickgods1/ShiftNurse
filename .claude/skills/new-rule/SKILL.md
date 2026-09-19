@@ -21,6 +21,11 @@ Read `packages/core/src/rules/rest-rules.ts` first — `minRestRule` is the refe
 - `severity` — `'hard'` (illegal; the solver will not emit it) or `'soft'` (advisory warning the
   manager may knowingly accept). "Legal but unfair" pressure belongs in the objective functions,
   not in a soft rule.
+- `scope` — `'nurse'` when the verdict follows from one nurse's own timeline (rest, hours, leave,
+  double-booking) or `'shift'` when it follows from who is on one shift (floors, charge, skill
+  mix, credentials). The solver checks rules incrementally on a single-nurse or single-shift
+  view, so this must be truthful: a `nurse` rule that peeks at other nurses would pass in the
+  solver and fail on the grid. See `RuleScope` in `rules/types.ts`.
 
 ## Step 2 — Define the params interface
 
@@ -111,6 +116,7 @@ export const maxNightsPerPeriodRule: Rule<MaxNightsPerPeriodParams> = {
   description: 'Caps how many night shifts one nurse may work in a single schedule period.',
   severity: 'soft',
   category: 'rest',
+  scope: 'nurse',
   defaultParams: { maxNights: 7, onCallCountsAsWork: false },
 
   evaluate(schedule, params, ctx): Violation[] {

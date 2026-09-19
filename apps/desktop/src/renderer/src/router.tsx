@@ -1,7 +1,7 @@
 /**
  * Route tree and the shell every route renders inside. Code-based routing (no file-based
  * routing plugin is installed) keeps the route table explicit and small while there are only
- * five destinations.
+ * seven destinations.
  */
 
 import {
@@ -15,6 +15,7 @@ import {
 import { ThemeToggle } from './components/theme-toggle.js';
 import DashboardPage from './pages/dashboard.js';
 import DemandPage from './pages/demand.js';
+import FairnessPage from './pages/fairness.js';
 import RequestsPage from './pages/requests.js';
 import RosterPage from './pages/roster.js';
 import SchedulePage from './pages/schedule.js';
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { to: '/', label: 'Dashboard' },
   { to: '/schedule', label: 'Schedule' },
   { to: '/demand', label: 'Demand' },
+  { to: '/fairness', label: 'Fairness' },
   { to: '/roster', label: 'Roster' },
   { to: '/requests', label: 'Requests' },
   { to: '/settings', label: 'Settings' },
@@ -99,6 +101,12 @@ const demandRoute = createRoute({
   component: DemandPage,
 });
 
+const fairnessRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/fairness',
+  component: FairnessPage,
+});
+
 const rosterRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/roster',
@@ -121,6 +129,7 @@ const routeTree = rootRoute.addChildren([
   dashboardRoute,
   scheduleRoute,
   demandRoute,
+  fairnessRoute,
   rosterRoute,
   requestsRoute,
   settingsRoute,

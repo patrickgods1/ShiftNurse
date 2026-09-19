@@ -81,7 +81,7 @@ shiftnurse/
 
 ## Current state
 
-`packages/core` and `packages/db` are complete and green: **180 tests passing, typecheck clean.**
+`packages/core`, `packages/db` and `apps/desktop` through M8 are green: **332 tests passing, typecheck clean.**
 
 - [x] Monorepo scaffold (npm workspaces, TS project references, vitest)
 - [x] `domain/time.ts` — DST-safe wall-clock timeline, shift windows, configurable weekend definitions
@@ -89,6 +89,8 @@ shiftnurse/
 - [x] `acuity/demand.ts` — census + acuity → staffing demand, ratio maths, coverage floors
 - [x] `schedule/view.ts` — indexed read model with prior-period lookback
 - [x] `rules/` — registry + all 8 hard rules, severity overrides, rule-set versioning
+- [x] `fairness/` — ledger derivation, decayed burden index, seniority multiplier, 0–100 score, Gini
+- [x] `cost/` — rate resolution, itemised per-shift pricing with stacked differentials and daily/weekly overtime, marginal cost of a candidate, overtime concentration, budget variance
 - [x] `testing/fixtures.ts` — scenario builder reused by tests and the demo seeder
 
 ---
@@ -173,6 +175,11 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
 - [x] Forecast-vs-actual back-test
 - [x] Verify: a high-acuity mix raises required staffing above the coverage floor
 
+> **Follow-up (found in M9):** ratio demand is derived per (date, shift type), so overlapping
+> shift types that both carry a census forecast (a D8 inside a D12) each demand a full complement
+> for the same patients. The demo now forecasts only the two 12-hour shifts; the proper fix is
+> concurrent time-of-day coverage, which M10's conflict detector is the natural home for.
+
 ### M6 — Schedule grid & live validation ✅
 - [x] Nurses × days grid, mixed shift lengths, colour-coded
 - [x] Drag-and-drop assignment, cell locking
@@ -182,29 +189,56 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
       soft-rule *weights* land with M7 since every shipped rule is hard today)
 - [x] Verify: dragging a shift to break minimum rest turns the cell red immediately
 
-### M7 — Fairness
-- [ ] `core/fairness`: per-nurse 0–100 composite with explainable component breakdown
-- [ ] Seniority as a multiplier on preference weight, not an absolute override
-- [ ] Rolling historical burden from `fairness_ledger`; signed burden index for the solver
-- [ ] Unit-level distribution (Gini + min/max spread)
-- [ ] CSV import of historical schedules to seed the ledger
-- [ ] Fairness screen: per-nurse breakdown and trend
-- [ ] Verify: fairness monotonicity — a worse assignment never raises a nurse's score
+### M7 — Fairness ✅
+- [x] `core/fairness`: per-nurse 0–100 composite with explainable component breakdown
+      (eight components; each carries carried-vs-fair-share and a sentence for the UI)
+- [x] Seniority as a multiplier on preference weight, not an absolute override
+- [x] Rolling historical burden from `fairness_ledger`; signed burden index for the solver
+      (13-period window, 0.85 decay; fair share pinned to contracted hours so the score is monotone)
+- [x] Unit-level distribution (Gini + min/max spread), per component and over the composite
+- [x] CSV import of historical schedules to seed the ledger (`employee_id,date,shift`, bucketed
+      into pay periods, derived with the same `deriveCounters` a publish will use)
+- [x] Fairness screen: per-nurse breakdown and trend; soft weights editable and versioned with
+      the rule set (the M6 deferral)
+- [x] Verify: fairness monotonicity — a worse assignment never raises a nurse's score
+      (property test over random rosters through `deriveCounters` → `scoreFairness`, plus the
+      same check against seeded data in the smoke test)
 
-### M8 — Cost
-- [ ] Pay rates, night/weekend/holiday/charge/on-call differentials, OT rules, agency premiums
-- [ ] Costing function over any schedule or candidate assignment
-- [ ] Budget vs. actual on the dashboard; overtime concentration by nurse
-- [ ] Verify: hand-computed payroll scenarios with stacked differentials match
+### M8 — Cost ✅
+- [x] Pay rates, night/weekend/holiday/charge/on-call differentials, OT rules, agency premiums
+      (repositories with audit, `cost` IPC resource, Settings › Pay editor; rates are dated so a
+      raise never re-prices earlier shifts)
+- [x] Costing function over any schedule or candidate assignment (`costSchedule` /
+      `marginalCost`: flats add to base, multipliers scale `(base + flats)`, overtime is an
+      FLSA-style premium on the straight rate, an hour is overtime once, weekly OT lands on the
+      later shifts and counts the lookback tail)
+- [x] Budget vs. actual on the dashboard; overtime concentration by nurse (ranked shares,
+      top-three share, Gini; running cost strip on the Schedule page re-prices on every edit)
+- [x] Verify: hand-computed payroll scenarios with stacked differentials match (31 core tests
+      with hand-worked dollar figures; smoke test prices seeded history to $149k with nothing
+      unpriced and sees +$576 for one added weekday D12)
 
-### M9 — Solver
-- [ ] `Solver` interface so a CP-SAT backend can be swapped in later
-- [ ] Greedy seed: most-constrained slot first, highest fairness debt wins
-- [ ] Simulated annealing / large-neighbourhood search over the weighted objective
-- [ ] Runs in a worker thread with progress and cancellation; seeded RNG for determinism
-- [ ] Generate flow honouring locked cells; solve report with unfilled slots and cost
-- [ ] Verify: property test — solver output never violates a hard rule; re-running
-      unchanged inputs produces an identical schedule
+### M9 — Solver ✅
+- [x] `Solver` interface so a CP-SAT backend can be swapped in later (`solver/types.ts`: plain-data
+      `SolveInput` → `SolveReport`; `localSearchSolver` is the shipped implementation)
+- [x] Greedy seed: most-constrained slot first, highest fairness debt wins (dynamic eligibility
+      counts that see leave, the day, the pay-period cap and the weekly overtime threshold; ties go
+      to the objective delta, where the coverage term cancels and fairness debt decides)
+- [x] Simulated annealing / large-neighbourhood search over the weighted objective (reassign,
+      swap, add, remove, relocate, convert-12-to-8s moves — 70% aimed at short shifts and
+      under-hours nurses — plus a two-day ruin-and-recreate every 2,500 iterations; rules are
+      evaluated incrementally on single-nurse / single-shift views via the new `Rule.scope`)
+- [x] Runs in a worker thread with progress and cancellation; seeded RNG for determinism
+      (`main/solver-worker.ts` via electron-vite `?nodeWorker`, cancel through a shared
+      `Int32Array`, `solver.start/status/cancel` IPC polled by the renderer; seed defaults to a
+      hash of the period id)
+- [x] Generate flow honouring locked cells; solve report with unfilled slots and cost
+      (Schedule › Generate: confirm → live progress with Stop → report of unfilled slots,
+      hard/soft counts, fairness and cost; result applied in one `replaceAssignments` transaction)
+- [x] Verify: property test — solver output never violates a hard rule; re-running
+      unchanged inputs produces an identical schedule (24 core tests incl. random-unit property
+      test re-judged by the full engine; smoke test generates the demo draft twice in ~1s each with
+      the locked row kept and byte-identical output; full budget on the demo unit fills every floor)
 
 ### M10 — Time off & conflicts
 - [ ] Time-off request entry and queue; calendar heatmap of overlapping requests
