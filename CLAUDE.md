@@ -31,7 +31,7 @@ self-service later becomes an intake surface rather than a new data model.
   verdicts `ok | warn | blocked` simulated on the conflicts engine), `publish/` (M12: `diff.ts`
   keyed on nurse/date/shift, `compliance.ts` alerts, `output.ts` grid/nurse-sheet projections
   and CSV), `testing/fixtures.ts`.
-- `packages/db` (M2, complete): 28-table Drizzle schema, generated migrations, `client.ts`
+- `packages/db` (M2, complete): 30-table Drizzle schema, generated migrations, `client.ts`
   (WAL, foreign keys ON, `transact`), `audit.ts`, `mappers.ts`, and repositories under
   `repositories/` — `roster`, `config`, `schedule`, `timeoff`, `operations`, `publish` (M12:
   `publishSchedule` writes a `schedule_version` + status + ledger; `requireChangeReason` /
@@ -70,6 +70,14 @@ self-service later becomes an intake surface rather than a new data model.
   Renderer hooks: `api.ts` (roster), `api-config.ts` (configuration + rules), `api-demand.ts`
   (census/demand), `api-schedule.ts` (grid mutations + validation), `api-fairness.ts`
   (report/trend/import), `api-cost.ts` (pay config, cost report, budget).
+- Packaging (M14, built): `apps/desktop/electron-builder.yml` + `scripts/{before-pack,dist}.mjs`
+  produce mac dmgs (x64 + arm64) and a Windows NSIS installer. The mac build is verified via
+  `smoke:packaged`; **the Windows installer has never been launched on real Windows 11
+  hardware** — that is the one open roadmap item.
+
+`README.md` is the build/run/ship guide for humans; `ARCHITECTURE.md` is the "why this stack"
+write-up. Keep the three in step: a milestone or convention change here should be reflected
+there when it affects setup, commands or the stack rationale.
 
 ## Architecture
 
