@@ -60,10 +60,10 @@ export function ProposeDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
         <Dialog.Content
           data-testid="propose-dialog"
-          className="fixed left-1/2 top-1/2 max-h-[80vh] w-[720px] max-w-[90vw]
+          className="fixed z-50 left-1/2 top-1/2 max-h-[80vh] w-[720px] max-w-[90vw]
             -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-md border border-border
             bg-surface p-5 shadow-lg"
         >

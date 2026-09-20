@@ -78,7 +78,7 @@ export function NewRequestDialog({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !create.isPending && onOpenChange(next)}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
         <Dialog.Content data-testid="new-request-dialog" className={`${DIALOG} w-[26rem]`}>
           <Dialog.Title className="text-base font-semibold text-text">
             New time-off request

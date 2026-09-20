@@ -45,7 +45,7 @@ export function ReasonDialog({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
         <Dialog.Content data-testid="reason-dialog" className={`${DIALOG} w-[28rem]`}>
           <Dialog.Title className="text-base font-semibold text-text">{title}</Dialog.Title>
           <Dialog.Description className="mt-1 text-sm text-text-muted">

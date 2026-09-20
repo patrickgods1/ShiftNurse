@@ -265,7 +265,7 @@ export function ScheduleGrid({
   return (
     <div
       data-testid="schedule-grid"
-      className="max-h-[65vh] overflow-auto rounded-md border border-border"
+      className="isolate max-h-[65vh] overflow-auto rounded-md border border-border"
     >
       <div className="inline-block min-w-full">
         <div className="flex">

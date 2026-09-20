@@ -176,8 +176,8 @@ function TierDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-lg">
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Content className="fixed z-50 left-1/2 top-1/2 w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-lg">
           <Dialog.Title className="mb-3 text-sm font-semibold text-text">{title}</Dialog.Title>
           <TierForm
             initial={initial}
@@ -322,8 +322,8 @@ function AcuityTiersSection({ unitId, tiers }: { unitId: string; tiers: AcuityTi
         }}
       >
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 bg-black/40" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-lg">
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+          <Dialog.Content className="fixed z-50 left-1/2 top-1/2 w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-lg">
             <Dialog.Title className="mb-2 text-sm font-semibold text-text">
               Delete acuity tier?
             </Dialog.Title>
@@ -530,8 +530,8 @@ function RatioDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-lg">
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Content className="fixed z-50 left-1/2 top-1/2 w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-lg">
           <Dialog.Title className="mb-3 text-sm font-semibold text-text">{title}</Dialog.Title>
           <RatioForm
             tiers={tiers}
@@ -727,8 +727,8 @@ function RatioRulesSection({
         }}
       >
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 bg-black/40" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-lg">
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+          <Dialog.Content className="fixed z-50 left-1/2 top-1/2 w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-lg">
             <Dialog.Title className="mb-2 text-sm font-semibold text-text">
               Deactivate ratio rule?
             </Dialog.Title>

@@ -320,10 +320,10 @@ function NewExchangeDialog({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !propose.isPending && onOpenChange(next)}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
         <Dialog.Content
           data-testid="new-exchange-dialog"
-          className="fixed left-1/2 top-1/2 max-h-[calc(100vh-2rem)] w-[42rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-border bg-surface p-6 shadow-lg"
+          className="fixed z-50 left-1/2 top-1/2 max-h-[calc(100vh-2rem)] w-[42rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-border bg-surface p-6 shadow-lg"
         >
           <Dialog.Title className="text-base font-semibold text-text">New exchange</Dialog.Title>
           <Dialog.Description className="mt-1 text-sm text-text-muted">
@@ -543,10 +543,10 @@ function DecideExchangeDialog({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && !busy && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
         <Dialog.Content
           data-testid="decide-exchange-dialog"
-          className="fixed left-1/2 top-1/2 max-h-[calc(100vh-2rem)] w-[42rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-border bg-surface p-6 shadow-lg"
+          className="fixed z-50 left-1/2 top-1/2 max-h-[calc(100vh-2rem)] w-[42rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-border bg-surface p-6 shadow-lg"
         >
           {swap === undefined ? null : (
             <>

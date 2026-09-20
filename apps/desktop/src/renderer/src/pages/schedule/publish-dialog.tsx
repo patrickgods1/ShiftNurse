@@ -70,7 +70,7 @@ export function PublishDialog({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !publish.isPending && onOpenChange(next)}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
         <Dialog.Content data-testid="publish-dialog" className={`${DIALOG} w-[40rem]`}>
           <Dialog.Title className="text-base font-semibold text-text">
             {done
