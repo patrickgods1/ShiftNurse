@@ -25,6 +25,11 @@ function createWindow(): BrowserWindow {
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // `hiddenInset` draws the traffic lights over the page instead of reserving a title bar
+    // for them, and their default vertical position drifts across macOS releases. Pinning it
+    // is what lets the renderer reserve exactly enough space for the sidebar's own title
+    // (see the drag-region spacer in `router.tsx`) instead of guessing at an OS default.
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 16 } } : {}),
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.cjs'),
       contextIsolation: true,

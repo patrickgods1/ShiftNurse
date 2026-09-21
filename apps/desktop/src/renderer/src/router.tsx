@@ -12,6 +12,7 @@ import {
   Link,
   Outlet,
 } from '@tanstack/react-router';
+import type { CSSProperties } from 'react';
 import { ThemeToggle } from './components/theme-toggle.js';
 import DashboardPage from './pages/dashboard.js';
 import DemandPage from './pages/demand.js';
@@ -34,6 +35,16 @@ const NAV_ITEMS = [
   { to: '/settings', label: 'Settings' },
 ] as const;
 
+// The main process draws the traffic lights at (16, 16) on macOS (see `main/index.ts`) — a
+// sandboxed, context-isolated renderer has no `process.platform`, so this is the standard
+// browser-side stand-in. Only macOS's `hiddenInset` title bar paints over the page; everywhere
+// else the OS reserves its own title bar and the sidebar's title was never at risk.
+const isMacOs = typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac');
+
+// `WebkitAppRegion` isn't in React's shipped CSSProperties typings; the cast is the standard
+// escape hatch rather than a second, looser style type for this one property.
+const DRAG_REGION = { WebkitAppRegion: 'drag' } as CSSProperties;
+
 function AppShell() {
   const unit = useUnit();
 
@@ -43,6 +54,13 @@ function AppShell() {
         aria-label="Primary"
         className="flex w-52 shrink-0 flex-col border-r border-border bg-surface p-3"
       >
+        {isMacOs ? (
+          // Reserves the row the traffic lights sit in (16px inset + 12px diameter, plus
+          // margin) so "ShiftNurse" renders below them instead of behind them, and doubles as
+          // the window's drag handle since `hiddenInset` otherwise leaves the title bar
+          // undraggable.
+          <div className="-mx-3 -mt-3 h-10 shrink-0" style={DRAG_REGION} />
+        ) : null}
         <p className="mb-4 px-2 text-sm font-semibold text-text-muted">ShiftNurse</p>
         <ul className="flex flex-col gap-1">
           {NAV_ITEMS.map((item) => (
