@@ -49,69 +49,71 @@ Decisions:
 
 ## Phase 1 — Solver registry and setting (SA+LNS is the only backend so far)
 **Core**
-- [ ] 1.1 Move `buildReport` and `unfilledFrom` from `solver/solver.ts` into `solver/report.ts`,
+- [x] 1.1 Move `buildReport` and `unfilledFrom` from `solver/solver.ts` into `solver/report.ts`,
       with no behaviour change (the existing solver tests stay green).
-- [ ] 1.2 `solver/types.ts`:
+- [x] 1.2 `solver/types.ts`:
   - Add `export type SolverId = 'hybrid' | 'sa-lns' | 'cp-sat'`.
   - Add `SolveStats.solver: SolverId`.
   - Add `SolveStats.bound?: number` and `SolveStats.gap?: number`.
   - Add `SolveStats.fellBackFrom?: { solver: SolverId; reason: string }`.
-- [ ] 1.3 `solver/registry.ts`:
+- [x] 1.3 `solver/registry.ts`:
   - `DEFAULT_SOLVER_ID = 'hybrid'`.
   - `FALLBACK_ORDER: readonly SolverId[] = ['hybrid', 'sa-lns', 'cp-sat']`, provisional until
     Phase 5.
   - `requiresOrTools(id): boolean`.
   - `PURE_SOLVERS: Partial<Record<SolverId, Solver>> = { 'sa-lns': localSearchSolver }`.
   - `resolveSolverId(requested, available): { id, fellBackFrom? }`.
-- [ ] 1.4 Test (write first): `resolveSolverId` picks the requested solver when it's available.
+- [x] 1.4 Test (write first): `resolveSolverId` picks the requested solver when it's available.
       When `hybrid` is requested but OR-Tools is missing, it falls back along `FALLBACK_ORDER`
       to the first available solver and records why.
-- [ ] 1.5 Export the new types and functions from `packages/core/src/index.ts`.
+- [x] 1.5 Export the new types and functions from `packages/core/src/index.ts`.
 
 **DB**
-- [ ] 1.6 `schema.ts`: add a `solver_settings` table: `id`, `unitId` (unique, FK cascade),
+- [x] 1.6 `schema.ts`: add a `solver_settings` table: `id`, `unitId` (unique, FK cascade),
       `solverId` (text, default `'hybrid'`), `maxIterations` (int, nullable). It follows the
       `conflict_policy` pattern.
-- [ ] 1.7 Generate the migration and check the SQL by hand.
-- [ ] 1.8 `repositories/solver.ts`: `getSolverSettings(db, unitId)` returns the default when there
+- [x] 1.7 Generate the migration and check the SQL by hand.
+- [x] 1.8 `repositories/solver.ts`: `getSolverSettings(db, unitId)` returns the default when there
       is no row; `saveSolverSettings(db, unitId, settings, actor)` validates the id and writes an
       audit entry (`create`, or `update` with `before`).
-- [ ] 1.9 `repositories/solver.test.ts`: the default for a unit with no row; saving and reading
+- [x] 1.9 `repositories/solver.test.ts`: the default for a unit with no row; saving and reading
       back; the update audit entry carries `before`; an unknown solver id is refused.
 
 **IPC / main**
-- [ ] 1.10 `shared/api.ts`:
+- [x] 1.10 `shared/api.ts`:
   - `solverSettings: { get(unitId), save(unitId, settings) }`.
   - `solver.available(): SolverAvailability[]` (id, available, reason?).
   - `SolveJobOptions.solver?: SolverId`.
   - Add the new channels to `API_CHANNELS`.
-- [ ] 1.11 `main/api.ts`: implement the new methods. In Phase 1, `available()` reports `sa-lns`
+- [x] 1.11 `main/api.ts`: implement the new methods. In Phase 1, `available()` reports `sa-lns`
       only; the others say "OR-Tools runner not installed".
-- [ ] 1.12 `main/solver-jobs.ts`: resolve the solver as per-run choice → unit default →
+- [x] 1.12 `main/solver-jobs.ts`: resolve the solver as per-run choice → unit default →
       `resolveSolverId`. Pass the `solverId` in `SolverWorkerData`. The applied-solve audit
       entry records `solver` and `fellBackFrom`.
-- [ ] 1.13 `main/solver-worker.ts`: pick the backend from the registry, not the hard-wired
+- [x] 1.13 `main/solver-worker.ts`: pick the backend from the registry, not the hard-wired
       `solve`.
-- [ ] 1.14 Extend `solver-jobs` tests (if present) or add them: a job requesting `hybrid` with
-      no runner reports `fellBackFrom`.
+- [x] 1.14 Extend `solver-jobs` tests (if present) or add them: a job requesting `hybrid` with
+      no runner reports `fellBackFrom`. *(Done as `main/solver-choice.test.ts`, which tests the
+      choice apart from the worker, plus a smoke assertion on the real job.)*
 
 **Renderer**
-- [ ] 1.15 `api-solver.ts`: `useSolverSettings`, `useSaveSolverSettings`,
+- [x] 1.15 `api-solver.ts`: `useSolverSettings`, `useSaveSolverSettings`,
       `useSolverAvailability`.
-- [ ] 1.16 `pages/settings/solver.tsx`:
+- [x] 1.16 `pages/settings/solver.tsx`:
   - A radio list: Hybrid (recommended), SA + LNS, CP-SAT, each with a one-line trade-off.
   - Unavailable options are disabled and show the reason.
   - A "falls back to…" note.
-- [ ] 1.17 `pages/settings.tsx`: add a **Solver** tab.
-- [ ] 1.18 `schedule/generate-dialog.tsx`: a solver select, preset to the unit default. The result
+- [x] 1.17 `pages/settings.tsx`: add a **Solver** tab.
+- [x] 1.18 `schedule/generate-dialog.tsx`: a solver select, preset to the unit default. The result
       summary shows the solver used, the fallback reason and the gap when present.
 
 **Check and ship**
-- [ ] 1.19 `npm run check` is green.
-- [ ] 1.20 `npm run build:packages && npm run smoke -w @shiftnurse/desktop` is green.
-- [ ] 1.21 Manual: in Settings › Solver, Hybrid is selected. Generating falls back to SA+LNS and
-      the dialog says why.
-- [ ] 1.22 **Commit & push to `main`:** "Add solver registry and per-unit solver setting".
+- [x] 1.19 `npm run check` is green.
+- [x] 1.20 `npm run build:packages && npm run smoke -w @shiftnurse/desktop` is green.
+- [x] 1.21 Manual: in Settings › Solver, Hybrid is selected. Generating falls back to SA+LNS and
+      the dialog says why. *(Automated in `main/smoke.ts`: the Solver tab renders 3 options with
+      hybrid checked, and Generate reports the fallback.)*
+- [x] 1.22 **Commit & push to `main`:** "Add solver registry and per-unit solver setting".
 
 ## Phase 2 — SA + LNS upgrade (`packages/core/src/solver/anneal.ts`)
 - [ ] 2.1 Test (first, must fail): *"two nurses trade their preferred 3-night blocks"*.

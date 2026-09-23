@@ -22,8 +22,9 @@
  */
 
 import type { Worker } from 'node:worker_threads';
-import type { Id, SolveInput, SolveReport } from '@shiftnurse/core';
-import type { SolveJobOptions, SolveJobStatus } from '../shared/api.js';
+import type { Id, SolveInput, SolveReport, SolverSettings } from '@shiftnurse/core';
+import type { SolveJobOptions, SolveJobStatus, SolverAvailability } from '../shared/api.js';
+import { chooseSolver } from './solver-choice.js';
 import spawnSolverWorker from './solver-worker?nodeWorker';
 import type { SolverWorkerData, SolverWorkerMessage } from './solver-worker.js';
 
@@ -38,6 +39,10 @@ export interface SolverJobsDeps {
   loadInput(periodId: Id): SolveInput;
   /** Persist a finished report into the period, preserving locked rows. */
   apply(periodId: Id, report: SolveReport): { created: number; preservedLocked: number };
+  /** The period's unit's saved solver choice. */
+  settings(periodId: Id): SolverSettings;
+  /** Which backends can run on this install. */
+  availability(): SolverAvailability[];
   now?: () => number;
 }
 
@@ -81,22 +86,34 @@ export class SolverJobs {
 
     const input = this.deps.loadInput(periodId);
     const seed = options.seed ?? seedFor(periodId);
+    const saved = this.deps.settings(periodId);
+    const choice = chooseSolver(options.solver, saved, this.deps.availability());
     const id = `solve-${++this.counter}-${this.now()}`;
     const cancelBuffer = new SharedArrayBuffer(4);
     const cancelFlag = new Int32Array(cancelBuffer);
 
     const workerData: SolverWorkerData = {
       input,
+      solverId: choice.id,
+      ...(choice.fellBackFrom ? { fellBackFrom: choice.fellBackFrom } : {}),
       options: {
         seed,
-        maxIterations: options.maxIterations ?? DEFAULT_MAX_ITERATIONS,
+        maxIterations: options.maxIterations ?? saved.maxIterations ?? DEFAULT_MAX_ITERATIONS,
         timeLimitMs: TIME_LIMIT_MS,
         progressEveryIterations: PROGRESS_EVERY_ITERATIONS,
       },
       cancelFlag: cancelBuffer,
     };
     const worker = spawnSolverWorker({ workerData });
-    const status: SolveJobStatus = { id, periodId, seed, state: 'running', startedAt: this.now() };
+    const status: SolveJobStatus = {
+      id,
+      periodId,
+      seed,
+      solver: choice.id,
+      ...(choice.fellBackFrom ? { fellBackFrom: choice.fellBackFrom } : {}),
+      state: 'running',
+      startedAt: this.now(),
+    };
     const job: Job = { status, worker, cancelFlag };
     this.jobs.set(id, job);
 

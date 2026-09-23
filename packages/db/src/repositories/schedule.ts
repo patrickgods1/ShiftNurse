@@ -413,6 +413,8 @@ export function replaceAssignments(
   periodId: Id,
   assignments: readonly CreateAssignmentInput[],
   actor: string,
+  /** Merged into the `generate` audit entry — which solver ran, and whether it fell back. */
+  auditDetails: Record<string, unknown> = {},
 ): Assignment[] {
   const existing = db.select().from(assignment).where(eq(assignment.periodId, periodId)).all();
   const lockedRows = existing.filter((r) => r.isLocked);
@@ -458,7 +460,7 @@ export function replaceAssignments(
     entityId: periodId,
     action: 'generate',
     actor,
-    after: { created: created.length, preservedLocked: preserved.length },
+    after: { ...auditDetails, created: created.length, preservedLocked: preserved.length },
   });
   return result;
 }

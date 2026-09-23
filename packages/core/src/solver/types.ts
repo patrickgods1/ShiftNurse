@@ -207,7 +207,21 @@ export interface UnfilledSlot {
   standard: 'coverage_floor' | 'ratio';
 }
 
+/**
+ * The selectable backends (M15). `sa-lns` is pure TypeScript and always available; `cp-sat` and
+ * `hybrid` need the OR-Tools runner, which lives in the desktop main process, not here.
+ */
+export type SolverId = 'hybrid' | 'sa-lns' | 'cp-sat';
+
 export interface SolveStats {
+  /** The backend that actually produced this schedule, after any fallback. */
+  solver: SolverId;
+  /** Set when the requested backend could not run and another took its place. */
+  fellBackFrom?: { solver: SolverId; reason: string };
+  /** Best proven lower bound on the objective, from exact backends. */
+  bound?: number;
+  /** Relative optimality gap, `(objective - bound) / objective`; 0 means proven optimal. */
+  gap?: number;
   seed: number;
   iterations: number;
   /** Moves the annealer accepted, including uphill ones. */
@@ -238,6 +252,6 @@ export interface SolveReport {
 }
 
 export interface Solver {
-  readonly name: string;
+  readonly name: SolverId;
   solve(input: SolveInput, options: SolveOptions): SolveReport;
 }

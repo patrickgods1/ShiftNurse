@@ -42,6 +42,7 @@ export const ids = {
   overtimeRule: () => newId('ot'),
   budget: () => newId('bud'),
   conflictPolicy: () => newId('cpol'),
+  solverSettings: () => newId('solv'),
   fairness: () => newId('fair'),
   audit: () => newId('aud'),
 } as const;

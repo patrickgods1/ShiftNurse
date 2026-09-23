@@ -9,12 +9,27 @@
  */
 
 import * as Dialog from '@radix-ui/react-dialog';
-import type { SolveJobStatus } from '@shared/api.js';
-import type { Id, SchedulePeriod, ShiftType, SolveReport, UnfilledSlot } from '@shiftnurse/core';
+import type { SolveJobStatus, SolverAvailability } from '@shared/api.js';
+import type {
+  Id,
+  SchedulePeriod,
+  ShiftType,
+  SolveReport,
+  SolverId,
+  UnfilledSlot,
+} from '@shiftnurse/core';
 import { useEffect, useMemo, useState } from 'react';
-import { isSettled, useCancelSolve, useSolveJob, useStartSolve } from '../../api-solver.js';
+import {
+  isSettled,
+  useCancelSolve,
+  useSolveJob,
+  useSolverAvailability,
+  useSolverSettings,
+  useStartSolve,
+} from '../../api-solver.js';
 import { formatDate } from '../../format.js';
 import { formatDollars } from '../../money.js';
+import { SOLVER_LABELS, SOLVER_ORDER } from '../../solver-labels.js';
 
 interface GenerateDialogProps {
   open: boolean;
@@ -37,6 +52,10 @@ export function GenerateDialog({
 }: GenerateDialogProps) {
   const [jobId, setJobId] = useState<Id | undefined>(undefined);
   const [seed, setSeed] = useState<number | undefined>(undefined);
+  /** A one-off override; undefined means "the unit's saved solver". */
+  const [solver, setSolver] = useState<SolverId | undefined>(undefined);
+  const savedSolver = useSolverSettings(unitId).data?.solverId;
+  const availability = useSolverAvailability().data;
   const start = useStartSolve();
   const cancel = useCancelSolve();
   const job = useSolveJob(jobId, period.id, unitId);
@@ -47,6 +66,7 @@ export function GenerateDialog({
   useEffect(() => {
     if (!open) return;
     setJobId(undefined);
+    setSolver(undefined);
     start.reset();
     cancel.reset();
   }, [open]);
@@ -56,7 +76,13 @@ export function GenerateDialog({
   function launch(nextSeed?: number) {
     setSeed(nextSeed);
     start.mutate(
-      { periodId: period.id, options: nextSeed !== undefined ? { seed: nextSeed } : {} },
+      {
+        periodId: period.id,
+        options: {
+          ...(nextSeed !== undefined ? { seed: nextSeed } : {}),
+          ...(solver !== undefined ? { solver } : {}),
+        },
+      },
       { onSuccess: (s) => setJobId(s.id) },
     );
   }
@@ -87,6 +113,10 @@ export function GenerateDialog({
               unlockedCount={unlockedCount}
               pending={start.isPending}
               error={startError}
+              solver={solver ?? savedSolver}
+              savedSolver={savedSolver}
+              availability={availability}
+              onSolverChange={setSolver}
               onGenerate={() => launch()}
             />
           ) : running ? (
@@ -116,14 +146,24 @@ function Confirm({
   unlockedCount,
   pending,
   error,
+  solver,
+  savedSolver,
+  availability,
+  onSolverChange,
   onGenerate,
 }: {
   lockedCount: number;
   unlockedCount: number;
   pending: boolean;
   error: string | undefined;
+  solver: SolverId | undefined;
+  savedSolver: SolverId | undefined;
+  availability: SolverAvailability[] | undefined;
+  onSolverChange: (solver: SolverId) => void;
   onGenerate: () => void;
 }) {
+  const byId = new Map((availability ?? []).map((a) => [a.id, a]));
+  const chosen = solver !== undefined ? byId.get(solver) : undefined;
   return (
     <div>
       <p className="text-sm text-text">
@@ -142,6 +182,29 @@ function Confirm({
         </li>
         <li>Running it again on the same inputs produces the same schedule.</li>
       </ul>
+      <label className="mt-4 flex flex-col gap-1 text-xs text-text-muted">
+        Solver
+        <select
+          data-testid="generate-solver"
+          className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-text"
+          value={solver ?? ''}
+          disabled={solver === undefined}
+          onChange={(e) => onSolverChange(e.target.value as SolverId)}
+        >
+          {SOLVER_ORDER.map((id) => (
+            <option key={id} value={id}>
+              {SOLVER_LABELS[id].name}
+              {id === savedSolver ? ' — unit default' : ''}
+              {byId.get(id)?.available === false ? ' (not installed)' : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+      {chosen?.available === false ? (
+        <p className="mt-1 text-xs text-warn">
+          {chosen.reason}. Generate will use the fallback solver and say so in the report.
+        </p>
+      ) : null}
       {error !== undefined ? (
         <p role="alert" className="mt-3 text-sm text-danger">
           {error}
@@ -264,10 +327,19 @@ function Finished({
           {status.applied?.preservedLocked ?? 0} locked shifts kept.
         </p>
       )}
+      {status.fellBackFrom ? (
+        <p className="mt-2 text-sm text-warn" data-testid="generate-fallback">
+          Ran {SOLVER_LABELS[status.solver].name} instead of{' '}
+          {SOLVER_LABELS[status.fellBackFrom.solver].name}: {status.fellBackFrom.reason}.
+        </p>
+      ) : null}
       {report ? <Report report={report} shiftTypes={shiftTypes} /> : null}
       <div className="mt-6 flex items-center justify-between gap-2">
         <span className="text-xs text-text-muted">
-          seed {status.seed}
+          {SOLVER_LABELS[status.solver].name} · seed {status.seed}
+          {report?.stats.gap !== undefined
+            ? ` · within ${(report.stats.gap * 100).toFixed(1)}% of optimal`
+            : ''}
           {report
             ? ` · ${report.stats.iterations.toLocaleString()} iterations · ${(report.stats.elapsedMs / 1000).toFixed(1)}s`
             : ''}

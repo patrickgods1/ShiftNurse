@@ -234,7 +234,11 @@ const SOLVER_SCRIPT = `
         'under_contracted_hours'].includes(v.code));
     const second = await run();
     const again = (await api.periods.assignments(draft.id)).map(key).sort();
+    const available = await api.solver.available();
     return {
+      solver: first.status.solver, fellBackFrom: first.status.fellBackFrom,
+      reportSolver: first.status.report ? first.status.report.stats.solver : null,
+      orTools: available.filter((a) => a.id !== 'sa-lns').every((a) => a.available),
       state: first.status.state, error: first.status.error, applied: first.status.applied,
       progressSeen: first.progressSeen, seed: first.status.seed,
       unfilled: first.status.report ? first.status.report.unfilled.length : -1,
@@ -260,6 +264,26 @@ const PAY_TAB_SCRIPT = `
       const differentials = document.querySelectorAll('[data-testid="differential-table"] tbody tr').length;
       if ((rows > 1 && differentials > 1) || Date.now() - started > 10000) resolve({ rows, differentials });
       else setTimeout(tick, 100);
+    };
+    tick();
+  })`;
+
+/** M15: Settings › Solver lists every backend, with the saved choice checked and the ones this
+ * install cannot run marked with the reason. */
+const SOLVER_TAB_SCRIPT = `
+  new Promise((resolve) => {
+    location.hash = '#/settings';
+    const started = Date.now();
+    const tick = () => {
+      const tab = document.getElementById('settings-tab-solver');
+      if (tab && tab.getAttribute('aria-selected') !== 'true') tab.click();
+      const options = [...document.querySelectorAll('[data-testid^="solver-option-"]')];
+      const checked = options.find((o) => o.checked);
+      const panel = document.querySelector('[data-testid="solver-settings"]');
+      const unavailable = panel ? (panel.textContent.match(/Not available here/g) || []).length : 0;
+      if (options.length === 3 || Date.now() - started > 10000) {
+        resolve({ options: options.length, checked: checked ? checked.value : null, unavailable });
+      } else setTimeout(tick, 100);
     };
     tick();
   })`;
@@ -713,6 +737,10 @@ export function runSmoke(win: BrowserWindow): void {
         `[smoke] cost OK (published $${Math.round(cost.historyTotal)} for ${cost.historyHours}h at ${(cost.historyRatio * 100).toFixed(1)}% of budget, ${cost.historyOvertimeNurses} nurses with OT; draft $${Math.round(cost.beforeTotal)} -> $${Math.round(cost.afterTotal)} after one shift)`,
       );
       const solved = (await win.webContents.executeJavaScript(SOLVER_SCRIPT)) as {
+        solver: string;
+        fellBackFrom?: { solver: string; reason: string };
+        reportSolver: string | null;
+        orTools: boolean;
         state: string;
         error?: string;
         applied?: { created: number; preservedLocked: number };
@@ -739,8 +767,19 @@ export function runSmoke(win: BrowserWindow): void {
           `regenerating unchanged inputs changed the schedule (second run ${solved.secondState})`,
         );
       }
+      // The demo unit is on the default solver (hybrid). Without the OR-Tools runner the job must
+      // fall back to SA + LNS *and say so*; a silent substitution is the failure being guarded.
+      if (solved.reportSolver !== solved.solver) {
+        fail(`job says ${solved.solver} but the report was produced by ${solved.reportSolver}`);
+      }
+      if (
+        !solved.orTools &&
+        (solved.solver !== 'sa-lns' || solved.fellBackFrom?.solver !== 'hybrid')
+      ) {
+        fail(`expected a reported fallback from hybrid to sa-lns, got ${solved.solver}`);
+      }
       console.log(
-        `[smoke] solver OK (${solved.applied.created} shifts in ${solved.elapsedMs}ms, seed ${solved.seed}, ${solved.unfilled} unfilled, ${solved.hard} hard violations, locked kept: ${solved.lockedKept}, regenerate identical)`,
+        `[smoke] solver OK (${solved.solver}${solved.fellBackFrom ? ` after falling back from ${solved.fellBackFrom.solver}` : ''}, ${solved.applied.created} shifts in ${solved.elapsedMs}ms, seed ${solved.seed}, ${solved.unfilled} unfilled, ${solved.hard} hard violations, locked kept: ${solved.lockedKept}, regenerate identical)`,
       );
       const pay = (await win.webContents.executeJavaScript(PAY_TAB_SCRIPT)) as {
         rows: number;
@@ -753,6 +792,19 @@ export function runSmoke(win: BrowserWindow): void {
       }
       console.log(
         `[smoke] pay settings OK (${pay.rows} rates, ${pay.differentials} differentials)`,
+      );
+      const solverTab = (await win.webContents.executeJavaScript(SOLVER_TAB_SCRIPT)) as {
+        options: number;
+        checked: string | null;
+        unavailable: number;
+      };
+      if (solverTab.options !== 3 || solverTab.checked !== 'hybrid') {
+        fail(
+          `Settings › Solver rendered ${solverTab.options} options with ${solverTab.checked} checked`,
+        );
+      }
+      console.log(
+        `[smoke] solver settings OK (3 options, hybrid checked, ${solverTab.unavailable} not installed)`,
       );
       const requests = (await win.webContents.executeJavaScript(REQUESTS_SCRIPT)) as {
         error?: string;

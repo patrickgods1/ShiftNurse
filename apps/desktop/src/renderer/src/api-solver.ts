@@ -8,7 +8,7 @@
  * process has just rewritten the period underneath them.
  */
 
-import type { Id } from '@shiftnurse/core';
+import type { Id, SolverSettings } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import type { SolveJobOptions, SolveJobStatus } from '../../shared/api.js';
@@ -19,7 +19,39 @@ import { scheduleKeys } from './api-schedule.js';
 
 export const solverKeys = {
   job: (jobId: Id) => ['solver', 'job', jobId] as const,
+  settings: (unitId: Id) => ['solver', 'settings', unitId] as const,
+  availability: () => ['solver', 'availability'] as const,
 };
+
+/** The unit's saved solver; hybrid when it never saved one. */
+export function useSolverSettings(unitId: Id | undefined) {
+  return useQuery({
+    queryKey: solverKeys.settings(unitId ?? ''),
+    queryFn: () => api.solverSettings.get(unitId as Id),
+    enabled: unitId !== undefined,
+  });
+}
+
+export function useSaveSolverSettings(unitId: Id | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (settings: SolverSettings) => api.solverSettings.save(unitId as Id, settings),
+    onSettled: () => {
+      if (unitId !== undefined) {
+        void queryClient.invalidateQueries({ queryKey: solverKeys.settings(unitId) });
+      }
+    },
+  });
+}
+
+/** Which backends this install can run; fixed for the life of the process. */
+export function useSolverAvailability() {
+  return useQuery({
+    queryKey: solverKeys.availability(),
+    queryFn: () => api.solver.available(),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
 
 const POLL_MS = 250;
 

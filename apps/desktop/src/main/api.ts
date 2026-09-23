@@ -116,6 +116,7 @@ import {
   getPeriod,
   getRuleSet,
   getShiftType,
+  getSolverSettings,
   getSwap,
   getUnit,
   grantCredential,
@@ -178,6 +179,7 @@ import {
   type ShiftNurseDb,
   saveConflictPolicy,
   saveRuleSet,
+  saveSolverSettings,
   setLocked as setAssignmentLocked,
   setBudget,
   transact,
@@ -220,6 +222,7 @@ import type {
 import { createBackup, listBackups, restoreBackup } from './backups.js';
 import { databasePath } from './database.js';
 import { exportToFile as exportPeriodToFile, type OutputInput, renderCsv } from './output.js';
+import { solverAvailability } from './solver-choice.js';
 import { SolverJobs } from './solver-jobs.js';
 
 /**
@@ -1191,6 +1194,11 @@ function applySolveReport(db: ShiftNurseDb, periodId: Id, report: SolveReport) {
         isOvertime: a.isOvertime,
       })),
       ACTOR,
+      {
+        solver: report.stats.solver,
+        seed: report.stats.seed,
+        ...(report.stats.fellBackFrom ? { fellBackFrom: report.stats.fellBackFrom } : {}),
+      },
     );
     const preservedLocked = written.filter((a) => a.isLocked).length;
     return { created: written.length - preservedLocked, preservedLocked };
@@ -1201,6 +1209,12 @@ export function createSolverJobs(db: ShiftNurseDb): SolverJobs {
   return new SolverJobs({
     loadInput: (periodId) => buildSolveInput(db, periodId),
     apply: (periodId, report) => applySolveReport(db, periodId, report),
+    settings: (periodId) => {
+      const period = getPeriod(db, periodId);
+      if (!period) throw new Error(`Unknown period ${periodId}`);
+      return getSolverSettings(db, period.unitId);
+    },
+    availability: () => solverAvailability(false),
   });
 }
 
@@ -1385,6 +1399,14 @@ export function createApi(
       start: (periodId, options) => solverJobs.start(periodId, options),
       status: (jobId) => solverJobs.status(jobId),
       cancel: (jobId) => solverJobs.cancel(jobId),
+      available: () => solverAvailability(false),
+    },
+    solverSettings: {
+      get: (unitId) => getSolverSettings(db, unitId),
+      save: (unitId, settings) => {
+        const { id: _id, ...saved } = saveSolverSettings(db, unitId, settings, ACTOR);
+        return saved;
+      },
     },
     rules: {
       getLatest: (unitId) => latestRuleSetOrDefault(db, unitId),

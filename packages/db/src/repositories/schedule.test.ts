@@ -442,4 +442,25 @@ describe('replaceAssignments', () => {
     expect(result.find((a) => a.id === locked.id)?.isLocked).toBe(true);
     void unlocked;
   });
+
+  it('records which solver produced a generated schedule, and why it fell back', () => {
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    const nurse = mkNurse('Ada');
+    replaceAssignments(
+      handle.db,
+      period.id,
+      [baseAssignment({ periodId: period.id, nurseId: nurse, date: isoDate('2026-01-16') })],
+      ACTOR,
+      { solver: 'sa-lns', fellBackFrom: { solver: 'hybrid', reason: 'runner missing' } },
+    );
+    const generated = auditHistoryFor(handle.db, 'schedule_period', period.id).find(
+      (e) => e.action === 'generate',
+    );
+    expect(generated?.after).toEqual({
+      solver: 'sa-lns',
+      fellBackFrom: { solver: 'hybrid', reason: 'runner missing' },
+      created: 1,
+      preservedLocked: 0,
+    });
+  });
 });

@@ -36,6 +36,7 @@ import type {
   ScheduleChangeSource,
   ShiftSwapKind,
   ShiftSwapStatus,
+  SolverId,
   TimeOffStatus,
   TimeOffType,
 } from '@shiftnurse/core';
@@ -645,6 +646,28 @@ export const conflictPolicy = sqliteTable('conflict_policy', {
   enabled: bool('enabled').notNull().default(false),
   maxCostDelta: real('max_cost_delta').notNull().default(0),
   maxFairnessDrop: real('max_fairness_drop').notNull().default(1),
+});
+
+// ---------------------------------------------------------------------------
+// Solver
+// ---------------------------------------------------------------------------
+
+/**
+ * Which solver backend a unit generates with (M15). One row per unit, absent until the manager
+ * first saves it — the repository returns core's `DEFAULT_SOLVER_ID` for a missing row. The id
+ * is a request, not a promise: a backend whose runner is missing falls back at solve time and the
+ * report says so.
+ */
+export const solverSettings = sqliteTable('solver_settings', {
+  id: text('id').primaryKey().$type<Id>(),
+  unitId: text('unit_id')
+    .notNull()
+    .unique()
+    .references(() => unit.id, { onDelete: 'cascade' })
+    .$type<Id>(),
+  solverId: text('solver_id').notNull().default('hybrid').$type<SolverId>(),
+  /** Overrides the job's default iteration budget; null means the default. */
+  maxIterations: integer('max_iterations'),
 });
 
 // ---------------------------------------------------------------------------

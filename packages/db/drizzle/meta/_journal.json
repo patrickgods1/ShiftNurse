@@ -43,6 +43,13 @@
       "when": 1789845610278,
       "tag": "0005_purple_mach_iv",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790206845284,
+      "tag": "0006_clear_jane_foster",
+      "breakpoints": true
     }
   ]
 }

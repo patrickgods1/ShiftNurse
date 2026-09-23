@@ -348,7 +348,7 @@ behind the existing `Solver` seam, chosen per unit in Settings › Solver with a
 engine plus the Ceschia/Guido/Schaerf block moves; the only one needing no native binary) and
 **CP-SAT** (exact, with an optimality gap). Fallback: hybrid, then whichever of SA+LNS / CP-SAT
 the benchmark ranks higher.
-- [ ] Phase 1 — solver registry, `solver_settings` table, IPC, Settings › Solver, Generate override
+- [x] Phase 1 — solver registry, `solver_settings` table, IPC, Settings › Solver, Generate override
 - [ ] Phase 2 — SA + LNS: block-swap and multi-day reassign moves
 - [ ] Phase 3 — OR-Tools C++ runner, GitHub Actions build, per-target bundling, main-process client
 - [ ] Phase 4 — CP-SAT backend: pure encode/decode in core, an encoder for every registered rule

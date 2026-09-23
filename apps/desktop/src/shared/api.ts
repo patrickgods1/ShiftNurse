@@ -64,6 +64,8 @@ import type {
   ShiftType,
   SolveProgress,
   SolveReport,
+  SolverId,
+  SolverSettings,
   TimeOffImpact,
   TimeOffRequest,
   TimeOffStatus,
@@ -300,7 +302,17 @@ export interface BackupInfo {
 export interface SolveJobOptions {
   /** Defaults to a stable hash of the period id, so regenerating unchanged inputs repeats itself. */
   seed?: number;
+  /** Defaults to the unit's saved budget, then the job default. */
   maxIterations?: number;
+  /** A one-off override of the unit's saved solver. */
+  solver?: SolverId;
+}
+
+/** Whether a backend can run on this install, and if not, why not. */
+export interface SolverAvailability {
+  id: SolverId;
+  available: boolean;
+  reason?: string;
 }
 
 /**
@@ -314,6 +326,10 @@ export interface SolveJobStatus {
   id: Id;
   periodId: Id;
   seed: number;
+  /** The backend running this job, after any fallback. */
+  solver: SolverId;
+  /** Set when the requested backend could not run and `solver` took its place. */
+  fellBackFrom?: { solver: SolverId; reason: string };
   state: SolveJobState;
   startedAt: number;
   finishedAt?: number;
@@ -524,6 +540,13 @@ export interface ShiftNurseApi {
     status(jobId: Id): SolveJobStatus | undefined;
     /** Asks a running solve to stop at its next check; the status flips once it has. */
     cancel(jobId: Id): SolveJobStatus | undefined;
+    /** Which backends can run on this install (CP-SAT and hybrid need the OR-Tools runner). */
+    available(): SolverAvailability[];
+  };
+  solverSettings: {
+    /** The unit's saved solver; the default (hybrid) when it never saved one. */
+    get(unitId: Id): SolverSettings;
+    save(unitId: Id, settings: SolverSettings): SolverSettings;
   };
   rules: {
     getLatest(unitId: Id): RuleSet;
@@ -700,7 +723,8 @@ export const API_CHANNELS = {
   publish: ['preview', 'publish', 'versions', 'changes', 'alerts'],
   output: ['exportToFile', 'renderCsv'],
   backups: ['list', 'create', 'restore'],
-  solver: ['start', 'status', 'cancel'],
+  solver: ['start', 'status', 'cancel', 'available'],
+  solverSettings: ['get', 'save'],
   rules: ['getLatest', 'save'],
   fairness: ['report', 'history', 'trend', 'pickHistoryImportFile', 'importHistory'],
   cost: [

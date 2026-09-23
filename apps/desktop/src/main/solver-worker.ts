@@ -12,17 +12,27 @@
  */
 
 import { parentPort, workerData } from 'node:worker_threads';
-import { type SolveInput, type SolveOptions, type SolveProgress, solve } from '@shiftnurse/core';
+import {
+  PURE_SOLVERS,
+  type SolveInput,
+  type SolveOptions,
+  type SolveProgress,
+  type SolveReport,
+  type SolverId,
+} from '@shiftnurse/core';
 
 export interface SolverWorkerData {
   input: SolveInput;
+  /** Already resolved by the job, fallback included; the worker never re-decides. */
+  solverId: SolverId;
+  fellBackFrom?: { solver: SolverId; reason: string };
   options: Omit<SolveOptions, 'onProgress' | 'shouldCancel' | 'now'>;
   cancelFlag: SharedArrayBuffer;
 }
 
 export type SolverWorkerMessage =
   | { type: 'progress'; progress: SolveProgress }
-  | { type: 'done'; report: ReturnType<typeof solve> }
+  | { type: 'done'; report: SolveReport }
   | { type: 'error'; message: string };
 
 const port = parentPort;
@@ -32,11 +42,14 @@ const flag = new Int32Array(data.cancelFlag);
 const post = (message: SolverWorkerMessage) => port.postMessage(message);
 
 try {
-  const report = solve(data.input, {
+  const solver = PURE_SOLVERS[data.solverId];
+  if (!solver) throw new Error(`Solver "${data.solverId}" cannot run in the worker thread`);
+  const report = solver.solve(data.input, {
     ...data.options,
     onProgress: (progress) => post({ type: 'progress', progress }),
     shouldCancel: () => Atomics.load(flag, 0) === 1,
   });
+  if (data.fellBackFrom) report.stats.fellBackFrom = data.fellBackFrom;
   post({ type: 'done', report });
 } catch (err) {
   post({ type: 'error', message: err instanceof Error ? err.message : String(err) });

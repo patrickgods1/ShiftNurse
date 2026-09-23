@@ -19,6 +19,7 @@ import HolidaysPanel from './settings/holidays.js';
 import PayPanel from './settings/pay.js';
 import RulesPanel from './settings/rules.js';
 import ShiftTypesPanel from './settings/shift-types.js';
+import SolverPanel from './settings/solver.js';
 
 const TABS = [
   { id: 'shift-types', label: 'Shift types' },
@@ -26,6 +27,7 @@ const TABS = [
   { id: 'acuity', label: 'Acuity' },
   { id: 'rules', label: 'Rules' },
   { id: 'pay', label: 'Pay' },
+  { id: 'solver', label: 'Solver' },
   { id: 'conflicts', label: 'Conflicts' },
   { id: 'holidays', label: 'Holidays' },
   { id: 'backups', label: 'Backups' },
@@ -145,6 +147,8 @@ export default function SettingsPage() {
               <RulesPanel />
             ) : tab.id === 'pay' ? (
               <PayPanel />
+            ) : tab.id === 'solver' ? (
+              <SolverPanel />
             ) : tab.id === 'conflicts' ? (
               <ConflictsPanel />
             ) : tab.id === 'holidays' ? (
