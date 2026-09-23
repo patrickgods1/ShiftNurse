@@ -73,7 +73,9 @@ self-service later becomes an intake surface rather than a new data model.
 - Packaging (M14, built): `apps/desktop/electron-builder.yml` + `scripts/{before-pack,dist}.mjs`
   produce mac dmgs (x64 + arm64) and a Windows NSIS installer. The mac build is verified via
   `smoke:packaged`; **the Windows installer has never been launched on real Windows 11
-  hardware** — that is the one open roadmap item.
+  hardware** — that is the one open M14 item.
+- **M15 — Selectable solvers** (planned): hybrid / SA + LNS / CP-SAT behind the `Solver` seam, with
+  a per-unit setting. The checkable plan is `docs/SOLVER_PLAN.md`; follow its phases and commit points.
 
 `README.md` is the build/run/ship guide for humans; `ARCHITECTURE.md` is the "why this stack"
 write-up. Keep the three in step: a milestone or convention change here should be reflected

@@ -29,7 +29,7 @@ surface rather than a new data model. See **Future: nurse self-service** below.
 | Fairness inputs | Seniority weighting, historical balance, preference satisfaction, time-off approval equity, on-call burden. |
 | Conflicts | Ranked resolution options, plus auto-resolve-with-audit-log below an impact threshold. |
 | Shift exchange | 1:1 trades **and** giveaway/pickup. Hard-rule breaches blocked; fairness/soft impacts warn and can be overridden with a logged reason. |
-| Solver | Pure TypeScript engine (no Python runtime to bundle). |
+| Solver | ~~Pure TypeScript engine (no Python runtime to bundle).~~ *Superseded by M15:* SA + LNS stays pure TypeScript; CP-SAT and the hybrid add a native OR-Tools runner (C++, built in CI, bundled per target). |
 | Staffing demand | Full acuity model — acuity tiers, HPPD targets, census forecasting, ratio rules. |
 | Day-of ops | Call-off handling with ranked replacement finder. |
 | Cost | Pay rates, differentials, OT and agency premiums; dollar impact on every decision. |
@@ -340,6 +340,23 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
 - [ ] Verify: install and launch the built artifact on Windows 11
       (the NSIS installer builds from macOS and carries the win32-x64 `.node`, but no Windows
       machine was available to install and launch it — needs real Windows 11 hardware)
+
+### M15 — Selectable solvers (planned)
+Plan of record with checkable steps: [`docs/SOLVER_PLAN.md`](docs/SOLVER_PLAN.md). Three backends
+behind the existing `Solver` seam, chosen per unit in Settings › Solver with a per-run override:
+**Hybrid** (default — annealing with CP-SAT re-optimising small windows), **SA + LNS** (the current
+engine plus the Ceschia/Guido/Schaerf block moves; the only one needing no native binary) and
+**CP-SAT** (exact, with an optimality gap). Fallback: hybrid, then whichever of SA+LNS / CP-SAT
+the benchmark ranks higher.
+- [ ] Phase 1 — solver registry, `solver_settings` table, IPC, Settings › Solver, Generate override
+- [ ] Phase 2 — SA + LNS: block-swap and multi-day reassign moves
+- [ ] Phase 3 — OR-Tools C++ runner, GitHub Actions build, per-target bundling, main-process client
+- [ ] Phase 4 — CP-SAT backend: pure encode/decode in core, an encoder for every registered rule
+- [ ] Phase 5 — Hybrid backend, `bench:solvers`, fallback order set from measured results
+- [ ] Phase 6 — CLAUDE.md, README, ARCHITECTURE
+- [ ] Verify: every backend passes the property suite (no nurse-scope hard violation, same seed →
+      identical schedule, locks preserved); Generate fills every floor on the demo with each;
+      `smoke:packaged` green on mac with the runner bundled
 
 ---
 
