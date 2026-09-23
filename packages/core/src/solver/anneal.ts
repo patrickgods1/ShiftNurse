@@ -19,6 +19,14 @@
  * result like any other move. It is expensive, so it runs on a fixed cadence rather than a
  * random draw; keeping it deterministic is also what keeps the run reproducible.
  *
+ * ## Why block moves
+ *
+ * Some better schedules sit behind a wall no single-shift move can cross: two nurses whose runs
+ * of days and nights should be traded, where every one-day trade breaks the rest rule. The block
+ * moves in `block-moves.ts` trade or hand over a whole 2–7 day run at once (the neighbourhood
+ * Ceschia, Guido & Schaerf used for INRC-II, 2020). They are costlier than a single-shift move —
+ * up to fourteen gate checks — so they take a small, fixed share of the draws.
+ *
  * ## Every state the annealer visits is legal per nurse
  *
  * A move is applied only if each nurse it touches passes the rule gate with their new
@@ -27,6 +35,7 @@
  */
 
 import type { Assignment, NurseRole } from '../domain/entities.js';
+import { blockSwap, type Move, multiDayReassign } from './block-moves.js';
 import { greedySeed } from './greedy.js';
 import type { AddToken, RemoveToken, Shift, SolverModel } from './model.js';
 import type { Rng } from './rng.js';
@@ -48,11 +57,6 @@ const CANCEL_POLL_EVERY = 64;
  * the walk rearrange the shifts around a gap, not just the gap itself.
  */
 const TARGETED = 0.7;
-
-interface Move {
-  delta: number;
-  undo: () => void;
-}
 
 export interface AnnealResult {
   iterations: number;
@@ -139,14 +143,17 @@ export function anneal(
 // Moves
 // ---------------------------------------------------------------------------
 
+/** Cumulative draw shares; the block moves take the last tenth (see "Why block moves"). */
 function randomMove(model: SolverModel, rng: Rng): Move | null {
   const roll = rng.nextFloat();
-  if (roll < 0.3) return reassign(model, rng);
-  if (roll < 0.5) return swap(model, rng);
-  if (roll < 0.6) return addShift(model, rng);
-  if (roll < 0.7) return removeShift(model, rng);
-  if (roll < 0.85) return relocate(model, rng);
-  return convert(model, rng);
+  if (roll < 0.27) return reassign(model, rng);
+  if (roll < 0.45) return swap(model, rng);
+  if (roll < 0.54) return addShift(model, rng);
+  if (roll < 0.63) return removeShift(model, rng);
+  if (roll < 0.765) return relocate(model, rng);
+  if (roll < 0.9) return convert(model, rng);
+  if (roll < 0.96) return blockSwap(model, rng);
+  return multiDayReassign(model, rng);
 }
 
 function pickUnlocked(model: SolverModel, rng: Rng): Assignment | null {

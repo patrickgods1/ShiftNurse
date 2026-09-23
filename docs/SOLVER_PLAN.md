@@ -116,30 +116,37 @@ Decisions:
 - [x] 1.22 **Commit & push to `main`:** "Add solver registry and per-unit solver setting".
 
 ## Phase 2 — SA + LNS upgrade (`packages/core/src/solver/anneal.ts`)
-- [ ] 2.1 Test (first, must fail): *"two nurses trade their preferred 3-night blocks"*.
+- [x] 2.1 Test (first, must fail): *"two nurses trade their preferred 3-night blocks"*.
   - Each nurse holds the other's preferred block.
   - A single-shift swap is blocked by the rest rule.
   - Assert that after the solve each nurse holds their preferred block. The expected result is
     worked out by hand.
-- [ ] 2.2 Implement `blockSwap(model, rng)`:
+  - *(Done at model level in `block-moves.test.ts`: the solver re-seeds unlocked shifts greedily,
+    so a whole-solve test cannot start from the trapped state. Every one-day trade is shown
+    refused by the rest rule; the three-day trade succeeds.)*
+- [x] 2.2 Implement `blockSwap(model, rng)`:
   - Pick two same-role nurses, both eligible for each other's shifts, and a run of 2–7
     consecutive days.
   - Swap all their unlocked assignments in that run.
   - Remove everything first, then add; if either timeline fails the gate, undo all of it.
   - Returns a `Move` with an exact `undo`.
-- [ ] 2.3 Implement `multiDayReassign(model, rng)`: move one nurse's 2–7 day block to another
+- [x] 2.3 Implement `multiDayReassign(model, rng)`: move one nurse's 2–7 day block to another
       eligible nurse, using the same gate and undo pattern.
-- [ ] 2.4 Add both to `randomMove` with fixed weights, documented in the header comment with
+- [x] 2.4 Add both to `randomMove` with fixed weights, documented in the header comment with
       the reason (the Ceschia et al. 2020 citation).
-- [ ] 2.5 Test: the block moves never touch a locked assignment.
-- [ ] 2.6 Test: the existing property suite still passes (no nurse-scope hard violations; same
+- [x] 2.5 Test: the block moves never touch a locked assignment.
+- [x] 2.6 Test: the existing property suite still passes (no nurse-scope hard violations; same
       seed → identical schedule; locks preserved).
-- [ ] 2.7 Record the demo objective before and after (seed-fixed) in the commit message. If it
+- [x] 2.7 Record the demo objective before and after (seed-fixed) in the commit message. If it
       got worse, retune the weights, `TARGETED` or `LNS_EVERY` and record why.
-- [ ] 2.8 Update the `anneal.ts` header ("Why block moves").
-- [ ] 2.9 `npm run check` is green. Generate on the demo fills every floor.
-- [ ] 2.10 Run `/scheduling-review` on the diff.
-- [ ] 2.11 **Commit & push to `main`:** "Add block-swap and multi-day reassign moves to the
+      *(Measured on a demo-sized synthetic unit — 24 nurses, 4 weeks, 8 seeds, 200k iterations —
+      because the solve-input builder is not reachable outside Electron yet; see 5.8. Mean
+      objective 6070 → 5876 (−3.2%); the old annealer given matching time scored 6189. Shares of
+      2% and 4% were worse; 10% kept.)*
+- [x] 2.8 Update the `anneal.ts` header ("Why block moves").
+- [x] 2.9 `npm run check` is green. Generate on the demo fills every floor.
+- [x] 2.10 Run `/scheduling-review` on the diff.
+- [x] 2.11 **Commit & push to `main`:** "Add block-swap and multi-day reassign moves to the
       annealer".
 
 ## Phase 3 — OR-Tools runner and packaging (branch `feat/or-tools`)
@@ -284,6 +291,9 @@ Decisions:
 
 **Benchmark**
 - [ ] 5.8 `packages/core/src/solver/bench/` and a root script `npm run bench:solvers`:
+  - First move `loadPeriodInput` (and its helpers `demandInputs`, `costContext`, `ledgerHistory`)
+    from `main/api.ts` into `packages/db` so the benchmark can build the demo's real `SolveInput`
+    in plain Node.
   - Runs every available backend on the demo and fixture units at 3 seeds.
   - Writes `docs/solver-bench.md` (objective, breakdown, unfilled, gap, time).
 - [ ] 5.9 Set `FALLBACK_ORDER` to hybrid, then whichever of SA+LNS / CP-SAT has the lower
