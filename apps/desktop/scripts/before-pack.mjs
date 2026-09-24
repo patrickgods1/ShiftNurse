@@ -7,6 +7,7 @@
  * darwin-arm64 `.node` file. See rebuild-sqlite-for-electron.mjs for the two-copies design.
  */
 import { Arch } from 'electron-builder';
+import { fetchCpsat, TARGET_DIR } from './fetch-cpsat.mjs';
 import { fetchSqliteForElectron } from './rebuild-sqlite-for-electron.mjs';
 
 const PLATFORM_MAP = {
@@ -33,4 +34,9 @@ export default async function beforePack(context) {
 
   console.log(`[before-pack] fetching better-sqlite3-electron for ${platform}/${archName}`);
   fetchSqliteForElectron({ platform, arch: archName });
+
+  // The CP-SAT runner for the same target, into the folder extraResources ships as
+  // resources/cpsat. Fatal on failure: an installer without it silently loses two solvers.
+  console.log(`[before-pack] fetching the CP-SAT runner for ${platform}/${archName}`);
+  await fetchCpsat({ platform, arch: archName, dest: TARGET_DIR });
 }

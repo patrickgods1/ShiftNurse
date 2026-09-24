@@ -15,6 +15,7 @@ import { ensureDailyBackup } from './backups.js';
 import { closeAppDatabase, openAppDatabase } from './database.js';
 import { registerIpc } from './ipc.js';
 import { isSmokeRun, runSmoke } from './smoke.js';
+import { disposeCpsatRunner } from './solver-backends.js';
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -71,7 +72,10 @@ app.whenReady().then(() => {
     (err) => console.error(`[backup] daily backup failed: ${err}`),
   );
   // Workers must not outlive the database handle they would write into.
-  app.on('will-quit', () => solverJobs.dispose());
+  app.on('will-quit', () => {
+    solverJobs.dispose();
+    disposeCpsatRunner();
+  });
   const win = createWindow();
   if (isSmokeRun()) runSmoke(win);
 

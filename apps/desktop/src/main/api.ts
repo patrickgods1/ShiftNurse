@@ -222,6 +222,7 @@ import type {
 import { createBackup, listBackups, restoreBackup } from './backups.js';
 import { databasePath } from './database.js';
 import { exportToFile as exportPeriodToFile, type OutputInput, renderCsv } from './output.js';
+import { cpsatRunnerPath, ORTOOLS_BACKEND_IDS } from './solver-backends.js';
 import { solverAvailability } from './solver-choice.js';
 import { SolverJobs } from './solver-jobs.js';
 
@@ -1214,7 +1215,7 @@ export function createSolverJobs(db: ShiftNurseDb): SolverJobs {
       if (!period) throw new Error(`Unknown period ${periodId}`);
       return getSolverSettings(db, period.unitId);
     },
-    availability: () => solverAvailability(false),
+    availability: () => solverAvailability(cpsatRunnerPath() !== undefined, ORTOOLS_BACKEND_IDS),
   });
 }
 
@@ -1399,7 +1400,7 @@ export function createApi(
       start: (periodId, options) => solverJobs.start(periodId, options),
       status: (jobId) => solverJobs.status(jobId),
       cancel: (jobId) => solverJobs.cancel(jobId),
-      available: () => solverAvailability(false),
+      available: () => solverAvailability(cpsatRunnerPath() !== undefined, ORTOOLS_BACKEND_IDS),
     },
     solverSettings: {
       get: (unitId) => getSolverSettings(db, unitId),

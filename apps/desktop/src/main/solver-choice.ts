@@ -18,14 +18,22 @@ import {
 import type { SolverAvailability } from '../shared/api.js';
 
 export const OR_TOOLS_MISSING = 'The OR-Tools runner is not installed';
+export const NOT_IN_THIS_BUILD = 'Not included in this version of ShiftNurse yet';
 
-/** Every backend, marked available unless it needs an OR-Tools runner this install lacks. */
-export function solverAvailability(orToolsInstalled: boolean): SolverAvailability[] {
-  return SOLVER_IDS.map((id) =>
-    requiresOrTools(id) && !orToolsInstalled
-      ? { id, available: false, reason: OR_TOOLS_MISSING }
-      : { id, available: true },
-  );
+/**
+ * Every backend, marked available unless it needs OR-Tools and either its backend is not part of
+ * this build (`orToolsBackends`) or the runner is not installed.
+ */
+export function solverAvailability(
+  orToolsInstalled: boolean,
+  orToolsBackends: ReadonlySet<SolverId>,
+): SolverAvailability[] {
+  return SOLVER_IDS.map((id) => {
+    if (!requiresOrTools(id)) return { id, available: true };
+    if (!orToolsBackends.has(id)) return { id, available: false, reason: NOT_IN_THIS_BUILD };
+    if (!orToolsInstalled) return { id, available: false, reason: OR_TOOLS_MISSING };
+    return { id, available: true };
+  });
 }
 
 export function chooseSolver(
