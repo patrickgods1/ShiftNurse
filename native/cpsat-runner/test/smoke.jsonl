@@ -1,0 +1,2 @@
+{"id":"bad","model":{"variables":"not-a-list"}}
+{"id":"smoke","model":{"variables":[{"name":"x","domain":[0,10]},{"name":"y","domain":[0,10]}],"constraints":[{"linear":{"vars":[0,1],"coeffs":[1,2],"domain":[-1000,14]}},{"linear":{"vars":[0,1],"coeffs":[3,-1],"domain":[0,1000]}},{"linear":{"vars":[0,1],"coeffs":[1,-1],"domain":[-1000,2]}}],"objective":{"vars":[0,1],"coeffs":[-3,-4]}},"params":{"num_workers":1,"random_seed":1}}

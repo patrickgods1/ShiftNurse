@@ -12,7 +12,8 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "rebuild:sqlite": "node scripts/rebuild-sqlite-for-electron.mjs",
-    "postinstall": "node scripts/rebuild-sqlite-for-electron.mjs",
+    "postinstall": "node scripts/rebuild-sqlite-for-electron.mjs && node scripts/fetch-cpsat.mjs",
+    "fetch:cpsat": "node scripts/fetch-cpsat.mjs --strict",
     "dist": "node scripts/dist.mjs",
     "smoke": "electron-vite build && node scripts/smoke.mjs",
     "smoke:packaged": "node scripts/smoke.mjs --packaged"

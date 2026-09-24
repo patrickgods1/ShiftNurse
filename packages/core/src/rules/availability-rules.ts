@@ -80,7 +80,11 @@ export const timeOffRule: Rule<TimeOffParams> = {
   },
 };
 
-function overlappingLeaveDate(
+/**
+ * The leave date a shift on `date` would fall on, if any. Exported so the CP-SAT encoder decides
+ * "no variable here" with the rule's own logic, night-before-leave included.
+ */
+export function overlappingLeaveDate(
   date: IsoDate,
   shiftType: { isNight: boolean },
   request: TimeOffRequest,

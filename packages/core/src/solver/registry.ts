@@ -31,8 +31,10 @@ export interface SolverSettings {
 export const DEFAULT_SOLVER_SETTINGS: SolverSettings = { solverId: DEFAULT_SOLVER_ID };
 
 /**
- * Provisional until the M15 benchmark: hybrid first, then whichever of SA + LNS / CP-SAT scores
- * the lower objective on the demo and fixture units (docs/SOLVER_PLAN.md, task 5.9).
+ * Measured by `npm run bench:solvers` (docs/solver-bench.md, 2026-09-24): the hybrid had the best
+ * median objective on the demo unit (−2% vs SA + LNS, every floor filled) and a 24-nurse synthetic
+ * unit (−11%), and tied on a small tight one. Whole-period CP-SAT lost to SA + LNS on all three —
+ * on the demo it left 14–17 floors short against 0–1 — so it comes last.
  */
 export const FALLBACK_ORDER: readonly SolverId[] = ['hybrid', 'sa-lns', 'cp-sat'];
 

@@ -23,6 +23,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "check": "npm run lint && npm run typecheck && npm test",
+    "bench:solvers": "npm run build:packages && vitest run --config vitest.bench.config.ts",
     "seed:demo": "npm run seed:demo -w @shiftnurse/db",
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
   },

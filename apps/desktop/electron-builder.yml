@@ -27,6 +27,10 @@ extraResources:
   # process.resourcesPath/drizzle in a packaged build (see src/main/database.ts).
   - from: ../../packages/db/drizzle
     to: drizzle
+  # The CP-SAT runner and its OR-Tools libraries for this target, fetched by before-pack.mjs
+  # (scripts/fetch-cpsat.mjs); main resolves it from process.resourcesPath/cpsat.
+  - from: .cpsat/target
+    to: cpsat
 asarUnpack:
   - '**/*.node'
 # electron-builder's default native rebuild recompiles the *hoisted* better-sqlite3 for

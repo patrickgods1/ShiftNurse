@@ -32,8 +32,9 @@ Decisions:
   and each must pass `canAdd`. A failure throws, naming the nurse and date.
 - One report path: `buildReport` → `evaluateSchedule` / `scoreFairness` / `costSchedule`.
   `ObjectiveBreakdown` comes from `SolverModel.breakdown()` for every backend.
-- Deterministic: CP-SAT uses `num_workers: 1`, `random_seed` = the period seed, and
-  `max_deterministic_time` as the budget. The wall clock is only a safety valve.
+- Deterministic: CP-SAT uses 8 workers in `interleave_search` mode (deterministic, unlike its
+  parallel portfolio), `random_seed` = the period seed, and `max_deterministic_time` as the
+  budget. The wall clock is only a safety valve.
 - Test-first in `packages/core`: watch each new test fail before making it pass.
 - `npm run check` must be green before every commit. The pre-commit hook enforces it.
 
@@ -151,10 +152,10 @@ Decisions:
 
 ## Phase 3 — OR-Tools runner and packaging (branch `feat/or-tools`)
 **Runner**
-- [ ] 3.1 `git checkout -b feat/or-tools`.
-- [ ] 3.2 `native/cpsat-runner/CMakeLists.txt`: link against a pinned OR-Tools C++ release
+- [x] 3.1 `git checkout -b feat/or-tools`.
+- [x] 3.2 `native/cpsat-runner/CMakeLists.txt`: link against a pinned OR-Tools C++ release
       archive (record the version and URL in the file).
-- [ ] 3.3 `native/cpsat-runner/main.cc`, reading and writing one JSON object per line:
+- [x] 3.3 `native/cpsat-runner/main.cc`, reading and writing one JSON object per line:
   - Requests: `{"id","model"(CpModelProto JSON),"params"(SatParameters JSON)}` or
     `{"stop":true}`.
   - Progress lines: `{"id","type":"progress","objective","bound","wallMs"}`, sent from the
@@ -162,152 +163,205 @@ Decisions:
   - Final line: `{"id","type":"result","status","values":[...],"objective","bound"}`.
   - Errors: `{"id","type":"error","message"}`. The process stays alive for the next request.
   - `stop` calls `StopSearch` through the solver's stop flag.
-- [ ] 3.4 `native/cpsat-runner/test/smoke.jsonl`: a 3-variable model with a known optimum
-      (worked out by hand) and the expected result line.
-- [ ] 3.5 `native/cpsat-runner/README.md`: the protocol and how to build locally
+- [x] 3.4 `native/cpsat-runner/test/smoke.jsonl`: a 3-variable model with a known optimum
+      (worked out by hand) and the expected result line. *(A 2-variable model — max 3x+4y, optimum
+      (6,4) = 34 — plus a malformed line; `test/check.sh` asserts the answers, since `wall_ms`
+      makes an exact expected line impossible.)*
+- [x] 3.5 `native/cpsat-runner/README.md`: the protocol and how to build locally
       (`brew install cmake`).
 
 **CI**
-- [ ] 3.6 `.github/workflows/cpsat-runner.yml`:
-  - A matrix of `macos-14` (arm64), `macos-13` (x64) and `windows-2022` (x64).
+- [x] 3.6 `.github/workflows/cpsat-runner.yml`:
+  - A matrix of `macos-14` (arm64), `macos-13` (x64) and `windows-2022` (x64). *(Built on
+    `macos-15` and `macos-15-intel`: `macos-13` was retired in December 2025, and
+    `macos-15-intel` is the last Intel image, available until August 2027.)*
   - Each job: fetch the OR-Tools archive, run cmake, build, then pipe the smoke model in and
     `diff` against the expected output.
-- [ ] 3.7 On tag `cpsat-runner-v*`: upload `cpsat-runner-<platform>-<arch>[.exe]` and
+- [x] 3.7 On tag `cpsat-runner-v*`: upload `cpsat-runner-<platform>-<arch>[.exe]` and
       `SHA256SUMS` to the GitHub release.
-- [ ] 3.8 Push the branch; the workflow is green on all three runners.
-- [ ] 3.9 Tag `cpsat-runner-v1` and confirm the release assets exist.
+- [x] 3.8 Push the branch; the workflow is green on all three runners.
+- [x] 3.9 Tag `cpsat-runner-v1` and confirm the release assets exist.
 
 **Fetch and bundle**
-- [ ] 3.10 `apps/desktop/scripts/fetch-cpsat.mjs`: `fetchCpsat({platform, arch, dest})`.
+- [x] 3.10 `apps/desktop/scripts/fetch-cpsat.mjs`: `fetchCpsat({platform, arch, dest})`.
   - Downloads the pinned release asset and checks it against `SHA256SUMS`, failing on a mismatch.
   - Sets `chmod +x` on mac.
-- [ ] 3.11 Call it from `postinstall` for the host into `apps/desktop/.cpsat/`, and add
+- [x] 3.11 Call it from `postinstall` for the host into `apps/desktop/.cpsat/`, and add
       `.cpsat/` to `.gitignore`.
-- [ ] 3.12 `scripts/before-pack.mjs`: call `fetchCpsat` per target next to
+- [x] 3.12 `scripts/before-pack.mjs`: call `fetchCpsat` per target next to
       `fetchSqliteForElectron`.
-- [ ] 3.13 `electron-builder.yml`: `extraResources` for `.cpsat/` → `cpsat/`.
+- [x] 3.13 `electron-builder.yml`: `extraResources` for `.cpsat/` → `cpsat/`.
 
 **Main-process client**
-- [ ] 3.14 `main/cpsat-process.ts`:
+- [x] 3.14 `main/cpsat-process.ts`:
   - `resolveRunnerPath()`: `process.resourcesPath/cpsat` when packaged, `.cpsat/` in dev.
   - `class CpsatRunner`: `start()`, `solve(model, params, onProgress)` returning a Promise,
     `stop()`, `dispose()`.
   - The request queue has one request in flight at a time.
-- [ ] 3.15 `main/cpsat-process.test.ts`: runs against a fake runner script that follows the same
+- [x] 3.15 `main/cpsat-process.test.ts`: runs against a fake runner script that follows the same
       protocol. Covers the result, progress, error and stop paths, and a crashed runner rejecting
       its pending request.
-- [ ] 3.16 `SolverJobs.stopAll` also disposes the runners. `solver.available()` now reports
-      OR-Tools as available when `resolveRunnerPath()` finds an executable.
+- [x] 3.16 `SolverJobs.stopAll` also disposes the runners. `solver.available()` now reports
+      OR-Tools as available when `resolveRunnerPath()` finds an executable. *(And only for a
+      backend registered in `main/solver-backends.ts`; none are until phases 4–5, so Generate
+      cannot pick a solver that has no code yet. The runner is disposed on `will-quit`.)*
 
 **Check and ship**
-- [ ] 3.17 `npm run check` is green.
-- [ ] 3.18 `npm run dist` (mac): the `.app` contains `Contents/Resources/cpsat/cpsat-runner`.
-      `smoke:packaged` is green.
-- [ ] 3.19 **Commit & push to `feat/or-tools`:** "Add CP-SAT runner, CI build and per-target
+- [x] 3.17 `npm run check` is green.
+- [x] 3.18 `npm run dist` (mac): the `.app` contains `Contents/Resources/cpsat/cpsat-runner`.
+      `smoke:packaged` is green. *(Both .apps carry their own arch's runner + 114 dylibs; the
+      arm64 one solves the smoke model from inside the bundle. Release `cpsat-runner-v1`: bundles
+      of 18.7 / 20.6 / 21.0 MB for mac arm64 / mac x64 / win x64.)*
+- [x] 3.19 **Commit & push to `feat/or-tools`:** "Add CP-SAT runner, CI build and per-target
       bundling".
 
 ## Phase 4 — CP-SAT backend (`packages/core/src/solver/cpsat/`, test-first)
 **Encoding**
-- [ ] 4.1 `cpsat/proto.ts`: minimal TS types for the parts of `CpModelProto`, `SatParameters`
+- [x] 4.1 `cpsat/proto.ts`: minimal TS types for the parts of `CpModelProto`, `SatParameters`
       and `CpSolverResponse` that we use.
-- [ ] 4.2 `cpsat/vars.ts`: builds the variables.
+- [x] 4.2 `cpsat/vars.ts`: builds the variables.
   - `x[n,d,s]` only where it can be true: the role matches, credentials are held, and there is
     no approved time off. Reuse `SolverModel.eligible` logic; do not re-derive it.
   - `charge[n,d,s] ≤ x` for charge-capable nurses.
   - Locked assignments fixed to 1; lookback-tail shifts as constants.
-- [ ] 4.3 Test: *"a nurse on approved leave gets no variable that week"*; *"a locked shift is
-      fixed on"*.
-- [ ] 4.4 `cpsat/rules/rest.ts`, for `no-overlapping-assignments` and `min-rest-between-shifts`:
+- [x] 4.3 Test: *"a nurse on approved leave gets no variable that week"*; *"a locked shift is
+      fixed on"*. *(Locked shifts are constants rather than fixed variables; the test is "a nurse
+      with a locked shift gets no other variable that day".)*
+- [x] 4.4 `cpsat/rules/rest.ts`, for `no-overlapping-assignments` and `min-rest-between-shifts`:
       at-most-one over pairs closer than the rest gap on the wall-clock timeline.
   - Test first: a 19:00–07:00 night then a 07:00 day is a forbidden pair (0 h rest,
     hand-computed).
   - Test: nights across the spring DST weekend are judged with the same 12 h as any other week.
-- [ ] 4.5 `cpsat/rules/consecutive.ts` (`max-consecutive-shifts`): sliding window, Σ ≤ k.
+- [x] 4.5 `cpsat/rules/consecutive.ts` (`max-consecutive-shifts`): sliding window, Σ ≤ k.
   - Test: 4 in a row is allowed and the 5th is forbidden when k = 4.
-- [ ] 4.6 `cpsat/rules/hours.ts` (`max-hours-per-week`): Σ `durationHours·x` + tail ≤ max per
+- [x] 4.6 `cpsat/rules/hours.ts` (`max-hours-per-week`): Σ `durationHours·x` + tail ≤ max per
       work week, with the week start from the rule params.
   - Test: a shift in the lookback tail counts toward week 1.
-- [ ] 4.7 `cpsat/rules/coverage.ts` (`coverage-minimums`, `patient-ratio-compliance`):
+- [x] 4.7 `cpsat/rules/coverage.ts` (`coverage-minimums`, `patient-ratio-compliance`):
       Σ staffed + `short` ≥ required from `SolveInput.demand`. Charge and all-novice use the
       same counting-with-slack pattern.
-- [ ] 4.8 `cpsat/rules/contract.ts` (`fte-target-hours`): per pay period,
+- [x] 4.8 `cpsat/rules/contract.ts` (`fte-target-hours`): per pay period,
       hours + `under` ≥ contracted.
-- [ ] 4.9 `approved-time-off-is-absolute`: handled by 4.2 (no variable). Registered as
+- [x] 4.9 `approved-time-off-is-absolute`: handled by 4.2 (no variable). Registered as
       `'by-construction'`.
-- [ ] 4.10 `cpsat/encoders.ts`: `CPSAT_ENCODERS: Record<string, Encoder | 'by-construction'>`.
-- [ ] 4.11 Test: *"every registered rule has a CP-SAT encoding"*. It iterates `ALL_RULES` and
+- [x] 4.10 `cpsat/encoders.ts`: `CPSAT_ENCODERS: Record<string, Encoder | 'by-construction'>`.
+- [x] 4.11 Test: *"every registered rule has a CP-SAT encoding"*. It iterates `ALL_RULES` and
       fails on any missing id.
-- [ ] 4.12 `encode()` refuses to run, with the rule id named, when an enabled hard rule has no
+- [x] 4.12 `encode()` refuses to run, with the rule id named, when an enabled hard rule has no
       encoder.
 
 **Objective**
-- [ ] 4.13 `cpsat/objective.ts`: `ObjectiveWeights` scaled to integers, with the scale factor
+- [x] 4.13 `cpsat/objective.ts`: `ObjectiveWeights` scaled to integers, with the scale factor
       stated in one constant.
   - Terms: `short`, over-target, `under`, preferences, straight-time cost.
-- [ ] 4.14 Fairness: burden counts as integer expressions. The positive deviation from a fair
+- [x] 4.14 Fairness: burden counts as integer expressions. The positive deviation from a fair
       share pinned to `contractedHoursPerPeriod` is squared via `AddMultiplicationEquality`.
-- [ ] 4.15 Test: the objective of a hand-built 2-nurse, 3-day solution equals
+      *(The annealer's fairness term turned out to be linear — `max(0, carried − teamTotal ·
+      share / teamShare)` — so it is encoded linearly, multiplied through by the team share so
+      every coefficient is an exact integer; one pinned team-total variable per component keeps
+      the model small. Weekend and overtime counters are pinned exactly, since a counter the
+      solver could inflate would lower everyone else's over-share.)*
+- [x] 4.15 Test: the objective of a hand-built 2-nurse, 3-day solution equals
       `SolverModel.breakdown().total` for the same assignments, within the scaling rounding.
+      *(Stronger: `CpBuilder.evaluate` prices any schedule without the runner; the annealer's own
+      schedules on a 7-nurse, 3-week unit with preferences, history, pay, holidays, on-call and a
+      locked shift price the same to within 0.1 points. A second test checks 400 random rosters:
+      the encoding calls one illegal exactly when the rule engine does — and a deliberately broken
+      encoding makes it fail.)*
 
 **Decode and backend**
-- [ ] 4.16 `cpsat/decode.ts`: response values → `Assignment[]`, with locked ids echoed back. Each
+- [x] 4.16 `cpsat/decode.ts`: response values → `Assignment[]`, with locked ids echoed back. Each
       assignment is loaded into `SolverModel` via `canAdd`/`add`, and a failure throws naming the
       nurse, date and shift.
-- [ ] 4.17 Test: a hand-written response that breaks the rest rule makes decode throw.
-- [ ] 4.18 `cpsat/params.ts`: `num_workers: 1`, `random_seed: seed`,
-      `max_deterministic_time` from options.
-- [ ] 4.19 Main: `main/solver-backends.ts`, `cp-sat` backend: `encode` → `CpsatRunner.solve` →
+- [x] 4.17 Test: a hand-written response that breaks the rest rule makes decode throw.
+- [x] 4.18 `cpsat/params.ts`: `num_workers: 1`, `random_seed: seed`,
+      `max_deterministic_time` from options. *(8 workers with `interleave_search`: still
+      deterministic, and on a 14-day, 8-nurse unit it filled every floor in ~2 s where one worker
+      left one short after 19 s. The hint is complete — every auxiliary at its evaluated value.)*
+- [x] 4.19 Main: `main/solver-backends.ts`, `cp-sat` backend: `encode` → `CpsatRunner.solve` →
       `decode` → `buildReport`. It maps progress onto `SolveProgress` and cancel onto `stop`,
-      and fills `stats.bound` and `stats.gap`.
-- [ ] 4.20 Integration test (skipped when the runner is missing): the fixtures unit solves, has no
+      and fills `stats.bound` and `stats.gap`. *(Runs in the solver worker thread, not main:
+      core's `prepareCpsat`/`finishCpsat` are the pure halves, the worker spawns its own runner and
+      reports its pid so quitting the app can kill it. New progress phase `searching` shows best
+      and bound in the Generate dialog.)*
+- [x] 4.20 Integration test (skipped when the runner is missing): the fixtures unit solves, has no
       nurse-scope hard violations, and two runs give identical assignments.
 
 **Check and ship**
-- [ ] 4.21 `npm run check` is green.
-- [ ] 4.22 Manual: Generate with CP-SAT on the demo. Every floor is filled and the gap is shown.
-- [ ] 4.23 Run `/scheduling-review` on the diff.
-- [ ] 4.24 **Commit & push to `feat/or-tools`:** "Add CP-SAT solver backend".
+- [x] 4.21 `npm run check` is green.
+- [x] 4.22 Manual: Generate with CP-SAT on the demo. Every floor is filled and the gap is shown.
+      *(Automated in the smoke run. Demo, 5 units of deterministic time: 785 shifts in 6.6 s, no
+      nurse-level violation, gap 73%, but 10 floors short against the annealer's 2 — **not** every
+      floor. On a 24-nurse, 4-week synthetic unit the annealer scores 5,778 in 3.7 s; CP-SAT
+      ~9,090 deterministic, 8,685 with its non-deterministic parallel portfolio. Full-period
+      CP-SAT is correct but weaker than SA + LNS at this scale; the phase 5 hybrid and benchmark
+      decide how it is used.)*
+- [x] 4.23 Run `/scheduling-review` on the diff.
+- [x] 4.24 **Commit & push to `feat/or-tools`:** "Add CP-SAT solver backend".
 
 ## Phase 5 — Hybrid backend and benchmark
 **Core (pure and synchronous)**
-- [ ] 5.1 `solver/stepwise.ts`: `createLocalSearch(input, options)`, which provides:
+- [x] 5.1 `solver/stepwise.ts`: `createLocalSearch(input, options)`, which provides:
   - `seed()`, `runAnneal(iterations)`, `pickWindow(rng)` (2–3 days, weighted toward the worst
     coverage/fairness days), `encodeWindow(window)` (the Phase 4 encoders, with everything
     outside the window fixed).
   - `applyWindow(assignments)` (through the model gate; accepted only if the objective doesn't
     get worse), `report(stats)`.
-- [ ] 5.2 Test: `applyWindow` never changes an assignment outside the window.
-- [ ] 5.3 Test: a window solution that makes the objective worse is rejected and the model state
+- [x] 5.2 Test: `applyWindow` never changes an assignment outside the window.
+- [x] 5.3 Test: a window solution that makes the objective worse is rejected and the model state
       is unchanged.
-- [ ] 5.4 Test: `pickWindow` is deterministic for a given seed.
+- [x] 5.4 Test: `pickWindow` is deterministic for a given seed.
+  *(Implemented as `LocalSearch` in `solver/hybrid.ts`; `anneal` gained a `span` so chunks share one
+  cooling schedule; `encodeCpsat` gained a `window` option. Also tested: an answer that breaks the
+  rest rule is refused and the window restored, and windows land on understaffed days > 60% of the
+  time where a uniform draw would give 25%.)*
 
 **Main**
-- [ ] 5.5 `hybrid` backend: seed → a loop of `runAnneal(N)` → `pickWindow` → CP-SAT solve →
+- [x] 5.5 `hybrid` backend: seed → a loop of `runAnneal(N)` → `pickWindow` → CP-SAT solve →
       `applyWindow`, until the iteration budget is spent. It reports progress and handles cancel.
-- [ ] 5.6 If the runner fails mid-run, finish as SA+LNS and set
+- [x] 5.6 If the runner fails mid-run, finish as SA+LNS and set
       `fellBackFrom: { solver: 'hybrid', reason }`.
-- [ ] 5.7 Integration test (skipped when the runner is missing): identical schedules across two
+- [x] 5.7 Integration test (skipped when the runner is missing): identical schedules across two
       runs; the objective is ≤ SA+LNS on the fixtures with the same seed and budget.
+      *(Identical-schedule, legality and runner-missing fallback are tested. "≤ SA + LNS" is not
+      asserted: chunked annealing follows a different trajectory, so it is not guaranteed, and the
+      benchmark measures it instead. A probe confirmed the live model, the window encoding and
+      CP-SAT's objective agree to the decimal on every window.)*
 
 **Benchmark**
-- [ ] 5.8 `packages/core/src/solver/bench/` and a root script `npm run bench:solvers`:
+- [x] 5.8 `packages/core/src/solver/bench/` and a root script `npm run bench:solvers`:
   - First move `loadPeriodInput` (and its helpers `demandInputs`, `costContext`, `ledgerHistory`)
     from `main/api.ts` into `packages/db` so the benchmark can build the demo's real `SolveInput`
     in plain Node.
+  - *(Lives at `apps/desktop/src/main/solver-bench.run.ts` under `vitest.bench.config.ts`, because
+    core may not spawn the runner; `npm run bench:solvers`. Result, 2026-09-24, Apple M1: hybrid
+    best on the demo (median 76,348 vs SA + LNS 77,936, 0 floors short) and a 24-nurse unit
+    (5,341 vs 6,028), tied on a small tight unit; whole-period CP-SAT last everywhere (demo
+    197,434, 14–17 floors short). Hybrid takes ~3× SA's time: ~30–40 s on the demo.)*
   - Runs every available backend on the demo and fixture units at 3 seeds.
   - Writes `docs/solver-bench.md` (objective, breakdown, unfilled, gap, time).
-- [ ] 5.9 Set `FALLBACK_ORDER` to hybrid, then whichever of SA+LNS / CP-SAT has the lower
-      median objective. The comment cites `docs/solver-bench.md` and its date.
-- [ ] 5.10 Update the Settings › Solver copy to match the measured trade-offs.
+- [x] 5.9 Set `FALLBACK_ORDER` to hybrid, then whichever of SA+LNS / CP-SAT has the lower
+      median objective. The comment cites `docs/solver-bench.md` and its date. *(Measured order:
+      hybrid, SA + LNS, CP-SAT — the provisional order, now confirmed.)*
+- [x] 5.10 Update the Settings › Solver copy to match the measured trade-offs.
 
 **Check and ship**
-- [ ] 5.11 `npm run check` is green.
-- [ ] 5.12 Extend `main/smoke.ts` to generate once with each available backend, and assert that
+- [x] 5.11 `npm run check` is green.
+- [x] 5.12 Extend `main/smoke.ts` to generate once with each available backend, and assert that
       regenerating is identical and no nurse-scope hard violations appear.
-- [ ] 5.13 `npm run smoke` and, after `npm run dist`, `smoke:packaged` are green on mac arm64.
-      Mac x64 is run under Rosetta.
-- [ ] 5.14 Run `/scheduling-review` on the diff.
-- [ ] 5.15 **Commit & push to `feat/or-tools`:** "Add hybrid SA + CP-SAT solver and benchmark".
+- [x] 5.13 `npm run smoke` and, after `npm run dist`, `smoke:packaged` are green on mac arm64.
+      Mac x64 is run under Rosetta. *(Both green. x64 needs `SHIFTNURSE_SMOKE_TIMEOUT_MS=900000`
+      under emulation (hybrid 70 s). The first x64 attempt failed the regenerate check; the
+      likely cause — Rosetta translating the runner and its 114 libraries on first launch beyond
+      the client's 15 s ready timeout, so one run lost CP-SAT — is supported by a warm rerun
+      passing and the runner itself being bit-identical across runs and architectures, but was
+      not reproduced cold. The ready timeout is now 120 s and the smoke reports each run's
+      solver path on a mismatch. One arm64 log came back truncated with exit 0 and did not
+      reproduce.)*
+- [x] 5.14 Run `/scheduling-review` on the diff. *(One finding, fixed: a hybrid that lost its
+      runner mid-run reported the fallback in its report but not in the job status the dialog
+      reads.)*
+- [x] 5.15 **Commit & push to `feat/or-tools`:** "Add hybrid SA + CP-SAT solver and benchmark".
 - [ ] 5.16 Open a PR from `feat/or-tools` to `main`. CI is green; merge.
 
 ## Phase 6 — Docs

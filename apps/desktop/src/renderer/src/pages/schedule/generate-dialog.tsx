@@ -248,7 +248,9 @@ function Running({
         ? 'Building the first draft'
         : progress?.phase === 'finishing'
           ? 'Finishing'
-          : 'Improving the draft';
+          : progress?.phase === 'searching'
+            ? 'Searching for a better schedule'
+            : 'Improving the draft';
   return (
     <div data-testid="generate-running">
       <div className="flex items-center justify-between text-sm">
@@ -264,20 +266,32 @@ function Running({
       />
       {progress ? (
         <dl className="mt-3 grid grid-cols-3 gap-2 text-xs text-text-muted">
-          <div>
-            <dt>Iterations</dt>
-            <dd className="font-medium text-text">
-              {progress.iteration.toLocaleString()} / {progress.maxIterations.toLocaleString()}
-            </dd>
-          </div>
-          <div>
-            <dt>Floor gaps</dt>
-            <dd
-              className={`font-medium ${progress.hardShortfall > 0 ? 'text-danger' : 'text-success'}`}
-            >
-              {progress.hardShortfall}
-            </dd>
-          </div>
+          {progress.phase === 'searching' ? (
+            <div className="col-span-2">
+              <dt>Best / proven bound</dt>
+              <dd className="font-medium text-text">
+                {Math.round(progress.best).toLocaleString()} /{' '}
+                {progress.bound !== undefined ? Math.round(progress.bound).toLocaleString() : '—'}
+              </dd>
+            </div>
+          ) : (
+            <>
+              <div>
+                <dt>Iterations</dt>
+                <dd className="font-medium text-text">
+                  {progress.iteration.toLocaleString()} / {progress.maxIterations.toLocaleString()}
+                </dd>
+              </div>
+              <div>
+                <dt>Floor gaps</dt>
+                <dd
+                  className={`font-medium ${(progress.hardShortfall ?? 0) > 0 ? 'text-danger' : 'text-success'}`}
+                >
+                  {progress.hardShortfall ?? '—'}
+                </dd>
+              </div>
+            </>
+          )}
           <div>
             <dt>Elapsed</dt>
             <dd className="font-medium text-text">{(progress.elapsedMs / 1000).toFixed(1)}s</dd>
@@ -340,9 +354,10 @@ function Finished({
           {report?.stats.gap !== undefined
             ? ` · within ${(report.stats.gap * 100).toFixed(1)}% of optimal`
             : ''}
-          {report
-            ? ` · ${report.stats.iterations.toLocaleString()} iterations · ${(report.stats.elapsedMs / 1000).toFixed(1)}s`
+          {report && report.stats.iterations > 0
+            ? ` · ${report.stats.iterations.toLocaleString()} iterations`
             : ''}
+          {report ? ` · ${(report.stats.elapsedMs / 1000).toFixed(1)}s` : ''}
         </span>
         <div className="flex gap-2">
           <button

@@ -20,3 +20,7 @@ coverage/
 # Vite / electron-vite
 apps/desktop/out/
 .vite/
+
+# CP-SAT runner: local builds and the per-host binary fetched on install
+/build/
+apps/desktop/.cpsat/

@@ -9,8 +9,8 @@ export const SOLVER_LABELS: Record<SolverId, { name: string; summary: string }> 
   hybrid: {
     name: 'Hybrid (recommended)',
     summary:
-      'Anneals the whole period, then re-optimises the hardest few days exactly with CP-SAT. ' +
-      'Best overall quality; needs the OR-Tools runner.',
+      'Anneals the whole period and has CP-SAT re-optimise the hardest few days exactly. The best ' +
+      "schedules in testing, at about three times the annealer's run time. Needs the OR-Tools runner.",
   },
   'sa-lns': {
     name: 'Simulated annealing + LNS',
@@ -21,8 +21,8 @@ export const SOLVER_LABELS: Record<SolverId, { name: string; summary: string }> 
   'cp-sat': {
     name: 'CP-SAT (exact)',
     summary:
-      'Solves the whole period as one constraint model and reports how far from optimal the ' +
-      'result can be. Slower on large units; needs the OR-Tools runner.',
+      'Solves the whole period as one model and reports how far from optimal the result could be. ' +
+      'On a unit this size it is slower and leaves more gaps than the other two. Needs the OR-Tools runner.',
   },
 };
 

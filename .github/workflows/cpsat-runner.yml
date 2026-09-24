@@ -1,0 +1,108 @@
+# Builds the CP-SAT runner (native/cpsat-runner) for every platform the desktop app ships on,
+# checks each build solves the smoke model, and on a `cpsat-runner-v*` tag publishes the three
+# bundles plus SHA256SUMS as a GitHub release. apps/desktop/scripts/fetch-cpsat.mjs downloads
+# from that release, pinned by tag and hash — the app never builds C++ itself.
+name: cpsat-runner
+
+on:
+  push:
+    branches: ['**']
+    tags: ['cpsat-runner-v*']
+    paths:
+      - 'native/cpsat-runner/**'
+      - '.github/workflows/cpsat-runner.yml'
+  workflow_dispatch:
+
+env:
+  ORTOOLS_TAG: v9.15
+  ORTOOLS_BUILD: '9.15.6755'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            os: macos-15
+            archive: or-tools_arm64_macOS-26.2_cpp_v9.15.6755.tar.gz
+          - target: darwin-x64
+            os: macos-15-intel
+            archive: or-tools_x86_64_macOS-26.2_cpp_v9.15.6755.tar.gz
+          - target: win32-x64
+            os: windows-2022
+            archive: or-tools_x64_VisualStudio2022_cpp_v9.15.6755.zip
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      # dumpbin, which CMake's runtime-dependency scan needs on Windows, is only on PATH inside a
+      # Visual Studio developer environment.
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Fetch OR-Tools ${{ env.ORTOOLS_BUILD }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/ortools"
+          cd "$RUNNER_TEMP/ortools"
+          gh release download "$ORTOOLS_TAG" -R google/or-tools -p '${{ matrix.archive }}'
+          case '${{ matrix.archive }}' in
+            *.zip) 7z x -y '${{ matrix.archive }}' > /dev/null ;;
+            *) tar xzf '${{ matrix.archive }}' ;;
+          esac
+          root="$(ls -d "$RUNNER_TEMP"/ortools/or-tools_*/ | head -1)"
+          if command -v cygpath > /dev/null; then root="$(cygpath -m "$root")"; fi
+          echo "ORTOOLS_ROOT=$root" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: |
+          cmake -S native/cpsat-runner -B build -DORTOOLS_ROOT="$ORTOOLS_ROOT" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release --parallel
+          cmake --install build --config Release --prefix dist
+
+      - name: Smoke test
+        run: |
+          exe=dist/cpsat-runner
+          if [ '${{ runner.os }}' = 'Windows' ]; then exe=dist/cpsat-runner.exe; fi
+          native/cpsat-runner/test/check.sh "$exe"
+
+      - name: Package
+        run: |
+          tar -czf 'cpsat-runner-${{ matrix.target }}.tar.gz' -C dist .
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpsat-runner-${{ matrix.target }}
+          path: cpsat-runner-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/cpsat-runner-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: bundles
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd bundles
+          sha256sum cpsat-runner-*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+          gh release create '${{ github.ref_name }}' -R '${{ github.repository }}' \
+            --title '${{ github.ref_name }}' \
+            --notes "CP-SAT runner for ShiftNurse, built against OR-Tools $ORTOOLS_BUILD." \
+            cpsat-runner-*.tar.gz SHA256SUMS
