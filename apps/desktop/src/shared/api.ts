@@ -306,6 +306,8 @@ export interface SolveJobOptions {
   maxIterations?: number;
   /** A one-off override of the unit's saved solver. */
   solver?: SolverId;
+  /** CP-SAT's search budget in deterministic time units; its default when absent. */
+  deterministicTime?: number;
 }
 
 /** Whether a backend can run on this install, and if not, why not. */

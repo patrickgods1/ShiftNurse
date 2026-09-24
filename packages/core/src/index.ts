@@ -36,6 +36,7 @@ export * from './rules/types.js';
 // Schedule read model
 export * from './schedule/view.js';
 // Solver
+export * from './solver/cpsat/index.js';
 export * from './solver/registry.js';
 export * from './solver/rng.js';
 export * from './solver/solver.js';

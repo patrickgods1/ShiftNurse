@@ -159,15 +159,21 @@ export interface ObjectiveBreakdown {
 export interface SolveProgress {
   /** 0–1. */
   fraction: number;
-  phase: 'seeding' | 'annealing' | 'finishing';
+  /** `searching` is CP-SAT's search, which reports objective and bound but no iterations. */
+  phase: 'seeding' | 'annealing' | 'searching' | 'finishing';
   iteration: number;
   maxIterations: number;
   /** Best objective found so far. */
   best: number;
   /** Current objective (may be worse than best mid-anneal). */
   current: number;
-  /** Nurse-slots still short of a hard minimum in the best schedule so far. */
-  hardShortfall: number;
+  /**
+   * Nurse-slots still short of a hard minimum in the best schedule so far. Absent while CP-SAT
+   * searches: its progress carries objective values, not schedules.
+   */
+  hardShortfall?: number;
+  /** CP-SAT's proven lower bound on the objective so far. */
+  bound?: number;
   elapsedMs: number;
 }
 

@@ -43,6 +43,8 @@ export interface SolverJobsDeps {
   settings(periodId: Id): SolverSettings;
   /** Which backends can run on this install. */
   availability(): SolverAvailability[];
+  /** The CP-SAT runner binary, when installed. */
+  runnerPath?(): string | undefined;
   now?: () => number;
 }
 
@@ -50,6 +52,8 @@ interface Job {
   status: SolveJobStatus;
   worker: Worker;
   cancelFlag: Int32Array;
+  /** The CP-SAT runner the worker spawned, if any: killed with the job. */
+  runnerPid?: number;
 }
 
 /**
@@ -103,6 +107,10 @@ export class SolverJobs {
         progressEveryIterations: PROGRESS_EVERY_ITERATIONS,
       },
       cancelFlag: cancelBuffer,
+      ...(this.deps.runnerPath?.() ? { runnerPath: this.deps.runnerPath()! } : {}),
+      ...(options.deterministicTime !== undefined
+        ? { deterministicTime: options.deterministicTime }
+        : {}),
     };
     const worker = spawnSolverWorker({ workerData });
     const status: SolveJobStatus = {
@@ -144,7 +152,17 @@ export class SolverJobs {
   /** Stop every worker; called on app quit so a solve never outlives the database handle. */
   dispose(): void {
     for (const job of this.jobs.values()) {
-      if (job.status.state === 'running') void job.worker.terminate();
+      if (job.status.state !== 'running') continue;
+      void job.worker.terminate();
+      // A terminated worker cannot stop the runner it spawned; closing its pipes would only let
+      // the search run out its budget. Kill it.
+      if (job.runnerPid !== undefined) {
+        try {
+          process.kill(job.runnerPid);
+        } catch {
+          // Already gone.
+        }
+      }
     }
   }
 
@@ -152,6 +170,9 @@ export class SolverJobs {
     switch (message.type) {
       case 'progress':
         job.status.progress = message.progress;
+        return;
+      case 'runner':
+        job.runnerPid = message.pid;
         return;
       case 'error':
         this.finish(job, 'failed', { error: message.message });

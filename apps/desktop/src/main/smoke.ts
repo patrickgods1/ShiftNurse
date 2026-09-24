@@ -235,10 +235,36 @@ const SOLVER_SCRIPT = `
     const second = await run();
     const again = (await api.periods.assignments(draft.id)).map(key).sort();
     const available = await api.solver.available();
+    // CP-SAT end to end, when this install has it: runner spawned from the worker, answer decoded
+    // through the rule gate, schedule written. A short budget keeps the smoke run quick.
+    let cpsat = null;
+    if (available.some((a) => a.id === 'cp-sat' && a.available)) {
+      const job = await api.solver.start(draft.id, { solver: 'cp-sat', deterministicTime: 5 });
+      let status = job;
+      const started = Date.now();
+      while (status.state === 'running' || status.state === 'applying') {
+        await new Promise((r) => setTimeout(r, 200));
+        status = await api.solver.status(job.id);
+        if (Date.now() - started > 60000) throw new Error('CP-SAT solve did not finish in 60s');
+      }
+      const v = await api.schedule.validate(draft.id);
+      cpsat = {
+        state: status.state, error: status.error, solver: status.report ? status.report.stats.solver : null,
+        created: status.applied ? status.applied.created : 0,
+        unfilled: status.report ? status.report.unfilled.length : -1,
+        gap: status.report ? status.report.stats.gap : null,
+        total: status.report ? Math.round(status.report.objective.total) : null,
+        elapsedMs: status.report ? status.report.stats.elapsedMs : -1,
+        nurseLevel: v.result.hardViolations.filter((x) =>
+          !['understaffed', 'ratio_breach', 'missing_charge_nurse', 'all_novice_shift', 'missing_credential',
+            'under_contracted_hours'].includes(x.code)).map((x) => x.message).slice(0, 3),
+      };
+    }
     return {
       solver: first.status.solver, fellBackFrom: first.status.fellBackFrom,
       reportSolver: first.status.report ? first.status.report.stats.solver : null,
       orTools: available.filter((a) => a.id !== 'sa-lns').every((a) => a.available),
+      cpsat,
       state: first.status.state, error: first.status.error, applied: first.status.applied,
       progressSeen: first.progressSeen, seed: first.status.seed,
       unfilled: first.status.report ? first.status.report.unfilled.length : -1,
@@ -741,6 +767,17 @@ export function runSmoke(win: BrowserWindow): void {
         fellBackFrom?: { solver: string; reason: string };
         reportSolver: string | null;
         orTools: boolean;
+        cpsat: null | {
+          state: string;
+          error?: string;
+          solver: string | null;
+          created: number;
+          unfilled: number;
+          gap: number | null;
+          total: number | null;
+          elapsedMs: number;
+          nurseLevel: string[];
+        };
         state: string;
         error?: string;
         applied?: { created: number; preservedLocked: number };
@@ -777,6 +814,20 @@ export function runSmoke(win: BrowserWindow): void {
         (solved.solver !== 'sa-lns' || solved.fellBackFrom?.solver !== 'hybrid')
       ) {
         fail(`expected a reported fallback from hybrid to sa-lns, got ${solved.solver}`);
+      }
+      if (solved.cpsat) {
+        const c = solved.cpsat;
+        if (c.state !== 'done' || c.solver !== 'cp-sat') {
+          fail(`CP-SAT solve ended ${c.state} (${c.solver}): ${c.error ?? ''}`);
+        }
+        if (c.nurseLevel.length > 0) {
+          fail(`CP-SAT schedule breaks a nurse-level rule: ${c.nurseLevel.join(' | ')}`);
+        }
+        console.log(
+          `[smoke] cp-sat OK (${c.created} shifts in ${c.elapsedMs}ms, objective ${c.total}, gap ${c.gap === null ? '?' : `${(c.gap * 100).toFixed(0)}%`}, ${c.unfilled} unfilled)`,
+        );
+      } else {
+        console.log('[smoke] cp-sat skipped (runner not installed)');
       }
       console.log(
         `[smoke] solver OK (${solved.solver}${solved.fellBackFrom ? ` after falling back from ${solved.fellBackFrom.solver}` : ''}, ${solved.applied.created} shifts in ${solved.elapsedMs}ms, seed ${solved.seed}, ${solved.unfilled} unfilled, ${solved.hard} hard violations, locked kept: ${solved.lockedKept}, regenerate identical)`,

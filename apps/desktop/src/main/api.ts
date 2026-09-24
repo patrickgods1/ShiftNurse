@@ -1216,6 +1216,7 @@ export function createSolverJobs(db: ShiftNurseDb): SolverJobs {
       return getSolverSettings(db, period.unitId);
     },
     availability: () => solverAvailability(cpsatRunnerPath() !== undefined, ORTOOLS_BACKEND_IDS),
+    runnerPath: cpsatRunnerPath,
   });
 }
 

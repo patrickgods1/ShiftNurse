@@ -126,7 +126,8 @@ export class SolverModel {
   // --- Schedule state --------------------------------------------------------
   private readonly byNurse: Assignment[][];
   private readonly byShift: Assignment[][];
-  private readonly prior: readonly Assignment[][];
+  /** Per nurse: the published lookback tail before the period. */
+  readonly prior: readonly Assignment[][];
   /** Every assignment the solver may move or remove, in no particular order. */
   readonly unlocked: Assignment[] = [];
   private idCounter = 0;
@@ -155,24 +156,26 @@ export class SolverModel {
   private readonly weekHours: number[][];
 
   // --- Precomputed inputs ----------------------------------------------------
-  private readonly nurseHardIds: readonly string[];
-  private readonly shiftHardIds: readonly string[];
+  // Public and read-only so the CP-SAT encoder (cpsat/) reads the same tables instead of
+  // re-deriving pay-period buckets, fair shares or preference weights a second way.
+  readonly nurseHardIds: readonly string[];
+  readonly shiftHardIds: readonly string[];
   private readonly baselineViolations: number[];
-  private readonly fteParams: ContractedHoursParams;
-  private readonly bucketOfDate: number[];
-  private readonly hoursTarget: number[][];
-  private readonly hoursCapped: boolean[];
-  private readonly contractedProRata: number[];
-  private readonly maxHoursParams: MaxHoursParams;
+  readonly fteParams: ContractedHoursParams;
+  readonly bucketOfDate: number[];
+  readonly hoursTarget: number[][];
+  readonly hoursCapped: boolean[];
+  readonly contractedProRata: number[];
+  readonly maxHoursParams: MaxHoursParams;
   /** date index → work-week index, counted from the week containing the period's first day. */
-  private readonly weekOfDate: number[];
+  readonly weekOfDate: number[];
   /** Same for any date, prior or in-period; negative before the first week. */
   private readonly weekOf: (date: IsoDate) => number;
   private readonly weekCount: number;
-  private readonly histCarried: Record<BurdenComponent, number>[];
-  private readonly shareWeight: number[];
-  private readonly teamShare: number;
-  private readonly seniority: number[];
+  readonly histCarried: Record<BurdenComponent, number>[];
+  readonly shareWeight: number[];
+  readonly teamShare: number;
+  readonly seniority: number[];
   private readonly prefCache = new Map<number, number>();
   private readonly undesirableCache = new Map<number, boolean>();
   private readonly costCache = new Map<number, number>();
@@ -676,6 +679,16 @@ export class SolverModel {
   }
 
   /** Nurse-slots short of a hard minimum across the whole schedule, for progress reporting. */
+  /** One shift's cached coverage penalty in points, as it stands. */
+  coveragePenaltyOf(shift: Shift): number {
+    return this.coverage[shift.idx]!;
+  }
+
+  /** One nurse's cached under-hours penalty in points, as it stands. */
+  hoursPenaltyOf(n: number): number {
+    return this.hoursPenalty[n]!;
+  }
+
   hardShortfall(): number {
     let total = 0;
     for (const shift of this.shifts) {
@@ -805,7 +818,7 @@ export class SolverModel {
     };
   }
 
-  private isUndesirable(n: number, shift: Shift): boolean {
+  isUndesirable(n: number, shift: Shift): boolean {
     const key = this.tableKey(n, shift);
     const cached = this.undesirableCache.get(key);
     if (cached !== undefined) return cached;
@@ -822,7 +835,7 @@ export class SolverModel {
    * Block-length preferences are not priced: they are a property of the whole timeline, not
    * of one shift, and the fairness ledger already scores them after the fact.
    */
-  private preferencePenalty(n: number, shift: Shift): number {
+  preferencePenalty(n: number, shift: Shift): number {
     const key = this.tableKey(n, shift);
     const cached = this.prefCache.get(key);
     if (cached !== undefined) return cached;
@@ -866,6 +879,11 @@ export class SolverModel {
    * schedule by the hard weekly-hours rule instead; the charge differential is ignored because
    * every worked shift carries exactly one charge nurse regardless of who it is.
    */
+  /** Straight-time dollars for this nurse on this shift; 0 without pay data. */
+  shiftCostFor(n: number, shift: Shift): number {
+    return this.shiftCost(n, shift, this.viewFor(n, shift).assignment);
+  }
+
   private shiftCost(n: number, shift: Shift, a: Assignment): number {
     if (!this.costCtx) return 0;
     const key = this.tableKey(n, shift);

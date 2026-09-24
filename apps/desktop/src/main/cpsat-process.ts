@@ -101,6 +101,11 @@ export class CpsatRunner {
     private readonly args: readonly string[] = [],
   ) {}
 
+  /** The runner's process id while it is running. */
+  get pid(): number | undefined {
+    return this.exited ? undefined : this.child?.pid;
+  }
+
   /** Spawn if needed and resolve with the OR-Tools version once the runner says it is ready. */
   start(): Promise<string> {
     if (this.ready && !this.exited) return this.ready;
