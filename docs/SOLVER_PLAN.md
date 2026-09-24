@@ -151,10 +151,10 @@ Decisions:
 
 ## Phase 3 — OR-Tools runner and packaging (branch `feat/or-tools`)
 **Runner**
-- [ ] 3.1 `git checkout -b feat/or-tools`.
-- [ ] 3.2 `native/cpsat-runner/CMakeLists.txt`: link against a pinned OR-Tools C++ release
+- [x] 3.1 `git checkout -b feat/or-tools`.
+- [x] 3.2 `native/cpsat-runner/CMakeLists.txt`: link against a pinned OR-Tools C++ release
       archive (record the version and URL in the file).
-- [ ] 3.3 `native/cpsat-runner/main.cc`, reading and writing one JSON object per line:
+- [x] 3.3 `native/cpsat-runner/main.cc`, reading and writing one JSON object per line:
   - Requests: `{"id","model"(CpModelProto JSON),"params"(SatParameters JSON)}` or
     `{"stop":true}`.
   - Progress lines: `{"id","type":"progress","objective","bound","wallMs"}`, sent from the
@@ -162,48 +162,56 @@ Decisions:
   - Final line: `{"id","type":"result","status","values":[...],"objective","bound"}`.
   - Errors: `{"id","type":"error","message"}`. The process stays alive for the next request.
   - `stop` calls `StopSearch` through the solver's stop flag.
-- [ ] 3.4 `native/cpsat-runner/test/smoke.jsonl`: a 3-variable model with a known optimum
-      (worked out by hand) and the expected result line.
-- [ ] 3.5 `native/cpsat-runner/README.md`: the protocol and how to build locally
+- [x] 3.4 `native/cpsat-runner/test/smoke.jsonl`: a 3-variable model with a known optimum
+      (worked out by hand) and the expected result line. *(A 2-variable model — max 3x+4y, optimum
+      (6,4) = 34 — plus a malformed line; `test/check.sh` asserts the answers, since `wall_ms`
+      makes an exact expected line impossible.)*
+- [x] 3.5 `native/cpsat-runner/README.md`: the protocol and how to build locally
       (`brew install cmake`).
 
 **CI**
-- [ ] 3.6 `.github/workflows/cpsat-runner.yml`:
-  - A matrix of `macos-14` (arm64), `macos-13` (x64) and `windows-2022` (x64).
+- [x] 3.6 `.github/workflows/cpsat-runner.yml`:
+  - A matrix of `macos-14` (arm64), `macos-13` (x64) and `windows-2022` (x64). *(Built on
+    `macos-15` and `macos-15-intel`: `macos-13` was retired in December 2025, and
+    `macos-15-intel` is the last Intel image, available until August 2027.)*
   - Each job: fetch the OR-Tools archive, run cmake, build, then pipe the smoke model in and
     `diff` against the expected output.
-- [ ] 3.7 On tag `cpsat-runner-v*`: upload `cpsat-runner-<platform>-<arch>[.exe]` and
+- [x] 3.7 On tag `cpsat-runner-v*`: upload `cpsat-runner-<platform>-<arch>[.exe]` and
       `SHA256SUMS` to the GitHub release.
-- [ ] 3.8 Push the branch; the workflow is green on all three runners.
-- [ ] 3.9 Tag `cpsat-runner-v1` and confirm the release assets exist.
+- [x] 3.8 Push the branch; the workflow is green on all three runners.
+- [x] 3.9 Tag `cpsat-runner-v1` and confirm the release assets exist.
 
 **Fetch and bundle**
-- [ ] 3.10 `apps/desktop/scripts/fetch-cpsat.mjs`: `fetchCpsat({platform, arch, dest})`.
+- [x] 3.10 `apps/desktop/scripts/fetch-cpsat.mjs`: `fetchCpsat({platform, arch, dest})`.
   - Downloads the pinned release asset and checks it against `SHA256SUMS`, failing on a mismatch.
   - Sets `chmod +x` on mac.
-- [ ] 3.11 Call it from `postinstall` for the host into `apps/desktop/.cpsat/`, and add
+- [x] 3.11 Call it from `postinstall` for the host into `apps/desktop/.cpsat/`, and add
       `.cpsat/` to `.gitignore`.
-- [ ] 3.12 `scripts/before-pack.mjs`: call `fetchCpsat` per target next to
+- [x] 3.12 `scripts/before-pack.mjs`: call `fetchCpsat` per target next to
       `fetchSqliteForElectron`.
-- [ ] 3.13 `electron-builder.yml`: `extraResources` for `.cpsat/` → `cpsat/`.
+- [x] 3.13 `electron-builder.yml`: `extraResources` for `.cpsat/` → `cpsat/`.
 
 **Main-process client**
-- [ ] 3.14 `main/cpsat-process.ts`:
+- [x] 3.14 `main/cpsat-process.ts`:
   - `resolveRunnerPath()`: `process.resourcesPath/cpsat` when packaged, `.cpsat/` in dev.
   - `class CpsatRunner`: `start()`, `solve(model, params, onProgress)` returning a Promise,
     `stop()`, `dispose()`.
   - The request queue has one request in flight at a time.
-- [ ] 3.15 `main/cpsat-process.test.ts`: runs against a fake runner script that follows the same
+- [x] 3.15 `main/cpsat-process.test.ts`: runs against a fake runner script that follows the same
       protocol. Covers the result, progress, error and stop paths, and a crashed runner rejecting
       its pending request.
-- [ ] 3.16 `SolverJobs.stopAll` also disposes the runners. `solver.available()` now reports
-      OR-Tools as available when `resolveRunnerPath()` finds an executable.
+- [x] 3.16 `SolverJobs.stopAll` also disposes the runners. `solver.available()` now reports
+      OR-Tools as available when `resolveRunnerPath()` finds an executable. *(And only for a
+      backend registered in `main/solver-backends.ts`; none are until phases 4–5, so Generate
+      cannot pick a solver that has no code yet. The runner is disposed on `will-quit`.)*
 
 **Check and ship**
-- [ ] 3.17 `npm run check` is green.
-- [ ] 3.18 `npm run dist` (mac): the `.app` contains `Contents/Resources/cpsat/cpsat-runner`.
-      `smoke:packaged` is green.
-- [ ] 3.19 **Commit & push to `feat/or-tools`:** "Add CP-SAT runner, CI build and per-target
+- [x] 3.17 `npm run check` is green.
+- [x] 3.18 `npm run dist` (mac): the `.app` contains `Contents/Resources/cpsat/cpsat-runner`.
+      `smoke:packaged` is green. *(Both .apps carry their own arch's runner + 114 dylibs; the
+      arm64 one solves the smoke model from inside the bundle. Release `cpsat-runner-v1`: bundles
+      of 18.7 / 20.6 / 21.0 MB for mac arm64 / mac x64 / win x64.)*
+- [x] 3.19 **Commit & push to `feat/or-tools`:** "Add CP-SAT runner, CI build and per-target
       bundling".
 
 ## Phase 4 — CP-SAT backend (`packages/core/src/solver/cpsat/`, test-first)

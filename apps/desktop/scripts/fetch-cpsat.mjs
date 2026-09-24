@@ -30,9 +30,9 @@ const REPO = 'patrickgods1/ShiftNurse';
 export const RUNNER_TAG = 'cpsat-runner-v1';
 /** From the release's SHA256SUMS; update together with RUNNER_TAG. */
 const SHA256 = {
-  'darwin-arm64': 'PENDING',
-  'darwin-x64': 'PENDING',
-  'win32-x64': 'PENDING',
+  'darwin-arm64': '54622dcc6971ebd9a86943891fd4e306484ed615437daed21635edca95a7baca',
+  'darwin-x64': 'cf026295dbdf4501c12d0bbdfccbcf6f47a322123f7d8da8e571135e0efae920',
+  'win32-x64': 'ae226b476534300767265400855704e729a849b22e180288ba6ee7ecae11f393',
 };
 
 export function runnerFileName(platform = process.platform) {

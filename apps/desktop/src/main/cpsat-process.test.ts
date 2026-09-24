@@ -6,6 +6,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { CpsatRunner, resolveRunnerPath, runnerFileName } from './cpsat-process.js';
 
 const FAKE = fileURLToPath(new URL('./cpsat-fake-runner.mjs', import.meta.url));
+/** The real runner, if `npm run fetch:cpsat -w @shiftnurse/desktop` has put one in place. */
+const REAL = resolveRunnerPath({
+  packaged: false,
+  resourcesPath: '',
+  appPath: fileURLToPath(new URL('../..', import.meta.url)),
+});
 const runners: CpsatRunner[] = [];
 
 function fakeRunner(): CpsatRunner {
@@ -69,6 +75,29 @@ describe('the CP-SAT runner client', () => {
     ]);
     expect(first.status).toBe('OPTIMAL');
     expect(second.status).toBe('OPTIMAL');
+  });
+});
+
+describe.skipIf(REAL === undefined)('the real CP-SAT runner', () => {
+  it('solves the hand-worked smoke model to its known optimum', async () => {
+    // Maximise 3x + 4y with x + 2y <= 14, 3x - y >= 0, x - y <= 2: the LP optimum (6, 4) is
+    // integral, so it is the integer optimum too, 34 (minimised as -34). Worked by hand.
+    const runner = new CpsatRunner(REAL!);
+    runners.push(runner);
+    const bound = [-1000, 1000];
+    const result = await runner.solve(
+      {
+        variables: [{ domain: [0, 10] }, { domain: [0, 10] }],
+        constraints: [
+          { linear: { vars: [0, 1], coeffs: [1, 2], domain: [bound[0], 14] } },
+          { linear: { vars: [0, 1], coeffs: [3, -1], domain: [0, bound[1]] } },
+          { linear: { vars: [0, 1], coeffs: [1, -1], domain: [bound[0], 2] } },
+        ],
+        objective: { vars: [0, 1], coeffs: [-3, -4] },
+      },
+      { num_workers: 1, random_seed: 1 },
+    );
+    expect(result).toMatchObject({ status: 'OPTIMAL', objective: -34, values: [6, 4] });
   });
 });
 

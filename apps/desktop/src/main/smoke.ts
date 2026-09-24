@@ -804,7 +804,7 @@ export function runSmoke(win: BrowserWindow): void {
         );
       }
       console.log(
-        `[smoke] solver settings OK (3 options, hybrid checked, ${solverTab.unavailable} not installed)`,
+        `[smoke] solver settings OK (3 options, hybrid checked, ${solverTab.unavailable} unavailable)`,
       );
       const requests = (await win.webContents.executeJavaScript(REQUESTS_SCRIPT)) as {
         error?: string;
