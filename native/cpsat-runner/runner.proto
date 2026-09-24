@@ -1,0 +1,41 @@
+// The CP-SAT runner's line protocol: one JSON-encoded message per line in each direction.
+//
+// Defined as protobuf rather than ad-hoc JSON so the runner parses a request straight into
+// OR-Tools' own CpModelProto and SatParameters (exact int64 handling, unknown fields rejected),
+// and so the TypeScript side has one authoritative schema to mirror (apps/desktop/src/main/
+// cpsat-process.ts). JSON field names are the proto names (snake_case); int64s arrive as strings.
+syntax = "proto3";
+
+package shiftnurse.cpsat;
+
+import "ortools/sat/cp_model.proto";
+import "ortools/sat/sat_parameters.proto";
+
+// Main process -> runner.
+message Request {
+  // Echoed on every event about this request.
+  string id = 1;
+  // Ask the solve in flight to stop at its next check and report its best solution so far.
+  bool stop = 2;
+  operations_research.sat.CpModelProto model = 3;
+  operations_research.sat.SatParameters params = 4;
+}
+
+// Runner -> main process.
+message Event {
+  // "ready" once at start-up, then per request: any number of "progress", then exactly one
+  // "result" or "error".
+  string type = 1;
+  string id = 2;
+  // ready: the OR-Tools version the runner was built against.
+  string version = 3;
+  // progress/result: objective of the best solution so far, and the proven lower bound.
+  double objective = 4;
+  double bound = 5;
+  int64 wall_ms = 6;
+  // result only.
+  operations_research.sat.CpSolverStatus status = 7;
+  repeated int64 values = 8;
+  // error only.
+  string message = 9;
+}
