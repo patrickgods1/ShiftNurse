@@ -14,7 +14,12 @@ import { outputInput } from './api.js';
 import { getDb } from './database.js';
 import { renderOutput } from './output.js';
 
-const TIMEOUT_MS = 60_000;
+/**
+ * The whole run. With the OR-Tools runner installed the solver section generates six times —
+ * hybrid (the demo's default) twice, then SA + LNS and CP-SAT twice each — so it needs minutes,
+ * not seconds; without the runner it finishes in well under one.
+ */
+const TIMEOUT_MS = Number(process.env.SHIFTNURSE_SMOKE_TIMEOUT_MS ?? 240_000);
 
 /** Each route must render an element carrying this test id. */
 const ROUTES: readonly { hash: string; testId: string }[] = [
@@ -211,8 +216,8 @@ const SOLVER_SCRIPT = `
     const before = await api.periods.assignments(draft.id);
     const pin = before.find((a) => !a.isLocked);
     const locked = pin ? await api.schedule.setLocked(pin.id, true) : undefined;
-    const run = async () => {
-      const job = await api.solver.start(draft.id, { maxIterations: 20000 });
+    const run = async (extra = {}) => {
+      const job = await api.solver.start(draft.id, { maxIterations: 20000, ...extra });
       const started = Date.now();
       let status = job;
       let progressSeen = 0;
@@ -220,7 +225,7 @@ const SOLVER_SCRIPT = `
         await new Promise((r) => setTimeout(r, 100));
         status = await api.solver.status(job.id);
         if (status.progress) progressSeen++;
-        if (Date.now() - started > 40000) throw new Error('solve did not finish in 40s');
+        if (Date.now() - started > 90000) throw new Error('solve did not finish in 90s');
       }
       return { status, progressSeen };
     };
@@ -235,36 +240,36 @@ const SOLVER_SCRIPT = `
     const second = await run();
     const again = (await api.periods.assignments(draft.id)).map(key).sort();
     const available = await api.solver.available();
-    // CP-SAT end to end, when this install has it: runner spawned from the worker, answer decoded
-    // through the rule gate, schedule written. A short budget keeps the smoke run quick.
-    let cpsat = null;
-    if (available.some((a) => a.id === 'cp-sat' && a.available)) {
-      const job = await api.solver.start(draft.id, { solver: 'cp-sat', deterministicTime: 5 });
-      let status = job;
-      const started = Date.now();
-      while (status.state === 'running' || status.state === 'applying') {
-        await new Promise((r) => setTimeout(r, 200));
-        status = await api.solver.status(job.id);
-        if (Date.now() - started > 60000) throw new Error('CP-SAT solve did not finish in 60s');
-      }
+    // Every other installed backend explicitly, twice each: it must finish, keep every nurse
+    // legal, and regenerate the identical schedule. (The default run above covers the unit's own
+    // solver — hybrid when the OR-Tools runner is installed.) A short CP-SAT budget keeps it quick.
+    const others = [];
+    for (const id of ['sa-lns', 'cp-sat']) {
+      if (!available.some((a) => a.id === id && a.available)) continue;
+      const a = await run({ solver: id, deterministicTime: 5 });
+      const keysA = (await api.periods.assignments(draft.id)).map(key).sort();
+      const b = await run({ solver: id, deterministicTime: 5 });
+      const keysB = (await api.periods.assignments(draft.id)).map(key).sort();
       const v = await api.schedule.validate(draft.id);
-      cpsat = {
-        state: status.state, error: status.error, solver: status.report ? status.report.stats.solver : null,
-        created: status.applied ? status.applied.created : 0,
-        unfilled: status.report ? status.report.unfilled.length : -1,
-        gap: status.report ? status.report.stats.gap : null,
-        total: status.report ? Math.round(status.report.objective.total) : null,
-        elapsedMs: status.report ? status.report.stats.elapsedMs : -1,
+      const r = a.status.report;
+      others.push({
+        id, state: a.status.state, error: a.status.error, solver: r ? r.stats.solver : null,
+        created: a.status.applied ? a.status.applied.created : 0,
+        unfilled: r ? r.unfilled.length : -1,
+        gap: r && r.stats.gap !== undefined ? r.stats.gap : null,
+        total: r ? Math.round(r.objective.total) : null,
+        elapsedMs: r ? r.stats.elapsedMs : -1,
+        identical: b.status.state === 'done' && JSON.stringify(keysA) === JSON.stringify(keysB),
         nurseLevel: v.result.hardViolations.filter((x) =>
           !['understaffed', 'ratio_breach', 'missing_charge_nurse', 'all_novice_shift', 'missing_credential',
             'under_contracted_hours'].includes(x.code)).map((x) => x.message).slice(0, 3),
-      };
+      });
     }
     return {
       solver: first.status.solver, fellBackFrom: first.status.fellBackFrom,
       reportSolver: first.status.report ? first.status.report.stats.solver : null,
       orTools: available.filter((a) => a.id !== 'sa-lns').every((a) => a.available),
-      cpsat,
+      others, windows: first.status.report ? first.status.report.stats.windows : null,
       state: first.status.state, error: first.status.error, applied: first.status.applied,
       progressSeen: first.progressSeen, seed: first.status.seed,
       unfilled: first.status.report ? first.status.report.unfilled.length : -1,
@@ -273,6 +278,12 @@ const SOLVER_SCRIPT = `
       written: after.length, lockedKept: locked ? after.some((a) => a.id === locked.id && a.isLocked) : null,
       nurseLevel: nurseLevel.map((v) => v.message).slice(0, 3),
       identical: second.status.state === 'done' && JSON.stringify(firstKeys) === JSON.stringify(again),
+      // How each default run was actually solved, so a mismatch says whether one of them lost
+      // its CP-SAT runner part-way.
+      paths: [first, second].map((r) => {
+        const st = r.status.report ? r.status.report.stats : null;
+        return st ? { solver: st.solver, fellBackFrom: st.fellBackFrom ?? null, windows: st.windows ?? null } : null;
+      }),
       secondState: second.status.state,
     };
   })()`;
@@ -767,7 +778,9 @@ export function runSmoke(win: BrowserWindow): void {
         fellBackFrom?: { solver: string; reason: string };
         reportSolver: string | null;
         orTools: boolean;
-        cpsat: null | {
+        windows: { tried: number; improved: number } | null;
+        others: {
+          id: string;
           state: string;
           error?: string;
           solver: string | null;
@@ -776,8 +789,9 @@ export function runSmoke(win: BrowserWindow): void {
           gap: number | null;
           total: number | null;
           elapsedMs: number;
+          identical: boolean;
           nurseLevel: string[];
-        };
+        }[];
         state: string;
         error?: string;
         applied?: { created: number; preservedLocked: number };
@@ -791,6 +805,7 @@ export function runSmoke(win: BrowserWindow): void {
         nurseLevel: string[];
         identical: boolean;
         secondState: string;
+        paths: unknown[];
       };
       if (solved.state !== 'done') fail(`solve ended ${solved.state}: ${solved.error ?? ''}`);
       if (!solved.applied || solved.applied.created === 0) fail('solve wrote no assignments');
@@ -801,7 +816,8 @@ export function runSmoke(win: BrowserWindow): void {
       }
       if (!solved.identical) {
         fail(
-          `regenerating unchanged inputs changed the schedule (second run ${solved.secondState})`,
+          `regenerating unchanged inputs changed the schedule (second run ${solved.secondState}; ` +
+            `solved as ${JSON.stringify(solved.paths)})`,
         );
       }
       // The demo unit is on the default solver (hybrid). Without the OR-Tools runner the job must
@@ -815,22 +831,24 @@ export function runSmoke(win: BrowserWindow): void {
       ) {
         fail(`expected a reported fallback from hybrid to sa-lns, got ${solved.solver}`);
       }
-      if (solved.cpsat) {
-        const c = solved.cpsat;
-        if (c.state !== 'done' || c.solver !== 'cp-sat') {
-          fail(`CP-SAT solve ended ${c.state} (${c.solver}): ${c.error ?? ''}`);
-        }
-        if (c.nurseLevel.length > 0) {
-          fail(`CP-SAT schedule breaks a nurse-level rule: ${c.nurseLevel.join(' | ')}`);
-        }
-        console.log(
-          `[smoke] cp-sat OK (${c.created} shifts in ${c.elapsedMs}ms, objective ${c.total}, gap ${c.gap === null ? '?' : `${(c.gap * 100).toFixed(0)}%`}, ${c.unfilled} unfilled)`,
+      if (solved.orTools && solved.solver !== 'hybrid') {
+        fail(
+          `with the OR-Tools runner installed the demo unit should generate with hybrid, got ${solved.solver}`,
         );
-      } else {
-        console.log('[smoke] cp-sat skipped (runner not installed)');
+      }
+      for (const o of solved.others) {
+        if (o.state !== 'done' || o.solver !== o.id) {
+          fail(`${o.id} solve ended ${o.state} (${o.solver}): ${o.error ?? ''}`);
+        }
+        if (o.nurseLevel.length > 0)
+          fail(`${o.id} breaks a nurse-level rule: ${o.nurseLevel.join(' | ')}`);
+        if (!o.identical) fail(`${o.id}: regenerating unchanged inputs changed the schedule`);
+        console.log(
+          `[smoke] ${o.id} OK (${o.created} shifts in ${o.elapsedMs}ms, objective ${o.total}, ${o.unfilled} unfilled${o.gap === null ? '' : `, gap ${(o.gap * 100).toFixed(0)}%`}, regenerate identical)`,
+        );
       }
       console.log(
-        `[smoke] solver OK (${solved.solver}${solved.fellBackFrom ? ` after falling back from ${solved.fellBackFrom.solver}` : ''}, ${solved.applied.created} shifts in ${solved.elapsedMs}ms, seed ${solved.seed}, ${solved.unfilled} unfilled, ${solved.hard} hard violations, locked kept: ${solved.lockedKept}, regenerate identical)`,
+        `[smoke] solver OK (${solved.solver}${solved.fellBackFrom ? ` after falling back from ${solved.fellBackFrom.solver}` : ''}${solved.windows ? `, ${solved.windows.improved}/${solved.windows.tried} CP-SAT windows improved` : ''}, ${solved.applied.created} shifts in ${solved.elapsedMs}ms, seed ${solved.seed}, ${solved.unfilled} unfilled, ${solved.hard} hard violations, locked kept: ${solved.lockedKept}, regenerate identical)`,
       );
       const pay = (await win.webContents.executeJavaScript(PAY_TAB_SCRIPT)) as {
         rows: number;

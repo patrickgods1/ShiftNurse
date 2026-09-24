@@ -12,8 +12,8 @@ import type { SolverId } from '@shiftnurse/core';
 import { app } from 'electron';
 import { resolveRunnerPath } from './cpsat-process.js';
 
-/** OR-Tools backends implemented in this build. Hybrid lands in M15 phase 5. */
-export const ORTOOLS_BACKEND_IDS: ReadonlySet<SolverId> = new Set<SolverId>(['cp-sat']);
+/** OR-Tools backends implemented in this build. */
+export const ORTOOLS_BACKEND_IDS: ReadonlySet<SolverId> = new Set<SolverId>(['cp-sat', 'hybrid']);
 
 let runnerPath: string | undefined | null = null;
 

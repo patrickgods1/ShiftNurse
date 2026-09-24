@@ -240,6 +240,8 @@ export interface SolveStats {
   timedOut: boolean;
   /** Objective after the greedy seed, before annealing. */
   seedObjective: number;
+  /** Hybrid only: CP-SAT windows attempted, and how many improved the schedule. */
+  windows?: { tried: number; improved: number };
 }
 
 export interface SolveReport {

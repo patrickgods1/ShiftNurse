@@ -62,6 +62,11 @@ export interface EncodeOptions {
   weights?: Partial<ObjectiveWeights>;
   /** A schedule to start the search from, e.g. the greedy seed. */
   hint?: readonly Assignment[];
+  /**
+   * Date indexes whose shifts are open to change (the hybrid's window). Absent means the whole
+   * period. Shifts outside it get no variables — the caller passes them in as locked constants.
+   */
+  window?: ReadonlySet<number>;
   /** Injectable for tests; defaults to `CPSAT_ENCODERS`. */
   encoders?: Readonly<Record<string, Encoder | 'by-construction'>>;
 }
@@ -111,6 +116,7 @@ export function encodeCpsat(input: SolveInput, options: EncodeOptions = {}): Cps
     const lockedDays = new Set(lockedByNurse[n]!.map((a) => model.shiftOf(a).dateIdx));
     const approved = model.ctx.approvedTimeOffByNurse.get(nurse.id) ?? [];
     for (const shift of model.solvableShifts) {
+      if (options.window && !options.window.has(shift.dateIdx)) continue;
       if (lockedDays.has(shift.dateIdx)) continue;
       if (approvedLeaveOn(model.ctx, nurse.id, shift.date)) continue;
       if (

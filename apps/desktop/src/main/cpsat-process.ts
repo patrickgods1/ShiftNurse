@@ -51,7 +51,13 @@ interface RunnerEvent {
   message: string;
 }
 
-const READY_TIMEOUT_MS = 15_000;
+/**
+ * Generous on purpose: a native binary's *first* launch can be slow — Rosetta translating an x64
+ * runner and its libraries on Apple silicon, antivirus scanning twenty DLLs on Windows. A
+ * timeout here makes the hybrid finish without CP-SAT, which is a different (if reported)
+ * schedule from the same inputs.
+ */
+const READY_TIMEOUT_MS = 120_000;
 /** After a stop and EOF, how long a runner gets to finish before it is killed. */
 const EXIT_GRACE_MS = 2_000;
 const STDERR_TAIL = 2_000;

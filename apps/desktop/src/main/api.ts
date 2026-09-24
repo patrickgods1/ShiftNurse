@@ -20,7 +20,6 @@ import {
   type ComplianceAlert,
   type ConflictInput,
   type ConflictReport,
-  type CostContext,
   type CounterContext,
   checkStaffing,
   compareDates,
@@ -76,6 +75,7 @@ import {
   cancelSwap,
   cancelTimeOff,
   changesSinceLastPublish,
+  costContext,
   createAcuityTier,
   createAssignment,
   createCredential,
@@ -101,6 +101,7 @@ import {
   deleteHoliday,
   deleteOvertimeRule,
   deletePayRate,
+  demandInputs,
   denySwap,
   denyTimeOff,
   exportRoster,
@@ -123,14 +124,13 @@ import {
   ids,
   importHistoricalLedger,
   importRoster,
+  LEDGER_LOOKBACK_DAYS,
   lastCalledAt,
   latestVersion,
+  ledgerHistory,
   ledgerPeriodsForUnit,
   ledgerSince,
-  listActiveDifferentials,
   listActiveNursesForUnit,
-  listActiveOvertimeRules,
-  listActiveRatioRulesForUnit,
   listAcuityTiersForUnit,
   listAssignmentsForDate,
   listAssignmentsForPeriod,
@@ -160,6 +160,7 @@ import {
   listTimeOffOverlappingForUnit,
   listUnits,
   listVersions,
+  loadPeriodInput,
   logCallAttempt,
   markCallOffCovered,
   markCallOffUncovered,
@@ -317,18 +318,6 @@ function exportToFile(db: ShiftNurseDb, unitId: Id): string | undefined {
   return path;
 }
 
-/** Everything `deriveDemand` needs for a unit, loaded once per call. */
-function demandInputs(db: DbLike, unitId: Id, start: IsoDate, end: IsoDate) {
-  return {
-    shiftTypes: listShiftTypesForUnit(db, unitId),
-    acuityTiers: listAcuityTiersForUnit(db, unitId),
-    ratioRules: listActiveRatioRulesForUnit(db, unitId),
-    coverageRequirements: listCoverageRequirementsForUnit(db, unitId),
-    censusForecasts: listCensusForecastsInRange(db, unitId, start, end),
-    hppdTarget: getHppdTarget(db, unitId),
-  };
-}
-
 /** The full context and view the rule engine needs to score one period. Loaded once per call. */
 function buildScheduleValidation(db: ShiftNurseDb, periodId: Id): ScheduleValidation {
   const period = getPeriod(db, periodId);
@@ -376,13 +365,6 @@ function buildScheduleValidation(db: ShiftNurseDb, periodId: Id): ScheduleValida
 // Fairness
 // ---------------------------------------------------------------------------
 
-/**
- * How far back the ledger is read. The burden window is 13 periods (~6 months of two-week
- * periods) with decay, so a year of rows is more than enough and keeps the query bounded on
- * a unit that has imported years of history.
- */
-const LEDGER_LOOKBACK_DAYS = 400;
-
 function latestRuleSetOrDefault(db: DbLike, unitId: Id): RuleSet {
   return getLatestRuleSet(db, unitId) ?? defaultRuleSet(unitId);
 }
@@ -396,12 +378,6 @@ function counterContext(db: DbLike, unitId: Id, ruleSet: RuleSet): CounterContex
     preferences: listPreferencesForUnit(db, unitId),
     timeOff: listTimeOffForUnit(db, unitId),
   };
-}
-
-function ledgerHistory(db: DbLike, unitId: Id, before: IsoDate): FairnessLedgerEntry[] {
-  return ledgerSince(db, unitId, addDays(before, -LEDGER_LOOKBACK_DAYS)).filter(
-    (e) => compareDates(e.periodStart, before) < 0,
-  );
 }
 
 function fairnessReport(db: ShiftNurseDb, periodId: Id) {
@@ -574,26 +550,6 @@ function importHistory(
 // ---------------------------------------------------------------------------
 // Cost
 // ---------------------------------------------------------------------------
-
-/**
- * Everything `costSchedule` needs for a unit under a given rule set. The work-week start comes
- * from the max-hours rule's parameters so weekly overtime is counted over the same week the
- * rule engine polices — two different "weeks" would let a shift be flagged as overtime by the
- * rules and priced as straight time, or the reverse.
- */
-function costContext(db: DbLike, unitId: Id, ruleSet: RuleSet): CostContext {
-  const maxHours = ruleSet.configs.find((c) => c.ruleId === maxHoursRule.id);
-  const params = (maxHours?.params ?? maxHoursRule.defaultParams) as Partial<MaxHoursParams>;
-  return {
-    unit: unitOrThrow(db, unitId),
-    payRates: listPayRatesForUnit(db, unitId),
-    differentials: listActiveDifferentials(db, unitId),
-    overtimeRules: listActiveOvertimeRules(db, unitId),
-    holidayDates: new Set<IsoDate>(listHolidaysForUnit(db, unitId).map((h) => h.date)),
-    weekendDefinition: ruleSet.weekendDefinition,
-    workWeekStartsOn: params.workWeekStartsOn ?? maxHoursRule.defaultParams.workWeekStartsOn,
-  };
-}
 
 function costReport(db: ShiftNurseDb, periodId: Id): PeriodCostReport {
   const period = getPeriod(db, periodId);
@@ -826,39 +782,6 @@ function buildConflictInput(db: DbLike, periodId: Id): ConflictInput {
   if (!period) throw new Error(`Unknown period ${periodId}`);
   const budget = getBudget(db, periodId);
   return { ...loadPeriodInput(db, period), ...(budget ? { budget } : {}) };
-}
-
-/** Shared loader behind the solver and the conflict detector: one definition of "the period". */
-function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput {
-  const ruleSet = getRuleSet(db, period.ruleSetId);
-  if (!ruleSet) throw new Error(`Period ${period.id} cites unknown rule set ${period.ruleSetId}`);
-  const unitId = period.unitId;
-  const cost = costContext(db, unitId, ruleSet);
-  return {
-    unit: unitOrThrow(db, unitId),
-    period,
-    ruleSet,
-    nurses: listNursesForUnit(db, unitId),
-    shiftTypes: listShiftTypesForUnit(db, unitId),
-    demand: deriveDemand(
-      datesInRange(period.startDate, period.endDate),
-      demandInputs(db, unitId, period.startDate, period.endDate),
-    ).all(),
-    assignments: listAssignmentsForPeriod(db, period.id),
-    priorAssignments: priorAssignmentsBefore(db, unitId, period.startDate, 14),
-    timeOff: listTimeOffForUnit(db, unitId),
-    credentials: listCredentials(db),
-    nurseCredentials: listNurseCredentialsForUnit(db, unitId),
-    shiftCredentialRequirements: listShiftCredentialRequirementsForUnit(db, unitId),
-    holidays: listHolidaysForUnit(db, unitId),
-    preferences: listPreferencesForUnit(db, unitId),
-    ledgerHistory: ledgerHistory(db, unitId, period.startDate),
-    cost: {
-      payRates: cost.payRates,
-      differentials: cost.differentials,
-      overtimeRules: cost.overtimeRules,
-    },
-  };
 }
 
 // ---------------------------------------------------------------------------

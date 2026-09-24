@@ -301,44 +301,67 @@ Decisions:
 
 ## Phase 5 — Hybrid backend and benchmark
 **Core (pure and synchronous)**
-- [ ] 5.1 `solver/stepwise.ts`: `createLocalSearch(input, options)`, which provides:
+- [x] 5.1 `solver/stepwise.ts`: `createLocalSearch(input, options)`, which provides:
   - `seed()`, `runAnneal(iterations)`, `pickWindow(rng)` (2–3 days, weighted toward the worst
     coverage/fairness days), `encodeWindow(window)` (the Phase 4 encoders, with everything
     outside the window fixed).
   - `applyWindow(assignments)` (through the model gate; accepted only if the objective doesn't
     get worse), `report(stats)`.
-- [ ] 5.2 Test: `applyWindow` never changes an assignment outside the window.
-- [ ] 5.3 Test: a window solution that makes the objective worse is rejected and the model state
+- [x] 5.2 Test: `applyWindow` never changes an assignment outside the window.
+- [x] 5.3 Test: a window solution that makes the objective worse is rejected and the model state
       is unchanged.
-- [ ] 5.4 Test: `pickWindow` is deterministic for a given seed.
+- [x] 5.4 Test: `pickWindow` is deterministic for a given seed.
+  *(Implemented as `LocalSearch` in `solver/hybrid.ts`; `anneal` gained a `span` so chunks share one
+  cooling schedule; `encodeCpsat` gained a `window` option. Also tested: an answer that breaks the
+  rest rule is refused and the window restored, and windows land on understaffed days > 60% of the
+  time where a uniform draw would give 25%.)*
 
 **Main**
-- [ ] 5.5 `hybrid` backend: seed → a loop of `runAnneal(N)` → `pickWindow` → CP-SAT solve →
+- [x] 5.5 `hybrid` backend: seed → a loop of `runAnneal(N)` → `pickWindow` → CP-SAT solve →
       `applyWindow`, until the iteration budget is spent. It reports progress and handles cancel.
-- [ ] 5.6 If the runner fails mid-run, finish as SA+LNS and set
+- [x] 5.6 If the runner fails mid-run, finish as SA+LNS and set
       `fellBackFrom: { solver: 'hybrid', reason }`.
-- [ ] 5.7 Integration test (skipped when the runner is missing): identical schedules across two
+- [x] 5.7 Integration test (skipped when the runner is missing): identical schedules across two
       runs; the objective is ≤ SA+LNS on the fixtures with the same seed and budget.
+      *(Identical-schedule, legality and runner-missing fallback are tested. "≤ SA + LNS" is not
+      asserted: chunked annealing follows a different trajectory, so it is not guaranteed, and the
+      benchmark measures it instead. A probe confirmed the live model, the window encoding and
+      CP-SAT's objective agree to the decimal on every window.)*
 
 **Benchmark**
-- [ ] 5.8 `packages/core/src/solver/bench/` and a root script `npm run bench:solvers`:
+- [x] 5.8 `packages/core/src/solver/bench/` and a root script `npm run bench:solvers`:
   - First move `loadPeriodInput` (and its helpers `demandInputs`, `costContext`, `ledgerHistory`)
     from `main/api.ts` into `packages/db` so the benchmark can build the demo's real `SolveInput`
     in plain Node.
+  - *(Lives at `apps/desktop/src/main/solver-bench.run.ts` under `vitest.bench.config.ts`, because
+    core may not spawn the runner; `npm run bench:solvers`. Result, 2026-09-24, Apple M1: hybrid
+    best on the demo (median 76,348 vs SA + LNS 77,936, 0 floors short) and a 24-nurse unit
+    (5,341 vs 6,028), tied on a small tight unit; whole-period CP-SAT last everywhere (demo
+    197,434, 14–17 floors short). Hybrid takes ~3× SA's time: ~30–40 s on the demo.)*
   - Runs every available backend on the demo and fixture units at 3 seeds.
   - Writes `docs/solver-bench.md` (objective, breakdown, unfilled, gap, time).
-- [ ] 5.9 Set `FALLBACK_ORDER` to hybrid, then whichever of SA+LNS / CP-SAT has the lower
-      median objective. The comment cites `docs/solver-bench.md` and its date.
-- [ ] 5.10 Update the Settings › Solver copy to match the measured trade-offs.
+- [x] 5.9 Set `FALLBACK_ORDER` to hybrid, then whichever of SA+LNS / CP-SAT has the lower
+      median objective. The comment cites `docs/solver-bench.md` and its date. *(Measured order:
+      hybrid, SA + LNS, CP-SAT — the provisional order, now confirmed.)*
+- [x] 5.10 Update the Settings › Solver copy to match the measured trade-offs.
 
 **Check and ship**
-- [ ] 5.11 `npm run check` is green.
-- [ ] 5.12 Extend `main/smoke.ts` to generate once with each available backend, and assert that
+- [x] 5.11 `npm run check` is green.
+- [x] 5.12 Extend `main/smoke.ts` to generate once with each available backend, and assert that
       regenerating is identical and no nurse-scope hard violations appear.
-- [ ] 5.13 `npm run smoke` and, after `npm run dist`, `smoke:packaged` are green on mac arm64.
-      Mac x64 is run under Rosetta.
-- [ ] 5.14 Run `/scheduling-review` on the diff.
-- [ ] 5.15 **Commit & push to `feat/or-tools`:** "Add hybrid SA + CP-SAT solver and benchmark".
+- [x] 5.13 `npm run smoke` and, after `npm run dist`, `smoke:packaged` are green on mac arm64.
+      Mac x64 is run under Rosetta. *(Both green. x64 needs `SHIFTNURSE_SMOKE_TIMEOUT_MS=900000`
+      under emulation (hybrid 70 s). The first x64 attempt failed the regenerate check; the
+      likely cause — Rosetta translating the runner and its 114 libraries on first launch beyond
+      the client's 15 s ready timeout, so one run lost CP-SAT — is supported by a warm rerun
+      passing and the runner itself being bit-identical across runs and architectures, but was
+      not reproduced cold. The ready timeout is now 120 s and the smoke reports each run's
+      solver path on a mismatch. One arm64 log came back truncated with exit 0 and did not
+      reproduce.)*
+- [x] 5.14 Run `/scheduling-review` on the diff. *(One finding, fixed: a hybrid that lost its
+      runner mid-run reported the fallback in its report but not in the job status the dialog
+      reads.)*
+- [x] 5.15 **Commit & push to `feat/or-tools`:** "Add hybrid SA + CP-SAT solver and benchmark".
 - [ ] 5.16 Open a PR from `feat/or-tools` to `main`. CI is green; merge.
 
 ## Phase 6 — Docs

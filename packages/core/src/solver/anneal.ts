@@ -72,13 +72,22 @@ export interface AnnealHooks {
   shouldStop: () => 'cancelled' | 'timed_out' | null;
 }
 
+/**
+ * Anneal for iterations `span.from` to `span.to` of an `options.maxIterations` run. The cooling
+ * schedule and the ruin-and-recreate cadence follow the iteration number within the whole run,
+ * so the hybrid solver can anneal in chunks — handing a few days to CP-SAT between them — and
+ * still get one continuous cooling curve rather than a reheat per chunk.
+ */
 export function anneal(
   model: SolverModel,
   rng: Rng,
   options: SolveOptions,
   hooks: AnnealHooks,
+  span?: { from: number; to: number },
 ): AnnealResult {
   const max = Math.max(0, Math.floor(options.maxIterations));
+  const from = Math.max(0, Math.min(max, span?.from ?? 0));
+  const to = Math.max(from, Math.min(max, span?.to ?? max));
   const progressEvery = Math.max(1, options.progressEveryIterations ?? 500);
 
   let current = model.objective();
@@ -88,9 +97,9 @@ export function anneal(
   let improvements = 0;
   let cancelled = false;
   let timedOut = false;
-  let it = 0;
+  let it = from;
 
-  for (; it < max; it++) {
+  for (; it < to; it++) {
     if (it % CANCEL_POLL_EVERY === 0) {
       const stop = hooks.shouldStop();
       if (stop === 'cancelled') cancelled = true;
@@ -136,7 +145,7 @@ export function anneal(
   }
 
   if (model.objective() > best + 1e-9) model.restore(bestSnapshot);
-  return { iterations: it, accepted, improvements, cancelled, timedOut, best };
+  return { iterations: it - from, accepted, improvements, cancelled, timedOut, best };
 }
 
 // ---------------------------------------------------------------------------

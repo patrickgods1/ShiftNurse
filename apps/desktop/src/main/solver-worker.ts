@@ -10,23 +10,22 @@
  * to receive one. So the main thread hands over a `SharedArrayBuffer` and the solver polls
  * one integer in it between iterations. Setting it to 1 is the whole cancel protocol.
  *
- * CP-SAT (M15) runs here too: the worker encodes the model, spawns its own runner process, and
- * decodes the answer, so the main process never blocks on a large encode. Its search is async,
- * so the worker polls the same flag on a timer and turns a 1 into the runner's stop line.
+ * The OR-Tools backends (M15: CP-SAT, hybrid) run here too, through `ortools-solvers.ts`: the
+ * worker encodes, spawns its own runner process and decodes, so the main process never blocks on
+ * a large encode. Their searches are async, so the same flag is polled on a timer and a 1 becomes
+ * the runner's stop line.
  */
 
 import { parentPort, workerData } from 'node:worker_threads';
 import {
-  finishCpsat,
   PURE_SOLVERS,
-  prepareCpsat,
   type SolveInput,
   type SolveOptions,
   type SolveProgress,
   type SolveReport,
   type SolverId,
 } from '@shiftnurse/core';
-import { CpsatRunner } from './cpsat-process.js';
+import { solveCpsat, solveHybrid } from './ortools-solvers.js';
 
 export interface SolverWorkerData {
   input: SolveInput;
@@ -54,75 +53,6 @@ const data = workerData as SolverWorkerData;
 const flag = new Int32Array(data.cancelFlag);
 const post = (message: SolverWorkerMessage) => port.postMessage(message);
 
-const CANCEL_POLL_MS = 100;
-
-/** CP-SAT: encode here, search in the runner process, decode and report here. */
-async function solveWithCpsat(): Promise<SolveReport> {
-  if (!data.runnerPath) throw new Error('The OR-Tools runner is not installed');
-  const started = Date.now();
-  const elapsed = () => Date.now() - started;
-  const { seed, timeLimitMs } = data.options;
-  post({
-    type: 'progress',
-    progress: {
-      fraction: 0,
-      phase: 'seeding',
-      iteration: 0,
-      maxIterations: 0,
-      best: 0,
-      current: 0,
-      elapsedMs: 0,
-    },
-  });
-  const job = prepareCpsat(data.input, {
-    seed,
-    ...(data.deterministicTime !== undefined ? { deterministicTime: data.deterministicTime } : {}),
-    ...(timeLimitMs !== undefined ? { timeLimitMs } : {}),
-  });
-  const budgetMs = (job.params.max_deterministic_time ?? 60) * 1000;
-
-  const runner = new CpsatRunner(data.runnerPath);
-  let cancelled = false;
-  let improvements = 0;
-  const poll = setInterval(() => {
-    if (!cancelled && Atomics.load(flag, 0) === 1) {
-      cancelled = true;
-      runner.stop();
-    }
-  }, CANCEL_POLL_MS);
-  try {
-    await runner.start();
-    if (runner.pid !== undefined) post({ type: 'runner', pid: runner.pid });
-    const result = await runner.solve(job.model, job.params, (p) => {
-      improvements++;
-      post({
-        type: 'progress',
-        progress: {
-          // Deterministic time only roughly tracks the wall clock; this is a hint, not a promise.
-          fraction: Math.min(0.99, p.wallMs / budgetMs),
-          phase: 'searching',
-          iteration: 0,
-          maxIterations: 0,
-          best: p.objective,
-          current: p.objective,
-          bound: p.bound,
-          elapsedMs: elapsed(),
-        },
-      });
-    });
-    return finishCpsat(data.input, job, result, {
-      seed,
-      elapsedMs: elapsed(),
-      improvements,
-      cancelled,
-      timedOut: timeLimitMs !== undefined && elapsed() >= timeLimitMs,
-    });
-  } finally {
-    clearInterval(poll);
-    runner.dispose();
-  }
-}
-
 async function run(): Promise<SolveReport> {
   const pure = PURE_SOLVERS[data.solverId];
   if (pure) {
@@ -132,7 +62,19 @@ async function run(): Promise<SolveReport> {
       shouldCancel: () => Atomics.load(flag, 0) === 1,
     });
   }
-  if (data.solverId === 'cp-sat') return solveWithCpsat();
+  if (!data.runnerPath) throw new Error('The OR-Tools runner is not installed');
+  const options = {
+    ...data.options,
+    runnerPath: data.runnerPath,
+    ...(data.deterministicTime !== undefined ? { deterministicTime: data.deterministicTime } : {}),
+  };
+  const hooks = {
+    onProgress: (progress: SolveProgress) => post({ type: 'progress', progress }),
+    shouldCancel: () => Atomics.load(flag, 0) === 1,
+    onRunner: (pid: number) => post({ type: 'runner', pid }),
+  };
+  if (data.solverId === 'cp-sat') return solveCpsat(data.input, options, hooks);
+  if (data.solverId === 'hybrid') return solveHybrid(data.input, options, hooks);
   throw new Error(`Solver "${data.solverId}" cannot run in the worker thread`);
 }
 

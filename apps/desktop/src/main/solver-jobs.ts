@@ -179,6 +179,11 @@ export class SolverJobs {
         return;
       case 'done': {
         job.status.report = message.report;
+        // The report is the last word on who solved it: a hybrid whose runner failed mid-run
+        // finishes as SA + LNS and says why, and the dialog reads the status, not the report.
+        job.status.solver = message.report.stats.solver;
+        const fellBack = message.report.stats.fellBackFrom ?? job.status.fellBackFrom;
+        if (fellBack) job.status.fellBackFrom = fellBack;
         if (message.report.stats.cancelled) {
           this.finish(job, 'cancelled', {});
           return;

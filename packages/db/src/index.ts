@@ -32,6 +32,7 @@ export * from './repositories/publish.js';
 export * from './repositories/roster.js';
 export * from './repositories/roster-io.js';
 export * from './repositories/schedule.js';
+export * from './repositories/solve-input.js';
 export * from './repositories/solver.js';
 export * from './repositories/timeoff.js';
 export * as schema from './schema.js';
