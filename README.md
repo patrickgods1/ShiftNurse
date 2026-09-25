@@ -57,7 +57,7 @@ this codebase is held to. This document is the practical "how do I build/run/shi
 
 ## Prerequisites
 
-- **Node.js ≥ 20** (see `engines` in [package.json](package.json)).
+- **Node.js ≥ 22.12** (see `engines` in [package.json](package.json); `.nvmrc` pins the major CI uses).
 - **npm** — this is an npm-workspaces monorepo. Do not introduce a pnpm lockfile; pnpm is
   intentionally not used here (see [CLAUDE.md](CLAUDE.md#conventions)).
 - A C/C++ toolchain capable of building native Node modules (`better-sqlite3` ships
@@ -103,7 +103,7 @@ apps/desktop/       # Electron app.
                       #   Roster, Requests (time off + exchanges), Settings (shift types,
                       #   coverage, acuity, holidays, rules, pay, solver, conflicts, backups).
 .claude/             # Claude Code skills, agents and hooks used while developing this repo.
-.githooks/           # pre-commit (test gate + AI review) and prepare-commit-msg.
+.githooks/           # pre-commit (fast gate + AI review) and prepare-commit-msg.
 ROADMAP.md           # Plan of record: milestones, locked-in decisions, verification steps.
 CLAUDE.md            # Architecture and conventions for anyone (human or AI) working here.
 ARCHITECTURE.md      # Why this stack, trade-offs considered.
@@ -122,11 +122,12 @@ Run from the repo root unless noted.
 | `npm run dev` | Builds packages, then runs package watchers + `electron-vite dev` with HMR. |
 | `npm test` | `vitest run` over `packages/*/src/**/*.test.ts`, renderer tests, and `apps/desktop/src/main/**/*.test.ts`. |
 | `npm run test:watch` | Vitest in watch mode. |
+| `npm run test:coverage` | Tests with v8 coverage (`packages/*` and the desktop main process). |
 | `npm run lint` | `biome check .` — format + lint, no writes. |
 | `npm run lint:fix` | `biome check --write .`. |
 | `npm run format` | `biome format --write .`. |
 | `npm run typecheck` | Builds `core` and `db`, then `tsc --build --force` against the root `tsconfig.json` (every package **including test files**), then the desktop's own `tsc --noEmit` over its `tsconfig.node.json` and `tsconfig.web.json`. |
-| `npm run check` | lint + typecheck + test — the pre-commit gate. |
+| `npm run check` | lint + typecheck + test — the full gate CI runs. |
 | `npm run build:packages` | Builds `core` then `db` with `tsc`. `dev`, `build` and `seed:demo` run it for you; run it by hand after touching core before trusting a smoke result. |
 | `npm run seed:demo` | Builds and runs the demo seeder into a standalone `packages/db/demo.sqlite` (optional; the app seeds its own DB). `-- --force` overwrites, `-- --seed <n>` changes the RNG seed. |
 | `npm run build` | Production bundle into `apps/desktop/out` (via `electron-vite build`). |
@@ -150,7 +151,8 @@ iterative work:
 npm run test:watch
 ```
 
-Before committing, run the full gate (also enforced by the pre-commit hook):
+Before opening a pull request, run the full gate (CI enforces it; the pre-commit hook runs a
+faster subset):
 
 ```bash
 npm run check   # lint + typecheck + test
@@ -197,12 +199,16 @@ request:
 
 | Job | Runs on | What |
 |---|---|---|
-| `lint-typecheck` | ubuntu-latest | `npm run lint`, `npm run typecheck` |
-| `test (…)` | ubuntu-latest, macos-15, windows-2022 | `npm run build:packages`, `npm test` — on macOS and Windows against the real CP-SAT runner, which `npm ci` fetches |
+| `lint-typecheck` | ubuntu-latest | `npm run lint`, `npm run typecheck`, `npm audit --omit=dev --audit-level=high` |
+| `test (…)` | ubuntu-latest, macos-15, windows-2022 | `npm run build:packages`, `npm test` — on macOS and Windows against the real CP-SAT runner, which `npm ci` fetches; on ubuntu with coverage, summarised on the run page |
 
 `main` is protected: a pull request merges only when those four checks pass (admins may still
 push directly). Lint runs on Linux only because Windows checks out with CRLF line endings, which
 Biome's format check would flag in every file. The pre-commit AI review stays local.
+
+All workflows set up through one composite action, [`.github/actions/setup`](.github/actions/setup/action.yml),
+pin third-party actions by commit SHA, and set a timeout on every job. Dependabot opens weekly
+grouped updates for npm and for the actions themselves.
 
 ## Releasing
 
@@ -358,11 +364,13 @@ the nurse rostering problem and on the local-search methods it uses:
 
 Installed automatically by `npm install` (`prepare` script points git at `.githooks/`):
 
-- **`pre-commit`** — runs `npm run check`, then sends the staged diff to a headless Claude
+- **`pre-commit`** — a fast gate (Biome on the staged files, incremental typecheck, the tests
+  related to the staged files; a few seconds), then sends the staged diff to a headless Claude
   reviewer briefed on this repo's invariants; a `VERDICT: BLOCK` aborts the commit with
   findings printed. The reviewer needs the `claude` CLI on your PATH; without it the hook
-  skips the review and keeps the test gate. `SKIP_REVIEW=1 git commit …` does the same
-  explicitly; `git commit --no-verify` skips both (avoid unless you have a specific reason).
+  skips the review and keeps the gate. `FULL_CHECK=1 git commit …` runs the full
+  `npm run check` instead; `SKIP_REVIEW=1 git commit …` skips the review;
+  `git commit --no-verify` skips both (avoid unless you have a specific reason).
 - **`prepare-commit-msg`** — drafts a commit message from the staged diff for a bare `git
   commit` (never touches a message given with `-m`/`-F`).
 

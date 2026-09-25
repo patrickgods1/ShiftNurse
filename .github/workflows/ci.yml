@@ -15,9 +15,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A newer push to a pull request supersedes the older run. On main every commit keeps its own
+# result: cancelling there would leave a merged commit with no CI verdict.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -26,15 +28,17 @@ jobs:
   lint-typecheck:
     name: lint-typecheck
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
+          build-packages: 'false'
+          install-scripts: 'false'
       - run: npm run lint
       - run: npm run typecheck
+      # Only what ships: a high-severity advisory in a runtime dependency fails the build.
+      - run: npm audit --omit=dev --audit-level=high
 
   test:
     name: test (${{ matrix.os }})
@@ -43,13 +47,16 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Desktop tests import @shiftnurse/core and @shiftnurse/db from their built dist.
-      - run: npm run build:packages
-      - run: npm test
+      - uses: ./.github/actions/setup
+      - if: runner.os != 'Linux'
+        run: npm test
+      # Coverage once, on the fastest runner; the summary lands on the run's page.
+      - if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          npm run test:coverage
+          node scripts/coverage-summary.mjs >> "$GITHUB_STEP_SUMMARY"

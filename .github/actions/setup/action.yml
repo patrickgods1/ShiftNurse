@@ -1,0 +1,47 @@
+# Node + dependencies, the way every job needs them. One place for the Node version (.nvmrc)
+# and the download caches, so ci.yml and release.yml cannot drift apart. Runs after checkout
+# (a local action is read from the checked-out tree).
+name: setup
+description: Node from .nvmrc, cached downloads, npm ci, and optionally the built packages.
+
+inputs:
+  build-packages:
+    description: Build @shiftnurse/core and @shiftnurse/db (desktop tests and builds import their dist).
+    default: 'true'
+  install-scripts:
+    description: >-
+      Run install scripts. Lint and typecheck need none of them — no Electron binary, no
+      Electron-ABI better-sqlite3, no CP-SAT runner — so that job turns them off.
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version-file: .nvmrc
+        cache: npm
+
+    # What postinstall and electron-builder download on every run otherwise: the pinned CP-SAT
+    # runner (keyed on fetch-cpsat.mjs, which holds its tag and hashes), the Electron binary
+    # and electron-builder's tools (keyed on the lockfile).
+    - if: inputs.install-scripts == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          apps/desktop/.cpsat/cache
+          ~/.cache/electron
+          ~/.cache/electron-builder
+          ~/Library/Caches/electron
+          ~/Library/Caches/electron-builder
+          ~/AppData/Local/electron/Cache
+          ~/AppData/Local/electron-builder/Cache
+        key: downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json', 'apps/desktop/scripts/fetch-cpsat.mjs') }}
+        restore-keys: downloads-${{ runner.os }}-${{ runner.arch }}-
+
+    - shell: bash
+      run: npm ci ${{ inputs.install-scripts != 'true' && '--ignore-scripts' || '' }}
+
+    - if: inputs.build-packages == 'true'
+      shell: bash
+      run: npm run build:packages

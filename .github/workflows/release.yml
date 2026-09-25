@@ -28,14 +28,23 @@ on:
 permissions:
   contents: read
 
+# A newer push to a packaging pull request supersedes its dry run (three native builds with
+# full smoke tests). Tag builds are never cancelled.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   version:
     name: version
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.check.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - id: check
         name: Tag and package versions agree
         run: |
@@ -78,6 +87,8 @@ jobs:
               apps/desktop/release/ShiftNurse-*-win-x64.exe
               apps/desktop/release/ShiftNurse-*-win-x64.exe.blockmap
     runs-on: ${{ matrix.os }}
+    # Package + a packaged smoke test allowed 20 min on its own (below).
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -93,13 +104,10 @@ jobs:
       # WIN_CSC_LINK: ${{ secrets.WIN_CERT_PFX_BASE64 }}
       # WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build:packages
+          persist-credentials: false
+      - uses: ./.github/actions/setup
       - run: npm run build -w @shiftnurse/desktop
       # --publish never: electron-builder would otherwise publish on its own when it sees CI,
       # a tag and a token. The release job below creates the (draft) release instead.
@@ -112,12 +120,12 @@ jobs:
           SHIFTNURSE_SMOKE_SOLVE_TIMEOUT_MS: '300000'
           SHIFTNURSE_SMOKE_TIMEOUT_MS: '1200000'
         run: npm run smoke:packaged -w @shiftnurse/desktop -- --screenshot "$RUNNER_TEMP/smoke-${{ matrix.target }}.png"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: installer-${{ matrix.target }}
           path: ${{ matrix.files }}
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: smoke-screenshot-${{ matrix.target }}
@@ -129,11 +137,17 @@ jobs:
     if: github.ref_type == 'tag'
     needs: [version, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      # Only the notes template is read from the tree; the write token stays out of .git/config.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/release-notes.md
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: installer-*
           path: dist
