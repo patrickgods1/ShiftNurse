@@ -11,7 +11,15 @@ export default defineConfig({
     // tests and the seeder), not for Electron's embedded Node. Bundling lets the alias below
     // redirect that import to `better-sqlite3-electron`, the Electron-ABI copy, which stays
     // external so the native binary loads from disk. See scripts/rebuild-sqlite-for-electron.mjs.
-    plugins: [externalizeDepsPlugin({ exclude: ['@shiftnurse/core', '@shiftnurse/db'] })],
+    //
+    // `drizzle-orm` is bundled for the same reason: its `drizzle-orm/better-sqlite3` driver does
+    // `import 'better-sqlite3'` itself, and loaded from disk that import skips the alias and asks
+    // for a package the installed app does not contain. v0.1.0's first draft shipped exactly that
+    // (ERR_MODULE_NOT_FOUND on launch, macOS and Windows); the packaged smoke test missed it
+    // because it ran inside the repo, where Node found the dev copy by walking up the folders.
+    plugins: [
+      externalizeDepsPlugin({ exclude: ['@shiftnurse/core', '@shiftnurse/db', 'drizzle-orm'] }),
+    ],
     resolve: {
       alias: { 'better-sqlite3': 'better-sqlite3-electron' },
     },

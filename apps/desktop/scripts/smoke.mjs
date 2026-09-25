@@ -18,11 +18,23 @@
  * on an arm64 Mac.
  *
  *   node scripts/smoke.mjs --packaged [--app <path-to-executable>] [--screenshot <file.png>]
+ *
+ * Two guards, both learned from v0.1.0's first draft, which launched fine here and crashed on
+ * every real install (`Cannot find package 'better-sqlite3'`):
+ *
+ * - **A packaged app is run from a copy outside the repo.** Inside it, Node resolves a module the
+ *   app forgot to ship by walking up the folders to the repo's own `node_modules`, so a missing
+ *   runtime dependency passes the smoke test and fails on a user's machine. The `.app` bundle (or
+ *   the unpacked Windows folder) is copied, symlinks and all, into a fresh temp directory first.
+ * - **Success is a line, not an exit code.** A main process that throws on startup shows an
+ *   error dialog and exits 0 once it is dismissed. The run passes only if the app printed
+ *   `[smoke] PASS`, and a run that hangs (a dialog nobody will click) is killed.
  */
-import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, relative } from 'node:path';
 
 const require = createRequire(import.meta.url);
 
@@ -46,8 +58,17 @@ function packagedExecutablePath() {
   process.exit(1);
 }
 
+/** The folder that is the whole packaged app: the .app on macOS, the unpacked dir on Windows. */
+function appRoot(execPath) {
+  const marker = `.app${join('/', 'Contents', 'MacOS')}`;
+  const at = execPath.indexOf(marker);
+  if (at !== -1) return execPath.slice(0, at + '.app'.length);
+  return dirname(execPath);
+}
+
 let command;
 let commandArgs;
+let scratch;
 if (packaged) {
   const execPath = appOverride ?? packagedExecutablePath();
   if (!existsSync(execPath)) {
@@ -55,8 +76,13 @@ if (packaged) {
     console.error('[smoke] build it first with `npm run dist`');
     process.exit(1);
   }
-  command = execPath;
+  const root = appRoot(execPath);
+  scratch = mkdtempSync(join(tmpdir(), 'shiftnurse-smoke-'));
+  const copy = join(scratch, basename(root));
+  cpSync(root, copy, { recursive: true, verbatimSymlinks: true });
+  command = join(copy, relative(root, execPath));
   commandArgs = [];
+  console.log(`[smoke] running a copy of the packaged app outside the repo: ${command}`);
 } else {
   command = require('electron');
   commandArgs = ['.'];
@@ -66,5 +92,47 @@ const env = { ...process.env, SHIFTNURSE_SMOKE: '1' };
 delete env.ELECTRON_RUN_AS_NODE;
 if (screenshot) env.SHIFTNURSE_SMOKE_SCREENSHOT = screenshot;
 
-const result = spawnSync(command, commandArgs, { env, stdio: 'inherit' });
-process.exit(result.status ?? 1);
+const PASS = '[smoke] PASS';
+// The app enforces its own limit (SHIFTNURSE_SMOKE_TIMEOUT_MS, default 240 s); this one only
+// catches a process that can no longer enforce anything — stuck on a crash dialog, say.
+const killAfterMs = Number(env.SHIFTNURSE_SMOKE_TIMEOUT_MS ?? 240_000) + 60_000;
+
+const outcome = await new Promise((resolve) => {
+  let passed = false;
+  const child = spawn(command, commandArgs, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const watch = (stream, sink) => {
+    let buffered = '';
+    stream.on('data', (chunk) => {
+      sink.write(chunk);
+      buffered += chunk.toString();
+      if (buffered.includes(PASS)) passed = true;
+      buffered = buffered.slice(-PASS.length);
+    });
+  };
+  watch(child.stdout, process.stdout);
+  watch(child.stderr, process.stderr);
+  const timer = setTimeout(() => {
+    console.error(`[smoke] FAIL: no result after ${killAfterMs / 1000}s; killing the app`);
+    child.kill('SIGKILL');
+  }, killAfterMs);
+  child.on('error', (err) => {
+    clearTimeout(timer);
+    console.error(`[smoke] FAIL: could not start ${command}: ${err.message}`);
+    resolve(1);
+  });
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    if (code === 0 && !passed) {
+      console.error(
+        '[smoke] FAIL: the app exited 0 without printing "[smoke] PASS" — it crashed or never ran ' +
+          'the checks (a startup error dialog exits 0 when dismissed)',
+      );
+      resolve(1);
+    } else {
+      resolve(code ?? 1);
+    }
+  });
+});
+
+if (scratch) rmSync(scratch, { recursive: true, force: true });
+process.exit(outcome);

@@ -19,6 +19,9 @@ import { renderOutput } from './output.js';
  * hybrid (the demo's default) twice, then SA + LNS and CP-SAT twice each — so it needs minutes,
  * not seconds; without the runner it finishes in well under one.
  */
+/** Printed once, last, on success; `scripts/smoke.mjs` requires it. */
+const SMOKE_PASS_MARKER = '[smoke] PASS: every check completed';
+
 const TIMEOUT_MS = Number(process.env.SHIFTNURSE_SMOKE_TIMEOUT_MS ?? 240_000);
 
 /** Each route must render an element carrying this test id. */
@@ -1130,6 +1133,10 @@ export function runSmoke(win: BrowserWindow): void {
         console.log(`[smoke] screenshot written to ${shot}`);
       }
       clearTimeout(timer);
+      // The launcher (scripts/smoke.mjs) passes the run only on this line: an exit code of 0 is
+      // not enough, because a main process that crashes on startup shows an error dialog and
+      // exits 0 once it is dismissed.
+      console.log(SMOKE_PASS_MARKER);
       app.exit(0);
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
