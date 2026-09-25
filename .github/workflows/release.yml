@@ -55,24 +55,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The target is named explicitly (`dmg`, `nsis`): electron-builder.yml lists both mac
+          # architectures, and that list overrides a bare --arm64/--x64 — the first dry run built
+          # both dmgs in each mac job, so the untested copy could have reached the release.
           - target: mac-arm64
             os: macos-15
-            builder: --mac --arm64
+            builder: --mac dmg --arm64
             files: |
-              apps/desktop/release/*.dmg
-              apps/desktop/release/*.dmg.blockmap
+              apps/desktop/release/ShiftNurse-*-mac-arm64.dmg
+              apps/desktop/release/ShiftNurse-*-mac-arm64.dmg.blockmap
           - target: mac-x64
             os: macos-15-intel
-            builder: --mac --x64
+            builder: --mac dmg --x64
             files: |
-              apps/desktop/release/*.dmg
-              apps/desktop/release/*.dmg.blockmap
+              apps/desktop/release/ShiftNurse-*-mac-x64.dmg
+              apps/desktop/release/ShiftNurse-*-mac-x64.dmg.blockmap
           - target: win-x64
             os: windows-2022
-            builder: --win --x64
+            builder: --win nsis --x64
             files: |
-              apps/desktop/release/*.exe
-              apps/desktop/release/*.exe.blockmap
+              apps/desktop/release/ShiftNurse-*-win-x64.exe
+              apps/desktop/release/ShiftNurse-*-win-x64.exe.blockmap
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -137,6 +140,12 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           cd dist
+          # Exactly one smoke-tested installer per platform, or no release.
+          ls -la
+          count=$(ls ShiftNurse-*-mac-arm64.dmg ShiftNurse-*-mac-x64.dmg ShiftNurse-*-win-x64.exe 2>/dev/null | wc -l)
+          if [ "$count" -ne 3 ] || [ "$(ls | grep -cvE '\.blockmap$')" -ne 3 ]; then
+            echo "::error::expected exactly three installers (mac arm64, mac x64, win x64)"; exit 1
+          fi
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
           sed -e "s/{{VERSION}}/${VERSION}/g" ../.github/release-notes.md > ../notes.md
