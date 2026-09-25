@@ -20,6 +20,7 @@ import {
   publishSchedule,
   recordScheduleChange,
   requireChangeReason,
+  requirePeriodEditable,
 } from './publish.js';
 import { createNurse } from './roster.js';
 import {
@@ -213,6 +214,16 @@ describe('the change log', () => {
     const published = getPeriod(handle.db, periodId)!;
     expect(() => requireChangeReason(published, '   ')).toThrow(/requires a reason/);
     expect(requireChangeReason(published, '  swap for clinic  ')).toBe('swap for clinic');
+  });
+
+  it('lets a draft or published schedule be edited but freezes an archived one', () => {
+    // Locking a shift needs no reason, but it is still an edit: an archived period is the
+    // record of what was worked and must not change, whatever the edit.
+    expect(() => requirePeriodEditable(getPeriod(handle.db, periodId)!)).not.toThrow();
+    publishSchedule(handle.db, { periodId }, ACTOR);
+    expect(() => requirePeriodEditable(getPeriod(handle.db, periodId)!)).not.toThrow();
+    const archived = { ...getPeriod(handle.db, periodId)!, status: 'archived' as const };
+    expect(() => requirePeriodEditable(archived)).toThrow(/archived/);
   });
 
   it('refuses to log a change on a period that was never published', () => {

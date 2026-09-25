@@ -13,6 +13,7 @@ import {
   Outlet,
 } from '@tanstack/react-router';
 import type { CSSProperties } from 'react';
+import { AsyncState } from './components/async-state.js';
 import { ThemeToggle } from './components/theme-toggle.js';
 import DashboardPage from './pages/dashboard.js';
 import DemandPage from './pages/demand.js';
@@ -164,7 +165,15 @@ const routeTree = rootRoute.addChildren([
 
 // Electron loads the built renderer from `file://` in production, where a path-based history
 // can't resolve on refresh/deep-link; hash history keeps routing working under that protocol.
-export const router = createRouter({ routeTree, history: createHashHistory() });
+// A render exception inside one page shows here, inside the shell, instead of unmounting the
+// whole app to a blank window with the nav gone.
+export const router = createRouter({
+  routeTree,
+  history: createHashHistory(),
+  defaultErrorComponent: ({ error }) => (
+    <AsyncState status="error" label="This page failed to load" error={error} />
+  ),
+});
 
 declare module '@tanstack/react-router' {
   interface Register {

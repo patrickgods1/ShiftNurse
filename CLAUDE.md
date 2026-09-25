@@ -240,6 +240,15 @@ violations of their own.
 - **`schedule.validate` judges a period by its own `ruleSetId` snapshot, never "latest".**
   A full pass over a 6-week, 42-nurse draft takes ~14ms in main, so the grid re-validates
   after every mutation via query invalidation rather than predicting violations client-side.
+- **Repository patches go through `patchOf` with a `PatchKeys<Patch>` allow-list**
+  (`db/src/repositories/patch.ts`). IPC payloads are typed, not checked, so spreading a patch
+  into a row once let `{ unitId }` move a nurse between units and `{ date }` move a locked
+  shift. An unknown key throws. An assignment's date, shift and nurse change only by a move;
+  `AssignmentPatch` carries flags and notes, and IPC creates are always `source: 'manual'`.
+- **Only the app's own page may navigate or call IPC.** `main/trusted-origin.ts` is the
+  policy: `will-navigate` is blocked for any other URL (a file dropped on the grid would
+  otherwise load with the preload bridge), `ipc.ts` refuses untrusted sender frames, and
+  `openExternal` takes only `https:`/`mailto:`.
 - **Moving a shift is delete + create in one `transact`.** `nurseId` is immutable on an
   assignment; the move carries `isCharge`/`isOvertime`/`notes` across and refuses locked rows.
 - **The smoke test creates data through the raw bridge**, which bypasses the renderer's

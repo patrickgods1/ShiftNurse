@@ -34,15 +34,7 @@ import {
   nurse as nurseTable,
   preference as preferenceTable,
 } from '../schema.js';
-
-/** Drop keys the caller left `undefined`, so a partial patch only touches fields it sets. */
-function compact<T extends object>(obj: T): Partial<T> {
-  const out: Partial<T> = {};
-  for (const [key, value] of Object.entries(obj) as [keyof T, T[keyof T]][]) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
+import { type PatchKeys, patchOf } from './patch.js';
 
 function getNurseRowOrThrow(db: DbLike, id: Id): typeof nurseTable.$inferSelect {
   const row = db.select().from(nurseTable).where(eq(nurseTable.id, id)).get();
@@ -168,10 +160,28 @@ export interface NursePatch {
   active?: boolean;
 }
 
+const NURSE_PATCH_KEYS: PatchKeys<NursePatch> = {
+  employeeId: true,
+  firstName: true,
+  lastName: true,
+  role: true,
+  employmentType: true,
+  fte: true,
+  contractedHoursPerPeriod: true,
+  seniorityDate: true,
+  isChargeEligible: true,
+  isNovice: true,
+  isFloatEligible: true,
+  phone: true,
+  email: true,
+  notes: true,
+  active: true,
+};
+
 export function updateNurse(db: DbLike, id: Id, patch: NursePatch, actor: string): Nurse {
   const row = getNurseRowOrThrow(db, id);
   const before = toNurse(row);
-  const merged = { ...row, ...compact(patch) };
+  const merged = { ...row, ...patchOf(patch, NURSE_PATCH_KEYS, 'nurse') };
   db.update(nurseTable).set(merged).where(eq(nurseTable.id, id)).run();
   const after = toNurse(merged);
   recordAudit(db, { entityType: 'nurse', entityId: id, action: 'update', actor, before, after });

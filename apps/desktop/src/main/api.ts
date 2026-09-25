@@ -176,6 +176,7 @@ import {
   replaceNursePreferences,
   reportCallOff,
   requireChangeReason,
+  requirePeriodEditable,
   revokeCredential,
   type ShiftNurseDb,
   saveConflictPolicy,
@@ -1262,9 +1263,21 @@ export function createApi(
       validate: (periodId) => buildScheduleValidation(db, periodId),
       createAssignment: (input, reason) =>
         editSchedule(db, input.periodId, reason, 'manual', (tx, log) => {
+          const { periodId, nurseId, shiftTypeId, date, isLocked, isCharge, isOvertime, notes } =
+            input;
           const created = createAssignment(
             tx,
-            { ...input, source: input.source ?? 'manual' },
+            {
+              periodId,
+              nurseId,
+              shiftTypeId,
+              date,
+              source: 'manual',
+              isLocked,
+              isCharge,
+              isOvertime,
+              notes,
+            },
             ACTOR,
             reason,
           );
@@ -1302,7 +1315,14 @@ export function createApi(
           log({ kind: 'removed', assignment: existing, before: existing });
         });
       },
-      setLocked: (assignmentId, locked) => setAssignmentLocked(db, assignmentId, locked, ACTOR),
+      // A lock is deliberately not in the change log (it pins a shift for Generate; it does
+      // not change who works), so it skips `editSchedule` — but not the archived check.
+      setLocked: (assignmentId, locked) =>
+        transact(db, (tx) => {
+          const existing = assignmentOrThrow(tx, assignmentId);
+          requirePeriodEditable(periodOrThrow(tx, existing.periodId));
+          return setAssignmentLocked(tx, assignmentId, locked, ACTOR);
+        }),
     },
     publish: {
       preview: (periodId) => publishPreview(db, periodId),
@@ -1318,7 +1338,7 @@ export function createApi(
     backups: {
       list: () => listBackups(),
       create: () => createBackup(db, 'manual', 'manual'),
-      restore: (fileName) => restoreBackup(db, fileName),
+      restore: (fileName) => restoreBackup(db, fileName, () => solverJobs.dispose()),
     },
     solver: {
       start: (periodId, options) => solverJobs.start(periodId, options),

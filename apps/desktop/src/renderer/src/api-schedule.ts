@@ -2,8 +2,8 @@
  * Schedule-grid data hooks: live rule validation for a period, and the mutations that create,
  * move, edit, lock and delete assignments.
  *
- * Every mutation invalidates the same four things — that period's assignments, its validation,
- * its cost report, and the unit's dashboard summary (which shows the current draft) — because
+ * Every mutation refreshes the period's derived views (`invalidatePeriod`: assignments,
+ * validation, cost, fairness, conflicts, publish preview/alerts) and the unit's dashboard, because
  * a schedule edit without a validation refresh is exactly the failure mode the milestone brief
  * calls out: the grid would keep showing a stale "no violations" state for a shift that just
  * became illegal, and a stale price for a shift that just became overtime.
@@ -23,8 +23,7 @@ import type {
   MoveAssignmentInput,
 } from '../../shared/api.js';
 import { api, queryKeys } from './api.js';
-import { costKeys } from './api-cost.js';
-import { publishKeys } from './api-publish.js';
+import { invalidatePeriod } from './period-cache.js';
 
 export interface WithReason {
   reason?: string;
@@ -45,14 +44,7 @@ export function useValidation(periodId: Id | undefined) {
 function useInvalidateSchedule(periodId: Id | undefined, unitId: Id | undefined) {
   const queryClient = useQueryClient();
   return () => {
-    if (periodId !== undefined) {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.assignments(periodId) });
-      void queryClient.invalidateQueries({ queryKey: scheduleKeys.validation(periodId) });
-      void queryClient.invalidateQueries({ queryKey: costKeys.report(periodId) });
-      void queryClient.invalidateQueries({ queryKey: publishKeys.preview(periodId) });
-      void queryClient.invalidateQueries({ queryKey: publishKeys.changes(periodId) });
-      void queryClient.invalidateQueries({ queryKey: publishKeys.alerts(periodId) });
-    }
+    if (periodId !== undefined) invalidatePeriod(queryClient, periodId);
     if (unitId !== undefined) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });
     }

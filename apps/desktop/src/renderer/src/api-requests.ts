@@ -15,9 +15,7 @@ import type { AutoResolvePolicy, Id, IsoDate, Resolution } from '@shiftnurse/cor
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CreateTimeOffInput } from '../../shared/api.js';
 import { api, queryKeys } from './api.js';
-import { costKeys } from './api-cost.js';
-import { fairnessQueryKeys } from './api-fairness.js';
-import { scheduleKeys } from './api-schedule.js';
+import { invalidatePeriod } from './period-cache.js';
 
 export const requestKeys = {
   inRange: (unitId: Id, start: IsoDate, end: IsoDate) =>
@@ -84,13 +82,7 @@ function useInvalidateRequests(unitId: Id | undefined, periodId: Id | undefined)
       void queryClient.invalidateQueries({ queryKey: ['timeOff'] });
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });
     }
-    if (periodId !== undefined) {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.assignments(periodId) });
-      void queryClient.invalidateQueries({ queryKey: scheduleKeys.validation(periodId) });
-      void queryClient.invalidateQueries({ queryKey: costKeys.report(periodId) });
-      void queryClient.invalidateQueries({ queryKey: fairnessQueryKeys.report(periodId) });
-      void queryClient.invalidateQueries({ queryKey: requestKeys.conflicts(periodId) });
-    }
+    if (periodId !== undefined) invalidatePeriod(queryClient, periodId);
   };
 }
 

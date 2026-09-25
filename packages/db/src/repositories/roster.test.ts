@@ -117,6 +117,25 @@ describe('nurses', () => {
     expect(cleared.phone).toBeUndefined();
   });
 
+  it('refuses to move a nurse to another unit through an edit', () => {
+    // Types stop this at compile time; nothing stops it in an IPC payload at runtime.
+    const nurse = createNurse(handle.db, baseNurse({ firstName: 'Ada' }), ACTOR);
+    const other = createUnit(
+      handle.db,
+      {
+        name: '5 East',
+        unitType: 'ICU',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    const smuggled = { unitId: other.id, fte: 0.5 } as unknown as { fte: number };
+    expect(() => updateNurse(handle.db, nurse.id, smuggled, ACTOR)).toThrow(/unitId/);
+    expect(getNurse(handle.db, nurse.id)?.unitId).toBe(unitId);
+    expect(getNurse(handle.db, nurse.id)?.fte).toBe(1);
+  });
+
   it('keeps a deactivated nurse retrievable', () => {
     // Deleting would orphan historical assignments and make published schedules unreadable.
     const nurse = createNurse(handle.db, baseNurse(), ACTOR);

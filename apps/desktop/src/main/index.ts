@@ -9,12 +9,18 @@
 
 import { join } from 'node:path';
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, session, shell } from 'electron';
 import { createApi, createSolverJobs } from './api.js';
 import { ensureDailyBackup } from './backups.js';
 import { closeAppDatabase, openAppDatabase } from './database.js';
 import { registerIpc } from './ipc.js';
 import { isSmokeRun, runSmoke } from './smoke.js';
+import { type AppLocation, isAppUrl, isSafeExternalUrl } from './trusted-origin.js';
+
+const APP_LOCATION: AppLocation = {
+  indexHtmlPath: join(import.meta.dirname, '../renderer/index.html'),
+  devServerUrl: is.dev ? process.env.ELECTRON_RENDERER_URL : undefined,
+};
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -40,16 +46,10 @@ function createWindow(): BrowserWindow {
 
   win.on('ready-to-show', () => win.show());
 
-  // Links in the UI open in the system browser, never inside the app's privileged window.
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
-    return { action: 'deny' };
-  });
-
-  if (is.dev && process.env.ELECTRON_RENDERER_URL) {
-    void win.loadURL(process.env.ELECTRON_RENDERER_URL);
+  if (APP_LOCATION.devServerUrl !== undefined) {
+    void win.loadURL(APP_LOCATION.devServerUrl);
   } else {
-    void win.loadFile(join(import.meta.dirname, '../renderer/index.html'));
+    void win.loadFile(APP_LOCATION.indexHtmlPath);
   }
   return win;
 }
@@ -58,13 +58,30 @@ function createWindow(): BrowserWindow {
 if (isSmokeRun())
   app.setPath('userData', join(app.getPath('temp'), `shiftnurse-smoke-${process.pid}`));
 
+// Every window, including the hidden print window: no page may navigate away from the app
+// (a file dropped on the grid would otherwise load with the preload bridge attached), and
+// links open in the system browser only for schemes that cannot launch a local handler.
+app.on('web-contents-created', (_, contents) => {
+  contents.on('will-navigate', (event, url) => {
+    if (!isAppUrl(url, APP_LOCATION)) event.preventDefault();
+  });
+  contents.setWindowOpenHandler(({ url }) => {
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+});
+
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.shiftnurse.desktop');
+  // The app needs no camera, microphone, notifications or geolocation; say no to all of it.
+  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
+    callback(false),
+  );
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window));
 
   const db = openAppDatabase();
   const solverJobs = createSolverJobs(db);
-  registerIpc(createApi(db, solverJobs));
+  registerIpc(createApi(db, solverJobs), (url) => isAppUrl(url, APP_LOCATION));
   // The rolling daily copy. Off the startup path: a slow disk must not delay the window.
   void ensureDailyBackup(db).then(
     (b) => b && console.log(`[backup] daily backup written to ${b.path}`),

@@ -12,10 +12,7 @@
 import type { ExchangeProposal, Id, ShiftSwapStatus } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, queryKeys } from './api.js';
-import { costKeys } from './api-cost.js';
-import { fairnessQueryKeys } from './api-fairness.js';
-import { requestKeys } from './api-requests.js';
-import { scheduleKeys } from './api-schedule.js';
+import { invalidatePeriod } from './period-cache.js';
 
 export const exchangeKeys = {
   forUnit: (unitId: Id, status?: ShiftSwapStatus) =>
@@ -64,13 +61,7 @@ function useInvalidateExchanges(unitId: Id | undefined, periodId: Id | undefined
       void queryClient.invalidateQueries({ queryKey: ['exchange'] });
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });
     }
-    if (periodId !== undefined) {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.assignments(periodId) });
-      void queryClient.invalidateQueries({ queryKey: scheduleKeys.validation(periodId) });
-      void queryClient.invalidateQueries({ queryKey: costKeys.report(periodId) });
-      void queryClient.invalidateQueries({ queryKey: fairnessQueryKeys.report(periodId) });
-      void queryClient.invalidateQueries({ queryKey: requestKeys.conflicts(periodId) });
-    }
+    if (periodId !== undefined) invalidatePeriod(queryClient, periodId);
   };
 }
 

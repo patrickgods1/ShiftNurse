@@ -48,6 +48,7 @@ import {
   payRate,
   schedulePeriod,
 } from '../schema.js';
+import { type PatchKeys, patchOf } from './patch.js';
 import { getAssignment } from './schedule.js';
 
 // ---------------------------------------------------------------------------
@@ -408,6 +409,13 @@ export function listActiveDifferentials(db: DbLike, unitId: Id): Differential[] 
 export type DifferentialInput = Omit<Differential, 'id'>;
 export type DifferentialPatch = Partial<Pick<Differential, 'kind' | 'mode' | 'amount' | 'active'>>;
 
+const DIFFERENTIAL_PATCH_KEYS: PatchKeys<DifferentialPatch> = {
+  kind: true,
+  mode: true,
+  amount: true,
+  active: true,
+};
+
 export function createDifferential(
   db: DbLike,
   input: DifferentialInput,
@@ -436,7 +444,7 @@ export function updateDifferential(
   const row = db.select().from(differential).where(eq(differential.id, id)).get();
   if (!row) throw new Error(`Differential ${id} not found`);
   const before = toDifferential(row);
-  const merged = { ...row, ...compact(patch) };
+  const merged = { ...row, ...patchOf(patch, DIFFERENTIAL_PATCH_KEYS, 'differential') };
   db.update(differential).set(merged).where(eq(differential.id, id)).run();
   const after = toDifferential(merged);
   recordAudit(db, {
@@ -477,6 +485,13 @@ export type OvertimeRulePatch = Partial<
   Pick<OvertimeRule, 'basis' | 'thresholdHours' | 'multiplier' | 'active'>
 >;
 
+const OVERTIME_RULE_PATCH_KEYS: PatchKeys<OvertimeRulePatch> = {
+  basis: true,
+  thresholdHours: true,
+  multiplier: true,
+  active: true,
+};
+
 export function createOvertimeRule(
   db: DbLike,
   input: OvertimeRuleInput,
@@ -505,7 +520,7 @@ export function updateOvertimeRule(
   const row = db.select().from(overtimeRule).where(eq(overtimeRule.id, id)).get();
   if (!row) throw new Error(`Overtime rule ${id} not found`);
   const before = toOvertimeRule(row);
-  const merged = { ...row, ...compact(patch) };
+  const merged = { ...row, ...patchOf(patch, OVERTIME_RULE_PATCH_KEYS, 'overtime rule') };
   db.update(overtimeRule).set(merged).where(eq(overtimeRule.id, id)).run();
   const after = toOvertimeRule(merged);
   recordAudit(db, {
@@ -525,15 +540,6 @@ export function deleteOvertimeRule(db: DbLike, id: Id, actor: string): void {
   const before = toOvertimeRule(row);
   db.delete(overtimeRule).where(eq(overtimeRule.id, id)).run();
   recordAudit(db, { entityType: 'overtime_rule', entityId: id, action: 'delete', actor, before });
-}
-
-/** Drop `undefined` entries so a patch never overwrites a column with NULL by accident. */
-function compact<T extends object>(patch: T): Partial<T> {
-  const out: Partial<T> = {};
-  for (const [key, value] of Object.entries(patch)) {
-    if (value !== undefined) (out as Record<string, unknown>)[key] = value;
-  }
-  return out;
 }
 
 export function getBudget(db: DbLike, periodId: Id): Budget | undefined {
