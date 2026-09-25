@@ -339,7 +339,10 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
       smoke's 60 s budget under emulation)
 - [ ] Verify: install and launch the built artifact on Windows 11
       (the NSIS installer builds from macOS and carries the win32-x64 `.node`, but no Windows
-      machine was available to install and launch it — needs real Windows 11 hardware)
+      machine was available to install and launch it — needs real Windows 11 hardware.
+      M16: the packaged app now boots and passes its full self-test on `windows-2022` in CI, run
+      from outside the repo. The first real Windows 11 install (v0.1.0's first draft) crashed on
+      launch — fixed in PR #6; the fixed installer still needs that real-hardware launch.)
 
 ### M15 — Selectable solvers ✅
 Plan of record with checkable steps: [`docs/SOLVER_PLAN.md`](docs/SOLVER_PLAN.md). Three backends
@@ -358,16 +361,16 @@ the benchmark ranks higher.
       identical schedule, locks preserved); Generate fills every floor on the demo with each;
       `smoke:packaged` green on mac with the runner bundled
 
-### M16 — CI/CD and GitHub releases (planned)
+### M16 — CI/CD and GitHub releases ✅
 Plan of record with checkable steps: [`docs/CI_PLAN.md`](docs/CI_PLAN.md). CI (lint and typecheck
 on Linux; tests on Linux, macOS and Windows) on every push and pull request, required before
 merging into `main`; a `vX.Y.Z` tag builds and smoke-tests the mac arm64, mac x64 and Windows x64
 installers natively on GitHub and attaches them to a **draft** release. Unsigned for now.
 - [x] Phase 1 — `ci.yml`: lint, typecheck, tests on three OSes; Windows `tar` pin in the runner fetch
 - [x] Phase 2 — `release.yml`: native builds + packaged smoke per platform, draft release with SHA256SUMS
-- [ ] Phase 3 — branch protection on `main`; first draft release `v0.1.0`
-- [ ] Phase 4 — README, CLAUDE.md, ARCHITECTURE
-- [ ] Verify: CI green on branch, PR and `main`; a failing PR is blocked; the `v0.1.0` draft carries
+- [x] Phase 3 — branch protection on `main`; first draft release `v0.1.0`
+- [x] Phase 4 — README, CLAUDE.md, ARCHITECTURE
+- [x] Verify: CI green on branch, PR and `main`; a failing PR is blocked; the `v0.1.0` draft carries
       three installers whose `SHA256SUMS` verify, and one installs and runs locally
 
 ---

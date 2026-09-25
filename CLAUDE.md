@@ -82,6 +82,11 @@ self-service later becomes an intake surface rather than a new data model.
   produce mac dmgs (x64 + arm64) and a Windows NSIS installer. The mac build is verified via
   `smoke:packaged`; **the Windows installer has never been launched on real Windows 11
   hardware** — that is the one open M14 item.
+- **M16 — CI/CD** (complete; plan `docs/CI_PLAN.md`): `.github/workflows/ci.yml` (lint +
+  typecheck on Linux; tests on ubuntu/macos-15/windows-2022) guards `main` through branch
+  protection; `.github/workflows/release.yml` builds each installer natively on a `vX.Y.Z` tag,
+  smoke-tests it, and creates a **draft** release (`.github/release-notes.md`); it dry-runs on PRs
+  touching packaging. Builds are unsigned.
 - **M15 — Selectable solvers** (complete; plan of record `docs/SOLVER_PLAN.md`, results
   `docs/solver-bench.md`): Settings › Solver picks **hybrid** (default), **SA + LNS** or **CP-SAT**
   per unit; the Generate dialog overrides per run. `native/cpsat-runner` is the C++ OR-Tools
@@ -281,6 +286,24 @@ violations of their own.
   period, a deterministic-time budget — its parallel portfolio is faster but not reproducible.
   A runner that is missing, crashes or times out makes the hybrid finish as SA + LNS with
   `fellBackFrom` set; that is a *different schedule*, which is why the ready timeout is generous.
+- **CI job names are load-bearing.** Branch protection on `main` requires `lint-typecheck`,
+  `test (ubuntu-latest)`, `test (macos-15)` and `test (windows-2022)` by name; renaming a job
+  means updating the protection rule too. A release tag must equal `v` + both `package.json`
+  versions. Release builds pass `--publish never` (electron-builder would otherwise publish on
+  its own when it sees CI + tag + token) and name their target explicitly (`--mac dmg --arm64`):
+  `electron-builder.yml` lists both mac archs, which overrides a bare `--arm64` and once made each
+  mac job build — and upload — an untested copy of the other arch's dmg.
+- **The packaged smoke test runs outside the repo and needs `[smoke] PASS`.** `scripts/smoke.mjs`
+  copies the packaged app to a temp dir first and fails unless the app prints the marker. Inside
+  the repo a module missing from the app is found in the repo's `node_modules`, and a startup
+  crash dialog exits 0 when dismissed; v0.1.0's first draft crashed on every real install that
+  way. Anything the packaged main process imports at runtime must be bundled (so the
+  `better-sqlite3` alias applies — `drizzle-orm` is, for exactly that reason) or be a real
+  `dependency`. `SHIFTNURSE_SMOKE_SOLVE_TIMEOUT_MS` / `SHIFTNURSE_SMOKE_TIMEOUT_MS` loosen its
+  limits for slow CI runners.
+- **The solver gates removals too.** `SolverModel.isLegal` re-checks a nurse who lost a shift:
+  the consecutive-nights rule counts only all-night stretches, so removing a day from "day + four
+  nights" creates a violation. Any new move that takes a shift from a nurse must re-check them.
 - **Credit and licences travel with the code that needs them.** OR-Tools/CP-SAT and every library
   the runner bundles are listed in `native/cpsat-runner/THIRD_PARTY_NOTICES.md`, with full texts
   in `native/cpsat-runner/licenses/` that the CMake install copies into every bundle; research a
