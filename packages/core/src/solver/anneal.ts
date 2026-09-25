@@ -36,8 +36,10 @@
  * ## Every state the annealer visits is legal per nurse
  *
  * A move is applied only if each nurse it touches passes the rule gate with their new
- * timeline. Rejected candidates are undone before the next draw. So cancelling mid-run, or
- * hitting the time limit, still leaves a schedule every nurse could legally work.
+ * timeline — including a nurse who only *lost* a shift, because a removal can break a rule too
+ * (see `SolverModel.isLegal`). Rejected candidates are undone before the next draw. So
+ * cancelling mid-run, or hitting the time limit, still leaves a schedule every nurse could
+ * legally work.
  */
 
 import type { Assignment, NurseRole } from '../domain/entities.js';
@@ -200,13 +202,16 @@ function reassign(model: SolverModel, rng: Rng): Move | null {
     return null;
   }
   const added = model.add(replacement);
-  return {
-    delta: model.objective() - before,
-    undo: () => {
-      model.undoAdd(replacement, added);
-      model.undoRemove(a, removed);
-    },
+  const undo = () => {
+    model.undoAdd(replacement, added);
+    model.undoRemove(a, removed);
   };
+  // The nurse who gave the shift away was never gated: taking it can break a rule too.
+  if (!model.isLegal(from)) {
+    undo();
+    return null;
+  }
+  return { delta: model.objective() - before, undo };
 }
 
 /** Two nurses of the same role trade two shifts. */
@@ -288,6 +293,10 @@ function removeShift(model: SolverModel, rng: Rng): Move | null {
   if (!a) return null;
   const before = model.objective();
   const token: RemoveToken = model.remove(a);
+  if (!model.isLegal(model.nurseOf(a))) {
+    model.undoRemove(a, token);
+    return null;
+  }
   return { delta: model.objective() - before, undo: () => model.undoRemove(a, token) };
 }
 
@@ -404,13 +413,20 @@ function ruinAndRecreate(model: SolverModel, rng: Rng): Move | null {
   const removed = model.unlocked.filter((a) => dateIdxs.has(model.shiftOf(a).dateIdx));
   for (const a of removed) model.remove(a);
   const added = greedySeed(model, dateIdxs);
-  return {
-    delta: model.objective() - before,
-    undo: () => {
-      for (let i = added.length - 1; i >= 0; i--) model.remove(added[i]!);
-      // Re-adding what was there restores each nurse's previous set of shifts, which the
-      // gate already passed, so no re-check is needed.
-      for (const a of removed) model.add(a);
-    },
+  const undo = () => {
+    for (let i = added.length - 1; i >= 0; i--) model.remove(added[i]!);
+    // Re-adding what was there restores each nurse's previous set of shifts, which the
+    // gate already passed, so no re-check is needed.
+    for (const a of removed) model.add(a);
   };
+  // Everyone who lost a shift and was not given one back by the greedy passes (which gate each
+  // addition) is unchecked — and a removal can break a rule.
+  const regated = new Set(added.map((a) => model.nurseOf(a)));
+  for (const n of new Set(removed.map((a) => model.nurseOf(a)))) {
+    if (!regated.has(n) && !model.isLegal(n)) {
+      undo();
+      return null;
+    }
+  }
+  return { delta: model.objective() - before, undo };
 }

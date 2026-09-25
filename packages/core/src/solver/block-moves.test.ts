@@ -11,6 +11,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Assignment, Nurse, Preference } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
+import { defaultRuleSet, evaluateSchedule, hardRuleIdsByScope } from '../rules/registry.js';
+import { ScheduleView } from '../schedule/view.js';
 import {
   assign,
   coverage,
@@ -19,9 +21,13 @@ import {
   NIGHT_12,
   resetFixtureCounters,
   solveInputFrom,
+  timeOff,
+  UNIT_ID,
 } from '../testing/fixtures.js';
+import { anneal } from './anneal.js';
 import { exchangeBlock } from './block-moves.js';
 import { SolverModel } from './model.js';
+import { Rng } from './rng.js';
 
 beforeEach(() => {
   resetFixtureCounters();
@@ -158,5 +164,148 @@ describe('block moves', () => {
     move!.undo();
     expect(codes(model, x)).toEqual(['2026-01-05 D', '2026-01-06 D', '2026-01-07 D']);
     expect(codes(model, z)).toEqual([]);
+  });
+});
+
+describe('a move that takes a shift away', () => {
+  /**
+   * The consecutive-nights limit only counts stretches made *entirely* of nights, so taking a
+   * shift away can create a violation: day Mon + nights Tue–Fri is a legal five-day stretch, but
+   * without Monday's day it is four nights in a row, against a limit of three. Found by the
+   * release pipeline: SA + LNS emitted exactly that for a demo nurse.
+   */
+  function dayThenFourNights() {
+    const nurseX = makeNurse({ id: 'nurse-x', firstName: 'Xena' });
+    const nurseZ = makeNurse({ id: 'nurse-z', firstName: 'Zara' });
+    const base = defaultRuleSet(UNIT_ID);
+    // Five 12s in a week is 60h: lift the weekly cap so only the night rule is in play.
+    const ruleSet = {
+      ...base,
+      configs: base.configs.map((c) =>
+        c.ruleId === 'max-hours-per-week'
+          ? { ...c, params: { ...c.params, maxHoursPerWeek: 84, overtimeThresholdHours: 84 } }
+          : c,
+      ),
+    };
+    const input = solveInputFrom({
+      startDate: isoDate(PERIOD_START),
+      endDate: isoDate(PERIOD_END),
+      nurses: [nurseX, nurseZ],
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: [
+        ...['2026-01-05'].map((d) => coverage(DAY_12, 'RN', 1, 1, null, isoDate(d))),
+        ...['2026-01-06', '2026-01-07', '2026-01-08', '2026-01-09'].map((d) =>
+          coverage(NIGHT_12, 'RN', 1, 1, null, isoDate(d)),
+        ),
+      ],
+      ruleSet,
+    });
+    const model = new SolverModel(input);
+    const x = model.nurseIdx.get('nurse-x')!;
+    const z = model.nurseIdx.get('nurse-z')!;
+    const pattern: [number, typeof DAY_12][] = [
+      [MON, DAY_12],
+      [MON + 1, NIGHT_12],
+      [MON + 2, NIGHT_12],
+      [MON + 3, NIGHT_12],
+      [MON + 4, NIGHT_12],
+    ];
+    for (const [d, st] of pattern) {
+      const a = model.make(x, model.shiftAt(d, st));
+      if (!model.canAdd(x, a)) throw new Error(`setup: Xena cannot take ${st.name} on day ${d}`);
+      model.add(a);
+    }
+    return { model, x, z };
+  }
+
+  it('knows a nurse left with four nights in a row is no longer legal', () => {
+    const { model, x } = dayThenFourNights();
+    expect(model.isLegal(x)).toBe(true);
+    const monday = model.timeline(x).find((a) => a.shiftTypeId === DAY_12.id)!;
+    model.remove(monday);
+    expect(model.isLegal(x)).toBe(false);
+  });
+
+  it('refuses to hand away the day shift that keeps a run of nights legal', () => {
+    const { model, x, z } = dayThenFourNights();
+    const before = codes(model, x);
+    expect(exchangeBlock(model, x, z, MON, MON, 'give')).toBeNull();
+    expect(codes(model, x)).toEqual(before);
+    expect(codes(model, z)).toEqual([]);
+  });
+});
+
+describe('the annealer, when giving a shift away looks like an improvement', () => {
+  it('keeps the day shift that keeps a run of nights legal', () => {
+    // Xena holds day Mon + nights Tue–Fri and has asked to avoid days; Yusuf is on leave Tue–Fri,
+    // so all he can take is Monday's day. Handing it to him scores better and leaves Xena with
+    // four nights in a row — illegal. The annealer must not take that trade, however many times
+    // it is offered.
+    // Both per-diem: no contracted-hours floor, so losing Monday costs Xena nothing but the
+    // preference she gains — the trade is a pure improvement unless the gate stops it.
+    const perDiem = { employmentType: 'per_diem' as const, contractedHoursPerPeriod: 0 };
+    const xena = makeNurse({ id: 'nurse-x', firstName: 'Xena', ...perDiem });
+    const yusuf = makeNurse({ id: 'nurse-y', firstName: 'Yusuf', ...perDiem });
+    const base = defaultRuleSet(UNIT_ID);
+    const ruleSet = {
+      ...base,
+      configs: base.configs.map((c) =>
+        c.ruleId === 'max-hours-per-week'
+          ? { ...c, params: { ...c.params, maxHoursPerWeek: 84, overtimeThresholdHours: 84 } }
+          : c,
+      ),
+    };
+    const nights = ['2026-01-06', '2026-01-07', '2026-01-08', '2026-01-09'];
+    const input = solveInputFrom({
+      startDate: isoDate(PERIOD_START),
+      endDate: isoDate(PERIOD_END),
+      nurses: [xena, yusuf],
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: [
+        coverage(DAY_12, 'RN', 1, 1, null, isoDate('2026-01-05')),
+        ...nights.map((d) => coverage(NIGHT_12, 'RN', 1, 1, null, isoDate(d))),
+      ],
+      preferences: [
+        {
+          id: 'p-x',
+          nurseId: 'nurse-x',
+          kind: 'avoid_shift_type',
+          shiftTypeId: DAY_12.id,
+          weight: 5,
+        },
+      ],
+      timeOff: [timeOff('nurse-y', '2026-01-06', '2026-01-09')],
+      ruleSet,
+    });
+    for (let seed = 1; seed <= 10; seed++) {
+      const model = new SolverModel(input);
+      const x = model.nurseIdx.get('nurse-x')!;
+      for (const [d, st] of [
+        [MON, DAY_12],
+        [MON + 1, NIGHT_12],
+        [MON + 2, NIGHT_12],
+        [MON + 3, NIGHT_12],
+        [MON + 4, NIGHT_12],
+      ] as const) {
+        const a = model.make(x, model.shiftAt(d, st));
+        if (!model.canAdd(x, a)) throw new Error('setup: Xena cannot take her starting pattern');
+        model.add(a);
+      }
+      anneal(model, new Rng(seed), { seed, maxIterations: 3000 }, { shouldStop: () => null });
+      // Judged independently of the solver's own gate: the rule engine over the final schedule.
+      const view = new ScheduleView({
+        period: input.period,
+        assignments: model.assignments(),
+        nurses: model.nurses,
+        shiftTypes: model.shiftTypes,
+      });
+      const broken = evaluateSchedule(view, input.ruleSet, model.ctx, {
+        only: hardRuleIdsByScope(input.ruleSet, 'nurse'),
+      }).hardViolations.filter((v) => v.code !== 'under_contracted_hours');
+      expect(
+        broken.map((v) => v.message),
+        `seed ${seed}`,
+      ).toEqual([]);
+    }
   });
 });

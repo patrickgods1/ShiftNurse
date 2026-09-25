@@ -511,6 +511,16 @@ export class SolverModel {
     return this.countHardViolations(nurseIdx, candidate) <= this.baselineViolations[nurseIdx]!;
   }
 
+  /**
+   * Does this nurse's timeline, as it stands, pass every hard nurse-scope rule (against the same
+   * locked-shift baseline as `canAdd`)? Needed after taking a shift *away*: most rules can only
+   * be broken by adding, but not all — the consecutive-nights limit counts only stretches made
+   * entirely of nights, so removing the day shift from "day + four nights" creates a violation.
+   */
+  isLegal(nurseIdx: number): boolean {
+    return this.countHardViolations(nurseIdx, null) <= this.baselineViolations[nurseIdx]!;
+  }
+
   private countHardViolations(nurseIdx: number, candidate: Assignment | null): number {
     const nurse = this.nurses[nurseIdx]!;
     const own = this.byNurse[nurseIdx]!;
