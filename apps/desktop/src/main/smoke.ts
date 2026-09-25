@@ -236,20 +236,12 @@ const SOLVER_SCRIPT = `
       }
       return { status, progressSeen };
     };
-    const first = await run();
-    const after = await api.periods.assignments(draft.id);
     const key = (a) => a.nurseId + '|' + a.date + '|' + a.shiftTypeId + '|' + (a.isCharge ? 'C' : '');
-    const firstKeys = after.map(key).sort();
-    const validation = await api.schedule.validate(draft.id);
-    const nurseLevel = validation.result.hardViolations.filter((v) =>
-      !['understaffed', 'ratio_breach', 'missing_charge_nurse', 'all_novice_shift', 'missing_credential',
-        'under_contracted_hours'].includes(v.code));
-    const second = await run();
-    const again = (await api.periods.assignments(draft.id)).map(key).sort();
     const available = await api.solver.available();
     // Every other installed backend explicitly, twice each: it must finish, keep every nurse
-    // legal, and regenerate the identical schedule. (The default run above covers the unit's own
-    // solver — hybrid when the OR-Tools runner is installed.) A short CP-SAT budget keeps it quick.
+    // legal, and regenerate the identical schedule. A short CP-SAT budget keeps it quick. These run
+    // *before* the unit's own solver (hybrid when the runner is installed), so the draft the later
+    // publish and day-of checks work on is the schedule a manager would actually get.
     const others = [];
     for (const id of ['sa-lns', 'cp-sat']) {
       if (!available.some((a) => a.id === id && a.available)) continue;
@@ -272,6 +264,15 @@ const SOLVER_SCRIPT = `
             'under_contracted_hours'].includes(x.code)).map((x) => x.message).slice(0, 3),
       });
     }
+    const first = await run();
+    const after = await api.periods.assignments(draft.id);
+    const firstKeys = after.map(key).sort();
+    const validation = await api.schedule.validate(draft.id);
+    const nurseLevel = validation.result.hardViolations.filter((v) =>
+      !['understaffed', 'ratio_breach', 'missing_charge_nurse', 'all_novice_shift', 'missing_credential',
+        'under_contracted_hours'].includes(v.code));
+    const second = await run();
+    const again = (await api.periods.assignments(draft.id)).map(key).sort();
     return {
       solver: first.status.solver, fellBackFrom: first.status.fellBackFrom,
       reportSolver: first.status.report ? first.status.report.stats.solver : null,
@@ -542,23 +543,38 @@ function dayOfScript(periodId: string): string {
     // The demo draft starts next Sunday, so today() is never inside it — always pass a date,
     // computed the same way the other scripts do: Date.UTC on the split parts.
     const [y, m, d] = period.startDate.split('-').map(Number);
-    const date = new Date(Date.UTC(y, m - 1, d + 3)).toISOString().slice(0, 10);
+    const dayAt = (k) => new Date(Date.UTC(y, m - 1, d + k)).toISOString().slice(0, 10);
 
-    const summary = await api.dayOf.today(unit.id, date);
+    // A call-off whose replacement list is empty is a legitimate outcome — on a tightly packed
+    // schedule every other RN can be resting, capped or already on — so take the first 12h day
+    // RN, over the period's first few days, whose call-off does have a candidate. Each call-off
+    // without one is cancelled, with a reason, before trying the next. Only if none of them has
+    // a replacement is that a failure.
+    let date, summary, absent, callOff, report;
+    let tried = 0;
+    search: for (const k of [3, 4, 5, 6]) {
+      const day = dayAt(k);
+      const view = await api.dayOf.today(unit.id, day);
+      for (const s of view.shifts) {
+        if (!(s.shiftType.durationHours === 12 && !s.shiftType.isNight && !s.shiftType.isOnCall)) continue;
+        for (const entry of s.roster.filter((r) => r.nurse.role === 'RN')) {
+          tried++;
+          const c = await api.dayOf.reportCallOff(entry.assignment.id, 'Smoke: sick');
+          const r = await api.dayOf.replacements(c.id);
+          if (r.candidates.length > 0) {
+            date = day; summary = view; absent = entry; callOff = c; report = r;
+            break search;
+          }
+          await api.dayOf.cancelCallOff(c.id, 'Smoke: no eligible replacement, trying another shift');
+        }
+      }
+    }
+    if (!absent) return { error: 'no 12h day RN call-off with any eligible replacement (' + tried + ' tried)' };
     const shiftsCount = summary.shifts.length;
     const hasStaffing = summary.shifts.every((s) => s.staffing && s.staffing.byRole.RN);
     const periodMatches = !!summary.period && summary.period.id === period.id;
     const rosterCount = summary.shifts.reduce((n, s) => n + s.roster.length, 0);
 
-    let absent;
-    for (const s of summary.shifts) {
-      if (!(s.shiftType.durationHours === 12 && !s.shiftType.isNight && !s.shiftType.isOnCall)) continue;
-      const entry = s.roster.find((r) => r.nurse.role === 'RN');
-      if (entry) { absent = entry; break; }
-    }
-    if (!absent) return { error: 'no 12h day RN rostered on ' + date };
-
-    const callOff = await api.dayOf.reportCallOff(absent.assignment.id, 'Smoke: sick');
     let duplicateRefused = false;
     try {
       await api.dayOf.reportCallOff(absent.assignment.id, 'Smoke: sick again');
@@ -578,7 +594,7 @@ function dayOfScript(periodId: string): string {
       !!openView && openView.attempts.length === 0 && !!openView.assignment &&
       openView.nurse.id === absent.nurse.id;
 
-    const report = await api.dayOf.replacements(callOff.id);
+
     const candidateCount = report.candidates.length;
     const excludedCount = report.excluded.length;
     const tiers = report.candidates.map((c) => c.payTier);
@@ -596,9 +612,6 @@ function dayOfScript(periodId: string): string {
     const allCallout = report.candidates.every(
       (c) => c.assignment.source === 'callout' && c.assignment.date === date,
     );
-    if (candidateCount === 0) {
-      return { error: 'no eligible replacement candidates for ' + callOff.id, excludedCount, excludedReasons };
-    }
 
     const attempt = await api.dayOf.logCall(callOff.id, report.candidates[0].nurseId, 'no_answer', 'smoke');
     let acceptedRefused = false;
