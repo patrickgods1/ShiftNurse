@@ -105,8 +105,11 @@ jobs:
       - name: Package
         run: npm run dist -w @shiftnurse/desktop -- ${{ matrix.builder }} --publish never
       - name: Smoke-test the packaged app
+        # CI runners are several times slower than a developer Mac: allow 5 min per Generate
+        # (hybrid took 79–90 s+ on Windows) and 20 min for the whole self-test.
         env:
-          SHIFTNURSE_SMOKE_TIMEOUT_MS: '600000'
+          SHIFTNURSE_SMOKE_SOLVE_TIMEOUT_MS: '300000'
+          SHIFTNURSE_SMOKE_TIMEOUT_MS: '1200000'
         run: npm run smoke:packaged -w @shiftnurse/desktop -- --screenshot "$RUNNER_TEMP/smoke-${{ matrix.target }}.png"
       - uses: actions/upload-artifact@v4
         with:

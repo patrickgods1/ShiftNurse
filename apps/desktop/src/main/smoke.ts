@@ -208,6 +208,13 @@ const COST_SCRIPT = `
  * violation in it, and running it again on unchanged inputs writes the identical schedule.
  * A short iteration budget keeps this to a couple of seconds; the property is the same.
  */
+/**
+ * One Generate. 90 s is generous on a developer machine, where the default (hybrid) solve takes
+ * ~20–35 s; CI runners are several times slower — hybrid took 79 s on windows-2022 and 87 s on
+ * macos-15-intel, then 90 s+ on one Windows run — so the release workflow raises it.
+ */
+const SOLVE_TIMEOUT_MS = Number(process.env.SHIFTNURSE_SMOKE_SOLVE_TIMEOUT_MS ?? 90_000);
+
 const SOLVER_SCRIPT = `
   (async () => {
     const api = window.shiftnurse;
@@ -225,7 +232,7 @@ const SOLVER_SCRIPT = `
         await new Promise((r) => setTimeout(r, 100));
         status = await api.solver.status(job.id);
         if (status.progress) progressSeen++;
-        if (Date.now() - started > 90000) throw new Error('solve did not finish in 90s');
+        if (Date.now() - started > ${SOLVE_TIMEOUT_MS}) throw new Error('solve did not finish in ${SOLVE_TIMEOUT_MS / 1000}s');
       }
       return { status, progressSeen };
     };
