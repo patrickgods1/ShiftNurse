@@ -161,6 +161,20 @@ export class LocalSearch {
       model.add(candidate);
       added.push(candidate);
     }
+    // Nurses who lost a window shift and got nothing back were never gated; a removal can
+    // break a rule as well as an addition. (The CP-SAT encoding forbids it; the rule engine is
+    // still the judge.)
+    const regated = new Set(added.map((a) => model.nurseOf(a)));
+    for (const n of new Set(removed.map((a) => model.nurseOf(a)))) {
+      if (!regated.has(n) && !model.isLegal(n)) {
+        rollback();
+        const nurse = model.nurses[n]!;
+        throw new Error(
+          `CP-SAT's window left ${nurse.firstName} ${nurse.lastName} breaking a hard rule: the ` +
+            'CP-SAT encoding and the rule engine disagree.',
+        );
+      }
+    }
     const delta = model.objective() - before;
     if (delta > 1e-6) {
       rollback();

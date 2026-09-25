@@ -16,8 +16,9 @@
  * ## All or nothing
  *
  * Every shift in the block is removed first, then placed on its new owner one by one through
- * the same eligibility check and rule gate as any other move. If any placement fails, every
- * step is undone in reverse, so a refused block move leaves the model exactly as it found it
+ * the same eligibility check and rule gate as any other move, and both nurses' final timelines
+ * are checked — a nurse who only gave shifts away can be left illegal too. If any check fails,
+ * every step is undone in reverse, so a refused block move leaves the model exactly as it found it
  * and an accepted one never leaves either nurse with an illegal timeline. Locked shifts are
  * never part of a block; they stay where the manager pinned them and the gate judges the rest
  * of the block around them.
@@ -89,7 +90,11 @@ export function exchangeBlock(
     !place(
       from,
       incoming.map((a) => model.shiftOf(a)),
-    )
+    ) ||
+    // A nurse who only gave shifts away was never gated, and a removal can break a rule
+    // (day + four nights is legal; the four nights alone are not).
+    !model.isLegal(from) ||
+    !model.isLegal(to)
   ) {
     rollback();
     return null;
