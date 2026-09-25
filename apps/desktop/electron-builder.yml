@@ -8,6 +8,11 @@
 # `--` passthrough).
 appId: com.shiftnurse.desktop
 productName: ShiftNurse
+# The Windows installer names its folder after package.json's `name` (`@shiftnurse/desktop`
+# became `AppData\Local\Programs\@shiftnursedesktop`). Override it in the packaged metadata;
+# the app's name and data folder come from productName and are unchanged.
+extraMetadata:
+  name: shiftnurse
 directories:
   output: release
   buildResources: build
