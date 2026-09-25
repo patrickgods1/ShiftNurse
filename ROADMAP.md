@@ -341,7 +341,7 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
       (the NSIS installer builds from macOS and carries the win32-x64 `.node`, but no Windows
       machine was available to install and launch it — needs real Windows 11 hardware)
 
-### M15 — Selectable solvers (planned)
+### M15 — Selectable solvers ✅
 Plan of record with checkable steps: [`docs/SOLVER_PLAN.md`](docs/SOLVER_PLAN.md). Three backends
 behind the existing `Solver` seam, chosen per unit in Settings › Solver with a per-run override:
 **Hybrid** (default — annealing with CP-SAT re-optimising small windows), **SA + LNS** (the current
@@ -353,8 +353,8 @@ the benchmark ranks higher.
 - [x] Phase 3 — OR-Tools C++ runner, GitHub Actions build, per-target bundling, main-process client
 - [x] Phase 4 — CP-SAT backend: pure encode/decode in core, an encoder for every registered rule
 - [x] Phase 5 — Hybrid backend, `bench:solvers`, fallback order set from measured results
-- [ ] Phase 6 — CLAUDE.md, README, ARCHITECTURE
-- [ ] Verify: every backend passes the property suite (no nurse-scope hard violation, same seed →
+- [x] Phase 6 — CLAUDE.md, README, ARCHITECTURE, credits and bundled licences
+- [x] Verify: every backend passes the property suite (no nurse-scope hard violation, same seed →
       identical schedule, locks preserved); Generate fills every floor on the demo with each;
       `smoke:packaged` green on mac with the runner bundled
 

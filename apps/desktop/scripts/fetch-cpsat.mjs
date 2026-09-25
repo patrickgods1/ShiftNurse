@@ -27,12 +27,12 @@ export const TARGET_DIR = join(DESKTOP_DIR, '.cpsat', 'target');
 const CACHE_DIR = join(DESKTOP_DIR, '.cpsat', 'cache');
 
 const REPO = 'patrickgods1/ShiftNurse';
-export const RUNNER_TAG = 'cpsat-runner-v1';
+export const RUNNER_TAG = 'cpsat-runner-v2';
 /** From the release's SHA256SUMS; update together with RUNNER_TAG. */
 const SHA256 = {
-  'darwin-arm64': '54622dcc6971ebd9a86943891fd4e306484ed615437daed21635edca95a7baca',
-  'darwin-x64': 'cf026295dbdf4501c12d0bbdfccbcf6f47a322123f7d8da8e571135e0efae920',
-  'win32-x64': 'ae226b476534300767265400855704e729a849b22e180288ba6ee7ecae11f393',
+  'darwin-arm64': 'd6ba20e3e709979836f9118436934137c9fe68f14f6e29880df3f71c30122b18',
+  'darwin-x64': '3ab0f3ad350b193a191a0bb9872cb46c34f5f62d4250f6f3b3201975fbfa6083',
+  'win32-x64': '3f8fa2bfb13e96ca185f0376f502a19a2849fcc43436e53063556dbbbc172044',
 };
 
 export function runnerFileName(platform = process.platform) {

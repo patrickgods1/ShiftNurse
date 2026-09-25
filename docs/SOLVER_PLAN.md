@@ -362,18 +362,24 @@ Decisions:
       runner mid-run reported the fallback in its report but not in the job status the dialog
       reads.)*
 - [x] 5.15 **Commit & push to `feat/or-tools`:** "Add hybrid SA + CP-SAT solver and benchmark".
-- [ ] 5.16 Open a PR from `feat/or-tools` to `main`. CI is green; merge.
+- [x] 5.16 Open a PR from `feat/or-tools` to `main`. CI is green; merge.
 
 ## Phase 6 — Docs
-- [ ] 6.1 `CLAUDE.md`: Current state (the solver registry, `cpsat/`, the runner), the commands
+- [x] 6.1 `CLAUDE.md`: Current state (the solver registry, `cpsat/`, the runner), the commands
       (`bench:solvers`), and the new conventions (every rule needs a CP-SAT encoder; the runner
       lives in main; CP-SAT determinism settings).
-- [ ] 6.2 `README.md`: building the runner locally, the CI release flow, and bumping OR-Tools.
-- [ ] 6.3 `ARCHITECTURE.md`: why a C++ sidecar (no JS bindings; Python too heavy) and why the
+- [x] 6.2 `README.md`: building the runner locally, the CI release flow, and bumping OR-Tools.
+- [x] 6.3 `ARCHITECTURE.md`: why a C++ sidecar (no JS bindings; Python too heavy) and why the
       hybrid is the default.
-- [ ] 6.4 `ROADMAP.md`: tick M15. Windows real-hardware launch stays open and now also covers
+- [x] 6.4 `ROADMAP.md`: tick M15. Windows real-hardware launch stays open and now also covers
       the runner.
-- [ ] 6.5 **Commit & push to `main`:** "Document selectable solvers (M15)".
+- [x] 6.5 **Commit & push to `main`:** "Document selectable solvers (M15)".
+- [x] 6.6 *(Added.)* Credit and licences: README › Credits and references cites OR-Tools and
+      CP-SAT as the OR-Tools project asks, lists the libraries the app is built on, and cites the
+      seven papers the solver design draws on with DOIs; module headers cite the technique they
+      implement. `native/cpsat-runner/THIRD_PARTY_NOTICES.md` and `licenses/` cover OR-Tools and
+      every library the runner bundles, and ship inside every bundle from `cpsat-runner-v2`
+      (now pinned in `fetch-cpsat.mjs`).
 
 ## Open risk
 - The Windows runner is built in CI but, like the installer, not launched on real Windows 11
