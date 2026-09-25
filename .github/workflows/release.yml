@@ -22,6 +22,7 @@ on:
       - '.github/release-notes.md'
       - 'apps/desktop/electron-builder.yml'
       - 'apps/desktop/scripts/**'
+      - 'apps/desktop/src/main/smoke.ts'
   workflow_dispatch:
 
 permissions:
