@@ -231,6 +231,18 @@ the repo. Installers are
 unsigned for now — accepted as a v1 trade-off (Gatekeeper/SmartScreen warnings) with signing
 deferred rather than blocking the first real-world usage on it.
 
+### Release builds are made natively, per platform, in CI
+
+A local `npm run dist` can build every installer from one Mac, but release builds are made on
+GitHub Actions, one native runner per target (mac arm64, mac x64 on Intel, Windows x64). Each
+installer is then smoke-tested on the machine type it is for — the only way the Windows app and
+the Windows CP-SAT runner get launched without Windows hardware at hand — and a mac `.app`
+cannot be carried between jobs anyway (artifact upload drops the symlinks and executable bits
+its frameworks rely on). The packaged smoke test runs a copy of the app **outside the repo** and
+requires an explicit pass line: the first v0.1.0 draft passed inside the repo and crashed on
+every real install, because Node resolved a module the app had not shipped from the repo's own
+`node_modules`, and a crash dialog exits 0 when dismissed.
+
 ## What this architecture optimizes for, and what it gives up
 
 **Optimized for:**

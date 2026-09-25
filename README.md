@@ -1,5 +1,8 @@
 # ShiftNurse
 
+[![ci](https://github.com/patrickgods1/ShiftNurse/actions/workflows/ci.yml/badge.svg)](https://github.com/patrickgods1/ShiftNurse/actions/workflows/ci.yml)
+[![release](https://github.com/patrickgods1/ShiftNurse/actions/workflows/release.yml/badge.svg)](https://github.com/patrickgods1/ShiftNurse/actions/workflows/release.yml)
+
 A local desktop app (Electron, Windows 11 + macOS) that builds nurse unit schedules. It
 generates a union/contract-compliant schedule for a scheduling period, scores the result for
 fairness across the team, prices it, and — when demand can't be met — presents ranked
@@ -187,6 +190,39 @@ reads that file. It refuses to overwrite an existing one unless you pass `--forc
 > ELECTRON_RUN_AS_NODE` before `npm run dev` in that terminal (the smoke and dist scripts do
 > this automatically).
 
+## Continuous integration
+
+GitHub Actions runs [`ci.yml`](.github/workflows/ci.yml) on every push to `main` and every pull
+request:
+
+| Job | Runs on | What |
+|---|---|---|
+| `lint-typecheck` | ubuntu-latest | `npm run lint`, `npm run typecheck` |
+| `test (…)` | ubuntu-latest, macos-15, windows-2022 | `npm run build:packages`, `npm test` — on macOS and Windows against the real CP-SAT runner, which `npm ci` fetches |
+
+`main` is protected: a pull request merges only when those four checks pass (admins may still
+push directly). Lint runs on Linux only because Windows checks out with CRLF line endings, which
+Biome's format check would flag in every file. The pre-commit AI review stays local.
+
+## Releasing
+
+1. Bump `version` in **both** `package.json` and `apps/desktop/package.json` (the release
+   workflow refuses a tag that does not match both), merge to `main`.
+2. `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. [`release.yml`](.github/workflows/release.yml) builds each installer **natively** — mac arm64
+   on `macos-15`, mac x64 on `macos-15-intel`, Windows x64 on `windows-2022` — and boots each
+   packaged app in smoke mode, **from a copy outside the repo**, generating with every solver and
+   running publish, exports and the day-of console. Then it creates a **draft** GitHub release
+   with the three installers, their blockmaps and `SHA256SUMS`, and notes from
+   [`.github/release-notes.md`](.github/release-notes.md).
+4. Review the draft (download an installer, check it against `SHA256SUMS`, install it) and press
+   **Publish**. Nothing is public before that.
+
+A dry run (the same builds and smoke tests, no release) runs on any pull request that touches
+packaging, or by hand: `gh workflow run release.yml`. Builds are **unsigned** for now — the
+release notes explain macOS Gatekeeper's and Windows SmartScreen's one-time "open anyway" steps,
+and the workflow lists (commented out) the secrets that signing will need.
+
 ## Compiling executables
 
 Production bundle only (no installer):
@@ -223,6 +259,12 @@ Notes:
   `electron-builder.yml` ships as `resources/cpsat`. A failed fetch fails the build — an
   installer without it would silently lose two solvers. The runner and its OR-Tools libraries
   add roughly 50 MB unpacked (~20 MB compressed) per platform.
+- A local `npm run dist` builds both mac dmgs on this machine (and can cross-build Windows);
+  release builds are made per platform in CI instead (see [Releasing](#releasing)).
+- `npm run smoke:packaged` runs a **copy of the app outside the repo** and passes only on the
+  app's final `[smoke] PASS` line. Inside the repo, Node would find a module the app forgot to
+  ship in the repo's own `node_modules`, and a crash-on-launch dialog exits 0 when dismissed —
+  both let v0.1.0's first draft pass here and crash on every real install.
 - Installers are unsigned initially, so expect Gatekeeper (macOS) / SmartScreen (Windows)
   warnings — code signing is planned for later.
 - After any packaging-related change, run `npm run smoke:packaged -w @shiftnurse/desktop` to

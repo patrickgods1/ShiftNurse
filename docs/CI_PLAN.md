@@ -127,40 +127,61 @@ Decisions made:
     packaging, because `workflow_dispatch` only works once the workflow is on `main`.)*
 - [x] 2.4 **Commit & push to `ci/github-actions`:** "Build and smoke-test installers on GitHub
       and attach them to a draft release".
-- [ ] 2.5 Open a PR to `main`. CI runs on the PR itself and is green. Merge.
+- [x] 2.5 Open a PR to `main`. CI runs on the PR itself and is green. Merge.
 
 ## Phase 3 — Protect `main` and cut the first release (on `main`)
-- [ ] 3.1 Branch protection on `main` through `gh api`:
+- [x] 3.1 Branch protection on `main` through `gh api`:
   - Required checks: `lint-typecheck`, `test (ubuntu-latest)`, `test (macos-15)` and
     `test (windows-2022)`, set to "up to date before merging".
   - `enforce_admins: false`, so direct maintenance pushes stay possible, and no required reviews.
-- [ ] 3.2 Confirm it: a PR shows the four required checks, and `gh api …/protection` echoes them.
-- [ ] 3.3 Tag `v0.1.0` (the current version in both `package.json` files) and push the tag. The
+- [x] 3.2 Confirm it: a PR shows the four required checks, and `gh api …/protection` echoes them.
+- [x] 3.3 Tag `v0.1.0` (the current version in both `package.json` files) and push the tag. The
       release workflow produces a **draft** release with 3 installers, 3 blockmaps and
       `SHA256SUMS`, and nothing is public until you press Publish.
-- [ ] 3.4 Download the draft's mac arm64 dmg and check it against `SHA256SUMS`. It installs,
+- [x] 3.4 Download the draft's mac arm64 dmg and check it against `SHA256SUMS`. It installs,
       launches and generates a schedule on this Mac.
 
 ## Phase 4 — Docs (on `main`)
-- [ ] 4.1 `README.md`:
+- [x] 4.1 `README.md`:
   - CI status badge.
   - A **Continuous integration** section: what runs where, and why lint is Linux-only.
   - A **Releasing** section: bump both `version` fields, then `git tag vX.Y.Z && git push
     origin vX.Y.Z`, then review and publish the draft. The dry run is `gh workflow run
     release.yml`.
   - Update the "Compiling executables" notes (local `dist` still works).
-- [ ] 4.2 `CLAUDE.md`: Current state (M16 workflows); conventions for the release version check,
+- [x] 4.2 `CLAUDE.md`: Current state (M16 workflows); conventions for the release version check,
       `--publish never`, native per-platform builds, the fixed CI job names branch protection
       depends on, and the Windows `tar` pin.
-- [ ] 4.3 `ARCHITECTURE.md` › Packaging trade-offs: installers are built natively per platform
+- [x] 4.3 `ARCHITECTURE.md` › Packaging trade-offs: installers are built natively per platform
       in CI rather than cross-built from one Mac, and why (native smoke tests, and mac bundles
       not surviving artifact upload).
-- [ ] 4.4 `ROADMAP.md`:
+- [x] 4.4 `ROADMAP.md`:
   - Tick M16.
   - The M14 Windows item stays open (a CI VM is not real Windows 11 hardware), but record that
     the packaged app now boots and solves on `windows-2022` in CI.
-- [ ] 4.5 **Commit & push to `main`:** "Document CI and the release process (M16)". CI is green
+- [x] 4.5 **Commit & push to `main`:** "Document CI and the release process (M16)". CI is green
       on the push.
+
+## What phase 3 found
+The first `v0.1.0` release runs stopped (failing safely — no release was created) or produced a
+broken draft, and each was fixed at the root through a pull request:
+1. **Day-of smoke flake.** The published schedule was CP-SAT's (it ran last) and the day-of step
+   demanded a replacement for one fixed RN. Now the unit's own solver runs last and the step
+   tries each rostered RN, cancelling call-offs with no candidate (PR #4).
+2. **A real solver bug.** SA + LNS emitted "4 consecutive nights, maximum 3": the annealer gated
+   additions only, and removing a day from "day + four nights" creates an all-night stretch. Moves
+   now re-check nurses who lose a shift (`SolverModel.isLegal`), with mutation-checked tests (PR #5).
+3. **The installers crashed on launch** on macOS and on Windows 11 (reported from a real install):
+   `Cannot find package 'better-sqlite3'` from drizzle-orm's driver. drizzle-orm is now bundled so
+   the build alias applies. The packaged smoke test had passed because it ran inside the repo (Node
+   found the dev copy) and counted an exit 0 after the crash dialog; it now runs a copy outside the
+   repo and requires `[smoke] PASS` — verified to fail the broken build and pass the fixed one
+   (PR #6). The broken draft was deleted before anyone could publish it.
+4. Windows installs into `Programs\shiftnurse` (was `Programs\@shiftnursedesktop`) — to be confirmed
+   on the Windows machine.
+
+The current `v0.1.0` draft: three native builds, each passing the self-test from outside the repo;
+its mac arm64 dmg matches `SHA256SUMS` and an installed copy passes the self-test here.
 
 ## Verification (end to end)
 - CI: the four jobs are green on the branch, on the PR and on `main`. A deliberately failing
