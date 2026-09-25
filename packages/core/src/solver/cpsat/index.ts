@@ -1,6 +1,10 @@
 /**
  * The CP-SAT backend's two pure halves, around the one impure step core may not take.
  *
+ * CP-SAT is Google OR-Tools' constraint solver (Laurent Perron, Frédéric Didier and the OR-Tools
+ * team; Apache-2.0; https://developers.google.com/optimization/cp/cp_solver). It runs in the
+ * native runner (native/cpsat-runner); credits and citations are in README.md.
+ *
  *   prepareCpsat(input)  → model + parameters      (here)
  *   runner.solve(model)  → values, objective, bound (desktop: a subprocess)
  *   finishCpsat(result)  → SolveReport              (here)

@@ -39,13 +39,14 @@ Why this matters:
   the server engine unchanged. This is the single biggest architectural bet in the codebase,
   and it's enforced as a hard boundary (see below), not a convention people are trusted to
   remember.
-- **A pure TypeScript solver instead of a bundled Python/OR-tools process** was a deliberate
-  choice to avoid shipping and managing a second language runtime inside an Electron
-  installer. The trade-off is writing the greedy-seed + simulated-annealing solver by hand
-  instead of using an off-the-shelf constraint solver — acceptable here because the hard
-  rules are a small, well-understood set (rest, consecutive hours, coverage, credentials,
-  ratios) rather than a generic CSP, and determinism (see below) is easier to guarantee in
-  code you control than in a black-box solver library.
+- **A pure TypeScript solver first, OR-Tools second.** v1 shipped only a hand-written
+  greedy-seed + simulated-annealing solver, to avoid shipping a second runtime inside an
+  Electron installer. M15 revisited that: a hybrid that lets Google OR-Tools' CP-SAT
+  re-optimise a few days at a time beat the annealer on the demo and a 24-nurse unit
+  ([docs/solver-bench.md](docs/solver-bench.md)), so OR-Tools now ships — but as a small
+  native **C++** runner, not a Python process (see [Why a C++ sidecar](#why-a-c-sidecar-for-or-tools)).
+  The annealer stays pure TypeScript and is always available, so a missing or broken runner
+  degrades Generate to SA + LNS rather than breaking it.
 
 ### The boundary rule
 
@@ -140,6 +141,51 @@ schedule) so the solver stays fast enough to run interactively; each rule declar
 `scope` precisely so a rule that secretly reads outside its scope fails loudly (passes in the
 solver, fails on the grid) instead of silently producing a different answer in each context.
 
+## Why three solvers, and why the hybrid is the default
+
+The published nurse-rostering results (INRC-I/II) put exact methods — branch-and-price,
+mixed-integer programming — at the top and large-neighbourhood simulated annealing close
+behind, with CP-SAT strong on the Boolean-heavy rules (rest, consecutive days, overlap). What
+matters here is how each does on *this* problem at *this* size, so M15 built three behind the
+same `Solver` seam and measured them (`npm run bench:solvers`); citations for all of this are
+in [README.md › Credits and references](README.md#credits-and-references):
+
+- **SA + LNS** (pure TS): annealing with ruin-and-recreate and the two-nurse block swaps from
+  Ceschia, Guido & Schaerf (2020). Fast, always available, no optimality bound.
+- **CP-SAT** over the whole period: correct, and it reports a bound — but its linear relaxation
+  is weak for this objective, and on the demo unit it left 14–17 floors short where the
+  annealer left 0–1. Its fast parallel portfolio is not deterministic; the deterministic
+  interleaved mode is slower still. Kept for small units and for a proven bound.
+- **Hybrid** (default): anneal in eight chunks, and between them hand the worst three days to
+  CP-SAT with every other shift fixed. A window is a few hundred variables, solved to
+  optimality in well under a second, and it is exactly where annealing is weakest — a knot of
+  rest rules across adjacent days that no single move can untie. Best median objective on the
+  demo and a 24-nurse unit; about 3× the annealer's run time.
+
+Two properties hold for every backend. **One judge**: CP-SAT's model is a second statement of
+the rules, so its answers go back through `SolverModel.canAdd` — the same gate every annealer
+move passes — and the report comes from the same `evaluateSchedule`/`scoreFairness`/
+`costSchedule`; a disagreement fails loudly instead of reaching the grid. A guard test fails if
+any registered rule has no CP-SAT encoding. **Determinism**: CP-SAT is seeded from the period,
+bounded by deterministic time and run in `interleave_search` mode, so every backend regenerates
+the identical schedule from unchanged inputs.
+
+## Why a C++ sidecar for OR-Tools
+
+OR-Tools has no JavaScript bindings. The options were a Python process (the `ortools` wheel
+frozen with PyInstaller — 100 MB+ per platform, slow start-up, a second language runtime) or a
+small C++ program linked against the official OR-Tools C++ release. The C++ runner is ~200
+lines, starts in a fraction of a second, bundles only the OR-Tools libraries it loads (~50 MB
+unpacked), and speaks JSON lines whose schema imports OR-Tools' own `CpModelProto`, so a
+request is parsed straight into the real protobuf with exact int64 handling. CI builds it for
+every target and publishes it as a pinned release; the desktop build downloads it by tag and
+SHA-256 — nobody building the app needs a C++ toolchain.
+
+It runs as a subprocess of the solver *worker thread*, never of `packages/core` (which still
+starts no processes) and never on the main thread (encoding a large unit takes long enough to
+stall IPC). Core provides the pure halves — build the model, read the answer — and the desktop
+runs the one impure step in between.
+
 ## Why React 18 + TanStack Router/Query + Radix + Tailwind
 
 The renderer is a fairly ordinary modern React SPA: TanStack Router for code-based, hash-history
@@ -178,7 +224,10 @@ packaging is disabled (`npmRebuild: false`) because that rebuild targets the *ho
 Instead, `before-pack.mjs` fetches the correct prebuilt binary per **target** platform/arch
 (so a Windows installer built on a Mac doesn't accidentally carry a macOS binary), and
 `dist.mjs` restores the host binary afterward regardless of outcome. Electron is pinned to an
-exact version rather than a range because electron-builder requires that. Installers are
+exact version rather than a range because electron-builder requires that. The same hook
+fetches the CP-SAT runner for each target from its pinned GitHub release — the installer
+carries a native binary it did not compile, which is why the fetch checks a SHA-256 pinned in
+the repo. Installers are
 unsigned for now — accepted as a v1 trade-off (Gatekeeper/SmartScreen warnings) with signing
 deferred rather than blocking the first real-world usage on it.
 
@@ -196,13 +245,18 @@ deferred rather than blocking the first real-world usage on it.
 **Given up, deliberately, for v1:**
 - Multi-user concurrent editing (SQLite, single machine) — acceptable because v1 is
   explicitly manager-only, one unit, one machine.
-- A general-purpose constraint solver library — acceptable because the hard-rule set is
-  small and well-understood, and hand-rolling it keeps determinism and the pure-TS boundary
-  intact.
+- A pure-TypeScript-only app — given up in M15 for the hybrid solver's better schedules. The
+  cost is a native runner per platform (and ~20 MB compressed per installer), a second
+  statement of every rule in the CP-SAT encoding (guarded by tests against the rule engine),
+  and a hybrid Generate that takes ~3× as long as the annealer's.
 - Code-signed installers — acceptable to defer past first real usage; revisit before wider
   distribution.
 
 ## Further reading
+
+- [README.md › Credits and references](README.md#credits-and-references) — OR-Tools and CP-SAT
+  (with the citations their authors ask for), the libraries the runner bundles, and the
+  papers the solver design draws on.
 
 - [ROADMAP.md](ROADMAP.md) — the plan of record: milestones, locked-in decisions, and the
   verification steps each one was actually checked against.

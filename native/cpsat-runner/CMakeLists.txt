@@ -82,3 +82,9 @@ install(CODE [[
       TYPE SHARED_LIBRARY FOLLOW_SYMLINK_CHAIN FILES "${dep}")
   endforeach()
 ]])
+
+# Licences travel with the binaries: OR-Tools and every library the runner bundles (see
+# THIRD_PARTY_NOTICES.md). SCIP's and SoPlex's texts come from the OR-Tools archive itself.
+install(FILES THIRD_PARTY_NOTICES.md DESTINATION .)
+install(DIRECTORY licenses/ DESTINATION licenses)
+install(DIRECTORY "${ORTOOLS_ROOT}/share/licenses/" DESTINATION licenses OPTIONAL)

@@ -15,7 +15,9 @@
  * state, so the *order* in which choices are made is part of what determinism captures —
  * reordering the caller's logic changes its output even with the same seed, which is expected.
  *
- * This is mulberry32: a 32-bit state, integer-only, xorshift-style generator. It is not
+ * This is mulberry32, by Tommy Ettinger (public domain,
+ * https://gist.github.com/tommyettinger/46a874533244883189143505d203312c): a 32-bit state,
+ * integer-only, xorshift-style generator. It is not
  * cryptographically secure and must never be used for anything security-sensitive — it exists
  * solely to turn one integer seed into a long, well-distributed, exactly-repeatable sequence of
  * floats.

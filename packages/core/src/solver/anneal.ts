@@ -1,6 +1,12 @@
 /**
  * Simulated annealing over the solver model, with a ruin-and-recreate large neighbourhood.
  *
+ * Simulated annealing is Kirkpatrick, Gelatt & Vecchi, "Optimization by simulated annealing",
+ * Science 220(4598):671–680 (1983), doi:10.1126/science.220.4598.671. Ruin and recreate is
+ * Schrimpf, Schneider, Stamm-Wilbrandt & Dueck, "Record breaking optimization results using the
+ * ruin and recreate principle", J. Computational Physics 159(2):139–171 (2000),
+ * doi:10.1006/jcph.1999.6413.
+ *
  * ## Why annealing after a greedy seed
  *
  * The seed fills slots one at a time and never revisits a choice. That leaves the classic

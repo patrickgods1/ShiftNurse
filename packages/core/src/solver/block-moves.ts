@@ -8,9 +8,10 @@
  * cannot trade any one of those days: a night ending 07:00 followed by a day starting 07:00 is
  * zero hours of rest, so every intermediate state is illegal and the gate refuses it. Trading
  * the whole run at once jumps straight to the legal schedule on the other side. Ceschia, Guido
- * & Schaerf (Ann. Oper. Res. 288, 2020) got their INRC-II results from exactly this
- * neighbourhood — swapping blocks of consecutive days between two compatible nurses — driven by
- * simulated annealing like ours.
+ * & Schaerf got their INRC-II results from exactly this neighbourhood — swapping blocks of
+ * consecutive days between two compatible nurses — driven by simulated annealing like ours:
+ * "Solving the static INRC-II nurse rostering problem by simulated annealing based on large
+ * neighborhoods", Annals of Operations Research 288:95–113 (2020), doi:10.1007/s10479-020-03527-6.
  *
  * ## All or nothing
  *

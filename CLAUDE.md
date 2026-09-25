@@ -23,7 +23,13 @@ self-service later becomes an intake surface rather than a new data model.
   `costSchedule`, `marginalCost`, `compareToBudget` — the pay model is documented in
   `cost/types.ts`), `solver/` (M9: `types.ts` is the `Solver` contract, `model.ts` the
   incremental state + objective, `greedy.ts` the seed, `anneal.ts` the moves, `solver.ts` the
-  entry point, `rng.ts` the seeded mulberry32 shared with the seeder), `dayof/` (M13:
+  entry point, `rng.ts` the seeded mulberry32 shared with the seeder; M15 added
+  `registry.ts` (`SolverId`, `FALLBACK_ORDER`, `resolveSolverId`), `report.ts` (the one
+  `buildReport` every backend shares), `block-moves.ts` (two-nurse multi-day swaps),
+  `hybrid.ts` (`LocalSearch`: chunked annealing + CP-SAT windows) and `cpsat/` — `encode.ts`
+  (`SolveInput` → CP-SAT model, `CPSAT_ENCODERS` per rule), `rules/*` the rule encoders,
+  `objective.ts`, `builder.ts` (`CpBuilder`, whose `evaluate` prices a schedule without the
+  runner), `decode.ts`, `params.ts`, `index.ts` (`prepareCpsat` / `finishCpsat`)), `dayof/` (M13:
   `types.ts` contract, `replacements.ts`,
   `staffing.ts`), `conflicts/` (M10: `types.ts` is the
   contract, `engine.ts` the shared indexes + simulation state, `detect.ts`, `resolve.ts`,
@@ -31,11 +37,13 @@ self-service later becomes an intake surface rather than a new data model.
   verdicts `ok | warn | blocked` simulated on the conflicts engine), `publish/` (M12: `diff.ts`
   keyed on nurse/date/shift, `compliance.ts` alerts, `output.ts` grid/nurse-sheet projections
   and CSV), `testing/fixtures.ts`.
-- `packages/db` (M2, complete): 30-table Drizzle schema, generated migrations, `client.ts`
+- `packages/db` (M2, complete): 31-table Drizzle schema, generated migrations, `client.ts`
   (WAL, foreign keys ON, `transact`), `audit.ts`, `mappers.ts`, and repositories under
   `repositories/` — `roster`, `config`, `schedule`, `timeoff`, `operations`, `publish` (M12:
   `publishSchedule` writes a `schedule_version` + status + ledger; `requireChangeReason` /
-  `recordScheduleChange` are the post-publish change log).
+  `recordScheduleChange` are the post-publish change log; M15: `solver` (the per-unit
+  `solver_settings`) and `solve-input` (`loadPeriodInput`, the one definition of a period's
+  `SolveInput`, shared by Generate, conflicts, cost and the solver benchmark)).
 - `apps/desktop` (M3, complete): electron-vite. `src/shared/api.ts` is the IPC contract
   (`ShiftNurseApi`, `API_CHANNELS`); `src/main/` opens the DB in `userData` (seeding the demo
   unit on first launch), implements the contract in `api.ts`, registers it in `ipc.ts`;
@@ -74,8 +82,15 @@ self-service later becomes an intake surface rather than a new data model.
   produce mac dmgs (x64 + arm64) and a Windows NSIS installer. The mac build is verified via
   `smoke:packaged`; **the Windows installer has never been launched on real Windows 11
   hardware** — that is the one open M14 item.
-- **M15 — Selectable solvers** (planned): hybrid / SA + LNS / CP-SAT behind the `Solver` seam, with
-  a per-unit setting. The checkable plan is `docs/SOLVER_PLAN.md`; follow its phases and commit points.
+- **M15 — Selectable solvers** (complete; plan of record `docs/SOLVER_PLAN.md`, results
+  `docs/solver-bench.md`): Settings › Solver picks **hybrid** (default), **SA + LNS** or **CP-SAT**
+  per unit; the Generate dialog overrides per run. `native/cpsat-runner` is the C++ OR-Tools
+  runner (JSON lines, `runner.proto`), built by `.github/workflows/cpsat-runner.yml` and released
+  as `cpsat-runner-v*`; `apps/desktop/scripts/fetch-cpsat.mjs` pins tag + SHA-256 and fills
+  `.cpsat/host` (postinstall) and `.cpsat/target` (before-pack). In main: `cpsat-process.ts`
+  (runner client), `ortools-solvers.ts` (CP-SAT and hybrid orchestration, used by the worker and
+  the benchmark), `solver-choice.ts` / `solver-backends.ts` (availability and fallback),
+  `solver-bench.run.ts` (`npm run bench:solvers`).
 
 `README.md` is the build/run/ship guide for humans; `ARCHITECTURE.md` is the "why this stack"
 write-up. Keep the three in step: a milestone or convention change here should be reflected
@@ -146,7 +161,9 @@ violations of their own.
 | `npm run seed:demo` | Builds and runs the demo seeder into a local SQLite file. |
 | `npm run dev` | Builds packages, then runs package watchers + `electron-vite dev` with HMR. |
 | `npm run build` / `dist` | Production bundles into `apps/desktop/out`; `dist` then packages with electron-builder. |
-| `npm run smoke -w @shiftnurse/desktop` / `npm run smoke:packaged -w @shiftnurse/desktop` | Builds and boots the real app headlessly against a temp `userData`, asserts the preload bridge and dashboard rendered, exits non-zero otherwise. `--screenshot <png>` captures the window. Run this after touching main/preload/IPC — unit tests cannot see a wrong-ABI native module or a preload that never ran. |
+| `npm run smoke -w @shiftnurse/desktop` / `npm run smoke:packaged -w @shiftnurse/desktop` | Builds and boots the real app headlessly against a temp `userData`, asserts the preload bridge and dashboard rendered, exits non-zero otherwise. `--screenshot <png>` captures the window. Run this after touching main/preload/IPC — unit tests cannot see a wrong-ABI native module or a preload that never ran. With the CP-SAT runner installed it generates with every solver twice (minutes); `SHIFTNURSE_SMOKE_TIMEOUT_MS` raises the 240 s limit for an emulated x64 run. |
+| `npm run bench:solvers` | Every solver × three units × three seeds → `docs/solver-bench.md`. Needs the runner; minutes; not part of `npm test`. `FALLBACK_ORDER` cites its result. |
+| `npm run fetch:cpsat -w @shiftnurse/desktop` | Fetches the pinned CP-SAT runner for this machine into `apps/desktop/.cpsat/host`; fails loudly (postinstall only warns). |
 
 ## Git hooks (`.githooks/`, wired by `npm install` via the `prepare` script)
 
@@ -250,6 +267,25 @@ violations of their own.
   a hash of the period id; the iteration budget, not the clock, ends the run (the wall-clock limit
   is a safety valve). Anything that depends on wall time in a solve path breaks "regenerate
   unchanged inputs → identical schedule", which the smoke test asserts.
+- **Every registered rule needs a CP-SAT encoding.** `CPSAT_ENCODERS` in `solver/cpsat/encode.ts`
+  maps each rule id to an encoder or `'by-construction'`; a test fails on any missing id, and
+  `encodeCpsat` refuses by name when an enabled hard rule has none. A new rule is therefore a
+  `Rule`, a registry entry *and* an encoder, checked against the rule engine by
+  `encode.test.ts` (hand-worked cases, parity with `SolverModel`, and 400 random rosters that
+  must be judged identically). CP-SAT's answers still go back through `SolverModel.canAdd`
+  before anything is written — the rule engine stays the judge.
+- **The OR-Tools runner lives in the solver worker, never in core or on the main thread.**
+  Core holds the pure halves (`prepareCpsat`/`finishCpsat`, `LocalSearch.encodeWindow`/
+  `applyWindow`); `main/ortools-solvers.ts` does the async step between. CP-SAT is deterministic
+  only as configured in `cpsat/params.ts`: 8 workers with `interleave_search`, a seed from the
+  period, a deterministic-time budget — its parallel portfolio is faster but not reproducible.
+  A runner that is missing, crashes or times out makes the hybrid finish as SA + LNS with
+  `fellBackFrom` set; that is a *different schedule*, which is why the ready timeout is generous.
+- **Credit and licences travel with the code that needs them.** OR-Tools/CP-SAT and every library
+  the runner bundles are listed in `native/cpsat-runner/THIRD_PARTY_NOTICES.md`, with full texts
+  in `native/cpsat-runner/licenses/` that the CMake install copies into every bundle; research a
+  solver technique comes from is cited in its module header and in README › Credits and
+  references. Bundling a new library or adopting a published method means adding its entry.
 - **`dayNumber`/`fromDayNumber` are memoised.** The rule engine on partial views converts the same
   few dozen dates millions of times per solve; without the cache that was 60% of a run.
 - **Demo data must be staffable by construction.** The seeder deals roles and employment types
@@ -321,7 +357,7 @@ violations of their own.
 
 ## Pointers
 
-- **`ROADMAP.md` is the plan of record** — 14 milestones, locked-in decisions, verification
+- **`ROADMAP.md` is the plan of record** — 15 milestones, locked-in decisions, verification
   steps. Tick a box when the work lands *and* its verification passes, not when code is written.
 - **`.claude/skills/scheduling-review`** — the domain review checklist for scheduling changes.
 - `.claude/scripts/` — SessionStart roadmap summary and a non-blocking Stop-hook test run.

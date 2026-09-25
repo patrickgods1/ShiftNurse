@@ -5,6 +5,13 @@ JavaScript bindings, so the Electron main process spawns this binary and talks t
 stdin/stdout. It does no scheduling logic: `packages/core` encodes the schedule as a
 `CpModelProto`; the runner solves it and reports back.
 
+It is built on **[Google OR-Tools](https://developers.google.com/optimization)** and its
+**CP-SAT** solver (Apache-2.0), by Laurent Perron, Frédéric Didier and the OR-Tools team at
+Google. Every bundle carries `THIRD_PARTY_NOTICES.md` and a `licenses/` folder with the licence
+of OR-Tools and of each library it ships (Abseil, Protocol Buffers, RE2, HiGHS, SCIP, SoPlex,
+COIN-OR, Eigen, zlib, bzip2, and on Windows the MSVC runtime) — see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), including how to cite OR-Tools and CP-SAT.
+
 ## Protocol
 
 One JSON message per line in each direction; the schema is [`runner.proto`](runner.proto).
@@ -31,7 +38,7 @@ gh release download v9.15 -R google/or-tools -p 'or-tools_arm64_macOS-26.2_cpp_v
 tar xzf or-tools_arm64_macOS-26.2_cpp_v9.15.6755.tar.gz
 cmake -S native/cpsat-runner -B build -DORTOOLS_ROOT="$PWD/or-tools_arm64_macOS-26.2_cpp_v9.15.6755" -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
-cmake --install build --prefix dist        # dist/cpsat-runner + dist/lib/*.dylib (~50 MB)
+cmake --install build --prefix dist        # dist/cpsat-runner + dist/lib/*.dylib + dist/licenses/ (~50 MB)
 native/cpsat-runner/test/check.sh dist/cpsat-runner
 ```
 
