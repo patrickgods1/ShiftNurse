@@ -363,8 +363,8 @@ Plan of record with checkable steps: [`docs/CI_PLAN.md`](docs/CI_PLAN.md). CI (l
 on Linux; tests on Linux, macOS and Windows) on every push and pull request, required before
 merging into `main`; a `vX.Y.Z` tag builds and smoke-tests the mac arm64, mac x64 and Windows x64
 installers natively on GitHub and attaches them to a **draft** release. Unsigned for now.
-- [ ] Phase 1 — `ci.yml`: lint, typecheck, tests on three OSes; Windows `tar` pin in the runner fetch
-- [ ] Phase 2 — `release.yml`: native builds + packaged smoke per platform, draft release with SHA256SUMS
+- [x] Phase 1 — `ci.yml`: lint, typecheck, tests on three OSes; Windows `tar` pin in the runner fetch
+- [x] Phase 2 — `release.yml`: native builds + packaged smoke per platform, draft release with SHA256SUMS
 - [ ] Phase 3 — branch protection on `main`; first draft release `v0.1.0`
 - [ ] Phase 4 — README, CLAUDE.md, ARCHITECTURE
 - [ ] Verify: CI green on branch, PR and `main`; a failing PR is blocked; the `v0.1.0` draft carries

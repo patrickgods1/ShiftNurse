@@ -50,8 +50,8 @@ Decisions made:
 - [x] 0.3 **Commit & push to `main`:** "Plan M16: CI/CD and GitHub release builds".
 
 ## Phase 1 — CI on every push and pull request (branch `ci/github-actions`)
-- [ ] 1.1 `git checkout -b ci/github-actions`.
-- [ ] 1.2 `.github/workflows/ci.yml`:
+- [x] 1.1 `git checkout -b ci/github-actions`.
+- [x] 1.2 `.github/workflows/ci.yml`:
   - Triggers: `push` to `main`, `pull_request`, and `workflow_dispatch`.
   - `concurrency` cancels superseded runs on the same ref. `permissions: contents: read`.
   - Job **`lint-typecheck`** (ubuntu-latest): `actions/checkout@v4`,
@@ -62,17 +62,26 @@ Decisions made:
     `npm run build:packages` (desktop tests import core/db from `dist`), then `npm test`.
   - Job names stay fixed (`lint-typecheck`, `test (ubuntu-latest)`, …) because branch protection
     refers to them.
-- [ ] 1.3 `apps/desktop/scripts/fetch-cpsat.mjs`: on `win32`, run
+- [x] 1.3 `apps/desktop/scripts/fetch-cpsat.mjs`: on `win32`, run
       `${process.env.SystemRoot}\System32\tar.exe`, and fall back to `tar` only if it is missing.
       The comment gives the GNU-tar reason.
-- [ ] 1.4 Push the branch. Fix anything platform-specific CI turns up (Windows paths, line
+- [x] 1.4 Push the branch. Fix anything platform-specific CI turns up (Windows paths, line
       endings in test fixtures, timing), each with its root cause in the commit message.
-- [ ] 1.5 All four jobs are green. Record in this file how long each took.
-- [ ] 1.6 **Commit & push to `ci/github-actions`:** "Add CI: lint, typecheck and tests on
+      *(Three fixes:*
+      - *`npm run typecheck` depended on a prior local build, because `@shiftnurse/core`
+        resolves to its git-ignored `dist` typings, so it failed on a fresh checkout. It now
+        builds the packages first.*
+      - *The runner-client tests spawn processes and hit Vitest's 5 s default on a busy Windows
+        VM; they now allow 30 s.*
+      - *The real-runner smoke test now allows 60 s, because a freshly unpacked runner is
+        OS-scanned on first launch.)*
+- [x] 1.5 All four jobs are green. Record in this file how long each took. *(lint-typecheck
+      25 s, test ubuntu 33 s, macOS 98 s, Windows 157 s.)*
+- [x] 1.6 **Commit & push to `ci/github-actions`:** "Add CI: lint, typecheck and tests on
       Linux, macOS and Windows".
 
 ## Phase 2 — Release builds from a version tag (branch `ci/github-actions`)
-- [ ] 2.1 `.github/workflows/release.yml`:
+- [x] 2.1 `.github/workflows/release.yml`:
   - Triggers: `push` of tags `v*` (this does not match `cpsat-runner-v*`, which starts with `c`),
     and `workflow_dispatch` (a dry run that builds and smoke-tests but publishes nothing).
   - Job **`version`** (ubuntu): fails unless the tag equals `v` + the `version` in both
@@ -96,20 +105,27 @@ Decisions made:
     - Downloads every artifact and writes `SHA256SUMS`.
     - Runs `gh release create vX.Y.Z --draft --title "ShiftNurse X.Y.Z"
       --notes-file` with the rendered notes, attaching the installers, blockmaps and `SHA256SUMS`.
-- [ ] 2.2 `.github/release-notes.md`, the template the release job renders with the version:
+- [x] 2.2 `.github/release-notes.md`, the template the release job renders with the version:
   - What to download for which machine.
   - The unsigned-app steps:
     - macOS: right-click › Open, or `xattr -dr com.apple.quarantine /Applications/ShiftNurse.app`
       if macOS says the app is damaged.
     - Windows: SmartScreen › More info › Run anyway.
   - How to verify `SHA256SUMS`, and a link to the solver benchmark.
-- [ ] 2.3 Run the dry run (`gh workflow run release.yml --ref ci/github-actions`). All three
+- [x] 2.3 Run the dry run (`gh workflow run release.yml --ref ci/github-actions`). All three
       builds and smoke runs are green. Download and inspect the artifacts: the file names follow
       `ShiftNurse-<version>-<os>-<arch>.<ext>`, and the dmg mounts locally.
   - The Windows smoke is the **first launch of the packaged Windows app** (a CI VM, not real
     hardware). It also covers the Windows CP-SAT runner doing real solves.
   - The mac x64 smoke runs natively on Intel, not under Rosetta.
-- [ ] 2.4 **Commit & push to `ci/github-actions`:** "Build and smoke-test installers on GitHub
+  - *(Green on all three: mac arm64 226 s, mac x64 559 s, Windows 331 s. Every solver
+    regenerated identically on each, including hybrid and CP-SAT on Windows. The first dry run
+    exposed that each mac job built **both** dmgs: `electron-builder.yml`'s mac arch list
+    overrides a bare `--arm64`, so an untested copy could have been released. Jobs now pass
+    `--mac dmg --arm64` etc., upload only their own file, and the release job requires exactly
+    three installers. The dmg mounts locally. Dry runs also run on pull requests that touch
+    packaging, because `workflow_dispatch` only works once the workflow is on `main`.)*
+- [x] 2.4 **Commit & push to `ci/github-actions`:** "Build and smoke-test installers on GitHub
       and attach them to a draft release".
 - [ ] 2.5 Open a PR to `main`. CI runs on the PR itself and is green. Merge.
 
