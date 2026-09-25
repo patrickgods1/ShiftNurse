@@ -122,7 +122,7 @@ Run from the repo root unless noted.
 | `npm run lint` | `biome check .` — format + lint, no writes. |
 | `npm run lint:fix` | `biome check --write .`. |
 | `npm run format` | `biome format --write .`. |
-| `npm run typecheck` | `tsc --build --force` against the root `tsconfig.json` (every package **including test files**), then the desktop's own `tsc --noEmit` over its `tsconfig.node.json` and `tsconfig.web.json`. |
+| `npm run typecheck` | Builds `core` and `db`, then `tsc --build --force` against the root `tsconfig.json` (every package **including test files**), then the desktop's own `tsc --noEmit` over its `tsconfig.node.json` and `tsconfig.web.json`. |
 | `npm run check` | lint + typecheck + test — the pre-commit gate. |
 | `npm run build:packages` | Builds `core` then `db` with `tsc`. `dev`, `build` and `seed:demo` run it for you; run it by hand after touching core before trusting a smoke result. |
 | `npm run seed:demo` | Builds and runs the demo seeder into a standalone `packages/db/demo.sqlite` (optional; the app seeds its own DB). `-- --force` overwrites, `-- --seed <n>` changes the RNG seed. |

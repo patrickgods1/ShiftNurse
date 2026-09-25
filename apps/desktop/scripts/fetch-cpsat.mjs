@@ -71,14 +71,23 @@ export async function fetchCpsat({
 
   rmSync(dest, { recursive: true, force: true });
   mkdirSync(dest, { recursive: true });
-  // bsdtar ships with macOS and Windows 10+, and GNU tar with Linux; all read .tar.gz.
-  const result = spawnSync('tar', ['-xzf', cached, '-C', dest], { stdio: 'inherit' });
+  // bsdtar ships with macOS and Windows 10+, and GNU tar with Linux; all read .tar.gz. On
+  // Windows, name System32's bsdtar explicitly: Git for Windows puts GNU tar on some PATHs, and
+  // GNU tar reads `C:\...` as `host:path` — a remote archive — and fails.
+  const result = spawnSync(tarCommand(), ['-xzf', cached, '-C', dest], { stdio: 'inherit' });
   if (result.status !== 0) throw new Error(`[fetch-cpsat] could not unpack ${cached}`);
   const exe = join(dest, runnerFileName(platform));
   if (!existsSync(exe))
     throw new Error(`[fetch-cpsat] ${asset} has no ${runnerFileName(platform)}`);
   console.log(`[fetch-cpsat] ${target} runner (${RUNNER_TAG}) ready in ${dest}`);
   return exe;
+}
+
+/** The tar for the machine doing the extracting (not the build target). */
+function tarCommand() {
+  if (process.platform !== 'win32') return 'tar';
+  const systemTar = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
+  return existsSync(systemTar) ? systemTar : 'tar';
 }
 
 function sha256(bytes) {

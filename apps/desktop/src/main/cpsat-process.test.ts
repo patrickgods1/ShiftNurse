@@ -24,7 +24,10 @@ afterEach(() => {
   for (const runner of runners.splice(0)) runner.dispose();
 });
 
-describe('the CP-SAT runner client', () => {
+// Every test here starts a real child process. Vitest's 5 s default is too tight on a busy
+// Windows CI VM, where process start-up (and antivirus scanning it) alone took most of it: the
+// queueing test failed there at 5.2 s after passing on the previous run.
+describe('the CP-SAT runner client', { timeout: 30_000 }, () => {
   it('reports the solver version once the runner is up', async () => {
     expect(await fakeRunner().start()).toBe('fake-1');
   });
@@ -98,7 +101,10 @@ describe.skipIf(REAL === undefined)('the real CP-SAT runner', () => {
       { num_workers: 1, random_seed: 1 },
     );
     expect(result).toMatchObject({ status: 'OPTIMAL', objective: -34, values: [6, 4] });
-  });
+    // Not the 5 s default: the first launch of a freshly unpacked runner is scanned by the OS
+    // (macOS checks the binary and its ~100 libraries) and can take seconds — every CI run
+    // unpacks it fresh.
+  }, 60_000);
 });
 
 describe('finding the runner', () => {

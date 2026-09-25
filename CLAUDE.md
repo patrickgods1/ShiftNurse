@@ -155,7 +155,7 @@ violations of their own.
 | `npm run lint` | `biome check .` — format + lint, no writes. |
 | `npm run lint:fix` | Biome check with `--write`. |
 | `npm run format` | `biome format --write .`. |
-| `npm run typecheck` | `tsc --build --force` against the root `tsconfig.json`, which covers every package **including test files**. The per-package configs set `composite` and exclude `*.test.ts` so they emit clean `.d.ts`, so a build-only check would never look at the tests. |
+| `npm run typecheck` | Builds `core` and `db` first, then `tsc --build --force` against the root `tsconfig.json`, which covers every package **including test files**. The per-package configs set `composite` and exclude `*.test.ts` so they emit clean `.d.ts`, so a build-only check would never look at the tests. The build comes first because `db` and the desktop resolve `@shiftnurse/core` through its `dist` typings: without it a fresh checkout (CI) cannot typecheck, and a stale local `dist` would check against old types. |
 | `npm run check` | lint + typecheck + test. The pre-commit gate. |
 | `npm run build:packages` | Builds `core` then `db` with `tsc`. Required before `seed:demo`. |
 | `npm run seed:demo` | Builds and runs the demo seeder into a local SQLite file. |

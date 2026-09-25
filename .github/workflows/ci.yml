@@ -1,0 +1,55 @@
+# The deterministic gate — lint, typecheck, tests — on every push to main and every pull
+# request. Branch protection on main requires these job names, so rename them only together
+# with the protection rule (docs/CI_PLAN.md, phase 3).
+#
+# Lint and typecheck run once, on Linux: Windows runners check out with CRLF line endings,
+# which Biome's format check would flag in every file. Tests run on all three platforms the
+# app ships to or is developed on; on macOS and Windows `npm ci`'s postinstall fetches the
+# pinned CP-SAT runner, so the real-runner tests run there too (there is no Linux runner, and
+# they skip).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint-typecheck:
+    name: lint-typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Desktop tests import @shiftnurse/core and @shiftnurse/db from their built dist.
+      - run: npm run build:packages
+      - run: npm test

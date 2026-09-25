@@ -1,0 +1,156 @@
+# Release builds. Pushing a tag vX.Y.Z builds each installer natively on its own platform,
+# boots the packaged app in smoke mode (every solver, twice), and attaches the installers and
+# SHA256SUMS to a DRAFT GitHub release for review — nothing is public until someone presses
+# Publish. `workflow_dispatch`, and any pull request touching packaging, is a dry run: the same
+# builds and smoke tests, no release.
+#
+# Why one native job per platform rather than cross-building from one Mac: each installer is
+# smoke-tested on the machine type it is for (the x64 mac app on Intel, the Windows app on
+# Windows), and a mac .app cannot be carried between jobs anyway — artifact upload drops the
+# symlinks and executable bits its frameworks depend on. Tags `cpsat-runner-v*` belong to
+# cpsat-runner.yml; `v*` does not match them.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  # A pull request that changes how the app is packaged gets the same native builds and packaged
+  # smoke tests before it can merge (the release job only runs for tags).
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/release-notes.md'
+      - 'apps/desktop/electron-builder.yml'
+      - 'apps/desktop/scripts/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        name: Tag and package versions agree
+        run: |
+          root=$(node -p "require('./package.json').version")
+          desktop=$(node -p "require('./apps/desktop/package.json').version")
+          if [ "$root" != "$desktop" ]; then
+            echo "::error::package.json is $root but apps/desktop/package.json is $desktop"; exit 1
+          fi
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$root" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match version $root (expected v$root)"; exit 1
+          fi
+          echo "version=$root" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The target is named explicitly (`dmg`, `nsis`): electron-builder.yml lists both mac
+          # architectures, and that list overrides a bare --arm64/--x64 — the first dry run built
+          # both dmgs in each mac job, so the untested copy could have reached the release.
+          - target: mac-arm64
+            os: macos-15
+            builder: --mac dmg --arm64
+            files: |
+              apps/desktop/release/ShiftNurse-*-mac-arm64.dmg
+              apps/desktop/release/ShiftNurse-*-mac-arm64.dmg.blockmap
+          - target: mac-x64
+            os: macos-15-intel
+            builder: --mac dmg --x64
+            files: |
+              apps/desktop/release/ShiftNurse-*-mac-x64.dmg
+              apps/desktop/release/ShiftNurse-*-mac-x64.dmg.blockmap
+          - target: win-x64
+            os: windows-2022
+            builder: --win nsis --x64
+            files: |
+              apps/desktop/release/ShiftNurse-*-win-x64.exe
+              apps/desktop/release/ShiftNurse-*-win-x64.exe.blockmap
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Unsigned for now: never go looking for a signing identity on the runner.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      # Signing, when certificates exist — add these as repository secrets and uncomment:
+      # CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+      # CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+      # APPLE_ID: ${{ secrets.APPLE_ID }}
+      # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # WIN_CSC_LINK: ${{ secrets.WIN_CERT_PFX_BASE64 }}
+      # WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:packages
+      - run: npm run build -w @shiftnurse/desktop
+      # --publish never: electron-builder would otherwise publish on its own when it sees CI,
+      # a tag and a token. The release job below creates the (draft) release instead.
+      - name: Package
+        run: npm run dist -w @shiftnurse/desktop -- ${{ matrix.builder }} --publish never
+      - name: Smoke-test the packaged app
+        # CI runners are several times slower than a developer Mac: allow 5 min per Generate
+        # (hybrid took 79–90 s+ on Windows) and 20 min for the whole self-test.
+        env:
+          SHIFTNURSE_SMOKE_SOLVE_TIMEOUT_MS: '300000'
+          SHIFTNURSE_SMOKE_TIMEOUT_MS: '1200000'
+        run: npm run smoke:packaged -w @shiftnurse/desktop -- --screenshot "$RUNNER_TEMP/smoke-${{ matrix.target }}.png"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.target }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-screenshot-${{ matrix.target }}
+          path: ${{ runner.temp }}/smoke-${{ matrix.target }}.png
+          if-no-files-found: ignore
+
+  release:
+    name: release
+    if: github.ref_type == 'tag'
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          path: dist
+          merge-multiple: true
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          cd dist
+          # Exactly one smoke-tested installer per platform, or no release.
+          ls -la
+          count=$(ls ShiftNurse-*-mac-arm64.dmg ShiftNurse-*-mac-x64.dmg ShiftNurse-*-win-x64.exe 2>/dev/null | wc -l)
+          if [ "$count" -ne 3 ] || [ "$(ls | grep -cvE '\.blockmap$')" -ne 3 ]; then
+            echo "::error::expected exactly three installers (mac arm64, mac x64, win x64)"; exit 1
+          fi
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+          sed -e "s/{{VERSION}}/${VERSION}/g" ../.github/release-notes.md > ../notes.md
+          gh release create "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" --draft \
+            --title "ShiftNurse ${VERSION}" --notes-file ../notes.md ./*
