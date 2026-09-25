@@ -98,7 +98,10 @@ describe.skipIf(REAL === undefined)('the real CP-SAT runner', () => {
       { num_workers: 1, random_seed: 1 },
     );
     expect(result).toMatchObject({ status: 'OPTIMAL', objective: -34, values: [6, 4] });
-  });
+    // Not the 5 s default: the first launch of a freshly unpacked runner is scanned by the OS
+    // (macOS checks the binary and its ~100 libraries) and can take seconds — every CI run
+    // unpacks it fresh.
+  }, 60_000);
 });
 
 describe('finding the runner', () => {
