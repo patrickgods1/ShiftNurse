@@ -227,6 +227,34 @@ describe('assignment CRUD', () => {
     expect(listAssignmentsForPeriod(handle.db, period.id)).toHaveLength(0);
   });
 
+  it('refuses to move a shift through a patch — a date or shift change must be a move', () => {
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    const nurseId = mkNurse('Ada');
+    const created = createAssignment(
+      handle.db,
+      baseAssignment({ periodId: period.id, nurseId, isLocked: true }),
+      ACTOR,
+    );
+    // The IPC boundary is typed, not checked: a payload can carry any key at runtime.
+    const smuggled = { date: isoDate('2026-01-20') } as unknown as { isCharge: boolean };
+    expect(() => updateAssignment(handle.db, created.id, smuggled, ACTOR)).toThrow(/date/);
+    expect(listAssignmentsForPeriod(handle.db, period.id)[0]?.date).toBe('2026-01-15');
+  });
+
+  it('refuses a patch that would hand the shift to a different nurse', () => {
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    const ada = mkNurse('Ada');
+    const bea = mkNurse('Bea');
+    const created = createAssignment(
+      handle.db,
+      baseAssignment({ periodId: period.id, nurseId: ada }),
+      ACTOR,
+    );
+    const smuggled = { nurseId: bea } as unknown as { isCharge: boolean };
+    expect(() => updateAssignment(handle.db, created.id, smuggled, ACTOR)).toThrow(/nurseId/);
+    expect(listAssignmentsForPeriod(handle.db, period.id)[0]?.nurseId).toBe(ada);
+  });
+
   it('captures the deleted row as `before` — the only remaining record it ever existed', () => {
     const period = createPeriod(handle.db, basePeriod(), ACTOR);
     const nurseId = mkNurse('Ada');
@@ -441,6 +469,36 @@ describe('replaceAssignments', () => {
 
     expect(result.find((a) => a.id === locked.id)?.isLocked).toBe(true);
     void unlocked;
+  });
+
+  it('keeps a record of who was on the grid before a regeneration wiped it', () => {
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    const ada = mkNurse('Ada');
+    const bea = mkNurse('Bea');
+    const replaced = createAssignment(
+      handle.db,
+      baseAssignment({ periodId: period.id, nurseId: ada, date: isoDate('2026-01-17') }),
+      ACTOR,
+    );
+    createAssignment(
+      handle.db,
+      baseAssignment({
+        periodId: period.id,
+        nurseId: bea,
+        date: isoDate('2026-01-18'),
+        isLocked: true,
+      }),
+      ACTOR,
+    );
+    replaceAssignments(handle.db, period.id, [], ACTOR);
+
+    const generated = auditHistoryFor(handle.db, 'schedule_period', period.id).find(
+      (e) => e.action === 'generate',
+    );
+    // Only Ada's unlocked shift was deleted; Bea's locked one survives and is not "before".
+    expect(generated?.before).toEqual({
+      removed: [{ id: replaced.id, nurseId: ada, date: '2026-01-17', shiftTypeId }],
+    });
   });
 
   it('records which solver produced a generated schedule, and why it fell back', () => {

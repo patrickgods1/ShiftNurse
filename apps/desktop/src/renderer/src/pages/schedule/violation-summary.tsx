@@ -8,15 +8,17 @@ import type { EvaluationResult } from '@shiftnurse/core';
 import { useMemo, useState } from 'react';
 import { formatDate } from '../../format.js';
 import { violationKey } from './grid-utils.js';
+import { type ValidationStatus, violationReadout } from './violation-readout.js';
 
 interface ViolationSummaryProps {
+  status: ValidationStatus;
   result: EvaluationResult | undefined;
 }
 
-export function ViolationSummary({ result }: ViolationSummaryProps) {
+export function ViolationSummary({ status, result }: ViolationSummaryProps) {
   const [open, setOpen] = useState(false);
-  const hard = result?.hardViolations.length ?? 0;
-  const soft = result?.softViolations.length ?? 0;
+  const { label, tone } = violationReadout(status, result);
+  const count = status === 'success' && result ? result.violations.length : 0;
 
   // Hard-first, so the most urgent problems are always at the top of an open list.
   const sorted = useMemo(() => {
@@ -27,18 +29,16 @@ export function ViolationSummary({ result }: ViolationSummaryProps) {
     });
   }, [result]);
 
-  const tone = hard > 0 ? 'text-danger' : soft > 0 ? 'text-warn' : 'text-success';
-
   return (
     <div
       data-testid="violation-summary"
       className="mb-3 rounded-md border border-border bg-surface px-3 py-2 text-sm"
     >
       <div className="flex items-center justify-between gap-3">
-        <p className={`font-medium ${tone}`}>
-          {hard} hard · {soft} soft violation{hard + soft === 1 ? '' : 's'}
+        <p className={`font-medium ${tone}`} role={status === 'error' ? 'alert' : undefined}>
+          {label}
         </p>
-        {hard + soft > 0 ? (
+        {count > 0 ? (
           <button
             type="button"
             onClick={() => setOpen((o) => !o)}
@@ -48,7 +48,7 @@ export function ViolationSummary({ result }: ViolationSummaryProps) {
           </button>
         ) : null}
       </div>
-      {open ? (
+      {open && count > 0 ? (
         <ul className="mt-2 flex max-h-48 flex-col gap-1 overflow-y-auto border-t border-border pt-2">
           {sorted.map((violation) => (
             // Violations have no id of their own; the rule plus the entities it names is

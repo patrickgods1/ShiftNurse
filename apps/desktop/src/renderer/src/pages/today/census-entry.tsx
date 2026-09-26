@@ -19,7 +19,7 @@ import {
   useRecordActualCensus,
   useUpsertCensus,
 } from '../../api-demand.js';
-import { INPUT, LABEL, PRIMARY } from '../requests/ui.js';
+import { errorMessage, INPUT, LABEL, PRIMARY } from '../requests/ui.js';
 
 export function CensusEntry({ unitId, shift }: { unitId: Id; shift: TodayShiftView }) {
   const date = shift.date;
@@ -46,6 +46,7 @@ export function CensusEntry({ unitId, shift }: { unitId: Id; shift: TodayShiftVi
   const mixTotal = sumMix(mix);
   const balanced = mixTotal === censusValue;
   const pending = recordActual.isPending || upsertCensus.isPending;
+  const saveError = errorMessage(upsertCensus.error ?? recordActual.error);
 
   async function save() {
     let id = census?.id;
@@ -69,7 +70,8 @@ export function CensusEntry({ unitId, shift }: { unitId: Id; shift: TodayShiftVi
       className="mt-3 flex flex-wrap items-end gap-2 border-t border-border pt-3"
       onSubmit={(e) => {
         e.preventDefault();
-        if (balanced) void save();
+        // The mutations carry their own error; catching here only stops an unhandled rejection.
+        if (balanced) save().catch(() => undefined);
       }}
     >
       <label className={LABEL}>
@@ -95,6 +97,11 @@ export function CensusEntry({ unitId, shift }: { unitId: Id; shift: TodayShiftVi
         </label>
       ))}
       {!balanced ? <p className="text-xs text-danger">Tiers must add up to {censusValue}</p> : null}
+      {saveError !== undefined ? (
+        <p role="alert" className="text-xs text-danger">
+          Census not saved: {saveError}
+        </p>
+      ) : null}
       <button type="submit" className={PRIMARY} disabled={!balanced || pending}>
         {pending ? 'Saving…' : 'Save census'}
       </button>

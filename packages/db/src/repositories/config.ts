@@ -50,15 +50,7 @@ import {
   shiftType as shiftTypeTable,
   unit as unitTable,
 } from '../schema.js';
-
-/** Drop keys the caller left `undefined`, so a partial patch only touches fields it sets. */
-function compact<T extends object>(obj: T): Partial<T> {
-  const out: Partial<T> = {};
-  for (const [key, value] of Object.entries(obj) as [keyof T, T[keyof T]][]) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
+import { type PatchKeys, patchOf } from './patch.js';
 
 // ---------------------------------------------------------------------------
 // Unit
@@ -89,11 +81,18 @@ export interface UnitPatch {
   payPeriodAnchor?: IsoDate;
 }
 
+const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
+  name: true,
+  unitType: true,
+  payPeriodDays: true,
+  payPeriodAnchor: true,
+};
+
 export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string): Unit {
   const row = db.select().from(unitTable).where(eq(unitTable.id, id)).get();
   if (!row) throw new Error(`Unit ${id} not found`);
   const before = toUnit(row);
-  const merged = { ...row, ...compact(patch) };
+  const merged = { ...row, ...patchOf(patch, UNIT_PATCH_KEYS, 'unit') };
   db.update(unitTable).set(merged).where(eq(unitTable.id, id)).run();
   const after = toUnit(merged);
   recordAudit(db, { entityType: 'unit', entityId: id, action: 'update', actor, before, after });
@@ -144,6 +143,18 @@ export interface ShiftTypePatch {
   active?: boolean;
 }
 
+const SHIFT_TYPE_PATCH_KEYS: PatchKeys<ShiftTypePatch> = {
+  name: true,
+  abbreviation: true,
+  startTime: true,
+  durationHours: true,
+  isNight: true,
+  isOnCall: true,
+  color: true,
+  sortOrder: true,
+  active: true,
+};
+
 export function updateShiftType(
   db: DbLike,
   id: Id,
@@ -153,7 +164,7 @@ export function updateShiftType(
   const row = db.select().from(shiftTypeTable).where(eq(shiftTypeTable.id, id)).get();
   if (!row) throw new Error(`Shift type ${id} not found`);
   const before = toShiftType(row);
-  const merged = { ...row, ...compact(patch) };
+  const merged = { ...row, ...patchOf(patch, SHIFT_TYPE_PATCH_KEYS, 'shift type') };
   db.update(shiftTypeTable).set(merged).where(eq(shiftTypeTable.id, id)).run();
   const after = toShiftType(merged);
   recordAudit(db, {
@@ -327,6 +338,12 @@ export interface AcuityTierPatch {
   careHoursPerPatientDay?: number;
 }
 
+const ACUITY_TIER_PATCH_KEYS: PatchKeys<AcuityTierPatch> = {
+  name: true,
+  level: true,
+  careHoursPerPatientDay: true,
+};
+
 export function updateAcuityTier(
   db: DbLike,
   id: Id,
@@ -336,7 +353,7 @@ export function updateAcuityTier(
   const row = db.select().from(acuityTierTable).where(eq(acuityTierTable.id, id)).get();
   if (!row) throw new Error(`Acuity tier ${id} not found`);
   const before = toAcuityTier(row);
-  const merged = { ...row, ...compact(patch) };
+  const merged = { ...row, ...patchOf(patch, ACUITY_TIER_PATCH_KEYS, 'acuity tier') };
   db.update(acuityTierTable).set(merged).where(eq(acuityTierTable.id, id)).run();
   const after = toAcuityTier(merged);
   recordAudit(db, {
@@ -410,6 +427,14 @@ export interface RatioRulePatch {
   active?: boolean;
 }
 
+const RATIO_RULE_PATCH_KEYS: PatchKeys<RatioRulePatch> = {
+  role: true,
+  acuityTierId: true,
+  maxPatientsPerNurse: true,
+  citation: true,
+  active: true,
+};
+
 export function updateRatioRule(
   db: DbLike,
   id: Id,
@@ -419,7 +444,7 @@ export function updateRatioRule(
   const row = db.select().from(ratioRuleTable).where(eq(ratioRuleTable.id, id)).get();
   if (!row) throw new Error(`Ratio rule ${id} not found`);
   const before = toRatioRule(row);
-  const merged = { ...row, ...compact(patch) };
+  const merged = { ...row, ...patchOf(patch, RATIO_RULE_PATCH_KEYS, 'ratio rule') };
   db.update(ratioRuleTable).set(merged).where(eq(ratioRuleTable.id, id)).run();
   const after = toRatioRule(merged);
   recordAudit(db, {

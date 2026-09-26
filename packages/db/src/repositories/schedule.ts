@@ -16,6 +16,7 @@ import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import { toAssignment, toSchedulePeriod } from '../mappers.js';
 import { assignment, schedulePeriod } from '../schema.js';
+import { type PatchKeys, patchOf } from './patch.js';
 
 // ---------------------------------------------------------------------------
 // Periods
@@ -300,12 +301,21 @@ export function createAssignment(
   return created;
 }
 
+/**
+ * What an in-place edit may change: the flags and the note. Where and when the shift is —
+ * `date`, `shiftTypeId`, `nurseId` — changes only through `moveAssignment`, which refuses a
+ * locked row and lets the change log record a removal plus an addition rather than an edit.
+ */
 export type UpdateAssignmentInput = Partial<
-  Pick<
-    CreateAssignmentInput,
-    'shiftTypeId' | 'date' | 'source' | 'isLocked' | 'isCharge' | 'isOvertime' | 'notes'
-  >
+  Pick<CreateAssignmentInput, 'isLocked' | 'isCharge' | 'isOvertime' | 'notes'>
 >;
+
+const ASSIGNMENT_PATCH_KEYS: PatchKeys<UpdateAssignmentInput> = {
+  isLocked: true,
+  isCharge: true,
+  isOvertime: true,
+  notes: true,
+};
 
 export function updateAssignment(
   db: DbLike,
@@ -317,7 +327,8 @@ export function updateAssignment(
   const beforeRow = db.select().from(assignment).where(eq(assignment.id, assignmentId)).get();
   if (!beforeRow) throw new Error(`Assignment ${assignmentId} not found`);
   const before = toAssignment(beforeRow);
-  db.update(assignment).set(patch).where(eq(assignment.id, assignmentId)).run();
+  const values = patchOf(patch, ASSIGNMENT_PATCH_KEYS, 'assignment');
+  db.update(assignment).set(values).where(eq(assignment.id, assignmentId)).run();
   const afterRow = db.select().from(assignment).where(eq(assignment.id, assignmentId)).get();
   if (!afterRow) throw new Error(`Assignment ${assignmentId} vanished during update`);
   const after = toAssignment(afterRow);
@@ -418,7 +429,8 @@ export function replaceAssignments(
 ): Assignment[] {
   const existing = db.select().from(assignment).where(eq(assignment.periodId, periodId)).all();
   const lockedRows = existing.filter((r) => r.isLocked);
-  const unlockedIds = existing.filter((r) => !r.isLocked).map((r) => r.id);
+  const unlockedRows = existing.filter((r) => !r.isLocked);
+  const unlockedIds = unlockedRows.map((r) => r.id);
 
   // Only the unlocked rows are wiped. Locked rows are never touched by this function — that
   // is the guarantee the manager's pin depends on.
@@ -460,6 +472,16 @@ export function replaceAssignments(
     entityId: periodId,
     action: 'generate',
     actor,
+    // The deleted rows go in `before`: after a regeneration this is the only record of who
+    // was on the grid, and "who was I replaced by, and when" is what a grievance asks.
+    before: {
+      removed: unlockedRows.map((r) => ({
+        id: r.id,
+        nurseId: r.nurseId,
+        date: r.date,
+        shiftTypeId: r.shiftTypeId,
+      })),
+    },
     after: { ...auditDetails, created: created.length, preservedLocked: preserved.length },
   });
   return result;

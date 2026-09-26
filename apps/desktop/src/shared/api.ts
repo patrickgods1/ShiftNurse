@@ -14,7 +14,6 @@
 import type {
   AcuityTier,
   Assignment,
-  AssignmentSource,
   AutoResolvePolicy,
   BacktestResult,
   Budget,
@@ -143,20 +142,23 @@ export interface CensusForecastInput {
   source: CensusForecast['source'];
 }
 
+/** A shift the manager places by hand. `source` is not an input: main stamps every IPC
+ * create as `'manual'`, so a solver or call-out row can only come from the code that makes one. */
 export interface CreateAssignmentInput {
   periodId: Id;
   nurseId: Id;
   shiftTypeId: Id;
   date: IsoDate;
-  source?: AssignmentSource;
   isLocked?: boolean;
   isCharge?: boolean;
   isOvertime?: boolean;
   notes?: string;
 }
 
+/** An in-place edit. Changing date, shift or nurse is a move (`moveAssignment`), which refuses a
+ * locked shift; locking is `setLocked`. */
 export type AssignmentPatch = Partial<
-  Pick<CreateAssignmentInput, 'shiftTypeId' | 'date' | 'isCharge' | 'isOvertime' | 'notes'>
+  Pick<CreateAssignmentInput, 'isCharge' | 'isOvertime' | 'notes'>
 >;
 
 /** Move a shift from one nurse/date/type to another. Assignment identity (`nurseId`) is

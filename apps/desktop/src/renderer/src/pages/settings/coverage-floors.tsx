@@ -18,6 +18,7 @@ import type {
 import { WEEKDAY_NAMES } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useDeleteCoverage, useUpsertCoverage } from '../../api-config.js';
+import { errorMessage } from '../requests/ui.js';
 
 const ROLES: NurseRole[] = ['RN', 'LPN', 'CNA'];
 const WEEKDAYS: Weekday[] = [0, 1, 2, 3, 4, 5, 6];
@@ -407,6 +408,11 @@ export default function CoverageFloors({ unitId, shiftTypes, requirements }: Cov
         <div className="mb-3 rounded-md border border-border bg-surface p-3">
           <OverrideForm unitId={unitId} shiftTypes={activeShiftTypes} onAdded={() => undefined} />
         </div>
+        {deleteCoverage.isError ? (
+          <p role="alert" className="mb-2 text-xs text-danger">
+            Could not delete the override: {errorMessage(deleteCoverage.error)}
+          </p>
+        ) : null}
         {dateOverrides.length === 0 ? (
           <p className="text-sm text-text-muted">No date overrides.</p>
         ) : (

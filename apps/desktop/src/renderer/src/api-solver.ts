@@ -13,9 +13,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import type { SolveJobOptions, SolveJobStatus } from '../../shared/api.js';
 import { api, queryKeys } from './api.js';
-import { costKeys } from './api-cost.js';
-import { fairnessQueryKeys } from './api-fairness.js';
-import { scheduleKeys } from './api-schedule.js';
+import { invalidatePeriod } from './period-cache.js';
 
 export const solverKeys = {
   job: (jobId: Id) => ['solver', 'job', jobId] as const,
@@ -96,12 +94,7 @@ export function useSolveJob(
   useEffect(() => {
     if (status?.state !== 'done' || invalidatedFor.current === status.id) return;
     invalidatedFor.current = status.id;
-    if (periodId !== undefined) {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.assignments(periodId) });
-      void queryClient.invalidateQueries({ queryKey: scheduleKeys.validation(periodId) });
-      void queryClient.invalidateQueries({ queryKey: costKeys.report(periodId) });
-      void queryClient.invalidateQueries({ queryKey: fairnessQueryKeys.report(periodId) });
-    }
+    if (periodId !== undefined) invalidatePeriod(queryClient, periodId);
     if (unitId !== undefined) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });
     }

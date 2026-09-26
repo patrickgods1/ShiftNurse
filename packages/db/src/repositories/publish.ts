@@ -170,10 +170,16 @@ export function publishSchedule(db: DbLike, input: PublishInput, actor: string):
  * a promise, so the reason is mandatory; an archived period is history and refuses edits.
  * Returns the trimmed reason to record, or `undefined` for a draft.
  */
-export function requireChangeReason(period: SchedulePeriod, reason?: string): string | undefined {
+/** Only an archived period is read-only. Every edit checks this — including the ones, like
+ * locking a shift, that need no reason and so never reach `requireChangeReason`. */
+export function requirePeriodEditable(period: SchedulePeriod): void {
   if (period.status === 'archived') {
     throw new Error(`Schedule period "${period.name}" is archived and cannot be edited`);
   }
+}
+
+export function requireChangeReason(period: SchedulePeriod, reason?: string): string | undefined {
+  requirePeriodEditable(period);
   if (period.status !== 'published') return undefined;
   const trimmed = reason?.trim();
   if (!trimmed) {

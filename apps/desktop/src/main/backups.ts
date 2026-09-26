@@ -137,8 +137,16 @@ function assertSqliteFile(path: string): void {
  * `pre-restore` backup, so a restore is itself reversible through the same screen. The
  * restore is audited in the *outgoing* database (the only one open); the incoming copy's
  * history starts where that backup left off.
+ *
+ * `stopWork` runs before the database closes. The relaunch goes through `app.exit`, which skips
+ * `will-quit` — the hook that normally stops solver workers — so without it a running solve's
+ * CP-SAT runner process would outlive the app.
  */
-export async function restoreBackup(db: ShiftNurseDb, fileName: string): Promise<BackupInfo> {
+export async function restoreBackup(
+  db: ShiftNurseDb,
+  fileName: string,
+  stopWork: () => void,
+): Promise<BackupInfo> {
   const source = listBackups().find((b) => b.fileName === fileName);
   if (!source) throw new Error(`Unknown backup ${fileName}`);
   assertSqliteFile(source.path);
@@ -153,6 +161,7 @@ export async function restoreBackup(db: ShiftNurseDb, fileName: string): Promise
       after: { restoredFrom: source.path },
     }),
   );
+  stopWork();
   closeAppDatabase();
   const live = databasePath();
   // WAL and shm files belong to the outgoing database; left behind they would be replayed

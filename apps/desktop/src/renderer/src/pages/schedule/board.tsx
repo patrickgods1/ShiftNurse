@@ -32,6 +32,7 @@ import {
 } from '../../api-schedule.js';
 import { AsyncState } from '../../components/async-state.js';
 import { ReasonDialog } from '../requests/reason-dialog.js';
+import { errorMessage } from '../requests/ui.js';
 import { AlertsPanel } from './alerts-panel.js';
 import { AssignmentDialog } from './assignment-dialog.js';
 import { ChangeLog } from './change-log.js';
@@ -257,6 +258,18 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const allAssignments =
     pendingCreates.length > 0 ? [...assignments, ...pendingCreates] : assignments;
 
+  // A rejected edit (locked source, archived period, missing reason, DB error) silently snaps
+  // the chip back on settle; without this the manager cannot tell a refusal from a glitch.
+  // A mutation keeps its error until its next run, so the latest failure stays up until
+  // dismissed or retried.
+  const failedEdit = [
+    createAssignment,
+    moveAssignment,
+    updateAssignment,
+    deleteAssignment,
+    setLocked,
+  ].find((m) => m.isError);
+
   const openAssignment = allAssignments.find((a) => a.id === openAssignmentId);
   const openNurse = openAssignment
     ? nursesQuery.data.find((n) => n.id === openAssignment.nurseId)
@@ -270,7 +283,23 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
 
   return (
     <div>
-      <ViolationSummary result={violationResult} />
+      <ViolationSummary status={validationQuery.status} result={violationResult} />
+      {failedEdit ? (
+        <div
+          role="alert"
+          data-testid="edit-error"
+          className="mb-3 flex items-center justify-between gap-3 rounded-md border border-danger bg-surface px-3 py-2 text-sm text-danger"
+        >
+          <p>That change was not saved: {errorMessage(failedEdit.error)}</p>
+          <button
+            type="button"
+            onClick={() => failedEdit.reset()}
+            className="shrink-0 text-xs underline underline-offset-2 hover:no-underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
       <CostSummary report={costQuery.data} />
       <AlertsPanel periodId={period.id} />
       <div className="mb-3 flex items-start justify-between gap-3">

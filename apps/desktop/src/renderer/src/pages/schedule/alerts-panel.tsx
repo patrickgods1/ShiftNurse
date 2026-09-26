@@ -8,6 +8,7 @@
 
 import { useState } from 'react';
 import { useAlerts } from '../../api-publish.js';
+import { errorMessage } from '../requests/ui.js';
 
 interface AlertsPanelProps {
   periodId: string;
@@ -17,6 +18,19 @@ export function AlertsPanel({ periodId }: AlertsPanelProps) {
   const [open, setOpen] = useState(false);
   const alertsQuery = useAlerts(periodId);
   const alerts = alertsQuery.data ?? [];
+  // A failed compliance check must not read as "no alerts" — that is the false all-clear
+  // this panel exists to prevent.
+  if (alertsQuery.isError) {
+    return (
+      <p
+        role="alert"
+        data-testid="alerts-panel"
+        className="mb-3 rounded-md border border-border bg-surface px-3 py-2 text-sm text-danger"
+      >
+        Could not check compliance alerts: {errorMessage(alertsQuery.error)}
+      </p>
+    );
+  }
   if (alertsQuery.isPending || alerts.length === 0) return null;
   const critical = alerts.filter((a) => a.severity === 'critical').length;
   const tone = critical > 0 ? 'text-danger' : 'text-warn';
