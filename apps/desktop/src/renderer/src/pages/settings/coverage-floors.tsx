@@ -18,6 +18,7 @@ import type {
 import { WEEKDAY_NAMES } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useDeleteCoverage, useUpsertCoverage } from '../../api-config.js';
+import { useConfirm } from '../../components/confirm.js';
 import { errorMessage } from '../../components/ui.js';
 
 const ROLES: NurseRole[] = ['RN', 'LPN', 'CNA'];
@@ -304,6 +305,7 @@ function OverrideForm({
 }
 
 export default function CoverageFloors({ unitId, shiftTypes, requirements }: CoverageFloorsProps) {
+  const confirm = useConfirm();
   const deleteCoverage = useDeleteCoverage();
   const [extraRows, setExtraRows] = useState<RowKey[]>([]);
 
@@ -430,8 +432,13 @@ export default function CoverageFloors({ unitId, shiftTypes, requirements }: Cov
                   </span>
                   <button
                     type="button"
-                    onClick={() => {
-                      if (window.confirm('Delete this coverage override?')) {
+                    onClick={async () => {
+                      if (
+                        await confirm({
+                          title: 'Delete this coverage override?',
+                          confirmLabel: 'Delete',
+                        })
+                      ) {
                         deleteCoverage.mutate({ id: override.id, unitId });
                       }
                     }}

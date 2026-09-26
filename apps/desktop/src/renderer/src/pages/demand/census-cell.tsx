@@ -8,6 +8,7 @@
 import type { AcuityTier, CensusForecast, Id } from '@shiftnurse/core';
 import { validateAcuityMix } from '@shiftnurse/core';
 import { useEffect, useRef, useState } from 'react';
+import { usePanelFocus } from '../../components/use-panel-focus.js';
 
 interface CensusCellProps {
   date: string;
@@ -45,6 +46,8 @@ export function CensusCell({
     emptyMix(tiers, existing?.actualAcuityMix),
   );
   const cellRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  usePanelFocus(popoverRef, open, () => setOpen(false));
 
   useEffect(() => {
     if (!open) return;
@@ -82,6 +85,7 @@ export function CensusCell({
       </button>
       {open ? (
         <div
+          ref={popoverRef}
           role="dialog"
           aria-label={`Census for ${date}`}
           className="absolute z-10 mt-1 w-72 rounded-md border border-border bg-surface p-3 shadow-lg"

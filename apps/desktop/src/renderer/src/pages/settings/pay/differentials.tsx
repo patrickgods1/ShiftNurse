@@ -10,6 +10,7 @@ import {
   useUpdateDifferential,
 } from '../../../api-cost.js';
 import { AsyncState } from '../../../components/async-state.js';
+import { useConfirm } from '../../../components/confirm.js';
 import { INPUT, LABEL, PRIMARY, SMALL, SMALL_DANGER, TD, TH } from '../../../components/ui.js';
 import { formatDollars } from '../../../money.js';
 
@@ -28,6 +29,7 @@ function describeAmount(d: Pick<Differential, 'mode' | 'amount'>): string {
 }
 
 export function DifferentialsSection({ unitId }: { unitId: Id }) {
+  const confirm = useConfirm();
   const query = useDifferentials(unitId);
   const create = useCreateDifferential(unitId);
   const update = useUpdateDifferential(unitId);
@@ -224,8 +226,13 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
                           <button
                             type="button"
                             className={SMALL_DANGER}
-                            onClick={() => {
-                              if (window.confirm(`Delete the ${COST_LINE_LABELS[d.kind]}?`)) {
+                            onClick={async () => {
+                              if (
+                                await confirm({
+                                  title: `Delete the ${COST_LINE_LABELS[d.kind]}?`,
+                                  confirmLabel: 'Delete',
+                                })
+                              ) {
                                 remove.mutate(d.id);
                               }
                             }}
