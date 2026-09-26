@@ -1,6 +1,6 @@
 # Weekly dependency and action updates. Minor/patch npm bumps arrive as one grouped PR; the
 # Electron toolchain moves together because Electron, electron-builder and electron-vite must
-# agree (and a new Electron needs a better-sqlite3 prebuild for its ABI — see CLAUDE.md).
+# agree. (better-sqlite3 is Node-API since 13, so an Electron bump needs no matching prebuild.)
 # Actions are pinned by SHA; Dependabot keeps the SHA and its version comment current.
 version: 2
 updates:
@@ -12,9 +12,25 @@ updates:
     groups:
       electron:
         patterns: ['electron', 'electron-builder', 'electron-vite', '@electron-toolkit/*']
+      # react and react-dom must be the same version: either alone fails the typecheck, and a
+      # stale copy left hoisted puts two Reacts in one renderer.
+      react:
+        patterns: ['react', 'react-dom', '@types/react', '@types/react-dom']
       minor-and-patch:
         update-types: [minor, patch]
-        exclude-patterns: ['electron', 'electron-builder', 'electron-vite', '@electron-toolkit/*']
+        exclude-patterns:
+          ['electron', 'electron-builder', 'electron-vite', '@electron-toolkit/*', 'react', 'react-dom', '@types/react', '@types/react-dom']
+    ignore:
+      # Types describe the Node that runs the code: 22, per .nvmrc and engines. Newer majors
+      # would type-check APIs that do not exist at runtime. Move with the runtime, by hand.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+      # electron-vite 5 (the latest) supports Vite 5-7 only, and @vitejs/plugin-react 6 needs
+      # Vite 8 (its build fails on 7). Lift both when electron-vite supports Vite 8.
+      - dependency-name: 'vite'
+        versions: ['>=8.0.0']
+      - dependency-name: '@vitejs/plugin-react'
+        versions: ['>=6.0.0']
 
   - package-ecosystem: github-actions
     directories: ['/', '/.github/actions/*']
