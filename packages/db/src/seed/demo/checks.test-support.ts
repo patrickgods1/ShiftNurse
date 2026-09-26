@@ -39,6 +39,9 @@ import { listTimeOffForUnit } from '../../repositories/timeoff.js';
 import { type DemoId, seedDemoUnit } from '../demo.js';
 import type { SeedResult } from '../types.js';
 
+/** Seeding six months of history takes about a second locally, several on a slow CI runner. */
+const SEED_TIMEOUT_MS = 60_000;
+
 export interface DemoFixture {
   handle: OpenedDatabase;
   result: SeedResult;
@@ -54,7 +57,7 @@ export function useDemo(demo: DemoId, today: IsoDate): DemoFixture {
     fixture.result = transact(fixture.handle.db, (tx) => seedDemoUnit(tx, { demo, today }));
     fixture.count = (sql) => (fixture.handle.sqlite.prepare(sql).get() as { n: number }).n;
     fixture.rows = <T>(sql: string) => fixture.handle.sqlite.prepare(sql).all() as T[];
-  });
+  }, SEED_TIMEOUT_MS);
   afterAll(() => fixture.handle.close());
   return fixture;
 }
@@ -200,23 +203,27 @@ export function realisticDemoChecks(f: DemoFixture, demo: DemoId, today: IsoDate
     expect(nurseLevel).toEqual([]);
   }, 60_000);
 
-  it('is the same unit every time for the same seed and date', () => {
-    const other = openTestDatabase();
-    try {
-      transact(other.db, (tx) => seedDemoUnit(tx, { demo, today }));
-      const projection = (h: OpenedDatabase) =>
-        h.sqlite
-          .prepare(
-            `SELECT n.employee_id, a.date, st.abbreviation, a.is_charge FROM assignment a
+  it(
+    'is the same unit every time for the same seed and date',
+    () => {
+      const other = openTestDatabase();
+      try {
+        transact(other.db, (tx) => seedDemoUnit(tx, { demo, today }));
+        const projection = (h: OpenedDatabase) =>
+          h.sqlite
+            .prepare(
+              `SELECT n.employee_id, a.date, st.abbreviation, a.is_charge FROM assignment a
                JOIN nurse n ON n.id = a.nurse_id JOIN shift_type st ON st.id = a.shift_type_id
                ORDER BY a.date, st.abbreviation, n.employee_id`,
-          )
-          .all();
-      expect(projection(other)).toEqual(projection(f.handle));
-    } finally {
-      other.close();
-    }
-  });
+            )
+            .all();
+        expect(projection(other)).toEqual(projection(f.handle));
+      } finally {
+        other.close();
+      }
+    },
+    SEED_TIMEOUT_MS,
+  );
 
   it('writes an audit trail naming the seeder', () => {
     expect(f.count("SELECT COUNT(*) n FROM audit_log WHERE actor != 'demo-seed'")).toBe(0);

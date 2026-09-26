@@ -11,10 +11,14 @@ import {
   type OpenedDatabase,
   openTestDatabase,
 } from '@shiftnurse/db';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BackupInfo } from '../../shared/api.js';
 import { ACTOR } from './context.js';
 import { setupApi } from './setup.js';
+
+// Several tests seed a whole demo unit (six months of history), about a second locally and
+// several on a slow Windows CI runner: past vitest's 5 s default.
+vi.setConfig({ testTimeout: 30_000 });
 
 let handle: OpenedDatabase;
 let setup: ReturnType<typeof setupApi>;

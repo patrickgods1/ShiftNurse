@@ -8,7 +8,7 @@
  */
 
 import { isoDate, type SetupPreset } from '@shiftnurse/core';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { getHppdTarget, listActiveRatioRulesForUnit, listAcuityTiersForUnit } from './acuity.js';
@@ -30,6 +30,10 @@ import {
   loadDemo,
   loadScenarios,
 } from './setup.js';
+
+// Several tests seed a whole demo unit (six months of history), about a second locally and
+// several on a slow Windows CI runner: past vitest's 5 s default.
+vi.setConfig({ testTimeout: 30_000 });
 
 const ACTOR = 'manager';
 let handle: OpenedDatabase;
