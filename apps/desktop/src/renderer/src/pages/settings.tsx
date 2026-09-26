@@ -6,22 +6,22 @@
 
 import { useState } from 'react';
 import { useAppInfo } from '../api.js';
-import { useCoverage, useShiftTypesList } from '../api-config.js';
 import { AsyncState } from '../components/async-state.js';
 import { PageHeader } from '../components/page-header.js';
 import { ThemeToggle } from '../components/theme-toggle.js';
-import { useUnitId } from '../unit-context.js';
 import AcuityPanel from './settings/acuity.js';
 import BackupsPanel from './settings/backups.js';
 import ConflictsPanel from './settings/conflicts.js';
-import CoverageFloors from './settings/coverage-floors.js';
+import { CoverageTab } from './settings/coverage-tab.js';
 import HolidaysPanel from './settings/holidays.js';
 import PayPanel from './settings/pay.js';
 import RulesPanel from './settings/rules.js';
 import ShiftTypesPanel from './settings/shift-types.js';
 import SolverPanel from './settings/solver.js';
+import UnitPanel from './settings/unit.js';
 
 const TABS = [
+  { id: 'unit', label: 'Unit' },
   { id: 'shift-types', label: 'Shift types' },
   { id: 'coverage', label: 'Coverage floors' },
   { id: 'acuity', label: 'Acuity' },
@@ -35,38 +35,6 @@ const TABS = [
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
-
-function CoverageTab() {
-  const unitId = useUnitId();
-  const shiftTypesQuery = useShiftTypesList(unitId);
-  const coverageQuery = useCoverage(unitId);
-
-  if (shiftTypesQuery.isPending || coverageQuery.isPending) {
-    return <AsyncState status="loading" label="Loading coverage floors" />;
-  }
-  if (shiftTypesQuery.isError) {
-    return (
-      <AsyncState status="error" label="Could not load shift types" error={shiftTypesQuery.error} />
-    );
-  }
-  if (coverageQuery.isError) {
-    return (
-      <AsyncState
-        status="error"
-        label="Could not load coverage floors"
-        error={coverageQuery.error}
-      />
-    );
-  }
-
-  return (
-    <CoverageFloors
-      unitId={unitId}
-      shiftTypes={shiftTypesQuery.data}
-      requirements={coverageQuery.data}
-    />
-  );
-}
 
 function AboutTab() {
   const appInfoQuery = useAppInfo();
@@ -96,7 +64,7 @@ function AboutTab() {
 }
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<TabId>('shift-types');
+  const [activeTab, setActiveTab] = useState<TabId>('unit');
 
   return (
     <div>
@@ -137,7 +105,9 @@ export default function SettingsPage() {
           hidden={activeTab !== tab.id}
         >
           {activeTab === tab.id ? (
-            tab.id === 'shift-types' ? (
+            tab.id === 'unit' ? (
+              <UnitPanel />
+            ) : tab.id === 'shift-types' ? (
               <ShiftTypesPanel />
             ) : tab.id === 'coverage' ? (
               <CoverageTab />

@@ -1,7 +1,11 @@
 /**
- * CLI: build the demo database.
+ * CLI: build the demo database, or with `--scenarios` the test-scenario database.
  *
- *   node dist/seed/run-demo-seed.js [--out <path>] [--force] [--seed <n>]
+ *   node dist/seed/run-demo-seed.js [--demo <id> | --scenarios] [--out <path>] [--force] [--seed <n>]
+ *
+ * `--demo` picks one of the realistic demo units (`community-med-surg`, `va-sf-med-surg`,
+ * `ca-icu`); the community med-surg unit is the default.
+ * The output defaults to `demo.sqlite` (or `scenarios.sqlite`) in the working directory.
  *
  * Refuses to overwrite an existing file unless `--force` is given: a demo database that has
  * been used for evaluation may hold edits worth keeping, and "I ran the seeder again" should
@@ -11,22 +15,38 @@
 import { existsSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { openDatabase, transact } from '../client.js';
-import { seedDemoUnit } from './demo.js';
+import { type DemoId, isDemoId, seedDemoUnit } from './demo.js';
+import { seedScenarioUnit } from './scenarios.js';
 
 interface Args {
+  scenarios: boolean;
+  demo: DemoId | undefined;
   out: string;
   force: boolean;
   seed: number | undefined;
 }
 
 function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { out: resolve('demo.sqlite'), force: false, seed: undefined };
+  const scenarios = argv.includes('--scenarios');
+  const args: Args = {
+    scenarios,
+    demo: undefined,
+    out: resolve(scenarios ? 'scenarios.sqlite' : 'demo.sqlite'),
+    force: false,
+    seed: undefined,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--out') {
       const value = argv[++i];
       if (!value) throw new Error('--out requires a path');
       args.out = resolve(value);
+    } else if (arg === '--demo') {
+      const value = argv[++i] ?? '';
+      if (!isDemoId(value)) throw new Error(`--demo requires a demo id, got "${value}"`);
+      args.demo = value;
+    } else if (arg === '--scenarios') {
+      // Read above: it decides the default output path.
     } else if (arg === '--force') {
       args.force = true;
     } else if (arg === '--seed') {
@@ -57,8 +77,11 @@ function main(): void {
   const started = Date.now();
   const handle = openDatabase({ url: args.out });
   try {
+    const options = args.seed === undefined ? {} : { seed: args.seed };
     const result = transact(handle.db, (tx) =>
-      seedDemoUnit(tx, args.seed === undefined ? {} : { seed: args.seed }),
+      args.scenarios
+        ? seedScenarioUnit(tx, options)
+        : seedDemoUnit(tx, { ...options, demo: args.demo }),
     );
     const elapsed = ((Date.now() - started) / 1000).toFixed(1);
 

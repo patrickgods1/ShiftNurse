@@ -52,8 +52,8 @@ this codebase is held to. This document is the practical "how do I build/run/shi
   alerts, PDF/CSV/xlsx export, and scheduled backups via SQLite's online backup API.
 - **Day-of console** — call-off handling with a ranked replacement finder and live
   re-staffing check against the current census.
-- **CSV import/export** for roster and history data, and a demo dataset seeded on first
-  launch.
+- **CSV import/export** for roster and history data, and a realistic demo unit to explore
+  from the first-launch welcome screen.
 
 ## Prerequisites
 
@@ -127,7 +127,8 @@ Run from the repo root unless noted.
 | `npm run typecheck` | Builds `core` and `db`, then `tsc --build --force` against the root `tsconfig.json` (every package **including test files**), then the desktop's own `tsc --noEmit` over its `tsconfig.node.json` and `tsconfig.web.json`. |
 | `npm run check` | lint + typecheck + test — the full gate CI runs. |
 | `npm run build:packages` | Builds `core` then `db` with `tsc`. `dev`, `build` and `seed:demo` run it for you; run it by hand after touching core before trusting a smoke result. |
-| `npm run seed:demo` | Builds and runs the demo seeder into a standalone `packages/db/demo.sqlite` (optional; the app seeds its own DB). `-- --force` overwrites, `-- --seed <n>` changes the RNG seed. |
+| `npm run seed:demo` | Builds and runs the demo seeder into a standalone `packages/db/demo.sqlite` (optional; the app loads its own demo from the welcome screen). `-- --demo <id>` picks the unit (`community-med-surg`, `va-sf-med-surg`, `ca-icu`), `-- --force` overwrites, `-- --seed <n>` changes the RNG seed. |
+| `npm run seed:scenarios` | The same for the test-scenario database, into `packages/db/scenarios.sqlite`. |
 | `npm run build` | Production bundle into `apps/desktop/out` (via `electron-vite build`). |
 | `npm run dist` | Builds, then packages installers with electron-builder (see [Compiling executables](#compiling-executables)). |
 | `npm run smoke -w @shiftnurse/desktop` | Builds and boots the real app headlessly against a temp `userData`, asserts the preload bridge and dashboard rendered. `-- --screenshot <png>` captures the window. Run after touching main/preload/IPC. |
@@ -175,14 +176,45 @@ npm run dev
 ```
 
 This builds `packages/core` and `packages/db`, starts their watchers, and starts
-`electron-vite dev`. On first launch the app creates its SQLite database in the OS
-`userData` directory and seeds a deterministic demo unit (roster, six months of history)
-into it — you do not need to seed anything by hand.
+`electron-vite dev`. On first launch the app creates an empty SQLite database in the OS
+`userData` directory and opens a welcome screen with three choices:
 
-`npm run seed:demo` is separate and optional: it writes a standalone `packages/db/demo.sqlite`
-for inspecting the schema with sqlite tooling or reproducing seeder issues. The app never
-reads that file. It refuses to overwrite an existing one unless you pass `--force`
-(`npm run seed:demo -- --force`).
+- **Explore a demo unit** lists realistic, deterministic demo units, each with its own shifts,
+  staffing rules and pay rules, six months of history staffed under those rules, a schedule
+  ready to generate, and requests waiting for a decision:
+  - *5 North Medical-Surgical* — a 28-bed community-hospital med-surg unit: RNs and CNAs on
+    12-hour days and nights, RN ratios 1:5 / 1:4 / 1:3, travelers, seniority step pay.
+  - *4A Medicine-Surgery (VA San Francisco sample)* — a federal ward on VA practice: 8-hour
+    day, evening and night tours on the federal pay calendar, RNs with LVNs and nursing
+    assistants, no legislated ratios (VHA staffs to nursing hours per patient day), Title 38
+    premium pay (10% night differential on evening and night tours, 25% weekend premium,
+    double-time holidays), overtime after 8 hours a day, all 11 federal holidays.
+  - *3 West Medical-Surgical ICU* — a 12-bed California ICU: Title 22 ratios 1:2 and 1:1,
+    ACLS for every RN, overtime on the 12-hour alternative workweek.
+- **Manual setup** creates just the unit (name, type, pay-period calendar); everything else is
+  entered from Settings and Roster.
+- **Guided setup** creates the unit, then walks through shift types, staffing floors, acuity and
+  ratios, holidays, contract rules, pay and roster. Each step offers one-click starting points
+  (12- or 8-hour shift patterns, typical ratios for the unit type, US federal holidays, the
+  recommended rules, role base rates) above the real Settings editor, and every step can be
+  skipped. Progress is saved, so quitting halfway resumes at the same step.
+
+Settings › Unit reopens the guide on an existing unit, and **Start over** saves a `pre-reset`
+backup, deletes the database and relaunches into the welcome screen (restore the backup from
+Settings › Backups to undo it). To get back to a clean first launch in development, use Start
+over or delete `shiftnurse.sqlite` from `userData`.
+
+Under `npm run dev` only, the welcome screen offers a fourth choice, **Load test scenarios**:
+the dataset the automated tests are built on (`packages/db/src/seed/scenarios.ts`). It is
+rigged on purpose — six nurses wanting the same weekend off, three ACLS cards expiring inside
+the draft, skewed night history, an on-call shift, LPNs, a preceptor requirement — so every
+feature has a known problem to show. Use it to try a change by hand against the same data the
+tests see; use the demo to see what a manager would. Built and installed apps never offer it.
+
+`npm run seed:demo` and `npm run seed:scenarios` are separate and optional: they write standalone
+`packages/db/demo.sqlite` / `scenarios.sqlite` files for inspecting the schema with sqlite
+tooling or reproducing seeder issues. The app never reads those files. Each refuses to overwrite
+an existing file unless you pass `--force` (`npm run seed:demo -- --force`).
 
 > **VS Code integrated terminal note:** VS Code exports `ELECTRON_RUN_AS_NODE`, which turns
 > the Electron binary into a bare Node runtime and breaks the app with an error like

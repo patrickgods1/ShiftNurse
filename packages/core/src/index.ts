@@ -35,6 +35,8 @@ export * from './rules/rest-rules.js';
 export * from './rules/types.js';
 // Schedule read model
 export * from './schedule/view.js';
+// First-run setup presets
+export * from './setup/index.js';
 // Solver
 export * from './solver/cpsat/index.js';
 export * from './solver/hybrid.js';

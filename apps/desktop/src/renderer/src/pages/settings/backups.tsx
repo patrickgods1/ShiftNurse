@@ -17,6 +17,7 @@ const KIND_LABEL: Record<string, string> = {
   daily: 'Daily',
   manual: 'Manual',
   'pre-restore': 'Before restore',
+  'pre-reset': 'Before start over',
 };
 
 function formatBytes(bytes: number): string {

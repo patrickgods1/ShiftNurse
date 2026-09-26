@@ -48,8 +48,8 @@ self-service later becomes an intake surface rather than a new data model.
   `solver_settings`) and `solve-input` (`loadPeriodInput`, the one definition of a period's
   `SolveInput`, shared by Generate, conflicts, cost and the solver benchmark)).
 - `apps/desktop` (M3, complete): electron-vite. `src/shared/api.ts` is the IPC contract
-  (`ShiftNurseApi`, `API_CHANNELS`); `src/main/` opens the DB in `userData` (seeding the demo
-  unit on first launch), implements the contract in `api.ts` (the wiring table) over the domain
+  (`ShiftNurseApi`, `API_CHANNELS`); `src/main/` opens the DB in `userData` (migrations only;
+  first-run setup decides what goes in it), implements the contract in `api.ts` (the wiring table) over the domain
   modules in `api/` (`context` holds the shared loaders and `scheduleViewFor`; `schedule` holds
   `editSchedule`), registers it in `ipc.ts`;
   `src/preload/` builds `window.shiftnurse` from the same channel table; `src/renderer/` is
@@ -101,6 +101,15 @@ self-service later becomes an intake surface rather than a new data model.
   (runner client), `ortools-solvers.ts` (CP-SAT and hybrid orchestration, used by the worker and
   the benchmark), `solver-choice.ts` / `solver-backends.ts` (availability and fallback),
   `solver-bench.run.ts` (`npm run bench:solvers`).
+- **First-run setup** (complete): an empty database opens on a welcome screen — demo, manual
+  or assisted. `core/setup/` holds `state.ts` (`SETUP_STEPS`, `setupPhase`, the `SetupPreset`
+  union), `presets.ts` (shift patterns, acuity presets by unit type, `coverageQuickFill`) and
+  `holidays.ts` (`usFederalHolidays`); `db/repositories/setup.ts` persists the single-row
+  `setup_state` (migration 0008) and applies presets through the ordinary audited creates;
+  `main/api/setup.ts` is the `setup` IPC resource, and Start over is `resetDatabase` in
+  `main/backups.ts`. Renderer: `setup/setup-gate.tsx` (in `RootLayout`), `welcome.tsx`,
+  `assisted.tsx` + `assisted-steps.tsx` (each step embeds the real Settings editor), `steps.ts`;
+  Settings › Unit (`pages/settings/unit.tsx`).
 
 `README.md` is the build/run/ship guide for humans; `ARCHITECTURE.md` is the "why this stack"
 write-up. Keep the three in step: a milestone or convention change here should be reflected
@@ -170,6 +179,7 @@ violations of their own.
 | `npm run check` | lint + typecheck + test. The full gate CI runs (`FULL_CHECK=1` makes the pre-commit hook run it too). |
 | `npm run build:packages` | Builds `core` then `db` with `tsc`. Required before `seed:demo`. |
 | `npm run seed:demo` | Builds and runs the demo seeder into a local SQLite file. |
+| `npm run seed:scenarios` | The same for the test-scenario database (`scenarios.sqlite`). |
 | `npm run dev` | Builds packages, then runs package watchers + `electron-vite dev` with HMR. |
 | `npm run build` / `dist` | Production bundles into `apps/desktop/out`; `dist` then packages with electron-builder. |
 | `npm run smoke -w @shiftnurse/desktop` / `npm run smoke:packaged -w @shiftnurse/desktop` | Builds and boots the real app headlessly against a temp `userData`, asserts the preload bridge and dashboard rendered, exits non-zero otherwise. `--screenshot <png>` captures the window. Run this after touching main/preload/IPC — unit tests cannot see a wrong-ABI native module or a preload that never ran. With the CP-SAT runner installed it generates with every solver twice (minutes); `SHIFTNURSE_SMOKE_TIMEOUT_MS` raises the 240 s limit for an emulated x64 run. |
@@ -351,10 +361,41 @@ violations of their own.
   rebuild after a random walk of moves and undos. Array order is behaviour (`pickUnlocked` samples
   by index, `ensureCharge` takes the first eligible nurse on the roster), so no swap-removes.
   Check a performance change by hashing SA + LNS output on fixed inputs before and after.
-- **Demo data must be staffable by construction.** The seeder deals roles and employment types
-  rather than drawing them, forecasts only the 12-hour shifts, and contracts 12-hour nurses at
-  72h (three 12s under a 40h overtime threshold). Changing floors, census or the roster mix means
-  re-checking Generate on the demo fills every floor.
+- **Two kinds of seeded data, for two audiences.** The realistic demos an evaluator explores
+  are `DemoProfile`s (`seed/demo/profiles.ts`: community med-surg, VA San Francisco med-surg,
+  California ICU) run through one engine (`seed/demo/engine.ts`); `seed/demo.ts` holds
+  `seedDemoUnit(db, { demo })` and the `DEMO_SUMMARIES` the welcome screen lists through
+  `setup.demos`. Each profile's numbers come from real practice for that setting, stated in its
+  comment, and nothing is planted. A new demo is a profile, a summary and a test file in
+  `seed/demo/` that runs `realisticDemoChecks` (`checks.test-support.ts`, excluded from the
+  package build) plus the facts particular to that unit. `seed/scenarios.ts` (`seedScenarioUnit`) is the
+  test-scenario database with known, asserted problems; the main-process fixture, repository
+  tests and the solver benchmark are built on it, and `npm run dev` offers it on the welcome
+  screen. **Tests never use the demo as a fixture** — its data should be free to become more
+  realistic — and **the scenario data must not change**: test expectations and
+  `docs/solver-bench.md` are pinned to it (even an extra inactive nurse changes a generated
+  schedule, since the solver sees every nurse in roster order). A new scenario is appended
+  from its own `Rng` together with re-pinned tests and a re-run `npm run bench:solvers`.
+- **Demo data must be staffable by construction.** Each demo's contracted hours are sized to
+  its floors, the history is staffed by the engine's `canWork`, which mirrors the unit's own rule
+  set (rest from shift windows, stretch and all-night limits, days off after a maximum stretch,
+  leave including the rule's "a night-flagged shift ends on the next day", hire dates), and to
+  the *forecast* census the rule engine judges by. Every demo's test runs Generate on its draft
+  at the app's default budget and requires every floor filled. Its history
+  still reads "under/over contracted hours" around PTO and call-offs, because that rule credits
+  neither; the header says so. The contracted hours are 72h a pay period for full-time 12-hour
+  staff (three 12s under a 40h overtime threshold). Changing floors, census or the roster mix
+  means re-running the demo tests in `seed/demo/`. The VA demo flags its evening tour
+  `isNight` on purpose: Title 38 pays night differential on the whole evening tour, and the flag
+  is what the cost engine prices by.
+- **Main never seeds the demo on its own.** `openAppDatabase` only migrates; the demo is loaded
+  by the welcome screen through `setup.loadDemo` (the test scenarios through
+  `setup.loadScenarios`, which main allows only under the electron-vite dev server), and all of
+  them and `setup.createUnit` refuse once any unit exists. `setupPhase` treats units-but-no-`setup_state`-row as `ready`, so an install
+  from before first-run setup never sees the welcome screen. Presets are idempotent — they only
+  add what is missing (coverage quick-fill sets the floors it names) — so pressing one twice, or
+  revisiting a step, never duplicates rows. The smoke run starts empty and clicks "Explore the
+  demo" before any other check, then walks the guide once on the demo unit.
 - **A published period is editable, with a reason.** Only `archived` is read-only. Every
   schedule mutation takes an optional `reason`; `requireChangeReason` throws on a published
   period without one and `editSchedule` in main writes each touched shift to `schedule_change`.

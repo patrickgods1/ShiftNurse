@@ -3,7 +3,8 @@
  * docs/solver-bench.md. `FALLBACK_ORDER` in core cites the result.
  *
  * Units:
- * - demo — the seeded demo unit's draft period (loaded exactly as Generate loads it);
+ * - demo — the seeded test-scenario unit's draft period (`seedScenarioUnit`; the row keeps its
+ *   original name so earlier results stay comparable) (loaded exactly as Generate loads it);
  * - synthetic-24 — 24 RNs, 4 weeks, mixed 8/12-hour shifts, night and weekend preferences;
  * - small-8 — 8 RNs, 2 weeks, tight enough that not every floor can be filled.
  *
@@ -28,7 +29,7 @@ import {
   solveInputFrom,
   timeOff,
 } from '@shiftnurse/core/testing';
-import { getPeriod, loadPeriodInput, openTestDatabase, seedDemoUnit } from '@shiftnurse/db';
+import { getPeriod, loadPeriodInput, openTestDatabase, seedScenarioUnit } from '@shiftnurse/db';
 import { expect, it } from 'vitest';
 import { CpsatRunner, resolveRunnerPath } from './cpsat-process.js';
 import { solveCpsat, solveHybrid } from './ortools-solvers.js';
@@ -44,7 +45,7 @@ const RUNNER = resolveRunnerPath({
 
 function demo(): SolveInput {
   const { db } = openTestDatabase();
-  const seeded = seedDemoUnit(db, { today: isoDate('2026-09-23') });
+  const seeded = seedScenarioUnit(db, { today: isoDate('2026-09-23') });
   return loadPeriodInput(db, getPeriod(db, seeded.draftPeriodId)!);
 }
 

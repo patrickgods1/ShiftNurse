@@ -33,7 +33,7 @@ import { closeAppDatabase, databasePath, getSqlite } from './database.js';
 /** Actor for audit rows written by the backup job itself. */
 const ACTOR = 'manager';
 const DAILY_KEEP = 14;
-const BACKUP_RE = /^(publish|daily|manual|pre-restore)-(.*)-(\d{13})\.sqlite$/;
+const BACKUP_RE = /^(publish|daily|manual|pre-restore|pre-reset)-(.*)-(\d{13})\.sqlite$/;
 
 export function backupsDir(): string {
   return join(app.getPath('userData'), 'backups');
@@ -78,7 +78,7 @@ export function listBackups(): BackupInfo[] {
  */
 export async function createBackup(
   db: ShiftNurseDb,
-  kind: 'publish' | 'daily' | 'manual' | 'pre-restore',
+  kind: 'publish' | 'daily' | 'manual' | 'pre-restore' | 'pre-reset',
   label: string,
 ): Promise<BackupInfo> {
   const dir = backupsDir();
@@ -138,9 +138,7 @@ function assertSqliteFile(path: string): void {
  * restore is audited in the *outgoing* database (the only one open); the incoming copy's
  * history starts where that backup left off.
  *
- * `stopWork` runs before the database closes. The relaunch goes through `app.exit`, which skips
- * `will-quit` — the hook that normally stops solver workers — so without it a running solve's
- * CP-SAT runner process would outlive the app.
+ * `stopWork` runs before the database closes (see `replaceLiveDatabase`).
  */
 export async function restoreBackup(
   db: ShiftNurseDb,
@@ -161,17 +159,39 @@ export async function restoreBackup(
       after: { restoredFrom: source.path },
     }),
   );
+  replaceLiveDatabase(source.path, stopWork);
+  return safety;
+}
+
+/**
+ * Start over: save the live database as a `pre-reset` backup, delete it and relaunch into the
+ * first-run welcome screen. Its audit trail cannot outlive it, so the backup is the record —
+ * restoring it from Settings › Backups undoes the reset, audit log and all.
+ */
+export async function resetDatabase(db: ShiftNurseDb, stopWork: () => void): Promise<BackupInfo> {
+  const safety = await createBackup(db, 'pre-reset', 'start-over');
+  replaceLiveDatabase(undefined, stopWork);
+  return safety;
+}
+
+/**
+ * Close the live database, replace it with `source` (or delete it when there is none) and
+ * relaunch. `stopWork` runs before the close: the relaunch goes through `app.exit`, which skips
+ * `will-quit` — the hook that normally stops solver workers — so without it a running solve's
+ * CP-SAT runner process would outlive the app.
+ */
+function replaceLiveDatabase(source: string | undefined, stopWork: () => void): void {
   stopWork();
   closeAppDatabase();
   const live = databasePath();
   // WAL and shm files belong to the outgoing database; left behind they would be replayed
-  // over the restored file on next open.
+  // over the restored file (or a fresh one) on next open.
   for (const suffix of ['-wal', '-shm']) rmSync(`${live}${suffix}`, { force: true });
-  copyFileSync(source.path, live);
+  if (source === undefined) rmSync(live, { force: true });
+  else copyFileSync(source, live);
   // Let the IPC reply reach the renderer before the process goes away.
   setTimeout(() => {
     app.relaunch();
     app.exit(0);
   }, 250);
-  return safety;
 }

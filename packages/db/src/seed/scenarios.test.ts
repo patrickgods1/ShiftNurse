@@ -1,5 +1,5 @@
 /**
- * The demo seeder is test data for every later milestone, so its invariants are guarded here:
+ * The test-scenario seeder is test data for every later milestone, so its invariants are guarded here:
  * if a change to the seeder quietly removed the planted PTO conflict, the conflict-resolution
  * feature would look broken for no reason anyone could find.
  */
@@ -8,7 +8,8 @@ import { isoDate } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import * as s from '../schema.js';
-import { type SeedResult, seedDemoUnit } from './demo.js';
+import { seedScenarioUnit } from './scenarios.js';
+import type { SeedResult } from './types.js';
 
 let handle: OpenedDatabase;
 let result: SeedResult;
@@ -17,7 +18,7 @@ beforeEach(() => {
   handle = openTestDatabase();
   // A fixed "today" keeps every date assertion below stable regardless of when tests run.
   result = transact(handle.db, (tx) =>
-    seedDemoUnit(tx, { seed: 42, today: isoDate('2026-09-17'), historyPeriods: 4 }),
+    seedScenarioUnit(tx, { seed: 42, today: isoDate('2026-09-17'), historyPeriods: 4 }),
   );
 });
 
@@ -27,7 +28,7 @@ function count(sql: string): number {
   return (handle.sqlite.prepare(sql).get() as { n: number }).n;
 }
 
-describe('demo seed', () => {
+describe('test-scenario seed', () => {
   it('creates a 42-nurse unit with a realistic role mix', () => {
     expect(result.counts.nurse).toBe(42);
     const rns = count("SELECT COUNT(*) n FROM nurse WHERE role='RN'");
@@ -110,7 +111,7 @@ describe('demo seed', () => {
     const other = openTestDatabase();
     try {
       transact(other.db, (tx) =>
-        seedDemoUnit(tx, { seed: 42, today: isoDate('2026-09-17'), historyPeriods: 4 }),
+        seedScenarioUnit(tx, { seed: 42, today: isoDate('2026-09-17'), historyPeriods: 4 }),
       );
       const projection = (h: OpenedDatabase) =>
         h.sqlite
@@ -130,7 +131,7 @@ describe('demo seed', () => {
     const other = openTestDatabase();
     try {
       transact(other.db, (tx) =>
-        seedDemoUnit(tx, { seed: 7, today: isoDate('2026-09-17'), historyPeriods: 4 }),
+        seedScenarioUnit(tx, { seed: 7, today: isoDate('2026-09-17'), historyPeriods: 4 }),
       );
       const names = (h: OpenedDatabase) =>
         h.sqlite.prepare('SELECT first_name FROM nurse ORDER BY employee_id').all();
@@ -144,7 +145,7 @@ describe('demo seed', () => {
     expect(count("SELECT COUNT(*) n FROM audit_log WHERE action='publish'")).toBe(4);
     expect(count("SELECT COUNT(*) n FROM audit_log WHERE action='deny'")).toBeGreaterThan(0);
     // The seeder itself is the actor, so the trail says where the data came from.
-    expect(count("SELECT COUNT(*) n FROM audit_log WHERE actor!='demo-seed'")).toBe(0);
+    expect(count("SELECT COUNT(*) n FROM audit_log WHERE actor!='scenario-seed'")).toBe(0);
   });
 
   it('references the schema tables the queries above depend on', () => {

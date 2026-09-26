@@ -43,7 +43,8 @@ Why this matters:
   greedy-seed + simulated-annealing solver, to avoid shipping a second runtime inside an
   Electron installer. M15 revisited that: a hybrid that lets Google OR-Tools' CP-SAT
   re-optimise a few days at a time beat the annealer on the demo and a 24-nurse unit
-  ([docs/solver-bench.md](docs/solver-bench.md)), so OR-Tools now ships — but as a small
+  ([docs/solver-bench.md](docs/solver-bench.md); its "demo" is the unit that is now the
+  test-scenario database, `seedScenarioUnit`), so OR-Tools now ships — but as a small
   native **C++** runner, not a Python process (see [Why a C++ sidecar](#why-a-c-sidecar-for-or-tools)).
   The annealer stays pure TypeScript and is always available, so a missing or broken runner
   degrades Generate to SA + LNS rather than breaking it.

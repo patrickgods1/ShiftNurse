@@ -78,6 +78,7 @@ export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string):
   const row = db.select().from(unitTable).where(eq(unitTable.id, id)).get();
   if (!row) throw new Error(`Unit ${id} not found`);
   const before = toUnit(row);
+  if (patch.name !== undefined && patch.name.trim() === '') throw new Error('A unit needs a name');
   const merged = { ...row, ...patchOf(patch, UNIT_PATCH_KEYS, 'unit') };
   db.update(unitTable).set(merged).where(eq(unitTable.id, id)).run();
   const after = toUnit(merged);
