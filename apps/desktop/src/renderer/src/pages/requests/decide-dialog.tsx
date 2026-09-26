@@ -19,8 +19,17 @@ import type {
 import { useEffect, useState } from 'react';
 import { useApproveTimeOff, useDenyTimeOff, useTimeOffImpact } from '../../api-requests.js';
 import { AsyncState } from '../../components/async-state.js';
+import {
+  DANGER,
+  DIALOG,
+  errorMessage,
+  INPUT,
+  LABEL,
+  OVERLAY,
+  PRIMARY,
+  SECONDARY,
+} from '../../components/ui.js';
 import { formatDate, formatDateWithWeekday } from '../../format.js';
-import { DANGER, DIALOG, errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from './ui.js';
 
 interface DecideDialogProps {
   request: TimeOffRequest | undefined;
@@ -63,7 +72,7 @@ export function DecideDialog({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && !busy && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Overlay className={OVERLAY} />
         <Dialog.Content data-testid="decide-dialog" className={`${DIALOG} w-[40rem]`}>
           {request === undefined ? null : (
             <>

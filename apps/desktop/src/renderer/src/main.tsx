@@ -10,6 +10,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { router } from './router.js';
 import './styles.css';
+import { ConfirmProvider } from './components/confirm.js';
 import { applyTheme, loadStoredTheme } from './theme.js';
 
 applyTheme(loadStoredTheme());
@@ -33,7 +34,9 @@ if (rootElement === null) {
 createRoot(rootElement).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      <ConfirmProvider>
+        <RouterProvider router={router} />
+      </ConfirmProvider>
     </QueryClientProvider>
   </StrictMode>,
 );

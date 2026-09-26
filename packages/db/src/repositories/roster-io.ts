@@ -12,7 +12,7 @@
 import type { Credential, Id, IsoDate, NurseCredential, RosterCsvRow } from '@shiftnurse/core';
 import { eq } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
-import type { DbLike } from '../client.js';
+import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { toCredential } from '../mappers.js';
 import { credential as credentialTable } from '../schema.js';
@@ -73,7 +73,8 @@ export interface ImportSummary {
  * a failed one.
  */
 export function importRoster(
-  db: DbLike,
+  // A transaction, not any handle: these writes are only correct all-or-nothing.
+  db: ShiftNurseTx,
   unitId: Id,
   rows: readonly RosterCsvRow[],
   actor: string,

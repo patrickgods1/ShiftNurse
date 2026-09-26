@@ -74,24 +74,23 @@ jobs:
           # The target is named explicitly (`dmg`, `nsis`): electron-builder.yml lists both mac
           # architectures, and that list overrides a bare --arm64/--x64 — the first dry run built
           # both dmgs in each mac job, so the untested copy could have reached the release.
+          # Installers only: the .blockmap files electron-builder also writes are read solely by
+          # electron-updater's differential download, which the app does not have yet (M17).
           - target: mac-arm64
             os: macos-15
             builder: --mac dmg --arm64
             files: |
               apps/desktop/release/ShiftNurse-*-mac-arm64.dmg
-              apps/desktop/release/ShiftNurse-*-mac-arm64.dmg.blockmap
           - target: mac-x64
             os: macos-15-intel
             builder: --mac dmg --x64
             files: |
               apps/desktop/release/ShiftNurse-*-mac-x64.dmg
-              apps/desktop/release/ShiftNurse-*-mac-x64.dmg.blockmap
           - target: win-x64
             os: windows-2022
             builder: --win nsis --x64
             files: |
               apps/desktop/release/ShiftNurse-*-win-x64.exe
-              apps/desktop/release/ShiftNurse-*-win-x64.exe.blockmap
     runs-on: ${{ matrix.os }}
     # Package + a packaged smoke test allowed 20 min on its own (below).
     timeout-minutes: 60

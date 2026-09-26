@@ -8,8 +8,8 @@
 import type { RosterEntryView, TodayShiftView } from '@shared/api.js';
 import type { Id, RoleStaffing } from '@shiftnurse/core';
 import { useState } from 'react';
+import { SMALL } from '../../components/ui.js';
 import { formatDateWithWeekday } from '../../format.js';
-import { SMALL } from '../requests/ui.js';
 import { CensusEntry } from './census-entry.js';
 import { ReportCallOffDialog } from './report-call-off-dialog.js';
 

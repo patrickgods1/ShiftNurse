@@ -17,6 +17,7 @@ import {
   useUpdateShiftType,
 } from '../../api-config.js';
 import { AsyncState } from '../../components/async-state.js';
+import { OVERLAY, POPUP } from '../../components/ui.js';
 import { useUnitId } from '../../unit-context.js';
 
 interface FormState {
@@ -212,8 +213,8 @@ function ShiftTypeDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
-        <Dialog.Content className="fixed z-50 left-1/2 top-1/2 w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-lg">
+        <Dialog.Overlay className={OVERLAY} />
+        <Dialog.Content className={`${POPUP} w-[420px]`}>
           <Dialog.Title className="mb-3 text-sm font-semibold text-text">{title}</Dialog.Title>
           <ShiftTypeForm
             initial={initial}
@@ -410,8 +411,8 @@ export default function ShiftTypesPanel() {
         }}
       >
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
-          <Dialog.Content className="fixed z-50 left-1/2 top-1/2 w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-lg">
+          <Dialog.Overlay className={OVERLAY} />
+          <Dialog.Content className={`${POPUP} w-[360px]`}>
             <Dialog.Title className="mb-2 text-sm font-semibold text-text">
               Deactivate shift type?
             </Dialog.Title>

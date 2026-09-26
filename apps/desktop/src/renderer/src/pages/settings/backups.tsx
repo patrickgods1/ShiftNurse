@@ -10,7 +10,7 @@ import type { BackupInfo } from '@shared/api.js';
 import { useState } from 'react';
 import { useBackups, useCreateBackup, useRestoreBackup } from '../../api-publish.js';
 import { AsyncState } from '../../components/async-state.js';
-import { DANGER, errorMessage, PRIMARY, SMALL } from '../requests/ui.js';
+import { DANGER, errorMessage, PRIMARY, SMALL } from '../../components/ui.js';
 
 const KIND_LABEL: Record<string, string> = {
   publish: 'On publish',

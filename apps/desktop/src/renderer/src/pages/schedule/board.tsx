@@ -31,8 +31,9 @@ import {
   useValidation,
 } from '../../api-schedule.js';
 import { AsyncState } from '../../components/async-state.js';
+import { useConfirm } from '../../components/confirm.js';
+import { errorMessage } from '../../components/ui.js';
 import { ReasonDialog } from '../requests/reason-dialog.js';
-import { errorMessage } from '../requests/ui.js';
 import { AlertsPanel } from './alerts-panel.js';
 import { AssignmentDialog } from './assignment-dialog.js';
 import { ChangeLog } from './change-log.js';
@@ -41,7 +42,7 @@ import { ExportMenu } from './export-menu.js';
 import { GenerateDialog } from './generate-dialog.js';
 import type { GridColumn } from './grid.js';
 import { ScheduleGrid } from './grid.js';
-import { makePendingId } from './grid-utils.js';
+import { makePendingId, sortNurses } from './grid-utils.js';
 import { ShiftPalette } from './palette.js';
 import { PublishDialog } from './publish-dialog.js';
 import { ViolationSummary } from './violation-summary.js';
@@ -69,6 +70,7 @@ function makeGhost(
 }
 
 export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
+  const confirm = useConfirm();
   const nursesQuery = useNurses(unitId);
   const shiftTypesQuery = useShiftTypes(unitId);
   const assignmentsQuery = useAssignments(period.id);
@@ -80,6 +82,13 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const updateAssignment = useUpdateAssignment(period.id, unitId);
   const deleteAssignment = useDeleteAssignment(period.id, unitId);
   const setLocked = useSetLocked(period.id, unitId);
+  // The handlers below depend on `mutate`, which TanStack keeps stable, not on the mutation
+  // objects, which change identity with every state change and would re-render every grid row.
+  const createMutate = createAssignment.mutate;
+  const moveMutate = moveAssignment.mutate;
+  const updateMutate = updateAssignment.mutate;
+  const deleteMutate = deleteAssignment.mutate;
+  const lockMutate = setLocked.mutate;
 
   const readOnly = period.status === 'archived';
   const published = period.status === 'published';
@@ -129,6 +138,8 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
       })),
     [period.startDate, period.endDate],
   );
+  const columnDates = useMemo(() => columns.map((c) => c.date), [columns]);
+  const sortedNurses = useMemo(() => sortNurses(nursesQuery.data ?? []), [nursesQuery.data]);
 
   const violationResult = validationQuery.data?.result;
   const violationsByAssignmentMap = useMemo(
@@ -153,13 +164,13 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
       withReason('Add a shift to the published schedule', (reason) => {
         const ghost = makeGhost(period.id, input);
         setPendingCreates((prev) => [...prev, ghost]);
-        createAssignment.mutate(
+        createMutate(
           { periodId: period.id, ...input, reason },
           { onSettled: () => setPendingCreates((prev) => prev.filter((g) => g.id !== ghost.id)) },
         );
       });
     },
-    [readOnly, period.id, createAssignment, withReason],
+    [readOnly, period.id, createMutate, withReason],
   );
 
   const handleMove = useCallback(
@@ -169,7 +180,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         markPending(input.assignmentId);
         const ghost = makeGhost(period.id, input);
         setPendingCreates((prev) => [...prev, ghost]);
-        moveAssignment.mutate(
+        moveMutate(
           { ...input, reason },
           {
             onSettled: () => {
@@ -180,44 +191,44 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         );
       });
     },
-    [readOnly, period.id, moveAssignment, markPending, clearPending, withReason],
+    [readOnly, period.id, moveMutate, markPending, clearPending, withReason],
   );
 
   const handleToggleLock = useCallback(
     (assignment: Assignment) => {
       markPending(assignment.id);
-      setLocked.mutate(
+      lockMutate(
         { assignmentId: assignment.id, locked: !assignment.isLocked },
         { onSettled: () => clearPending(assignment.id) },
       );
     },
-    [setLocked, markPending, clearPending],
+    [lockMutate, markPending, clearPending],
   );
 
   const handleToggleCharge = useCallback(
     (assignment: Assignment) => {
       withReason('Change the charge nurse on the published schedule', (reason) => {
         markPending(assignment.id);
-        updateAssignment.mutate(
+        updateMutate(
           { assignmentId: assignment.id, patch: { isCharge: !assignment.isCharge }, reason },
           { onSettled: () => clearPending(assignment.id) },
         );
       });
     },
-    [updateAssignment, markPending, clearPending, withReason],
+    [updateMutate, markPending, clearPending, withReason],
   );
 
   const handleToggleOvertime = useCallback(
     (assignment: Assignment) => {
       withReason('Change overtime authorisation on the published schedule', (reason) => {
         markPending(assignment.id);
-        updateAssignment.mutate(
+        updateMutate(
           { assignmentId: assignment.id, patch: { isOvertime: !assignment.isOvertime }, reason },
           { onSettled: () => clearPending(assignment.id) },
         );
       });
     },
-    [updateAssignment, markPending, clearPending, withReason],
+    [updateMutate, markPending, clearPending, withReason],
   );
 
   const handleRemove = useCallback(
@@ -225,20 +236,24 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
       setOpenAssignmentId(undefined);
       withReason('Remove a shift from the published schedule', (reason) => {
         markPending(assignment.id);
-        deleteAssignment.mutate(
+        deleteMutate(
           { assignmentId: assignment.id, reason },
           { onSettled: () => clearPending(assignment.id) },
         );
       });
     },
-    [deleteAssignment, markPending, clearPending, withReason],
+    [deleteMutate, markPending, clearPending, withReason],
   );
 
+  const handleChipOpen = useCallback((a: Assignment) => setOpenAssignmentId(a.id), []);
+
   const handleChipDelete = useCallback(
-    (assignment: Assignment) => {
-      if (window.confirm('Remove this assignment?')) handleRemove(assignment);
+    async (assignment: Assignment) => {
+      if (await confirm({ title: 'Remove this assignment?', confirmLabel: 'Remove' })) {
+        handleRemove(assignment);
+      }
     },
-    [handleRemove],
+    [confirm, handleRemove],
   );
 
   if (nursesQuery.isPending || shiftTypesQuery.isPending || assignmentsQuery.isPending) {
@@ -355,7 +370,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         violationsByDate={violationsByDateMap}
         onMove={handleMove}
         onCreate={handleCreate}
-        onChipOpen={(a) => setOpenAssignmentId(a.id)}
+        onChipOpen={handleChipOpen}
         onChipDelete={handleChipDelete}
       />
       <GenerateDialog
@@ -402,6 +417,9 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         onToggleCharge={handleToggleCharge}
         onToggleOvertime={handleToggleOvertime}
         onRemove={handleRemove}
+        nurses={sortedNurses}
+        dates={columnDates}
+        onMove={handleMove}
       />
     </div>
   );

@@ -8,6 +8,7 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import type { CensusForecast, CensusProposal, Id, ShiftType } from '@shiftnurse/core';
 import { useEffect, useState } from 'react';
+import { OVERLAY } from '../../components/ui.js';
 import { formatDateWithWeekday } from '../../format.js';
 
 interface ProposeDialogProps {
@@ -60,7 +61,7 @@ export function ProposeDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Overlay className={OVERLAY} />
         <Dialog.Content
           data-testid="propose-dialog"
           className="fixed z-50 left-1/2 top-1/2 max-h-[80vh] w-[720px] max-w-[90vw]

@@ -118,16 +118,22 @@ export function weekdayOf(date: IsoDate): Weekday {
   return new Date(dayNumber(date) * MS_PER_DAY).getUTCDay() as Weekday;
 }
 
+/**
+ * Negative, zero or positive as `a` is before, on or after `b` — the sign only; use
+ * `daysBetween` for a distance. A validated `YYYY-MM-DD` string sorts lexicographically in
+ * calendar order, so this compares the strings: it runs inside every rule's date filter, and
+ * even the memoised `dayNumber` lookups were a tenth of a solve.
+ */
 export function compareDates(a: IsoDate, b: IsoDate): number {
-  return dayNumber(a) - dayNumber(b);
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 export function minDate(a: IsoDate, b: IsoDate): IsoDate {
-  return dayNumber(a) <= dayNumber(b) ? a : b;
+  return a <= b ? a : b;
 }
 
 export function maxDate(a: IsoDate, b: IsoDate): IsoDate {
-  return dayNumber(a) >= dayNumber(b) ? a : b;
+  return a >= b ? a : b;
 }
 
 /** Inclusive on both ends. Returns `[]` if `end` precedes `start`. */
@@ -142,8 +148,8 @@ export function datesInRange(start: IsoDate, end: IsoDate): IsoDate[] {
 
 /** Inclusive range containment. */
 export function dateInRange(date: IsoDate, start: IsoDate, end: IsoDate): boolean {
-  const n = dayNumber(date);
-  return n >= dayNumber(start) && n <= dayNumber(end);
+  // String order is calendar order for validated ISO dates (see `compareDates`).
+  return date >= start && date <= end;
 }
 
 export function rangesOverlap(
@@ -167,8 +173,19 @@ export function today(now: Date = new Date()): IsoDate {
 // Times of day
 // ---------------------------------------------------------------------------
 
-/** `"19:00"` → `1140`. Minutes since local midnight. */
+const TIME_OF_DAY_CACHE = new Map<string, number>();
+
+/** `"19:00"` → `1140`. Minutes since local midnight. Memoised: every shift window a rule or
+ * the solver builds parses its shift type's start time, a handful of distinct strings. */
 export function parseTimeOfDay(value: string): number {
+  const cached = TIME_OF_DAY_CACHE.get(value);
+  if (cached !== undefined) return cached;
+  const minutes = parseTimeOfDayUncached(value);
+  TIME_OF_DAY_CACHE.set(value, minutes);
+  return minutes;
+}
+
+function parseTimeOfDayUncached(value: string): number {
   const match = TIME_OF_DAY_RE.exec(value);
   if (!match) throw new RangeError(`Invalid time of day "${value}" (expected HH:MM)`);
   const hours = Number(match[1]);

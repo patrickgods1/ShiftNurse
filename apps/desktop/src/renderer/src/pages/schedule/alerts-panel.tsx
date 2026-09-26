@@ -8,7 +8,7 @@
 
 import { useState } from 'react';
 import { useAlerts } from '../../api-publish.js';
-import { errorMessage } from '../requests/ui.js';
+import { errorMessage } from '../../components/ui.js';
 
 interface AlertsPanelProps {
   periodId: string;

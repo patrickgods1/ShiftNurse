@@ -20,7 +20,7 @@ import type {
 } from '@shiftnurse/core';
 import { and, eq } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
-import type { DbLike } from '../client.js';
+import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { toShiftSwap } from '../mappers.js';
 import { schedulePeriod, shiftSwap } from '../schema.js';
@@ -179,7 +179,8 @@ export interface ApproveSwapOptions {
  * refused approval — for a missing reason or a stale id — must not have partially applied.
  */
 export function approveSwap(
-  db: DbLike,
+  // A transaction, not any handle: these writes are only correct all-or-nothing.
+  db: ShiftNurseTx,
   id: Id,
   application: ExchangeApplication,
   actor: string,
