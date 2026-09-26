@@ -12,6 +12,20 @@ describe('isAppUrl', () => {
     expect(isAppUrl(`${indexUrl}#/schedule`, { indexHtmlPath })).toBe(true);
   });
 
+  it('trusts the packaged page on Windows under an 8.3 short path', () => {
+    // CI's temp dir is C:\Users\RUNNER~1\…: Node's file URL encodes the ~ as %7E, Chromium's
+    // frame URL does not, and the drive letter's case can differ. The first packaged Windows
+    // build compared URL strings and refused every IPC call from its own window.
+    const app = {
+      indexHtmlPath: 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\app\\out\\renderer\\index.html',
+      windows: true,
+    };
+    const chromium = 'file:///C:/Users/RUNNER~1/AppData/Local/Temp/app/out/renderer/index.html';
+    expect(isAppUrl(`${chromium}#/schedule`, app)).toBe(true);
+    expect(isAppUrl(chromium.replace('C:', 'c:').replace('~', '%7E'), app)).toBe(true);
+    expect(isAppUrl('file:///C:/Users/RUNNER~1/Downloads/roster.html', app)).toBe(false);
+  });
+
   it('does not trust a file a manager drags onto the window', () => {
     // Chromium navigates to a dropped file; the preload would then hand it the whole API.
     expect(isAppUrl('file:///Users/manager/Downloads/roster.html', { indexHtmlPath })).toBe(false);
