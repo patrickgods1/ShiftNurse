@@ -13,11 +13,9 @@ import {
   useSolverSettings,
 } from '../../api-solver.js';
 import { AsyncState } from '../../components/async-state.js';
+import { PRIMARY } from '../../components/ui.js';
 import { SOLVER_LABELS, SOLVER_ORDER } from '../../solver-labels.js';
 import { useUnitId } from '../../unit-context.js';
-
-const PRIMARY =
-  'rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50';
 
 export default function SolverPanel() {
   const unitId = useUnitId();

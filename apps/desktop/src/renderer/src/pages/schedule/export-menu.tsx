@@ -8,7 +8,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import type { OutputFormat } from '@shared/api.js';
 import { useState } from 'react';
 import { useExport } from '../../api-publish.js';
-import { errorMessage } from '../requests/ui.js';
+import { errorMessage } from '../../components/ui.js';
 
 const ITEMS: readonly { format: OutputFormat; label: string }[] = [
   { format: 'pdf-grid', label: 'Unit grid (PDF)' },

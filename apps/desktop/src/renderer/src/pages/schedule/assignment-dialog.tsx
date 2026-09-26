@@ -6,6 +6,7 @@
 
 import * as Dialog from '@radix-ui/react-dialog';
 import type { Assignment, Nurse, ShiftType, Violation } from '@shiftnurse/core';
+import { OVERLAY } from '../../components/ui.js';
 import { formatDateWithWeekday } from '../../format.js';
 import { violationKey } from './grid-utils.js';
 
@@ -44,7 +45,7 @@ export function AssignmentDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Overlay className={OVERLAY} />
         <Dialog.Content
           className="fixed z-50 left-1/2 top-1/2 w-80 -translate-x-1/2 -translate-y-1/2 rounded-lg
             border border-border bg-surface p-5 shadow-lg"

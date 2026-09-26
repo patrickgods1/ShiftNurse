@@ -8,12 +8,8 @@ import type { AutoResolvePolicy } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useConflictPolicy, useSaveConflictPolicy } from '../../api-requests.js';
 import { AsyncState } from '../../components/async-state.js';
+import { INPUT, LABEL, PRIMARY } from '../../components/ui.js';
 import { useUnitId } from '../../unit-context.js';
-
-const INPUT = 'rounded-md border border-border bg-bg px-2 py-1 text-sm text-text';
-const LABEL = 'flex flex-col gap-1 text-xs text-text-muted';
-const PRIMARY =
-  'rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50';
 
 export default function ConflictsPanel() {
   const unitId = useUnitId();

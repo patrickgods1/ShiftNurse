@@ -22,6 +22,7 @@ import {
 import { AsyncState } from '../components/async-state.js';
 import { type Column, DataTable } from '../components/data-table.js';
 import { PageHeader } from '../components/page-header.js';
+import { PRIMARY, SMALL } from '../components/ui.js';
 import { defaultPeriod } from '../default-period.js';
 import { formatDate } from '../format.js';
 import { useUnitId } from '../unit-context.js';
@@ -33,7 +34,6 @@ import { bucketByDay } from './requests/heatmap-data.js';
 import { NewRequestDialog } from './requests/new-request-dialog.js';
 import { periodForRequest } from './requests/period-for-request.js';
 import { ReasonDialog } from './requests/reason-dialog.js';
-import { PRIMARY, SMALL } from './requests/ui.js';
 
 type FilterValue = TimeOffStatus | 'all';
 
