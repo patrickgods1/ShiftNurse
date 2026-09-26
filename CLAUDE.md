@@ -157,11 +157,12 @@ violations of their own.
 |---|---|
 | `npm test` | `vitest run` over `packages/*/src/**/*.test.ts`, renderer tests and `apps/desktop/src/main/**/*.test.ts`. The real gate. |
 | `npm run test:watch` | Vitest in watch mode. |
+| `npm run test:coverage` | Tests with v8 coverage over `packages/*` and desktop `main`; CI's ubuntu leg posts a per-area table (`scripts/coverage-summary.mjs`) to the run summary. |
 | `npm run lint` | `biome check .` — format + lint, no writes. |
 | `npm run lint:fix` | Biome check with `--write`. |
 | `npm run format` | `biome format --write .`. |
 | `npm run typecheck` | Builds `core` and `db` first, then `tsc --build --force` against the root `tsconfig.json`, which covers every package **including test files**. The per-package configs set `composite` and exclude `*.test.ts` so they emit clean `.d.ts`, so a build-only check would never look at the tests. The build comes first because `db` and the desktop resolve `@shiftnurse/core` through its `dist` typings: without it a fresh checkout (CI) cannot typecheck, and a stale local `dist` would check against old types. |
-| `npm run check` | lint + typecheck + test. The pre-commit gate. |
+| `npm run check` | lint + typecheck + test. The full gate CI runs (`FULL_CHECK=1` makes the pre-commit hook run it too). |
 | `npm run build:packages` | Builds `core` then `db` with `tsc`. Required before `seed:demo`. |
 | `npm run seed:demo` | Builds and runs the demo seeder into a local SQLite file. |
 | `npm run dev` | Builds packages, then runs package watchers + `electron-vite dev` with HMR. |
@@ -172,15 +173,18 @@ violations of their own.
 
 ## Git hooks (`.githooks/`, wired by `npm install` via the `prepare` script)
 
-- **`pre-commit`** runs `npm run check`, then sends the staged diff to a headless Claude
-  reviewer (`claude -p`, Sonnet, read-only tools) briefed on this repo's invariants. A
-  `VERDICT: BLOCK` aborts the commit with the findings printed. Budget about 1½ minutes.
-  `SKIP_REVIEW=1` keeps the test gate but skips the review; `--no-verify` skips both.
+- **`pre-commit`** runs a fast mechanical gate — `biome check --staged`, an incremental
+  typecheck, and `vitest related` for the staged files minus the real-runner CP-SAT test (~6 s;
+  CI runs the full `npm run check` on three platforms) — then sends the staged diff to a
+  headless Claude reviewer (`claude -p`, Sonnet, read-only tools) briefed on this repo's
+  invariants. A `VERDICT: BLOCK` aborts the commit with the findings printed. Budget about a
+  minute. `FULL_CHECK=1` runs the full `npm run check` instead; `SKIP_REVIEW=1` keeps the
+  mechanical gate but skips the review; `--no-verify` skips both.
 - **`prepare-commit-msg`** drafts a plain-English message from the staged diff for a bare
   `git commit`; it never touches a message given with `-m`/`-F`. To commit non-interactively
   with a drafted message: run `.githooks/prepare-commit-msg <file> ""` then `git commit -F <file>`.
 - The review fails *open* (no verdict → not blocked) so a flaky reviewer cannot wedge the
-  repo; the test gate fails closed.
+  repo; the mechanical gate fails closed.
 
 ## Conventions
 
@@ -302,6 +306,13 @@ violations of their own.
   its own when it sees CI + tag + token) and name their target explicitly (`--mac dmg --arm64`):
   `electron-builder.yml` lists both mac archs, which overrides a bare `--arm64` and once made each
   mac job build — and upload — an untested copy of the other arch's dmg.
+- **Workflows share `.github/actions/setup`** (Node from `.nvmrc`, npm + download caches,
+  `npm ci`, `build:packages`). Every third-party action is pinned to a commit SHA with a
+  `# vX.Y.Z` comment; Dependabot (`.github/dependabot.yml`) bumps both. Every job has a
+  `timeout-minutes`. The OR-Tools archive the runner links against is checked against a
+  per-matrix `sha256` (GitHub's asset digest) whether downloaded or cached.
+  `lint-typecheck` installs with `--ignore-scripts` and fails on a high-severity advisory in a
+  runtime dependency (`npm audit --omit=dev`).
 - **The packaged smoke test runs outside the repo and needs `[smoke] PASS`.** `scripts/smoke.mjs`
   copies the packaged app to a temp dir first and fails unless the app prints the marker. Inside
   the repo a module missing from the app is found in the repo's `node_modules`, and a startup

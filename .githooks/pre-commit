@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # Pre-commit gate for ShiftNurse.
 #
-#   1. lint + format check, typecheck, tests  (npm run check)
+#   1. a fast mechanical gate: Biome on the staged files, an incremental typecheck, and the
+#      tests related to the staged files (vitest's module graph)
 #   2. an AI code review of the staged diff by a headless Claude subagent
 #
-# Either failing blocks the commit. Escape hatches, for when you know better:
-#   SKIP_REVIEW=1 git commit ...   skips only the AI review (keeps the test gate)
+# Either failing blocks the commit. CI runs the full `npm run check` on three platforms and
+# branch protection requires it, so the hook only has to catch what would fail there cheaply.
+#   FULL_CHECK=1 git commit ...    runs the full `npm run check` instead of the fast gate
+#   SKIP_REVIEW=1 git commit ...   skips only the AI review (keeps the mechanical gate)
 #   git commit --no-verify         skips everything
 #
-# The review reads the *staged* diff. The test gate runs against the working tree, which
-# is what you have in front of you; stage everything you intend to commit before running.
+# Biome and the review read the *staged* files; typecheck and tests run against the working
+# tree. Stage everything you intend to commit before running.
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -24,11 +27,36 @@ fi
 # ---------------------------------------------------------------------------
 # 1. Mechanical gate
 # ---------------------------------------------------------------------------
-echo "${bold}pre-commit: lint + typecheck + tests${reset}"
-if ! out=$(npm run --silent check 2>&1); then
-  echo "$out" | tail -60
-  echo "${red}pre-commit: npm run check failed — commit blocked${reset}"
-  exit 1
+run_gate() {
+  local label=$1; shift
+  if ! out=$("$@" 2>&1); then
+    echo "$out" | tail -60
+    echo "${red}pre-commit: ${label} failed — commit blocked${reset}"
+    exit 1
+  fi
+}
+
+if [[ "${FULL_CHECK:-0}" == "1" ]]; then
+  echo "${bold}pre-commit: lint + typecheck + tests (full)${reset}"
+  run_gate "npm run check" npm run --silent check
+else
+  echo "${bold}pre-commit: lint (staged) + typecheck + related tests${reset}"
+  run_gate "lint" npx biome check --staged --no-errors-on-unmatched
+  # Incremental: `npm run typecheck` forces a full rebuild for CI's sake; locally the build
+  # info is trustworthy because build:packages refreshes the dist typings first.
+  run_gate "typecheck" bash -c \
+    'npm run --silent build:packages && npx tsc --build && npm run --silent typecheck -w @shiftnurse/desktop'
+  # A read loop, not mapfile: macOS ships bash 3.2.
+  code=()
+  while IFS= read -r f; do code+=("$f"); done < <(
+    git diff --cached --name-only --diff-filter=ACMR -- '*.ts' '*.tsx' '*.mjs'
+  )
+  if (( ${#code[@]} > 0 )); then
+    # The real-runner CP-SAT test is ~45 s of a ~50 s suite; CI runs it on macOS and Windows.
+    run_gate "tests" npx vitest related --run --passWithNoTests \
+      --exclude 'apps/desktop/src/main/cpsat-backend.test.ts' --exclude '**/node_modules/**' \
+      "${code[@]}"
+  fi
 fi
 echo "${green}pre-commit: check passed${reset}"
 

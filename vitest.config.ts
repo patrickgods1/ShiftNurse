@@ -10,8 +10,9 @@ export default defineConfig({
     environment: 'node',
     coverage: {
       provider: 'v8',
-      include: ['packages/*/src/**/*.ts'],
-      exclude: ['packages/*/src/**/*.test.ts'],
+      include: ['packages/*/src/**/*.ts', 'apps/desktop/src/main/**/*.ts'],
+      exclude: ['**/*.test.ts', '**/*.run.ts'],
+      reporter: ['text-summary', 'json-summary'],
     },
   },
 });

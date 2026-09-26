@@ -1,0 +1,25 @@
+# Weekly dependency and action updates. Minor/patch npm bumps arrive as one grouped PR; the
+# Electron toolchain moves together because Electron, electron-builder and electron-vite must
+# agree (and a new Electron needs a better-sqlite3 prebuild for its ABI — see CLAUDE.md).
+# Actions are pinned by SHA; Dependabot keeps the SHA and its version comment current.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      electron:
+        patterns: ['electron', 'electron-builder', 'electron-vite', '@electron-toolkit/*']
+      minor-and-patch:
+        update-types: [minor, patch]
+        exclude-patterns: ['electron', 'electron-builder', 'electron-vite', '@electron-toolkit/*']
+
+  - package-ecosystem: github-actions
+    directories: ['/', '/.github/actions/*']
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
