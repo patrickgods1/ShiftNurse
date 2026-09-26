@@ -30,7 +30,7 @@ import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import { toScheduleChange, toScheduleVersion } from '../mappers.js';
 import { scheduleChange, schedulePeriod, scheduleVersion } from '../schema.js';
-import { type UpsertFairnessLedgerInput, upsertFairnessLedgerEntry } from './operations.js';
+import { type UpsertFairnessLedgerInput, upsertFairnessLedgerEntry } from './ledger.js';
 import { getPeriod, listAssignmentsForPeriod } from './schedule.js';
 
 // ---------------------------------------------------------------------------

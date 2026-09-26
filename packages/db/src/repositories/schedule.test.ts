@@ -10,8 +10,9 @@ import { addDays, DEFAULT_FAIRNESS_WEIGHTS, type IsoDate, isoDate } from '@shift
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase } from '../client.js';
-import { createShiftType, createUnit, saveRuleSet } from './config.js';
+import { createShiftType, createUnit } from './config.js';
 import { createNurse } from './roster.js';
+import { saveRuleSet } from './rulesets.js';
 import {
   type CreateAssignmentInput,
   type CreatePeriodInput,

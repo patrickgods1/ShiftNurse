@@ -14,15 +14,10 @@ import * as s from '../schema.js';
 import {
   createAcuityTier,
   createRatioRule,
-  createShiftType,
-  createUnit,
-  getLatestRuleSet,
-  getRuleSet,
   listActiveRatioRulesForUnit,
   listAcuityTiersForUnit,
-  listShiftTypesForUnit,
-  saveRuleSet,
-} from './config.js';
+} from './acuity.js';
+import { createShiftType, createUnit, listShiftTypesForUnit } from './config.js';
 import {
   createNurse,
   credentialsExpiringBetween,
@@ -38,6 +33,7 @@ import {
   replaceNursePreferences,
   updateNurse,
 } from './roster.js';
+import { getLatestRuleSet, getRuleSet, saveRuleSet } from './rulesets.js';
 
 const ACTOR = 'manager';
 let handle: OpenedDatabase;

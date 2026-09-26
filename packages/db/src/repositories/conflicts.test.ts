@@ -17,9 +17,10 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
-import { createShiftType, createUnit, saveRuleSet } from './config.js';
+import { createShiftType, createUnit } from './config.js';
 import { applyResolution, getConflictPolicy, saveConflictPolicy } from './conflicts.js';
 import { createNurse } from './roster.js';
+import { saveRuleSet } from './rulesets.js';
 import {
   createAssignment,
   createPeriod,

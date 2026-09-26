@@ -39,14 +39,19 @@ self-service later becomes an intake surface rather than a new data model.
   and CSV), `testing/fixtures.ts`.
 - `packages/db` (M2, complete): 31-table Drizzle schema, generated migrations, `client.ts`
   (WAL, foreign keys ON, `transact`), `audit.ts`, `mappers.ts`, and repositories under
-  `repositories/` — `roster`, `config`, `schedule`, `timeoff`, `operations`, `publish` (M12:
+  `repositories/` — `roster`, `config` (unit, shift types, coverage, holidays, credential
+  requirements), `acuity` (tiers, ratios, HPPD), `rulesets`, `schedule`, `timeoff`, `calloffs`,
+  `pay` (rates, differentials, overtime, budget), `ledger`, shared `patch` (`patchOf`) and `bulk`
+  (`insertRows`), `publish` (M12:
   `publishSchedule` writes a `schedule_version` + status + ledger; `requireChangeReason` /
   `recordScheduleChange` are the post-publish change log; M15: `solver` (the per-unit
   `solver_settings`) and `solve-input` (`loadPeriodInput`, the one definition of a period's
   `SolveInput`, shared by Generate, conflicts, cost and the solver benchmark)).
 - `apps/desktop` (M3, complete): electron-vite. `src/shared/api.ts` is the IPC contract
   (`ShiftNurseApi`, `API_CHANNELS`); `src/main/` opens the DB in `userData` (seeding the demo
-  unit on first launch), implements the contract in `api.ts`, registers it in `ipc.ts`;
+  unit on first launch), implements the contract in `api.ts` (the wiring table) over the domain
+  modules in `api/` (`context` holds the shared loaders and `scheduleViewFor`; `schedule` holds
+  `editSchedule`), registers it in `ipc.ts`;
   `src/preload/` builds `window.shiftnurse` from the same channel table; `src/renderer/` is
   React 18 + TanStack Router (hash history, code-based routes) + TanStack Query + Tailwind v4
   tokens. Dashboard, Roster (CRUD, credentials, preferences, CSV import/export via native
@@ -67,13 +72,13 @@ self-service later becomes an intake surface rather than a new data model.
   dialog, overlap heatmap, decide-with-impact dialog and ranked resolution cards, and Settings >
   Conflicts holds the auto-resolve policy, off by default) and Exchanges (M11: Requests ›
   Exchanges — proposal dialog with live verdict, decide dialog; `exchange.approve` re-evaluates
-  in main and requires an override reason on `warn`) and Publish (M12: `main/api.ts`
+  in main and requires an override reason on `warn`) and Publish (M12: `main/api/schedule.ts`
   `editSchedule` wraps every grid mutation and logs reasoned edits on a published period;
   `main/backups.ts` (publish/daily/manual/restore), `main/output.ts` + `print-html.ts` +
   `xlsx.ts` for PDF/CSV/xlsx; Schedule › Publish dialog, change log, Export menu, reason dialog
   on published-period edits; Settings › Backups) and Today (M13: `core/dayof/` — `findReplacements`
   ranks same-role nurses simulated on the conflicts engine, `checkStaffing`/`shiftsAround` for the
-  live census re-check; `dayOf` IPC in `main/api.ts`, `backfill` goes through `editSchedule` as
+  live census re-check; `dayOf` IPC in `main/api/dayof.ts`, `backfill` goes through `editSchedule` as
   `'backfill'`; `pages/today.tsx` + `api-dayof.ts`) are real.
   Renderer hooks: `api.ts` (roster), `api-config.ts` (configuration + rules), `api-demand.ts`
   (census/demand), `api-schedule.ts` (grid mutations + validation), `api-fairness.ts`
@@ -263,7 +268,7 @@ violations of their own.
   mutation hooks and their invalidation; it reloads the window before asserting on the grid.
   Do not read that as a cache bug in the app.
 - **Adding an IPC method:** add it to `ShiftNurseApi` and `API_CHANNELS` in `shared/api.ts`,
-  implement it in `main/api.ts`. Preload and renderer types follow; a missing implementation
+  implement it in `main/api.ts` (logic in the matching `main/api/` module). Preload and renderer types follow; a missing implementation
   is a type error, not a runtime "no handler".
 - Bad data throws loudly (`ScheduleView` throws on an unknown nurse id). Silently dropping a
   row hides corruption; in scheduling that becomes a grievance.
