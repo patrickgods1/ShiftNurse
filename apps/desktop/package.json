@@ -11,8 +11,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "rebuild:sqlite": "node scripts/rebuild-sqlite-for-electron.mjs",
-    "postinstall": "node scripts/rebuild-sqlite-for-electron.mjs && node scripts/fetch-cpsat.mjs",
+    "postinstall": "node scripts/fetch-cpsat.mjs",
     "fetch:cpsat": "node scripts/fetch-cpsat.mjs --strict",
     "dist": "node scripts/dist.mjs",
     "smoke": "electron-vite build && node scripts/smoke.mjs",
@@ -20,7 +19,7 @@
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
-    "better-sqlite3-electron": "npm:better-sqlite3@~12.11.1"
+    "better-sqlite3": "~13.0.3"
   },
   "devDependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
@@ -35,7 +34,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "drizzle-orm": "^0.45.3",
-    "electron": "42.11.5",
+    "electron": "44.4.4",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
     "react": "^18.3.1",

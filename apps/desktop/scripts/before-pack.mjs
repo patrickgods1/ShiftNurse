@@ -1,14 +1,11 @@
 /**
- * electron-builder `beforePack` hook: fetch the Electron-ABI better-sqlite3 binary for the
- * *target* platform/arch, not the host building it. `npmRebuild: false` in electron-builder.yml
- * stops electron-builder recompiling the hoisted `better-sqlite3` (which would break `npm test`
- * on this machine); this hook is what puts the right binary into `better-sqlite3-electron`
- * before each target is asar'd, so a Windows installer built on macOS doesn't end up carrying a
- * darwin-arm64 `.node` file. See rebuild-sqlite-for-electron.mjs for the two-copies design.
+ * electron-builder `beforePack` hook: fetch the CP-SAT runner for the *target* platform/arch, not
+ * the host building it, so a Windows installer built on macOS doesn't carry a darwin binary.
+ * (better-sqlite3 needs nothing here: its Node-API prebuilds for every platform ship inside the
+ * package, and electron-builder.yml keeps only the target OS's.)
  */
 import { Arch } from 'electron-builder';
 import { fetchCpsat, TARGET_DIR } from './fetch-cpsat.mjs';
-import { fetchSqliteForElectron } from './rebuild-sqlite-for-electron.mjs';
 
 const PLATFORM_MAP = {
   darwin: 'darwin',
@@ -21,7 +18,7 @@ export default async function beforePack(context) {
   if (archName === 'universal') {
     throw new Error(
       '[before-pack] refusing to build a universal binary: mac.target builds separate ' +
-        'x64 and arm64 dmgs, each with its own better-sqlite3-electron binary.',
+        'x64 and arm64 dmgs, each with its own CP-SAT runner.',
     );
   }
 
@@ -31,9 +28,6 @@ export default async function beforePack(context) {
       `[before-pack] unrecognised electronPlatformName: ${context.electronPlatformName}`,
     );
   }
-
-  console.log(`[before-pack] fetching better-sqlite3-electron for ${platform}/${archName}`);
-  fetchSqliteForElectron({ platform, arch: archName });
 
   // The CP-SAT runner for the same target, into the folder extraResources ships as
   // resources/cpsat. Fatal on failure: an installer without it silently loses two solvers.

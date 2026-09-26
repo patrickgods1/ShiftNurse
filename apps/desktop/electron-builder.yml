@@ -23,10 +23,13 @@ files:
   - out/**
   - package.json
   - '!**/*.map'
-  # The sqlite amalgamation source and native sources aren't needed once the prebuilt binary
-  # (fetched per target by before-pack.mjs) is in place; asarUnpack below only needs the .node.
-  - '!node_modules/better-sqlite3-electron/deps/**'
-  - '!node_modules/better-sqlite3-electron/src/**'
+  # better-sqlite3 ships its SQLite sources and Node-API prebuilds for every platform; the app
+  # needs only lib/ and the target OS's prebuilds (see each platform's files below).
+  - '!node_modules/better-sqlite3/{deps,src}/**'
+  - '!node_modules/better-sqlite3/binding.gyp'
+  - '!node_modules/better-sqlite3/prebuilds/linux*'
+  # Headers better-sqlite3 compiles against when no prebuild fits; never loaded at runtime.
+  - '!node_modules/node-addon-api/**'
 extraResources:
   # `openDatabase` needs the SQL migrations at runtime; main resolves them from
   # process.resourcesPath/drizzle in a packaged build (see src/main/database.ts).
@@ -38,19 +41,21 @@ extraResources:
     to: cpsat
 asarUnpack:
   - '**/*.node'
-# electron-builder's default native rebuild recompiles the *hoisted* better-sqlite3 for
-# Electron's ABI, which breaks `npm test`/the seeder on this machine (they need the Node ABI).
-# beforePack fetches the right prebuilt binary into better-sqlite3-electron per target instead
-# — see scripts/before-pack.mjs and scripts/rebuild-sqlite-for-electron.mjs.
+# Nothing to rebuild: better-sqlite3's prebuilds are Node-API, valid for Electron as shipped.
+# A rebuild would only recompile it from source on the build machine for its own platform.
 npmRebuild: false
 beforePack: scripts/before-pack.mjs
 artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 mac:
   category: public.app-category.business
+  files:
+    - '!node_modules/better-sqlite3/prebuilds/win32-*'
   target:
     - target: dmg
       arch: [x64, arm64]
 win:
+  files:
+    - '!node_modules/better-sqlite3/prebuilds/darwin-*'
   target:
     - target: nsis
       arch: [x64]
