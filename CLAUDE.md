@@ -224,17 +224,18 @@ violations of their own.
   period snapshots the version it was solved under, so editing rules must never rewrite the
   rules an existing schedule was judged by.
 - **`better-sqlite3` is synchronous.** No `async`/`await`/`Promise` in `packages/db`.
-- **Two copies of better-sqlite3, on purpose.** The hoisted `better-sqlite3` is built for the
-  system Node (tests, seeder). `apps/desktop` depends on `better-sqlite3-electron`, an npm
-  alias of the same package whose binary `scripts/rebuild-sqlite-for-electron.mjs` swaps for
-  the Electron-ABI prebuild on postinstall. The main bundle inlines `@shiftnurse/db` and
-  aliases the import (see `electron.vite.config.ts`), so `db` itself knows nothing about it.
-  Bumping Electron means checking that better-sqlite3 publishes a prebuild for its ABI.
-- **Packaging never lets electron-builder rebuild native modules.** `electron-builder.yml` sets
-  `npmRebuild: false`: its default rebuild walks `@shiftnurse/db → better-sqlite3` and recompiles
-  the *hoisted* copy for Electron, which breaks `npm test`. Instead `scripts/before-pack.mjs`
-  fetches the prebuild for each *target* platform/arch (a Windows installer built on a Mac must
-  not carry a darwin `.node`) and `scripts/dist.mjs` restores the host binary in a `finally`.
+- **One better-sqlite3, for Node and Electron alike.** Since 13 it is a Node-API module: the
+  package ships one prebuilt binary per platform (`prebuilds/<os>-<arch>.node`) that loads under
+  the system Node (tests, seeder) and Electron's embedded Node unchanged, with no install-time
+  download. `apps/desktop` depends on it directly and electron-vite leaves it external, so the
+  bundled `@shiftnurse/db` and `drizzle-orm` load it from disk. (12.x needed a second, Electron-ABI
+  copy behind an npm alias and a postinstall swap, and published no build for Electron 44's ABI.)
+  An Electron bump no longer waits on a better-sqlite3 prebuild.
+- **Packaging never rebuilds native modules.** `npmRebuild: false`: the prebuilds are already
+  right for every target, and a rebuild would only compile for the build machine.
+  `electron-builder.yml` ships only the target OS's better-sqlite3 prebuilds (`mac.files`,
+  `win.files`), and `scripts/before-pack.mjs` fetches the CP-SAT runner for each *target*
+  platform/arch (a Windows installer built on a Mac must not carry a darwin binary).
   Electron is pinned to an exact version (electron-builder refuses a range). Everything
   electron-vite bundles (`@shiftnurse/*`, react, radix, tanstack) is a **devDependency**;
   `dependencies` is exactly the set the packaged main process loads from disk. `npm run
