@@ -1,7 +1,9 @@
 /**
  * The nurse x day grid. Rows are memoised (`React.memo` + stable callbacks from the parent) so
  * that redrawing 42 nurses x 42 days on every validation refresh doesn't mean re-rendering
- * every cell that didn't change — only the row(s) whose props actually differ do. Violation
+ * every cell that didn't change — only the row(s) whose props actually differ do. That only
+ * holds if per-row props are per-row: a row sees the drag highlight only when it is in that
+ * row, and the pending set only when one of its own shifts is pending. Violation
  * indexes are built once per validation result by the caller (`board.tsx`) and passed in as
  * plain maps, so this component never re-walks the violations array itself.
  */
@@ -140,15 +142,17 @@ interface GridRowProps {
   violationsByAssignment: ReadonlyMap<Id, Violation[]>;
   pendingIds: ReadonlySet<Id>;
   nurseViolations: readonly Violation[] | undefined;
-  dragOverKey: string | undefined;
+  /** The highlighted drop target's date, when it is in this row. */
+  dragOverDate: IsoDate | undefined;
   readOnly: boolean;
   onDrop: (nurseId: Id, date: IsoDate, payload: DragPayload) => void;
-  onDragOverCell: (key: string | undefined) => void;
+  onDragOverCell: (nurseId: Id, date: IsoDate, over: boolean) => void;
   onChipOpen: (assignment: Assignment) => void;
   onChipDelete: (assignment: Assignment) => void;
 }
 
 const EMPTY_ASSIGNMENTS: readonly Assignment[] = [];
+const NO_PENDING: ReadonlySet<Id> = new Set();
 
 const GridRow = memo(function GridRow({
   nurse,
@@ -158,7 +162,7 @@ const GridRow = memo(function GridRow({
   violationsByAssignment,
   pendingIds,
   nurseViolations,
-  dragOverKey,
+  dragOverDate,
   readOnly,
   onDrop,
   onDragOverCell,
@@ -195,11 +199,11 @@ const GridRow = memo(function GridRow({
             shiftTypesById={shiftTypesById}
             violationsByAssignment={violationsByAssignment}
             pendingIds={pendingIds}
-            isDragOver={dragOverKey === key}
+            isDragOver={dragOverDate === column.date}
             isWeekend={column.isWeekend}
             readOnly={readOnly}
             onDrop={(payload) => onDrop(nurse.id, column.date, payload)}
-            onDragOverChange={(over) => onDragOverCell(over ? key : undefined)}
+            onDragOverChange={(over) => onDragOverCell(nurse.id, column.date, over)}
             onChipOpen={onChipOpen}
             onChipDelete={onChipDelete}
           />
@@ -240,11 +244,25 @@ export function ScheduleGrid({
   onChipOpen,
   onChipDelete,
 }: ScheduleGridProps) {
-  const [dragOverKey, setDragOverKey] = useState<string | undefined>(undefined);
+  const [dragOver, setDragOver] = useState<{ nurseId: Id; date: IsoDate } | undefined>(undefined);
+  // `dragenter` on the next cell fires before `dragleave` on the last one, so a leave only
+  // clears the highlight if it is still this cell's.
+  const handleDragOverCell = useCallback((nurseId: Id, date: IsoDate, over: boolean) => {
+    setDragOver((current) => {
+      if (over) return { nurseId, date };
+      return current?.nurseId === nurseId && current.date === date ? undefined : current;
+    });
+  }, []);
 
   const activeNurses = useMemo(() => sortNurses(nurses), [nurses]);
   const shiftTypesById = useMemo(() => new Map(shiftTypes.map((st) => [st.id, st])), [shiftTypes]);
   const assignmentsByCell = useMemo(() => buildCellIndex(assignments), [assignments]);
+  const nursesWithPending = useMemo(() => {
+    const out = new Set<Id>();
+    if (pendingIds.size === 0) return out;
+    for (const a of assignments) if (pendingIds.has(a.id)) out.add(a.nurseId);
+    return out;
+  }, [assignments, pendingIds]);
 
   const handleDrop = useCallback(
     (nurseId: Id, date: IsoDate, payload: DragPayload) => {
@@ -308,12 +326,12 @@ export function ScheduleGrid({
             assignmentsByCell={assignmentsByCell}
             shiftTypesById={shiftTypesById}
             violationsByAssignment={violationsByAssignment}
-            pendingIds={pendingIds}
+            pendingIds={nursesWithPending.has(nurse.id) ? pendingIds : NO_PENDING}
             nurseViolations={violationsByNurse.get(nurse.id)}
-            dragOverKey={dragOverKey}
+            dragOverDate={dragOver?.nurseId === nurse.id ? dragOver.date : undefined}
             readOnly={readOnly}
             onDrop={handleDrop}
-            onDragOverCell={setDragOverKey}
+            onDragOverCell={handleDragOverCell}
             onChipOpen={onChipOpen}
             onChipDelete={onChipDelete}
           />

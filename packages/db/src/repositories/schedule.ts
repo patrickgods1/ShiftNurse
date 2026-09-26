@@ -16,6 +16,7 @@ import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import { toAssignment, toSchedulePeriod } from '../mappers.js';
 import { assignment, schedulePeriod } from '../schema.js';
+import { insertRows } from './bulk.js';
 import { type PatchKeys, patchOf } from './patch.js';
 
 // ---------------------------------------------------------------------------
@@ -445,11 +446,11 @@ export function replaceAssignments(
     `${r.nurseId}::${r.date}::${r.shiftTypeId}`;
   const lockedKeys = new Set(lockedRows.map(lockedKey));
 
-  const created: Assignment[] = [];
+  const rows: (typeof assignment.$inferSelect)[] = [];
   for (const input of assignments) {
     if (lockedKeys.has(lockedKey(input))) continue;
     const id = ids.assignment();
-    const row = {
+    rows.push({
       id,
       periodId,
       nurseId: input.nurseId,
@@ -460,10 +461,10 @@ export function replaceAssignments(
       isCharge: input.isCharge ?? false,
       isOvertime: input.isOvertime ?? false,
       notes: input.notes ?? null,
-    };
-    db.insert(assignment).values(row).run();
-    created.push(toAssignment(row));
+    });
   }
+  insertRows(db, assignment, rows);
+  const created = rows.map(toAssignment);
 
   const preserved = lockedRows.map(toAssignment);
   const result = [...preserved, ...created];

@@ -479,11 +479,11 @@ export interface ShiftNurseApi {
   };
   roster: {
     /** Opens a native file picker, parses the file, returns what an import would do. */
-    pickImportFile(unitId: Id): RosterImportPreview | undefined;
+    pickImportFile(unitId: Id): Promise<RosterImportPreview | undefined>;
     /** Applies previously previewed rows atomically. */
     importRows(unitId: Id, rows: RosterCsvRow[]): RosterImportSummary;
     /** Opens a native save dialog and writes the roster CSV. Returns the path written. */
-    exportToFile(unitId: Id): string | undefined;
+    exportToFile(unitId: Id): Promise<string | undefined>;
     /** The CSV text itself, for the clipboard or tests. */
     exportCsv(unitId: Id): string;
   };
@@ -571,7 +571,7 @@ export interface ShiftNurseApi {
     /** Score snapshots per ledger period, oldest first. */
     trend(unitId: Id): FairnessTrendPoint[];
     /** Opens a native file picker for a historical schedule CSV and previews the import. */
-    pickHistoryImportFile(unitId: Id): HistoryImportPreview | undefined;
+    pickHistoryImportFile(unitId: Id): Promise<HistoryImportPreview | undefined>;
     /** Derives ledger rows from previously previewed shifts and writes them atomically. */
     importHistory(unitId: Id, rows: HistoricalShiftRow[]): HistoryImportSummary;
   };

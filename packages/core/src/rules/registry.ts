@@ -182,30 +182,48 @@ export interface EvaluateOptions {
   only?: readonly string[];
 }
 
-export function evaluateSchedule(
-  schedule: ScheduleView,
-  ruleSet: RuleSet,
-  ctx: RuleContext,
-  options: EvaluateOptions = {},
-): EvaluationResult {
-  const violations: Violation[] = [];
-  const configs = resolveConfigs(ruleSet);
+/**
+ * A rule set resolved for repeated evaluation: the enabled rules (optionally only some ids), in
+ * registry order, each with its merged params and effective severity. `evaluateSchedule` builds
+ * one per call; the solver builds one per solve and reuses it for every "may this nurse take this
+ * shift" check — resolving the configs was a measurable slice of a solve on its own.
+ */
+export interface PreparedRule {
+  rule: Rule<never>;
+  params: Record<string, unknown>;
+  severity: RuleSeverity;
+}
 
-  for (const config of configs) {
+export function prepareRules(ruleSet: RuleSet, only?: readonly string[]): PreparedRule[] {
+  const wanted = only ? new Set(only) : undefined;
+  const out: PreparedRule[] = [];
+  for (const config of resolveConfigs(ruleSet)) {
     if (!config.enabled) continue;
-    if (options.only && !options.only.includes(config.ruleId)) continue;
+    if (wanted && !wanted.has(config.ruleId)) continue;
     const rule = RULES_BY_ID.get(config.ruleId);
     if (!rule) continue;
+    out.push({ rule, params: config.params, severity: config.severityOverride ?? rule.severity });
+  }
+  return out;
+}
 
-    const severity: RuleSeverity = config.severityOverride ?? rule.severity;
-    const found = rule.evaluate(schedule, config.params as never, ctx);
+export function evaluatePrepared(
+  schedule: ScheduleView,
+  prepared: readonly PreparedRule[],
+  ctx: RuleContext,
+  stopOnFirstHardViolation = false,
+): EvaluationResult {
+  const violations: Violation[] = [];
+
+  for (const { rule, params, severity } of prepared) {
+    const found = rule.evaluate(schedule, params as never, ctx);
 
     for (const item of found) {
       // A rule set may relax a hard rule to advisory, or promote a soft one.
       violations.push(severity === item.severity ? item : { ...item, severity });
     }
 
-    if (options.stopOnFirstHardViolation && violations.some((v) => v.severity === 'hard')) {
+    if (stopOnFirstHardViolation && violations.some((v) => v.severity === 'hard')) {
       break;
     }
   }
@@ -217,6 +235,20 @@ export function evaluateSchedule(
     softViolations: violations.filter((v) => v.severity === 'soft'),
     feasible: hardViolations.length === 0,
   };
+}
+
+export function evaluateSchedule(
+  schedule: ScheduleView,
+  ruleSet: RuleSet,
+  ctx: RuleContext,
+  options: EvaluateOptions = {},
+): EvaluationResult {
+  return evaluatePrepared(
+    schedule,
+    prepareRules(ruleSet, options.only),
+    ctx,
+    options.stopOnFirstHardViolation,
+  );
 }
 
 /** Fast path for the solver: is this schedule legal at all? */

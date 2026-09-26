@@ -331,6 +331,16 @@ violations of their own.
   references. Bundling a new library or adopting a published method means adding its entry.
 - **`dayNumber`/`fromDayNumber` are memoised.** The rule engine on partial views converts the same
   few dozen dates millions of times per solve; without the cache that was 60% of a run.
+  `compareDates`, `minDate`, `maxDate` and `dateInRange` compare the ISO strings directly
+  (validated `YYYY-MM-DD` sorts in calendar order): `compareDates` returns only a sign — use
+  `daysBetween` for a distance. `ScheduleView.dates` is a shared, frozen array; its other indexes
+  are built on first use.
+- **Solver speed-ups must not change a schedule.** `SolverModel` caches fairness (cleared in
+  `count`), staffing per shift and role, prepared rules (`prepareRules`/`evaluatePrepared`) and
+  per-nurse rule contexts. `solver/model.test.ts` checks every cached term against a fresh
+  rebuild after a random walk of moves and undos. Array order is behaviour (`pickUnlocked` samples
+  by index, `ensureCharge` takes the first eligible nurse on the roster), so no swap-removes.
+  Check a performance change by hashing SA + LNS output on fixed inputs before and after.
 - **Demo data must be staffable by construction.** The seeder deals roles and employment types
   rather than drawing them, forecasts only the 12-hour shifts, and contracts 12-hour nurses at
   72h (three 12s under a 40h overtime threshold). Changing floors, census or the roster mix means

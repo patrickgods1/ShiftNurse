@@ -55,6 +55,21 @@ function shiftKey(date: IsoDate, shiftTypeId: Id): string {
   return `${date}::${shiftTypeId}`;
 }
 
+/**
+ * The solver builds a view per candidate check — millions per solve — almost always over the
+ * same period, so the period's date list is shared (frozen: every view hands out the same one).
+ */
+const DATES_CACHE = new Map<string, readonly IsoDate[]>();
+function periodDates(start: IsoDate, end: IsoDate): readonly IsoDate[] {
+  const key = `${start}|${end}`;
+  let dates = DATES_CACHE.get(key);
+  if (!dates) {
+    dates = Object.freeze(datesInRange(start, end));
+    DATES_CACHE.set(key, dates);
+  }
+  return dates;
+}
+
 export class ScheduleView {
   readonly period: SchedulePeriod;
   readonly nursesById: ReadonlyMap<Id, Nurse>;
@@ -64,17 +79,19 @@ export class ScheduleView {
 
   /** All views including the lookback tail, sorted by start. */
   private readonly allViews: readonly AssignmentView[];
-  private readonly periodViews: readonly AssignmentView[];
   private readonly timelineByNurse: ReadonlyMap<Id, readonly AssignmentView[]>;
-  private readonly byDateShift: ReadonlyMap<string, readonly AssignmentView[]>;
-  private readonly byDate: ReadonlyMap<IsoDate, readonly AssignmentView[]>;
-  private readonly byId: ReadonlyMap<Id, AssignmentView>;
+  // Built on first use. The solver's one-nurse and one-shift views are evaluated by rules that
+  // each read one or two of these, and building all of them eagerly was a third of a view.
+  private periodViewsCache?: readonly AssignmentView[];
+  private byDateShiftCache?: ReadonlyMap<string, readonly AssignmentView[]>;
+  private byDateCache?: ReadonlyMap<IsoDate, readonly AssignmentView[]>;
+  private byIdCache?: ReadonlyMap<Id, AssignmentView>;
 
   constructor(input: ScheduleViewInput) {
     this.period = input.period;
     this.nursesById = new Map(input.nurses.map((n) => [n.id, n]));
     this.shiftTypesById = new Map(input.shiftTypes.map((s) => [s.id, s]));
-    this.dates = datesInRange(input.period.startDate, input.period.endDate);
+    this.dates = periodDates(input.period.startDate, input.period.endDate);
 
     const views: AssignmentView[] = [];
     const build = (assignment: Assignment, inPeriod: boolean): void => {
@@ -106,24 +123,44 @@ export class ScheduleView {
     views.sort((a, b) => a.window.startMinute - b.window.startMinute);
 
     const timeline = new Map<Id, AssignmentView[]>();
-    const dateShift = new Map<string, AssignmentView[]>();
-    const date = new Map<IsoDate, AssignmentView[]>();
-    const byId = new Map<Id, AssignmentView>();
-
-    for (const view of views) {
-      push(timeline, view.assignment.nurseId, view);
-      byId.set(view.assignment.id, view);
-      if (!view.inPeriod) continue;
-      push(dateShift, shiftKey(view.assignment.date, view.assignment.shiftTypeId), view);
-      push(date, view.assignment.date, view);
-    }
+    for (const view of views) push(timeline, view.assignment.nurseId, view);
 
     this.allViews = views;
-    this.periodViews = views.filter((v) => v.inPeriod);
     this.timelineByNurse = timeline;
-    this.byDateShift = dateShift;
-    this.byDate = date;
-    this.byId = byId;
+  }
+
+  private get periodViews(): readonly AssignmentView[] {
+    this.periodViewsCache ??= this.allViews.filter((v) => v.inPeriod);
+    return this.periodViewsCache;
+  }
+
+  private get byId(): ReadonlyMap<Id, AssignmentView> {
+    if (!this.byIdCache) {
+      const byId = new Map<Id, AssignmentView>();
+      for (const view of this.allViews) byId.set(view.assignment.id, view);
+      this.byIdCache = byId;
+    }
+    return this.byIdCache;
+  }
+
+  private get byDateShift(): ReadonlyMap<string, readonly AssignmentView[]> {
+    if (!this.byDateShiftCache) {
+      const dateShift = new Map<string, AssignmentView[]>();
+      for (const view of this.periodViews) {
+        push(dateShift, shiftKey(view.assignment.date, view.assignment.shiftTypeId), view);
+      }
+      this.byDateShiftCache = dateShift;
+    }
+    return this.byDateShiftCache;
+  }
+
+  private get byDate(): ReadonlyMap<IsoDate, readonly AssignmentView[]> {
+    if (!this.byDateCache) {
+      const date = new Map<IsoDate, AssignmentView[]>();
+      for (const view of this.periodViews) push(date, view.assignment.date, view);
+      this.byDateCache = date;
+    }
+    return this.byDateCache;
   }
 
   /** In-period assignments only — what this schedule is responsible for. */

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   addDays,
+  compareDates,
   crossesMidnight,
   DEFAULT_WEEKEND,
   dateInRange,
@@ -15,6 +16,8 @@ import {
   isoDate,
   isWeekendWindow,
   MINUTES_PER_DAY,
+  maxDate,
+  minDate,
   parseTimeOfDay,
   rangesOverlap,
   restMinutesBetween,
@@ -65,6 +68,17 @@ describe('calendar arithmetic', () => {
   it('round-trips through day numbers', () => {
     const d = isoDate('2026-09-17');
     expect(fromDayNumber(dayNumber(d))).toBe(d);
+  });
+
+  it('orders dates by the calendar across month, year and leap-day boundaries', () => {
+    const d = isoDate;
+    expect(compareDates(d('2026-01-31'), d('2026-02-01'))).toBeLessThan(0);
+    expect(compareDates(d('2027-01-01'), d('2026-12-31'))).toBeGreaterThan(0);
+    expect(compareDates(d('2028-02-29'), d('2028-02-29'))).toBe(0);
+    expect(minDate(d('2026-10-09'), d('2026-09-30'))).toBe('2026-09-30');
+    expect(maxDate(d('2026-10-09'), d('2026-09-30'))).toBe('2026-10-09');
+    expect(dateInRange(d('2026-03-01'), d('2026-02-28'), d('2026-03-01'))).toBe(true);
+    expect(dateInRange(d('2026-03-02'), d('2026-02-28'), d('2026-03-01'))).toBe(false);
   });
 
   it('adds days across month and year boundaries', () => {

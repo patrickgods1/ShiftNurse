@@ -48,6 +48,7 @@ import {
   payRate,
   schedulePeriod,
 } from '../schema.js';
+import { insertRows } from './bulk.js';
 import { type PatchKeys, patchOf } from './patch.js';
 import { getAssignment } from './schedule.js';
 
@@ -291,20 +292,16 @@ export function lastCalledAt(db: DbLike, unitId: Id, sinceDate: IsoDate): Map<Id
  * `nurse`, and a role default has no owning unit at all (it is `nurseId: null`, the role's
  * base rate wherever it applies), so it is always included.
  */
+/** Role defaults (shared by every unit) plus this unit's per-nurse rates. In insertion order:
+ * `resolvePayRate` keeps the first of two rates with the same effective date. */
 export function listPayRatesForUnit(db: DbLike, unitId: Id): PayRate[] {
-  const nurseIdsInUnit = new Set(
-    db
-      .select({ id: nurse.id })
-      .from(nurse)
-      .where(eq(nurse.unitId, unitId))
-      .all()
-      .map((r) => r.id),
-  );
+  const unitNurses = db.select({ id: nurse.id }).from(nurse).where(eq(nurse.unitId, unitId));
   return db
     .select()
     .from(payRate)
+    .where(or(isNull(payRate.nurseId), inArray(payRate.nurseId, unitNurses)))
+    .orderBy(sql`rowid`)
     .all()
-    .filter((r) => r.nurseId === null || nurseIdsInUnit.has(r.nurseId))
     .map(toPayRate);
 }
 
@@ -594,6 +591,33 @@ export function getFairnessLedgerEntry(
   return row ? toFairnessLedgerEntry(row) : undefined;
 }
 
+/** A ledger row's counters, with every omitted counter as 0 — the one place those defaults live. */
+function ledgerValues(input: UpsertFairnessLedgerInput) {
+  return {
+    periodStart: input.periodStart,
+    nightShifts: input.nightShifts ?? 0,
+    weekendsWorked: input.weekendsWorked ?? 0,
+    holidaysWorked: input.holidaysWorked ?? 0,
+    onCallShifts: input.onCallShifts ?? 0,
+    undesirableShifts: input.undesirableShifts ?? 0,
+    requestsApproved: input.requestsApproved ?? 0,
+    requestsDenied: input.requestsDenied ?? 0,
+    callOutsCovered: input.callOutsCovered ?? 0,
+    totalHours: input.totalHours ?? 0,
+    overtimeHours: input.overtimeHours ?? 0,
+    preferenceHitRate: input.preferenceHitRate ?? 0,
+  };
+}
+
+function ledgerRow(input: UpsertFairnessLedgerInput) {
+  return {
+    id: ids.fairness(),
+    nurseId: input.nurseId,
+    periodId: input.periodId,
+    ...ledgerValues(input),
+  };
+}
+
 /**
  * A rolling window of ledger entries for every nurse in a unit, ordered by period start.
  * Fairness scoring reads this to compare a nurse's recent burden against the team's.
@@ -642,20 +666,7 @@ export function upsertFairnessLedgerEntry(
     )
     .get();
 
-  const values = {
-    periodStart: input.periodStart,
-    nightShifts: input.nightShifts ?? 0,
-    weekendsWorked: input.weekendsWorked ?? 0,
-    holidaysWorked: input.holidaysWorked ?? 0,
-    onCallShifts: input.onCallShifts ?? 0,
-    undesirableShifts: input.undesirableShifts ?? 0,
-    requestsApproved: input.requestsApproved ?? 0,
-    requestsDenied: input.requestsDenied ?? 0,
-    callOutsCovered: input.callOutsCovered ?? 0,
-    totalHours: input.totalHours ?? 0,
-    overtimeHours: input.overtimeHours ?? 0,
-    preferenceHitRate: input.preferenceHitRate ?? 0,
-  };
+  const values = ledgerValues(input);
 
   if (existing) {
     const before = toFairnessLedgerEntry(existing);
@@ -697,29 +708,9 @@ export function importFairnessLedgerEntries(
   entries: readonly UpsertFairnessLedgerInput[],
   actor: string,
 ): FairnessLedgerEntry[] {
-  const created: FairnessLedgerEntry[] = [];
-  for (const input of entries) {
-    const id = ids.fairness();
-    const row = {
-      id,
-      nurseId: input.nurseId,
-      periodId: input.periodId,
-      periodStart: input.periodStart,
-      nightShifts: input.nightShifts ?? 0,
-      weekendsWorked: input.weekendsWorked ?? 0,
-      holidaysWorked: input.holidaysWorked ?? 0,
-      onCallShifts: input.onCallShifts ?? 0,
-      undesirableShifts: input.undesirableShifts ?? 0,
-      requestsApproved: input.requestsApproved ?? 0,
-      requestsDenied: input.requestsDenied ?? 0,
-      callOutsCovered: input.callOutsCovered ?? 0,
-      totalHours: input.totalHours ?? 0,
-      overtimeHours: input.overtimeHours ?? 0,
-      preferenceHitRate: input.preferenceHitRate ?? 0,
-    };
-    db.insert(fairnessLedger).values(row).run();
-    created.push(toFairnessLedgerEntry(row));
-  }
+  const rows = entries.map((input) => ledgerRow(input));
+  insertRows(db, fairnessLedger, rows);
+  const created = rows.map(toFairnessLedgerEntry);
   recordAudit(db, {
     entityType: 'fairness_ledger',
     entityId: 'batch' as Id,
@@ -820,28 +811,12 @@ export function importHistoricalLedger(
     }
   }
 
-  let written = 0;
-  for (const input of entries) {
-    const row = {
-      id: ids.fairness(),
-      nurseId: input.nurseId,
-      periodId: input.periodId,
-      periodStart: input.periodStart,
-      nightShifts: input.nightShifts ?? 0,
-      weekendsWorked: input.weekendsWorked ?? 0,
-      holidaysWorked: input.holidaysWorked ?? 0,
-      onCallShifts: input.onCallShifts ?? 0,
-      undesirableShifts: input.undesirableShifts ?? 0,
-      requestsApproved: input.requestsApproved ?? 0,
-      requestsDenied: input.requestsDenied ?? 0,
-      callOutsCovered: input.callOutsCovered ?? 0,
-      totalHours: input.totalHours ?? 0,
-      overtimeHours: input.overtimeHours ?? 0,
-      preferenceHitRate: input.preferenceHitRate ?? 0,
-    };
-    db.insert(fairnessLedger).values(row).run();
-    written++;
-  }
+  insertRows(
+    db,
+    fairnessLedger,
+    entries.map((input) => ledgerRow(input)),
+  );
+  const written = entries.length;
 
   recordAudit(db, {
     entityType: 'fairness_ledger',
