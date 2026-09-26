@@ -23,6 +23,12 @@ on:
       - 'apps/desktop/electron-builder.yml'
       - 'apps/desktop/scripts/**'
       - 'apps/desktop/src/main/smoke.ts'
+      # Window, IPC and preload wiring: unit tests cannot see a packaged window refused its own
+      # IPC (the first trusted-origin check did exactly that on Windows, and only here).
+      - 'apps/desktop/src/main/index.ts'
+      - 'apps/desktop/src/main/ipc.ts'
+      - 'apps/desktop/src/main/trusted-origin.ts'
+      - 'apps/desktop/src/preload/**'
   workflow_dispatch:
 
 permissions:
