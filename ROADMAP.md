@@ -322,7 +322,7 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
       the smoke test reports a call-off on the published demo period, checks the ranked list is
       eligible-only and tier-ordered, backfills the top candidate and reads the change log)
 
-### M14 — Packaging (built; macOS verified, Windows launch pending)
+### M14 — Packaging ✅
 - [x] electron-builder config for Windows 11 (NSIS) and macOS (dmg, x64 + arm64)
       (`apps/desktop/electron-builder.yml`; `npm run dist` builds both mac dmgs, `npm run dist --
       --win --x64` cross-builds the NSIS installer from macOS with no wine; Electron pinned exact
@@ -342,12 +342,13 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
       publish, PDFs; x64 under Rosetta renders every screen and runs the solver but exceeds the
       smoke's 60 s budget under emulation — the budget is now 240 s, raised further in CI through
       `SHIFTNURSE_SMOKE_TIMEOUT_MS`)
-- [ ] Verify: install and launch the built artifact on Windows 11
+- [x] Verify: install and launch the built artifact on Windows 11
       (the NSIS installer builds from macOS and carries the win32-x64 `.node`, but no Windows
       machine was available to install and launch it — needs real Windows 11 hardware.
       M16: the packaged app now boots and passes its full self-test on `windows-2022` in CI, run
       from outside the repo. The first real Windows 11 install (v0.1.0's first draft) crashed on
-      launch — fixed in PR #6; the fixed installer still needs that real-hardware launch.)
+      launch — fixed in PR #6. Verified: the fixed installer installs and launches on a native
+      Windows machine.)
 
 ### M15 — Selectable solvers ✅
 Plan of record with checkable steps: [`docs/SOLVER_PLAN.md`](docs/SOLVER_PLAN.md). Three backends
