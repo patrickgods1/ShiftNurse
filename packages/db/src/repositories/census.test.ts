@@ -2,8 +2,9 @@ import { isoDate } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase } from '../client.js';
+import { createAcuityTier } from './acuity.js';
 import { listCensusForecastsInRange, recordActualCensus, upsertCensusForecast } from './census.js';
-import { createAcuityTier, createShiftType, createUnit } from './config.js';
+import { createShiftType, createUnit } from './config.js';
 
 const ACTOR = 'manager';
 let handle: OpenedDatabase;

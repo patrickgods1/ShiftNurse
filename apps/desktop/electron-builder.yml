@@ -1,6 +1,6 @@
-# Packaging. Finalised in M14 (installers, signing, auto-update); enough here that `npm run
-# dist` produces runnable mac (dmg, x64 + arm64) and Windows (nsis, x64) installers, and the
-# migrations travel with them.
+# Packaging (M14): `npm run dist` produces runnable mac (dmg, x64 + arm64) and Windows (nsis,
+# x64) installers, and the migrations travel with them. Unsigned, and with no auto-update —
+# both are the proposed M17 in ROADMAP.md.
 #
 # `npm run dist` from the repo root builds mac. Cross-building Windows from macOS needs the
 # workspace form so extra flags reach electron-builder: `npm run dist -w @shiftnurse/desktop

@@ -20,7 +20,6 @@ import {
   createTimeOffRequest,
   denyTimeOff,
   getTimeOffRequest,
-  listTimeOffOverlapping,
   listTimeOffOverlappingForUnit,
   withdrawApproval,
 } from './timeoff.js';
@@ -203,18 +202,28 @@ describe('approvedTimeOffInRange', () => {
   });
 });
 
-describe('listTimeOffOverlapping', () => {
+describe('listTimeOffOverlappingForUnit boundaries', () => {
   it('counts a request ending exactly on the window start as overlapping', () => {
     const nurseId = mkNurse('Ada');
     const req = request(nurseId, '2026-03-01', '2026-03-10');
-    const result = listTimeOffOverlapping(handle.db, isoDate('2026-03-10'), isoDate('2026-03-20'));
+    const result = listTimeOffOverlappingForUnit(
+      handle.db,
+      unitId,
+      isoDate('2026-03-10'),
+      isoDate('2026-03-20'),
+    );
     expect(result.map((r) => r.id)).toContain(req.id);
   });
 
   it('counts a request starting exactly on the window end as overlapping', () => {
     const nurseId = mkNurse('Ada');
     const req = request(nurseId, '2026-03-20', '2026-03-25');
-    const result = listTimeOffOverlapping(handle.db, isoDate('2026-03-10'), isoDate('2026-03-20'));
+    const result = listTimeOffOverlappingForUnit(
+      handle.db,
+      unitId,
+      isoDate('2026-03-10'),
+      isoDate('2026-03-20'),
+    );
     expect(result.map((r) => r.id)).toContain(req.id);
   });
 });

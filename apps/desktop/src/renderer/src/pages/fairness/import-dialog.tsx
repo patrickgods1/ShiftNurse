@@ -11,6 +11,7 @@ import type { Id } from '@shiftnurse/core';
 import { useState } from 'react';
 import type { HistoryImportPreview, HistoryImportSummary } from '../../../../shared/api.js';
 import { useImportHistory, usePickHistoryImportFile } from '../../api-fairness.js';
+import { OVERLAY } from '../../components/ui.js';
 import { formatDate } from '../../format.js';
 
 interface ImportHistoryDialogProps {
@@ -57,7 +58,7 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Overlay className={OVERLAY} />
         <Dialog.Content
           className="fixed z-50 left-1/2 top-1/2 max-h-[85vh] w-[680px] -translate-x-1/2 -translate-y-1/2
             overflow-y-auto rounded-lg border border-border bg-surface p-6 shadow-lg"

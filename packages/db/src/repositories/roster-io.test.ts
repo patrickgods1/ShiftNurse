@@ -103,7 +103,7 @@ describe('roster round trip', () => {
 
   it('exports the awkward values faithfully — a comma in a surname and a quote in a note', () => {
     const parsed = parseRosterCsv(sixtyNurses(), { payPeriodDays: 14 });
-    importRoster(handle.db, unitId, parsed.rows, ACTOR);
+    transact(handle.db, (tx) => importRoster(tx, unitId, parsed.rows, ACTOR));
     const nurse = exportRoster(handle.db, unitId).find((r) => r.nurse.employeeId === 'E1000')!;
     expect(nurse.nurse.lastName).toBe('Last, 0');
     expect(nurse.nurse.notes).toBe('Note "quoted"');
@@ -132,9 +132,9 @@ describe('roster import reconciliation', () => {
   };
 
   it('updates an existing nurse by employee id instead of creating a twin', () => {
-    importRoster(handle.db, unitId, [ada], ACTOR);
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
     const changed = { ...ada, nurse: { ...ada.nurse, fte: 0.6, contractedHoursPerPeriod: 48 } };
-    const summary = importRoster(handle.db, unitId, [changed], ACTOR);
+    const summary = transact(handle.db, (tx) => importRoster(tx, unitId, [changed], ACTOR));
     expect(summary).toMatchObject({ created: 0, updated: 1 });
     const nurses = listActiveNursesForUnit(handle.db, unitId);
     expect(nurses).toHaveLength(1);
@@ -147,7 +147,7 @@ describe('roster import reconciliation', () => {
       { ...ada.nurse, employeeId: 'E9', firstName: 'Bo', unitId, active: true },
       ACTOR,
     );
-    importRoster(handle.db, unitId, [ada], ACTOR);
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
     expect(
       listActiveNursesForUnit(handle.db, unitId)
         .map((n) => n.employeeId)
@@ -157,7 +157,7 @@ describe('roster import reconciliation', () => {
 
   it('reactivates a deactivated nurse who reappears in the file', () => {
     const created = createNurse(handle.db, { ...ada.nurse, unitId, active: false }, ACTOR);
-    importRoster(handle.db, unitId, [ada], ACTOR);
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
     expect(listActiveNursesForUnit(handle.db, unitId).map((n) => n.id)).toEqual([created.id]);
   });
 
@@ -167,11 +167,13 @@ describe('roster import reconciliation', () => {
       { code: 'ACLS', name: 'Advanced Cardiac Life Support', tracksExpiry: true },
       ACTOR,
     );
-    const summary = importRoster(
-      handle.db,
-      unitId,
-      [{ ...ada, credentials: [...ada.credentials, { code: 'PALS', expiresOn: undefined }] }],
-      ACTOR,
+    const summary = transact(handle.db, (tx) =>
+      importRoster(
+        tx,
+        unitId,
+        [{ ...ada, credentials: [...ada.credentials, { code: 'PALS', expiresOn: undefined }] }],
+        ACTOR,
+      ),
     );
     expect(summary.credentialsCreated).toEqual(['PALS']);
     expect(
@@ -184,16 +186,20 @@ describe('roster import reconciliation', () => {
   });
 
   it('updates an expiry that moved and never revokes a credential missing from the file', () => {
-    importRoster(handle.db, unitId, [ada], ACTOR);
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
     const nurse = getNurseByEmployeeId(handle.db, unitId, 'E1')!;
-    const renewed = importRoster(
-      handle.db,
-      unitId,
-      [{ ...ada, credentials: [{ code: 'ACLS', expiresOn: isoDate('2029-03-01') }] }],
-      ACTOR,
+    const renewed = transact(handle.db, (tx) =>
+      importRoster(
+        tx,
+        unitId,
+        [{ ...ada, credentials: [{ code: 'ACLS', expiresOn: isoDate('2029-03-01') }] }],
+        ACTOR,
+      ),
     );
     expect(renewed).toMatchObject({ credentialsUpdated: 1, credentialsGranted: 0 });
-    const stripped = importRoster(handle.db, unitId, [{ ...ada, credentials: [] }], ACTOR);
+    const stripped = transact(handle.db, (tx) =>
+      importRoster(tx, unitId, [{ ...ada, credentials: [] }], ACTOR),
+    );
     expect(stripped).toMatchObject({ credentialsUpdated: 0, credentialsGranted: 0 });
     const held = listNurseCredentials(handle.db, nurse.id);
     expect(held).toHaveLength(1);
@@ -201,13 +207,10 @@ describe('roster import reconciliation', () => {
   });
 
   it('writes an audit trail: a create on first import, an update with before/after on the second', () => {
-    importRoster(handle.db, unitId, [ada], ACTOR);
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
     const nurse = getNurseByEmployeeId(handle.db, unitId, 'E1')!;
-    importRoster(
-      handle.db,
-      unitId,
-      [{ ...ada, nurse: { ...ada.nurse, phone: '555-0199' } }],
-      ACTOR,
+    transact(handle.db, (tx) =>
+      importRoster(tx, unitId, [{ ...ada, nurse: { ...ada.nurse, phone: '555-0199' } }], ACTOR),
     );
     const history = auditHistoryFor(handle.db, 'nurse', nurse.id);
     expect(history.map((h) => h.action)).toEqual(['update', 'create']);

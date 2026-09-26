@@ -7,7 +7,7 @@
  */
 
 import type { Id, TimeOffRequest } from '../domain/entities.js';
-import { dateInRange, type IsoDate, windowsOverlap } from '../domain/time.js';
+import { addDays, dateInRange, type IsoDate, windowsOverlap } from '../domain/time.js';
 import type { ScheduleView } from '../schedule/view.js';
 import { nurseName, type Rule, type RuleContext, type Violation, violation } from './types.js';
 
@@ -100,8 +100,7 @@ export function overlappingLeaveDate(
 }
 
 function nextDay(date: IsoDate): IsoDate {
-  const ms = Date.parse(`${date}T00:00:00Z`) + 86_400_000;
-  return new Date(ms).toISOString().slice(0, 10) as IsoDate;
+  return addDays(date, 1);
 }
 
 function describeType(request: TimeOffRequest): string {

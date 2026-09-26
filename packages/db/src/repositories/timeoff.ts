@@ -10,7 +10,7 @@
 import type { Assignment, Id, IsoDate, TimeOffRequest, TimeOffStatus } from '@shiftnurse/core';
 import { and, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
-import type { DbLike } from '../client.js';
+import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { toTimeOffRequest } from '../mappers.js';
 import { nurse, timeOffRequest } from '../schema.js';
@@ -50,21 +50,6 @@ export function listTimeOffForNurse(db: DbLike, nurseId: Id): TimeOffRequest[] {
 export function getTimeOffRequest(db: DbLike, id: Id): TimeOffRequest | undefined {
   const row = db.select().from(timeOffRequest).where(eq(timeOffRequest.id, id)).get();
   return row ? toTimeOffRequest(row) : undefined;
-}
-
-/**
- * Requests overlapping `[start, end]`, inclusive on both ends. One indexed query
- * (`time_off_range_idx`) serves both the solver's availability matrix, which needs every
- * approved request touching a period, and the overlapping-requests heatmap, which needs
- * every request regardless of status.
- */
-export function listTimeOffOverlapping(db: DbLike, start: IsoDate, end: IsoDate): TimeOffRequest[] {
-  return db
-    .select()
-    .from(timeOffRequest)
-    .where(and(lte(timeOffRequest.startDate, end), gte(timeOffRequest.endDate, start)))
-    .all()
-    .map(toTimeOffRequest);
 }
 
 /**
@@ -208,7 +193,8 @@ export interface ApprovalResult {
  * `scheduled_on_leave` conflict for the manager to resolve deliberately.
  */
 export function approveTimeOffAndLiftAssignments(
-  db: DbLike,
+  // A transaction, not any handle: these writes are only correct all-or-nothing.
+  db: ShiftNurseTx,
   id: Id,
   actor: string,
   reason?: string,

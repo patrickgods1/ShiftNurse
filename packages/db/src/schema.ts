@@ -304,7 +304,11 @@ export const censusForecast = sqliteTable(
     actualAcuityMix: text('actual_acuity_mix', { mode: 'json' }).$type<Record<Id, number>>(),
     source: text('source').notNull().default('manual').$type<'manual' | 'forecast'>(),
   },
-  (t) => [uniqueIndex('census_date_shift_idx').on(t.date, t.shiftTypeId)],
+  (t) => [
+    uniqueIndex('census_date_shift_idx').on(t.date, t.shiftTypeId),
+    // The forecaster and back-test read a unit's history by date; the table grows every day.
+    index('census_unit_date_idx').on(t.unitId, t.date),
+  ],
 );
 
 export const coverageRequirement = sqliteTable(
@@ -326,7 +330,10 @@ export const coverageRequirement = sqliteTable(
     minCount: integer('min_count').notNull(),
     targetCount: integer('target_count').notNull(),
   },
-  (t) => [index('coverage_lookup_idx').on(t.shiftTypeId, t.role, t.weekday)],
+  (t) => [
+    index('coverage_lookup_idx').on(t.shiftTypeId, t.role, t.weekday),
+    index('coverage_unit_idx').on(t.unitId),
+  ],
 );
 
 export const holiday = sqliteTable(
@@ -614,18 +621,23 @@ export const overtimeRule = sqliteTable('overtime_rule', {
   active: bool('active').notNull().default(true),
 });
 
-export const budget = sqliteTable('budget', {
-  id: text('id').primaryKey().$type<Id>(),
-  unitId: text('unit_id')
-    .notNull()
-    .references(() => unit.id, { onDelete: 'cascade' })
-    .$type<Id>(),
-  periodId: text('period_id')
-    .notNull()
-    .references(() => schedulePeriod.id, { onDelete: 'cascade' })
-    .$type<Id>(),
-  targetDollars: real('target_dollars').notNull(),
-});
+export const budget = sqliteTable(
+  'budget',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    periodId: text('period_id')
+      .notNull()
+      .references(() => schedulePeriod.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    targetDollars: real('target_dollars').notNull(),
+  },
+  // One budget per period: `setBudget` upserts, and a second row would never be read.
+  (t) => [uniqueIndex('budget_period_idx').on(t.periodId)],
+);
 
 // ---------------------------------------------------------------------------
 // Conflicts

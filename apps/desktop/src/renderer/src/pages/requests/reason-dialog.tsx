@@ -6,7 +6,16 @@
 
 import * as Dialog from '@radix-ui/react-dialog';
 import { type ReactNode, useEffect, useState } from 'react';
-import { DANGER, DIALOG, errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from './ui.js';
+import {
+  DANGER,
+  DIALOG,
+  errorMessage,
+  INPUT,
+  LABEL,
+  OVERLAY,
+  PRIMARY,
+  SECONDARY,
+} from '../../components/ui.js';
 
 interface ReasonDialogProps {
   open: boolean;
@@ -45,7 +54,7 @@ export function ReasonDialog({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Overlay className={OVERLAY} />
         <Dialog.Content data-testid="reason-dialog" className={`${DIALOG} w-[28rem]`}>
           <Dialog.Title className="text-base font-semibold text-text">{title}</Dialog.Title>
           <Dialog.Description className="mt-1 text-sm text-text-muted">

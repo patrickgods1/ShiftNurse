@@ -12,7 +12,7 @@ import { DEFAULT_FAIRNESS_WEIGHTS, isoDate } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
-import { createShiftType, createUnit, saveRuleSet } from './config.js';
+import { createShiftType, createUnit } from './config.js';
 import {
   approveSwap,
   cancelSwap,
@@ -24,6 +24,7 @@ import {
 } from './exchange.js';
 import { listChanges, publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
+import { saveRuleSet } from './rulesets.js';
 import {
   createAssignment,
   createPeriod,
