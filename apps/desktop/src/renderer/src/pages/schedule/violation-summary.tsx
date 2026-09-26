@@ -35,7 +35,12 @@ export function ViolationSummary({ status, result }: ViolationSummaryProps) {
       className="mb-3 rounded-md border border-border bg-surface px-3 py-2 text-sm"
     >
       <div className="flex items-center justify-between gap-3">
-        <p className={`font-medium ${tone}`} role={status === 'error' ? 'alert' : undefined}>
+        {/* Polite, not assertive: it changes after every grid edit. An error is an alert. */}
+        <p
+          className={`font-medium ${tone}`}
+          role={status === 'error' ? 'alert' : undefined}
+          aria-live={status === 'error' ? undefined : 'polite'}
+        >
           {label}
         </p>
         {count > 0 ? (

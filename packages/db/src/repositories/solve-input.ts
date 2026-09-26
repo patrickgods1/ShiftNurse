@@ -22,30 +22,24 @@ import {
   type SolveInput,
 } from '@shiftnurse/core';
 import type { DbLike } from '../client.js';
+import { getHppdTarget, listActiveRatioRulesForUnit, listAcuityTiersForUnit } from './acuity.js';
 import { listCensusForecastsInRange } from './census.js';
 import {
-  getHppdTarget,
-  getRuleSet,
   getUnit,
-  listActiveRatioRulesForUnit,
-  listAcuityTiersForUnit,
   listCoverageRequirementsForUnit,
   listHolidaysForUnit,
   listShiftCredentialRequirementsForUnit,
   listShiftTypesForUnit,
 } from './config.js';
-import {
-  ledgerSince,
-  listActiveDifferentials,
-  listActiveOvertimeRules,
-  listPayRatesForUnit,
-} from './operations.js';
+import { ledgerSince } from './ledger.js';
+import { listActiveDifferentials, listActiveOvertimeRules, listPayRatesForUnit } from './pay.js';
 import {
   listCredentials,
   listNurseCredentialsForUnit,
   listNursesForUnit,
   listPreferencesForUnit,
 } from './roster.js';
+import { getRuleSet } from './rulesets.js';
 import { listAssignmentsForPeriod, priorAssignmentsBefore } from './schedule.js';
 import { listTimeOffForUnit } from './timeoff.js';
 
@@ -105,17 +99,16 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
   const ruleSet = getRuleSet(db, period.ruleSetId);
   if (!ruleSet) throw new Error(`Period ${period.id} cites unknown rule set ${period.ruleSetId}`);
   const unitId = period.unitId;
-  const cost = costContext(db, unitId, ruleSet);
+  // Each table read once: the demand inputs carry the shift types, and the solver's cost data is
+  // just the three pay tables (it takes unit, holidays and the work week from the input itself).
+  const demand = demandInputs(db, unitId, period.startDate, period.endDate);
   return {
     unit: unitOrThrow(db, unitId),
     period,
     ruleSet,
     nurses: listNursesForUnit(db, unitId),
-    shiftTypes: listShiftTypesForUnit(db, unitId),
-    demand: deriveDemand(
-      datesInRange(period.startDate, period.endDate),
-      demandInputs(db, unitId, period.startDate, period.endDate),
-    ).all(),
+    shiftTypes: demand.shiftTypes,
+    demand: deriveDemand(datesInRange(period.startDate, period.endDate), demand).all(),
     assignments: listAssignmentsForPeriod(db, period.id),
     priorAssignments: priorAssignmentsBefore(db, unitId, period.startDate, 14),
     timeOff: listTimeOffForUnit(db, unitId),
@@ -126,9 +119,9 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     preferences: listPreferencesForUnit(db, unitId),
     ledgerHistory: ledgerHistory(db, unitId, period.startDate),
     cost: {
-      payRates: cost.payRates,
-      differentials: cost.differentials,
-      overtimeRules: cost.overtimeRules,
+      payRates: listPayRatesForUnit(db, unitId),
+      differentials: listActiveDifferentials(db, unitId),
+      overtimeRules: listActiveOvertimeRules(db, unitId),
     },
   };
 }

@@ -1,5 +1,8 @@
 ShiftNurse {{VERSION}} — a local desktop app that builds contract-compliant nurse unit schedules.
 
+What changed in this version: see
+[CHANGELOG.md](https://github.com/patrickgods1/ShiftNurse/blob/main/CHANGELOG.md).
+
 ## Download
 
 | Your computer | File |

@@ -19,7 +19,7 @@ import {
   useRecordActualCensus,
   useUpsertCensus,
 } from '../../api-demand.js';
-import { errorMessage, INPUT, LABEL, PRIMARY } from '../requests/ui.js';
+import { errorMessage, INPUT, LABEL, PRIMARY } from '../../components/ui.js';
 
 export function CensusEntry({ unitId, shift }: { unitId: Id; shift: TodayShiftView }) {
   const date = shift.date;

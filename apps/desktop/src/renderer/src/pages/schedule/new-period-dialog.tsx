@@ -8,6 +8,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import type { Id, IsoDate, SchedulePeriod } from '@shiftnurse/core';
 import { type FormEvent, useEffect, useId, useState } from 'react';
 import { useCreatePeriod } from '../../api-schedule.js';
+import { OVERLAY } from '../../components/ui.js';
 
 interface NewPeriodDialogProps {
   open: boolean;
@@ -65,7 +66,7 @@ export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPe
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Overlay className={OVERLAY} />
         <Dialog.Content
           className="fixed z-50 left-1/2 top-1/2 w-96 -translate-x-1/2 -translate-y-1/2 rounded-lg
             border border-border bg-surface p-6 shadow-lg"

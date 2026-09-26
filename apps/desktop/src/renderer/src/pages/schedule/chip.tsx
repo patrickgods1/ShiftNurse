@@ -20,6 +20,8 @@ interface AssignmentChipProps {
   pending: boolean;
   onOpen: (assignment: Assignment) => void;
   onDelete: (assignment: Assignment) => void;
+  /** In the grid's active cell: only then is the chip a tab stop (see `grid.tsx`). */
+  tabbable?: boolean;
 }
 
 export const AssignmentChip = memo(function AssignmentChip({
@@ -30,6 +32,7 @@ export const AssignmentChip = memo(function AssignmentChip({
   pending,
   onOpen,
   onDelete,
+  tabbable = true,
 }: AssignmentChipProps) {
   const optimistic = pending || isPendingId(assignment.id);
   const interactive = !readOnly && !optimistic;
@@ -50,6 +53,7 @@ export const AssignmentChip = memo(function AssignmentChip({
     <button
       type="button"
       data-testid="assignment-chip"
+      tabIndex={tabbable ? 0 : -1}
       draggable={draggable}
       disabled={optimistic}
       title={title}

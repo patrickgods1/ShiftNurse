@@ -10,6 +10,7 @@ import type { Id } from '@shiftnurse/core';
 import { useState } from 'react';
 import type { RosterImportPreview, RosterImportSummary } from '../../../../shared/api.js';
 import { useImportRosterRows, usePickRosterImportFile } from '../../api.js';
+import { OVERLAY } from '../../components/ui.js';
 
 interface ImportDialogProps {
   open: boolean;
@@ -58,7 +59,7 @@ export function ImportDialog({ open, onOpenChange, unitId }: ImportDialogProps) 
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Overlay className={OVERLAY} />
         <Dialog.Content
           className="fixed z-50 left-1/2 top-1/2 max-h-[85vh] w-[640px] -translate-x-1/2 -translate-y-1/2
             overflow-y-auto rounded-lg border border-border bg-surface p-6 shadow-lg"

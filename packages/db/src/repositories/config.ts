@@ -1,6 +1,7 @@
 /**
- * Unit configuration repository: the unit itself, shift types, staffing rules (coverage,
- * acuity, ratios, HPPD), holidays, shift credential requirements and rule sets.
+ * Unit configuration repository: the unit itself, shift types, coverage floors, holidays and
+ * shift credential requirements. Acuity (tiers, ratios, HPPD) is in `acuity.ts`, rule sets in
+ * `rulesets.ts`.
  *
  * This is the slowest-moving data in the system — a manager edits it a handful of times a
  * year — but it is what every solve and every compliance report is judged against, so reads
@@ -9,43 +10,28 @@
  */
 
 import type {
-  AcuityTier,
   CoverageRequirement,
-  FairnessWeights,
   Holiday,
-  HppdTarget,
   Id,
   IsoDate,
-  NurseRole,
-  RatioRule,
-  RuleConfig,
-  RuleSet,
   ShiftCredentialRequirement,
   ShiftType,
   Unit,
-  WeekendDefinition,
 } from '@shiftnurse/core';
-import { and, asc, desc, eq, gte, lte } from 'drizzle-orm';
+import { and, asc, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import {
-  toAcuityTier,
   toCoverageRequirement,
   toCredentialRequirement,
   toHoliday,
-  toRatioRule,
   toShiftType,
   toUnit,
 } from '../mappers.js';
 import {
-  acuityTier as acuityTierTable,
   coverageRequirement as coverageRequirementTable,
   holiday as holidayTable,
-  hppdTarget as hppdTargetTable,
-  ratioRule as ratioRuleTable,
-  ruleConfig as ruleConfigTable,
-  ruleSet as ruleSetTable,
   shiftCredentialRequirement as shiftCredentialRequirementTable,
   shiftType as shiftTypeTable,
   unit as unitTable,
@@ -214,18 +200,6 @@ export function listCoverageRequirementsForUnit(db: DbLike, unitId: Id): Coverag
     .map(toCoverageRequirement);
 }
 
-export function listCoverageRequirementsForShiftType(
-  db: DbLike,
-  shiftTypeId: Id,
-): CoverageRequirement[] {
-  return db
-    .select()
-    .from(coverageRequirementTable)
-    .where(eq(coverageRequirementTable.shiftTypeId, shiftTypeId))
-    .all()
-    .map(toCoverageRequirement);
-}
-
 /** Create when `input.id` is absent, otherwise update the existing row in place. */
 export function upsertCoverageRequirement(
   db: DbLike,
@@ -303,222 +277,6 @@ export function deleteCoverageRequirement(db: DbLike, id: Id, actor: string): vo
     actor,
     before,
   });
-}
-
-// ---------------------------------------------------------------------------
-// Acuity tiers
-// ---------------------------------------------------------------------------
-
-export function listAcuityTiersForUnit(db: DbLike, unitId: Id): AcuityTier[] {
-  return db
-    .select()
-    .from(acuityTierTable)
-    .where(eq(acuityTierTable.unitId, unitId))
-    .orderBy(asc(acuityTierTable.level))
-    .all()
-    .map(toAcuityTier);
-}
-
-export function createAcuityTier(
-  db: DbLike,
-  input: Omit<AcuityTier, 'id'>,
-  actor: string,
-): AcuityTier {
-  const id = ids.acuityTier();
-  const row: typeof acuityTierTable.$inferInsert = { id, ...input };
-  db.insert(acuityTierTable).values(row).run();
-  const after = toAcuityTier(row as typeof acuityTierTable.$inferSelect);
-  recordAudit(db, { entityType: 'acuity_tier', entityId: id, action: 'create', actor, after });
-  return after;
-}
-
-export interface AcuityTierPatch {
-  name?: string;
-  level?: number;
-  careHoursPerPatientDay?: number;
-}
-
-const ACUITY_TIER_PATCH_KEYS: PatchKeys<AcuityTierPatch> = {
-  name: true,
-  level: true,
-  careHoursPerPatientDay: true,
-};
-
-export function updateAcuityTier(
-  db: DbLike,
-  id: Id,
-  patch: AcuityTierPatch,
-  actor: string,
-): AcuityTier {
-  const row = db.select().from(acuityTierTable).where(eq(acuityTierTable.id, id)).get();
-  if (!row) throw new Error(`Acuity tier ${id} not found`);
-  const before = toAcuityTier(row);
-  const merged = { ...row, ...patchOf(patch, ACUITY_TIER_PATCH_KEYS, 'acuity tier') };
-  db.update(acuityTierTable).set(merged).where(eq(acuityTierTable.id, id)).run();
-  const after = toAcuityTier(merged);
-  recordAudit(db, {
-    entityType: 'acuity_tier',
-    entityId: id,
-    action: 'update',
-    actor,
-    before,
-    after,
-  });
-  return after;
-}
-
-export function deleteAcuityTier(db: DbLike, id: Id, actor: string): void {
-  const row = db.select().from(acuityTierTable).where(eq(acuityTierTable.id, id)).get();
-  if (!row) throw new Error(`Acuity tier ${id} not found`);
-  const before = toAcuityTier(row);
-  db.delete(acuityTierTable).where(eq(acuityTierTable.id, id)).run();
-  recordAudit(db, { entityType: 'acuity_tier', entityId: id, action: 'delete', actor, before });
-}
-
-// ---------------------------------------------------------------------------
-// Ratio rules
-// ---------------------------------------------------------------------------
-
-/** Every rule including deactivated ones — the editor shows history, the solver does not. */
-export function listRatioRulesForUnit(db: DbLike, unitId: Id): RatioRule[] {
-  return db
-    .select()
-    .from(ratioRuleTable)
-    .where(eq(ratioRuleTable.unitId, unitId))
-    .all()
-    .map(toRatioRule);
-}
-
-export function listActiveRatioRulesForUnit(db: DbLike, unitId: Id): RatioRule[] {
-  return db
-    .select()
-    .from(ratioRuleTable)
-    .where(and(eq(ratioRuleTable.unitId, unitId), eq(ratioRuleTable.active, true)))
-    .all()
-    .map(toRatioRule);
-}
-
-export function createRatioRule(
-  db: DbLike,
-  input: Omit<RatioRule, 'id'>,
-  actor: string,
-): RatioRule {
-  const id = ids.ratioRule();
-  const row: typeof ratioRuleTable.$inferInsert = {
-    id,
-    unitId: input.unitId,
-    role: input.role,
-    acuityTierId: input.acuityTierId,
-    maxPatientsPerNurse: input.maxPatientsPerNurse,
-    citation: input.citation ?? null,
-    active: input.active,
-  };
-  db.insert(ratioRuleTable).values(row).run();
-  const after = toRatioRule(row as typeof ratioRuleTable.$inferSelect);
-  recordAudit(db, { entityType: 'ratio_rule', entityId: id, action: 'create', actor, after });
-  return after;
-}
-
-export interface RatioRulePatch {
-  role?: NurseRole;
-  acuityTierId?: Id | null;
-  maxPatientsPerNurse?: number;
-  citation?: string | null;
-  active?: boolean;
-}
-
-const RATIO_RULE_PATCH_KEYS: PatchKeys<RatioRulePatch> = {
-  role: true,
-  acuityTierId: true,
-  maxPatientsPerNurse: true,
-  citation: true,
-  active: true,
-};
-
-export function updateRatioRule(
-  db: DbLike,
-  id: Id,
-  patch: RatioRulePatch,
-  actor: string,
-): RatioRule {
-  const row = db.select().from(ratioRuleTable).where(eq(ratioRuleTable.id, id)).get();
-  if (!row) throw new Error(`Ratio rule ${id} not found`);
-  const before = toRatioRule(row);
-  const merged = { ...row, ...patchOf(patch, RATIO_RULE_PATCH_KEYS, 'ratio rule') };
-  db.update(ratioRuleTable).set(merged).where(eq(ratioRuleTable.id, id)).run();
-  const after = toRatioRule(merged);
-  recordAudit(db, {
-    entityType: 'ratio_rule',
-    entityId: id,
-    action: 'update',
-    actor,
-    before,
-    after,
-  });
-  return after;
-}
-
-/** Deactivate rather than delete: past periods were solved under this rule and must stay explainable. */
-export function deactivateRatioRule(db: DbLike, id: Id, actor: string): RatioRule {
-  const row = db.select().from(ratioRuleTable).where(eq(ratioRuleTable.id, id)).get();
-  if (!row) throw new Error(`Ratio rule ${id} not found`);
-  const before = toRatioRule(row);
-  const merged = { ...row, active: false };
-  db.update(ratioRuleTable).set(merged).where(eq(ratioRuleTable.id, id)).run();
-  const after = toRatioRule(merged);
-  recordAudit(db, {
-    entityType: 'ratio_rule',
-    entityId: id,
-    action: 'delete',
-    actor,
-    before,
-    after,
-  });
-  return after;
-}
-
-// ---------------------------------------------------------------------------
-// HPPD target
-// ---------------------------------------------------------------------------
-
-function toHppdTarget(r: typeof hppdTargetTable.$inferSelect): HppdTarget {
-  return { id: r.id, unitId: r.unitId, targetHours: r.targetHours };
-}
-
-export function getHppdTarget(db: DbLike, unitId: Id): HppdTarget | undefined {
-  const row = db.select().from(hppdTargetTable).where(eq(hppdTargetTable.unitId, unitId)).get();
-  return row ? toHppdTarget(row) : undefined;
-}
-
-/** One target per unit. Updates the existing row if present, otherwise creates it. */
-export function upsertHppdTarget(
-  db: DbLike,
-  unitId: Id,
-  targetHours: number,
-  actor: string,
-): HppdTarget {
-  const row = db.select().from(hppdTargetTable).where(eq(hppdTargetTable.unitId, unitId)).get();
-  if (row) {
-    const before = toHppdTarget(row);
-    const merged = { ...row, targetHours };
-    db.update(hppdTargetTable).set(merged).where(eq(hppdTargetTable.id, row.id)).run();
-    const after = toHppdTarget(merged);
-    recordAudit(db, {
-      entityType: 'hppd_target',
-      entityId: row.id,
-      action: 'update',
-      actor,
-      before,
-      after,
-    });
-    return after;
-  }
-  const id = ids.hppdTarget();
-  const newRow: typeof hppdTargetTable.$inferInsert = { id, unitId, targetHours };
-  db.insert(hppdTargetTable).values(newRow).run();
-  const after = toHppdTarget(newRow as typeof hppdTargetTable.$inferSelect);
-  recordAudit(db, { entityType: 'hppd_target', entityId: id, action: 'create', actor, after });
-  return after;
 }
 
 // ---------------------------------------------------------------------------
@@ -619,106 +377,4 @@ export function deleteShiftCredentialRequirement(db: DbLike, id: Id, actor: stri
     actor,
     before,
   });
-}
-
-// ---------------------------------------------------------------------------
-// Rule sets
-// ---------------------------------------------------------------------------
-
-function toRuleConfig(r: typeof ruleConfigTable.$inferSelect): RuleConfig {
-  return {
-    ruleId: r.ruleId,
-    enabled: r.enabled,
-    severityOverride: r.severityOverride ?? undefined,
-    params: r.params,
-  };
-}
-
-function assembleRuleSet(db: DbLike, row: typeof ruleSetTable.$inferSelect): RuleSet {
-  const configRows = db
-    .select()
-    .from(ruleConfigTable)
-    .where(eq(ruleConfigTable.ruleSetId, row.id))
-    .all();
-  return {
-    id: row.id,
-    unitId: row.unitId,
-    name: row.name,
-    version: row.version,
-    configs: configRows.map(toRuleConfig),
-    weekendDefinition: row.weekendDefinition as WeekendDefinition,
-    fairnessWeights: row.fairnessWeights as FairnessWeights,
-    createdAt: row.createdAt,
-  };
-}
-
-export function getRuleSet(db: DbLike, id: Id): RuleSet | undefined {
-  const row = db.select().from(ruleSetTable).where(eq(ruleSetTable.id, id)).get();
-  return row ? assembleRuleSet(db, row) : undefined;
-}
-
-/** The highest-`version` rule set for a unit — the rules currently in force. */
-export function getLatestRuleSet(db: DbLike, unitId: Id): RuleSet | undefined {
-  const row = db
-    .select()
-    .from(ruleSetTable)
-    .where(eq(ruleSetTable.unitId, unitId))
-    .orderBy(desc(ruleSetTable.version))
-    .limit(1)
-    .get();
-  return row ? assembleRuleSet(db, row) : undefined;
-}
-
-/**
- * Save a rule set as a brand-new, immutable version rather than editing the latest one in
- * place. A published `SchedulePeriod` snapshots the `ruleSetVersion` it was solved under, so
- * a manager tightening the rest-rule tomorrow must never silently rewrite the rules an
- * already-published schedule was judged by — that would make the schedule's own compliance
- * report describe rules that were never actually in force when it ran. Editing rules always
- * produces version N+1; version N is retained forever.
- */
-export function saveRuleSet(
-  db: DbLike,
-  draft: Pick<RuleSet, 'unitId' | 'name' | 'configs' | 'weekendDefinition' | 'fairnessWeights'>,
-  actor: string,
-): RuleSet {
-  const latest = getLatestRuleSet(db, draft.unitId);
-  const id = ids.ruleSet();
-  const version = (latest?.version ?? 0) + 1;
-  const createdAt = Date.now();
-  const row: typeof ruleSetTable.$inferInsert = {
-    id,
-    unitId: draft.unitId,
-    name: draft.name,
-    version,
-    weekendDefinition: draft.weekendDefinition,
-    fairnessWeights: draft.fairnessWeights,
-    createdAt,
-  };
-  db.insert(ruleSetTable).values(row).run();
-  if (draft.configs.length > 0) {
-    db.insert(ruleConfigTable)
-      .values(
-        draft.configs.map((c) => ({
-          ruleSetId: id,
-          ruleId: c.ruleId,
-          enabled: c.enabled,
-          severityOverride: c.severityOverride ?? null,
-          params: c.params,
-        })),
-      )
-      .run();
-  }
-  const after: RuleSet = {
-    id,
-    unitId: draft.unitId,
-    name: draft.name,
-    version,
-    configs: draft.configs,
-    weekendDefinition: draft.weekendDefinition,
-    fairnessWeights: draft.fairnessWeights,
-    createdAt,
-  };
-  recordAudit(db, { entityType: 'rule_set', entityId: id, action: 'create', actor, after });
-  return after;
 }

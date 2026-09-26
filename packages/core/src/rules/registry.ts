@@ -60,21 +60,32 @@ export function getRule(ruleId: string): Rule<never> | undefined {
 }
 
 /**
- * Ids of the rules in a rule set that are enabled, hard under that rule set, and of the given
- * scope. This is the list the solver hands to `evaluateSchedule`'s `only` option when it
- * checks one nurse's timeline or one shift's roster in isolation; a soft rule never gates a
- * move, and a rule of the other scope would give a nonsense answer on a partial view.
+ * Ids of the rules in a rule set that are enabled and of the given scope — optionally only those
+ * hard under that rule set. A rule of the other scope would give a nonsense answer on the
+ * partial views these lists are used with (one nurse's timeline, one shift's roster).
  */
-export function hardRuleIdsByScope(ruleSet: RuleSet, scope: RuleScope): string[] {
+export function ruleIdsByScope(
+  ruleSet: RuleSet,
+  scope: RuleScope,
+  options: { hardOnly: boolean },
+): string[] {
   const out: string[] = [];
   for (const config of resolveConfigs(ruleSet)) {
     if (!config.enabled) continue;
     const rule = RULES_BY_ID.get(config.ruleId);
     if (!rule || rule.scope !== scope) continue;
-    if ((config.severityOverride ?? rule.severity) !== 'hard') continue;
+    if (options.hardOnly && (config.severityOverride ?? rule.severity) !== 'hard') continue;
     out.push(rule.id);
   }
   return out;
+}
+
+/**
+ * The solver's gate list: a soft rule never gates a move. The conflict engine uses every enabled
+ * rule of a scope instead, since its simulations diff soft violations too.
+ */
+export function hardRuleIdsByScope(ruleSet: RuleSet, scope: RuleScope): string[] {
+  return ruleIdsByScope(ruleSet, scope, { hardOnly: true });
 }
 
 /** A rule set enabling every rule at its shipped defaults. The starting point for a new unit. */
@@ -182,30 +193,48 @@ export interface EvaluateOptions {
   only?: readonly string[];
 }
 
-export function evaluateSchedule(
-  schedule: ScheduleView,
-  ruleSet: RuleSet,
-  ctx: RuleContext,
-  options: EvaluateOptions = {},
-): EvaluationResult {
-  const violations: Violation[] = [];
-  const configs = resolveConfigs(ruleSet);
+/**
+ * A rule set resolved for repeated evaluation: the enabled rules (optionally only some ids), in
+ * registry order, each with its merged params and effective severity. `evaluateSchedule` builds
+ * one per call; the solver builds one per solve and reuses it for every "may this nurse take this
+ * shift" check — resolving the configs was a measurable slice of a solve on its own.
+ */
+export interface PreparedRule {
+  rule: Rule<never>;
+  params: Record<string, unknown>;
+  severity: RuleSeverity;
+}
 
-  for (const config of configs) {
+export function prepareRules(ruleSet: RuleSet, only?: readonly string[]): PreparedRule[] {
+  const wanted = only ? new Set(only) : undefined;
+  const out: PreparedRule[] = [];
+  for (const config of resolveConfigs(ruleSet)) {
     if (!config.enabled) continue;
-    if (options.only && !options.only.includes(config.ruleId)) continue;
+    if (wanted && !wanted.has(config.ruleId)) continue;
     const rule = RULES_BY_ID.get(config.ruleId);
     if (!rule) continue;
+    out.push({ rule, params: config.params, severity: config.severityOverride ?? rule.severity });
+  }
+  return out;
+}
 
-    const severity: RuleSeverity = config.severityOverride ?? rule.severity;
-    const found = rule.evaluate(schedule, config.params as never, ctx);
+export function evaluatePrepared(
+  schedule: ScheduleView,
+  prepared: readonly PreparedRule[],
+  ctx: RuleContext,
+  stopOnFirstHardViolation = false,
+): EvaluationResult {
+  const violations: Violation[] = [];
+
+  for (const { rule, params, severity } of prepared) {
+    const found = rule.evaluate(schedule, params as never, ctx);
 
     for (const item of found) {
       // A rule set may relax a hard rule to advisory, or promote a soft one.
       violations.push(severity === item.severity ? item : { ...item, severity });
     }
 
-    if (options.stopOnFirstHardViolation && violations.some((v) => v.severity === 'hard')) {
+    if (stopOnFirstHardViolation && violations.some((v) => v.severity === 'hard')) {
       break;
     }
   }
@@ -219,9 +248,18 @@ export function evaluateSchedule(
   };
 }
 
-/** Fast path for the solver: is this schedule legal at all? */
-export function isFeasible(schedule: ScheduleView, ruleSet: RuleSet, ctx: RuleContext): boolean {
-  return evaluateSchedule(schedule, ruleSet, ctx, { stopOnFirstHardViolation: true }).feasible;
+export function evaluateSchedule(
+  schedule: ScheduleView,
+  ruleSet: RuleSet,
+  ctx: RuleContext,
+  options: EvaluateOptions = {},
+): EvaluationResult {
+  return evaluatePrepared(
+    schedule,
+    prepareRules(ruleSet, options.only),
+    ctx,
+    options.stopOnFirstHardViolation,
+  );
 }
 
 /** Group violations by nurse, for the per-nurse view on the schedule grid. */
