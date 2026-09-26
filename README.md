@@ -76,9 +76,7 @@ npm install
 
 `npm install` runs the `prepare` script, which points git at the repo's hooks
 (`.githooks/`) — see [Git hooks](#git-hooks) below — and a `postinstall` step in
-`apps/desktop` that rebuilds `better-sqlite3` for Electron's ABI
-(`scripts/rebuild-sqlite-for-electron.mjs`) and downloads the CP-SAT runner for this machine
-into `apps/desktop/.cpsat/host` (`scripts/fetch-cpsat.mjs`). The download needs network access;
+`apps/desktop` that downloads the CP-SAT runner for this machine into `apps/desktop/.cpsat/host` (`scripts/fetch-cpsat.mjs`). The download needs network access;
 offline it only warns, and the app falls back to SA + LNS until
 `npm run fetch:cpsat -w @shiftnurse/desktop` succeeds.
 
@@ -253,12 +251,9 @@ npm run dist -w @shiftnurse/desktop -- --win --x64
 Notes:
 
 - Electron is pinned to an exact version — electron-builder refuses a version range.
-- `electron-builder.yml` sets `npmRebuild: false`. electron-builder's default native-module
-  rebuild would recompile the repo's hoisted `better-sqlite3` for Electron's ABI, which
-  breaks `npm test`/the seeder afterward. Instead `apps/desktop/scripts/before-pack.mjs`
-  fetches the correct prebuild for each **target** platform/arch, and
-  `apps/desktop/scripts/dist.mjs` restores the host (Node-ABI) binary in a `finally` block
-  regardless of build outcome.
+- `electron-builder.yml` sets `npmRebuild: false`. `better-sqlite3` (13+) is a Node-API module
+  that ships a prebuilt binary for every platform, valid under Node and Electron alike, so there
+  is nothing to rebuild; each installer keeps only its own OS's prebuilds.
 - `before-pack.mjs` also fetches the **CP-SAT runner** for each target from the pinned
   `cpsat-runner-v*` GitHub release (checked against the SHA-256 in
   `apps/desktop/scripts/fetch-cpsat.mjs`) into `apps/desktop/.cpsat/target`, which

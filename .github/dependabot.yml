@@ -1,6 +1,6 @@
 # Weekly dependency and action updates. Minor/patch npm bumps arrive as one grouped PR; the
 # Electron toolchain moves together because Electron, electron-builder and electron-vite must
-# agree (and a new Electron needs a better-sqlite3 prebuild for its ABI — see CLAUDE.md).
+# agree. (better-sqlite3 is Node-API since 13, so an Electron bump needs no matching prebuild.)
 # Actions are pinned by SHA; Dependabot keeps the SHA and its version comment current.
 version: 2
 updates:

@@ -103,13 +103,12 @@ process to manage, back up, or fail independently.
   functions' shapes) if/when this becomes a hosted multi-user product — another payoff of
   keeping `packages/db` behind repository functions rather than scattering raw queries
   through the app.
-- **Two builds of the same native module, on purpose.** Tests and the seeder run under system
-  Node; the packaged app runs under Electron's own Node ABI. Rather than force one binary to
-  serve both (which breaks one of the two), the repo keeps a hoisted `better-sqlite3` for
-  Node and installs `better-sqlite3-electron` (an npm alias of the same package) for
-  `apps/desktop`, swapped to the Electron-ABI prebuild by a postinstall script. Packaging
-  disables electron-builder's own native-rebuild step for the same reason — its default
-  would recompile the hoisted (test-facing) copy for Electron and quietly break `npm test`.
+- **One native module for Node and Electron.** Tests and the seeder run under system Node; the
+  packaged app runs under Electron's embedded Node. better-sqlite3 13 is built on Node-API,
+  whose binary interface is stable across both, so one prebuilt binary per platform serves
+  both, shipped inside the package. (Until 12.x the two needed different builds: the repo kept
+  an npm-aliased Electron copy swapped in by a postinstall script, and every Electron upgrade
+  waited on a matching prebuild — Electron 44 had none.)
 
 ## Why the wall-clock time model
 
