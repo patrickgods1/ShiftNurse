@@ -20,7 +20,8 @@
     "build": "tsc -p tsconfig.json",
     "watch": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "generate": "drizzle-kit generate",
-    "seed:demo": "npm run build && node dist/seed/run-demo-seed.js"
+    "seed:demo": "npm run build && node dist/seed/run-demo-seed.js",
+    "seed:scenarios": "npm run build && node dist/seed/run-demo-seed.js --scenarios"
   },
   "dependencies": {
     "@shiftnurse/core": "*",

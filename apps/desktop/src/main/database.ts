@@ -3,22 +3,15 @@
  *
  * The file lives in Electron's `userData` directory — the per-user, per-app location the OS
  * expects application state in, which survives reinstalls and is what a backup job or a
- * support request will be pointed at. On first launch the file is empty, so the demo unit
- * is seeded: a manager evaluating the product should see a real roster and six months of
- * history, not an empty grid, and the seed is deterministic so two evaluators see the same
- * thing.
+ * support request will be pointed at. Opening only migrates: an empty file is left empty, and
+ * the renderer's first-run welcome screen decides what goes in it (the demo unit, a bare unit,
+ * or the assisted guide — see `api/setup.ts`). Seeding here would put a fictional 42-nurse
+ * unit into every real install.
  */
 
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import {
-  listUnits,
-  type OpenedDatabase,
-  openDatabase,
-  type ShiftNurseDb,
-  seedDemoUnit,
-  transact,
-} from '@shiftnurse/db';
+import { type OpenedDatabase, openDatabase, type ShiftNurseDb } from '@shiftnurse/db';
 import { app } from 'electron';
 
 let opened: OpenedDatabase | undefined;
@@ -54,12 +47,6 @@ export function getSqlite(): OpenedDatabase['sqlite'] {
 export function openAppDatabase(): ShiftNurseDb {
   if (opened) return opened.db;
   opened = openDatabase({ url: databasePath(), migrationsFolder: resolveMigrationsFolder() });
-
-  if (listUnits(opened.db).length === 0) {
-    const db = opened.db;
-    const result = transact(db, (tx) => seedDemoUnit(tx));
-    console.log(`[db] seeded demo unit ${result.unitId} into ${databasePath()}`);
-  }
   return opened.db;
 }
 

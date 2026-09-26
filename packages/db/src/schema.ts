@@ -34,6 +34,9 @@ import type {
   RequestOrigin,
   ScheduleChangeKind,
   ScheduleChangeSource,
+  SetupMode,
+  SetupState,
+  SetupStepId,
   ShiftSwapKind,
   ShiftSwapStatus,
   SolverId,
@@ -680,6 +683,25 @@ export const solverSettings = sqliteTable('solver_settings', {
   solverId: text('solver_id').notNull().default('hybrid').$type<SolverId>(),
   /** Overrides the job's default iteration budget; null means the default. */
   maxIterations: integer('max_iterations'),
+});
+
+// ---------------------------------------------------------------------------
+// First-run setup
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether first-run setup has happened, and where the assisted guide resumes. App-wide, not
+ * per unit: it has to exist before any unit does. At most one row (id `app`). An install that
+ * predates setup has units and no row, which core's `setupPhase` reads as "ready".
+ */
+export const setupState = sqliteTable('setup_state', {
+  id: text('id').primaryKey(),
+  mode: text('mode').notNull().$type<SetupMode>(),
+  status: text('status').notNull().$type<SetupState['status']>(),
+  currentStep: text('current_step').$type<SetupStepId>(),
+  skippedSteps: text('skipped_steps', { mode: 'json' }).notNull().$type<SetupStepId[]>(),
+  startedAt: timestamp('started_at').notNull(),
+  completedAt: timestamp('completed_at'),
 });
 
 // ---------------------------------------------------------------------------

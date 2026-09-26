@@ -9,7 +9,8 @@
 import { isoDate } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
-import { type SeedResult, seedDemoUnit } from '../seed/demo.js';
+import { seedScenarioUnit } from '../seed/scenarios.js';
+import type { SeedResult } from '../seed/types.js';
 import { createUnit, listShiftTypesForUnit } from './config.js';
 import { createPayRate, listPayRatesForUnit } from './pay.js';
 import { createNurse, listNursesForUnit } from './roster.js';
@@ -23,7 +24,7 @@ let seeded: SeedResult;
 beforeEach(() => {
   handle = openTestDatabase();
   seeded = transact(handle.db, (tx) =>
-    seedDemoUnit(tx, { seed: 42, today: isoDate('2026-09-17'), historyPeriods: 2 }),
+    seedScenarioUnit(tx, { seed: 42, today: isoDate('2026-09-17'), historyPeriods: 2 }),
   );
 });
 

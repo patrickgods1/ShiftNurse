@@ -56,6 +56,11 @@ import type {
   ScheduleDiff,
   SchedulePeriod,
   ScheduleVersion,
+  SetupPhase,
+  SetupPreset,
+  SetupPresetResult,
+  SetupState,
+  SetupStepId,
   ShiftDemand,
   ShiftStaffingCheck,
   ShiftSwap,
@@ -70,7 +75,32 @@ import type {
   TimeOffStatus,
   TimeOffType,
   Unit,
+  UnitSetupMode,
 } from '@shiftnurse/core';
+
+/** Which screen a launch opens, and the persisted setup record behind the decision. */
+export interface SetupStatus {
+  phase: SetupPhase;
+  /** Absent on a brand-new install, and on one that predates first-run setup. */
+  state: SetupState | undefined;
+  /** Whether the welcome screen may offer the test-scenario database (development only). */
+  scenariosAvailable: boolean;
+}
+
+/** One realistic demo unit the welcome screen offers (`db/seed/demo.ts`). */
+export interface DemoSummary {
+  id: string;
+  name: string;
+  /** Where a unit like this is found. */
+  setting: string;
+  summary: string;
+  /** What makes this unit's rules and operations different, one line each. */
+  highlights: string[];
+}
+
+export type UnitInput = Omit<Unit, 'id'>;
+/** A unit's name and type. Its pay-period calendar is fixed once hours have been counted in it. */
+export type UnitPatch = Partial<Pick<Unit, 'name' | 'unitType'>>;
 
 export interface AppInfo {
   version: string;
@@ -295,7 +325,7 @@ export type OutputFormat = 'pdf-grid' | 'pdf-nurses' | 'csv-grid' | 'csv-long' |
 export interface BackupInfo {
   fileName: string;
   path: string;
-  /** `publish`, `daily`, `manual` or `pre-restore`, from the file name. */
+  /** `publish`, `daily`, `manual`, `pre-restore` or `pre-reset`, from the file name. */
   kind: string;
   createdAt: number;
   bytes: number;
@@ -412,6 +442,28 @@ export interface ShiftNurseApi {
   };
   units: {
     list(): Unit[];
+    update(id: Id, patch: UnitPatch): Unit;
+  };
+  setup: {
+    status(): SetupStatus;
+    /** The realistic demo units on offer, the default first. */
+    demos(): DemoSummary[];
+    /** Seeds the named demo unit. Refused once any unit exists. */
+    loadDemo(demoId: string): Unit;
+    /** Seeds the test-scenario unit. Development only; refused once any unit exists. */
+    loadScenarios(): Unit;
+    /** The unit a manual or assisted setup starts from. Refused once any unit exists. */
+    createUnit(input: UnitInput, mode: UnitSetupMode): Unit;
+    advance(move: { from: SetupStepId; to: SetupStepId; skipped: boolean }): SetupState;
+    complete(): SetupState;
+    /** Reopens the assisted guide on the existing unit, from Settings. */
+    resume(): SetupState;
+    applyPreset(unitId: Id, preset: SetupPreset): SetupPresetResult;
+    /**
+     * Saves the live database as a `pre-reset` backup, deletes it and relaunches into the
+     * welcome screen. The call returns before the relaunch.
+     */
+    startOver(): Promise<BackupInfo>;
   };
   dashboard: {
     summary(unitId: Id): DashboardSummary;
@@ -684,7 +736,19 @@ export type RendererApi = { [R in keyof ShiftNurseApi]: Promisify<ShiftNurseApi[
  */
 export const API_CHANNELS = {
   app: ['info'],
-  units: ['list'],
+  units: ['list', 'update'],
+  setup: [
+    'status',
+    'demos',
+    'loadDemo',
+    'loadScenarios',
+    'createUnit',
+    'advance',
+    'complete',
+    'resume',
+    'applyPreset',
+    'startOver',
+  ],
   dashboard: ['summary'],
   nurses: ['list', 'get', 'create', 'update', 'deactivate'],
   credentials: ['list', 'create', 'forNurse', 'grant', 'updateExpiry', 'revoke'],

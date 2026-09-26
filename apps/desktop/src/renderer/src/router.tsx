@@ -23,6 +23,7 @@ import RosterPage from './pages/roster.js';
 import SchedulePage from './pages/schedule.js';
 import SettingsPage from './pages/settings.js';
 import TodayPage from './pages/today.js';
+import { SetupGate } from './setup/setup-gate.js';
 import { UnitProvider, useUnit } from './unit-context.js';
 
 const NAV_ITEMS = [
@@ -93,12 +94,15 @@ function AppShell() {
 }
 
 function RootLayout() {
-  // Resolves "the" unit once for the whole app; every page below reads it via `useUnitId`/
+  // The gate shows first-run setup instead of the app until there is a unit to run. Below it,
+  // "the" unit is resolved once for the whole app; every page reads it via `useUnitId`/
   // `useUnit` instead of re-fetching `units.list()`.
   return (
-    <UnitProvider>
-      <AppShell />
-    </UnitProvider>
+    <SetupGate>
+      <UnitProvider>
+        <AppShell />
+      </UnitProvider>
+    </SetupGate>
   );
 }
 

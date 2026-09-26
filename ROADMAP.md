@@ -379,6 +379,39 @@ installers natively on GitHub and attaches them to a **draft** release. Unsigned
 - [x] Verify: CI green on branch, PR and `main`; a failing PR is blocked; the `v0.1.0` draft carries
       three installers whose `SHA256SUMS` verify, and one installs and runs locally
 
+### First-run setup ✅
+A fresh install used to seed a fictional 42-nurse unit into every real database. It now opens a
+welcome screen: explore the demo, set up a bare unit manually, or follow the guided setup, whose
+every step offers one-click starting points and can be skipped. Settings › Unit reopens the guide
+and can start over (after a `pre-reset` backup).
+- [x] Core: `setup/` — step order and `setupPhase`, shift/acuity/coverage presets, US federal
+      holidays (test-first, hand-checked dates)
+- [x] DB: `setup_state` (migration 0008), `repositories/setup.ts` — demo/unit starts refuse over an
+      existing unit, idempotent audited presets
+- [x] Main/IPC: `setup` resource, `units.update`, Start over via `resetDatabase`; no seeding at open
+- [x] Renderer: setup gate, welcome screen, assisted guide embedding the Settings editors,
+      Settings › Unit
+- [x] Verify: `npm run check` green; smoke passes from an empty database (welcome → demo →
+      dashboard, then the guide walked end to end)
+- [ ] Verify by hand: a guided setup on a fresh `userData` applying every preset, quit and resume
+      mid-guide, Generate fills the floors of a new period; Start over returns to the welcome
+      screen and its `pre-reset` backup restores
+- [x] Realistic demo (`seed/demo.ts`): a 28-bed med-surg unit sized from real staffing practice;
+      the planted-problem dataset moved unchanged to `seed/scenarios.ts` (fingerprint of its
+      output identical before and after) for tests, the benchmark, `npm run seed:scenarios` and a
+      dev-only "Load test scenarios" welcome option
+- [x] Verify: `demo.test.ts` — history legal under the rule engine, no ratio breach, every past
+      shift priced within 6% of budget, Generate fills every floor of the draft; smoke passes on
+      the new demo (hybrid and SA + LNS 0 unfilled)
+- [x] A choice of demo units: the demo became a profile-driven engine; the welcome screen lists
+      community med-surg, a VA San Francisco medicine-surgery ward (8-hour tours, LVNs, no
+      ratio law, Title 38 premiums, federal holidays and pay calendar) and a California ICU
+      (Title 22 1:2/1:1, ACLS for all, 12-hour alternative workweek)
+- [x] Verify: `seed/demo/*.test.ts` — the shared realism checks on every unit (legal history,
+      Generate fills every floor) plus each unit's own facts, Title 38 pay factors computed by
+      hand; mutating the weekend premium or pay calendar fails them; smoke picks a unit from the
+      list
+
 ### M17 — Signed installers and updates (proposed)
 v0.1.0 ships unsigned: macOS users are told to run `xattr` and Windows users to click past
 SmartScreen, and an installed copy has no way to learn that a fix exists — the crash-on-launch
@@ -397,7 +430,7 @@ fix in PR #6 reached nobody who had already installed the first draft. Nothing h
 ## Verification
 
 - `npm test` — core rule, acuity, fairness, cost and solver suites, including property tests.
-- `npm run seed:demo && npm run dev` — Electron boots with the sample unit loaded.
+- `npm run dev` — Electron boots on the first-run welcome screen; "Explore the demo" loads the sample unit.
 - End-to-end manual pass:
   1. Enter a high-acuity census → derived demand rises above the coverage floor.
   2. Generate a 6-week period → zero hard violations, everyone within FTE tolerance,

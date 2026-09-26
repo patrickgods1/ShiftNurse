@@ -62,6 +62,73 @@ function visitScript(hash: string, testId: string): string {
     })`;
 }
 
+/** Wait for a selector, polling, for up to 10 s; resolves with how many matched. */
+const WAIT_FOR = `
+  const waitFor = (selector, test = () => true) => new Promise((resolve) => {
+    const started = Date.now();
+    const tick = () => {
+      const found = [...document.querySelectorAll(selector)].filter(test);
+      if (found.length > 0 || Date.now() - started > 10000) resolve(found);
+      else setTimeout(tick, 100);
+    };
+    tick();
+  });`;
+
+/**
+ * First run, through the real UI: the empty database must open on the welcome screen, "Explore a
+ * demo unit" must list the three demos, and picking the community med-surg unit must seed it and
+ * land on the dashboard without a reload — the renderer's own invalidation has to carry it there.
+ * Every later check runs on that demo; `db/seed/demo/*.test.ts` covers the other two.
+ */
+const WELCOME_SCRIPT = `
+  (async () => {
+    ${WAIT_FOR}
+    const api = window.shiftnurse;
+    const before = await api.setup.status();
+    const welcome = (await waitFor('[data-testid="setup-welcome"]')).length;
+    const choices = (await waitFor('[data-testid^="setup-choose-"]')).length;
+    const demo = document.querySelector('[data-testid="setup-choose-demo"]');
+    if (demo) demo.click();
+    const demos = (await waitFor('[data-demo-id]')).length;
+    const community = document.querySelector('[data-testid="setup-demo-community-med-surg"]');
+    if (community) community.click();
+    const dashboard = (await waitFor('[data-testid="stat-card"]')).length;
+    const after = await api.setup.status();
+    const [unit] = await api.units.list();
+    return { before: before.phase, welcome, choices, demos, dashboard, after: after.phase, mode: after.state?.mode, unit: unit?.name };
+  })()`;
+
+/**
+ * The assisted guide, reopened from Settings on the demo unit: every step must render its
+ * body (each embeds a real Settings editor) and Continue must reach the summary and back to
+ * the dashboard. Continue applies no preset, so the demo data the later checks rely on is
+ * untouched; only the setup record changes.
+ */
+const GUIDE_SCRIPT = `
+  (async () => {
+    location.hash = '#/settings';
+    await window.shiftnurse.setup.resume();
+    return true;
+  })()`;
+
+const GUIDE_WALK_SCRIPT = `
+  (async () => {
+    ${WAIT_FOR}
+    const api = window.shiftnurse;
+    const visited = [];
+    for (let i = 1; i <= 8; i++) {
+      const current = await waitFor('[aria-current="step"]', (el) => el.textContent.startsWith(i + '.'));
+      if (current.length === 0) return { visited, stuckAt: i, body: document.body.innerText.slice(0, 300) };
+      visited.push(current[0].textContent);
+      const button = await waitFor(i < 8 ? '[data-testid="setup-continue"]' : '[data-testid="setup-finish"]');
+      await waitFor(i < 8 ? 'main > *' : '[data-testid="setup-summary"]');
+      button[0]?.click();
+    }
+    const dashboard = (await waitFor('[data-testid="stat-card"]')).length;
+    const after = await api.setup.status();
+    return { visited, dashboard, after: after.phase, hash: location.hash };
+  })()`;
+
 /** Create a nurse through the bridge and read it back — proves the write path end to end. */
 const WRITE_SCRIPT = `
   (async () => {
@@ -612,6 +679,9 @@ function dayOfScript(periodId: string): string {
       const day = dayAt(k);
       const view = await api.dayOf.today(unit.id, day);
       for (const s of view.shifts) {
+        // The Today view also carries the current and next shift, which after 19:00 is
+        // tomorrow's day shift: only this date's shifts are the ones being called off.
+        if (s.date !== day) continue;
         if (!(s.shiftType.durationHours === 12 && !s.shiftType.isNight && !s.shiftType.isOnCall)) continue;
         for (const entry of s.roster.filter((r) => r.nurse.role === 'RN')) {
           tried++;
@@ -665,9 +735,11 @@ function dayOfScript(periodId: string): string {
     const disjoint = [...candidateIds].every((id) => !excludedIds.has(id));
     const absentNotListed = !candidateIds.has(absent.nurse.id) && !excludedIds.has(absent.nurse.id);
     const excludedReasons = [...new Set(report.excluded.map((e) => e.reason.slice(0, 40)))];
-    const allCallout = report.candidates.every(
-      (c) => c.assignment.source === 'callout' && c.assignment.date === date,
+    const notCallout = report.candidates.filter(
+      (c) => c.assignment.source !== 'callout' || c.assignment.date !== date,
     );
+    const allCallout = notCallout.length === 0;
+    const notCalloutDetail = JSON.stringify({ date, rows: notCallout.map((c) => c.assignment) });
 
     const attempt = await api.dayOf.logCall(callOff.id, report.candidates[0].nurseId, 'no_answer', 'smoke');
     let acceptedRefused = false;
@@ -729,7 +801,7 @@ function dayOfScript(periodId: string): string {
       shiftsCount, hasStaffing, periodMatches, rosterCount,
       duplicateRefused, taggedCallOff, openCount, openViewOk,
       candidateCount, excludedCount, tiers, ranks, sameRole, disjoint, absentNotListed,
-      excludedReasons, allCallout,
+      excludedReasons, allCallout, notCalloutDetail,
       acceptedRefused, covered, calloutSource, acceptedLogged,
       backfillChanges, backfillReasonOk, logOutcomes,
       absentGone, replacementPresent, stillOpen, viewHasReplacement, viewAssignmentGone,
@@ -754,6 +826,55 @@ export function runSmoke(win: BrowserWindow): void {
         `typeof window.shiftnurse?.units?.list === 'function'`,
       );
       if (!bridge) fail('window.shiftnurse not installed by preload');
+
+      const welcome = (await win.webContents.executeJavaScript(WELCOME_SCRIPT)) as {
+        before: string;
+        welcome: number;
+        choices: number;
+        demos: number;
+        dashboard: number;
+        after: string;
+        mode: string | undefined;
+        unit: string | undefined;
+      };
+      if (welcome.before !== 'welcome' || welcome.welcome === 0) {
+        fail(`an empty database did not open on the welcome screen: ${JSON.stringify(welcome)}`);
+      }
+      if (welcome.choices !== 3) fail(`welcome offers ${welcome.choices} choices, expected 3`);
+      if (welcome.demos !== 3) fail(`the demo list offers ${welcome.demos} units, expected 3`);
+      if (welcome.dashboard === 0 || welcome.after !== 'ready' || welcome.mode !== 'demo') {
+        fail(`"Explore the demo" did not reach the dashboard: ${JSON.stringify(welcome)}`);
+      }
+      if (welcome.unit !== '5 North Medical-Surgical') {
+        fail(`picking the community demo loaded "${welcome.unit}"`);
+      }
+      console.log(
+        `[smoke] first run OK (welcome screen → ${welcome.demos} demo units → ${welcome.unit} → dashboard)`,
+      );
+
+      // The guide is reopened through the raw bridge, which bypasses the renderer's cache
+      // invalidation, so reload before walking it.
+      await win.webContents.executeJavaScript(GUIDE_SCRIPT);
+      const reloaded = new Promise<void>((resolve) =>
+        win.webContents.once('did-finish-load', () => resolve()),
+      );
+      win.webContents.reload();
+      await reloaded;
+      const guide = (await win.webContents.executeJavaScript(GUIDE_WALK_SCRIPT)) as {
+        visited: string[];
+        stuckAt?: number;
+        body?: string;
+        dashboard?: number;
+        after?: string;
+        hash?: string;
+      };
+      if (guide.stuckAt !== undefined) {
+        fail(`setup guide stuck at step ${guide.stuckAt}; body: ${guide.body}`);
+      }
+      if (guide.dashboard === 0 || guide.after !== 'ready' || guide.hash !== '#/') {
+        fail(`finishing the setup guide did not open the dashboard: ${JSON.stringify(guide)}`);
+      }
+      console.log(`[smoke] setup guide OK (${guide.visited.length} steps → dashboard)`);
 
       for (const route of ROUTES) {
         const result = (await win.webContents.executeJavaScript(
@@ -1105,6 +1226,7 @@ export function runSmoke(win: BrowserWindow): void {
         absentNotListed: boolean;
         excludedReasons: string[];
         allCallout: boolean;
+        notCalloutDetail: string;
         acceptedRefused: boolean;
         covered: boolean;
         calloutSource: boolean;
@@ -1146,7 +1268,9 @@ export function runSmoke(win: BrowserWindow): void {
       if (!dayOf.disjoint) fail('a nurse appears in both the candidate and excluded lists');
       if (!dayOf.absentNotListed)
         fail('the absent nurse appears in the candidate or excluded list');
-      if (!dayOf.allCallout) fail('a candidate row is not a callout on the call-off date');
+      if (!dayOf.allCallout) {
+        fail(`a candidate row is not a callout on the call-off date: ${dayOf.notCalloutDetail}`);
+      }
       if (!dayOf.acceptedRefused) fail('logCall accepted an "accepted" outcome directly');
       if (!dayOf.covered)
         fail('backfill did not mark the call-off covered with a matching assignment');

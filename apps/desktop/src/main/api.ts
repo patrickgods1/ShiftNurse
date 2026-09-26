@@ -10,6 +10,7 @@
  * are tested that way.
  */
 
+import { is } from '@electron-toolkit/utils';
 import {
   addDays,
   backtest,
@@ -98,6 +99,7 @@ import {
   updatePayRate,
   updateRatioRule,
   updateShiftType,
+  updateUnit,
   upsertCensusForecast,
   upsertCensusForecasts,
   upsertCoverageRequirement,
@@ -115,8 +117,9 @@ import { fairnessReport, fairnessTrend, importHistory } from './api/fairness.js'
 import { exportRosterToFile, pickHistoryImportFile, pickRosterImportFile } from './api/files.js';
 import { alertsFor, outputInput, publish, publishPreview } from './api/publish.js';
 import { periodsApi, scheduleApi } from './api/schedule.js';
+import { setupApi } from './api/setup.js';
 import { createSolverJobs } from './api/solver.js';
-import { createBackup, listBackups, restoreBackup } from './backups.js';
+import { createBackup, listBackups, resetDatabase, restoreBackup } from './backups.js';
 import { databasePath } from './database.js';
 import { exportToFile as exportPeriodToFile, renderCsv } from './output.js';
 import { cpsatRunnerPath, ORTOOLS_BACKEND_IDS } from './solver-backends.js';
@@ -140,7 +143,13 @@ export function createApi(
     },
     units: {
       list: () => listUnits(db),
+      update: (id, patch) => updateUnit(db, id, patch, ACTOR),
     },
+    setup: setupApi(db, {
+      startOver: () => resetDatabase(db, () => solverJobs.dispose()),
+      // Only under the electron-vite dev server (`npm run dev`): not in a built or packaged app.
+      scenariosAvailable: is.dev && process.env.ELECTRON_RENDERER_URL !== undefined,
+    }),
     dashboard: {
       summary: (unitId) => dashboardSummary(db, unitId),
     },
