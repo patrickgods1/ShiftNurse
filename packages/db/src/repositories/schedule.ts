@@ -12,7 +12,7 @@ import type { Assignment, Id, IsoDate, PeriodStatus, SchedulePeriod } from '@shi
 import { addDays } from '@shiftnurse/core';
 import { and, asc, desc, eq, gte, inArray, lte } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
-import type { DbLike } from '../client.js';
+import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { toAssignment, toSchedulePeriod } from '../mappers.js';
 import { assignment, schedulePeriod } from '../schema.js';
@@ -198,19 +198,16 @@ export function listAssignmentsForNurseInRange(
     .map(toAssignment);
 }
 
-export function listAssignmentsForDate(db: DbLike, date: IsoDate): Assignment[] {
-  return db.select().from(assignment).where(eq(assignment.date, date)).all().map(toAssignment);
-}
-
-export function listAssignmentsForDateAndShift(
+/** One period's shifts starting on one date. Scoped to the period: a date alone spans units. */
+export function listAssignmentsForPeriodOnDate(
   db: DbLike,
+  periodId: Id,
   date: IsoDate,
-  shiftTypeId: Id,
 ): Assignment[] {
   return db
     .select()
     .from(assignment)
-    .where(and(eq(assignment.date, date), eq(assignment.shiftTypeId, shiftTypeId)))
+    .where(and(eq(assignment.periodId, periodId), eq(assignment.date, date)))
     .all()
     .map(toAssignment);
 }
@@ -383,7 +380,8 @@ export interface MoveAssignmentTarget {
  * nurse. Locked rows refuse to move: the lock is the manager's pin.
  */
 export function moveAssignment(
-  db: DbLike,
+  // A transaction, not any handle: these writes are only correct all-or-nothing.
+  db: ShiftNurseTx,
   assignmentId: Id,
   target: MoveAssignmentTarget,
   actor: string,
@@ -495,22 +493,4 @@ export function setLocked(
   actor: string,
 ): Assignment {
   return updateAssignment(db, assignmentId, { isLocked }, actor);
-}
-
-export function setCharge(
-  db: DbLike,
-  assignmentId: Id,
-  isCharge: boolean,
-  actor: string,
-): Assignment {
-  return updateAssignment(db, assignmentId, { isCharge }, actor);
-}
-
-export function setOvertime(
-  db: DbLike,
-  assignmentId: Id,
-  isOvertime: boolean,
-  actor: string,
-): Assignment {
-  return updateAssignment(db, assignmentId, { isOvertime }, actor);
 }

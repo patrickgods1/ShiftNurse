@@ -8,9 +8,10 @@
 import { DEFAULT_FAIRNESS_WEIGHTS, isoDate } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
-import { type OpenedDatabase, openTestDatabase } from '../client.js';
-import { createShiftType, createUnit, saveRuleSet } from './config.js';
+import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
+import { createShiftType, createUnit } from './config.js';
 import { createNurse } from './roster.js';
+import { saveRuleSet } from './rulesets.js';
 import {
   createAssignment,
   createPeriod,
@@ -125,7 +126,7 @@ describe('approveTimeOffAndLiftAssignments', () => {
       ACTOR,
     );
 
-    const result = approveTimeOffAndLiftAssignments(handle.db, req.id, ACTOR);
+    const result = transact(handle.db, (tx) => approveTimeOffAndLiftAssignments(tx, req.id, ACTOR));
 
     expect(result.request.status).toBe('approved');
     expect(result.lifted.map((a) => a.id).sort()).toEqual([sat, sun].sort());
@@ -146,7 +147,7 @@ describe('approveTimeOffAndLiftAssignments', () => {
       { nurseId, startDate: isoDate('2026-01-17'), endDate: isoDate('2026-01-17'), type: 'pto' },
       ACTOR,
     );
-    const result = approveTimeOffAndLiftAssignments(handle.db, req.id, ACTOR);
+    const result = transact(handle.db, (tx) => approveTimeOffAndLiftAssignments(tx, req.id, ACTOR));
     expect(result.lifted).toHaveLength(1);
     expect(listAssignmentsForPeriod(handle.db, periodId)).toHaveLength(0);
   });
@@ -160,7 +161,7 @@ describe('approveTimeOffAndLiftAssignments', () => {
       { nurseId, startDate: isoDate('2025-12-24'), endDate: isoDate('2025-12-26'), type: 'pto' },
       ACTOR,
     );
-    const result = approveTimeOffAndLiftAssignments(handle.db, req.id, ACTOR);
+    const result = transact(handle.db, (tx) => approveTimeOffAndLiftAssignments(tx, req.id, ACTOR));
     expect(result.request.status).toBe('approved');
     expect(result.lifted).toHaveLength(0);
     expect(result.stillRostered).toHaveLength(1);

@@ -20,11 +20,11 @@ import type {
 import { useEffect, useState } from 'react';
 import { useAutoResolve, useResolveConflict } from '../../api-requests.js';
 import { StatCard } from '../../components/stat-card.js';
+import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { formatDateWithWeekday } from '../../format.js';
 import { formatSignedDollars } from '../../money.js';
 import { nurseLabel } from './decide-dialog.js';
 import { ReasonDialog } from './reason-dialog.js';
-import { errorMessage, PRIMARY, SECONDARY } from './ui.js';
 
 interface ConflictsPanelProps {
   unitId: Id;

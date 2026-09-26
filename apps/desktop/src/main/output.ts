@@ -139,13 +139,12 @@ export async function exportToFile(
   const suffix =
     format === 'pdf-nurses' ? 'nurse-sheets' : format === 'csv-long' ? 'shifts' : 'grid';
   const version = input.ctx.version ? `-v${input.ctx.version.version}` : '';
-  const win = BrowserWindow.getFocusedWindow();
   const options: Electron.SaveDialogOptions = {
     title: `Export ${label}`,
     defaultPath: `${slug(input.ctx.unit.name)}-${slug(period.name)}${version}-${suffix}.${extension}`,
     filters: [{ name: label, extensions: [extension] }],
   };
-  const path = await saveFile(win, options);
+  const path = await saveFile(options);
   if (!path) return undefined;
   writeFileSync(path, await renderOutput(input, format));
   return path;

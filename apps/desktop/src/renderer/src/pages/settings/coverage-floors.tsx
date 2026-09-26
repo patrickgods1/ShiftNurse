@@ -18,7 +18,7 @@ import type {
 import { WEEKDAY_NAMES } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useDeleteCoverage, useUpsertCoverage } from '../../api-config.js';
-import { errorMessage } from '../requests/ui.js';
+import { errorMessage } from '../../components/ui.js';
 
 const ROLES: NurseRole[] = ['RN', 'LPN', 'CNA'];
 const WEEKDAYS: Weekday[] = [0, 1, 2, 3, 4, 5, 6];

@@ -31,8 +31,8 @@ import {
   useValidation,
 } from '../../api-schedule.js';
 import { AsyncState } from '../../components/async-state.js';
+import { errorMessage } from '../../components/ui.js';
 import { ReasonDialog } from '../requests/reason-dialog.js';
-import { errorMessage } from '../requests/ui.js';
 import { AlertsPanel } from './alerts-panel.js';
 import { AssignmentDialog } from './assignment-dialog.js';
 import { ChangeLog } from './change-log.js';

@@ -9,7 +9,15 @@ import type { Id, IsoDate, Nurse, TimeOffType } from '@shiftnurse/core';
 import { compareDates, isIsoDate } from '@shiftnurse/core';
 import { useEffect, useState } from 'react';
 import { useCreateTimeOff } from '../../api-requests.js';
-import { DIALOG, errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from './ui.js';
+import {
+  DIALOG,
+  errorMessage,
+  INPUT,
+  LABEL,
+  OVERLAY,
+  PRIMARY,
+  SECONDARY,
+} from '../../components/ui.js';
 
 const TYPES: { value: TimeOffType; label: string }[] = [
   { value: 'pto', label: 'PTO' },
@@ -78,7 +86,7 @@ export function NewRequestDialog({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !create.isPending && onOpenChange(next)}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Overlay className={OVERLAY} />
         <Dialog.Content data-testid="new-request-dialog" className={`${DIALOG} w-[26rem]`}>
           <Dialog.Title className="text-base font-semibold text-text">
             New time-off request

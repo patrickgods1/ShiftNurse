@@ -10,8 +10,9 @@ import { addDays, DEFAULT_FAIRNESS_WEIGHTS, type IsoDate, isoDate } from '@shift
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase } from '../client.js';
-import { createShiftType, createUnit, saveRuleSet } from './config.js';
+import { createShiftType, createUnit } from './config.js';
 import { createNurse } from './roster.js';
+import { saveRuleSet } from './rulesets.js';
 import {
   type CreateAssignmentInput,
   type CreatePeriodInput,
@@ -27,9 +28,7 @@ import {
   priorAssignmentsBefore,
   publishPeriod,
   replaceAssignments,
-  setCharge,
   setLocked,
-  setOvertime,
   updateAssignment,
   updatePeriodStatus,
 } from './schedule.js';
@@ -275,7 +274,7 @@ describe('assignment CRUD', () => {
     });
   });
 
-  it('setLocked, setCharge and setOvertime toggle their single field', () => {
+  it('toggles lock, charge and overtime one field at a time', () => {
     const period = createPeriod(handle.db, basePeriod(), ACTOR);
     const nurseId = mkNurse('Ada');
     const created = createAssignment(
@@ -284,8 +283,10 @@ describe('assignment CRUD', () => {
       ACTOR,
     );
     expect(setLocked(handle.db, created.id, true, ACTOR).isLocked).toBe(true);
-    expect(setCharge(handle.db, created.id, true, ACTOR).isCharge).toBe(true);
-    expect(setOvertime(handle.db, created.id, true, ACTOR).isOvertime).toBe(true);
+    expect(updateAssignment(handle.db, created.id, { isCharge: true }, ACTOR).isCharge).toBe(true);
+    expect(updateAssignment(handle.db, created.id, { isOvertime: true }, ACTOR).isOvertime).toBe(
+      true,
+    );
   });
 });
 

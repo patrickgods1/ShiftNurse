@@ -60,21 +60,32 @@ export function getRule(ruleId: string): Rule<never> | undefined {
 }
 
 /**
- * Ids of the rules in a rule set that are enabled, hard under that rule set, and of the given
- * scope. This is the list the solver hands to `evaluateSchedule`'s `only` option when it
- * checks one nurse's timeline or one shift's roster in isolation; a soft rule never gates a
- * move, and a rule of the other scope would give a nonsense answer on a partial view.
+ * Ids of the rules in a rule set that are enabled and of the given scope — optionally only those
+ * hard under that rule set. A rule of the other scope would give a nonsense answer on the
+ * partial views these lists are used with (one nurse's timeline, one shift's roster).
  */
-export function hardRuleIdsByScope(ruleSet: RuleSet, scope: RuleScope): string[] {
+export function ruleIdsByScope(
+  ruleSet: RuleSet,
+  scope: RuleScope,
+  options: { hardOnly: boolean },
+): string[] {
   const out: string[] = [];
   for (const config of resolveConfigs(ruleSet)) {
     if (!config.enabled) continue;
     const rule = RULES_BY_ID.get(config.ruleId);
     if (!rule || rule.scope !== scope) continue;
-    if ((config.severityOverride ?? rule.severity) !== 'hard') continue;
+    if (options.hardOnly && (config.severityOverride ?? rule.severity) !== 'hard') continue;
     out.push(rule.id);
   }
   return out;
+}
+
+/**
+ * The solver's gate list: a soft rule never gates a move. The conflict engine uses every enabled
+ * rule of a scope instead, since its simulations diff soft violations too.
+ */
+export function hardRuleIdsByScope(ruleSet: RuleSet, scope: RuleScope): string[] {
+  return ruleIdsByScope(ruleSet, scope, { hardOnly: true });
 }
 
 /** A rule set enabling every rule at its shipped defaults. The starting point for a new unit. */
@@ -249,11 +260,6 @@ export function evaluateSchedule(
     ctx,
     options.stopOnFirstHardViolation,
   );
-}
-
-/** Fast path for the solver: is this schedule legal at all? */
-export function isFeasible(schedule: ScheduleView, ruleSet: RuleSet, ctx: RuleContext): boolean {
-  return evaluateSchedule(schedule, ruleSet, ctx, { stopOnFirstHardViolation: true }).feasible;
 }
 
 /** Group violations by nurse, for the per-nurse view on the schedule grid. */

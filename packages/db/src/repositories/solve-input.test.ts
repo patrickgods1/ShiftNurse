@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { type SeedResult, seedDemoUnit } from '../seed/demo.js';
 import { createUnit, listShiftTypesForUnit } from './config.js';
-import { createPayRate, listPayRatesForUnit } from './operations.js';
+import { createPayRate, listPayRatesForUnit } from './pay.js';
 import { createNurse, listNursesForUnit } from './roster.js';
 import { getPeriod } from './schedule.js';
 import { loadPeriodInput } from './solve-input.js';

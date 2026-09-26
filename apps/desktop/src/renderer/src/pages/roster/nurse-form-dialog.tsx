@@ -11,6 +11,7 @@ import type { EmploymentType, Id, Nurse, NurseRole } from '@shiftnurse/core';
 import { type FormEvent, type ReactNode, useEffect, useId, useState } from 'react';
 import type { NurseInput, NursePatch } from '../../../../shared/api.js';
 import { useCreateNurse, useUpdateNurse } from '../../api.js';
+import { OVERLAY } from '../../components/ui.js';
 
 const ROLES: readonly NurseRole[] = ['RN', 'LPN', 'CNA'];
 const EMPLOYMENT_TYPES: readonly EmploymentType[] = [
@@ -239,7 +240,7 @@ export function NurseFormDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Overlay className={OVERLAY} />
         <Dialog.Content
           className="fixed z-50 left-1/2 top-1/2 max-h-[85vh] w-[560px] -translate-x-1/2 -translate-y-1/2
             overflow-y-auto rounded-lg border border-border bg-surface p-6 shadow-lg"

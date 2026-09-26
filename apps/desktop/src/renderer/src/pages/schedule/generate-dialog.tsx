@@ -27,6 +27,7 @@ import {
   useSolverSettings,
   useStartSolve,
 } from '../../api-solver.js';
+import { OVERLAY } from '../../components/ui.js';
 import { formatDate } from '../../format.js';
 import { formatDollars } from '../../money.js';
 import { SOLVER_LABELS, SOLVER_ORDER } from '../../solver-labels.js';
@@ -92,7 +93,7 @@ export function GenerateDialog({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !running && onOpenChange(next)}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Overlay className={OVERLAY} />
         <Dialog.Content
           data-testid="generate-dialog"
           className="fixed z-50 left-1/2 top-1/2 w-[34rem] max-w-[calc(100vw-2rem)] -translate-x-1/2

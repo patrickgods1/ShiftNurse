@@ -13,8 +13,16 @@ import type { Id, Nurse, SchedulePeriod, ShiftType } from '@shiftnurse/core';
 import { useEffect, useMemo, useState } from 'react';
 import { usePublish, usePublishPreview } from '../../api-publish.js';
 import { AsyncState } from '../../components/async-state.js';
+import {
+  DIALOG,
+  errorMessage,
+  INPUT,
+  LABEL,
+  OVERLAY,
+  PRIMARY,
+  SECONDARY,
+} from '../../components/ui.js';
 import { formatDate } from '../../format.js';
-import { DIALOG, errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from '../requests/ui.js';
 
 interface PublishDialogProps {
   open: boolean;
@@ -70,7 +78,7 @@ export function PublishDialog({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !publish.isPending && onOpenChange(next)}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <Dialog.Overlay className={OVERLAY} />
         <Dialog.Content data-testid="publish-dialog" className={`${DIALOG} w-[40rem]`}>
           <Dialog.Title className="text-base font-semibold text-text">
             {done

@@ -18,7 +18,7 @@ import type { AutoResolvePolicy, Id, Resolution } from '@shiftnurse/core';
 import { DEFAULT_AUTO_RESOLVE_POLICY } from '@shiftnurse/core';
 import { and, eq } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
-import type { DbLike } from '../client.js';
+import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { assignment, conflictPolicy } from '../schema.js';
 import {
@@ -109,7 +109,8 @@ export interface AppliedResolution {
  * index raise a bare SQL error halfway through the actions.
  */
 export function applyResolution(
-  db: DbLike,
+  // A transaction: a resolution writes several rows and must land all-or-nothing.
+  db: ShiftNurseTx,
   periodId: Id,
   resolution: Resolution,
   actor: string,
