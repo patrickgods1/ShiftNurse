@@ -208,6 +208,10 @@ violations of their own.
   them run standalone or compose inside one `transact()` — publishing a schedule writes
   assignments, a period status, a fairness ledger and audit entries, and a partial publish is
   worse than a failed one.
+  The exception proves the rule: a function whose several writes are only correct together —
+  `moveAssignment`, `approveSwap`, `importRoster`, `importHistoricalLedger`,
+  `approveTimeOffAndLiftAssignments`, `applyResolution` — takes `ShiftNurseTx`, so calling it
+  outside a transaction is a type error rather than a docstring nobody read.
 - **Every mutation writes an audit entry in the same call**, with `before` on updates/deletes.
   Denials, resolutions and overrides go through `recordAuditStrict`, which refuses to record
   without a stated reason — that text is what gets quoted if a decision is challenged.

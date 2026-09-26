@@ -6,7 +6,7 @@
 import { DEFAULT_FAIRNESS_WEIGHTS, type IsoDate, isoDate } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor, recentAudit } from '../audit.js';
-import { type OpenedDatabase, openTestDatabase } from '../client.js';
+import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { ids } from '../ids.js';
 import * as s from '../schema.js';
 import { createShiftType, createUnit, saveRuleSet } from './config.js';
@@ -642,32 +642,36 @@ describe('fairness ledger', () => {
 describe('historical schedule import', () => {
   it('re-importing the same period replaces the rows rather than duplicating them', () => {
     const nurseId = mkNurse('Reimported');
-    const first = importHistoricalLedger(
-      handle.db,
-      unitId,
-      [
-        {
-          nurseId,
-          periodId: 'import:2025-06-01',
-          periodStart: isoDate('2025-06-01'),
-          nightShifts: 3,
-        },
-      ],
-      ACTOR,
+    const first = transact(handle.db, (tx) =>
+      importHistoricalLedger(
+        tx,
+        unitId,
+        [
+          {
+            nurseId,
+            periodId: 'import:2025-06-01',
+            periodStart: isoDate('2025-06-01'),
+            nightShifts: 3,
+          },
+        ],
+        ACTOR,
+      ),
     );
     // The manager fixed a typo in the spreadsheet and ran it again.
-    const second = importHistoricalLedger(
-      handle.db,
-      unitId,
-      [
-        {
-          nurseId,
-          periodId: 'import:2025-06-01',
-          periodStart: isoDate('2025-06-01'),
-          nightShifts: 4,
-        },
-      ],
-      ACTOR,
+    const second = transact(handle.db, (tx) =>
+      importHistoricalLedger(
+        tx,
+        unitId,
+        [
+          {
+            nurseId,
+            periodId: 'import:2025-06-01',
+            periodStart: isoDate('2025-06-01'),
+            nightShifts: 4,
+          },
+        ],
+        ACTOR,
+      ),
     );
 
     expect(first).toEqual({ written: 1, replaced: 0 });
@@ -678,20 +682,24 @@ describe('historical schedule import', () => {
 
   it('leaves periods the new file does not mention untouched', () => {
     const nurseId = mkNurse('Partial');
-    importHistoricalLedger(
-      handle.db,
-      unitId,
-      [
-        { nurseId, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') },
-        { nurseId, periodId: 'import:2025-06-15', periodStart: isoDate('2025-06-15') },
-      ],
-      ACTOR,
+    transact(handle.db, (tx) =>
+      importHistoricalLedger(
+        tx,
+        unitId,
+        [
+          { nurseId, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') },
+          { nurseId, periodId: 'import:2025-06-15', periodStart: isoDate('2025-06-15') },
+        ],
+        ACTOR,
+      ),
     );
-    importHistoricalLedger(
-      handle.db,
-      unitId,
-      [{ nurseId, periodId: 'import:2025-06-15', periodStart: isoDate('2025-06-15') }],
-      ACTOR,
+    transact(handle.db, (tx) =>
+      importHistoricalLedger(
+        tx,
+        unitId,
+        [{ nurseId, periodId: 'import:2025-06-15', periodStart: isoDate('2025-06-15') }],
+        ACTOR,
+      ),
     );
     expect(ledgerPeriodsForUnit(handle.db, unitId).map((p) => p.periodId)).toEqual([
       'import:2025-06-01',
@@ -731,14 +739,20 @@ describe('historical schedule import', () => {
     ).id;
     const local = mkNurse('Local');
     expect(() =>
-      importHistoricalLedger(
-        handle.db,
-        unitId,
-        [
-          { nurseId: local, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') },
-          { nurseId: stranger, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') },
-        ],
-        ACTOR,
+      transact(handle.db, (tx) =>
+        importHistoricalLedger(
+          tx,
+          unitId,
+          [
+            { nurseId: local, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') },
+            {
+              nurseId: stranger,
+              periodId: 'import:2025-06-01',
+              periodStart: isoDate('2025-06-01'),
+            },
+          ],
+          ACTOR,
+        ),
       ),
     ).toThrow(/not a nurse on unit/);
     expect(handle.db.select().from(s.fairnessLedger).all()).toHaveLength(0);
@@ -746,17 +760,21 @@ describe('historical schedule import', () => {
 
   it('records the import once in the audit log with what it replaced', () => {
     const nurseId = mkNurse('Audited');
-    importHistoricalLedger(
-      handle.db,
-      unitId,
-      [{ nurseId, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') }],
-      ACTOR,
+    transact(handle.db, (tx) =>
+      importHistoricalLedger(
+        tx,
+        unitId,
+        [{ nurseId, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') }],
+        ACTOR,
+      ),
     );
-    importHistoricalLedger(
-      handle.db,
-      unitId,
-      [{ nurseId, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') }],
-      ACTOR,
+    transact(handle.db, (tx) =>
+      importHistoricalLedger(
+        tx,
+        unitId,
+        [{ nurseId, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') }],
+        ACTOR,
+      ),
     );
     const imports = recentAudit(handle.db).filter(
       (e) => e.entityType === 'fairness_ledger' && e.action === 'import',

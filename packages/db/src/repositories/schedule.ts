@@ -12,7 +12,7 @@ import type { Assignment, Id, IsoDate, PeriodStatus, SchedulePeriod } from '@shi
 import { addDays } from '@shiftnurse/core';
 import { and, asc, desc, eq, gte, inArray, lte } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
-import type { DbLike } from '../client.js';
+import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { toAssignment, toSchedulePeriod } from '../mappers.js';
 import { assignment, schedulePeriod } from '../schema.js';
@@ -380,7 +380,8 @@ export interface MoveAssignmentTarget {
  * nurse. Locked rows refuse to move: the lock is the manager's pin.
  */
 export function moveAssignment(
-  db: DbLike,
+  // A transaction, not any handle: these writes are only correct all-or-nothing.
+  db: ShiftNurseTx,
   assignmentId: Id,
   target: MoveAssignmentTarget,
   actor: string,

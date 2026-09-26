@@ -229,7 +229,7 @@ describe('applying a resolution', () => {
       ],
       'authorize_overtime',
     );
-    applyResolution(handle.db, periodId, res, ACTOR, { auto: true });
+    transact(handle.db, (tx) => applyResolution(tx, periodId, res, ACTOR, { auto: true }));
     const audit = auditHistoryFor(handle.db, 'conflict', 'conf_sat_night');
     expect(audit[0]).toMatchObject({ action: 'auto_resolve', reason: res.description });
     expect(listAssignmentsForPeriod(handle.db, periodId)[0]?.isOvertime).toBe(true);
@@ -251,7 +251,9 @@ describe('applying a resolution', () => {
       'assign_available',
     );
     expect(() =>
-      applyResolution(handle.db, periodId, res, ACTOR, { auto: false, reason: '   ' }),
+      transact(handle.db, (tx) =>
+        applyResolution(tx, periodId, res, ACTOR, { auto: false, reason: '   ' }),
+      ),
     ).toThrow(/requires a reason/);
     expect(listAssignmentsForPeriod(handle.db, periodId)).toHaveLength(0);
     expect(auditHistoryFor(handle.db, 'conflict', 'conf_sat_night')).toHaveLength(0);
@@ -353,7 +355,9 @@ describe('applying a resolution', () => {
       [{ type: 'accept_shortfall', conflictId: 'conf_sat_night' }],
       'accept_shortfall',
     );
-    applyResolution(handle.db, periodId, res, ACTOR, { auto: false, reason: 'Agency booked' });
+    transact(handle.db, (tx) =>
+      applyResolution(tx, periodId, res, ACTOR, { auto: false, reason: 'Agency booked' }),
+    );
     expect(listAssignmentsForPeriod(handle.db, periodId)).toHaveLength(0);
     expect(auditHistoryFor(handle.db, 'conflict', 'conf_sat_night')[0]?.reason).toBe(
       'Agency booked',
@@ -367,7 +371,9 @@ describe('applying a resolution', () => {
       'accept_shortfall',
     );
     expect(() =>
-      applyResolution(handle.db, periodId, res, ACTOR, { auto: false, reason: 'x' }),
+      transact(handle.db, (tx) =>
+        applyResolution(tx, periodId, res, ACTOR, { auto: false, reason: 'x' }),
+      ),
     ).toThrow(/only be applied to a draft/);
   });
 

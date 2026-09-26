@@ -26,7 +26,7 @@ import type {
 import { dayNumber, MS_PER_DAY, resolvePayRate } from '@shiftnurse/core';
 import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
-import type { DbLike } from '../client.js';
+import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import {
   toBudget,
@@ -762,7 +762,8 @@ export interface LedgerImportResult {
  * row for the wrong unit is a data-integrity bug, not a case to paper over.
  */
 export function importHistoricalLedger(
-  db: DbLike,
+  // A transaction, not any handle: these writes are only correct all-or-nothing.
+  db: ShiftNurseTx,
   unitId: Id,
   entries: readonly UpsertFairnessLedgerInput[],
   actor: string,

@@ -37,6 +37,7 @@ import {
   requireChangeReason,
   requirePeriodEditable,
   type ShiftNurseDb,
+  type ShiftNurseTx,
   saveRuleSet,
   setLocked as setAssignmentLocked,
   transact,
@@ -103,7 +104,7 @@ export function editSchedule<T>(
   periodId: Id,
   reason: string | undefined,
   source: ScheduleChangeSource,
-  work: (tx: DbLike, log: (entry: ChangeLogEntry) => void) => T,
+  work: (tx: ShiftNurseTx, log: (entry: ChangeLogEntry) => void) => T,
 ): T {
   return transact(db, (tx) => {
     const period = periodOrThrow(tx, periodId);

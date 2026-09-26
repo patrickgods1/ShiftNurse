@@ -10,7 +10,7 @@
 import type { Assignment, Id, IsoDate, TimeOffRequest, TimeOffStatus } from '@shiftnurse/core';
 import { and, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
-import type { DbLike } from '../client.js';
+import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { toTimeOffRequest } from '../mappers.js';
 import { nurse, timeOffRequest } from '../schema.js';
@@ -193,7 +193,8 @@ export interface ApprovalResult {
  * `scheduled_on_leave` conflict for the manager to resolve deliberately.
  */
 export function approveTimeOffAndLiftAssignments(
-  db: DbLike,
+  // A transaction, not any handle: these writes are only correct all-or-nothing.
+  db: ShiftNurseTx,
   id: Id,
   actor: string,
   reason?: string,
