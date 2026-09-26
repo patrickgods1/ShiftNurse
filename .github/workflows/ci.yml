@@ -36,6 +36,8 @@ jobs:
           build-packages: 'false'
           install-scripts: 'false'
       - run: npm run lint
+      # One React, one Electron, one better-sqlite3: a duplicate passes every other check.
+      - run: node scripts/check-single-copies.mjs
       - run: npm run typecheck
       # The production bundles. Typecheck and tests never run the bundler, so a plugin that
       # needs a newer Vite (@vitejs/plugin-react 6 on Vite 7) passed everything else.
