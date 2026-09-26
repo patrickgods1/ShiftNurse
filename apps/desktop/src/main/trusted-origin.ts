@@ -9,13 +9,16 @@
  * apply them.
  */
 
-import { pathToFileURL } from 'node:url';
+import { posix, win32 } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export interface AppLocation {
   /** The built renderer's `index.html` on disk. */
   indexHtmlPath: string;
   /** electron-vite's dev server, when running `npm run dev`. */
   devServerUrl?: string;
+  /** Windows path rules; defaults to the host's. A parameter so tests can exercise both. */
+  windows?: boolean;
 }
 
 function parse(url: string): URL | undefined {
@@ -26,7 +29,12 @@ function parse(url: string): URL | undefined {
   }
 }
 
-/** The renderer itself: the dev server's origin in dev, else exactly the packaged index.html. */
+/**
+ * The renderer itself: the dev server's origin in dev, else exactly the packaged index.html.
+ * Compared as decoded file paths, never URL strings: Chromium and Node disagree on encoding
+ * (`RUNNER~1` vs `RUNNER%7E1` in a Windows 8.3 short path) and on drive-letter case, and a
+ * string comparison refused every IPC call from the packaged app's own window on Windows.
+ */
 export function isAppUrl(url: string, app: AppLocation): boolean {
   const parsed = parse(url);
   if (!parsed) return false;
@@ -34,9 +42,19 @@ export function isAppUrl(url: string, app: AppLocation): boolean {
     const dev = parse(app.devServerUrl);
     return dev !== undefined && parsed.origin === dev.origin;
   }
-  return (
-    parsed.protocol === 'file:' && parsed.pathname === pathToFileURL(app.indexHtmlPath).pathname
-  );
+  if (parsed.protocol !== 'file:') return false;
+  const windows = app.windows ?? process.platform === 'win32';
+  let path: string;
+  try {
+    path = fileURLToPath(parsed, { windows });
+  } catch {
+    return false;
+  }
+  const paths = windows ? win32 : posix;
+  const got = paths.normalize(path);
+  const want = paths.normalize(app.indexHtmlPath);
+  // NTFS is case-insensitive; the drive letter in particular arrives in either case.
+  return windows ? got.toLowerCase() === want.toLowerCase() : got === want;
 }
 
 /** `shell.openExternal` hands a URL to the OS, which will launch any registered protocol
