@@ -83,10 +83,10 @@ self-service later becomes an intake surface rather than a new data model.
   Renderer hooks: `api.ts` (roster), `api-config.ts` (configuration + rules), `api-demand.ts`
   (census/demand), `api-schedule.ts` (grid mutations + validation), `api-fairness.ts`
   (report/trend/import), `api-cost.ts` (pay config, cost report, budget).
-- Packaging (M14, built): `apps/desktop/electron-builder.yml` + `scripts/{before-pack,dist}.mjs`
-  produce mac dmgs (x64 + arm64) and a Windows NSIS installer. The mac build is verified via
-  `smoke:packaged`; **the Windows installer has never been launched on real Windows 11
-  hardware** — that is the one open M14 item.
+- Packaging (M14, complete): `apps/desktop/electron-builder.yml` + `scripts/{before-pack,dist}.mjs`
+  produce mac dmgs (x64 + arm64) and a Windows NSIS installer. Both are verified: the mac build
+  via `smoke:packaged`, the Windows installer by installing and launching it on native Windows
+  (and by the packaged smoke on `windows-2022` in CI).
 - **M16 — CI/CD** (complete; plan `docs/CI_PLAN.md`): `.github/workflows/ci.yml` (lint +
   typecheck on Linux; tests on ubuntu/macos-15/windows-2022) guards `main` through branch
   protection; `.github/workflows/release.yml` builds each installer natively on a `vX.Y.Z` tag,

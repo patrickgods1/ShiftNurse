@@ -19,8 +19,8 @@ pickup) is modelled as *a request with a submitter and a decider*, with v1 alway
 `enteredBy: 'manager'`. That seam is deliberate: nurse self-service later becomes an intake
 surface on the same data model, not a rewrite.
 
-**Status:** pre-1.0. All 14 roadmap milestones are built; the macOS build is verified end to
-end, the Windows installer builds but has not yet been launched on real Windows 11 hardware.
+**Status:** pre-1.0. All 16 roadmap milestones are complete, with installers verified on macOS
+and on native Windows; signed installers and auto-update are the proposed M17.
 
 See [ROADMAP.md](ROADMAP.md) for the full plan of record (locked-in decisions, milestone
 detail, verification steps) and [CLAUDE.md](CLAUDE.md) for the conventions and invariants
