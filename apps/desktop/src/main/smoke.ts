@@ -679,6 +679,9 @@ function dayOfScript(periodId: string): string {
       const day = dayAt(k);
       const view = await api.dayOf.today(unit.id, day);
       for (const s of view.shifts) {
+        // The Today view also carries the current and next shift, which after 19:00 is
+        // tomorrow's day shift: only this date's shifts are the ones being called off.
+        if (s.date !== day) continue;
         if (!(s.shiftType.durationHours === 12 && !s.shiftType.isNight && !s.shiftType.isOnCall)) continue;
         for (const entry of s.roster.filter((r) => r.nurse.role === 'RN')) {
           tried++;
@@ -732,9 +735,11 @@ function dayOfScript(periodId: string): string {
     const disjoint = [...candidateIds].every((id) => !excludedIds.has(id));
     const absentNotListed = !candidateIds.has(absent.nurse.id) && !excludedIds.has(absent.nurse.id);
     const excludedReasons = [...new Set(report.excluded.map((e) => e.reason.slice(0, 40)))];
-    const allCallout = report.candidates.every(
-      (c) => c.assignment.source === 'callout' && c.assignment.date === date,
+    const notCallout = report.candidates.filter(
+      (c) => c.assignment.source !== 'callout' || c.assignment.date !== date,
     );
+    const allCallout = notCallout.length === 0;
+    const notCalloutDetail = JSON.stringify({ date, rows: notCallout.map((c) => c.assignment) });
 
     const attempt = await api.dayOf.logCall(callOff.id, report.candidates[0].nurseId, 'no_answer', 'smoke');
     let acceptedRefused = false;
@@ -796,7 +801,7 @@ function dayOfScript(periodId: string): string {
       shiftsCount, hasStaffing, periodMatches, rosterCount,
       duplicateRefused, taggedCallOff, openCount, openViewOk,
       candidateCount, excludedCount, tiers, ranks, sameRole, disjoint, absentNotListed,
-      excludedReasons, allCallout,
+      excludedReasons, allCallout, notCalloutDetail,
       acceptedRefused, covered, calloutSource, acceptedLogged,
       backfillChanges, backfillReasonOk, logOutcomes,
       absentGone, replacementPresent, stillOpen, viewHasReplacement, viewAssignmentGone,
@@ -1221,6 +1226,7 @@ export function runSmoke(win: BrowserWindow): void {
         absentNotListed: boolean;
         excludedReasons: string[];
         allCallout: boolean;
+        notCalloutDetail: string;
         acceptedRefused: boolean;
         covered: boolean;
         calloutSource: boolean;
@@ -1262,7 +1268,9 @@ export function runSmoke(win: BrowserWindow): void {
       if (!dayOf.disjoint) fail('a nurse appears in both the candidate and excluded lists');
       if (!dayOf.absentNotListed)
         fail('the absent nurse appears in the candidate or excluded list');
-      if (!dayOf.allCallout) fail('a candidate row is not a callout on the call-off date');
+      if (!dayOf.allCallout) {
+        fail(`a candidate row is not a callout on the call-off date: ${dayOf.notCalloutDetail}`);
+      }
       if (!dayOf.acceptedRefused) fail('logCall accepted an "accepted" outcome directly');
       if (!dayOf.covered)
         fail('backfill did not mark the call-off covered with a matching assignment');
