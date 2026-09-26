@@ -81,7 +81,9 @@ shiftnurse/
 
 ## Current state
 
-`packages/core`, `packages/db` and `apps/desktop` through M14 are green: **496 tests passing, typecheck clean.**
+`packages/core`, `packages/db` and `apps/desktop` through M16 are green: lint, typecheck and the
+full test suite pass in CI on Linux, macOS and Windows (`npm run check`; no count kept here — it
+went stale within a milestone the last time).
 
 - [x] Monorepo scaffold (npm workspaces, TS project references, vitest)
 - [x] `domain/time.ts` — DST-safe wall-clock timeline, shift windows, configurable weekend definitions
@@ -326,7 +328,9 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
       --win --x64` cross-builds the NSIS installer from macOS with no wine; Electron pinned exact
       because electron-builder refuses a range; everything electron-vite bundles moved to
       devDependencies so the asar carries only `better-sqlite3-electron`, `drizzle-orm` and
-      `@electron-toolkit/utils` — 23 MB → 8 MB)
+      `@electron-toolkit/utils` — 23 MB → 8 MB. Since PR #6 `drizzle-orm` is bundled into the
+      main process instead, so the `better-sqlite3` alias applies to it; the asar's runtime
+      dependencies are `better-sqlite3-electron` and `@electron-toolkit/utils`)
 - [x] Native module rebuild for better-sqlite3 against the Electron ABI
       (`npmRebuild: false` — electron-builder's own rebuild recompiled the *hoisted* copy and broke
       `npm test`; `scripts/before-pack.mjs` fetches the prebuild for each *target* platform/arch
@@ -336,7 +340,8 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
       (both dmgs mounted, `ShiftNurse.app` copied out and booted via `npm run smoke:packaged` —
       arm64 passes the full smoke natively: migrations from `resources/`, native module, solver,
       publish, PDFs; x64 under Rosetta renders every screen and runs the solver but exceeds the
-      smoke's 60 s budget under emulation)
+      smoke's 60 s budget under emulation — the budget is now 240 s, raised further in CI through
+      `SHIFTNURSE_SMOKE_TIMEOUT_MS`)
 - [ ] Verify: install and launch the built artifact on Windows 11
       (the NSIS installer builds from macOS and carries the win32-x64 `.node`, but no Windows
       machine was available to install and launch it — needs real Windows 11 hardware.
@@ -372,6 +377,19 @@ installers natively on GitHub and attaches them to a **draft** release. Unsigned
 - [x] Phase 4 — README, CLAUDE.md, ARCHITECTURE
 - [x] Verify: CI green on branch, PR and `main`; a failing PR is blocked; the `v0.1.0` draft carries
       three installers whose `SHA256SUMS` verify, and one installs and runs locally
+
+### M17 — Signed installers and updates (proposed)
+v0.1.0 ships unsigned: macOS users are told to run `xattr` and Windows users to click past
+SmartScreen, and an installed copy has no way to learn that a fix exists — the crash-on-launch
+fix in PR #6 reached nobody who had already installed the first draft. Nothing here is started.
+- [ ] Apple Developer ID signing with hardened runtime and entitlements, and notarisation
+      (`notarize: true`), wired to repository secrets in `release.yml`
+- [ ] Windows Authenticode signing (e.g. Azure Trusted Signing) for the NSIS installer
+- [ ] `electron-updater` with `publish: github`: `latest*.yml` and blockmaps in the release,
+      a "restart to update" prompt, never an unattended restart mid-shift
+- [ ] An app icon (`apps/desktop/build/icon.{icns,ico,png}`) — installers use Electron's default
+- [ ] Verify: a signed dmg opens without a Gatekeeper prompt on a clean Mac; the signed installer
+      passes SmartScreen on real Windows 11; v0.1.x updates itself to v0.1.y from a draft release
 
 ---
 
