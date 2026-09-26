@@ -13,7 +13,7 @@ import {
   type DbLike,
   getCurrentDraft,
   listActiveNursesForUnit,
-  listAssignmentsForDate,
+  listAssignmentsForPeriodOnDate,
   listCallOffsForUnit,
   listNursesForUnit,
   listPeriodsForUnit,
@@ -22,7 +22,7 @@ import {
 } from '@shiftnurse/db';
 import type { DashboardSummary, OnShiftView } from '../../shared/api.js';
 
-import { unitOrThrow } from './context.js';
+import { periodCoveringDate, unitOrThrow } from './context.js';
 
 const CREDENTIAL_LOOKAHEAD_DAYS = 90;
 
@@ -32,13 +32,16 @@ function latestPublished(periods: SchedulePeriod[]): SchedulePeriod | undefined 
     .sort((a, b) => (a.startDate < b.startDate ? 1 : -1))[0];
 }
 
-function onShiftToday(db: DbLike, unitId: Id, date: IsoDate): OnShiftView[] {
+/** Who is on each shift on a date, from the one period that covers it (as the Today screen). */
+export function onShiftOn(db: DbLike, unitId: Id, date: IsoDate): OnShiftView[] {
+  const period = periodCoveringDate(db, unitId, date);
+  if (!period) return [];
   const nurses = new Map(listNursesForUnit(db, unitId).map((n) => [n.id, n]));
   const shiftTypes = listShiftTypesForUnit(db, unitId);
   const byShift = new Map<Id, OnShiftView>(
     shiftTypes.map((st: ShiftType) => [st.id, { shiftType: st, nurses: [] }]),
   );
-  for (const a of listAssignmentsForDate(db, date)) {
+  for (const a of listAssignmentsForPeriodOnDate(db, period.id, date)) {
     const view = byShift.get(a.shiftTypeId);
     const nurse = nurses.get(a.nurseId);
     if (view && nurse) view.nurses.push(nurse);
@@ -65,6 +68,6 @@ export function dashboardSummary(db: DbLike, unitId: Id): DashboardSummary {
       now,
       addDays(now, CREDENTIAL_LOOKAHEAD_DAYS),
     ).filter((e) => unitNurseIds.has(e.nurse.id)),
-    todayOnShift: onShiftToday(db, unitId, now),
+    todayOnShift: onShiftOn(db, unitId, now),
   };
 }

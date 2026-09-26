@@ -12,6 +12,7 @@ import {
   type Assignment,
   type ConflictInput,
   type CounterContext,
+  dateInRange,
   defaultRuleSet,
   type Id,
   type IsoDate,
@@ -33,6 +34,7 @@ import {
   listAssignmentsForPeriod,
   listHolidaysForUnit,
   listNursesForUnit,
+  listPeriodsForUnit,
   listPreferencesForUnit,
   listShiftTypesForUnit,
   listTimeOffForUnit,
@@ -142,4 +144,27 @@ export function buildConflictInput(db: DbLike, periodId: Id): ConflictInput {
   const period = periodOrThrow(db, periodId);
   const budget = getBudget(db, periodId);
   return { ...loadPeriodInput(db, period), ...(budget ? { budget } : {}) };
+}
+
+const PERIOD_STATUS_PRIORITY: Record<SchedulePeriod['status'], number> = {
+  published: 0,
+  draft: 1,
+  archived: 2,
+};
+
+/**
+ * The period whose shifts count for a date: published over draft over archived. Periods may
+ * overlap (a draft is often laid out before the published one ends), and counting every period's
+ * rows for the date would show a draft's proposals as people actually on shift.
+ */
+export function periodCoveringDate(
+  db: DbLike,
+  unitId: Id,
+  date: IsoDate,
+): SchedulePeriod | undefined {
+  const covering = listPeriodsForUnit(db, unitId).filter((p) =>
+    dateInRange(date, p.startDate, p.endDate),
+  );
+  covering.sort((a, b) => PERIOD_STATUS_PRIORITY[a.status] - PERIOD_STATUS_PRIORITY[b.status]);
+  return covering[0];
 }

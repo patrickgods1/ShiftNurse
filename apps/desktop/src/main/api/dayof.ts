@@ -9,13 +9,11 @@ import {
   type CallOff,
   type CallOutcome,
   checkStaffing,
-  dateInRange,
   findReplacements,
   type Id,
   type IsoDate,
   type Nurse,
   type ReplacementReport,
-  type SchedulePeriod,
   type ShiftType,
   shiftsAround,
   today,
@@ -31,12 +29,11 @@ import {
   getNurse,
   getShiftType,
   lastCalledAt,
-  listAssignmentsForDate,
+  listAssignmentsForPeriodOnDate,
   listCallAttempts,
   listCallOffsForUnit,
   listCensusForecastsInRange,
   listNursesForUnit,
-  listPeriodsForUnit,
   listShiftTypesForUnit,
   logCallAttempt,
   markCallOffCovered,
@@ -54,26 +51,17 @@ import type {
   TodayShiftView,
 } from '../../shared/api.js';
 
-import { ACTOR, assignmentOrThrow, buildConflictInput, periodOrThrow } from './context.js';
+import {
+  ACTOR,
+  assignmentOrThrow,
+  buildConflictInput,
+  periodCoveringDate,
+  periodOrThrow,
+} from './context.js';
 import { editSchedule } from './schedule.js';
 
 /** How far back the call log is read when spreading calls across the pool. */
 const LAST_CALL_LOOKBACK_DAYS = 180;
-
-const PERIOD_STATUS_PRIORITY: Record<SchedulePeriod['status'], number> = {
-  published: 0,
-  draft: 1,
-  archived: 2,
-};
-
-/** The period covering a date, preferring a published one over a draft over an archived one. */
-function periodCoveringDate(db: DbLike, unitId: Id, date: IsoDate): SchedulePeriod | undefined {
-  const covering = listPeriodsForUnit(db, unitId).filter((p) =>
-    dateInRange(date, p.startDate, p.endDate),
-  );
-  covering.sort((a, b) => PERIOD_STATUS_PRIORITY[a.status] - PERIOD_STATUS_PRIORITY[b.status]);
-  return covering[0];
-}
 
 /**
  * The one place main reads the wall clock for "what shift is running right now" — the same
@@ -158,9 +146,7 @@ function planForDate(
   date: IsoDate,
 ) {
   const period = periodCoveringDate(db, unitId, date);
-  const assignments = period
-    ? listAssignmentsForDate(db, date).filter((a) => a.periodId === period.id)
-    : [];
+  const assignments = period ? listAssignmentsForPeriodOnDate(db, period.id, date) : [];
   const checks = checkStaffing({
     date,
     shiftTypes,

@@ -31,7 +31,6 @@ import {
   listCallAttempts,
   listCallOffsForUnit,
   listDifferentialsForUnit,
-  listOpenCallOffs,
   listOvertimeRulesForUnit,
   listPayRatesForUnit,
   logCallAttempt,
@@ -199,7 +198,7 @@ describe('call-offs', () => {
     markCallOffCovered(handle.db, toCover.id, replacement.id, ACTOR);
     cancelCallOff(handle.db, toCancel.id, ACTOR, 'Nurse turned up after all');
 
-    const openList = listOpenCallOffs(handle.db);
+    const openList = listCallOffsForUnit(handle.db, unitId, { status: 'open' });
     expect(openList.map((c) => c.id)).toEqual([open.id]);
   });
 

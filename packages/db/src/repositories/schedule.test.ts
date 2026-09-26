@@ -27,9 +27,7 @@ import {
   priorAssignmentsBefore,
   publishPeriod,
   replaceAssignments,
-  setCharge,
   setLocked,
-  setOvertime,
   updateAssignment,
   updatePeriodStatus,
 } from './schedule.js';
@@ -275,7 +273,7 @@ describe('assignment CRUD', () => {
     });
   });
 
-  it('setLocked, setCharge and setOvertime toggle their single field', () => {
+  it('toggles lock, charge and overtime one field at a time', () => {
     const period = createPeriod(handle.db, basePeriod(), ACTOR);
     const nurseId = mkNurse('Ada');
     const created = createAssignment(
@@ -284,8 +282,10 @@ describe('assignment CRUD', () => {
       ACTOR,
     );
     expect(setLocked(handle.db, created.id, true, ACTOR).isLocked).toBe(true);
-    expect(setCharge(handle.db, created.id, true, ACTOR).isCharge).toBe(true);
-    expect(setOvertime(handle.db, created.id, true, ACTOR).isOvertime).toBe(true);
+    expect(updateAssignment(handle.db, created.id, { isCharge: true }, ACTOR).isCharge).toBe(true);
+    expect(updateAssignment(handle.db, created.id, { isOvertime: true }, ACTOR).isOvertime).toBe(
+      true,
+    );
   });
 });
 

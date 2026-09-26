@@ -53,7 +53,7 @@ import type {
   ResolutionKind,
   ResolutionOptions,
 } from './types.js';
-import { violationKey } from './violation-diff.js';
+import { diffViolations, violationKey } from './violation-diff.js';
 
 const DEFAULT_MAX_PER_CONFLICT = 5;
 
@@ -191,8 +191,7 @@ function simulate(
     }
   }
   const isThere = collectViolations(after, change);
-  const introduced = [...isThere.entries()].filter(([k]) => !wasThere.has(k)).map(([, v]) => v);
-  const cleared = [...wasThere.entries()].filter(([k]) => !isThere.has(k)).map(([, v]) => v);
+  const { introduced, cleared } = diffViolations([...wasThere.values()], [...isThere.values()]);
 
   const hardCodes = introduced
     .filter((v) => v.severity === 'hard' && !MEASURED_HARD_CODES.has(v.code))

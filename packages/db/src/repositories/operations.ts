@@ -56,10 +56,6 @@ import { getAssignment } from './schedule.js';
 // Call-offs
 // ---------------------------------------------------------------------------
 
-export function listOpenCallOffs(db: DbLike): CallOff[] {
-  return db.select().from(callOff).where(eq(callOff.status, 'open')).all().map(toCallOff);
-}
-
 export function getCallOff(db: DbLike, id: Id): CallOff | undefined {
   const row = db.select().from(callOff).where(eq(callOff.id, id)).get();
   return row ? toCallOff(row) : undefined;

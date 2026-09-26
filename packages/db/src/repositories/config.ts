@@ -214,18 +214,6 @@ export function listCoverageRequirementsForUnit(db: DbLike, unitId: Id): Coverag
     .map(toCoverageRequirement);
 }
 
-export function listCoverageRequirementsForShiftType(
-  db: DbLike,
-  shiftTypeId: Id,
-): CoverageRequirement[] {
-  return db
-    .select()
-    .from(coverageRequirementTable)
-    .where(eq(coverageRequirementTable.shiftTypeId, shiftTypeId))
-    .all()
-    .map(toCoverageRequirement);
-}
-
 /** Create when `input.id` is absent, otherwise update the existing row in place. */
 export function upsertCoverageRequirement(
   db: DbLike,

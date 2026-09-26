@@ -198,19 +198,16 @@ export function listAssignmentsForNurseInRange(
     .map(toAssignment);
 }
 
-export function listAssignmentsForDate(db: DbLike, date: IsoDate): Assignment[] {
-  return db.select().from(assignment).where(eq(assignment.date, date)).all().map(toAssignment);
-}
-
-export function listAssignmentsForDateAndShift(
+/** One period's shifts starting on one date. Scoped to the period: a date alone spans units. */
+export function listAssignmentsForPeriodOnDate(
   db: DbLike,
+  periodId: Id,
   date: IsoDate,
-  shiftTypeId: Id,
 ): Assignment[] {
   return db
     .select()
     .from(assignment)
-    .where(and(eq(assignment.date, date), eq(assignment.shiftTypeId, shiftTypeId)))
+    .where(and(eq(assignment.periodId, periodId), eq(assignment.date, date)))
     .all()
     .map(toAssignment);
 }
@@ -495,22 +492,4 @@ export function setLocked(
   actor: string,
 ): Assignment {
   return updateAssignment(db, assignmentId, { isLocked }, actor);
-}
-
-export function setCharge(
-  db: DbLike,
-  assignmentId: Id,
-  isCharge: boolean,
-  actor: string,
-): Assignment {
-  return updateAssignment(db, assignmentId, { isCharge }, actor);
-}
-
-export function setOvertime(
-  db: DbLike,
-  assignmentId: Id,
-  isOvertime: boolean,
-  actor: string,
-): Assignment {
-  return updateAssignment(db, assignmentId, { isOvertime }, actor);
 }

@@ -53,21 +53,6 @@ export function getTimeOffRequest(db: DbLike, id: Id): TimeOffRequest | undefine
 }
 
 /**
- * Requests overlapping `[start, end]`, inclusive on both ends. One indexed query
- * (`time_off_range_idx`) serves both the solver's availability matrix, which needs every
- * approved request touching a period, and the overlapping-requests heatmap, which needs
- * every request regardless of status.
- */
-export function listTimeOffOverlapping(db: DbLike, start: IsoDate, end: IsoDate): TimeOffRequest[] {
-  return db
-    .select()
-    .from(timeOffRequest)
-    .where(and(lte(timeOffRequest.startDate, end), gte(timeOffRequest.endDate, start)))
-    .all()
-    .map(toTimeOffRequest);
-}
-
-/**
  * Every request for a unit touching `[start, end]` (inclusive), whatever its status. The
  * heatmap and the competing-PTO detector both need the pending ones — a cluster of asks on one
  * weekend is a staffing problem before any of them is approved.

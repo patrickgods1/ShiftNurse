@@ -44,8 +44,16 @@ import { deriveCounters } from '../fairness/ledger.js';
 import { scoreFairness } from '../fairness/score.js';
 import type { CounterContext } from '../fairness/types.js';
 import { type MaxHoursParams, maxHoursRule } from '../rules/hours-rules.js';
-import { buildRuleContext, evaluateSchedule, getRule, resolveConfigs } from '../rules/registry.js';
-import type { EvaluationResult, RuleContext, RuleScope, Violation } from '../rules/types.js';
+import {
+  buildRuleContext,
+  evaluatePrepared,
+  evaluateSchedule,
+  type PreparedRule,
+  prepareRules,
+  resolveConfigs,
+  ruleIdsByScope,
+} from '../rules/registry.js';
+import type { EvaluationResult, RuleContext, Violation } from '../rules/types.js';
 import { ScheduleView } from '../schedule/view.js';
 import type { ConflictInput } from './types.js';
 
@@ -64,17 +72,6 @@ export interface FairnessSnapshot {
   byNurse: ReadonlyMap<Id, number>;
 }
 
-/** Ids of every enabled rule of one scope — hard and soft, since simulations diff both. */
-function ruleIdsByScope(input: ConflictInput, scope: RuleScope): string[] {
-  const out: string[] = [];
-  for (const config of resolveConfigs(input.ruleSet)) {
-    if (!config.enabled) continue;
-    const rule = getRule(config.ruleId);
-    if (rule && rule.scope === scope) out.push(rule.id);
-  }
-  return out;
-}
-
 export class ConflictEngine {
   readonly input: ConflictInput;
   /** Sorted by id so every iteration order is independent of row order. */
@@ -88,6 +85,9 @@ export class ConflictEngine {
   readonly slots: readonly Slot[];
   readonly nurseRuleIds: readonly string[];
   readonly shiftRuleIds: readonly string[];
+  /** Resolved once per engine; every simulated state evaluates against these. */
+  readonly nurseRules: readonly PreparedRule[];
+  readonly shiftRules: readonly PreparedRule[];
   readonly maxHoursParams: MaxHoursParams;
   readonly costCtx: CostContext | undefined;
   readonly counterCtx: Omit<CounterContext, 'timeOff'>;
@@ -103,8 +103,11 @@ export class ConflictEngine {
     this.dates = datesInRange(input.period.startDate, input.period.endDate);
     this.demand = new DemandTable(input.demand);
     this.baseCtx = this.contextFor(input.timeOff);
-    this.nurseRuleIds = ruleIdsByScope(input, 'nurse');
-    this.shiftRuleIds = ruleIdsByScope(input, 'shift');
+    // Hard and soft: simulations diff both.
+    this.nurseRuleIds = ruleIdsByScope(input.ruleSet, 'nurse', { hardOnly: false });
+    this.shiftRuleIds = ruleIdsByScope(input.ruleSet, 'shift', { hardOnly: false });
+    this.nurseRules = prepareRules(input.ruleSet, this.nurseRuleIds);
+    this.shiftRules = prepareRules(input.ruleSet, this.shiftRuleIds);
 
     const configs = resolveConfigs(input.ruleSet);
     this.maxHoursParams = (configs.find((c) => c.ruleId === maxHoursRule.id)?.params ??
@@ -246,12 +249,7 @@ export class SimState {
       nurses: [nurse],
       shiftTypes: this.engine.shiftTypes,
     });
-    const result = evaluateSchedule(
-      view,
-      this.engine.input.ruleSet,
-      { ...this.ctx, nurses: [nurse] },
-      { only: this.engine.nurseRuleIds },
-    );
+    const result = evaluatePrepared(view, this.engine.nurseRules, { ...this.ctx, nurses: [nurse] });
     this.nurseEvaluations.set(nurseId, result.violations);
     return result.violations;
   }
@@ -269,12 +267,10 @@ export class SimState {
       nurses: roster.map((v) => v.nurse),
       shiftTypes: [shiftType],
     });
-    const result = evaluateSchedule(
-      view,
-      this.engine.input.ruleSet,
-      { ...this.ctx, shiftTypes: [shiftType] },
-      { only: this.engine.shiftRuleIds },
-    );
+    const result = evaluatePrepared(view, this.engine.shiftRules, {
+      ...this.ctx,
+      shiftTypes: [shiftType],
+    });
     this.shiftEvaluations.set(key, result.violations);
     return result.violations;
   }
