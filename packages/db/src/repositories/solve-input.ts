@@ -105,17 +105,16 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
   const ruleSet = getRuleSet(db, period.ruleSetId);
   if (!ruleSet) throw new Error(`Period ${period.id} cites unknown rule set ${period.ruleSetId}`);
   const unitId = period.unitId;
-  const cost = costContext(db, unitId, ruleSet);
+  // Each table read once: the demand inputs carry the shift types, and the solver's cost data is
+  // just the three pay tables (it takes unit, holidays and the work week from the input itself).
+  const demand = demandInputs(db, unitId, period.startDate, period.endDate);
   return {
     unit: unitOrThrow(db, unitId),
     period,
     ruleSet,
     nurses: listNursesForUnit(db, unitId),
-    shiftTypes: listShiftTypesForUnit(db, unitId),
-    demand: deriveDemand(
-      datesInRange(period.startDate, period.endDate),
-      demandInputs(db, unitId, period.startDate, period.endDate),
-    ).all(),
+    shiftTypes: demand.shiftTypes,
+    demand: deriveDemand(datesInRange(period.startDate, period.endDate), demand).all(),
     assignments: listAssignmentsForPeriod(db, period.id),
     priorAssignments: priorAssignmentsBefore(db, unitId, period.startDate, 14),
     timeOff: listTimeOffForUnit(db, unitId),
@@ -126,9 +125,9 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     preferences: listPreferencesForUnit(db, unitId),
     ledgerHistory: ledgerHistory(db, unitId, period.startDate),
     cost: {
-      payRates: cost.payRates,
-      differentials: cost.differentials,
-      overtimeRules: cost.overtimeRules,
+      payRates: listPayRatesForUnit(db, unitId),
+      differentials: listActiveDifferentials(db, unitId),
+      overtimeRules: listActiveOvertimeRules(db, unitId),
     },
   };
 }

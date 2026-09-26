@@ -201,7 +201,7 @@ import {
   upsertHppdTarget,
   withdrawApproval,
 } from '@shiftnurse/db';
-import { app, BrowserWindow, dialog } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import type {
   AutoResolveResult,
   BackfillResult,
@@ -223,6 +223,7 @@ import type {
 } from '../shared/api.js';
 import { createBackup, listBackups, restoreBackup } from './backups.js';
 import { databasePath } from './database.js';
+import { openFile, saveFile } from './native-dialogs.js';
 import { exportToFile as exportPeriodToFile, type OutputInput, renderCsv } from './output.js';
 import { cpsatRunnerPath, ORTOOLS_BACKEND_IDS } from './solver-backends.js';
 import { solverAvailability } from './solver-choice.js';
@@ -286,16 +287,18 @@ function unitOrThrow(db: DbLike, unitId: Id) {
   return unit;
 }
 
-function pickImportFile(db: ShiftNurseDb, unitId: Id): RosterImportPreview | undefined {
+async function pickImportFile(
+  db: ShiftNurseDb,
+  unitId: Id,
+): Promise<RosterImportPreview | undefined> {
   const unit = unitOrThrow(db, unitId);
   const win = BrowserWindow.getFocusedWindow();
-  const options: Electron.OpenDialogSyncOptions = {
+  const options: Electron.OpenDialogOptions = {
     title: 'Import roster',
     filters: [{ name: 'CSV', extensions: ['csv', 'txt'] }],
     properties: ['openFile'],
   };
-  const [path] =
-    (win ? dialog.showOpenDialogSync(win, options) : dialog.showOpenDialogSync(options)) ?? [];
+  const path = await openFile(win, options);
   if (!path) return undefined;
   const text = readFileSync(path, 'utf8');
   const { rows, errors } = parseRosterCsv(text, { payPeriodDays: unit.payPeriodDays });
@@ -305,15 +308,15 @@ function pickImportFile(db: ShiftNurseDb, unitId: Id): RosterImportPreview | und
   return { path, rows, errors, existingEmployeeIds };
 }
 
-function exportToFile(db: ShiftNurseDb, unitId: Id): string | undefined {
+async function exportToFile(db: ShiftNurseDb, unitId: Id): Promise<string | undefined> {
   const unit = unitOrThrow(db, unitId);
   const win = BrowserWindow.getFocusedWindow();
-  const options: Electron.SaveDialogSyncOptions = {
+  const options: Electron.SaveDialogOptions = {
     title: 'Export roster',
     defaultPath: `${unit.name.replace(/[^\w-]+/g, '_')}-roster-${today()}.csv`,
     filters: [{ name: 'CSV', extensions: ['csv'] }],
   };
-  const path = win ? dialog.showSaveDialogSync(win, options) : dialog.showSaveDialogSync(options);
+  const path = await saveFile(win, options);
   if (!path) return undefined;
   writeFileSync(path, formatRosterCsv(exportRoster(db, unitId)), 'utf8');
   return path;
@@ -448,16 +451,18 @@ function fairnessTrend(db: ShiftNurseDb, unitId: Id): FairnessTrendPoint[] {
   });
 }
 
-function pickHistoryImportFile(db: ShiftNurseDb, unitId: Id): HistoryImportPreview | undefined {
+async function pickHistoryImportFile(
+  db: ShiftNurseDb,
+  unitId: Id,
+): Promise<HistoryImportPreview | undefined> {
   const unit = unitOrThrow(db, unitId);
   const win = BrowserWindow.getFocusedWindow();
-  const options: Electron.OpenDialogSyncOptions = {
+  const options: Electron.OpenDialogOptions = {
     title: 'Import historical schedule',
     filters: [{ name: 'CSV', extensions: ['csv', 'txt'] }],
     properties: ['openFile'],
   };
-  const [path] =
-    (win ? dialog.showOpenDialogSync(win, options) : dialog.showOpenDialogSync(options)) ?? [];
+  const path = await openFile(win, options);
   if (!path) return undefined;
   const text = readFileSync(path, 'utf8');
   const { rows, errors } = parseHistoricalScheduleCsv(text, {

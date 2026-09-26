@@ -19,8 +19,9 @@ import {
   formatAssignmentsCsv,
   formatGridCsv,
 } from '@shiftnurse/core';
-import { BrowserWindow, dialog } from 'electron';
+import { BrowserWindow } from 'electron';
 import type { OutputFormat } from '../shared/api.js';
+import { saveFile } from './native-dialogs.js';
 import { gridHtml, nurseSheetsHtml, type PrintContext } from './print-html.js';
 import { buildXlsx } from './xlsx.js';
 
@@ -139,12 +140,12 @@ export async function exportToFile(
     format === 'pdf-nurses' ? 'nurse-sheets' : format === 'csv-long' ? 'shifts' : 'grid';
   const version = input.ctx.version ? `-v${input.ctx.version.version}` : '';
   const win = BrowserWindow.getFocusedWindow();
-  const options: Electron.SaveDialogSyncOptions = {
+  const options: Electron.SaveDialogOptions = {
     title: `Export ${label}`,
     defaultPath: `${slug(input.ctx.unit.name)}-${slug(period.name)}${version}-${suffix}.${extension}`,
     filters: [{ name: label, extensions: [extension] }],
   };
-  const path = win ? dialog.showSaveDialogSync(win, options) : dialog.showSaveDialogSync(options);
+  const path = await saveFile(win, options);
   if (!path) return undefined;
   writeFileSync(path, await renderOutput(input, format));
   return path;

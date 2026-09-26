@@ -80,6 +80,13 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const updateAssignment = useUpdateAssignment(period.id, unitId);
   const deleteAssignment = useDeleteAssignment(period.id, unitId);
   const setLocked = useSetLocked(period.id, unitId);
+  // The handlers below depend on `mutate`, which TanStack keeps stable, not on the mutation
+  // objects, which change identity with every state change and would re-render every grid row.
+  const createMutate = createAssignment.mutate;
+  const moveMutate = moveAssignment.mutate;
+  const updateMutate = updateAssignment.mutate;
+  const deleteMutate = deleteAssignment.mutate;
+  const lockMutate = setLocked.mutate;
 
   const readOnly = period.status === 'archived';
   const published = period.status === 'published';
@@ -153,13 +160,13 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
       withReason('Add a shift to the published schedule', (reason) => {
         const ghost = makeGhost(period.id, input);
         setPendingCreates((prev) => [...prev, ghost]);
-        createAssignment.mutate(
+        createMutate(
           { periodId: period.id, ...input, reason },
           { onSettled: () => setPendingCreates((prev) => prev.filter((g) => g.id !== ghost.id)) },
         );
       });
     },
-    [readOnly, period.id, createAssignment, withReason],
+    [readOnly, period.id, createMutate, withReason],
   );
 
   const handleMove = useCallback(
@@ -169,7 +176,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         markPending(input.assignmentId);
         const ghost = makeGhost(period.id, input);
         setPendingCreates((prev) => [...prev, ghost]);
-        moveAssignment.mutate(
+        moveMutate(
           { ...input, reason },
           {
             onSettled: () => {
@@ -180,44 +187,44 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         );
       });
     },
-    [readOnly, period.id, moveAssignment, markPending, clearPending, withReason],
+    [readOnly, period.id, moveMutate, markPending, clearPending, withReason],
   );
 
   const handleToggleLock = useCallback(
     (assignment: Assignment) => {
       markPending(assignment.id);
-      setLocked.mutate(
+      lockMutate(
         { assignmentId: assignment.id, locked: !assignment.isLocked },
         { onSettled: () => clearPending(assignment.id) },
       );
     },
-    [setLocked, markPending, clearPending],
+    [lockMutate, markPending, clearPending],
   );
 
   const handleToggleCharge = useCallback(
     (assignment: Assignment) => {
       withReason('Change the charge nurse on the published schedule', (reason) => {
         markPending(assignment.id);
-        updateAssignment.mutate(
+        updateMutate(
           { assignmentId: assignment.id, patch: { isCharge: !assignment.isCharge }, reason },
           { onSettled: () => clearPending(assignment.id) },
         );
       });
     },
-    [updateAssignment, markPending, clearPending, withReason],
+    [updateMutate, markPending, clearPending, withReason],
   );
 
   const handleToggleOvertime = useCallback(
     (assignment: Assignment) => {
       withReason('Change overtime authorisation on the published schedule', (reason) => {
         markPending(assignment.id);
-        updateAssignment.mutate(
+        updateMutate(
           { assignmentId: assignment.id, patch: { isOvertime: !assignment.isOvertime }, reason },
           { onSettled: () => clearPending(assignment.id) },
         );
       });
     },
-    [updateAssignment, markPending, clearPending, withReason],
+    [updateMutate, markPending, clearPending, withReason],
   );
 
   const handleRemove = useCallback(
@@ -225,14 +232,16 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
       setOpenAssignmentId(undefined);
       withReason('Remove a shift from the published schedule', (reason) => {
         markPending(assignment.id);
-        deleteAssignment.mutate(
+        deleteMutate(
           { assignmentId: assignment.id, reason },
           { onSettled: () => clearPending(assignment.id) },
         );
       });
     },
-    [deleteAssignment, markPending, clearPending, withReason],
+    [deleteMutate, markPending, clearPending, withReason],
   );
+
+  const handleChipOpen = useCallback((a: Assignment) => setOpenAssignmentId(a.id), []);
 
   const handleChipDelete = useCallback(
     (assignment: Assignment) => {
@@ -355,7 +364,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         violationsByDate={violationsByDateMap}
         onMove={handleMove}
         onCreate={handleCreate}
-        onChipOpen={(a) => setOpenAssignmentId(a.id)}
+        onChipOpen={handleChipOpen}
         onChipDelete={handleChipDelete}
       />
       <GenerateDialog

@@ -35,7 +35,14 @@
 import { DemandTable, NURSE_ROLES, type ShiftDemand } from '../acuity/demand.js';
 import { costNurse } from '../cost/cost.js';
 import type { CostContext } from '../cost/types.js';
-import type { Assignment, Id, Nurse, NurseRole, ShiftType } from '../domain/entities.js';
+import type {
+  Assignment,
+  Id,
+  Nurse,
+  NurseRole,
+  SchedulePeriod,
+  ShiftType,
+} from '../domain/entities.js';
 import {
   dateInRange,
   datesInRange,
@@ -66,8 +73,10 @@ import {
 } from '../rules/hours-rules.js';
 import {
   buildRuleContext,
-  evaluateSchedule,
+  evaluatePrepared,
   hardRuleIdsByScope,
+  type PreparedRule,
+  prepareRules,
   resolveConfigs,
 } from '../rules/registry.js';
 import type { RuleContext, RuleSet } from '../rules/types.js';
@@ -148,6 +157,15 @@ export class SolverModel {
   private readonly onCall: number[];
   private readonly undesirable: number[];
   private readonly weekendKeys: Map<string, number>[];
+  /** shift × role → nurses of that role on the roster. `staffed` is asked for every shift and
+   * role on every move (coverage, `shortShifts`); counting the roster each time was a fifth of
+   * a solve. */
+  private readonly staffedByRole: number[];
+  /** `fairness()` reads every nurse's counters; they change only in `count`, which clears this. */
+  private fairnessCache: number | undefined;
+  /** Candidates with a fair share, in candidate order — the only nurses fairness sums over. */
+  private readonly sharers: readonly number[];
+  private readonly fairnessScratch: number[];
   /** nurse × date → assignments starting that day. O(1) "is this nurse free that day". */
   private readonly onDate: number[][];
   /** nurse × date → on approved leave. Leave never changes during a solve. */
@@ -161,6 +179,14 @@ export class SolverModel {
   readonly nurseHardIds: readonly string[];
   readonly shiftHardIds: readonly string[];
   private readonly baselineViolations: number[];
+  // The gate's fixed inputs, built once: the hard rules of each scope, one rule context per
+  // nurse and per shift type, one single-day period per shift. Rebuilding them on every check
+  // (a spread of the context, a resolve of the rule set) was a fifth of a solve.
+  private readonly nurseRules: readonly PreparedRule[];
+  private readonly shiftRules: readonly PreparedRule[];
+  private readonly nurseCtx: RuleContext[] = [];
+  private readonly shiftCtx = new Map<ShiftType, RuleContext>();
+  private readonly shiftPeriod: SchedulePeriod[] = [];
   readonly fteParams: ContractedHoursParams;
   readonly bucketOfDate: number[];
   readonly hoursTarget: number[][];
@@ -230,6 +256,8 @@ export class SolverModel {
 
     this.nurseHardIds = hardRuleIdsByScope(input.ruleSet, 'nurse');
     this.shiftHardIds = hardRuleIdsByScope(input.ruleSet, 'shift');
+    this.nurseRules = prepareRules(input.ruleSet, this.nurseHardIds);
+    this.shiftRules = prepareRules(input.ruleSet, this.shiftHardIds);
 
     const configs = resolveConfigs(input.ruleSet);
     this.fteParams = (configs.find((c) => c.ruleId === contractedHoursRule.id)?.params ??
@@ -306,6 +334,8 @@ export class SolverModel {
     });
     this.shareWeight = this.nurses.map((nurse) => burden.byNurse.get(nurse.id)?.shareWeight ?? 0);
     this.teamShare = this.shareWeight.reduce((sum, w) => sum + w, 0);
+    this.sharers = this.candidates.filter((i) => this.shareWeight[i]! > 0);
+    this.fairnessScratch = new Array<number>(this.sharers.length).fill(0);
 
     const multipliers = seniorityMultipliers(activeNurses);
     this.seniority = this.nurses.map((nurse) => multipliers.get(nurse.id) ?? 1);
@@ -345,6 +375,7 @@ export class SolverModel {
     }
     this.hoursPenalty = new Array<number>(n).fill(0);
     this.coverage = this.shifts.map(() => 0);
+    this.staffedByRole = new Array<number>(this.shifts.length * NURSE_ROLES.length).fill(0);
 
     // Locked assignments are the manager's pins: placed first, never moved, and any hard
     // violation they already carry is the baseline the gate measures additions against.
@@ -402,11 +433,7 @@ export class SolverModel {
   }
 
   staffed(shift: Shift, role: NurseRole): number {
-    let count = 0;
-    for (const a of this.byShift[shift.idx]!) {
-      if (this.nurses[this.nurseOf(a)]!.role === role) count++;
-    }
-    return count;
+    return this.staffedByRole[shift.idx * NURSE_ROLES.length + ROLE_INDEX[role]]!;
   }
 
   isOnDate(nurseIdx: number, dateIdx: number): boolean {
@@ -531,12 +558,12 @@ export class SolverModel {
       nurses: [nurse],
       shiftTypes: this.shiftTypes,
     });
-    const result = evaluateSchedule(
-      view,
-      this.ruleSet,
-      { ...this.ctx, nurses: [nurse] },
-      { only: this.nurseHardIds },
-    );
+    let ctx = this.nurseCtx[nurseIdx];
+    if (!ctx) {
+      ctx = { ...this.ctx, nurses: [nurse] };
+      this.nurseCtx[nurseIdx] = ctx;
+    }
+    const result = evaluatePrepared(view, this.nurseRules, ctx);
     let count = 0;
     for (const v of result.hardViolations) if (!FLOOR_CODES.has(v.code)) count++;
     return count;
@@ -618,6 +645,8 @@ export class SolverModel {
   /** Update every per-nurse counter and the preference/cost sums for one assignment. */
   private count(n: number, shift: Shift, a: Assignment, sign: 1 | -1): void {
     const st = shift.shiftType;
+    this.fairnessCache = undefined;
+    this.staffedByRole[shift.idx * NURSE_ROLES.length + ROLE_INDEX[this.nurses[n]!.role]]! += sign;
     this.onDate[n]![shift.dateIdx]! += sign;
     if (!st.isOnCall || this.maxHoursParams.onCallCountsTowardHours) {
       this.weekHours[n]![this.weekOfDate[shift.dateIdx]!]! += sign * st.durationHours;
@@ -720,18 +749,23 @@ export class SolverModel {
     if (!shift.solvable && roster.length === 0) return 0;
     let hard = 0;
     if (shift.demand) {
+      let period = this.shiftPeriod[shift.idx];
+      if (!period) {
+        period = { ...this.input.period, startDate: shift.date, endDate: shift.date };
+        this.shiftPeriod[shift.idx] = period;
+      }
+      let ctx = this.shiftCtx.get(shift.shiftType);
+      if (!ctx) {
+        ctx = { ...this.ctx, shiftTypes: [shift.shiftType] };
+        this.shiftCtx.set(shift.shiftType, ctx);
+      }
       const view = new ScheduleView({
-        period: { ...this.input.period, startDate: shift.date, endDate: shift.date },
+        period,
         assignments: roster,
         nurses: roster.map((a) => this.nurses[this.nurseOf(a)]!),
         shiftTypes: [shift.shiftType],
       });
-      const result = evaluateSchedule(
-        view,
-        this.ruleSet,
-        { ...this.ctx, shiftTypes: [shift.shiftType] },
-        { only: this.shiftHardIds },
-      );
+      const result = evaluatePrepared(view, this.shiftRules, ctx);
       for (const v of result.hardViolations) {
         const shortfall = v.details?.shortfall;
         hard += typeof shortfall === 'number' ? shortfall : 1;
@@ -754,21 +788,33 @@ export class SolverModel {
   }
 
   private fairness(): number {
+    this.fairnessCache ??= this.computeFairness();
+    return this.fairnessCache;
+  }
+
+  /**
+   * Runs after every move, so each component reads its counters once into a scratch array and
+   * walks only the nurses who carry a share. Same terms, summed in the same order, as walking
+   * every candidate and skipping the rest — the result is bit-identical, which determinism needs.
+   */
+  private computeFairness(): number {
     if (this.teamShare <= 0) return 0;
     const weights = this.ruleSet.fairnessWeights;
+    const sharers = this.sharers;
+    const carried = this.fairnessScratch;
     let total = 0;
     for (const component of BURDEN_COMPONENTS) {
       const w = weights[component];
       if (w <= 0) continue;
       let teamTotal = 0;
-      for (const i of this.candidates) {
-        if (this.shareWeight[i]! > 0) teamTotal += this.carried(i, component);
+      for (let k = 0; k < sharers.length; k++) {
+        const value = this.carried(sharers[k]!, component);
+        carried[k] = value;
+        teamTotal += value;
       }
       if (teamTotal <= 0) continue;
-      for (const i of this.candidates) {
-        const share = this.shareWeight[i]!;
-        if (share <= 0) continue;
-        const over = this.carried(i, component) - (teamTotal * share) / this.teamShare;
+      for (let k = 0; k < sharers.length; k++) {
+        const over = carried[k]! - (teamTotal * this.shareWeight[sharers[k]!]!) / this.teamShare;
         if (over > 0) total += w * over;
       }
     }
@@ -940,6 +986,11 @@ export class SolverModel {
     return all.map((a) => (a.isLocked ? a : { ...a, id: `solver-${++seq}` }));
   }
 }
+
+const ROLE_INDEX = Object.fromEntries(NURSE_ROLES.map((role, i) => [role, i])) as Record<
+  NurseRole,
+  number
+>;
 
 function spliceOut<T>(list: T[], item: T): void {
   const i = list.indexOf(item);
