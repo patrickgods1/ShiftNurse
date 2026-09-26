@@ -37,6 +37,9 @@ jobs:
           install-scripts: 'false'
       - run: npm run lint
       - run: npm run typecheck
+      # The production bundles. Typecheck and tests never run the bundler, so a plugin that
+      # needs a newer Vite (@vitejs/plugin-react 6 on Vite 7) passed everything else.
+      - run: npm run build -w @shiftnurse/desktop
       # Only what ships: a high-severity advisory in a runtime dependency fails the build.
       - run: npm audit --omit=dev --audit-level=high
 
