@@ -7,10 +7,11 @@
 
 import * as Dialog from '@radix-ui/react-dialog';
 import type { Id, Nurse } from '@shiftnurse/core';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useDeactivateNurse, useNurse } from '../../api.js';
 import { AsyncState } from '../../components/async-state.js';
 import { OVERLAY } from '../../components/ui.js';
+import { usePanelFocus } from '../../components/use-panel-focus.js';
 import { formatDate } from '../../format.js';
 import { CredentialsSection } from './nurse-credentials.js';
 import { PreferencesSection } from './nurse-preferences.js';
@@ -23,9 +24,12 @@ interface NurseDetailProps {
 
 export function NurseDetail({ nurseId, onClose, onEdit }: NurseDetailProps) {
   const nurseQuery = useNurse(nurseId);
+  const panelRef = useRef<HTMLDivElement>(null);
+  usePanelFocus(panelRef, true, onClose);
 
   return (
     <div
+      ref={panelRef}
       role="dialog"
       aria-label="Nurse detail"
       className="fixed inset-y-0 right-0 z-40 flex w-[420px] flex-col overflow-y-auto border-l

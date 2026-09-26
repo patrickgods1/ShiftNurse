@@ -9,6 +9,7 @@ import {
   useUpdateOvertimeRule,
 } from '../../../api-cost.js';
 import { AsyncState } from '../../../components/async-state.js';
+import { useConfirm } from '../../../components/confirm.js';
 import { INPUT, LABEL, PRIMARY, SMALL_DANGER, TD, TH } from '../../../components/ui.js';
 
 function describeRule(rule: OvertimeRule): string {
@@ -18,6 +19,7 @@ function describeRule(rule: OvertimeRule): string {
 }
 
 export function OvertimeSection({ unitId }: { unitId: Id }) {
+  const confirm = useConfirm();
   const query = useOvertimeRules(unitId);
   const create = useCreateOvertimeRule(unitId);
   const update = useUpdateOvertimeRule(unitId);
@@ -150,8 +152,13 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
                     <button
                       type="button"
                       className={SMALL_DANGER}
-                      onClick={() => {
-                        if (window.confirm(`Delete "${describeRule(rule)}"?`)) {
+                      onClick={async () => {
+                        if (
+                          await confirm({
+                            title: `Delete "${describeRule(rule)}"?`,
+                            confirmLabel: 'Delete',
+                          })
+                        ) {
                           remove.mutate(rule.id);
                         }
                       }}

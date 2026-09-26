@@ -8,6 +8,7 @@ import type { Holiday } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useCreateHoliday, useDeleteHoliday, useHolidays } from '../../api-config.js';
 import { AsyncState } from '../../components/async-state.js';
+import { useConfirm } from '../../components/confirm.js';
 import { formatDateWithWeekday } from '../../format.js';
 import { useUnitId } from '../../unit-context.js';
 
@@ -16,6 +17,7 @@ function yearOf(date: string): string {
 }
 
 export default function HolidaysPanel() {
+  const confirm = useConfirm();
   const unitId = useUnitId();
   const holidaysQuery = useHolidays(unitId);
   const createHoliday = useCreateHoliday();
@@ -131,8 +133,13 @@ export default function HolidaysPanel() {
                     </span>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (window.confirm(`Delete "${holiday.name}"?`)) {
+                      onClick={async () => {
+                        if (
+                          await confirm({
+                            title: `Delete "${holiday.name}"?`,
+                            confirmLabel: 'Delete',
+                          })
+                        ) {
                           deleteHoliday.mutate({ id: holiday.id, unitId });
                         }
                       }}

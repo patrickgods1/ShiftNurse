@@ -316,6 +316,59 @@ const PAY_TAB_SCRIPT = `
     tick();
   })`;
 
+/**
+ * The schedule grid from the keyboard alone: one tab stop that arrow keys move, Enter opening the
+ * shift picker on that cell, Escape closing it and handing focus back to the cell. Unit tests do
+ * not render the grid; this is the only check that the roving focus and picker actually work.
+ */
+const GRID_KEYBOARD_SCRIPT = `
+  new Promise((resolve) => {
+    location.hash = '#/schedule';
+    const started = Date.now();
+    const key = (el, k) =>
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+    const settle = (fn) => setTimeout(fn, 150);
+    const tick = () => {
+      const first = document.querySelector('[data-cell="0:0"]');
+      if (!first) {
+        if (Date.now() - started > 10000) resolve({ error: 'no grid cells rendered' });
+        else setTimeout(tick, 100);
+        return;
+      }
+      // Every tab stop in the grid, chips included: the active cell and its own shifts only.
+      const grid = document.querySelector('[data-testid="schedule-grid"]');
+      const tabStops = grid.querySelectorAll('[tabindex="0"]').length;
+      const expectedStops = 1 + first.querySelectorAll('[data-testid="assignment-chip"]').length;
+      const chips = grid.querySelectorAll('[data-testid="assignment-chip"]').length;
+      first.focus();
+      key(first, 'ArrowRight');
+      settle(() => {
+        const moved = document.activeElement?.dataset?.cell;
+        key(document.activeElement, 'Enter');
+        settle(() => {
+          const picker = document.querySelector('[data-testid="shift-picker"]');
+          const focusInPicker = !!picker && picker.contains(document.activeElement);
+          const options = picker ? picker.querySelectorAll('button').length : 0;
+          key(document.activeElement, 'Escape');
+          settle(() => {
+            resolve({
+              tabStops,
+              expectedStops,
+              chips,
+              moved,
+              pickerOpened: !!picker,
+              focusInPicker,
+              options,
+              pickerClosed: !document.querySelector('[data-testid="shift-picker"]'),
+              focusBack: document.activeElement?.dataset?.cell,
+            });
+          });
+        });
+      });
+    };
+    tick();
+  })`;
+
 /** M15: Settings › Solver lists every backend, with the saved choice checked and the ones this
  * install cannot run marked with the reason. */
 const SOLVER_TAB_SCRIPT = `
@@ -897,6 +950,33 @@ export function runSmoke(win: BrowserWindow): void {
       }
       console.log(
         `[smoke] solver settings OK (3 options, hybrid checked, ${solverTab.unavailable} unavailable)`,
+      );
+      const grid = (await win.webContents.executeJavaScript(GRID_KEYBOARD_SCRIPT)) as {
+        error?: string;
+        tabStops: number;
+        expectedStops: number;
+        chips: number;
+        moved?: string;
+        pickerOpened: boolean;
+        focusInPicker: boolean;
+        options: number;
+        pickerClosed: boolean;
+        focusBack?: string;
+      };
+      if (
+        grid.error ||
+        grid.tabStops !== grid.expectedStops ||
+        grid.moved !== '0:1' ||
+        !grid.pickerOpened ||
+        !grid.focusInPicker ||
+        grid.options === 0 ||
+        !grid.pickerClosed ||
+        grid.focusBack !== '0:1'
+      ) {
+        fail(`schedule grid keyboard path broken: ${JSON.stringify(grid)}`);
+      }
+      console.log(
+        `[smoke] grid keyboard OK (${grid.tabStops} tab stop(s) among ${grid.chips} chips, arrows move, Enter opens ${grid.options} shift types, Escape returns focus)`,
       );
       const requests = (await win.webContents.executeJavaScript(REQUESTS_SCRIPT)) as {
         error?: string;

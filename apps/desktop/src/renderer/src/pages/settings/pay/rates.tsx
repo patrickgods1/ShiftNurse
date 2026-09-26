@@ -10,6 +10,7 @@ import {
   useUpdatePayRate,
 } from '../../../api-cost.js';
 import { AsyncState } from '../../../components/async-state.js';
+import { useConfirm } from '../../../components/confirm.js';
 import { INPUT, LABEL, PRIMARY, SMALL, SMALL_DANGER, TD, TH } from '../../../components/ui.js';
 import { formatDate } from '../../../format.js';
 import { formatDollars } from '../../../money.js';
@@ -27,6 +28,7 @@ function describeScope(rate: PayRate, nursesById: ReadonlyMap<Id, Nurse>): strin
 }
 
 export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[] }) {
+  const confirm = useConfirm();
   const ratesQuery = usePayRates(unitId);
   const createRate = useCreatePayRate(unitId);
   const updateRate = useUpdatePayRate(unitId);
@@ -232,11 +234,12 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
                           <button
                             type="button"
                             className={SMALL_DANGER}
-                            onClick={() => {
+                            onClick={async () => {
                               if (
-                                window.confirm(
-                                  `Delete the ${describeScope(rate, nursesById)} rate of ${formatDollars(rate.hourlyRate, { cents: true })}?`,
-                                )
+                                await confirm({
+                                  title: `Delete the ${describeScope(rate, nursesById)} rate of ${formatDollars(rate.hourlyRate, { cents: true })}?`,
+                                  confirmLabel: 'Delete',
+                                })
                               ) {
                                 deleteRate.mutate(rate.id);
                               }

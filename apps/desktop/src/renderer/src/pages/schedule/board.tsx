@@ -31,6 +31,7 @@ import {
   useValidation,
 } from '../../api-schedule.js';
 import { AsyncState } from '../../components/async-state.js';
+import { useConfirm } from '../../components/confirm.js';
 import { errorMessage } from '../../components/ui.js';
 import { ReasonDialog } from '../requests/reason-dialog.js';
 import { AlertsPanel } from './alerts-panel.js';
@@ -41,7 +42,7 @@ import { ExportMenu } from './export-menu.js';
 import { GenerateDialog } from './generate-dialog.js';
 import type { GridColumn } from './grid.js';
 import { ScheduleGrid } from './grid.js';
-import { makePendingId } from './grid-utils.js';
+import { makePendingId, sortNurses } from './grid-utils.js';
 import { ShiftPalette } from './palette.js';
 import { PublishDialog } from './publish-dialog.js';
 import { ViolationSummary } from './violation-summary.js';
@@ -69,6 +70,7 @@ function makeGhost(
 }
 
 export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
+  const confirm = useConfirm();
   const nursesQuery = useNurses(unitId);
   const shiftTypesQuery = useShiftTypes(unitId);
   const assignmentsQuery = useAssignments(period.id);
@@ -136,6 +138,8 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
       })),
     [period.startDate, period.endDate],
   );
+  const columnDates = useMemo(() => columns.map((c) => c.date), [columns]);
+  const sortedNurses = useMemo(() => sortNurses(nursesQuery.data ?? []), [nursesQuery.data]);
 
   const violationResult = validationQuery.data?.result;
   const violationsByAssignmentMap = useMemo(
@@ -244,10 +248,12 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const handleChipOpen = useCallback((a: Assignment) => setOpenAssignmentId(a.id), []);
 
   const handleChipDelete = useCallback(
-    (assignment: Assignment) => {
-      if (window.confirm('Remove this assignment?')) handleRemove(assignment);
+    async (assignment: Assignment) => {
+      if (await confirm({ title: 'Remove this assignment?', confirmLabel: 'Remove' })) {
+        handleRemove(assignment);
+      }
     },
-    [handleRemove],
+    [confirm, handleRemove],
   );
 
   if (nursesQuery.isPending || shiftTypesQuery.isPending || assignmentsQuery.isPending) {
@@ -411,6 +417,9 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         onToggleCharge={handleToggleCharge}
         onToggleOvertime={handleToggleOvertime}
         onRemove={handleRemove}
+        nurses={sortedNurses}
+        dates={columnDates}
+        onMove={handleMove}
       />
     </div>
   );
