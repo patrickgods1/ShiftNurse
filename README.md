@@ -107,7 +107,7 @@ apps/desktop/       # Electron app.
 ROADMAP.md           # Plan of record: milestones, locked-in decisions, verification steps.
 CLAUDE.md            # Architecture and conventions for anyone (human or AI) working here.
 ARCHITECTURE.md      # Why this stack, trade-offs considered.
-docs/                # SOLVER_PLAN.md (M15 plan of record) and solver-bench.md (benchmark results).
+docs/                # SOLVER_PLAN.md (M15 plan), CI_PLAN.md (M16 plan) and solver-bench.md (benchmark results).
 ```
 
 Each package/app has its own `package.json`, `tsconfig.json`, and (for `core`/`db`) a
@@ -384,6 +384,9 @@ be re-hosted behind a future web/mobile backend unchanged. `packages/db` owns al
 surface (`src/shared/api.ts`) deliberately shaped like the eventual HTTP API.
 
 ## Contributing / working in this repo
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow, and [CHANGELOG.md](CHANGELOG.md) for
+what changed in each release.
 
 If you're using Claude Code in this repository, start with [CLAUDE.md](CLAUDE.md) — it
 documents the conventions, invariants (especially the wall-clock time model in

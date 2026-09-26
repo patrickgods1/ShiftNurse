@@ -419,7 +419,7 @@ violations of their own.
 
 ## Pointers
 
-- **`ROADMAP.md` is the plan of record** — 15 milestones, locked-in decisions, verification
+- **`ROADMAP.md` is the plan of record** — 16 milestones and a proposed M17, locked-in decisions, verification
   steps. Tick a box when the work lands *and* its verification passes, not when code is written.
 - **`.claude/skills/scheduling-review`** — the domain review checklist for scheduling changes.
 - `.claude/scripts/` — SessionStart roadmap summary and a non-blocking Stop-hook test run.
