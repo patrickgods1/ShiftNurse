@@ -48,6 +48,9 @@ this codebase is held to. This document is the practical "how do I build/run/shi
 - **Time off, conflicts & exchanges** — a conflict-detection engine simulates every request
   against the schedule, ranks resolution options, supports policy-driven auto-resolve with an
   audit trail, and evaluates 1:1 trades and giveaways for hard-rule and fairness impact.
+  Leave is booked against the shifts dated in it (a nurse off on the 7th can still work the
+  night of the 6th), and paid leave — PTO, paid sick calls, bereavement, paid education —
+  counts toward contracted hours, not toward overtime unless a contract says so.
 - **Publish lifecycle** — versioned publishes, a reasoned post-publish change log, compliance
   alerts, PDF/CSV/xlsx export, and scheduled backups via SQLite's online backup API.
 - **Day-of console** — call-off handling with a ranked replacement finder and live

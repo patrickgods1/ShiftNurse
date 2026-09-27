@@ -13,8 +13,8 @@ const f = useDemo('community-med-surg', TODAY);
 
 describe('the community med-surg demo', () => {
   it('staffs 28 beds with RNs and CNAs, as most acute-care hospitals do', () => {
-    expect(f.count("SELECT COUNT(*) n FROM nurse WHERE role='RN'")).toBe(34);
-    expect(f.count("SELECT COUNT(*) n FROM nurse WHERE role='CNA'")).toBe(15);
+    expect(f.count("SELECT COUNT(*) n FROM nurse WHERE role='RN'")).toBe(36);
+    expect(f.count("SELECT COUNT(*) n FROM nurse WHERE role='CNA'")).toBe(16);
     expect(f.count("SELECT COUNT(*) n FROM nurse WHERE role='LPN'")).toBe(0);
     expect(f.count('SELECT MAX(projected_census) n FROM census_forecast')).toBeLessThanOrEqual(28);
     expect(f.count('SELECT MAX(actual_census) n FROM census_forecast')).toBeLessThanOrEqual(28);

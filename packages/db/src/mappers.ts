@@ -204,6 +204,7 @@ export function toTimeOffRequest(r: typeof s.timeOffRequest.$inferSelect): TimeO
     decidedBy: opt(r.decidedBy),
     reason: opt(r.reason),
     decisionReason: opt(r.decisionReason),
+    paidHours: opt(r.paidHours),
   };
 }
 
@@ -367,6 +368,7 @@ export function toCallOff(r: typeof s.callOff.$inferSelect): CallOff {
     reason: opt(r.reason),
     status: r.status,
     replacementAssignmentId: opt(r.replacementAssignmentId),
+    paidSickHours: opt(r.paidSickHours),
   };
 }
 

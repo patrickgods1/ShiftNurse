@@ -34,6 +34,7 @@ import type {
 import type { IsoDate, WeekendDefinition } from '../domain/time.js';
 import type { FairnessWeights } from '../fairness/types.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
+import type { PaidLeaveCredit } from './paid-leave.js';
 
 export type RuleSeverity = 'hard' | 'soft';
 
@@ -104,6 +105,8 @@ export interface RuleContext {
   /** Approved time off only, indexed by nurse. Pending requests never block the solver. */
   approvedTimeOffByNurse: ReadonlyMap<Id, readonly TimeOffRequest[]>;
   allTimeOff: readonly TimeOffRequest[];
+  /** Paid leave hours by nurse and date: approved paid leave and paid sick calls. */
+  paidLeaveByNurse: ReadonlyMap<Id, readonly PaidLeaveCredit[]>;
 
   credentials: readonly Credential[];
   credentialsById: ReadonlyMap<Id, Credential>;

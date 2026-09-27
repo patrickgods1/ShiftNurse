@@ -77,6 +77,12 @@ export interface CostContext {
   weekendDefinition: WeekendDefinition;
   /** The contract's work-week start for weekly overtime, matching the max-hours rule. */
   workWeekStartsOn: Weekday;
+  /**
+   * Paid leave that counts toward weekly overtime, keyed `nurseId|weekStart`
+   * (`leaveHoursByWorkWeek`). Present only when the rule set's max-hours rule says leave counts;
+   * absent, leave never moves a shift into overtime.
+   */
+  overtimeLeaveHours?: ReadonlyMap<string, number>;
 }
 
 // ---------------------------------------------------------------------------

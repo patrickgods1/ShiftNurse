@@ -222,7 +222,12 @@ function dayOfSummary(db: DbLike, unitId: Id, date?: IsoDate): DayOfSummary {
   };
 }
 
-function reportDayOfCallOff(db: ShiftNurseDb, assignmentId: Id, reason?: string): CallOff {
+function reportDayOfCallOff(
+  db: ShiftNurseDb,
+  assignmentId: Id,
+  reason?: string,
+  paidSickHours?: number,
+): CallOff {
   if (openCallOffForAssignment(db, assignmentId)) {
     throw new Error('A call-off is already open for this assignment');
   }
@@ -231,7 +236,13 @@ function reportDayOfCallOff(db: ShiftNurseDb, assignmentId: Id, reason?: string)
   if (period.status === 'archived') {
     throw new Error(`Period "${period.name}" is archived; cannot report a call-off against it`);
   }
-  return reportCallOff(db, assignmentId, ACTOR, reason);
+  return reportCallOff(
+    db,
+    assignmentId,
+    ACTOR,
+    reason,
+    paidSickHours === undefined ? {} : { paidSickHours },
+  );
 }
 
 /** Ranked, eligible-only replacements, simulated on the period's own rule-set snapshot. */
@@ -324,7 +335,8 @@ export function dayOfApi(db: ShiftNurseDb): ShiftNurseApi['dayOf'] {
     today: (unitId, date) => dayOfSummary(db, unitId, date),
     callOffs: (unitId, start, end) =>
       listCallOffsForUnit(db, unitId, { start, end }).map((c) => callOffView(db, c)),
-    reportCallOff: (assignmentId, reason) => reportDayOfCallOff(db, assignmentId, reason),
+    reportCallOff: (assignmentId, reason, paidSickHours) =>
+      reportDayOfCallOff(db, assignmentId, reason, paidSickHours),
     replacements: (callOffId) => replacementsFor(db, callOffId),
     logCall: (callOffId, nurseId, outcome, notes) =>
       logCall(db, callOffId, nurseId, outcome, notes),

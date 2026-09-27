@@ -22,10 +22,16 @@
  * - **Balanced before posting.** Shifts move from anyone past their contract to anyone short,
  *   wherever the move is legal — the pass a scheduler makes before posting.
  *
- * Call-offs (about two a week), leave requests (denied when too many of a role are already off)
- * and budgets follow. The contracted-hours rule credits neither PTO nor a sick call, so a few past
- * pay periods read under or over contract around them; that is what the app would say about any
- * real unit's history.
+ * - **Removals checked too.** A shift moved away or called off must not leave its nurse in an
+ *   illegal stretch (`canRemove`): taking the day off "day, night, night, night, night" leaves
+ *   four nights.
+ *
+ * Leave requests carry the paid hours of the shifts they cover and are denied when too many of a
+ * role are already off; staff call-offs (about two a week) are paid from sick leave. Both count
+ * toward contracted hours, so a vacation comes off the nurse's target for the period and its
+ * shifts go to the per-diem pool, then to overtime. A nurse at contract who picks up a call-off
+ * still reads "over contract" — the rule counts any hours past it — so a few past pay periods
+ * show that, as they would on a real unit.
  *
  * Every random choice comes from a seeded `Rng`: same profile, seed and date, same database.
  */
@@ -56,6 +62,7 @@ import {
   ScheduleView,
   type ShiftType,
   shiftWindow,
+  suggestedPaidLeaveHours,
   today,
   usFederalHolidays,
   type Weekday,
@@ -365,12 +372,16 @@ interface Staff {
   weekendGroup: 0 | 1;
   /** Shifts a pay period the contract (or a per-diem commitment) calls for. */
   targetPerPeriod: number;
+  /** The length of the shift this person is hired to work, which a day of paid leave pays. */
+  shiftHours: number;
   /** Contracted hours a week: past this a shift is a catch-up or an overtime pick-up. */
   weeklyHours: number;
   years: number;
 }
 
 interface Limits {
+  /** The time-off rule's calendar-day option: a shift into leave's first morning counts. */
+  nightIntoLeave: boolean;
   minRestMinutes: number;
   maxRun: number;
   maxNights: number;
@@ -420,10 +431,12 @@ function canWork(
   const mine = worked.get(id)!;
   if (mine.has(date) || leave.has(`${id}|${date}`)) return false;
   const window = shiftWindow(date, shift);
-  // A night ends the next morning, which counts as a day of leave. The rule treats every
-  // night-flagged shift that way, even an evening tour that ends before midnight.
-  const endDate = shift.isNight ? addDays(date, 1) : windowEndDate(window);
-  if (endDate !== date && leave.has(`${id}|${endDate}`)) return false;
+  // Leave belongs to the shifts dated in it. Only where the rule set makes a day off a whole
+  // calendar day does a shift running into leave's first morning count too.
+  if (limits.nightIntoLeave) {
+    const endDate = windowEndDate(window);
+    if (endDate !== date && leave.has(`${id}|${endDate}`)) return false;
+  }
   // Rest between this shift and the ones either side.
   for (const offset of [-1, 1]) {
     const other = mine.get(addDays(date, offset));
@@ -458,6 +471,28 @@ function canWork(
     if (length >= limits.maxRun && mine.has(addDays(last, daysOff + 1))) return false;
   }
   return true;
+}
+
+/**
+ * Could this person's shift on `date` come off the schedule without breaking a rule? Removal
+ * only shortens stretches, but the consecutive-nights limit counts all-night stretches, so
+ * taking the day off the front of "day, night, night, night, night" leaves four nights.
+ */
+function canRemove(worked: Worked, staff: Staff, date: IsoDate, limits: Limits): boolean {
+  const mine = worked.get(staff.nurse.id)!;
+  // The stretch left on each side, counted only if it is all nights.
+  const allNights = (d: IsoDate, step: number) => {
+    let n = 0;
+    for (let x = d; mine.has(x); x = addDays(x, step)) {
+      if (!mine.get(x)!.isNight) return 0;
+      n++;
+    }
+    return n;
+  };
+  return (
+    allNights(addDays(date, -1), -1) <= limits.maxNights &&
+    allNights(addDays(date, 1), 1) <= limits.maxNights
+  );
 }
 
 function hoursInWeek(worked: Worked, staff: Staff, date: IsoDate): number {
@@ -655,7 +690,10 @@ export function seedFromProfile(
     ACTOR,
   );
   bump('ruleSet');
+  const nightIntoLeave = configs.find((c) => c.ruleId === 'approved-time-off-is-absolute')?.params
+    ?.nightShiftEndingOnLeaveCounts;
   const limits: Limits = {
+    nightIntoLeave: nightIntoLeave === true,
     minRestMinutes: 60 * numberParam(configs, 'min-rest-between-shifts', 'minRestHours', 10),
     maxRun: numberParam(configs, 'max-consecutive-shifts', 'maxConsecutiveShifts', 5),
     maxNights: numberParam(configs, 'max-consecutive-shifts', 'maxConsecutiveNights', 3),
@@ -745,10 +783,11 @@ export function seedFromProfile(
       position: row.position,
       weekendGroup: (p.k % 2) as 0 | 1,
       // A per-diem nurse typically works two or three shifts a week when the unit needs them.
+      shiftHours,
       targetPerPeriod:
         row.contractedHoursPerPeriod > 0
           ? Math.round(row.contractedHoursPerPeriod / shiftHours)
-          : Math.round(64 / shiftHours),
+          : Math.round(72 / shiftHours),
       weeklyHours: row.contractedHoursPerPeriod > 0 ? row.contractedHoursPerPeriod / 2 : 36,
       years: p.years,
     };
@@ -900,6 +939,8 @@ export function seedFromProfile(
   // Decided before the history is staffed, as it would have been: approved leave keeps the nurse
   // off the schedule. A request is denied when too many of the same role are already off.
   const leave = new Set<string>();
+  /** Paid leave hours by nurse and date, once approved: they count toward the contract. */
+  const leavePaid = new Map<string, number>();
   const offByRoleDate = new Map<string, number>();
   const offLimit = (role: NurseRole) =>
     Math.max(1, Math.floor(staff.filter((s) => s.nurse.role === role).length / 10));
@@ -911,9 +952,18 @@ export function seedFromProfile(
     reason: string,
     decision: 'decide' | 'approve' | 'pending',
   ) => {
+    const days = datesInRange(startDate, endDate).length;
+    // Paid as the shifts the nurse would have worked over those days.
+    const paidHours = suggestedPaidLeaveHours({
+      type,
+      days,
+      contractedHoursPerPeriod: s.nurse.contractedHoursPerPeriod,
+      payPeriodDays: 14,
+      shiftHours: s.shiftHours,
+    });
     const request = createTimeOffRequest(
       db,
-      { nurseId: s.nurse.id, startDate, endDate, type, reason },
+      { nurseId: s.nurse.id, startDate, endDate, type, reason, paidHours },
       ACTOR,
     );
     bump('timeOffRequest');
@@ -933,6 +983,7 @@ export function seedFromProfile(
     bump('timeOffApproved');
     for (const d of dates) {
       leave.add(`${s.nurse.id}|${d}`);
+      leavePaid.set(`${s.nurse.id}|${d}`, paidHours / dates.length);
       offByRoleDate.set(key(d), (offByRoleDate.get(key(d)) ?? 0) + 1);
     }
   };
@@ -989,6 +1040,13 @@ export function seedFromProfile(
     bump('period');
     const shiftCount = new Map<Id, number>();
     const count = (s: Staff) => shiftCount.get(s.nurse.id) ?? 0;
+    // Paid leave in this pay period counts toward the contract, so it comes off the shifts
+    // still to schedule, as it would for a real scheduler.
+    const periodTarget = (s: Staff) => {
+      let paid = 0;
+      for (const d of datesInRange(start, end)) paid += leavePaid.get(`${s.nurse.id}|${d}`) ?? 0;
+      return Math.max(0, s.targetPerPeriod - Math.round(paid / s.shiftHours));
+    };
     const plan: PlannedShift[] = [];
     const periodRows: Id[] = [];
 
@@ -1005,7 +1063,7 @@ export function seedFromProfile(
           legal(s, date, shift),
       );
       const week = (s: Staff) => hoursInWeek(worked, s, date) + shift.durationHours;
-      const short = (s: Staff) => count(s) < s.targetPerPeriod;
+      const short = (s: Staff) => count(s) < periodTarget(s);
       return [
         free.filter((s) => contracted(s) && short(s) && week(s) <= s.weeklyHours),
         free.filter((s) => !contracted(s) && short(s) && week(s) <= 36),
@@ -1019,8 +1077,8 @@ export function seedFromProfile(
         const week = Math.floor(daysBetween(historyStart, date) / 7);
         w *= week % 2 === s.weekendGroup ? 3 : 0.3;
       }
-      const deficit = Math.max(0, s.targetPerPeriod - count(s));
-      return w * (1 + (3 * deficit) / s.targetPerPeriod);
+      const deficit = Math.max(0, periodTarget(s) - count(s));
+      return w * (1 + (3 * deficit) / Math.max(1, periodTarget(s)));
     };
     const pick = (pool: Staff[], shift: ShiftType, date: IsoDate) =>
       rng.weightedPick(pool.map((s) => ({ value: s, weight: weight(s, shift, date) })));
@@ -1047,15 +1105,17 @@ export function seedFromProfile(
             if (chargePool) add(pick(chargePool, shift, date), true);
           }
           while (staffed < min) {
-            const pool = tiersFor(date, shift, r, false).find((t) => t.length > 0);
-            if (!pool) break; // Nobody left who could legally work it: the shift ran short.
-            add(pick(pool, shift, date));
+            const tiers = tiersFor(date, shift, r, false);
+            const tier = tiers.findIndex((t) => t.length > 0);
+            if (tier === -1) break; // Nobody left who could legally work it: the shift ran short.
+            if (tier === tiers.length - 1) bump('overtimePicks');
+            add(pick(tiers[tier]!, shift, date));
           }
           // Above the floor, only contracted staff behind on their hours for the period so far.
           const elapsed = (daysBetween(start, date) + 1) / 14;
           while (staffed < target) {
             const pool = tiersFor(date, shift, r, false)[0]!.filter(
-              (s) => count(s) < Math.floor(s.targetPerPeriod * elapsed),
+              (s) => count(s) < Math.floor(periodTarget(s) * elapsed),
             );
             if (pool.length === 0) break;
             add(pick(pool, shift, date));
@@ -1069,12 +1129,16 @@ export function seedFromProfile(
     const takerFor = (from: Staff, entry: PlannedShift) => {
       const mine = worked.get(from.nurse.id)!;
       mine.delete(entry.date);
+      if (!canRemove(worked, from, entry.date, limits)) {
+        mine.set(entry.date, entry.shift);
+        return undefined;
+      }
       const taker = staff.find(
         (u) =>
           u !== from &&
           u.nurse.role === from.nurse.role &&
           contracted(u) &&
-          count(u) < u.targetPerPeriod &&
+          count(u) < periodTarget(u) &&
           (!entry.isCharge || u.nurse.isChargeEligible) &&
           hoursInWeek(worked, u, entry.date) + entry.shift.durationHours <= 48 &&
           legal(u, entry.date, entry.shift),
@@ -1086,7 +1150,7 @@ export function seedFromProfile(
       moved = false;
       for (const entry of plan) {
         const from = entry.staff;
-        if (contracted(from) && count(from) <= from.targetPerPeriod) continue;
+        if (contracted(from) && count(from) <= periodTarget(from)) continue;
         const taker = takerFor(from, entry);
         if (!taker) continue;
         worked.get(from.nurse.id)!.delete(entry.date);
@@ -1126,8 +1190,13 @@ export function seedFromProfile(
     }
 
     // About two call-offs a week. Per-diem staff are phoned first, overtime is the last resort.
+    const staffOf = (a: Assignment) => staff.find((s) => s.nurse.id === a.nurseId)!;
     const callable = rng
-      .shuffle(periodRows.map((id) => rows.get(id)!).filter((a) => !a.isCharge))
+      .shuffle(
+        periodRows
+          .map((id) => rows.get(id)!)
+          .filter((a) => !a.isCharge && canRemove(worked, staffOf(a), a.date, limits)),
+      )
       .slice(0, rng.nextInt(3, 5));
     for (const absent of callable) {
       const reason = rng.weightedPick([
@@ -1136,7 +1205,14 @@ export function seedFromProfile(
         { value: 'Family emergency', weight: 1 },
         { value: 'Car trouble', weight: 1 },
       ]);
-      const callOff = reportCallOff(db, absent.id, ACTOR, reason);
+      // Staff are paid from sick leave; per-diem and travel nurses have none.
+      const absentNurse = staff.find((s) => s.nurse.id === absent.nurseId)!;
+      const sickPay =
+        absentNurse.nurse.employmentType === 'full_time' ||
+        absentNurse.nurse.employmentType === 'part_time'
+          ? { paidSickHours: shifts.find((x) => x.id === absent.shiftTypeId)!.durationHours }
+          : {};
+      const callOff = reportCallOff(db, absent.id, ACTOR, reason, sickPay);
       bump('callOff');
       deleteAssignment(db, absent.id, ACTOR, `Called off: ${reason}`);
       rows.delete(absent.id);
@@ -1159,12 +1235,12 @@ export function seedFromProfile(
       ]
         .filter((s) => s !== absentStaff)
         .slice(0, rng.nextInt(2, 5));
-      // An RN call-off is nearly always covered — below ratio or floor the unit cannot run
-      // safely — while an assistant's shift sometimes just runs one short.
-      const covered =
-        phoneList.length > 0 && rng.chance(absentStaff.nurse.role === 'RN' ? 0.97 : 0.8);
+      // An RN call-off is covered whenever anyone can legally come in — below ratio the unit
+      // cannot run — while an assistant's shift sometimes just runs one short.
+      const covered = phoneList.length > 0 && (absentStaff.nurse.role === 'RN' || rng.chance(0.8));
       for (const [i, s] of phoneList.entries()) {
         if (covered && i === phoneList.length - 1) {
+          if (contracted(s) && count(s) >= periodTarget(s)) bump('overtimeCallouts');
           logCallAttempt(db, callOff.id, s.nurse.id, 'accepted', ACTOR);
           bump('callAttempt');
           const hours = hoursInWeek(worked, s, absent.date) + shift.durationHours;

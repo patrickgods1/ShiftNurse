@@ -29,6 +29,7 @@ export * from './roster/csv.js';
 export * from './rules/availability-rules.js';
 export * from './rules/coverage-rules.js';
 export * from './rules/hours-rules.js';
+export * from './rules/paid-leave.js';
 export * from './rules/registry.js';
 export * from './rules/rest-rules.js';
 // Rule engine

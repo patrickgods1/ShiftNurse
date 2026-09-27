@@ -44,6 +44,7 @@ import { deriveCounters } from '../fairness/ledger.js';
 import { scoreFairness } from '../fairness/score.js';
 import type { CounterContext } from '../fairness/types.js';
 import { type MaxHoursParams, maxHoursRule } from '../rules/hours-rules.js';
+import { leaveHoursByWorkWeek } from '../rules/paid-leave.js';
 import {
   buildRuleContext,
   evaluatePrepared,
@@ -137,6 +138,14 @@ export class ConflictEngine {
           holidayDates: this.baseCtx.holidayDates,
           weekendDefinition: input.ruleSet.weekendDefinition,
           workWeekStartsOn: this.maxHoursParams.workWeekStartsOn,
+          ...(this.maxHoursParams.paidLeaveCountsTowardOvertime
+            ? {
+                overtimeLeaveHours: leaveHoursByWorkWeek(
+                  this.baseCtx.paidLeaveByNurse,
+                  this.maxHoursParams.workWeekStartsOn,
+                ),
+              }
+            : {}),
         }
       : undefined;
     this.counterCtx = {
@@ -161,6 +170,7 @@ export class ConflictEngine {
       shiftCredentialRequirements: this.input.shiftCredentialRequirements,
       holidays: this.input.holidays,
       weekendDefinition: this.input.ruleSet.weekendDefinition,
+      ...(this.input.paidSickCalls ? { paidSickCalls: this.input.paidSickCalls } : {}),
     });
   }
 

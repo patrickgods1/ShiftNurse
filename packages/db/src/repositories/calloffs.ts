@@ -11,6 +11,7 @@ import type {
   CallOutcome,
   Id,
   IsoDate,
+  PaidSickCall,
 } from '@shiftnurse/core';
 import { dayNumber, MS_PER_DAY } from '@shiftnurse/core';
 import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
@@ -76,9 +77,14 @@ export function reportCallOff(
   assignmentId: Id,
   actor: string,
   reason?: string,
+  options: { paidSickHours?: number } = {},
 ): CallOff {
   const absent = getAssignment(db, assignmentId);
   if (!absent) throw new Error(`Assignment ${assignmentId} not found`);
+  const paid = options.paidSickHours;
+  if (paid !== undefined && (!Number.isFinite(paid) || paid < 0 || paid > 24)) {
+    throw new Error(`Paid sick hours must be between 0 and 24, got ${paid}`);
+  }
   const id = ids.callOff();
   const row = {
     id,
@@ -91,6 +97,7 @@ export function reportCallOff(
     reason: reason ?? null,
     status: 'open' as CallOffStatus,
     replacementAssignmentId: null,
+    paidSickHours: paid && paid > 0 ? paid : null,
   };
   db.insert(callOff).values(row).run();
   const created = toCallOff(row);
@@ -245,4 +252,20 @@ export function lastCalledAt(db: DbLike, unitId: Id, sinceDate: IsoDate): Map<Id
       result.set(row.nurseId, row.attemptedAt);
   }
   return result;
+}
+
+/**
+ * Missed shifts paid from sick leave whose assignment is no longer on the schedule, dated in
+ * `range`: what counts toward contracted hours in place of the shift. While a called-off
+ * shift is still on the schedule (open, or uncovered with the row kept) its hours already count
+ * as scheduled, and crediting the sick pay too would count them twice.
+ */
+export function paidSickCallsForUnit(
+  db: DbLike,
+  unitId: Id,
+  range: { start?: IsoDate; end?: IsoDate } = {},
+): PaidSickCall[] {
+  return listCallOffsForUnit(db, unitId, range)
+    .filter((c) => (c.paidSickHours ?? 0) > 0 && getAssignment(db, c.assignmentId) === undefined)
+    .map((c) => ({ nurseId: c.nurseId, date: c.date, hours: c.paidSickHours! }));
 }

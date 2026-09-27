@@ -19,6 +19,7 @@ import {
   markCallOffCovered,
   markCallOffUncovered,
   openCallOffForAssignment,
+  paidSickCallsForUnit,
   reportCallOff,
 } from './calloffs.js';
 import { createShiftType, createUnit } from './config.js';
@@ -57,6 +58,35 @@ function mkNurse(firstName: string): string {
 function mkAssignment(nurseId: string, date: IsoDate) {
   return createAssignment(handle.db, { periodId, nurseId, shiftTypeId, date }, ACTOR);
 }
+
+describe('paid sick leave', () => {
+  it('credits a paid sick call once the missed shift is off the schedule, and not before', () => {
+    const nurseId = mkNurse('Ada');
+    const absent = mkAssignment(nurseId, isoDate('2026-01-07'));
+    reportCallOff(handle.db, absent.id, ACTOR, 'Sick', { paidSickHours: 12 });
+    // Still on the schedule: its hours already count as scheduled, so crediting now doubles them.
+    expect(paidSickCallsForUnit(handle.db, unitId)).toEqual([]);
+    handle.db.delete(s.assignment).run();
+    expect(paidSickCallsForUnit(handle.db, unitId)).toEqual([
+      { nurseId, date: '2026-01-07', hours: 12 },
+    ]);
+  });
+
+  it('credits nothing for a call-off not paid from sick leave', () => {
+    const nurseId = mkNurse('Ada');
+    const absent = mkAssignment(nurseId, isoDate('2026-01-07'));
+    reportCallOff(handle.db, absent.id, ACTOR, 'Car trouble');
+    handle.db.delete(s.assignment).run();
+    expect(paidSickCallsForUnit(handle.db, unitId)).toEqual([]);
+  });
+
+  it('refuses a sick payment longer than a day', () => {
+    const absent = mkAssignment(mkNurse('Ada'), isoDate('2026-01-07'));
+    expect(() => reportCallOff(handle.db, absent.id, ACTOR, 'Sick', { paidSickHours: 25 })).toThrow(
+      /between 0 and 24/,
+    );
+  });
+});
 
 beforeEach(() => {
   handle = openTestDatabase();

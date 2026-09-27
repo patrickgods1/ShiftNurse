@@ -15,14 +15,18 @@ import {
   type FairnessLedgerEntry,
   type Id,
   type IsoDate,
+  leaveHoursByWorkWeek,
   type MaxHoursParams,
   maxHoursRule,
+  type PaidLeaveCredit,
+  paidLeaveCredits,
   type RuleSet,
   type SchedulePeriod,
   type SolveInput,
 } from '@shiftnurse/core';
 import type { DbLike } from '../client.js';
 import { getHppdTarget, listActiveRatioRulesForUnit, listAcuityTiersForUnit } from './acuity.js';
+import { paidSickCallsForUnit } from './calloffs.js';
 import { listCensusForecastsInRange } from './census.js';
 import {
   getUnit,
@@ -91,7 +95,24 @@ export function costContext(db: DbLike, unitId: Id, ruleSet: RuleSet): CostConte
     holidayDates: new Set<IsoDate>(listHolidaysForUnit(db, unitId).map((h) => h.date)),
     weekendDefinition: ruleSet.weekendDefinition,
     workWeekStartsOn: params.workWeekStartsOn ?? maxHoursRule.defaultParams.workWeekStartsOn,
+    ...(params.paidLeaveCountsTowardOvertime
+      ? { overtimeLeaveHours: overtimeLeave(db, unitId, params) }
+      : {}),
   };
+}
+
+/** Paid leave by nurse and work week, for a contract that counts it toward overtime. */
+function overtimeLeave(db: DbLike, unitId: Id, params: Partial<MaxHoursParams>) {
+  const byNurse = new Map<Id, PaidLeaveCredit[]>();
+  const credits = paidLeaveCredits(
+    listTimeOffForUnit(db, unitId),
+    paidSickCallsForUnit(db, unitId),
+  );
+  for (const c of credits) byNurse.set(c.nurseId, [...(byNurse.get(c.nurseId) ?? []), c]);
+  return leaveHoursByWorkWeek(
+    byNurse,
+    params.workWeekStartsOn ?? maxHoursRule.defaultParams.workWeekStartsOn,
+  );
 }
 
 /** Shared loader behind the solver and the conflict detector: one definition of "the period". */
@@ -112,6 +133,11 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     assignments: listAssignmentsForPeriod(db, period.id),
     priorAssignments: priorAssignmentsBefore(db, unitId, period.startDate, 14),
     timeOff: listTimeOffForUnit(db, unitId),
+    // From the lookback tail on, as far as the weekly rules read.
+    paidSickCalls: paidSickCallsForUnit(db, unitId, {
+      start: addDays(period.startDate, -14),
+      end: period.endDate,
+    }),
     credentials: listCredentials(db),
     nurseCredentials: listNurseCredentialsForUnit(db, unitId),
     shiftCredentialRequirements: listShiftCredentialRequirementsForUnit(db, unitId),

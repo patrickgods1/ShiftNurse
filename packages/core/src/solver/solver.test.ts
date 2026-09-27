@@ -204,9 +204,22 @@ describe('locks, leave and the lookback tail', () => {
       dateInRange(a.date, isoDate('2026-01-06'), isoDate('2026-01-12')),
     );
     expect(during).toEqual([]);
-    // The night before leave runs into its first morning, so that one is off-limits too.
-    const eve = mine.find((a) => a.date === '2026-01-05' && a.shiftTypeId === NIGHT_12.id);
-    expect(eve).toBeUndefined();
+  });
+
+  it('does not schedule a nurse back from a paid vacation up to a full pay period of work', () => {
+    // A unit that needs more hours than its staff have: the solver fills everyone to the top
+    // of their contract. Paid leave counts toward it, so the vacationer's ceiling is
+    // 72 contracted + 4 tolerance − 36 paid leave = 40 worked hours: three 12s, not six.
+    const nurses = fullTimers(6, { contractedHoursPerPeriod: 72 });
+    const away = nurses[1]!;
+    const input = twelveHourUnit(nurses, 3, {
+      timeOff: [timeOff(away.id, '2026-01-04', '2026-01-10', { paidHours: 36 })],
+    });
+    const report = solve(input, QUICK);
+    const hours = report.assignments.filter((a) => a.nurseId === away.id).length * 12;
+    expect(hours).toBeLessThanOrEqual(40);
+    expect(hours).toBeGreaterThan(0);
+    expect(rejudge(input, report).filter((v) => v.code === 'over_contracted_hours')).toEqual([]);
   });
 
   it('respects rest owed from the last shift of the previous period', () => {

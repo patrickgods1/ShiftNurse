@@ -24,6 +24,7 @@ import type { ScheduleView } from '../schedule/view.js';
 import { overlapRule, timeOffRule } from './availability-rules.js';
 import { coverageRule, ratioComplianceRule } from './coverage-rules.js';
 import { contractedHoursRule, maxHoursRule } from './hours-rules.js';
+import { type PaidLeaveCredit, type PaidSickCall, paidLeaveCredits } from './paid-leave.js';
 import { consecutiveShiftsRule, minRestRule } from './rest-rules.js';
 import type {
   EvaluationResult,
@@ -146,6 +147,8 @@ export interface RuleContextInput {
   shiftCredentialRequirements: readonly ShiftCredentialRequirement[];
   holidays: readonly Holiday[];
   weekendDefinition?: WeekendDefinition;
+  /** Missed shifts paid from sick leave, credited toward contracted hours like paid leave. */
+  paidSickCalls?: readonly PaidSickCall[];
 }
 
 /** Precompute the joins and indexes every rule needs, once per evaluation pass. */
@@ -156,6 +159,13 @@ export function buildRuleContext(input: RuleContextInput): RuleContext {
     const existing = approvedByNurse.get(request.nurseId);
     if (existing) existing.push(request);
     else approvedByNurse.set(request.nurseId, [request]);
+  }
+
+  const paidLeaveByNurse = new Map<Id, PaidLeaveCredit[]>();
+  for (const credit of paidLeaveCredits(input.timeOff, input.paidSickCalls)) {
+    const existing = paidLeaveByNurse.get(credit.nurseId);
+    if (existing) existing.push(credit);
+    else paidLeaveByNurse.set(credit.nurseId, [credit]);
   }
 
   const credentialsByNurse = new Map<Id, NurseCredential[]>();
@@ -174,6 +184,7 @@ export function buildRuleContext(input: RuleContextInput): RuleContext {
     weekendDefinition: input.weekendDefinition ?? DEFAULT_WEEKEND,
     approvedTimeOffByNurse: approvedByNurse,
     allTimeOff: input.timeOff,
+    paidLeaveByNurse,
     credentials: input.credentials,
     credentialsById: new Map(input.credentials.map((c) => [c.id, c])),
     nurseCredentials: credentialsByNurse,

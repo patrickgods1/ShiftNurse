@@ -6,14 +6,19 @@
 
 import {
   type ComplianceAlert,
+  type ContractedHoursParams,
   complianceAlerts,
+  contractedHoursRule,
   datesInRange,
   deriveCounters,
   deriveDemand,
   type Id,
   type MaxHoursParams,
   maxHoursRule,
+  type PaidLeaveCredit,
+  paidLeaveCredits,
   type RuleSet,
+  resolveConfigs,
   type SchedulePeriod,
   type ScheduleView,
 } from '@shiftnurse/core';
@@ -24,6 +29,8 @@ import {
   latestVersion,
   listCredentials,
   listNurseCredentialsForUnit,
+  listTimeOffForUnit,
+  paidSickCallsForUnit,
   pendingDiff,
   publishSchedule,
   type ShiftNurseDb,
@@ -53,9 +60,24 @@ function alertsForView(
   ruleSet: RuleSet,
   schedule: ScheduleView,
 ): ComplianceAlert[] {
-  const maxHours = ruleSet.configs.find((c) => c.ruleId === maxHoursRule.id);
-  const params = { ...maxHoursRule.defaultParams, ...(maxHours?.params ?? {}) } as MaxHoursParams;
+  const configs = resolveConfigs(ruleSet);
+  const params = configs.find((c) => c.ruleId === maxHoursRule.id)!
+    .params as unknown as MaxHoursParams;
+  const fte = configs.find((c) => c.ruleId === contractedHoursRule.id)!
+    .params as unknown as ContractedHoursParams;
+  // Paid leave counts as the hours rules count it, so a nurse back from vacation is not "drift".
+  const paidLeaveByNurse = new Map<Id, PaidLeaveCredit[]>();
+  const credits = paidLeaveCredits(
+    listTimeOffForUnit(db, period.unitId),
+    paidSickCallsForUnit(db, period.unitId, { start: period.startDate, end: period.endDate }),
+  );
+  for (const c of credits) {
+    paidLeaveByNurse.set(c.nurseId, [...(paidLeaveByNurse.get(c.nurseId) ?? []), c]);
+  }
   return complianceAlerts({
+    paidLeaveByNurse,
+    paidLeaveCountsTowardHours: fte.paidLeaveCountsTowardHours,
+    paidLeaveCountsTowardOvertime: params.paidLeaveCountsTowardOvertime,
     schedule,
     credentials: listCredentials(db),
     nurseCredentials: listNurseCredentialsForUnit(db, period.unitId),

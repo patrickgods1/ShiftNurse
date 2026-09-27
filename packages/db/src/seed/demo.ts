@@ -35,7 +35,7 @@ export const DEMO_SUMMARIES: readonly DemoSummary[] = [
     name: COMMUNITY_MED_SURG.unit.name,
     setting: 'Community hospital · adult medical-surgical · 28 beds',
     summary:
-      'The most common inpatient unit: 49 RNs and CNAs on 12-hour days and nights, with travelers and per-diem staff covering the gaps.',
+      'The most common inpatient unit: 52 RNs and CNAs on 12-hour days and nights, with travelers and per-diem staff covering the gaps.',
     highlights: [
       '12-hour day and night shifts, six-week schedules',
       'RN ratios 1:5 / 1:4 / 1:3 by acuity',

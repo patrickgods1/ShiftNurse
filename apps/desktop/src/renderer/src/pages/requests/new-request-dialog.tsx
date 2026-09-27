@@ -6,8 +6,9 @@
 
 import * as Dialog from '@radix-ui/react-dialog';
 import type { Id, IsoDate, Nurse, TimeOffType } from '@shiftnurse/core';
-import { compareDates, isIsoDate } from '@shiftnurse/core';
+import { compareDates, daysBetween, isIsoDate, suggestedPaidLeaveHours } from '@shiftnurse/core';
 import { useEffect, useState } from 'react';
+import { useShiftTypesList } from '../../api-config.js';
 import { useCreateTimeOff } from '../../api-requests.js';
 import {
   DIALOG,
@@ -18,9 +19,12 @@ import {
   PRIMARY,
   SECONDARY,
 } from '../../components/ui.js';
+import { useUnit } from '../../unit-context.js';
+import { typicalShiftHours } from './paid-hours.js';
 
 const TYPES: { value: TimeOffType; label: string }[] = [
   { value: 'pto', label: 'PTO' },
+  { value: 'sick', label: 'Sick (paid)' },
   { value: 'unpaid', label: 'Unpaid' },
   { value: 'fmla', label: 'FMLA' },
   { value: 'education', label: 'Education' },
@@ -48,7 +52,11 @@ export function NewRequestDialog({
   const [end, setEnd] = useState('');
   const [type, setType] = useState<TimeOffType>('pto');
   const [reason, setReason] = useState('');
+  /** Paid hours as typed; `undefined` until the manager overrides the suggestion. */
+  const [paidHours, setPaidHours] = useState<string | undefined>(undefined);
   const [problem, setProblem] = useState<string | undefined>(undefined);
+  const unit = useUnit();
+  const shiftTypes = useShiftTypesList(unitId).data ?? [];
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the form on each open.
   useEffect(() => {
@@ -58,16 +66,36 @@ export function NewRequestDialog({
     setEnd('');
     setType('pto');
     setReason('');
+    setPaidHours(undefined);
     setProblem(undefined);
     create.reset();
   }, [open]);
 
   const active = nurses.filter((n) => n.active);
+  const nurse = active.find((n) => n.id === nurseId);
+  const days =
+    isIsoDate(start) && isIsoDate(end) && compareDates(end, start) >= 0
+      ? daysBetween(start, end) + 1
+      : 0;
+  // The shifts this nurse would have worked over those days, until the manager says otherwise.
+  const suggested =
+    nurse && days > 0
+      ? suggestedPaidLeaveHours({
+          type,
+          days,
+          contractedHoursPerPeriod: nurse.contractedHoursPerPeriod,
+          payPeriodDays: unit.payPeriodDays,
+          shiftHours: typicalShiftHours(shiftTypes),
+        })
+      : 0;
+  const paidValue = type === 'unpaid' ? '0' : (paidHours ?? String(suggested));
 
   function submit() {
     if (!nurseId) return setProblem('Pick a nurse.');
     if (!isIsoDate(start) || !isIsoDate(end)) return setProblem('Enter both dates.');
     if (compareDates(end, start) < 0) return setProblem('The end date is before the start date.');
+    const paid = Number(paidValue);
+    if (!Number.isFinite(paid) || paid < 0) return setProblem('Paid hours must be 0 or more.');
     setProblem(undefined);
     create.mutate(
       {
@@ -76,6 +104,7 @@ export function NewRequestDialog({
         endDate: end as IsoDate,
         type,
         ...(reason.trim() ? { reason: reason.trim() } : {}),
+        ...(paid > 0 ? { paidHours: paid } : {}),
       },
       { onSuccess: () => onOpenChange(false) },
     );
@@ -152,6 +181,24 @@ export function NewRequestDialog({
                   </option>
                 ))}
               </select>
+            </label>
+            <label className={LABEL}>
+              Paid hours
+              <input
+                type="number"
+                min={0}
+                step={0.25}
+                className={INPUT}
+                value={paidValue}
+                disabled={type === 'unpaid'}
+                onChange={(e) => setPaidHours(e.target.value)}
+                data-testid="paid-hours"
+              />
+              <span>
+                {type === 'unpaid'
+                  ? 'Unpaid leave does not count toward contracted hours.'
+                  : 'The shifts this nurse would have worked. Counts toward contracted hours once approved.'}
+              </span>
             </label>
             <label className={LABEL}>
               Reason (optional)

@@ -234,6 +234,8 @@ export const timeOffRequest = sqliteTable(
     reason: text('reason'),
     /** Required on denial. This text gets quoted in grievances. */
     decisionReason: text('decision_reason'),
+    /** Paid leave hours charged, counted toward contracted hours once approved. Null: unpaid. */
+    paidHours: real('paid_hours'),
   },
   (t) => [
     index('time_off_nurse_idx').on(t.nurseId),
@@ -550,6 +552,8 @@ export const callOff = sqliteTable(
     reason: text('reason'),
     status: text('status').notNull().default('open').$type<CallOffStatus>(),
     replacementAssignmentId: text('replacement_assignment_id').$type<Id>(),
+    /** Hours paid from sick leave for the missed shift. Null: not paid. */
+    paidSickHours: real('paid_sick_hours'),
   },
   (t) => [
     index('call_off_status_idx').on(t.status),

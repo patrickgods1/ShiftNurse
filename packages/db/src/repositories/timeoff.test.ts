@@ -84,6 +84,34 @@ describe('creating a request', () => {
   });
 });
 
+describe('paid hours', () => {
+  const create = (paidHours: number, type: 'pto' | 'unpaid' = 'pto') =>
+    createTimeOffRequest(
+      handle.db,
+      {
+        nurseId: mkNurse('Ada'),
+        startDate: isoDate('2026-02-01'),
+        endDate: isoDate('2026-02-07'),
+        type,
+        paidHours,
+      },
+      ACTOR,
+    );
+
+  it('records the paid hours a week of PTO charges', () => {
+    expect(create(36).paidHours).toBe(36);
+  });
+
+  it('refuses paid hours on unpaid leave, which would quietly count toward the contract', () => {
+    expect(() => create(12, 'unpaid')).toThrow(/Unpaid leave cannot carry paid hours/);
+  });
+
+  it('refuses more paid hours than the days the request covers', () => {
+    expect(() => create(7 * 24 + 1)).toThrow(/more than the 7 day/);
+    expect(() => create(-1)).toThrow(/negative/);
+  });
+});
+
 describe('approving', () => {
   it('sets status, decidedAt and decidedBy', () => {
     const nurseId = mkNurse('Ada');

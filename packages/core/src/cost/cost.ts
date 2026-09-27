@@ -68,13 +68,17 @@ function weeklyOvertime(
   timeline: readonly AssignmentView[],
   threshold: number,
   startsOn: number,
+  leaveHours: ReadonlyMap<string, number> | undefined,
 ): Map<AssignmentView, number> {
   const out = new Map<AssignmentView, number>();
   const runningByWeek = new Map<IsoDate, number>();
   for (const view of timeline) {
     if (!isWorked(view)) continue;
     const week = workWeekStart(view.assignment.date, startsOn);
-    const before = runningByWeek.get(week) ?? 0;
+    // Counted leave uses up the threshold first: a week's PTO day is not attributable to one
+    // shift, and putting it first is what makes the shifts that cross 40 the overtime ones.
+    const before =
+      runningByWeek.get(week) ?? leaveHours?.get(`${view.assignment.nurseId}|${week}`) ?? 0;
     const after = before + view.paidHours;
     runningByWeek.set(week, after);
     if (!view.inPeriod) continue;
@@ -99,7 +103,12 @@ function attributeOvertime(
     const hoursByView =
       rule.basis === 'daily'
         ? dailyOvertime(timeline, rule.thresholdHours)
-        : weeklyOvertime(timeline, rule.thresholdHours, ctx.workWeekStartsOn);
+        : weeklyOvertime(
+            timeline,
+            rule.thresholdHours,
+            ctx.workWeekStartsOn,
+            ctx.overtimeLeaveHours,
+          );
     for (const [view, hours] of hoursByView) {
       const candidate = { hours, multiplier: rule.multiplier };
       const current = best.get(view);

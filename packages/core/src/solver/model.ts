@@ -71,6 +71,7 @@ import {
   maxHoursRule,
   payPeriodsIn,
 } from '../rules/hours-rules.js';
+import { leaveHoursByWorkWeek } from '../rules/paid-leave.js';
 import {
   buildRuleContext,
   evaluatePrepared,
@@ -172,6 +173,11 @@ export class SolverModel {
   private readonly onLeave: boolean[][];
   /** nurse × work week → hours that count toward the weekly cap, lookback tail included. */
   private readonly weekHours: number[][];
+  /**
+   * nurse × work week → paid leave that counts toward the overtime threshold (never the cap).
+   * All zero unless the rule set counts leave toward overtime.
+   */
+  readonly weekLeaveHours: number[][];
 
   // --- Precomputed inputs ----------------------------------------------------
   // Public and read-only so the CP-SAT encoder (cpsat/) reads the same tables instead of
@@ -230,6 +236,7 @@ export class SolverModel {
       shiftCredentialRequirements: input.shiftCredentialRequirements,
       holidays: input.holidays,
       weekendDefinition: input.ruleSet.weekendDefinition,
+      ...(input.paidSickCalls ? { paidSickCalls: input.paidSickCalls } : {}),
     });
 
     const shifts: Shift[] = [];
@@ -281,6 +288,14 @@ export class SolverModel {
           holidayDates: this.ctx.holidayDates,
           weekendDefinition: input.ruleSet.weekendDefinition,
           workWeekStartsOn: maxHours.workWeekStartsOn,
+          ...(maxHours.paidLeaveCountsTowardOvertime
+            ? {
+                overtimeLeaveHours: leaveHoursByWorkWeek(
+                  this.ctx.paidLeaveByNurse,
+                  maxHours.workWeekStartsOn,
+                ),
+              }
+            : {}),
         }
       : undefined;
 
@@ -299,10 +314,22 @@ export class SolverModel {
     const bucketCount = bucketDays[periods.length] === 0 ? periods.length : periods.length + 1;
 
     const n = this.nurses.length;
+    // Paid leave counts toward the contract, so it comes off the hours still to schedule:
+    // "worked + leave within tolerance of target" is "worked within tolerance of target − leave".
+    const leaveInBucket = (nurseId: Id, b: number) => {
+      if (!this.fteParams.paidLeaveCountsTowardHours) return 0;
+      let hours = 0;
+      for (const c of this.ctx.paidLeaveByNurse.get(nurseId) ?? []) {
+        const idx = this.dateIdx.get(c.date);
+        if (idx !== undefined && this.bucketOfDate[idx] === b) hours += c.hours;
+      }
+      return hours;
+    };
     this.hoursTarget = this.nurses.map((nurse) =>
       Array.from({ length: bucketCount }, (_, b) =>
         nurse.contractedHoursPerPeriod > 0
-          ? (nurse.contractedHoursPerPeriod * (bucketDays[b] ?? 0)) / input.unit.payPeriodDays
+          ? (nurse.contractedHoursPerPeriod * (bucketDays[b] ?? 0)) / input.unit.payPeriodDays -
+            leaveInBucket(nurse.id, b)
           : 0,
       ),
     );
@@ -363,6 +390,15 @@ export class SolverModel {
       this.dates.map((date) => approvedLeaveOn(this.ctx, nurse.id, date) !== undefined),
     );
     this.weekHours = Array.from({ length: n }, () => new Array<number>(this.weekCount).fill(0));
+    this.weekLeaveHours = this.nurses.map((nurse) => {
+      const weeks = new Array<number>(this.weekCount).fill(0);
+      if (!maxHours.paidLeaveCountsTowardOvertime) return weeks;
+      for (const c of this.ctx.paidLeaveByNurse.get(nurse.id) ?? []) {
+        const week = this.weekOf(c.date);
+        if (week >= 0 && week < this.weekCount) weeks[week]! += c.hours;
+      }
+      return weeks;
+    });
     for (const [i, list] of prior.entries()) {
       for (const a of list) {
         const week = this.weekOf(a.date);
@@ -501,7 +537,7 @@ export class SolverModel {
       if (after > this.maxHoursParams.maxHoursPerWeek) return false;
       if (
         this.maxHoursParams.requireOvertimeAuthorisation &&
-        after > this.maxHoursParams.overtimeThresholdHours
+        after + this.weekLeaveHours[nurseIdx]![week]! > this.maxHoursParams.overtimeThresholdHours
       ) {
         return false;
       }

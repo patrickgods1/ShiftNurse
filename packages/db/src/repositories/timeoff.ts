@@ -7,7 +7,14 @@
  * visible before it becomes a staffing surprise). Both are served by one range query here.
  */
 
-import type { Assignment, Id, IsoDate, TimeOffRequest, TimeOffStatus } from '@shiftnurse/core';
+import {
+  type Assignment,
+  datesInRange,
+  type Id,
+  type IsoDate,
+  type TimeOffRequest,
+  type TimeOffStatus,
+} from '@shiftnurse/core';
 import { and, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
 import type { DbLike, ShiftNurseTx } from '../client.js';
@@ -111,6 +118,25 @@ export interface CreateTimeOffInput {
   endDate: IsoDate;
   type: TimeOffRequest['type'];
   reason?: string;
+  /** Paid leave hours charged: the shifts the nurse would have worked. Absent for unpaid. */
+  paidHours?: number;
+}
+
+/**
+ * Paid hours must be a real amount the request could pay: not negative, not more than every
+ * hour of every day it covers, and none at all for unpaid leave — a paid "unpaid leave" would
+ * quietly count toward the nurse's contract.
+ */
+function checkPaidHours(input: CreateTimeOffInput): number | null {
+  const hours = input.paidHours;
+  if (hours === undefined || hours === 0) return null;
+  if (!Number.isFinite(hours) || hours < 0) throw new Error('Paid hours cannot be negative');
+  if (input.type === 'unpaid') throw new Error('Unpaid leave cannot carry paid hours');
+  const days = datesInRange(input.startDate, input.endDate).length;
+  if (hours > days * 24) {
+    throw new Error(`${hours} paid hours is more than the ${days} day(s) the request covers`);
+  }
+  return hours;
 }
 
 /**
@@ -125,6 +151,7 @@ export function createTimeOffRequest(
   actor: string,
   enteredBy: TimeOffRequest['enteredBy'] = 'manager',
 ): TimeOffRequest {
+  const paidHours = checkPaidHours(input);
   const id = ids.timeOff();
   const row = {
     id,
@@ -139,6 +166,7 @@ export function createTimeOffRequest(
     decidedBy: null,
     reason: input.reason ?? null,
     decisionReason: null,
+    paidHours,
   };
   db.insert(timeOffRequest).values(row).run();
   const created = toTimeOffRequest(row);
