@@ -6,6 +6,16 @@ tags. Each release's notes link here.
 
 ## [Unreleased]
 
+### Added
+- Generate makes up to ten variations of a schedule at once, with an estimate of how long they
+  will take on your computer. Page through them, preview any one on the grid with its changed
+  shifts outlined, compare them side by side with the schedule already on the grid (staffing,
+  rule breaks, fairness, preferences, overtime, cost), and save the one you want. Nothing on the
+  grid changes until you save.
+- **Generate more** carries on with new variations (4–6 after 1–3) instead of repeating the same
+  ones, and the schedule on the grid is scored alongside them, so the app says so when none of
+  the new variations beats it.
+
 ### Fixed
 - The schedule no longer shows a green "0 hard · 0 soft violations" while its rules are still
   being checked, or when the check failed.
