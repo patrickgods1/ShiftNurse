@@ -363,6 +363,10 @@ the benchmark ranks higher.
 - [x] Phase 4 — CP-SAT backend: pure encode/decode in core, an encoder for every registered rule
 - [x] Phase 5 — Hybrid backend, `bench:solvers`, fallback order set from measured results
 - [x] Phase 6 — CLAUDE.md, README, ARCHITECTURE, credits and bundled licences
+- [x] Generate variations — a batch of 1–10 seeds held as candidates (not written until saved),
+      time estimate per solver, candidates bar with grid preview, comparison against the draft,
+      stale-input detection, the grid's schedule scored as a contender, "Generate more" with new
+      seeds; verified by `api/solver.test.ts` and the smoke run's Generate UI step
 - [x] Verify: every backend passes the property suite (no nurse-scope hard violation, same seed →
       identical schedule, locks preserved); Generate fills every floor on the demo with each;
       `smoke:packaged` green on mac with the runner bundled

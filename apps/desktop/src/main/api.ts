@@ -118,21 +118,16 @@ import { exportRosterToFile, pickHistoryImportFile, pickRosterImportFile } from 
 import { alertsFor, outputInput, publish, publishPreview } from './api/publish.js';
 import { periodsApi, scheduleApi } from './api/schedule.js';
 import { setupApi } from './api/setup.js';
-import { createSolverJobs } from './api/solver.js';
+import { solverApi } from './api/solver.js';
 import { createBackup, listBackups, resetDatabase, restoreBackup } from './backups.js';
 import { databasePath } from './database.js';
 import { exportToFile as exportPeriodToFile, renderCsv } from './output.js';
-import { cpsatRunnerPath, ORTOOLS_BACKEND_IDS } from './solver-backends.js';
-import { solverAvailability } from './solver-choice.js';
 import type { SolverJobs } from './solver-jobs.js';
 
 export { outputInput } from './api/publish.js';
 export { createSolverJobs } from './api/solver.js';
 
-export function createApi(
-  db: ShiftNurseDb,
-  solverJobs: SolverJobs = createSolverJobs(db),
-): ShiftNurseApi {
+export function createApi(db: ShiftNurseDb, solverJobs: SolverJobs): ShiftNurseApi {
   return {
     app: {
       info: () => ({
@@ -248,12 +243,7 @@ export function createApi(
       create: () => createBackup(db, 'manual', 'manual'),
       restore: (fileName) => restoreBackup(db, fileName, () => solverJobs.dispose()),
     },
-    solver: {
-      start: (periodId, options) => solverJobs.start(periodId, options),
-      status: (jobId) => solverJobs.status(jobId),
-      cancel: (jobId) => solverJobs.cancel(jobId),
-      available: () => solverAvailability(cpsatRunnerPath() !== undefined, ORTOOLS_BACKEND_IDS),
-    },
+    solver: solverApi(db, solverJobs),
     solverSettings: {
       get: (unitId) => getSolverSettings(db, unitId),
       save: (unitId, settings) => {

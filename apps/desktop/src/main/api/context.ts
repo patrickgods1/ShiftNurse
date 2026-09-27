@@ -98,6 +98,8 @@ export interface ScheduleViewOptions {
   /** Already loaded by the caller; loaded here otherwise. */
   nurses?: Nurse[];
   shiftTypes?: ShiftType[];
+  /** In place of the period's own rows: a Generate candidate being previewed. */
+  assignments?: Assignment[];
 }
 
 export function scheduleViewFor(
@@ -107,7 +109,7 @@ export function scheduleViewFor(
 ): ScheduleView {
   return new ScheduleView({
     period,
-    assignments: listAssignmentsForPeriod(db, period.id),
+    assignments: options.assignments ?? listAssignmentsForPeriod(db, period.id),
     ...(options.lookback
       ? {
           priorAssignments: priorAssignmentsBefore(

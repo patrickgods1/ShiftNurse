@@ -70,6 +70,8 @@ interface GridCellProps {
   shiftTypesById: ReadonlyMap<Id, ShiftType>;
   violationsByAssignment: ReadonlyMap<Id, Violation[]>;
   pendingIds: ReadonlySet<Id>;
+  /** Shifts to mark as differing from the draft (`nurseId|date|shiftTypeId`), when previewing. */
+  highlightKeys: ReadonlySet<string> | undefined;
   isDragOver: boolean;
   isWeekend: boolean;
   readOnly: boolean;
@@ -92,6 +94,7 @@ function GridCell({
   shiftTypesById,
   violationsByAssignment,
   pendingIds,
+  highlightKeys,
   isDragOver,
   isWeekend,
   readOnly,
@@ -169,6 +172,11 @@ function GridCell({
           violations={violationsByAssignment.get(assignment.id) ?? EMPTY_VIOLATIONS}
           readOnly={readOnly}
           pending={pendingIds.has(assignment.id)}
+          highlighted={
+            highlightKeys?.has(
+              `${assignment.nurseId}|${assignment.date}|${assignment.shiftTypeId}`,
+            ) ?? false
+          }
           onOpen={onChipOpen}
           onDelete={onChipDelete}
           tabbable={tabbable}
@@ -185,6 +193,7 @@ interface GridRowProps {
   shiftTypesById: ReadonlyMap<Id, ShiftType>;
   violationsByAssignment: ReadonlyMap<Id, Violation[]>;
   pendingIds: ReadonlySet<Id>;
+  highlightKeys: ReadonlySet<string> | undefined;
   nurseViolations: readonly Violation[] | undefined;
   /** The highlighted drop target's date, when it is in this row. */
   dragOverDate: IsoDate | undefined;
@@ -210,6 +219,7 @@ const GridRow = memo(function GridRow({
   shiftTypesById,
   violationsByAssignment,
   pendingIds,
+  highlightKeys,
   nurseViolations,
   dragOverDate,
   row,
@@ -264,6 +274,7 @@ const GridRow = memo(function GridRow({
             shiftTypesById={shiftTypesById}
             violationsByAssignment={violationsByAssignment}
             pendingIds={pendingIds}
+            highlightKeys={highlightKeys}
             isDragOver={dragOverDate === column.date}
             isWeekend={column.isWeekend}
             readOnly={readOnly}
@@ -285,6 +296,8 @@ export interface ScheduleGridProps {
   assignments: readonly Assignment[];
   pendingIds: ReadonlySet<Id>;
   readOnly: boolean;
+  /** While previewing a Generate variation: its shifts that differ from the draft. */
+  highlightKeys?: ReadonlySet<string>;
   violationsByAssignment: ReadonlyMap<Id, Violation[]>;
   violationsByNurse: ReadonlyMap<Id, Violation[]>;
   violationsByDate: ReadonlyMap<IsoDate, Violation[]>;
@@ -301,6 +314,7 @@ export function ScheduleGrid({
   assignments,
   pendingIds,
   readOnly,
+  highlightKeys,
   violationsByAssignment,
   violationsByNurse,
   violationsByDate,
@@ -450,6 +464,7 @@ export function ScheduleGrid({
             shiftTypesById={shiftTypesById}
             violationsByAssignment={violationsByAssignment}
             pendingIds={nursesWithPending.has(nurse.id) ? pendingIds : NO_PENDING}
+            highlightKeys={highlightKeys}
             nurseViolations={violationsByNurse.get(nurse.id)}
             dragOverDate={dragOver?.nurseId === nurse.id ? dragOver.date : undefined}
             readOnly={readOnly}

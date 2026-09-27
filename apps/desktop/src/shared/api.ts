@@ -67,7 +67,6 @@ import type {
   ShiftSwapStatus,
   ShiftType,
   SolveProgress,
-  SolveReport,
   SolverId,
   SolverSettings,
   TimeOffImpact,
@@ -333,7 +332,14 @@ export interface BackupInfo {
   bytes: number;
 }
 
-export interface SolveJobOptions {
+export interface SolveBatchOptions {
+  /** How many variations to generate, 1–10; one when absent. */
+  count?: number;
+  /**
+   * Carry on after this batch's variations — numbering and seeds — so the new batch tries seeds
+   * not yet tried. Absent: start at variation 1, which on unchanged inputs repeats the first batch.
+   */
+  continueAfter?: Id;
   /** Defaults to a stable hash of the period id, so regenerating unchanged inputs repeats itself. */
   seed?: number;
   /** Defaults to the unit's saved budget, then the job default. */
@@ -352,28 +358,134 @@ export interface SolverAvailability {
 }
 
 /**
- * `running` while the worker solves; `applying` while the result is written; `done` once the
- * draft holds the new schedule. A cancelled run is not applied — the manager said stop — but
- * its best-so-far report is kept so they can see how far it got.
+ * A run waits `queued` until a slot frees up, then runs. A stopped run is `cancelled` and its
+ * best-so-far is not kept as a candidate — the manager said stop.
  */
-export type SolveJobState = 'running' | 'applying' | 'done' | 'failed' | 'cancelled';
+export type SolveRunState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
-export interface SolveJobStatus {
-  id: Id;
-  periodId: Id;
+/** A finished run's headline numbers, from its solve report. */
+export interface SolveRunSummary {
+  objective: number;
+  /** Nurse-slots still below a hard minimum, summed over every short shift. */
+  floorsShort: number;
+  /** Shifts (and roles) with any shortfall. */
+  unfilledSlots: number;
+  hardViolations: number;
+  softViolations: number;
+  elapsedMs: number;
+  /** CP-SAT's relative optimality gap, when it proved a bound. */
+  gap?: number;
+  /** Hybrid only: CP-SAT windows attempted, and how many improved the schedule. */
+  windows?: { tried: number; improved: number };
+}
+
+export interface SolveRunStatus {
+  index: number;
   seed: number;
-  /** The backend running this job, after any fallback. */
+  /** The backend that ran (or will run) this variation, after any fallback. */
   solver: SolverId;
-  /** Set when the requested backend could not run and `solver` took its place. */
   fellBackFrom?: { solver: SolverId; reason: string };
-  state: SolveJobState;
-  startedAt: number;
+  state: SolveRunState;
+  startedAt?: number;
   finishedAt?: number;
   progress?: SolveProgress;
-  report?: SolveReport;
-  /** What `replaceAssignments` did once the run finished. */
-  applied?: { created: number; preservedLocked: number };
+  summary?: SolveRunSummary;
   error?: string;
+}
+
+/**
+ * One Generate: N variations of a period, held in main as candidates until one is saved to the
+ * draft. `running` while any run is queued or running.
+ */
+export interface SolveBatchStatus {
+  id: Id;
+  periodId: Id;
+  /** The backend the batch asked for, after any up-front fallback. */
+  solver: SolverId;
+  fellBackFrom?: { solver: SolverId; reason: string };
+  state: 'running' | 'done';
+  cancelled: boolean;
+  count: number;
+  /**
+   * Variations generated before this batch in the period's sequence: run k is variation
+   * `offset + k + 1`, seeded `seed + offset + k`.
+   */
+  offset: number;
+  /** How many runs execute at once. */
+  concurrency: number;
+  startedAt: number;
+  finishedAt?: number;
+  runs: SolveRunStatus[];
+  /** The finished run with the lowest objective. */
+  best?: number;
+  /**
+   * The schedule on the grid now, scored the way every variation is; absent when the grid is
+   * empty. When it is no higher than `best`'s, keeping the grid is the best choice.
+   */
+  draftObjective?: number;
+  /** The run most recently saved to the draft. */
+  saved?: number;
+  /** Set once anything the solver read has changed: the candidates are gone and none can be saved. */
+  stale?: string;
+}
+
+export interface SolveEstimate {
+  solver: SolverId;
+  count: number;
+  perRunMs: number;
+  concurrency: number;
+  waves: number;
+  totalMs: number;
+  /** `observed` from the last run of this solver on this unit; `rough` before there is one. */
+  basis: 'observed' | 'rough';
+}
+
+/** A candidate as the grid would judge it, for previewing it in place of the draft. */
+export interface CandidatePreview {
+  batchId: Id;
+  index: number;
+  assignments: Assignment[];
+  validation: ScheduleValidation;
+  cost: PeriodCostReport;
+  /** Shifts the candidate adds or changes against the draft, keyed `nurseId|date|shiftTypeId`. */
+  changedKeys: string[];
+  diff: { added: number; removed: number; changed: number };
+}
+
+/** One column of the comparison: the current draft or one candidate, scored the same way. */
+export interface ComparisonColumn {
+  /** Absent for the current draft. */
+  index?: number;
+  seed?: number;
+  solver?: SolverId;
+  fellBackFrom?: { solver: SolverId; reason: string };
+  elapsedMs?: number;
+  /** Nurse-slots below a hard minimum. */
+  floorsShort: number;
+  hardViolations: number;
+  softViolations: number;
+  /** Mean of the per-nurse fairness scores (0–100, higher is fairer). */
+  fairnessMean: number;
+  /** Gini over the per-nurse fairness scores (0 is perfectly even). */
+  fairnessGini: number;
+  /** The nurse this schedule treats worst. */
+  worstNurse?: { nurseId: Id; score: number };
+  /** Objective points given up to unmet preferences (lower is better). */
+  preferencePoints: number;
+  /** The whole objective (lower is better); the one number the solver minimises. */
+  objective: number;
+  overtimeHours?: number;
+  costTotal?: number;
+  unpricedAssignments?: number;
+  budgetVariance?: BudgetVariance;
+  /** Shifts added, removed or changed against the current draft; 0 for the draft itself. */
+  shiftsChanged: number;
+}
+
+export interface CandidateComparison {
+  batchId: Id;
+  draft: ComparisonColumn;
+  candidates: ComparisonColumn[];
 }
 
 /**
@@ -593,11 +705,25 @@ export interface ShiftNurseApi {
     restore(fileName: string): Promise<BackupInfo>;
   };
   solver: {
-    /** Starts a solve for a draft period in a worker thread and returns immediately. */
-    start(periodId: Id, options?: SolveJobOptions): SolveJobStatus;
-    status(jobId: Id): SolveJobStatus | undefined;
-    /** Asks a running solve to stop at its next check; the status flips once it has. */
-    cancel(jobId: Id): SolveJobStatus | undefined;
+    /**
+     * Starts a batch of variations for a draft period in worker threads and returns at once.
+     * Replaces the period's previous batch; nothing reaches the draft until `save`.
+     */
+    start(periodId: Id, options?: SolveBatchOptions): SolveBatchStatus;
+    status(batchId: Id): SolveBatchStatus | undefined;
+    /** Asks every running variation to stop at its next check and drops the queued ones. */
+    cancel(batchId: Id): SolveBatchStatus | undefined;
+    /** The period's batch, re-checked against today's inputs; undefined when there is none. */
+    current(periodId: Id): SolveBatchStatus | undefined;
+    discard(batchId: Id): void;
+    /** How long a batch would take with these options on this machine. */
+    estimate(periodId: Id, options?: SolveBatchOptions): SolveEstimate;
+    /** One finished variation, judged by the same validation and costing as the grid. */
+    candidate(batchId: Id, index: number): CandidatePreview;
+    /** The current draft and every finished variation, scored side by side. */
+    compare(batchId: Id): CandidateComparison;
+    /** Writes one variation to the draft (unlocked rows replaced, locked kept, audited). */
+    save(batchId: Id, index: number): { created: number; preservedLocked: number };
     /** Which backends can run on this install (CP-SAT and hybrid need the OR-Tools runner). */
     available(): SolverAvailability[];
   };
@@ -794,7 +920,18 @@ export const API_CHANNELS = {
   publish: ['preview', 'publish', 'versions', 'changes', 'alerts'],
   output: ['exportToFile', 'renderCsv'],
   backups: ['list', 'create', 'restore'],
-  solver: ['start', 'status', 'cancel', 'available'],
+  solver: [
+    'start',
+    'status',
+    'cancel',
+    'current',
+    'discard',
+    'estimate',
+    'candidate',
+    'compare',
+    'save',
+    'available',
+  ],
   solverSettings: ['get', 'save'],
   rules: ['getLatest', 'save'],
   fairness: ['report', 'history', 'trend', 'pickHistoryImportFile', 'importHistory'],
