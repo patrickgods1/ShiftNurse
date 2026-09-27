@@ -63,8 +63,13 @@ self-service later becomes an intake surface rather than a new data model.
   breakdown with trend sparklines, history CSV import) and Cost (M8: Settings > Pay editor for
   rates/differentials/OT rules, budget-vs-actual + overtime concentration on the Dashboard, a
   running cost strip on the Schedule page) and Generate (M9: `main/solver-worker.ts` runs core's
-  `solve` in a worker thread, `main/solver-jobs.ts` tracks jobs and applies the result, the
-  renderer polls `solver.status` from `api-solver.ts` and shows `schedule/generate-dialog.tsx`)
+  `solve` in a worker thread; `main/solver-jobs.ts` runs a *batch* of 1–10 variations (seeds
+  `seedFor(period) + k`, parallelism and time estimate from `main/solver-plan.ts`) and keeps each
+  finished report in memory as a candidate — nothing reaches the draft until `solver.save`;
+  `main/api/solver.ts` previews a candidate through the grid's own `validateView`/`costReportForView`
+  and compares every candidate with the draft via core's `scoreAssignments`; the renderer's
+  `useCurrentBatch` in `api-solver.ts` drives `schedule/generate-dialog.tsx`,
+  `candidates-bar.tsx` (page, preview, save) and `compare-dialog.tsx`)
   and Requests (M10: `core/conflicts` — `detectConflicts`, `generateResolutions`,
   `analyseConflicts`, `selectAutoResolutions`, `timeOffImpact` over the same `SolveInput` the
   solver uses; `db/repositories/conflicts.ts` holds the per-unit auto-resolve policy and
@@ -304,7 +309,20 @@ violations of their own.
 - **The solver is deterministic by construction.** All randomness comes from `Rng` seeded from
   a hash of the period id; the iteration budget, not the clock, ends the run (the wall-clock limit
   is a safety valve). Anything that depends on wall time in a solve path breaks "regenerate
-  unchanged inputs → identical schedule", which the smoke test asserts.
+  unchanged inputs → identical schedule", which the smoke test asserts. A batch's variation k is
+  seeded `seedFor(period) + k`, so variation 1 is the schedule a single Generate always gave and
+  the same inputs give the same variations whatever ran in parallel. "Generate more" passes
+  `continueAfter`, carrying numbering and seeds on (a second batch of three is variations 4–6 —
+  `SolveBatchStatus.offset`), so it searches seeds not yet tried; unticking it starts over at 1.
+  The offset lives in memory with the batch, so a restart begins again at variation 1. The grid's
+  own schedule is scored beside every batch (`draftObjective`) and counts as a contender: when no
+  variation beats it, the app says keep it.
+- **Generate candidates go stale by fingerprint, not by event.** `inputFingerprint`
+  (`main/solver-plan.ts`) hashes the whole `SolveInput` minus the unlocked draft rows the solver
+  discards; `solver.current`/`candidate`/`save` re-check it, so any change to anything the solver
+  reads — a table added later included — drops the candidates and `save` refuses them. OR-Tools
+  variations run `floor(cores / SEARCH_WORKERS)` at a time: oversubscribing the runner's threads
+  only stretches wall time into the hybrid's fallback, which is a different schedule.
 - **Every registered rule needs a CP-SAT encoding.** `CPSAT_ENCODERS` in `solver/cpsat/encode.ts`
   maps each rule id to an encoder or `'by-construction'`; a test fails on any missing id, and
   `encodeCpsat` refuses by name when an enabled hard rule has none. A new rule is therefore a

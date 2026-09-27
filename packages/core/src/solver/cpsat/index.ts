@@ -103,4 +103,5 @@ export function finishCpsat(
 
 export type { CpsatEncoding } from './encode.js';
 export { CPSAT_ENCODERS, decisionsFor, encodeCpsat } from './encode.js';
+export { DEFAULT_DETERMINISTIC_TIME, SEARCH_WORKERS } from './params.js';
 export type { CpModel, CpParameters, CpStatus } from './proto.js';

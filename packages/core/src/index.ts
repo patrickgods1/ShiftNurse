@@ -42,6 +42,7 @@ export * from './setup/index.js';
 export * from './solver/cpsat/index.js';
 export * from './solver/hybrid.js';
 export * from './solver/registry.js';
+export { type ScheduleScore, scoreAssignments } from './solver/report.js';
 export * from './solver/rng.js';
 export * from './solver/solver.js';
 export * from './solver/types.js';

@@ -34,8 +34,13 @@ this codebase is held to. This document is the practical "how do I build/run/shi
   CP-SAT re-optimising the hardest few days exactly), **SA + LNS** (pure TypeScript, always
   available) and **CP-SAT** over the whole period. Settings › Solver picks the unit's default;
   the Generate dialog can override it for one run. See [docs/solver-bench.md](docs/solver-bench.md)
-  for how they compare. A manual drag-and-drop grid with live violation badges handles edits
-  afterward.
+  for how they compare. Generate produces up to ten variations at once (with an estimate of how
+  long they take on this machine); page through them, preview any on the grid with its changes
+  outlined, compare them side by side with the current draft on staffing, rule breaks, fairness,
+  preferences, overtime and cost, and save the one to keep — nothing changes until you do.
+  **Generate more** carries on with new seeds (variations 4–6 after 1–3), and the schedule already
+  on the grid is scored alongside, so a batch that cannot beat it says so. A
+  manual drag-and-drop grid with live violation badges handles edits afterward.
 - **Rule engine** — rest periods, consecutive-shift limits, contracted hours/FTE, credential
   and skill coverage, patient-ratio compliance. Rules are data plus a small evaluator, so a
   new contract clause is a new rule, not new solver code.

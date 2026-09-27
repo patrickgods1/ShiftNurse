@@ -273,13 +273,14 @@ const COST_SCRIPT = `
   })()`;
 
 /**
- * The M9 check: Generate runs in a worker thread against the seeded draft, its result lands in
- * the database with locked rows untouched, the grid's own validator finds no nurse-level hard
- * violation in it, and running it again on unchanged inputs writes the identical schedule.
- * A short iteration budget keeps this to a couple of seconds; the property is the same.
+ * The M9 check: Generate runs a batch of variations in worker threads against the seeded draft,
+ * they compare and preview, the saved one lands in the database with locked rows untouched, the
+ * grid's own validator finds no nurse-level hard violation in it, and running it again on
+ * unchanged inputs writes the identical schedule. A short iteration budget keeps each run to a
+ * couple of seconds; the property is the same.
  */
 /**
- * One Generate. 90 s is generous on a developer machine, where the default (hybrid) solve takes
+ * One variation (a batch of N gets N times this). 90 s is generous on a developer machine, where the default (hybrid) solve takes
  * ~20–35 s; CI runners are several times slower — hybrid took 79 s on windows-2022 and 87 s on
  * macos-15-intel, then 90 s+ on one Windows run — so the release workflow raises it.
  */
@@ -293,18 +294,26 @@ const SOLVER_SCRIPT = `
     const before = await api.periods.assignments(draft.id);
     const pin = before.find((a) => !a.isLocked);
     const locked = pin ? await api.schedule.setLocked(pin.id, true) : undefined;
+    // One Generate: a batch of variations, then variation 1 saved to the draft (nothing reaches
+    // the draft until a save). status flattens the saved run for the checks below.
     const run = async (extra = {}) => {
-      const job = await api.solver.start(draft.id, { maxIterations: 20000, ...extra });
+      const job = await api.solver.start(draft.id, { maxIterations: 20000, count: 1, ...extra });
       const started = Date.now();
-      let status = job;
+      let batch = job;
       let progressSeen = 0;
-      while (status.state === 'running' || status.state === 'applying') {
+      while (batch.state === 'running') {
         await new Promise((r) => setTimeout(r, 100));
-        status = await api.solver.status(job.id);
-        if (status.progress) progressSeen++;
-        if (Date.now() - started > ${SOLVE_TIMEOUT_MS}) throw new Error('solve did not finish in ${SOLVE_TIMEOUT_MS / 1000}s');
+        batch = await api.solver.status(job.id);
+        if (batch.runs.some((r) => r.progress)) progressSeen++;
+        if (Date.now() - started > ${SOLVE_TIMEOUT_MS} * job.count) throw new Error('solve did not finish in ' + ${SOLVE_TIMEOUT_MS / 1000} * job.count + 's');
       }
-      return { status, progressSeen };
+      const r0 = batch.runs[0];
+      const applied = r0.state === 'done' ? await api.solver.save(batch.id, 0) : undefined;
+      const status = {
+        state: r0.state, error: r0.error, solver: r0.solver, fellBackFrom: r0.fellBackFrom,
+        seed: r0.seed, summary: r0.summary, applied,
+      };
+      return { status, batch, progressSeen };
     };
     const key = (a) => a.nurseId + '|' + a.date + '|' + a.shiftTypeId + '|' + (a.isCharge ? 'C' : '');
     const available = await api.solver.available();
@@ -320,20 +329,34 @@ const SOLVER_SCRIPT = `
       const b = await run({ solver: id, deterministicTime: 5 });
       const keysB = (await api.periods.assignments(draft.id)).map(key).sort();
       const v = await api.schedule.validate(draft.id);
-      const r = a.status.report;
+      const r = a.status.summary;
       others.push({
-        id, state: a.status.state, error: a.status.error, solver: r ? r.stats.solver : null,
+        id, state: a.status.state, error: a.status.error, solver: r ? a.status.solver : null,
         created: a.status.applied ? a.status.applied.created : 0,
-        unfilled: r ? r.unfilled.length : -1,
-        gap: r && r.stats.gap !== undefined ? r.stats.gap : null,
-        total: r ? Math.round(r.objective.total) : null,
-        elapsedMs: r ? r.stats.elapsedMs : -1,
+        unfilled: r ? r.unfilledSlots : -1,
+        gap: r && r.gap !== undefined ? r.gap : null,
+        total: r ? Math.round(r.objective) : null,
+        elapsedMs: r ? r.elapsedMs : -1,
         identical: b.status.state === 'done' && JSON.stringify(keysA) === JSON.stringify(keysB),
         nurseLevel: v.result.hardViolations.filter((x) =>
           !['understaffed', 'ratio_breach', 'missing_charge_nurse', 'all_novice_shift', 'missing_credential',
             'under_contracted_hours'].includes(x.code)).map((x) => x.message).slice(0, 3),
       });
     }
+    // A batch of two: both must finish, compare side by side with the draft, and preview through
+    // the grid's own validation. SA + LNS, because none of that depends on the solver and a
+    // hybrid batch runs one variation at a time — two more hybrid runs cost ~40 s here and
+    // minutes on a CI runner. The unit's own solver runs next, and its result is the draft the
+    // later checks use.
+    const pair = await run({ solver: 'sa-lns', count: 2 });
+    const comparison = await api.solver.compare(pair.batch.id);
+    const preview = await api.solver.candidate(pair.batch.id, 1);
+    const batchCheck = {
+      runs: pair.batch.runs.map((r) => r.state),
+      columns: comparison.candidates.length,
+      previewShifts: preview.assignments.length,
+      previewValidated: Array.isArray(preview.validation.result.violations),
+    };
     const first = await run();
     const after = await api.periods.assignments(draft.id);
     const firstKeys = after.map(key).sort();
@@ -344,24 +367,23 @@ const SOLVER_SCRIPT = `
     const second = await run();
     const again = (await api.periods.assignments(draft.id)).map(key).sort();
     return {
-      solver: first.status.solver, fellBackFrom: first.status.fellBackFrom,
-      reportSolver: first.status.report ? first.status.report.stats.solver : null,
+      solver: first.status.solver, fellBackFrom: first.status.fellBackFrom, batchCheck,
       orTools: available.filter((a) => a.id !== 'sa-lns').every((a) => a.available),
-      others, windows: first.status.report ? first.status.report.stats.windows : null,
+      others, windows: first.status.summary ? first.status.summary.windows ?? null : null,
       state: first.status.state, error: first.status.error, applied: first.status.applied,
       progressSeen: first.progressSeen, seed: first.status.seed,
-      unfilled: first.status.report ? first.status.report.unfilled.length : -1,
-      hard: first.status.report ? first.status.report.hardViolations.length : -1,
-      elapsedMs: first.status.report ? first.status.report.stats.elapsedMs : -1,
+      unfilled: first.status.summary ? first.status.summary.unfilledSlots : -1,
+      hard: first.status.summary ? first.status.summary.hardViolations : -1,
+      elapsedMs: first.status.summary ? first.status.summary.elapsedMs : -1,
       written: after.length, lockedKept: locked ? after.some((a) => a.id === locked.id && a.isLocked) : null,
       nurseLevel: nurseLevel.map((v) => v.message).slice(0, 3),
       identical: second.status.state === 'done' && JSON.stringify(firstKeys) === JSON.stringify(again),
       // How each default run was actually solved, so a mismatch says whether one of them lost
       // its CP-SAT runner part-way.
-      paths: [first, second].map((r) => {
-        const st = r.status.report ? r.status.report.stats : null;
-        return st ? { solver: st.solver, fellBackFrom: st.fellBackFrom ?? null, windows: st.windows ?? null } : null;
-      }),
+      paths: [first, second].map((r) => ({
+        solver: r.status.solver, fellBackFrom: r.status.fellBackFrom ?? null,
+        windows: r.status.summary ? r.status.summary.windows ?? null : null,
+      })),
       secondState: second.status.state,
     };
   })()`;
@@ -382,6 +404,175 @@ const PAY_TAB_SCRIPT = `
     };
     tick();
   })`;
+
+/** Poll `test` (a JS expression) until truthy or `ms` pass; resolves to its last value. */
+function waitScript(test: string, ms: number): string {
+  return `
+  new Promise((resolve) => {
+    const started = Date.now();
+    const tick = () => {
+      const value = (() => { ${test} })();
+      if (value || Date.now() - started > ${ms}) resolve(value || null);
+      else setTimeout(tick, 100);
+    };
+    tick();
+  })`;
+}
+
+/**
+ * Generate from the Schedule page as a manager would: three SA + LNS variations through the dialog,
+ * then the candidates bar, a preview with the differing shifts outlined, and the comparison table.
+ * The API-level solver check above cannot see any of this render. Nothing is saved: the draft the
+ * later checks work on stays the hybrid schedule.
+ */
+const GENERATE_UI_STEPS = {
+  // A 20,000-iteration budget saved on the unit first, as the API checks pass one: this step
+  // tests the screens, not schedule quality, and the default budget made it ~10 s longer.
+  start: `
+  (async () => {
+    const api = window.shiftnurse;
+    const [unit] = await api.units.list();
+    const settings = await api.solverSettings.get(unit.id);
+    await api.solverSettings.save(unit.id, { ...settings, maxIterations: 20000 });
+  })().then(() => new Promise((resolve) => {
+    location.hash = '#/schedule';
+    const started = Date.now();
+    const set = (el, value) => {
+      const proto = el.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
+      el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+    };
+    let opened = false, configured = false;
+    const tick = () => {
+      if (Date.now() - started > 20000) return resolve({ error: 'Generate dialog never became ready' });
+      if (!opened) {
+        const open = document.querySelector('[data-testid="generate-open"]');
+        if (open) { open.click(); opened = true; }
+        return setTimeout(tick, 100);
+      }
+      const count = document.querySelector('[data-testid="generate-count"]');
+      const solver = document.querySelector('[data-testid="generate-solver"]');
+      if (!count || !solver || solver.disabled) return setTimeout(tick, 100);
+      if (!configured) { set(count, '3'); set(solver, 'sa-lns'); configured = true; return setTimeout(tick, 300); }
+      const estimate = document.querySelector('[data-testid="generate-estimate"]')?.textContent ?? '';
+      if (!/Takes/.test(estimate)) return setTimeout(tick, 100);
+      document.querySelector('[data-testid="generate-confirm"]').click();
+      resolve({ estimate });
+    };
+    tick();
+  }))`,
+  summary: waitScript(
+    `const done = document.querySelector('[data-testid="generate-finished"][data-state="done"]');
+     return done
+       ? { runs: done.querySelectorAll('[data-testid="generate-run"][data-state="done"]').length,
+           names: [...done.querySelectorAll('[data-testid="generate-run"] th')].map((th) => th.textContent),
+           gridBest: !!done.querySelector('[data-testid="generate-grid-best"]') }
+       : null;`,
+    120_000,
+  ),
+  // Close the summary, then come back to it from the bar: it must reopen on the summary, not on
+  // a fresh setup screen (it once did, because the dialog forgot which run it had started).
+  reopen: `
+  (() => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  })(),
+  ${waitScript(
+    `if (document.querySelector('[data-testid="generate-dialog"]')) return null;
+     const summary = [...document.querySelectorAll('[data-testid="candidates-bar"] button')]
+       .find((b) => b.textContent === 'Summary');
+     if (!summary) return null;
+     summary.click();
+     return { clicked: true };`,
+    10_000,
+  )}.then(() => ${waitScript(
+    `const dialog = document.querySelector('[data-testid="generate-dialog"]');
+     if (!dialog) return null;
+     return { finished: !!dialog.querySelector('[data-testid="generate-finished"]'),
+              setup: !!dialog.querySelector('[data-testid="generate-confirm"]') };`,
+    10_000,
+  )})`,
+  // From the summary to the grid: "Preview variation N" when a variation wins, otherwise "Keep
+  // the grid" and the bar's own preview button.
+  preview: waitScript(
+    `const best = document.querySelector('[data-testid="generate-preview-best"]');
+     if (best) { best.click(); return null; }
+     const keep = document.querySelector('[data-testid="generate-keep"]');
+     if (keep) { keep.click(); return null; }
+     const toggle = document.querySelector('[data-testid="candidate-preview"]');
+     if (!document.querySelector('[data-testid="preview-banner"]')) {
+       if (toggle && !document.querySelector('[data-testid="generate-dialog"]')) toggle.click();
+       return null;
+     }
+     const banner = document.querySelector('[data-testid="preview-banner"]');
+     if (!banner || /Loading/.test(banner.textContent)) return null;
+     const outlined = document.querySelectorAll('[data-testid="assignment-chip"][aria-label*="differs from the draft"]');
+     if (outlined.length === 0) return null;
+     outlined[0].scrollIntoView({ block: 'center' });
+     return { banner: banner.textContent, outlined: outlined.length };`,
+    20_000,
+  ),
+  compare: `
+  (() => { document.querySelector('[data-testid="candidate-compare"]').click(); })(),
+  ${waitScript(
+    `const dialog = document.querySelector('[data-testid="compare-dialog"]');
+     const rows = dialog ? dialog.querySelectorAll('tbody tr').length : 0;
+     const columns = dialog ? dialog.querySelectorAll('thead th').length : 0;
+     return rows > 0 ? { rows, columns } : null;`,
+    20_000,
+  )}`,
+  // Generate again from the summary: it must carry on with new seeds (variations 4–6), not repeat
+  // variations 1–3, which on unchanged inputs would be the identical schedules.
+  more: `
+  (() => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    window.__more = { stage: 'closing' };
+  })(),
+  ${waitScript(
+    `const m = window.__more;
+     const dialog = document.querySelector('[data-testid="generate-dialog"]');
+     if (m.stage === 'closing') {
+       if (document.querySelector('[data-testid="compare-dialog"]') || dialog) return null;
+       const summary = [...document.querySelectorAll('[data-testid="candidates-bar"] button')]
+         .find((b) => b.textContent === 'Summary');
+       if (summary) { summary.click(); m.stage = 'summary'; }
+       return null;
+     }
+     if (m.stage === 'summary') {
+       const again = document.querySelector('[data-testid="generate-again"]');
+       if (again) { again.click(); m.stage = 'setup'; }
+       return null;
+     }
+     if (m.stage === 'setup') {
+       const confirm = document.querySelector('[data-testid="generate-confirm"]');
+       const box = document.querySelector('[data-testid="generate-continue"]');
+       if (!confirm || !box) return null;
+       m.checked = box.checked;
+       m.label = confirm.textContent;
+       confirm.click();
+       m.stage = 'running';
+       return null;
+     }
+     const done = document.querySelector('[data-testid="generate-finished"][data-state="done"]');
+     if (!done) return null;
+     const names = [...done.querySelectorAll('[data-testid="generate-run"] th')].map((th) => th.textContent);
+     // The previous batch's preview must not survive into this one under the same run index.
+     const carried = !!document.querySelector('[data-testid="preview-banner"]');
+     return { checked: m.checked, label: m.label, names, carried };`,
+    120_000,
+  )}`,
+  discard: `
+  (() => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  })(),
+  ${waitScript(
+    `if (document.querySelector('[data-testid="compare-dialog"], [data-testid="generate-dialog"]')) return null;
+     const discard = [...document.querySelectorAll('[data-testid="candidates-bar"] button')]
+       .find((b) => b.textContent === 'Discard');
+     if (discard) { discard.click(); return null; }
+     return !document.querySelector('[data-testid="candidates-bar"]') ? { gone: true } : null;`,
+    10_000,
+  )}`,
+};
 
 /**
  * The schedule grid from the keyboard alone: one tab stop that arrow keys move, Enter opening the
@@ -973,7 +1164,12 @@ export function runSmoke(win: BrowserWindow): void {
       const solved = (await win.webContents.executeJavaScript(SOLVER_SCRIPT)) as {
         solver: string;
         fellBackFrom?: { solver: string; reason: string };
-        reportSolver: string | null;
+        batchCheck: {
+          runs: string[];
+          columns: number;
+          previewShifts: number;
+          previewValidated: boolean;
+        };
         orTools: boolean;
         windows: { tried: number; improved: number } | null;
         others: {
@@ -1017,11 +1213,17 @@ export function runSmoke(win: BrowserWindow): void {
             `solved as ${JSON.stringify(solved.paths)})`,
         );
       }
+      const batch = solved.batchCheck;
+      if (batch.runs.join() !== 'done,done' || batch.columns !== 2) {
+        fail(
+          `a batch of two finished as [${batch.runs}] with ${batch.columns} comparable variations`,
+        );
+      }
+      if (batch.previewShifts === 0 || !batch.previewValidated) {
+        fail('previewing variation 2 returned no shifts or no validation');
+      }
       // The demo unit is on the default solver (hybrid). Without the OR-Tools runner the job must
       // fall back to SA + LNS *and say so*; a silent substitution is the failure being guarded.
-      if (solved.reportSolver !== solved.solver) {
-        fail(`job says ${solved.solver} but the report was produced by ${solved.reportSolver}`);
-      }
       if (
         !solved.orTools &&
         (solved.solver !== 'sa-lns' || solved.fellBackFrom?.solver !== 'hybrid')
@@ -1098,6 +1300,70 @@ export function runSmoke(win: BrowserWindow): void {
       }
       console.log(
         `[smoke] grid keyboard OK (${grid.tabStops} tab stop(s) among ${grid.chips} chips, arrows move, Enter opens ${grid.options} shift types, Escape returns focus)`,
+      );
+      const uiShotDir = process.env.SHIFTNURSE_SMOKE_SCREENSHOT;
+      const uiShot = async (name: string) => {
+        if (uiShotDir?.endsWith('/')) {
+          await new Promise((r) => setTimeout(r, 300));
+          writeFileSync(`${uiShotDir}${name}.png`, (await win.webContents.capturePage()).toPNG());
+        }
+      };
+      const run = (script: string) => win.webContents.executeJavaScript(script);
+      const started = (await run(GENERATE_UI_STEPS.start)) as { error?: string; estimate?: string };
+      if (started.error) fail(`Generate from the page: ${started.error}`);
+      const summary = (await run(GENERATE_UI_STEPS.summary)) as {
+        runs: number;
+        names: string[];
+        gridBest: boolean;
+      } | null;
+      if (summary?.runs !== 3) {
+        fail(`three variations generated from the page summarised as ${JSON.stringify(summary)}`);
+      }
+      await uiShot('generate-summary');
+
+      const reopened = (await run(GENERATE_UI_STEPS.reopen)) as {
+        finished: boolean;
+        setup: boolean;
+      } | null;
+      if (!reopened?.finished || reopened.setup) {
+        fail(`reopening Generate after a finished run showed ${JSON.stringify(reopened)}`);
+      }
+      await uiShot('generate-reopened');
+      const previewed = (await run(GENERATE_UI_STEPS.preview)) as {
+        banner: string;
+        outlined: number;
+      } | null;
+      if (!previewed) fail('previewing a variation outlined no shifts that differ from the draft');
+      await uiShot('generate-preview');
+      const compared = (await run(GENERATE_UI_STEPS.compare)) as {
+        rows: number;
+        columns: number;
+      } | null;
+      // A label column, the grid's column and one per variation.
+      if (compared?.columns !== 5) {
+        fail(`the comparison table rendered ${JSON.stringify(compared)}, expected 5 columns`);
+      }
+      await uiShot('generate-compare');
+      const more = (await run(GENERATE_UI_STEPS.more)) as {
+        checked: boolean;
+        label: string;
+        names: string[];
+        carried: boolean;
+      } | null;
+      if (more?.carried) fail('a preview of the previous batch carried over into Generate more');
+      // The next three numbers after the batch it followed: new seeds, not a repeat.
+      const last = Number(summary!.names.at(-1)?.replace('Variation ', ''));
+      const expected = [1, 2, 3].map((k) => `Variation ${last + k}`).join();
+      if (!more?.checked || more.names.join() !== expected) {
+        fail(
+          `Generate more after ${summary!.names.join(', ')} gave ${JSON.stringify(more)}, expected ${expected}`,
+        );
+      }
+      await uiShot('generate-more');
+      const discarded = (await run(GENERATE_UI_STEPS.discard)) as { gone: boolean } | null;
+      if (!discarded) fail('discarding the variations left the candidates bar up');
+      console.log(
+        `[smoke] generate UI OK (${started.estimate}; summary of ${summary!.runs} with ${summary!.gridBest ? 'the grid' : 'a variation'} best, reopens on the summary; preview outlines ${previewed!.outlined} changed shifts; compare ${compared!.rows} rows × ${compared!.columns - 2} variations; "${more!.label}" after ${summary!.names.at(-1)} gave ${more!.names.join(', ')}; discarded)`,
       );
       const requests = (await win.webContents.executeJavaScript(REQUESTS_SCRIPT)) as {
         error?: string;

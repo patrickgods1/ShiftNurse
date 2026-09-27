@@ -1,7 +1,7 @@
 /**
  * Everything derived from one period's assignments, refreshed together.
  *
- * Five mutation families write assignments — grid edits, Generate, call-off backfill, exchange
+ * Five mutation families write assignments — grid edits, saving a Generate variation, call-off backfill, exchange
  * decisions and time-off/conflict decisions — and each used to keep its own list of what to
  * refresh. The lists drifted: after a Generate or a backfill the compliance alerts and publish
  * preview kept showing the old schedule, while grid edits never refreshed fairness. One list,
@@ -19,6 +19,7 @@ import { fairnessQueryKeys } from './api-fairness.js';
 import { publishKeys } from './api-publish.js';
 import { requestKeys } from './api-requests.js';
 import { scheduleKeys } from './api-schedule.js';
+import { solverKeys } from './api-solver.js';
 
 export function invalidatePeriod(queryClient: QueryClient, periodId: Id): void {
   for (const queryKey of [
@@ -30,6 +31,9 @@ export function invalidatePeriod(queryClient: QueryClient, periodId: Id): void {
     publishKeys.preview(periodId),
     publishKeys.changes(periodId),
     publishKeys.alerts(periodId),
+    // Generate's candidates are compared with the draft and re-checked against its inputs.
+    solverKeys.current(periodId),
+    solverKeys.againstDraft(periodId),
   ]) {
     void queryClient.invalidateQueries({ queryKey });
   }

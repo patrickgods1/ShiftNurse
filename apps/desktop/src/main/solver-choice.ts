@@ -2,8 +2,8 @@
  * Which backend a Generate actually runs: the manager's one-off choice, else the unit's saved
  * one, falling back along core's `FALLBACK_ORDER` when that backend cannot run on this install.
  *
- * Kept apart from `solver-jobs.ts` (which spawns a worker through an electron-vite import) so the
- * decision is unit-testable on its own. The decision is the part a manager will ask about —
+ * Kept apart from `solver-jobs.ts` (which runs the batch) so the decision is unit-testable on
+ * its own. The decision is the part a manager will ask about —
  * "I picked CP-SAT, why did it anneal?" — so it must be exact and say why.
  */
 

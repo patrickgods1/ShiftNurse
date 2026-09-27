@@ -30,16 +30,26 @@ import {
   useUpdateAssignment,
   useValidation,
 } from '../../api-schedule.js';
+import {
+  useCancelBatch,
+  useCandidatePreview,
+  useCurrentBatch,
+  useDiscardBatch,
+  useSaveCandidate,
+} from '../../api-solver.js';
 import { AsyncState } from '../../components/async-state.js';
 import { useConfirm } from '../../components/confirm.js';
 import { errorMessage } from '../../components/ui.js';
 import { ReasonDialog } from '../requests/reason-dialog.js';
 import { AlertsPanel } from './alerts-panel.js';
 import { AssignmentDialog } from './assignment-dialog.js';
+import { bestChoice, finishedRuns, variationNumber } from './candidates.js';
+import { CandidatesBar } from './candidates-bar.js';
 import { ChangeLog } from './change-log.js';
+import { CompareDialog } from './compare-dialog.js';
 import { CostSummary } from './cost-summary.js';
 import { ExportMenu } from './export-menu.js';
-import { GenerateDialog } from './generate-dialog.js';
+import { GenerateDialog, type GenerateView } from './generate-dialog.js';
 import type { GridColumn } from './grid.js';
 import { ScheduleGrid } from './grid.js';
 import { makePendingId, sortNurses } from './grid-utils.js';
@@ -76,6 +86,10 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const assignmentsQuery = useAssignments(period.id);
   const validationQuery = useValidation(period.id);
   const costQuery = useCostReport(period.id);
+  const batch = useCurrentBatch(period.id).data;
+  const saveCandidate = useSaveCandidate(period.id, unitId);
+  const discardBatch = useDiscardBatch(period.id);
+  const cancelBatch = useCancelBatch(period.id);
 
   const createAssignment = useCreateAssignment(period.id, unitId);
   const moveAssignment = useMoveAssignment(period.id, unitId);
@@ -97,8 +111,49 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const [pendingCreates, setPendingCreates] = useState<readonly Assignment[]>([]);
   const [openAssignmentId, setOpenAssignmentId] = useState<Id | undefined>(undefined);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [generateView, setGenerateView] = useState<GenerateView>('setup');
   const [publishOpen, setPublishOpen] = useState(false);
   const [changeLogOpen, setChangeLogOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
+  /** The Generate variation on show in the bar; the batch's best until the manager pages. */
+  // Both belong to one batch: a run index means nothing in the next one ("Generate more" makes
+  // variations 5–7 of what were 2–4), so a new batch starts on its own best, out of preview.
+  const [pick, setPick] = useState<{ batchId: Id; index?: number; previewing: boolean }>();
+  const picked = batch && pick?.batchId === batch.id ? pick : undefined;
+  const chosenIndex = picked?.index;
+  const previewing = picked?.previewing ?? false;
+  const setChosenIndex = (index: number) => {
+    if (batch) setPick({ batchId: batch.id, index, previewing });
+  };
+  const setPreviewing = (next: boolean | ((was: boolean) => boolean)) => {
+    if (!batch) return;
+    const value = typeof next === 'function' ? next(previewing) : next;
+    setPick({
+      batchId: batch.id,
+      ...(chosenIndex !== undefined ? { index: chosenIndex } : {}),
+      previewing: value,
+    });
+  };
+
+  const finished = batch ? finishedRuns(batch) : [];
+  const choice = batch ? bestChoice(batch) : undefined;
+  const selectedIndex = finished.some((r) => r.index === chosenIndex)
+    ? chosenIndex
+    : choice?.kind === 'variation'
+      ? choice.index
+      : (choice?.bestVariation ?? finished[0]?.index);
+  // A preview needs a variation to show; a batch that went stale or was discarded ends it.
+  const previewActive = previewing && selectedIndex !== undefined;
+  const previewQuery = useCandidatePreview(
+    period.id,
+    previewActive ? batch?.id : undefined,
+    previewActive ? selectedIndex : undefined,
+  );
+  const preview = previewActive ? previewQuery.data : undefined;
+  const highlightKeys = useMemo(
+    () => (preview ? new Set(preview.changedKeys) : undefined),
+    [preview],
+  );
   /** An edit waiting on its reason. Set only on a published period. */
   const [pendingEdit, setPendingEdit] = useState<
     { title: string; run: (reason: string | undefined) => void } | undefined
@@ -141,7 +196,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const columnDates = useMemo(() => columns.map((c) => c.date), [columns]);
   const sortedNurses = useMemo(() => sortNurses(nursesQuery.data ?? []), [nursesQuery.data]);
 
-  const violationResult = validationQuery.data?.result;
+  const violationResult = preview ? preview.validation.result : validationQuery.data?.result;
   const violationsByAssignmentMap = useMemo(
     (): Map<Id, Violation[]> =>
       violationResult ? indexByAssignment(violationResult.violations) : new Map(),
@@ -272,6 +327,25 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const assignments = assignmentsQuery.data;
   const allAssignments =
     pendingCreates.length > 0 ? [...assignments, ...pendingCreates] : assignments;
+  const gridAssignments = preview ? preview.assignments : allAssignments;
+
+  const handleSaveCandidate = async () => {
+    if (!batch || selectedIndex === undefined) return;
+    const unlocked = assignments.filter((a) => !a.isLocked).length;
+    const ok = await confirm({
+      title: `Save variation ${variationNumber(batch, selectedIndex)} as the draft?`,
+      description:
+        unlocked > 0
+          ? `It replaces the ${unlocked} unlocked shift${unlocked === 1 ? '' : 's'} on the grid. Locked shifts stay exactly where they are.`
+          : 'Locked shifts stay exactly where they are.',
+      confirmLabel: 'Save',
+    });
+    if (!ok) return;
+    saveCandidate.mutate(
+      { batchId: batch.id, index: selectedIndex },
+      { onSuccess: () => setPreviewing(false) },
+    );
+  };
 
   // A rejected edit (locked source, archived period, missing reason, DB error) silently snaps
   // the chip back on settle; without this the manager cannot tell a refusal from a glitch.
@@ -298,7 +372,60 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
 
   return (
     <div>
-      <ViolationSummary status={validationQuery.status} result={violationResult} />
+      {batch ? (
+        <CandidatesBar
+          batch={batch}
+          selected={selectedIndex}
+          onSelect={setChosenIndex}
+          previewing={previewActive}
+          onTogglePreview={() => setPreviewing((p) => !p)}
+          onCompare={() => setCompareOpen(true)}
+          onSave={() => void handleSaveCandidate()}
+          onDiscard={() => {
+            setPreviewing(false);
+            discardBatch.mutate(batch.id);
+          }}
+          onCancel={() => cancelBatch.mutate(batch.id)}
+          onShowProgress={() => {
+            setGenerateView('batch');
+            setGenerateOpen(true);
+          }}
+          saving={saveCandidate.isPending}
+          error={
+            saveCandidate.isError
+              ? `That variation was not saved: ${errorMessage(saveCandidate.error)}`
+              : previewQuery.isError && previewActive
+                ? `Could not preview it: ${errorMessage(previewQuery.error)}`
+                : undefined
+          }
+        />
+      ) : null}
+      {previewActive ? (
+        <div
+          role="status"
+          data-testid="preview-banner"
+          className="mb-3 flex items-center justify-between gap-3 rounded-md border border-accent bg-accent/10 px-3 py-2 text-sm text-text"
+        >
+          <p>
+            Previewing variation {batch ? variationNumber(batch, selectedIndex) : selectedIndex + 1}{' '}
+            — nothing is saved yet.{' '}
+            {preview
+              ? `Outlined shifts differ from the draft (${preview.diff.added} added, ${preview.diff.removed} removed, ${preview.diff.changed} changed).`
+              : 'Loading…'}
+          </p>
+          <button
+            type="button"
+            onClick={() => setPreviewing(false)}
+            className="shrink-0 text-xs underline underline-offset-2 hover:no-underline"
+          >
+            Exit preview
+          </button>
+        </div>
+      ) : null}
+      <ViolationSummary
+        status={preview ? 'success' : validationQuery.status}
+        result={violationResult}
+      />
       {failedEdit ? (
         <div
           role="alert"
@@ -315,10 +442,14 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
           </button>
         </div>
       ) : null}
-      <CostSummary report={costQuery.data} />
+      <CostSummary report={preview ? preview.cost : costQuery.data} />
       <AlertsPanel periodId={period.id} />
       <div className="mb-3 flex items-start justify-between gap-3">
-        {!readOnly ? (
+        {previewActive ? (
+          <p className="text-sm text-text-muted">
+            A preview is read-only: save the variation, or exit the preview, to edit.
+          </p>
+        ) : !readOnly ? (
           <ShiftPalette shiftTypes={shiftTypesQuery.data} readOnly={false} />
         ) : (
           <p className="text-sm text-text-muted">This period is archived and read-only.</p>
@@ -339,7 +470,11 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
             <button
               type="button"
               data-testid="generate-open"
-              onClick={() => setGenerateOpen(true)}
+              onClick={() => {
+                // A run in progress is the thing to show; otherwise Generate means a new one.
+                setGenerateView(batch?.state === 'running' ? 'batch' : 'setup');
+                setGenerateOpen(true);
+              }}
               className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text hover:bg-bg"
             >
               Generate
@@ -362,9 +497,10 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         nurses={nursesQuery.data}
         shiftTypes={shiftTypesQuery.data}
         columns={columns}
-        assignments={allAssignments}
+        assignments={gridAssignments}
         pendingIds={pendingIds}
-        readOnly={readOnly}
+        readOnly={readOnly || previewActive}
+        highlightKeys={highlightKeys}
         violationsByAssignment={violationsByAssignmentMap}
         violationsByNurse={violationsByNurseMap}
         violationsByDate={violationsByDateMap}
@@ -378,9 +514,28 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         onOpenChange={setGenerateOpen}
         unitId={unitId}
         period={period}
-        shiftTypes={shiftTypesQuery.data}
         lockedCount={assignments.filter((a) => a.isLocked).length}
         unlockedCount={assignments.filter((a) => !a.isLocked).length}
+        batch={batch}
+        view={generateView}
+        onViewChange={setGenerateView}
+        onCompare={() => setCompareOpen(true)}
+        onPreview={(index) => {
+          if (batch) setPick({ batchId: batch.id, index, previewing: true });
+        }}
+      />
+      <CompareDialog
+        open={compareOpen}
+        onOpenChange={setCompareOpen}
+        periodId={period.id}
+        batchId={batch?.id}
+        offset={batch?.offset ?? 0}
+        nurses={nursesQuery.data}
+        selected={selectedIndex}
+        onSelect={setChosenIndex}
+        onPreview={(index) => {
+          if (batch) setPick({ batchId: batch.id, index, previewing: true });
+        }}
       />
       <PublishDialog
         open={publishOpen}

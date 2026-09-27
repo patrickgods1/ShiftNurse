@@ -15,6 +15,7 @@ import { ensureDailyBackup } from './backups.js';
 import { closeAppDatabase, openAppDatabase } from './database.js';
 import { registerIpc } from './ipc.js';
 import { isSmokeRun, runSmoke } from './smoke.js';
+import spawnSolverWorker from './solver-worker?nodeWorker';
 import { type AppLocation, isAppUrl, isSafeExternalUrl } from './trusted-origin.js';
 
 const APP_LOCATION: AppLocation = {
@@ -80,7 +81,7 @@ app.whenReady().then(() => {
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window));
 
   const db = openAppDatabase();
-  const solverJobs = createSolverJobs(db);
+  const solverJobs = createSolverJobs(db, (workerData) => spawnSolverWorker({ workerData }));
   registerIpc(createApi(db, solverJobs), (url) => isAppUrl(url, APP_LOCATION));
   // The rolling daily copy. Off the startup path: a slow disk must not delay the window.
   void ensureDailyBackup(db).then(

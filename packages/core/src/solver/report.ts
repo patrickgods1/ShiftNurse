@@ -10,19 +10,41 @@
  */
 
 import { costSchedule } from '../cost/cost.js';
-import type { Id, NurseRole } from '../domain/entities.js';
+import type { Assignment, Id, NurseRole } from '../domain/entities.js';
 import type { IsoDate } from '../domain/time.js';
 import { deriveCounters } from '../fairness/ledger.js';
 import { scoreFairness } from '../fairness/score.js';
 import { evaluateSchedule } from '../rules/registry.js';
 import type { Violation } from '../rules/types.js';
 import { ScheduleView } from '../schedule/view.js';
-import type { SolverModel } from './model.js';
-import type { SolveReport, UnfilledSlot } from './types.js';
+import { SolverModel } from './model.js';
+import type { SolveInput, SolveReport, UnfilledSlot } from './types.js';
+
+/** Everything a report says about a schedule, without who solved it or how. */
+export type ScheduleScore = Omit<SolveReport, 'assignments' | 'stats'>;
 
 export function buildReport(model: SolverModel, stats: SolveReport['stats']): SolveReport {
-  const { input } = model;
   const assignments = model.assignments();
+  return { assignments, ...scoreModel(model, assignments), stats };
+}
+
+/**
+ * Score a schedule that no solver produced — the draft on the grid, hand edits and all — by the
+ * objective and engine a solve report uses, so Generate's candidates can be compared with it
+ * point for point. Every row is pinned: the model's constructor keeps locked rows and discards
+ * the rest, and here nothing is to be discarded, moved or given the charge.
+ */
+export function scoreAssignments(
+  input: SolveInput,
+  assignments: readonly Assignment[],
+): ScheduleScore {
+  const pinned = assignments.map((a) => (a.isLocked ? a : { ...a, isLocked: true }));
+  const model = new SolverModel({ ...input, assignments: pinned });
+  return scoreModel(model, [...assignments]);
+}
+
+function scoreModel(model: SolverModel, assignments: Assignment[]): ScheduleScore {
+  const { input } = model;
   const view = new ScheduleView({
     period: input.period,
     assignments,
@@ -48,14 +70,12 @@ export function buildReport(model: SolverModel, stats: SolveReport['stats']): So
   });
 
   return {
-    assignments,
     unfilled: unfilledFrom(evaluation.hardViolations),
     hardViolations: evaluation.hardViolations,
     softViolations: evaluation.softViolations,
     objective: model.breakdown(),
     fairness,
     ...(model.costCtx ? { cost: costSchedule(view, model.costCtx) } : {}),
-    stats,
   };
 }
 

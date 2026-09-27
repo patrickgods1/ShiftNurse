@@ -18,6 +18,8 @@ interface AssignmentChipProps {
   violations: readonly Violation[];
   readOnly: boolean;
   pending: boolean;
+  /** Differs from the draft, in a preview of a Generate variation. */
+  highlighted?: boolean;
   onOpen: (assignment: Assignment) => void;
   onDelete: (assignment: Assignment) => void;
   /** In the grid's active cell: only then is the chip a tab stop (see `grid.tsx`). */
@@ -30,6 +32,7 @@ export const AssignmentChip = memo(function AssignmentChip({
   violations,
   readOnly,
   pending,
+  highlighted = false,
   onOpen,
   onDelete,
   tabbable = true,
@@ -43,6 +46,7 @@ export const AssignmentChip = memo(function AssignmentChip({
   const color = shiftType?.color ?? '#9aa2b1';
   const titleParts: string[] = [];
   if (assignment.isLocked) titleParts.push('Locked');
+  if (highlighted) titleParts.push('Differs from the draft');
   if (violations.length > 0) titleParts.push(...violations.map((v) => v.message));
   const title =
     titleParts.length > 0
@@ -59,7 +63,9 @@ export const AssignmentChip = memo(function AssignmentChip({
       title={title}
       aria-label={`${shiftType?.abbreviation ?? 'Shift'} on ${assignment.date}${
         assignment.isLocked ? ', locked' : ''
-      }${assignment.isCharge ? ', charge nurse' : ''}${hard ? ', hard violation' : soft ? ', soft violation' : ''}`}
+      }${assignment.isCharge ? ', charge nurse' : ''}${hard ? ', hard violation' : soft ? ', soft violation' : ''}${
+        highlighted ? ', differs from the draft' : ''
+      }`}
       onDragStart={(event) => {
         if (!draggable) {
           event.preventDefault();
@@ -87,8 +93,8 @@ export const AssignmentChip = memo(function AssignmentChip({
         )} ${draggable ? 'cursor-grab active:cursor-grabbing' : assignment.isLocked ? 'cursor-not-allowed' : ''} ${
           optimistic ? 'opacity-50' : ''
         } ${hard ? 'ring-2 ring-danger' : soft ? 'ring-2 ring-warn' : ''} ${
-          !readOnly ? 'focus-visible:ring-2 focus-visible:ring-accent' : ''
-        }`}
+          highlighted ? 'outline outline-2 outline-offset-1 outline-accent' : ''
+        } ${!readOnly ? 'focus-visible:ring-2 focus-visible:ring-accent' : ''}`}
       style={{ backgroundColor: color, color: readableTextColor(color) }}
     >
       <span className="truncate">{shiftType?.abbreviation ?? '?'}</span>
