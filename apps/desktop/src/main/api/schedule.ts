@@ -6,6 +6,7 @@
 
 import {
   type Assignment,
+  addDays,
   buildRuleContext,
   datesInRange,
   defaultRuleSet,
@@ -33,6 +34,7 @@ import {
   listShiftCredentialRequirementsForUnit,
   listTimeOffForUnit,
   moveAssignment,
+  paidSickCallsForUnit,
   recordScheduleChange,
   requireChangeReason,
   requirePeriodEditable,
@@ -77,6 +79,10 @@ export function validateView(
     shiftCredentialRequirements: listShiftCredentialRequirementsForUnit(db, period.unitId),
     holidays: listHolidaysForUnit(db, period.unitId),
     weekendDefinition: ruleSet.weekendDefinition,
+    paidSickCalls: paidSickCallsForUnit(db, period.unitId, {
+      start: addDays(period.startDate, -14),
+      end: period.endDate,
+    }),
   });
   return { ruleSet, result: evaluateSchedule(schedule, ruleSet, ctx) };
 }

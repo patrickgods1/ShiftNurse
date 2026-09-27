@@ -412,6 +412,24 @@ and can start over (after a `pre-reset` backup).
       hand; mutating the weekend premium or pay calendar fails them; smoke picks a unit from the
       list
 
+### Leave by shift and paid leave hours ✅
+Leave is booked against the shifts dated in it, as unit scheduling systems do, and paid leave
+counts toward contracted hours — a nurse back from a paid week off is not "36 hours short".
+- [x] Time-off rule: the night into leave's first morning counts only where a rule set makes a
+      day off a whole calendar day (off by default), judged by the shift's end, not its night flag
+- [x] Paid hours on leave requests (suggested as the shifts the nurse would have worked) and
+      paid sick hours on call-offs (migration 0009); a "sick" leave type
+- [x] Contracted-hours rule credits paid leave; the max-hours rule counts it toward overtime only
+      when a contract says so, never toward the weekly cap — rule engine, solver model, CP-SAT,
+      cost engine and compliance alerts all read the one credit
+- [x] Demos: paid leave and sick pay, a removal check in the history scheduler, realistic
+      per-diem pools; under-contract readings fell from 8–15% of nurse-pay-periods to under 5%
+- [x] Verify: rule, parity (400 random rosters with leave, both settings), solver and model tests
+      written first and mutation-checked; `npm run check`; `npm run bench:solvers` re-run —
+      rankings unchanged; synthetic-24 identical; small-8's hybrid fills one more floor because
+      the night before its nurse's leave is now available; the scenario row moves within its
+      run-to-run noise (random UUIDs; the leave settings were checked to have no effect on it)
+
 ### M17 — Signed installers and updates (proposed)
 v0.1.0 ships unsigned: macOS users are told to run `xattr` and Windows users to click past
 SmartScreen, and an installed copy has no way to learn that a fix exists — the crash-on-launch

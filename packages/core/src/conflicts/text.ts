@@ -50,6 +50,8 @@ export function leaveLabel(type: TimeOffType): string {
   switch (type) {
     case 'pto':
       return 'PTO';
+    case 'sick':
+      return 'sick leave';
     case 'fmla':
       return 'FMLA leave';
     case 'unpaid':

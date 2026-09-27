@@ -107,7 +107,21 @@ describe('variables', () => {
     for (const date of ['2026-01-06', '2026-01-07', '2026-01-08']) {
       expect(hasVariable(encoding, 'ada', date, DAY_12.id)).toBe(false);
     }
-    // The night before leave runs into its first morning, so it is off limits too.
+    // Leave belongs to the shifts dated in it: the night before, finishing on its first
+    // morning, is still the 5th's to work.
+    expect(hasVariable(encoding, 'ada', '2026-01-05', NIGHT_12.id)).toBe(true);
+    expect(hasVariable(encoding, 'ada', '2026-01-05', DAY_12.id)).toBe(true);
+  });
+
+  it('keeps the night before leave off limits where a day off is a whole calendar day', () => {
+    const encoding = encodeCpsat(
+      unit([ada()], {
+        timeOff: [timeOff('ada', '2026-01-06', '2026-01-08')],
+        ruleSet: withParams('approved-time-off-is-absolute', {
+          nightShiftEndingOnLeaveCounts: true,
+        }),
+      }),
+    );
     expect(hasVariable(encoding, 'ada', '2026-01-05', NIGHT_12.id)).toBe(false);
     expect(hasVariable(encoding, 'ada', '2026-01-05', DAY_12.id)).toBe(true);
   });
@@ -246,14 +260,12 @@ describe('hours', () => {
 });
 
 describe('agreement with the rule engine', () => {
-  it('calls a random schedule illegal exactly when the rule engine does', () => {
-    // Mixed 8/12-hour shifts, on-call, a lookback tail: hundreds of random rosters, each judged
-    // twice — by the encoded constraints and by the real nurse-scope hard rules.
-    const nurses = [ada(), makeNurse({ id: 'bo', firstName: 'Bo', contractedHoursPerPeriod: 48 })];
-    const input = solveInputFrom({
+  /** Mixed 8/12-hour shifts, on-call and a lookback tail, for two nurses. */
+  const parityInput = (options: Partial<SolveScenarioOptions> = {}) =>
+    solveInputFrom({
       startDate: isoDate('2026-01-04'),
       endDate: isoDate('2026-01-17'),
-      nurses,
+      nurses: [ada(), makeNurse({ id: 'bo', firstName: 'Bo', contractedHoursPerPeriod: 48 })],
       shiftTypes: [DAY_12, NIGHT_12, DAY_8, EVENING_8, ON_CALL],
       coverageRequirements: [
         ...coverageAllWeek(DAY_12, 'RN', 1),
@@ -263,7 +275,11 @@ describe('agreement with the rule engine', () => {
         ...coverageAllWeek(ON_CALL, 'RN', 1),
       ],
       priorAssignments: [assign('ada', NIGHT_12, '2026-01-03', { periodId: 'prev' })],
+      ...options,
     });
+
+  /** Hundreds of random rosters, each judged twice: by the encoding and by the real rules. */
+  function expectParity(input: SolveInput): void {
     const encoding = encodeCpsat(input);
     const model = encoding.solverModel;
     const rng = new Rng(7);
@@ -297,6 +313,29 @@ describe('agreement with the rule engine', () => {
     // The generator must produce both kinds, or the agreement proves nothing.
     expect(illegal).toBeGreaterThan(50);
     expect(illegal).toBeLessThan(390);
+  }
+
+  it('calls a random schedule illegal exactly when the rule engine does', () => {
+    expectParity(parityInput());
+  });
+
+  /** A paid vacation for Ada and a paid sick call for Bo, both inside the first pay period. */
+  const paidLeave: Partial<SolveScenarioOptions> = {
+    timeOff: [timeOff('ada', '2026-01-08', '2026-01-09', { paidHours: 20 })],
+    paidSickCalls: [{ nurseId: 'bo', date: isoDate('2026-01-12'), hours: 12 }],
+  };
+
+  it('agrees with the rules when paid leave counts toward contracted hours', () => {
+    expectParity(parityInput(paidLeave));
+  });
+
+  it('agrees with the rules when leave counts toward overtime and a day off is a calendar day', () => {
+    const ruleSet = withParams(
+      'approved-time-off-is-absolute',
+      { nightShiftEndingOnLeaveCounts: true },
+      withParams('max-hours-per-week', { paidLeaveCountsTowardOvertime: true }),
+    );
+    expectParity(parityInput({ ...paidLeave, ruleSet }));
   });
 });
 

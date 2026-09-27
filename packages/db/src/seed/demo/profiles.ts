@@ -26,21 +26,22 @@ const TRAVEL = { employmentType: 'agency', fte: 0.9, contractedHoursPerPeriod: 7
  *
  * Contracted RN day shifts come to about 47 a week against a floor of about 44; nights 37
  * against 40, with per-diem making up the difference. CNAs: 25 day shifts against 21, 14 nights
- * against 14.
+ * against 14. The per-diem pool is sized as real units size it: to cover vacations and
+ * call-offs, which paid leave no longer lets the vacationer "make up" elsewhere in the period.
  */
 const communityRoster: DemoRosterRow[] = [
   { role: 'RN', ...FULL_12, position: 'D12', count: 12, newGrads: 2 },
   { role: 'RN', ...FULL_12, position: 'N12', count: 10, newGrads: 1 },
   { role: 'RN', ...PART_12, position: 'D12', count: 4 },
   { role: 'RN', ...PART_12, position: 'N12', count: 2 },
-  { role: 'RN', ...PER_DIEM, position: 'flex', count: 4 },
+  { role: 'RN', ...PER_DIEM, position: 'flex', count: 6 },
   { role: 'RN', ...TRAVEL, position: 'D12', count: 1 },
   { role: 'RN', ...TRAVEL, position: 'N12', count: 1 },
   { role: 'CNA', ...FULL_12, position: 'D12', count: 7 },
   { role: 'CNA', ...FULL_12, position: 'N12', count: 4 },
   { role: 'CNA', ...PART_12, position: 'D12', count: 2 },
   { role: 'CNA', ...PART_12, position: 'N12', count: 1 },
-  { role: 'CNA', ...PER_DIEM, position: 'flex', count: 1 },
+  { role: 'CNA', ...PER_DIEM, position: 'flex', count: 2 },
 ];
 
 export const COMMUNITY_MED_SURG: DemoProfile = {
@@ -178,19 +179,19 @@ const vaRoster: DemoRosterRow[] = [
   { role: 'RN', ...PART_8, position: 'D8', count: 1 },
   { role: 'RN', ...PART_8, position: 'E8', count: 1 },
   { role: 'RN', ...PART_8, position: 'N8', count: 1 },
-  { role: 'RN', ...INTERMITTENT, position: 'flex', count: 2 },
+  { role: 'RN', ...INTERMITTENT, position: 'flex', count: 3 },
   { role: 'LPN', ...FULL_8, position: 'D8', count: 3 },
   { role: 'LPN', ...FULL_8, position: 'E8', count: 1 },
   { role: 'LPN', ...PART_8, position: 'E8', count: 1 },
   { role: 'LPN', ...FULL_8, position: 'N8', count: 1 },
   { role: 'LPN', ...PART_8, position: 'N8', count: 1 },
-  { role: 'LPN', ...INTERMITTENT, position: 'flex', count: 1 },
+  { role: 'LPN', ...INTERMITTENT, position: 'flex', count: 2 },
   { role: 'CNA', ...FULL_8, position: 'D8', count: 3 },
   { role: 'CNA', ...FULL_8, position: 'E8', count: 3 },
   { role: 'CNA', ...PART_8, position: 'E8', count: 1 },
   { role: 'CNA', ...FULL_8, position: 'N8', count: 2 },
   { role: 'CNA', ...PART_8, position: 'N8', count: 1 },
-  { role: 'CNA', ...INTERMITTENT, position: 'flex', count: 1 },
+  { role: 'CNA', ...INTERMITTENT, position: 'flex', count: 2 },
 ];
 
 export const VA_SF_MED_SURG: DemoProfile = {
@@ -316,7 +317,7 @@ const icuRoster: DemoRosterRow[] = [
   { role: 'RN', ...FULL_12, position: 'N12', count: 13 },
   { role: 'RN', ...PART_12, position: 'D12', count: 3 },
   { role: 'RN', ...PART_12, position: 'N12', count: 3 },
-  { role: 'RN', ...PER_DIEM, position: 'flex', count: 4 },
+  { role: 'RN', ...PER_DIEM, position: 'flex', count: 6 },
   { role: 'RN', ...TRAVEL, position: 'D12', count: 1 },
   { role: 'RN', ...TRAVEL, position: 'N12', count: 1 },
   { role: 'CNA', ...FULL_12, position: 'D12', count: 2 },

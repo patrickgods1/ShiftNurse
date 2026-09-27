@@ -229,6 +229,67 @@ describe('contracted hours', () => {
     expect(codes(s)).not.toContain('over_contracted_hours');
   });
 
+  it("counts a week of PTO toward a full-timer's contracted hours", () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 72 });
+    const s = scenario({
+      nurses: [nurse],
+      // Week one on vacation, paid as the three 12s she would have worked; week two worked.
+      timeOff: [timeOff(nurse.id, '2026-01-04', '2026-01-10', { paidHours: 36 })],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-11'),
+        assign(nurse.id, DAY_12, '2026-01-13'),
+        assign(nurse.id, DAY_12, '2026-01-15'),
+      ],
+    });
+    expect(codes(s)).not.toContain('under_contracted_hours');
+  });
+
+  it('does not count unpaid leave toward contracted hours', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 72 });
+    const s = scenario({
+      nurses: [nurse],
+      timeOff: [timeOff(nurse.id, '2026-01-04', '2026-01-10', { type: 'unpaid' })],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-11'),
+        assign(nurse.id, DAY_12, '2026-01-13'),
+        assign(nurse.id, DAY_12, '2026-01-15'),
+      ],
+    });
+    const v = evaluate(s).violations.find((x) => x.code === 'under_contracted_hours');
+    expect(v?.details).toMatchObject({ scheduledHours: 36, paidLeaveHours: 0, targetHours: 72 });
+  });
+
+  it('counts a shift missed on paid sick leave toward contracted hours', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 72 });
+    const s = scenario({
+      nurses: [nurse],
+      paidSickCalls: [{ nurseId: nurse.id, date: isoDate('2026-01-09'), hours: 12 }],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-05'),
+        assign(nurse.id, DAY_12, '2026-01-06'),
+        assign(nurse.id, DAY_12, '2026-01-08'),
+        assign(nurse.id, DAY_12, '2026-01-12'),
+        assign(nurse.id, DAY_12, '2026-01-13'),
+      ], // 60 worked + 12 sick = 72
+    });
+    expect(codes(s)).not.toContain('under_contracted_hours');
+  });
+
+  it('can be told to count worked hours only', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 72 });
+    const s = scenario({
+      nurses: [nurse],
+      timeOff: [timeOff(nurse.id, '2026-01-04', '2026-01-10', { paidHours: 36 })],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-11'),
+        assign(nurse.id, DAY_12, '2026-01-13'),
+        assign(nurse.id, DAY_12, '2026-01-15'),
+      ],
+      ruleParams: { 'fte-target-hours': { paidLeaveCountsTowardHours: false } },
+    });
+    expect(codes(s)).toContain('under_contracted_hours');
+  });
+
   it('ignores a pay period only partly covered by the schedule', () => {
     const nurse = makeNurse({ contractedHoursPerPeriod: 72 });
     // One week only: the 14-day pay period is not fully inside it.
@@ -272,6 +333,52 @@ describe('weekly hours and overtime', () => {
     expect(codes(s)).not.toContain('unauthorised_overtime');
   });
 
+  it('does not make a week with a PTO day overtime: leave is not hours worked', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 84 });
+    const s = scenario({
+      nurses: [nurse],
+      timeOff: [timeOff(nurse.id, '2026-01-06', '2026-01-06', { paidHours: 12 })],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-04'),
+        assign(nurse.id, DAY_12, '2026-01-07'),
+        assign(nurse.id, DAY_12, '2026-01-09'),
+      ], // 36 worked + 12 PTO
+    });
+    expect(codes(s)).not.toContain('unauthorised_overtime');
+  });
+
+  it('counts PTO toward overtime where the contract says it does', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 84 });
+    const s = scenario({
+      nurses: [nurse],
+      timeOff: [timeOff(nurse.id, '2026-01-06', '2026-01-06', { paidHours: 12 })],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-04'),
+        assign(nurse.id, DAY_12, '2026-01-07'),
+        assign(nurse.id, DAY_12, '2026-01-09'),
+      ],
+      ruleParams: { 'max-hours-per-week': { paidLeaveCountsTowardOvertime: true } },
+    });
+    const v = evaluate(s).violations.find((x) => x.code === 'unauthorised_overtime');
+    expect(v?.details).toMatchObject({ scheduledHours: 36, paidLeaveHours: 12, overtimeHours: 8 });
+  });
+
+  it('never counts leave toward the absolute weekly cap: it is not fatigue', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 120 });
+    const s = scenario({
+      nurses: [nurse],
+      timeOff: [timeOff(nurse.id, '2026-01-10', '2026-01-10', { paidHours: 12 })],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-04', { isOvertime: true }),
+        assign(nurse.id, DAY_12, '2026-01-05', { isOvertime: true }),
+        assign(nurse.id, DAY_12, '2026-01-07', { isOvertime: true }),
+        assign(nurse.id, DAY_12, '2026-01-08', { isOvertime: true }),
+      ], // 48 worked, exactly the cap, plus 12 PTO
+      ruleParams: { 'max-hours-per-week': { paidLeaveCountsTowardOvertime: true } },
+    });
+    expect(codes(s)).not.toContain('over_max_hours');
+  });
+
   it('flags a week over the absolute cap even when overtime is authorised', () => {
     const nurse = makeNurse({ contractedHoursPerPeriod: 120 });
     const s = scenario({
@@ -299,14 +406,56 @@ describe('approved time off', () => {
     expect(codes(s)).toContain('works_during_approved_time_off');
   });
 
-  it('flags a night shift that runs into the first morning of leave', () => {
+  it('lets a nurse work the night before their leave, finishing on its first morning', () => {
+    // Leave is booked against the shifts dated in it: the night dated the 6th is the 6th's.
     const nurse = makeNurse();
     const s = scenario({
       nurses: [nurse],
       timeOff: [timeOff(nurse.id, '2026-01-07', '2026-01-10')],
       assignments: [assign(nurse.id, NIGHT_12, '2026-01-06')], // ends 07:00 on the 7th
     });
+    expect(codes(s)).not.toContain('works_during_approved_time_off');
+  });
+
+  it('keeps a nurse off the night dated on their day of leave, but not the next night', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      timeOff: [timeOff(nurse.id, '2026-01-07', '2026-01-07')],
+      assignments: [
+        assign(nurse.id, NIGHT_12, '2026-01-07'), // the 7th's night: on leave
+        assign(nurse.id, NIGHT_12, '2026-01-08'), // the 8th's night: free to work
+      ],
+    });
+    const flagged = evaluate(s)
+      .violations.filter((v) => v.code === 'works_during_approved_time_off')
+      .map((v) => v.dates[0]);
+    expect(flagged).toEqual(['2026-01-07']);
+  });
+
+  it("counts the night into leave's first morning when the contract makes a day off a whole calendar day", () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      timeOff: [timeOff(nurse.id, '2026-01-07', '2026-01-10')],
+      assignments: [assign(nurse.id, NIGHT_12, '2026-01-06')],
+      ruleParams: { 'approved-time-off-is-absolute': { nightShiftEndingOnLeaveCounts: true } },
+    });
     expect(codes(s)).toContain('works_during_approved_time_off');
+  });
+
+  it('judges that by when the shift ends: an evening tour ending before midnight never reaches leave', () => {
+    // A Title 38 evening tour is flagged as a night for its differential; it still ends at 23:30.
+    const eveningTour = { ...EVENING_8, id: 'st-e8-va', startTime: '15:30', isNight: true };
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_12, NIGHT_12, eveningTour],
+      timeOff: [timeOff(nurse.id, '2026-01-07', '2026-01-10')],
+      assignments: [assign(nurse.id, eveningTour, '2026-01-06')],
+      ruleParams: { 'approved-time-off-is-absolute': { nightShiftEndingOnLeaveCounts: true } },
+    });
+    expect(codes(s)).not.toContain('works_during_approved_time_off');
   });
 
   it('ignores pending requests', () => {

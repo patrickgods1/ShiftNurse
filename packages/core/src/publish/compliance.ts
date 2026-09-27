@@ -18,6 +18,7 @@ import { NURSE_ROLES, type ShiftDemand } from '../acuity/demand.js';
 import type { Credential, Id, NurseCredential, NurseRole } from '../domain/entities.js';
 import { compareDates, type IsoDate, type Weekday } from '../domain/time.js';
 import { workWeeksIn } from '../rules/hours-rules.js';
+import { leaveHoursBetween, type PaidLeaveCredit } from '../rules/paid-leave.js';
 import { nurseName } from '../rules/types.js';
 import type { ScheduleView } from '../schedule/view.js';
 
@@ -56,6 +57,12 @@ export interface ComplianceInput {
    * the contract is scaled by `periodDays / payPeriodDays` before comparing.
    */
   payPeriodDays: number;
+  /** Paid leave by nurse (`RuleContext.paidLeaveByNurse`), counted as the hours rules count it. */
+  paidLeaveByNurse?: ReadonlyMap<Id, readonly PaidLeaveCredit[]>;
+  /** The contracted-hours rule's setting; paid leave counts toward the contract unless false. */
+  paidLeaveCountsTowardHours?: boolean;
+  /** The max-hours rule's setting; paid leave counts toward overtime only when true. */
+  paidLeaveCountsTowardOvertime?: boolean;
 }
 
 const SEVERITY_ORDER: Record<ComplianceSeverity, number> = { critical: 0, warning: 1 };
@@ -102,7 +109,16 @@ function hoursDrift(input: ComplianceInput): ComplianceAlert[] {
     if (!nurse.active || nurse.employmentType === 'per_diem') continue;
     if (nurse.contractedHoursPerPeriod <= 0) continue;
     const views = schedule.assignmentsFor(nurseId).filter((v) => !v.shiftType.isOnCall);
-    const hours = views.reduce((sum, v) => sum + v.paidHours, 0);
+    const worked = views.reduce((sum, v) => sum + v.paidHours, 0);
+    const leave =
+      input.paidLeaveCountsTowardHours === false
+        ? 0
+        : leaveHoursBetween(
+            input.paidLeaveByNurse?.get(nurseId),
+            schedule.period.startDate,
+            schedule.period.endDate,
+          );
+    const hours = worked + leave;
     const contracted =
       (nurse.contractedHoursPerPeriod * schedule.dates.length) / input.payPeriodDays;
     const drift = (hours - contracted) / contracted;
@@ -115,7 +131,7 @@ function hoursDrift(input: ComplianceInput): ComplianceAlert[] {
       hours,
       expectedHours: contracted,
       assignmentIds: views.map((v) => v.assignment.id),
-      message: `${nurseName(nurse)} is scheduled ${hours}h against ${contracted}h contracted (${pct >= 0 ? '+' : ''}${pct}%)`,
+      message: `${nurseName(nurse)} is scheduled ${worked}h${leave > 0 ? ` plus ${Math.round(leave * 10) / 10}h paid leave` : ''} against ${contracted}h contracted (${pct >= 0 ? '+' : ''}${pct}%)`,
     });
   }
   return alerts;
@@ -139,7 +155,10 @@ function overtime(input: ComplianceInput): ComplianceAlert[] {
             compareDates(v.assignment.date, week.start) >= 0 &&
             compareDates(v.assignment.date, week.end) <= 0,
         );
-      const hours = inWeek.reduce((sum, v) => sum + v.paidHours, 0);
+      const leave = input.paidLeaveCountsTowardOvertime
+        ? leaveHoursBetween(input.paidLeaveByNurse?.get(nurseId), week.start, week.end)
+        : 0;
+      const hours = inWeek.reduce((sum, v) => sum + v.paidHours, 0) + leave;
       if (hours <= input.overtimeThresholdHours) continue;
       alerts.push({
         kind: 'overtime',

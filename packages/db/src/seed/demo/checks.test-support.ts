@@ -17,6 +17,7 @@ import {
 } from '@shiftnurse/core';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { type OpenedDatabase, openTestDatabase, transact } from '../../client.js';
+import { paidSickCallsForUnit } from '../../repositories/calloffs.js';
 import {
   getUnit,
   listHolidaysForUnit,
@@ -92,6 +93,7 @@ export function historyViolations(f: DemoFixture): Map<string, number> {
       shiftCredentialRequirements: listShiftCredentialRequirementsForUnit(db, unit.id),
       holidays: listHolidaysForUnit(db, unit.id),
       weekendDefinition: ruleSet.weekendDefinition,
+      paidSickCalls: paidSickCallsForUnit(db, unit.id),
     });
     for (const v of evaluateSchedule(view, ruleSet, ctx).hardViolations) {
       byCode.set(v.code, (byCode.get(v.code) ?? 0) + 1);
@@ -117,7 +119,6 @@ export function realisticDemoChecks(f: DemoFixture, demo: DemoId, today: IsoDate
       'missing_charge_nurse',
       'missing_credential',
       'all_novice_shift',
-      'ratio_breach',
     ]) {
       expect(violations.get(code) ?? 0, code).toBe(0);
     }
@@ -127,13 +128,34 @@ export function realisticDemoChecks(f: DemoFixture, demo: DemoId, today: IsoDate
     ).toBe(0);
   });
 
-  it('only runs a shift short when a call-off could not be covered', () => {
+  it('only runs a shift short, or over ratio, when a call-off could not be covered', () => {
+    const violations = historyViolations(f);
     const uncovered = f.count("SELECT COUNT(*) n FROM call_off WHERE status = 'uncovered'");
-    expect(historyViolations(f).get('understaffed') ?? 0).toBeLessThanOrEqual(uncovered);
+    const uncoveredRn = f.count(
+      `SELECT COUNT(*) n FROM call_off c JOIN nurse n ON n.id = c.nurse_id
+         WHERE c.status = 'uncovered' AND n.role = 'RN'`,
+    );
+    expect(violations.get('understaffed') ?? 0).toBeLessThanOrEqual(uncovered);
+    expect(violations.get('ratio_breach') ?? 0).toBeLessThanOrEqual(uncoveredRn);
     // About two call-offs a week over six months.
     const callOffs = f.count('SELECT COUNT(*) n FROM call_off');
     expect(callOffs).toBeGreaterThan(35);
     expect(callOffs).toBeLessThan(75);
+  });
+
+  it('credits paid leave and sick calls, so a nurse rarely reads short of contract', () => {
+    // Uncredited, vacations and sick calls left 8–15% of nurse-pay-periods "under contract".
+    const nursePeriods = f.count('SELECT COUNT(*) n FROM nurse') * 13;
+    const under = historyViolations(f).get('under_contracted_hours') ?? 0;
+    expect(under / nursePeriods).toBeLessThan(0.05);
+    expect(
+      f.count(
+        "SELECT COUNT(*) n FROM time_off_request WHERE status = 'approved' AND paid_hours > 0",
+      ),
+    ).toBeGreaterThan(20);
+    expect(f.count('SELECT COUNT(*) n FROM call_off WHERE paid_sick_hours > 0')).toBeGreaterThan(
+      20,
+    );
   });
 
   it('puts one charge nurse on every staffed shift of the history', () => {

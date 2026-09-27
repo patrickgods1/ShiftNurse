@@ -7,7 +7,14 @@
  */
 
 import type { Id, TimeOffRequest } from '../domain/entities.js';
-import { addDays, dateInRange, type IsoDate, windowsOverlap } from '../domain/time.js';
+import {
+  addDays,
+  crossesMidnight,
+  dateInRange,
+  type IsoDate,
+  type ShiftTiming,
+  windowsOverlap,
+} from '../domain/time.js';
 import type { ScheduleView } from '../schedule/view.js';
 import { nurseName, type Rule, type RuleContext, type Violation, violation } from './types.js';
 
@@ -17,9 +24,15 @@ import { nurseName, type Rule, type RuleContext, type Violation, violation } fro
 
 export interface TimeOffParams {
   /**
-   * Whether a night shift starting the evening before approved leave counts as working
-   * during it. It ends on the first morning of the nurse's vacation, so most contracts say
-   * yes — the nurse does not get their first day.
+   * Whether a shift that starts the day before approved leave and runs past midnight into its
+   * first morning counts as working during it.
+   *
+   * Off by default: leave is booked against the shifts dated in it, and a shift is dated by the
+   * day it starts, so a nurse off on Saturday may work Friday night and finish at 07:00 — if
+   * they want Friday night off too, they request Friday. The minimum-rest rule already protects
+   * the turnaround. Some contracts define a day off as a whole calendar day free of work; they
+   * turn this on. It is judged by when the shift actually ends, not by its night flag: an
+   * evening tour flagged as an off-tour for its differential still ends before midnight.
    */
   nightShiftEndingOnLeaveCounts: boolean;
 }
@@ -33,7 +46,7 @@ export const timeOffRule: Rule<TimeOffParams> = {
   severity: 'hard',
   category: 'coverage',
   scope: 'nurse',
-  defaultParams: { nightShiftEndingOnLeaveCounts: true },
+  defaultParams: { nightShiftEndingOnLeaveCounts: false },
 
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];
@@ -86,12 +99,12 @@ export const timeOffRule: Rule<TimeOffParams> = {
  */
 export function overlappingLeaveDate(
   date: IsoDate,
-  shiftType: { isNight: boolean },
+  shiftType: ShiftTiming,
   request: TimeOffRequest,
   params: TimeOffParams,
 ): IsoDate | null {
   if (dateInRange(date, request.startDate, request.endDate)) return date;
-  if (params.nightShiftEndingOnLeaveCounts && shiftType.isNight) {
+  if (params.nightShiftEndingOnLeaveCounts && crossesMidnight(shiftType)) {
     // The shift starts the day before leave begins but runs into its first morning.
     const endsOn = nextDay(date);
     if (dateInRange(endsOn, request.startDate, request.endDate)) return endsOn;
@@ -107,6 +120,8 @@ function describeType(request: TimeOffRequest): string {
   switch (request.type) {
     case 'pto':
       return 'PTO';
+    case 'sick':
+      return 'sick leave';
     case 'fmla':
       return 'FMLA leave';
     case 'unpaid':

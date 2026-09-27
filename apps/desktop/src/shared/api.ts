@@ -280,6 +280,8 @@ export interface CreateTimeOffInput {
   endDate: IsoDate;
   type: TimeOffType;
   reason?: string;
+  /** Paid leave hours: the shifts the nurse would have worked. Counts toward their contract. */
+  paidHours?: number;
 }
 
 export interface TimeOffApproval {
@@ -695,7 +697,8 @@ export interface ShiftNurseApi {
     /** Call-offs whose shift falls in the inclusive range, any status, soonest first. */
     callOffs(unitId: Id, start: IsoDate, end: IsoDate): CallOffView[];
     /** Records the call-off; the assignment stays on the grid until a backfill replaces it. */
-    reportCallOff(assignmentId: Id, reason?: string): CallOff;
+    /** `paidSickHours`: hours paid from sick leave, credited toward contract once backfilled. */
+    reportCallOff(assignmentId: Id, reason?: string, paidSickHours?: number): CallOff;
     /** Ranked, eligible-only replacements, simulated on the period's own rule-set snapshot. */
     replacements(callOffId: Id): ReplacementReport;
     /** Log a call that did not end the search. `accepted` goes through `backfill` instead. */

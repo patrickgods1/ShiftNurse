@@ -20,7 +20,13 @@ import {
   weekdayOf,
 } from '../domain/time.js';
 import type { ScheduleView } from '../schedule/view.js';
+import { leaveHoursBetween } from './paid-leave.js';
 import { isWorked, nurseName, type Rule, type Violation, violation } from './types.js';
+
+/** " plus 12h paid leave", for violation messages; empty when there is none. */
+function leaveNote(hours: number): string {
+  return hours > 0 ? ` plus ${Math.round(hours * 10) / 10}h paid leave` : '';
+}
 
 export interface DateWindow {
   start: IsoDate;
@@ -91,6 +97,12 @@ export interface ContractedHoursParams {
   exemptEmploymentTypes: string[];
   /** Whether standby hours count toward the contracted total. */
   onCallCountsTowardHours: boolean;
+  /**
+   * Whether approved paid leave and paid sick calls count toward the contracted total. They
+   * do: payroll pays those hours, and a nurse back from a paid week off is not short of their
+   * FTE. See `paid-leave.ts`.
+   */
+  paidLeaveCountsTowardHours: boolean;
 }
 
 export const contractedHoursRule: Rule<ContractedHoursParams> = {
@@ -108,6 +120,7 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
     onlyCompletePayPeriods: true,
     exemptEmploymentTypes: ['per_diem', 'agency'],
     onCallCountsTowardHours: false,
+    paidLeaveCountsTowardHours: true,
   },
 
   evaluate(schedule, params, ctx): Violation[] {
@@ -140,7 +153,10 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
         // No contracted total (per-diem, agency) means nothing to be over or under: every shift
         // such a nurse picks up would otherwise read as "over" a contract that was never made.
         if (target <= 0) continue;
-        const delta = hours - target;
+        const paidLeaveHours = params.paidLeaveCountsTowardHours
+          ? leaveHoursBetween(ctx.paidLeaveByNurse.get(nurse.id), period.start, period.end)
+          : 0;
+        const delta = hours + paidLeaveHours - target;
 
         if (!exempt && delta < -params.underToleranceHours) {
           violations.push(
@@ -148,14 +164,16 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
               contractedHoursRule,
               'hard',
               'under_contracted_hours',
-              `${nurseName(nurse)} is scheduled ${hours}h in the pay period starting ${period.start}, ` +
-                `${Math.abs(delta)}h short of their contracted ${target}h (${nurse.fte} FTE).`,
+              `${nurseName(nurse)} is scheduled ${hours}h${leaveNote(paidLeaveHours)} in the pay ` +
+                `period starting ${period.start}, ${Math.abs(delta)}h short of their contracted ` +
+                `${target}h (${nurse.fte} FTE).`,
               {
                 nurseIds: [nurse.id],
                 dates: [period.start, period.end],
                 assignmentIds,
                 details: {
                   scheduledHours: hours,
+                  paidLeaveHours,
                   targetHours: target,
                   deltaHours: delta,
                   payPeriod: period,
@@ -169,14 +187,16 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
               contractedHoursRule,
               'hard',
               'over_contracted_hours',
-              `${nurseName(nurse)} is scheduled ${hours}h in the pay period starting ${period.start}, ` +
-                `${delta}h over their contracted ${target}h (${nurse.fte} FTE).`,
+              `${nurseName(nurse)} is scheduled ${hours}h${leaveNote(paidLeaveHours)} in the pay ` +
+                `period starting ${period.start}, ${delta}h over their contracted ${target}h ` +
+                `(${nurse.fte} FTE).`,
               {
                 nurseIds: [nurse.id],
                 dates: [period.start, period.end],
                 assignmentIds,
                 details: {
                   scheduledHours: hours,
+                  paidLeaveHours,
                   targetHours: target,
                   deltaHours: delta,
                   payPeriod: period,
@@ -210,6 +230,13 @@ export interface MaxHoursParams {
    */
   requireOvertimeAuthorisation: boolean;
   onCallCountsTowardHours: boolean;
+  /**
+   * Whether paid leave in the week counts toward the overtime threshold. Off by default: under
+   * federal wage-and-hour law paid leave is not hours worked, so 36 worked hours and a PTO day
+   * are not overtime. Some union contracts count it; they turn this on. Leave never counts
+   * toward `maxHoursPerWeek` — that cap is about fatigue, and a day off is not tiring.
+   */
+  paidLeaveCountsTowardOvertime: boolean;
 }
 
 export const maxHoursRule: Rule<MaxHoursParams> = {
@@ -227,6 +254,7 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
     workWeekStartsOn: 0,
     requireOvertimeAuthorisation: true,
     onCallCountsTowardHours: false,
+    paidLeaveCountsTowardOvertime: false,
   },
 
   evaluate(schedule, params, ctx): Violation[] {
@@ -259,6 +287,10 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
         }
 
         if (!touchesPeriod) continue;
+        const paidLeaveHours = params.paidLeaveCountsTowardOvertime
+          ? leaveHoursBetween(ctx.paidLeaveByNurse.get(nurse.id), week.start, week.end)
+          : 0;
+        const overtimeHours = hours + paidLeaveHours;
 
         if (hours > params.maxHoursPerWeek) {
           violations.push(
@@ -278,7 +310,7 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
           );
         } else if (
           params.requireOvertimeAuthorisation &&
-          hours > params.overtimeThresholdHours &&
+          overtimeHours > params.overtimeThresholdHours &&
           !authorised
         ) {
           violations.push(
@@ -286,16 +318,17 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
               maxHoursRule,
               'hard',
               'unauthorised_overtime',
-              `${nurseName(nurse)} is scheduled ${hours}h in the week of ${week.start}, which is ` +
-                `${hours - params.overtimeThresholdHours}h of overtime, but no shift that week is ` +
-                'marked as authorised overtime.',
+              `${nurseName(nurse)} is scheduled ${hours}h${leaveNote(paidLeaveHours)} in the week of ` +
+                `${week.start}, which is ${overtimeHours - params.overtimeThresholdHours}h of ` +
+                'overtime, but no shift that week is marked as authorised overtime.',
               {
                 nurseIds: [nurse.id],
                 dates: [week.start, week.end],
                 assignmentIds,
                 details: {
                   scheduledHours: hours,
-                  overtimeHours: hours - params.overtimeThresholdHours,
+                  paidLeaveHours,
+                  overtimeHours: overtimeHours - params.overtimeThresholdHours,
                   threshold: params.overtimeThresholdHours,
                   week,
                 },

@@ -22,6 +22,7 @@ import {
   NIGHT_12,
   resetFixtureCounters,
   solveInputFrom,
+  timeOff,
 } from '../testing/fixtures.js';
 import { SolverModel } from './model.js';
 import { Rng } from './rng.js';
@@ -143,5 +144,36 @@ describe('SolverModel bookkeeping', () => {
     // The walk must actually have built a schedule worth checking, not idled on ineligible picks.
     expect(checked).toBe(24);
     expect(model.unlocked.length).toBeGreaterThan(10);
+  });
+});
+
+describe('paid leave in the hours the objective chases', () => {
+  it('does not count a nurse back from a paid vacation as still owed hours', () => {
+    // 72 contracted, 36 paid for the vacation week, 36 worked in the other: nothing owed.
+    const nurse = makeNurse({ id: 'vac', contractedHoursPerPeriod: 72 });
+    const input = solveInputFrom({
+      nurses: [nurse],
+      shiftTypes: [DAY_12, NIGHT_12],
+      timeOff: [timeOff('vac', '2026-01-04', '2026-01-10', { paidHours: 36 })],
+    });
+    const model = new SolverModel(input);
+    for (const date of ['2026-01-11', '2026-01-13', '2026-01-15']) {
+      model.add(assign('vac', DAY_12, date));
+    }
+    expect(model.hoursShort(0)).toBe(0);
+  });
+
+  it('still counts unpaid leave as hours the nurse is short', () => {
+    const nurse = makeNurse({ id: 'vac', contractedHoursPerPeriod: 72 });
+    const input = solveInputFrom({
+      nurses: [nurse],
+      shiftTypes: [DAY_12, NIGHT_12],
+      timeOff: [timeOff('vac', '2026-01-04', '2026-01-10', { type: 'unpaid' })],
+    });
+    const model = new SolverModel(input);
+    for (const date of ['2026-01-11', '2026-01-13', '2026-01-15']) {
+      model.add(assign('vac', DAY_12, date));
+    }
+    expect(model.hoursShort(0)).toBe(36);
   });
 });

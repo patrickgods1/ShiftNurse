@@ -30,6 +30,8 @@ interface ReasonDialogProps {
   pending: boolean;
   error: unknown;
   onConfirm: (reason: string) => void;
+  /** Extra fields shown under the reason, for dialogs that record more than the reason. */
+  children?: ReactNode;
 }
 
 export function ReasonDialog({
@@ -43,6 +45,7 @@ export function ReasonDialog({
   pending,
   error,
   onConfirm,
+  children,
 }: ReasonDialogProps) {
   const [reason, setReason] = useState('');
   useEffect(() => {
@@ -79,6 +82,7 @@ export function ReasonDialog({
                 autoFocus
               />
             </label>
+            {children}
             {message !== undefined ? (
               <p role="alert" className="text-sm text-danger">
                 {message}

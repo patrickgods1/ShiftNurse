@@ -372,18 +372,22 @@ violations of their own.
   test-scenario database with known, asserted problems; the main-process fixture, repository
   tests and the solver benchmark are built on it, and `npm run dev` offers it on the welcome
   screen. **Tests never use the demo as a fixture** — its data should be free to become more
-  realistic — and **the scenario data must not change**: test expectations and
-  `docs/solver-bench.md` are pinned to it (even an extra inactive nurse changes a generated
-  schedule, since the solver sees every nurse in roster order). A new scenario is appended
-  from its own `Rng` together with re-pinned tests and a re-run `npm run bench:solvers`.
+  realistic — and **the scenario data must not change**: test expectations are pinned to it
+  (even an extra inactive nurse changes a generated schedule, since the solver sees every nurse
+  in roster order). A new scenario is appended from its own `Rng` together with re-pinned tests
+  and a re-run `npm run bench:solvers`. The benchmark's scenario row is *not* reproducible run
+  to run — ids are random UUIDs, so each seeding solves differently (three seedings gave
+  objectives of 76,760–79,497) — so compare its medians and rankings, not exact numbers; the
+  fixture-only rows (synthetic-24, small-8) are exact.
 - **Demo data must be staffable by construction.** Each demo's contracted hours are sized to
   its floors, the history is staffed by the engine's `canWork`, which mirrors the unit's own rule
   set (rest from shift windows, stretch and all-night limits, days off after a maximum stretch,
-  leave including the rule's "a night-flagged shift ends on the next day", hire dates), and to
-  the *forecast* census the rule engine judges by. Every demo's test runs Generate on its draft
-  at the app's default budget and requires every floor filled. Its history
-  still reads "under/over contracted hours" around PTO and call-offs, because that rule credits
-  neither; the header says so. The contracted hours are 72h a pay period for full-time 12-hour
+  leave by shift date, hire dates), and `canRemove` checks every shift it moves away or calls
+  off, and to the *forecast* census the rule engine judges by. Every demo's test runs Generate
+  on its draft at the app's default budget and requires every floor filled, and requires fewer
+  than 5% of nurse-pay-periods to read "under contract" (paid leave and sick calls are credited).
+  A nurse at contract who picks up a call-off still reads "over contract": the rule counts any
+  hours past it. The contracted hours are 72h a pay period for full-time 12-hour
   staff (three 12s under a 40h overtime threshold). Changing floors, census or the roster mix
   means re-running the demo tests in `seed/demo/`. The VA demo flags its evening tour
   `isNight` on purpose: Title 38 pays night differential on the whole evening tour, and the flag
@@ -401,6 +405,25 @@ violations of their own.
   period without one and `editSchedule` in main writes each touched shift to `schedule_change`.
   A republish needs a reason and refuses an unchanged schedule. The diff is keyed on
   nurse/date/shift, never row ids, so a regenerate that lands the same shifts is "no change".
+- **Leave belongs to the shifts dated in it.** A shift is dated by its start day, so leave on
+  the 7th removes the shift that starts on the 7th — a night running into the 8th included — and
+  leaves the night of the 6th (ending on the 7th's morning) free to work. The time-off rule's
+  `nightShiftEndingOnLeaveCounts` (off by default) is for contracts that make a day off a whole
+  calendar day; it is judged by the shift's window (`crossesMidnight`), never by `isNight`, which
+  also flags a Title 38 evening tour that ends before midnight. `overlappingLeaveDate` is the one
+  definition, shared by the rule and the CP-SAT encoder.
+- **Paid leave counts toward the contract, not toward overtime.** Approved leave carries
+  `paidHours` (the shifts it pays, not every calendar day; the request dialog suggests them with
+  `suggestedPaidLeaveHours`), and a call-off can be paid from sick leave (`paidSickHours`,
+  credited only once the shift is off the schedule, so an uncovered call-off is not counted
+  twice). `rules/paid-leave.ts` turns both into per-day credits in `RuleContext.paidLeaveByNurse`;
+  the contracted-hours rule adds them (`paidLeaveCountsTowardHours`, on), the max-hours rule adds
+  them to the overtime threshold only when `paidLeaveCountsTowardOvertime` is on (off: federal
+  wage-and-hour law does not treat leave as hours worked) and never to the absolute weekly cap.
+  Every consumer reads the same credit: `SolverModel` takes it off `hoursTarget` and adds it to
+  `weekLeaveHours`, the CP-SAT caps subtract it (rounded down to integer hundredths), the cost
+  engine starts a week's overtime count with it via `CostContext.overtimeLeaveHours`, and
+  compliance alerts count it. `SolveInput.paidSickCalls` comes from `loadPeriodInput`.
 - **`contractedHoursPerPeriod` is per pay period, not per schedule period.** A six-week
   period is three pay periods; anything comparing scheduled hours to the contract must scale by
   `periodDays / unit.payPeriodDays` (compliance alerts do; the under-hours rule works per pay

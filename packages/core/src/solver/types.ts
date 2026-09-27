@@ -60,6 +60,7 @@ import type {
 } from '../domain/entities.js';
 import type { IsoDate } from '../domain/time.js';
 import type { FairnessReport } from '../fairness/types.js';
+import type { PaidSickCall } from '../rules/paid-leave.js';
 import type { RuleSet, Violation } from '../rules/types.js';
 
 // ---------------------------------------------------------------------------
@@ -92,6 +93,11 @@ export interface SolveInput {
   /** The published lookback tail, so rest and weekly-hours rules see across the boundary. */
   priorAssignments: readonly Assignment[];
   timeOff: readonly TimeOffRequest[];
+  /**
+   * Missed shifts paid from sick leave whose assignment is off the schedule: credited toward
+   * contracted hours, as approved paid leave in `timeOff` is.
+   */
+  paidSickCalls?: readonly PaidSickCall[];
   credentials: readonly Credential[];
   nurseCredentials: readonly NurseCredential[];
   shiftCredentialRequirements: readonly ShiftCredentialRequirement[];

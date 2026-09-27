@@ -4,10 +4,15 @@
  * `ReasonDialog` the Requests screens use rather than a bespoke modal. The caller keys it on
  * the assignment id, so picking a different nurse remounts it with fresh mutation state — no
  * effect has to reset a stale error by hand.
+ *
+ * Staff call-offs are usually paid from sick leave, and paid sick hours count toward the nurse's
+ * contracted hours once the shift is covered — so the box starts ticked for employees and
+ * unticked for per-diem and travel nurses, who accrue none.
  */
 
 import type { RosterEntryView } from '@shared/api.js';
 import type { Id, IsoDate, ShiftType } from '@shiftnurse/core';
+import { useState } from 'react';
 import { useReportCallOff } from '../../api-dayof.js';
 import { formatDateWithWeekday } from '../../format.js';
 import { ReasonDialog } from '../requests/reason-dialog.js';
@@ -28,6 +33,9 @@ export function ReportCallOffDialog({
   onClose,
 }: ReportCallOffDialogProps) {
   const reportCallOff = useReportCallOff(unitId);
+  const employee =
+    entry?.nurse.employmentType === 'full_time' || entry?.nurse.employmentType === 'part_time';
+  const [paidSick, setPaidSick] = useState(employee);
 
   return (
     <ReasonDialog
@@ -50,10 +58,24 @@ export function ReportCallOffDialog({
       onConfirm={(reason) => {
         if (!entry) return;
         reportCallOff.mutate(
-          { assignmentId: entry.assignment.id, ...(reason ? { reason } : {}) },
+          {
+            assignmentId: entry.assignment.id,
+            ...(reason ? { reason } : {}),
+            ...(paidSick ? { paidSickHours: shiftType.durationHours } : {}),
+          },
           { onSuccess: onClose },
         );
       }}
-    />
+    >
+      <label className="flex items-center gap-2 text-sm text-text">
+        <input
+          type="checkbox"
+          checked={paidSick}
+          onChange={(e) => setPaidSick(e.target.checked)}
+          data-testid="paid-sick"
+        />
+        Paid from sick leave ({shiftType.durationHours}h, counts toward contracted hours)
+      </label>
+    </ReasonDialog>
   );
 }

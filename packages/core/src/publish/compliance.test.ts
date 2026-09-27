@@ -14,6 +14,7 @@ import {
   resetFixtureCounters,
   scenario,
   TIER_ROUTINE,
+  timeOff,
 } from '../testing/fixtures.js';
 import { complianceAlerts } from './compliance.js';
 
@@ -192,5 +193,44 @@ describe('complianceAlerts', () => {
       assignments: [assign('a', NIGHT_12, '2026-01-04'), assign('b', NIGHT_12, '2026-01-04')],
     });
     expect(alertsFor(s).filter((a) => a.kind === 'ratio_risk')).toEqual([]);
+  });
+  it('does not flag a nurse back from a paid vacation as drifting under contract', () => {
+    resetFixtureCounters();
+    const nurse = makeNurse({ id: 'n1', contractedHoursPerPeriod: 72 });
+    const s = scenario({
+      nurses: [nurse],
+      timeOff: [timeOff('n1', '2026-01-04', '2026-01-10', { paidHours: 36 })],
+      assignments: [
+        assign('n1', DAY_12, '2026-01-11'),
+        assign('n1', DAY_12, '2026-01-13'),
+        assign('n1', DAY_12, '2026-01-15'),
+      ], // 36 worked + 36 paid leave = the 72 contracted
+    });
+    expect(
+      alertsFor(s, { paidLeaveByNurse: s.ctx.paidLeaveByNurse }).filter(
+        (a) => a.kind === 'hours_drift',
+      ),
+    ).toEqual([]);
+  });
+
+  it('warns of overtime from paid leave only where the contract counts leave toward it', () => {
+    resetFixtureCounters();
+    const nurse = makeNurse({ id: 'n1', contractedHoursPerPeriod: 84 });
+    const s = scenario({
+      nurses: [nurse],
+      timeOff: [timeOff('n1', '2026-01-06', '2026-01-06', { paidHours: 12 })],
+      assignments: [
+        assign('n1', DAY_12, '2026-01-04'),
+        assign('n1', DAY_12, '2026-01-07'),
+        assign('n1', DAY_12, '2026-01-09'),
+      ], // 36 worked + 12 PTO in the week of 4 January
+    });
+    const overtime = (counts: boolean) =>
+      alertsFor(s, {
+        paidLeaveByNurse: s.ctx.paidLeaveByNurse,
+        paidLeaveCountsTowardOvertime: counts,
+      }).filter((a) => a.kind === 'overtime');
+    expect(overtime(false)).toEqual([]);
+    expect(overtime(true)).toMatchObject([{ nurseId: 'n1', hours: 48 }]);
   });
 });

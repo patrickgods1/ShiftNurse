@@ -68,8 +68,15 @@ function useInvalidateDayOf(unitId: Id | undefined) {
 export function useReportCallOff(unitId: Id | undefined) {
   const invalidate = useInvalidateDayOf(unitId);
   return useMutation({
-    mutationFn: ({ assignmentId, reason }: { assignmentId: Id; reason?: string }) =>
-      api.dayOf.reportCallOff(assignmentId, reason),
+    mutationFn: ({
+      assignmentId,
+      reason,
+      paidSickHours,
+    }: {
+      assignmentId: Id;
+      reason?: string;
+      paidSickHours?: number;
+    }) => api.dayOf.reportCallOff(assignmentId, reason, paidSickHours),
     onSettled: invalidate,
   });
 }

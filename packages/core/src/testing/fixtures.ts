@@ -32,6 +32,7 @@ import type {
   Unit,
 } from '../domain/entities.js';
 import { datesInRange, type IsoDate, isoDate, type Weekday } from '../domain/time.js';
+import type { PaidSickCall } from '../rules/paid-leave.js';
 import { buildRuleContext, defaultRuleSet } from '../rules/registry.js';
 import type { RuleContext, RuleSet } from '../rules/types.js';
 import { ScheduleView } from '../schedule/view.js';
@@ -241,6 +242,10 @@ export interface ScenarioOptions {
   acuityTiers?: AcuityTier[];
   hppdTarget?: HppdTarget;
   unit?: Unit;
+  /** Missed shifts paid from sick leave. */
+  paidSickCalls?: PaidSickCall[];
+  /** Parameter overrides by rule id, merged over the defaults. */
+  ruleParams?: Record<string, Record<string, unknown>>;
 }
 
 export interface Scenario {
@@ -298,6 +303,7 @@ export function scenario(options: ScenarioOptions = {}): Scenario {
     nurseCredentials: options.nurseCredentials ?? [],
     shiftCredentialRequirements: options.shiftCredentialRequirements ?? [],
     holidays: options.holidays ?? [],
+    ...(options.paidSickCalls ? { paidSickCalls: options.paidSickCalls } : {}),
   });
 
   const schedule = new ScheduleView({
@@ -313,10 +319,24 @@ export function scenario(options: ScenarioOptions = {}): Scenario {
     period,
     schedule,
     ctx,
-    ruleSet: defaultRuleSet(unit.id),
+    ruleSet: withRuleParams(defaultRuleSet(unit.id), options.ruleParams),
     nurses,
     shiftTypes,
     dates,
+  };
+}
+
+/** A rule set with some rules' parameters overridden. */
+export function withRuleParams(
+  ruleSet: RuleSet,
+  overrides: Record<string, Record<string, unknown>> | undefined,
+): RuleSet {
+  if (!overrides) return ruleSet;
+  return {
+    ...ruleSet,
+    configs: ruleSet.configs.map((c) =>
+      overrides[c.ruleId] ? { ...c, params: { ...c.params, ...overrides[c.ruleId] } } : c,
+    ),
   };
 }
 
@@ -347,6 +367,7 @@ export function solveInputFrom(options: SolveScenarioOptions = {}): SolveInput {
     assignments: options.assignments ?? [],
     priorAssignments: options.priorAssignments ?? [],
     timeOff: options.timeOff ?? [],
+    ...(options.paidSickCalls ? { paidSickCalls: options.paidSickCalls } : {}),
     credentials: testCredentials,
     nurseCredentials: options.nurseCredentials ?? [],
     shiftCredentialRequirements: options.shiftCredentialRequirements ?? [],

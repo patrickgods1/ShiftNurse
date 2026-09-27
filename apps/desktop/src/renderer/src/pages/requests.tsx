@@ -132,7 +132,12 @@ export default function RequestsPage() {
       render: (r) => `${formatDate(r.startDate)} – ${formatDate(r.endDate)}`,
       sortValue: (r) => r.startDate,
     },
-    { key: 'type', header: 'Type', render: (r) => r.type },
+    {
+      key: 'type',
+      header: 'Type',
+      // Paid hours count toward the nurse's contract once approved, so they show with the type.
+      render: (r) => (r.paidHours ? `${r.type} · ${r.paidHours}h paid` : r.type),
+    },
     { key: 'status', header: 'Status', render: (r) => r.status },
     {
       key: 'reason',

@@ -156,7 +156,7 @@ export type PreferenceKind = Preference['kind'];
 // Time off
 // ---------------------------------------------------------------------------
 
-export type TimeOffType = 'pto' | 'unpaid' | 'fmla' | 'education' | 'bereavement';
+export type TimeOffType = 'pto' | 'sick' | 'unpaid' | 'fmla' | 'education' | 'bereavement';
 
 export type TimeOffStatus = 'pending' | 'approved' | 'denied' | 'cancelled';
 
@@ -189,6 +189,12 @@ export interface TimeOffRequest {
   reason?: string;
   /** Required on denial — this is the text that gets quoted in a grievance. */
   decisionReason?: string;
+  /**
+   * Hours of paid leave charged for this absence, once approved: the shifts the nurse would
+   * have worked, not every calendar day. They count toward contracted hours (see
+   * `rules/paid-leave.ts`). Absent or 0 for unpaid leave.
+   */
+  paidHours?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -373,6 +379,11 @@ export interface CallOff {
   status: CallOffStatus;
   /** The backfill assignment, once someone accepts. */
   replacementAssignmentId?: Id;
+  /**
+   * Hours paid from the nurse's sick leave for the missed shift. Once the shift is off the
+   * schedule they count toward contracted hours, as paid leave does.
+   */
+  paidSickHours?: number;
 }
 
 export type CallOutcome = 'accepted' | 'declined' | 'no_answer' | 'left_message' | 'ineligible';
