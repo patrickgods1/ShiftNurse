@@ -39,12 +39,11 @@ import type {
   ShiftType,
   TimeOffRequest,
 } from '../domain/entities.js';
-import { dateInRange, datesInRange, type IsoDate } from '../domain/time.js';
+import { addDays, dateInRange, datesInRange, type IsoDate } from '../domain/time.js';
 import { deriveCounters } from '../fairness/ledger.js';
 import { scoreFairness } from '../fairness/score.js';
 import type { CounterContext } from '../fairness/types.js';
 import { type MaxHoursParams, maxHoursRule } from '../rules/hours-rules.js';
-import { leaveHoursByWorkWeek } from '../rules/paid-leave.js';
 import {
   buildRuleContext,
   evaluatePrepared,
@@ -55,6 +54,7 @@ import {
   ruleIdsByScope,
 } from '../rules/registry.js';
 import type { EvaluationResult, RuleContext, Violation } from '../rules/types.js';
+import { containingDate, coveringShift } from '../schedule/cover.js';
 import { ScheduleView } from '../schedule/view.js';
 import type { ConflictInput } from './types.js';
 
@@ -139,12 +139,7 @@ export class ConflictEngine {
           weekendDefinition: input.ruleSet.weekendDefinition,
           workWeekStartsOn: this.maxHoursParams.workWeekStartsOn,
           ...(this.maxHoursParams.paidLeaveCountsTowardOvertime
-            ? {
-                overtimeLeaveHours: leaveHoursByWorkWeek(
-                  this.baseCtx.paidLeaveByNurse,
-                  this.maxHoursParams.workWeekStartsOn,
-                ),
-              }
+            ? { overtimeLeave: this.baseCtx.paidLeaveByNurse }
             : {}),
         }
       : undefined;
@@ -264,18 +259,25 @@ export class SimState {
     return result.violations;
   }
 
-  /** Every enabled shift-scope rule, on a one-day view holding only this shift's roster. */
+  /**
+   * Every enabled shift-scope rule, on a one-day view holding only this shift's roster — and,
+   * for a shift inside another, the containing shift's roster, which covers it.
+   */
   shiftViolations(date: IsoDate, shiftTypeId: Id): Violation[] {
     const key = `${date}::${shiftTypeId}`;
     const cached = this.shiftEvaluations.get(key);
     if (cached) return cached;
     const shiftType = this.engine.shiftType(shiftTypeId);
-    const roster = this.view.onShift(date, shiftTypeId);
+    const cover = coveringShift(shiftType, date, this.view.shiftTypesById);
+    const roster = [
+      ...this.view.onShift(date, shiftTypeId),
+      ...(cover ? this.view.rosterAt(cover.date, cover.shiftType.id) : []),
+    ];
     const view = new ScheduleView({
       period: { ...this.engine.input.period, startDate: date, endDate: date },
       assignments: roster.map((v) => v.assignment),
       nurses: roster.map((v) => v.nurse),
-      shiftTypes: [shiftType],
+      shiftTypes: cover ? [shiftType, cover.shiftType] : [shiftType],
     });
     const result = evaluatePrepared(view, this.engine.shiftRules, {
       ...this.ctx,
@@ -283,6 +285,26 @@ export class SimState {
     });
     this.shiftEvaluations.set(key, result.violations);
     return result.violations;
+  }
+
+  /**
+   * This shift's violations and those of every shift running inside it: taking an RN off the
+   * day 12 can leave a new grad on the mid 8 inside it uncovered, and a simulated change must
+   * report that too.
+   */
+  shiftViolationsAround(date: IsoDate, shiftTypeId: Id): Violation[] {
+    const out = [...this.shiftViolations(date, shiftTypeId)];
+    const outer = this.engine.shiftType(shiftTypeId);
+    for (const inner of this.engine.shiftTypes) {
+      if (inner.withinShiftTypeId !== shiftTypeId) continue;
+      // Dated the same day, or the next for a shift inside a night that began this evening.
+      for (const innerDate of [date, addDays(date, 1)]) {
+        if (containingDate(inner, outer, innerDate) === date) {
+          out.push(...this.shiftViolations(innerDate, inner.id));
+        }
+      }
+    }
+    return out;
   }
 
   staffed(date: IsoDate, shiftTypeId: Id, role: NurseRole): number {

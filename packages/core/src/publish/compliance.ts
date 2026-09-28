@@ -17,7 +17,7 @@
 import { NURSE_ROLES, type ShiftDemand } from '../acuity/demand.js';
 import type { Credential, Id, NurseCredential, NurseRole } from '../domain/entities.js';
 import { compareDates, type IsoDate, type Weekday } from '../domain/time.js';
-import { workWeeksIn } from '../rules/hours-rules.js';
+import { payPeriodsIn, workWeeksIn } from '../rules/hours-rules.js';
 import { leaveHoursBetween, type PaidLeaveCredit } from '../rules/paid-leave.js';
 import { nurseName } from '../rules/types.js';
 import type { ScheduleView } from '../schedule/view.js';
@@ -30,13 +30,13 @@ export interface ComplianceAlert {
   severity: ComplianceSeverity;
   message: string;
   nurseId?: Id;
-  /** For `overtime`, the work week's start; for `ratio_risk`, the day. */
+  /** For `overtime`, the work week's (or pay period's) start; for `ratio_risk`, the day. */
   date?: IsoDate;
   shiftTypeId?: Id;
   role?: NurseRole;
   /** The shifts this alert is about — what the manager would move to clear it. */
   assignmentIds: Id[];
-  /** `hours_drift`: scheduled hours; `overtime`: hours in the week. */
+  /** `hours_drift`: scheduled hours; `overtime`: hours in the week or pay period. */
   hours?: number;
   /** `hours_drift`: contracted hours; `overtime`: the threshold. */
   expectedHours?: number;
@@ -50,6 +50,11 @@ export interface ComplianceInput {
   /** Weekly hours past which the week is overtime, from the max-hours rule params. */
   overtimeThresholdHours: number;
   workWeekStartsOn: Weekday;
+  /**
+   * Present when the max-hours rule judges overtime over the pay period: its threshold, and the
+   * unit's pay-period anchor. Overtime is then counted per pay period instead of per week.
+   */
+  payPeriodOvertime?: { thresholdHours: number; payPeriodAnchor: IsoDate };
   /** Fraction of contracted hours a nurse may drift either way before it is flagged. */
   hoursDriftTolerance: number;
   /**
@@ -140,10 +145,17 @@ function hoursDrift(input: ComplianceInput): ComplianceAlert[] {
 function overtime(input: ComplianceInput): ComplianceAlert[] {
   const { schedule } = input;
   const alerts: ComplianceAlert[] = [];
-  const weeks = workWeeksIn(
-    { start: schedule.period.startDate, end: schedule.period.endDate },
-    input.workWeekStartsOn,
-  );
+  const window = { start: schedule.period.startDate, end: schedule.period.endDate };
+  const byPayPeriod = input.payPeriodOvertime;
+  const weeks = byPayPeriod
+    ? payPeriodsIn(
+        window,
+        { payPeriodAnchor: byPayPeriod.payPeriodAnchor, payPeriodDays: input.payPeriodDays },
+        false,
+      )
+    : workWeeksIn(window, input.workWeekStartsOn);
+  const threshold = byPayPeriod ? byPayPeriod.thresholdHours : input.overtimeThresholdHours;
+  const span = byPayPeriod ? 'the pay period from' : 'the week of';
   for (const [nurseId, nurse] of schedule.nursesById) {
     if (!nurse.active) continue;
     for (const week of weeks) {
@@ -159,16 +171,16 @@ function overtime(input: ComplianceInput): ComplianceAlert[] {
         ? leaveHoursBetween(input.paidLeaveByNurse?.get(nurseId), week.start, week.end)
         : 0;
       const hours = inWeek.reduce((sum, v) => sum + v.paidHours, 0) + leave;
-      if (hours <= input.overtimeThresholdHours) continue;
+      if (hours <= threshold) continue;
       alerts.push({
         kind: 'overtime',
         severity: 'warning',
         nurseId,
         date: week.start,
         hours,
-        expectedHours: input.overtimeThresholdHours,
+        expectedHours: threshold,
         assignmentIds: inWeek.filter((v) => v.inPeriod).map((v) => v.assignment.id),
-        message: `${nurseName(nurse)} has ${hours - input.overtimeThresholdHours}h overtime in the week of ${week.start} (${hours}h)`,
+        message: `${nurseName(nurse)} has ${hours - threshold}h overtime in ${span} ${week.start} (${hours}h)`,
       });
     }
   }

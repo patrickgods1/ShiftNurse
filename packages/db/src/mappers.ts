@@ -73,6 +73,7 @@ export function toShiftType(r: typeof s.shiftType.$inferSelect): ShiftType {
     color: r.color,
     sortOrder: r.sortOrder,
     active: r.active,
+    withinShiftTypeId: r.withinShiftTypeId ?? null,
   };
 }
 

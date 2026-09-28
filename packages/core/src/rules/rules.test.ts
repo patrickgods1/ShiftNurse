@@ -11,6 +11,7 @@ import {
   DAY_8,
   DAY_12,
   EVENING_8,
+  MID_8,
   makeNurse,
   NIGHT_8,
   NIGHT_12,
@@ -21,6 +22,7 @@ import {
   TIER_HIGH,
   TIER_MODERATE,
   TIER_ROUTINE,
+  testShiftTypes,
   timeOff,
 } from '../testing/fixtures.js';
 import { evaluateSchedule } from './registry.js';
@@ -395,6 +397,121 @@ describe('weekly hours and overtime', () => {
   });
 });
 
+describe('overtime judged over the pay period', () => {
+  // Six 12s and one 8 a fortnight: 3×12 + 8 = 44h one week, 3×12 = 36h the next, 80h in all.
+  // Pay period Sun 4 – Sat 17 Jan 2026.
+  const PAY_PERIOD_80 = {
+    'max-hours-per-week': { overtimeByPayPeriod: true, payPeriodOvertimeThresholdHours: 80 },
+  };
+  const sixTwelvesAndAnEight = (nurseId: string) => [
+    assign(nurseId, DAY_12, '2026-01-04'),
+    assign(nurseId, DAY_12, '2026-01-06'),
+    assign(nurseId, DAY_12, '2026-01-08'),
+    assign(nurseId, DAY_8, '2026-01-09'),
+    assign(nurseId, DAY_12, '2026-01-12'),
+    assign(nurseId, DAY_12, '2026-01-14'),
+    assign(nurseId, DAY_12, '2026-01-16'),
+  ];
+
+  it('calls the 44-hour week overtime when overtime is weekly', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 80 });
+    const s = scenario({ nurses: [nurse], assignments: sixTwelvesAndAnEight(nurse.id) });
+    const v = evaluate(s).violations.find((x) => x.code === 'unauthorised_overtime');
+    expect(v?.details).toMatchObject({ scheduledHours: 44, overtimeHours: 4 });
+  });
+
+  it('accepts a 44-hour week when the pay period comes to 80', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 80 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: sixTwelvesAndAnEight(nurse.id),
+      ruleParams: PAY_PERIOD_80,
+    });
+    expect(codes(s)).not.toContain('unauthorised_overtime');
+  });
+
+  it('flags the hours past 80 in a pay period with no authorised shift', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 120 });
+    const s = scenario({
+      nurses: [nurse],
+      // A seventh 12 on Sat 17 Jan: 92h in the pay period, week two exactly at the 48h cap.
+      assignments: [...sixTwelvesAndAnEight(nurse.id), assign(nurse.id, DAY_12, '2026-01-17')],
+      ruleParams: PAY_PERIOD_80,
+    });
+    const v = evaluate(s).violations.find((x) => x.code === 'unauthorised_overtime');
+    expect(v?.details).toMatchObject({ scheduledHours: 92, overtimeHours: 12, threshold: 80 });
+    expect(v?.dates).toEqual(['2026-01-04', '2026-01-17']);
+    expect(v?.message).toMatch(/pay period/);
+    expect(codes(s)).not.toContain('over_max_hours');
+  });
+
+  it('accepts the hours past 80 when a shift in the pay period is authorised overtime', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 120 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        ...sixTwelvesAndAnEight(nurse.id),
+        assign(nurse.id, DAY_12, '2026-01-17', { isOvertime: true }),
+      ],
+      ruleParams: PAY_PERIOD_80,
+    });
+    expect(codes(s)).not.toContain('unauthorised_overtime');
+  });
+
+  it('counts the shifts worked before this schedule began in the same pay period', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 120 });
+    // This schedule starts Sun 11 Jan, halfway through the pay period; the first week's 44h
+    // were published last period. Four 12s this week bring the pay period to 92h.
+    const s = scenario({
+      nurses: [nurse],
+      startDate: isoDate('2026-01-11'),
+      endDate: isoDate('2026-01-24'),
+      priorAssignments: sixTwelvesAndAnEight(nurse.id)
+        .slice(0, 4)
+        .map((a) => ({ ...a, periodId: 'period-0' })),
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-12'),
+        assign(nurse.id, DAY_12, '2026-01-14'),
+        assign(nurse.id, DAY_12, '2026-01-16'),
+        assign(nurse.id, DAY_12, '2026-01-17'),
+      ],
+      ruleParams: PAY_PERIOD_80,
+    });
+    const v = evaluate(s).violations.find((x) => x.code === 'unauthorised_overtime');
+    expect(v?.details).toMatchObject({ scheduledHours: 92, overtimeHours: 12 });
+  });
+
+  it('still caps a single week at the absolute weekly limit', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 120 });
+    const s = scenario({
+      nurses: [nurse],
+      // 60h in the week of 4 Jan, all authorised: under 80 for the pay period, over the 48h cap.
+      assignments: ['2026-01-04', '2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08'].map((d) =>
+        assign(nurse.id, DAY_12, d, { isOvertime: true }),
+      ),
+      ruleParams: PAY_PERIOD_80,
+    });
+    expect(codes(s)).toContain('over_max_hours');
+  });
+
+  it('counts PTO toward the pay period threshold where the contract says it does', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 120 });
+    const s = scenario({
+      nurses: [nurse],
+      timeOff: [timeOff(nurse.id, '2026-01-10', '2026-01-10', { paidHours: 12 })],
+      assignments: [...sixTwelvesAndAnEight(nurse.id)], // 80 worked + 12 PTO
+      ruleParams: {
+        'max-hours-per-week': {
+          ...PAY_PERIOD_80['max-hours-per-week'],
+          paidLeaveCountsTowardOvertime: true,
+        },
+      },
+    });
+    const v = evaluate(s).violations.find((x) => x.code === 'unauthorised_overtime');
+    expect(v?.details).toMatchObject({ scheduledHours: 80, paidLeaveHours: 12, overtimeHours: 12 });
+  });
+});
+
 describe('approved time off', () => {
   it('flags a nurse scheduled during approved PTO', () => {
     const nurse = makeNurse();
@@ -549,6 +666,20 @@ describe('coverage minimums', () => {
     expect(codes(s)).toContain('missing_charge_nurse');
   });
 
+  it('does not ask for a charge nurse on a mid shift the day charge nurse runs', () => {
+    const nurses = [makeNurse(), makeNurse()];
+    const s = scenario({
+      nurses,
+      shiftTypes: [...testShiftTypes, MID_8],
+      coverageRequirements: coverageAllWeek(MID_8, 'RN', 2),
+      assignments: [
+        assign(nurses[0]!.id, MID_8, '2026-01-05'),
+        assign(nurses[1]!.id, MID_8, '2026-01-05'),
+      ],
+    });
+    expect(codes(s)).not.toContain('missing_charge_nurse');
+  });
+
   it('accepts a shift with a designated, eligible charge nurse', () => {
     const charge = makeNurse({ isChargeEligible: true });
     const other = makeNurse();
@@ -590,6 +721,69 @@ describe('coverage minimums', () => {
       ],
     });
     expect(codes(s)).toContain('all_novice_shift');
+  });
+
+  it('does not count an experienced nursing assistant as cover for a new-grad RN', () => {
+    const newGrad = makeNurse({ isNovice: true });
+    const aide = makeNurse({ role: 'CNA' });
+    const s = scenario({
+      nurses: [newGrad, aide],
+      coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
+      assignments: [
+        assign(newGrad.id, DAY_12, '2026-01-05'),
+        assign(aide.id, DAY_12, '2026-01-05'),
+      ],
+    });
+    expect(codes(s)).toContain('all_novice_shift');
+  });
+
+  it('lets a new grad on the mid 8 work beside the day 12’s experienced RN', () => {
+    const newGrad = makeNurse({ isNovice: true });
+    const lead = makeNurse({ isChargeEligible: true });
+    const s = scenario({
+      nurses: [newGrad, lead],
+      shiftTypes: [...testShiftTypes, MID_8],
+      coverageRequirements: [
+        ...coverageAllWeek(DAY_12, 'RN', 1),
+        ...coverageAllWeek(MID_8, 'RN', 1),
+      ],
+      assignments: [
+        assign(lead.id, DAY_12, '2026-01-05', { isCharge: true }),
+        assign(newGrad.id, MID_8, '2026-01-05'),
+      ],
+    });
+    expect(codes(s)).not.toContain('all_novice_shift');
+  });
+
+  it('flags a new grad alone on the mid 8 when the day 12 has no experienced RN either', () => {
+    const newGrad = makeNurse({ isNovice: true });
+    const s = scenario({
+      nurses: [newGrad],
+      shiftTypes: [...testShiftTypes, MID_8],
+      coverageRequirements: coverageAllWeek(MID_8, 'RN', 1),
+      assignments: [assign(newGrad.id, MID_8, '2026-01-05')],
+    });
+    expect(codes(s)).toContain('all_novice_shift');
+  });
+
+  it('counts the day 12’s ACLS nurse toward an ACLS requirement on the mid 8', () => {
+    const lead = makeNurse({ isChargeEligible: true });
+    const mid = makeNurse();
+    const s = scenario({
+      nurses: [lead, mid],
+      shiftTypes: [...testShiftTypes, MID_8],
+      coverageRequirements: [
+        ...coverageAllWeek(DAY_12, 'RN', 1),
+        ...coverageAllWeek(MID_8, 'RN', 1),
+      ],
+      shiftCredentialRequirements: [credentialRequirement(CRED_ACLS, 1, { shiftType: MID_8 })],
+      nurseCredentials: [nurseCredential(lead.id, CRED_ACLS)],
+      assignments: [
+        assign(lead.id, DAY_12, '2026-01-05', { isCharge: true }),
+        assign(mid.id, MID_8, '2026-01-05'),
+      ],
+    });
+    expect(codes(s)).not.toContain('missing_credential');
   });
 
   it('flags a shift missing a required credential', () => {

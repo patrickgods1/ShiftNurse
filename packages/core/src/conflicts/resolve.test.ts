@@ -9,6 +9,7 @@ import {
   credentialRequirement,
   DAY_12,
   differential,
+  MID_8,
   makeNurse,
   NIGHT_12,
   nurseCredential,
@@ -58,6 +59,29 @@ function analyse(input: ConflictInput): { conflicts: Conflict[]; resolutions: Re
 function forConflict(resolutions: Resolution[], conflictId: string): Resolution[] {
   return resolutions.filter((r) => r.conflictId === conflictId);
 }
+
+describe('charge on the offered shift', () => {
+  const chargeOffered = (shiftType: typeof DAY_12) => {
+    const priya = named('Priya', 'Nair');
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-05'),
+      endDate: isoDate('2026-01-17'),
+      nurses: [priya],
+      shiftTypes: [DAY_12, NIGHT_12, MID_8],
+      coverageRequirements: [coverage(shiftType, 'RN', 1, 1, null, isoDate(SAT))],
+    });
+    const { resolutions } = analyse(input);
+    const create = forConflict(resolutions, `understaffing:${SAT}:${shiftType.id}:RN`)
+      .flatMap((r) => r.actions)
+      .find((a) => a.type === 'create_assignment');
+    return create?.type === 'create_assignment' ? create.isCharge : undefined;
+  };
+
+  it('makes a charge-eligible nurse charge of an empty day 12, but not of a mid 8', () => {
+    expect(chargeOffered(DAY_12)).toBe(true);
+    expect(chargeOffered(MID_8)).toBe(false);
+  });
+});
 
 describe('who may be offered', () => {
   it('never offers a nurse who would break minimum rest', () => {

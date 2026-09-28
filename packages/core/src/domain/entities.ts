@@ -44,6 +44,14 @@ export interface ShiftType {
   /** Display/solve ordering. */
   sortOrder: number;
   active: boolean;
+  /**
+   * The shift this one runs inside, or null for a standalone shift. A mid or short shift (an 8
+   * from 07:00 inside the day 12) is covered by whoever is on the unit during its hours: it has
+   * no charge nurse of its own, and the containing shift's staff count toward its credential
+   * requirements and toward the experienced RNs a new grad on it works beside. Its window must
+   * sit inside that shift's (`schedule/cover.ts`).
+   */
+  withinShiftTypeId: Id | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -432,8 +440,11 @@ export interface Differential {
 export interface OvertimeRule {
   id: Id;
   unitId: Id;
-  /** 'daily' compares against hours in one shift; 'weekly' against a rolling 7-day window. */
-  basis: 'daily' | 'weekly';
+  /**
+   * 'daily' compares against hours in one shift; 'weekly' against the contract's work week;
+   * 'pay_period' against the unit's pay period (a 14-day overtime period, as under 8/80).
+   */
+  basis: 'daily' | 'weekly' | 'pay_period';
   thresholdHours: number;
   multiplier: number;
   active: boolean;

@@ -3,7 +3,7 @@
  * the unit, and prices a single candidate assignment in context.
  *
  * See `types.ts` for the pay model this implements. The one structural point worth restating:
- * overtime is a property of a nurse's *week*, not of a shift, so costing walks each nurse's
+ * overtime is a property of a nurse's *week* (or pay period), not of a shift, so costing walks each nurse's
  * full timeline (lookback tail included, exactly as the max-hours rule does) before any shift
  * can be priced. That is also why `marginalCost` re-costs the nurse rather than pricing the
  * candidate in isolation — the shift you add on Sunday can turn Wednesday into overtime.
@@ -12,6 +12,8 @@
 import type { Assignment, Differential, DifferentialKind, Id } from '../domain/entities.js';
 import { addDays, type IsoDate, isWeekendWindow, weekdayOf } from '../domain/time.js';
 import { gini } from '../fairness/distribution.js';
+import { payPeriodIndex, payPeriodWindow } from '../rules/hours-rules.js';
+import type { PaidLeaveCredit } from '../rules/paid-leave.js';
 import { isWorked } from '../rules/types.js';
 import { type AssignmentView, ScheduleView } from '../schedule/view.js';
 import { resolvePayRate } from './rates.js';
@@ -59,28 +61,34 @@ function workWeekStart(date: IsoDate, startsOn: number): IsoDate {
 }
 
 /**
- * Overtime hours per worked in-period view under a weekly rule. Hours accrue in chronological
- * order — the timeline is sorted by shift start — so the tail's hours consume the threshold
- * first and only the shifts that cross it carry overtime. Tail views accrue but are never
- * attributed overtime: a previous period's shift is not this schedule's cost.
+ * Overtime hours per worked in-period view under a weekly or pay-period rule; `windowOf` names
+ * the window (by its first date) a shift's hours accrue in. Hours accrue in chronological order
+ * — the timeline is sorted by shift start — so the tail's hours consume the threshold first and
+ * only the shifts that cross it carry overtime. Tail views accrue but are never attributed
+ * overtime: a previous period's shift is not this schedule's cost.
  */
-function weeklyOvertime(
+function windowOvertime(
   timeline: readonly AssignmentView[],
   threshold: number,
-  startsOn: number,
-  leaveHours: ReadonlyMap<string, number> | undefined,
+  windowOf: (date: IsoDate) => IsoDate,
+  leave: readonly PaidLeaveCredit[] | undefined,
 ): Map<AssignmentView, number> {
+  // Counted leave uses up the threshold first: a window's PTO day is not attributable to one
+  // shift, and putting it first is what makes the shifts that cross the threshold the overtime
+  // ones.
+  const leaveByWindow = new Map<IsoDate, number>();
+  for (const c of leave ?? []) {
+    const window = windowOf(c.date);
+    leaveByWindow.set(window, (leaveByWindow.get(window) ?? 0) + c.hours);
+  }
   const out = new Map<AssignmentView, number>();
-  const runningByWeek = new Map<IsoDate, number>();
+  const runningByWindow = new Map<IsoDate, number>();
   for (const view of timeline) {
     if (!isWorked(view)) continue;
-    const week = workWeekStart(view.assignment.date, startsOn);
-    // Counted leave uses up the threshold first: a week's PTO day is not attributable to one
-    // shift, and putting it first is what makes the shifts that cross 40 the overtime ones.
-    const before =
-      runningByWeek.get(week) ?? leaveHours?.get(`${view.assignment.nurseId}|${week}`) ?? 0;
+    const window = windowOf(view.assignment.date);
+    const before = runningByWindow.get(window) ?? leaveByWindow.get(window) ?? 0;
     const after = before + view.paidHours;
-    runningByWeek.set(week, after);
+    runningByWindow.set(window, after);
     if (!view.inPeriod) continue;
     const over = after - Math.max(threshold, before);
     if (over > 0) out.set(view, over);
@@ -99,15 +107,19 @@ function attributeOvertime(
   ctx: CostContext,
 ): Map<AssignmentView, OvertimeShare> {
   const best = new Map<AssignmentView, OvertimeShare>();
+  const nurseId = timeline[0]?.assignment.nurseId;
+  const leave = nurseId === undefined ? undefined : ctx.overtimeLeave?.get(nurseId);
   for (const rule of ctx.overtimeRules) {
     const hoursByView =
       rule.basis === 'daily'
         ? dailyOvertime(timeline, rule.thresholdHours)
-        : weeklyOvertime(
+        : windowOvertime(
             timeline,
             rule.thresholdHours,
-            ctx.workWeekStartsOn,
-            ctx.overtimeLeaveHours,
+            rule.basis === 'pay_period'
+              ? (date) => payPeriodWindow(payPeriodIndex(date, ctx.unit), ctx.unit).start
+              : (date) => workWeekStart(date, ctx.workWeekStartsOn),
+            leave,
           );
     for (const [view, hours] of hoursByView) {
       const candidate = { hours, multiplier: rule.multiplier };

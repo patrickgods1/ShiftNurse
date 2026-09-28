@@ -26,12 +26,16 @@ import { ScheduleView } from '../../schedule/view.js';
 import {
   assign,
   assignRun,
+  CRED_ACLS,
   coverageAllWeek,
+  credentialRequirement,
   DAY_8,
   DAY_12,
   EVENING_8,
+  MID_8,
   makeNurse,
   NIGHT_12,
+  nurseCredential,
   ON_CALL,
   payRate,
   resetFixtureCounters,
@@ -257,6 +261,47 @@ describe('hours', () => {
     const seven = [...six, assign('ada', DAY_12, '2026-01-17')];
     expect(evaluate(encoding, seven).violated.join('\n')).toMatch(/pay period/);
   });
+
+  describe('overtime judged over the pay period', () => {
+    // A 120h contract so only overtime can trip. Three 12s and an 8 in week one is 44h.
+    const bigContract = () => makeNurse({ id: 'ada', contractedHoursPerPeriod: 120 });
+    const withEight = (options: Partial<SolveScenarioOptions>) =>
+      unit([bigContract()], {
+        shiftTypes: [DAY_12, NIGHT_12, DAY_8],
+        coverageRequirements: [
+          ...coverageAllWeek(DAY_12, 'RN', 1),
+          ...coverageAllWeek(NIGHT_12, 'RN', 1),
+          ...coverageAllWeek(DAY_8, 'RN', 1),
+        ],
+        ...options,
+      });
+    const fortnightly = withParams('max-hours-per-week', {
+      overtimeByPayPeriod: true,
+      payPeriodOvertimeThresholdHours: 80,
+    });
+    const fortnight = [
+      assign('ada', DAY_12, '2026-01-04'),
+      assign('ada', DAY_12, '2026-01-06'),
+      assign('ada', DAY_12, '2026-01-08'),
+      assign('ada', DAY_8, '2026-01-09'),
+      assign('ada', DAY_12, '2026-01-12'),
+      assign('ada', DAY_12, '2026-01-14'),
+      assign('ada', DAY_12, '2026-01-16'),
+    ];
+
+    it('allows a 44-hour week in an 80-hour pay period', () => {
+      const weekly = encodeCpsat(withEight({}));
+      expect(evaluate(weekly, fortnight).violated.join('\n')).toMatch(/weekly hours/);
+      const encoding = encodeCpsat(withEight({ ruleSet: fortnightly }));
+      expect(evaluate(encoding, fortnight).violated).toEqual([]);
+    });
+
+    it('forbids the twelve that takes the pay period to 92 hours', () => {
+      const encoding = encodeCpsat(withEight({ ruleSet: fortnightly }));
+      const extra = [...fortnight, assign('ada', DAY_12, '2026-01-17')];
+      expect(evaluate(encoding, extra).violated.join('\n')).toMatch(/overtime: .* pay period/);
+    });
+  });
 });
 
 describe('agreement with the rule engine', () => {
@@ -335,6 +380,16 @@ describe('agreement with the rule engine', () => {
       { nightShiftEndingOnLeaveCounts: true },
       withParams('max-hours-per-week', { paidLeaveCountsTowardOvertime: true }),
     );
+    expectParity(parityInput({ ...paidLeave, ruleSet }));
+  });
+
+  it('agrees with the rules when overtime is judged over the pay period', () => {
+    // 60h a pay period, so the threshold binds below both nurses' contract caps.
+    const ruleSet = withParams('max-hours-per-week', {
+      overtimeByPayPeriod: true,
+      payPeriodOvertimeThresholdHours: 60,
+      paidLeaveCountsTowardOvertime: true,
+    });
     expectParity(parityInput({ ...paidLeave, ruleSet }));
   });
 });
@@ -450,6 +505,63 @@ describe('parity with the annealer', () => {
       // Integer scaling rounds each coefficient to 1/1000 point and each hour target to 0.01h.
       expect(evaluation.objective).toBeCloseTo(expected, 0);
     }
+  });
+
+  describe('a mid 8 covered by the day 12', () => {
+    // Nurse 0: charge-eligible, experienced, ACLS. Nurse 1: experienced RN, no ACLS.
+    // Nurse 5: a new grad. The mid 8 needs one ACLS nurse on the unit during its hours.
+    const midInput = (mid = MID_8, nurses = richInput().nurses) => {
+      return solveInputFrom({
+        startDate: isoDate('2026-01-04'),
+        endDate: isoDate('2026-01-24'),
+        nurses: [...nurses],
+        shiftTypes: [DAY_12, NIGHT_12, mid],
+        coverageRequirements: [
+          ...coverageAllWeek(DAY_12, 'RN', 1, 2),
+          ...coverageAllWeek(NIGHT_12, 'RN', 1, 1),
+          ...coverageAllWeek(mid, 'RN', 1, 1),
+        ],
+        shiftCredentialRequirements: [credentialRequirement(CRED_ACLS, 1, { shiftType: mid })],
+        nurseCredentials: [nurseCredential(nurses[0]!.id, CRED_ACLS)],
+      });
+    };
+    const on = (input: SolveInput, i: number, shift: typeof DAY_12) =>
+      assign(input.nurses[i]!.id, shift, '2026-01-05');
+
+    it('prices charge, ACLS and new-grad cover from the day 12 the same', () => {
+      const input = midInput();
+      const covered = both(input, [on(input, 0, DAY_12), on(input, 5, MID_8)]);
+      const noAcls = both(input, [on(input, 1, DAY_12), on(input, 5, MID_8)]);
+      const alone = both(input, [on(input, 5, MID_8)]);
+      for (const { evaluation, expected } of [covered, noAcls, alone]) {
+        expect(evaluation.violated).toEqual([]);
+        expect(evaluation.objective).toBeCloseTo(expected, 0);
+      }
+      // The day 12's ACLS nurse covers the mid 8; an experienced RN without ACLS covers only
+      // the new grad; nobody on the day 12 covers neither.
+      expect(covered.expected).toBeLessThan(noAcls.expected);
+      expect(noAcls.expected).toBeLessThan(alone.expected);
+    });
+
+    it('accepts and prices the annealer’s schedules the same, seed after seed', () => {
+      const input = midInput();
+      for (const seed of [1, 2]) {
+        const report = solve(input, { seed, maxIterations: 4000 });
+        const { evaluation, expected } = both(input, report.assignments);
+        expect(evaluation.violated).toEqual([]);
+        expect(evaluation.objective).toBeCloseTo(expected, 0);
+      }
+    });
+
+    it('costs more when the 8 must carry its own charge and ACLS nurse', () => {
+      const inside = midInput();
+      const alone = midInput({ ...MID_8, withinShiftTypeId: null }, inside.nurses);
+      const schedule = [on(inside, 0, DAY_12), on(inside, 1, MID_8)];
+      const insideCost = both(inside, schedule);
+      const aloneCost = both(alone, schedule);
+      expect(aloneCost.evaluation.objective).toBeCloseTo(aloneCost.expected, 0);
+      expect(aloneCost.expected).toBeGreaterThan(insideCost.expected);
+    });
   });
 
   it('prices an empty schedule — every floor short — the same', () => {

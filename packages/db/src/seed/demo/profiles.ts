@@ -139,8 +139,11 @@ export const COMMUNITY_MED_SURG: DemoProfile = {
 // VA San Francisco medical-surgical
 // ---------------------------------------------------------------------------
 
-const FULL_8 = { employmentType: 'full_time', fte: 1, contractedHoursPerPeriod: 80 } as const;
-const PART_8 = { employmentType: 'part_time', fte: 0.6, contractedHoursPerPeriod: 48 } as const;
+/** Six 12s and one 8 a pay period: 80 hours, 44 one week and 36 the next. */
+const FULL_80 = { employmentType: 'full_time', fte: 1, contractedHoursPerPeriod: 80 } as const;
+const EIGHT_A_PAY_PERIOD = { shortShift: { code: 'D8', perPayPeriod: 1 } } as const;
+/** Four 12s a pay period. */
+const PART_48 = { employmentType: 'part_time', fte: 0.6, contractedHoursPerPeriod: 48 } as const;
 /** VA "intermittent" staff: no fixed tour, no hours commitment, the per-diem equivalent. */
 const INTERMITTENT = { employmentType: 'per_diem', fte: 0, contractedHoursPerPeriod: 0 } as const;
 
@@ -148,49 +151,50 @@ const INTERMITTENT = { employmentType: 'per_diem', fte: 0, contractedHoursPerPer
  * An acute medical-surgical ward modelled on VA practice at a large urban medical center such as
  * San Francisco's (Fort Miley). What sets it apart:
  *
- * - **Tours, not shifts.** Traditional 8-hour day, evening and night tours (07:30, 15:30, 23:30)
- *   worked five a week; full-time is 80 hours a pay period.
+ * - **A compressed biweekly schedule.** Full-time staff work six 12-hour tours and one 8-hour
+ *   tour each pay period: 80 hours, the long week 44 and the short week 36. That is a compressed
+ *   schedule — 80 hours in fewer than ten workdays, as 5 U.S.C. §6121 defines one — so overtime
+ *   is counted over the pay period rather than the week: past 80 hours in the pay period, or past
+ *   the 12 hours of a scheduled tour. Part-time staff work four 12s.
+ * - **The 8 has its own floor and runs inside the day 12.** It works 07:00–15:00, adding hands
+ *   for the morning's care and discharges, and is covered as a real ward covers it: by the day
+ *   12's charge nurse and ACLS nurse, and a new grad on it works beside the day 12's
+ *   experienced RNs.
  * - **Federal staff mix.** RNs, LVNs (California's LPNs; the VA employs many) and nursing
  *   assistants in team nursing. No agency travelers.
  * - **No legislated ratios.** California's ratio law does not bind a federal facility; VHA
  *   staffs to nursing hours per patient day set by its expert-panel staffing methodology
  *   (VHA Directive 1351), so demand here is the floors and the NHPPD target, not a ratio.
  * - **Title 38 premium pay** (38 U.S.C. §7453): a 10% night differential on any tour with at
- *   least four hours between 6 pm and 6 am — the whole evening and night tours, which is why the
- *   evening tour is flagged as an off-tour here — a 25% premium for any tour touching Saturday
- *   or Sunday, double time on holidays, and overtime after 8 hours in a day or 40 in a week.
+ *   least four hours between 6 pm and 6 am — the whole night 12, not the day 12 or the 8 — and a
+ *   25% premium for any tour touching Saturday or Sunday, and double time on holidays.
  * - **All eleven federal holidays**, Veterans Day included.
  * - **The federal biweekly pay calendar** and four-week schedules.
- * - **Permanent off-tours.** Evening and night staff work five tours in a row, so the rule set
- *   allows five consecutive off-tours where a community unit allows three 12-hour nights.
  *
  * Pay is on the VA Nurse Locality Pay System for RNs (Nurse I–III by experience, San Francisco
  * rates among the highest in the VA) and the General Schedule with the San Francisco locality
  * for LVNs and nursing assistants. The figures are rounded approximations.
  *
- * Floors (24 beds, about 20 patients): days 4 RN, 2 LVN, 2 NA; evenings 4 RN, 1 LVN, 2 NA;
- * nights 3 RN, 1 LVN, 1 NA — 160 nursing hours a day, 8.0 per patient day. Targets, which a
- * manager schedules to when staff are available, add one on most tours.
+ * Floors (24 beds, about 20 patients): day 12 4 RN, 2 LVN, 2 NA; night 12 3 RN, 1 LVN, 1 NA; the
+ * 8 one RN — 164 nursing hours a day, 8.2 per patient day. Targets, which a manager schedules to
+ * when staff are available, add one on most shifts. Contracted RN 12s come to about 116 a pay
+ * period against a floor of 98, and eighteen 8s against fourteen.
  */
 const vaRoster: DemoRosterRow[] = [
-  { role: 'RN', ...FULL_8, position: 'D8', count: 6, newGrads: 2 },
-  { role: 'RN', ...FULL_8, position: 'E8', count: 6 },
-  { role: 'RN', ...FULL_8, position: 'N8', count: 4 },
-  { role: 'RN', ...PART_8, position: 'D8', count: 1 },
-  { role: 'RN', ...PART_8, position: 'E8', count: 1 },
-  { role: 'RN', ...PART_8, position: 'N8', count: 1 },
+  { role: 'RN', ...FULL_80, ...EIGHT_A_PAY_PERIOD, position: 'D12', count: 10, newGrads: 2 },
+  { role: 'RN', ...FULL_80, ...EIGHT_A_PAY_PERIOD, position: 'N12', count: 8 },
+  { role: 'RN', ...PART_48, position: 'D12', count: 1 },
+  { role: 'RN', ...PART_48, position: 'N12', count: 1 },
   { role: 'RN', ...INTERMITTENT, position: 'flex', count: 3 },
-  { role: 'LPN', ...FULL_8, position: 'D8', count: 3 },
-  { role: 'LPN', ...FULL_8, position: 'E8', count: 1 },
-  { role: 'LPN', ...PART_8, position: 'E8', count: 1 },
-  { role: 'LPN', ...FULL_8, position: 'N8', count: 1 },
-  { role: 'LPN', ...PART_8, position: 'N8', count: 1 },
+  { role: 'LPN', ...FULL_80, ...EIGHT_A_PAY_PERIOD, position: 'D12', count: 4 },
+  { role: 'LPN', ...FULL_80, ...EIGHT_A_PAY_PERIOD, position: 'N12', count: 3 },
+  { role: 'LPN', ...PART_48, position: 'D12', count: 1 },
+  { role: 'LPN', ...PART_48, position: 'N12', count: 1 },
   { role: 'LPN', ...INTERMITTENT, position: 'flex', count: 2 },
-  { role: 'CNA', ...FULL_8, position: 'D8', count: 3 },
-  { role: 'CNA', ...FULL_8, position: 'E8', count: 3 },
-  { role: 'CNA', ...PART_8, position: 'E8', count: 1 },
-  { role: 'CNA', ...FULL_8, position: 'N8', count: 2 },
-  { role: 'CNA', ...PART_8, position: 'N8', count: 1 },
+  { role: 'CNA', ...FULL_80, ...EIGHT_A_PAY_PERIOD, position: 'D12', count: 4 },
+  { role: 'CNA', ...FULL_80, ...EIGHT_A_PAY_PERIOD, position: 'N12', count: 3 },
+  { role: 'CNA', ...PART_48, position: 'D12', count: 1 },
+  { role: 'CNA', ...PART_48, position: 'N12', count: 1 },
   { role: 'CNA', ...INTERMITTENT, position: 'flex', count: 2 },
 ];
 
@@ -202,40 +206,41 @@ export const VA_SF_MED_SURG: DemoProfile = {
   payPeriodCycle: isoDate('2025-01-12'),
   shifts: [
     {
-      code: 'D8',
-      name: 'Day tour',
-      startTime: '07:30',
-      durationHours: 8,
+      code: 'D12',
+      name: 'Day 12',
+      startTime: '07:00',
+      durationHours: 12,
       isNight: false,
       color: '#f59e0b',
       censusDelta: 0,
     },
-    // An off-tour: Title 38 night differential applies to the whole tour.
     {
-      code: 'E8',
-      name: 'Evening tour',
-      startTime: '15:30',
-      durationHours: 8,
-      isNight: true,
-      color: '#f97316',
-      censusDelta: 0,
-    },
-    {
-      code: 'N8',
-      name: 'Night tour',
-      startTime: '23:30',
-      durationHours: 8,
+      code: 'N12',
+      name: 'Night 12',
+      startTime: '19:00',
+      durationHours: 12,
       isNight: true,
       color: '#4f46e5',
       censusDelta: -1,
     },
+    // Inside the day 12, which covers it: its charge nurse, ACLS nurse and experienced RNs.
+    {
+      code: 'D8',
+      name: 'Day 8',
+      startTime: '07:00',
+      durationHours: 8,
+      isNight: false,
+      color: '#14b8a6',
+      censusDelta: 0,
+      within: 'D12',
+    },
   ],
   roster: vaRoster,
-  chargeNurses: { D8: 4, E8: 4, N8: 4 },
+  chargeNurses: { D12: 5, N12: 4 },
   floors: {
-    D8: { RN: { min: 4, target: 5 }, LPN: { min: 2, target: 3 }, CNA: { min: 2, target: 3 } },
-    E8: { RN: { min: 4, target: 5 }, LPN: { min: 1, target: 2 }, CNA: { min: 2, target: 3 } },
-    N8: { RN: { min: 3, target: 4 }, LPN: { min: 1, target: 2 }, CNA: { min: 1, target: 2 } },
+    D12: { RN: { min: 4, target: 5 }, LPN: { min: 2, target: 3 }, CNA: { min: 2, target: 3 } },
+    N12: { RN: { min: 3, target: 4 }, LPN: { min: 1, target: 2 }, CNA: { min: 1, target: 2 } },
+    D8: { RN: { min: 1, target: 2 }, LPN: { min: 0, target: 1 }, CNA: { min: 0, target: 1 } },
   },
   census: {
     beds: 24,
@@ -274,9 +279,10 @@ export const VA_SF_MED_SURG: DemoProfile = {
     { kind: 'weekend', mode: 'multiplier', amount: 1.25 },
     { kind: 'holiday', mode: 'multiplier', amount: 2 },
   ],
+  // A compressed schedule: overtime past the scheduled 12-hour tour or 80 hours a pay period.
   overtime: [
-    { basis: 'daily', thresholdHours: 8, multiplier: 1.5 },
-    { basis: 'weekly', thresholdHours: 40, multiplier: 1.5 },
+    { basis: 'daily', thresholdHours: 12, multiplier: 1.5 },
+    { basis: 'pay_period', thresholdHours: 80, multiplier: 1.5 },
   ],
   holidays: 'federal',
   rules: {
@@ -288,8 +294,8 @@ export const VA_SF_MED_SURG: DemoProfile = {
       mode: 'overlaps',
     },
     params: {
-      // Five tours on, two off; a permanent evening or night tour is five in a row.
-      'max-consecutive-shifts': { maxConsecutiveShifts: 5, maxConsecutiveNights: 5 },
+      // 44 hours one week and 36 the next is 80 for the pay period, not four hours of overtime.
+      'max-hours-per-week': { overtimeByPayPeriod: true, payPeriodOvertimeThresholdHours: 80 },
     },
   },
 };

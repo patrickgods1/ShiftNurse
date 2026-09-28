@@ -408,8 +408,9 @@ and can start over (after a `pre-reset` backup).
       shift priced within 6% of budget, Generate fills every floor of the draft; smoke passes on
       the new demo (hybrid and SA + LNS 0 unfilled)
 - [x] A choice of demo units: the demo became a profile-driven engine; the welcome screen lists
-      community med-surg, a VA San Francisco medicine-surgery ward (8-hour tours, LVNs, no
-      ratio law, Title 38 premiums, federal holidays and pay calendar) and a California ICU
+      community med-surg, a VA San Francisco medicine-surgery ward (six 12s and an 8 a pay
+      period with overtime over the pay period, LVNs, no ratio law, Title 38 premiums, federal
+      holidays and pay calendar) and a California ICU
       (Title 22 1:2/1:1, ACLS for all, 12-hour alternative workweek)
 - [x] Verify: `seed/demo/*.test.ts` — the shared realism checks on every unit (legal history,
       Generate fills every floor) plus each unit's own facts, Title 38 pay factors computed by

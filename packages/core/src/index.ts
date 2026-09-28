@@ -35,6 +35,7 @@ export * from './rules/rest-rules.js';
 // Rule engine
 export * from './rules/types.js';
 // Schedule read model
+export * from './schedule/cover.js';
 export * from './schedule/view.js';
 // First-run setup presets
 export * from './setup/index.js';

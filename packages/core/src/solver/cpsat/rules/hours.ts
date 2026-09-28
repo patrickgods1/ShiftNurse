@@ -10,6 +10,7 @@ import { compareDates } from '../../../domain/time.js';
 import {
   type ContractedHoursParams,
   type MaxHoursParams,
+  overtimeThreshold,
   payPeriodsIn,
   workWeeksIn,
 } from '../../../rules/hours-rules.js';
@@ -31,33 +32,52 @@ function within(e: TimelineEntry, start: string, end: string): boolean {
 
 export function encodeWeeklyHours(ctx: EncodeContext, raw: Record<string, unknown>): void {
   const params = raw as unknown as MaxHoursParams;
-  const { period } = ctx.input;
-  const weeks = workWeeksIn(
-    { start: period.startDate, end: period.endDate },
-    params.workWeekStartsOn,
-  );
+  const { period, unit } = ctx.input;
+  const window = { start: period.startDate, end: period.endDate };
+  const weeks = workWeeksIn(window, params.workWeekStartsOn);
+  // Over the pay period, overtime gets its own constraint per pay period and the weeks keep only
+  // the absolute cap; weekly, one constraint per week carries the tighter of the two.
+  const payPeriods = params.overtimeByPayPeriod ? payPeriodsIn(window, unit, false) : [];
   for (const [n, vars] of ctx.byNurse.entries()) {
     if (vars.length === 0) continue;
     const counted = ctx
       .timeline(n)
       .filter((e) => params.onCallCountsTowardHours || !e.shiftType.isOnCall);
     const leave = ctx.model.ctx.paidLeaveByNurse.get(ctx.model.nurses[n]!.id);
-    for (const week of weeks) {
-      const inWeek = counted.filter((e) => within(e, week.start, week.end));
-      const authorised = inWeek.some((e) => e.literal === null && e.assignment?.isOvertime);
+    /** The overtime cap on a window, or null when overtime there is already authorised. */
+    const overtimeCap = (inWindow: TimelineEntry[], start: string, end: string) => {
+      const authorised = inWindow.some((e) => e.literal === null && e.assignment?.isOvertime);
+      if (!params.requireOvertimeAuthorisation || authorised) return null;
       // Paid leave eats into the overtime threshold only where the contract counts it; it never
       // counts toward the absolute cap.
       const leaveHours = params.paidLeaveCountsTowardOvertime
-        ? leaveHoursBetween(leave, week.start, week.end)
+        ? leaveHoursBetween(leave, start as never, end as never)
         : 0;
+      return overtimeThreshold(params) - leaveHours;
+    };
+    for (const week of weeks) {
+      const inWeek = counted.filter((e) => within(e, week.start, week.end));
+      const overtime = params.overtimeByPayPeriod
+        ? null
+        : overtimeCap(inWeek, week.start, week.end);
       const cap =
-        params.requireOvertimeAuthorisation && !authorised
-          ? Math.min(params.maxHoursPerWeek, params.overtimeThresholdHours - leaveHours)
-          : params.maxHoursPerWeek;
+        overtime === null ? params.maxHoursPerWeek : Math.min(params.maxHoursPerWeek, overtime);
       ctx.b.atMost(
         hoursExpr(inWeek),
         atMostHours(cap),
         `weekly hours: ${ctx.name(n)} week of ${week.start} over ${cap}h`,
+      );
+    }
+    for (const pay of payPeriods) {
+      const inPay = counted.filter((e) => within(e, pay.start, pay.end));
+      // A pay period with none of this schedule's shifts is not the rule's to judge.
+      if (!inPay.some((e) => e.inPeriod)) continue;
+      const cap = overtimeCap(inPay, pay.start, pay.end);
+      if (cap === null) continue;
+      ctx.b.atMost(
+        hoursExpr(inPay),
+        atMostHours(cap),
+        `overtime: ${ctx.name(n)} pay period from ${pay.start} over ${cap}h`,
       );
     }
   }

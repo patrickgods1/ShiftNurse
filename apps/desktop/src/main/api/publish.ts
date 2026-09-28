@@ -65,6 +65,7 @@ function alertsForView(
     .params as unknown as MaxHoursParams;
   const fte = configs.find((c) => c.ruleId === contractedHoursRule.id)!
     .params as unknown as ContractedHoursParams;
+  const unit = unitOrThrow(db, period.unitId);
   // Paid leave counts as the hours rules count it, so a nurse back from vacation is not "drift".
   const paidLeaveByNurse = new Map<Id, PaidLeaveCredit[]>();
   const credits = paidLeaveCredits(
@@ -87,8 +88,16 @@ function alertsForView(
     ).all(),
     overtimeThresholdHours: params.overtimeThresholdHours,
     workWeekStartsOn: params.workWeekStartsOn,
+    ...(params.overtimeByPayPeriod
+      ? {
+          payPeriodOvertime: {
+            thresholdHours: params.payPeriodOvertimeThresholdHours,
+            payPeriodAnchor: unit.payPeriodAnchor,
+          },
+        }
+      : {}),
     hoursDriftTolerance: HOURS_DRIFT_TOLERANCE,
-    payPeriodDays: unitOrThrow(db, period.unitId).payPeriodDays,
+    payPeriodDays: unit.payPeriodDays,
   });
 }
 

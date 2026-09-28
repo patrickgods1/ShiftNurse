@@ -12,6 +12,7 @@ import {
   coverage,
   credentialRequirement,
   DAY_12,
+  MID_8,
   makeNurse,
   NIGHT_12,
   nurseCredential,
@@ -74,6 +75,25 @@ function ledgerRow(
 }
 
 describe('findReplacements', () => {
+  it('makes a charge-eligible replacement charge on a day 12 with none, never on a mid 8', () => {
+    resetFixtureCounters();
+    const absent = makeNurse({ firstName: 'Priya', lastName: 'Nair' });
+    const lead = makeNurse({ firstName: 'Ana', lastName: 'Cruz', isChargeEligible: true });
+    const onDay = assign(absent.id, DAY_12, SAT);
+    const onMid = assign(absent.id, MID_8, FRI);
+    const chargeFor = (absentShift: typeof onDay) =>
+      findReplacements(
+        replacementInput({
+          nurses: [absent, lead],
+          shiftTypes: [DAY_12, NIGHT_12, MID_8],
+          assignments: [absentShift],
+          absentAssignmentId: absentShift.id,
+        }),
+      ).candidates.find((c) => c.nurseId === lead.id)?.assignment.isCharge;
+    expect(chargeFor(onDay)).toBe(true);
+    expect(chargeFor(onMid)).toBe(false);
+  });
+
   it('excludes the nurse whose Friday night ends when this Saturday day shift starts', () => {
     resetFixtureCounters();
     const absent = makeNurse({ firstName: 'Priya', lastName: 'Nair' });

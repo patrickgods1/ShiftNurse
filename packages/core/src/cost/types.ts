@@ -26,13 +26,14 @@
  *   *premium* of `(multiplier − 1) × straight rate`. So an overtime hour on a holiday night
  *   earns the holiday and night premiums *and* half of that rate again — the multipliers
  *   compound, which is what "time-and-a-half on the holiday rate" means in a contract.
- * - **Daily and weekly overtime do not stack.** An hour is overtime once. When both kinds of
- *   rule are active, each assignment is priced under whichever rule yields the larger premium
- *   for it.
- * - **Weekly overtime falls on the later shifts of the week.** The first `threshold` hours of a
- *   work week are straight time, in chronological order, including hours carried in from the
- *   previous period's lookback tail; only shifts that push past the threshold carry overtime,
- *   and only the hours past it.
+ * - **Daily, weekly and pay-period overtime do not stack.** An hour is overtime once. When
+ *   several kinds of rule are active, each assignment is priced under whichever rule yields the
+ *   larger premium for it.
+ * - **Weekly overtime falls on the later shifts of the week**, and pay-period overtime on the
+ *   later shifts of the pay period. The first `threshold` hours of the window are straight
+ *   time, in chronological order, including hours carried in from the previous period's
+ *   lookback tail; only shifts that push past the threshold carry overtime, and only the hours
+ *   past it.
  * - **On-call standby** is not worked time: it earns the `on_call` differential alone (a flat
  *   amount per standby hour, or a multiplier on the base rate), never base pay, never other
  *   differentials, and never overtime. `call_back` — being called in while on standby — is
@@ -59,6 +60,7 @@ import type {
   Unit,
 } from '../domain/entities.js';
 import type { IsoDate, Weekday, WeekendDefinition } from '../domain/time.js';
+import type { PaidLeaveCredit } from '../rules/paid-leave.js';
 
 // ---------------------------------------------------------------------------
 // Context
@@ -78,11 +80,12 @@ export interface CostContext {
   /** The contract's work-week start for weekly overtime, matching the max-hours rule. */
   workWeekStartsOn: Weekday;
   /**
-   * Paid leave that counts toward weekly overtime, keyed `nurseId|weekStart`
-   * (`leaveHoursByWorkWeek`). Present only when the rule set's max-hours rule says leave counts;
-   * absent, leave never moves a shift into overtime.
+   * Paid leave that counts toward overtime, by nurse (`RuleContext.paidLeaveByNurse`). Present
+   * only when the rule set's max-hours rule says leave counts; absent, leave never moves a shift
+   * into overtime. Each weekly or pay-period window starts its running hours with the leave
+   * dated in it.
    */
-  overtimeLeaveHours?: ReadonlyMap<string, number>;
+  overtimeLeave?: ReadonlyMap<Id, readonly PaidLeaveCredit[]>;
 }
 
 // ---------------------------------------------------------------------------

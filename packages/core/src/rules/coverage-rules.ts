@@ -16,6 +16,7 @@
 import { NURSE_ROLES } from '../acuity/demand.js';
 import type { Id, NurseCredential, NurseRole } from '../domain/entities.js';
 import { compareDates, type IsoDate } from '../domain/time.js';
+import { coveringShift } from '../schedule/cover.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
 import { type Rule, type RuleContext, type Violation, violation } from './types.js';
 
@@ -46,8 +47,9 @@ export interface CoverageParams {
   /** Every bedside shift needs a designated charge nurse. */
   requireChargeNurse: boolean;
   /**
-   * At least this many non-novice nurses per staffed shift. A shift of nothing but new
-   * graduates is unsafe regardless of the headcount being technically correct.
+   * At least this many experienced RNs on the unit during any shift a new grad works: on that
+   * shift or, for a shift inside another, on the containing one. Only an RN can supervise an
+   * RN, so an experienced LVN or nursing assistant does not count.
    */
   minExperiencedPerShift: number;
   /** Enforce the credential requirements configured for the unit. */
@@ -59,7 +61,9 @@ export const coverageRule: Rule<CoverageParams> = {
   name: 'Coverage minimums and skill mix',
   description:
     'Every shift must meet its baseline staffing floor for each role, have a designated charge ' +
-    'nurse, satisfy credential requirements, and never consist entirely of novice nurses.',
+    'nurse, satisfy credential requirements, and never leave a new grad without an experienced ' +
+    'RN. A shift inside another is covered by the containing shift: no charge nurse of its own, ' +
+    'and that shift’s staff count toward its credentials and new-grad cover.',
   severity: 'hard',
   category: 'coverage',
   scope: 'shift',
@@ -79,6 +83,11 @@ export const coverageRule: Rule<CoverageParams> = {
         if (!demand) continue;
 
         const assigned = schedule.onShift(date, shiftType.id);
+        // Whoever else is on the unit during this shift's hours: the containing shift's roster.
+        const cover = coveringShift(shiftType, date, schedule.shiftTypesById);
+        const onUnit = cover
+          ? [...assigned, ...schedule.rosterAt(cover.date, cover.shiftType.id)]
+          : assigned;
         const requiresStaff = NURSE_ROLES.some((r) => (demand.byRole[r]?.minCount ?? 0) > 0);
 
         // --- Baseline floor per role -------------------------------------
@@ -115,7 +124,11 @@ export const coverageRule: Rule<CoverageParams> = {
         if (!requiresStaff || shiftType.isOnCall) continue;
 
         // --- Charge nurse -------------------------------------------------
-        if (params.requireChargeNurse && assigned.length > 0) {
+        if (
+          params.requireChargeNurse &&
+          shiftType.withinShiftTypeId === null &&
+          assigned.length > 0
+        ) {
           const charge = assigned.filter((v) => v.assignment.isCharge && v.nurse.isChargeEligible);
           if (charge.length === 0) {
             violations.push(
@@ -136,16 +149,19 @@ export const coverageRule: Rule<CoverageParams> = {
         }
 
         // --- Skill mix ----------------------------------------------------
-        if (params.minExperiencedPerShift > 0 && assigned.length > 0) {
-          const experienced = assigned.filter((v) => !v.nurse.isNovice).length;
+        const hasNovice = assigned.some((v) => v.nurse.isNovice);
+        if (params.minExperiencedPerShift > 0 && hasNovice) {
+          const experienced = onUnit.filter(
+            (v) => v.nurse.role === 'RN' && !v.nurse.isNovice,
+          ).length;
           if (experienced < params.minExperiencedPerShift) {
             violations.push(
               violation(
                 coverageRule,
                 'hard',
                 'all_novice_shift',
-                `${shiftType.name} on ${date} has only ${experienced} experienced ` +
-                  `nurse${experienced === 1 ? '' : 's'}; ${params.minExperiencedPerShift} required.`,
+                `${shiftType.name} on ${date} has a new grad with ${experienced} experienced ` +
+                  `RN${experienced === 1 ? '' : 's'} on the unit; ${params.minExperiencedPerShift} required.`,
                 {
                   dates: [date],
                   nurseIds: assigned.map((v) => v.nurse.id),
@@ -167,7 +183,7 @@ export const coverageRule: Rule<CoverageParams> = {
             if (requirement.shiftTypeId !== null && requirement.shiftTypeId !== shiftType.id)
               continue;
 
-            const eligible = assigned.filter(
+            const eligible = onUnit.filter(
               (v) => requirement.role === null || v.nurse.role === requirement.role,
             );
             const holders = eligible.filter((v) =>

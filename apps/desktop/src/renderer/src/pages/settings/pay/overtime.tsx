@@ -1,4 +1,7 @@
-/** Overtime rules: the weekly or daily thresholds and multipliers costing prices against. */
+/**
+ * Overtime rules: the daily, weekly or pay-period thresholds and multipliers costing prices
+ * against.
+ */
 
 import type { Id, OvertimeRule } from '@shiftnurse/core';
 import { useState } from 'react';
@@ -12,10 +15,14 @@ import { AsyncState } from '../../../components/async-state.js';
 import { useConfirm } from '../../../components/confirm.js';
 import { INPUT, LABEL, PRIMARY, SMALL_DANGER, TD, TH } from '../../../components/ui.js';
 
+const BASIS_SPAN: Record<OvertimeRule['basis'], string> = {
+  daily: 'one shift',
+  weekly: 'a work week',
+  pay_period: 'a pay period',
+};
+
 function describeRule(rule: OvertimeRule): string {
-  return rule.basis === 'daily'
-    ? `Over ${rule.thresholdHours}h in one shift`
-    : `Over ${rule.thresholdHours}h in a work week`;
+  return `Over ${rule.thresholdHours}h in ${BASIS_SPAN[rule.basis]}`;
 }
 
 export function OvertimeSection({ unitId }: { unitId: Id }) {
@@ -40,8 +47,10 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
       <h2 className="mb-1 text-sm font-semibold text-text">Overtime</h2>
       <p className="mb-3 text-xs text-text-muted">
         Hours past the threshold earn the multiplier on the shift's full rate, differentials
-        included. An hour is overtime once: where a daily and a weekly rule both apply, the one
-        paying more for that shift wins. The work week starts on the day set in the Rules tab.
+        included. An hour is overtime once: where several rules apply, the one paying more for that
+        shift wins. The work week starts on the day set in the Rules tab; a pay-period rule (such as
+        80 hours in 14 days) counts over the unit's pay period instead, for schedules where one week
+        runs long and the next short.
       </p>
 
       <form
@@ -69,6 +78,7 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
             className={INPUT}
           >
             <option value="weekly">Per work week</option>
+            <option value="pay_period">Per pay period</option>
             <option value="daily">Per shift</option>
           </select>
         </label>

@@ -29,6 +29,7 @@ import type {
   Id,
   IsoDate,
   NurseRole,
+  OvertimeRule,
   PeriodStatus,
   PreferenceKind,
   RequestOrigin,
@@ -46,6 +47,7 @@ import type {
 import { DEFAULT_FAIRNESS_WEIGHTS } from '@shiftnurse/core';
 import { relations, sql } from 'drizzle-orm';
 import {
+  type AnySQLiteColumn,
   index,
   integer,
   primaryKey,
@@ -90,6 +92,10 @@ export const shiftType = sqliteTable(
     color: text('color').notNull().default('#64748b'),
     sortOrder: integer('sort_order').notNull().default(0),
     active: bool('active').notNull().default(true),
+    /** The shift this one runs inside (`ShiftType.withinShiftTypeId`); null when standalone. */
+    withinShiftTypeId: text('within_shift_type_id')
+      .references((): AnySQLiteColumn => shiftType.id, { onDelete: 'set null' })
+      .$type<Id>(),
   },
   (t) => [index('shift_type_unit_idx').on(t.unitId)],
 );
@@ -622,7 +628,7 @@ export const overtimeRule = sqliteTable('overtime_rule', {
     .notNull()
     .references(() => unit.id, { onDelete: 'cascade' })
     .$type<Id>(),
-  basis: text('basis').notNull().$type<'daily' | 'weekly'>(),
+  basis: text('basis').notNull().$type<OvertimeRule['basis']>(),
   thresholdHours: real('threshold_hours').notNull(),
   multiplier: real('multiplier').notNull(),
   active: bool('active').notNull().default(true),

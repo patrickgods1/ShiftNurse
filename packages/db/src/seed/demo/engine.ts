@@ -42,7 +42,9 @@ import {
   addDays,
   type CostContext,
   compareDates,
+  containingDate,
   costSchedule,
+  coveringShift,
   datesInRange,
   daysBetween,
   defaultRuleSet,
@@ -136,6 +138,11 @@ export interface DemoShift {
   color: string;
   /** Census difference from the day tour: patients discharged before this shift starts. */
   censusDelta: number;
+  /**
+   * The code of the shift this one runs inside, which covers it: charge nurse, ACLS and new-grad
+   * cover come from whoever is on that shift. Listed after it.
+   */
+  within?: string;
 }
 
 export interface DemoRosterRow {
@@ -145,6 +152,12 @@ export interface DemoRosterRow {
   contractedHoursPerPeriod: number;
   /** The shift code this position is hired to work, or `flex` for per-diem staff. */
   position: string;
+  /**
+   * A shorter shift this position works a set number of times each pay period on top of its
+   * home shifts: six 12s and one 8 make 80 hours. Its hours are held back for it, so the home
+   * shifts stop where the pattern needs them to.
+   */
+  shortShift?: { code: string; perPayPeriod: number };
   count: number;
   /** How many of these are new graduates in their first year (RN rows only). */
   newGrads?: number;
@@ -370,10 +383,15 @@ interface Staff {
   position: string;
   /** Which alternate weekend this nurse works. */
   weekendGroup: 0 | 1;
-  /** Shifts a pay period the contract (or a per-diem commitment) calls for. */
-  targetPerPeriod: number;
+  /**
+   * Hours a pay period the contract (or a per-diem commitment) calls for. Counted in hours, not
+   * shifts, so a pattern of mixed lengths (six 12s and an 8) comes out right.
+   */
+  targetHours: number;
   /** The length of the shift this person is hired to work, which a day of paid leave pays. */
   shiftHours: number;
+  /** The row's short shift, resolved, if the position works one. */
+  shortShift?: { shift: ShiftType; perPayPeriod: number };
   /** Contracted hours a week: past this a shift is a catch-up or an overtime pick-up. */
   weeklyHours: number;
   years: number;
@@ -495,6 +513,13 @@ function canRemove(worked: Worked, staff: Staff, date: IsoDate, limits: Limits):
   );
 }
 
+function hoursBetween(worked: Worked, staff: Staff, start: IsoDate, end: IsoDate): number {
+  const mine = worked.get(staff.nurse.id)!;
+  let hours = 0;
+  for (const d of datesInRange(start, end)) hours += mine.get(d)?.durationHours ?? 0;
+  return hours;
+}
+
 function hoursInWeek(worked: Worked, staff: Staff, date: IsoDate): number {
   const weekStart = addDays(date, -weekdayOf(date));
   const mine = worked.get(staff.nurse.id)!;
@@ -541,26 +566,38 @@ export function seedFromProfile(
   bump('unit');
 
   // --- Shifts ---------------------------------------------------------------------------------
-  const shifts = profile.shifts.map((spec, i) =>
-    createShiftType(
-      db,
-      {
-        unitId: unit.id,
-        name: spec.name,
-        abbreviation: spec.code,
-        startTime: spec.startTime,
-        durationHours: spec.durationHours,
-        isNight: spec.isNight,
-        isOnCall: false,
-        color: spec.color,
-        sortOrder: i + 1,
-        active: true,
-      },
-      ACTOR,
-    ),
-  );
+  const shifts: ShiftType[] = [];
+  for (const [i, spec] of profile.shifts.entries()) {
+    const within = spec.within ? shifts.find((x) => x.abbreviation === spec.within)!.id : null;
+    shifts.push(
+      createShiftType(
+        db,
+        {
+          unitId: unit.id,
+          name: spec.name,
+          abbreviation: spec.code,
+          startTime: spec.startTime,
+          durationHours: spec.durationHours,
+          isNight: spec.isNight,
+          isOnCall: false,
+          color: spec.color,
+          sortOrder: i + 1,
+          active: true,
+          withinShiftTypeId: within,
+        },
+        ACTOR,
+      ),
+    );
+  }
   bump('shiftType', shifts.length);
   const shiftByCode = new Map(shifts.map((s) => [s.abbreviation, s]));
+  const shiftById = new Map(shifts.map((s) => [s.id, s]));
+  /** Container id → the shifts running inside it. */
+  const innerShifts = new Map<Id, ShiftType[]>();
+  for (const s of shifts) {
+    if (s.withinShiftTypeId === null) continue;
+    innerShifts.set(s.withinShiftTypeId, [...(innerShifts.get(s.withinShiftTypeId) ?? []), s]);
+  }
   const specOf = (s: ShiftType) => profile.shifts.find((x) => x.code === s.abbreviation)!;
 
   // --- Credentials ----------------------------------------------------------------------------
@@ -699,6 +736,13 @@ export function seedFromProfile(
     maxNights: numberParam(configs, 'max-consecutive-shifts', 'maxConsecutiveNights', 3),
     minDaysOff: numberParam(configs, 'max-consecutive-shifts', 'minDaysOffAfterMaxStretch', 2),
   };
+  // Where the rule set judges overtime over the pay period, a history period (one pay period)
+  // is overtime past its threshold rather than a week past forty.
+  const overtimeByPayPeriod =
+    configs.find((c) => c.ruleId === 'max-hours-per-week')?.params?.overtimeByPayPeriod === true;
+  const overtimeThreshold = overtimeByPayPeriod
+    ? numberParam(configs, 'max-hours-per-week', 'payPeriodOvertimeThresholdHours', 80)
+    : 40;
 
   // --- Staff ----------------------------------------------------------------------------------
   // Planned in full before anyone is created: who is charge-eligible depends on the seniority
@@ -778,17 +822,24 @@ export function seedFromProfile(
     bump('nurse');
     const home = shiftByCode.get(row.position);
     const shiftHours = home?.durationHours ?? shifts[0]!.durationHours;
+    const short = row.shortShift
+      ? { shift: shiftByCode.get(row.shortShift.code)!, perPayPeriod: row.shortShift.perPayPeriod }
+      : undefined;
+    // The long week of a mixed pattern: three 12s and the 8 is 44 hours, the short week 36.
+    const shortWeek = short ? (short.shift.durationHours * short.perPayPeriod) / 2 : 0;
     return {
       nurse,
       position: row.position,
       weekendGroup: (p.k % 2) as 0 | 1,
       // A per-diem nurse typically works two or three shifts a week when the unit needs them.
       shiftHours,
-      targetPerPeriod:
+      ...(short ? { shortShift: short } : {}),
+      targetHours:
         row.contractedHoursPerPeriod > 0
-          ? Math.round(row.contractedHoursPerPeriod / shiftHours)
-          : Math.round(72 / shiftHours),
-      weeklyHours: row.contractedHoursPerPeriod > 0 ? row.contractedHoursPerPeriod / 2 : 36,
+          ? row.contractedHoursPerPeriod
+          : Math.round(72 / shiftHours) * shiftHours,
+      weeklyHours:
+        row.contractedHoursPerPeriod > 0 ? row.contractedHoursPerPeriod / 2 + shortWeek : 36,
       years: p.years,
     };
   });
@@ -1038,17 +1089,81 @@ export function seedFromProfile(
       ACTOR,
     );
     bump('period');
-    const shiftCount = new Map<Id, number>();
-    const count = (s: Staff) => shiftCount.get(s.nurse.id) ?? 0;
-    // Paid leave in this pay period counts toward the contract, so it comes off the shifts
-    // still to schedule, as it would for a real scheduler.
+    const hoursWorked = new Map<Id, number>();
+    const shortWorked = new Map<Id, number>();
+    const hours = (s: Staff) => hoursWorked.get(s.nurse.id) ?? 0;
+    /** Record a shift planned (+1) or taken away (-1). */
+    const credit = (s: Staff, shift: ShiftType, sign: 1 | -1) => {
+      hoursWorked.set(s.nurse.id, hours(s) + sign * shift.durationHours);
+      if (shift === s.shortShift?.shift) {
+        shortWorked.set(s.nurse.id, (shortWorked.get(s.nurse.id) ?? 0) + sign);
+      }
+    };
+    /** Hours still held back for the short shifts this pay period owes. */
+    const reserved = (s: Staff) =>
+      s.shortShift
+        ? Math.max(0, s.shortShift.perPayPeriod - (shortWorked.get(s.nurse.id) ?? 0)) *
+          s.shortShift.shift.durationHours
+        : 0;
+    // Paid leave in this pay period counts toward the contract, so it comes off the hours
+    // still to schedule, as it would for a real scheduler. It pays whole home shifts.
     const periodTarget = (s: Staff) => {
       let paid = 0;
       for (const d of datesInRange(start, end)) paid += leavePaid.get(`${s.nurse.id}|${d}`) ?? 0;
-      return Math.max(0, s.targetPerPeriod - Math.round(paid / s.shiftHours));
+      return Math.max(0, s.targetHours - Math.round(paid / s.shiftHours) * s.shiftHours);
+    };
+    /**
+     * Whether `shift` fits inside what the nurse is still owed this pay period. A short shift
+     * fits only while one is owed; any other shift must leave room for the short ones.
+     */
+    const fits = (s: Staff, shift: ShiftType) => {
+      if (shift === s.shortShift?.shift) {
+        return reserved(s) > 0 && hours(s) + shift.durationHours <= periodTarget(s);
+      }
+      return hours(s) + shift.durationHours + reserved(s) <= periodTarget(s);
     };
     const plan: PlannedShift[] = [];
     const periodRows: Id[] = [];
+
+    // A standalone shift always has an experienced RN: its charge nurse, placed first. A shift
+    // inside another has no charge nurse of its own; a new grad on it is covered by the
+    // experienced RNs on it or on the shift it runs inside, as on a real unit. So a new grad
+    // joins it only with that cover, and nobody takes the last of that cover away.
+    const experiencedRnOn = (date: IsoDate, shift: ShiftType, except?: Staff) =>
+      staff.some(
+        (x) =>
+          x !== except &&
+          x.nurse.role === 'RN' &&
+          !x.nurse.isNovice &&
+          worked.get(x.nurse.id)!.get(date) === shift,
+      );
+    const noviceOn = (date: IsoDate, shift: ShiftType, except?: Staff) =>
+      staff.some(
+        (x) => x !== except && x.nurse.isNovice && worked.get(x.nurse.id)!.get(date) === shift,
+      );
+    const covered = (date: IsoDate, shift: ShiftType, except?: Staff) => {
+      if (experiencedRnOn(date, shift, except)) return true;
+      const cover = coveringShift(shift, date, shiftById);
+      return cover !== undefined && experiencedRnOn(cover.date, cover.shiftType, except);
+    };
+    /** The inside shifts a shift on `date` covers, dated. */
+    const innerOf = (date: IsoDate, shift: ShiftType) =>
+      (innerShifts.get(shift.id) ?? []).flatMap((inner) =>
+        [date, addDays(date, 1)]
+          .filter((d) => containingDate(inner, shift, d) === date)
+          .map((d) => ({ date: d, shift: inner })),
+      );
+    const noviceSafe = (s: Staff, date: IsoDate, shift: ShiftType) =>
+      shift.withinShiftTypeId === null || !s.nurse.isNovice || covered(date, shift);
+    /** Whether taking `s` off leaves a new grad on this shift, or one inside it, uncovered. */
+    const leavesNoviceAlone = (s: Staff, date: IsoDate, shift: ShiftType) => {
+      if (s.nurse.isNovice || s.nurse.role !== 'RN') return false;
+      const affected = [
+        ...(shift.withinShiftTypeId === null ? [] : [{ date, shift }]),
+        ...innerOf(date, shift),
+      ];
+      return affected.some((x) => noviceOn(x.date, x.shift, s) && !covered(x.date, x.shift, s));
+    };
 
     /**
      * Who to ask, in the order a staffing office asks: contracted staff short of their hours,
@@ -1060,10 +1175,11 @@ export function seedFromProfile(
         (s) =>
           s.nurse.role === role &&
           (!onlyCharge || s.nurse.isChargeEligible) &&
-          legal(s, date, shift),
+          legal(s, date, shift) &&
+          noviceSafe(s, date, shift),
       );
       const week = (s: Staff) => hoursInWeek(worked, s, date) + shift.durationHours;
-      const short = (s: Staff) => count(s) < periodTarget(s);
+      const short = (s: Staff) => fits(s, shift);
       return [
         free.filter((s) => contracted(s) && short(s) && week(s) <= s.weeklyHours),
         free.filter((s) => !contracted(s) && short(s) && week(s) <= 36),
@@ -1072,12 +1188,13 @@ export function seedFromProfile(
       ];
     };
     const weight = (s: Staff, shift: ShiftType, date: IsoDate) => {
-      let w = s.position === shift.abbreviation ? 10 : s.position === 'flex' ? 2 : 0.3;
+      const owedShort = shift === s.shortShift?.shift && reserved(s) > 0;
+      let w = s.position === shift.abbreviation || owedShort ? 10 : s.position === 'flex' ? 2 : 0.3;
       if (isWeekendDate(date) && s.position !== 'flex') {
         const week = Math.floor(daysBetween(historyStart, date) / 7);
         w *= week % 2 === s.weekendGroup ? 3 : 0.3;
       }
-      const deficit = Math.max(0, periodTarget(s) - count(s));
+      const deficit = Math.max(0, periodTarget(s) - hours(s));
       return w * (1 + (3 * deficit) / Math.max(1, periodTarget(s)));
     };
     const pick = (pool: Staff[], shift: ShiftType, date: IsoDate) =>
@@ -1097,10 +1214,10 @@ export function seedFromProfile(
           const add = (s: Staff, isCharge = false) => {
             plan.push({ staff: s, date, shift, isCharge });
             worked.get(s.nurse.id)!.set(date, shift);
-            shiftCount.set(s.nurse.id, count(s) + 1);
+            credit(s, shift, 1);
             staffed++;
           };
-          if (r === 'RN') {
+          if (r === 'RN' && shift.withinShiftTypeId === null) {
             const chargePool = tiersFor(date, shift, r, true).find((t) => t.length > 0);
             if (chargePool) add(pick(chargePool, shift, date), true);
           }
@@ -1114,8 +1231,10 @@ export function seedFromProfile(
           // Above the floor, only contracted staff behind on their hours for the period so far.
           const elapsed = (daysBetween(start, date) + 1) / 14;
           while (staffed < target) {
+            // Behind by whole home shifts: the pay period's share so far, rounded down.
             const pool = tiersFor(date, shift, r, false)[0]!.filter(
-              (s) => count(s) < Math.floor(periodTarget(s) * elapsed),
+              (s) =>
+                hours(s) < Math.floor((periodTarget(s) / s.shiftHours) * elapsed) * s.shiftHours,
             );
             if (pool.length === 0) break;
             add(pick(pool, shift, date));
@@ -1124,9 +1243,37 @@ export function seedFromProfile(
       }
     }
 
+    // Anyone still owed their short shift gets it, as a scheduler would place it: on a legal
+    // day, preferring one where that shift is still under target for their role.
+    const onShortShift = (date: IsoDate, shift: ShiftType, role: NurseRole) =>
+      plan.filter((e) => e.date === date && e.shift === shift && e.staff.nurse.role === role)
+        .length;
+    for (const s of staff) {
+      if (!s.shortShift) continue;
+      const shift = s.shortShift.shift;
+      const target = profile.floors[shift.abbreviation]?.[s.nurse.role]?.target ?? 0;
+      while (reserved(s) > 0) {
+        const days = datesInRange(start, end).filter(
+          (d) =>
+            fits(s, shift) &&
+            hoursInWeek(worked, s, d) + shift.durationHours <= 48 &&
+            legal(s, d, shift) &&
+            noviceSafe(s, d, shift),
+        );
+        if (days.length === 0) break;
+        const under = days.filter((d) => onShortShift(d, shift, s.nurse.role) < target);
+        const date = rng.pick(under.length > 0 ? under : days);
+        plan.push({ staff: s, date, shift, isCharge: false });
+        worked.get(s.nurse.id)!.set(date, shift);
+        credit(s, shift, 1);
+      }
+    }
+
     // Before posting, move shifts from anyone past their contract — or from per-diem staff — to
     // contracted staff still short, wherever the move is legal.
     const takerFor = (from: Staff, entry: PlannedShift) => {
+      // If `from` is the last experienced RN covering a new grad, only another one may take over.
+      const needsCover = leavesNoviceAlone(from, entry.date, entry.shift);
       const mine = worked.get(from.nurse.id)!;
       mine.delete(entry.date);
       if (!canRemove(worked, from, entry.date, limits)) {
@@ -1138,10 +1285,12 @@ export function seedFromProfile(
           u !== from &&
           u.nurse.role === from.nurse.role &&
           contracted(u) &&
-          count(u) < periodTarget(u) &&
+          fits(u, entry.shift) &&
           (!entry.isCharge || u.nurse.isChargeEligible) &&
           hoursInWeek(worked, u, entry.date) + entry.shift.durationHours <= 48 &&
-          legal(u, entry.date, entry.shift),
+          legal(u, entry.date, entry.shift) &&
+          noviceSafe(u, entry.date, entry.shift) &&
+          (!needsCover || !u.nurse.isNovice),
       );
       mine.set(entry.date, entry.shift);
       return taker;
@@ -1150,27 +1299,30 @@ export function seedFromProfile(
       moved = false;
       for (const entry of plan) {
         const from = entry.staff;
-        if (contracted(from) && count(from) <= periodTarget(from)) continue;
+        if (contracted(from) && hours(from) <= periodTarget(from)) continue;
         const taker = takerFor(from, entry);
         if (!taker) continue;
         worked.get(from.nurse.id)!.delete(entry.date);
         worked.get(taker.nurse.id)!.set(entry.date, entry.shift);
-        shiftCount.set(from.nurse.id, count(from) - 1);
-        shiftCount.set(taker.nurse.id, count(taker) + 1);
+        credit(from, entry.shift, -1);
+        credit(taker, entry.shift, 1);
         entry.staff = taker;
         moved = true;
       }
     }
 
-    // Post the period. A shift is overtime once the Sunday-to-Saturday week passes 40 hours.
-    const weekHours = new Map<string, number>();
+    // Post the period. A shift is overtime once the Sunday-to-Saturday week passes 40 hours, or
+    // the pay period its threshold where overtime is judged that way.
+    const windowHours = new Map<string, number>();
     plan.sort(
       (a, b) => compareDates(a.date, b.date) || a.shift.startTime.localeCompare(b.shift.startTime),
     );
     for (const entry of plan) {
-      const weekKey = `${entry.staff.nurse.id}|${addDays(entry.date, -weekdayOf(entry.date))}`;
-      const hours = (weekHours.get(weekKey) ?? 0) + entry.shift.durationHours;
-      weekHours.set(weekKey, hours);
+      const windowKey = overtimeByPayPeriod
+        ? entry.staff.nurse.id
+        : `${entry.staff.nurse.id}|${addDays(entry.date, -weekdayOf(entry.date))}`;
+      const windowTotal = (windowHours.get(windowKey) ?? 0) + entry.shift.durationHours;
+      windowHours.set(windowKey, windowTotal);
       const row = createAssignment(
         db,
         {
@@ -1180,7 +1332,7 @@ export function seedFromProfile(
           date: entry.date,
           source: 'solver',
           isCharge: entry.isCharge,
-          isOvertime: hours > 40,
+          isOvertime: windowTotal > overtimeThreshold,
         },
         ACTOR,
       );
@@ -1191,11 +1343,17 @@ export function seedFromProfile(
 
     // About two call-offs a week. Per-diem staff are phoned first, overtime is the last resort.
     const staffOf = (a: Assignment) => staff.find((s) => s.nurse.id === a.nurseId)!;
+    const shiftOf = (a: Assignment) => shifts.find((x) => x.id === a.shiftTypeId)!;
     const callable = rng
       .shuffle(
         periodRows
           .map((id) => rows.get(id)!)
-          .filter((a) => !a.isCharge && canRemove(worked, staffOf(a), a.date, limits)),
+          .filter(
+            (a) =>
+              !a.isCharge &&
+              canRemove(worked, staffOf(a), a.date, limits) &&
+              !leavesNoviceAlone(staffOf(a), a.date, shiftOf(a)),
+          ),
       )
       .slice(0, rng.nextInt(3, 5));
     for (const absent of callable) {
@@ -1219,8 +1377,8 @@ export function seedFromProfile(
       periodRows.splice(periodRows.indexOf(absent.id), 1);
       const absentStaff = staff.find((s) => s.nurse.id === absent.nurseId)!;
       worked.get(absentStaff.nurse.id)!.delete(absent.date);
-      shiftCount.set(absentStaff.nurse.id, count(absentStaff) - 1);
       const shift = shifts.find((s) => s.id === absent.shiftTypeId)!;
+      credit(absentStaff, shift, -1);
       const [under, perDiem, catchUp, overtime] = tiersFor(
         absent.date,
         shift,
@@ -1240,10 +1398,12 @@ export function seedFromProfile(
       const covered = phoneList.length > 0 && (absentStaff.nurse.role === 'RN' || rng.chance(0.8));
       for (const [i, s] of phoneList.entries()) {
         if (covered && i === phoneList.length - 1) {
-          if (contracted(s) && count(s) >= periodTarget(s)) bump('overtimeCallouts');
+          if (contracted(s) && hours(s) >= periodTarget(s)) bump('overtimeCallouts');
           logCallAttempt(db, callOff.id, s.nurse.id, 'accepted', ACTOR);
           bump('callAttempt');
-          const hours = hoursInWeek(worked, s, absent.date) + shift.durationHours;
+          const before = overtimeByPayPeriod
+            ? hoursBetween(worked, s, start, end)
+            : hoursInWeek(worked, s, absent.date);
           const replacement = createAssignment(
             db,
             {
@@ -1252,12 +1412,12 @@ export function seedFromProfile(
               shiftTypeId: shift.id,
               date: absent.date,
               source: 'callout',
-              isOvertime: hours > 40,
+              isOvertime: before + shift.durationHours > overtimeThreshold,
             },
             ACTOR,
           );
           worked.get(s.nurse.id)!.set(absent.date, shift);
-          shiftCount.set(s.nurse.id, count(s) + 1);
+          credit(s, shift, 1);
           rows.set(replacement.id, replacement);
           periodRows.push(replacement.id);
           bump('assignment');
@@ -1302,14 +1462,17 @@ export function seedFromProfile(
           .filter((a) => isWeekendDate(a.date))
           .map((a) => addDays(a.date, -((weekdayOf(a.date) + 1) % 7))),
       );
-      const overtimeHours = [0, 7].reduce((sum, offset) => {
-        const from = addDays(start, offset);
-        const to = addDays(from, 6);
-        const inWeek = mine
-          .filter((a) => compareDates(a.date, from) >= 0 && compareDates(a.date, to) <= 0)
-          .reduce((h, a) => h + hoursOf(a), 0);
-        return sum + Math.max(0, inWeek - 40);
-      }, 0);
+      const totalHours = mine.reduce((h, a) => h + hoursOf(a), 0);
+      const overtimeHours = overtimeByPayPeriod
+        ? Math.max(0, totalHours - overtimeThreshold)
+        : [0, 7].reduce((sum, offset) => {
+            const from = addDays(start, offset);
+            const to = addDays(from, 6);
+            const inWeek = mine
+              .filter((a) => compareDates(a.date, from) >= 0 && compareDates(a.date, to) <= 0)
+              .reduce((h, a) => h + hoursOf(a), 0);
+            return sum + Math.max(0, inWeek - 40);
+          }, 0);
       ledgerInputs.push({
         nurseId: s.nurse.id,
         periodId: period.id,
@@ -1319,7 +1482,7 @@ export function seedFromProfile(
         holidaysWorked: mine.filter((a) => holidayDates.has(a.date)).length,
         onCallShifts: 0,
         undesirableShifts: nightPosition ? 0 : nights,
-        totalHours: mine.reduce((h, a) => h + hoursOf(a), 0),
+        totalHours,
         overtimeHours,
         preferenceHitRate:
           mine.length === 0 ? 1 : nightPosition ? nights / mine.length : 1 - nights / mine.length,

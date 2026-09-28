@@ -69,9 +69,10 @@ import {
   contractedHoursRule,
   type MaxHoursParams,
   maxHoursRule,
+  overtimeThreshold,
+  payPeriodIndex,
   payPeriodsIn,
 } from '../rules/hours-rules.js';
-import { leaveHoursByWorkWeek } from '../rules/paid-leave.js';
 import {
   buildRuleContext,
   evaluatePrepared,
@@ -81,6 +82,7 @@ import {
   resolveConfigs,
 } from '../rules/registry.js';
 import type { RuleContext, RuleSet } from '../rules/types.js';
+import { coveringShift } from '../schedule/cover.js';
 import { type AssignmentView, ScheduleView } from '../schedule/view.js';
 import {
   DEFAULT_OBJECTIVE_WEIGHTS,
@@ -104,6 +106,8 @@ export interface Shift {
 export interface AddToken {
   coverageBefore: number;
   hoursBefore: number;
+  /** The coverage of the shifts inside this one, in `innerShifts` order, when it has any. */
+  innerBefore?: readonly number[];
 }
 
 export type RemoveToken = AddToken;
@@ -174,10 +178,16 @@ export class SolverModel {
   /** nurse × work week → hours that count toward the weekly cap, lookback tail included. */
   private readonly weekHours: number[][];
   /**
-   * nurse × work week → paid leave that counts toward the overtime threshold (never the cap).
-   * All zero unless the rule set counts leave toward overtime.
+   * nurse × overtime window → hours that count toward the overtime threshold, lookback tail
+   * included. The window is the work week, or the pay period when the rule set judges overtime
+   * over the pay period; kept apart from `weekHours` because the weekly cap binds either way.
    */
-  readonly weekLeaveHours: number[][];
+  private readonly overtimeHours: number[][];
+  /**
+   * nurse × overtime window → paid leave that counts toward the overtime threshold (never the
+   * cap). All zero unless the rule set counts leave toward overtime.
+   */
+  readonly overtimeLeaveHours: number[][];
 
   // --- Precomputed inputs ----------------------------------------------------
   // Public and read-only so the CP-SAT encoder (cpsat/) reads the same tables instead of
@@ -193,6 +203,17 @@ export class SolverModel {
   private readonly nurseCtx: RuleContext[] = [];
   private readonly shiftCtx = new Map<ShiftType, RuleContext>();
   private readonly shiftPeriod: SchedulePeriod[] = [];
+  /**
+   * shift index → the shift covering it: in the model, or (a night begun the day before the
+   * period) the tail's roster of it. Undefined for a standalone shift.
+   */
+  readonly coverShift: (
+    | { shiftType: ShiftType; shift: Shift }
+    | { shiftType: ShiftType; tail: readonly Assignment[] }
+    | undefined
+  )[];
+  /** shift index → the shifts inside it. */
+  private readonly innerShifts: Shift[][];
   readonly fteParams: ContractedHoursParams;
   readonly bucketOfDate: number[];
   readonly hoursTarget: number[][];
@@ -204,6 +225,11 @@ export class SolverModel {
   /** Same for any date, prior or in-period; negative before the first week. */
   private readonly weekOf: (date: IsoDate) => number;
   private readonly weekCount: number;
+  /** date index → overtime-window index, counted from the window containing the first day. */
+  private readonly overtimeOfDate: number[];
+  private readonly overtimeOf: (date: IsoDate) => number;
+  private readonly overtimeCount: number;
+  private readonly overtimeThreshold: number;
   readonly histCarried: Record<BurdenComponent, number>[];
   readonly shareWeight: number[];
   readonly teamShare: number;
@@ -261,6 +287,26 @@ export class SolverModel {
     this.shifts = shifts;
     this.solvableShifts = shifts.filter((s) => s.solvable);
 
+    // A shift inside another is judged with the containing shift's roster as cover, so a change
+    // to the containing shift re-prices the ones inside it (`refresh`).
+    const shiftTypesById = new Map(this.shiftTypes.map((t) => [t.id, t]));
+    this.innerShifts = shifts.map(() => []);
+    this.coverShift = shifts.map((shift) => {
+      const cover = coveringShift(shift.shiftType, shift.date, shiftTypesById);
+      if (!cover) return undefined;
+      const dateIdx = this.dateIdx.get(cover.date);
+      if (dateIdx === undefined) {
+        // The night that began the day before the period: its roster is the published tail.
+        const tail = input.priorAssignments.filter(
+          (a) => a.date === cover.date && a.shiftTypeId === cover.shiftType.id,
+        );
+        return { shiftType: cover.shiftType, tail };
+      }
+      const outer = this.shiftAt(dateIdx, cover.shiftType);
+      this.innerShifts[outer.idx]!.push(shift);
+      return { shiftType: cover.shiftType, shift: outer };
+    });
+
     this.nurseHardIds = hardRuleIdsByScope(input.ruleSet, 'nurse');
     this.shiftHardIds = hardRuleIdsByScope(input.ruleSet, 'shift');
     this.nurseRules = prepareRules(input.ruleSet, this.nurseHardIds);
@@ -278,6 +324,13 @@ export class SolverModel {
     this.weekOf = (date) => Math.floor((dayNumber(date) - weekStart) / 7);
     this.weekOfDate = this.dates.map((date) => this.weekOf(date));
     this.weekCount = (this.weekOfDate[this.weekOfDate.length - 1] ?? 0) + 1;
+    const firstPayPeriod = payPeriodIndex(input.period.startDate, input.unit);
+    this.overtimeOf = maxHours.overtimeByPayPeriod
+      ? (date) => payPeriodIndex(date, input.unit) - firstPayPeriod
+      : this.weekOf;
+    this.overtimeOfDate = this.dates.map((date) => this.overtimeOf(date));
+    this.overtimeCount = (this.overtimeOfDate[this.overtimeOfDate.length - 1] ?? 0) + 1;
+    this.overtimeThreshold = overtimeThreshold(maxHours);
 
     this.costCtx = input.cost
       ? {
@@ -289,12 +342,7 @@ export class SolverModel {
           weekendDefinition: input.ruleSet.weekendDefinition,
           workWeekStartsOn: maxHours.workWeekStartsOn,
           ...(maxHours.paidLeaveCountsTowardOvertime
-            ? {
-                overtimeLeaveHours: leaveHoursByWorkWeek(
-                  this.ctx.paidLeaveByNurse,
-                  maxHours.workWeekStartsOn,
-                ),
-              }
+            ? { overtimeLeave: this.ctx.paidLeaveByNurse }
             : {}),
         }
       : undefined;
@@ -390,23 +438,26 @@ export class SolverModel {
       this.dates.map((date) => approvedLeaveOn(this.ctx, nurse.id, date) !== undefined),
     );
     this.weekHours = Array.from({ length: n }, () => new Array<number>(this.weekCount).fill(0));
-    this.weekLeaveHours = this.nurses.map((nurse) => {
-      const weeks = new Array<number>(this.weekCount).fill(0);
-      if (!maxHours.paidLeaveCountsTowardOvertime) return weeks;
+    this.overtimeHours = Array.from({ length: n }, () =>
+      new Array<number>(this.overtimeCount).fill(0),
+    );
+    this.overtimeLeaveHours = this.nurses.map((nurse) => {
+      const windows = new Array<number>(this.overtimeCount).fill(0);
+      if (!maxHours.paidLeaveCountsTowardOvertime) return windows;
       for (const c of this.ctx.paidLeaveByNurse.get(nurse.id) ?? []) {
-        const week = this.weekOf(c.date);
-        if (week >= 0 && week < this.weekCount) weeks[week]! += c.hours;
+        const w = this.overtimeOf(c.date);
+        if (w >= 0 && w < this.overtimeCount) windows[w]! += c.hours;
       }
-      return weeks;
+      return windows;
     });
     for (const [i, list] of prior.entries()) {
       for (const a of list) {
-        const week = this.weekOf(a.date);
-        if (week < 0 || week >= this.weekCount) continue;
         const st = this.shiftTypes.find((s) => s.id === a.shiftTypeId);
-        if (st && (!st.isOnCall || maxHours.onCallCountsTowardHours)) {
-          this.weekHours[i]![week]! += st.durationHours;
-        }
+        if (!st || (st.isOnCall && !maxHours.onCallCountsTowardHours)) continue;
+        const week = this.weekOf(a.date);
+        if (week >= 0 && week < this.weekCount) this.weekHours[i]![week]! += st.durationHours;
+        const w = this.overtimeOf(a.date);
+        if (w >= 0 && w < this.overtimeCount) this.overtimeHours[i]![w]! += st.durationHours;
       }
     }
     this.hoursPenalty = new Array<number>(n).fill(0);
@@ -532,12 +583,16 @@ export class SolverModel {
     // The weekly cap binds on every nurse, and the overtime threshold does too unless the
     // solver could authorise overtime — which it never does.
     if (!shift.shiftType.isOnCall || this.maxHoursParams.onCallCountsTowardHours) {
+      const hours = shift.shiftType.durationHours;
       const week = this.weekOfDate[shift.dateIdx]!;
-      const after = this.weekHours[nurseIdx]![week]! + shift.shiftType.durationHours;
-      if (after > this.maxHoursParams.maxHoursPerWeek) return false;
+      if (this.weekHours[nurseIdx]![week]! + hours > this.maxHoursParams.maxHoursPerWeek) {
+        return false;
+      }
+      const w = this.overtimeOfDate[shift.dateIdx]!;
       if (
         this.maxHoursParams.requireOvertimeAuthorisation &&
-        after + this.weekLeaveHours[nurseIdx]![week]! > this.maxHoursParams.overtimeThresholdHours
+        this.overtimeHours[nurseIdx]![w]! + hours + this.overtimeLeaveHours[nurseIdx]![w]! >
+          this.overtimeThreshold
       ) {
         return false;
       }
@@ -617,7 +672,7 @@ export class SolverModel {
     if (!a.isLocked) this.unlocked.push(a);
     this.count(n, shift, a, +1);
     this.ensureCharge(shift);
-    const token = { coverageBefore: this.coverage[shift.idx]!, hoursBefore: this.hoursPenalty[n]! };
+    const token = this.tokenFor(n, shift);
     this.refresh(n, shift);
     return token;
   }
@@ -633,8 +688,18 @@ export class SolverModel {
     a.isCharge = false;
     this.count(n, shift, a, -1);
     this.ensureCharge(shift);
-    const token = { coverageBefore: this.coverage[shift.idx]!, hoursBefore: this.hoursPenalty[n]! };
+    const token = this.tokenFor(n, shift);
     this.refresh(n, shift);
+    return token;
+  }
+
+  private tokenFor(n: number, shift: Shift): AddToken {
+    const token: AddToken = {
+      coverageBefore: this.coverage[shift.idx]!,
+      hoursBefore: this.hoursPenalty[n]!,
+    };
+    const inner = this.innerShifts[shift.idx]!;
+    if (inner.length > 0) token.innerBefore = inner.map((s) => this.coverage[s.idx]!);
     return token;
   }
 
@@ -665,14 +730,22 @@ export class SolverModel {
   private restoreCaches(n: number, shift: Shift, token: AddToken): void {
     this.coverageSum += token.coverageBefore - this.coverage[shift.idx]!;
     this.coverage[shift.idx] = token.coverageBefore;
+    if (token.innerBefore) {
+      for (const [i, inner] of this.innerShifts[shift.idx]!.entries()) {
+        this.coverageSum += token.innerBefore[i]! - this.coverage[inner.idx]!;
+        this.coverage[inner.idx] = token.innerBefore[i]!;
+      }
+    }
     this.hoursSum += token.hoursBefore - this.hoursPenalty[n]!;
     this.hoursPenalty[n] = token.hoursBefore;
   }
 
   private refresh(n: number, shift: Shift): void {
-    const coverage = this.coveragePenalty(shift);
-    this.coverageSum += coverage - this.coverage[shift.idx]!;
-    this.coverage[shift.idx] = coverage;
+    for (const s of [shift, ...this.innerShifts[shift.idx]!]) {
+      const coverage = this.coveragePenalty(s);
+      this.coverageSum += coverage - this.coverage[s.idx]!;
+      this.coverage[s.idx] = coverage;
+    }
     const hours = this.hoursPenaltyFor(n);
     this.hoursSum += hours - this.hoursPenalty[n]!;
     this.hoursPenalty[n] = hours;
@@ -686,6 +759,7 @@ export class SolverModel {
     this.onDate[n]![shift.dateIdx]! += sign;
     if (!st.isOnCall || this.maxHoursParams.onCallCountsTowardHours) {
       this.weekHours[n]![this.weekOfDate[shift.dateIdx]!]! += sign * st.durationHours;
+      this.overtimeHours[n]![this.overtimeOfDate[shift.dateIdx]!]! += sign * st.durationHours;
     }
     if (st.isOnCall) {
       this.onCall[n]! += sign;
@@ -711,12 +785,13 @@ export class SolverModel {
   }
 
   /**
-   * Exactly one charge nurse per worked shift when one is available. The first eligible,
-   * unlocked nurse on the roster gets it — deterministic, and re-run after every change so a
-   * removed charge nurse hands the role to whoever is left.
+   * Exactly one charge nurse per worked shift when one is available — none on a shift run by
+   * another's charge nurse. The first eligible, unlocked nurse on the roster gets it —
+   * deterministic, and re-run after every change so a removed charge nurse hands the role to
+   * whoever is left.
    */
   private ensureCharge(shift: Shift): void {
-    if (shift.shiftType.isOnCall) return;
+    if (shift.shiftType.isOnCall || shift.shiftType.withinShiftTypeId !== null) return;
     const roster = this.byShift[shift.idx]!;
     if (roster.some((a) => a.isCharge)) return;
     const pick = roster.find((a) => !a.isLocked && this.nurses[this.nurseOf(a)]!.isChargeEligible);
@@ -795,11 +870,16 @@ export class SolverModel {
         ctx = { ...this.ctx, shiftTypes: [shift.shiftType] };
         this.shiftCtx.set(shift.shiftType, ctx);
       }
+      const cover = this.coverShift[shift.idx];
+      const onUnit =
+        cover === undefined
+          ? roster
+          : [...roster, ...('tail' in cover ? cover.tail : this.byShift[cover.shift.idx]!)];
       const view = new ScheduleView({
         period,
-        assignments: roster,
-        nurses: roster.map((a) => this.nurses[this.nurseOf(a)]!),
-        shiftTypes: [shift.shiftType],
+        assignments: onUnit,
+        nurses: onUnit.map((a) => this.nurses[this.nurseOf(a)]!),
+        shiftTypes: cover === undefined ? [shift.shiftType] : [shift.shiftType, cover.shiftType],
       });
       const result = evaluatePrepared(view, this.shiftRules, ctx);
       for (const v of result.hardViolations) {

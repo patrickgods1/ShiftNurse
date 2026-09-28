@@ -158,13 +158,14 @@ export function realisticDemoChecks(f: DemoFixture, demo: DemoId, today: IsoDate
     );
   });
 
-  it('puts one charge nurse on every staffed shift of the history', () => {
-    const shifts = f.rows<{ charges: number }>(
-      `SELECT SUM(a.is_charge) charges FROM assignment a JOIN schedule_period p
-         ON p.id = a.period_id WHERE p.status = 'published' GROUP BY a.date, a.shift_type_id`,
+  it('puts one charge nurse on every staffed shift of the history that needs its own', () => {
+    const shifts = f.rows<{ charges: number; own: number }>(
+      `SELECT SUM(a.is_charge) charges, st.within_shift_type_id IS NULL own FROM assignment a
+         JOIN schedule_period p ON p.id = a.period_id JOIN shift_type st ON st.id = a.shift_type_id
+         WHERE p.status = 'published' GROUP BY a.date, a.shift_type_id`,
     );
-    expect(shifts.length).toBeGreaterThan(300);
-    expect(shifts.filter((s) => s.charges !== 1)).toEqual([]);
+    expect(shifts.filter((s) => s.own === 1).length).toBeGreaterThan(300);
+    expect(shifts.filter((s) => s.charges !== (s.own === 1 ? 1 : 0))).toEqual([]);
   });
 
   it('gives everyone BLS and every charge nurse ACLS, with no card already lapsed', () => {

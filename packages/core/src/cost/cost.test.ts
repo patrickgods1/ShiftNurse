@@ -331,6 +331,98 @@ describe('overtime', () => {
     expect(report.assignments[3]?.total).toBe(72);
     expect(report.totals.total).toBe(2568); // 4 × 576 + 72 + 192
   });
+
+  it('weekly: a PTO day that counts toward overtime uses up the threshold first', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: ['2026-01-05', '2026-01-06', '2026-01-07'].map((d) =>
+        assign(nurse.id, DAY_12, d),
+      ),
+    });
+    const overtimeLeave = new Map([
+      [nurse.id, [{ nurseId: nurse.id, date: isoDate('2026-01-08'), hours: 12 }]],
+    ]);
+
+    const report = costSchedule(s.schedule, ctx({ overtimeRules: [WEEKLY_40], overtimeLeave }));
+    // 12h leave, then 24, 36, 48: the Wednesday is the shift that crosses forty.
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 8]);
+  });
+});
+
+describe('overtime over the pay period', () => {
+  // Six 12s and an 8 over the Sun 4 – Sat 17 Jan pay period, all on weekdays: 44h the first
+  // week, 36h the second, 80h in all.
+  const PAY_PERIOD_80: OvertimeRule = {
+    id: 'ot-pay-period',
+    unitId: UNIT_ID,
+    basis: 'pay_period',
+    thresholdHours: 80,
+    multiplier: 1.5,
+    active: true,
+  };
+  const fortnight = (nurseId: string) => [
+    assign(nurseId, DAY_12, '2026-01-05'),
+    assign(nurseId, DAY_12, '2026-01-07'),
+    assign(nurseId, DAY_12, '2026-01-08'),
+    assign(nurseId, DAY_8, '2026-01-09'),
+    assign(nurseId, DAY_12, '2026-01-12'),
+    assign(nurseId, DAY_12, '2026-01-14'),
+    assign(nurseId, DAY_12, '2026-01-15'),
+  ];
+
+  it('prices the 44-hour week at straight time when the fortnight comes to 80', () => {
+    const nurse = makeNurse();
+    const s = scenario({ nurses: [nurse], assignments: fortnight(nurse.id) });
+
+    const report = costSchedule(s.schedule, ctx({ overtimeRules: [PAY_PERIOD_80] }));
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    expect(report.totals.total).toBe(3840); // 6 × 576 + 384
+
+    // The same fortnight under a weekly rule: the Friday 8 takes week one to 44h.
+    const weekly = costSchedule(s.schedule, ctx({ overtimeRules: [WEEKLY_40] }));
+    expect(weekly.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 4, 0, 0, 0]);
+  });
+
+  it('charges the hours past 80 to the shift that crosses it', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [...fortnight(nurse.id), assign(nurse.id, DAY_12, '2026-01-16')],
+    });
+
+    const report = costSchedule(s.schedule, ctx({ overtimeRules: [PAY_PERIOD_80] }));
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 0, 0, 0, 0, 12]);
+    expect(report.assignments[7]?.total).toBe(864); // 576 + 12 × 48 × 0.5
+  });
+
+  it('counts hours from the previous schedule in the same pay period', () => {
+    const nurse = makeNurse();
+    // This schedule starts Sun 11 Jan, halfway through the pay period.
+    const [w1, w2] = [fortnight(nurse.id).slice(0, 4), fortnight(nurse.id).slice(4)];
+    const s = scenario({
+      nurses: [nurse],
+      startDate: isoDate('2026-01-11'),
+      endDate: isoDate('2026-01-24'),
+      priorAssignments: w1.map((a) => ({ ...a, periodId: 'period-0' })),
+      assignments: [...w2, assign(nurse.id, DAY_12, '2026-01-16')],
+    });
+
+    const report = costSchedule(s.schedule, ctx({ overtimeRules: [PAY_PERIOD_80] }));
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 12]);
+  });
+
+  it('starts a pay period that counts leave toward overtime with the leave', () => {
+    const nurse = makeNurse();
+    const s = scenario({ nurses: [nurse], assignments: fortnight(nurse.id) });
+    const overtimeLeave = new Map([
+      [nurse.id, [{ nurseId: nurse.id, date: isoDate('2026-01-13'), hours: 12 }]],
+    ]);
+
+    const report = costSchedule(s.schedule, ctx({ overtimeRules: [PAY_PERIOD_80], overtimeLeave }));
+    // 12h leave first, then 24 … 80 by Wed 14th; Thu 15th takes it to 92.
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 0, 0, 0, 12]);
+  });
 });
 
 describe('aggregates', () => {
