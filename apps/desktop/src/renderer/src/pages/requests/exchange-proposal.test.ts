@@ -16,6 +16,7 @@ function shiftType(patch: Partial<ShiftType> = {}): ShiftType {
     color: '#000000',
     sortOrder: 1,
     active: true,
+    withinShiftTypeId: null,
     ...patch,
   };
 }

@@ -7,6 +7,7 @@ import {
   CRED_ACLS,
   census,
   coverageAllWeek,
+  DAY_8,
   DAY_12,
   makeNurse,
   NIGHT_12,
@@ -151,6 +152,33 @@ describe('complianceAlerts', () => {
     expect(ot).toHaveLength(1);
     expect(ot[0]).toMatchObject({ nurseId: 'n1', date: '2026-01-04', hours: 48 });
     expect(ot[0]!.message).toContain('8h');
+  });
+
+  it('warns of overtime past 80 hours in the pay period, not past 40 in the week', () => {
+    resetFixtureCounters();
+    // Six 12s and an 8 in the Sun 4 – Sat 17 Jan pay period: 44h then 36h, 80h in all.
+    const fortnight = [
+      ...['2026-01-04', '2026-01-06', '2026-01-08', '2026-01-12', '2026-01-14', '2026-01-16'].map(
+        (d) => assign('n1', DAY_12, d),
+      ),
+      assign('n1', DAY_8, '2026-01-09'),
+    ];
+    const nurses = [makeNurse({ id: 'n1', contractedHoursPerPeriod: 80 })];
+    const s = scenario({ nurses, assignments: fortnight });
+    const payPeriodOvertime = { thresholdHours: 80, payPeriodAnchor: s.unit.payPeriodAnchor };
+    const overtime = (sc: typeof s, extra = {}) =>
+      alertsFor(sc, extra).filter((a) => a.kind === 'overtime');
+
+    expect(overtime(s, { payPeriodOvertime })).toEqual([]);
+    expect(overtime(s)).toHaveLength(1); // weekly: the 44-hour week
+
+    const extra = scenario({
+      nurses,
+      assignments: [...fortnight, assign('n1', DAY_12, '2026-01-17')],
+    });
+    const over = overtime(extra, { payPeriodOvertime });
+    expect(over).toMatchObject([{ nurseId: 'n1', date: '2026-01-04', hours: 92 }]);
+    expect(over[0]!.message).toMatch(/12h overtime in the pay period from 2026-01-04/);
   });
 
   it('marks a night staffed exactly at the patient ratio as ratio-risk: one call-off breaches it', () => {

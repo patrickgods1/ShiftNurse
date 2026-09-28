@@ -15,7 +15,6 @@ import {
   type FairnessLedgerEntry,
   type Id,
   type IsoDate,
-  leaveHoursByWorkWeek,
   type MaxHoursParams,
   maxHoursRule,
   type PaidLeaveCredit,
@@ -95,24 +94,19 @@ export function costContext(db: DbLike, unitId: Id, ruleSet: RuleSet): CostConte
     holidayDates: new Set<IsoDate>(listHolidaysForUnit(db, unitId).map((h) => h.date)),
     weekendDefinition: ruleSet.weekendDefinition,
     workWeekStartsOn: params.workWeekStartsOn ?? maxHoursRule.defaultParams.workWeekStartsOn,
-    ...(params.paidLeaveCountsTowardOvertime
-      ? { overtimeLeaveHours: overtimeLeave(db, unitId, params) }
-      : {}),
+    ...(params.paidLeaveCountsTowardOvertime ? { overtimeLeave: overtimeLeave(db, unitId) } : {}),
   };
 }
 
-/** Paid leave by nurse and work week, for a contract that counts it toward overtime. */
-function overtimeLeave(db: DbLike, unitId: Id, params: Partial<MaxHoursParams>) {
+/** Paid leave by nurse, for a contract that counts it toward overtime. */
+function overtimeLeave(db: DbLike, unitId: Id) {
   const byNurse = new Map<Id, PaidLeaveCredit[]>();
   const credits = paidLeaveCredits(
     listTimeOffForUnit(db, unitId),
     paidSickCallsForUnit(db, unitId),
   );
   for (const c of credits) byNurse.set(c.nurseId, [...(byNurse.get(c.nurseId) ?? []), c]);
-  return leaveHoursByWorkWeek(
-    byNurse,
-    params.workWeekStartsOn ?? maxHoursRule.defaultParams.workWeekStartsOn,
-  );
+  return byNurse;
 }
 
 /** Shared loader behind the solver and the conflict detector: one definition of "the period". */

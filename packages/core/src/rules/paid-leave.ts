@@ -17,7 +17,7 @@
  */
 
 import type { Id, TimeOffRequest, TimeOffType } from '../domain/entities.js';
-import { addDays, compareDates, datesInRange, type IsoDate, weekdayOf } from '../domain/time.js';
+import { compareDates, datesInRange, type IsoDate } from '../domain/time.js';
 
 /** A missed shift paid from sick leave. */
 export interface PaidSickCall {
@@ -65,25 +65,6 @@ export function leaveHoursBetween(
     if (compareDates(c.date, start) >= 0 && compareDates(c.date, end) <= 0) hours += c.hours;
   }
   return hours;
-}
-
-/**
- * Paid leave per nurse per work week, keyed `nurseId|weekStart`: what the cost engine adds
- * to a week's running hours before any shift when a contract counts leave toward overtime.
- */
-export function leaveHoursByWorkWeek(
-  paidLeaveByNurse: ReadonlyMap<Id, readonly PaidLeaveCredit[]>,
-  workWeekStartsOn: number,
-): Map<string, number> {
-  const out = new Map<string, number>();
-  for (const [nurseId, credits] of paidLeaveByNurse) {
-    for (const c of credits) {
-      const weekStart = addDays(c.date, -((weekdayOf(c.date) - workWeekStartsOn + 7) % 7));
-      const key = `${nurseId}|${weekStart}`;
-      out.set(key, (out.get(key) ?? 0) + c.hours);
-    }
-  }
-  return out;
 }
 
 /**

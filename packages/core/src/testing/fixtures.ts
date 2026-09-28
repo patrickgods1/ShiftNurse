@@ -72,6 +72,7 @@ function shift(
     color: '#64748b',
     sortOrder: 0,
     active: true,
+    withinShiftTypeId: null,
     ...extra,
   };
 }
@@ -99,6 +100,13 @@ export const ON_CALL = shift('st-oc', 'On call', 'OC', '19:00', 12, {
   isOnCall: true,
   sortOrder: 6,
   color: '#94a3b8',
+});
+
+/** A mid shift inside the day 12, covered by whoever is on the day 12. Not in `testShiftTypes`. */
+export const MID_8 = shift('st-m8', 'Mid 8', 'M8', '11:00', 8, {
+  sortOrder: 7,
+  color: '#14b8a6',
+  withinShiftTypeId: DAY_12.id,
 });
 
 export const testShiftTypes: ShiftType[] = [DAY_12, NIGHT_12, DAY_8, EVENING_8, NIGHT_8, ON_CALL];

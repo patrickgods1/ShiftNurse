@@ -61,9 +61,12 @@ export function findReplacements(input: ReplacementInput): ReplacementReport {
   const shortfall = world.slotShortfall(date, shiftType.id, absentNurse.role);
 
   const burdenByNurse = burdenIndexByNurse(engine, world);
-  const hasCharge = world.view
-    .onShift(date, shiftType.id)
-    .some((v) => v.assignment.isCharge && v.nurse.isChargeEligible);
+  // A shift inside another runs under that shift's charge nurse, so nobody is made charge on it.
+  const hasCharge =
+    shiftType.withinShiftTypeId !== null ||
+    world.view
+      .onShift(date, shiftType.id)
+      .some((v) => v.assignment.isCharge && v.nurse.isChargeEligible);
 
   const candidates: ReplacementCandidate[] = [];
   const excluded: ExcludedNurse[] = [];
@@ -218,8 +221,8 @@ function tryNurse(
       after.nurseViolations(nurse.id),
     );
     const shiftDiff = diffViolations(
-      before.shiftViolations(date, shiftType.id),
-      after.shiftViolations(date, shiftType.id),
+      before.shiftViolationsAround(date, shiftType.id),
+      after.shiftViolationsAround(date, shiftType.id),
     );
     const introduced = [...nurseDiff.introduced, ...shiftDiff.introduced];
     const hard = introduced.filter((v) => v.severity === 'hard');

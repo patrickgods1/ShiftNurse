@@ -84,6 +84,7 @@ export class ScheduleView {
   // each read one or two of these, and building all of them eagerly was a third of a view.
   private periodViewsCache?: readonly AssignmentView[];
   private byDateShiftCache?: ReadonlyMap<string, readonly AssignmentView[]>;
+  private byDateShiftAllCache?: ReadonlyMap<string, readonly AssignmentView[]>;
   private byDateCache?: ReadonlyMap<IsoDate, readonly AssignmentView[]>;
   private byIdCache?: ReadonlyMap<Id, AssignmentView>;
 
@@ -196,6 +197,21 @@ export class ScheduleView {
 
   onShift(date: IsoDate, shiftTypeId: Id): readonly AssignmentView[] {
     return this.byDateShift.get(shiftKey(date, shiftTypeId)) ?? EMPTY;
+  }
+
+  /**
+   * Everyone on a shift, the lookback tail included: the cover a shift early on the first day
+   * gets from the night that began the day before the period.
+   */
+  rosterAt(date: IsoDate, shiftTypeId: Id): readonly AssignmentView[] {
+    if (!this.byDateShiftAllCache) {
+      const all = new Map<string, AssignmentView[]>();
+      for (const view of this.allViews) {
+        push(all, shiftKey(view.assignment.date, view.assignment.shiftTypeId), view);
+      }
+      this.byDateShiftAllCache = all;
+    }
+    return this.byDateShiftAllCache.get(shiftKey(date, shiftTypeId)) ?? EMPTY;
   }
 
   /** Staffed count for one role on one shift, excluding on-call standby. */

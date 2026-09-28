@@ -19,7 +19,7 @@ import {
   type Weekday,
   weekdayOf,
 } from '../domain/time.js';
-import type { ScheduleView } from '../schedule/view.js';
+import type { AssignmentView, ScheduleView } from '../schedule/view.js';
 import { leaveHoursBetween } from './paid-leave.js';
 import { isWorked, nurseName, type Rule, type Violation, violation } from './types.js';
 
@@ -37,12 +37,15 @@ export interface DateWindow {
 // Pay periods
 // ---------------------------------------------------------------------------
 
+/** All the pay-period maths reads of a unit. */
+export type PayCalendar = Pick<Unit, 'payPeriodAnchor' | 'payPeriodDays'>;
+
 /** Which pay period a date falls in, counted from the unit's anchor date. */
-export function payPeriodIndex(date: IsoDate, unit: Unit): number {
+export function payPeriodIndex(date: IsoDate, unit: PayCalendar): number {
   return Math.floor(daysBetween(unit.payPeriodAnchor, date) / unit.payPeriodDays);
 }
 
-export function payPeriodWindow(index: number, unit: Unit): DateWindow {
+export function payPeriodWindow(index: number, unit: PayCalendar): DateWindow {
   const start = addDays(unit.payPeriodAnchor, index * unit.payPeriodDays);
   return { start, end: addDays(start, unit.payPeriodDays - 1) };
 }
@@ -54,7 +57,11 @@ export function payPeriodWindow(index: number, unit: Unit): DateWindow {
  * report every nurse as drastically under-hours for that final partial period, burying the
  * real violations in noise.
  */
-export function payPeriodsIn(window: DateWindow, unit: Unit, onlyComplete: boolean): DateWindow[] {
+export function payPeriodsIn(
+  window: DateWindow,
+  unit: PayCalendar,
+  onlyComplete: boolean,
+): DateWindow[] {
   const first = payPeriodIndex(window.start, unit);
   const last = payPeriodIndex(window.end, unit);
   const out: DateWindow[] = [];
@@ -219,7 +226,7 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
 export interface MaxHoursParams {
   /** Absolute cap on hours in one work week, regardless of authorisation. */
   maxHoursPerWeek: number;
-  /** Hours past which the week counts as overtime. */
+  /** Hours past which the week counts as overtime (when overtime is weekly). */
   overtimeThresholdHours: number;
   /** The contract's work-week start. 0 = Sunday. */
   workWeekStartsOn: Weekday;
@@ -237,6 +244,64 @@ export interface MaxHoursParams {
    * toward `maxHoursPerWeek` — that cap is about fatigue, and a day off is not tiring.
    */
   paidLeaveCountsTowardOvertime: boolean;
+  /**
+   * Judge overtime over the unit's pay period instead of the work week, against
+   * `payPeriodOvertimeThresholdHours`. Six 12s and an 8 a fortnight is 44h one week and 36h the
+   * next: a weekly threshold calls the long week overtime, a fortnightly one sees exactly 80h.
+   * That is how a hospital on the FLSA's 14-day overtime period (29 U.S.C. §207(j)) or a
+   * federal biweekly compressed schedule counts it. `maxHoursPerWeek` still binds every week —
+   * it is about fatigue, not pay.
+   */
+  overtimeByPayPeriod: boolean;
+  /** Hours past which a pay period counts as overtime, when `overtimeByPayPeriod` is on. */
+  payPeriodOvertimeThresholdHours: number;
+}
+
+/** The overtime window containing `date`. */
+export function overtimeWindowOf(
+  date: IsoDate,
+  params: MaxHoursParams,
+  calendar: PayCalendar,
+): DateWindow {
+  if (params.overtimeByPayPeriod) return payPeriodWindow(payPeriodIndex(date, calendar), calendar);
+  const start = addDays(date, -((weekdayOf(date) - params.workWeekStartsOn + 7) % 7));
+  return { start, end: addDays(start, 6) };
+}
+
+/** Hours past which one overtime window is overtime. */
+export function overtimeThreshold(params: MaxHoursParams): number {
+  return params.overtimeByPayPeriod
+    ? params.payPeriodOvertimeThresholdHours
+    : params.overtimeThresholdHours;
+}
+
+/** "the week of 2026-01-04" or "the pay period from 2026-01-04", for messages. */
+function windowName(window: DateWindow, params: MaxHoursParams): string {
+  return params.overtimeByPayPeriod
+    ? `the pay period from ${window.start}`
+    : `the week of ${window.start}`;
+}
+
+interface WindowHours {
+  hours: number;
+  authorised: boolean;
+  touchesPeriod: boolean;
+  assignmentIds: Id[];
+}
+
+function hoursIn(timeline: readonly AssignmentView[], window: DateWindow): WindowHours {
+  const out: WindowHours = { hours: 0, authorised: false, touchesPeriod: false, assignmentIds: [] };
+  for (const view of timeline) {
+    if (compareDates(view.assignment.date, window.start) < 0) continue;
+    if (compareDates(view.assignment.date, window.end) > 0) continue;
+    out.hours += view.paidHours;
+    if (view.assignment.isOvertime) out.authorised = true;
+    if (view.inPeriod) {
+      out.touchesPeriod = true;
+      out.assignmentIds.push(view.assignment.id);
+    }
+  }
+  return out;
 }
 
 export const maxHoursRule: Rule<MaxHoursParams> = {
@@ -244,7 +309,8 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
   name: 'Weekly hour cap and overtime authorisation',
   description:
     'Caps hours in a single work week and requires overtime to be explicitly authorised rather than ' +
-    'appearing by accident.',
+    'appearing by accident. Overtime is judged per work week or, where the contract says so, per ' +
+    'pay period.',
   severity: 'hard',
   category: 'hours',
   scope: 'nurse',
@@ -255,87 +321,87 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
     requireOvertimeAuthorisation: true,
     onCallCountsTowardHours: false,
     paidLeaveCountsTowardOvertime: false,
+    overtimeByPayPeriod: false,
+    payPeriodOvertimeThresholdHours: 80,
   },
 
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];
-    const weeks = workWeeksIn(
-      { start: schedule.period.startDate, end: schedule.period.endDate },
-      params.workWeekStartsOn,
-    );
+    const window = { start: schedule.period.startDate, end: schedule.period.endDate };
+    const weeks = workWeeksIn(window, params.workWeekStartsOn);
+    // Weekly overtime is judged in the cap's own loop, so a week over the cap reports that alone.
+    const payPeriods = params.overtimeByPayPeriod ? payPeriodsIn(window, ctx.unit, false) : [];
 
     for (const nurse of ctx.nurses) {
       const timeline = schedule
         .timelineFor(nurse.id)
         .filter((v) => params.onCallCountsTowardHours || isWorked(v));
 
-      for (const week of weeks) {
-        let hours = 0;
-        let authorised = false;
-        let touchesPeriod = false;
-        const assignmentIds: Id[] = [];
-
-        for (const view of timeline) {
-          if (compareDates(view.assignment.date, week.start) < 0) continue;
-          if (compareDates(view.assignment.date, week.end) > 0) continue;
-          hours += view.paidHours;
-          if (view.assignment.isOvertime) authorised = true;
-          if (view.inPeriod) {
-            touchesPeriod = true;
-            assignmentIds.push(view.assignment.id);
-          }
-        }
-
-        if (!touchesPeriod) continue;
+      const unauthorised = (span: DateWindow, found: WindowHours) => {
+        if (!params.requireOvertimeAuthorisation || found.authorised) return;
         const paidLeaveHours = params.paidLeaveCountsTowardOvertime
-          ? leaveHoursBetween(ctx.paidLeaveByNurse.get(nurse.id), week.start, week.end)
+          ? leaveHoursBetween(ctx.paidLeaveByNurse.get(nurse.id), span.start, span.end)
           : 0;
-        const overtimeHours = hours + paidLeaveHours;
+        const threshold = overtimeThreshold(params);
+        const overtimeHours = found.hours + paidLeaveHours - threshold;
+        if (overtimeHours <= 0) return;
+        const unit = params.overtimeByPayPeriod ? 'pay period' : 'week';
+        violations.push(
+          violation(
+            maxHoursRule,
+            'hard',
+            'unauthorised_overtime',
+            `${nurseName(nurse)} is scheduled ${found.hours}h${leaveNote(paidLeaveHours)} in ` +
+              `${windowName(span, params)}, which is ${overtimeHours}h of overtime, but no shift ` +
+              `that ${unit} is marked as authorised overtime.`,
+            {
+              nurseIds: [nurse.id],
+              dates: [span.start, span.end],
+              assignmentIds: found.assignmentIds,
+              details: {
+                scheduledHours: found.hours,
+                paidLeaveHours,
+                overtimeHours,
+                threshold,
+                ...(params.overtimeByPayPeriod ? { payPeriod: span } : { week: span }),
+              },
+            },
+          ),
+        );
+      };
 
-        if (hours > params.maxHoursPerWeek) {
+      for (const week of weeks) {
+        const found = hoursIn(timeline, week);
+        if (!found.touchesPeriod) continue;
+
+        if (found.hours > params.maxHoursPerWeek) {
           violations.push(
             violation(
               maxHoursRule,
               'hard',
               'over_max_hours',
-              `${nurseName(nurse)} is scheduled ${hours}h in the week of ${week.start}, over the ` +
-                `${params.maxHoursPerWeek}h cap.`,
+              `${nurseName(nurse)} is scheduled ${found.hours}h in the week of ${week.start}, ` +
+                `over the ${params.maxHoursPerWeek}h cap.`,
               {
                 nurseIds: [nurse.id],
                 dates: [week.start, week.end],
-                assignmentIds,
-                details: { scheduledHours: hours, maxHours: params.maxHoursPerWeek, week },
-              },
-            ),
-          );
-        } else if (
-          params.requireOvertimeAuthorisation &&
-          overtimeHours > params.overtimeThresholdHours &&
-          !authorised
-        ) {
-          violations.push(
-            violation(
-              maxHoursRule,
-              'hard',
-              'unauthorised_overtime',
-              `${nurseName(nurse)} is scheduled ${hours}h${leaveNote(paidLeaveHours)} in the week of ` +
-                `${week.start}, which is ${overtimeHours - params.overtimeThresholdHours}h of ` +
-                'overtime, but no shift that week is marked as authorised overtime.',
-              {
-                nurseIds: [nurse.id],
-                dates: [week.start, week.end],
-                assignmentIds,
+                assignmentIds: found.assignmentIds,
                 details: {
-                  scheduledHours: hours,
-                  paidLeaveHours,
-                  overtimeHours: overtimeHours - params.overtimeThresholdHours,
-                  threshold: params.overtimeThresholdHours,
+                  scheduledHours: found.hours,
+                  maxHours: params.maxHoursPerWeek,
                   week,
                 },
               },
             ),
           );
+        } else if (!params.overtimeByPayPeriod) {
+          unauthorised(week, found);
         }
+      }
+
+      for (const pay of payPeriods) {
+        const found = hoursIn(timeline, pay);
+        if (found.touchesPeriod) unauthorised(pay, found);
       }
     }
 
@@ -343,14 +409,18 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
   },
 };
 
-/** Hours a nurse is scheduled in the work week containing `date`. Used by the day-of finder. */
-export function hoursInWeekOf(
+/**
+ * Hours past the overtime threshold in the overtime window (work week or pay period) containing
+ * `date`. Used by the exchange evaluator to show what a trade does to each side's overtime.
+ */
+export function overtimeHoursAround(
   schedule: ScheduleView,
   nurseId: Id,
   date: IsoDate,
-  startsOn: Weekday,
+  params: MaxHoursParams,
+  calendar: PayCalendar,
 ): number {
-  const shift = (weekdayOf(date) - startsOn + 7) % 7;
-  const start = addDays(date, -shift);
-  return schedule.hoursBetween(nurseId, start, addDays(start, 6));
+  const window = overtimeWindowOf(date, params, calendar);
+  const hours = schedule.hoursBetween(nurseId, window.start, window.end);
+  return Math.max(0, hours - overtimeThreshold(params));
 }

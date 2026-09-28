@@ -71,6 +71,13 @@
       "when": 1790466773852,
       "tag": "0009_dashing_mulholland_black",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1790626903458,
+      "tag": "0010_amused_scarecrow",
+      "breakpoints": true
     }
   ]
 }

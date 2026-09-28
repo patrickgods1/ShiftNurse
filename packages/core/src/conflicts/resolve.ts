@@ -236,7 +236,7 @@ function collectViolations(state: SimState, change: Change): Map<string, Violati
     for (const v of state.nurseViolations(nurseId)) out.set(violationKey(v), v);
   }
   for (const { date, shiftTypeId } of change.touchedShifts) {
-    for (const v of state.shiftViolations(date, shiftTypeId)) out.set(violationKey(v), v);
+    for (const v of state.shiftViolationsAround(date, shiftTypeId)) out.set(violationKey(v), v);
   }
   return out;
 }
@@ -331,7 +331,10 @@ function staffingOptions(
   const { world, before, date } = prelude;
   const shiftType = engine.shiftType(prelude.shiftTypeId);
   const roster = world.view.onShift(date, shiftType.id);
-  const hasCharge = roster.some((v) => v.assignment.isCharge && v.nurse.isChargeEligible);
+  // A shift inside another runs under that shift's charge nurse, so nobody is made charge on it.
+  const hasCharge =
+    shiftType.withinShiftTypeId !== null ||
+    roster.some((v) => v.assignment.isCharge && v.nurse.isChargeEligible);
   const slotLabel = `${dayLabel(date)} ${shiftType.abbreviation}${target.role ? ` ${target.role}` : ''}`;
   const here: ShiftRef = { date, shiftTypeId: shiftType.id };
   const out: Resolution[] = [];

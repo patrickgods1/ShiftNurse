@@ -192,11 +192,13 @@ This builds `packages/core` and `packages/db`, starts their watchers, and starts
   ready to generate, and requests waiting for a decision:
   - *5 North Medical-Surgical* — a 28-bed community-hospital med-surg unit: RNs and CNAs on
     12-hour days and nights, RN ratios 1:5 / 1:4 / 1:3, travelers, seniority step pay.
-  - *4A Medicine-Surgery (VA San Francisco sample)* — a federal ward on VA practice: 8-hour
-    day, evening and night tours on the federal pay calendar, RNs with LVNs and nursing
-    assistants, no legislated ratios (VHA staffs to nursing hours per patient day), Title 38
-    premium pay (10% night differential on evening and night tours, 25% weekend premium,
-    double-time holidays), overtime after 8 hours a day, all 11 federal holidays.
+  - *4A Medicine-Surgery (VA San Francisco sample)* — a federal ward on VA practice: a
+    compressed schedule of six 12-hour tours and one 8 per pay period (44 hours one week, 36 the
+    next) on the federal pay calendar, with the 8 running inside the day 12 under its charge
+    nurse; RNs with LVNs and nursing assistants, no legislated ratios (VHA staffs to nursing
+    hours per patient day), Title 38 premium pay (10% night differential on the night 12, 25%
+    weekend premium, double-time holidays), overtime past a 12-hour tour or 80 hours a pay
+    period, all 11 federal holidays.
   - *3 West Medical-Surgical ICU* — a 12-bed California ICU: Title 22 ratios 1:2 and 1:1,
     ACLS for every RN, overtime on the 12-hour alternative workweek.
 - **Manual setup** creates just the unit (name, type, pay-period calendar); everything else is

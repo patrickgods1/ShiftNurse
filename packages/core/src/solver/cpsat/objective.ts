@@ -17,7 +17,7 @@ import { weekendKey } from '../../domain/time.js';
 import { BURDEN_COMPONENTS, type BurdenComponent } from '../../fairness/types.js';
 import { type Expr, evalExpr, expr, scale, sum } from './builder.js';
 import { countExpr, type EncodeContext, HOURS, hoursExpr, type TimelineEntry } from './context.js';
-import { roleExpr } from './rules/coverage.js';
+import { isMovable, roleExpr } from './rules/coverage.js';
 
 /** Fixed-point scale for fair-share arithmetic: shares are fractions of the team. */
 const FAIR = 10_000;
@@ -42,7 +42,7 @@ function priced(ctx: EncodeContext, e: Expr, weight: number, label: string): voi
 function coverageTerms(ctx: EncodeContext): void {
   const { model, weights } = ctx;
   for (const shift of model.shifts) {
-    if (ctx.byShift[shift.idx]!.length === 0) {
+    if (!isMovable(ctx, shift)) {
       ctx.b.minimise(expr([], model.coveragePenaltyOf(shift)), 1);
       continue;
     }

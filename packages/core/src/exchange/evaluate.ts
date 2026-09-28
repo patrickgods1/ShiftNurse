@@ -28,7 +28,7 @@ import { dollars, nurseName, plural, signed } from '../conflicts/text.js';
 import { diffViolations } from '../conflicts/violation-diff.js';
 import type { Assignment, Id } from '../domain/entities.js';
 import type { IsoDate } from '../domain/time.js';
-import { hoursInWeekOf } from '../rules/hours-rules.js';
+import { overtimeHoursAround } from '../rules/hours-rules.js';
 import type { Violation } from '../rules/types.js';
 import type { AssignmentView } from '../schedule/view.js';
 import type {
@@ -65,8 +65,8 @@ export function evaluateExchange(input: ExchangeInput): ExchangeEvaluation {
   const shiftIntroduced: Violation[] = [];
   for (const ref of shiftRefs) {
     const diff = diffViolations(
-      before.shiftViolations(ref.date, ref.shiftTypeId),
-      afterState.shiftViolations(ref.date, ref.shiftTypeId),
+      before.shiftViolationsAround(ref.date, ref.shiftTypeId),
+      afterState.shiftViolationsAround(ref.date, ref.shiftTypeId),
     );
     shiftIntroduced.push(...diff.introduced);
   }
@@ -322,8 +322,7 @@ function overtimeHoursFor(
   nurseId: Id,
   date: IsoDate,
 ): number {
-  const hours = hoursInWeekOf(state.view, nurseId, date, engine.maxHoursParams.workWeekStartsOn);
-  return Math.max(0, hours - engine.maxHoursParams.overtimeThresholdHours);
+  return overtimeHoursAround(state.view, nurseId, date, engine.maxHoursParams, engine.input.unit);
 }
 
 function sideImpact(nurseId: Id, before: SimState, after: SimState): NurseSideImpact {

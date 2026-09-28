@@ -18,6 +18,7 @@ import type {
   ShiftType,
   Unit,
 } from '@shiftnurse/core';
+import { withinShiftProblem } from '@shiftnurse/core';
 import { and, asc, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
@@ -105,13 +106,38 @@ export function getShiftType(db: DbLike, id: Id): ShiftType | undefined {
   return row ? toShiftType(row) : undefined;
 }
 
-export function createShiftType(
-  db: DbLike,
-  input: Omit<ShiftType, 'id'>,
-  actor: string,
-): ShiftType {
+/** A new shift type; standalone unless `withinShiftTypeId` names the shift it runs inside. */
+export type NewShiftType = Omit<ShiftType, 'id' | 'withinShiftTypeId'> &
+  Partial<Pick<ShiftType, 'withinShiftTypeId'>>;
+
+/**
+ * Refuse a shift type that would run inside a shift whose hours do not contain it, inside a
+ * shift that itself runs inside another, or that other shifts run inside while it runs inside
+ * one — so every shift inside another is covered by a standalone shift for all its hours.
+ */
+function assertCoverFits(db: DbLike, shiftType: ShiftType): void {
+  const outer = shiftType.withinShiftTypeId
+    ? getShiftType(db, shiftType.withinShiftTypeId)
+    : undefined;
+  const problem = withinShiftProblem(shiftType, outer);
+  if (problem) throw new Error(problem);
+  const inner = listShiftTypesForUnit(db, shiftType.unitId).filter(
+    (t) => t.withinShiftTypeId === shiftType.id,
+  );
+  for (const t of inner) {
+    const innerProblem = withinShiftProblem(t, shiftType);
+    if (innerProblem) throw new Error(`${innerProblem}: ${t.name} runs inside ${shiftType.name}`);
+  }
+}
+
+export function createShiftType(db: DbLike, input: NewShiftType, actor: string): ShiftType {
   const id = ids.shiftType();
-  const row: typeof shiftTypeTable.$inferInsert = { id, ...input };
+  const row: typeof shiftTypeTable.$inferInsert = {
+    id,
+    ...input,
+    withinShiftTypeId: input.withinShiftTypeId ?? null,
+  };
+  assertCoverFits(db, toShiftType(row as typeof shiftTypeTable.$inferSelect));
   db.insert(shiftTypeTable).values(row).run();
   const after = toShiftType(row as typeof shiftTypeTable.$inferSelect);
   recordAudit(db, { entityType: 'shift_type', entityId: id, action: 'create', actor, after });
@@ -128,6 +154,7 @@ export interface ShiftTypePatch {
   color?: string;
   sortOrder?: number;
   active?: boolean;
+  withinShiftTypeId?: Id | null;
 }
 
 const SHIFT_TYPE_PATCH_KEYS: PatchKeys<ShiftTypePatch> = {
@@ -140,6 +167,7 @@ const SHIFT_TYPE_PATCH_KEYS: PatchKeys<ShiftTypePatch> = {
   color: true,
   sortOrder: true,
   active: true,
+  withinShiftTypeId: true,
 };
 
 export function updateShiftType(
@@ -152,8 +180,10 @@ export function updateShiftType(
   if (!row) throw new Error(`Shift type ${id} not found`);
   const before = toShiftType(row);
   const merged = { ...row, ...patchOf(patch, SHIFT_TYPE_PATCH_KEYS, 'shift type') };
-  db.update(shiftTypeTable).set(merged).where(eq(shiftTypeTable.id, id)).run();
   const after = toShiftType(merged);
+  // A new time or length can stop it fitting inside its shift, or stop another fitting inside it.
+  assertCoverFits(db, after);
+  db.update(shiftTypeTable).set(merged).where(eq(shiftTypeTable.id, id)).run();
   recordAudit(db, {
     entityType: 'shift_type',
     entityId: id,

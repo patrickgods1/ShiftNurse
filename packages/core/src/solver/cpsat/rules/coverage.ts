@@ -31,6 +31,23 @@ export function staffedExpr(
   return e;
 }
 
+/**
+ * Staff matching `keep` on the shift covering this one (`schedule/cover.ts`): its variables and
+ * locked rows, or the lookback tail's roster of a night begun the day before the period.
+ */
+function coverExpr(
+  ctx: EncodeContext,
+  shift: Shift,
+  keep: (nurseIdx: number, locked: Assignment | null) => boolean,
+): Expr {
+  const cover = ctx.model.coverShift[shift.idx];
+  if (cover === undefined) return expr();
+  if ('tail' in cover) {
+    return expr([], cover.tail.filter((a) => keep(ctx.model.nurseOf(a), a)).length);
+  }
+  return staffedExpr(ctx, cover.shift, keep);
+}
+
 export function roleExpr(ctx: EncodeContext, shift: Shift, role: NurseRole): Expr {
   return staffedExpr(ctx, shift, (n) => ctx.model.nurses[n]!.role === role);
 }
@@ -39,9 +56,18 @@ function label(shift: Shift): string {
   return `${shift.shiftType.abbreviation} ${shift.date}`;
 }
 
-/** Shifts CP-SAT can change: the others are constants priced from the annealer's model. */
+/**
+ * Whether CP-SAT can change what this shift costs: it has variables, or the shift covering it
+ * does. The others are constants priced from the annealer's model.
+ */
+export function isMovable(ctx: EncodeContext, shift: Shift): boolean {
+  if (ctx.byShift[shift.idx]!.length > 0) return true;
+  const cover = ctx.model.coverShift[shift.idx];
+  return cover !== undefined && 'shift' in cover && ctx.byShift[cover.shift.idx]!.length > 0;
+}
+
 function variableShifts(ctx: EncodeContext): Shift[] {
-  return ctx.model.shifts.filter((s) => ctx.byShift[s.idx]!.length > 0);
+  return ctx.model.shifts.filter((s) => isMovable(ctx, s));
 }
 
 export function encodeCoverage(ctx: EncodeContext, raw: Record<string, unknown>): void {
@@ -66,15 +92,22 @@ export function encodeCoverage(ctx: EncodeContext, raw: Record<string, unknown>)
     const vars = ctx.byShift[shift.idx]!;
     const locked = ctx.lockedByShift[shift.idx]!;
 
-    if (params.requireChargeNurse) missingCharge(ctx, shift, vars, locked, cost);
+    if (params.requireChargeNurse && shift.shiftType.withinShiftTypeId === null) {
+      missingCharge(ctx, shift, vars, locked, cost);
+    }
 
     if (params.minExperiencedPerShift > 0) {
-      const experienced = staffedExpr(ctx, shift, (n) => !ctx.model.nurses[n]!.isNovice);
+      // Any new grad on the shift needs enough experienced RNs on the unit: here or covering.
+      const isNovice = (n: number) => ctx.model.nurses[n]!.isNovice;
+      const experiencedRn = (n: number) => {
+        const nurse = ctx.model.nurses[n]!;
+        return nurse.role === 'RN' && !nurse.isNovice;
+      };
       shortOfAtLeast(
         ctx,
-        vars,
-        locked,
-        experienced,
+        vars.filter((sv) => isNovice(sv.n)),
+        locked.some((a) => isNovice(ctx.model.nurseOf(a))),
+        sum(staffedExpr(ctx, shift, experiencedRn), coverExpr(ctx, shift, experiencedRn)),
         params.minExperiencedPerShift,
         cost,
         `all novice: ${label(shift)}`,
@@ -85,15 +118,16 @@ export function encodeCoverage(ctx: EncodeContext, raw: Record<string, unknown>)
       for (const req of ctx.input.shiftCredentialRequirements) {
         if (req.shiftTypeId !== null && req.shiftTypeId !== shift.shiftType.id) continue;
         if (req.minCount <= 0) continue;
-        const holders = staffedExpr(ctx, shift, (n) => {
+        const holds = (n: number) => {
           const nurse = ctx.model.nurses[n]!;
           if (req.role !== null && nurse.role !== req.role) return false;
           return hasValidCredential(ctx.model.ctx, nurse.id, req.credentialId, shift.date);
-        });
+        };
+        const holders = sum(staffedExpr(ctx, shift, holds), coverExpr(ctx, shift, holds));
         shortOfAtLeast(
           ctx,
           vars,
-          locked,
+          locked.length > 0,
           holders,
           req.minCount,
           cost,
@@ -168,21 +202,23 @@ function missingCharge(
 }
 
 /**
- * One unit when anyone is on the shift but fewer than `min` of them qualify:
- * `min·flag + qualified ≥ min·y` for everyone `y` who could be on.
+ * One unit when the requirement is triggered — someone who needs it is on the shift, a variable
+ * in `vars` or a locked row (`lockedTrigger`) — but fewer than `min` qualify:
+ * `min·flag + qualified ≥ min·y` for every trigger `y`.
  */
 function shortOfAtLeast(
   ctx: EncodeContext,
   vars: readonly ShiftVar[],
-  locked: readonly Assignment[],
+  lockedTrigger: boolean,
   qualified: Expr,
   min: number,
   cost: number,
   name: string,
 ): void {
+  if (vars.length === 0 && !lockedTrigger) return; // Nobody who needs it can be on.
   const b = ctx.b;
   const flag = b.auxiliary(name, 0, 1, (value) => {
-    const anyone = locked.length > 0 || vars.some((sv) => value(sv.variable) === 1);
+    const anyone = lockedTrigger || vars.some((sv) => value(sv.variable) === 1);
     let q = qualified.constant;
     for (const [v, c] of qualified.terms) q += c * value(v);
     return anyone && q < min ? 1 : 0;
@@ -201,7 +237,7 @@ function shortOfAtLeast(
       name,
     );
   }
-  if (locked.length > 0) {
+  if (lockedTrigger) {
     b.linear(sum(expr([[flag, min]], -min), qualified), 0, Number.POSITIVE_INFINITY, name);
   }
   b.minimise(expr([[flag, 1]]), cost);

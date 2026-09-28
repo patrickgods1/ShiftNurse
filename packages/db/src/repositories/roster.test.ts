@@ -17,7 +17,13 @@ import {
   listActiveRatioRulesForUnit,
   listAcuityTiersForUnit,
 } from './acuity.js';
-import { createShiftType, createUnit, listShiftTypesForUnit } from './config.js';
+import {
+  createShiftType,
+  createUnit,
+  getShiftType,
+  listShiftTypesForUnit,
+  updateShiftType,
+} from './config.js';
 import {
   createNurse,
   credentialsExpiringBetween,
@@ -314,6 +320,46 @@ describe('unit configuration', () => {
       'second',
       'third',
     ]);
+  });
+
+  it('lets a shift run inside another only where its hours fit, and never in a chain', () => {
+    const mk = (
+      name: string,
+      startTime: string,
+      durationHours: number,
+      withinShiftTypeId?: string,
+    ) =>
+      createShiftType(
+        handle.db,
+        {
+          unitId,
+          name,
+          abbreviation: name,
+          startTime,
+          durationHours,
+          isNight: false,
+          isOnCall: false,
+          color: '#000',
+          sortOrder: 1,
+          active: true,
+          ...(withinShiftTypeId ? { withinShiftTypeId } : {}),
+        },
+        ACTOR,
+      );
+    const day = mk('D12', '07:00', 12);
+    expect(day.withinShiftTypeId).toBeNull();
+    const eight = mk('D8', '07:00', 8, day.id);
+    expect(getShiftType(handle.db, eight.id)?.withinShiftTypeId).toBe(day.id);
+    // 13:00–21:00 runs past the day 12's 19:00 end.
+    expect(() => mk('M8', '13:00', 8, day.id)).toThrow(/does not fit inside/);
+    // Cover comes from a standalone shift, not from one that is itself covered.
+    expect(() => mk('M4', '09:00', 4, eight.id)).toThrow(/itself runs inside another/);
+    // Moving the day 12 so the 8 no longer fits is refused too.
+    expect(() => updateShiftType(handle.db, day.id, { startTime: '09:00' }, ACTOR)).toThrow(
+      /D8 runs inside D12/,
+    );
+    updateShiftType(handle.db, eight.id, { withinShiftTypeId: null }, ACTOR);
+    expect(getShiftType(handle.db, eight.id)?.withinShiftTypeId).toBeNull();
   });
 
   it('orders acuity tiers by level', () => {

@@ -1,0 +1,1 @@
+ALTER TABLE `shift_type` ADD `within_shift_type_id` text REFERENCES shift_type(id) ON DELETE set null;

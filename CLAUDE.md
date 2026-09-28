@@ -407,9 +407,24 @@ violations of their own.
   A nurse at contract who picks up a call-off still reads "over contract": the rule counts any
   hours past it. The contracted hours are 72h a pay period for full-time 12-hour
   staff (three 12s under a 40h overtime threshold). Changing floors, census or the roster mix
-  means re-running the demo tests in `seed/demo/`. The VA demo flags its evening tour
-  `isNight` on purpose: Title 38 pays night differential on the whole evening tour, and the flag
-  is what the cost engine prices by.
+  means re-running the demo tests in `seed/demo/`. The VA demo is a compressed biweekly
+  schedule: full-time rows carry a `shortShift` (one D8 a pay period on top of six 12s, 80h),
+  which the engine holds hours back for and places in a pass of its own, and its rule set judges
+  overtime by pay period. The D8 runs inside the day 12 (`within: 'D12'`), which covers it, and
+  the engine lets a new grad onto it only with an experienced RN on the D8 or that day's D12.
+  The engine counts hours, not shifts, which for the all-12-hour demos is the same arithmetic
+  scaled: their seeded data did not change.
+- **Cover is by the hour, as units judge it.** A shift type may run inside another
+  (`withinShiftTypeId`; `schedule/cover.ts` is the one definition of which dated shift covers
+  which, a night included). The inside shift has no charge nurse of its own, and the containing
+  shift's roster counts toward its credential requirements and toward the experienced RNs a new
+  grad on it needs. The coverage rule is still `'shift'` scope, but its view of an inside shift
+  must hold the containing shift's roster: `SolverModel.coveragePenalty`, the conflicts engine's
+  `shiftViolations` and CP-SAT's `coverExpr` all add it, a change to a containing shift
+  re-prices the shifts inside it (`innerShifts`, and `shiftViolationsAround` for simulated
+  changes), and CP-SAT treats a shift as movable when its cover is. Only experienced **RNs**
+  cover a new grad: an LVN or nursing assistant cannot supervise an RN. The repository refuses
+  a containing shift whose hours do not hold the inside one, or a chain.
 - **Main never seeds the demo on its own.** `openAppDatabase` only migrates; the demo is loaded
   by the welcome screen through `setup.loadDemo` (the test scenarios through
   `setup.loadScenarios`, which main allows only under the electron-vite dev server), and all of
@@ -454,7 +469,10 @@ violations of their own.
   shows that count next to the total. Overtime is priced per nurse-week over the full timeline
   including the lookback tail, using the work-week start from the `max-hours-per-week` rule
   params, so a shift can never be flagged as overtime by the rules and priced as straight time.
-  The DB's `effectiveRateForNurse` delegates to core's `resolvePayRate`; do not add a second
+  A `pay_period` overtime rule (8/80-style) prices per nurse-pay-period instead; the max-hours
+  rule's `overtimeByPayPeriod` is its rule-engine twin, honoured by `SolverModel.eligible`, the
+  CP-SAT encoder, compliance alerts and the exchange evaluator alike. The weekly cap
+  (`maxHoursPerWeek`) binds every week either way. The DB's `effectiveRateForNurse` delegates to core's `resolvePayRate`; do not add a second
   definition of "the rate in force".
 
 ## Development discipline
@@ -492,8 +510,11 @@ violations of their own.
   contractual; breaching one makes a schedule infeasible.
 - **Coverage floor** — static minimum staffing per shift/weekday, independent of census.
   Demand is `max(floor, ratio-derived)`: acuity can only push staffing up, never below.
-- **Charge nurse** — the RN running the shift. Some shifts require exactly one.
-- **Novice** — new grad / recent hire. A shift staffed entirely by novices is a violation.
+- **Charge nurse** — the RN running the shift. Every standalone shift requires exactly one; a
+  shift that runs inside another (a mid or short shift, like the VA demo's 8) works under that
+  shift's charge nurse and has none of its own.
+- **Novice** — new grad / recent hire. A novice must work with at least one experienced RN on
+  the unit during the shift — on it, or on the shift it runs inside; any other role does not count.
 - **Per-diem** — as-needed staff with no contracted-hours floor, so exempt from under-hours checks.
 - **Hard vs soft rule** — hard = illegal, the solver will never emit one. Soft = advisory, the
   manager can knowingly accept it. Fairness pressure lives in the objective function, not here.

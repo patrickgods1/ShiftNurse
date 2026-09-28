@@ -143,7 +143,9 @@ export type NursePatch = Partial<Omit<Nurse, 'id' | 'unitId' | 'phone' | 'email'
   notes?: string | null;
 };
 
-export type ShiftTypeInput = Omit<ShiftType, 'id'>;
+/** A new shift type; standalone unless `withinShiftTypeId` names the shift it runs inside. */
+export type ShiftTypeInput = Omit<ShiftType, 'id' | 'withinShiftTypeId'> &
+  Partial<Pick<ShiftType, 'withinShiftTypeId'>>;
 export type ShiftTypePatch = Partial<Omit<ShiftType, 'id' | 'unitId'>>;
 
 /** A preference as the editor submits it: identity is assigned on save. */

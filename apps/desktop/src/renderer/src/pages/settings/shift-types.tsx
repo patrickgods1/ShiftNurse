@@ -7,7 +7,7 @@
  */
 
 import * as Dialog from '@radix-ui/react-dialog';
-import type { ShiftType } from '@shiftnurse/core';
+import type { Id, ShiftType } from '@shiftnurse/core';
 import { useState } from 'react';
 import type { ShiftTypeInput, ShiftTypePatch } from '../../../../shared/api.js';
 import {
@@ -27,6 +27,8 @@ interface FormState {
   durationHours: string;
   isNight: boolean;
   isOnCall: boolean;
+  /** The id of the shift this one runs inside, or '' for a standalone shift. */
+  withinShiftTypeId: string;
   color: string;
   sortOrder: string;
 }
@@ -38,6 +40,7 @@ const EMPTY_FORM: FormState = {
   durationHours: '12',
   isNight: false,
   isOnCall: false,
+  withinShiftTypeId: '',
   color: '#1f6f8b',
   sortOrder: '0',
 };
@@ -50,9 +53,14 @@ function toFormState(shiftType: ShiftType): FormState {
     durationHours: String(shiftType.durationHours),
     isNight: shiftType.isNight,
     isOnCall: shiftType.isOnCall,
+    withinShiftTypeId: shiftType.withinShiftTypeId ?? '',
     color: shiftType.color,
     sortOrder: String(shiftType.sortOrder),
   };
+}
+
+function withinOf(form: FormState): ShiftType['withinShiftTypeId'] {
+  return form.withinShiftTypeId === '' ? null : (form.withinShiftTypeId as Id);
 }
 
 function diffPatch(original: ShiftType, form: FormState): ShiftTypePatch {
@@ -64,6 +72,8 @@ function diffPatch(original: ShiftType, form: FormState): ShiftTypePatch {
   if (durationHours !== original.durationHours) patch.durationHours = durationHours;
   if (form.isNight !== original.isNight) patch.isNight = form.isNight;
   if (form.isOnCall !== original.isOnCall) patch.isOnCall = form.isOnCall;
+  const withinShiftTypeId = withinOf(form);
+  if (withinShiftTypeId !== original.withinShiftTypeId) patch.withinShiftTypeId = withinShiftTypeId;
   if (form.color !== original.color) patch.color = form.color;
   const sortOrder = Number(form.sortOrder);
   if (sortOrder !== original.sortOrder) patch.sortOrder = sortOrder;
@@ -72,11 +82,14 @@ function diffPatch(original: ShiftType, form: FormState): ShiftTypePatch {
 
 function ShiftTypeForm({
   initial,
+  containers,
   onCancel,
   onSubmit,
   submitLabel,
 }: {
   initial: FormState;
+  /** Standalone shifts this one could run inside. */
+  containers: readonly ShiftType[];
   onCancel: () => void;
   onSubmit: (form: FormState) => void;
   submitLabel: string;
@@ -176,6 +189,27 @@ function ShiftTypeForm({
           On-call
         </label>
       </div>
+      <label className="flex flex-col gap-1 text-sm text-text">
+        Runs inside
+        <select
+          value={form.withinShiftTypeId}
+          onChange={(event) => setForm({ ...form, withinShiftTypeId: event.target.value })}
+          className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+        >
+          <option value="">Nothing — a standalone shift</option>
+          {containers.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name} ({t.abbreviation}, {t.startTime}, {t.durationHours}h)
+            </option>
+          ))}
+        </select>
+        <span className="text-xs text-text-muted">
+          For a mid or short shift whose hours sit inside another, such as an 8 inside the day 12.
+          It is covered by whoever is on that shift: no charge nurse of its own, and that shift's
+          staff count toward its credential requirements and the experienced RNs a new grad on it
+          works beside.
+        </span>
+      </label>
       <div className="mt-2 flex justify-end gap-2">
         <button
           type="button"
@@ -200,6 +234,8 @@ function ShiftTypeDialog({
   onOpenChange,
   title,
   initial,
+  containers,
+  error,
   onSubmit,
   submitLabel,
 }: {
@@ -207,6 +243,9 @@ function ShiftTypeDialog({
   onOpenChange: (open: boolean) => void;
   title: string;
   initial: FormState;
+  containers: readonly ShiftType[];
+  /** Why main refused the last save — a shift that does not fit inside the one it names. */
+  error: Error | null;
   onSubmit: (form: FormState) => void;
   submitLabel: string;
 }) {
@@ -216,8 +255,14 @@ function ShiftTypeDialog({
         <Dialog.Overlay className={OVERLAY} />
         <Dialog.Content className={`${POPUP} w-[420px]`}>
           <Dialog.Title className="mb-3 text-sm font-semibold text-text">{title}</Dialog.Title>
+          {error ? (
+            <p role="alert" className="mb-3 text-xs text-danger">
+              {error.message}
+            </p>
+          ) : null}
           <ShiftTypeForm
             initial={initial}
+            containers={containers}
             submitLabel={submitLabel}
             onCancel={() => onOpenChange(false)}
             onSubmit={onSubmit}
@@ -251,6 +296,11 @@ export default function ShiftTypesPanel() {
   }
 
   const shiftTypes = [...shiftTypesQuery.data].sort((a, b) => a.sortOrder - b.sortOrder);
+  // A shift runs inside a standalone one, never itself; main refuses one whose hours do not fit.
+  const containersFor = (self: ShiftType | undefined) =>
+    shiftTypes.filter(
+      (t) => t.withinShiftTypeId === null && t.id !== self?.id && !t.isOnCall && t.active,
+    );
 
   function handleCreate(form: FormState) {
     const input: ShiftTypeInput = {
@@ -261,6 +311,7 @@ export default function ShiftTypesPanel() {
       durationHours: Number(form.durationHours),
       isNight: form.isNight,
       isOnCall: form.isOnCall,
+      withinShiftTypeId: withinOf(form),
       color: form.color,
       sortOrder: Number(form.sortOrder),
       active: true,
@@ -283,7 +334,10 @@ export default function ShiftTypesPanel() {
         <h2 className="text-sm font-semibold text-text">Shift types</h2>
         <button
           type="button"
-          onClick={() => setCreating(true)}
+          onClick={() => {
+            createMutation.reset();
+            setCreating(true);
+          }}
           className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
         >
           Add shift type
@@ -316,6 +370,9 @@ export default function ShiftTypesPanel() {
                 On-call
               </th>
               <th scope="col" className="px-3 py-2 font-medium">
+                Runs inside
+              </th>
+              <th scope="col" className="px-3 py-2 font-medium">
                 Sort
               </th>
               <th scope="col" className="px-3 py-2 font-medium">
@@ -329,7 +386,7 @@ export default function ShiftTypesPanel() {
           <tbody>
             {shiftTypes.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-3 py-6 text-center text-text-muted">
+                <td colSpan={10} className="px-3 py-6 text-center text-text-muted">
                   No shift types yet.
                 </td>
               </tr>
@@ -351,6 +408,10 @@ export default function ShiftTypesPanel() {
                   <td className="px-3 py-2 text-text">{shiftType.durationHours}h</td>
                   <td className="px-3 py-2 text-text">{shiftType.isNight ? 'Yes' : 'No'}</td>
                   <td className="px-3 py-2 text-text">{shiftType.isOnCall ? 'Yes' : 'No'}</td>
+                  <td className="px-3 py-2 text-text">
+                    {shiftTypes.find((t) => t.id === shiftType.withinShiftTypeId)?.abbreviation ??
+                      '—'}
+                  </td>
                   <td className="px-3 py-2 text-text">{shiftType.sortOrder}</td>
                   <td className="px-3 py-2 text-text">
                     {shiftType.active ? 'Active' : 'Inactive'}
@@ -359,7 +420,10 @@ export default function ShiftTypesPanel() {
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
-                        onClick={() => setEditing(shiftType)}
+                        onClick={() => {
+                          updateMutation.reset();
+                          setEditing(shiftType);
+                        }}
                         className="rounded-md border border-border px-2 py-1 text-xs text-text hover:bg-bg"
                       >
                         Edit
@@ -387,6 +451,8 @@ export default function ShiftTypesPanel() {
         onOpenChange={setCreating}
         title="Add shift type"
         initial={EMPTY_FORM}
+        containers={containersFor(undefined)}
+        error={createMutation.error}
         submitLabel="Create"
         onSubmit={handleCreate}
       />
@@ -399,6 +465,8 @@ export default function ShiftTypesPanel() {
           }}
           title="Edit shift type"
           initial={toFormState(editing)}
+          containers={containersFor(editing)}
+          error={updateMutation.error}
           submitLabel="Save"
           onSubmit={(form) => handleUpdate(editing, form)}
         />
