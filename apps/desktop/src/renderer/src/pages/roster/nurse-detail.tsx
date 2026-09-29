@@ -8,7 +8,7 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import type { Id, Nurse } from '@shiftnurse/core';
 import { useRef, useState } from 'react';
-import { useDeactivateNurse, useNurse } from '../../api.js';
+import { useDeactivateNurse, useIncompatibilityGroups, useNurse } from '../../api.js';
 import { AsyncState } from '../../components/async-state.js';
 import { OVERLAY } from '../../components/ui.js';
 import { usePanelFocus } from '../../components/use-panel-focus.js';
@@ -75,6 +75,7 @@ function NurseDetailBody({
   return (
     <>
       <NurseSummary nurse={nurse} />
+      <KeptApart nurse={nurse} />
 
       <div className="mt-4 flex gap-2">
         <button
@@ -180,5 +181,17 @@ function NurseSummary({ nurse }: { nurse: Nurse }) {
       {flags.length > 0 ? <p className="mt-2 text-text">{flags.join(' · ')}</p> : null}
       {nurse.notes ? <p className="mt-2 italic text-text-muted">{nurse.notes}</p> : null}
     </div>
+  );
+}
+
+/** The groups this nurse is kept apart in, by name; the members and reason are on the roster. */
+function KeptApart({ nurse }: { nurse: Nurse }) {
+  const groups = useIncompatibilityGroups(nurse.unitId);
+  const mine = (groups.data ?? []).filter((g) => g.nurseIds.includes(nurse.id));
+  if (mine.length === 0) return null;
+  return (
+    <p className="mt-3 text-sm text-text-muted">
+      Kept apart in: <span className="text-text">{mine.map((g) => g.name).join(', ')}</span>
+    </p>
   );
 }

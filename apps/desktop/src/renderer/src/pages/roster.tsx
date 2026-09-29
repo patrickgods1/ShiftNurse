@@ -13,6 +13,7 @@ import { PageHeader } from '../components/page-header.js';
 import { formatDate } from '../format.js';
 import { useUnit } from '../unit-context.js';
 import { ImportDialog } from './roster/import-dialog.js';
+import { IncompatibilitySection } from './roster/incompatibility.js';
 import { NurseDetail } from './roster/nurse-detail.js';
 import { NurseFormDialog } from './roster/nurse-form-dialog.js';
 
@@ -170,6 +171,10 @@ export default function RosterPage() {
           />
         </div>
       )}
+
+      {nursesQuery.data ? (
+        <IncompatibilitySection unitId={unit.id} nurses={nursesQuery.data} />
+      ) : null}
 
       <NurseFormDialog
         open={formTarget !== undefined}

@@ -564,6 +564,119 @@ describe('parity with the annealer', () => {
     });
   });
 
+  describe('incompatible staff', () => {
+    // A clique of three with the lookback night's nurse in it, and a pair from the 10th on:
+    // day 8s and evening 8s overlap the day 12 and the night, so stretches are cut every which way.
+    const groupInput = (overrides: Partial<SolveScenarioOptions> = {}): SolveInput => {
+      const base = richInput();
+      const ids = base.nurses.map((n) => n.id);
+      return {
+        ...base,
+        ...(overrides.ruleSet ? { ruleSet: overrides.ruleSet } : {}),
+        incompatibilityGroups: [
+          {
+            id: 'clique',
+            unitId: UNIT_ID,
+            name: 'Clique',
+            nurseIds: [ids[1]!, ids[3]!, ids[5]!],
+            maxTogether: 1,
+            reason: 'test',
+          },
+          {
+            id: 'pair',
+            unitId: UNIT_ID,
+            name: 'Pair',
+            nurseIds: [ids[0]!, ids[2]!],
+            maxTogether: 1,
+            reason: 'test',
+            startsOn: isoDate('2026-01-10'),
+          },
+        ],
+      };
+    };
+
+    it('charges a shared day 12 with one outside nurse by the hour, as worked by hand', () => {
+      const input = groupInput();
+      const [, b, , d, e] = input.nurses.map((n) => n.id);
+      // Wednesday the 14th: clique members b and d on the day 12 with e from outside.
+      const schedule = [
+        ...input.assignments,
+        assign(b!, DAY_12, '2026-01-14'),
+        assign(d!, DAY_12, '2026-01-14'),
+        assign(e!, DAY_12, '2026-01-14'),
+      ];
+      const model = new SolverModel(input);
+      for (const a of schedule) if (!a.isLocked) model.add({ ...a });
+      // One member over the cap for 12h at 50 = 600; one outside nurse short for 12h at
+      // 3000 / 12 = 3000.
+      expect(model.breakdown().incompatibility).toBeCloseTo(3600, 6);
+      const { evaluation, expected } = both(input, schedule);
+      expect(evaluation.violated).toEqual([]);
+      expect(evaluation.objective).toBeCloseTo(expected, 0);
+    });
+
+    it('charges a cap the rule set makes hard like a staffing shortfall', () => {
+      const soft = groupInput();
+      const hardCap = groupInput({
+        ruleSet: {
+          ...soft.ruleSet,
+          configs: soft.ruleSet.configs.map((c) =>
+            c.ruleId === 'incompatible-staff-cap' ? { ...c, severityOverride: 'hard' } : c,
+          ),
+        },
+      });
+      const [, b, , d, e, , g] = hardCap.nurses.map((n) => n.id);
+      // Two outside nurses, so only the cap is broken: 12h × 3000 / 12 = 3000.
+      const schedule = [
+        ...hardCap.assignments,
+        assign(b!, DAY_12, '2026-01-14'),
+        assign(d!, DAY_12, '2026-01-14'),
+        assign(e!, DAY_12, '2026-01-14'),
+        assign(g!, DAY_12, '2026-01-14'),
+      ];
+      const model = new SolverModel(hardCap);
+      for (const a of schedule) if (!a.isLocked) model.add({ ...a });
+      expect(model.breakdown().incompatibility).toBeCloseTo(3000, 6);
+      const { evaluation, expected } = both(hardCap, schedule);
+      expect(evaluation.objective).toBeCloseTo(expected, 0);
+    });
+
+    it('prices random rosters the same as the annealer', () => {
+      const input = groupInput();
+      const encoding = encodeCpsat(input);
+      const rng = new Rng(11);
+      let priced = 0;
+      for (let trial = 0; trial < 60; trial++) {
+        const density = 0.2 + 0.5 * rng.nextFloat();
+        const seen = new Set<string>();
+        const assignments = [...input.assignments];
+        for (const sv of encoding.shiftVars) {
+          const day = `${sv.nurseId}|${sv.shift.date}`;
+          if (seen.has(day) || !rng.chance(density / 3)) continue;
+          seen.add(day);
+          assignments.push(assign(sv.nurseId, sv.shift.shiftType, sv.shift.date));
+        }
+        const evaluation = evaluate(encoding, assignments);
+        const model = new SolverModel(input);
+        for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+        if (model.breakdown().incompatibility > 0) priced++;
+        expect(evaluation.objective, `trial ${trial}`).toBeCloseTo(model.breakdown().total, 0);
+      }
+      // Most rosters must actually put incompatible nurses together, or this proves nothing.
+      expect(priced).toBeGreaterThan(40);
+    });
+
+    it("accepts the annealer's schedules and prices them the same, seed after seed", () => {
+      const input = groupInput();
+      for (const seed of [1, 2]) {
+        const report = solve(input, { seed, maxIterations: 4000 });
+        const { evaluation, expected } = both(input, report.assignments);
+        expect(evaluation.violated).toEqual([]);
+        expect(evaluation.objective).toBeCloseTo(expected, 0);
+      }
+    });
+  });
+
   it('prices an empty schedule — every floor short — the same', () => {
     const input = richInput();
     const locked = input.assignments.filter((a) => a.isLocked);

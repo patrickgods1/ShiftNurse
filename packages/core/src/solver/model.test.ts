@@ -37,8 +37,12 @@ beforeEach(() => {
   resetFixtureCounters();
 });
 
-/** `mid`: add an 11:00–19:00 mid 8 inside the day 12, with an ACLS requirement on it. */
-function scenario({ mid = false } = {}): SolveInput {
+/**
+ * `mid`: add an 11:00–19:00 mid 8 inside the day 12, with an ACLS requirement on it.
+ * `groups`: keep five of the staff apart (one the nurse with the lookback night, one an LPN), and
+ * two more from the 8th, so the walk keeps pairing and parting incompatible nurses.
+ */
+function scenario({ mid = false, groups = false } = {}): SolveInput {
   const nurses: Nurse[] = [
     ...Array.from({ length: 8 }, (_, i) =>
       makeNurse({ isChargeEligible: i % 3 === 0, contractedHoursPerPeriod: i === 7 ? 0 : 72 }),
@@ -86,6 +90,29 @@ function scenario({ mid = false } = {}): SolveInput {
         }
       : {}),
     preferences,
+    ...(groups
+      ? {
+          incompatibilityGroups: [
+            {
+              id: 'g1',
+              unitId: 'unit-1',
+              name: 'Clique',
+              nurseIds: [0, 1, 2, 4, 9].map((i) => nurses[i]!.id),
+              maxTogether: 1,
+              reason: 'test',
+            },
+            {
+              id: 'g2',
+              unitId: 'unit-1',
+              name: 'Pair',
+              nurseIds: [nurses[5]!.id, nurses[6]!.id],
+              maxTogether: 1,
+              reason: 'test',
+              startsOn: isoDate('2026-01-08'),
+            },
+          ],
+        }
+      : {}),
     assignments: [pinned],
     priorAssignments: [prior],
     holidays: [
@@ -121,9 +148,18 @@ describe('SolverModel bookkeeping', () => {
     // Checked after every step: a stale mid 8 is often re-priced by its own next move.
     walk(scenario({ mid: true }), 1);
   });
+
+  it('keeps the price of incompatible nurses right as they are paired and parted', () => {
+    // A change to the day 12 re-prices the hours the mid 8 shares with it, and the other way
+    // round; checked every step for the same reason as the mid 8 above.
+    const priced = walk(scenario({ mid: true, groups: true }), 1);
+    expect(priced.incompatibility).toBeGreaterThan(0);
+  });
 });
 
-function walk(input: SolveInput, checkEvery = 25): void {
+/** Walks, checks, and returns the largest value each term reached, so a test can see it was exercised. */
+function walk(input: SolveInput, checkEvery = 25): Record<string, number> {
+  const peak: Record<string, number> = {};
   {
     const model = new SolverModel(input);
     const rng = new Rng(20260104);
@@ -147,8 +183,11 @@ function walk(input: SolveInput, checkEvery = 25): void {
       const fresh = rebuild(input, model);
       const got = model.breakdown();
       const want = fresh.breakdown();
+      for (const [term, value] of Object.entries(got))
+        peak[term] = Math.max(peak[term] ?? 0, value);
       for (const term of [
         'coverage',
+        'incompatibility',
         'hours',
         'fairness',
         'preferences',
@@ -171,6 +210,7 @@ function walk(input: SolveInput, checkEvery = 25): void {
     expect(checked).toBeGreaterThanOrEqual(Math.floor((0.9 * 600) / checkEvery));
     expect(model.unlocked.length).toBeGreaterThan(10);
   }
+  return peak;
 }
 
 describe('paid leave in the hours the objective chases', () => {

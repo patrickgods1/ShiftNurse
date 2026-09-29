@@ -14,7 +14,13 @@ import type {
   TimeOffStatus,
 } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { NurseInput, NursePatch, PreferenceInput } from '../../shared/api.js';
+import type {
+  IncompatibilityGroupInput,
+  IncompatibilityGroupPatch,
+  NurseInput,
+  NursePatch,
+  PreferenceInput,
+} from '../../shared/api.js';
 
 export const api = window.shiftnurse;
 
@@ -31,6 +37,7 @@ export const queryKeys = {
   credentials: () => ['credentials'] as const,
   nurseCredentials: (nurseId: Id) => ['nurseCredentials', nurseId] as const,
   preferences: (nurseId: Id) => ['preferences', nurseId] as const,
+  incompatibility: (unitId: Id) => ['incompatibility', unitId] as const,
 };
 
 export function useUnits() {
@@ -231,6 +238,68 @@ export function useReplacePreferences(nurseId: Id | undefined) {
         void queryClient.invalidateQueries({ queryKey: queryKeys.preferences(nurseId) });
       }
     },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Incompatible staff
+// ---------------------------------------------------------------------------
+
+export function useIncompatibilityGroups(unitId: Id | undefined) {
+  return useQuery({
+    queryKey: queryKeys.incompatibility(unitId ?? ''),
+    queryFn: () => api.incompatibility.list(unitId as Id),
+    enabled: unitId !== undefined,
+  });
+}
+
+/**
+ * A group changes what every schedule check says about the people in it, so the grid's
+ * validation, Generate's candidates, conflicts, backfills and exchanges all refresh with it.
+ */
+function useInvalidateIncompatibility(unitId: Id | undefined) {
+  const queryClient = useQueryClient();
+  return () => {
+    if (unitId !== undefined) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.incompatibility(unitId) });
+    }
+    for (const prefix of ['validation', 'solver', 'conflicts', 'dayOf', 'exchange']) {
+      void queryClient.invalidateQueries({ queryKey: [prefix] });
+    }
+  };
+}
+
+export function useCreateIncompatibilityGroup(unitId: Id | undefined) {
+  const invalidate = useInvalidateIncompatibility(unitId);
+  return useMutation({
+    mutationFn: ({ input, reason }: { input: IncompatibilityGroupInput; reason: string }) =>
+      api.incompatibility.create(input, reason),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateIncompatibilityGroup(unitId: Id | undefined) {
+  const invalidate = useInvalidateIncompatibility(unitId);
+  return useMutation({
+    mutationFn: ({
+      id,
+      patch,
+      reason,
+    }: {
+      id: Id;
+      patch: IncompatibilityGroupPatch;
+      reason: string;
+    }) => api.incompatibility.update(id, patch, reason),
+    onSuccess: invalidate,
+  });
+}
+
+export function useRemoveIncompatibilityGroup(unitId: Id | undefined) {
+  const invalidate = useInvalidateIncompatibility(unitId);
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: Id; reason: string }) =>
+      api.incompatibility.remove(id, reason),
+    onSuccess: invalidate,
   });
 }
 

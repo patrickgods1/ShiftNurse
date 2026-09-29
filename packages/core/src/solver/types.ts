@@ -46,6 +46,7 @@ import type {
   FairnessLedgerEntry,
   Holiday,
   Id,
+  IncompatibilityGroup,
   Nurse,
   NurseCredential,
   NurseRole,
@@ -98,6 +99,8 @@ export interface SolveInput {
    * contracted hours, as approved paid leave in `timeOff` is.
    */
   paidSickCalls?: readonly PaidSickCall[];
+  /** Nurses who should not be on the floor together; absent means none. */
+  incompatibilityGroups?: readonly IncompatibilityGroup[];
   credentials: readonly Credential[];
   nurseCredentials: readonly NurseCredential[];
   shiftCredentialRequirements: readonly ShiftCredentialRequirement[];
@@ -117,6 +120,8 @@ export interface SolveInput {
  * that a genuine staffing gap dominates everything, a nurse's contracted hours come next (both
  * are hard rules, but a shift below its floor is a safety problem while a nurse a shift short
  * of contract is a grievance — 3000 against 480, more than any fairness swing),
+ * nurses the manager keeps apart come next (a whole shared 12 costs 600, above a nurse's shift
+ * of contracted hours, so the solver will rather leave someone a shift short than pair them),
  * an unfilled soft target beats fairness, and fairness beats preference and money — but the
  * ratios are deliberately not extreme, so a $600 difference or a badly skewed night count can
  * still move a decision between two otherwise-equal candidates.
@@ -130,6 +135,12 @@ export interface ObjectiveWeights {
   overTarget: number;
   /** Per hour a nurse is short of their contracted hours in a pay period. */
   underHours: number;
+  /**
+   * Per hour, per member of an incompatibility group on the floor beyond the group's cap, while
+   * that rule is soft. A hard incompatibility rule — the outside-staff buffer, or the cap when a
+   * rule set makes it hard — costs `hardShortfall` per missing (or excess) person per 12 hours.
+   */
+  incompatibility: number;
   /** Scales the fairness term: weighted sum of squared positive burden deviations. */
   fairness: number;
   /** Per unit of preference weight (1–5, seniority-scaled) an assignment runs against. */
@@ -143,6 +154,7 @@ export const DEFAULT_OBJECTIVE_WEIGHTS: ObjectiveWeights = {
   targetShortfall: 60,
   overTarget: 8,
   underHours: 40,
+  incompatibility: 50,
   fairness: 30,
   preference: 10,
   cost: 0.05,
@@ -152,6 +164,8 @@ export const DEFAULT_OBJECTIVE_WEIGHTS: ObjectiveWeights = {
 export interface ObjectiveBreakdown {
   total: number;
   coverage: number;
+  /** Incompatible staff on the floor together, and without enough outside staff. */
+  incompatibility: number;
   hours: number;
   fairness: number;
   preferences: number;

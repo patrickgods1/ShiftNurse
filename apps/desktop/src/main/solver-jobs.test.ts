@@ -25,6 +25,7 @@ class FakeWorker extends EventEmitter implements SolverWorkerHandle {
         objective: {
           total: objective,
           coverage: 0,
+          incompatibility: 0,
           hours: 0,
           fairness: 0,
           preferences: 0,

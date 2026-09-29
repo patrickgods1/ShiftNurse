@@ -38,17 +38,20 @@ import type { CostContext } from '../cost/types.js';
 import type {
   Assignment,
   Id,
+  IncompatibilityGroup,
   Nurse,
   NurseRole,
   SchedulePeriod,
   ShiftType,
 } from '../domain/entities.js';
 import {
+  addDays,
   dateInRange,
   datesInRange,
   dayNumber,
   type IsoDate,
   isWeekendWindow,
+  type ShiftWindow,
   shiftWindow,
   weekdayOf,
   weekendKey,
@@ -74,15 +77,25 @@ import {
   payPeriodsIn,
 } from '../rules/hours-rules.js';
 import {
+  groupsForPeriod,
+  type IncompatibleBufferParams,
+  incompatibleBufferRule,
+  incompatibleTogetherRule,
+  judgeFloor,
+  type OnFloor,
+} from '../rules/incompatibility-rules.js';
+import {
   buildRuleContext,
   evaluatePrepared,
+  getRule,
   hardRuleIdsByScope,
   type PreparedRule,
   prepareRules,
   resolveConfigs,
 } from '../rules/registry.js';
-import type { RuleContext, RuleSet } from '../rules/types.js';
+import type { RuleContext, RuleSet, RuleSeverity } from '../rules/types.js';
 import { coveringShift } from '../schedule/cover.js';
+import { floorSegments } from '../schedule/overlap.js';
 import { type AssignmentView, ScheduleView } from '../schedule/view.js';
 import {
   DEFAULT_OBJECTIVE_WEIGHTS,
@@ -102,13 +115,31 @@ export interface Shift {
   solvable: boolean;
 }
 
+/**
+ * A stretch of the floor covered by the same shifts throughout — what incompatible staff are
+ * priced over. Only built when the period has incompatibility groups.
+ */
+export interface FloorStretch {
+  idx: number;
+  hours: number;
+  /** Model shifts whose hours cover the whole stretch. */
+  shifts: Shift[];
+  /** Published lookback rows covering it: a night begun the evening before the period. */
+  tail: Assignment[];
+}
+
 /** What `add` needs to hand back so `undoAdd` can restore caches without re-evaluating. */
 export interface AddToken {
   coverageBefore: number;
   hoursBefore: number;
   /** The coverage of the shifts inside this one, in `innerShifts` order, when it has any. */
   innerBefore?: readonly number[];
+  /** The incompatibility price of the stretches this shift covers, in `stretchesOf` order. */
+  stretchesBefore?: readonly number[];
 }
+
+/** Priced over overlapping rosters by their own term, not on one shift's roster. */
+const INCOMPATIBILITY_RULE_IDS = new Set([incompatibleTogetherRule.id, incompatibleBufferRule.id]);
 
 export type RemoveToken = AddToken;
 
@@ -151,6 +182,8 @@ export class SolverModel {
   private coverageSum = 0;
   private readonly hoursPenalty: number[];
   private hoursSum = 0;
+  private readonly incompat: number[];
+  private incompatSum = 0;
   private prefSum = 0;
   private costSum = 0;
 
@@ -214,6 +247,17 @@ export class SolverModel {
   )[];
   /** shift index → the shifts inside it. */
   private readonly innerShifts: Shift[][];
+  /** Groups that can apply to a shift in the period; empty when neither rule is priced. */
+  readonly incompatibilityGroups: readonly IncompatibilityGroup[];
+  /**
+   * Points per person-hour: `excess` for a member beyond the cap, `shortfall` for missing
+   * outside staff; each `hardShortfall / 12` when its rule is hard, `incompatibility` when
+   * soft, 0 when disabled.
+   */
+  readonly incompatibilityPrice: { excess: number; shortfall: number; minOutsideStaff: number };
+  readonly stretches: readonly FloorStretch[];
+  /** shift index → the stretches it covers. A change to the shift re-prices exactly these. */
+  private readonly stretchesOf: FloorStretch[][];
   readonly fteParams: ContractedHoursParams;
   readonly bucketOfDate: number[];
   readonly hoursTarget: number[][];
@@ -263,6 +307,9 @@ export class SolverModel {
       holidays: input.holidays,
       weekendDefinition: input.ruleSet.weekendDefinition,
       ...(input.paidSickCalls ? { paidSickCalls: input.paidSickCalls } : {}),
+      ...(input.incompatibilityGroups
+        ? { incompatibilityGroups: input.incompatibilityGroups }
+        : {}),
     });
 
     const shifts: Shift[] = [];
@@ -308,11 +355,49 @@ export class SolverModel {
     });
 
     this.nurseHardIds = hardRuleIdsByScope(input.ruleSet, 'nurse');
-    this.shiftHardIds = hardRuleIdsByScope(input.ruleSet, 'shift');
+    this.shiftHardIds = hardRuleIdsByScope(input.ruleSet, 'shift').filter(
+      (id) => !INCOMPATIBILITY_RULE_IDS.has(id),
+    );
     this.nurseRules = prepareRules(input.ruleSet, this.nurseHardIds);
     this.shiftRules = prepareRules(input.ruleSet, this.shiftHardIds);
 
     const configs = resolveConfigs(input.ruleSet);
+
+    // --- Incompatible staff: priced per stretch of floor, by the hour. ---
+    const severityOf = (ruleId: string): RuleSeverity | null => {
+      const config = configs.find((c) => c.ruleId === ruleId);
+      if (!config?.enabled) return null;
+      return config.severityOverride ?? getRule(ruleId)!.severity;
+    };
+    const perHour = (severity: RuleSeverity | null) =>
+      severity === null
+        ? 0
+        : severity === 'hard'
+          ? this.weights.hardShortfall / 12
+          : this.weights.incompatibility;
+    const bufferSeverity = severityOf(incompatibleBufferRule.id);
+    const bufferParams = configs.find((c) => c.ruleId === incompatibleBufferRule.id)
+      ?.params as unknown as IncompatibleBufferParams | undefined;
+    this.incompatibilityPrice = {
+      excess: perHour(severityOf(incompatibleTogetherRule.id)),
+      shortfall: perHour(bufferSeverity),
+      minOutsideStaff: bufferSeverity === null ? 0 : (bufferParams?.minOutsideStaff ?? 0),
+    };
+    const priced = this.incompatibilityPrice.excess > 0 || this.incompatibilityPrice.shortfall > 0;
+    // The day before the period too: its night is on the floor on the first morning.
+    this.incompatibilityGroups = priced
+      ? groupsForPeriod(
+          input.incompatibilityGroups ?? [],
+          addDays(input.period.startDate, -1),
+          input.period.endDate,
+        )
+      : [];
+    this.stretches = this.buildStretches(shiftTypesById);
+    this.stretchesOf = shifts.map(() => []);
+    for (const stretch of this.stretches) {
+      for (const shift of stretch.shifts) this.stretchesOf[shift.idx]!.push(stretch);
+    }
+    this.incompat = this.stretches.map(() => 0);
     this.fteParams = (configs.find((c) => c.ruleId === contractedHoursRule.id)?.params ??
       contractedHoursRule.defaultParams) as ContractedHoursParams;
     const maxHours = (configs.find((c) => c.ruleId === maxHoursRule.id)?.params ??
@@ -484,6 +569,42 @@ export class SolverModel {
       this.coverage[shift.idx] = this.coveragePenalty(shift);
       this.coverageSum += this.coverage[shift.idx]!;
     }
+    this.incompatSum = 0;
+    for (const stretch of this.stretches) {
+      this.incompat[stretch.idx] = this.incompatibilityPenalty(stretch);
+      this.incompatSum += this.incompat[stretch.idx]!;
+    }
+  }
+
+  /**
+   * The period's floor cut into stretches covered by the same shifts, inside the hours of the
+   * period's own shifts. Only when there are groups to price: otherwise nothing reads them.
+   */
+  private buildStretches(shiftTypesById: ReadonlyMap<Id, ShiftType>): FloorStretch[] {
+    if (this.incompatibilityGroups.length === 0) return [];
+    type Item = { window: ShiftWindow; shift?: Shift; tail?: Assignment[] };
+    const items: Item[] = [];
+    for (const shift of this.shifts) {
+      if (shift.shiftType.isOnCall) continue;
+      items.push({ window: shiftWindow(shift.date, shift.shiftType), shift });
+    }
+    const within = items.map((item) => item.window);
+    const tails = new Map<string, Item>();
+    for (const a of this.input.priorAssignments) {
+      const type = shiftTypesById.get(a.shiftTypeId);
+      if (!type || type.isOnCall) continue;
+      const key = `${a.date}|${a.shiftTypeId}`;
+      const item = tails.get(key);
+      if (item) item.tail!.push(a);
+      else tails.set(key, { window: shiftWindow(a.date, type), tail: [a] });
+    }
+    items.push(...tails.values());
+    return floorSegments(items, within).map((segment, idx) => ({
+      idx,
+      hours: (segment.endMinute - segment.startMinute) / 60,
+      shifts: segment.on.flatMap((item) => (item.shift ? [item.shift] : [])),
+      tail: segment.on.flatMap((item) => item.tail ?? []),
+    }));
   }
 
   // ---------------------------------------------------------------------------
@@ -700,6 +821,10 @@ export class SolverModel {
     };
     const inner = this.innerShifts[shift.idx]!;
     if (inner.length > 0) token.innerBefore = inner.map((s) => this.coverage[s.idx]!);
+    const stretches = this.stretchesOf[shift.idx]!;
+    if (stretches.length > 0) {
+      token.stretchesBefore = stretches.map((s) => this.incompat[s.idx]!);
+    }
     return token;
   }
 
@@ -736,6 +861,12 @@ export class SolverModel {
         this.coverage[inner.idx] = token.innerBefore[i]!;
       }
     }
+    if (token.stretchesBefore) {
+      for (const [i, stretch] of this.stretchesOf[shift.idx]!.entries()) {
+        this.incompatSum += token.stretchesBefore[i]! - this.incompat[stretch.idx]!;
+        this.incompat[stretch.idx] = token.stretchesBefore[i]!;
+      }
+    }
     this.hoursSum += token.hoursBefore - this.hoursPenalty[n]!;
     this.hoursPenalty[n] = token.hoursBefore;
   }
@@ -745,6 +876,11 @@ export class SolverModel {
       const coverage = this.coveragePenalty(s);
       this.coverageSum += coverage - this.coverage[s.idx]!;
       this.coverage[s.idx] = coverage;
+    }
+    for (const stretch of this.stretchesOf[shift.idx]!) {
+      const price = this.incompatibilityPenalty(stretch);
+      this.incompatSum += price - this.incompat[stretch.idx]!;
+      this.incompat[stretch.idx] = price;
     }
     const hours = this.hoursPenaltyFor(n);
     this.hoursSum += hours - this.hoursPenalty[n]!;
@@ -805,6 +941,7 @@ export class SolverModel {
   objective(): number {
     return (
       this.coverageSum +
+      this.incompatSum +
       this.hoursSum +
       this.fairness() +
       this.prefSum * this.weights.preference +
@@ -814,13 +951,15 @@ export class SolverModel {
 
   breakdown(): ObjectiveBreakdown {
     const coverage = this.coverageSum;
+    const incompatibility = this.incompatSum;
     const hours = this.hoursSum;
     const fairness = this.fairness();
     const preferences = this.prefSum * this.weights.preference;
     const cost = this.costSum * this.weights.cost;
     return {
-      total: coverage + hours + fairness + preferences + cost,
+      total: coverage + incompatibility + hours + fairness + preferences + cost,
       coverage,
+      incompatibility,
       hours,
       fairness,
       preferences,
@@ -832,6 +971,11 @@ export class SolverModel {
   /** One shift's cached coverage penalty in points, as it stands. */
   coveragePenaltyOf(shift: Shift): number {
     return this.coverage[shift.idx]!;
+  }
+
+  /** One stretch's cached incompatibility price in points, as it stands. */
+  incompatibilityPenaltyOf(stretch: FloorStretch): number {
+    return this.incompat[stretch.idx]!;
   }
 
   /** One nurse's cached under-hours penalty in points, as it stands. */
@@ -897,6 +1041,26 @@ export class SolverModel {
       }
     }
     return hard * this.weights.hardShortfall + soft;
+  }
+
+  /**
+   * One stretch's price: every group's verdict on who is on the floor through it (`judgeFloor`,
+   * the rules' own), per person-hour. The lookback tail is on the floor too; a stretch only
+   * the tail makes wrong is a constant, as it is for CP-SAT.
+   */
+  private incompatibilityPenalty(stretch: FloorStretch): number {
+    const floor: OnFloor[] = [];
+    for (const shift of stretch.shifts) {
+      for (const a of this.byShift[shift.idx]!) floor.push({ nurseId: a.nurseId, date: a.date });
+    }
+    for (const a of stretch.tail) floor.push({ nurseId: a.nurseId, date: a.date });
+    if (floor.length < 2) return 0;
+    const { excess, shortfall, minOutsideStaff } = this.incompatibilityPrice;
+    let points = 0;
+    for (const verdict of judgeFloor(floor, this.incompatibilityGroups, minOutsideStaff)) {
+      points += verdict.excess * excess + verdict.shortfall * shortfall;
+    }
+    return points * stretch.hours;
   }
 
   private hoursPenaltyFor(n: number): number {

@@ -339,3 +339,77 @@ describe('findReplacements', () => {
     expect(() => findReplacements(input)).toThrow(/history/i);
   });
 });
+
+describe('findReplacements with nurses kept apart', () => {
+  /** 11:00–23:00: shares 11:00–19:00 with the day 12. */
+  const LATE_12 = {
+    ...DAY_12,
+    id: 'st-l12',
+    name: 'Late 12',
+    abbreviation: 'L12',
+    startTime: '11:00',
+  };
+
+  function keepApart(a: { id: string }, b: { id: string }) {
+    return {
+      id: 'grp',
+      unitId: 'unit-1',
+      name: 'Keep apart',
+      nurseIds: [a.id, b.id],
+      maxTogether: 1,
+      reason: 'test',
+    };
+  }
+
+  it('warns on the card when the pickup shares hours with someone they are kept apart from', () => {
+    resetFixtureCounters();
+    const absent = makeNurse({ firstName: 'Priya', lastName: 'Nair' });
+    const ana = makeNurse({ firstName: 'Ana', lastName: 'Cruz' });
+    const ben = makeNurse({ firstName: 'Ben', lastName: 'Ortiz' });
+    const [cy, di] = [makeNurse(), makeNurse()];
+    const absentShift = assign(absent.id, DAY_12, SAT);
+    const report = findReplacements(
+      replacementInput({
+        nurses: [absent, ana, ben, cy, di],
+        shiftTypes: [DAY_12, NIGHT_12, LATE_12],
+        // Ana is on the late 12, not the day 12: it is the shared hours that count.
+        assignments: [
+          absentShift,
+          assign(ana.id, LATE_12, SAT),
+          assign(cy.id, DAY_12, SAT),
+          assign(di.id, DAY_12, SAT),
+        ],
+        incompatibilityGroups: [keepApart(ana, ben)],
+        absentAssignmentId: absentShift.id,
+      }),
+    );
+    const card = report.candidates.find((c) => c.nurseId === ben.id);
+    expect(card).toBeDefined();
+    expect(card!.softViolationsIntroduced.map((v) => v.code)).toContain(
+      'incompatible_staff_together',
+    );
+    const other = report.candidates.find((c) => c.nurseId === cy.id);
+    expect(other?.softViolationsIntroduced.map((v) => v.code) ?? []).not.toContain(
+      'incompatible_staff_together',
+    );
+  });
+
+  it('leaves off the list a pickup who would work beside them with one outside nurse', () => {
+    resetFixtureCounters();
+    const absent = makeNurse({ firstName: 'Priya', lastName: 'Nair' });
+    const ana = makeNurse({ firstName: 'Ana', lastName: 'Cruz' });
+    const ben = makeNurse({ firstName: 'Ben', lastName: 'Ortiz' });
+    const cy = makeNurse();
+    const absentShift = assign(absent.id, DAY_12, SAT);
+    const report = findReplacements(
+      replacementInput({
+        nurses: [absent, ana, ben, cy],
+        assignments: [absentShift, assign(ana.id, DAY_12, SAT), assign(cy.id, DAY_12, SAT)],
+        incompatibilityGroups: [keepApart(ana, ben)],
+        absentAssignmentId: absentShift.id,
+      }),
+    );
+    expect(report.candidates.some((c) => c.nurseId === ben.id)).toBe(false);
+    expect(report.excluded.find((e) => e.nurseId === ben.id)?.reason).toMatch(/Outside staff/);
+  });
+});

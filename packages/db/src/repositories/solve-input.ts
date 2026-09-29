@@ -13,6 +13,7 @@ import {
   datesInRange,
   deriveDemand,
   type FairnessLedgerEntry,
+  groupsForPeriod,
   type Id,
   type IsoDate,
   type MaxHoursParams,
@@ -34,6 +35,7 @@ import {
   listShiftCredentialRequirementsForUnit,
   listShiftTypesForUnit,
 } from './config.js';
+import { listIncompatibilityGroups } from './incompatibility.js';
 import { ledgerSince } from './ledger.js';
 import { listActiveDifferentials, listActiveOvertimeRules, listPayRatesForUnit } from './pay.js';
 import {
@@ -138,6 +140,13 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     holidays: listHolidaysForUnit(db, unitId),
     preferences: listPreferencesForUnit(db, unitId),
     ledgerHistory: ledgerHistory(db, unitId, period.startDate),
+    // Only groups that can apply to this period (its first morning shares the night before),
+    // so ending an unrelated group does not make Generate's candidates stale.
+    incompatibilityGroups: groupsForPeriod(
+      listIncompatibilityGroups(db, unitId),
+      addDays(period.startDate, -1),
+      period.endDate,
+    ),
     cost: {
       payRates: listPayRatesForUnit(db, unitId),
       differentials: listActiveDifferentials(db, unitId),

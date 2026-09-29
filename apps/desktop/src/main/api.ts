@@ -32,6 +32,7 @@ import {
   createCredential,
   createDifferential,
   createHoliday,
+  createIncompatibilityGroup,
   createNurse,
   createOvertimeRule,
   createPayRate,
@@ -46,6 +47,7 @@ import {
   deleteCoverageRequirement,
   deleteDifferential,
   deleteHoliday,
+  deleteIncompatibilityGroup,
   deleteOvertimeRule,
   deletePayRate,
   demandInputs,
@@ -69,6 +71,7 @@ import {
   listCredentials,
   listDifferentialsForUnit,
   listHolidaysForUnit,
+  listIncompatibilityGroups,
   listNurseCredentials,
   listNursesForUnit,
   listOvertimeRulesForUnit,
@@ -94,6 +97,7 @@ import {
   updateAcuityTier,
   updateCredentialExpiry,
   updateDifferential,
+  updateIncompatibilityGroup,
   updateNurse,
   updateOvertimeRule,
   updatePayRate,
@@ -172,6 +176,15 @@ export function createApi(db: ShiftNurseDb, solverJobs: SolverJobs): ShiftNurseA
           inputs.map((p) => ({ ...p, id: ids.preference(), nurseId }) as Preference),
           ACTOR,
         ),
+    },
+    incompatibility: {
+      list: (unitId) => listIncompatibilityGroups(db, unitId),
+      create: (input, reason) =>
+        transact(db, (tx) => createIncompatibilityGroup(tx, input, reason, ACTOR)),
+      update: (id, patch, reason) =>
+        transact(db, (tx) => updateIncompatibilityGroup(tx, id, patch, reason, ACTOR)),
+      remove: (id, reason) =>
+        transact(db, (tx) => deleteIncompatibilityGroup(tx, id, reason, ACTOR)),
     },
     shiftTypes: {
       list: (unitId) => listShiftTypesForUnit(db, unitId),

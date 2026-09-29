@@ -6,12 +6,13 @@
  * ones the cost screen would resolve.
  */
 
-import { isoDate } from '@shiftnurse/core';
+import { addDays, isoDate } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { seedScenarioUnit } from '../seed/scenarios.js';
 import type { SeedResult } from '../seed/types.js';
 import { createUnit, listShiftTypesForUnit } from './config.js';
+import { createIncompatibilityGroup } from './incompatibility.js';
 import { createPayRate, listPayRatesForUnit } from './pay.js';
 import { createNurse, listNursesForUnit } from './roster.js';
 import { getPeriod } from './schedule.js';
@@ -81,6 +82,34 @@ describe('loadPeriodInput', () => {
     expect(input.nurses.some((n) => n.id === other.nurseId)).toBe(false);
     expect(input.shiftTypes).toEqual(listShiftTypesForUnit(handle.db, seeded.unitId));
     expect(input.demand.length).toBeGreaterThan(0);
+  });
+
+  it('carries the groups that can apply to the period, and none that ended before it', () => {
+    const period = getPeriod(handle.db, seeded.draftPeriodId)!;
+    const [a, b] = listNursesForUnit(handle.db, seeded.unitId);
+    const group = (name: string, endsOn?: string) =>
+      transact(handle.db, (tx) =>
+        createIncompatibilityGroup(
+          tx,
+          {
+            unitId: seeded.unitId,
+            name,
+            nurseIds: [a!.id, b!.id],
+            maxTogether: 1,
+            ...(endsOn ? { endsOn: isoDate(endsOn) } : {}),
+          },
+          'test',
+          ACTOR,
+        ),
+      );
+    const current = group('Current');
+    // Ends the evening before: its night still shares the first morning with the period.
+    const lastNight = group('Last night', addDays(period.startDate, -1));
+    group('Long over', addDays(period.startDate, -2));
+    const input = loadPeriodInput(handle.db, period);
+    expect(input.incompatibilityGroups!.map((g) => g.id).sort()).toEqual(
+      [current.id, lastNight.id].sort(),
+    );
   });
 
   it('prices with the role defaults and this unit’s own rates, never another unit’s nurse rate', () => {

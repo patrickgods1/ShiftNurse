@@ -31,7 +31,8 @@ self-service later becomes an intake surface rather than a new data model.
   `objective.ts`, `builder.ts` (`CpBuilder`, whose `evaluate` prices a schedule without the
   runner), `decode.ts`, `params.ts`, `index.ts` (`prepareCpsat` / `finishCpsat`)), `dayof/` (M13:
   `types.ts` contract, `replacements.ts`,
-  `staffing.ts`), `conflicts/` (M10: `types.ts` is the
+  `staffing.ts`), `rules/incompatibility-rules.ts` + `schedule/overlap.ts` (incompatible staff),
+  `conflicts/` (M10: `types.ts` is the
   contract, `engine.ts` the shared indexes + simulation state, `detect.ts`, `resolve.ts`,
   `analyse.ts`), `exchange/` (M11: `evaluateExchange` / `planExchange` — trade and giveaway
   verdicts `ok | warn | blocked` simulated on the conflicts engine), `publish/` (M12: `diff.ts`
@@ -41,7 +42,8 @@ self-service later becomes an intake surface rather than a new data model.
   (WAL, foreign keys ON, `transact`), `audit.ts`, `mappers.ts`, and repositories under
   `repositories/` — `roster`, `config` (unit, shift types, coverage, holidays, credential
   requirements), `acuity` (tiers, ratios, HPPD), `rulesets`, `schedule`, `timeoff`, `calloffs`,
-  `pay` (rates, differentials, overtime, budget), `ledger`, shared `patch` (`patchOf`) and `bulk`
+  `pay` (rates, differentials, overtime, budget), `ledger`, `incompatibility` (groups of nurses
+  kept apart, migration 0011), shared `patch` (`patchOf`) and `bulk`
   (`insertRows`), `publish` (M12:
   `publishSchedule` writes a `schedule_version` + status + ledger; `requireChangeReason` /
   `recordScheduleChange` are the post-publish change log; M15: `solver` (the per-unit
@@ -438,6 +440,20 @@ violations of their own.
   period without one and `editSchedule` in main writes each touched shift to `schedule_change`.
   A republish needs a reason and refuses an unchanged schedule. The diff is keyed on
   nurse/date/shift, never row ids, so a regenerate that lands the same shifts is "no change".
+- **Incompatible staff are judged by the hours they share.** An `IncompatibilityGroup` (two or
+  more nurses, a `maxTogether` cap, optional `startsOn`/`endsOn` applied by shift date) feeds two
+  shift-scope rules in `rules/incompatibility-rules.ts`: `incompatible-staff-cap` (soft) and
+  `incompatible-staff-buffer` (hard: while two or more members overlap, `minOutsideStaff` people
+  from outside the group on the floor). `schedule/overlap.ts` is the one definition of "on the
+  floor together" (half-open windows, on-call excluded) and `judgeFloor` the one verdict; the
+  rules, `SolverModel` (per-stretch cache, `stretchesOf`), CP-SAT (`incompatibilityTerms`, priced
+  at either severity, hence `'by-construction'` in `CPSAT_ENCODERS`) and the conflicts engine
+  (overlapping rosters, only when the input has groups) all use them. Both are priced per
+  person-hour — `incompatibility` when soft, `hardShortfall / 12` when hard — which makes any
+  cutting of the floor into stretches price the same; they are kept out of `shiftHardIds`
+  because one shift's roster cannot judge them. The group's reason is HR-sensitive: audited
+  (`recordAuditStrict`, always required) and shown on Roster › Kept apart, never in a violation
+  message, which reaches the grid, exports and grievances.
 - **Leave belongs to the shifts dated in it.** A shift is dated by its start day, so leave on
   the 7th removes the shift that starts on the 7th — a night running into the 8th included — and
   leaves the night of the 6th (ending on the 7th's morning) free to work. The time-off rule's

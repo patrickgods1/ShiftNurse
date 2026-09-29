@@ -217,6 +217,51 @@ export const preference = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// Incompatible staff
+// ---------------------------------------------------------------------------
+
+/**
+ * Nurses kept apart (`IncompatibilityGroup`). Members live in their own table rather than a JSON
+ * array so a member is a real foreign key to `nurse`, and "which groups is this nurse in" is a
+ * query, not a scan. `reason` is HR-sensitive: shown on the roster screen and in the audit log,
+ * never in a violation or an export.
+ */
+export const incompatibilityGroup = sqliteTable(
+  'incompatibility_group',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    name: text('name').notNull(),
+    maxTogether: integer('max_together').notNull().default(1),
+    reason: text('reason').notNull(),
+    startsOn: isoDate('starts_on').$type<IsoDate>(),
+    endsOn: isoDate('ends_on').$type<IsoDate>(),
+  },
+  (t) => [index('incompatibility_group_unit_idx').on(t.unitId)],
+);
+
+export const incompatibilityMember = sqliteTable(
+  'incompatibility_member',
+  {
+    groupId: text('group_id')
+      .notNull()
+      .references(() => incompatibilityGroup.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.groupId, t.nurseId] }),
+    index('incompatibility_member_nurse_idx').on(t.nurseId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // Time off
 // ---------------------------------------------------------------------------
 

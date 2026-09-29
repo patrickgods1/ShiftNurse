@@ -44,6 +44,12 @@ this codebase is held to. This document is the practical "how do I build/run/shi
 - **Rule engine** — rest periods, consecutive-shift limits, contracted hours/FTE, credential
   and skill coverage, patient-ratio compliance. Rules are data plus a small evaluator, so a
   new contract clause is a new rule, not new solver code.
+- **Incompatible staff** — Roster › Kept apart groups two or more nurses who should not work
+  the same hours, with how many of them may overlap at once and optional dates. Judged by the
+  hours actually shared (a mid shift overlapping a day shift counts). Generate avoids pairing
+  them; the grid warns when they are; and whenever they do overlap, a rule-set minimum of staff
+  from outside the group (default 2) must be on with them. Every change is audited with a
+  reason, which never appears on the schedule or in exports.
 - **Acuity-driven demand** — coverage floors, acuity tiers/ratios/HPPD, a same-weekday
   moving-average forecaster with seasonal index and back-test, and a census grid.
 - **Fairness scoring** — per-nurse and unit-wide distribution of nights, weekends, holidays,

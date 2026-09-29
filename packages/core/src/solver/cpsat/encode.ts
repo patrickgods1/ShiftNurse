@@ -56,6 +56,11 @@ export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'
   'max-consecutive-shifts': encodeConsecutive,
   'max-hours-per-week': encodeWeeklyHours,
   'fte-target-hours': encodeContractCap,
+  // Priced in the objective at whatever severity the rule set gives them (`incompatibilityTerms`):
+  // the soft cap needs its price even when no hard encoder runs, and neither rule forbids
+  // anything outright, so there is nothing for an encoder to add.
+  'incompatible-staff-buffer': 'by-construction',
+  'incompatible-staff-cap': 'by-construction',
 };
 
 export interface EncodeOptions {

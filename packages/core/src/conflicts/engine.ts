@@ -55,6 +55,7 @@ import {
 } from '../rules/registry.js';
 import type { EvaluationResult, RuleContext, Violation } from '../rules/types.js';
 import { containingDate, coveringShift } from '../schedule/cover.js';
+import { overlappingShifts } from '../schedule/overlap.js';
 import { ScheduleView } from '../schedule/view.js';
 import type { ConflictInput } from './types.js';
 
@@ -166,7 +167,15 @@ export class ConflictEngine {
       holidays: this.input.holidays,
       weekendDefinition: this.input.ruleSet.weekendDefinition,
       ...(this.input.paidSickCalls ? { paidSickCalls: this.input.paidSickCalls } : {}),
+      ...(this.input.incompatibilityGroups
+        ? { incompatibilityGroups: this.input.incompatibilityGroups }
+        : {}),
     });
+  }
+
+  /** Whether any shift-scope rule reads rosters beyond a shift and the one covering it. */
+  get judgesOverlaps(): boolean {
+    return (this.input.incompatibilityGroups?.length ?? 0) > 0;
   }
 
   /** The period as the input describes it. */
@@ -261,7 +270,9 @@ export class SimState {
 
   /**
    * Every enabled shift-scope rule, on a one-day view holding only this shift's roster — and,
-   * for a shift inside another, the containing shift's roster, which covers it.
+   * for a shift inside another, the containing shift's roster, which covers it. When the unit
+   * keeps nurses apart, every roster overlapping this shift's hours too: who shares the floor
+   * with this shift is part of its verdict. The other rules read only this shift and its cover.
    */
   shiftViolations(date: IsoDate, shiftTypeId: Id): Violation[] {
     const key = `${date}::${shiftTypeId}`;
@@ -269,15 +280,22 @@ export class SimState {
     if (cached) return cached;
     const shiftType = this.engine.shiftType(shiftTypeId);
     const cover = coveringShift(shiftType, date, this.view.shiftTypesById);
+    const around: { date: IsoDate; shiftType: ShiftType }[] = cover ? [cover] : [];
+    if (this.engine.judgesOverlaps) {
+      for (const other of overlappingShifts(date, shiftType, this.engine.shiftTypes)) {
+        if (other.date === cover?.date && other.shiftType.id === cover.shiftType.id) continue;
+        around.push(other);
+      }
+    }
     const roster = [
       ...this.view.onShift(date, shiftTypeId),
-      ...(cover ? this.view.rosterAt(cover.date, cover.shiftType.id) : []),
+      ...around.flatMap((s) => this.view.rosterAt(s.date, s.shiftType.id)),
     ];
     const view = new ScheduleView({
       period: { ...this.engine.input.period, startDate: date, endDate: date },
       assignments: roster.map((v) => v.assignment),
       nurses: roster.map((v) => v.nurse),
-      shiftTypes: cover ? [shiftType, cover.shiftType] : [shiftType],
+      shiftTypes: [shiftType, ...new Set(around.map((s) => s.shiftType))],
     });
     const result = evaluatePrepared(view, this.engine.shiftRules, {
       ...this.ctx,
@@ -290,18 +308,29 @@ export class SimState {
   /**
    * This shift's violations and those of every shift running inside it: taking an RN off the
    * day 12 can leave a new grad on the mid 8 inside it uncovered, and a simulated change must
-   * report that too.
+   * report that too. When the unit keeps nurses apart, every in-period shift overlapping it as
+   * well: a nurse added to the day 12 can break the verdict of the mid shift beside it.
    */
   shiftViolationsAround(date: IsoDate, shiftTypeId: Id): Violation[] {
     const out = [...this.shiftViolations(date, shiftTypeId)];
     const outer = this.engine.shiftType(shiftTypeId);
+    const seen = new Set<string>();
     for (const inner of this.engine.shiftTypes) {
       if (inner.withinShiftTypeId !== shiftTypeId) continue;
       // Dated the same day, or the next for a shift inside a night that began this evening.
       for (const innerDate of [date, addDays(date, 1)]) {
         if (containingDate(inner, outer, innerDate) === date) {
+          seen.add(`${innerDate}::${inner.id}`);
           out.push(...this.shiftViolations(innerDate, inner.id));
         }
+      }
+    }
+    if (this.engine.judgesOverlaps) {
+      for (const other of overlappingShifts(date, outer, this.engine.shiftTypes)) {
+        const key = `${other.date}::${other.shiftType.id}`;
+        if (seen.has(key) || !this.engine.inPeriod(other.date)) continue;
+        seen.add(key);
+        out.push(...this.shiftViolations(other.date, other.shiftType.id));
       }
     }
     return out;
