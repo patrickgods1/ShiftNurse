@@ -22,6 +22,7 @@ export const ids = {
   nurseCredential: () => newId('ncred'),
   credentialRequirement: () => newId('creq'),
   preference: () => newId('pref'),
+  incompatibilityGroup: () => newId('incg'),
   timeOff: () => newId('to'),
   shiftSwap: () => newId('swp'),
   acuityTier: () => newId('tier'),

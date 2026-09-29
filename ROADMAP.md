@@ -435,6 +435,29 @@ counts toward contracted hours — a nurse back from a paid week off is not "36 
       the night before its nurse's leave is now available; the scenario row moves within its
       run-to-run noise (random UUIDs; the leave settings were checked to have no effect on it)
 
+### Incompatible staff ✅
+Managers keep some nurses off the floor together — a clash, an HR investigation — and the
+problem is often a group of three or more, not a pair.
+- [x] `IncompatibilityGroup` (members, `maxTogether`, reason, optional start/end dates);
+      `incompatibility_group` + `incompatibility_member` (migration 0011); repository refuses a
+      group of one, another unit's nurse, a cap that allows everyone, and any change without a
+      reason (audited)
+- [x] "Together" is by the hour (`schedule/overlap.ts`): a mid overlapping a day 12 counts, a
+      night ending at 07:00 does not overlap the 07:00 day
+- [x] Two rules: `incompatible-staff-cap` (soft: more members on at once than the cap) and
+      `incompatible-staff-buffer` (hard: while members overlap, `minOutsideStaff` — default 2 —
+      from outside the group on the floor every shared hour); the reason never appears in a
+      violation
+- [x] Solver prices both per person-hour over floor stretches (`SolverModel.stretches`), CP-SAT
+      term for term; conflicts engine judges overlapping rosters, so backfill cards warn and
+      exchanges block the same way the grid does
+- [x] Roster › Kept apart (create/edit/remove with reason), groups on the nurse drawer;
+      `minOutsideStaff` on Settings › Rules
+- [x] Verify: rule, overlap, model cache-vs-rebuild, CP-SAT parity (hand-worked prices, random
+      rosters, annealer schedules), backfill, repository and grid tests written first and
+      mutation-checked; `npm run check`; `npm run smoke`. `bench:solvers` not re-run: with no
+      groups every new term is zero and no rule list changes, so its inputs price identically
+
 ### M17 — Signed installers and updates (proposed)
 v0.1.0 ships unsigned: macOS users are told to run `xattr` and Windows users to click past
 SmartScreen, and an installed copy has no way to learn that a fix exists — the crash-on-launch

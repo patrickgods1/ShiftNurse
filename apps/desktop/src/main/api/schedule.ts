@@ -29,6 +29,7 @@ import {
   listAssignmentsForPeriod,
   listCredentials,
   listHolidaysForUnit,
+  listIncompatibilityGroups,
   listNurseCredentialsForUnit,
   listPeriodsForUnit,
   listShiftCredentialRequirementsForUnit,
@@ -83,6 +84,7 @@ export function validateView(
       start: addDays(period.startDate, -14),
       end: period.endDate,
     }),
+    incompatibilityGroups: listIncompatibilityGroups(db, period.unitId),
   });
   return { ruleSet, result: evaluateSchedule(schedule, ruleSet, ctx) };
 }

@@ -18,6 +18,7 @@ import type {
   Holiday,
   HppdTarget,
   Id,
+  IncompatibilityGroup,
   Nurse,
   NurseCredential,
   NurseRole,
@@ -252,6 +253,8 @@ export interface ScenarioOptions {
   unit?: Unit;
   /** Missed shifts paid from sick leave. */
   paidSickCalls?: PaidSickCall[];
+  /** Nurses who should not be on the floor together. */
+  incompatibilityGroups?: IncompatibilityGroup[];
   /** Parameter overrides by rule id, merged over the defaults. */
   ruleParams?: Record<string, Record<string, unknown>>;
 }
@@ -312,6 +315,9 @@ export function scenario(options: ScenarioOptions = {}): Scenario {
     shiftCredentialRequirements: options.shiftCredentialRequirements ?? [],
     holidays: options.holidays ?? [],
     ...(options.paidSickCalls ? { paidSickCalls: options.paidSickCalls } : {}),
+    ...(options.incompatibilityGroups
+      ? { incompatibilityGroups: options.incompatibilityGroups }
+      : {}),
   });
 
   const schedule = new ScheduleView({
@@ -382,6 +388,9 @@ export function solveInputFrom(options: SolveScenarioOptions = {}): SolveInput {
     holidays: options.holidays ?? [],
     preferences: options.preferences ?? [],
     ledgerHistory: options.ledgerHistory ?? [],
+    ...(options.incompatibilityGroups
+      ? { incompatibilityGroups: options.incompatibilityGroups }
+      : {}),
     ...(options.cost ? { cost: options.cost } : {}),
   };
 }

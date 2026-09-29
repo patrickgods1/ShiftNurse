@@ -39,6 +39,7 @@ import type {
   Holiday,
   HppdTarget,
   Id,
+  IncompatibilityGroup,
   IsoDate,
   Nurse,
   NurseCredential,
@@ -135,6 +136,18 @@ export interface DashboardSummary {
 }
 
 export type NurseInput = Omit<Nurse, 'id'>;
+
+/** A group's members, cap and dates. The reason travels separately, as for every audited change. */
+export type IncompatibilityGroupInput = Omit<IncompatibilityGroup, 'id' | 'reason'>;
+
+/** Optional dates take `null` to clear them. The unit never changes. */
+export interface IncompatibilityGroupPatch {
+  name?: string;
+  nurseIds?: Id[];
+  maxTogether?: number;
+  startsOn?: IsoDate | null;
+  endsOn?: IsoDate | null;
+}
 
 /** Optional-and-clearable fields take `null` to clear; an omitted key is left untouched. */
 export type NursePatch = Partial<Omit<Nurse, 'id' | 'unitId' | 'phone' | 'email' | 'notes'>> & {
@@ -604,6 +617,13 @@ export interface ShiftNurseApi {
     forNurse(nurseId: Id): Preference[];
     replace(nurseId: Id, preferences: PreferenceInput[]): Preference[];
   };
+  /** Nurses kept off the floor together. Every change needs a reason, which is audited. */
+  incompatibility: {
+    list(unitId: Id): IncompatibilityGroup[];
+    create(input: IncompatibilityGroupInput, reason: string): IncompatibilityGroup;
+    update(id: Id, patch: IncompatibilityGroupPatch, reason: string): IncompatibilityGroup;
+    remove(id: Id, reason: string): void;
+  };
   shiftTypes: {
     list(unitId: Id): ShiftType[];
     create(input: ShiftTypeInput): ShiftType;
@@ -884,6 +904,7 @@ export const API_CHANNELS = {
   nurses: ['list', 'get', 'create', 'update', 'deactivate'],
   credentials: ['list', 'create', 'forNurse', 'grant', 'updateExpiry', 'revoke'],
   preferences: ['forNurse', 'replace'],
+  incompatibility: ['list', 'create', 'update', 'remove'],
   shiftTypes: ['list', 'create', 'update', 'deactivate'],
   coverage: ['list', 'upsert', 'delete'],
   holidays: ['list', 'create', 'delete'],

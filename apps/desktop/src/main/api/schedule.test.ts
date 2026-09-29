@@ -5,7 +5,14 @@
  */
 
 import { type Assignment, addDays } from '@shiftnurse/core';
-import { listChanges, publishSchedule, updatePeriodStatus } from '@shiftnurse/db';
+import {
+  createIncompatibilityGroup,
+  listChanges,
+  publishSchedule,
+  transact,
+  updateIncompatibilityGroup,
+  updatePeriodStatus,
+} from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ACTOR } from './context.js';
 import { scheduleApi } from './schedule.js';
@@ -91,5 +98,42 @@ describe('editing a schedule through the API', () => {
       ...({ source: 'solver' } as object),
     });
     expect(created.source).toBe('manual');
+  });
+});
+
+describe('nurses kept apart, as the grid judges them', () => {
+  it('flags two nurses of a group sharing a day shift, and not once the group has ended', () => {
+    const group = transact(f.handle.db, (tx) =>
+      createIncompatibilityGroup(
+        tx,
+        {
+          unitId: f.seeded.unitId,
+          name: 'Keep apart',
+          nurseIds: [f.rns[0]!.id, f.rns[1]!.id],
+          maxTogether: 1,
+        },
+        'test',
+        ACTOR,
+      ),
+    );
+    place(0, 1);
+    place(1, 1);
+    const together = () =>
+      api
+        .validate(f.seeded.draftPeriodId)
+        .result.violations.filter((v) => v.code === 'incompatible_staff_together');
+    expect(together()).toHaveLength(1);
+    expect(together()[0]!.nurseIds.sort()).toEqual([f.rns[0]!.id, f.rns[1]!.id].sort());
+
+    transact(f.handle.db, (tx) =>
+      updateIncompatibilityGroup(
+        tx,
+        group.id,
+        { endsOn: addDays(f.seeded.draftStart, 0) },
+        'Resolved',
+        ACTOR,
+      ),
+    );
+    expect(together()).toEqual([]);
   });
 });

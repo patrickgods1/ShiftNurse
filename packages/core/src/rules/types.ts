@@ -24,6 +24,7 @@ import type {
   Credential,
   Holiday,
   Id,
+  IncompatibilityGroup,
   Nurse,
   NurseCredential,
   ShiftCredentialRequirement,
@@ -73,7 +74,9 @@ export type ViolationCode =
   | 'ratio_breach'
   | 'works_during_approved_time_off'
   | 'overlapping_assignments'
-  | 'excess_weekends';
+  | 'excess_weekends'
+  | 'incompatible_staff_together'
+  | 'incompatible_staff_unbuffered';
 
 export interface Violation {
   ruleId: string;
@@ -116,6 +119,9 @@ export interface RuleContext {
 
   /** Holiday dates as a set, for O(1) membership tests. */
   holidayDates: ReadonlySet<IsoDate>;
+
+  /** Nurses who should not be on the floor together, with their dates in force. */
+  incompatibilityGroups: readonly IncompatibilityGroup[];
 }
 
 /**

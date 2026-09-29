@@ -301,6 +301,78 @@ describe('fairness and preferences in the objective', () => {
   });
 });
 
+describe('incompatible staff', () => {
+  /** A week of day 12s needing four RNs; ten RNs of three shifts each staff it, two kept apart. */
+  function week(extra: Partial<SolveScenarioOptions> = {}): SolveInput {
+    const nurses = fullTimers(10);
+    return solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-10'),
+      nurses,
+      shiftTypes: [DAY_12],
+      coverageRequirements: coverageAllWeek(DAY_12, 'RN', 4),
+      incompatibilityGroups: [
+        {
+          id: 'g1',
+          unitId: testUnit.id,
+          name: 'Keep apart',
+          nurseIds: [nurses[0]!.id, nurses[1]!.id],
+          maxTogether: 1,
+          reason: 'test',
+        },
+      ],
+      ...extra,
+    });
+  }
+
+  function daysTogether(input: SolveInput, report: SolveReport): string[] {
+    const [a, b] = input.incompatibilityGroups![0]!.nurseIds;
+    const aDays = new Set(report.assignments.filter((x) => x.nurseId === a).map((x) => x.date));
+    return report.assignments
+      .filter((x) => x.nurseId === b && aDays.has(x.date))
+      .map((x) => x.date);
+  }
+
+  it('never puts the two on the same day when there is someone else to send', () => {
+    const input = week();
+    const report = solve(input, QUICK);
+    expect(report.unfilled).toEqual([]);
+    expect(daysTogether(input, report)).toEqual([]);
+    expect(report.softViolations.filter((v) => v.code === 'incompatible_staff_together')).toEqual(
+      [],
+    );
+  });
+
+  it('still gives both of them work', () => {
+    const input = week();
+    const report = solve(input, QUICK);
+    const [a, b] = input.incompatibilityGroups![0]!.nurseIds;
+    expect(report.assignments.filter((x) => x.nurseId === a).length).toBeGreaterThan(0);
+    expect(report.assignments.filter((x) => x.nurseId === b).length).toBeGreaterThan(0);
+  });
+
+  it('gives the same schedule when run again on the same inputs', () => {
+    const input = week();
+    expect(solve(input, QUICK).assignments).toEqual(solve(input, QUICK).assignments);
+  });
+
+  it('pairs them only once the group has ended', () => {
+    const input = week();
+    const ended = {
+      ...input,
+      incompatibilityGroups: [
+        { ...input.incompatibilityGroups![0]!, endsOn: isoDate('2026-01-03') },
+      ],
+    };
+    // With the group ended nothing holds them apart, so the objective has no reason to.
+    const report = solve(ended, QUICK);
+    expect(report.softViolations.filter((v) => v.code === 'incompatible_staff_together')).toEqual(
+      [],
+    );
+    expect(report.objective.incompatibility).toBe(0);
+  });
+});
+
 describe('cost', () => {
   it('prices the result when pay data is supplied, and not otherwise', () => {
     const nurses = fullTimers(6);

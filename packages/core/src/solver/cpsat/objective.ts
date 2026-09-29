@@ -13,8 +13,10 @@
  */
 
 import { NURSE_ROLES } from '../../acuity/demand.js';
-import { weekendKey } from '../../domain/time.js';
+import type { Id } from '../../domain/entities.js';
+import { type IsoDate, weekendKey } from '../../domain/time.js';
 import { BURDEN_COMPONENTS, type BurdenComponent } from '../../fairness/types.js';
+import { groupInForce } from '../../rules/incompatibility-rules.js';
 import { type Expr, evalExpr, expr, scale, sum } from './builder.js';
 import { countExpr, type EncodeContext, HOURS, hoursExpr, type TimelineEntry } from './context.js';
 import { isMovable, roleExpr } from './rules/coverage.js';
@@ -24,6 +26,7 @@ const FAIR = 10_000;
 
 export function encodeObjective(ctx: EncodeContext): void {
   coverageTerms(ctx);
+  incompatibilityTerms(ctx);
   hoursTerms(ctx);
   fairnessTerms(ctx);
   perShiftTerms(ctx);
@@ -63,6 +66,74 @@ function coverageTerms(ctx: EncodeContext): void {
         weights.overTarget,
         `over target: ${at} ${role}`,
       );
+    }
+  }
+}
+
+/**
+ * Incompatible staff, stretch by stretch, as `SolverModel.incompatibilityPenalty` prices them
+ * with `judgeFloor`: per group, members beyond the cap, and — while two or more members overlap —
+ * outside staff short of the minimum, each per person-hour. A stretch with no variables on it is
+ * the model's own constant. Both rules are priced here whatever their severity, which is why
+ * `CPSAT_ENCODERS` has nothing to add for them.
+ */
+function incompatibilityTerms(ctx: EncodeContext): void {
+  const { model } = ctx;
+  const { excess, shortfall, minOutsideStaff } = model.incompatibilityPrice;
+  for (const stretch of model.stretches) {
+    const floor: { nurseId: Id; date: IsoDate; literal: number | null }[] = [];
+    for (const shift of stretch.shifts) {
+      for (const sv of ctx.byShift[shift.idx]!) {
+        floor.push({ nurseId: sv.nurseId, date: shift.date, literal: sv.variable });
+      }
+      for (const a of ctx.lockedByShift[shift.idx]!) {
+        floor.push({ nurseId: a.nurseId, date: a.date, literal: null });
+      }
+    }
+    for (const a of stretch.tail) floor.push({ nurseId: a.nurseId, date: a.date, literal: null });
+    if (floor.every((f) => f.literal === null)) {
+      ctx.b.minimise(expr([], model.incompatibilityPenaltyOf(stretch)), 1);
+      continue;
+    }
+    for (const group of model.incompatibilityGroups) {
+      const members = expr();
+      const outside = expr();
+      for (const f of floor) {
+        const side =
+          group.nurseIds.includes(f.nurseId) && groupInForce(group, f.date) ? members : outside;
+        if (f.literal === null) side.constant += 1;
+        else side.terms.push([f.literal, 1]);
+      }
+      const [lo, hi] = ctx.b.bounds(members);
+      if (hi < 2) continue;
+      const label = `incompatible ${group.id}: stretch ${stretch.idx}`;
+      if (excess > 0) {
+        priced(ctx, sum(members, expr([], -group.maxTogether)), excess * stretch.hours, label);
+      }
+      if (shortfall > 0 && minOutsideStaff > 0) {
+        let together: Expr;
+        if (lo >= 2) {
+          together = expr([], 1);
+        } else {
+          const t = ctx.b.auxiliary(`${label} together`, 0, 1, (value) =>
+            evalExpr(members, value) >= 2 ? 1 : 0,
+          );
+          // Two or more members force `t` on: members − 1 ≤ (hi − 1)·t.
+          ctx.b.linear(
+            sum(members, expr([[t, -(hi - 1)]], -1)),
+            Number.NEGATIVE_INFINITY,
+            0,
+            `${label} together`,
+          );
+          together = expr([[t, 1]]);
+        }
+        priced(
+          ctx,
+          sum(scale(together, minOutsideStaff), scale(outside, -1)),
+          shortfall * stretch.hours,
+          `${label} outside staff`,
+        );
+      }
     }
   }
 }

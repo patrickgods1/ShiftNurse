@@ -119,6 +119,34 @@ export interface ShiftCredentialRequirement {
 }
 
 // ---------------------------------------------------------------------------
+// Incompatible staff
+// ---------------------------------------------------------------------------
+
+/**
+ * Nurses the manager has decided should not be on the floor together: a personality clash, an
+ * open HR investigation, a former couple. A group rather than a pair, because the problem is
+ * often three or more people. `maxTogether` is how many of them may overlap at once — 1 means
+ * no two ever, 2 means pairs are fine but not the whole clique.
+ *
+ * `reason` is HR-sensitive. It is kept for the audit trail and the roster screen, and is never
+ * written into a violation message, which appears on the grid, in exports and in grievances.
+ */
+export interface IncompatibilityGroup {
+  id: Id;
+  unitId: Id;
+  name: string;
+  /** Two or more distinct nurses of the unit. */
+  nurseIds: Id[];
+  /** At least 1, fewer than the number of members. */
+  maxTogether: number;
+  reason: string;
+  /** First shift date the group applies to; absent means "from the start". */
+  startsOn?: IsoDate;
+  /** Last shift date the group applies to; absent means "until removed". */
+  endsOn?: IsoDate;
+}
+
+// ---------------------------------------------------------------------------
 // Preferences
 // ---------------------------------------------------------------------------
 

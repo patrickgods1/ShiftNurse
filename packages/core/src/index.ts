@@ -29,6 +29,7 @@ export * from './roster/csv.js';
 export * from './rules/availability-rules.js';
 export * from './rules/coverage-rules.js';
 export * from './rules/hours-rules.js';
+export * from './rules/incompatibility-rules.js';
 export * from './rules/paid-leave.js';
 export * from './rules/registry.js';
 export * from './rules/rest-rules.js';
@@ -36,6 +37,7 @@ export * from './rules/rest-rules.js';
 export * from './rules/types.js';
 // Schedule read model
 export * from './schedule/cover.js';
+export * from './schedule/overlap.js';
 export * from './schedule/view.js';
 // First-run setup presets
 export * from './setup/index.js';

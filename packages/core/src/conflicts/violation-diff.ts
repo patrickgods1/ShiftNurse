@@ -15,13 +15,15 @@ import type { Violation } from '../rules/types.js';
 /**
  * Identity of a violation across two schedules. A shift-scope violation lists its whole roster
  * in `nurseIds`, so it is keyed by the shift and role instead — otherwise adding one nurse
- * would make a still-missing charge nurse read as both cleared and introduced.
+ * would make a still-missing charge nurse read as both cleared and introduced. An incompatibility
+ * violation is keyed by its group and dates, not its hours: a simulation judges each shift's hours
+ * separately, and the same pairing seen from the day 12 and the mid beside it is one problem.
  */
 export function violationKey(v: Violation): string {
   const d = v.details ?? {};
   const who =
     getRule(v.ruleId)?.scope === 'shift'
-      ? `${d.shiftTypeId ?? ''}|${d.role ?? ''}|${d.credentialId ?? ''}`
+      ? `${d.shiftTypeId ?? ''}|${d.role ?? ''}|${d.credentialId ?? ''}|${d.groupId ?? ''}`
       : [...v.nurseIds].sort().join(',');
   return `${v.ruleId}|${v.code}|${v.dates.join(',')}|${who}`;
 }
