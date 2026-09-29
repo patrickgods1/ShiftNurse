@@ -78,6 +78,7 @@ const WAIT_FOR = `
  * First run, through the real UI: the empty database must open on the welcome screen, "Explore a
  * demo unit" must list the three demos, and picking the community med-surg unit must seed it and
  * land on the dashboard without a reload — the renderer's own invalidation has to carry it there.
+ * The dashboard's 10 s starts once seeding has finished, however long that took.
  * Every later check runs on that demo; `db/seed/demo/*.test.ts` covers the other two.
  */
 const WELCOME_SCRIPT = `
@@ -92,8 +93,16 @@ const WELCOME_SCRIPT = `
     const demos = (await waitFor('[data-demo-id]')).length;
     const community = document.querySelector('[data-testid="setup-demo-community-med-surg"]');
     if (community) community.click();
+    // Seeding the demo takes as long as the machine needs (the emulated x64 runner once took
+    // more than 10 s), so wait for it to finish before giving the dashboard its 10 s to render;
+    // otherwise a slow seed reads as a dashboard that never came.
+    const seeded = Date.now();
+    let after = await api.setup.status();
+    while (after.phase !== 'ready' && Date.now() - seeded < 180000) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      after = await api.setup.status();
+    }
     const dashboard = (await waitFor('[data-testid="stat-card"]')).length;
-    const after = await api.setup.status();
     const [unit] = await api.units.list();
     return { before: before.phase, welcome, choices, demos, dashboard, after: after.phase, mode: after.state?.mode, unit: unit?.name };
   })()`;
