@@ -232,7 +232,9 @@ violations of their own.
   worse than a failed one.
   The exception proves the rule: a function whose several writes are only correct together —
   `moveAssignment`, `approveSwap`, `importRoster`, `importHistoricalLedger`,
-  `approveTimeOffAndLiftAssignments`, `applyResolution` — takes `ShiftNurseTx`, so calling it
+  `approveTimeOffAndLiftAssignments`, `applyResolution`, and the holiday writes (`updateHoliday`,
+  `deleteHoliday`, `recordHolidayWork`, `clearHolidayWork`, `addHolidayYear`) — takes
+  `ShiftNurseTx`, so calling it
   outside a transaction is a type error rather than a docstring nobody read.
 - **Every mutation writes an audit entry in the same call**, with `before` on updates/deletes.
   Denials, resolutions and overrides go through `recordAuditStrict`, which refuses to record
