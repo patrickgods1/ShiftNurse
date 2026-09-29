@@ -150,6 +150,10 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
     previewActive ? selectedIndex : undefined,
   );
   const preview = previewActive ? previewQuery.data : undefined;
+  // Named from the preview's own index: while the next variation loads, the previous one's
+  // numbers are still on show and must not be labelled as the next.
+  const previewLabel =
+    preview && batch ? `Variation ${variationNumber(batch, preview.index)}` : undefined;
   const highlightKeys = useMemo(
     () => (preview ? new Set(preview.changedKeys) : undefined),
     [preview],
@@ -425,6 +429,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
       <ViolationSummary
         status={preview ? 'success' : validationQuery.status}
         result={violationResult}
+        previewLabel={previewLabel}
       />
       {failedEdit ? (
         <div
@@ -442,8 +447,13 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
           </button>
         </div>
       ) : null}
-      <CostSummary report={preview ? preview.cost : costQuery.data} />
-      <AlertsPanel periodId={period.id} />
+      <CostSummary report={preview ? preview.cost : costQuery.data} previewLabel={previewLabel} />
+      <AlertsPanel
+        periodId={period.id}
+        preview={
+          preview && previewLabel ? { alerts: preview.alerts, label: previewLabel } : undefined
+        }
+      />
       <div className="mb-3 flex items-start justify-between gap-3">
         {previewActive ? (
           <p className="text-sm text-text-muted">

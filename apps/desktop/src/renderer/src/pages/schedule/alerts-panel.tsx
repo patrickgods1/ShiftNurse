@@ -6,21 +6,26 @@
  * out on the day.
  */
 
+import type { ComplianceAlert } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useAlerts } from '../../api-publish.js';
 import { errorMessage } from '../../components/ui.js';
+import { PreviewTag } from './preview-tag.js';
 
 interface AlertsPanelProps {
   periodId: string;
+  /** While a Generate variation is previewed: its alerts, judged by main, and its name. */
+  preview?: { alerts: readonly ComplianceAlert[]; label: string } | undefined;
 }
 
-export function AlertsPanel({ periodId }: AlertsPanelProps) {
+export function AlertsPanel({ periodId, preview }: AlertsPanelProps) {
   const [open, setOpen] = useState(false);
-  const alertsQuery = useAlerts(periodId);
-  const alerts = alertsQuery.data ?? [];
+  // The draft's alerts are not asked for while a variation stands in for it.
+  const alertsQuery = useAlerts(preview ? undefined : periodId);
+  const alerts = preview ? preview.alerts : (alertsQuery.data ?? []);
   // A failed compliance check must not read as "no alerts" — that is the false all-clear
   // this panel exists to prevent.
-  if (alertsQuery.isError) {
+  if (!preview && alertsQuery.isError) {
     return (
       <p
         role="alert"
@@ -31,7 +36,7 @@ export function AlertsPanel({ periodId }: AlertsPanelProps) {
       </p>
     );
   }
-  if (alertsQuery.isPending || alerts.length === 0) return null;
+  if ((!preview && alertsQuery.isPending) || alerts.length === 0) return null;
   const critical = alerts.filter((a) => a.severity === 'critical').length;
   const tone = critical > 0 ? 'text-danger' : 'text-warn';
 
@@ -42,6 +47,7 @@ export function AlertsPanel({ periodId }: AlertsPanelProps) {
     >
       <div className="flex items-center justify-between gap-3">
         <p className={`font-medium ${tone}`}>
+          <PreviewTag label={preview?.label} />
           {alerts.length} compliance alert{alerts.length === 1 ? '' : 's'}
           {critical > 0 ? ` · ${critical} critical` : ''}
         </p>

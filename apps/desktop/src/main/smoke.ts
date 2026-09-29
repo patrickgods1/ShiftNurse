@@ -508,7 +508,13 @@ const GENERATE_UI_STEPS = {
      const outlined = document.querySelectorAll('[data-testid="assignment-chip"][aria-label*="differs from the draft"]');
      if (outlined.length === 0) return null;
      outlined[0].scrollIntoView({ block: 'center' });
-     return { banner: banner.textContent, outlined: outlined.length };`,
+     // Every readout above the grid must be the variation's: the violation count and the cost
+     // strip always render, the alerts panel whenever there are alerts.
+     const tagged = ['violation-summary', 'cost-summary', 'alerts-panel'].filter((id) =>
+       document.querySelector('[data-testid="' + id + '"] [data-testid="preview-scope"]'));
+     const alerts = !!document.querySelector('[data-testid="alerts-panel"]');
+     if (tagged.length < (alerts ? 3 : 2)) return null;
+     return { banner: banner.textContent, outlined: outlined.length, tagged: tagged.length };`,
     20_000,
   ),
   compare: `
@@ -1332,8 +1338,13 @@ export function runSmoke(win: BrowserWindow): void {
       const previewed = (await run(GENERATE_UI_STEPS.preview)) as {
         banner: string;
         outlined: number;
+        tagged: number;
       } | null;
-      if (!previewed) fail('previewing a variation outlined no shifts that differ from the draft');
+      if (!previewed) {
+        fail(
+          'previewing a variation outlined no shifts that differ from the draft, or left a readout above the grid on the draft',
+        );
+      }
       await uiShot('generate-preview');
       const compared = (await run(GENERATE_UI_STEPS.compare)) as {
         rows: number;
@@ -1363,7 +1374,7 @@ export function runSmoke(win: BrowserWindow): void {
       const discarded = (await run(GENERATE_UI_STEPS.discard)) as { gone: boolean } | null;
       if (!discarded) fail('discarding the variations left the candidates bar up');
       console.log(
-        `[smoke] generate UI OK (${started.estimate}; summary of ${summary!.runs} with ${summary!.gridBest ? 'the grid' : 'a variation'} best, reopens on the summary; preview outlines ${previewed!.outlined} changed shifts; compare ${compared!.rows} rows × ${compared!.columns - 2} variations; "${more!.label}" after ${summary!.names.at(-1)} gave ${more!.names.join(', ')}; discarded)`,
+        `[smoke] generate UI OK (${started.estimate}; summary of ${summary!.runs} with ${summary!.gridBest ? 'the grid' : 'a variation'} best, reopens on the summary; preview outlines ${previewed!.outlined} changed shifts with ${previewed!.tagged} readouts on the variation; compare ${compared!.rows} rows × ${compared!.columns - 2} variations; "${more!.label}" after ${summary!.names.at(-1)} gave ${more!.names.join(', ')}; discarded)`,
       );
       const requests = (await win.webContents.executeJavaScript(REQUESTS_SCRIPT)) as {
         error?: string;

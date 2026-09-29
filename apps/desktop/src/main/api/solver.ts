@@ -33,6 +33,7 @@ import { cpsatRunnerPath, ORTOOLS_BACKEND_IDS } from '../solver-backends.js';
 import { solverAvailability } from '../solver-choice.js';
 import { SolverJobs, type SolverJobsDeps } from '../solver-jobs.js';
 
+import { alertsForView } from './alerts.js';
 import { ACTOR, periodOrThrow, ruleSetFor, scheduleViewFor } from './context.js';
 import { costReportForView } from './cost.js';
 import { validateView } from './schedule.js';
@@ -92,7 +93,11 @@ function candidateKey(a: { nurseId: Id; date: string; shiftTypeId: Id }): string
   return `${a.nurseId}|${a.date}|${a.shiftTypeId}`;
 }
 
-/** A candidate on the grid: its rows, and the validation and cost strip the grid would show. */
+/**
+ * A candidate on the grid: its rows, and everything the schedule page reads off them — the
+ * validation, the cost strip against the budget and the compliance alerts — judged on the
+ * candidate, so a preview shows what saving it would.
+ */
 export function previewCandidate(
   db: DbLike,
   jobs: SolverJobs,
@@ -104,12 +109,14 @@ export function previewCandidate(
   const view = scheduleViewFor(db, period, { lookback: true, assignments: report.assignments });
   const draft = listAssignmentsForPeriod(db, period.id);
   const diff = diffAssignments(draft, report.assignments);
+  const ruleSet = ruleSetFor(db, period);
   return {
     batchId,
     index,
     assignments: report.assignments,
-    validation: validateView(db, period, ruleSetFor(db, period), view),
+    validation: validateView(db, period, ruleSet, view),
     cost: costReportForView(db, period, view),
+    alerts: alertsForView(db, period, ruleSet, view),
     changedKeys: diff.changes.filter((c) => c.kind !== 'removed').map((c) => candidateKey(c)),
     diff: { added: diff.added, removed: diff.removed, changed: diff.changed },
   };

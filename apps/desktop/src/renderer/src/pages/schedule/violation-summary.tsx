@@ -8,14 +8,17 @@ import type { EvaluationResult } from '@shiftnurse/core';
 import { useMemo, useState } from 'react';
 import { formatDate } from '../../format.js';
 import { violationKey } from './grid-utils.js';
+import { PreviewTag } from './preview-tag.js';
 import { type ValidationStatus, violationReadout } from './violation-readout.js';
 
 interface ViolationSummaryProps {
   status: ValidationStatus;
   result: EvaluationResult | undefined;
+  /** The previewed variation's name, when the result is that variation's. */
+  previewLabel?: string | undefined;
 }
 
-export function ViolationSummary({ status, result }: ViolationSummaryProps) {
+export function ViolationSummary({ status, result, previewLabel }: ViolationSummaryProps) {
   const [open, setOpen] = useState(false);
   const { label, tone } = violationReadout(status, result);
   const count = status === 'success' && result ? result.violations.length : 0;
@@ -41,6 +44,7 @@ export function ViolationSummary({ status, result }: ViolationSummaryProps) {
           role={status === 'error' ? 'alert' : undefined}
           aria-live={status === 'error' ? undefined : 'polite'}
         >
+          <PreviewTag label={previewLabel} />
           {label}
         </p>
         {count > 0 ? (

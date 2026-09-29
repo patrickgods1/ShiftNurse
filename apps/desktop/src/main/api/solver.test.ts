@@ -4,7 +4,13 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { type Assignment, addDays, PURE_SOLVERS, type Violation } from '@shiftnurse/core';
+import {
+  type Assignment,
+  addDays,
+  type ComplianceAlert,
+  PURE_SOLVERS,
+  type Violation,
+} from '@shiftnurse/core';
 import {
   approveTimeOff,
   auditHistoryFor,
@@ -14,6 +20,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SolverJobs, seedFor } from '../solver-jobs.js';
 import type { SolverWorkerData } from '../solver-worker.js';
+import { alertsFor } from './alerts.js';
 import { ACTOR } from './context.js';
 import { costReport } from './cost.js';
 import { buildScheduleValidation, scheduleApi } from './schedule.js';
@@ -153,6 +160,24 @@ describe('previewing and comparing', () => {
     const onGrid = buildScheduleValidation(f.handle.db, periodId);
     expect(said(preview.validation.result.violations)).toEqual(said(onGrid.result.violations));
     expect(preview.cost.cost.totals).toEqual(costReport(f.handle.db, periodId).cost.totals);
+    expect(preview.cost.variance).toEqual(costReport(f.handle.db, periodId).variance);
+    // Saving gives the rows database ids; everything else about each alert must match.
+    const alertSaid = (alerts: readonly ComplianceAlert[]) =>
+      alerts.map(({ assignmentIds, ...rest }) => ({ ...rest, shifts: assignmentIds.length }));
+    expect(alertSaid(preview.alerts)).toEqual(alertSaid(alertsFor(f.handle.db, periodId)));
+  });
+
+  it('judges a variation’s compliance alerts, not the draft’s', async () => {
+    // The draft is empty, so every contracted nurse drifts short of contract; a variation that
+    // staffs the period must not be shown those alerts.
+    const id = await generate(1);
+    const draftAlerts = alertsFor(f.handle.db, periodId);
+    expect(draftAlerts.filter((a) => a.kind === 'hours_drift').length).toBeGreaterThan(10);
+    const preview = previewCandidate(f.handle.db, jobs, id, 0);
+    expect(preview.alerts).not.toEqual(draftAlerts);
+    expect(preview.alerts.filter((a) => a.kind === 'hours_drift').length).toBeLessThan(
+      draftAlerts.filter((a) => a.kind === 'hours_drift').length,
+    );
   });
 
   it('marks every shift of a variation as new against an empty draft', async () => {

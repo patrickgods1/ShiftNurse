@@ -10,12 +10,15 @@
 
 import type { PeriodCostReport } from '@shared/api.js';
 import { formatDollars, formatHours, formatSignedDollars } from '../../money.js';
+import { PreviewTag } from './preview-tag.js';
 
 interface CostSummaryProps {
   report: PeriodCostReport | undefined;
+  /** The previewed variation's name, when the report is that variation's. */
+  previewLabel?: string | undefined;
 }
 
-export function CostSummary({ report }: CostSummaryProps) {
+export function CostSummary({ report, previewLabel }: CostSummaryProps) {
   if (!report) return null;
   const { cost, variance } = report;
   const overtime = cost.overtime;
@@ -27,6 +30,7 @@ export function CostSummary({ report }: CostSummaryProps) {
       className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border bg-surface px-3 py-2 text-sm"
     >
       <p className="font-medium text-text">
+        <PreviewTag label={previewLabel} />
         {formatDollars(cost.totals.total)}
         <span className="ml-1 font-normal text-text-muted">
           for {formatHours(cost.totals.hours)}

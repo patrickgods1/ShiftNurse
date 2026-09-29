@@ -4,33 +4,11 @@
  * it to validation and alerts, which used to load and index the same rows twice per call.
  */
 
-import {
-  type ComplianceAlert,
-  type ContractedHoursParams,
-  complianceAlerts,
-  contractedHoursRule,
-  datesInRange,
-  deriveCounters,
-  deriveDemand,
-  type Id,
-  type MaxHoursParams,
-  maxHoursRule,
-  type PaidLeaveCredit,
-  paidLeaveCredits,
-  type RuleSet,
-  resolveConfigs,
-  type SchedulePeriod,
-  type ScheduleView,
-} from '@shiftnurse/core';
+import { deriveCounters, type Id } from '@shiftnurse/core';
 import {
   changesSinceLastPublish,
   type DbLike,
-  demandInputs,
   latestVersion,
-  listCredentials,
-  listNurseCredentialsForUnit,
-  listTimeOffForUnit,
-  paidSickCallsForUnit,
   pendingDiff,
   publishSchedule,
   type ShiftNurseDb,
@@ -40,7 +18,7 @@ import {
 import type { PublishOutcome, PublishPreview } from '../../shared/api.js';
 import { createBackup } from '../backups.js';
 import type { OutputInput } from '../output.js';
-
+import { alertsFor, alertsForView } from './alerts.js';
 import {
   ACTOR,
   counterContext,
@@ -51,61 +29,7 @@ import {
 } from './context.js';
 import { validateView } from './schedule.js';
 
-/** How far a nurse may drift from contracted hours before the publish preview flags it. */
-const HOURS_DRIFT_TOLERANCE = 0.1;
-
-function alertsForView(
-  db: DbLike,
-  period: SchedulePeriod,
-  ruleSet: RuleSet,
-  schedule: ScheduleView,
-): ComplianceAlert[] {
-  const configs = resolveConfigs(ruleSet);
-  const params = configs.find((c) => c.ruleId === maxHoursRule.id)!
-    .params as unknown as MaxHoursParams;
-  const fte = configs.find((c) => c.ruleId === contractedHoursRule.id)!
-    .params as unknown as ContractedHoursParams;
-  const unit = unitOrThrow(db, period.unitId);
-  // Paid leave counts as the hours rules count it, so a nurse back from vacation is not "drift".
-  const paidLeaveByNurse = new Map<Id, PaidLeaveCredit[]>();
-  const credits = paidLeaveCredits(
-    listTimeOffForUnit(db, period.unitId),
-    paidSickCallsForUnit(db, period.unitId, { start: period.startDate, end: period.endDate }),
-  );
-  for (const c of credits) {
-    paidLeaveByNurse.set(c.nurseId, [...(paidLeaveByNurse.get(c.nurseId) ?? []), c]);
-  }
-  return complianceAlerts({
-    paidLeaveByNurse,
-    paidLeaveCountsTowardHours: fte.paidLeaveCountsTowardHours,
-    paidLeaveCountsTowardOvertime: params.paidLeaveCountsTowardOvertime,
-    schedule,
-    credentials: listCredentials(db),
-    nurseCredentials: listNurseCredentialsForUnit(db, period.unitId),
-    demand: deriveDemand(
-      datesInRange(period.startDate, period.endDate),
-      demandInputs(db, period.unitId, period.startDate, period.endDate),
-    ).all(),
-    overtimeThresholdHours: params.overtimeThresholdHours,
-    workWeekStartsOn: params.workWeekStartsOn,
-    ...(params.overtimeByPayPeriod
-      ? {
-          payPeriodOvertime: {
-            thresholdHours: params.payPeriodOvertimeThresholdHours,
-            payPeriodAnchor: unit.payPeriodAnchor,
-          },
-        }
-      : {}),
-    hoursDriftTolerance: HOURS_DRIFT_TOLERANCE,
-    payPeriodDays: unit.payPeriodDays,
-  });
-}
-
-export function alertsFor(db: DbLike, periodId: Id): ComplianceAlert[] {
-  const period = periodOrThrow(db, periodId);
-  const schedule = scheduleViewFor(db, period, { lookback: true });
-  return alertsForView(db, period, ruleSetFor(db, period), schedule);
-}
+export { alertsFor };
 
 export function publishPreview(db: DbLike, periodId: Id): PublishPreview {
   const period = periodOrThrow(db, periodId);
