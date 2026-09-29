@@ -22,6 +22,9 @@
  * - **Balanced before posting.** Shifts move from anyone past their contract to anyone short,
  *   wherever the move is legal — the pass a scheduler makes before posting.
  *
+ * - **Kept apart.** Staff the profile keeps apart (`keptApart`) are never put on the floor
+ *   together once their group applies — separated, as a real ward separates them, by tour.
+ *
  * - **Removals checked too.** A shift moved away or called off must not leave its nurse in an
  *   illegal stretch (`canRemove`): taking the day off "day, night, night, night, night" leaves
  *   four nights.
@@ -49,7 +52,9 @@ import {
   daysBetween,
   defaultRuleSet,
   type EmploymentType,
+  groupInForce,
   type Id,
+  type IncompatibilityGroup,
   type IsoDate,
   isWeekendDate,
   type Nurse,
@@ -71,8 +76,9 @@ import {
   type WeekendDefinition,
   weekdayOf,
   windowEndDate,
+  windowsOverlap,
 } from '@shiftnurse/core';
-import type { DbLike } from '../../client.js';
+import type { ShiftNurseTx } from '../../client.js';
 import { ids } from '../../ids.js';
 import { createAcuityTier, createRatioRule, upsertHppdTarget } from '../../repositories/acuity.js';
 import {
@@ -89,6 +95,7 @@ import {
   createUnit,
   upsertCoverageRequirement,
 } from '../../repositories/config.js';
+import { createIncompatibilityGroup } from '../../repositories/incompatibility.js';
 import {
   importFairnessLedgerEntries,
   type UpsertFairnessLedgerInput,
@@ -171,6 +178,20 @@ export interface DemoPayInput {
   isChargeEligible: boolean;
 }
 
+/**
+ * Staff the manager keeps off the floor together. One member is drawn from each slot, never a
+ * charge nurse or a new grad (a unit cannot afford to lose either to a separation). Dates are
+ * days from the next schedule's first day; negative is the past.
+ */
+export interface DemoKeptApart {
+  name: string;
+  reason: string;
+  maxTogether: number;
+  members: readonly { role: NurseRole; position: string }[];
+  startsIn: number;
+  endsIn?: number;
+}
+
 export interface DemoProfile {
   id: string;
   unit: { name: string; unitType: string };
@@ -222,6 +243,7 @@ export interface DemoProfile {
     /** Parameter overrides by rule id, merged over the registry defaults. */
     params?: Readonly<Record<string, Record<string, unknown>>>;
   };
+  keptApart?: readonly DemoKeptApart[];
 }
 
 // ---------------------------------------------------------------------------
@@ -443,12 +465,14 @@ function canWork(
   shift: ShiftType,
   leave: ReadonlySet<string>,
   limits: Limits,
+  apart: readonly IncompatibilityGroup[],
 ): boolean {
   const id = staff.nurse.id;
   if (compareDates(date, staff.nurse.seniorityDate) < 0) return false; // Not hired yet.
   const mine = worked.get(id)!;
   if (mine.has(date) || leave.has(`${id}|${date}`)) return false;
   const window = shiftWindow(date, shift);
+  if (breaksApart(worked, id, date, window, apart)) return false;
   // Leave belongs to the shifts dated in it. Only where the rule set makes a day off a whole
   // calendar day does a shift running into leave's first morning count too.
   if (limits.nightIntoLeave) {
@@ -489,6 +513,38 @@ function canWork(
     if (length >= limits.maxRun && mine.has(addDays(last, daysOff + 1))) return false;
   }
   return true;
+}
+
+/**
+ * Would this shift put the person on the floor with more of a group they are kept apart from
+ * than it allows? Counts every member whose shift overlaps any of this one's hours, which is
+ * exact for a cap of one and errs on the safe side above it.
+ */
+function breaksApart(
+  worked: Worked,
+  id: Id,
+  date: IsoDate,
+  window: ReturnType<typeof shiftWindow>,
+  apart: readonly IncompatibilityGroup[],
+): boolean {
+  for (const group of apart) {
+    if (!group.nurseIds.includes(id) || !groupInForce(group, date)) continue;
+    let together = 1;
+    for (const other of group.nurseIds) {
+      if (other === id) continue;
+      const theirs = worked.get(other)!;
+      const overlaps = [-1, 0, 1].some((offset) => {
+        const d = addDays(date, offset);
+        const s = theirs.get(d);
+        return (
+          s !== undefined && groupInForce(group, d) && windowsOverlap(window, shiftWindow(d, s))
+        );
+      });
+      if (overlaps) together++;
+    }
+    if (together > group.maxTogether) return true;
+  }
+  return false;
 }
 
 /**
@@ -537,7 +593,7 @@ function hoursInWeek(worked: Worked, staff: Staff, date: IsoDate): number {
  * one.
  */
 export function seedFromProfile(
-  db: DbLike,
+  db: ShiftNurseTx,
   profile: DemoProfile,
   options: SeedOptions = {},
 ): SeedResult {
@@ -904,6 +960,42 @@ export function seedFromProfile(
     bump('preference', prefs.length);
   }
 
+  // --- Staff kept apart -----------------------------------------------------------------------
+  const apart: IncompatibilityGroup[] = [];
+  const inGroup = new Set<Id>();
+  for (const spec of profile.keptApart ?? []) {
+    const nurseIds = spec.members.map(({ role, position }) => {
+      const pool = staff.filter(
+        (s) =>
+          s.nurse.role === role &&
+          s.position === position &&
+          !s.nurse.isChargeEligible &&
+          !s.nurse.isNovice &&
+          !inGroup.has(s.nurse.id),
+      );
+      if (pool.length === 0) throw new Error(`No ${role} on ${position} left to keep apart`);
+      const chosen = rng.pick(pool).nurse.id;
+      inGroup.add(chosen);
+      return chosen;
+    });
+    apart.push(
+      createIncompatibilityGroup(
+        db,
+        {
+          unitId: unit.id,
+          name: spec.name,
+          nurseIds,
+          maxTogether: spec.maxTogether,
+          startsOn: addDays(draftStart, spec.startsIn),
+          ...(spec.endsIn !== undefined ? { endsOn: addDays(draftStart, spec.endsIn) } : {}),
+        },
+        spec.reason,
+        ACTOR,
+      ),
+    );
+    bump('incompatibilityGroup');
+  }
+
   // --- Pay ------------------------------------------------------------------------------------
   const rateStart = addDays(historyStart, -365);
   const raiseMonth = String(profile.pay.raise.month).padStart(2, '0');
@@ -1071,7 +1163,7 @@ export function seedFromProfile(
   const roundToThousand = (dollars: number) => Math.round(dollars / 1000) * 1000;
   const contracted = (s: Staff) => s.nurse.employmentType !== 'per_diem';
   const legal = (s: Staff, date: IsoDate, shift: ShiftType) =>
-    canWork(worked, s, date, shift, leave, limits);
+    canWork(worked, s, date, shift, leave, limits, apart);
 
   for (let p = 0; p < historyPeriods; p++) {
     const start = addDays(historyStart, p * 14);
