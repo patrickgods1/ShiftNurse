@@ -6,12 +6,13 @@
  * computed by hand.
  */
 
-import { costSchedule, isoDate, ScheduleView } from '@shiftnurse/core';
+import { addDays, costSchedule, daysBetween, isoDate, ScheduleView, solve } from '@shiftnurse/core';
 import { describe, expect, it } from 'vitest';
 import { listHolidaysForUnit } from '../../repositories/config.js';
-import { listPeriodsForUnit } from '../../repositories/schedule.js';
+import { listIncompatibilityGroups } from '../../repositories/incompatibility.js';
+import { getPeriod, listPeriodsForUnit } from '../../repositories/schedule.js';
 import { costContext, loadPeriodInput } from '../../repositories/solve-input.js';
-import { realisticDemoChecks, useDemo } from './checks.test-support.js';
+import { historyViolations, realisticDemoChecks, useDemo } from './checks.test-support.js';
 
 // A Thursday whose next Sunday (27 September) is not a federal pay-period start.
 const TODAY = isoDate('2026-09-24');
@@ -196,6 +197,103 @@ describe('the VA San Francisco med-surg demo', () => {
       }
     }
     expect(atEighty).toBeGreaterThan(200);
+  });
+
+  describe('staff kept apart', () => {
+    const groups = () => listIncompatibilityGroups(f.handle.db, f.result.unitId);
+    const positionOf = (nurseId: string) =>
+      f.rows<{ position: string }>(
+        `SELECT COALESCE((SELECT st.abbreviation FROM assignment a
+                  JOIN shift_type st ON st.id = a.shift_type_id
+                 WHERE a.nurse_id = '${nurseId}' GROUP BY st.abbreviation
+                 ORDER BY COUNT(*) DESC LIMIT 1), '') position`,
+      )[0]!.position;
+
+    it('keeps an RN pair, a trio of assistants and a clique of five LVNs apart, with reasons', () => {
+      expect(groups()).toHaveLength(3);
+      expect(
+        groups()
+          .map((g) => `${g.nurseIds.length} at most ${g.maxTogether}`)
+          .sort(),
+      ).toEqual(['2 at most 1', '3 at most 1', '5 at most 2']);
+      for (const g of groups()) expect(g.reason.length).toBeGreaterThan(20);
+      expect(new Set(groups().map((g) => g.name)).size).toBe(3);
+      const roles = (ids: string[]) =>
+        f
+          .rows<{ role: string }>(
+            `SELECT DISTINCT role FROM nurse WHERE id IN (${ids.map((i) => `'${i}'`).join(',')})`,
+          )
+          .map((r) => r.role);
+      const pair = groups().find((g) => g.nurseIds.length === 2)!;
+      const trio = groups().find((g) => g.nurseIds.length === 3)!;
+      expect(roles(pair.nurseIds)).toEqual(['RN']);
+      expect(roles(trio.nurseIds)).toEqual(['CNA']);
+      const clique = groups().find((g) => g.nurseIds.length === 5)!;
+      expect(roles(clique.nurseIds)).toEqual(['LPN']);
+      // Kept apart as a real ward does it: on different tours, not by splitting the days.
+      expect(pair.nurseIds.map(positionOf).sort()).toEqual(['D12', 'N12']);
+      // Nobody in a group is a charge nurse or a new grad: the unit cannot lose either to a
+      // separation.
+      const flagged = f.count(
+        `SELECT COUNT(*) n FROM nurse n JOIN incompatibility_member m ON m.nurse_id = n.id
+          WHERE n.is_charge_eligible = 1 OR n.is_novice = 1`,
+      );
+      expect(flagged).toBe(0);
+    });
+
+    it('dates the separations: the RN pair from before the schedule, the trio for a while', () => {
+      const pair = groups().find((g) => g.nurseIds.length === 2)!;
+      const trio = groups().find((g) => g.nurseIds.length === 3)!;
+      expect(pair.startsOn! < f.result.draftStart).toBe(true);
+      expect(pair.endsOn).toBeUndefined();
+      expect(trio.startsOn! < f.result.draftStart).toBe(true);
+      expect(trio.endsOn! > f.result.draftEnd).toBe(true);
+      expect(trio.endsOn! < addDays(f.result.draftEnd, 60)).toBe(true);
+    });
+
+    it('never put them on the floor together once a separation applied', () => {
+      expect(historyViolations(f, 'soft').get('incompatible_staff_together') ?? 0).toBe(0);
+      expect(historyViolations(f).get('incompatible_staff_unbuffered') ?? 0).toBe(0);
+      // Kept apart by tour, not by losing shifts: each member works about as many a week once
+      // the group applies as in the six weeks before it.
+      const perWeek = (id: string, from: string, to: string) =>
+        f.count(
+          `SELECT COUNT(*) n FROM assignment
+            WHERE nurse_id = '${id}' AND date >= '${from}' AND date < '${to}'`,
+        ) /
+        (daysBetween(isoDate(from), isoDate(to)) / 7);
+      for (const g of groups()) {
+        for (const id of g.nurseIds) {
+          const before = perWeek(id, addDays(g.startsOn!, -42), g.startsOn!);
+          const after = perWeek(id, g.startsOn!, f.result.draftStart);
+          expect(before).toBeGreaterThan(0);
+          expect(after / before, id).toBeGreaterThan(0.75);
+        }
+      }
+    });
+
+    it('lets two of the five LVNs share a tour, as their cap allows, but never three', () => {
+      const clique = groups().find((g) => g.nurseIds.length === 5)!;
+      const members = clique.nurseIds.map((i) => `'${i}'`).join(',');
+      const onTogether = f.rows<{ n: number }>(
+        `SELECT COUNT(*) n FROM assignment a JOIN shift_type st ON st.id = a.shift_type_id
+          WHERE a.nurse_id IN (${members}) AND a.date >= '${clique.startsOn}'
+            AND a.date < '${f.result.draftStart}' AND st.within_shift_type_id IS NULL
+          GROUP BY a.date, a.shift_type_id`,
+      );
+      expect(onTogether.some((r) => r.n === 2)).toBe(true);
+      expect(onTogether.every((r) => r.n <= 2)).toBe(true);
+    });
+
+    it('lets Generate keep them apart on the next schedule', () => {
+      const input = loadPeriodInput(f.handle.db, getPeriod(f.handle.db, f.result.draftPeriodId)!);
+      expect(input.incompatibilityGroups).toHaveLength(3);
+      const report = solve(input, { seed: 1, maxIterations: 200_000 });
+      expect(report.softViolations.filter((v) => v.code === 'incompatible_staff_together')).toEqual(
+        [],
+      );
+      expect(report.objective.incompatibility).toBe(0);
+    }, 60_000);
   });
 
   realisticDemoChecks(f, 'va-sf-med-surg', TODAY);

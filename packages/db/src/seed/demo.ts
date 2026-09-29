@@ -6,7 +6,7 @@
  * most like their own. The rigged dataset the tests are built on is `scenarios.ts`, not these.
  */
 
-import type { DbLike } from '../client.js';
+import type { ShiftNurseTx } from '../client.js';
 import { type DemoProfile, seedFromProfile } from './demo/engine.js';
 import { CA_ICU, COMMUNITY_MED_SURG, DEMO_PROFILES, VA_SF_MED_SURG } from './demo/profiles.js';
 import type { SeedOptions, SeedResult } from './types.js';
@@ -77,7 +77,7 @@ export function isDemoId(value: string): value is DemoId {
 
 /** Seed one demo unit: the community med-surg unit unless another is named. */
 export function seedDemoUnit(
-  db: DbLike,
+  db: ShiftNurseTx,
   options: SeedOptions & { demo?: DemoId } = {},
 ): SeedResult {
   const id = options.demo ?? DEFAULT_DEMO_ID;

@@ -170,6 +170,14 @@ const INTERMITTENT = { employmentType: 'per_diem', fte: 0, contractedHoursPerPer
  *   25% premium for any tour touching Saturday or Sunday, and double time on holidays.
  * - **All eleven federal holidays**, Veterans Day included.
  * - **The federal biweekly pay calendar** and four-week schedules.
+ * - **Staff kept apart.** Three separations of the kind a VA nurse manager carries: an RN pair
+ *   with an unresolved conflict, one on days and one on nights; three nursing assistants who
+ *   are parties to an open EEO complaint and do not share a tour until it closes; and five LVNs
+ *   who work well in pairs but, together, freeze newer staff out, so no more than two of them
+ *   are on the floor at once while a unit-culture review runs. A ward separates people by tour —
+ *   two full-timers each working seven day tours a pay period cannot be kept apart by splitting
+ *   fourteen days — so each group spans days, nights and the intermittent pool, and a group of
+ *   five is staffable only with a cap above one.
  *
  * Pay is on the VA Nurse Locality Pay System for RNs (Nurse I–III by experience, San Francisco
  * rates among the highest in the VA) and the General Schedule with the San Francisco locality
@@ -298,6 +306,51 @@ export const VA_SF_MED_SURG: DemoProfile = {
       'max-hours-per-week': { overtimeByPayPeriod: true, payPeriodOvertimeThresholdHours: 80 },
     },
   },
+  keptApart: [
+    {
+      name: 'RN tour separation',
+      reason:
+        'Unresolved conflict between the two nurses; kept on separate tours while mediation ' +
+        'through the Employee Assistance Program continues.',
+      maxTogether: 1,
+      members: [
+        { role: 'RN', position: 'D12' },
+        { role: 'RN', position: 'N12' },
+      ],
+      startsIn: -84,
+    },
+    {
+      name: 'Nursing assistants — pending investigation',
+      reason:
+        'Parties to an open EEO complaint; not to share a tour until the investigation closes.',
+      maxTogether: 1,
+      members: [
+        { role: 'CNA', position: 'D12' },
+        { role: 'CNA', position: 'N12' },
+        { role: 'CNA', position: 'flex' },
+      ],
+      startsIn: -42,
+      // Expected to close about a month after this schedule.
+      endsIn: 56,
+    },
+    {
+      name: 'LVN team — unit-culture review',
+      reason:
+        'Newer staff report being shut out when these five LVNs work together; no more than ' +
+        'two of them on the floor at once while the unit-culture review is open.',
+      maxTogether: 2,
+      members: [
+        { role: 'LPN', position: 'D12' },
+        { role: 'LPN', position: 'D12' },
+        { role: 'LPN', position: 'N12' },
+        { role: 'LPN', position: 'N12' },
+        { role: 'LPN', position: 'flex' },
+      ],
+      startsIn: -56,
+      // Reviewed at the end of the quarter.
+      endsIn: 84,
+    },
+  ],
 };
 
 // ---------------------------------------------------------------------------

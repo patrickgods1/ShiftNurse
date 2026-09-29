@@ -24,6 +24,7 @@ import {
   listShiftCredentialRequirementsForUnit,
   listShiftTypesForUnit,
 } from '../../repositories/config.js';
+import { listIncompatibilityGroups } from '../../repositories/incompatibility.js';
 import {
   listCredentials,
   listNurseCredentialsForUnit,
@@ -63,8 +64,11 @@ export function useDemo(demo: DemoId, today: IsoDate): DemoFixture {
   return fixture;
 }
 
-/** Hard violations across every published pay period, by rule-engine code. */
-export function historyViolations(f: DemoFixture): Map<string, number> {
+/** Violations of one severity (hard unless asked) across every published pay period, by code. */
+export function historyViolations(
+  f: DemoFixture,
+  severity: 'hard' | 'soft' = 'hard',
+): Map<string, number> {
   const db = f.handle.db;
   const unit = getUnit(db, f.result.unitId)!;
   const nurses = listNursesForUnit(db, unit.id);
@@ -94,8 +98,10 @@ export function historyViolations(f: DemoFixture): Map<string, number> {
       holidays: listHolidaysForUnit(db, unit.id),
       weekendDefinition: ruleSet.weekendDefinition,
       paidSickCalls: paidSickCallsForUnit(db, unit.id),
+      incompatibilityGroups: listIncompatibilityGroups(db, unit.id),
     });
-    for (const v of evaluateSchedule(view, ruleSet, ctx).hardViolations) {
+    const result = evaluateSchedule(view, ruleSet, ctx);
+    for (const v of severity === 'hard' ? result.hardViolations : result.softViolations) {
       byCode.set(v.code, (byCode.get(v.code) ?? 0) + 1);
     }
   }
@@ -119,6 +125,7 @@ export function realisticDemoChecks(f: DemoFixture, demo: DemoId, today: IsoDate
       'missing_charge_nurse',
       'missing_credential',
       'all_novice_shift',
+      'incompatible_staff_unbuffered',
     ]) {
       expect(violations.get(code) ?? 0, code).toBe(0);
     }

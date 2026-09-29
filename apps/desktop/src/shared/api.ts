@@ -462,6 +462,8 @@ export interface CandidatePreview {
   assignments: Assignment[];
   validation: ScheduleValidation;
   cost: PeriodCostReport;
+  /** The compliance alerts the publish dialog would show for this variation. */
+  alerts: ComplianceAlert[];
   /** Shifts the candidate adds or changes against the draft, keyed `nurseId|date|shiftTypeId`. */
   changedKeys: string[];
   diff: { added: number; removed: number; changed: number };

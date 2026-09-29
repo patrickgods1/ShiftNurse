@@ -415,7 +415,15 @@ violations of their own.
   overtime by pay period. The D8 runs inside the day 12 (`within: 'D12'`), which covers it, and
   the engine lets a new grad onto it only with an experienced RN on the D8 or that day's D12.
   The engine counts hours, not shifts, which for the all-12-hour demos is the same arithmetic
-  scaled: their seeded data did not change.
+  scaled: their seeded data did not change. A profile's `keptApart` groups (the VA demo has an
+  RN pair, a trio of nursing assistants, and five LVNs at most two at a time) are created before
+  the history, and `canWork`
+  refuses any shift that would put a member on the floor with another once their group applies.
+  Members are drawn one per role/position slot, never a charge nurse or new grad, and spread
+  across days, nights and the intermittent pool: two full-timers each working seven day tours a
+  pay period cannot be separated by splitting fourteen days, and a real ward separates people by
+  tour; a group of five is staffable only with a cap above one. The RNG draws for them happen only when a profile has groups, so the other demos'
+  data did not change.
 - **Cover is by the hour, as units judge it.** A shift type may run inside another
   (`withinShiftTypeId`; `schedule/cover.ts` is the one definition of which dated shift covers
   which, a night included). The inside shift has no charge nurse of its own, and the containing
