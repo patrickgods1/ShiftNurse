@@ -137,6 +137,7 @@ export class ConflictEngine {
           differentials: input.cost.differentials.filter((d) => d.active),
           overtimeRules: input.cost.overtimeRules.filter((r) => r.active),
           holidayDates: this.baseCtx.holidayDates,
+          majorHolidayDates: this.baseCtx.majorHolidayDates,
           weekendDefinition: input.ruleSet.weekendDefinition,
           workWeekStartsOn: this.maxHoursParams.workWeekStartsOn,
           ...(this.maxHoursParams.paidLeaveCountsTowardOvertime
@@ -170,6 +171,7 @@ export class ConflictEngine {
       ...(this.input.incompatibilityGroups
         ? { incompatibilityGroups: this.input.incompatibilityGroups }
         : {}),
+      ...(this.input.holidayWork ? { holidayWork: this.input.holidayWork } : {}),
     });
   }
 

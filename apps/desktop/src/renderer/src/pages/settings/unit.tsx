@@ -7,11 +7,16 @@
  * confirms by naming what is kept: a `pre-reset` backup that Settings › Backups can restore.
  */
 
+import { ACUITY_PRESETS } from '@shiftnurse/core';
 import { type FormEvent, useEffect, useState } from 'react';
 import { useResumeSetup, useStartOver, useUpdateUnit } from '../../api-setup.js';
 import { useConfirm } from '../../components/confirm.js';
-import { DANGER, errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { describedBy, Field, InfoTip } from '../../components/field-help.js';
+import { DANGER, errorMessage, INPUT, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { useUnsavedChanges } from '../../components/unsaved-changes.js';
 import { useUnit } from '../../unit-context.js';
+
+const UNIT_TYPES = Object.values(ACUITY_PRESETS).map((p) => p.unitType);
 
 export default function UnitPanel() {
   const unit = useUnit();
@@ -29,6 +34,7 @@ export default function UnitPanel() {
   }, [unit.id, unit.name, unit.unitType]);
 
   const dirty = name !== unit.name || unitType !== unit.unitType;
+  useUnsavedChanges('Unit', dirty);
 
   const save = (event: FormEvent) => {
     event.preventDefault();
@@ -51,21 +57,42 @@ export default function UnitPanel() {
         <h2 className="mb-3 text-sm font-semibold text-text">Unit</h2>
         <form onSubmit={save} className="flex flex-col gap-3">
           <div className="grid max-w-xl grid-cols-2 gap-3">
-            <label className={LABEL}>
-              Name
-              <input className={INPUT} value={name} onChange={(e) => setName(e.target.value)} />
-            </label>
-            <label className={LABEL}>
-              Type
+            <Field id="unit-name" label="Name" hint="Shown in the app and on printed schedules.">
               <input
+                id="unit-name"
                 className={INPUT}
+                value={name}
+                aria-describedby={describedBy('unit-name', { hint: true })}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </Field>
+            <Field
+              id="unit-type"
+              label="Type"
+              hint="Used to suggest typical patient ratios in the setup guide. Any wording is fine."
+            >
+              <input
+                id="unit-type"
+                className={INPUT}
+                list="unit-type-suggestions"
                 value={unitType}
+                aria-describedby={describedBy('unit-type', { hint: true })}
                 onChange={(e) => setUnitType(e.target.value)}
               />
-            </label>
+              <datalist id="unit-type-suggestions">
+                {UNIT_TYPES.map((t) => (
+                  <option key={t} value={t} />
+                ))}
+              </datalist>
+            </Field>
           </div>
-          <p className="text-xs text-text-muted">
+          <p className="flex items-center gap-1 text-xs text-text-muted">
             Pay periods are {unit.payPeriodDays} days long, counted from {unit.payPeriodAnchor}.
+            <InfoTip label="the pay period">
+              Set when the unit was created and fixed after that. Contracted hours and pay-period
+              overtime are counted per pay period, so moving the calendar would re-judge every
+              period already counted in it.
+            </InfoTip>
           </p>
           <div className="flex items-center gap-3">
             <button
@@ -73,11 +100,15 @@ export default function UnitPanel() {
               className={PRIMARY}
               disabled={!dirty || name.trim() === '' || update.isPending}
             >
-              Save
+              {update.isPending ? 'Saving…' : 'Save'}
             </button>
             {update.isError ? (
               <span role="alert" className="text-sm text-danger">
                 {errorMessage(update.error)}
+              </span>
+            ) : update.isSuccess && !dirty ? (
+              <span role="status" className="text-sm text-success">
+                Saved.
               </span>
             ) : null}
           </div>

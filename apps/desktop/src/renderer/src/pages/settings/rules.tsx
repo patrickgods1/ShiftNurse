@@ -12,7 +12,10 @@
  */
 
 import type {
+  EmploymentType,
+  FairnessComponent,
   FairnessWeights,
+  ParamDoc,
   Rule,
   RuleConfig,
   RuleSeverity,
@@ -23,6 +26,8 @@ import {
   ALL_RULES,
   DEFAULT_FAIRNESS_WEIGHTS,
   DEFAULT_WEEKEND,
+  EMPLOYMENT_TYPE_LABELS,
+  EMPLOYMENT_TYPES,
   FAIRNESS_COMPONENT_LABELS,
   FAIRNESS_COMPONENTS,
   formatTimeOfDay,
@@ -32,30 +37,70 @@ import {
   resolveConfigs,
   WEEKDAY_NAMES,
 } from '@shiftnurse/core';
-import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { useRuleSet, useSaveRuleSet } from '../../api-config.js';
 import { AsyncState } from '../../components/async-state.js';
+import { CheckField, describedBy, Field, InfoTip } from '../../components/field-help.js';
+import { INPUT, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { useUnsavedChanges } from '../../components/unsaved-changes.js';
 import { useUnitId } from '../../unit-context.js';
+import { invalidParams, numberFieldValue, paramError, withNumberParam } from './rule-params.js';
 
 type RuleCategory = (typeof ALL_RULES)[number]['category'];
 
-const CATEGORY_ORDER: { id: RuleCategory; label: string }[] = [
-  { id: 'rest', label: 'Rest' },
-  { id: 'hours', label: 'Hours' },
-  { id: 'coverage', label: 'Coverage' },
-  { id: 'safety', label: 'Safety' },
-  { id: 'equity', label: 'Equity' },
+const CATEGORY_ORDER: { id: RuleCategory; label: string; intro: string }[] = [
+  {
+    id: 'rest',
+    label: 'Rest',
+    intro:
+      'Time off between shifts and limits on long runs, so nobody is scheduled while exhausted.',
+  },
+  {
+    id: 'hours',
+    label: 'Hours',
+    intro: 'Weekly caps, overtime, and how close each nurse lands to their contracted hours.',
+  },
+  {
+    id: 'coverage',
+    label: 'Coverage',
+    intro: 'Who must be on each shift, and who cannot be because they are on leave or elsewhere.',
+  },
+  {
+    id: 'safety',
+    label: 'Safety',
+    intro: 'Patient ratios and staff kept apart. A breach here is a regulatory or HR exposure.',
+  },
+  {
+    id: 'equity',
+    label: 'Equity',
+    intro: 'How evenly the hard parts of the job are shared. These never make a schedule illegal.',
+  },
 ];
 
-/** "minRestHours" -> "Min rest hours". */
-function labelize(key: string): string {
-  const words = key
-    .replace(/([A-Z])/g, ' $1')
-    .toLowerCase()
-    .trim();
-  return words.length === 0 ? words : words.charAt(0).toUpperCase() + words.slice(1);
-}
+const FAIRNESS_TIPS: Record<FairnessComponent, string> = {
+  nights:
+    'Night shifts each nurse works compared with their fair share. Raise it if nights are what ' +
+    'your staff grieve most.',
+  weekends:
+    "Weekend shifts, as defined below, compared with each nurse's fair share. Raise it if " +
+    'weekend rotation is a frequent complaint.',
+  holidays:
+    'Shifts starting on a holiday from the Holidays tab. Raise it so the same people do not work ' +
+    'every holiday year after year.',
+  onCall: 'Standby shifts. Raise it if on-call is a real burden on your unit, lower it if not.',
+  undesirable:
+    'Shifts that go against what a nurse said they prefer (for example a night for someone ' +
+    'avoiding nights).',
+  overtime:
+    'Overtime hours. Low by default, because many nurses want overtime; raise it if overtime ' +
+    'should be spread evenly.',
+  preferences:
+    'How often each nurse gets the shifts they prefer. Raise it to make preferences count for ' +
+    'more when shifts are handed out.',
+  timeOff:
+    "How often each nurse's time-off requests are approved. Raise it so denials do not keep " +
+    'landing on the same people.',
+};
 
 function formatSavedAt(createdAt: number): string {
   // `createdAt` is an audit-style instant, not schedule geometry, so a plain `Date` is the
@@ -72,39 +117,42 @@ function clearSeverityOverride(config: RuleConfig): RuleConfig {
 // Parameters form
 // ---------------------------------------------------------------------------
 
-function ParamField({
-  fieldId,
-  label,
-  defaultLabel,
+function defaultLabel(doc: ParamDoc, defaultValue: unknown): string {
+  if (defaultValue === undefined) return 'not set';
+  if (typeof defaultValue === 'boolean') return defaultValue ? 'on' : 'off';
+  if (doc.input === 'weekday') return WEEKDAY_NAMES[defaultValue as number] ?? String(defaultValue);
+  if (doc.input === 'employment-types' && Array.isArray(defaultValue)) {
+    return defaultValue.length === 0
+      ? 'none'
+      : defaultValue.map((t) => EMPLOYMENT_TYPE_LABELS[t as EmploymentType] ?? t).join(', ');
+  }
+  return String(defaultValue);
+}
+
+/** "Default: 10 · Reset", under every field. */
+function DefaultNote({
+  doc,
+  defaultValue,
   changed,
   onReset,
-  children,
 }: {
-  fieldId: string;
-  label: string;
-  defaultLabel: string;
+  doc: ParamDoc;
+  defaultValue: unknown;
   changed: boolean;
   onReset: () => void;
-  children: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={fieldId} className="flex flex-col gap-1 text-sm text-text">
-        {label}
-        {children}
-      </label>
-      <p className="text-xs text-text-muted">
-        default {defaultLabel}
-        {changed ? (
-          <>
-            {' · '}
-            <button type="button" onClick={onReset} className="underline hover:no-underline">
-              Reset
-            </button>
-          </>
-        ) : null}
-      </p>
-    </div>
+    <p className="text-xs text-text-muted">
+      Default: {defaultLabel(doc, defaultValue)}
+      {changed ? (
+        <>
+          {' · '}
+          <button type="button" onClick={onReset} className="underline hover:no-underline">
+            Reset
+          </button>
+        </>
+      ) : null}
+    </p>
   );
 }
 
@@ -118,109 +166,180 @@ function ParamsForm({
   onChange: (nextParams: Record<string, unknown>) => void;
 }) {
   const defaults = rule.defaultParams as Record<string, unknown>;
-  const keys = Object.keys(defaults);
-  if (keys.length === 0) return null;
+  const docs = rule.paramDocs as Record<string, ParamDoc>;
+  const keys = Object.keys(docs);
+  if (keys.length === 0) {
+    return <p className="mt-3 text-xs text-text-muted">This rule has no settings.</p>;
+  }
 
   return (
-    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
       {keys.map((key) => {
-        const defaultValue = defaults[key]!;
-        const value = params[key] ?? defaultValue;
-        const label = labelize(key);
+        const doc = docs[key]!;
+        const defaultValue = defaults[key];
+        const value = key in params ? params[key] : defaultValue;
         const fieldId = `${rule.id}-${key}`;
         const changed = JSON.stringify(value) !== JSON.stringify(defaultValue);
-        const reset = () => onChange({ ...params, [key]: defaultValue });
+        const reset = () => {
+          if (defaultValue === undefined) {
+            const { [key]: _removed, ...rest } = params;
+            onChange(rest);
+          } else {
+            onChange({ ...params, [key]: defaultValue });
+          }
+        };
+        const gate = doc.activeWhen;
+        const inactive =
+          gate !== undefined && (params[gate.param] ?? defaults[gate.param]) !== gate.equals;
+        const gateNote =
+          gate !== undefined && inactive
+            ? `Used only when “${docs[gate.param]?.label ?? gate.param}” is ${gate.equals ? 'on' : 'off'}.`
+            : undefined;
+        const note = (
+          <DefaultNote doc={doc} defaultValue={defaultValue} changed={changed} onReset={reset} />
+        );
 
         if (typeof defaultValue === 'boolean') {
           return (
-            <ParamField
-              key={key}
-              fieldId={fieldId}
-              label={label}
-              defaultLabel={String(defaultValue)}
-              changed={changed}
-              onReset={reset}
-            >
-              <input
+            <div key={key} className="flex flex-col gap-1">
+              <CheckField
                 id={fieldId}
-                type="checkbox"
-                checked={Boolean(value)}
-                onChange={(event) => onChange({ ...params, [key]: event.target.checked })}
-                className="mt-1 self-start"
-              />
-            </ParamField>
+                label={doc.label}
+                tip={doc.why}
+                hint={gateNote ?? doc.hint}
+                disabled={inactive}
+              >
+                <input
+                  id={fieldId}
+                  type="checkbox"
+                  checked={Boolean(value)}
+                  disabled={inactive}
+                  aria-describedby={describedBy(fieldId, { hint: true })}
+                  onChange={(event) => onChange({ ...params, [key]: event.target.checked })}
+                />
+              </CheckField>
+              <div className="pl-6">{note}</div>
+            </div>
           );
         }
 
-        if (typeof defaultValue === 'number') {
-          const step = Number.isInteger(defaultValue) ? 1 : 0.5;
+        if (doc.input === 'employment-types') {
+          const chosen = new Set(Array.isArray(value) ? (value as string[]) : []);
           return (
-            <ParamField
+            <fieldset
               key={key}
-              fieldId={fieldId}
-              label={label}
-              defaultLabel={String(defaultValue)}
-              changed={changed}
-              onReset={reset}
+              className="flex flex-col gap-1"
+              aria-describedby={`${fieldId}-hint`}
+            >
+              <legend className="mb-1 flex items-center gap-1 text-sm font-medium text-text">
+                {doc.label}
+                <InfoTip label={doc.label}>{doc.why}</InfoTip>
+              </legend>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {EMPLOYMENT_TYPES.map((type) => (
+                  <label key={type} className="flex items-center gap-1.5 text-sm text-text">
+                    <input
+                      type="checkbox"
+                      checked={chosen.has(type)}
+                      onChange={(event) => {
+                        const next = EMPLOYMENT_TYPES.filter((t) =>
+                          t === type ? event.target.checked : chosen.has(t),
+                        );
+                        onChange({ ...params, [key]: next });
+                      }}
+                    />
+                    {EMPLOYMENT_TYPE_LABELS[type]}
+                  </label>
+                ))}
+              </div>
+              <p id={`${fieldId}-hint`} className="text-xs text-text-muted">
+                {doc.hint}
+              </p>
+              {note}
+            </fieldset>
+          );
+        }
+
+        if (doc.input === 'weekday') {
+          return (
+            <Field
+              key={key}
+              id={fieldId}
+              label={doc.label}
+              tip={doc.why}
+              hint={doc.hint}
+              footer={note}
+            >
+              <select
+                id={fieldId}
+                className={INPUT}
+                value={String(value)}
+                aria-describedby={describedBy(fieldId, { hint: true })}
+                onChange={(event) => onChange({ ...params, [key]: Number(event.target.value) })}
+              >
+                {WEEKDAY_NAMES.map((name, index) => (
+                  <option key={name} value={index}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          );
+        }
+
+        if (typeof defaultValue === 'number' || (doc.optional && defaultValue === undefined)) {
+          const error = paramError(doc, defaultValue, value);
+          const step =
+            typeof defaultValue === 'number' && !Number.isInteger(defaultValue) ? 0.5 : 1;
+          return (
+            <Field
+              key={key}
+              id={fieldId}
+              label={doc.label}
+              tip={doc.why}
+              hint={gateNote ?? doc.hint}
+              error={error}
+              disabled={inactive}
+              footer={note}
             >
               <input
                 id={fieldId}
                 type="number"
+                min={doc.min ?? 0}
                 step={step}
-                value={String(value)}
-                onChange={(event) => onChange({ ...params, [key]: Number(event.target.value) })}
-                className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+                value={numberFieldValue(value)}
+                placeholder={doc.optional ? 'Not set' : undefined}
+                disabled={inactive}
+                aria-invalid={error !== undefined || undefined}
+                aria-describedby={describedBy(fieldId, { hint: true, error: error !== undefined })}
+                onChange={(event) =>
+                  onChange(withNumberParam(params, key, event.target.value, doc))
+                }
+                className={INPUT}
               />
-            </ParamField>
+            </Field>
           );
         }
 
-        if (Array.isArray(defaultValue)) {
-          const arrayValue = Array.isArray(value) ? (value as unknown[]) : defaultValue;
-          return (
-            <ParamField
-              key={key}
-              fieldId={fieldId}
-              label={`${label} (comma-separated)`}
-              defaultLabel={defaultValue.length > 0 ? defaultValue.join(', ') : '(none)'}
-              changed={changed}
-              onReset={reset}
-            >
-              <input
-                id={fieldId}
-                type="text"
-                value={arrayValue.join(', ')}
-                onChange={(event) => {
-                  const next = event.target.value
-                    .split(',')
-                    .map((v) => v.trim())
-                    .filter((v) => v.length > 0);
-                  onChange({ ...params, [key]: next });
-                }}
-                className="rounded-md border border-border bg-bg px-2 py-1 text-text"
-              />
-            </ParamField>
-          );
-        }
-
-        // Everything else (string, and any future scalar param type) gets a text input.
+        // Any other scalar a future rule adds gets a text input.
         return (
-          <ParamField
+          <Field
             key={key}
-            fieldId={fieldId}
-            label={label}
-            defaultLabel={String(defaultValue)}
-            changed={changed}
-            onReset={reset}
+            id={fieldId}
+            label={doc.label}
+            tip={doc.why}
+            hint={doc.hint}
+            footer={note}
           >
             <input
               id={fieldId}
               type="text"
-              value={String(value)}
+              value={String(value ?? '')}
+              aria-describedby={describedBy(fieldId, { hint: true })}
               onChange={(event) => onChange({ ...params, [key]: event.target.value })}
-              className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+              className={INPUT}
             />
-          </ParamField>
+          </Field>
         );
       })}
     </div>
@@ -242,6 +361,8 @@ function RuleCard({
 }) {
   const effectiveSeverity: RuleSeverity = config.severityOverride ?? rule.severity;
   const alternateSeverity: RuleSeverity = rule.severity === 'hard' ? 'soft' : 'hard';
+  const enabledId = `${rule.id}-enabled`;
+  const severityId = `${rule.id}-severity`;
 
   return (
     <div
@@ -251,49 +372,76 @@ function RuleCard({
       <div className="flex items-start justify-between gap-4">
         <div>
           <h3 className="text-sm font-semibold text-text">{rule.name}</h3>
-          <p className="mt-1 text-sm text-text-muted">{rule.description}</p>
+          <p className="mt-1 max-w-prose text-sm text-text-muted">{rule.description}</p>
         </div>
-        <label className="flex shrink-0 items-center gap-2 text-sm text-text">
+        <div className="flex shrink-0 items-center gap-2">
           <input
+            id={enabledId}
             type="checkbox"
             checked={config.enabled}
             onChange={(event) => onChange({ ...config, enabled: event.target.checked })}
           />
-          Enabled
-        </label>
+          <label htmlFor={enabledId} className="text-sm text-text">
+            Enabled
+          </label>
+          <InfoTip label={`enabling ${rule.name}`}>
+            When off, Generate, the grid's warnings and the pre-publish compliance report all ignore
+            this rule. Turn a rule off only if your contract has no such clause.
+          </InfoTip>
+        </div>
       </div>
 
-      <label className="mt-3 flex max-w-xs flex-col gap-1 text-sm text-text">
-        Severity
-        <select
-          value={effectiveSeverity}
-          onChange={(event) => {
-            const next = event.target.value as RuleSeverity;
-            onChange(
-              next === rule.severity
-                ? clearSeverityOverride(config)
-                : { ...config, severityOverride: next },
-            );
-          }}
-          className="rounded-md border border-border bg-bg px-2 py-1 text-text"
-        >
-          <option value={rule.severity}>
-            {rule.severity === 'hard' ? 'Hard (default)' : 'Soft (default)'}
-          </option>
-          <option value={alternateSeverity}>
-            {alternateSeverity === 'hard' ? 'Hard' : 'Soft'}
-          </option>
-        </select>
-      </label>
+      {config.enabled ? (
+        <>
+          <div className="mt-3 max-w-xs">
+            <Field
+              id={severityId}
+              label="Severity"
+              tip={
+                <>
+                  <strong>Hard</strong>: Generate never breaks it. If it cannot be met, a shift is
+                  left short and listed as unfilled.
+                  <br />
+                  <strong>Soft</strong>: Generate tries to respect it but may break it for a better
+                  overall schedule. The grid shows it as a warning you can accept.
+                </>
+              }
+            >
+              <select
+                id={severityId}
+                value={effectiveSeverity}
+                onChange={(event) => {
+                  const next = event.target.value as RuleSeverity;
+                  onChange(
+                    next === rule.severity
+                      ? clearSeverityOverride(config)
+                      : { ...config, severityOverride: next },
+                  );
+                }}
+                className={INPUT}
+              >
+                <option value={rule.severity}>
+                  {rule.severity === 'hard' ? 'Hard (default)' : 'Soft (default)'}
+                </option>
+                <option value={alternateSeverity}>
+                  {alternateSeverity === 'hard' ? 'Hard' : 'Soft'}
+                </option>
+              </select>
+            </Field>
+          </div>
 
-      <h4 className="mt-4 text-xs font-semibold uppercase tracking-wide text-text-muted">
-        Parameters
-      </h4>
-      <ParamsForm
-        rule={rule}
-        params={config.params}
-        onChange={(nextParams) => onChange({ ...config, params: nextParams })}
-      />
+          <ParamsForm
+            rule={rule}
+            params={config.params}
+            onChange={(nextParams) => onChange({ ...config, params: nextParams })}
+          />
+        </>
+      ) : (
+        <p className="mt-3 text-xs text-text-muted">
+          Off: Generate, the grid and the compliance report ignore this rule. Its settings are kept
+          and come back when you turn it on.
+        </p>
+      )}
     </div>
   );
 }
@@ -302,6 +450,14 @@ function RuleCard({
 // Weekend definition
 // ---------------------------------------------------------------------------
 
+/** A weekend length the manager left unsaveable (cleared, or out of range). */
+function weekendDurationError(value: WeekendDefinition): string | undefined {
+  const hours = minutesToHours(value.durationMinutes);
+  return Number.isFinite(hours) && hours >= 1 && hours <= 168
+    ? undefined
+    : 'Enter between 1 and 168 hours.';
+}
+
 function WeekendSection({
   value,
   onChange,
@@ -309,25 +465,30 @@ function WeekendSection({
   value: WeekendDefinition;
   onChange: (next: WeekendDefinition) => void;
 }) {
+  const durationHours = minutesToHours(value.durationMinutes);
+  const durationError = weekendDurationError(value);
+
   return (
     <section
       data-testid="weekend-definition"
       className="rounded-md border border-border bg-surface p-4"
     >
       <h2 className="text-sm font-semibold text-text">Weekend definition</h2>
-      <p className="mt-1 text-sm text-text-muted">
-        What counts as a weekend shift for equity tracking — nights, weekends and holidays feed the
-        fairness ledger, and contracts disagree about where a weekend starts.
+      <p className="mt-1 max-w-prose text-sm text-text-muted">
+        What counts as a weekend shift. It decides who is credited with a weekend in the fairness
+        score and which shifts earn the weekend differential on the Pay tab. Contracts disagree
+        about where a weekend starts: Friday 19:00 for 60 hours covers Friday night through Monday
+        07:00, while Saturday 00:00 for 48 hours covers only Saturday and Sunday.
       </p>
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label className="flex flex-col gap-1 text-sm text-text">
-          Starts on
+      <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field id="weekend-start-day" label="Starts on">
           <select
+            id="weekend-start-day"
             value={value.startWeekday}
             onChange={(event) =>
               onChange({ ...value, startWeekday: Number(event.target.value) as Weekday })
             }
-            className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+            className={INPUT}
           >
             {WEEKDAY_NAMES.map((weekdayName, index) => (
               <option key={weekdayName} value={index}>
@@ -335,44 +496,68 @@ function WeekendSection({
               </option>
             ))}
           </select>
-        </label>
-        <label className="flex flex-col gap-1 text-sm text-text">
-          Start time
+        </Field>
+        <Field id="weekend-start-time" label="Start time">
           <input
+            id="weekend-start-time"
             type="time"
             value={formatTimeOfDay(value.startMinute)}
             onChange={(event) =>
               onChange({ ...value, startMinute: parseTimeOfDay(event.target.value) })
             }
-            className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+            className={INPUT}
           />
-        </label>
-        <label className="flex flex-col gap-1 text-sm text-text">
-          Duration (hours)
+        </Field>
+        <Field
+          id="weekend-duration"
+          label="Length (hours)"
+          hint="48 from Saturday 00:00 is Saturday and Sunday; 60 from Friday 19:00 adds Friday night."
+          error={durationError}
+        >
           <input
+            id="weekend-duration"
             type="number"
             min={1}
+            max={168}
             step={1}
-            value={minutesToHours(value.durationMinutes)}
+            value={Number.isFinite(durationHours) ? durationHours : ''}
+            aria-invalid={durationError !== undefined || undefined}
+            aria-describedby={describedBy('weekend-duration', {
+              hint: true,
+              error: durationError !== undefined,
+            })}
             onChange={(event) =>
-              onChange({ ...value, durationMinutes: hoursToMinutes(Number(event.target.value)) })
+              onChange({
+                ...value,
+                durationMinutes:
+                  event.target.value.trim() === ''
+                    ? Number.NaN
+                    : hoursToMinutes(Number(event.target.value)),
+              })
             }
-            className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+            className={INPUT}
           />
-        </label>
-        <label className="flex flex-col gap-1 text-sm text-text">
-          Counts a shift as weekend when it
+        </Field>
+        <Field
+          id="weekend-mode"
+          label="Counts a shift as weekend when it"
+          tip={
+            'Say the weekend starts Saturday 00:00. A Friday night shift from 19:00 to 07:00 ' +
+            'overlaps it but starts before it, so only "overlaps" counts it as a weekend shift.'
+          }
+        >
           <select
+            id="weekend-mode"
             value={value.mode}
             onChange={(event) =>
               onChange({ ...value, mode: event.target.value as WeekendDefinition['mode'] })
             }
-            className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+            className={INPUT}
           >
             <option value="starts_within">Starts within the window</option>
             <option value="overlaps">Overlaps the window at all</option>
           </select>
-        </label>
+        </Field>
       </div>
     </section>
   );
@@ -396,16 +581,21 @@ function FairnessWeightsSection({
       className="rounded-md border border-border bg-surface p-4"
     >
       <h2 className="text-sm font-semibold text-text">Fairness weights</h2>
-      <p className="mt-1 text-sm text-text-muted">
-        How much each component counts in the fairness score and the solver's objective. 0 removes
-        it from the score. Weights are relative to each other, so doubling every one changes
-        nothing.
+      <p className="mt-1 max-w-prose text-sm text-text-muted">
+        How much each component counts in the fairness score and in what Generate aims for. 0
+        removes it from the score. Weights are relative to each other, so doubling every one changes
+        nothing. Raise the ones your staff complain about most.
       </p>
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {FAIRNESS_COMPONENTS.map((component) => (
-          <label key={component} className="flex flex-col gap-1 text-sm text-text">
-            {FAIRNESS_COMPONENT_LABELS[component]}
+          <Field
+            key={component}
+            id={`fairness-${component}`}
+            label={FAIRNESS_COMPONENT_LABELS[component]}
+            tip={FAIRNESS_TIPS[component]}
+          >
             <input
+              id={`fairness-${component}`}
               type="number"
               min={0}
               step={0.5}
@@ -413,15 +603,14 @@ function FairnessWeightsSection({
               onChange={(event) =>
                 onChange({ ...value, [component]: Math.max(0, Number(event.target.value) || 0) })
               }
-              className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+              className={INPUT}
             />
-          </label>
+          </Field>
         ))}
       </div>
     </section>
   );
 }
-
 // ---------------------------------------------------------------------------
 // Panel
 // ---------------------------------------------------------------------------
@@ -453,6 +642,14 @@ export default function RulesPanel() {
     setSavedMessage(undefined);
   }
 
+  const dirty =
+    data !== undefined &&
+    (name !== data.name ||
+      JSON.stringify(configs) !== JSON.stringify(resolveConfigs(data)) ||
+      JSON.stringify(weekendDefinition) !== JSON.stringify(data.weekendDefinition) ||
+      JSON.stringify(fairnessWeights) !== JSON.stringify(data.fairnessWeights));
+  useUnsavedChanges('Rules', dirty);
+
   if (ruleSetQuery.isPending) {
     return <AsyncState status="loading" label="Loading rules" />;
   }
@@ -460,13 +657,10 @@ export default function RulesPanel() {
     return <AsyncState status="error" label="Could not load rules" error={ruleSetQuery.error} />;
   }
 
-  const baselineConfigs = resolveConfigs(data);
-  const dirty =
-    name !== data.name ||
-    JSON.stringify(configs) !== JSON.stringify(baselineConfigs) ||
-    JSON.stringify(weekendDefinition) !== JSON.stringify(data.weekendDefinition) ||
-    JSON.stringify(fairnessWeights) !== JSON.stringify(data.fairnessWeights);
   const nextVersion = data.version + 1;
+  const problems = invalidParams(ALL_RULES, configs);
+  const weekendError = weekendDurationError(weekendDefinition);
+  if (weekendError !== undefined) problems.push('Weekend definition: Length (hours)');
 
   function updateConfig(ruleId: string, next: RuleConfig) {
     setConfigs((prev) => prev.map((c) => (c.ruleId === ruleId ? next : c)));
@@ -500,15 +694,20 @@ export default function RulesPanel() {
     <div data-testid="rules-panel" className="flex flex-col gap-4 pb-24">
       <section className="rounded-md border border-border bg-surface p-4">
         <div className="flex flex-wrap items-end justify-between gap-4">
-          <label className="flex min-w-[240px] flex-1 flex-col gap-1 text-sm text-text">
-            Rule set name
+          <Field
+            id="rule-set-name"
+            label="Rule set name"
+            className="min-w-[240px] flex-1"
+            tip="A name for your own reference, such as the contract it follows. Each save keeps the name with the new version."
+          >
             <input
+              id="rule-set-name"
               type="text"
               value={name}
               onChange={(event) => setName(event.target.value)}
-              className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+              className={INPUT}
             />
-          </label>
+          </Field>
           <p className="text-sm text-text-muted">
             Version {data.version} · saved {formatSavedAt(data.createdAt)}
           </p>
@@ -520,15 +719,21 @@ export default function RulesPanel() {
         </p>
       </section>
 
-      {CATEGORY_ORDER.map(({ id, label }) => {
+      {CATEGORY_ORDER.map(({ id, label, intro }) => {
         const rulesInCategory = rulesByCategory.get(id) ?? [];
         if (rulesInCategory.length === 0 && id !== 'equity') return null;
 
         return (
           <section key={id} className="flex flex-col gap-3">
-            <h2 className="text-sm font-semibold text-text">{label}</h2>
+            <div>
+              <h2 className="text-base font-semibold text-text">{label}</h2>
+              <p className="text-sm text-text-muted">{intro}</p>
+            </div>
             {id === 'equity' ? (
-              <FairnessWeightsSection value={fairnessWeights} onChange={setFairnessWeights} />
+              <>
+                <FairnessWeightsSection value={fairnessWeights} onChange={setFairnessWeights} />
+                <WeekendSection value={weekendDefinition} onChange={setWeekendDefinition} />
+              </>
             ) : null}
             {rulesInCategory.map((rule) => {
               const config = configs.find((c) => c.ruleId === rule.id);
@@ -546,29 +751,35 @@ export default function RulesPanel() {
         );
       })}
 
-      <WeekendSection value={weekendDefinition} onChange={setWeekendDefinition} />
-
-      <div className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-border bg-bg px-4 py-3">
-        {savedMessage !== undefined ? (
-          <p role="status" className="mr-auto text-sm text-text-muted">
+      <div
+        data-sticky-footer
+        className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-border bg-bg px-4 py-3"
+      >
+        {saveMutation.error instanceof Error ? (
+          <p role="alert" className="mr-auto text-sm text-danger">
+            {saveMutation.error.message}
+          </p>
+        ) : problems.length > 0 ? (
+          <p role="alert" className="mr-auto text-sm text-danger">
+            Fix before saving: {problems.join('; ')}
+          </p>
+        ) : savedMessage !== undefined ? (
+          <p role="status" className="mr-auto text-sm text-success">
             {savedMessage}
           </p>
+        ) : dirty ? (
+          <p className="mr-auto text-sm text-text-muted">Unsaved changes</p>
         ) : null}
-        <button
-          type="button"
-          disabled={!dirty}
-          onClick={discard}
-          className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-surface disabled:opacity-50"
-        >
+        <button type="button" disabled={!dirty} onClick={discard} className={SECONDARY}>
           Discard changes
         </button>
         <button
           type="button"
-          disabled={!dirty || saveMutation.isPending}
+          disabled={!dirty || problems.length > 0 || saveMutation.isPending}
           onClick={save}
-          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          className={PRIMARY}
         >
-          Save as version {nextVersion}
+          {saveMutation.isPending ? 'Saving…' : `Save as version ${nextVersion}`}
         </button>
       </div>
     </div>

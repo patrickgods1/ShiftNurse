@@ -14,7 +14,9 @@ import {
 } from '@tanstack/react-router';
 import type { CSSProperties } from 'react';
 import { AsyncState } from './components/async-state.js';
+import { TipProvider } from './components/field-help.js';
 import { ThemeToggle } from './components/theme-toggle.js';
+import { NavigationGuard, UnsavedChangesProvider } from './components/unsaved-changes.js';
 import DashboardPage from './pages/dashboard.js';
 import DemandPage from './pages/demand.js';
 import FairnessPage from './pages/fairness.js';
@@ -98,11 +100,16 @@ function RootLayout() {
   // "the" unit is resolved once for the whole app; every page reads it via `useUnitId`/
   // `useUnit` instead of re-fetching `units.list()`.
   return (
-    <SetupGate>
-      <UnitProvider>
-        <AppShell />
-      </UnitProvider>
-    </SetupGate>
+    <TipProvider>
+      <UnsavedChangesProvider>
+        <NavigationGuard />
+        <SetupGate>
+          <UnitProvider>
+            <AppShell />
+          </UnitProvider>
+        </SetupGate>
+      </UnsavedChangesProvider>
+    </TipProvider>
   );
 }
 

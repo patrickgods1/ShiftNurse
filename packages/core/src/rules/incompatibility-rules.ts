@@ -124,6 +124,7 @@ export const incompatibleTogetherRule: Rule<Record<string, never>> = {
   category: 'safety',
   scope: 'shift',
   defaultParams: {},
+  paramDocs: {},
 
   evaluate(schedule, _params, ctx): Violation[] {
     return findings(schedule, ctx, 0)
@@ -160,6 +161,15 @@ export const incompatibleBufferRule: Rule<IncompatibleBufferParams> = {
   category: 'safety',
   scope: 'shift',
   defaultParams: { minOutsideStaff: 2 },
+  paramDocs: {
+    minOutsideStaff: {
+      label: 'Others on the floor with them',
+      hint: 'People from outside the group who must be on the floor whenever members overlap.',
+      why:
+        'Two means they are never the only ones running the unit together. Raise it for a ' +
+        'tense situation; lower it if the unit is small and the pair rarely overlaps anyway.',
+    },
+  },
 
   evaluate(schedule, params, ctx): Violation[] {
     return findings(schedule, ctx, params.minOutsideStaff)

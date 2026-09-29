@@ -24,12 +24,14 @@ import type { ScheduleView } from '../schedule/view.js';
 
 import { overlapRule, timeOffRule } from './availability-rules.js';
 import { coverageRule, ratioComplianceRule } from './coverage-rules.js';
+import { holidayIndexes, holidayRotationRule } from './holiday-rotation.js';
 import { contractedHoursRule, maxHoursRule } from './hours-rules.js';
 import { incompatibleBufferRule, incompatibleTogetherRule } from './incompatibility-rules.js';
 import { type PaidLeaveCredit, type PaidSickCall, paidLeaveCredits } from './paid-leave.js';
 import { consecutiveShiftsRule, minRestRule } from './rest-rules.js';
 import type {
   EvaluationResult,
+  HolidayWorkRecord,
   Rule,
   RuleConfig,
   RuleContext,
@@ -56,6 +58,7 @@ export const ALL_RULES: readonly Rule<never>[] = [
   contractedHoursRule,
   incompatibleBufferRule,
   incompatibleTogetherRule,
+  holidayRotationRule,
 ] as unknown as readonly Rule<never>[];
 
 const RULES_BY_ID = new Map<string, Rule<never>>(ALL_RULES.map((r) => [r.id, r]));
@@ -155,6 +158,8 @@ export interface RuleContextInput {
   paidSickCalls?: readonly PaidSickCall[];
   /** Nurses who should not be on the floor together. */
   incompatibilityGroups?: readonly IncompatibilityGroup[];
+  /** Who worked each past holiday, for the holiday rotation. Absent: nobody is owed a holiday. */
+  holidayWork?: readonly HolidayWorkRecord[];
 }
 
 /** Precompute the joins and indexes every rule needs, once per evaluation pass. */
@@ -196,6 +201,8 @@ export function buildRuleContext(input: RuleContextInput): RuleContext {
     nurseCredentials: credentialsByNurse,
     shiftCredentialRequirements: input.shiftCredentialRequirements,
     holidayDates: new Set<IsoDate>(input.holidays.map((h) => h.date)),
+    majorHolidayDates: new Set<IsoDate>(input.holidays.filter((h) => h.isMajor).map((h) => h.date)),
+    ...holidayIndexes(input.holidays, input.holidayWork ?? []),
     incompatibilityGroups: input.incompatibilityGroups ?? [],
   };
 }

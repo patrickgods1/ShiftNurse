@@ -129,6 +129,49 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
     onCallCountsTowardHours: false,
     paidLeaveCountsTowardHours: true,
   },
+  paramDocs: {
+    underToleranceHours: {
+      label: 'Allowed shortfall (hours)',
+      hint: 'How far under their contracted hours a nurse may be scheduled in a pay period.',
+      why:
+        'A little slack (about one short shift) lets the solver balance the team. Set it to 0 ' +
+        'if nurses must always get their full hours; raise it if short hours are routine.',
+    },
+    overToleranceHours: {
+      label: 'Allowed overage (hours)',
+      hint: 'How far over their contracted hours a nurse may be scheduled in a pay period.',
+      why:
+        'Keep it small to spread shifts fairly and keep overtime down. Raise it if staff often ' +
+        'pick up extra and you accept that.',
+    },
+    onlyCompletePayPeriods: {
+      label: 'Only judge whole pay periods',
+      hint: 'Skip pay periods the schedule only partly covers.',
+      why:
+        'Leave this on. A schedule that ends mid pay period would otherwise flag everyone as ' +
+        'short for the half it does not cover.',
+    },
+    exemptEmploymentTypes: {
+      label: 'No minimum for',
+      hint: 'Employment types with no contracted minimum, so being under hours is never flagged.',
+      why:
+        'Per-diem and agency staff work as needed and have no minimum. Tick any other type your ' +
+        'unit schedules the same way.',
+      input: 'employment-types',
+    },
+    onCallCountsTowardHours: {
+      label: 'On-call counts toward hours',
+      hint: "Whether standby hours count toward a nurse's contracted total.",
+      why: 'Usually off. Turn it on if your contract credits time on call as hours worked.',
+    },
+    paidLeaveCountsTowardHours: {
+      label: 'Paid leave counts toward hours',
+      hint: 'Whether approved paid leave and paid sick calls count toward the contracted total.',
+      why:
+        'Leave this on: payroll pays those hours, so a nurse back from a paid week off is not ' +
+        'short. Turn it off only if your contract says leave does not count.',
+    },
+  },
 
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];
@@ -323,6 +366,63 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
     paidLeaveCountsTowardOvertime: false,
     overtimeByPayPeriod: false,
     payPeriodOvertimeThresholdHours: 80,
+  },
+  paramDocs: {
+    maxHoursPerWeek: {
+      label: 'Weekly hour cap',
+      min: 1,
+      hint: 'The most hours anyone may be scheduled in a work week, overtime or not.',
+      why:
+        'A fatigue limit, often 48 to 60. It binds every week even when overtime is judged by ' +
+        'pay period. Lower it to protect staff; raising it gives more room to cover gaps.',
+    },
+    overtimeThresholdHours: {
+      label: 'Weekly overtime after (hours)',
+      min: 1,
+      hint: 'Hours in a work week past which the week counts as overtime.',
+      why: "Usually 40, the US federal threshold. Use your contract's number if it differs.",
+      activeWhen: { param: 'overtimeByPayPeriod', equals: false },
+    },
+    workWeekStartsOn: {
+      label: 'Work week starts on',
+      hint: 'The first day of the work week used for the hour cap and weekly overtime.',
+      why: 'Match payroll. If payroll counts Sunday to Saturday, pick Sunday.',
+      input: 'weekday',
+    },
+    requireOvertimeAuthorisation: {
+      label: 'Overtime must be authorised',
+      hint: 'A week or pay period over the threshold needs a shift marked as authorised overtime.',
+      why:
+        'Leave this on to stop overtime appearing by accident. Mark the shift as overtime on the ' +
+        'grid when you mean it. Turn it off if overtime needs no sign-off on your unit.',
+    },
+    onCallCountsTowardHours: {
+      label: 'On-call counts toward hours',
+      hint: 'Whether standby hours count toward the cap and the overtime threshold.',
+      why: 'Usually off. Turn it on if your contract counts time on call as hours worked.',
+    },
+    paidLeaveCountsTowardOvertime: {
+      label: 'Paid leave counts toward overtime',
+      hint: 'Whether paid leave in the week counts toward the overtime threshold.',
+      why:
+        'Off under US federal law: paid leave is not hours worked, so 36 worked hours and a paid ' +
+        'day off are not overtime. Some union contracts count it; turn it on if yours does. ' +
+        'Leave never counts toward the weekly cap.',
+    },
+    overtimeByPayPeriod: {
+      label: 'Judge overtime by pay period',
+      hint: 'Count overtime over the whole pay period instead of each work week.',
+      why:
+        'For hospitals on a 14-day overtime period (8/80) or a biweekly compressed schedule, ' +
+        'where one week of 44 hours and one of 36 is not overtime. The weekly cap still applies.',
+    },
+    payPeriodOvertimeThresholdHours: {
+      label: 'Pay-period overtime after (hours)',
+      min: 1,
+      hint: 'Hours in a pay period past which it counts as overtime.',
+      why: "Usually 80 for a two-week pay period. Use your contract's number if it differs.",
+      activeWhen: { param: 'overtimeByPayPeriod', equals: true },
+    },
   },
 
   evaluate(schedule, params, ctx): Violation[] {

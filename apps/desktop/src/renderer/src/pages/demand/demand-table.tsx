@@ -6,6 +6,7 @@
 
 import type { BindingConstraint, ShiftDemand, ShiftType } from '@shiftnurse/core';
 import { NURSE_ROLES } from '@shiftnurse/core';
+import { LabelWithTip } from '../../components/field-help.js';
 import { formatDateWithWeekday } from '../../format.js';
 
 const CONSTRAINT_LABEL: Record<BindingConstraint, string> = {
@@ -53,7 +54,25 @@ export function DemandTable({ demand, shiftTypesById }: DemandTableProps) {
                 </th>
               ))
             )}
-            <th className="px-3 py-2 font-medium">HPPD nurses</th>
+            <th className="px-3 py-2 font-medium">
+              <LabelWithTip
+                label="Acuity staff"
+                tip={
+                  'The staff this shift’s patients need by acuity: the care hours of each tier on ' +
+                  'the Acuity tab, over the forecast census, divided by the shift’s length. ' +
+                  'Advisory: it never changes the minimum.'
+                }
+              />
+            </th>
+            <th className="px-3 py-2 font-medium">
+              <LabelWithTip
+                label="HPPD staff"
+                tip={
+                  'The staff your HPPD budget pays for on this shift. When acuity staff runs well ' +
+                  'above it, the patients are sicker than the budget assumes.'
+                }
+              />
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -97,7 +116,12 @@ export function DemandTable({ demand, shiftTypesById }: DemandTableProps) {
                     );
                   })
                 )}
-                <td className="px-3 py-2 text-text-muted">{d.hppdRecommendedNurses.toFixed(1)}</td>
+                <td className="px-3 py-2 tabular-nums text-text-muted">
+                  {d.fromCoverageFloorOnly ? '—' : d.careHoursRecommendedNurses.toFixed(1)}
+                </td>
+                <td className="px-3 py-2 tabular-nums text-text-muted">
+                  {d.fromCoverageFloorOnly ? '—' : d.hppdRecommendedNurses.toFixed(1)}
+                </td>
               </tr>
             );
           })}

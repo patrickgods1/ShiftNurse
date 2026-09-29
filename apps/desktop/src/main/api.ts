@@ -19,15 +19,19 @@ import {
   evaluateExchange,
   formatRosterCsv,
   type Preference,
+  planHolidayYear,
   proposeCensus,
+  scheduledHppd,
   timeOffImpact,
   today,
 } from '@shiftnurse/core';
 import {
+  addHolidayYear,
   applyResolution,
   approveTimeOffAndLiftAssignments,
   cancelSwap,
   cancelTimeOff,
+  clearHolidayWork,
   createAcuityTier,
   createCredential,
   createDifferential,
@@ -59,11 +63,13 @@ import {
   getNurse,
   getSolverSettings,
   grantCredential,
+  holidayWorkSummary,
   ids,
   importRoster,
   LEDGER_LOOKBACK_DAYS,
   ledgerSince,
   listAcuityTiersForUnit,
+  listAssignmentsForPeriod,
   listCensusForecastsInRange,
   listCensusHistory,
   listChanges,
@@ -87,6 +93,7 @@ import {
   listVersions,
   proposeSwap,
   recordActualCensus,
+  recordHolidayWork,
   replaceNursePreferences,
   revokeCredential,
   type ShiftNurseDb,
@@ -97,6 +104,7 @@ import {
   updateAcuityTier,
   updateCredentialExpiry,
   updateDifferential,
+  updateHoliday,
   updateIncompatibilityGroup,
   updateNurse,
   updateOvertimeRule,
@@ -113,7 +121,7 @@ import {
 import { app } from 'electron';
 import type { ShiftNurseApi } from '../shared/api.js';
 import { analyse, approveExchange, autoResolve } from './api/conflicts.js';
-import { ACTOR, buildConflictInput, latestRuleSetOrDefault } from './api/context.js';
+import { ACTOR, buildConflictInput, latestRuleSetOrDefault, periodOrThrow } from './api/context.js';
 import { costReport, setPeriodBudget } from './api/cost.js';
 import { dashboardSummary } from './api/dashboard.js';
 import { dayOfApi } from './api/dayof.js';
@@ -123,7 +131,16 @@ import { alertsFor, outputInput, publish, publishPreview } from './api/publish.j
 import { periodsApi, scheduleApi } from './api/schedule.js';
 import { setupApi } from './api/setup.js';
 import { solverApi } from './api/solver.js';
-import { createBackup, listBackups, resetDatabase, restoreBackup } from './backups.js';
+import {
+  createBackup,
+  deleteBackup,
+  listBackups,
+  listDeletedBackups,
+  purgeDeletedBackup,
+  resetDatabase,
+  restoreBackup,
+  undeleteBackup,
+} from './backups.js';
 import { databasePath } from './database.js';
 import { exportToFile as exportPeriodToFile, renderCsv } from './output.js';
 import type { SolverJobs } from './solver-jobs.js';
@@ -200,7 +217,14 @@ export function createApi(db: ShiftNurseDb, solverJobs: SolverJobs): ShiftNurseA
     holidays: {
       list: (unitId) => listHolidaysForUnit(db, unitId),
       create: (input) => createHoliday(db, input, ACTOR),
-      delete: (id) => deleteHoliday(db, id, ACTOR),
+      update: (id, patch) => transact(db, (tx) => updateHoliday(tx, id, patch, ACTOR)),
+      delete: (id) => transact(db, (tx) => deleteHoliday(tx, id, ACTOR)),
+      work: (holidayId) => holidayWorkSummary(db, holidayId),
+      recordWork: (holidayId, nurseIds) =>
+        transact(db, (tx) => recordHolidayWork(tx, holidayId, nurseIds, ACTOR)),
+      clearWork: (holidayId) => transact(db, (tx) => clearHolidayWork(tx, holidayId, ACTOR)),
+      planYear: (unitId, year) => planHolidayYear(listHolidaysForUnit(db, unitId), year),
+      addYear: (unitId, input) => transact(db, (tx) => addHolidayYear(tx, unitId, input, ACTOR)),
     },
     acuity: {
       tiers: (unitId) => listAcuityTiersForUnit(db, unitId),
@@ -231,6 +255,18 @@ export function createApi(db: ShiftNurseDb, solverJobs: SolverJobs): ShiftNurseA
       backtest: (unitId, options) => backtest(listCensusHistory(db, unitId), options),
       demand: (unitId, start, end) =>
         deriveDemand(datesInRange(start, end), demandInputs(db, unitId, start, end)).all(),
+      hppd: (periodId) => {
+        const period = periodOrThrow(db, periodId);
+        const dates = datesInRange(period.startDate, period.endDate);
+        const inputs = demandInputs(db, period.unitId, period.startDate, period.endDate);
+        return scheduledHppd({
+          dates,
+          shiftTypes: inputs.shiftTypes,
+          demand: deriveDemand(dates, inputs),
+          assignments: listAssignmentsForPeriod(db, periodId),
+          target: inputs.hppdTarget,
+        });
+      },
     },
     roster: {
       pickImportFile: (unitId) => pickRosterImportFile(db, unitId),
@@ -255,6 +291,10 @@ export function createApi(db: ShiftNurseDb, solverJobs: SolverJobs): ShiftNurseA
       list: () => listBackups(),
       create: () => createBackup(db, 'manual', 'manual'),
       restore: (fileName) => restoreBackup(db, fileName, () => solverJobs.dispose()),
+      listDeleted: () => listDeletedBackups(),
+      remove: (fileName, options) => deleteBackup(db, fileName, options),
+      undelete: (fileName) => undeleteBackup(db, fileName),
+      purge: (fileName) => purgeDeletedBackup(db, fileName),
     },
     solver: solverApi(db, solverJobs),
     solverSettings: {

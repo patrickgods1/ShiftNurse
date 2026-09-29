@@ -72,6 +72,29 @@ export const coverageRule: Rule<CoverageParams> = {
     minExperiencedPerShift: 1,
     enforceCredentialRequirements: true,
   },
+  paramDocs: {
+    requireChargeNurse: {
+      label: 'Require a charge nurse',
+      hint: 'Every standalone shift must have one nurse marked as charge.',
+      why:
+        'Leave this on unless your unit does not assign a charge nurse per shift. Shifts that ' +
+        "run inside another use that shift's charge nurse.",
+    },
+    minExperiencedPerShift: {
+      label: 'Experienced RNs with a new grad',
+      hint: 'Experienced RNs who must be on the unit whenever a new grad works.',
+      why:
+        'One is the usual minimum. Raise it while a large new-grad cohort is on orientation. ' +
+        'Only RNs count; an experienced LPN or nursing assistant cannot supervise an RN.',
+    },
+    enforceCredentialRequirements: {
+      label: 'Enforce credential requirements',
+      hint: 'Shifts must have the credentials set for them, such as an ACLS-certified nurse.',
+      why:
+        'Leave this on. Turn it off only while credential records are still being entered, so ' +
+        'missing data does not block every schedule.',
+    },
+  },
 
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];
@@ -249,6 +272,15 @@ export const ratioComplianceRule: Rule<RatioParams> = {
   category: 'safety',
   scope: 'shift',
   defaultParams: { skipShiftsWithoutForecast: true },
+  paramDocs: {
+    skipShiftsWithoutForecast: {
+      label: 'Skip shifts with no census forecast',
+      hint: 'A shift with no forecast census is not checked against ratios.',
+      why:
+        'Leave this on: with no census there is nothing to divide. The coverage floors still ' +
+        'apply, and the Today page re-checks ratios against the actual census.',
+    },
+  },
 
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];

@@ -14,6 +14,7 @@ import {
 } from '../../api-solver.js';
 import { AsyncState } from '../../components/async-state.js';
 import { PRIMARY } from '../../components/ui.js';
+import { useUnsavedChanges } from '../../components/unsaved-changes.js';
 import { SOLVER_LABELS, SOLVER_ORDER } from '../../solver-labels.js';
 import { useUnitId } from '../../unit-context.js';
 
@@ -63,6 +64,7 @@ function SolverForm({
   const [solverId, setSolverId] = useState(saved.solverId);
   const [message, setMessage] = useState<string | undefined>(undefined);
   const dirty = solverId !== saved.solverId;
+  useUnsavedChanges('Solver', dirty);
   const byId = new Map(availability.map((a) => [a.id, a]));
   const chosenUnavailable = byId.get(solverId)?.available === false;
   const fallback = FALLBACK_ORDER.find((id) => byId.get(id)?.available);

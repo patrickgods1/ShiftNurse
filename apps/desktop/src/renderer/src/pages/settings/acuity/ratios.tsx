@@ -14,7 +14,8 @@ import {
   useDeactivateRatioRule,
   useUpdateRatioRule,
 } from '../../../api-config.js';
-import { OVERLAY, POPUP } from '../../../components/ui.js';
+import { describedBy, Field } from '../../../components/field-help.js';
+import { INPUT, OVERLAY, POPUP, PRIMARY, SECONDARY } from '../../../components/ui.js';
 
 const ALL_TIERS_VALUE = '__all__';
 
@@ -85,12 +86,12 @@ function RatioForm({
         onSubmit(form);
       }}
     >
-      <label className="flex flex-col gap-1 text-sm text-text">
-        Role
+      <Field id="ratio-role" label="Role">
         <select
+          id="ratio-role"
           value={form.role}
           onChange={(event) => setForm({ ...form, role: event.target.value as NurseRole })}
-          className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+          className={INPUT}
         >
           {NURSE_ROLES.map((role) => (
             <option key={role} value={role}>
@@ -98,13 +99,18 @@ function RatioForm({
             </option>
           ))}
         </select>
-      </label>
-      <label className="flex flex-col gap-1 text-sm text-text">
-        Acuity tier
+      </Field>
+      <Field
+        id="ratio-tier"
+        label="Acuity tier"
+        hint="All tiers applies to every patient. Where several rules apply, the strictest one wins."
+      >
         <select
+          id="ratio-tier"
           value={form.acuityTierId}
+          aria-describedby={describedBy('ratio-tier', { hint: true })}
           onChange={(event) => setForm({ ...form, acuityTierId: event.target.value })}
-          className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+          className={INPUT}
         >
           <option value={ALL_TIERS_VALUE}>All tiers</option>
           {sortedTiers.map((tier) => (
@@ -113,47 +119,52 @@ function RatioForm({
             </option>
           ))}
         </select>
-      </label>
-      <label className="flex flex-col gap-1 text-sm text-text">
-        Max patients per nurse
+      </Field>
+      <Field
+        id="ratio-max"
+        label="Max patients per nurse"
+        hint="A hard ceiling. Generate staffs each shift so no one carries more than this."
+        tip={
+          "Each tier's forecast patients are divided by its ceiling, the results are added up, " +
+          'and the total is rounded up once, since one nurse can carry a mixed assignment. When ' +
+          'that is above the coverage floor, it becomes the minimum for the shift.'
+        }
+      >
         <input
+          id="ratio-max"
           type="number"
           required
           min={0.01}
           step={1}
           value={form.maxPatientsPerNurse}
+          aria-describedby={describedBy('ratio-max', { hint: true })}
           onChange={(event) => setForm({ ...form, maxPatientsPerNurse: event.target.value })}
-          className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+          className={INPUT}
         />
-      </label>
-      <label className="flex flex-col gap-1 text-sm text-text">
-        Legal/contract citation
+      </Field>
+      <Field
+        id="ratio-citation"
+        label="Legal or contract citation"
+        hint={
+          'Where this ceiling comes from: the regulation or contract clause. This is the text ' +
+          'quoted back if a schedule is challenged, so keep it precise or leave it blank.'
+        }
+      >
         <input
+          id="ratio-citation"
           type="text"
           placeholder="e.g. CA Title 22 §70217"
           value={form.citation}
+          aria-describedby={describedBy('ratio-citation', { hint: true })}
           onChange={(event) => setForm({ ...form, citation: event.target.value })}
-          className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+          className={INPUT}
         />
-        <span className="text-xs text-text-muted">
-          Where this ceiling comes from — the regulation or contract clause. This is the text that
-          gets quoted back if a schedule is challenged, so leave it precise or blank.
-        </span>
-      </label>
+      </Field>
       <div className="mt-2 flex justify-end gap-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg"
-        >
+        <button type="button" onClick={onCancel} className={SECONDARY}>
           Cancel
         </button>
-        <button
-          type="submit"
-          disabled={!valid}
-          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90
-            disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <button type="submit" disabled={!valid} className={PRIMARY}>
           {submitLabel}
         </button>
       </div>
@@ -248,8 +259,15 @@ export function RatioRulesSection({
 
   return (
     <section>
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-text">Patient ratios</h2>
+      <div className="mb-3 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-sm font-semibold text-text">Patient ratios</h2>
+          <p className="mt-1 max-w-prose text-sm text-text-muted">
+            The most patients one nurse may carry, by role and tier. With the census forecast they
+            set each shift's minimum staff; breaching one makes a schedule unsafe. A rule is
+            deactivated rather than deleted, because published schedules were staffed against it.
+          </p>
+        </div>
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-2 text-xs text-text-muted">
             <input
@@ -259,11 +277,7 @@ export function RatioRulesSection({
             />
             Show inactive
           </label>
-          <button
-            type="button"
-            onClick={() => setCreating(true)}
-            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
-          >
+          <button type="button" onClick={() => setCreating(true)} className={PRIMARY}>
             Add ratio rule
           </button>
         </div>
@@ -392,7 +406,7 @@ export function RatioRulesSection({
               <button
                 type="button"
                 onClick={() => setConfirmingDeactivate(undefined)}
-                className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg"
+                className={SECONDARY}
               >
                 Cancel
               </button>

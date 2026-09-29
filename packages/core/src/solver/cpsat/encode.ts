@@ -40,6 +40,7 @@ import { encodeObjective } from './objective.js';
 import type { CpModel } from './proto.js';
 import { encodeConsecutive } from './rules/consecutive.js';
 import { encodeCoverage, encodeRatio } from './rules/coverage.js';
+import { encodeHolidayRotation } from './rules/holidays.js';
 import { encodeContractCap, encodeWeeklyHours } from './rules/hours.js';
 import { encodeOverlap, encodeRest } from './rules/rest.js';
 
@@ -61,6 +62,8 @@ export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'
   // anything outright, so there is nothing for an encoder to add.
   'incompatible-staff-buffer': 'by-construction',
   'incompatible-staff-cap': 'by-construction',
+  // Priced in the objective while soft (`holidayTerms`); forbidden outright when hard.
+  'holiday-rotation': encodeHolidayRotation,
 };
 
 export interface EncodeOptions {

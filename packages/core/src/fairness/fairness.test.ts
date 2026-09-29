@@ -42,6 +42,7 @@ const HOLIDAY: Holiday = {
   date: isoDate('2026-01-19'),
   name: 'MLK Day',
   isMajor: true,
+  pairedHolidayId: null,
 };
 
 interface Roster {

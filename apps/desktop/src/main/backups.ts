@@ -11,6 +11,9 @@
  * Restore is deliberately blunt: save the live file as a `pre-restore` backup, copy the
  * chosen backup over it, relaunch. Swapping the connection under a running renderer with
  * cached queries would be cleverer and wrong in more ways.
+ *
+ * Deleting a backup is soft (see `backup-files.ts`): it waits in the trash for 30 days, and
+ * the launch sweep purges it after that unless the manager deletes it permanently first.
  */
 
 import {
@@ -19,21 +22,28 @@ import {
   existsSync,
   mkdirSync,
   openSync,
-  readdirSync,
   readSync,
   rmSync,
-  statSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { recordAudit, type ShiftNurseDb, transact } from '@shiftnurse/db';
 import { app } from 'electron';
-import type { BackupInfo } from '../shared/api.js';
+import type { BackupInfo, DeletedBackupInfo } from '../shared/api.js';
+import {
+  deleteLiveBackup,
+  listBackupFiles,
+  listTrash,
+  moveToTrash,
+  purgeExpired,
+  purgeFromTrash,
+  readBackup,
+  restoreFromTrash,
+} from './backup-files.js';
 import { closeAppDatabase, databasePath, getSqlite } from './database.js';
 
 /** Actor for audit rows written by the backup job itself. */
 const ACTOR = 'manager';
 const DAILY_KEEP = 14;
-const BACKUP_RE = /^(publish|daily|manual|pre-restore|pre-reset)-(.*)-(\d{13})\.sqlite$/;
 
 export function backupsDir(): string {
   return join(app.getPath('userData'), 'backups');
@@ -48,27 +58,9 @@ function slug(text: string): string {
   );
 }
 
-function info(fileName: string): BackupInfo | undefined {
-  const m = BACKUP_RE.exec(fileName);
-  if (!m) return undefined;
-  const path = join(backupsDir(), fileName);
-  return {
-    fileName,
-    path,
-    kind: m[1]!,
-    createdAt: Number(m[3]),
-    bytes: statSync(path).size,
-  };
-}
-
 /** Newest first. */
 export function listBackups(): BackupInfo[] {
-  const dir = backupsDir();
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .map(info)
-    .filter((b): b is BackupInfo => b !== undefined)
-    .sort((a, b) => b.createdAt - a.createdAt);
+  return listBackupFiles(backupsDir());
 }
 
 /**
@@ -87,7 +79,7 @@ export async function createBackup(
   const fileName = `${kind}-${slug(label)}-${createdAt}.sqlite`;
   const path = join(dir, fileName);
   await getSqlite().backup(path);
-  const result = info(fileName);
+  const result = readBackup(backupsDir(), fileName);
   if (!result) throw new Error(`Backup ${fileName} was written but cannot be read back`);
   recordAudit(db, {
     entityType: 'backup',
@@ -116,6 +108,72 @@ export async function ensureDailyBackup(db: ShiftNurseDb): Promise<BackupInfo | 
   const created = await createBackup(db, 'daily', today);
   pruneDaily();
   return created;
+}
+
+/** Deleted backups still in the trash, most recently deleted first. */
+export function listDeletedBackups(): DeletedBackupInfo[] {
+  return listTrash(backupsDir());
+}
+
+/**
+ * Delete a backup. By default it goes to the trash for `TRASH_RETENTION_DAYS`; `permanent`
+ * is the manager's override and removes the file now. Audited after the file operation, so
+ * a failed delete is never recorded as done.
+ */
+export function deleteBackup(
+  db: ShiftNurseDb,
+  fileName: string,
+  options: { permanent?: boolean } = {},
+): void {
+  if (options.permanent) {
+    const gone = deleteLiveBackup(backupsDir(), fileName);
+    auditDelete(db, gone, { permanent: true });
+    return;
+  }
+  const trashed = moveToTrash(backupsDir(), fileName, Date.now());
+  auditDelete(db, trashed, { permanent: false, purgeAt: trashed.purgeAt });
+}
+
+/** Take a backup back out of the trash onto the list. */
+export function undeleteBackup(db: ShiftNurseDb, fileName: string): BackupInfo {
+  const restored = restoreFromTrash(backupsDir(), fileName);
+  transact(db, (tx) =>
+    recordAudit(tx, {
+      entityType: 'backup',
+      entityId: fileName,
+      action: 'update',
+      actor: ACTOR,
+      before: { inTrash: true },
+      after: { inTrash: false, path: restored.path },
+    }),
+  );
+  return restored;
+}
+
+/** Delete a trashed backup now instead of waiting out its retention. */
+export function purgeDeletedBackup(db: ShiftNurseDb, fileName: string): void {
+  const gone = purgeFromTrash(backupsDir(), fileName);
+  auditDelete(db, gone, { permanent: true });
+}
+
+/** The launch sweep: trashed backups past their retention are removed for good. */
+export function purgeExpiredBackups(db: ShiftNurseDb): DeletedBackupInfo[] {
+  const purged = purgeExpired(backupsDir(), Date.now());
+  for (const b of purged) auditDelete(db, b, { permanent: true, expired: true });
+  return purged;
+}
+
+function auditDelete(db: ShiftNurseDb, backup: BackupInfo, after: Record<string, unknown>): void {
+  transact(db, (tx) =>
+    recordAudit(tx, {
+      entityType: 'backup',
+      entityId: backup.fileName,
+      action: 'delete',
+      actor: ACTOR,
+      before: { kind: backup.kind, createdAt: backup.createdAt, bytes: backup.bytes },
+      after,
+    }),
+  );
 }
 
 function assertSqliteFile(path: string): void {

@@ -1,7 +1,14 @@
-/** The unit's HPPD budget: a soft target the demand math reports against, never a constraint. */
+/**
+ * The unit's HPPD budget: a soft target the Demand page and Dashboard report the schedule
+ * against, never a constraint. Nothing in Generate reads it, and the copy says so — the first
+ * version claimed it steered the solver.
+ */
 
 import { useEffect, useState } from 'react';
 import { useHppdTarget, useSetHppdTarget } from '../../../api-config.js';
+import { describedBy, Field } from '../../../components/field-help.js';
+import { errorMessage, INPUT, PRIMARY } from '../../../components/ui.js';
+import { useUnsavedChanges } from '../../../components/unsaved-changes.js';
 
 export function HppdSection({ unitId }: { unitId: string }) {
   const hppdQuery = useHppdTarget(unitId);
@@ -18,42 +25,68 @@ export function HppdSection({ unitId }: { unitId: string }) {
 
   const parsed = Number(value);
   const valid = value !== '' && Number.isFinite(parsed) && parsed > 0;
+  const dirty = hppdQuery.data === undefined || parsed !== hppdQuery.data.targetHours;
+  useUnsavedChanges('HPPD target', hppdQuery.isSuccess && value !== '' && dirty);
+  const error = value !== '' && !valid ? 'Enter a number above 0.' : undefined;
 
   return (
     <section>
       <h2 className="mb-3 text-sm font-semibold text-text">HPPD target</h2>
       <form
-        className="flex max-w-sm flex-col gap-2 rounded-md border border-border bg-surface p-4"
+        className="flex max-w-sm flex-col gap-3 rounded-md border border-border bg-surface p-4"
         onSubmit={(event) => {
           event.preventDefault();
           if (!valid) return;
           setHppd.mutate({ unitId, targetHours: parsed });
         }}
       >
-        <label className="flex flex-col gap-1 text-sm text-text">
-          Target nursing hours per patient day
+        <Field
+          id="hppd-target"
+          label="Nursing hours per patient day"
+          hint="The care hours per patient per day your budget pays for, for example 8.5."
+          tip={
+            'The Demand page and Dashboard compare the hours each schedule actually spends per ' +
+            'patient day with this target, and show the staff it pays for on each shift. It is ' +
+            'for comparison only: Generate does not use it, and it never lowers a ratio or ' +
+            'coverage floor.'
+          }
+          error={error}
+        >
           <input
+            id="hppd-target"
             type="number"
             required
             min={0.01}
             step={0.1}
             value={value}
-            onChange={(event) => setValue(event.target.value)}
-            className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+            aria-invalid={error !== undefined || undefined}
+            aria-describedby={describedBy('hppd-target', {
+              hint: true,
+              error: error !== undefined,
+            })}
+            onChange={(event) => {
+              setHppd.reset();
+              setValue(event.target.value);
+            }}
+            className={INPUT}
           />
-        </label>
-        <p className="text-xs text-text-muted">
-          A soft budget target, e.g. 8.5 — it informs the objective function and dashboard, but it
-          never becomes a hard constraint the way a patient ratio or coverage floor does.
-        </p>
-        <div className="mt-1 flex justify-end">
+        </Field>
+        <div className="flex items-center justify-end gap-3">
+          {setHppd.isError ? (
+            <p role="alert" className="mr-auto text-sm text-danger">
+              {errorMessage(setHppd.error)}
+            </p>
+          ) : setHppd.isSuccess && !dirty ? (
+            <p role="status" className="mr-auto text-sm text-success">
+              Saved.
+            </p>
+          ) : null}
           <button
             type="submit"
-            disabled={!valid}
-            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90
-              disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!valid || !dirty || setHppd.isPending}
+            className={PRIMARY}
           >
-            Save
+            {setHppd.isPending ? 'Saving…' : 'Save'}
           </button>
         </div>
       </form>

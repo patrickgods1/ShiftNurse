@@ -338,23 +338,6 @@ export function listHolidaysInRange(
     .map(toHoliday);
 }
 
-export function createHoliday(db: DbLike, input: Omit<Holiday, 'id'>, actor: string): Holiday {
-  const id = ids.holiday();
-  const row: typeof holidayTable.$inferInsert = { id, ...input };
-  db.insert(holidayTable).values(row).run();
-  const after = toHoliday(row as typeof holidayTable.$inferSelect);
-  recordAudit(db, { entityType: 'holiday', entityId: id, action: 'create', actor, after });
-  return after;
-}
-
-export function deleteHoliday(db: DbLike, id: Id, actor: string): void {
-  const row = db.select().from(holidayTable).where(eq(holidayTable.id, id)).get();
-  if (!row) throw new Error(`Holiday ${id} not found`);
-  const before = toHoliday(row);
-  db.delete(holidayTable).where(eq(holidayTable.id, id)).run();
-  recordAudit(db, { entityType: 'holiday', entityId: id, action: 'delete', actor, before });
-}
-
 // ---------------------------------------------------------------------------
 // Shift credential requirements
 // ---------------------------------------------------------------------------

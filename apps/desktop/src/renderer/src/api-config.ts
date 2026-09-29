@@ -7,12 +7,15 @@
  * and coverage edits can change.
  */
 
-import type { Holiday, Id, RuleSet } from '@shiftnurse/core';
+import type { Id, RuleSet } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AcuityTierInput,
   AcuityTierPatch,
   CoverageRequirementInput,
+  HolidayInput,
+  HolidayPatch,
+  HolidayYearInput,
   RatioRuleInput,
   RatioRulePatch,
   ShiftTypeInput,
@@ -26,6 +29,7 @@ export const configKeys = {
   shiftTypes: (unitId: Id) => queryKeys.shiftTypes(unitId),
   coverage: (unitId: Id) => ['coverage', unitId] as const,
   holidays: (unitId: Id) => ['holidays', unitId] as const,
+  holidayWork: (holidayId: Id) => ['holiday-work', holidayId] as const,
   acuityTiers: (unitId: Id) => ['acuityTiers', unitId] as const,
   ratioRules: (unitId: Id) => ['ratioRules', unitId] as const,
   hppd: (unitId: Id) => ['hppd', unitId] as const,
@@ -133,10 +137,76 @@ export function useHolidays(unitId: Id | undefined) {
 export function useCreateHoliday() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: Omit<Holiday, 'id'>) => api.holidays.create(input),
+    mutationFn: (input: HolidayInput) => api.holidays.create(input),
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: configKeys.holidays(created.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(created.unitId) });
+    },
+  });
+}
+
+/** Rename, move between major and minor, or pair. Unpairing minors changes other rows too. */
+export function useUpdateHoliday() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: Id; unitId: Id; patch: HolidayPatch }) =>
+      api.holidays.update(id, patch),
+    onSuccess: (_updated, variables) => {
+      queryClient.invalidateQueries({ queryKey: configKeys.holidays(variables.unitId) });
+      queryClient.invalidateQueries({ queryKey: dashboardKey(variables.unitId) });
+    },
+  });
+}
+
+export function useHolidayWork(holidayId: Id | undefined) {
+  return useQuery({
+    queryKey: configKeys.holidayWork(holidayId ?? ''),
+    queryFn: () => api.holidays.work(holidayId as Id),
+    enabled: holidayId !== undefined,
+    // Published schedules change it too; it is one small read, so always ask again.
+    staleTime: 0,
+  });
+}
+
+export function useRecordHolidayWork() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ holidayId, nurseIds }: { holidayId: Id; nurseIds: Id[] }) =>
+      api.holidays.recordWork(holidayId, nurseIds),
+    onSuccess: (summary) => {
+      queryClient.setQueryData(configKeys.holidayWork(summary.holidayId), summary);
+    },
+  });
+}
+
+export function useClearHolidayWork() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (holidayId: Id) => api.holidays.clearWork(holidayId),
+    onSuccess: (summary) => {
+      queryClient.setQueryData(configKeys.holidayWork(summary.holidayId), summary);
+    },
+  });
+}
+
+/** A proposal for a year of holidays; nothing is saved by asking. */
+export function useHolidayYearPlan(unitId: Id | undefined, year: number | undefined) {
+  return useQuery({
+    queryKey: ['holiday-year-plan', unitId ?? '', year ?? 0],
+    queryFn: () => api.holidays.planYear(unitId as Id, year as number),
+    enabled: unitId !== undefined && year !== undefined,
+    staleTime: 0,
+  });
+}
+
+export function useAddHolidayYear() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ unitId, input }: { unitId: Id; input: HolidayYearInput }) =>
+      api.holidays.addYear(unitId, input),
+    onSuccess: (_added, variables) => {
+      queryClient.invalidateQueries({ queryKey: configKeys.holidays(variables.unitId) });
+      queryClient.invalidateQueries({ queryKey: dashboardKey(variables.unitId) });
     },
   });
 }

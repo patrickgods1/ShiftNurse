@@ -62,6 +62,21 @@ export type NurseRole = 'RN' | 'LPN' | 'CNA';
 
 export type EmploymentType = 'full_time' | 'part_time' | 'per_diem' | 'agency';
 
+/** Every employment type, in the order forms list them. */
+export const EMPLOYMENT_TYPES: readonly EmploymentType[] = [
+  'full_time',
+  'part_time',
+  'per_diem',
+  'agency',
+];
+
+export const EMPLOYMENT_TYPE_LABELS: Readonly<Record<EmploymentType, string>> = {
+  full_time: 'Full time',
+  part_time: 'Part time',
+  per_diem: 'Per diem',
+  agency: 'Agency',
+};
+
 export interface Nurse {
   id: Id;
   unitId: Id;
@@ -450,6 +465,8 @@ export type DifferentialKind =
   | 'night'
   | 'weekend'
   | 'holiday'
+  /** A major holiday's premium. Absent, a major holiday earns the `holiday` premium. */
+  | 'major_holiday'
   | 'charge'
   | 'on_call'
   | 'call_back'
@@ -526,6 +543,13 @@ export interface Holiday {
   name: string;
   /** Contracts often treat a subset as "major" holidays with stricter rotation equity. */
   isMajor: boolean;
+  /**
+   * For a minor holiday: the major holiday the manager paired it with — Christmas Eve with
+   * Christmas Day, or Memorial Day with Thanksgiving, any distance apart. When the rule set pairs
+   * minor holidays with majors, whoever works one of the two is kept off the other. Null for a
+   * major holiday or an unpaired minor one.
+   */
+  pairedHolidayId: Id | null;
 }
 
 // ---------------------------------------------------------------------------

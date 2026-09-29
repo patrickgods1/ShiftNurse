@@ -403,8 +403,39 @@ export const holiday = sqliteTable(
     date: isoDate('date').notNull(),
     name: text('name').notNull(),
     isMajor: bool('is_major').notNull().default(false),
+    /** A minor holiday's major partner, any date; cleared if the major is deleted. */
+    pairedHolidayId: text('paired_holiday_id')
+      .references((): AnySQLiteColumn => holiday.id, { onDelete: 'set null' })
+      .$type<Id>(),
+    /**
+     * True once the manager has recorded who worked this holiday by hand (`holiday_work`):
+     * the list then stands in for what published schedules say, even when it is empty.
+     */
+    workRecorded: bool('work_recorded').notNull().default(false),
   },
   (t) => [uniqueIndex('holiday_unit_date_idx').on(t.unitId, t.date)],
+);
+
+/**
+ * Who worked a past holiday, recorded by hand: a year before the app was in use, or a
+ * correction to what the schedule says. Read only while `holiday.work_recorded` is set.
+ */
+export const holidayWork = sqliteTable(
+  'holiday_work',
+  {
+    holidayId: text('holiday_id')
+      .notNull()
+      .references(() => holiday.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.holidayId, t.nurseId] }),
+    index('holiday_work_nurse_idx').on(t.nurseId),
+  ],
 );
 
 // ---------------------------------------------------------------------------

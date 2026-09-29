@@ -321,6 +321,7 @@ export function toHoliday(r: typeof s.holiday.$inferSelect): Holiday {
     date: r.date as Holiday['date'],
     name: r.name,
     isMajor: r.isMajor,
+    pairedHolidayId: r.pairedHolidayId ?? null,
   };
 }
 

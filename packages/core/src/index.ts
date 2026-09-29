@@ -3,6 +3,7 @@
 // Acuity-driven demand
 export * from './acuity/demand.js';
 export * from './acuity/forecast.js';
+export * from './acuity/hppd.js';
 // Conflicts
 export * from './conflicts/index.js';
 // Cost
@@ -28,6 +29,7 @@ export * from './publish/index.js';
 export * from './roster/csv.js';
 export * from './rules/availability-rules.js';
 export * from './rules/coverage-rules.js';
+export * from './rules/holiday-rotation.js';
 export * from './rules/hours-rules.js';
 export * from './rules/incompatibility-rules.js';
 export * from './rules/paid-leave.js';

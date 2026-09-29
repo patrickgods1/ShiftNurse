@@ -141,6 +141,53 @@ describe('pricing one shift', () => {
     expect(cost?.total).toBe(909);
   });
 
+  it('pays Christmas at the major-holiday premium instead of the holiday one', () => {
+    const nurse = makeNurse();
+    const s = scenario({ nurses: [nurse], assignments: [assign(nurse.id, DAY_12, '2026-12-25')] });
+
+    // Friday 25 December, a major holiday: $48 × 2 for 12 hours, and no 1.5× on top.
+    const [cost] = costSchedule(
+      s.schedule,
+      ctx({
+        differentials: [HOLIDAY, diff('major_holiday', 'multiplier', 2)],
+        holidayDates: new Set([isoDate('2026-12-25')]),
+        majorHolidayDates: new Set([isoDate('2026-12-25')]),
+      }),
+    ).assignments;
+    expect(lineAmounts(cost!)).toEqual({ base: 576, major_holiday: 576 });
+    expect(cost?.total).toBe(1152);
+  });
+
+  it('keeps a minor holiday at the holiday premium when majors pay more', () => {
+    const nurse = makeNurse();
+    const s = scenario({ nurses: [nurse], assignments: [assign(nurse.id, DAY_12, '2026-01-19')] });
+
+    // Monday 19 January (MLK Day), minor: $48 × 1.5 for 12 hours.
+    const [cost] = costSchedule(
+      s.schedule,
+      ctx({
+        differentials: [HOLIDAY, diff('major_holiday', 'multiplier', 2)],
+        holidayDates: new Set([isoDate('2026-01-19'), isoDate('2026-12-25')]),
+        majorHolidayDates: new Set([isoDate('2026-12-25')]),
+      }),
+    ).assignments;
+    expect(lineAmounts(cost!)).toEqual({ base: 576, holiday: 288 });
+  });
+
+  it('pays a major holiday the holiday premium when no major premium is set', () => {
+    const nurse = makeNurse();
+    const s = scenario({ nurses: [nurse], assignments: [assign(nurse.id, DAY_12, '2026-12-25')] });
+
+    const [cost] = costSchedule(
+      s.schedule,
+      ctx({
+        holidayDates: new Set([isoDate('2026-12-25')]),
+        majorHolidayDates: new Set([isoDate('2026-12-25')]),
+      }),
+    ).assignments;
+    expect(lineAmounts(cost!)).toEqual({ base: 576, holiday: 288 });
+  });
+
   it('does not treat the night shift into a holiday morning as a holiday shift', () => {
     const nurse = makeNurse();
     const s = scenario({

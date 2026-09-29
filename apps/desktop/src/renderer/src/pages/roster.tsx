@@ -5,6 +5,7 @@
  */
 
 import type { Id, Nurse } from '@shiftnurse/core';
+import { EMPLOYMENT_TYPE_LABELS } from '@shiftnurse/core';
 import { useMemo, useState } from 'react';
 import { useExportRosterToFile, useNurses } from '../api.js';
 import { AsyncState } from '../components/async-state.js';
@@ -16,13 +17,6 @@ import { ImportDialog } from './roster/import-dialog.js';
 import { IncompatibilitySection } from './roster/incompatibility.js';
 import { NurseDetail } from './roster/nurse-detail.js';
 import { NurseFormDialog } from './roster/nurse-form-dialog.js';
-
-const EMPLOYMENT_LABELS: Record<Nurse['employmentType'], string> = {
-  full_time: 'Full time',
-  part_time: 'Part time',
-  per_diem: 'Per diem',
-  agency: 'Agency',
-};
 
 function matchesSearch(nurse: Nurse, term: string): boolean {
   const haystack = `${nurse.firstName} ${nurse.lastName} ${nurse.employeeId}`.toLowerCase();
@@ -63,7 +57,7 @@ export default function RosterPage() {
       {
         key: 'employmentType',
         header: 'Employment',
-        render: (nurse) => EMPLOYMENT_LABELS[nurse.employmentType],
+        render: (nurse) => EMPLOYMENT_TYPE_LABELS[nurse.employmentType],
         sortValue: (nurse) => nurse.employmentType,
       },
       {

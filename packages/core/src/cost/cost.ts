@@ -141,12 +141,18 @@ function differentialOf(ctx: CostContext, kind: DifferentialKind): Differential 
 
 /** Which differentials a *worked* shift earns, in itemisation order. */
 function applicableDifferentials(view: AssignmentView, ctx: CostContext): Differential[] {
+  // Dated by start day, same as the fairness ledger: the night into a holiday morning is not a
+  // holiday shift. A major holiday earns the major premium in place of the holiday one, never
+  // both; a unit with no major premium pays every holiday the holiday premium, as before.
+  const date = view.assignment.date;
+  const major =
+    (ctx.majorHolidayDates?.has(date) ?? false) &&
+    differentialOf(ctx, 'major_holiday') !== undefined;
   const applies: Record<DifferentialKind, boolean> = {
     night: view.shiftType.isNight,
     weekend: isWeekendWindow(view.window, ctx.weekendDefinition),
-    // Dated by start day, same as the fairness ledger: the night into a holiday morning is
-    // not a holiday shift.
-    holiday: ctx.holidayDates.has(view.assignment.date),
+    holiday: ctx.holidayDates.has(date) && !major,
+    major_holiday: major,
     charge: view.assignment.isCharge,
     agency: view.nurse.employmentType === 'agency',
     // Standby is priced separately; call-back is a day-of event with no assignment to hang on.
