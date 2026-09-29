@@ -17,7 +17,10 @@ import { formatDollars } from '../../../money.js';
 const DIFFERENTIAL_HELP: Record<DifferentialKind, string> = {
   night: 'Shifts whose type is marked as night',
   weekend: 'Shifts inside the weekend window defined on the Rules tab',
-  holiday: 'Shifts starting on a holiday from the Holidays tab',
+  holiday:
+    'Shifts starting on a holiday from the Holidays tab. With a major-holiday premium set, minor holidays only',
+  major_holiday:
+    'Shifts starting on a major holiday, in place of the holiday premium. Without it, majors earn the holiday premium',
   charge: 'Shifts where the nurse is the charge nurse',
   on_call: 'Standby hours — paid instead of base pay, not on top of it',
   call_back: 'Being called in while on standby (priced by the day-of console)',

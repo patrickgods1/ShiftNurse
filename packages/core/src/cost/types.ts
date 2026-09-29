@@ -76,6 +76,11 @@ export interface CostContext {
   /** Active overtime rules only. Empty means no overtime is ever priced. */
   overtimeRules: readonly OvertimeRule[];
   holidayDates: ReadonlySet<IsoDate>;
+  /**
+   * The major ones among `holidayDates`. A shift on one earns the `major_holiday` premium when
+   * the unit has one, instead of the `holiday` premium; absent, every holiday is priced alike.
+   */
+  majorHolidayDates?: ReadonlySet<IsoDate>;
   weekendDefinition: WeekendDefinition;
   /** The contract's work-week start for weekly overtime, matching the max-hours rule. */
   workWeekStartsOn: Weekday;
@@ -103,6 +108,7 @@ export const DIFFERENTIAL_ORDER: readonly DifferentialKind[] = [
   'night',
   'weekend',
   'holiday',
+  'major_holiday',
   'charge',
   'on_call',
   'call_back',
@@ -114,6 +120,7 @@ export const COST_LINE_LABELS: Record<CostLineKind, string> = {
   night: 'Night differential',
   weekend: 'Weekend differential',
   holiday: 'Holiday premium',
+  major_holiday: 'Major holiday premium',
   charge: 'Charge differential',
   on_call: 'On-call standby',
   call_back: 'Call-back',

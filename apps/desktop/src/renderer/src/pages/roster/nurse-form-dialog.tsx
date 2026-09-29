@@ -8,24 +8,13 @@
 
 import * as Dialog from '@radix-ui/react-dialog';
 import type { EmploymentType, Id, Nurse, NurseRole } from '@shiftnurse/core';
+import { EMPLOYMENT_TYPE_LABELS, EMPLOYMENT_TYPES } from '@shiftnurse/core';
 import { type FormEvent, type ReactNode, useEffect, useId, useState } from 'react';
 import type { NurseInput, NursePatch } from '../../../../shared/api.js';
 import { useCreateNurse, useUpdateNurse } from '../../api.js';
 import { OVERLAY } from '../../components/ui.js';
 
 const ROLES: readonly NurseRole[] = ['RN', 'LPN', 'CNA'];
-const EMPLOYMENT_TYPES: readonly EmploymentType[] = [
-  'full_time',
-  'part_time',
-  'per_diem',
-  'agency',
-];
-const EMPLOYMENT_LABELS: Record<EmploymentType, string> = {
-  full_time: 'Full time',
-  part_time: 'Part time',
-  per_diem: 'Per diem',
-  agency: 'Agency',
-};
 
 interface FormState {
   employeeId: string;
@@ -300,7 +289,7 @@ export function NurseFormDialog({
                 >
                   {EMPLOYMENT_TYPES.map((type) => (
                     <option key={type} value={type}>
-                      {EMPLOYMENT_LABELS[type]}
+                      {EMPLOYMENT_TYPE_LABELS[type]}
                     </option>
                   ))}
                 </select>

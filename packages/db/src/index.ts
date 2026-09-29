@@ -29,6 +29,7 @@ export * from './repositories/census.js';
 export * from './repositories/config.js';
 export * from './repositories/conflicts.js';
 export * from './repositories/exchange.js';
+export * from './repositories/holidays.js';
 export * from './repositories/incompatibility.js';
 export * from './repositories/ledger.js';
 export * from './repositories/pay.js';

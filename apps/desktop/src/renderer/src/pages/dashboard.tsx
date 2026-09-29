@@ -8,6 +8,7 @@ import type { ExpiringCredentialView } from '@shared/api.js';
 import { Link } from '@tanstack/react-router';
 import { useDashboard, useNurses } from '../api.js';
 import { AsyncState } from '../components/async-state.js';
+import { HppdSummary } from '../components/hppd-summary.js';
 import { PageHeader } from '../components/page-header.js';
 import { StatCard } from '../components/stat-card.js';
 import { daysFromToday, formatDate } from '../format.js';
@@ -144,7 +145,15 @@ export default function DashboardPage() {
         {costPeriod === undefined ? (
           <p className="text-sm text-text-muted">No scheduling period to price yet.</p>
         ) : (
-          <CostPanel period={costPeriod} nurses={nursesQuery.data ?? []} />
+          <>
+            <CostPanel period={costPeriod} nurses={nursesQuery.data ?? []} />
+            <div className="mt-4 max-w-xl">
+              <HppdSummary
+                periodId={costPeriod.id}
+                title={`Scheduled HPPD, ${costPeriod.status === 'draft' ? 'current draft' : 'latest published'}`}
+              />
+            </div>
+          </>
         )}
       </div>
 

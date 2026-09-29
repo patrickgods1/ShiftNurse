@@ -12,7 +12,7 @@
  * process reads the file and persists the rows; the eventual web server does the same.
  */
 
-import type { EmploymentType, Nurse, NurseRole } from '../domain/entities.js';
+import { EMPLOYMENT_TYPES, type Nurse, type NurseRole } from '../domain/entities.js';
 import { type IsoDate, isIsoDate } from '../domain/time.js';
 
 // ---------------------------------------------------------------------------
@@ -115,12 +115,6 @@ const REQUIRED_COLUMNS: readonly RosterColumn[] = [
 ];
 
 const ROLES: readonly NurseRole[] = ['RN', 'LPN', 'CNA'];
-const EMPLOYMENT_TYPES: readonly EmploymentType[] = [
-  'full_time',
-  'part_time',
-  'per_diem',
-  'agency',
-];
 
 /** The roster fields a spreadsheet carries: everything on a nurse except identity and unit. */
 export type RosterNurseFields = Omit<Nurse, 'id' | 'unitId' | 'active'>;

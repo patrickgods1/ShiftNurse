@@ -39,6 +39,31 @@ export const minRestRule: Rule<MinRestParams> = {
   category: 'rest',
   scope: 'nurse',
   defaultParams: { minRestHours: 10, onCallCountsAsWork: false },
+  paramDocs: {
+    minRestHours: {
+      label: 'Minimum rest (hours)',
+      hint: 'Hours off a nurse must have between the end of one shift and the start of the next.',
+      why:
+        'Set it to what your contract says; 8 to 12 hours is typical in the US. A higher number ' +
+        'protects against fatigue but leaves fewer ways to fill a hole, so the solver may leave ' +
+        'more shifts short.',
+    },
+    minRestHoursAfterNight: {
+      label: 'Minimum rest after a night (hours)',
+      hint: 'A longer rest after a night shift. Leave blank to use the minimum rest above.',
+      why:
+        'Many contracts give extra recovery coming off nights, for example 12 or 24 hours before ' +
+        'the next shift. Set it if yours does.',
+      optional: true,
+    },
+    onCallCountsAsWork: {
+      label: 'On-call counts as work',
+      hint: 'Whether a standby shift needs the same rest before and after it as a worked shift.',
+      why:
+        'Usually off: a nurse on standby is resting unless called in. Turn it on if your contract ' +
+        'treats being on call as working time for rest.',
+    },
+  },
 
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];
@@ -180,6 +205,38 @@ export const consecutiveShiftsRule: Rule<ConsecutiveShiftsParams> = {
     maxConsecutiveNights: 3,
     minDaysOffAfterMaxStretch: 2,
     onCallCountsAsWork: false,
+  },
+  paramDocs: {
+    maxConsecutiveShifts: {
+      label: 'Most days in a row',
+      min: 1,
+      hint: 'The longest run of consecutive days a nurse may work, days and nights mixed.',
+      why:
+        'Contracts commonly allow 4 to 6. Lower it to limit fatigue; raise it only if your ' +
+        'contract allows longer stretches and you are short of ways to cover.',
+    },
+    maxConsecutiveNights: {
+      label: 'Most nights in a row',
+      min: 1,
+      hint: 'The longest run of night shifts only. Usually stricter than the days-in-a-row limit.',
+      why:
+        'Three or four nights in a row is a common ceiling, because nights are harder on sleep. ' +
+        'A mixed run (a day, then nights) is judged by the days-in-a-row limit instead.',
+    },
+    minDaysOffAfterMaxStretch: {
+      label: 'Days off after a longest run',
+      hint: 'Days off required after a nurse works the most days in a row allowed. 0 turns it off.',
+      why:
+        'Many contracts require two days off after a full stretch so staff recover before the ' +
+        'next one. Set it to what your contract says.',
+    },
+    onCallCountsAsWork: {
+      label: 'On-call counts as work',
+      hint: 'Whether a standby shift counts as a day worked in a run.',
+      why:
+        'Usually off. Turn it on if your contract counts days on call toward consecutive-day ' +
+        'limits.',
+    },
   },
 
   evaluate(schedule, params, ctx): Violation[] {

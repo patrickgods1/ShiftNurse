@@ -76,7 +76,18 @@ export type ViolationCode =
   | 'overlapping_assignments'
   | 'excess_weekends'
   | 'incompatible_staff_together'
-  | 'incompatible_staff_unbuffered';
+  | 'incompatible_staff_unbuffered'
+  | 'holiday_rotation'
+  | 'holiday_pair_both';
+
+/**
+ * One nurse worked one past holiday. Derived from published schedules, or recorded by hand for
+ * a year before the app was in use; the holiday rotation reads last year's list.
+ */
+export interface HolidayWorkRecord {
+  holidayId: Id;
+  nurseId: Id;
+}
 
 export interface Violation {
   ruleId: string;
@@ -119,9 +130,37 @@ export interface RuleContext {
 
   /** Holiday dates as a set, for O(1) membership tests. */
   holidayDates: ReadonlySet<IsoDate>;
+  /** The major ones among them. */
+  majorHolidayDates: ReadonlySet<IsoDate>;
+  /** Every holiday by id and by date, past years included. */
+  holidaysById: ReadonlyMap<Id, Holiday>;
+  holidaysByDate: ReadonlyMap<IsoDate, Holiday>;
+  /** holiday id → the same holiday a year earlier, when the unit has it. */
+  previousHoliday: ReadonlyMap<Id, Holiday>;
+  /** holiday id → the nurses who worked it. Past holidays only; see `HolidayWorkRecord`. */
+  holidayWorkedBy: ReadonlyMap<Id, ReadonlySet<Id>>;
 
   /** Nurses who should not be on the floor together, with their dates in force. */
   incompatibilityGroups: readonly IncompatibilityGroup[];
+}
+
+/**
+ * One rule parameter as the manager sees it. The text is for someone who knows the contract,
+ * not the code: `hint` says what the setting does, `why` when and why a unit would change it.
+ */
+export interface ParamDoc {
+  label: string;
+  hint: string;
+  why: string;
+  /** An editor other than the one the default's type implies: a number that is a weekday, a
+   * string list drawn from the employment types. */
+  input?: 'weekday' | 'employment-types';
+  /** The parameter may be absent; the hint says what absence falls back to. */
+  optional?: boolean;
+  /** The smallest number that makes sense. Absent means 0. */
+  min?: number;
+  /** The parameter only matters while a boolean parameter of the same rule has this value. */
+  activeWhen?: { param: string; equals: boolean };
 }
 
 /**
@@ -140,6 +179,12 @@ export interface Rule<P = Record<string, unknown>> {
   /** Whether the verdict reads one nurse's timeline or one shift's roster. See {@link RuleScope}. */
   scope: RuleScope;
   defaultParams: P;
+  /**
+   * What each parameter means to a manager, keyed like `P`. The Rules screen builds its form
+   * from this, so the type demands a doc for every key — optional ones included, which is how a
+   * setting with no default (a longer rest after nights) stays reachable at all.
+   */
+  paramDocs: { [K in keyof Required<P>]-?: ParamDoc };
   evaluate(schedule: ScheduleView, params: P, ctx: RuleContext): Violation[];
 }
 

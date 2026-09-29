@@ -62,7 +62,7 @@ import type {
 import type { IsoDate } from '../domain/time.js';
 import type { FairnessReport } from '../fairness/types.js';
 import type { PaidSickCall } from '../rules/paid-leave.js';
-import type { RuleSet, Violation } from '../rules/types.js';
+import type { HolidayWorkRecord, RuleSet, Violation } from '../rules/types.js';
 
 // ---------------------------------------------------------------------------
 // Input
@@ -105,6 +105,8 @@ export interface SolveInput {
   nurseCredentials: readonly NurseCredential[];
   shiftCredentialRequirements: readonly ShiftCredentialRequirement[];
   holidays: readonly Holiday[];
+  /** Who worked each past holiday, for the holiday rotation. Absent: nobody is owed one. */
+  holidayWork?: readonly HolidayWorkRecord[];
   preferences: readonly Preference[];
   /** Ledger rows strictly before this period, for the burden index the seed and objective read. */
   ledgerHistory: readonly FairnessLedgerEntry[];
@@ -145,6 +147,13 @@ export interface ObjectiveWeights {
   fairness: number;
   /** Per unit of preference weight (1–5, seniority-scaled) an assignment runs against. */
   preference: number;
+  /**
+   * Per holiday-rotation breach while that rule is soft: a worked shift on a holiday the nurse
+   * worked last year, or one nurse on both halves of a paired minor/major holiday. Counted in
+   * the fairness bucket of the breakdown. Above a strong preference (5 × 10), below an unfilled
+   * target, so the rotation gives way before a shift goes short.
+   */
+  holidayRotation: number;
   /** Per dollar of straight-time cost. */
   cost: number;
 }
@@ -157,6 +166,7 @@ export const DEFAULT_OBJECTIVE_WEIGHTS: ObjectiveWeights = {
   incompatibility: 50,
   fairness: 30,
   preference: 10,
+  holidayRotation: 55,
   cost: 0.05,
 };
 

@@ -16,6 +16,7 @@ export const demandQueryKeys = {
   demand: (unitId: Id, start: IsoDate, end: IsoDate) => ['demand', unitId, start, end] as const,
   backtest: (unitId: Id, options: ForecastOptions | undefined) =>
     ['backtest', unitId, options ?? {}] as const,
+  hppd: (periodId: Id) => ['hppd', periodId] as const,
 };
 
 export function useAcuityTiers(unitId: Id | undefined) {
@@ -42,6 +43,20 @@ export function useDemand(unitId: Id | undefined, start: IsoDate, end: IsoDate) 
   });
 }
 
+/**
+ * Scheduled HPPD for a period. It reads the schedule, the census, the shift types and the target,
+ * which a dozen mutations across the app change; it is cheap, so it refetches whenever a page
+ * showing it mounts instead of every one of those mutations having to know about it.
+ */
+export function useScheduledHppd(periodId: Id | undefined) {
+  return useQuery({
+    queryKey: demandQueryKeys.hppd(periodId ?? ''),
+    queryFn: () => api.census.hppd(periodId as Id),
+    enabled: periodId !== undefined,
+    staleTime: 0,
+  });
+}
+
 export function useBacktest(unitId: Id | undefined, options: ForecastOptions | undefined) {
   return useQuery({
     queryKey: demandQueryKeys.backtest(unitId ?? '', options),
@@ -61,6 +76,7 @@ function useInvalidateCensus(unitId: Id | undefined, start: IsoDate, end: IsoDat
     if (unitId !== undefined) {
       void queryClient.invalidateQueries({ queryKey: demandQueryKeys.census(unitId, start, end) });
       void queryClient.invalidateQueries({ queryKey: demandQueryKeys.demand(unitId, start, end) });
+      void queryClient.invalidateQueries({ queryKey: ['hppd'] });
     }
   };
 }

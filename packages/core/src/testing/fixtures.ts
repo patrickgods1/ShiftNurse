@@ -35,7 +35,7 @@ import type {
 import { datesInRange, type IsoDate, isoDate, type Weekday } from '../domain/time.js';
 import type { PaidSickCall } from '../rules/paid-leave.js';
 import { buildRuleContext, defaultRuleSet } from '../rules/registry.js';
-import type { RuleContext, RuleSet } from '../rules/types.js';
+import type { HolidayWorkRecord, RuleContext, RuleSet } from '../rules/types.js';
 import { ScheduleView } from '../schedule/view.js';
 import type { SolveCostInput, SolveInput } from '../solver/types.js';
 
@@ -255,6 +255,8 @@ export interface ScenarioOptions {
   paidSickCalls?: PaidSickCall[];
   /** Nurses who should not be on the floor together. */
   incompatibilityGroups?: IncompatibilityGroup[];
+  /** Who worked each past holiday. */
+  holidayWork?: HolidayWorkRecord[];
   /** Parameter overrides by rule id, merged over the defaults. */
   ruleParams?: Record<string, Record<string, unknown>>;
 }
@@ -318,6 +320,7 @@ export function scenario(options: ScenarioOptions = {}): Scenario {
     ...(options.incompatibilityGroups
       ? { incompatibilityGroups: options.incompatibilityGroups }
       : {}),
+    ...(options.holidayWork ? { holidayWork: options.holidayWork } : {}),
   });
 
   const schedule = new ScheduleView({
@@ -391,6 +394,7 @@ export function solveInputFrom(options: SolveScenarioOptions = {}): SolveInput {
     ...(options.incompatibilityGroups
       ? { incompatibilityGroups: options.incompatibilityGroups }
       : {}),
+    ...(options.holidayWork ? { holidayWork: options.holidayWork } : {}),
     ...(options.cost ? { cost: options.cost } : {}),
   };
 }

@@ -12,9 +12,13 @@
  *    makes a schedule infeasible, not merely suboptimal.
  * 2. **Coverage floors** (hard) — the static baseline per shift and weekday, independent of
  *    census. Demand is `max(floor, ratio-derived)`; acuity can only push staffing up.
- * 3. **HPPD target** (soft) — nursing hours per patient day. A budget goal that informs the
- *    objective function and the dashboard, never a constraint. Reported at the shift level
- *    rather than split across roles, because apportioning it per role would be invention.
+ * 3. **HPPD target** (soft) — nursing hours per patient day. A budget goal reported beside the
+ *    demand (and against the schedule, in `hppd.ts`), never a constraint and never read by
+ *    Generate. Reported at the shift level rather than split across roles, because
+ *    apportioning it per role would be invention.
+ *
+ * Beside the HPPD figure sits the acuity one: the staff the census's care hours call for. HPPD
+ * is a flat budget; the acuity figure moves with how sick the patients are. Both are advisory.
  */
 
 import type {
@@ -57,6 +61,8 @@ export interface ShiftDemand {
   careHoursThisShift: number;
   /** Soft, unit-level: nurses the HPPD target suggests for this shift. */
   hppdRecommendedNurses: number;
+  /** Soft, unit-level: nurses this shift's care hours call for (care hours ÷ shift length). */
+  careHoursRecommendedNurses: number;
   byRole: Record<NurseRole, RoleDemand>;
   /** True when no forecast existed and only the static coverage floor applied. */
   fromCoverageFloorOnly: boolean;
@@ -278,6 +284,8 @@ export function deriveDemand(dates: readonly IsoDate[], inputs: DemandInputs): D
         weightedCareHoursPerDay: careHoursPerDay,
         careHoursThisShift,
         hppdRecommendedNurses,
+        careHoursRecommendedNurses:
+          shiftType.durationHours > 0 ? careHoursThisShift / shiftType.durationHours : 0,
         byRole,
         fromCoverageFloorOnly: forecast === undefined,
       });

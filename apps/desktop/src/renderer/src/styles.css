@@ -72,3 +72,9 @@ body {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
+
+/* A page with a sticky footer (the Rules save bar) reserves its height at the bottom of the
+   scroll area, so a field reached with Tab scrolls clear of the bar instead of under it. */
+main:has([data-sticky-footer]) {
+  scroll-padding-bottom: 5rem;
+}

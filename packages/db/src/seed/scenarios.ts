@@ -64,12 +64,12 @@ import { ids } from '../ids.js';
 import { createAcuityTier, createRatioRule, upsertHppdTarget } from '../repositories/acuity.js';
 import { logCallAttempt, markCallOffCovered, reportCallOff } from '../repositories/calloffs.js';
 import {
-  createHoliday,
   createShiftCredentialRequirement,
   createShiftType,
   createUnit,
   upsertCoverageRequirement,
 } from '../repositories/config.js';
+import { createHoliday } from '../repositories/holidays.js';
 import {
   importFairnessLedgerEntries,
   type UpsertFairnessLedgerInput,

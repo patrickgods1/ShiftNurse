@@ -85,6 +85,13 @@
       "when": 1790639594317,
       "tag": "0011_wet_chronomancer",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1790667559500,
+      "tag": "0012_daily_sway",
+      "breakpoints": true
     }
   ]
 }

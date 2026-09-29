@@ -4,11 +4,12 @@
  * destination rather than as separate nav entries. About keeps the existing app-info + theme content.
  */
 
-import { useState } from 'react';
+import { type KeyboardEvent, useState } from 'react';
 import { useAppInfo } from '../api.js';
 import { AsyncState } from '../components/async-state.js';
 import { PageHeader } from '../components/page-header.js';
 import { ThemeToggle } from '../components/theme-toggle.js';
+import { useConfirmDiscard } from '../components/unsaved-changes.js';
 import AcuityPanel from './settings/acuity.js';
 import BackupsPanel from './settings/backups.js';
 import ConflictsPanel from './settings/conflicts.js';
@@ -65,6 +66,34 @@ function AboutTab() {
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>('unit');
+  const confirmDiscard = useConfirmDiscard();
+
+  // Leaving a tab unmounts its panel, and with it any edits not yet saved.
+  const selectTab = async (id: TabId): Promise<boolean> => {
+    if (id === activeTab) return true;
+    if (!(await confirmDiscard())) return false;
+    setActiveTab(id);
+    return true;
+  };
+
+  // The ARIA tabs pattern: one tab stop for the whole row, arrows move between tabs.
+  const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const index = TABS.findIndex((t) => t.id === activeTab);
+    const count = TABS.length;
+    const targets: Record<string, number> = {
+      ArrowRight: (index + 1) % count,
+      ArrowLeft: (index - 1 + count) % count,
+      Home: 0,
+      End: count - 1,
+    };
+    const next = targets[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    const tab = TABS[next]!;
+    void selectTab(tab.id).then((moved) => {
+      if (moved) document.getElementById(`settings-tab-${tab.id}`)?.focus();
+    });
+  };
 
   return (
     <div>
@@ -74,7 +103,7 @@ export default function SettingsPage() {
         data-testid="settings-tabs"
         role="tablist"
         aria-label="Settings sections"
-        className="mb-4 flex gap-1 border-b border-border"
+        className="mb-4 flex gap-1 overflow-x-auto border-b border-border"
       >
         {TABS.map((tab) => (
           <button
@@ -84,8 +113,10 @@ export default function SettingsPage() {
             id={`settings-tab-${tab.id}`}
             aria-selected={activeTab === tab.id}
             aria-controls={`settings-panel-${tab.id}`}
-            onClick={() => setActiveTab(tab.id)}
-            className={`rounded-t-md px-3 py-2 text-sm font-medium ${
+            tabIndex={activeTab === tab.id ? 0 : -1}
+            onClick={() => void selectTab(tab.id)}
+            onKeyDown={onTabKeyDown}
+            className={`shrink-0 whitespace-nowrap rounded-t-md px-3 py-2 text-sm font-medium ${
               activeTab === tab.id
                 ? 'border-b-2 border-accent text-text'
                 : 'text-text-muted hover:text-text'

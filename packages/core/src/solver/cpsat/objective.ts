@@ -16,6 +16,7 @@ import { NURSE_ROLES } from '../../acuity/demand.js';
 import type { Id } from '../../domain/entities.js';
 import { type IsoDate, weekendKey } from '../../domain/time.js';
 import { BURDEN_COMPONENTS, type BurdenComponent } from '../../fairness/types.js';
+import { workedInHistory } from '../../rules/holiday-rotation.js';
 import { groupInForce } from '../../rules/incompatibility-rules.js';
 import { type Expr, evalExpr, expr, scale, sum } from './builder.js';
 import { countExpr, type EncodeContext, HOURS, hoursExpr, type TimelineEntry } from './context.js';
@@ -29,6 +30,7 @@ export function encodeObjective(ctx: EncodeContext): void {
   incompatibilityTerms(ctx);
   hoursTerms(ctx);
   fairnessTerms(ctx);
+  holidayTerms(ctx);
   perShiftTerms(ctx);
 }
 
@@ -310,6 +312,59 @@ function current(
       return expr([[ot, 1 / HOURS]]);
     }
   }
+}
+
+/**
+ * The holiday rotation, as `SolverModel.countHolidayRotation` counts it: each worked shift on a
+ * holiday the nurse is owed off, and each pair a nurse works both halves of. Priced only while
+ * the rule is soft (`holidayPrice`); a hard rule is `encodeHolidayRotation`'s constraints.
+ */
+function holidayTerms(ctx: EncodeContext): void {
+  const { model, input } = ctx;
+  const price = model.holidayPrice;
+  if (price === 0) return;
+  const facts = model.holidayFacts;
+  for (let n = 0; n < model.nurses.length; n++) {
+    const worked = ctx.timeline(n).filter((e) => !e.shiftType.isOnCall);
+    const owed = facts.owedOff.get(model.nurses[n]!.id);
+    if (owed) {
+      ctx.b.minimise(countExpr(worked.filter((e) => e.inPeriod && owed.has(e.date))), price);
+    }
+    const nurseId = model.nurses[n]!.id;
+    const start = input.period.startDate;
+    for (const { minor, major } of facts.pairs) {
+      const label = `holiday pair: ${ctx.name(n)} ${minor.date}/${major.date}`;
+      // A half behind the period may be on record rather than on the timeline.
+      const [onMinor, onMajor] = [minor, major].map((h) =>
+        workedInHistory(model.ctx, nurseId, h, start)
+          ? expr([], 1)
+          : worked.some((e) => e.date === h.date)
+            ? anyOf(
+                ctx,
+                worked.filter((e) => e.date === h.date),
+                label,
+              )
+            : undefined,
+      );
+      if (onMinor === undefined || onMajor === undefined) continue;
+      priced(ctx, sum(onMinor, onMajor, expr([], -1)), price, label);
+    }
+  }
+}
+
+/** 1 when any of these entries is worked: a constant if one is, else their Boolean or. */
+function anyOf(ctx: EncodeContext, entries: readonly TimelineEntry[], label: string): Expr {
+  if (entries.some((e) => e.literal === null)) return expr([], 1);
+  if (entries.length === 1) return expr([[entries[0]!.literal!, 1]]);
+  return expr([
+    [
+      ctx.b.exactOr(
+        entries.map((e) => e.literal!),
+        `${label} any`,
+      ),
+      1,
+    ],
+  ]);
 }
 
 /** Preferences and straight-time cost: a fixed price per (nurse, shift), locked shifts included. */

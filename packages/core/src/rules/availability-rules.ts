@@ -47,6 +47,16 @@ export const timeOffRule: Rule<TimeOffParams> = {
   category: 'coverage',
   scope: 'nurse',
   defaultParams: { nightShiftEndingOnLeaveCounts: false },
+  paramDocs: {
+    nightShiftEndingOnLeaveCounts: {
+      label: 'Leave covers the night before',
+      hint: 'A shift that ends on the first morning of leave counts as working during it.',
+      why:
+        'Off by default: leave on Saturday removes the shifts that start on Saturday, so the ' +
+        'nurse may still work Friday night and finish Saturday at 07:00. Turn it on if your ' +
+        'contract makes a day off a whole calendar day free of work.',
+    },
+  },
 
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];
@@ -154,6 +164,15 @@ export const overlapRule: Rule<OverlapParams> = {
   category: 'coverage',
   scope: 'nurse',
   defaultParams: { allowOnCallDuringShift: false },
+  paramDocs: {
+    allowOnCallDuringShift: {
+      label: 'Allow on-call during a shift',
+      hint: 'Whether a nurse may be on standby while also working a shift.',
+      why:
+        'Leave this off: a nurse at the bedside cannot also be called in. Turn it on only if ' +
+        'your on-call is a separate role that someone working can hold.',
+    },
+  },
 
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];

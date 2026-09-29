@@ -383,6 +383,46 @@ describe('agreement with the rule engine', () => {
     expectParity(parityInput({ ...paidLeave, ruleSet }));
   });
 
+  it('agrees with the rules when the holiday rotation is hard', () => {
+    // Ada worked last year's Winter Day; the eve before the period pairs with its first day,
+    // and Ada's lookback night falls on the eve.
+    const h = (
+      id: string,
+      date: string,
+      name: string,
+      isMajor: boolean,
+      paired: string | null,
+    ) => ({
+      id,
+      unitId: UNIT_ID,
+      date: isoDate(date),
+      name,
+      isMajor,
+      pairedHolidayId: paired,
+    });
+    const base = withParams('holiday-rotation', { pairMinorWithMajor: true });
+    const ruleSet: RuleSet = {
+      ...base,
+      configs: base.configs.map((c) =>
+        c.ruleId === 'holiday-rotation' ? { ...c, severityOverride: 'hard' as const } : c,
+      ),
+    };
+    expectParity(
+      parityInput({
+        ruleSet,
+        holidays: [
+          h('winter-25', '2025-01-08', 'Winter Day', true, null),
+          h('winter-26', '2026-01-08', 'Winter Day', true, null),
+          h('eve-26', '2026-01-03', 'First Eve', false, 'first-26'),
+          h('first-26', '2026-01-04', 'First Day', true, null),
+          h('mid-eve', '2026-01-12', 'Mid Eve', false, 'mid-26'),
+          h('mid-26', '2026-01-13', 'Mid Day', true, null),
+        ],
+        holidayWork: [{ holidayId: 'winter-25', nurseId: 'ada' }],
+      }),
+    );
+  });
+
   it('agrees with the rules when overtime is judged over the pay period', () => {
     // 60h a pay period, so the threshold binds below both nurses' contract caps.
     const ruleSet = withParams('max-hours-per-week', {
@@ -470,7 +510,14 @@ describe('parity with the annealer', () => {
         ...coverageAllWeek(ON_CALL, 'RN', 0, 1),
       ],
       holidays: [
-        { id: 'h1', unitId: UNIT_ID, date: isoDate('2026-01-19'), name: 'MLK Day', isMajor: true },
+        {
+          id: 'h1',
+          unitId: UNIT_ID,
+          date: isoDate('2026-01-19'),
+          name: 'MLK Day',
+          isMajor: true,
+          pairedHolidayId: null,
+        },
       ],
       preferences,
       ledgerHistory: nurses.slice(0, 4).map((n, i) => history(n.id, i * 2, i)),
@@ -674,6 +721,113 @@ describe('parity with the annealer', () => {
         expect(evaluation.violated).toEqual([]);
         expect(evaluation.objective).toBeCloseTo(expected, 0);
       }
+    });
+  });
+
+  describe('holiday rotation', () => {
+    // Last year's MLK Day was worked by nurses 0–2; the Sunday before this year's is a minor
+    // holiday paired with it, so nurses working both are priced too.
+    const holidayInput = (severity?: 'hard'): SolveInput => {
+      const base = richInput();
+      const ids = base.nurses.map((n) => n.id);
+      const h = (
+        id: string,
+        date: string,
+        name: string,
+        isMajor: boolean,
+        paired: string | null,
+      ) => ({
+        id,
+        unitId: UNIT_ID,
+        date: isoDate(date),
+        name,
+        isMajor,
+        pairedHolidayId: paired,
+      });
+      return {
+        ...base,
+        ruleSet: {
+          ...base.ruleSet,
+          configs: base.ruleSet.configs.map((c) =>
+            c.ruleId === 'holiday-rotation'
+              ? {
+                  ...c,
+                  params: { ...c.params, pairMinorWithMajor: true },
+                  ...(severity ? { severityOverride: severity } : {}),
+                }
+              : c,
+          ),
+        },
+        holidays: [
+          h('mlk-25', '2025-01-20', 'MLK Day', true, null),
+          h('mlk-26', '2026-01-19', 'MLK Day', true, null),
+          h('eve-26', '2026-01-18', 'MLK Eve', false, 'mlk-26'),
+          // Paired months apart: nurses 3 and 4 worked Labor Day, so MLK Day is the other half's.
+          h('labor-25', '2025-09-01', 'Labor Day', false, 'mlk-26'),
+        ],
+        holidayWork: [
+          ...[0, 1, 2].map((i) => ({ holidayId: 'mlk-25', nurseId: ids[i]! })),
+          ...[3, 4].map((i) => ({ holidayId: 'labor-25', nurseId: ids[i]! })),
+        ],
+      };
+    };
+
+    it('prices random rosters the same as the annealer', () => {
+      const input = holidayInput();
+      const encoding = encodeCpsat(input);
+      const rng = new Rng(19);
+      let breached = 0;
+      for (let trial = 0; trial < 60; trial++) {
+        const seen = new Set<string>();
+        const assignments = [...input.assignments];
+        for (const sv of encoding.shiftVars) {
+          const day = `${sv.nurseId}|${sv.shift.date}`;
+          const onHoliday = sv.shift.date === '2026-01-18' || sv.shift.date === '2026-01-19';
+          if (seen.has(day) || !rng.chance(onHoliday ? 0.5 : 0.1)) continue;
+          seen.add(day);
+          assignments.push(assign(sv.nurseId, sv.shift.shiftType, sv.shift.date));
+        }
+        const evaluation = evaluate(encoding, assignments);
+        const model = new SolverModel(input);
+        for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+        if (model.holidayBreaches() > 0) breached++;
+        expect(evaluation.objective, `trial ${trial}`).toBeCloseTo(model.breakdown().total, 0);
+      }
+      // Most rosters must actually break the rotation, or this proves nothing.
+      expect(breached).toBeGreaterThan(40);
+    });
+
+    it("accepts the annealer's schedules and prices them the same", () => {
+      const input = holidayInput();
+      const report = solve(input, { seed: 1, maxIterations: 4000 });
+      const { evaluation, expected } = both(input, report.assignments);
+      expect(evaluation.violated).toEqual([]);
+      expect(evaluation.objective).toBeCloseTo(expected, 0);
+    });
+
+    it('forbids an owed holiday and a pair outright when the rule is hard', () => {
+      const input = holidayInput('hard');
+      const encoding = encodeCpsat(input);
+      // Nurse 0 worked last year's MLK Day; nurse 3 worked Labor Day, paired with this MLK Day;
+      // nurses 5 and 6 have no holiday history.
+      const [owed, , , laborDay, , fresh, other] = input.nurses.map((n) => n.id);
+      expect(
+        evaluate(encoding, [...input.assignments, assign(owed!, DAY_12, '2026-01-19')]).violated,
+      ).toEqual([expect.stringContaining('holiday owed off')]);
+      expect(
+        evaluate(encoding, [
+          ...input.assignments,
+          assign(fresh!, DAY_12, '2026-01-18'),
+          assign(fresh!, DAY_12, '2026-01-19'),
+        ]).violated,
+      ).toEqual([expect.stringContaining('holiday pair')]);
+      expect(
+        evaluate(encoding, [...input.assignments, assign(laborDay!, DAY_12, '2026-01-19')])
+          .violated,
+      ).toEqual([expect.stringContaining('Labor Day 2025-09-01 on record')]);
+      expect(
+        evaluate(encoding, [...input.assignments, assign(other!, DAY_12, '2026-01-19')]).violated,
+      ).toEqual([]);
     });
   });
 

@@ -7,7 +7,7 @@
  * derivation exists and packages/core/src/acuity/forecast.ts for why the model stays simple.
  */
 
-import type { Id, IsoDate, ShiftType } from '@shiftnurse/core';
+import type { Id, IsoDate, SchedulePeriod, ShiftType } from '@shiftnurse/core';
 import { addDays, datesInRange, isoDate, today } from '@shiftnurse/core';
 import { useMemo, useState } from 'react';
 import { usePeriods, useShiftTypes } from '../api.js';
@@ -23,7 +23,9 @@ import {
   useUpsertManyCensus,
 } from '../api-demand.js';
 import { AsyncState } from '../components/async-state.js';
+import { HppdSummary } from '../components/hppd-summary.js';
 import { PageHeader } from '../components/page-header.js';
+import { formatDate } from '../format.js';
 import { useUnitId } from '../unit-context.js';
 import { BacktestPanel } from './demand/backtest-panel.js';
 import { CensusGrid } from './demand/census-grid.js';
@@ -33,13 +35,17 @@ import { ProposeDialog } from './demand/propose-dialog.js';
 const LOOKBACK_OPTIONS = [4, 8, 12] as const;
 
 /** The current draft period if there is one, else the next 14 days from today. */
-function useDefaultRange(unitId: Id | undefined): { start: IsoDate; end: IsoDate } {
+function useDefaultRange(unitId: Id | undefined): {
+  start: IsoDate;
+  end: IsoDate;
+  draft: SchedulePeriod | undefined;
+} {
   const periodsQuery = usePeriods(unitId);
   return useMemo(() => {
     const draft = periodsQuery.data?.find((p) => p.status === 'draft');
-    if (draft !== undefined) return { start: draft.startDate, end: draft.endDate };
+    if (draft !== undefined) return { start: draft.startDate, end: draft.endDate, draft };
     const start = today();
-    return { start, end: addDays(start, 13) };
+    return { start, end: addDays(start, 13), draft: undefined };
   }, [periodsQuery.data]);
 }
 
@@ -191,6 +197,15 @@ export default function DemandPage() {
               }}
             />
           </section>
+
+          {defaultRange.draft !== undefined ? (
+            <section className="mb-8 max-w-xl">
+              <HppdSummary
+                periodId={defaultRange.draft.id}
+                title={`Scheduled HPPD, draft ${formatDate(defaultRange.draft.startDate)} – ${formatDate(defaultRange.draft.endDate)}`}
+              />
+            </section>
+          ) : null}
 
           <section className="mb-8">
             <h2 className="mb-2 text-sm font-semibold text-text">Derived staffing demand</h2>

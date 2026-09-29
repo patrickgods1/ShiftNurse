@@ -481,6 +481,33 @@ violations of their own.
   `weekLeaveHours`, the CP-SAT caps subtract it (rounded down to integer hundredths), the cost
   engine starts a week's overtime count with it via `CostContext.overtimeLeaveHours`, and
   compliance alerts count it. `SolveInput.paidSickCalls` comes from `loadPeriodInput`.
+- **Every rule parameter is documented on the rule.** `Rule.paramDocs` (label, hint, why, and
+  `input`/`optional`/`min`/`activeWhen` for the editor) is typed to cover every key of `P`, and
+  Settings › Rules builds its form from it; `param-docs.test.ts` fails on a gap. A new rule's
+  parameters are not done until a manager can read what they do. Help in the renderer follows
+  `components/field-help.tsx`: a visible hint for what a setting does, an ⓘ tip for why to change
+  it, the tip never inside the `<label>`.
+- **Holidays rotate by name, year to year.** `rules/holiday-rotation.ts` (soft, nurse scope):
+  a nurse who worked last year's occurrence — same name, 300–430 days earlier — is owed this
+  year's off; with `pairMinorWithMajor`, a minor holiday's `pairedHolidayId` major (any major, any
+  distance — the manager's choice) keeps one nurse off both. A pair is judged by the period that
+  holds its later half, reading the earlier half from history; `holidayWorkForPeriod` loads the
+  far half's record however long ago it was. "Who worked" is `HolidayWorkRecord`s from `holidayWorkForPeriod` (published
+  schedules, or the hand-recorded `holiday_work` list once `holiday.work_recorded` is set, which
+  is authoritative even empty). Both solvers price breaches from `SolverModel.holidayFacts` at
+  `holidayRotation` (in the fairness bucket); hard, the gate and `encodeHolidayRotation` forbid
+  them. A shift dated on the holiday counts, standby does not — as for pay and the ledger.
+  Names are matched by `holidayNameKey` (case, spacing and punctuation ignored), and a year is
+  added by rolling the last forward — `setup/holiday-year.ts`'s `planHolidayYear` (federal names
+  take their new date, others keep month and day; pairings carried, a cross-year pair re-linked
+  as `repairs` once its partner's year is added), saved by `addHolidayYear` in one transaction —
+  so names and pairings stay the same year to year instead of being re-typed.
+- **A major holiday earns `major_holiday` in place of `holiday`, never both,** and only when the
+  unit has a major premium; otherwise it earns the holiday premium as before, so existing units
+  price unchanged. `CostContext.majorHolidayDates` carries which dates are major.
+- **Forms that hold edits until Save register with `useUnsavedChanges`.** Settings tab switches
+  await `useConfirmDiscard`, `NavigationGuard` guards routes and window unload, and main answers
+  Electron's `will-prevent-unload` with a native dialog (skipped in a smoke run).
 - **`contractedHoursPerPeriod` is per pay period, not per schedule period.** A six-week
   period is three pay periods; anything comparing scheduled hours to the contract must scale by
   `periodDays / unit.payPeriodDays` (compliance alerts do; the under-hours rule works per pay
@@ -488,6 +515,10 @@ violations of their own.
 - **Backups use SQLite's online backup API**, never a file copy — a WAL database copied by
   hand loses un-checkpointed pages. The smoke run builds core/db from `dist`, so rebuild packages
   (`npm run build:packages`) after touching core before trusting a smoke result.
+- **HPPD and acuity care hours are advisory.** `ShiftDemand.careHoursRecommendedNurses` (care hours
+  ÷ shift length) and `hppdRecommendedNurses` show on the Demand page; `acuity/hppd.ts`'s
+  `scheduledHppd` compares a period's scheduled hours per patient day with the target on the Demand
+  page and Dashboard. Neither changes a minimum, and Generate reads neither.
 - **Costing is never a silent zero.** A nurse with no resolvable pay rate makes their shifts
   *unpriced* (`rateSource: 'none'`, counted in `unpricedAssignments`) and every cost surface
   shows that count next to the total. Overtime is priced per nurse-week over the full timeline

@@ -47,7 +47,6 @@ import {
   upsertHppdTarget,
 } from './acuity.js';
 import {
-  createHoliday,
   createShiftType,
   createUnit,
   getUnit,
@@ -57,6 +56,7 @@ import {
   listUnits,
   upsertCoverageRequirement,
 } from './config.js';
+import { createHoliday } from './holidays.js';
 import { createPayRate, listPayRatesForUnit } from './pay.js';
 import { getLatestRuleSet, saveRuleSet } from './rulesets.js';
 

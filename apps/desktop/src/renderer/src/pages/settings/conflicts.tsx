@@ -8,7 +8,9 @@ import type { AutoResolvePolicy } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useConflictPolicy, useSaveConflictPolicy } from '../../api-requests.js';
 import { AsyncState } from '../../components/async-state.js';
-import { INPUT, LABEL, PRIMARY } from '../../components/ui.js';
+import { describedBy, Field } from '../../components/field-help.js';
+import { INPUT, PRIMARY } from '../../components/ui.js';
+import { useUnsavedChanges } from '../../components/unsaved-changes.js';
 import { useUnitId } from '../../unit-context.js';
 
 export default function ConflictsPanel() {
@@ -40,6 +42,7 @@ function PolicyForm({ saved }: { saved: AutoResolvePolicy }) {
     enabled !== saved.enabled ||
     costNumber !== saved.maxCostDelta ||
     dropNumber !== saved.maxFairnessDrop;
+  useUnsavedChanges('Conflicts', dirty);
 
   return (
     <section
@@ -77,28 +80,50 @@ function PolicyForm({ saved }: { saved: AutoResolvePolicy }) {
           />
           Allow automatic resolution
         </label>
-        <label className={LABEL}>
-          Maximum added cost per resolution (dollars)
+        <Field
+          id="policy-max-cost"
+          label="Most added cost per resolution (dollars)"
+          hint="A fix that adds more than this to the schedule's cost is left for you to decide."
+          tip={
+            'Overtime, differentials and agency staff all add cost. 0 allows only fixes that cost ' +
+            'nothing extra; a few hundred dollars lets it apply a fix such as one overtime shift.'
+          }
+          disabled={!enabled}
+        >
           <input
+            id="policy-max-cost"
             type="number"
             min={0}
             step={1}
             className={INPUT}
             value={maxCost}
+            disabled={!enabled}
+            aria-describedby={describedBy('policy-max-cost', { hint: true })}
             onChange={(e) => setMaxCost(e.target.value)}
           />
-        </label>
-        <label className={LABEL}>
-          Maximum drop in unit fairness score (points, 0–100 scale)
+        </Field>
+        <Field
+          id="policy-max-drop"
+          label="Most drop in unit fairness score (points)"
+          hint="The fairness score runs 0–100. A fix that lowers it by more is left for you."
+          tip={
+            'A small allowance, 1 or 2 points, lets it fix conflicts that shift a little burden ' +
+            'onto someone. 0 allows only fixes that leave the team at least as fair as before.'
+          }
+          disabled={!enabled}
+        >
           <input
+            id="policy-max-drop"
             type="number"
             min={0}
             step={0.5}
             className={INPUT}
             value={maxDrop}
+            disabled={!enabled}
+            aria-describedby={describedBy('policy-max-drop', { hint: true })}
             onChange={(e) => setMaxDrop(e.target.value)}
           />
-        </label>
+        </Field>
         {save.error instanceof Error ? (
           <p role="alert" className="text-sm text-danger">
             {save.error.message}

@@ -12,7 +12,8 @@ import {
   useDeleteAcuityTier,
   useUpdateAcuityTier,
 } from '../../../api-config.js';
-import { OVERLAY, POPUP } from '../../../components/ui.js';
+import { describedBy, Field } from '../../../components/field-help.js';
+import { INPUT, OVERLAY, POPUP, PRIMARY, SECONDARY } from '../../../components/ui.js';
 
 interface TierFormState {
   name: string;
@@ -77,58 +78,61 @@ function TierForm({
         onSubmit(form);
       }}
     >
-      <label className="flex flex-col gap-1 text-sm text-text">
-        Name
+      <Field id="tier-name" label="Name" hint="As your unit says it, such as “Stable” or “High”.">
         <input
+          id="tier-name"
           type="text"
           required
           value={form.name}
+          aria-describedby={describedBy('tier-name', { hint: true })}
           onChange={(event) => setForm({ ...form, name: event.target.value })}
-          className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+          className={INPUT}
         />
-      </label>
-      <label className="flex flex-col gap-1 text-sm text-text">
-        Level (1 = lowest acuity)
+      </Field>
+      <Field
+        id="tier-level"
+        label="Level"
+        hint="1 for the least sick patients. It orders the tiers in lists and census entry."
+      >
         <input
+          id="tier-level"
           type="number"
           required
           min={1}
           step={1}
           value={form.level}
+          aria-describedby={describedBy('tier-level', { hint: true })}
           onChange={(event) => setForm({ ...form, level: event.target.value })}
-          className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+          className={INPUT}
         />
-      </label>
-      <label className="flex flex-col gap-1 text-sm text-text">
-        Care hours per patient day
+      </Field>
+      <Field
+        id="tier-care-hours"
+        label="Care hours per patient day"
+        hint="Nursing care hours one patient at this tier needs in a day."
+        tip={
+          'Take it from your acuity tool or unit standard. The Demand page adds it up over the ' +
+          'census to show the staff each shift’s patients need, beside what the HPPD budget pays ' +
+          'for. It is advisory: the patient ratios and coverage floors set the minimum.'
+        }
+      >
         <input
+          id="tier-care-hours"
           type="number"
           required
           min={0.01}
           step={0.1}
           value={form.careHoursPerPatientDay}
+          aria-describedby={describedBy('tier-care-hours', { hint: true })}
           onChange={(event) => setForm({ ...form, careHoursPerPatientDay: event.target.value })}
-          className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+          className={INPUT}
         />
-        <span className="text-xs text-text-muted">
-          Nursing care hours a single patient at this tier needs per day. Feeds the HPPD calculation
-          and derived staffing demand.
-        </span>
-      </label>
+      </Field>
       <div className="mt-2 flex justify-end gap-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg"
-        >
+        <button type="button" onClick={onCancel} className={SECONDARY}>
           Cancel
         </button>
-        <button
-          type="submit"
-          disabled={!valid}
-          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90
-            disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <button type="submit" disabled={!valid} className={PRIMARY}>
           {submitLabel}
         </button>
       </div>
@@ -201,13 +205,15 @@ export function AcuityTiersSection({ unitId, tiers }: { unitId: string; tiers: A
 
   return (
     <section>
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-text">Acuity tiers</h2>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
-        >
+      <div className="mb-3 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-sm font-semibold text-text">Acuity tiers</h2>
+          <p className="mt-1 max-w-prose text-sm text-text-muted">
+            How sick patients are, in levels. The census on the Demand page is entered per tier, and
+            patient ratios can be set per tier.
+          </p>
+        </div>
+        <button type="button" onClick={() => setCreating(true)} className={PRIMARY}>
           Add tier
         </button>
       </div>
@@ -314,7 +320,7 @@ export function AcuityTiersSection({ unitId, tiers }: { unitId: string; tiers: A
               <button
                 type="button"
                 onClick={() => setConfirmingDelete(undefined)}
-                className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg"
+                className={SECONDARY}
               >
                 Cancel
               </button>

@@ -89,12 +89,12 @@ import {
 } from '../../repositories/calloffs.js';
 import { recordActualCensus, upsertCensusForecast } from '../../repositories/census.js';
 import {
-  createHoliday,
   createShiftCredentialRequirement,
   createShiftType,
   createUnit,
   upsertCoverageRequirement,
 } from '../../repositories/config.js';
+import { createHoliday } from '../../repositories/holidays.js';
 import { createIncompatibilityGroup } from '../../repositories/incompatibility.js';
 import {
   importFairnessLedgerEntries,

@@ -26,6 +26,7 @@ import {
   deleteAssignment,
   demandInputs,
   getLatestRuleSet,
+  holidayWorkForPeriod,
   listAssignmentsForPeriod,
   listCredentials,
   listHolidaysForUnit,
@@ -85,6 +86,7 @@ export function validateView(
       end: period.endDate,
     }),
     incompatibilityGroups: listIncompatibilityGroups(db, period.unitId),
+    holidayWork: holidayWorkForPeriod(db, period),
   });
   return { ruleSet, result: evaluateSchedule(schedule, ruleSet, ctx) };
 }

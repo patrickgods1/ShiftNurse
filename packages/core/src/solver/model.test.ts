@@ -31,6 +31,7 @@ import {
 } from '../testing/fixtures.js';
 import { SolverModel } from './model.js';
 import { Rng } from './rng.js';
+import { solve } from './solver.js';
 import type { SolveInput } from './types.js';
 
 beforeEach(() => {
@@ -42,7 +43,7 @@ beforeEach(() => {
  * `groups`: keep five of the staff apart (one the nurse with the lookback night, one an LPN), and
  * two more from the 8th, so the walk keeps pairing and parting incompatible nurses.
  */
-function scenario({ mid = false, groups = false } = {}): SolveInput {
+function scenario({ mid = false, groups = false, holidays = false } = {}): SolveInput {
   const nurses: Nurse[] = [
     ...Array.from({ length: 8 }, (_, i) =>
       makeNurse({ isChargeEligible: i % 3 === 0, contractedHoursPerPeriod: i === 7 ? 0 : 72 }),
@@ -116,9 +117,45 @@ function scenario({ mid = false, groups = false } = {}): SolveInput {
     assignments: [pinned],
     priorAssignments: [prior],
     holidays: [
-      { id: 'h1', unitId: 'unit-1', date: isoDate('2026-01-08'), name: 'Test day', isMajor: false },
+      {
+        id: 'h1',
+        unitId: 'unit-1',
+        date: isoDate('2026-01-08'),
+        name: 'Test day',
+        isMajor: false,
+        pairedHolidayId: holidays ? 'winter-26' : null,
+      },
+      ...(holidays ? rotationHolidays() : []),
     ],
+    ...(holidays
+      ? {
+          // Four nurses worked last year's Winter Day; the eve before the period pairs with
+          // the period's first day, so the lookback night is half a pair.
+          holidayWork: [0, 1, 2, 3].map((i) => ({
+            holidayId: 'winter-25',
+            nurseId: nurses[i]!.id,
+          })),
+          ruleParams: { 'holiday-rotation': { pairMinorWithMajor: true } },
+        }
+      : {}),
   });
+}
+
+function rotationHolidays() {
+  const h = (id: string, date: string, name: string, isMajor: boolean, paired: string | null) => ({
+    id,
+    unitId: 'unit-1',
+    date: isoDate(date),
+    name,
+    isMajor,
+    pairedHolidayId: paired,
+  });
+  return [
+    h('winter-25', '2025-01-09', 'Winter Day', true, null),
+    h('winter-26', '2026-01-09', 'Winter Day', true, null),
+    h('eve-26', '2026-01-03', 'First Eve', false, 'first-26'),
+    h('first-26', '2026-01-04', 'First Day', true, null),
+  ];
 }
 
 /** The same schedule, built the slow way: a fresh model, fed each shift's roster in order. */
@@ -147,6 +184,34 @@ describe('SolverModel bookkeeping', () => {
     // re-price the mid 8 too — and an undo has to put its old price back.
     // Checked after every step: a stale mid 8 is often re-priced by its own next move.
     walk(scenario({ mid: true }), 1);
+  });
+
+  it('keeps the holiday rotation priced right as shifts land on and leave holidays', () => {
+    // Nurses owed Winter Day off, a minor holiday paired with it, and a pair split across the
+    // lookback tail: every add and undo on those dates moves the count.
+    walk(scenario({ holidays: true }), 1);
+  });
+
+  it('prices each holiday-rotation breach at the holiday weight', () => {
+    const input = scenario({ holidays: true });
+    // Nurse 0 is owed Winter Day (the 9th, day 5) off and works it; nurse 4, on the lookback
+    // night of First Eve, works First Day (the 4th, day 0), the major it is paired with.
+    const place = (model: SolverModel) => {
+      for (const [i, day] of [
+        [0, 5],
+        [4, 0],
+      ] as const) {
+        const n = model.nurseIdx.get(input.nurses[i]!.id)!;
+        model.add(model.make(n, model.shiftAt(day, DAY_12)));
+      }
+      return model;
+    };
+    const priced = place(new SolverModel(input));
+    const free = place(new SolverModel(input, { holidayRotation: 0 }));
+    expect(priced.holidayBreaches()).toBe(2);
+    // Two breaches at 55 points each; nothing else differs between the two models.
+    expect(priced.breakdown().fairness - free.breakdown().fairness).toBeCloseTo(110, 6);
+    expect(priced.objective() - free.objective()).toBeCloseTo(110, 6);
   });
 
   it('keeps the price of incompatible nurses right as they are paired and parted', () => {
@@ -212,6 +277,88 @@ function walk(input: SolveInput, checkEvery = 25): Record<string, number> {
   }
   return peak;
 }
+
+describe('holiday rotation in Generate', () => {
+  function christmas(workedLastYear: string) {
+    const ana = makeNurse({ id: 'ana', isChargeEligible: true, contractedHoursPerPeriod: 0 });
+    const ben = makeNurse({ id: 'ben', isChargeEligible: true, contractedHoursPerPeriod: 0 });
+    const h = (id: string, date: string) => ({
+      id,
+      unitId: 'unit-1',
+      date: isoDate(date),
+      name: 'Christmas Day',
+      isMajor: true,
+      pairedHolidayId: null,
+    });
+    return solveInputFrom({
+      startDate: isoDate('2026-12-25'),
+      endDate: isoDate('2026-12-25'),
+      nurses: [ana, ben],
+      shiftTypes: [DAY_12],
+      coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1, 1),
+      holidays: [h('xmas-25', '2025-12-25'), h('xmas-26', '2026-12-25')],
+      holidayWork: [{ holidayId: 'xmas-25', nurseId: workedLastYear }],
+    });
+  }
+
+  it('gives Christmas to the nurse who had it off last year', () => {
+    // Run both ways round, so the answer is the rotation and not roster order.
+    for (const [worked, expected] of [
+      ['ana', 'ben'],
+      ['ben', 'ana'],
+    ] as const) {
+      const report = solve(christmas(worked), { seed: 1, maxIterations: 500 });
+      expect(
+        report.assignments.map((a) => a.nurseId),
+        `${worked} worked last year`,
+      ).toEqual([expected]);
+    }
+  });
+
+  it('gives Thanksgiving to the nurse who did not work Memorial Day, when the unit pairs them', () => {
+    const thanksgiving = (workedMemorialDay: string) =>
+      solveInputFrom({
+        startDate: isoDate('2026-11-26'),
+        endDate: isoDate('2026-11-26'),
+        nurses: [
+          makeNurse({ id: 'ana', isChargeEligible: true, contractedHoursPerPeriod: 0 }),
+          makeNurse({ id: 'ben', isChargeEligible: true, contractedHoursPerPeriod: 0 }),
+        ],
+        shiftTypes: [DAY_12],
+        coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1, 1),
+        holidays: [
+          {
+            id: 'tg',
+            unitId: 'unit-1',
+            date: isoDate('2026-11-26'),
+            name: 'Thanksgiving Day',
+            isMajor: true,
+            pairedHolidayId: null,
+          },
+          {
+            id: 'mem',
+            unitId: 'unit-1',
+            date: isoDate('2026-05-25'),
+            name: 'Memorial Day',
+            isMajor: false,
+            pairedHolidayId: 'tg',
+          },
+        ],
+        holidayWork: [{ holidayId: 'mem', nurseId: workedMemorialDay }],
+        ruleParams: { 'holiday-rotation': { pairMinorWithMajor: true } },
+      });
+    for (const [worked, expected] of [
+      ['ana', 'ben'],
+      ['ben', 'ana'],
+    ] as const) {
+      const report = solve(thanksgiving(worked), { seed: 1, maxIterations: 500 });
+      expect(
+        report.assignments.map((a) => a.nurseId),
+        `${worked} worked Memorial Day`,
+      ).toEqual([expected]);
+    }
+  });
+});
 
 describe('paid leave in the hours the objective chases', () => {
   it('does not count a nurse back from a paid vacation as still owed hours', () => {

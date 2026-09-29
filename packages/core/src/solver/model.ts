@@ -68,6 +68,13 @@ import {
 } from '../fairness/types.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import {
+  type HolidayRotationFacts,
+  type HolidayRotationParams,
+  holidayRotationFacts,
+  holidayRotationRule,
+  workedInHistory,
+} from '../rules/holiday-rotation.js';
+import {
   type ContractedHoursParams,
   contractedHoursRule,
   type MaxHoursParams,
@@ -186,6 +193,8 @@ export class SolverModel {
   private incompatSum = 0;
   private prefSum = 0;
   private costSum = 0;
+  /** Holiday-rotation breaches as the schedule stands (see `holidayRotationFacts`). */
+  private holidaySum = 0;
 
   // --- Per-nurse counters feeding fairness and hours ---------------------------
   private readonly workedHours: number[];
@@ -278,6 +287,17 @@ export class SolverModel {
   readonly shareWeight: number[];
   readonly teamShare: number;
   readonly seniority: number[];
+  /** What the holiday rotation owes and pairs for this period; empty while the rule is off. */
+  readonly holidayFacts: HolidayRotationFacts;
+  /** Points per breach: the weight while the rule is soft; 0 when hard (the gate keeps breaches
+   * out) or off. */
+  readonly holidayPrice: number;
+  /** nurse → holiday dates in the period they are owed off. */
+  private readonly owedOffDates: (ReadonlySet<IsoDate> | undefined)[];
+  /** date → the pair sides that fall on it (pair index, 0 minor / 1 major). */
+  private readonly pairSidesOn = new Map<IsoDate, { pair: number; side: 0 | 1 }[]>();
+  /** nurse × (pair · 2 + side) → worked shifts on that date, lookback tail included. */
+  private readonly pairWork: number[][];
   private readonly prefCache = new Map<number, number>();
   private readonly undesirableCache = new Map<number, boolean>();
   private readonly costCache = new Map<number, number>();
@@ -310,6 +330,7 @@ export class SolverModel {
       ...(input.incompatibilityGroups
         ? { incompatibilityGroups: input.incompatibilityGroups }
         : {}),
+      ...(input.holidayWork ? { holidayWork: input.holidayWork } : {}),
     });
 
     const shifts: Shift[] = [];
@@ -383,6 +404,27 @@ export class SolverModel {
       shortfall: perHour(bufferSeverity),
       minOutsideStaff: bufferSeverity === null ? 0 : (bufferParams?.minOutsideStaff ?? 0),
     };
+    // --- Holiday rotation: which holidays each nurse is owed off, which dates are paired. ---
+    const rotationSeverity = severityOf(holidayRotationRule.id);
+    this.holidayFacts =
+      rotationSeverity === null
+        ? { owedOff: new Map(), pairs: [] }
+        : holidayRotationFacts(
+            this.ctx,
+            configs.find((c) => c.ruleId === holidayRotationRule.id)!
+              .params as unknown as HolidayRotationParams,
+            { start: input.period.startDate, end: input.period.endDate },
+          );
+    this.holidayPrice = rotationSeverity === 'soft' ? this.weights.holidayRotation : 0;
+    this.owedOffDates = this.nurses.map((nurse) => this.holidayFacts.owedOff.get(nurse.id));
+    for (const [pair, { minor, major }] of this.holidayFacts.pairs.entries()) {
+      for (const [side, date] of [minor.date, major.date].entries()) {
+        const list = this.pairSidesOn.get(date) ?? [];
+        list.push({ pair, side: side as 0 | 1 });
+        this.pairSidesOn.set(date, list);
+      }
+    }
+
     const priced = this.incompatibilityPrice.excess > 0 || this.incompatibilityPrice.shortfall > 0;
     // The day before the period too: its night is on the floor on the first morning.
     this.incompatibilityGroups = priced
@@ -424,6 +466,7 @@ export class SolverModel {
           differentials: input.cost.differentials.filter((d) => d.active),
           overtimeRules: input.cost.overtimeRules.filter((r) => r.active),
           holidayDates: this.ctx.holidayDates,
+          majorHolidayDates: this.ctx.majorHolidayDates,
           weekendDefinition: input.ruleSet.weekendDefinition,
           workWeekStartsOn: maxHours.workWeekStartsOn,
           ...(maxHours.paidLeaveCountsTowardOvertime
@@ -543,6 +586,24 @@ export class SolverModel {
         if (week >= 0 && week < this.weekCount) this.weekHours[i]![week]! += st.durationHours;
         const w = this.overtimeOf(a.date);
         if (w >= 0 && w < this.overtimeCount) this.overtimeHours[i]![w]! += st.durationHours;
+      }
+    }
+    // The half of a pair already behind the period: worked in the lookback tail (Christmas Eve
+    // last period), or on record however long ago (Memorial Day for a Thanksgiving pair).
+    this.pairWork = this.nurses.map((nurse) =>
+      this.holidayFacts.pairs.flatMap(({ minor, major }) =>
+        [minor, major].map((h) =>
+          workedInHistory(this.ctx, nurse.id, h, input.period.startDate) ? 1 : 0,
+        ),
+      ),
+    );
+    for (const [i, list] of prior.entries()) {
+      for (const a of list) {
+        const st = this.shiftTypes.find((s) => s.id === a.shiftTypeId);
+        if (!st || st.isOnCall) continue;
+        for (const { pair, side } of this.pairSidesOn.get(a.date) ?? []) {
+          this.pairWork[i]![pair * 2 + side]! += 1;
+        }
       }
     }
     this.hoursPenalty = new Array<number>(n).fill(0);
@@ -908,6 +969,7 @@ export class SolverModel {
       if (st.isNight) this.nights[n]! += sign;
       if (this.ctx.holidayDates.has(shift.date)) this.holidays[n]! += sign;
       if (this.isUndesirable(n, shift)) this.undesirable[n]! += sign;
+      if (this.ctx.holidayDates.has(shift.date)) this.countHolidayRotation(n, shift.date, sign);
       const key = weekendKey(shiftWindow(shift.date, st), this.ctx.weekendDefinition);
       if (key !== null) {
         const keys = this.weekendKeys[n]!;
@@ -918,6 +980,25 @@ export class SolverModel {
     }
     this.prefSum += sign * this.preferencePenalty(n, shift);
     this.costSum += sign * this.shiftCost(n, shift, a);
+  }
+
+  /** A worked shift on a holiday date: an owed-off breach, and the pair it may complete. */
+  private countHolidayRotation(n: number, date: IsoDate, sign: 1 | -1): void {
+    if (this.owedOffDates[n]?.has(date)) this.holidaySum += sign;
+    const sides = this.pairSidesOn.get(date);
+    if (!sides) return;
+    const work = this.pairWork[n]!;
+    for (const { pair, side } of sides) {
+      const both = () => (work[pair * 2]! > 0 && work[pair * 2 + 1]! > 0 ? 1 : 0);
+      const before = both();
+      work[pair * 2 + side]! += sign;
+      this.holidaySum += both() - before;
+    }
+  }
+
+  /** Holiday-rotation breaches as the schedule stands. */
+  holidayBreaches(): number {
+    return this.holidaySum;
   }
 
   /**
@@ -944,6 +1025,7 @@ export class SolverModel {
       this.incompatSum +
       this.hoursSum +
       this.fairness() +
+      this.holidaySum * this.holidayPrice +
       this.prefSum * this.weights.preference +
       this.costSum * this.weights.cost
     );
@@ -953,7 +1035,8 @@ export class SolverModel {
     const coverage = this.coverageSum;
     const incompatibility = this.incompatSum;
     const hours = this.hoursSum;
-    const fairness = this.fairness();
+    // The holiday rotation is fairness between nurses, so it is reported with it.
+    const fairness = this.fairness() + this.holidaySum * this.holidayPrice;
     const preferences = this.prefSum * this.weights.preference;
     const cost = this.costSum * this.weights.cost;
     return {

@@ -10,10 +10,12 @@ import {
   addDays,
   type CostContext,
   compareDates,
+  dateInRange,
   datesInRange,
   deriveDemand,
   type FairnessLedgerEntry,
   groupsForPeriod,
+  type HolidayWorkRecord,
   type Id,
   type IsoDate,
   type MaxHoursParams,
@@ -35,6 +37,7 @@ import {
   listShiftCredentialRequirementsForUnit,
   listShiftTypesForUnit,
 } from './config.js';
+import { holidayWorkFor, holidayWorkIn } from './holidays.js';
 import { listIncompatibilityGroups } from './incompatibility.js';
 import { ledgerSince } from './ledger.js';
 import { listActiveDifferentials, listActiveOvertimeRules, listPayRatesForUnit } from './pay.js';
@@ -60,6 +63,34 @@ function unitOrThrow(db: DbLike, unitId: Id) {
  * a unit that has imported years of history.
  */
 export const LEDGER_LOOKBACK_DAYS = 400;
+
+/**
+ * The holiday history this period's rotation reads: who worked the previous occurrence of every
+ * holiday it could hold (300–430 days before, see `previousOccurrence`), and who worked the far
+ * half of any pair it holds one half of — a pair can span months, so that half may be anywhere
+ * in the past.
+ */
+export function holidayWorkForPeriod(db: DbLike, period: SchedulePeriod): HolidayWorkRecord[] {
+  const lastYear = holidayWorkIn(
+    db,
+    period.unitId,
+    addDays(period.startDate, -430),
+    addDays(period.endDate, -300),
+  );
+  const holidays = listHolidaysForUnit(db, period.unitId);
+  const inPeriod = new Set(
+    holidays.filter((h) => dateInRange(h.date, period.startDate, period.endDate)).map((h) => h.id),
+  );
+  const partners = new Set<Id>();
+  for (const h of holidays) {
+    if (h.pairedHolidayId === null) continue;
+    if (inPeriod.has(h.id)) partners.add(h.pairedHolidayId);
+    if (inPeriod.has(h.pairedHolidayId)) partners.add(h.id);
+  }
+  const seen = new Set(lastYear.map((r) => r.holidayId));
+  const farHalves = [...partners].filter((id) => !seen.has(id) && !inPeriod.has(id));
+  return [...lastYear, ...holidayWorkFor(db, period.unitId, farHalves)];
+}
 
 /** Everything `deriveDemand` needs for a unit, loaded once per call. */
 export function demandInputs(db: DbLike, unitId: Id, start: IsoDate, end: IsoDate) {
@@ -88,12 +119,14 @@ export function ledgerHistory(db: DbLike, unitId: Id, before: IsoDate): Fairness
 export function costContext(db: DbLike, unitId: Id, ruleSet: RuleSet): CostContext {
   const maxHours = ruleSet.configs.find((c) => c.ruleId === maxHoursRule.id);
   const params = (maxHours?.params ?? maxHoursRule.defaultParams) as Partial<MaxHoursParams>;
+  const holidays = listHolidaysForUnit(db, unitId);
   return {
     unit: unitOrThrow(db, unitId),
     payRates: listPayRatesForUnit(db, unitId),
     differentials: listActiveDifferentials(db, unitId),
     overtimeRules: listActiveOvertimeRules(db, unitId),
-    holidayDates: new Set<IsoDate>(listHolidaysForUnit(db, unitId).map((h) => h.date)),
+    holidayDates: new Set<IsoDate>(holidays.map((h) => h.date)),
+    majorHolidayDates: new Set<IsoDate>(holidays.filter((h) => h.isMajor).map((h) => h.date)),
     weekendDefinition: ruleSet.weekendDefinition,
     workWeekStartsOn: params.workWeekStartsOn ?? maxHoursRule.defaultParams.workWeekStartsOn,
     ...(params.paidLeaveCountsTowardOvertime ? { overtimeLeave: overtimeLeave(db, unitId) } : {}),
@@ -138,6 +171,7 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     nurseCredentials: listNurseCredentialsForUnit(db, unitId),
     shiftCredentialRequirements: listShiftCredentialRequirementsForUnit(db, unitId),
     holidays: listHolidaysForUnit(db, unitId),
+    holidayWork: holidayWorkForPeriod(db, period),
     preferences: listPreferencesForUnit(db, unitId),
     ledgerHistory: ledgerHistory(db, unitId, period.startDate),
     // Only groups that can apply to this period (its first morning shares the night before),

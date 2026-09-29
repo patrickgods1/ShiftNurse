@@ -17,7 +17,8 @@ import {
   useUpdateShiftType,
 } from '../../api-config.js';
 import { AsyncState } from '../../components/async-state.js';
-import { OVERLAY, POPUP } from '../../components/ui.js';
+import { CheckField, describedBy, Field } from '../../components/field-help.js';
+import { INPUT, OVERLAY, POPUP, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { useUnitId } from '../../unit-context.js';
 
 interface FormState {
@@ -104,41 +105,56 @@ function ShiftTypeForm({
         onSubmit(form);
       }}
     >
-      <label className="flex flex-col gap-1 text-sm text-text">
-        Name
+      <Field id="shift-name" label="Name" hint="As staff say it, such as “Day 12” or “Night 8”.">
         <input
+          id="shift-name"
           type="text"
           required
           value={form.name}
+          aria-describedby={describedBy('shift-name', { hint: true })}
           onChange={(event) => setForm({ ...form, name: event.target.value })}
-          className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+          className={INPUT}
         />
-      </label>
-      <label className="flex flex-col gap-1 text-sm text-text">
-        Abbreviation (up to 4 characters)
+      </Field>
+      <Field
+        id="shift-abbreviation"
+        label="Abbreviation"
+        hint="Up to 4 characters. This is what each cell of the schedule grid and printouts shows."
+      >
         <input
+          id="shift-abbreviation"
           type="text"
           required
           maxLength={4}
           value={form.abbreviation}
+          aria-describedby={describedBy('shift-abbreviation', { hint: true })}
           onChange={(event) => setForm({ ...form, abbreviation: event.target.value })}
-          className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+          className={INPUT}
         />
-      </label>
+      </Field>
       <div className="flex gap-3">
-        <label className="flex flex-1 flex-col gap-1 text-sm text-text">
-          Start time
+        <Field id="shift-start" label="Start time" className="flex-1">
           <input
+            id="shift-start"
             type="time"
             required
             value={form.startTime}
             onChange={(event) => setForm({ ...form, startTime: event.target.value })}
-            className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+            className={INPUT}
           />
-        </label>
-        <label className="flex flex-1 flex-col gap-1 text-sm text-text">
-          Duration (hours)
+        </Field>
+        <Field
+          id="shift-duration"
+          label="Paid hours"
+          className="flex-1"
+          tip={
+            'The paid length of the shift. Rest, overtime, contracted hours and cost are all ' +
+            'counted from this number, so enter the hours payroll pays (for example 12 for a ' +
+            '07:00–19:00 shift), not the gap between clock times.'
+          }
+        >
           <input
+            id="shift-duration"
             type="number"
             required
             min={1}
@@ -146,55 +162,85 @@ function ShiftTypeForm({
             step={0.5}
             value={form.durationHours}
             onChange={(event) => setForm({ ...form, durationHours: event.target.value })}
-            className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+            className={INPUT}
           />
-        </label>
+        </Field>
       </div>
       <div className="flex gap-3">
-        <label className="flex flex-1 flex-col gap-1 text-sm text-text">
-          Colour
+        <Field
+          id="shift-colour"
+          label="Colour"
+          className="flex-1"
+          tip="Tints this shift on the schedule grid and dashboard so shift types are easy to tell apart."
+        >
           <input
+            id="shift-colour"
             type="color"
             value={form.color}
             onChange={(event) => setForm({ ...form, color: event.target.value })}
             className="h-9 w-full rounded-md border border-border bg-bg px-1"
           />
-        </label>
-        <label className="flex flex-1 flex-col gap-1 text-sm text-text">
-          Sort order
+        </Field>
+        <Field
+          id="shift-sort"
+          label="Sort order"
+          className="flex-1"
+          tip="Lower numbers are listed first: in the grid's shift palette, coverage floors, demand and the Today page. Day, evening, night is a common order."
+        >
           <input
+            id="shift-sort"
             type="number"
             required
             value={form.sortOrder}
             onChange={(event) => setForm({ ...form, sortOrder: event.target.value })}
-            className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+            className={INPUT}
           />
-        </label>
+        </Field>
       </div>
-      <div className="flex gap-4">
-        <label className="flex items-center gap-2 text-sm text-text">
-          <input
-            type="checkbox"
-            checked={form.isNight}
-            onChange={(event) => setForm({ ...form, isNight: event.target.checked })}
-          />
-          Night shift
-        </label>
-        <label className="flex items-center gap-2 text-sm text-text">
-          <input
-            type="checkbox"
-            checked={form.isOnCall}
-            onChange={(event) => setForm({ ...form, isOnCall: event.target.checked })}
-          />
-          On-call
-        </label>
-      </div>
-      <label className="flex flex-col gap-1 text-sm text-text">
-        Runs inside
+      <CheckField
+        id="shift-night"
+        label="Night shift"
+        hint="Counts toward the consecutive-nights limit, the longer rest after nights, the night differential and the nights share in the fairness score."
+        tip="Tick it for any tour your contract treats as a night or off-shift. Whether leave covers a shift is judged by its clock times instead, so this flag never changes that."
+      >
+        <input
+          id="shift-night"
+          type="checkbox"
+          checked={form.isNight}
+          aria-describedby={describedBy('shift-night', { hint: true })}
+          onChange={(event) => setForm({ ...form, isNight: event.target.checked })}
+        />
+      </CheckField>
+      <CheckField
+        id="shift-on-call"
+        label="On-call"
+        hint="Standby, not worked time: paid at the on-call rate from the Pay tab, and never counted as on the floor."
+        tip="Whether standby counts toward rest, consecutive days and hours is set per rule on the Rules tab. By default it does not."
+      >
+        <input
+          id="shift-on-call"
+          type="checkbox"
+          checked={form.isOnCall}
+          aria-describedby={describedBy('shift-on-call', { hint: true })}
+          onChange={(event) => setForm({ ...form, isOnCall: event.target.checked })}
+        />
+      </CheckField>
+      <Field
+        id="shift-within"
+        label="Runs inside"
+        hint={
+          'For a mid or short shift whose hours sit inside another, such as an 8 inside the day ' +
+          '12. It is covered by whoever is on that shift: no charge nurse of its own, and that ' +
+          "shift's staff count toward its credential requirements and the experienced RNs a new " +
+          'grad on it works beside.'
+        }
+      >
         <select
+          id="shift-within"
           value={form.withinShiftTypeId}
+          aria-describedby={describedBy('shift-within', { hint: true })}
           onChange={(event) => setForm({ ...form, withinShiftTypeId: event.target.value })}
-          className="rounded-md border border-border bg-bg px-2 py-1 text-text"
+          className={INPUT}
         >
           <option value="">Nothing — a standalone shift</option>
           {containers.map((t) => (
@@ -203,25 +249,12 @@ function ShiftTypeForm({
             </option>
           ))}
         </select>
-        <span className="text-xs text-text-muted">
-          For a mid or short shift whose hours sit inside another, such as an 8 inside the day 12.
-          It is covered by whoever is on that shift: no charge nurse of its own, and that shift's
-          staff count toward its credential requirements and the experienced RNs a new grad on it
-          works beside.
-        </span>
-      </label>
+      </Field>
       <div className="mt-2 flex justify-end gap-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg"
-        >
+        <button type="button" onClick={onCancel} className={SECONDARY}>
           Cancel
         </button>
-        <button
-          type="submit"
-          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
-        >
+        <button type="submit" className={PRIMARY}>
           {submitLabel}
         </button>
       </div>
@@ -330,15 +363,22 @@ export default function ShiftTypesPanel() {
 
   return (
     <section>
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-text">Shift types</h2>
+      <div className="mb-3 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-sm font-semibold text-text">Shift types</h2>
+          <p className="mt-1 max-w-prose text-sm text-text-muted">
+            The shifts your unit works. Every schedule, coverage floor and pay rule refers to these.
+            A shift type in use is deactivated rather than deleted, so schedules already built with
+            it still read correctly.
+          </p>
+        </div>
         <button
           type="button"
           onClick={() => {
             createMutation.reset();
             setCreating(true);
           }}
-          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+          className={`${PRIMARY} shrink-0`}
         >
           Add shift type
         </button>
@@ -436,7 +476,18 @@ export default function ShiftTypesPanel() {
                         >
                           Deactivate
                         </button>
-                      ) : null}
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={updateMutation.isPending}
+                          onClick={() =>
+                            updateMutation.mutate({ id: shiftType.id, patch: { active: true } })
+                          }
+                          className="rounded-md border border-border px-2 py-1 text-xs text-text hover:bg-bg disabled:opacity-50"
+                        >
+                          Reactivate
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -486,14 +537,14 @@ export default function ShiftTypesPanel() {
             </Dialog.Title>
             <p className="mb-4 text-sm text-text-muted">
               {confirmingDeactivate !== undefined
-                ? `"${confirmingDeactivate.name}" will no longer be offered when building new schedules. Existing assignments are unaffected.`
+                ? `"${confirmingDeactivate.name}" will no longer be offered when building new schedules. Existing assignments are unaffected, and you can reactivate it later.`
                 : ''}
             </p>
             <div className="flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setConfirmingDeactivate(undefined)}
-                className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg"
+                className={SECONDARY}
               >
                 Cancel
               </button>

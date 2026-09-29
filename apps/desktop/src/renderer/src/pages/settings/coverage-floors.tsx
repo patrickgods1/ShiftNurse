@@ -19,7 +19,7 @@ import { WEEKDAY_NAMES } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useDeleteCoverage, useUpsertCoverage } from '../../api-config.js';
 import { useConfirm } from '../../components/confirm.js';
-import { errorMessage } from '../../components/ui.js';
+import { errorMessage, PRIMARY } from '../../components/ui.js';
 
 const ROLES: NurseRole[] = ['RN', 'LPN', 'CNA'];
 const WEEKDAYS: Weekday[] = [0, 1, 2, 3, 4, 5, 6];
@@ -172,8 +172,7 @@ function AddRowForm({
         type="button"
         disabled={alreadyExists}
         onClick={() => onAdd({ shiftTypeId, role })}
-        className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90
-          disabled:cursor-not-allowed disabled:opacity-50"
+        className={PRIMARY}
       >
         Add row
       </button>
@@ -293,10 +292,7 @@ function OverrideForm({
           className="w-16 rounded-md border border-border bg-bg px-2 py-1 text-sm text-text"
         />
       </label>
-      <button
-        type="submit"
-        className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
-      >
+      <button type="submit" className={PRIMARY}>
         Add override
       </button>
       {error !== undefined ? <span className="text-xs text-danger">{error}</span> : null}
@@ -336,7 +332,14 @@ export default function CoverageFloors({ unitId, shiftTypes, requirements }: Cov
 
   return (
     <section>
-      <h2 className="mb-3 text-sm font-semibold text-text">Coverage floors</h2>
+      <h2 className="text-sm font-semibold text-text">Coverage floors</h2>
+      <p className="mb-3 mt-1 max-w-prose text-sm text-text-muted">
+        The fewest staff of each role every shift needs, whatever the census. When patient ratios
+        call for more on a busy day, the higher number wins; the floor is never lowered. Each cell
+        is <strong className="text-text">minimum / target</strong>: Generate never schedules below
+        the minimum (a shift it cannot fill is reported short) and aims for the target when it has
+        the staff, without going past it.
+      </p>
 
       <div
         data-testid="coverage-grid"
@@ -406,7 +409,11 @@ export default function CoverageFloors({ unitId, shiftTypes, requirements }: Cov
       </div>
 
       <div className="mt-6">
-        <h3 className="mb-2 text-sm font-semibold text-text">Date-specific overrides</h3>
+        <h3 className="text-sm font-semibold text-text">Date-specific overrides</h3>
+        <p className="mb-2 mt-1 max-w-prose text-sm text-text-muted">
+          A different minimum and target for one date, replacing the weekday row above for that day
+          only. Use it for a known one-off, such as extra staff on Christmas Eve or a planned surge.
+        </p>
         <div className="mb-3 rounded-md border border-border bg-surface p-3">
           <OverrideForm unitId={unitId} shiftTypes={activeShiftTypes} onAdded={() => undefined} />
         </div>

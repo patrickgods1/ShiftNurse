@@ -37,6 +37,8 @@ import type {
   HistoricalCsvError,
   HistoricalShiftRow,
   Holiday,
+  HolidayYearPlan,
+  HppdReport,
   HppdTarget,
   Id,
   IncompatibilityGroup,
@@ -45,6 +47,7 @@ import type {
   NurseCredential,
   OvertimeRule,
   PayRate,
+  PlannedHoliday,
   Preference,
   RatioRule,
   ReplacementReport,
@@ -169,6 +172,27 @@ export type PreferenceInput = Preference extends infer P
   : never;
 
 export type CoverageRequirementInput = Omit<CoverageRequirement, 'id'> & { id?: Id };
+
+/** A new holiday; unpaired unless `pairedHolidayId` names the major holiday it goes with. */
+export type HolidayInput = Omit<Holiday, 'id' | 'pairedHolidayId'> &
+  Partial<Pick<Holiday, 'pairedHolidayId'>>;
+export type HolidayPatch = Partial<Pick<Holiday, 'name' | 'isMajor' | 'pairedHolidayId'>>;
+
+/** A year of holidays as the manager approved it: `HolidayYearPlan`'s rows, edited. */
+export interface HolidayYearInput {
+  holidays: Pick<PlannedHoliday, 'key' | 'date' | 'name' | 'isMajor' | 'pairWith'>[];
+  repairs: HolidayYearPlan['repairs'];
+}
+
+export interface HolidayWorkSummary {
+  holidayId: Id;
+  /** True when the list was recorded by hand rather than read from published schedules. */
+  recorded: boolean;
+  /** Who the holiday rotation counts as having worked it. */
+  nurseIds: Id[];
+  /** What published schedules say, for comparison. */
+  fromSchedules: Id[];
+}
 
 export type AcuityTierInput = Omit<AcuityTier, 'id'>;
 export type AcuityTierPatch = Partial<Omit<AcuityTier, 'id' | 'unitId'>>;
@@ -645,8 +669,20 @@ export interface ShiftNurseApi {
   };
   holidays: {
     list(unitId: Id): Holiday[];
-    create(input: Omit<Holiday, 'id'>): Holiday;
+    create(input: HolidayInput): Holiday;
+    /** Rename, move between major and minor, or pair a minor holiday with a major one. */
+    update(id: Id, patch: HolidayPatch): Holiday;
     delete(id: Id): void;
+    /** Who the holiday rotation counts as having worked a holiday, and where that comes from. */
+    work(holidayId: Id): HolidayWorkSummary;
+    /** Record who worked a holiday by hand; it then stands in for the schedules. */
+    recordWork(holidayId: Id, nurseIds: Id[]): HolidayWorkSummary;
+    /** Go back to what published schedules say. */
+    clearWork(holidayId: Id): HolidayWorkSummary;
+    /** Propose a year of holidays from the year before (or the federal list): nothing is saved. */
+    planYear(unitId: Id, year: number): HolidayYearPlan;
+    /** Save a proposal as the manager approved it, all or nothing. */
+    addYear(unitId: Id, input: HolidayYearInput): Holiday[];
   };
   acuity: {
     tiers(unitId: Id): AcuityTier[];
@@ -672,6 +708,8 @@ export interface ShiftNurseApi {
     backtest(unitId: Id, options?: ForecastOptions): BacktestResult;
     /** Derived staffing demand with the binding constraint per role. */
     demand(unitId: Id, start: IsoDate, end: IsoDate): ShiftDemand[];
+    /** Scheduled nursing hours per patient day for a period, against the HPPD target. */
+    hppd(periodId: Id): HppdReport;
   };
   roster: {
     /** Opens a native file picker, parses the file, returns what an import would do. */
@@ -925,7 +963,17 @@ export const API_CHANNELS = {
   incompatibility: ['list', 'create', 'update', 'remove'],
   shiftTypes: ['list', 'create', 'update', 'deactivate'],
   coverage: ['list', 'upsert', 'delete'],
-  holidays: ['list', 'create', 'delete'],
+  holidays: [
+    'list',
+    'create',
+    'update',
+    'delete',
+    'work',
+    'recordWork',
+    'clearWork',
+    'planYear',
+    'addYear',
+  ],
   acuity: [
     'tiers',
     'createTier',
@@ -947,6 +995,7 @@ export const API_CHANNELS = {
     'propose',
     'backtest',
     'demand',
+    'hppd',
   ],
   roster: ['pickImportFile', 'importRows', 'exportToFile', 'exportCsv'],
   periods: ['list', 'assignments', 'create'],

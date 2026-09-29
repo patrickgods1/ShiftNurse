@@ -9,7 +9,7 @@
 
 import { join } from 'node:path';
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
-import { app, BrowserWindow, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, session, shell } from 'electron';
 import { createApi, createSolverJobs } from './api.js';
 import { ensureDailyBackup, purgeExpiredBackups } from './backups.js';
 import { closeAppDatabase, openAppDatabase } from './database.js';
@@ -46,6 +46,25 @@ function createWindow(): BrowserWindow {
   });
 
   win.on('ready-to-show', () => win.show());
+
+  // A page holding unsaved edits blocks its own unload (the renderer's `beforeunload`). Electron
+  // then cancels the close or reload silently, so the question is asked here, where a native
+  // dialog can be shown. A smoke run never has anyone to answer it, and always proceeds.
+  win.webContents.on('will-prevent-unload', (event) => {
+    if (isSmokeRun()) {
+      event.preventDefault();
+      return;
+    }
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'question',
+      buttons: ['Discard changes', 'Keep editing'],
+      defaultId: 1,
+      cancelId: 1,
+      message: 'You have unsaved changes.',
+      detail: 'Leave anyway and lose them?',
+    });
+    if (choice === 0) event.preventDefault();
+  });
 
   if (APP_LOCATION.devServerUrl !== undefined) {
     void win.loadURL(APP_LOCATION.devServerUrl);
