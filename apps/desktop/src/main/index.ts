@@ -107,16 +107,19 @@ app.whenReady().then(() => {
     (b) => b && console.log(`[backup] daily backup written to ${b.path}`),
     (err) => console.error(`[backup] daily backup failed: ${err}`),
   );
-  // Deleted backups wait 30 days in the trash; anything past that goes now.
-  try {
-    for (const b of purgeExpiredBackups(db)) console.log(`[backup] purged ${b.fileName}`);
-  } catch (err) {
-    console.error(`[backup] purging expired backups failed: ${err}`);
-  }
   // Workers must not outlive the database handle they would write into.
   app.on('will-quit', () => solverJobs.dispose());
   const win = createWindow();
   if (isSmokeRun()) runSmoke(win);
+  // Deleted backups wait 30 days in the trash; anything past that goes now. Off the startup
+  // path like the daily copy: it is disk I/O and audit writes the first paint need not wait for.
+  setImmediate(() => {
+    try {
+      for (const b of purgeExpiredBackups(db)) console.log(`[backup] purged ${b.fileName}`);
+    } catch (err) {
+      console.error(`[backup] purging expired backups failed: ${err}`);
+    }
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

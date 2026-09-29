@@ -81,7 +81,8 @@ self-service later becomes an intake surface rather than a new data model.
   Exchanges — proposal dialog with live verdict, decide dialog; `exchange.approve` re-evaluates
   in main and requires an override reason on `warn`) and Publish (M12: `main/api/schedule.ts`
   `editSchedule` wraps every grid mutation and logs reasoned edits on a published period;
-  `main/backups.ts` (publish/daily/manual/restore), `main/output.ts` + `print-html.ts` +
+  `main/backups.ts` (publish/daily/manual/restore; a deleted backup waits 30 days in a trash —
+  `backup-files.ts` on disk, `backup-trash.ts` its audit rows, both Electron-free and tested), `main/output.ts` + `print-html.ts` +
   `xlsx.ts` for PDF/CSV/xlsx; Schedule › Publish dialog, change log, Export menu, reason dialog
   on published-period edits; Settings › Backups) and Today (M13: `core/dayof/` — `findReplacements`
   ranks same-role nurses simulated on the conflicts engine, `checkStaffing`/`shiftsAround` for the
