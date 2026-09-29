@@ -19,6 +19,8 @@ export const publishKeys = {
   changes: (periodId: Id) => ['publish', 'changes', periodId] as const,
   alerts: (periodId: Id) => ['publish', 'alerts', periodId] as const,
   backups: () => ['backups'] as const,
+  // Under `backups()` so one prefix invalidation refreshes the list and the trash together.
+  deletedBackups: () => ['backups', 'deleted'] as const,
 };
 
 export function usePublishPreview(periodId: Id | undefined, enabled = true) {
@@ -87,4 +89,35 @@ export function useCreateBackup() {
 
 export function useRestoreBackup() {
   return useMutation({ mutationFn: (fileName: string) => api.backups.restore(fileName) });
+}
+
+export function useDeletedBackups() {
+  return useQuery({
+    queryKey: publishKeys.deletedBackups(),
+    queryFn: () => api.backups.listDeleted(),
+  });
+}
+
+/** Every trash operation moves a file between the list and the trash, so refresh both. */
+function useBackupFileMutation<T>(mutationFn: (vars: T) => Promise<unknown>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: publishKeys.backups() }),
+  });
+}
+
+export function useDeleteBackup() {
+  return useBackupFileMutation(
+    async ({ fileName, permanent }: { fileName: string; permanent: boolean }) =>
+      api.backups.remove(fileName, { permanent }),
+  );
+}
+
+export function useUndeleteBackup() {
+  return useBackupFileMutation(async (fileName: string) => api.backups.undelete(fileName));
+}
+
+export function usePurgeBackup() {
+  return useBackupFileMutation(async (fileName: string) => api.backups.purge(fileName));
 }

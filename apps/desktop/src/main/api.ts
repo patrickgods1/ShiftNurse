@@ -123,7 +123,16 @@ import { alertsFor, outputInput, publish, publishPreview } from './api/publish.j
 import { periodsApi, scheduleApi } from './api/schedule.js';
 import { setupApi } from './api/setup.js';
 import { solverApi } from './api/solver.js';
-import { createBackup, listBackups, resetDatabase, restoreBackup } from './backups.js';
+import {
+  createBackup,
+  deleteBackup,
+  listBackups,
+  listDeletedBackups,
+  purgeDeletedBackup,
+  resetDatabase,
+  restoreBackup,
+  undeleteBackup,
+} from './backups.js';
 import { databasePath } from './database.js';
 import { exportToFile as exportPeriodToFile, renderCsv } from './output.js';
 import type { SolverJobs } from './solver-jobs.js';
@@ -255,6 +264,10 @@ export function createApi(db: ShiftNurseDb, solverJobs: SolverJobs): ShiftNurseA
       list: () => listBackups(),
       create: () => createBackup(db, 'manual', 'manual'),
       restore: (fileName) => restoreBackup(db, fileName, () => solverJobs.dispose()),
+      listDeleted: () => listDeletedBackups(),
+      remove: (fileName, options) => deleteBackup(db, fileName, options),
+      undelete: (fileName) => undeleteBackup(db, fileName),
+      purge: (fileName) => purgeDeletedBackup(db, fileName),
     },
     solver: solverApi(db, solverJobs),
     solverSettings: {

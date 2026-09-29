@@ -347,6 +347,12 @@ export interface BackupInfo {
   bytes: number;
 }
 
+/** A backup deleted from the list, held in the trash until `purgeAt`. */
+export interface DeletedBackupInfo extends BackupInfo {
+  deletedAt: number;
+  purgeAt: number;
+}
+
 export interface SolveBatchOptions {
   /** How many variations to generate, 1–10; one when absent. */
   count?: number;
@@ -727,6 +733,16 @@ export interface ShiftNurseApi {
      * `pre-restore` backup) and relaunches the app. The call returns before the relaunch.
      */
     restore(fileName: string): Promise<BackupInfo>;
+    /** Backups in the trash, restorable until their `purgeAt`. */
+    listDeleted(): DeletedBackupInfo[];
+    /**
+     * Moves a backup to the trash for 30 days; `permanent` deletes the file now instead.
+     */
+    remove(fileName: string, options?: { permanent?: boolean }): void;
+    /** Puts a trashed backup back on the list. */
+    undelete(fileName: string): BackupInfo;
+    /** Deletes a trashed backup now rather than when its retention runs out. */
+    purge(fileName: string): void;
   };
   solver: {
     /**
@@ -944,7 +960,7 @@ export const API_CHANNELS = {
   ],
   publish: ['preview', 'publish', 'versions', 'changes', 'alerts'],
   output: ['exportToFile', 'renderCsv'],
-  backups: ['list', 'create', 'restore'],
+  backups: ['list', 'create', 'restore', 'listDeleted', 'remove', 'undelete', 'purge'],
   solver: [
     'start',
     'status',

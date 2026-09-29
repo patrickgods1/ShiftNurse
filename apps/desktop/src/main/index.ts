@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { app, BrowserWindow, session, shell } from 'electron';
 import { createApi, createSolverJobs } from './api.js';
-import { ensureDailyBackup } from './backups.js';
+import { ensureDailyBackup, purgeExpiredBackups } from './backups.js';
 import { closeAppDatabase, openAppDatabase } from './database.js';
 import { registerIpc } from './ipc.js';
 import { isSmokeRun, runSmoke } from './smoke.js';
@@ -88,6 +88,12 @@ app.whenReady().then(() => {
     (b) => b && console.log(`[backup] daily backup written to ${b.path}`),
     (err) => console.error(`[backup] daily backup failed: ${err}`),
   );
+  // Deleted backups wait 30 days in the trash; anything past that goes now.
+  try {
+    for (const b of purgeExpiredBackups(db)) console.log(`[backup] purged ${b.fileName}`);
+  } catch (err) {
+    console.error(`[backup] purging expired backups failed: ${err}`);
+  }
   // Workers must not outlive the database handle they would write into.
   app.on('will-quit', () => solverJobs.dispose());
   const win = createWindow();
