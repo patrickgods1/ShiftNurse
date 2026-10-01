@@ -11,15 +11,72 @@
  * a temp directory; `backups.ts` supplies the real `userData` path and the audit rows.
  */
 
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { join } from 'node:path';
+import { today } from '@shiftnurse/core';
 import type { BackupInfo, DeletedBackupInfo } from '../shared/api.js';
 
 export const TRASH_RETENTION_DAYS = 30;
 const DAY_MS = 86_400_000;
 
-export const BACKUP_RE = /^(publish|daily|manual|pre-restore|pre-reset)-(.*)-(\d{13})\.sqlite$/;
+export type BackupKind =
+  | 'publish'
+  | 'daily'
+  | 'manual'
+  | 'pre-restore'
+  | 'pre-reset'
+  | 'pre-migrate';
+
+export const BACKUP_RE =
+  /^(publish|daily|manual|pre-restore|pre-reset|pre-migrate)-(.*)-(\d{13})\.sqlite$/;
 const TRASH_RE = /^(\d{13})-(.+)$/;
+
+function slug(text: string): string {
+  return (
+    text
+      .replace(/[^\w-]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 40) || 'db'
+  );
+}
+
+/** The one spelling of a backup's file name; `BACKUP_RE` reads it back. */
+export function backupFileName(kind: BackupKind, label: string, createdAt: number): string {
+  return `${kind}-${slug(label)}-${createdAt}.sqlite`;
+}
+
+/**
+ * Whether today's daily copy is still to take. "Today" is the manager's local date, the one on
+ * the clock on the ward wall: a UTC date would roll over at 5 pm in California and take the
+ * evening's copy as tomorrow's.
+ */
+export function dailyBackupDue(backups: readonly BackupInfo[], now: Date): boolean {
+  const day = today(now);
+  return !backups.some((b) => b.kind === 'daily' && today(new Date(b.createdAt)) === day);
+}
+
+/**
+ * Swap the live database file for `source` (restore) or remove it (start over). The caller has
+ * closed the connection. The source is copied next to the live file first and renamed over it,
+ * so a copy that fails part way — a full disk, a backup that vanished — leaves the live file and
+ * its WAL as they were. The WAL and shm files belong to the outgoing database: left behind they
+ * would be replayed over the restored file (or a fresh one) on the next open.
+ */
+export function replaceDatabaseFile(live: string, source: string | undefined): void {
+  const staged = `${live}.restoring`;
+  if (source !== undefined) copyFileSync(source, staged);
+  for (const suffix of ['-wal', '-shm']) rmSync(`${live}${suffix}`, { force: true });
+  if (source === undefined) rmSync(live, { force: true });
+  else renameSync(staged, live);
+}
 
 function trashDir(dir: string): string {
   return join(dir, 'trash');

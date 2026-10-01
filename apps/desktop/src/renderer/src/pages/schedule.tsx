@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { usePeriods } from '../api.js';
 import { AsyncState } from '../components/async-state.js';
 import { PageHeader } from '../components/page-header.js';
+import { PRIMARY } from '../components/ui.js';
 import { defaultPeriod } from '../default-period.js';
 import { formatDate } from '../format.js';
 import { useUnitId } from '../unit-context.js';
@@ -47,7 +48,7 @@ export default function SchedulePage() {
             type="button"
             data-testid="new-period"
             onClick={() => setNewPeriodOpen(true)}
-            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white"
+            className={PRIMARY}
           >
             New period
           </button>

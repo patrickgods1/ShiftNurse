@@ -9,7 +9,7 @@
 import { DEFAULT_FAIRNESS_WEIGHTS, isoDate, type Nurse, type Preference } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor, recentAudit } from '../audit.js';
-import { type OpenedDatabase, openTestDatabase } from '../client.js';
+import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import * as s from '../schema.js';
 import {
   createAcuityTier,
@@ -421,7 +421,7 @@ describe('rule set versioning', () => {
   }
 
   it('starts at version 1 and assembles its configs', () => {
-    const saved = saveRuleSet(handle.db, draft('Contract 2026', 10), ACTOR);
+    const saved = transact(handle.db, (tx) => saveRuleSet(tx, draft('Contract 2026', 10), ACTOR));
     expect(saved.version).toBe(1);
 
     const loaded = getLatestRuleSet(handle.db, unitId);
@@ -431,8 +431,8 @@ describe('rule set versioning', () => {
   });
 
   it('bumps the version on every save', () => {
-    saveRuleSet(handle.db, draft('v1', 10), ACTOR);
-    const second = saveRuleSet(handle.db, draft('v2', 12), ACTOR);
+    transact(handle.db, (tx) => saveRuleSet(tx, draft('v1', 10), ACTOR));
+    const second = transact(handle.db, (tx) => saveRuleSet(tx, draft('v2', 12), ACTOR));
     expect(second.version).toBe(2);
     expect(getLatestRuleSet(handle.db, unitId)?.version).toBe(2);
   });
@@ -440,8 +440,8 @@ describe('rule set versioning', () => {
   it('never mutates an earlier version', () => {
     // This is the property that keeps a published schedule defensible: it was judged under
     // the rules in force at the time, and editing the rules later must not rewrite history.
-    const v1 = saveRuleSet(handle.db, draft('Original', 10), ACTOR);
-    saveRuleSet(handle.db, draft('Revised', 12), ACTOR);
+    const v1 = transact(handle.db, (tx) => saveRuleSet(tx, draft('Original', 10), ACTOR));
+    transact(handle.db, (tx) => saveRuleSet(tx, draft('Revised', 12), ACTOR));
 
     const reloaded = getRuleSet(handle.db, v1.id);
     expect(reloaded?.version).toBe(1);
@@ -451,14 +451,12 @@ describe('rule set versioning', () => {
 
   it('keeps the fairness weights a rule set was saved with', () => {
     const heavyWeekends = { ...DEFAULT_FAIRNESS_WEIGHTS, weekends: 5 };
-    const v1 = saveRuleSet(
-      handle.db,
-      { ...draft('Original', 10), fairnessWeights: heavyWeekends },
-      ACTOR,
+    const v1 = transact(handle.db, (tx) =>
+      saveRuleSet(tx, { ...draft('Original', 10), fairnessWeights: heavyWeekends }, ACTOR),
     );
     // A later save with different weights must not alter the version already published under
     // the old ones — the same immutability the rules themselves get, and for the same reason.
-    saveRuleSet(handle.db, draft('Revised', 12), ACTOR);
+    transact(handle.db, (tx) => saveRuleSet(tx, draft('Revised', 12), ACTOR));
 
     const reloaded = getRuleSet(handle.db, v1.id);
     expect(reloaded?.fairnessWeights).toEqual(heavyWeekends);

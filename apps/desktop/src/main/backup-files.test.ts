@@ -1,13 +1,16 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  backupFileName,
+  dailyBackupDue,
   listBackupFiles,
   listTrash,
   moveToTrash,
   purgeExpired,
   purgeFromTrash,
+  replaceDatabaseFile,
   restoreFromTrash,
 } from './backup-files.js';
 
@@ -88,5 +91,67 @@ describe('backup trash', () => {
     expect(listTrash(dir)).toEqual([]);
     expect(purgeExpired(dir, NOW + 365 * DAY)).toEqual([]);
     expect(existsSync(join(dir, 'trash', 'notes.txt'))).toBe(true);
+  });
+});
+
+describe('swapping the live database for a restore or a start over', () => {
+  function live(): string {
+    const path = join(dir, 'shiftnurse.sqlite');
+    writeFileSync(path, 'SQLite format 3\0live');
+    writeFileSync(`${path}-wal`, 'pages not yet checkpointed');
+    writeFileSync(`${path}-shm`, 'index');
+    return path;
+  }
+
+  it('puts the backup in place and drops the outgoing WAL, which would replay over it', () => {
+    const path = live();
+    replaceDatabaseFile(path, join(dir, MANUAL));
+    expect(readFileSync(path, 'utf8')).toBe('SQLite format 3\0manual');
+    expect(existsSync(`${path}-wal`)).toBe(false);
+    expect(existsSync(`${path}-shm`)).toBe(false);
+    expect(existsSync(join(dir, MANUAL))).toBe(true);
+  });
+
+  it('deletes the live file for a start over, leaving the backups', () => {
+    const path = live();
+    replaceDatabaseFile(path, undefined);
+    expect(existsSync(path)).toBe(false);
+    expect(existsSync(`${path}-wal`)).toBe(false);
+    expect(listBackupFiles(dir)).toHaveLength(2);
+  });
+
+  it('leaves the live database untouched when the backup cannot be read', () => {
+    const path = live();
+    expect(() => replaceDatabaseFile(path, join(dir, 'gone.sqlite'))).toThrow();
+    expect(readFileSync(path, 'utf8')).toBe('SQLite format 3\0live');
+    expect(existsSync(`${path}-wal`)).toBe(true);
+  });
+});
+
+describe('the daily backup', () => {
+  function daily(at: Date): void {
+    writeFileSync(join(dir, backupFileName('daily', 'x', at.getTime())), 'SQLite format 3\0');
+  }
+
+  it('counts a copy taken just after midnight as today’s, late the same evening', () => {
+    daily(new Date(2026, 8, 28, 0, 15));
+    expect(dailyBackupDue(listBackupFiles(dir), new Date(2026, 8, 28, 23, 30))).toBe(false);
+  });
+
+  it('is due again once the local date turns over', () => {
+    daily(new Date(2026, 8, 27, 23, 59));
+    expect(dailyBackupDue(listBackupFiles(dir), new Date(2026, 8, 28, 0, 1))).toBe(true);
+  });
+
+  it('ignores manual and publish copies, which are not the daily rotation', () => {
+    expect(dailyBackupDue(listBackupFiles(dir), new Date(NOW))).toBe(true);
+  });
+});
+
+describe('backup names', () => {
+  it('lists the copy taken before an upgrade migrated the database', () => {
+    const name = backupFileName('pre-migrate', 'v0.1.0 → 14 changes', NOW);
+    writeFileSync(join(dir, name), 'SQLite format 3\0');
+    expect(listBackupFiles(dir).find((b) => b.fileName === name)?.kind).toBe('pre-migrate');
   });
 });

@@ -315,7 +315,13 @@ Notes:
   ship in the repo's own `node_modules`, and a crash-on-launch dialog exits 0 when dismissed —
   both let v0.1.0's first draft pass here and crash on every real install.
 - Installers are unsigned initially, so expect Gatekeeper (macOS) / SmartScreen (Windows)
-  warnings — code signing is planned for later.
+  warnings — code signing is planned for later. Unsigned builds cannot update themselves; a
+  packaged app checks GitHub's latest published release at launch and shows a banner linking
+  to it.
+- The app icon is `apps/desktop/build/icon.png`, drawn by `node apps/desktop/scripts/make-icon.mjs`;
+  electron-builder derives the `.icns` and `.ico` from it.
+- Main's log is `userData/logs/main.log` (Settings › About › Open logs folder). Ask for it with
+  any bug report: a packaged app has no visible console.
 - After any packaging-related change, run `npm run smoke:packaged -w @shiftnurse/desktop` to
   boot the actual built binary and catch what unit tests structurally can't (a missing
   migration file, a wrong-ABI native module).

@@ -10,13 +10,22 @@
 import { join } from 'node:path';
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { app, BrowserWindow, dialog, session, shell } from 'electron';
+import type { UpdateInfo } from '../shared/api.js';
 import { createApi, createSolverJobs } from './api.js';
-import { ensureDailyBackup, purgeExpiredBackups } from './backups.js';
-import { closeAppDatabase, openAppDatabase } from './database.js';
+import {
+  backupBeforeMigrate,
+  backupsDir,
+  purgeExpiredBackups,
+  recordBackup,
+  startDailyBackups,
+} from './backups.js';
+import { closeAppDatabase, databasePath, openAppDatabase } from './database.js';
 import { registerIpc } from './ipc.js';
+import { createFileLog, teeConsole } from './log.js';
 import { isSmokeRun, runSmoke } from './smoke.js';
 import spawnSolverWorker from './solver-worker?nodeWorker';
 import { type AppLocation, isAppUrl, isSafeExternalUrl } from './trusted-origin.js';
+import { checkForUpdate } from './updates.js';
 
 const APP_LOCATION: AppLocation = {
   indexHtmlPath: join(import.meta.dirname, '../renderer/index.html'),
@@ -78,6 +87,29 @@ function createWindow(): BrowserWindow {
 if (isSmokeRun())
   app.setPath('userData', join(app.getPath('temp'), `shiftnurse-smoke-${process.pid}`));
 
+// Everything main prints also goes to userData/logs/main.log: a packaged app has no console.
+const logsDir = join(app.getPath('userData'), 'logs');
+teeConsole(createFileLog(logsDir));
+process.on('uncaughtException', (err) => console.error('[main] uncaught exception:', err));
+process.on('unhandledRejection', (err) => console.error('[main] unhandled rejection:', err));
+
+// One copy of the app per user. A second would open the same database with its own solver
+// jobs and backup sweep, and a restore in one would replace the file under the other's open
+// connection. Launching again (a double-clicked shortcut) brings the running window forward.
+const isPrimaryInstance = isSmokeRun() || app.requestSingleInstanceLock();
+if (!isPrimaryInstance) app.quit();
+
+let mainWindow: BrowserWindow | undefined;
+let update: UpdateInfo | undefined;
+/** Shutdown steps, run in order on quit: workers before the database they would write into. */
+const onQuit: (() => void)[] = [];
+
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+});
+
 // Every window, including the hidden print window: no page may navigate away from the app
 // (a file dropped on the grid would otherwise load with the preload bridge attached), and
 // links open in the system browser only for schemes that cannot launch a local handler.
@@ -91,7 +123,22 @@ app.on('web-contents-created', (_, contents) => {
   });
 });
 
-app.whenReady().then(() => {
+/**
+ * Open the database, copying it first when an update is about to migrate it. The copy cannot
+ * be audited until the schema is current, so its audit row is written after the migration.
+ */
+async function openDatabaseWithSafetyCopy() {
+  let safetyCopy: Awaited<ReturnType<typeof backupBeforeMigrate>>;
+  const db = await openAppDatabase(async (sqlite, status) => {
+    safetyCopy = await backupBeforeMigrate(sqlite, status);
+    if (safetyCopy)
+      console.log(`[backup] copied the database before migrating: ${safetyCopy.path}`);
+  });
+  if (safetyCopy) recordBackup(db, safetyCopy);
+  return db;
+}
+
+async function start(): Promise<void> {
   electronApp.setAppUserModelId('com.shiftnurse.desktop');
   // The app needs no camera, microphone, notifications or geolocation; say no to all of it.
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
@@ -99,18 +146,21 @@ app.whenReady().then(() => {
   );
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window));
 
-  const db = openAppDatabase();
+  const db = await openDatabaseWithSafetyCopy();
   const solverJobs = createSolverJobs(db, (workerData) => spawnSolverWorker({ workerData }));
-  registerIpc(createApi(db, solverJobs), (url) => isAppUrl(url, APP_LOCATION));
-  // The rolling daily copy. Off the startup path: a slow disk must not delay the window.
-  void ensureDailyBackup(db).then(
-    (b) => b && console.log(`[backup] daily backup written to ${b.path}`),
-    (err) => console.error(`[backup] daily backup failed: ${err}`),
+  onQuit.push(() => solverJobs.dispose());
+  registerIpc(
+    createApi(db, solverJobs, {
+      update: () => update,
+      openLogs: () => void shell.openPath(logsDir),
+    }),
+    (url) => isAppUrl(url, APP_LOCATION),
   );
-  // Workers must not outlive the database handle they would write into.
-  app.on('will-quit', () => solverJobs.dispose());
-  const win = createWindow();
-  if (isSmokeRun()) runSmoke(win);
+  // The rolling daily copy, now and hourly while the app stays open. Off the startup path: a
+  // slow disk must not delay the window.
+  onQuit.push(startDailyBackups(db, { info: console.log, error: console.error }));
+  mainWindow = createWindow();
+  if (isSmokeRun()) runSmoke(mainWindow);
   // Deleted backups wait 30 days in the trash; anything past that goes now. Off the startup
   // path like the daily copy: it is disk I/O and audit writes the first paint need not wait for.
   setImmediate(() => {
@@ -120,14 +170,47 @@ app.whenReady().then(() => {
       console.error(`[backup] purging expired backups failed: ${err}`);
     }
   });
+  // Ask GitHub once whether a newer release is out; never in development or a smoke run.
+  if (app.isPackaged && !isSmokeRun()) {
+    void checkForUpdate(app.getVersion()).then((found) => {
+      update = found;
+      if (found) console.log(`[update] ShiftNurse ${found.version} is available: ${found.url}`);
+    });
+  }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow();
   });
-});
+}
+
+/**
+ * A database that will not open (a failed migration, a file from a newer release, a full or
+ * read-only disk) must say so: an unhandled rejection here leaves no window and no message,
+ * and on macOS a dock icon with nothing behind it.
+ */
+function failedToStart(err: unknown): void {
+  console.error('[main] startup failed:', err);
+  if (isSmokeRun()) {
+    app.exit(1);
+    return;
+  }
+  dialog.showErrorBox(
+    'ShiftNurse could not start',
+    `${err instanceof Error ? err.message : String(err)}\n\n` +
+      `Database: ${databasePath()}\nBackups: ${backupsDir()}\nLog: ${join(logsDir, 'main.log')}`,
+  );
+  app.exit(1);
+}
+
+if (isPrimaryInstance) {
+  app.whenReady().then(start).catch(failedToStart);
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('will-quit', () => closeAppDatabase());
+app.on('will-quit', () => {
+  for (const step of onQuit) step();
+  closeAppDatabase();
+});

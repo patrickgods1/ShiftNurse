@@ -12,7 +12,7 @@ import { EMPLOYMENT_TYPE_LABELS, EMPLOYMENT_TYPES } from '@shiftnurse/core';
 import { type FormEvent, type ReactNode, useEffect, useId, useState } from 'react';
 import type { NurseInput, NursePatch } from '../../../../shared/api.js';
 import { useCreateNurse, useUpdateNurse } from '../../api.js';
-import { OVERLAY } from '../../components/ui.js';
+import { OVERLAY, PRIMARY, SECONDARY } from '../../components/ui.js';
 
 const ROLES: readonly NurseRole[] = ['RN', 'LPN', 'CNA'];
 
@@ -397,10 +397,7 @@ export function NurseFormDialog({
 
             <div className="mt-6 flex justify-end gap-2">
               <Dialog.Close asChild>
-                <button
-                  type="button"
-                  className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg"
-                >
+                <button type="button" className={SECONDARY}>
                   Cancel
                 </button>
               </Dialog.Close>
@@ -408,8 +405,7 @@ export function NurseFormDialog({
                 type="submit"
                 data-testid="nurse-form-save"
                 disabled={saving}
-                className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white
-                  disabled:opacity-60"
+                className={PRIMARY}
               >
                 {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Add nurse'}
               </button>

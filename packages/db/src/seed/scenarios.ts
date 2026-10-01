@@ -59,7 +59,7 @@ import {
   type Weekday,
   weekdayOf,
 } from '@shiftnurse/core';
-import type { DbLike } from '../client.js';
+import type { ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { createAcuityTier, createRatioRule, upsertHppdTarget } from '../repositories/acuity.js';
 import { logCallAttempt, markCallOffCovered, reportCallOff } from '../repositories/calloffs.js';
@@ -199,7 +199,7 @@ const LAST_NAMES = [
  * Build the whole dataset. Call inside a transaction: a half-seeded database is worse than
  * an empty one.
  */
-export function seedScenarioUnit(db: DbLike, options: SeedOptions = {}): SeedResult {
+export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): SeedResult {
   const rng = new Rng(options.seed ?? 20260917);
   const now = options.today ?? today();
   const historyPeriods = options.historyPeriods ?? 13; // ~6 months of 14-day periods

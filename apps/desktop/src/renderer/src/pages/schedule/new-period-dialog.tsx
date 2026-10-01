@@ -8,7 +8,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import type { Id, IsoDate, SchedulePeriod } from '@shiftnurse/core';
 import { type FormEvent, useEffect, useId, useState } from 'react';
 import { useCreatePeriod } from '../../api-schedule.js';
-import { OVERLAY } from '../../components/ui.js';
+import { OVERLAY, PRIMARY, SECONDARY } from '../../components/ui.js';
 
 interface NewPeriodDialogProps {
   open: boolean;
@@ -118,10 +118,7 @@ export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPe
             ) : null}
             <div className="mt-6 flex justify-end gap-2">
               <Dialog.Close asChild>
-                <button
-                  type="button"
-                  className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg"
-                >
+                <button type="button" className={SECONDARY}>
                   Cancel
                 </button>
               </Dialog.Close>
@@ -129,8 +126,7 @@ export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPe
                 type="submit"
                 data-testid="new-period-save"
                 disabled={createPeriod.isPending}
-                className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white
-                  disabled:opacity-60"
+                className={PRIMARY}
               >
                 {createPeriod.isPending ? 'Creating…' : 'Create'}
               </button>

@@ -9,7 +9,7 @@
 import { addDays, DEFAULT_FAIRNESS_WEIGHTS, type IsoDate, isoDate } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
-import { type OpenedDatabase, openTestDatabase } from '../client.js';
+import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { createShiftType, createUnit } from './config.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
@@ -106,22 +106,24 @@ beforeEach(() => {
     ACTOR,
   );
   unitId = unit.id;
-  const ruleSet = saveRuleSet(
-    handle.db,
-    {
-      unitId,
-      name: 'Default',
-      weekendDefinition: weekendDefinition(),
-      fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
-      configs: [
-        {
-          ruleId: 'min-rest-between-shifts',
-          enabled: true,
-          params: { minRestHours: 10, onCallCountsAsWork: false },
-        },
-      ],
-    },
-    ACTOR,
+  const ruleSet = transact(handle.db, (tx) =>
+    saveRuleSet(
+      tx,
+      {
+        unitId,
+        name: 'Default',
+        weekendDefinition: weekendDefinition(),
+        fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+        configs: [
+          {
+            ruleId: 'min-rest-between-shifts',
+            enabled: true,
+            params: { minRestHours: 10, onCallCountsAsWork: false },
+          },
+        ],
+      },
+      ACTOR,
+    ),
   );
   ruleSetId = ruleSet.id;
   ruleSetVersion = ruleSet.version;

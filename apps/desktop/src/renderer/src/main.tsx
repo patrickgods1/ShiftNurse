@@ -11,6 +11,7 @@ import { createRoot } from 'react-dom/client';
 import { router } from './router.js';
 import './styles.css';
 import { ConfirmProvider } from './components/confirm.js';
+import { AppErrorBoundary } from './components/error-boundary.js';
 import { applyTheme, loadStoredTheme } from './theme.js';
 
 applyTheme(loadStoredTheme());
@@ -33,10 +34,12 @@ if (rootElement === null) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <ConfirmProvider>
-        <RouterProvider router={router} />
-      </ConfirmProvider>
-    </QueryClientProvider>
+    <AppErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <ConfirmProvider>
+          <RouterProvider router={router} />
+        </ConfirmProvider>
+      </QueryClientProvider>
+    </AppErrorBoundary>
   </StrictMode>,
 );

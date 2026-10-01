@@ -5,10 +5,11 @@
  */
 
 import { type KeyboardEvent, useState } from 'react';
-import { useAppInfo } from '../api.js';
+import { api, useAppInfo } from '../api.js';
 import { AsyncState } from '../components/async-state.js';
 import { PageHeader } from '../components/page-header.js';
 import { ThemeToggle } from '../components/theme-toggle.js';
+import { SECONDARY } from '../components/ui.js';
 import { useConfirmDiscard } from '../components/unsaved-changes.js';
 import AcuityPanel from './settings/acuity.js';
 import BackupsPanel from './settings/backups.js';
@@ -60,6 +61,14 @@ function AboutTab() {
           <dd className="break-all text-text">{appInfoQuery.data.databasePath}</dd>
         </dl>
       )}
+
+      <h2 className="mb-1 mt-6 text-sm font-semibold text-text">Support</h2>
+      <p className="mb-3 text-sm text-text-muted">
+        The log records backups, errors and solver runs. Attach it when you report a problem.
+      </p>
+      <button type="button" className={SECONDARY} onClick={() => void api.app.openLogs()}>
+        Open logs folder
+      </button>
     </section>
   );
 }

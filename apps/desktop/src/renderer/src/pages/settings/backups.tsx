@@ -37,6 +37,7 @@ const KIND_LABEL: Record<string, string> = {
   manual: 'Manual',
   'pre-restore': 'Before restore',
   'pre-reset': 'Before start over',
+  'pre-migrate': 'Before update',
 };
 
 function formatBytes(bytes: number): string {

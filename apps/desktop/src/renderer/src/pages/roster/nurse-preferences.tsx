@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import type { PreferenceInput } from '../../../../shared/api.js';
 import { useNursePreferences, useReplacePreferences, useShiftTypes } from '../../api.js';
 import { AsyncState } from '../../components/async-state.js';
+import { PRIMARY } from '../../components/ui.js';
 
 const WEEKDAY_NAMES = [
   'Sunday',
@@ -120,8 +121,7 @@ export function PreferencesSection({ nurseId, unitId }: { nurseId: Id; unitId: I
               type="button"
               onClick={() => replace.mutate(rows.map((r) => r.value))}
               disabled={replace.isPending}
-              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white
-                disabled:opacity-60"
+              className={PRIMARY}
             >
               {replace.isPending ? 'Saving…' : 'Save preferences'}
             </button>

@@ -11,6 +11,7 @@ import { useExportRosterToFile, useNurses } from '../api.js';
 import { AsyncState } from '../components/async-state.js';
 import { type Column, DataTable } from '../components/data-table.js';
 import { PageHeader } from '../components/page-header.js';
+import { PRIMARY, SECONDARY } from '../components/ui.js';
 import { formatDate } from '../format.js';
 import { useUnit } from '../unit-context.js';
 import { ImportDialog } from './roster/import-dialog.js';
@@ -100,19 +101,14 @@ export default function RosterPage() {
         description="Nurses assigned to this unit"
         actions={
           <>
-            <button
-              type="button"
-              onClick={() => setImportOpen(true)}
-              className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg"
-            >
+            <button type="button" onClick={() => setImportOpen(true)} className={SECONDARY}>
               Import CSV
             </button>
             <button
               type="button"
               onClick={() => exportRoster.mutate(unit.id)}
               disabled={exportRoster.isPending}
-              className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg
-                disabled:opacity-60"
+              className={SECONDARY}
             >
               {exportRoster.isPending ? 'Exporting…' : 'Export CSV'}
             </button>
@@ -120,7 +116,7 @@ export default function RosterPage() {
               type="button"
               data-testid="roster-add"
               onClick={() => setFormTarget('new')}
-              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white"
+              className={PRIMARY}
             >
               Add nurse
             </button>

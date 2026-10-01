@@ -356,7 +356,7 @@ function applyHolidays(
 }
 
 /** Save the default rules as version 1, unless the unit already has a rule set. */
-function applyDefaultRules(db: DbLike, unitId: Id, actor: string): SetupPresetResult {
+function applyDefaultRules(db: ShiftNurseTx, unitId: Id, actor: string): SetupPresetResult {
   if (getLatestRuleSet(db, unitId) !== undefined) return { created: 0, updated: 0, unchanged: 1 };
   const base = defaultRuleSet(unitId);
   saveRuleSet(

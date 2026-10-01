@@ -233,11 +233,18 @@ violations of their own.
   worse than a failed one.
   The exception proves the rule: a function whose several writes are only correct together —
   `moveAssignment`, `approveSwap`, `importRoster`, `importHistoricalLedger`,
-  `approveTimeOffAndLiftAssignments`, `applyResolution`, and the holiday writes (`updateHoliday`,
-  `deleteHoliday`, `recordHolidayWork`, `clearHolidayWork`, `addHolidayYear`) — takes
-  `ShiftNurseTx`, so calling it
+  `approveTimeOffAndLiftAssignments`, `applyResolution`, `saveRuleSet` (a header, its configs and
+  the audit row — a header alone would be a "latest" rule set with no rules), and the holiday
+  writes (`updateHoliday`, `deleteHoliday`, `recordHolidayWork`, `clearHolidayWork`,
+  `addHolidayYear`) — takes `ShiftNurseTx`, so calling it
   outside a transaction is a type error rather than a docstring nobody read.
+- **Every IPC write runs in one `transact`**, in the `main/api/` module that builds its resource
+  (`api.ts` is only the wiring table): a repository function given the bare `db` commits its
+  change and its audit row as two statements, and a crash or failed audit insert between them
+  leaves a change with no record.
 - **Every mutation writes an audit entry in the same call**, with `before` on updates/deletes.
+  `audit_log` is append-only in the file itself (migration 0013's triggers refuse UPDATE and
+  DELETE); restore and start over replace the whole file instead.
   Denials, resolutions and overrides go through `recordAuditStrict`, which refuses to record
   without a stated reason — that text is what gets quoted if a decision is challenged.
 - **Rule set versions are immutable.** `saveRuleSet` always inserts a new version; a published
@@ -264,7 +271,9 @@ violations of their own.
 - **The renderer never re-derives time maths.** `renderer/src/format.ts` splits ISO strings
   for display and calls core's `weekdayOf`/`dayNumber` for anything else. The first version
   computed weekday as `dayNumber % 7` and labelled Sunday 2026-09-20 "Wed" — day 0 of the
-  epoch was a Thursday. Renderer unit tests live next to the code and run under `npm test`.
+  epoch was a Thursday. Renderer unit tests live next to the code and run under `npm test`;
+  component tests are `*.test.tsx` with `// @vitest-environment jsdom` and Testing Library
+  (the grid's drag and drop uses a stand-in `DataTransfer`, which jsdom lacks).
 - **`ELECTRON_RUN_AS_NODE` must be unset when launching Electron.** VS Code's integrated
   terminal exports it, and with it set the Electron binary is a bare Node runtime — the
   symptom is `'electron' does not provide an export named 'BrowserWindow'`. `scripts/smoke.mjs`
@@ -517,7 +526,30 @@ violations of their own.
   period already).
 - **Backups use SQLite's online backup API**, never a file copy — a WAL database copied by
   hand loses un-checkpointed pages. The smoke run builds core/db from `dist`, so rebuild packages
-  (`npm run build:packages`) after touching core before trusting a smoke result.
+  (`npm run build:packages`) after touching core before trusting a smoke result. Restore and
+  start over swap the file through `replaceDatabaseFile` (staged copy, then rename), so a failed
+  copy leaves the live database alone. The daily copy is due by the *local* date and re-checked
+  hourly while the app runs.
+- **An update never migrates the only copy.** `openAppDatabase` opens without migrating, reads
+  `migrationStatus`, and when migrations are pending on a non-empty file takes a `pre-migrate`
+  backup first (audited once the schema is current). A database migrated by a newer release is
+  refused (`DatabaseNewerThanAppError`) — drizzle's migrator would otherwise find nothing to do
+  and let this build's queries run against tables it has never seen.
+- **Main starts or says why not.** `index.ts` takes the single-instance lock (a second copy would
+  share the database, and a restore would replace the file under it), and a startup failure
+  shows a native error box naming the database, backups and log paths before exiting. Main's
+  console output is teed to `userData/logs/main.log` (`main/log.ts`, rolled at 5 MB), which
+  Settings › About opens.
+- **Errors reach the manager in words.** `ipc.ts` logs every failed call in full and re-throws
+  `userFacingMessage(err)` (`main/ipc-errors.ts`: SQLite constraint errors reworded, the app's
+  own messages unchanged); the preload strips Electron's `Error invoking remote method …`
+  wrapper (`shared/ipc-error.ts`). Write refusals for people, since they reach the UI verbatim.
+- **CSV exports defuse formulas.** `serializeCsv` prefixes `'` to a field starting `=`, `+`, `-`,
+  `@`, tab or CR (numbers exempt) and `parseCsv` removes it, so an exported roster opened in
+  Excel cannot run a formula hidden in a name, and still re-imports as itself.
+- **The app says when a release is out, but cannot update itself** (builds are unsigned).
+  `main/updates.ts` asks GitHub's latest-release API once at launch in a packaged, non-smoke run;
+  any failure is silence, and only a link to the project's own releases page is ever shown.
 - **HPPD and acuity care hours are advisory.** `ShiftDemand.careHoursRecommendedNurses` (care hours
   ÷ shift length) and `hppdRecommendedNurses` show on the Demand page; `acuity/hppd.ts`'s
   `scheduledHppd` compares a period's scheduled hours per patient day with the target on the Demand

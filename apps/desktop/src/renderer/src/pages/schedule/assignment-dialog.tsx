@@ -147,10 +147,7 @@ export function AssignmentDialog({
 
               <div className="mt-4 flex justify-end">
                 <Dialog.Close asChild>
-                  <button
-                    type="button"
-                    className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg"
-                  >
+                  <button type="button" className={SECONDARY}>
                     Close
                   </button>
                 </Dialog.Close>

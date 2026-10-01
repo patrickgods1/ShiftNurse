@@ -16,20 +16,22 @@
  * the launch sweep purges it after that unless the manager deletes it permanently first.
  */
 
-import {
-  closeSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readSync,
-  rmSync,
-} from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { recordAudit, type ShiftNurseDb, transact } from '@shiftnurse/db';
+import { today } from '@shiftnurse/core';
+import type { MigrationStatus, OpenedDatabase, ShiftNurseDb } from '@shiftnurse/db';
+import { recordAudit, transact } from '@shiftnurse/db';
 import { app } from 'electron';
 import type { BackupInfo, DeletedBackupInfo } from '../shared/api.js';
-import { listBackupFiles, listTrash, readBackup } from './backup-files.js';
+import {
+  type BackupKind,
+  backupFileName,
+  dailyBackupDue,
+  listBackupFiles,
+  listTrash,
+  readBackup,
+  replaceDatabaseFile,
+} from './backup-files.js';
 import {
   deleteBackupIn,
   purgeDeletedBackupIn,
@@ -41,18 +43,11 @@ import { closeAppDatabase, databasePath, getSqlite } from './database.js';
 /** Actor for audit rows written by the backup job itself. */
 const ACTOR = 'manager';
 const DAILY_KEEP = 14;
+/** How often a running app checks whether today's copy is still to take. */
+const DAILY_CHECK_MS = 60 * 60 * 1000;
 
 export function backupsDir(): string {
   return join(app.getPath('userData'), 'backups');
-}
-
-function slug(text: string): string {
-  return (
-    text
-      .replace(/[^\w-]+/g, '_')
-      .replace(/^_+|_+$/g, '')
-      .slice(0, 40) || 'db'
-  );
 }
 
 /** Newest first. */
@@ -60,33 +55,60 @@ export function listBackups(): BackupInfo[] {
   return listBackupFiles(backupsDir());
 }
 
-/**
- * Write one backup. The audit row is written *after* the file exists, in its own statement:
- * a backup that failed must not be recorded as taken, and the record must live in the live
- * database (not the copy) so the next backup's audit trail is complete.
- */
-export async function createBackup(
-  db: ShiftNurseDb,
-  kind: 'publish' | 'daily' | 'manual' | 'pre-restore' | 'pre-reset',
+/** Copy the database through SQLite's online backup API; no audit row yet. */
+async function writeBackupFile(
+  sqlite: OpenedDatabase['sqlite'],
+  kind: BackupKind,
   label: string,
 ): Promise<BackupInfo> {
   const dir = backupsDir();
   mkdirSync(dir, { recursive: true });
-  const createdAt = Date.now();
-  const fileName = `${kind}-${slug(label)}-${createdAt}.sqlite`;
-  const path = join(dir, fileName);
-  await getSqlite().backup(path);
-  const result = readBackup(backupsDir(), fileName);
+  const fileName = backupFileName(kind, label, Date.now());
+  await sqlite.backup(join(dir, fileName));
+  const result = readBackup(dir, fileName);
   if (!result) throw new Error(`Backup ${fileName} was written but cannot be read back`);
+  return result;
+}
+
+/**
+ * The audit row for a backup, written *after* the file exists: a backup that failed must not
+ * be recorded as taken, and the record must live in the live database (not the copy) so the
+ * next backup's audit trail is complete.
+ */
+export function recordBackup(db: ShiftNurseDb, backup: BackupInfo): void {
   recordAudit(db, {
     entityType: 'backup',
-    entityId: fileName,
+    entityId: backup.fileName,
     action: 'backup',
     actor: ACTOR,
-    after: { kind, path, bytes: result.bytes },
-    at: createdAt,
+    after: { kind: backup.kind, path: backup.path, bytes: backup.bytes },
+    at: backup.createdAt,
   });
+}
+
+/** Write one backup and audit it. */
+export async function createBackup(
+  db: ShiftNurseDb,
+  kind: Exclude<BackupKind, 'pre-migrate'>,
+  label: string,
+): Promise<BackupInfo> {
+  const result = await writeBackupFile(getSqlite(), kind, label);
+  recordBackup(db, result);
   return result;
+}
+
+/**
+ * The copy taken before an update migrates the database — the only way back if a migration
+ * goes wrong on a real unit's data. It runs before the schema is current, so it cannot be
+ * audited yet: the caller records it with `recordBackup` once the migrations have run.
+ * A fresh file has nothing to lose and is not copied.
+ */
+export async function backupBeforeMigrate(
+  sqlite: OpenedDatabase['sqlite'],
+  status: MigrationStatus,
+): Promise<BackupInfo | undefined> {
+  if (status.fresh || status.pending === 0) return undefined;
+  return writeBackupFile(sqlite, 'pre-migrate', `before-v${app.getVersion()}`);
 }
 
 /** Keep the newest `DAILY_KEEP` daily backups; publish and manual backups are never pruned. */
@@ -95,16 +117,31 @@ function pruneDaily(): void {
   for (const stale of daily.slice(DAILY_KEEP)) rmSync(stale.path, { force: true });
 }
 
-/** Once per calendar day on the host clock; a no-op when today's copy already exists. */
+/** Once per local calendar day; a no-op when today's copy already exists. */
 export async function ensureDailyBackup(db: ShiftNurseDb): Promise<BackupInfo | undefined> {
-  const today = new Date().toISOString().slice(0, 10);
-  const existing = listBackups().find(
-    (b) => b.kind === 'daily' && new Date(b.createdAt).toISOString().slice(0, 10) === today,
-  );
-  if (existing) return undefined;
-  const created = await createBackup(db, 'daily', today);
+  const now = new Date();
+  if (!dailyBackupDue(listBackups(), now)) return undefined;
+  const created = await createBackup(db, 'daily', today(now));
   pruneDaily();
   return created;
+}
+
+/**
+ * Take the daily copy now and keep checking while the app runs: a ward PC can leave the app
+ * open for a week, and a copy only at launch would then be a week old. Returns the stop.
+ */
+export function startDailyBackups(
+  db: ShiftNurseDb,
+  log: { info(msg: string): void; error(msg: string): void },
+): () => void {
+  const run = () =>
+    void ensureDailyBackup(db).then(
+      (b) => b && log.info(`[backup] daily backup written to ${b.path}`),
+      (err) => log.error(`[backup] daily backup failed: ${err}`),
+    );
+  run();
+  const timer = setInterval(run, DAILY_CHECK_MS);
+  return () => clearInterval(timer);
 }
 
 /** Deleted backups still in the trash, most recently deleted first. */
@@ -198,12 +235,7 @@ export async function resetDatabase(db: ShiftNurseDb, stopWork: () => void): Pro
 function replaceLiveDatabase(source: string | undefined, stopWork: () => void): void {
   stopWork();
   closeAppDatabase();
-  const live = databasePath();
-  // WAL and shm files belong to the outgoing database; left behind they would be replayed
-  // over the restored file (or a fresh one) on next open.
-  for (const suffix of ['-wal', '-shm']) rmSync(`${live}${suffix}`, { force: true });
-  if (source === undefined) rmSync(live, { force: true });
-  else copyFileSync(source, live);
+  replaceDatabaseFile(databasePath(), source);
   // Let the IPC reply reach the renderer before the process goes away.
   setTimeout(() => {
     app.relaunch();

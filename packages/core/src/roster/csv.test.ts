@@ -56,6 +56,20 @@ describe('CSV parsing', () => {
     expect(text).toBe('plain,"has,comma","has ""quote""","has\nnewline",\r\n1,2,3,4,5\r\n');
     expect(parseCsv(text)).toEqual(rows);
   });
+
+  it('defuses a name Excel would run as a formula, like =HYPERLINK(...) imported from HR', () => {
+    const text = serializeCsv([['=HYPERLINK("http://x","Smith")', '+1+1', '@SUM(A1)', '\tTab']]);
+    expect(text).toBe(`"'=HYPERLINK(""http://x"",""Smith"")",'+1+1,'@SUM(A1),'\tTab\r\n`);
+  });
+
+  it('leaves numbers alone, so a negative pay delta exports as -12.5, not as text', () => {
+    expect(serializeCsv([['-12.5', '+3', '-', 'Smith-Jones']])).toBe("-12.5,+3,'-,Smith-Jones\r\n");
+  });
+
+  it('reads a defused field back as the original text, so the app re-imports its own export', () => {
+    const rows = [['=1+1', '-', '@home', "'quoted already", "'=already defused", '-4']];
+    expect(parseCsv(serializeCsv(rows))).toEqual(rows);
+  });
 });
 
 const HEADER = ROSTER_COLUMNS.join(',');

@@ -113,6 +113,13 @@ export interface AppInfo {
   databasePath: string;
 }
 
+/** A published release newer than the running app (see `main/updates.ts`). */
+export interface UpdateInfo {
+  version: string;
+  /** The release's GitHub page, where the installers are. */
+  url: string;
+}
+
 export interface ExpiringCredentialView {
   nurse: Nurse;
   credential: Credential;
@@ -600,6 +607,10 @@ export interface BackfillResult {
 export interface ShiftNurseApi {
   app: {
     info(): AppInfo;
+    /** A newer release, once the launch check has found one; null otherwise. */
+    update(): UpdateInfo | null;
+    /** Show the folder holding the main-process log in the file manager. */
+    openLogs(): void;
   };
   units: {
     list(): Unit[];
@@ -942,7 +953,7 @@ export type RendererApi = { [R in keyof ShiftNurseApi]: Promisify<ShiftNurseApi[
  * system refuses an entry that is not a method on {@link ShiftNurseApi}.
  */
 export const API_CHANNELS = {
-  app: ['info'],
+  app: ['info', 'update', 'openLogs'],
   units: ['list', 'update'],
   setup: [
     'status',

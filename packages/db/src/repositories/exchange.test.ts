@@ -76,21 +76,23 @@ beforeEach(() => {
     },
     ACTOR,
   ).id;
-  const ruleSet = saveRuleSet(
-    handle.db,
-    {
-      unitId,
-      name: 'Default',
-      weekendDefinition: {
-        startWeekday: 6,
-        startMinute: 0,
-        durationMinutes: 2880,
-        mode: 'starts_within',
+  const ruleSet = transact(handle.db, (tx) =>
+    saveRuleSet(
+      tx,
+      {
+        unitId,
+        name: 'Default',
+        weekendDefinition: {
+          startWeekday: 6,
+          startMinute: 0,
+          durationMinutes: 2880,
+          mode: 'starts_within',
+        },
+        fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+        configs: [],
       },
-      fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
-      configs: [],
-    },
-    ACTOR,
+      ACTOR,
+    ),
   );
   shiftTypeId = createShiftType(
     handle.db,

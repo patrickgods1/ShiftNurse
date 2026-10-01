@@ -7,8 +7,27 @@ import {
   type SchedulePeriod,
   type ScheduleView,
 } from '@shiftnurse/core';
-import { costContext, type DbLike, getBudget, setBudget } from '@shiftnurse/db';
-import type { PeriodCostReport } from '../../shared/api.js';
+import {
+  costContext,
+  createDifferential,
+  createOvertimeRule,
+  createPayRate,
+  type DbLike,
+  deleteDifferential,
+  deleteOvertimeRule,
+  deletePayRate,
+  getBudget,
+  listDifferentialsForUnit,
+  listOvertimeRulesForUnit,
+  listPayRatesForUnit,
+  type ShiftNurseDb,
+  setBudget,
+  transact,
+  updateDifferential,
+  updateOvertimeRule,
+  updatePayRate,
+} from '@shiftnurse/db';
+import type { PeriodCostReport, ShiftNurseApi } from '../../shared/api.js';
 
 import { ACTOR, periodOrThrow, ruleSetFor, scheduleViewFor } from './context.js';
 
@@ -36,7 +55,31 @@ export function costReportForView(
   };
 }
 
-export function setPeriodBudget(db: DbLike, periodId: Id, targetDollars: number) {
-  const period = periodOrThrow(db, periodId);
-  return setBudget(db, period.unitId, periodId, targetDollars, ACTOR);
+export function setPeriodBudget(db: ShiftNurseDb, periodId: Id, targetDollars: number) {
+  return transact(db, (tx) => {
+    const period = periodOrThrow(tx, periodId);
+    return setBudget(tx, period.unitId, periodId, targetDollars, ACTOR);
+  });
+}
+
+/** Pay configuration and the period cost report; every write audited in one transaction. */
+export function costApi(db: ShiftNurseDb): ShiftNurseApi['cost'] {
+  return {
+    payRates: (unitId) => listPayRatesForUnit(db, unitId),
+    createPayRate: (input) => transact(db, (tx) => createPayRate(tx, input, ACTOR)),
+    updatePayRate: (id, patch) => transact(db, (tx) => updatePayRate(tx, id, patch, ACTOR)),
+    deletePayRate: (id) => transact(db, (tx) => deletePayRate(tx, id, ACTOR)),
+    differentials: (unitId) => listDifferentialsForUnit(db, unitId),
+    createDifferential: (input) => transact(db, (tx) => createDifferential(tx, input, ACTOR)),
+    updateDifferential: (id, patch) =>
+      transact(db, (tx) => updateDifferential(tx, id, patch, ACTOR)),
+    deleteDifferential: (id) => transact(db, (tx) => deleteDifferential(tx, id, ACTOR)),
+    overtimeRules: (unitId) => listOvertimeRulesForUnit(db, unitId),
+    createOvertimeRule: (input) => transact(db, (tx) => createOvertimeRule(tx, input, ACTOR)),
+    updateOvertimeRule: (id, patch) =>
+      transact(db, (tx) => updateOvertimeRule(tx, id, patch, ACTOR)),
+    deleteOvertimeRule: (id) => transact(db, (tx) => deleteOvertimeRule(tx, id, ACTOR)),
+    report: (periodId) => costReport(db, periodId),
+    setBudget: (periodId, targetDollars) => setPeriodBudget(db, periodId, targetDollars),
+  };
 }

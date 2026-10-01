@@ -4,11 +4,13 @@
  * Builds `window.shiftnurse` from the channel table in the shared contract: every entry
  * becomes a function that forwards its arguments over `ipcRenderer.invoke`. Nothing else is
  * exposed — no raw `ipcRenderer`, no `require` — so the surface the UI can reach is exactly
- * the contract and nothing more.
+ * the contract and nothing more. A rejected call reaches the UI with main's message alone, not
+ * Electron's `Error invoking remote method …` wrapper.
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
 import { API_CHANNELS, channelName, type RendererApi } from '../shared/api.js';
+import { stripIpcPrefix } from '../shared/ipc-error.js';
 
 function buildApi(): RendererApi {
   const api: Record<string, Record<string, (...args: unknown[]) => Promise<unknown>>> = {};
@@ -16,7 +18,10 @@ function buildApi(): RendererApi {
     api[resource] = {};
     for (const method of methods) {
       const channel = channelName(resource, method);
-      api[resource][method] = (...args) => ipcRenderer.invoke(channel, ...args);
+      api[resource][method] = (...args) =>
+        ipcRenderer.invoke(channel, ...args).catch((err: unknown) => {
+          throw new Error(stripIpcPrefix(err instanceof Error ? err.message : String(err)));
+        });
     }
   }
   return api as unknown as RendererApi;

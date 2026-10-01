@@ -8,7 +8,7 @@
  */
 
 import type { Id } from '../domain/entities.js';
-import { dayNumber, type IsoDate, minutesToHours, restMinutesBetween } from '../domain/time.js';
+import { dayNumber, fromDayNumber, minutesToHours, restMinutesBetween } from '../domain/time.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
 import { isWorked, nurseName, type Rule, type Violation, violation } from './types.js';
 
@@ -294,7 +294,7 @@ export const consecutiveShiftsRule: Rule<ConsecutiveShiftsParams> = {
             stretchViolation(
               'missing_required_days_off',
               `${nurseName(nurse)} gets only ${daysOff} day${daysOff === 1 ? '' : 's'} off after a ` +
-                `${previous.length}-day stretch ending ${describeDay(previous.endDay)}. ` +
+                `${previous.length}-day stretch ending ${fromDayNumber(previous.endDay)}. ` +
                 `${params.minDaysOffAfterMaxStretch} required.`,
               nurse.id,
               next,
@@ -329,11 +329,7 @@ function stretchViolation(
 }
 
 function describeStretch(stretch: Stretch): string {
-  return `${describeDay(stretch.startDay)} to ${describeDay(stretch.endDay)}`;
-}
-
-function describeDay(day: number): IsoDate {
-  return new Date(day * 86_400_000).toISOString().slice(0, 10) as IsoDate;
+  return `${fromDayNumber(stretch.startDay)} to ${fromDayNumber(stretch.endDay)}`;
 }
 
 function formatHours(hours: number): string {

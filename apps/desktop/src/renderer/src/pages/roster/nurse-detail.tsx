@@ -10,7 +10,7 @@ import type { Id, Nurse } from '@shiftnurse/core';
 import { useRef, useState } from 'react';
 import { useDeactivateNurse, useIncompatibilityGroups, useNurse } from '../../api.js';
 import { AsyncState } from '../../components/async-state.js';
-import { OVERLAY } from '../../components/ui.js';
+import { OVERLAY, SECONDARY } from '../../components/ui.js';
 import { usePanelFocus } from '../../components/use-panel-focus.js';
 import { formatDate } from '../../format.js';
 import { CredentialsSection } from './nurse-credentials.js';
@@ -78,11 +78,7 @@ function NurseDetailBody({
       <KeptApart nurse={nurse} />
 
       <div className="mt-4 flex gap-2">
-        <button
-          type="button"
-          onClick={() => onEdit(nurse)}
-          className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg"
-        >
+        <button type="button" onClick={() => onEdit(nurse)} className={SECONDARY}>
           Edit
         </button>
         {nurse.active ? (
@@ -113,10 +109,7 @@ function NurseDetailBody({
             </p>
             <div className="flex justify-end gap-2">
               <Dialog.Close asChild>
-                <button
-                  type="button"
-                  className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg"
-                >
+                <button type="button" className={SECONDARY}>
                   Cancel
                 </button>
               </Dialog.Close>

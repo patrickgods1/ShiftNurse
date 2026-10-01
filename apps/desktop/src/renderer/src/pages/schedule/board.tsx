@@ -39,7 +39,7 @@ import {
 } from '../../api-solver.js';
 import { AsyncState } from '../../components/async-state.js';
 import { useConfirm } from '../../components/confirm.js';
-import { errorMessage } from '../../components/ui.js';
+import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { ReasonDialog } from '../requests/reason-dialog.js';
 import { AlertsPanel } from './alerts-panel.js';
 import { AssignmentDialog } from './assignment-dialog.js';
@@ -471,7 +471,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
               type="button"
               data-testid="change-log-open"
               onClick={() => setChangeLogOpen((o) => !o)}
-              className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text hover:bg-bg"
+              className={SECONDARY}
             >
               {changeLogOpen ? 'Hide change log' : 'Change log'}
             </button>
@@ -485,7 +485,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
                 setGenerateView(batch?.state === 'running' ? 'batch' : 'setup');
                 setGenerateOpen(true);
               }}
-              className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text hover:bg-bg"
+              className={SECONDARY}
             >
               Generate
             </button>
@@ -495,7 +495,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
               type="button"
               data-testid="publish-open"
               onClick={() => setPublishOpen(true)}
-              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white"
+              className={PRIMARY}
             >
               {published ? 'Publish changes' : 'Publish'}
             </button>

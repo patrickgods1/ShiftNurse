@@ -32,7 +32,7 @@ import {
   transact,
   type UpsertFairnessLedgerInput,
 } from '@shiftnurse/db';
-import type { FairnessTrendPoint, HistoryImportSummary } from '../../shared/api.js';
+import type { FairnessTrendPoint, HistoryImportSummary, ShiftNurseApi } from '../../shared/api.js';
 
 import {
   ACTOR,
@@ -174,4 +174,16 @@ export function importHistory(
       entriesReplaced: result.replaced,
     };
   });
+}
+
+/** The fairness resource, less the history file picker, which is Electron's (`api.ts`). */
+export function fairnessApi(
+  db: ShiftNurseDb,
+): Omit<ShiftNurseApi['fairness'], 'pickHistoryImportFile'> {
+  return {
+    report: (periodId) => fairnessReport(db, periodId),
+    history: (unitId) => ledgerSince(db, unitId, addDays(today(), -LEDGER_LOOKBACK_DAYS)),
+    trend: (unitId) => fairnessTrend(db, unitId),
+    importHistory: (unitId, rows) => importHistory(db, unitId, rows),
+  };
 }

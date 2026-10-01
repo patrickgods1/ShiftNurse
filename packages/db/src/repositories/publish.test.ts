@@ -8,7 +8,7 @@
 import { DEFAULT_FAIRNESS_WEIGHTS, isoDate } from '@shiftnurse/core';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
-import { type OpenedDatabase, openTestDatabase } from '../client.js';
+import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { createShiftType, createUnit } from './config.js';
 import { getFairnessLedgerEntry } from './ledger.js';
 import {
@@ -53,21 +53,23 @@ beforeEach(() => {
     },
     ACTOR,
   ).id;
-  const ruleSet = saveRuleSet(
-    db,
-    {
-      unitId,
-      name: 'Default',
-      weekendDefinition: {
-        startWeekday: 6,
-        startMinute: 0,
-        durationMinutes: 2880,
-        mode: 'starts_within',
+  const ruleSet = transact(db, (tx) =>
+    saveRuleSet(
+      tx,
+      {
+        unitId,
+        name: 'Default',
+        weekendDefinition: {
+          startWeekday: 6,
+          startMinute: 0,
+          durationMinutes: 2880,
+          mode: 'starts_within',
+        },
+        fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+        configs: [],
       },
-      fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
-      configs: [],
-    },
-    ACTOR,
+      ACTOR,
+    ),
   );
   shiftTypeId = createShiftType(
     db,

@@ -17,6 +17,7 @@ import { AsyncState } from './components/async-state.js';
 import { TipProvider } from './components/field-help.js';
 import { ThemeToggle } from './components/theme-toggle.js';
 import { NavigationGuard, UnsavedChangesProvider } from './components/unsaved-changes.js';
+import { UpdateBanner } from './components/update-banner.js';
 import DashboardPage from './pages/dashboard.js';
 import DemandPage from './pages/demand.js';
 import FairnessPage from './pages/fairness.js';
@@ -87,6 +88,7 @@ function AppShell() {
           <span className="text-sm font-medium text-text">{unit.name}</span>
           <ThemeToggle />
         </header>
+        <UpdateBanner />
         <main className="flex-1 overflow-y-auto p-6">
           <Outlet />
         </main>

@@ -147,22 +147,23 @@ export function periodsApi(db: ShiftNurseDb): ShiftNurseApi['periods'] {
   return {
     list: (unitId) => listPeriodsForUnit(db, unitId),
     assignments: (periodId) => listAssignmentsForPeriod(db, periodId),
-    create: ({ unitId, name, startDate, endDate }) => {
-      const ruleSet =
-        getLatestRuleSet(db, unitId) ?? saveRuleSet(db, defaultRuleSet(unitId), ACTOR);
-      return createPeriod(
-        db,
-        {
-          unitId,
-          name,
-          startDate,
-          endDate,
-          ruleSetId: ruleSet.id,
-          ruleSetVersion: ruleSet.version,
-        },
-        ACTOR,
-      );
-    },
+    create: ({ unitId, name, startDate, endDate }) =>
+      transact(db, (tx) => {
+        const ruleSet =
+          getLatestRuleSet(tx, unitId) ?? saveRuleSet(tx, defaultRuleSet(unitId), ACTOR);
+        return createPeriod(
+          tx,
+          {
+            unitId,
+            name,
+            startDate,
+            endDate,
+            ruleSetId: ruleSet.id,
+            ruleSetVersion: ruleSet.version,
+          },
+          ACTOR,
+        );
+      }),
   };
 }
 

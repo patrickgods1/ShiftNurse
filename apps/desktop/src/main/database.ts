@@ -11,7 +11,15 @@
 
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import { type OpenedDatabase, openDatabase, type ShiftNurseDb } from '@shiftnurse/db';
+import {
+  DatabaseNewerThanAppError,
+  type MigrationStatus,
+  migrateDatabase,
+  migrationStatus,
+  type OpenedDatabase,
+  openDatabase,
+  type ShiftNurseDb,
+} from '@shiftnurse/db';
 import { app } from 'electron';
 
 let opened: OpenedDatabase | undefined;
@@ -44,9 +52,30 @@ export function getSqlite(): OpenedDatabase['sqlite'] {
   return opened.sqlite;
 }
 
-export function openAppDatabase(): ShiftNurseDb {
+/**
+ * Open the database, letting the host copy it before an update migrates it. Opening without
+ * migrating first is what makes that copy possible: the migrator would otherwise have changed
+ * the file before anyone could save the old one. A database from a newer release is refused
+ * before anything touches it.
+ */
+export async function openAppDatabase(
+  beforeMigrate: (sqlite: OpenedDatabase['sqlite'], status: MigrationStatus) => Promise<void>,
+): Promise<ShiftNurseDb> {
   if (opened) return opened.db;
-  opened = openDatabase({ url: databasePath(), migrationsFolder: resolveMigrationsFolder() });
+  const folder = resolveMigrationsFolder();
+  const candidate = openDatabase({ url: databasePath(), migrateOnOpen: false });
+  try {
+    const status = migrationStatus(candidate.sqlite, folder);
+    if (status.newerThanApp) throw new DatabaseNewerThanAppError();
+    if (status.pending > 0) {
+      await beforeMigrate(candidate.sqlite, status);
+      migrateDatabase(candidate.db, folder);
+    }
+  } catch (err) {
+    candidate.close();
+    throw err;
+  }
+  opened = candidate;
   return opened.db;
 }
 
