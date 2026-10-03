@@ -34,15 +34,17 @@ export function patchOf<T extends object>(
 /**
  * Refuse a whole object (not a patch) that carries a key its type does not. Saves like the
  * conflict policy and solver settings copy named fields out of an IPC payload, so a stray key
- * would otherwise vanish silently — the same hidden bug `patchOf` exists to surface.
+ * would otherwise vanish silently — the same hidden bug `patchOf` exists to surface. The
+ * allow-list is a `PatchKeys` record for the same reason: a field added to the type later must
+ * be added here too, or the code does not compile.
  */
 export function assertKeys<T extends object>(
   value: T,
-  allowed: readonly (keyof T)[],
+  allowed: PatchKeys<T>,
   entity: string,
 ): void {
   for (const key of Object.keys(value)) {
-    if (!(allowed as readonly string[]).includes(key)) {
+    if (!Object.hasOwn(allowed, key)) {
       throw new Error(`A ${entity} cannot include '${key}'`);
     }
   }

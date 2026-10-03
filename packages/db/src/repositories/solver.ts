@@ -37,7 +37,7 @@ export function saveSolverSettings(
   settings: SolverSettings,
   actor: string,
 ): SolverSettings & { id: Id } {
-  assertKeys(settings, ['solverId', 'maxIterations'], 'solver setting');
+  assertKeys(settings, { solverId: true, maxIterations: true }, 'solver setting');
   if (!isSolverId(settings.solverId)) {
     throw new Error(`Unknown solver "${String(settings.solverId)}"`);
   }

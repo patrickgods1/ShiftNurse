@@ -55,7 +55,11 @@ export function saveConflictPolicy(
   policy: AutoResolvePolicy,
   actor: string,
 ): AutoResolvePolicy {
-  assertKeys(policy, ['enabled', 'maxCostDelta', 'maxFairnessDrop'], 'conflict policy');
+  assertKeys(
+    policy,
+    { enabled: true, maxCostDelta: true, maxFairnessDrop: true },
+    'conflict policy',
+  );
   if (!(policy.maxCostDelta >= 0) || !(policy.maxFairnessDrop >= 0)) {
     throw new Error('Auto-resolve thresholds must be zero or positive numbers');
   }
