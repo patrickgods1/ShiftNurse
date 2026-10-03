@@ -458,8 +458,9 @@ problem is often a group of three or more, not a pair.
       mutation-checked; `npm run check`; `npm run smoke`. `bench:solvers` not re-run: with no
       groups every new term is zero and no rule list changes, so its inputs price identically
 
-### M17 — Signed installers and updates (proposed)
-v0.1.0 ships unsigned: macOS users are told to run `xattr` and Windows users to click past
+### M17 — Signed installers and updates (deferred)
+Deferred by decision (2026-10-03): 1.0 ships unsigned with install instructions (M18 › Phase 8);
+the icon moves to M18. v0.1.0 ships unsigned: macOS users are told to run `xattr` and Windows users to click past
 SmartScreen, and an installed copy has no way to learn that a fix exists — the crash-on-launch
 fix in PR #6 reached nobody who had already installed the first draft. Nothing here is started.
 - [ ] Apple Developer ID signing with hardened runtime and entitlements, and notarisation
@@ -473,6 +474,84 @@ fix in PR #6 reached nobody who had already installed the first draft. Nothing h
       tick once a packaged v0.1.x has shown it for a published v0.1.y)
 - [ ] Verify: a signed dmg opens without a Gatekeeper prompt on a clean Mac; the signed installer
       passes SmartScreen on real Windows 11; v0.1.x updates itself to v0.1.y from a draft release
+
+### M18 — Release hardening (in progress)
+The 2026-10-03 release audit: data safety, renderer correctness, maintainability, tests, the
+manager's experience and the contract rules a real hospital would check first. One PR per phase.
+
+**Phase 1 — Data safety and robustness**
+- [ ] Backups written to `.partial`, `quick_check`ed, then renamed; quit waits for one in flight
+- [ ] Restore refuses a damaged backup or one from a newer version; the restore is audited in the
+      restored database
+- [ ] Backup trash moves and their audit rows succeed or fail together
+- [ ] The CP-SAT runner is killed on a failed start, a hung solve and a crashed worker
+- [ ] Hardening: CSP `object-src`/`base-uri`/`form-action`, redirect and frame navigation guards,
+      permission check handler, smoke harness loaded only in a smoke run, xlsx control characters
+- [ ] Every patch goes through an allow-list (`updatePayRate`, conflict policy, solver settings)
+- [ ] Every IPC call's arguments are checked at runtime (`shared/schemas`, zod) before main runs it
+- [ ] Time off loaded for the period and its lookback only; Generate's freshness check recomputes
+      the fingerprint only after a write
+- [ ] Verify: `npm run check`; `npm run smoke`; `npm run dist` + `smoke:packaged`; SA + LNS
+      output unchanged on fixed inputs
+
+**Phase 2 — Renderer correctness**
+- [ ] Configuration edits refresh every read model derived from them (`invalidateUnitDerived`);
+      publish no longer refetches the whole app
+- [ ] A failed save always reaches the manager (toast for any mutation without an inline error)
+- [ ] Undo for grid edits (toast + Cmd/Ctrl-Z), published edits carrying an "Undo:" reason
+- [ ] `board.tsx` split into edit, generate and dialog hooks; shared `Modal`, `EditorShell`,
+      `DateField`; instants formatted once
+- [ ] Verify: invalidation matrix test, undo tests, smoke
+
+**Phase 3 — The manager's experience**
+- [ ] Settings grouped (My unit, Contract & pay, Scheduling, Data) with links from where the
+      question comes up; navigation in workflow order with a pending-requests badge
+- [ ] Generate says "options", not variations or seeds; unfilled shifts explained in words
+- [ ] Fairness lists the actual nights, weekends and holidays, with "Show on schedule"
+- [ ] Violation chips distinguishable without colour; 12px minimum on the grid at 1366×768
+- [ ] "Someone called off" as the first action on Today
+- [ ] Verify: smoke with the new paths; screenshot at 1366×768
+
+**Phase 4 — Core maintainability**
+- [ ] Typed rule parameters (no `as unknown as` params) and typed violation details
+- [ ] `SolverModel` split into hours, coverage, preference and holiday parts; shift types by map
+- [ ] Soft-rule pricing parity test between the rule engine and `SolverModel`
+- [ ] `dayNumber` refuses a malformed date; memo caches bounded; `defaultRuleSet` takes its clock
+- [ ] Named core exports; conflicts engine indexes; shared audited update in `packages/db`
+- [ ] Verify: SA + LNS output unchanged; `bench:solvers` no slower
+
+**Phase 5 — Tests**
+- [ ] Renderer harness (fake bridge) and dialog tests: decide, publish, generate/save, call-off,
+      new period, rules, assisted setup
+- [ ] IPC channel-table test; DST and leap-day solver/cost/fairness tests; leave and day-of API
+      cases; property tests (diff, exchange, locks, dates, overtime)
+- [ ] Coverage run passes first time; CP-SAT suites required on one CI leg; desktop main ≥ 70%
+- [ ] Smoke: generate→save, leave with cover, undo, call-off button, settings groups
+
+**Phase 6 — Contract rules for 1.0**
+- [ ] A charge nurse without patients does not count toward the ratio (`chargeNurseTakesPatients`)
+- [ ] Break relief so ratios hold at all times (`breakMinutesPerNurse`)
+- [ ] California overtime: daily by workday, banded 1.5×/2×, seventh day
+- [ ] No mandatory overtime: volunteer records and the `mandatory-overtime` rule
+- [ ] Weekend pattern rule (every other weekend, weekends per period)
+- [ ] Credential expiry day judged the same everywhere; 30-day look-ahead
+- [ ] Posting lead time; jurisdiction presets (CA, OR, NY, MA) with citations
+- [ ] Stated limits: what 1.0 does not enforce, in the app and the README
+
+**Phase 8 — Distribution without signing**
+- [ ] App icon in the dmg and installer
+- [ ] Install instructions for unsigned builds; checksums in the release
+
+### M19–M26 — Union and HR features (after 1.0)
+Each is a milestone of its own: core algorithm and rules test-first, then entity, IPC and UI.
+- [ ] M19 Seniority leave bidding (bid rounds awarded in seniority order, every denial reasoned)
+- [ ] M20 Low-census cancellation order (policy tiers, rotation in the ledger, Today flow)
+- [ ] M21 Float pool and multi-unit staff (other-unit shifts as busy time, float rotation)
+- [ ] M22 Leave balances and FMLA (accrual, certifications, balance warnings)
+- [ ] M23 Pay realism (missed-break premium, call-back, minimum reporting and on-call pay)
+- [ ] M24 Pooled licensed-nurse ratios with a minimum RN share
+- [ ] M25 Preceptor pairing rule
+- [ ] M26 Grievance export of the audit trail
 
 ---
 

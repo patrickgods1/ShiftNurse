@@ -100,6 +100,10 @@ self-service later becomes an intake surface rather than a new data model.
   protection; `.github/workflows/release.yml` builds each installer natively on a `vX.Y.Z` tag,
   smoke-tests it, and creates a **draft** release (`.github/release-notes.md`); it dry-runs on PRs
   touching packaging. Builds are unsigned.
+- **M18 — Release hardening** (in progress; boxes in `ROADMAP.md`): the 2026-10-03 release
+  audit's fixes, one PR per phase — data safety, renderer correctness, the manager's experience,
+  core maintainability, tests, contract rules for 1.0, unsigned distribution. M17 (signing) is
+  deferred; M19–M26 are the union and HR features planned for after 1.0.
 - **M15 — Selectable solvers** (complete; plan of record `docs/SOLVER_PLAN.md`, results
   `docs/solver-bench.md`): Settings › Generate (the solver tab) picks **hybrid** (default), **SA + LNS** or **CP-SAT**
   per unit; the Generate dialog overrides per run. `native/cpsat-runner` is the C++ OR-Tools
