@@ -65,6 +65,16 @@ instead of `fetch`. Adding an IPC method means adding it to that shared contract
 missing implementation in `main/api.ts` is then a type error, not a runtime "no handler"
 surprise.
 
+Types do not exist at runtime, so the contract has a runtime half too: every method has an
+argument schema in `apps/desktop/src/shared/schemas/` (zod, bundled into main), and `ipc.ts`
+parses each call against it before the handler runs. Object schemas are strict — an unknown key
+is refused, never silently dropped — and each schema's output must fit the method's TypeScript
+signature, so a schema that drifts from the contract does not compile. These schemas are what an
+HTTP server would put on its request bodies. The database itself carries no `CHECK`
+constraints: adding them to SQLite means rebuilding each table in a migration that fails on any
+legacy row, and with one process as the only writer, validation at the door (schemas) and in the
+repositories (`patchOf`, value checks) covers the same ground without that risk.
+
 ```
 ┌─────────────────────────────┐
 │  apps/desktop (Electron)    │

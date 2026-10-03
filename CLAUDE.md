@@ -307,8 +307,12 @@ violations of their own.
   mutation hooks and their invalidation; it reloads the window before asserting on the grid.
   Do not read that as a cache bug in the app.
 - **Adding an IPC method:** add it to `ShiftNurseApi` and `API_CHANNELS` in `shared/api.ts`,
-  implement it in `main/api.ts` (logic in the matching `main/api/` module). Preload and renderer types follow; a missing implementation
-  is a type error, not a runtime "no handler".
+  its argument schema to `shared/schemas/<resource>.ts`, and implement it in `main/api.ts`
+  (logic in the matching `main/api/` module). Preload and renderer types follow; a missing
+  implementation or schema is a type error, not a runtime "no handler". `ipc.ts` parses every
+  call's arguments against `API_SCHEMAS` before the handler runs: object schemas are strict
+  (`object` in `schemas/primitives.ts`), so an unknown key is refused rather than dropped, and a
+  schema must never be stricter than what the renderer actually sends.
 - Bad data throws loudly (`ScheduleView` throws on an unknown nurse id). Silently dropping a
   row hides corruption; in scheduling that becomes a grievance.
 - **Fairness fair-share is pinned to `contractedHoursPerPeriod`, never worked hours.** That is
