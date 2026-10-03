@@ -62,6 +62,13 @@ describe('buildXlsx', () => {
     expect(buf.subarray(buf.length - 22).readUInt32LE(0)).toBe(0x06054b50);
   });
 
+  it('drops control characters and escapes apostrophes in a nurse name', () => {
+    const buf = buildXlsx([{ name: 'S', rows: [["O'Brien\x07, Ann"]] }]);
+    const sheet = readZip(buf).get('xl/worksheets/sheet1.xml')!;
+    expect(sheet).not.toContain('\x07');
+    expect(sheet).toContain('O&apos;Brien, Ann');
+  });
+
   it('is byte-for-byte deterministic', () => {
     const rows = [
       ['a', 1],

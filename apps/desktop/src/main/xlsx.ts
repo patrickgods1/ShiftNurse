@@ -104,11 +104,18 @@ function zip(entries: readonly ZipEntry[]): Buffer {
 // ---------------------------------------------------------------------------
 
 function xml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+  // Control characters other than tab/LF/CR are illegal in XML 1.0: one pasted into a name
+  // would make Excel refuse the whole workbook, not just that cell.
+  return (
+    text
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: matching them is the point
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;')
+  );
 }
 
 /** `A`, `B`, … `Z`, `AA`, … — the column letters Excel expects in cell references. */

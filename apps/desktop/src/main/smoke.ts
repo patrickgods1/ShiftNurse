@@ -36,10 +36,6 @@ const ROUTES: readonly { hash: string; testId: string }[] = [
   { hash: '#/settings', testId: 'settings-tabs' },
 ];
 
-export function isSmokeRun(): boolean {
-  return process.env.SHIFTNURSE_SMOKE === '1';
-}
-
 function fail(message: string): never {
   console.error(`[smoke] FAIL: ${message}`);
   app.exit(1);

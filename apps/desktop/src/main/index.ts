@@ -15,6 +15,7 @@ import { createApi, createSolverJobs } from './api.js';
 import {
   backupBeforeMigrate,
   backupsDir,
+  backupsInFlight,
   purgeExpiredBackups,
   recordBackup,
   startDailyBackups,
@@ -22,7 +23,7 @@ import {
 import { closeAppDatabase, databasePath, openAppDatabase } from './database.js';
 import { registerIpc } from './ipc.js';
 import { createFileLog, teeConsole } from './log.js';
-import { isSmokeRun, runSmoke } from './smoke.js';
+import { isSmokeRun } from './smoke-flag.js';
 import spawnSolverWorker from './solver-worker?nodeWorker';
 import { type AppLocation, isAppUrl, isSafeExternalUrl } from './trusted-origin.js';
 import { checkForUpdate } from './updates.js';
@@ -117,6 +118,14 @@ app.on('web-contents-created', (_, contents) => {
   contents.on('will-navigate', (event, url) => {
     if (!isAppUrl(url, APP_LOCATION)) event.preventDefault();
   });
+  // A redirect or a subframe navigation reaches the page with the same preload bridge, so the
+  // one guard above is not enough on its own.
+  contents.on('will-redirect', (event, url) => {
+    if (!isAppUrl(url, APP_LOCATION)) event.preventDefault();
+  });
+  contents.on('will-frame-navigate', (event) => {
+    if (!isAppUrl(event.url, APP_LOCATION)) event.preventDefault();
+  });
   contents.setWindowOpenHandler(({ url }) => {
     if (isSafeExternalUrl(url)) void shell.openExternal(url);
     return { action: 'deny' };
@@ -180,6 +189,7 @@ async function start(): Promise<void> {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
     callback(false),
   );
+  session.defaultSession.setPermissionCheckHandler(() => false);
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window));
 
   const db = await openDatabaseWithSafetyCopy();
@@ -197,7 +207,11 @@ async function start(): Promise<void> {
   onQuit.push(startDailyBackups(db, { info: console.log, error: console.error }));
   mainWindow = createWindow();
   guardUnsavedVariations(mainWindow, () => solverJobs.unsavedVariations());
-  if (isSmokeRun()) runSmoke(mainWindow);
+  if (isSmokeRun()) {
+    // The harness is large and only a smoke run needs it; a normal launch never loads it.
+    const { runSmoke } = await import('./smoke.js');
+    runSmoke(mainWindow);
+  }
   // Deleted backups wait 30 days in the trash; anything past that goes now. Off the startup
   // path like the daily copy: it is disk I/O and audit writes the first paint need not wait for.
   setImmediate(() => {
@@ -247,7 +261,38 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('will-quit', () => {
-  for (const step of onQuit) step();
-  closeAppDatabase();
+// Quitting mid-backup would leave a partial file, so the first will-quit is held until every
+// started backup write has settled, then quit again; the second pass goes straight through.
+// Bounded, because a stalled copy must not keep a ward PC from quitting: the .partial it leaves
+// is removed at next launch.
+const QUIT_BACKUP_WAIT_MS = 30_000;
+let quitting = false;
+app.on('will-quit', (event) => {
+  if (quitting) return;
+  quitting = true;
+  event.preventDefault();
+  // One failing step must not strand the app windowless: every step runs, and quit follows.
+  for (const step of onQuit) {
+    try {
+      step();
+    } catch (err) {
+      console.error('[main] shutdown step failed:', err);
+    }
+  }
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, QUIT_BACKUP_WAIT_MS);
+  });
+  void Promise.race([backupsInFlight(), timeout])
+    .catch((err) => console.error('[main] waiting for backups failed:', err))
+    .finally(() => {
+      clearTimeout(timer);
+      try {
+        closeAppDatabase();
+      } catch (err) {
+        console.error('[main] closing the database failed:', err);
+      } finally {
+        app.quit();
+      }
+    });
 });
