@@ -16,29 +16,36 @@
  * the launch sweep purges it after that unless the manager deletes it permanently first.
  */
 
-import { closeSync, existsSync, mkdirSync, openSync, readSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, renameSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { today } from '@shiftnurse/core';
 import type { MigrationStatus, OpenedDatabase, ShiftNurseDb } from '@shiftnurse/db';
-import { recordAudit, transact } from '@shiftnurse/db';
+import { recordAudit } from '@shiftnurse/db';
 import { app } from 'electron';
 import type { BackupInfo, DeletedBackupInfo } from '../shared/api.js';
 import {
   type BackupKind,
   backupFileName,
+  clearRestoreMarker,
   dailyBackupDue,
   listBackupFiles,
   listTrash,
+  PARTIAL_SUFFIX,
   readBackup,
+  removeStalePartials,
   replaceDatabaseFile,
+  restoreRefusal,
+  verifyDatabaseFile,
+  writeRestoreMarker,
 } from './backup-files.js';
 import {
   deleteBackupIn,
   purgeDeletedBackupIn,
   purgeExpiredBackupsIn,
+  settleInterruptedRemovals,
   undeleteBackupIn,
 } from './backup-trash.js';
-import { closeAppDatabase, databasePath, getSqlite } from './database.js';
+import { closeAppDatabase, databasePath, getSqlite, resolveMigrationsFolder } from './database.js';
 
 /** Actor for audit rows written by the backup job itself. */
 const ACTOR = 'manager';
@@ -55,8 +62,34 @@ export function listBackups(): BackupInfo[] {
   return listBackupFiles(backupsDir());
 }
 
-/** Copy the database through SQLite's online backup API; no audit row yet. */
-async function writeBackupFile(
+const inFlight = new Set<Promise<unknown>>();
+
+/**
+ * Resolves, never rejects, once every backup write started so far has settled. Quitting while
+ * one is mid-copy would leave a `.partial` file and no backup, so the quit waits on this.
+ */
+export async function backupsInFlight(): Promise<void> {
+  await Promise.allSettled([...inFlight]);
+}
+
+/**
+ * Copy the database through SQLite's online backup API; no audit row yet. Written under a
+ * `.partial` name and renamed only once it verifies, so a crash or full disk never leaves a
+ * half-copied file that Settings › Backups lists as a good backup.
+ */
+function writeBackupFile(
+  sqlite: OpenedDatabase['sqlite'],
+  kind: BackupKind,
+  label: string,
+): Promise<BackupInfo> {
+  const write = copyBackup(sqlite, kind, label);
+  inFlight.add(write);
+  const done = () => inFlight.delete(write);
+  write.then(done, done);
+  return write;
+}
+
+async function copyBackup(
   sqlite: OpenedDatabase['sqlite'],
   kind: BackupKind,
   label: string,
@@ -64,7 +97,16 @@ async function writeBackupFile(
   const dir = backupsDir();
   mkdirSync(dir, { recursive: true });
   const fileName = backupFileName(kind, label, Date.now());
-  await sqlite.backup(join(dir, fileName));
+  const partial = join(dir, `${fileName}${PARTIAL_SUFFIX}`);
+  try {
+    await sqlite.backup(partial);
+    const verdict = verifyDatabaseFile(partial, resolveMigrationsFolder());
+    if (!verdict.ok) throw new Error(`Backup ${fileName} failed verification: ${verdict.detail}`);
+    renameSync(partial, join(dir, fileName));
+  } catch (err) {
+    rmSync(partial, { force: true });
+    throw err;
+  }
   const result = readBackup(dir, fileName);
   if (!result) throw new Error(`Backup ${fileName} was written but cannot be read back`);
   return result;
@@ -134,6 +176,8 @@ export function startDailyBackups(
   db: ShiftNurseDb,
   log: { info(msg: string): void; error(msg: string): void },
 ): () => void {
+  removeStalePartials(backupsDir());
+  settleInterruptedRemovals(db, backupsDir());
   const run = () =>
     void ensureDailyBackup(db).then(
       (b) => b && log.info(`[backup] daily backup written to ${b.path}`),
@@ -170,25 +214,12 @@ export function purgeExpiredBackups(db: ShiftNurseDb): DeletedBackupInfo[] {
   return purgeExpiredBackupsIn(db, backupsDir(), Date.now());
 }
 
-function assertSqliteFile(path: string): void {
-  if (!existsSync(path)) throw new Error(`Backup ${path} does not exist`);
-  const fd = openSync(path, 'r');
-  try {
-    const header = Buffer.alloc(16);
-    readSync(fd, header, 0, 16, 0);
-    if (header.toString('utf8', 0, 15) !== 'SQLite format 3') {
-      throw new Error(`${path} is not a SQLite database`);
-    }
-  } finally {
-    closeSync(fd);
-  }
-}
-
 /**
  * Replace the live database with a backup and relaunch. The live file is saved first as a
  * `pre-restore` backup, so a restore is itself reversible through the same screen. The
- * restore is audited in the *outgoing* database (the only one open); the incoming copy's
- * history starts where that backup left off.
+ * backup is verified first — a refusal takes no safety copy and touches nothing. The restore is
+ * audited in the *restored* database: a marker beside the live file is consumed by
+ * `openAppDatabase`, because a row written to the outgoing database would be thrown away.
  *
  * `stopWork` runs before the database closes (see `replaceLiveDatabase`).
  */
@@ -199,19 +230,26 @@ export async function restoreBackup(
 ): Promise<BackupInfo> {
   const source = listBackups().find((b) => b.fileName === fileName);
   if (!source) throw new Error(`Unknown backup ${fileName}`);
-  assertSqliteFile(source.path);
+  const verdict = verifyDatabaseFile(source.path, resolveMigrationsFolder());
+  const refusal = restoreRefusal(verdict);
+  if (refusal) throw new Error(refusal);
   const safety = await createBackup(db, 'pre-restore', fileName.replace(/\.sqlite$/, ''));
-  transact(db, (tx) =>
-    recordAudit(tx, {
-      entityType: 'backup',
-      entityId: fileName,
-      action: 'restore',
-      actor: ACTOR,
-      before: { live: databasePath(), savedAs: safety.fileName },
-      after: { restoredFrom: source.path },
-    }),
-  );
-  replaceLiveDatabase(source.path, stopWork);
+  const liveDir = dirname(databasePath());
+  writeRestoreMarker(liveDir, {
+    fileName,
+    restoredFrom: source.path,
+    savedAs: safety.fileName,
+    at: Date.now(),
+  });
+  // A daily or manual copy may still be running; closing the database under it would corrupt it.
+  await backupsInFlight();
+  try {
+    replaceLiveDatabase(source.path, stopWork);
+  } catch (err) {
+    // The swap did not happen, so there is no restore to audit.
+    clearRestoreMarker(liveDir);
+    throw err;
+  }
   return safety;
 }
 
@@ -222,6 +260,7 @@ export async function restoreBackup(
  */
 export async function resetDatabase(db: ShiftNurseDb, stopWork: () => void): Promise<BackupInfo> {
   const safety = await createBackup(db, 'pre-reset', 'start-over');
+  await backupsInFlight();
   replaceLiveDatabase(undefined, stopWork);
   return safety;
 }

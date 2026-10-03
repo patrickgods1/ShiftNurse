@@ -18,9 +18,12 @@ import {
   migrationStatus,
   type OpenedDatabase,
   openDatabase,
+  recordAudit,
   type ShiftNurseDb,
+  transact,
 } from '@shiftnurse/db';
 import { app } from 'electron';
+import { clearRestoreMarker, readRestoreMarker } from './backup-files.js';
 
 let opened: OpenedDatabase | undefined;
 
@@ -34,7 +37,7 @@ export function databasePath(): string {
  * host locates the migrations: from the package's real install location in development, or
  * from the copy electron-builder places under `resources/` in a packaged build.
  */
-function resolveMigrationsFolder(): string {
+export function resolveMigrationsFolder(): string {
   if (app.isPackaged) return join(process.resourcesPath, 'drizzle');
   const require = createRequire(import.meta.url);
   const dbEntry = require.resolve('@shiftnurse/db'); // .../packages/db/dist/index.js
@@ -76,7 +79,35 @@ export async function openAppDatabase(
     throw err;
   }
   opened = candidate;
+  recordPendingRestore(candidate.db);
   return opened.db;
+}
+
+/**
+ * A restore swaps the file, so its audit row can only be written once the restored database is
+ * open. The marker is removed only after the row commits: a crash in between audits it on the
+ * next launch rather than losing it. Never blocks startup.
+ */
+function recordPendingRestore(db: ShiftNurseDb): void {
+  const dir = dirname(databasePath());
+  const marker = readRestoreMarker(dir);
+  if (!marker) return;
+  try {
+    transact(db, (tx) =>
+      recordAudit(tx, {
+        entityType: 'backup',
+        entityId: marker.fileName,
+        action: 'restore',
+        actor: 'manager',
+        before: { savedAs: marker.savedAs },
+        after: { restoredFrom: marker.restoredFrom },
+        at: marker.at,
+      }),
+    );
+    clearRestoreMarker(dir);
+  } catch (err) {
+    console.error(`[backup] could not record the restore in the audit log: ${err}`);
+  }
 }
 
 export function closeAppDatabase(): void {
