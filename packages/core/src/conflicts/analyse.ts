@@ -28,6 +28,7 @@
 
 import type { Assignment, Id, TimeOffRequest } from '../domain/entities.js';
 import { dateInRange, rangesOverlap } from '../domain/time.js';
+import { leaveCapacity } from './capacity.js';
 import { detectWith } from './detect.js';
 import { ConflictEngine } from './engine.js';
 import { resolveWith } from './resolve.js';
@@ -201,5 +202,6 @@ export function timeOffImpact(
       delta: shortfallAfter - shortfallBefore,
     },
     competing,
+    capacity: leaveCapacity(input, requestId),
   };
 }

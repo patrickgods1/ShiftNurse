@@ -11,6 +11,8 @@ import {
   addDays,
   crossesMidnight,
   dateInRange,
+  describeDate,
+  describeDateRange,
   type IsoDate,
   type ShiftTiming,
   windowsOverlap,
@@ -80,8 +82,8 @@ export const timeOffRule: Rule<TimeOffParams> = {
             'hard',
             'works_during_approved_time_off',
             `${nurseName(view.nurse)} is scheduled for the ${view.shiftType.name} on ` +
-              `${view.assignment.date} during approved ${describeType(request)} ` +
-              `(${request.startDate} to ${request.endDate}).`,
+              `${describeDate(view.assignment.date)} during approved ${describeType(request)} ` +
+              `(${describeDateRange(request.startDate, request.endDate)}).`,
             {
               nurseIds: [view.nurse.id],
               dates: [view.assignment.date],
@@ -126,7 +128,7 @@ function nextDay(date: IsoDate): IsoDate {
   return addDays(date, 1);
 }
 
-function describeType(request: TimeOffRequest): string {
+export function describeType(request: Pick<TimeOffRequest, 'type'>): string {
   switch (request.type) {
     case 'pto':
       return 'PTO';
@@ -198,8 +200,8 @@ export const overlapRule: Rule<OverlapParams> = {
             'hard',
             'overlapping_assignments',
             `${nurseName(nurse)} is double-booked: the ${previous.shiftType.name} on ` +
-              `${previous.assignment.date} overlaps the ${current.shiftType.name} on ` +
-              `${current.assignment.date}.`,
+              `${describeDate(previous.assignment.date)} overlaps the ${current.shiftType.name} on ` +
+              `${describeDate(current.assignment.date)}.`,
             {
               nurseIds: [nurse.id],
               dates: [previous.assignment.date, current.assignment.date],

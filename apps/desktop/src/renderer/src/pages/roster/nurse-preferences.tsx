@@ -8,6 +8,8 @@ import { useEffect, useState } from 'react';
 import type { PreferenceInput } from '../../../../shared/api.js';
 import { useNursePreferences, useReplacePreferences, useShiftTypes } from '../../api.js';
 import { AsyncState } from '../../components/async-state.js';
+import { PRIMARY } from '../../components/ui.js';
+import { strengthLabel } from '../../preferences.js';
 
 const WEEKDAY_NAMES = [
   'Sunday',
@@ -120,8 +122,7 @@ export function PreferencesSection({ nurseId, unitId }: { nurseId: Id; unitId: I
               type="button"
               onClick={() => replace.mutate(rows.map((r) => r.value))}
               disabled={replace.isPending}
-              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white
-                disabled:opacity-60"
+              className={PRIMARY}
             >
               {replace.isPending ? 'Saving…' : 'Save preferences'}
             </button>
@@ -226,17 +227,20 @@ function PreferenceRowEditor({
         </select>
       ) : null}
 
-      <label className="ml-auto flex items-center gap-1 text-text-muted">
-        Weight
+      <label
+        className="ml-auto flex items-center gap-1 text-text-muted"
+        title="How much this matters when Generate has to choose. Longer-serving nurses' preferences count a little more."
+      >
+        How much it matters
         <select
-          aria-label="Weight"
+          aria-label="How much it matters"
           value={value.weight}
           onChange={(e) => onChange({ ...value, weight: Number(e.target.value) })}
           className="rounded-md border border-border bg-bg px-1.5 py-1"
         >
           {[1, 2, 3, 4, 5].map((w) => (
             <option key={w} value={w}>
-              {w}
+              {w} — {strengthLabel(w)}
             </option>
           ))}
         </select>

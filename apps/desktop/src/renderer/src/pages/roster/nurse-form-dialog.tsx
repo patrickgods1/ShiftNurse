@@ -12,7 +12,7 @@ import { EMPLOYMENT_TYPE_LABELS, EMPLOYMENT_TYPES } from '@shiftnurse/core';
 import { type FormEvent, type ReactNode, useEffect, useId, useState } from 'react';
 import type { NurseInput, NursePatch } from '../../../../shared/api.js';
 import { useCreateNurse, useUpdateNurse } from '../../api.js';
-import { OVERLAY } from '../../components/ui.js';
+import { OVERLAY, PRIMARY, SECONDARY } from '../../components/ui.js';
 
 const ROLES: readonly NurseRole[] = ['RN', 'LPN', 'CNA'];
 
@@ -33,7 +33,7 @@ interface FormState {
   notes: string;
 }
 
-function blankForm(): FormState {
+function blankForm(payPeriodDays: number): FormState {
   return {
     employeeId: '',
     firstName: '',
@@ -41,7 +41,8 @@ function blankForm(): FormState {
     role: 'RN',
     employmentType: 'full_time',
     fte: '1.0',
-    contractedHoursPerPeriod: '',
+    // Worked out from the FTE so the field is never blank on a new nurse (see the hint).
+    contractedHoursPerPeriod: String(defaultContractedHours(1, payPeriodDays)),
     seniorityDate: '',
     isChargeEligible: false,
     isNovice: false,
@@ -127,7 +128,9 @@ export function NurseFormDialog({
   nurse,
 }: NurseFormDialogProps) {
   const isEdit = nurse !== undefined;
-  const [form, setForm] = useState<FormState>(() => (nurse ? formFromNurse(nurse) : blankForm()));
+  const [form, setForm] = useState<FormState>(() =>
+    nurse ? formFromNurse(nurse) : blankForm(payPeriodDays),
+  );
   const [hoursTouched, setHoursTouched] = useState(isEdit);
   const [errors, setErrors] = useState<FieldErrors>({});
   const formId = useId();
@@ -143,7 +146,7 @@ export function NurseFormDialog({
   // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above.
   useEffect(() => {
     if (!open) return;
-    setForm(nurse ? formFromNurse(nurse) : blankForm());
+    setForm(nurse ? formFromNurse(nurse) : blankForm(payPeriodDays));
     setHoursTouched(isEdit);
     setErrors({});
     createNurse.reset();
@@ -153,6 +156,14 @@ export function NurseFormDialog({
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => {
       const next = { ...prev, [key]: value };
+      // Per-diem and agency staff have no contracted minimum.
+      if (
+        key === 'employmentType' &&
+        (value === 'per_diem' || value === 'agency') &&
+        !hoursTouched
+      ) {
+        next.contractedHoursPerPeriod = '0';
+      }
       if (key === 'fte' && !hoursTouched) {
         const fte = Number(value);
         if (!Number.isNaN(fte)) {
@@ -323,6 +334,10 @@ export function NurseFormDialog({
                     setField('contractedHoursPerPeriod', e.target.value);
                   }}
                 />
+                <span className="mt-1 block text-xs">
+                  Worked out from FTE ({defaultContractedHours(1, payPeriodDays)}h a pay period at
+                  1.0). Change it to match the contract, e.g. 72h for three 12s a week.
+                </span>
               </Field>
               <Field
                 label="Seniority date"
@@ -337,46 +352,53 @@ export function NurseFormDialog({
                   onChange={(e) => setField('seniorityDate', e.target.value)}
                 />
               </Field>
-
-              <Field label="Phone" htmlFor={`${formId}-phone`}>
-                <input
-                  id={`${formId}-phone`}
-                  className={inputClass}
-                  value={form.phone}
-                  onChange={(e) => setField('phone', e.target.value)}
-                />
-              </Field>
-              <Field label="Email" error={errors.email} htmlFor={`${formId}-email`}>
-                <input
-                  id={`${formId}-email`}
-                  type="email"
-                  className={inputClass}
-                  value={form.email}
-                  onChange={(e) => setField('email', e.target.value)}
-                />
-              </Field>
             </div>
 
             <fieldset className="mt-4 flex gap-6">
-              <legend className="mb-1 text-sm font-medium text-text">Flags</legend>
+              <legend className="mb-1 text-sm font-medium text-text">
+                On shift, this nurse can
+              </legend>
               <Checkbox
                 id={`${formId}-charge`}
-                label="Charge eligible"
+                label="Be charge nurse"
                 checked={form.isChargeEligible}
                 onChange={(v) => setField('isChargeEligible', v)}
               />
               <Checkbox
                 id={`${formId}-novice`}
-                label="Novice"
+                label="New grad (needs an experienced RN on shift)"
                 checked={form.isNovice}
                 onChange={(v) => setField('isNovice', v)}
               />
               <Checkbox
                 id={`${formId}-float`}
-                label="Float eligible"
+                label="Float to other units"
                 checked={form.isFloatEligible}
                 onChange={(v) => setField('isFloatEligible', v)}
               />
+            </fieldset>
+
+            <fieldset className="mt-4">
+              <legend className="mb-1 text-sm font-medium text-text">Contact (optional)</legend>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Phone" htmlFor={`${formId}-phone`}>
+                  <input
+                    id={`${formId}-phone`}
+                    className={inputClass}
+                    value={form.phone}
+                    onChange={(e) => setField('phone', e.target.value)}
+                  />
+                </Field>
+                <Field label="Email" error={errors.email} htmlFor={`${formId}-email`}>
+                  <input
+                    id={`${formId}-email`}
+                    type="email"
+                    className={inputClass}
+                    value={form.email}
+                    onChange={(e) => setField('email', e.target.value)}
+                  />
+                </Field>
+              </div>
             </fieldset>
 
             <Field label="Notes" htmlFor={`${formId}-notes`} className="mt-4">
@@ -397,10 +419,7 @@ export function NurseFormDialog({
 
             <div className="mt-6 flex justify-end gap-2">
               <Dialog.Close asChild>
-                <button
-                  type="button"
-                  className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg"
-                >
+                <button type="button" className={SECONDARY}>
                   Cancel
                 </button>
               </Dialog.Close>
@@ -408,8 +427,7 @@ export function NurseFormDialog({
                 type="submit"
                 data-testid="nurse-form-save"
                 disabled={saving}
-                className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white
-                  disabled:opacity-60"
+                className={PRIMARY}
               >
                 {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Add nurse'}
               </button>

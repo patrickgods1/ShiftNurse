@@ -19,8 +19,23 @@ export {
   recordAuditStrict,
   requiresReason,
 } from './audit.js';
-export type { DbLike, OpenedDatabase, OpenOptions, ShiftNurseDb, ShiftNurseTx } from './client.js';
-export { migrationsFolder, openDatabase, openTestDatabase, transact } from './client.js';
+export type {
+  DbLike,
+  MigrationStatus,
+  OpenedDatabase,
+  OpenOptions,
+  ShiftNurseDb,
+  ShiftNurseTx,
+} from './client.js';
+export {
+  DatabaseNewerThanAppError,
+  migrateDatabase,
+  migrationStatus,
+  migrationsFolder,
+  openDatabase,
+  openTestDatabase,
+  transact,
+} from './client.js';
 export { ids, newId } from './ids.js';
 export * as mappers from './mappers.js';
 export * from './repositories/acuity.js';

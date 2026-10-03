@@ -13,7 +13,7 @@
 
 import type { AutoResolvePolicy, Id, IsoDate, Resolution } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { CreateTimeOffInput } from '../../shared/api.js';
+import type { CreateTimeOffInput, LeaveCover } from '../../shared/api.js';
 import { api, queryKeys } from './api.js';
 import { invalidatePeriod } from './period-cache.js';
 
@@ -42,6 +42,15 @@ export function useTimeOffImpact(
   return useQuery({
     queryKey: requestKeys.impact(periodId ?? '', requestId ?? '', decision),
     queryFn: () => api.timeOff.impact(periodId as Id, requestId as Id, decision),
+    enabled: periodId !== undefined && requestId !== undefined,
+  });
+}
+
+/** For each shift approving the request would free: who could take it, best first. */
+export function useCoverOptions(periodId: Id | undefined, requestId: Id | undefined) {
+  return useQuery({
+    queryKey: ['coverOptions', periodId ?? '', requestId ?? ''] as const,
+    queryFn: () => api.timeOff.coverOptions(periodId as Id, requestId as Id),
     enabled: periodId !== undefined && requestId !== undefined,
   });
 }
@@ -98,6 +107,16 @@ export function useApproveTimeOff(unitId: Id | undefined, periodId: Id | undefin
   const invalidate = useInvalidateRequests(unitId, periodId);
   return useMutation({
     mutationFn: ({ id, reason }: { id: Id; reason?: string }) => api.timeOff.approve(id, reason),
+    onSettled: invalidate,
+  });
+}
+
+/** Approve, take the nurse's shifts off and give each chosen one to its cover, in one step. */
+export function useApproveAndCover(unitId: Id | undefined, periodId: Id | undefined) {
+  const invalidate = useInvalidateRequests(unitId, periodId);
+  return useMutation({
+    mutationFn: ({ id, reason, covers }: { id: Id; reason?: string; covers: LeaveCover[] }) =>
+      api.timeOff.approveAndCover(periodId as Id, id, reason, covers),
     onSettled: invalidate,
   });
 }

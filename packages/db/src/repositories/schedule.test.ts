@@ -9,7 +9,7 @@
 import { addDays, DEFAULT_FAIRNESS_WEIGHTS, type IsoDate, isoDate } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
-import { type OpenedDatabase, openTestDatabase } from '../client.js';
+import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { createShiftType, createUnit } from './config.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
@@ -29,6 +29,7 @@ import {
   publishPeriod,
   replaceAssignments,
   setLocked,
+  setRequestsCloseOn,
   updateAssignment,
   updatePeriodStatus,
 } from './schedule.js';
@@ -106,22 +107,24 @@ beforeEach(() => {
     ACTOR,
   );
   unitId = unit.id;
-  const ruleSet = saveRuleSet(
-    handle.db,
-    {
-      unitId,
-      name: 'Default',
-      weekendDefinition: weekendDefinition(),
-      fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
-      configs: [
-        {
-          ruleId: 'min-rest-between-shifts',
-          enabled: true,
-          params: { minRestHours: 10, onCallCountsAsWork: false },
-        },
-      ],
-    },
-    ACTOR,
+  const ruleSet = transact(handle.db, (tx) =>
+    saveRuleSet(
+      tx,
+      {
+        unitId,
+        name: 'Default',
+        weekendDefinition: weekendDefinition(),
+        fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+        configs: [
+          {
+            ruleId: 'min-rest-between-shifts',
+            enabled: true,
+            params: { minRestHours: 10, onCallCountsAsWork: false },
+          },
+        ],
+      },
+      ACTOR,
+    ),
   );
   ruleSetId = ruleSet.id;
   ruleSetVersion = ruleSet.version;
@@ -152,6 +155,17 @@ describe('periods', () => {
 
     expect(getPeriod(handle.db, period.id)?.name).toBe('Pay Period 3');
     expect(getCurrentDraft(handle.db, unitId)?.id).toBe(period.id);
+  });
+
+  it('records when time-off requests close for a period, and can clear it again', () => {
+    const period = createPeriod(handle.db, basePeriod({}), ACTOR);
+    expect(getPeriod(handle.db, period.id)?.requestsCloseOn).toBeUndefined();
+    setRequestsCloseOn(handle.db, period.id, isoDate('2026-01-01'), ACTOR);
+    expect(getPeriod(handle.db, period.id)?.requestsCloseOn).toBe('2026-01-01');
+    setRequestsCloseOn(handle.db, period.id, undefined, ACTOR);
+    expect(getPeriod(handle.db, period.id)?.requestsCloseOn).toBeUndefined();
+    const audit = auditHistoryFor(handle.db, 'schedule_period', period.id);
+    expect(audit.filter((a) => a.action === 'update')).toHaveLength(2);
   });
 
   it('lists periods for a unit newest-first', () => {

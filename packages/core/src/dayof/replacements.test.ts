@@ -169,7 +169,7 @@ describe('findReplacements', () => {
 
     const excludedBusy = report.excluded.find((e) => e.nurseId === busy.id);
     const excludedOnLeave = report.excluded.find((e) => e.nurseId === onLeave.id);
-    expect(excludedBusy!.reason).toMatch(/Already scheduled on 2026-01-10/);
+    expect(excludedBusy!.reason).toMatch(/Already scheduled on Sat Jan 10/);
     expect(excludedOnLeave!.reason).toBe('On approved leave');
   });
 

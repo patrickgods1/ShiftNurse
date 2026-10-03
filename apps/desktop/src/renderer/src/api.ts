@@ -34,6 +34,7 @@ export const queryKeys = {
   assignments: (periodId: Id) => ['assignments', periodId] as const,
   timeOff: (unitId: Id, status?: TimeOffStatus) => ['timeOff', unitId, status ?? 'all'] as const,
   appInfo: () => ['appInfo'] as const,
+  update: () => ['update'] as const,
   credentials: () => ['credentials'] as const,
   nurseCredentials: (nurseId: Id) => ['nurseCredentials', nurseId] as const,
   preferences: (nurseId: Id) => ['preferences', nurseId] as const,
@@ -94,6 +95,19 @@ export function useTimeOff(unitId: Id | undefined, status?: TimeOffStatus) {
 
 export function useAppInfo() {
   return useQuery({ queryKey: queryKeys.appInfo(), queryFn: () => api.app.info() });
+}
+
+/**
+ * A newer release, if main's launch check found one. The check runs in the background after
+ * the window opens, so this asks again for a few minutes rather than once at first paint.
+ */
+export function useAvailableUpdate() {
+  return useQuery({
+    queryKey: queryKeys.update(),
+    queryFn: () => api.app.update(),
+    refetchInterval: (query) =>
+      query.state.data || query.state.dataUpdateCount > 10 ? false : 30_000,
+  });
 }
 
 // ---------------------------------------------------------------------------

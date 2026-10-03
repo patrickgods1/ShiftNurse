@@ -170,6 +170,42 @@ export function today(now: Date = new Date()): IsoDate {
 }
 
 // ---------------------------------------------------------------------------
+// Dates in words
+// ---------------------------------------------------------------------------
+
+const SHORT_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+const MONTH_NAMES = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+] as const;
+
+/**
+ * "Sun Oct 18": a date in rule messages, alerts and exports, which nurse managers read and quote.
+ * Weekday and month come from the ISO string and `weekdayOf` (UTC), never a local `Date`.
+ */
+export function describeDate(date: IsoDate, options: { year?: boolean } = {}): string {
+  const [y, m, d] = date.split('-');
+  const text = `${SHORT_WEEKDAYS[weekdayOf(date)]} ${MONTH_NAMES[Number(m) - 1]} ${Number(d)}`;
+  return options.year ? `${text}, ${y}` : text;
+}
+
+/** "Sun Oct 18 – Sat Oct 31"; with years on both ends when the range crosses a year. */
+export function describeDateRange(start: IsoDate, end: IsoDate): string {
+  const year = start.slice(0, 4) !== end.slice(0, 4);
+  return `${describeDate(start, { year })} – ${describeDate(end, { year })}`;
+}
+
+// ---------------------------------------------------------------------------
 // Times of day
 // ---------------------------------------------------------------------------
 

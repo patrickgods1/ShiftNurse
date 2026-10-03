@@ -468,6 +468,9 @@ fix in PR #6 reached nobody who had already installed the first draft. Nothing h
 - [ ] `electron-updater` with `publish: github`: `latest*.yml` and blockmaps in the release,
       a "restart to update" prompt, never an unattended restart mid-shift
 - [ ] An app icon (`apps/desktop/build/icon.{icns,ico,png}`) — installers use Electron's default
+      (drawn: `build/icon.png` from `scripts/make-icon.mjs`; tick once a packaged build shows it)
+- [ ] An in-app "new version available" banner from GitHub's latest release (`main/updates.ts`;
+      tick once a packaged v0.1.x has shown it for a published v0.1.y)
 - [ ] Verify: a signed dmg opens without a Gatekeeper prompt on a clean Mac; the signed installer
       passes SmartScreen on real Windows 11; v0.1.x updates itself to v0.1.y from a draft release
 

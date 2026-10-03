@@ -16,7 +16,7 @@
 
 import { NURSE_ROLES, type ShiftDemand } from '../acuity/demand.js';
 import type { Credential, Id, NurseCredential, NurseRole } from '../domain/entities.js';
-import { compareDates, type IsoDate, type Weekday } from '../domain/time.js';
+import { compareDates, describeDate, type IsoDate, type Weekday } from '../domain/time.js';
 import { payPeriodsIn, workWeeksIn } from '../rules/hours-rules.js';
 import { leaveHoursBetween, type PaidLeaveCredit } from '../rules/paid-leave.js';
 import { nurseName } from '../rules/types.js';
@@ -100,8 +100,8 @@ function credentialExpiry(input: ComplianceInput): ComplianceAlert[] {
       assignmentIds: lapsed.map((v) => v.assignment.id),
       message:
         lapsed.length > 0
-          ? `${nurseName(nurse)}'s ${credential.code} expires ${expiresOn}; ${lapsed.length} shift${lapsed.length === 1 ? '' : 's'} on or after that date`
-          : `${nurseName(nurse)}'s ${credential.code} expires ${expiresOn}, inside this period (no shifts after it)`,
+          ? `${nurseName(nurse)}'s ${credential.code} expires ${describeDate(expiresOn)}; ${lapsed.length} shift${lapsed.length === 1 ? '' : 's'} on or after that date`
+          : `${nurseName(nurse)}'s ${credential.code} expires ${describeDate(expiresOn)}, inside this period (no shifts after it)`,
     });
   }
   return alerts;
@@ -180,7 +180,7 @@ function overtime(input: ComplianceInput): ComplianceAlert[] {
         hours,
         expectedHours: threshold,
         assignmentIds: inWeek.filter((v) => v.inPeriod).map((v) => v.assignment.id),
-        message: `${nurseName(nurse)} has ${hours - threshold}h overtime in ${span} ${week.start} (${hours}h)`,
+        message: `${nurseName(nurse)} has ${hours - threshold}h overtime in ${span} ${describeDate(week.start)} (${hours}h)`,
       });
     }
   }
@@ -225,7 +225,7 @@ function ratioRisk(input: ComplianceInput): ComplianceAlert[] {
         .onShift(d.date, d.shiftTypeId)
         .filter((v) => atRatio.some((r) => r.role === v.nurse.role))
         .map((v) => v.assignment.id),
-      message: `${d.date} ${label} is staffed exactly at the patient ratio (${detail}): one call-off breaches it`,
+      message: `${describeDate(d.date)} ${label} is staffed exactly at the patient ratio (${detail}): one call-off breaches it`,
     });
   }
   return alerts;

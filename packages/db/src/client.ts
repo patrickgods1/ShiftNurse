@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { readMigrationFiles } from 'drizzle-orm/migrator';
 import * as schema from './schema.js';
 
 export type ShiftNurseDb = ReturnType<typeof drizzle<typeof schema>>;
@@ -69,7 +70,12 @@ export function openDatabase(options: OpenOptions): OpenedDatabase {
   const db = drizzle(sqlite, { schema });
 
   if (migrateOnOpen) {
-    migrate(db, { migrationsFolder: migrations });
+    try {
+      migrateDatabase(db, migrations);
+    } catch (err) {
+      sqlite.close();
+      throw err;
+    }
   }
 
   return {
@@ -77,6 +83,64 @@ export function openDatabase(options: OpenOptions): OpenedDatabase {
     sqlite,
     close: () => sqlite.close(),
   };
+}
+
+/** Where a database stands against the migrations this build of the app ships. */
+export interface MigrationStatus {
+  /** No migration has ever run: a new, empty file. */
+  fresh: boolean;
+  /** Migrations this build will apply on open. */
+  pending: number;
+  /** The file was migrated by a newer build: this one does not know its schema. */
+  newerThanApp: boolean;
+}
+
+/**
+ * Thrown instead of opening a database written by a newer release. Drizzle's migrator would
+ * see nothing to apply and carry on, and this build's queries would then run against tables
+ * it has never seen — a restored backup from after an update, opened on a machine before it.
+ */
+export class DatabaseNewerThanAppError extends Error {
+  constructor() {
+    super(
+      'This database was last opened by a newer version of ShiftNurse. Install the latest ' +
+        'version to open it; this one does not know its layout and could damage it.',
+    );
+    this.name = 'DatabaseNewerThanAppError';
+  }
+}
+
+const MIGRATIONS_TABLE = '__drizzle_migrations';
+
+/**
+ * The same comparison drizzle's migrator makes (a migration runs when its folder timestamp is
+ * later than the last applied one), done without writing anything, so the host can back the
+ * file up before an upgrade touches it.
+ */
+export function migrationStatus(sqlite: Database.Database, folder: string): MigrationStatus {
+  const bundled = readMigrationFiles({ migrationsFolder: folder });
+  const hasTable = sqlite
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(MIGRATIONS_TABLE);
+  const last = hasTable
+    ? (sqlite.prepare(`SELECT MAX(created_at) AS at FROM ${MIGRATIONS_TABLE}`).get() as {
+        at: number | null;
+      })
+    : undefined;
+  if (last?.at == null) return { fresh: true, pending: bundled.length, newerThanApp: false };
+  const lastAt = Number(last.at);
+  const newest = Math.max(0, ...bundled.map((m) => m.folderMillis));
+  return {
+    fresh: false,
+    pending: bundled.filter((m) => m.folderMillis > lastAt).length,
+    newerThanApp: lastAt > newest,
+  };
+}
+
+/** Apply pending migrations, refusing a database a newer release has already migrated. */
+export function migrateDatabase(db: ShiftNurseDb, folder: string): void {
+  if (migrationStatus(db.$client, folder).newerThanApp) throw new DatabaseNewerThanAppError();
+  migrate(db, { migrationsFolder: folder });
 }
 
 /**

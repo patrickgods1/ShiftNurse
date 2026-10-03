@@ -9,6 +9,7 @@ import {
   createIncompatibilityGroup,
   listChanges,
   publishSchedule,
+  replaceNursePreferences,
   transact,
   updateIncompatibilityGroup,
   updatePeriodStatus,
@@ -45,6 +46,107 @@ function place(nurseIndex: number, dayOffset: number, reason?: string): Assignme
 function publishDraft(): void {
   publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
 }
+
+describe('shifts that go against what a nurse asked for', () => {
+  it('names the preference a night breaks for a nurse who avoids nights', () => {
+    const nurse = f.rns[0]!;
+    transact(f.handle.db, (tx) =>
+      replaceNursePreferences(
+        tx,
+        nurse.id,
+        [
+          {
+            id: 'pref-avoid-nights',
+            nurseId: nurse.id,
+            kind: 'avoid_shift_type',
+            shiftTypeId: f.night.id,
+            weight: 5,
+          },
+        ],
+        ACTOR,
+      ),
+    );
+    const night = api.createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: nurse.id,
+      shiftTypeId: f.night.id,
+      date: addDays(f.seeded.draftStart, 6),
+    });
+    const day = api.createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: nurse.id,
+      shiftTypeId: f.day.id,
+      date: addDays(f.seeded.draftStart, 9),
+    });
+    const validation = api.validate(f.seeded.draftPeriodId);
+    expect(validation.againstPreference[night.id]?.map((p) => p.kind)).toEqual([
+      'avoid_shift_type',
+    ]);
+    expect(validation.againstPreference[day.id]).toBeUndefined();
+  });
+});
+
+describe('swapping two nurses’ shifts', () => {
+  function placeAs(nurseIndex: number, dayOffset: number, shiftTypeId: string): Assignment {
+    return api.createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: f.rns[nurseIndex]!.id,
+      shiftTypeId,
+      date: addDays(f.seeded.draftStart, dayOffset),
+    });
+  }
+
+  it('trades Ann’s day for Bea’s night on the same date in one step', () => {
+    const ann = placeAs(0, 2, f.day.id);
+    const bea = placeAs(1, 2, f.night.id);
+    const [annNow, beaNow] = api.swapAssignments(ann.id, bea.id);
+    expect([annNow.nurseId, annNow.shiftTypeId]).toEqual([f.rns[0]!.id, f.night.id]);
+    expect([beaNow.nurseId, beaNow.shiftTypeId]).toEqual([f.rns[1]!.id, f.day.id]);
+    const onDay = (nurseIndex: number) =>
+      f.handle.db.query.assignment
+        .findMany()
+        .sync()
+        .filter((a) => a.nurseId === f.rns[nurseIndex]!.id && a.date === ann.date)
+        .map((a) => a.shiftTypeId);
+    expect(onDay(0)).toEqual([f.night.id]);
+    expect(onDay(1)).toEqual([f.day.id]);
+  });
+
+  it('leaves both shifts where they were when one of them is locked', () => {
+    const ann = placeAs(0, 3, f.day.id);
+    const bea = placeAs(1, 3, f.night.id);
+    api.setLocked(bea.id, true);
+    expect(() => api.swapAssignments(ann.id, bea.id)).toThrow(/locked/);
+    const rows = f.handle.db.query.assignment.findMany().sync();
+    expect(rows.find((a) => a.id === ann.id)?.nurseId).toBe(f.rns[0]!.id);
+    expect(rows.find((a) => a.id === bea.id)?.nurseId).toBe(f.rns[1]!.id);
+  });
+
+  it('undoes the first half when the second cannot go through', () => {
+    // Ann already works the night, so taking Bea's night would double-book her: the second
+    // move fails after the first has run, and Ann must still have her day.
+    const annDay = placeAs(0, 5, f.day.id);
+    placeAs(0, 5, f.night.id);
+    const beaNight = placeAs(1, 5, f.night.id);
+    expect(() => api.swapAssignments(annDay.id, beaNight.id)).toThrow();
+    const rows = f.handle.db.query.assignment.findMany().sync();
+    expect(rows.find((a) => a.id === annDay.id)?.nurseId).toBe(f.rns[0]!.id);
+    expect(rows.find((a) => a.id === beaNight.id)?.nurseId).toBe(f.rns[1]!.id);
+  });
+
+  it('logs a swap on a published schedule under its one reason', () => {
+    const ann = placeAs(0, 4, f.day.id);
+    const bea = placeAs(1, 4, f.night.id);
+    publishDraft();
+    expect(() => api.swapAssignments(ann.id, bea.id)).toThrow(/requires a reason/);
+    api.swapAssignments(ann.id, bea.id, 'Bea asked to come off nights for her exam');
+    const changes = listChanges(f.handle.db, f.seeded.draftPeriodId);
+    expect(changes).toHaveLength(4);
+    expect(changes.every((c) => c.reason === 'Bea asked to come off nights for her exam')).toBe(
+      true,
+    );
+  });
+});
 
 describe('editing a schedule through the API', () => {
   it('lets a draft change freely and keeps no change log for it', () => {

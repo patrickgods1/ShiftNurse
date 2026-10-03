@@ -41,6 +41,8 @@ import {
   openCallOffForAssignment,
   reportCallOff,
   type ShiftNurseDb,
+  type ShiftNurseTx,
+  transact,
 } from '@shiftnurse/db';
 import type {
   BackfillResult,
@@ -223,7 +225,7 @@ function dayOfSummary(db: DbLike, unitId: Id, date?: IsoDate): DayOfSummary {
 }
 
 function reportDayOfCallOff(
-  db: ShiftNurseDb,
+  db: ShiftNurseTx,
   assignmentId: Id,
   reason?: string,
   paidSickHours?: number,
@@ -263,7 +265,7 @@ function replacementsFor(db: DbLike, callOffId: Id): ReplacementReport {
 }
 
 function logCall(
-  db: ShiftNurseDb,
+  db: ShiftNurseTx,
   callOffId: Id,
   nurseId: Id,
   outcome: Exclude<CallOutcome, 'accepted'>,
@@ -336,13 +338,15 @@ export function dayOfApi(db: ShiftNurseDb): ShiftNurseApi['dayOf'] {
     callOffs: (unitId, start, end) =>
       listCallOffsForUnit(db, unitId, { start, end }).map((c) => callOffView(db, c)),
     reportCallOff: (assignmentId, reason, paidSickHours) =>
-      reportDayOfCallOff(db, assignmentId, reason, paidSickHours),
+      transact(db, (tx) => reportDayOfCallOff(tx, assignmentId, reason, paidSickHours)),
     replacements: (callOffId) => replacementsFor(db, callOffId),
     logCall: (callOffId, nurseId, outcome, notes) =>
-      logCall(db, callOffId, nurseId, outcome, notes),
+      transact(db, (tx) => logCall(tx, callOffId, nurseId, outcome, notes)),
     backfill: (callOffId, nurseId, notes) => backfill(db, callOffId, nurseId, notes),
-    markUncovered: (callOffId, reason) => markCallOffUncovered(db, callOffId, ACTOR, reason),
-    cancelCallOff: (callOffId, reason) => cancelCallOff(db, callOffId, ACTOR, reason),
+    markUncovered: (callOffId, reason) =>
+      transact(db, (tx) => markCallOffUncovered(tx, callOffId, ACTOR, reason)),
+    cancelCallOff: (callOffId, reason) =>
+      transact(db, (tx) => cancelCallOff(tx, callOffId, ACTOR, reason)),
     callLog: (callOffId) => listCallAttempts(db, callOffId),
   };
 }

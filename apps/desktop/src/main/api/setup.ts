@@ -55,11 +55,11 @@ export function setupApi(
       return transact(db, (tx) => loadScenarios(tx, ACTOR));
     },
     createUnit: (input, mode) => transact(db, (tx) => createSetupUnit(tx, input, mode, ACTOR)),
-    advance: (move) => advanceSetup(db, move, ACTOR),
-    complete: () => completeSetup(db, ACTOR),
+    advance: (move) => transact(db, (tx) => advanceSetup(tx, move, ACTOR)),
+    complete: () => transact(db, (tx) => completeSetup(tx, ACTOR)),
     resume: () => {
       if (listUnits(db).length === 0) throw new Error('Set up a unit before resuming the guide');
-      return startSetup(db, 'assisted', ACTOR);
+      return transact(db, (tx) => startSetup(tx, 'assisted', ACTOR));
     },
     applyPreset: (unitId, preset) =>
       transact(db, (tx) => applySetupPreset(tx, unitId, preset, ACTOR)),

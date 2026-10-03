@@ -19,8 +19,15 @@ import { type IsoDate, isIsoDate } from '../domain/time.js';
 // Generic CSV (RFC 4180)
 // ---------------------------------------------------------------------------
 
-/** Parse CSV text into rows of fields. Handles quoted commas, quotes and newlines, CRLF, BOM. */
+/**
+ * Parse CSV text into rows of fields. Handles quoted commas, quotes and newlines, CRLF, BOM,
+ * and the apostrophe `serializeCsv` puts in front of a field a spreadsheet would evaluate.
+ */
 export function parseCsv(text: string): string[][] {
+  return parseRawCsv(text).map((row) => row.map(undefuse));
+}
+
+function parseRawCsv(text: string): string[][] {
   const src = text.startsWith('﻿') ? text.slice(1) : text;
   const rows: string[][] = [];
   let row: string[] = [];
@@ -71,7 +78,27 @@ export function parseCsv(text: string): string[][] {
   return rows;
 }
 
-function csvField(value: string): string {
+/**
+ * A field Excel or Sheets would evaluate: one starting with `=`, `+`, `-`, `@`, a tab or a
+ * carriage return. Names and notes come from HR exports and free text, and a roster export
+ * opened in a spreadsheet must not run `=HYPERLINK(...)` hidden in a nurse's name. A leading
+ * apostrophe makes the cell text; numbers are exempt so pay figures stay numbers. Apostrophes
+ * already in front count too, so `'=x` exports as `''=x` and still reads back as itself.
+ */
+const FORMULA_START = /^'*[=+\-@\t\r]/;
+const NUMBER = /^[-+]?(\d+\.?\d*|\.\d+)$/;
+
+function defuse(value: string): string {
+  return FORMULA_START.test(value) && !NUMBER.test(value) ? `'${value}` : value;
+}
+
+/** The inverse of `defuse`, applied to every parsed field. */
+function undefuse(value: string): string {
+  return value.startsWith("'") && FORMULA_START.test(value.slice(1)) ? value.slice(1) : value;
+}
+
+function csvField(raw: string): string {
+  const value = defuse(raw);
   return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 

@@ -8,10 +8,14 @@
 
 import { ipcMain } from 'electron';
 import { API_CHANNELS, channelName, type ShiftNurseApi } from '../shared/api.js';
+import { userFacingMessage } from './ipc-errors.js';
 
 type AnyFn = (...args: never[]) => unknown;
 
 /**
+ * A failure is logged in full (with its stack, for the log file) and re-thrown in words a
+ * manager can act on — see `ipc-errors.ts`.
+ *
  * `isTrustedSender` is checked on every call: the navigation guard in `index.ts` is the first
  * line, and this is the second — a frame that is not the app's own page gets nothing.
  */
@@ -22,12 +26,18 @@ export function registerIpc(api: ShiftNurseApi, isTrustedSender: (url: string) =
       const handler = group[method];
       if (!handler) throw new Error(`API has no implementation for ${resource}.${method}`);
       const channel = channelName(resource, method);
-      ipcMain.handle(channel, (event, ...args: unknown[]) => {
+      ipcMain.handle(channel, async (event, ...args: unknown[]) => {
         const sender = event.senderFrame?.url ?? '';
         if (!isTrustedSender(sender)) {
           throw new Error(`Refused ${channel} from an untrusted page (${sender || 'unknown'})`);
         }
-        return handler(...(args as never[]));
+        try {
+          // Awaited here so an async handler's rejection is reworded and logged too.
+          return await handler(...(args as never[]));
+        } catch (err) {
+          console.error(`[ipc] ${channel} failed:`, err);
+          throw new Error(userFacingMessage(err));
+        }
       });
     }
   }

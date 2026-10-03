@@ -25,10 +25,11 @@ import {
   useSolverSettings,
   useStartBatch,
 } from '../../api-solver.js';
-import { errorMessage, OVERLAY } from '../../components/ui.js';
-import { formatDate } from '../../format.js';
+import { errorMessage, OVERLAY, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { periodLabel } from '../../format.js';
+import { formatDollars } from '../../money.js';
 import { SOLVER_LABELS, SOLVER_ORDER } from '../../solver-labels.js';
-import { bestChoice, finishedRuns, variationNumber } from './candidates.js';
+import { bestChoice, digestLine, finishedRuns, spread, variationNumber } from './candidates.js';
 
 /** Matches `MAX_BATCH_SIZE` in main; main clamps whatever arrives. */
 const MAX_VARIATIONS = 10;
@@ -41,6 +42,8 @@ interface GenerateDialogProps {
   period: SchedulePeriod;
   lockedCount: number;
   unlockedCount: number;
+  /** Time-off requests in the period still waiting for a decision. */
+  undecidedRequests: number;
   /** The period's current batch, if any. */
   batch: SolveBatchStatus | null | undefined;
   /**
@@ -63,6 +66,7 @@ export function GenerateDialog({
   period,
   lockedCount,
   unlockedCount,
+  undecidedRequests,
   batch,
   view,
   onViewChange,
@@ -112,7 +116,7 @@ export function GenerateDialog({
             Generate schedule
           </Dialog.Title>
           <Dialog.Description className="mb-4 text-sm text-text-muted">
-            {period.name} · {formatDate(period.startDate)} – {formatDate(period.endDate)}
+            {periodLabel(period)}
           </Dialog.Description>
 
           {running && batch ? (
@@ -143,6 +147,7 @@ export function GenerateDialog({
             />
           ) : (
             <Confirm
+              undecidedRequests={undecidedRequests}
               lockedCount={lockedCount}
               unlockedCount={unlockedCount}
               previous={previous}
@@ -190,6 +195,7 @@ function describeEstimate(estimate: SolveEstimate): string {
 
 function Confirm({
   lockedCount,
+  undecidedRequests,
   unlockedCount,
   previous,
   continuing,
@@ -206,6 +212,7 @@ function Confirm({
   onGenerate,
 }: {
   lockedCount: number;
+  undecidedRequests: number;
   unlockedCount: number;
   /** Variations already waiting above the grid, which this Generate replaces. */
   /** The period's last batch, finished: what this Generate replaces or carries on from. */
@@ -228,25 +235,35 @@ function Confirm({
   return (
     <div>
       <p className="text-sm text-text">
-        The solver fills every shift from the coverage floors and census demand, keeps each nurse
-        within the contract rules, and balances nights, weekends and holidays against the fairness
-        ledger.
+        ShiftNurse staffs every shift to your floors and census, keeps everyone inside their
+        contract and the unit's rules, and shares nights, weekends and holidays fairly — taking
+        account of who carried them in past schedules.
       </p>
       <ul className="mt-3 list-disc pl-5 text-sm text-text-muted">
         <li>
-          Each variation is a different search of the same inputs. Compare them, preview them on the
-          grid, and save the one you want —{' '}
-          <span className="font-medium text-text">nothing on the grid changes until you save</span>.
+          You get a few versions to choose between: each one balances the same rules a little
+          differently.{' '}
+          <span className="font-medium text-text">
+            Nothing on the schedule changes until you pick one and save it.
+          </span>
         </li>
-        <li>
-          Saving replaces the <span className="font-medium text-text">{unlockedCount}</span>{' '}
-          unlocked shift{unlockedCount === 1 ? '' : 's'} on the grid and keeps the{' '}
-          <span className="font-medium text-text">{lockedCount}</span> locked one
-          {lockedCount === 1 ? '' : 's'} exactly where they are.
-        </li>
-        <li>
-          A variation's number fixes it: the same inputs always give the same variation 1, 2, 3…
-        </li>
+        {undecidedRequests > 0 ? (
+          <li className="text-warn">
+            {undecidedRequests} time-off request{undecidedRequests === 1 ? ' is' : 's are'} still
+            undecided. Generate keeps those days free where it can, but deciding them first gives
+            the schedule you can rely on: approved leave is planned around, not patched later.
+          </li>
+        ) : null}
+        {unlockedCount + lockedCount > 0 ? (
+          <li>
+            Saving replaces the {unlockedCount} shift{unlockedCount === 1 ? '' : 's'} on the
+            schedule now
+            {lockedCount > 0
+              ? ` and keeps your ${lockedCount} locked shift${lockedCount === 1 ? '' : 's'} where ${lockedCount === 1 ? 'it is' : 'they are'}`
+              : ''}
+            . Lock a shift (click it) to keep it through every Generate.
+          </li>
+        ) : null}
       </ul>
       {previous ? (
         <PreviousBatch
@@ -256,9 +273,9 @@ function Confirm({
           onContinueChange={onContinueChange}
         />
       ) : null}
-      <div className="mt-4 grid grid-cols-[8rem_1fr] gap-3">
-        <label className="flex flex-col gap-1 text-xs text-text-muted">
-          Variations
+      <div className="mt-4">
+        <label className="flex w-40 flex-col gap-1 text-xs text-text-muted">
+          Versions to compare
           <input
             type="number"
             data-testid="generate-count"
@@ -272,8 +289,11 @@ function Confirm({
             className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-text"
           />
         </label>
-        <label className="flex flex-col gap-1 text-xs text-text-muted">
-          Solver
+      </div>
+      <details className="mt-3 text-xs text-text-muted">
+        <summary className="cursor-pointer select-none">Advanced: search method</summary>
+        <label className="mt-2 flex max-w-sm flex-col gap-1">
+          Search method (the unit's default is set in Settings › Generate)
           <select
             data-testid="generate-solver"
             className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-text"
@@ -290,7 +310,7 @@ function Confirm({
             ))}
           </select>
         </label>
-      </div>
+      </details>
       {chosen?.available === false ? (
         <p className="mt-1 text-xs text-warn">
           {chosen.reason}. Generate will use the fallback solver and say so in the report.
@@ -421,7 +441,7 @@ function describeRun(run: SolveRunStatus): string {
     case 'done': {
       const s = run.summary;
       if (!s) return 'Done';
-      return `Done · ${s.floorsShort === 0 ? 'every floor filled' : `${s.floorsShort} short`} · score ${Math.round(s.objective).toLocaleString()}`;
+      return `Done · ${digestLine(s).slice(0, 3).join(' · ')}`;
     }
     case 'failed':
       return `Failed: ${run.error ?? 'unknown error'}`;
@@ -572,17 +592,13 @@ function Finished({
       {choice?.kind === 'grid' ? (
         <p data-testid="generate-grid-best" className="mt-1 text-sm text-success">
           {choice.tie
-            ? 'The schedule on the grid already scores as well as the best of these.'
-            : `The schedule on the grid scores better than every variation (${choice.gridScore.toLocaleString()} against ${choice.bestScore.toLocaleString()}). Keeping it is the strongest choice.`}
+            ? 'The schedule already on the grid is as good as the best of these — keep it.'
+            : 'The schedule already on the grid is better balanced than any of these — keep it.'}
         </p>
       ) : choice ? (
         <p className="mt-1 text-sm text-success">
-          Variation {variationNumber(batch, choice.index)} scores best (
-          {choice.score.toLocaleString()}
-          {choice.gridScore !== undefined
-            ? ` against ${choice.gridScore.toLocaleString()} on the grid now`
-            : ''}
-          ).
+          Variation {variationNumber(batch, choice.index)} strikes the best balance of staffing,
+          fairness, preferences and cost.
         </p>
       ) : null}
       {batch.fellBackFrom ? (
@@ -595,9 +611,30 @@ function Finished({
         <thead>
           <tr className="border-b border-border text-left text-text-muted">
             <th className="px-2 py-1 font-medium">&nbsp;</th>
-            <th className="px-2 py-1 font-medium">Short</th>
-            <th className="px-2 py-1 font-medium">Rule breaks</th>
-            <th className="px-2 py-1 text-right font-medium">Score</th>
+            <th className="px-2 py-1 font-medium">Short shifts</th>
+            <th
+              className="px-2 py-1 font-medium"
+              title="Night shifts per nurse who works nights, fewest to most"
+            >
+              Nights each
+            </th>
+            <th className="px-2 py-1 font-medium" title="Weekends per nurse, fewest to most">
+              Weekends each
+            </th>
+            <th
+              className="px-2 py-1 font-medium"
+              title="Day or evening shifts too soon after nights"
+            >
+              Night→day flips
+            </th>
+            <th className="px-2 py-1 font-medium">Under contract</th>
+            <th
+              className="px-2 py-1 font-medium"
+              title="Shifts inside a time-off request still waiting for a decision"
+            >
+              On days asked off
+            </th>
+            <th className="px-2 py-1 text-right font-medium">Cost</th>
           </tr>
         </thead>
         <tbody>
@@ -608,10 +645,8 @@ function Finished({
               <th scope="row" className="px-2 py-1 text-left font-normal">
                 On the grid now
               </th>
-              <td className="px-2 py-1">—</td>
-              <td className="px-2 py-1">—</td>
-              <td className="px-2 py-1 text-right">
-                {Math.round(batch.draftObjective).toLocaleString()}
+              <td colSpan={7} className="px-2 py-1">
+                {choice?.kind === 'grid' ? 'Best balance — keep it' : 'Compare all for its numbers'}
               </td>
             </tr>
           ) : null}
@@ -633,16 +668,22 @@ function Finished({
                     <td className={`px-2 py-1 ${s.floorsShort > 0 ? 'text-danger' : ''}`}>
                       {s.floorsShort}
                     </td>
-                    <td className="px-2 py-1">
-                      {s.hardViolations} hard · {s.softViolations} soft
+                    <td className="px-2 py-1">{spread(s.digest.nights)}</td>
+                    <td className="px-2 py-1">{spread(s.digest.weekends)}</td>
+                    <td className={`px-2 py-1 ${s.digest.quickFlips > 0 ? 'text-warn' : ''}`}>
+                      {s.digest.quickFlips}
+                    </td>
+                    <td className="px-2 py-1">{s.digest.nursesUnderContract}</td>
+                    <td className={`px-2 py-1 ${s.digest.onDaysAskedOff > 0 ? 'text-warn' : ''}`}>
+                      {s.digest.onDaysAskedOff}
                     </td>
                     <td className="px-2 py-1 text-right">
-                      {Math.round(s.objective).toLocaleString()}
+                      {s.costTotal !== undefined ? formatDollars(s.costTotal) : '—'}
                     </td>
                   </>
                 ) : (
                   <td
-                    colSpan={3}
+                    colSpan={7}
                     className={`px-2 py-1 ${run.state === 'failed' ? 'text-danger' : 'text-text-muted'}`}
                   >
                     {describeRun(run)}
@@ -654,8 +695,8 @@ function Finished({
         </tbody>
       </table>
       <p className="mt-2 text-xs text-text-muted">
-        Score is everything the solver weighs — staffing, hours, fairness, preferences, cost — in
-        one number; lower is better. Nothing on the grid has changed.
+        Nights are per nurse who works nights, weekends per nurse with contracted hours, fewest to
+        most. Nothing on the schedule has changed yet: preview one, then save it.
       </p>
       <div className="mt-6 flex flex-wrap justify-end gap-2">
         <button
@@ -703,7 +744,5 @@ function Finished({
   );
 }
 
-const primaryButton =
-  'rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60';
-const secondaryButton =
-  'rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg disabled:opacity-60';
+const primaryButton = PRIMARY;
+const secondaryButton = SECONDARY;

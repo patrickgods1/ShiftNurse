@@ -9,7 +9,7 @@
  * delegated to `@shiftnurse/core`'s time helpers rather than re-derived.
  */
 
-import { type IsoDate, isIsoDate, weekdayOf } from '@shiftnurse/core';
+import { type IsoDate, isIsoDate, type Nurse, weekdayOf } from '@shiftnurse/core';
 
 const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = [
@@ -62,4 +62,38 @@ export function daysFromToday(date: IsoDate | string): number {
   const now = new Date();
   const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
   return Math.round((target - today) / 86_400_000);
+}
+
+/** "Campbell, Grace": every list and table, sorted and read the way the unit calls the roster. */
+export function listName(nurse: Pick<Nurse, 'firstName' | 'lastName'>): string {
+  return `${nurse.lastName}, ${nurse.firstName}`;
+}
+
+/** "0.9 FTE", or what a nurse with no contracted hours is: per diem, agency. */
+export function fteLabel(nurse: Pick<Nurse, 'employmentType' | 'fte'>): string {
+  if (nurse.employmentType === 'per_diem') return 'Per diem';
+  if (nurse.employmentType === 'agency') return 'Agency';
+  return `${nurse.fte.toFixed(1)} FTE`;
+}
+
+function monthDay(date: IsoDate | string): string {
+  const [, m, d] = date.split('-');
+  return `${MONTH_NAMES[Number(m) - 1]} ${Number(d)}`;
+}
+
+/** "Oct 4 – Nov 14, 2026": the year once when both ends share it. */
+export function periodRange(period: { startDate: string; endDate: string }): string {
+  const [startYear, endYear] = [period.startDate.slice(0, 4), period.endDate.slice(0, 4)];
+  return startYear === endYear
+    ? `${monthDay(period.startDate)} – ${monthDay(period.endDate)}, ${endYear}`
+    : `${formatDate(period.startDate)} – ${formatDate(period.endDate)}`;
+}
+
+/** Names the app generated from ISO dates ("Schedule 2026-10-04 to …", "Pay period 2026-09-20"). */
+const GENERATED_NAME = /^(Schedule|Pay period) \d{4}-\d{2}-\d{2}/;
+
+/** A period as a manager reads it: its dates, after the name only when someone chose one. */
+export function periodLabel(period: { name: string; startDate: string; endDate: string }): string {
+  const range = periodRange(period);
+  return GENERATED_NAME.test(period.name) ? range : `${period.name} (${range})`;
 }

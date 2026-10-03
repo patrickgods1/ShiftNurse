@@ -33,7 +33,7 @@ import { costImpact } from '../conflicts/impact.js';
 import { nurseName } from '../conflicts/text.js';
 import { diffViolations } from '../conflicts/violation-diff.js';
 import type { Assignment, Id, Nurse } from '../domain/entities.js';
-import type { IsoDate } from '../domain/time.js';
+import { describeDate, type IsoDate } from '../domain/time.js';
 import { deriveCounters } from '../fairness/ledger.js';
 import { scoreFairness } from '../fairness/score.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
@@ -81,7 +81,7 @@ export function findReplacements(input: ReplacementInput): ReplacementReport {
       excluded.push({
         nurseId: nurse.id,
         label,
-        reason: `Already scheduled on ${date} (${shiftAbbreviationsOn(world, nurse.id, date)})`,
+        reason: `Already scheduled on ${describeDate(date)} (${shiftAbbreviationsOn(world, nurse.id, date)})`,
       });
       continue;
     }

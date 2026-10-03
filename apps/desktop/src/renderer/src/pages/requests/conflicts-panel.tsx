@@ -21,7 +21,7 @@ import { useEffect, useState } from 'react';
 import { useAutoResolve, useResolveConflict } from '../../api-requests.js';
 import { StatCard } from '../../components/stat-card.js';
 import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
-import { formatDateWithWeekday } from '../../format.js';
+import { formatDateWithWeekday, periodLabel } from '../../format.js';
 import { formatSignedDollars } from '../../money.js';
 import { nurseLabel } from './decide-dialog.js';
 import { ReasonDialog } from './reason-dialog.js';
@@ -74,7 +74,7 @@ export function ConflictsPanel({
     <section aria-labelledby="conflicts-heading" data-testid="conflicts-panel">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 id="conflicts-heading" className="text-sm font-semibold text-text">
-          Conflicts · {period.name}
+          Conflicts · {periodLabel(period)}
         </h2>
         <div className="flex items-center gap-2">
           {auto.data !== undefined ? (

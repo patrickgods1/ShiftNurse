@@ -131,16 +131,18 @@ beforeEach(() => {
     },
     ACTOR,
   ).id;
-  ruleSetId = saveRuleSet(
-    handle.db,
-    {
-      unitId,
-      name: 'Default',
-      weekendDefinition: DEFAULT_WEEKEND,
-      fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
-      configs: [],
-    },
-    ACTOR,
+  ruleSetId = transact(handle.db, (tx) =>
+    saveRuleSet(
+      tx,
+      {
+        unitId,
+        name: 'Default',
+        weekendDefinition: DEFAULT_WEEKEND,
+        fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+        configs: [],
+      },
+      ACTOR,
+    ),
   ).id;
   dayId = shift('Day 12', false);
   onCallId = shift('On call', true);

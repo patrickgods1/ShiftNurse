@@ -1,0 +1,1 @@
+ALTER TABLE `schedule_period` ADD `requests_close_on` text;

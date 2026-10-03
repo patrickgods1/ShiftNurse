@@ -9,7 +9,7 @@ import { addDays } from '@shiftnurse/core';
 import { publishSchedule } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ACTOR } from './context.js';
-import { onShiftOn } from './dashboard.js';
+import { dashboardSummary, onShiftOn } from './dashboard.js';
 import { periodsApi, scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
 
@@ -51,5 +51,22 @@ describe("the dashboard's on-shift-today list", () => {
 
   it('is empty on a date no period covers', () => {
     expect(onShiftOn(f.handle.db, f.seeded.unitId, addDays(f.seeded.draftStart, -400))).toEqual([]);
+  });
+});
+
+describe('the dashboard’s next steps', () => {
+  it('knows how many shifts the current draft holds, so it can say generate or publish', () => {
+    const before = dashboardSummary(f.handle.db, f.seeded.unitId);
+    expect(before.currentDraft?.id).toBe(f.seeded.draftPeriodId);
+    const grid = scheduleApi(f.handle.db);
+    for (const offset of [1, 2]) {
+      grid.createAssignment({
+        periodId: f.seeded.draftPeriodId,
+        nurseId: f.rns[0]!.id,
+        shiftTypeId: f.day.id,
+        date: addDays(f.seeded.draftStart, offset * 3),
+      });
+    }
+    expect(dashboardSummary(f.handle.db, f.seeded.unitId).draftShifts).toBe(before.draftShifts + 2);
   });
 });

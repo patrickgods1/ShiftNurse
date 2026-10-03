@@ -17,16 +17,22 @@ import {
   violationsByDate as indexByDate,
   violationsByNurse as indexByNurse,
   isWeekendDate,
+  payPeriodIndex,
+  payPeriodWindow,
+  rangesOverlap,
   weekdayOf,
 } from '@shiftnurse/core';
-import { useCallback, useMemo, useState } from 'react';
-import { useAssignments, useNurses, useShiftTypes } from '../../api.js';
+import { Link } from '@tanstack/react-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useAssignments, useNurses, useShiftTypes, useTimeOff } from '../../api.js';
 import { useCostReport } from '../../api-cost.js';
+import { useDemand } from '../../api-demand.js';
 import {
   useCreateAssignment,
   useDeleteAssignment,
   useMoveAssignment,
   useSetLocked,
+  useSwapAssignments,
   useUpdateAssignment,
   useValidation,
 } from '../../api-schedule.js';
@@ -39,7 +45,9 @@ import {
 } from '../../api-solver.js';
 import { AsyncState } from '../../components/async-state.js';
 import { useConfirm } from '../../components/confirm.js';
-import { errorMessage } from '../../components/ui.js';
+import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { periodRange } from '../../format.js';
+import { useUnit } from '../../unit-context.js';
 import { ReasonDialog } from '../requests/reason-dialog.js';
 import { AlertsPanel } from './alerts-panel.js';
 import { AssignmentDialog } from './assignment-dialog.js';
@@ -81,6 +89,7 @@ function makeGhost(
 
 export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const confirm = useConfirm();
+  const unit = useUnit();
   const nursesQuery = useNurses(unitId);
   const shiftTypesQuery = useShiftTypes(unitId);
   const assignmentsQuery = useAssignments(period.id);
@@ -90,11 +99,14 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const saveCandidate = useSaveCandidate(period.id, unitId);
   const discardBatch = useDiscardBatch(period.id);
   const cancelBatch = useCancelBatch(period.id);
+  const pendingTimeOff = useTimeOff(unitId, 'pending').data;
+  const demandQuery = useDemand(unitId, period.startDate, period.endDate);
 
   const createAssignment = useCreateAssignment(period.id, unitId);
   const moveAssignment = useMoveAssignment(period.id, unitId);
   const updateAssignment = useUpdateAssignment(period.id, unitId);
   const deleteAssignment = useDeleteAssignment(period.id, unitId);
+  const swapAssignments = useSwapAssignments(period.id, unitId);
   const setLocked = useSetLocked(period.id, unitId);
   // The handlers below depend on `mutate`, which TanStack keeps stable, not on the mutation
   // objects, which change identity with every state change and would re-render every grid row.
@@ -134,6 +146,13 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
       previewing: value,
     });
   };
+
+  // Variations belong to a draft. Once the period is published they can never be saved, so they
+  // go quietly rather than as an "out of date" warning about a schedule the manager just sent.
+  const discardMutate = discardBatch.mutate;
+  useEffect(() => {
+    if (batch && period.status !== 'draft') discardMutate(batch.id);
+  }, [batch, period.status, discardMutate]);
 
   const finished = batch ? finishedRuns(batch) : [];
   const choice = batch ? bestChoice(batch) : undefined;
@@ -194,13 +213,22 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         date,
         weekday: weekdayOf(date),
         isWeekend: isWeekendDate(date),
+        weekStart: date !== period.startDate && weekdayOf(date) === weekdayOf(period.startDate),
       })),
     [period.startDate, period.endDate],
   );
   const columnDates = useMemo(() => columns.map((c) => c.date), [columns]);
   const sortedNurses = useMemo(() => sortNurses(nursesQuery.data ?? []), [nursesQuery.data]);
 
-  const violationResult = preview ? preview.validation.result : validationQuery.data?.result;
+  // An empty draft has not been built yet. Judged as a schedule it is every shift short — "378
+  // hard violations" in red before the manager has done anything — so it is not judged at all.
+  const emptyDraft =
+    period.status === 'draft' && !preview && (assignmentsQuery.data?.length ?? 0) === 0;
+  const violationResult = preview
+    ? preview.validation.result
+    : emptyDraft
+      ? undefined
+      : validationQuery.data?.result;
   const violationsByAssignmentMap = useMemo(
     (): Map<Id, Violation[]> =>
       violationResult ? indexByAssignment(violationResult.violations) : new Map(),
@@ -336,15 +364,16 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const handleSaveCandidate = async () => {
     if (!batch || selectedIndex === undefined) return;
     const unlocked = assignments.filter((a) => !a.isLocked).length;
-    const ok = await confirm({
-      title: `Save variation ${variationNumber(batch, selectedIndex)} as the draft?`,
-      description:
-        unlocked > 0
-          ? `It replaces the ${unlocked} unlocked shift${unlocked === 1 ? '' : 's'} on the grid. Locked shifts stay exactly where they are.`
-          : 'Locked shifts stay exactly where they are.',
-      confirmLabel: 'Save',
-    });
-    if (!ok) return;
+    // Nothing on the grid to lose: saving needs no second question.
+    if (unlocked > 0) {
+      const ok = await confirm({
+        title: `Save variation ${variationNumber(batch, selectedIndex)} as the draft?`,
+        description: `It replaces the ${unlocked} unlocked shift${unlocked === 1 ? '' : 's'} on the grid, hand edits included. Locked shifts stay exactly where they are.`,
+        confirmLabel: 'Save',
+        danger: false,
+      });
+      if (!ok) return;
+    }
     saveCandidate.mutate(
       { batchId: batch.id, index: selectedIndex },
       { onSuccess: () => setPreviewing(false) },
@@ -358,10 +387,26 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const failedEdit = [
     createAssignment,
     moveAssignment,
+    swapAssignments,
     updateAssignment,
     deleteAssignment,
     setLocked,
   ].find((m) => m.isError);
+
+  const undecided = (pendingTimeOff ?? []).filter((r) =>
+    rangesOverlap(r.startDate, r.endDate, period.startDate, period.endDate),
+  ).length;
+  const openGenerate = () => {
+    // A run in progress is the thing to show; otherwise Generate means a new one.
+    setGenerateView(batch?.state === 'running' ? 'batch' : 'setup');
+    setGenerateOpen(true);
+  };
+
+  const showDate = (date: string) => {
+    document
+      .querySelector(`[data-testid="schedule-grid"] [data-date="${date}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  };
 
   const openAssignment = allAssignments.find((a) => a.id === openAssignmentId);
   const openNurse = openAssignment
@@ -370,13 +415,59 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   const openShiftType = openAssignment
     ? shiftTypesQuery.data.find((st) => st.id === openAssignment.shiftTypeId)
     : undefined;
+  const openContext = (() => {
+    if (!openAssignment || !openNurse) return undefined;
+    const window = payPeriodWindow(payPeriodIndex(openAssignment.date, unit), unit);
+    const byType = new Map(shiftTypesQuery.data.map((st) => [st.id, st]));
+    const hours = allAssignments
+      .filter(
+        (a) =>
+          a.nurseId === openNurse.id &&
+          a.date >= window.start &&
+          a.date <= window.end &&
+          !byType.get(a.shiftTypeId)?.isOnCall,
+      )
+      .reduce((sum, a) => sum + (byType.get(a.shiftTypeId)?.durationHours ?? 0), 0);
+    const alsoOnShift = allAssignments
+      .filter(
+        (a) =>
+          a.date === openAssignment.date &&
+          a.shiftTypeId === openAssignment.shiftTypeId &&
+          a.nurseId !== openNurse.id,
+      )
+      .map((a) => nursesQuery.data.find((n) => n.id === a.nurseId))
+      .filter((n): n is NonNullable<typeof n> => n !== undefined)
+      .sort((a, b) => a.lastName.localeCompare(b.lastName));
+    return {
+      hoursThisPayPeriod: hours,
+      contractedHours: openNurse.contractedHoursPerPeriod,
+      payPeriodLabel: periodRange({ startDate: window.start, endDate: window.end }),
+      alsoOnShift,
+    };
+  })();
+  const swapOptions = openAssignment
+    ? allAssignments
+        .filter(
+          (a) =>
+            a.date === openAssignment.date &&
+            a.nurseId !== openAssignment.nurseId &&
+            a.shiftTypeId !== openAssignment.shiftTypeId &&
+            !a.isLocked,
+        )
+        .flatMap((a) => {
+          const nurse = nursesQuery.data.find((n) => n.id === a.nurseId);
+          const shiftType = shiftTypesQuery.data.find((st) => st.id === a.shiftTypeId);
+          return nurse && shiftType ? [{ assignment: a, nurse, shiftType }] : [];
+        })
+        .sort((x, y) => x.nurse.lastName.localeCompare(y.nurse.lastName))
+    : [];
   const openViolations = openAssignment
     ? (violationsByAssignmentMap.get(openAssignment.id) ?? [])
     : [];
 
   return (
     <div>
-      {batch ? (
+      {batch && period.status === 'draft' ? (
         <CandidatesBar
           batch={batch}
           selected={selectedIndex}
@@ -426,11 +517,45 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
           </button>
         </div>
       ) : null}
-      <ViolationSummary
-        status={preview ? 'success' : validationQuery.status}
-        result={violationResult}
-        previewLabel={previewLabel}
-      />
+      {period.status === 'draft' && undecided > 0 ? (
+        <div
+          role="status"
+          data-testid="pending-requests-nudge"
+          className="mb-3 flex items-center justify-between gap-3 rounded-md border border-warn bg-surface px-3 py-2 text-sm text-text"
+        >
+          <p>
+            {undecided} time-off request{undecided === 1 ? ' is' : 's are'} waiting for a decision
+            in this period. Decide {undecided === 1 ? 'it' : 'them'} before generating, so the
+            schedule works around approved leave.
+          </p>
+          <Link to="/requests" className="shrink-0 text-xs underline underline-offset-2">
+            Review requests
+          </Link>
+        </div>
+      ) : null}
+      {emptyDraft && !batch ? (
+        <div
+          data-testid="empty-draft"
+          className="mb-3 rounded-md border border-accent/50 bg-surface px-4 py-4"
+        >
+          <p className="text-sm font-medium text-text">This schedule hasn't been built yet.</p>
+          <p className="mt-1 text-sm text-text-muted">
+            Generate fills every shift from your staffing floors, contracts, approved leave and
+            preferences, and shares nights and weekends fairly. You can also drag shifts onto the
+            grid by hand.
+          </p>
+          <button type="button" onClick={openGenerate} className={`${PRIMARY} mt-3`}>
+            Generate schedule
+          </button>
+        </div>
+      ) : null}
+      {emptyDraft ? null : (
+        <ViolationSummary
+          status={preview ? 'success' : validationQuery.status}
+          result={violationResult}
+          previewLabel={previewLabel}
+        />
+      )}
       {failedEdit ? (
         <div
           role="alert"
@@ -447,13 +572,22 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
           </button>
         </div>
       ) : null}
-      <CostSummary report={preview ? preview.cost : costQuery.data} previewLabel={previewLabel} />
-      <AlertsPanel
-        periodId={period.id}
-        preview={
-          preview && previewLabel ? { alerts: preview.alerts, label: previewLabel } : undefined
-        }
-      />
+      {emptyDraft ? null : (
+        <>
+          <CostSummary
+            report={preview ? preview.cost : costQuery.data}
+            previewLabel={previewLabel}
+          />
+          <AlertsPanel
+            periodId={period.id}
+            published={period.status !== 'draft'}
+            onShowDate={showDate}
+            preview={
+              preview && previewLabel ? { alerts: preview.alerts, label: previewLabel } : undefined
+            }
+          />
+        </>
+      )}
       <div className="mb-3 flex items-start justify-between gap-3">
         {previewActive ? (
           <p className="text-sm text-text-muted">
@@ -471,7 +605,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
               type="button"
               data-testid="change-log-open"
               onClick={() => setChangeLogOpen((o) => !o)}
-              className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text hover:bg-bg"
+              className={SECONDARY}
             >
               {changeLogOpen ? 'Hide change log' : 'Change log'}
             </button>
@@ -480,12 +614,9 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
             <button
               type="button"
               data-testid="generate-open"
-              onClick={() => {
-                // A run in progress is the thing to show; otherwise Generate means a new one.
-                setGenerateView(batch?.state === 'running' ? 'batch' : 'setup');
-                setGenerateOpen(true);
-              }}
-              className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text hover:bg-bg"
+              onClick={openGenerate}
+              // Until there is a schedule, building one is the next step, not publishing it.
+              className={emptyDraft ? PRIMARY : SECONDARY}
             >
               Generate
             </button>
@@ -495,7 +626,9 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
               type="button"
               data-testid="publish-open"
               onClick={() => setPublishOpen(true)}
-              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white"
+              disabled={emptyDraft}
+              title={emptyDraft ? 'Generate or add shifts before publishing' : undefined}
+              className={emptyDraft ? SECONDARY : PRIMARY}
             >
               {published ? 'Publish changes' : 'Publish'}
             </button>
@@ -503,6 +636,13 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         </div>
       </div>
       {published && changeLogOpen ? <ChangeLog periodId={period.id} /> : null}
+      {emptyDraft ? null : (
+        <p className="mb-2 text-xs text-text-muted" data-testid="grid-legend">
+          A red number counts rule breaks: in a day's header for that day, beside a name for that
+          nurse — hover it to read them. On a shift, C marks the charge nurse and ♡ a shift that
+          goes against what the nurse asked for. The rows under the grid show staffed / needed.
+        </p>
+      )}
       <ScheduleGrid
         nurses={nursesQuery.data}
         shiftTypes={shiftTypesQuery.data}
@@ -518,6 +658,10 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         onCreate={handleCreate}
         onChipOpen={handleChipOpen}
         onChipDelete={handleChipDelete}
+        demand={demandQuery.data}
+        againstPreference={
+          preview ? preview.validation.againstPreference : validationQuery.data?.againstPreference
+        }
       />
       <GenerateDialog
         open={generateOpen}
@@ -525,6 +669,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         unitId={unitId}
         period={period}
         lockedCount={assignments.filter((a) => a.isLocked).length}
+        undecidedRequests={undecided}
         unlockedCount={assignments.filter((a) => !a.isLocked).length}
         batch={batch}
         view={generateView}
@@ -585,6 +730,14 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         nurses={sortedNurses}
         dates={columnDates}
         onMove={handleMove}
+        context={openContext}
+        shiftTypes={shiftTypesQuery.data}
+        swapOptions={swapOptions}
+        onSwap={(firstId, secondId) =>
+          withReason('Swap two shifts on the published schedule', (reason) =>
+            swapAssignments.mutate({ firstId, secondId, reason }),
+          )
+        }
       />
     </div>
   );

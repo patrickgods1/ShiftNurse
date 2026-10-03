@@ -11,12 +11,14 @@ import {
   createRouter,
   Link,
   Outlet,
+  useRouterState,
 } from '@tanstack/react-router';
-import type { CSSProperties } from 'react';
+import { type CSSProperties, useEffect, useRef } from 'react';
 import { AsyncState } from './components/async-state.js';
 import { TipProvider } from './components/field-help.js';
 import { ThemeToggle } from './components/theme-toggle.js';
 import { NavigationGuard, UnsavedChangesProvider } from './components/unsaved-changes.js';
+import { UpdateBanner } from './components/update-banner.js';
 import DashboardPage from './pages/dashboard.js';
 import DemandPage from './pages/demand.js';
 import FairnessPage from './pages/fairness.js';
@@ -51,6 +53,14 @@ const DRAG_REGION = { WebkitAppRegion: 'drag' } as CSSProperties;
 
 function AppShell() {
   const unit = useUnit();
+  // The pages share one scrolling container, so without this a page opened from another one
+  // halfway down its list opened halfway down too.
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const mainRef = useRef<HTMLElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the route change is the trigger.
+  useEffect(() => {
+    mainRef.current?.scrollTo(0, 0);
+  }, [pathname]);
 
   return (
     <div className="flex h-screen min-w-[1000px] bg-bg text-text">
@@ -87,7 +97,8 @@ function AppShell() {
           <span className="text-sm font-medium text-text">{unit.name}</span>
           <ThemeToggle />
         </header>
-        <main className="flex-1 overflow-y-auto p-6">
+        <UpdateBanner />
+        <main ref={mainRef} className="flex-1 overflow-y-auto p-6">
           <Outlet />
         </main>
       </div>

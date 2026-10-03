@@ -423,6 +423,34 @@ describe('agreement with the rule engine', () => {
     );
   });
 
+  it('agrees with the rules when days asked off must stay off', () => {
+    const base = parityInput({
+      timeOff: [timeOff('ada', '2026-01-07', '2026-01-09', { status: 'pending' })],
+    });
+    expectParity({
+      ...base,
+      ruleSet: {
+        ...base.ruleSet,
+        configs: base.ruleSet.configs.map((c) =>
+          c.ruleId === 'avoid-pending-time-off' ? { ...c, severityOverride: 'hard' as const } : c,
+        ),
+      },
+    });
+  });
+
+  it('agrees with the rules when days off after nights are hard', () => {
+    const base = parityInput();
+    expectParity({
+      ...base,
+      ruleSet: {
+        ...base.ruleSet,
+        configs: base.ruleSet.configs.map((c) =>
+          c.ruleId === 'recovery-after-nights' ? { ...c, severityOverride: 'hard' as const } : c,
+        ),
+      },
+    });
+  });
+
   it('agrees with the rules when overtime is judged over the pay period', () => {
     // 60h a pay period, so the threshold binds below both nurses' contract caps.
     const ruleSet = withParams('max-hours-per-week', {
@@ -828,6 +856,65 @@ describe('parity with the annealer', () => {
       expect(
         evaluate(encoding, [...input.assignments, assign(other!, DAY_12, '2026-01-19')]).violated,
       ).toEqual([]);
+    });
+  });
+
+  describe('days asked off, not yet decided', () => {
+    it('prices random rosters the same as the annealer', () => {
+      const base = richInput();
+      const input: SolveInput = {
+        ...base,
+        timeOff: [
+          ...base.timeOff,
+          timeOff(base.nurses[0]!.id, '2026-01-05', '2026-01-09', { status: 'pending' }),
+          timeOff(base.nurses[3]!.id, '2026-01-12', '2026-01-13', { status: 'pending' }),
+        ],
+      };
+      const encoding = encodeCpsat(input);
+      const rng = new Rng(29);
+      let onPending = 0;
+      for (let trial = 0; trial < 60; trial++) {
+        const seen = new Set<string>();
+        const assignments = [...input.assignments];
+        for (const sv of encoding.shiftVars) {
+          const day = `${sv.nurseId}|${sv.shift.date}`;
+          if (seen.has(day) || !rng.chance(0.3)) continue;
+          seen.add(day);
+          assignments.push(assign(sv.nurseId, sv.shift.shiftType, sv.shift.date));
+        }
+        const evaluation = evaluate(encoding, assignments);
+        const model = new SolverModel(input);
+        for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+        if (model.pendingBreaches() > 0) onPending++;
+        expect(evaluation.objective, `trial ${trial}`).toBeCloseTo(model.breakdown().total, 0);
+      }
+      expect(onPending).toBeGreaterThan(40);
+    });
+  });
+
+  describe('days off after nights', () => {
+    it('prices random rosters the same as the annealer', () => {
+      const input = richInput();
+      const encoding = encodeCpsat(input);
+      const rng = new Rng(23);
+      let flipped = 0;
+      for (let trial = 0; trial < 60; trial++) {
+        const seen = new Set<string>();
+        const assignments = [...input.assignments];
+        for (const sv of encoding.shiftVars) {
+          const day = `${sv.nurseId}|${sv.shift.date}`;
+          if (seen.has(day) || !rng.chance(0.3)) continue;
+          seen.add(day);
+          assignments.push(assign(sv.nurseId, sv.shift.shiftType, sv.shift.date));
+        }
+        const evaluation = evaluate(encoding, assignments);
+        const model = new SolverModel(input);
+        for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+        if (model.recoveryBreaches() > 0) flipped++;
+        expect(evaluation.objective, `trial ${trial}`).toBeCloseTo(model.breakdown().total, 0);
+      }
+      // Most rosters must actually flip someone from nights to days, or this proves nothing.
+      expect(flipped).toBeGreaterThan(40);
     });
   });
 

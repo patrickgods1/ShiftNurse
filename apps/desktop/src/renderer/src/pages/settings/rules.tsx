@@ -102,10 +102,13 @@ const FAIRNESS_TIPS: Record<FairnessComponent, string> = {
     'landing on the same people.',
 };
 
+/** "Oct 2, 2026, 5:53 PM": the app's date style, with the time a version was saved. */
+const SAVED_AT = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+
 function formatSavedAt(createdAt: number): string {
   // `createdAt` is an audit-style instant, not schedule geometry, so a plain `Date` is the
   // right tool here (see the time-model header in packages/core/src/domain/time.ts).
-  return new Date(createdAt).toLocaleString();
+  return SAVED_AT.format(new Date(createdAt));
 }
 
 function clearSeverityOverride(config: RuleConfig): RuleConfig {

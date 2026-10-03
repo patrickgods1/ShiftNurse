@@ -17,6 +17,7 @@ import { AsyncState } from '../../components/async-state.js';
 import { DIALOG, OVERLAY } from '../../components/ui.js';
 import { formatDollars, formatHours, formatSignedDollars } from '../../money.js';
 import { SOLVER_LABELS } from '../../solver-labels.js';
+import { spread } from './candidates.js';
 
 interface CompareDialogProps {
   open: boolean;
@@ -41,46 +42,84 @@ interface Row {
   decimals?: number;
 }
 
-const whole = (n: number) => Math.round(n).toLocaleString();
+/** Fewest–most spreads read as fairer the narrower they are. */
+const width = (r: { min: number; max: number }) => r.max - r.min;
 
 const ROWS: Row[] = [
   {
-    label: 'Nurse-slots short',
-    hint: 'Below a coverage floor or patient ratio',
+    label: 'Short shifts',
+    hint: 'Staff missing below a minimum or patient ratio',
     value: (c) => c.floorsShort,
     show: (c) => String(c.floorsShort),
     better: 'lower',
   },
   {
-    label: 'Hard rule breaks',
+    label: 'Rule breaks',
+    hint: 'Contract or safety rules broken',
     value: (c) => c.hardViolations,
     show: (c) => String(c.hardViolations),
     better: 'lower',
   },
   {
-    label: 'Soft rule warnings',
+    label: 'Warnings',
+    hint: 'Advice the schedule goes against',
     value: (c) => c.softViolations,
     show: (c) => String(c.softViolations),
     better: 'lower',
   },
   {
+    label: 'Nights each',
+    hint: 'Per nurse who works nights, fewest to most',
+    value: (c) => width(c.digest.nights),
+    show: (c) => spread(c.digest.nights),
+    better: 'lower',
+  },
+  {
+    label: 'Weekends each',
+    hint: 'Per nurse with contracted hours, fewest to most',
+    value: (c) => width(c.digest.weekends),
+    show: (c) => spread(c.digest.weekends),
+    better: 'lower',
+  },
+  {
+    label: 'Night-to-day flips',
+    hint: 'Day or evening shifts too soon after nights',
+    value: (c) => c.digest.quickFlips,
+    show: (c) => String(c.digest.quickFlips),
+    better: 'lower',
+  },
+  {
+    label: 'On days asked off',
+    hint: 'Shifts inside a time-off request not yet decided',
+    value: (c) => c.digest.onDaysAskedOff,
+    show: (c) => String(c.digest.onDaysAskedOff),
+    better: 'lower',
+  },
+  {
+    label: 'Against preferences',
+    hint: 'Shifts a nurse asked not to work',
+    value: (c) => c.digest.againstPreference,
+    show: (c) => String(c.digest.againstPreference),
+    better: 'lower',
+  },
+  {
+    label: 'Under contract',
+    hint: 'Nurses short of their contracted hours',
+    value: (c) => c.digest.nursesUnderContract,
+    show: (c) => String(c.digest.nursesUnderContract),
+    better: 'lower',
+  },
+  {
     label: 'Fairness, average',
-    hint: '0–100 per nurse; higher is fairer',
+    hint: '100 = everyone at their fair share',
     value: (c) => c.fairnessMean,
     show: (c) => c.fairnessMean.toFixed(0),
     better: 'higher',
     decimals: 0,
   },
   {
-    label: 'Fairness spread',
-    hint: 'Gini; 0 is perfectly even',
-    value: (c) => c.fairnessGini,
-    show: (c) => c.fairnessGini.toFixed(2),
-    better: 'lower',
-    decimals: 2,
-  },
-  {
-    label: 'Worst-off nurse',
+    label: 'Least fairly treated',
+    hint: 'Lowest fairness among nurses with contracted hours',
     value: (c) => c.worstNurse?.score,
     show: (c, names) =>
       c.worstNurse
@@ -88,13 +127,6 @@ const ROWS: Row[] = [
         : '—',
     better: 'higher',
     decimals: 0,
-  },
-  {
-    label: 'Preferences given up',
-    hint: 'Objective points; lower is better',
-    value: (c) => c.preferencePoints,
-    show: (c) => whole(c.preferencePoints),
-    better: 'lower',
   },
   {
     label: 'Overtime',
@@ -119,18 +151,11 @@ const ROWS: Row[] = [
     better: 'lower',
   },
   {
-    label: 'Shifts changed',
-    hint: 'Added, removed or changed against the draft',
+    label: 'Shifts that change',
+    hint: 'Against the schedule on the grid now',
     value: (c) => c.shiftsChanged,
     show: (c) => String(c.shiftsChanged),
     better: 'none',
-  },
-  {
-    label: 'Overall score',
-    hint: 'Everything above, weighted; what the solver minimises',
-    value: (c) => c.objective,
-    show: (c) => whole(c.objective),
-    better: 'lower',
   },
 ];
 

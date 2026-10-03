@@ -15,6 +15,7 @@ import type {
 import { FAIRNESS_COMPONENT_LABELS, FAIRNESS_COMPONENTS } from '@shiftnurse/core';
 import { useId, useState } from 'react';
 import type { FairnessTrendPoint } from '../../../../shared/api.js';
+import { fteLabel, listName } from '../../format.js';
 import { SCORE_BAR_CLASSES, SCORE_TONE_CLASSES, scoreTone } from './score-tone.js';
 import { Sparkline } from './sparkline.js';
 
@@ -25,7 +26,7 @@ interface NurseFairnessTableProps {
 }
 
 function nurseName(nurse: Nurse | undefined): string {
-  return nurse !== undefined ? `${nurse.firstName} ${nurse.lastName}` : 'Unknown nurse';
+  return nurse !== undefined ? listName(nurse) : 'Unknown nurse';
 }
 
 /** Comparable nurses (the ones a burden reading actually applies to) sort first, lowest score
@@ -122,7 +123,7 @@ function NurseRow({
         </td>
         <td className="px-3 py-2 text-sm text-text">{nurse?.role ?? '—'}</td>
         <td className="px-3 py-2 text-sm tabular-nums text-text">
-          {nurse !== undefined ? nurse.fte.toFixed(2) : '—'}
+          {nurse !== undefined ? fteLabel(nurse) : '—'}
         </td>
         <td className="px-3 py-2 text-sm tabular-nums">
           {score.comparable ? (
@@ -157,7 +158,24 @@ function NurseRow({
 
 export function NurseFairnessTable({ scores, nurses, trend }: NurseFairnessTableProps) {
   const nursesById = new Map(nurses.map((n) => [n.id, n]));
-  const sorted = sortScores(scores);
+  // Per-diem and agency staff have no contracted share: a low score for them means they picked
+  // up the shifts they were asked to, not that they were treated unfairly. They get their own
+  // folded list instead of heading the table as the unit's "worst treated".
+  const contracted = (s: NurseFairnessScore) =>
+    (nursesById.get(s.nurseId)?.contractedHoursPerPeriod ?? 0) > 0;
+  const sorted = sortScores(scores.filter(contracted));
+  const asNeeded = sortScores(scores.filter((s) => !contracted(s)));
+  const rowsFor = (list: NurseFairnessScore[]) =>
+    list.map((score) => (
+      <NurseRow
+        key={score.nurseId}
+        score={score}
+        nurse={nursesById.get(score.nurseId)}
+        trendValues={trend
+          .map((point) => point.scores[score.nurseId])
+          .filter((value): value is number => value !== undefined)}
+      />
+    ));
 
   if (sorted.length === 0) {
     return (
@@ -184,33 +202,44 @@ export function NurseFairnessTable({ scores, nurses, trend }: NurseFairnessTable
             <th scope="col" className="px-3 py-2 font-medium">
               FTE
             </th>
-            <th scope="col" className="px-3 py-2 font-medium">
-              Score
+            <th
+              scope="col"
+              className="px-3 py-2 font-medium"
+              title="100 means at or under their fair share of every burden"
+            >
+              Fairness (0–100)
             </th>
-            <th scope="col" className="px-3 py-2 font-medium">
-              Burden index
+            <th
+              scope="col"
+              className="px-3 py-2 font-medium"
+              title="Above 0: carrying more than their share of nights, weekends and holidays, this period and recently"
+            >
+              Load vs fair share
             </th>
-            <th scope="col" className="px-3 py-2 font-medium">
-              Seniority
+            <th
+              scope="col"
+              className="px-3 py-2 font-medium"
+              title="Longer-serving nurses' preferences count for more"
+            >
+              Seniority weight
             </th>
             <th scope="col" className="px-3 py-2 font-medium">
               Trend
             </th>
           </tr>
         </thead>
-        <tbody>
-          {sorted.map((score) => (
-            <NurseRow
-              key={score.nurseId}
-              score={score}
-              nurse={nursesById.get(score.nurseId)}
-              trendValues={trend
-                .map((point) => point.scores[score.nurseId])
-                .filter((value): value is number => value !== undefined)}
-            />
-          ))}
-        </tbody>
+        <tbody>{rowsFor(sorted)}</tbody>
       </table>
+      {asNeeded.length > 0 ? (
+        <details className="border-t border-border">
+          <summary className="cursor-pointer px-3 py-2 text-sm text-text-muted">
+            Per-diem and agency staff ({asNeeded.length}) — no contracted share to compare against
+          </summary>
+          <table className="w-full min-w-[760px] border-collapse text-sm">
+            <tbody>{rowsFor(asNeeded)}</tbody>
+          </table>
+        </details>
+      ) : null}
     </div>
   );
 }

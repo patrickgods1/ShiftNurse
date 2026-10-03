@@ -101,7 +101,7 @@ self-service later becomes an intake surface rather than a new data model.
   smoke-tests it, and creates a **draft** release (`.github/release-notes.md`); it dry-runs on PRs
   touching packaging. Builds are unsigned.
 - **M15 — Selectable solvers** (complete; plan of record `docs/SOLVER_PLAN.md`, results
-  `docs/solver-bench.md`): Settings › Solver picks **hybrid** (default), **SA + LNS** or **CP-SAT**
+  `docs/solver-bench.md`): Settings › Generate (the solver tab) picks **hybrid** (default), **SA + LNS** or **CP-SAT**
   per unit; the Generate dialog overrides per run. `native/cpsat-runner` is the C++ OR-Tools
   runner (JSON lines, `runner.proto`), built by `.github/workflows/cpsat-runner.yml` and released
   as `cpsat-runner-v*`; `apps/desktop/scripts/fetch-cpsat.mjs` pins tag + SHA-256 and fills
@@ -233,11 +233,18 @@ violations of their own.
   worse than a failed one.
   The exception proves the rule: a function whose several writes are only correct together —
   `moveAssignment`, `approveSwap`, `importRoster`, `importHistoricalLedger`,
-  `approveTimeOffAndLiftAssignments`, `applyResolution`, and the holiday writes (`updateHoliday`,
-  `deleteHoliday`, `recordHolidayWork`, `clearHolidayWork`, `addHolidayYear`) — takes
-  `ShiftNurseTx`, so calling it
+  `approveTimeOffAndLiftAssignments`, `applyResolution`, `saveRuleSet` (a header, its configs and
+  the audit row — a header alone would be a "latest" rule set with no rules), and the holiday
+  writes (`updateHoliday`, `deleteHoliday`, `recordHolidayWork`, `clearHolidayWork`,
+  `addHolidayYear`) — takes `ShiftNurseTx`, so calling it
   outside a transaction is a type error rather than a docstring nobody read.
+- **Every IPC write runs in one `transact`**, in the `main/api/` module that builds its resource
+  (`api.ts` is only the wiring table): a repository function given the bare `db` commits its
+  change and its audit row as two statements, and a crash or failed audit insert between them
+  leaves a change with no record.
 - **Every mutation writes an audit entry in the same call**, with `before` on updates/deletes.
+  `audit_log` is append-only in the file itself (migration 0013's triggers refuse UPDATE and
+  DELETE); restore and start over replace the whole file instead.
   Denials, resolutions and overrides go through `recordAuditStrict`, which refuses to record
   without a stated reason — that text is what gets quoted if a decision is challenged.
 - **Rule set versions are immutable.** `saveRuleSet` always inserts a new version; a published
@@ -264,7 +271,9 @@ violations of their own.
 - **The renderer never re-derives time maths.** `renderer/src/format.ts` splits ISO strings
   for display and calls core's `weekdayOf`/`dayNumber` for anything else. The first version
   computed weekday as `dayNumber % 7` and labelled Sunday 2026-09-20 "Wed" — day 0 of the
-  epoch was a Thursday. Renderer unit tests live next to the code and run under `npm test`.
+  epoch was a Thursday. Renderer unit tests live next to the code and run under `npm test`;
+  component tests are `*.test.tsx` with `// @vitest-environment jsdom` and Testing Library
+  (the grid's drag and drop uses a stand-in `DataTransfer`, which jsdom lacks).
 - **`ELECTRON_RUN_AS_NODE` must be unset when launching Electron.** VS Code's integrated
   terminal exports it, and with it set the Electron binary is a bare Node runtime — the
   symptom is `'electron' does not provide an export named 'BrowserWindow'`. `scripts/smoke.mjs`
@@ -283,6 +292,11 @@ violations of their own.
   policy: `will-navigate` is blocked for any other URL (a file dropped on the grid would
   otherwise load with the preload bridge), `ipc.ts` refuses untrusted sender frames, and
   `openExternal` takes only `https:`/`mailto:`.
+- **A shift's broken preferences reach the grid.** `fairness/ledger.ts`'s `preferencesBroken`
+  is the one definition (`isUndesirable` is its yes/no, which the ledger and digest count);
+  `schedule.validate` returns `againstPreference` per assignment and the grid marks those chips.
+- **Swapping two shifts is both moves in one `transact`** (`schedule.swapAssignments`): a refusal
+  of either half — a lock, a nurse already on that shift — leaves both where they were.
 - **Moving a shift is delete + create in one `transact`.** `nurseId` is immutable on an
   assignment; the move carries `isCharge`/`isOvertime`/`notes` across and refuses locked rows.
 - **The smoke test creates data through the raw bridge**, which bypasses the renderer's
@@ -306,6 +320,33 @@ violations of their own.
   cascades into its children.
 - **The ledger's `periodId` has no foreign key on purpose:** imported history uses synthetic
   `import:<start>` ids for pay periods that predate the app.
+- **A finding keeps the severity its rule gave it** unless the rule set overrides the rule
+  (`PreparedRule.override`): `fte-target-hours` refuses hours past the contract (hard) but only
+  advises on a shortfall (soft) — being short is a manager's decision, not a breach — and a
+  contract that guarantees full hours sets the rule hard, which makes both hard.
+- **Days off after nights** (`rules/night-recovery.ts`, soft, nurse scope): a day or evening
+  shift within `daysOffAfterNights` (2) days of a night is flagged once, against the last night,
+  lookback nights included. Both solvers price it per such shift at `nightRecovery` (45, in the
+  preferences bucket): `SolverModel.recoveryFor` and CP-SAT's `nightRecoveryTerms`; hard, it is
+  `encodeNightRecovery`'s forbidden pairs. Rest hours alone allowed Night, Day, Night in four days.
+- **Time off is decided before the schedule, and late requests are covered, not regenerated.**
+  `rules/pending-time-off.ts` (soft, nurse scope) flags a shift inside a request still pending;
+  both solvers price it per shift at `pendingTimeOff` (80, preferences bucket; `SolverModel.
+  pendingPenaltyOf`, CP-SAT `perShiftTerms`; hard: `encodePendingTimeOff`), so Generate keeps
+  asked-for days free when it can. A request is judged by `conflicts/capacity.ts`'s
+  `leaveCapacity` — per day and role, shifts the floors need against what contracted staff not on
+  leave supply at their contracted hours, plus per diem — never by the draft (`TimeOffImpact.
+  capacity`). It judges against the unit's *usual* day, not a perfect one: "tight" only when leave
+  adds a whole shift to the usual per-diem gap, or a unit built to lean on per diem (the community
+  demo) reads every request on every day as tight. `main/api/leave.ts` is the late path: `coverOptions` ranks legal cover for each
+  freed shift (the day-of `findReplacements`, with the leave approved) and `approveAndCover`
+  approves, takes the shifts off (a published period's too, under a reason, in the change log)
+  and writes the chosen cover in one transaction, re-checking every pick first. A period's
+  optional `requestsCloseOn` (migration 0014) marks later requests as late; it never refuses one.
+- **Generate speaks in the manager's numbers.** `buildReport` adds `SolveReport.digest`
+  (`solver/digest.ts`: nights per nurse who works nights, weekends per contracted nurse, quick
+  flips, nurses under contract, shifts against preferences), which the Generate dialog, the
+  candidates bar and the comparison show in place of the solver's score.
 - **Every rule declares a `scope`** (`'nurse'` or `'shift'`). The solver evaluates hard rules
   incrementally on a view holding one nurse's timeline or one shift's roster, so a rule that
   secretly reads more than its scope passes in the solver and fails on the grid. Nurse-scope hard
@@ -476,7 +517,10 @@ violations of their own.
   `paidHours` (the shifts it pays, not every calendar day; the request dialog suggests them with
   `suggestedPaidLeaveHours`), and a call-off can be paid from sick leave (`paidSickHours`,
   credited only once the shift is off the schedule, so an uncovered call-off is not counted
-  twice). `rules/paid-leave.ts` turns both into per-day credits in `RuleContext.paidLeaveByNurse`;
+  twice). `rules/paid-leave.ts` turns both into dated credits in `RuleContext.paidLeaveByNurse`,
+  a request's paid hours cut into **whole shifts** of the unit's worked lengths and spaced over
+  its days — never spread by the hour: 36h over a week that crossed a pay period read as 5.1h and
+  30.9h, targets no run of 12s can meet, so an approved week off left the nurse "short";
   the contracted-hours rule adds them (`paidLeaveCountsTowardHours`, on), the max-hours rule adds
   them to the overtime threshold only when `paidLeaveCountsTowardOvertime` is on (off: federal
   wage-and-hour law does not treat leave as hours worked) and never to the absolute weekly cap.
@@ -517,7 +561,30 @@ violations of their own.
   period already).
 - **Backups use SQLite's online backup API**, never a file copy — a WAL database copied by
   hand loses un-checkpointed pages. The smoke run builds core/db from `dist`, so rebuild packages
-  (`npm run build:packages`) after touching core before trusting a smoke result.
+  (`npm run build:packages`) after touching core before trusting a smoke result. Restore and
+  start over swap the file through `replaceDatabaseFile` (staged copy, then rename), so a failed
+  copy leaves the live database alone. The daily copy is due by the *local* date and re-checked
+  hourly while the app runs.
+- **An update never migrates the only copy.** `openAppDatabase` opens without migrating, reads
+  `migrationStatus`, and when migrations are pending on a non-empty file takes a `pre-migrate`
+  backup first (audited once the schema is current). A database migrated by a newer release is
+  refused (`DatabaseNewerThanAppError`) — drizzle's migrator would otherwise find nothing to do
+  and let this build's queries run against tables it has never seen.
+- **Main starts or says why not.** `index.ts` takes the single-instance lock (a second copy would
+  share the database, and a restore would replace the file under it), and a startup failure
+  shows a native error box naming the database, backups and log paths before exiting. Main's
+  console output is teed to `userData/logs/main.log` (`main/log.ts`, rolled at 5 MB), which
+  Settings › About opens.
+- **Errors reach the manager in words.** `ipc.ts` logs every failed call in full and re-throws
+  `userFacingMessage(err)` (`main/ipc-errors.ts`: SQLite constraint errors reworded, the app's
+  own messages unchanged); the preload strips Electron's `Error invoking remote method …`
+  wrapper (`shared/ipc-error.ts`). Write refusals for people, since they reach the UI verbatim.
+- **CSV exports defuse formulas.** `serializeCsv` prefixes `'` to a field starting `=`, `+`, `-`,
+  `@`, tab or CR (numbers exempt) and `parseCsv` removes it, so an exported roster opened in
+  Excel cannot run a formula hidden in a name, and still re-imports as itself.
+- **The app says when a release is out, but cannot update itself** (builds are unsigned).
+  `main/updates.ts` asks GitHub's latest-release API once at launch in a packaged, non-smoke run;
+  any failure is silence, and only a link to the project's own releases page is ever shown.
 - **HPPD and acuity care hours are advisory.** `ShiftDemand.careHoursRecommendedNurses` (care hours
   ÷ shift length) and `hppdRecommendedNurses` show on the Demand page; `acuity/hppd.ts`'s
   `scheduledHppd` compares a period's scheduled hours per patient day with the target on the Demand

@@ -13,6 +13,7 @@ import {
   type DbLike,
   getCurrentDraft,
   listActiveNursesForUnit,
+  listAssignmentsForPeriod,
   listAssignmentsForPeriodOnDate,
   listCallOffsForUnit,
   listNursesForUnit,
@@ -54,12 +55,14 @@ export function dashboardSummary(db: DbLike, unitId: Id): DashboardSummary {
   const now = today();
   const periods = listPeriodsForUnit(db, unitId);
   const unitNurseIds = new Set(listNursesForUnit(db, unitId).map((n) => n.id));
+  const currentDraft = getCurrentDraft(db, unitId);
 
   return {
     unit,
     today: now,
     activeNurses: listActiveNursesForUnit(db, unitId).length,
-    currentDraft: getCurrentDraft(db, unitId),
+    currentDraft,
+    draftShifts: currentDraft ? listAssignmentsForPeriod(db, currentDraft.id).length : 0,
     latestPublished: latestPublished(periods),
     pendingTimeOff: listTimeOffForUnit(db, unitId, 'pending').length,
     openCallOffs: listCallOffsForUnit(db, unitId, { status: 'open' }).length,

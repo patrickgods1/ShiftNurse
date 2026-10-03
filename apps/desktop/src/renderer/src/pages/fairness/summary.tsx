@@ -5,7 +5,7 @@
  */
 
 import type { FairnessComponent, FairnessReport } from '@shiftnurse/core';
-import { FAIRNESS_COMPONENT_LABELS, FAIRNESS_COMPONENTS } from '@shiftnurse/core';
+import { FAIRNESS_COMPONENT_LABELS, FAIRNESS_COMPONENTS, gini } from '@shiftnurse/core';
 import { StatCard } from '../../components/stat-card.js';
 
 /** Gini bands for the stat-card tone. There is no hard threshold in the domain model — these
@@ -22,14 +22,22 @@ function scoreStatTone(mean: number): 'neutral' | 'warn' | 'danger' {
   return 'neutral';
 }
 
+/**
+ * The burden doing most to make the period unfair: unevenness weighted by how much the unit
+ * says that burden matters. Unweighted, a barely weighted measure (a little overtime carried
+ * over from history) headed the page on a schedule with no overtime at all.
+ */
 function worstComponent(
-  components: Record<FairnessComponent, { gini: number }>,
+  components: Record<FairnessComponent, { gini: number; max: number }>,
+  weights: Record<FairnessComponent, number>,
 ): { component: FairnessComponent; gini: number } | undefined {
-  let worst: { component: FairnessComponent; gini: number } | undefined;
+  let worst: { component: FairnessComponent; gini: number; impact: number } | undefined;
   for (const component of FAIRNESS_COMPONENTS) {
     const stats = components[component];
-    if (worst === undefined || stats.gini > worst.gini) {
-      worst = { component, gini: stats.gini };
+    if (stats.max === 0) continue;
+    const impact = stats.gini * weights[component];
+    if (impact > 0 && (worst === undefined || impact > worst.impact)) {
+      worst = { component, gini: stats.gini, impact };
     }
   }
   return worst;
@@ -37,31 +45,46 @@ function worstComponent(
 
 interface FairnessSummaryProps {
   report: FairnessReport;
+  /** Nurses with contracted hours, the ones the headline numbers are about. */
+  contracted: ReadonlySet<string>;
 }
 
-export function FairnessSummary({ report }: FairnessSummaryProps) {
-  const { score } = report.distribution;
-  const worst = worstComponent(report.distribution.components);
+export function FairnessSummary({ report, contracted }: FairnessSummaryProps) {
+  // The headline is about staff with a contracted share: a per-diem nurse's low score means
+  // they picked up what they were asked to, and would otherwise set "lowest" for the unit.
+  const values = report.scores.filter((s) => contracted.has(s.nurseId)).map((s) => s.score);
+  const score =
+    values.length === 0
+      ? { count: 0, mean: 0, min: 0, max: 0, gini: 0 }
+      : {
+          count: values.length,
+          mean: values.reduce((a, b) => a + b, 0) / values.length,
+          min: Math.min(...values),
+          max: Math.max(...values),
+          gini: gini(values),
+        };
+  const worst = worstComponent(report.distribution.components, report.weights);
 
   return (
     <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4" data-testid="fairness-summary">
       <StatCard
-        label="Mean score"
-        value={score.count > 0 ? score.mean.toFixed(1) : '—'}
+        label="Average fairness (100 = everyone at their fair share)"
+        value={score.count > 0 ? score.mean.toFixed(0) : '—'}
         tone={score.count > 0 ? scoreStatTone(score.mean) : 'neutral'}
       />
       <StatCard
-        label="Score evenness (Gini)"
+        label="Lowest to highest"
+        value={score.count > 0 ? `${score.min.toFixed(0)}–${score.max.toFixed(0)}` : '—'}
+        tone={score.count > 0 ? scoreStatTone(score.min) : 'neutral'}
+      />
+      <StatCard
+        label="How evenly shared (0 = perfectly even)"
         value={score.count > 0 ? score.gini.toFixed(2) : '—'}
         tone={score.count > 0 ? giniTone(score.gini) : 'neutral'}
       />
       <StatCard
-        label="Score spread"
-        value={score.count > 0 ? `${score.min.toFixed(0)}–${score.max.toFixed(0)}` : '—'}
-      />
-      <StatCard
-        label="Most uneven"
-        value={worst !== undefined ? FAIRNESS_COMPONENT_LABELS[worst.component] : '—'}
+        label="Biggest gap"
+        value={worst !== undefined ? FAIRNESS_COMPONENT_LABELS[worst.component] : 'None'}
         tone={worst !== undefined ? giniTone(worst.gini) : 'neutral'}
       />
     </div>
@@ -83,19 +106,16 @@ export function ComponentDistributionStrip({ report }: ComponentStripProps) {
         <thead>
           <tr className="border-b border-border text-left text-text-muted">
             <th scope="col" className="px-3 py-2 font-medium">
-              Component
+              What is shared
             </th>
             <th scope="col" className="px-3 py-2 font-medium">
-              Weight
+              How much it counts
             </th>
             <th scope="col" className="px-3 py-2 font-medium">
-              Gini
+              Unevenness (0 = even)
             </th>
             <th scope="col" className="px-3 py-2 font-medium">
-              Min
-            </th>
-            <th scope="col" className="px-3 py-2 font-medium">
-              Max
+              Range across nurses
             </th>
           </tr>
         </thead>
@@ -109,13 +129,19 @@ export function ComponentDistributionStrip({ report }: ComponentStripProps) {
                   {report.weights[component].toFixed(1)}
                 </td>
                 <td className="px-3 py-2 tabular-nums text-text">{stats.gini.toFixed(2)}</td>
-                <td className="px-3 py-2 tabular-nums text-text">{stats.min.toFixed(2)}</td>
-                <td className="px-3 py-2 tabular-nums text-text">{stats.max.toFixed(2)}</td>
+                <td className="px-3 py-2 tabular-nums text-text">
+                  {Math.round(stats.min * 100)}% – {Math.round(stats.max * 100)}%
+                </td>
               </tr>
             );
           })}
         </tbody>
       </table>
+      <p className="border-t border-border px-3 py-2 text-xs text-text-muted">
+        Burdens (nights, weekends, holidays, on call, overtime) are shown as a share of each nurse's
+        fair share, this period and recently: 100% is exactly fair. Preferences and requests are the
+        share honoured.
+      </p>
     </div>
   );
 }

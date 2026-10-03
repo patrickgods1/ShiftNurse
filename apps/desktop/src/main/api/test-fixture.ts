@@ -22,6 +22,7 @@ export interface Fixture {
   /** Active RNs, sorted by id so tests pick the same nurses every run. */
   rns: Nurse[];
   day: ShiftType;
+  night: ShiftType;
 }
 
 export function openFixture(): Fixture {
@@ -36,5 +37,9 @@ export function openFixture(): Fixture {
     (s) => s.active && !s.isNight && !s.isOnCall && s.durationHours === 12,
   );
   if (!day) throw new Error('demo unit has no 12-hour day shift');
-  return { handle, seeded, rns, day };
+  const night = listShiftTypesForUnit(handle.db, seeded.unitId).find(
+    (s) => s.active && s.isNight && !s.isOnCall,
+  );
+  if (!night) throw new Error('demo unit has no night shift');
+  return { handle, seeded, rns, day, night };
 }

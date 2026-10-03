@@ -29,7 +29,13 @@ import {
   solveInputFrom,
   timeOff,
 } from '@shiftnurse/core/testing';
-import { getPeriod, loadPeriodInput, openTestDatabase, seedScenarioUnit } from '@shiftnurse/db';
+import {
+  getPeriod,
+  loadPeriodInput,
+  openTestDatabase,
+  seedScenarioUnit,
+  transact,
+} from '@shiftnurse/db';
 import { expect, it } from 'vitest';
 import { CpsatRunner, resolveRunnerPath } from './cpsat-process.js';
 import { solveCpsat, solveHybrid } from './ortools-solvers.js';
@@ -45,7 +51,7 @@ const RUNNER = resolveRunnerPath({
 
 function demo(): SolveInput {
   const { db } = openTestDatabase();
-  const seeded = seedScenarioUnit(db, { today: isoDate('2026-09-23') });
+  const seeded = transact(db, (tx) => seedScenarioUnit(tx, { today: isoDate('2026-09-23') }));
   return loadPeriodInput(db, getPeriod(db, seeded.draftPeriodId)!);
 }
 

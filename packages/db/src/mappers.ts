@@ -336,6 +336,7 @@ export function toSchedulePeriod(r: typeof s.schedulePeriod.$inferSelect): Sched
     publishedAt: opt(r.publishedAt),
     ruleSetId: r.ruleSetId,
     ruleSetVersion: r.ruleSetVersion,
+    requestsCloseOn: opt(r.requestsCloseOn) as SchedulePeriod['requestsCloseOn'],
   };
 }
 

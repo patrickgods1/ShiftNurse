@@ -32,6 +32,14 @@ class FakeWorker extends EventEmitter implements SolverWorkerHandle {
           cost: 0,
         },
         fairness: {} as SolveReport['fairness'],
+        digest: {
+          nights: { min: 0, max: 0 },
+          weekends: { min: 0, max: 0 },
+          quickFlips: 0,
+          nursesUnderContract: 0,
+          againstPreference: 0,
+          onDaysAskedOff: 0,
+        },
         stats: {
           solver: this.data.solverId,
           seed: this.data.options.seed,
@@ -84,6 +92,29 @@ beforeEach(() => {
 });
 
 describe('a batch of variations', () => {
+  it('counts finished variations nobody has saved yet, so quitting can warn about them', () => {
+    const j = jobs(3);
+    expect(j.unsavedVariations()).toBe(0);
+    const batch = j.start('period-1', { count: 2, seed: 100 });
+    // Running: nothing to lose yet that the manager has seen.
+    expect(j.unsavedVariations()).toBe(0);
+    workers[0]!.finish(50);
+    workers[1]!.finish(40);
+    expect(j.unsavedVariations()).toBe(2);
+    j.markSaved(batch.id, 1);
+    expect(j.unsavedVariations()).toBe(0);
+  });
+
+  it('does not count variations that went stale, which could not be saved anyway', () => {
+    const j = jobs(3);
+    const batch = j.start('period-1', { count: 1, seed: 100 });
+    workers[0]!.finish(50);
+    inputVersion++;
+    j.current('period-1');
+    expect(j.status(batch.id)?.stale).toBeTruthy();
+    expect(j.unsavedVariations()).toBe(0);
+  });
+
   it('never runs more at once than the machine has room for, and starts the next as one ends', () => {
     // Three cores: two annealing runs at a time.
     const j = jobs(3);

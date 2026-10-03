@@ -13,6 +13,8 @@ import {
   deriveDemand,
   evaluateSchedule,
   type Id,
+  type Preference,
+  preferencesBroken,
   type RuleSet,
   type ScheduleChangeKind,
   type ScheduleChangeSource,
@@ -33,6 +35,7 @@ import {
   listIncompatibilityGroups,
   listNurseCredentialsForUnit,
   listPeriodsForUnit,
+  listPreferencesForUnit,
   listShiftCredentialRequirementsForUnit,
   listTimeOffForUnit,
   moveAssignment,
@@ -44,6 +47,7 @@ import {
   type ShiftNurseTx,
   saveRuleSet,
   setLocked as setAssignmentLocked,
+  setRequestsCloseOn,
   transact,
   updateAssignment as updateAssignmentDb,
 } from '@shiftnurse/db';
@@ -88,7 +92,22 @@ export function validateView(
     incompatibilityGroups: listIncompatibilityGroups(db, period.unitId),
     holidayWork: holidayWorkForPeriod(db, period),
   });
-  return { ruleSet, result: evaluateSchedule(schedule, ruleSet, ctx) };
+  // Which preferences each worked shift goes against, so the grid can say "avoids nights"
+  // rather than leave a broken request invisible until the nurse complains.
+  const preferences = listPreferencesForUnit(db, period.unitId);
+  const byNurse = new Map<Id, Preference[]>();
+  for (const p of preferences) byNurse.set(p.nurseId, [...(byNurse.get(p.nurseId) ?? []), p]);
+  const againstPreference: Record<Id, Preference[]> = {};
+  for (const view of schedule.assignments()) {
+    if (view.shiftType.isOnCall) continue;
+    const broken = preferencesBroken(
+      view,
+      byNurse.get(view.nurse.id) ?? [],
+      ruleSet.weekendDefinition,
+    );
+    if (broken.length > 0) againstPreference[view.assignment.id] = broken;
+  }
+  return { ruleSet, result: evaluateSchedule(schedule, ruleSet, ctx), againstPreference };
 }
 
 export function buildScheduleValidation(db: DbLike, periodId: Id): ScheduleValidation {
@@ -147,22 +166,26 @@ export function periodsApi(db: ShiftNurseDb): ShiftNurseApi['periods'] {
   return {
     list: (unitId) => listPeriodsForUnit(db, unitId),
     assignments: (periodId) => listAssignmentsForPeriod(db, periodId),
-    create: ({ unitId, name, startDate, endDate }) => {
-      const ruleSet =
-        getLatestRuleSet(db, unitId) ?? saveRuleSet(db, defaultRuleSet(unitId), ACTOR);
-      return createPeriod(
-        db,
-        {
-          unitId,
-          name,
-          startDate,
-          endDate,
-          ruleSetId: ruleSet.id,
-          ruleSetVersion: ruleSet.version,
-        },
-        ACTOR,
-      );
-    },
+    create: ({ unitId, name, startDate, endDate, requestsCloseOn }) =>
+      transact(db, (tx) => {
+        const ruleSet =
+          getLatestRuleSet(tx, unitId) ?? saveRuleSet(tx, defaultRuleSet(unitId), ACTOR);
+        return createPeriod(
+          tx,
+          {
+            unitId,
+            name,
+            startDate,
+            endDate,
+            ruleSetId: ruleSet.id,
+            ruleSetVersion: ruleSet.version,
+            ...(requestsCloseOn ? { requestsCloseOn } : {}),
+          },
+          ACTOR,
+        );
+      }),
+    setRequestsCloseOn: (periodId, date) =>
+      transact(db, (tx) => setRequestsCloseOn(tx, periodId, date ?? undefined, ACTOR)),
   };
 }
 
@@ -208,6 +231,45 @@ export function scheduleApi(db: ShiftNurseDb): ShiftNurseApi['schedule'] {
         log({ kind: 'removed', assignment: existing, before: existing });
         log({ kind: 'added', assignment: moved, after: moved });
         return moved;
+      });
+    },
+    // Two nurses trade shifts: both moves in one transaction, so a refusal of either (a locked
+    // row, a nurse already on that shift) leaves both where they were. A half-done swap would
+    // put one nurse on two shifts and leave the other off the schedule.
+    swapAssignments: (firstId, secondId, reason) => {
+      const first = assignmentOrThrow(db, firstId);
+      const second = assignmentOrThrow(db, secondId);
+      if (first.periodId !== second.periodId) {
+        throw new Error('Only shifts on the same schedule can be swapped');
+      }
+      if (first.nurseId === second.nurseId) {
+        throw new Error('Both shifts belong to the same nurse; there is nothing to swap');
+      }
+      return editSchedule(db, first.periodId, reason, 'manual', (tx, log) => {
+        for (const a of [first, second]) {
+          if (a.isLocked) throw new Error('One of those shifts is locked; unlock it to swap it');
+        }
+        const toSecond = moveAssignment(
+          tx,
+          first.id,
+          { nurseId: second.nurseId, shiftTypeId: first.shiftTypeId, date: first.date },
+          ACTOR,
+          'manual',
+          reason,
+        );
+        const toFirst = moveAssignment(
+          tx,
+          second.id,
+          { nurseId: first.nurseId, shiftTypeId: second.shiftTypeId, date: second.date },
+          ACTOR,
+          'manual',
+          reason,
+        );
+        log({ kind: 'removed', assignment: first, before: first });
+        log({ kind: 'removed', assignment: second, before: second });
+        log({ kind: 'added', assignment: toSecond, after: toSecond });
+        log({ kind: 'added', assignment: toFirst, after: toFirst });
+        return [toFirst, toSecond] as [Assignment, Assignment];
       });
     },
     updateAssignment: (assignmentId, patch, reason) => {

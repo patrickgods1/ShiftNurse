@@ -36,7 +36,7 @@
  */
 
 import type { Assignment, Id, NurseRole, TimeOffRequest } from '../domain/entities.js';
-import type { IsoDate } from '../domain/time.js';
+import { describeDateRange, type IsoDate } from '../domain/time.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import { hasValidCredential } from '../rules/coverage-rules.js';
 import type { Violation } from '../rules/types.js';
@@ -567,7 +567,9 @@ function leaveOptions(
 }
 
 function describeRequests(requests: readonly TimeOffRequest[]): string {
-  return requests.map((r) => `${leaveLabel(r.type)} ${r.startDate}–${r.endDate}`).join(' and ');
+  return requests
+    .map((r) => `${leaveLabel(r.type)} ${describeDateRange(r.startDate, r.endDate)}`)
+    .join(' and ');
 }
 
 // ---------------------------------------------------------------------------

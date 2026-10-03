@@ -8,7 +8,7 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import type { CensusForecast, CensusProposal, Id, ShiftType } from '@shiftnurse/core';
 import { useEffect, useState } from 'react';
-import { OVERLAY } from '../../components/ui.js';
+import { OVERLAY, PRIMARY } from '../../components/ui.js';
 import { formatDateWithWeekday } from '../../format.js';
 
 interface ProposeDialogProps {
@@ -150,8 +150,7 @@ export function ProposeDialog({
             <button
               type="button"
               disabled={acceptedCount === 0 || accepting}
-              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white
-                disabled:opacity-50"
+              className={PRIMARY}
               onClick={() => onAccept(proposals.filter((p) => checked.has(proposalKey(p))))}
             >
               Accept {acceptedCount} proposal{acceptedCount === 1 ? '' : 's'}

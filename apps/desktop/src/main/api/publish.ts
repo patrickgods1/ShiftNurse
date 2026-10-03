@@ -9,13 +9,15 @@ import {
   changesSinceLastPublish,
   type DbLike,
   latestVersion,
+  listChanges,
+  listVersions,
   pendingDiff,
   publishSchedule,
   type ShiftNurseDb,
   transact,
   type UpsertFairnessLedgerInput,
 } from '@shiftnurse/db';
-import type { PublishOutcome, PublishPreview } from '../../shared/api.js';
+import type { PublishOutcome, PublishPreview, ShiftNurseApi } from '../../shared/api.js';
 import { createBackup } from '../backups.js';
 import type { OutputInput } from '../output.js';
 import { alertsFor, alertsForView } from './alerts.js';
@@ -104,5 +106,15 @@ export function outputInput(db: DbLike, periodId: Id): OutputInput {
       status: period.status,
       alerts: alertsForView(db, period, ruleSetFor(db, period), schedule),
     },
+  };
+}
+
+export function publishApi(db: ShiftNurseDb): ShiftNurseApi['publish'] {
+  return {
+    preview: (periodId) => publishPreview(db, periodId),
+    publish: (periodId, reason) => publish(db, periodId, reason),
+    versions: (periodId) => listVersions(db, periodId),
+    changes: (periodId) => listChanges(db, periodId),
+    alerts: (periodId) => alertsFor(db, periodId),
   };
 }

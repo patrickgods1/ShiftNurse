@@ -325,6 +325,23 @@ describe('audit log', () => {
     });
   });
 
+  it('cannot be rewritten or deleted after the fact, even with raw SQL', () => {
+    recordAudit(handle.db, {
+      entityType: 'time_off_request',
+      entityId: 'req-1',
+      action: 'deny',
+      actor: 'manager',
+      reason: 'Three nurses already off that weekend',
+    });
+    expect(() => handle.sqlite.prepare("UPDATE audit_log SET reason = 'Approved'").run()).toThrow(
+      /append-only/,
+    );
+    expect(() => handle.sqlite.prepare('DELETE FROM audit_log').run()).toThrow(/append-only/);
+    expect(auditHistoryFor(handle.db, 'time_off_request', 'req-1')[0]?.reason).toBe(
+      'Three nurses already off that weekend',
+    );
+  });
+
   it('refuses a denial with no reason', () => {
     // The denial text is what gets quoted if the decision is challenged.
     expect(() =>

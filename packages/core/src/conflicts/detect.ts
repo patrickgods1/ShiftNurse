@@ -21,7 +21,7 @@
 
 import { NURSE_ROLES } from '../acuity/demand.js';
 import type { Id, Nurse, NurseRole, TimeOffRequest } from '../domain/entities.js';
-import { compareDates, dateInRange, type IsoDate } from '../domain/time.js';
+import { compareDates, dateInRange, describeDateRange, type IsoDate } from '../domain/time.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import { hasValidCredential } from '../rules/coverage-rules.js';
 import type { Violation } from '../rules/types.js';
@@ -318,7 +318,7 @@ function leaveConflicts(engine: ConflictEngine, violations: readonly Violation[]
     const dates = [...group.dates].sort();
     const request = engine.input.timeOff.find((r) => r.id === group.timeOffId);
     const leave = request
-      ? `${leaveLabel(request.type)} ${request.startDate}–${request.endDate}`
+      ? `${leaveLabel(request.type)} ${describeDateRange(request.startDate, request.endDate)}`
       : 'approved leave';
     out.push({
       id: `scheduled_on_leave:${group.nurseId}:${group.timeOffId}`,
@@ -410,7 +410,7 @@ function credentialConflicts(
       nurseIds: [entry.nurse.id],
       timeOffIds: [],
       message:
-        `${nurseName(entry.nurse)}'s ${code} expires ${expiresOn} but they are rostered on ` +
+        `${nurseName(entry.nurse)}'s ${code} expires ${expiresOn ? dayLabel(expiresOn) : 'during this period'} but they are rostered on ` +
         `${plural(dates.length, 'shift')} after that, first ${dayLabel(dates[0]!)}.`,
       magnitude: 1,
       details: {

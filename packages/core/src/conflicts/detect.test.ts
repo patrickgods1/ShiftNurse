@@ -72,7 +72,7 @@ describe('staffing conflicts', () => {
       [`to-${ana.id}-${SAT}`, `to-${priya.id}-${SAT}`].sort(),
     );
     expect(night!.nurseIds.sort()).toEqual([ana.id, priya.id].sort());
-    expect(night!.message).toContain('Sat 10 Jan');
+    expect(night!.message).toContain('Sat Jan 10');
     expect(night!.message).toContain('0 staffed of 2 required');
     expect(night!.message).toContain('Priya Nair');
     // The day shift is covered, so the only staffing conflict is the night.
@@ -132,7 +132,7 @@ describe('staffing conflicts', () => {
 });
 
 describe('hours, credentials and budget', () => {
-  it('reports a full-timer 24 hours short of contract as a hard FTE conflict', () => {
+  it('reports a full-timer 24 hours short of contract as an FTE conflict to decide, not a breach', () => {
     const priya = named('Priya', 'Nair');
     // 4 Jan – 17 Jan is exactly one 14-day pay period; four 12-hour days is 48h of 72h.
     const input = solveInputFrom({
@@ -150,7 +150,7 @@ describe('hours, credentials and budget', () => {
     expect(conflicts).toHaveLength(1);
     const fte = conflicts[0]!;
     expect(fte.kind).toBe('fte');
-    expect(fte.severity).toBe('hard');
+    expect(fte.severity).toBe('soft');
     expect(fte.magnitude).toBe(24);
     expect(fte.nurseIds).toEqual([priya.id]);
     expect(fte.id).toBe(`fte:under_contracted_hours:${priya.id}:2026-01-04`);
@@ -237,8 +237,8 @@ describe('rostered during approved leave', () => {
     expect(c.dates).toEqual([SAT, '2026-01-11']);
     expect(c.magnitude).toBe(2);
     expect(c.message).toContain('Priya Nair');
-    expect(c.message).toContain('Sat 10 Jan');
-    expect(c.message).toContain('Sun 11 Jan');
+    expect(c.message).toContain('Sat Jan 10');
+    expect(c.message).toContain('Sun Jan 11');
     // The night is still fully staffed on paper, so no understaffing conflict yet.
     expect(conflicts.some((k) => k.kind === 'understaffing')).toBe(false);
   });

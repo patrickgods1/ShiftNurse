@@ -60,6 +60,7 @@ export interface CreatePeriodInput {
   endDate: IsoDate;
   ruleSetId: Id;
   ruleSetVersion: number;
+  requestsCloseOn?: IsoDate;
 }
 
 export function createPeriod(db: DbLike, input: CreatePeriodInput, actor: string): SchedulePeriod {
@@ -74,6 +75,7 @@ export function createPeriod(db: DbLike, input: CreatePeriodInput, actor: string
     publishedAt: null,
     ruleSetId: input.ruleSetId,
     ruleSetVersion: input.ruleSetVersion,
+    requestsCloseOn: input.requestsCloseOn ?? null,
   };
   db.insert(schedulePeriod).values(row).run();
   const created = toSchedulePeriod(row);
@@ -85,6 +87,35 @@ export function createPeriod(db: DbLike, input: CreatePeriodInput, actor: string
     after: created,
   });
   return created;
+}
+
+/**
+ * When time-off requests for this period close: the request window units run, after which a
+ * request is late and decided first-come with a cover plan. Undefined clears it. Advisory — the
+ * app flags late requests, it never refuses them.
+ */
+export function setRequestsCloseOn(
+  db: DbLike,
+  periodId: Id,
+  date: IsoDate | undefined,
+  actor: string,
+): SchedulePeriod {
+  const before = getPeriod(db, periodId);
+  if (!before) throw new Error(`Schedule period ${periodId} not found`);
+  db.update(schedulePeriod)
+    .set({ requestsCloseOn: date ?? null })
+    .where(eq(schedulePeriod.id, periodId))
+    .run();
+  const after = getPeriod(db, periodId)!;
+  recordAudit(db, {
+    entityType: 'schedule_period',
+    entityId: periodId,
+    action: 'update',
+    actor,
+    before,
+    after,
+  });
+  return after;
 }
 
 export function updatePeriodStatus(

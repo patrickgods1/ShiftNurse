@@ -91,6 +91,8 @@ import {
   judgeFloor,
   type OnFloor,
 } from '../rules/incompatibility-rules.js';
+import { type NightRecoveryParams, nightRecoveryRule } from '../rules/night-recovery.js';
+import { pendingRequestOn, pendingTimeOffRule } from '../rules/pending-time-off.js';
 import {
   buildRuleContext,
   evaluatePrepared,
@@ -139,6 +141,7 @@ export interface FloorStretch {
 export interface AddToken {
   coverageBefore: number;
   hoursBefore: number;
+  recoveryBefore: number;
   /** The coverage of the shifts inside this one, in `innerShifts` order, when it has any. */
   innerBefore?: readonly number[];
   /** The incompatibility price of the stretches this shift covers, in `stretchesOf` order. */
@@ -195,6 +198,11 @@ export class SolverModel {
   private costSum = 0;
   /** Holiday-rotation breaches as the schedule stands (see `holidayRotationFacts`). */
   private holidaySum = 0;
+  /** Per nurse: day-side shifts worked too soon after nights (see `night-recovery.ts`). */
+  private readonly recovery: number[];
+  private recoverySum = 0;
+  /** Worked shifts inside a pending time-off request (see `pending-time-off.ts`). */
+  private pendingSum = 0;
 
   // --- Per-nurse counters feeding fairness and hours ---------------------------
   private readonly workedHours: number[];
@@ -292,6 +300,19 @@ export class SolverModel {
   /** Points per breach: the weight while the rule is soft; 0 when hard (the gate keeps breaches
    * out) or off. */
   readonly holidayPrice: number;
+  /** Whole days off owed after a night before a day-side shift; 0 while the rule is off. */
+  readonly recoveryDays: number;
+  /** Points per day-side shift too soon after nights; 0 unless the rule is soft. */
+  readonly recoveryPrice: number;
+  /** Points per worked shift inside a pending request; 0 unless that rule is soft. */
+  readonly pendingPrice: number;
+  /** nurse × date index → the date falls inside a pending request of theirs. */
+  private readonly pendingOn: boolean[][];
+  /** nurse × date index → worked night shifts / worked day-side shifts on that date. */
+  private readonly nightsOn: number[][];
+  private readonly daySideOn: number[][];
+  /** Per nurse: lookback nights still owed days off, as days before the period's first day. */
+  private readonly priorNightOffsets: number[][];
   /** nurse → holiday dates in the period they are owed off. */
   private readonly owedOffDates: (ReadonlySet<IsoDate> | undefined)[];
   /** date → the pair sides that fall on it (pair index, 0 minor / 1 major). */
@@ -416,6 +437,17 @@ export class SolverModel {
             { start: input.period.startDate, end: input.period.endDate },
           );
     this.holidayPrice = rotationSeverity === 'soft' ? this.weights.holidayRotation : 0;
+    // --- Days off after nights: priced while soft; a hard rule is the gate's to enforce. ---
+    const recoverySeverity = severityOf(nightRecoveryRule.id);
+    const recoveryParams = configs.find((c) => c.ruleId === nightRecoveryRule.id)
+      ?.params as unknown as NightRecoveryParams | undefined;
+    this.recoveryDays =
+      recoverySeverity === null
+        ? 0
+        : Math.max(0, Math.floor(recoveryParams?.daysOffAfterNights ?? 0));
+    this.recoveryPrice = recoverySeverity === 'soft' ? this.weights.nightRecovery : 0;
+    this.pendingPrice =
+      severityOf(pendingTimeOffRule.id) === 'soft' ? this.weights.pendingTimeOff : 0;
     this.owedOffDates = this.nurses.map((nurse) => this.holidayFacts.owedOff.get(nurse.id));
     for (const [pair, { minor, major }] of this.holidayFacts.pairs.entries()) {
       for (const [side, date] of [minor.date, major.date].entries()) {
@@ -606,6 +638,23 @@ export class SolverModel {
         }
       }
     }
+    this.nightsOn = Array.from({ length: n }, () => new Array<number>(this.dates.length).fill(0));
+    this.daySideOn = Array.from({ length: n }, () => new Array<number>(this.dates.length).fill(0));
+    const periodFirstDay = dayNumber(input.period.startDate);
+    this.priorNightOffsets = prior.map((list) => {
+      const offsets: number[] = [];
+      for (const a of list) {
+        const st = this.shiftTypes.find((s) => s.id === a.shiftTypeId);
+        if (!st || st.isOnCall || !st.isNight) continue;
+        const k = periodFirstDay - dayNumber(a.date);
+        if (k >= 1 && k <= this.recoveryDays) offsets.push(k);
+      }
+      return offsets;
+    });
+    this.recovery = new Array<number>(n).fill(0);
+    this.pendingOn = this.nurses.map((nurse) =>
+      this.dates.map((date) => pendingRequestOn(this.ctx, nurse.id, date) !== undefined),
+    );
     this.hoursPenalty = new Array<number>(n).fill(0);
     this.coverage = this.shifts.map(() => 0);
     this.staffedByRole = new Array<number>(this.shifts.length * NURSE_ROLES.length).fill(0);
@@ -621,9 +670,12 @@ export class SolverModel {
     // Every cached term from scratch: the adds above refreshed only the shifts and nurses
     // they touched, and an empty shift already owes its whole floor.
     this.hoursSum = 0;
+    this.recoverySum = 0;
     for (let i = 0; i < n; i++) {
       this.hoursPenalty[i] = this.hoursPenaltyFor(i);
       this.hoursSum += this.hoursPenalty[i]!;
+      this.recovery[i] = this.recoveryFor(i);
+      this.recoverySum += this.recovery[i]!;
     }
     this.coverageSum = 0;
     for (const shift of this.shifts) {
@@ -879,6 +931,7 @@ export class SolverModel {
     const token: AddToken = {
       coverageBefore: this.coverage[shift.idx]!,
       hoursBefore: this.hoursPenalty[n]!,
+      recoveryBefore: this.recovery[n]!,
     };
     const inner = this.innerShifts[shift.idx]!;
     if (inner.length > 0) token.innerBefore = inner.map((s) => this.coverage[s.idx]!);
@@ -930,6 +983,8 @@ export class SolverModel {
     }
     this.hoursSum += token.hoursBefore - this.hoursPenalty[n]!;
     this.hoursPenalty[n] = token.hoursBefore;
+    this.recoverySum += token.recoveryBefore - this.recovery[n]!;
+    this.recovery[n] = token.recoveryBefore;
   }
 
   private refresh(n: number, shift: Shift): void {
@@ -946,6 +1001,9 @@ export class SolverModel {
     const hours = this.hoursPenaltyFor(n);
     this.hoursSum += hours - this.hoursPenalty[n]!;
     this.hoursPenalty[n] = hours;
+    const recovery = this.recoveryFor(n);
+    this.recoverySum += recovery - this.recovery[n]!;
+    this.recovery[n] = recovery;
   }
 
   /** Update every per-nurse counter and the preference/cost sums for one assignment. */
@@ -966,7 +1024,13 @@ export class SolverModel {
     } else {
       this.workedHours[n]! += sign * st.durationHours;
       this.bucketHours[n]![this.bucketOfDate[shift.dateIdx]!]! += sign * st.durationHours;
-      if (st.isNight) this.nights[n]! += sign;
+      if (this.pendingOn[n]![shift.dateIdx]) this.pendingSum += sign;
+      if (st.isNight) {
+        this.nights[n]! += sign;
+        this.nightsOn[n]![shift.dateIdx]! += sign;
+      } else {
+        this.daySideOn[n]![shift.dateIdx]! += sign;
+      }
       if (this.ctx.holidayDates.has(shift.date)) this.holidays[n]! += sign;
       if (this.isUndesirable(n, shift)) this.undesirable[n]! += sign;
       if (this.ctx.holidayDates.has(shift.date)) this.countHolidayRotation(n, shift.date, sign);
@@ -1001,6 +1065,45 @@ export class SolverModel {
     return this.holidaySum;
   }
 
+  /** Day-side shifts worked too soon after nights, as the schedule stands. */
+  recoveryBreaches(): number {
+    return this.recoverySum;
+  }
+
+  /** Worked shifts inside pending time-off requests, as the schedule stands. */
+  pendingBreaches(): number {
+    return this.pendingSum;
+  }
+
+  /** What working this shift costs for falling inside the nurse's pending request. */
+  pendingPenaltyOf(n: number, shift: Shift): number {
+    return !shift.shiftType.isOnCall && this.pendingOn[n]![shift.dateIdx] ? this.pendingPrice : 0;
+  }
+
+  /**
+   * One nurse's day-side shifts that start within `recoveryDays` days after a night, counted as
+   * `nightRecoveryRule` counts them: once per day-side shift however many nights precede it,
+   * lookback nights included.
+   */
+  private recoveryFor(n: number): number {
+    const days = this.recoveryDays;
+    if (days === 0) return 0;
+    const nights = this.nightsOn[n]!;
+    const daySide = this.daySideOn[n]!;
+    const prior = this.priorNightOffsets[n]!;
+    let count = 0;
+    for (let d = 0; d < daySide.length; d++) {
+      if (daySide[d]! === 0) continue;
+      let tooSoon = false;
+      for (let gap = 1; gap <= days && !tooSoon; gap++) {
+        const night = d - gap;
+        tooSoon = night >= 0 ? nights[night]! > 0 : prior.includes(-night);
+      }
+      if (tooSoon) count += daySide[d]!;
+    }
+    return count;
+  }
+
   /**
    * Exactly one charge nurse per worked shift when one is available — none on a shift run by
    * another's charge nurse. The first eligible, unlocked nurse on the roster gets it —
@@ -1026,6 +1129,8 @@ export class SolverModel {
       this.hoursSum +
       this.fairness() +
       this.holidaySum * this.holidayPrice +
+      this.recoverySum * this.recoveryPrice +
+      this.pendingSum * this.pendingPrice +
       this.prefSum * this.weights.preference +
       this.costSum * this.weights.cost
     );
@@ -1037,7 +1142,11 @@ export class SolverModel {
     const hours = this.hoursSum;
     // The holiday rotation is fairness between nurses, so it is reported with it.
     const fairness = this.fairness() + this.holidaySum * this.holidayPrice;
-    const preferences = this.prefSum * this.weights.preference;
+    // Days off after nights are about the nurse, so they are reported with preferences.
+    const preferences =
+      this.prefSum * this.weights.preference +
+      this.recoverySum * this.recoveryPrice +
+      this.pendingSum * this.pendingPrice;
     const cost = this.costSum * this.weights.cost;
     return {
       total: coverage + incompatibility + hours + fairness + preferences + cost,

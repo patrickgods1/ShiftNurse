@@ -27,7 +27,9 @@ import { coverageRule, ratioComplianceRule } from './coverage-rules.js';
 import { holidayIndexes, holidayRotationRule } from './holiday-rotation.js';
 import { contractedHoursRule, maxHoursRule } from './hours-rules.js';
 import { incompatibleBufferRule, incompatibleTogetherRule } from './incompatibility-rules.js';
+import { nightRecoveryRule } from './night-recovery.js';
 import { type PaidLeaveCredit, type PaidSickCall, paidLeaveCredits } from './paid-leave.js';
+import { pendingTimeOffRule } from './pending-time-off.js';
 import { consecutiveShiftsRule, minRestRule } from './rest-rules.js';
 import type {
   EvaluationResult,
@@ -59,6 +61,8 @@ export const ALL_RULES: readonly Rule<never>[] = [
   incompatibleBufferRule,
   incompatibleTogetherRule,
   holidayRotationRule,
+  nightRecoveryRule,
+  pendingTimeOffRule,
 ] as unknown as readonly Rule<never>[];
 
 const RULES_BY_ID = new Map<string, Rule<never>>(ALL_RULES.map((r) => [r.id, r]));
@@ -173,7 +177,10 @@ export function buildRuleContext(input: RuleContextInput): RuleContext {
   }
 
   const paidLeaveByNurse = new Map<Id, PaidLeaveCredit[]>();
-  for (const credit of paidLeaveCredits(input.timeOff, input.paidSickCalls)) {
+  const workedShiftHours = input.shiftTypes
+    .filter((s) => s.active && !s.isOnCall)
+    .map((s) => s.durationHours);
+  for (const credit of paidLeaveCredits(input.timeOff, input.paidSickCalls, workedShiftHours)) {
     const existing = paidLeaveByNurse.get(credit.nurseId);
     if (existing) existing.push(credit);
     else paidLeaveByNurse.set(credit.nurseId, [credit]);
@@ -228,6 +235,8 @@ export interface PreparedRule {
   rule: Rule<never>;
   params: Record<string, unknown>;
   severity: RuleSeverity;
+  /** The rule set's explicit severity, when it sets one; it then applies to every finding. */
+  override?: RuleSeverity;
 }
 
 export function prepareRules(ruleSet: RuleSet, only?: readonly string[]): PreparedRule[] {
@@ -238,7 +247,12 @@ export function prepareRules(ruleSet: RuleSet, only?: readonly string[]): Prepar
     if (wanted && !wanted.has(config.ruleId)) continue;
     const rule = RULES_BY_ID.get(config.ruleId);
     if (!rule) continue;
-    out.push({ rule, params: config.params, severity: config.severityOverride ?? rule.severity });
+    out.push({
+      rule,
+      params: config.params,
+      severity: config.severityOverride ?? rule.severity,
+      ...(config.severityOverride ? { override: config.severityOverride } : {}),
+    });
   }
   return out;
 }
@@ -251,12 +265,19 @@ export function evaluatePrepared(
 ): EvaluationResult {
   const violations: Violation[] = [];
 
-  for (const { rule, params, severity } of prepared) {
+  for (const { rule, params, override } of prepared) {
     const found = rule.evaluate(schedule, params as never, ctx);
 
     for (const item of found) {
-      // A rule set may relax a hard rule to advisory, or promote a soft one.
-      violations.push(severity === item.severity ? item : { ...item, severity });
+      // A rule set may relax a hard rule to advisory, or promote a soft one. Without that, a
+      // finding keeps the severity its rule gave it: the contracted-hours rule refuses hours
+      // past the contract (hard) but only advises on a shortfall (soft), which is a choice a
+      // manager makes, not a breach.
+      violations.push(
+        override === undefined || override === item.severity
+          ? item
+          : { ...item, severity: override },
+      );
     }
 
     if (stopOnFirstHardViolation && violations.some((v) => v.severity === 'hard')) {

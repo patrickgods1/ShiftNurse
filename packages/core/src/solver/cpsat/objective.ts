@@ -18,6 +18,7 @@ import { type IsoDate, weekendKey } from '../../domain/time.js';
 import { BURDEN_COMPONENTS, type BurdenComponent } from '../../fairness/types.js';
 import { workedInHistory } from '../../rules/holiday-rotation.js';
 import { groupInForce } from '../../rules/incompatibility-rules.js';
+import { isDaySide, isWorkedNight, tooSoonAfterNight } from '../../rules/night-recovery.js';
 import { type Expr, evalExpr, expr, scale, sum } from './builder.js';
 import { countExpr, type EncodeContext, HOURS, hoursExpr, type TimelineEntry } from './context.js';
 import { isMovable, roleExpr } from './rules/coverage.js';
@@ -31,6 +32,7 @@ export function encodeObjective(ctx: EncodeContext): void {
   hoursTerms(ctx);
   fairnessTerms(ctx);
   holidayTerms(ctx);
+  nightRecoveryTerms(ctx);
   perShiftTerms(ctx);
 }
 
@@ -352,6 +354,31 @@ function holidayTerms(ctx: EncodeContext): void {
   }
 }
 
+/**
+ * Days off after nights, as `SolverModel.recoveryFor` counts them: each worked day-side shift
+ * with a night in the days before it, once, however many nights. Priced only while the rule is
+ * soft (`recoveryPrice`); a hard rule is `encodeNightRecovery`'s forbidden pairs.
+ */
+function nightRecoveryTerms(ctx: EncodeContext): void {
+  const { model } = ctx;
+  const price = model.recoveryPrice;
+  const required = model.recoveryDays;
+  if (price === 0 || required === 0) return;
+  for (let n = 0; n < model.nurses.length; n++) {
+    const timeline = ctx.timeline(n);
+    const nights = timeline.filter(isWorkedNight);
+    if (nights.length === 0) continue;
+    for (const day of timeline) {
+      if (!day.inPeriod || !isDaySide(day)) continue;
+      const before = nights.filter((night) => tooSoonAfterNight(night.day, day.day, required));
+      if (before.length === 0) continue;
+      const label = `recovery: ${ctx.name(n)} ${day.date}`;
+      const worked = day.literal === null ? expr([], 1) : expr([[day.literal, 1]]);
+      priced(ctx, sum(worked, anyOf(ctx, before, label), expr([], -1)), price, label);
+    }
+  }
+}
+
 /** 1 when any of these entries is worked: a constant if one is, else their Boolean or. */
 function anyOf(ctx: EncodeContext, entries: readonly TimelineEntry[], label: string): Expr {
   if (entries.some((e) => e.literal === null)) return expr([], 1);
@@ -367,12 +394,16 @@ function anyOf(ctx: EncodeContext, entries: readonly TimelineEntry[], label: str
   ]);
 }
 
-/** Preferences and straight-time cost: a fixed price per (nurse, shift), locked shifts included. */
+/**
+ * Preferences, days asked off and straight-time cost: a fixed price per (nurse, shift), locked
+ * shifts included.
+ */
 function perShiftTerms(ctx: EncodeContext): void {
   const { model, weights } = ctx;
   for (const sv of ctx.shiftVars) {
     const price =
       model.preferencePenalty(sv.n, sv.shift) * weights.preference +
+      model.pendingPenaltyOf(sv.n, sv.shift) +
       model.shiftCostFor(sv.n, sv.shift) * weights.cost;
     if (price !== 0) ctx.b.minimise(expr([[sv.variable, 1]]), price);
   }
@@ -383,6 +414,7 @@ function perShiftTerms(ctx: EncodeContext): void {
         expr(
           [],
           model.preferencePenalty(n, shift) * weights.preference +
+            model.pendingPenaltyOf(n, shift) +
             model.shiftCostFor(n, shift) * weights.cost,
         ),
         1,

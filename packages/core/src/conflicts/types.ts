@@ -33,6 +33,7 @@ import type { Assignment, Budget, Id, NurseRole, TimeOffRequest } from '../domai
 import type { IsoDate } from '../domain/time.js';
 import type { Violation } from '../rules/types.js';
 import type { ObjectiveWeights, SolveInput } from '../solver/types.js';
+import type { DayCapacity } from './capacity.js';
 
 // ---------------------------------------------------------------------------
 // Input
@@ -256,4 +257,6 @@ export interface TimeOffImpact {
   coverage: CoverageImpact;
   /** Other pending requests overlapping the same dates — the competition the manager is judging. */
   competing: TimeOffRequest[];
+  /** Whether the unit can spare the nurse on each day asked for, judged without the draft. */
+  capacity: DayCapacity[];
 }

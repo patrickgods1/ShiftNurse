@@ -11,7 +11,7 @@ import type { Id } from '@shiftnurse/core';
 import { useState } from 'react';
 import type { HistoryImportPreview, HistoryImportSummary } from '../../../../shared/api.js';
 import { useImportHistory, usePickHistoryImportFile } from '../../api-fairness.js';
-import { OVERLAY } from '../../components/ui.js';
+import { OVERLAY, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { formatDate } from '../../format.js';
 
 interface ImportHistoryDialogProps {
@@ -83,10 +83,7 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
               </ul>
               <div className="mt-4 flex justify-end">
                 <Dialog.Close asChild>
-                  <button
-                    type="button"
-                    className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white"
-                  >
+                  <button type="button" className={PRIMARY}>
                     Done
                   </button>
                 </Dialog.Close>
@@ -108,10 +105,7 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
               ) : null}
               <div className="flex justify-end gap-2">
                 <Dialog.Close asChild>
-                  <button
-                    type="button"
-                    className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg"
-                  >
+                  <button type="button" className={SECONDARY}>
                     Cancel
                   </button>
                 </Dialog.Close>
@@ -119,8 +113,7 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
                   type="button"
                   onClick={handlePickFile}
                   disabled={pickFile.isPending}
-                  className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white
-                    disabled:opacity-60"
+                  className={PRIMARY}
                 >
                   {pickFile.isPending ? 'Opening…' : 'Choose file…'}
                 </button>
@@ -213,19 +206,14 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
               ) : null}
 
               <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPreview(undefined)}
-                  className="rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg"
-                >
+                <button type="button" onClick={() => setPreview(undefined)} className={SECONDARY}>
                   Choose a different file
                 </button>
                 <button
                   type="button"
                   onClick={handleImport}
                   disabled={preview.errors.length > 0 || importHistory.isPending}
-                  className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white
-                    disabled:opacity-60"
+                  className={PRIMARY}
                 >
                   {importHistory.isPending
                     ? 'Importing…'

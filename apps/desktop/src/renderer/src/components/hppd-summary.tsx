@@ -29,6 +29,13 @@ function Body({ report }: { report: HppdReport }) {
       </p>
     );
   }
+  if (report.nursingHours === 0) {
+    return (
+      <p className="text-sm text-text-muted">
+        Nothing scheduled yet: generate the schedule to see its hours per patient day.
+      </p>
+    );
+  }
   const target = report.targetHours;
   const tone =
     target === undefined ? 'text-text' : report.hppd > target + 0.05 ? 'text-warn' : 'text-text';

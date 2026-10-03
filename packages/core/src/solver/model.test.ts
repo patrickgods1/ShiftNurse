@@ -43,7 +43,12 @@ beforeEach(() => {
  * `groups`: keep five of the staff apart (one the nurse with the lookback night, one an LPN), and
  * two more from the 8th, so the walk keeps pairing and parting incompatible nurses.
  */
-function scenario({ mid = false, groups = false, holidays = false } = {}): SolveInput {
+function scenario({
+  mid = false,
+  groups = false,
+  holidays = false,
+  pending = false,
+} = {}): SolveInput {
   const nurses: Nurse[] = [
     ...Array.from({ length: 8 }, (_, i) =>
       makeNurse({ isChargeEligible: i % 3 === 0, contractedHoursPerPeriod: i === 7 ? 0 : 72 }),
@@ -116,6 +121,14 @@ function scenario({ mid = false, groups = false, holidays = false } = {}): Solve
       : {}),
     assignments: [pinned],
     priorAssignments: [prior],
+    ...(pending
+      ? {
+          timeOff: [
+            timeOff(nurses[0]!.id, '2026-01-06', '2026-01-08', { status: 'pending' }),
+            timeOff(nurses[2]!.id, '2026-01-10', '2026-01-10', { status: 'pending' }),
+          ],
+        }
+      : {}),
     holidays: [
       {
         id: 'h1',
@@ -212,6 +225,70 @@ describe('SolverModel bookkeeping', () => {
     // Two breaches at 55 points each; nothing else differs between the two models.
     expect(priced.breakdown().fairness - free.breakdown().fairness).toBeCloseTo(110, 6);
     expect(priced.objective() - free.objective()).toBeCloseTo(110, 6);
+  });
+
+  it('keeps days asked off priced right as shifts land on and leave them', () => {
+    walk(scenario({ pending: true }), 1);
+  });
+
+  it('prices each shift inside a pending request at the pending weight', () => {
+    const input = scenario({ pending: true });
+    // Nurse 0 asked for the 6th–8th (days 2–4) and nurse 2 for the 10th (day 6).
+    const place = (model: SolverModel) => {
+      for (const [i, day] of [
+        [0, 2],
+        [0, 4],
+        [2, 6],
+        [2, 7],
+      ] as const) {
+        const n = model.nurseIdx.get(input.nurses[i]!.id)!;
+        model.add(model.make(n, model.shiftAt(day, DAY_12)));
+      }
+      return model;
+    };
+    const priced = place(new SolverModel(input));
+    const free = place(new SolverModel(input, { pendingTimeOff: 0 }));
+    // Three of the four land inside a request; the 11th (day 7) is after nurse 2's.
+    expect(priced.pendingBreaches()).toBe(3);
+    expect(priced.breakdown().preferences - free.breakdown().preferences).toBeCloseTo(240, 6);
+    expect(priced.objective() - free.objective()).toBeCloseTo(240, 6);
+  });
+
+  it('prices each day shift too soon after nights at the recovery weight', () => {
+    const input = scenario();
+    // Nurse 4 comes off the lookback night of the 3rd and works the day of the 5th (day 1):
+    // one day off. Nurse 0 works the night of the 7th (day 3) and the day of the 8th (day 4).
+    const place = (model: SolverModel) => {
+      for (const [i, day, st] of [
+        [4, 1, DAY_12],
+        [0, 3, NIGHT_12],
+        [0, 4, DAY_12],
+      ] as const) {
+        const n = model.nurseIdx.get(input.nurses[i]!.id)!;
+        model.add(model.make(n, model.shiftAt(day, st)));
+      }
+      return model;
+    };
+    const priced = place(new SolverModel(input));
+    const free = place(new SolverModel(input, { nightRecovery: 0 }));
+    expect(priced.recoveryBreaches()).toBe(2);
+    // Two breaches at 45 points each, counted with preferences.
+    expect(priced.breakdown().preferences - free.breakdown().preferences).toBeCloseTo(90, 6);
+    expect(priced.objective() - free.objective()).toBeCloseTo(90, 6);
+  });
+
+  it('stops pricing the day shift once the night before it is taken away, and back on undo', () => {
+    const input = scenario();
+    const model = new SolverModel(input);
+    const n = model.nurseIdx.get(input.nurses[0]!.id)!;
+    const night = model.make(n, model.shiftAt(3, NIGHT_12));
+    model.add(night);
+    model.add(model.make(n, model.shiftAt(5, DAY_12)));
+    expect(model.recoveryBreaches()).toBe(1);
+    const token = model.remove(night);
+    expect(model.recoveryBreaches()).toBe(0);
+    model.undoRemove(night, token);
+    expect(model.recoveryBreaches()).toBe(1);
   });
 
   it('keeps the price of incompatible nurses right as they are paired and parted', () => {

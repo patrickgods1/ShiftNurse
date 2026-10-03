@@ -7,7 +7,7 @@
 import type { FairnessWeights, Id, RuleConfig, RuleSet, WeekendDefinition } from '@shiftnurse/core';
 import { desc, eq } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
-import type { DbLike } from '../client.js';
+import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { ruleConfig as ruleConfigTable, ruleSet as ruleSetTable } from '../schema.js';
 
@@ -68,7 +68,7 @@ export function getLatestRuleSet(db: DbLike, unitId: Id): RuleSet | undefined {
  * produces version N+1; version N is retained forever.
  */
 export function saveRuleSet(
-  db: DbLike,
+  db: ShiftNurseTx,
   draft: Pick<RuleSet, 'unitId' | 'name' | 'configs' | 'weekendDefinition' | 'fairnessWeights'>,
   actor: string,
 ): RuleSet {

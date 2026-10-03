@@ -32,7 +32,7 @@ this codebase is held to. This document is the practical "how do I build/run/shi
 - **Schedule generation** — three selectable solvers produce a full-period schedule under hard
   union/contract rules: **Hybrid** (the default: simulated annealing with Google OR-Tools'
   CP-SAT re-optimising the hardest few days exactly), **SA + LNS** (pure TypeScript, always
-  available) and **CP-SAT** over the whole period. Settings › Solver picks the unit's default;
+  available) and **CP-SAT** over the whole period. Settings › Generate picks the unit's default;
   the Generate dialog can override it for one run. See [docs/solver-bench.md](docs/solver-bench.md)
   for how they compare. Generate produces up to ten variations at once (with an estimate of how
   long they take on this machine); page through them, preview any on the grid with its changes
@@ -41,7 +41,8 @@ this codebase is held to. This document is the practical "how do I build/run/shi
   **Generate more** carries on with new seeds (variations 4–6 after 1–3), and the schedule already
   on the grid is scored alongside, so a batch that cannot beat it says so. A
   manual drag-and-drop grid with live violation badges handles edits afterward.
-- **Rule engine** — rest periods, consecutive-shift limits, contracted hours/FTE, credential
+- **Rule engine** — rest periods, days off after nights, consecutive-shift limits, contracted
+  hours/FTE (a shortfall is advice; approved paid leave is credited in whole shifts), credential
   and skill coverage, patient-ratio compliance. Rules are data plus a small evaluator, so a
   new contract clause is a new rule, not new solver code.
 - **Incompatible staff** — Roster › Kept apart groups two or more nurses who should not work
@@ -315,7 +316,13 @@ Notes:
   ship in the repo's own `node_modules`, and a crash-on-launch dialog exits 0 when dismissed —
   both let v0.1.0's first draft pass here and crash on every real install.
 - Installers are unsigned initially, so expect Gatekeeper (macOS) / SmartScreen (Windows)
-  warnings — code signing is planned for later.
+  warnings — code signing is planned for later. Unsigned builds cannot update themselves; a
+  packaged app checks GitHub's latest published release at launch and shows a banner linking
+  to it.
+- The app icon is `apps/desktop/build/icon.png`, drawn by `node apps/desktop/scripts/make-icon.mjs`;
+  electron-builder derives the `.icns` and `.ico` from it.
+- Main's log is `userData/logs/main.log` (Settings › About › Open logs folder). Ask for it with
+  any bug report: a packaged app has no visible console.
 - After any packaging-related change, run `npm run smoke:packaged -w @shiftnurse/desktop` to
   boot the actual built binary and catch what unit tests structurally can't (a missing
   migration file, a wrong-ABI native module).
