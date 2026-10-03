@@ -13,7 +13,7 @@ import type {
   OvertimeRule,
   PayRate,
 } from '@shiftnurse/core';
-import { resolvePayRate } from '@shiftnurse/core';
+import { isIsoDate, resolvePayRate } from '@shiftnurse/core';
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
@@ -106,15 +106,27 @@ export function createPayRate(db: DbLike, input: PayRateInput, actor: string): P
 
 export type PayRatePatch = Partial<Pick<PayRate, 'hourlyRate' | 'effectiveFrom'>>;
 
+const PAY_RATE_PATCH_KEYS: PatchKeys<PayRatePatch> = { hourlyRate: true, effectiveFrom: true };
+
 /** Correct a rate's amount or start date. Scope is fixed: re-scoping is a delete and a create. */
 export function updatePayRate(db: DbLike, id: Id, patch: PayRatePatch, actor: string): PayRate {
   const row = db.select().from(payRate).where(eq(payRate.id, id)).get();
   if (!row) throw new Error(`Pay rate ${id} not found`);
   const before = toPayRate(row);
-  const values = {
-    ...(patch.hourlyRate !== undefined ? { hourlyRate: patch.hourlyRate } : {}),
-    ...(patch.effectiveFrom !== undefined ? { effectiveFrom: patch.effectiveFrom } : {}),
-  };
+  const values = patchOf(patch, PAY_RATE_PATCH_KEYS, 'pay rate');
+  // A NaN or negative rate would misprice every shift it covers without failing anywhere.
+  if (
+    values.hourlyRate !== undefined &&
+    !(Number.isFinite(values.hourlyRate) && values.hourlyRate >= 0)
+  ) {
+    throw new Error('An hourly rate must be a number of dollars, zero or more.');
+  }
+  if (
+    values.effectiveFrom !== undefined &&
+    !(typeof values.effectiveFrom === 'string' && isIsoDate(values.effectiveFrom))
+  ) {
+    throw new Error('Effective from must be a date.');
+  }
   db.update(payRate).set(values).where(eq(payRate.id, id)).run();
   const after: PayRate = { ...before, ...values };
   recordAudit(db, { entityType: 'pay_rate', entityId: id, action: 'update', actor, before, after });

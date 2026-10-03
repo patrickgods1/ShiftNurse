@@ -21,6 +21,7 @@ import { recordAudit, recordAuditStrict } from '../audit.js';
 import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { assignment, conflictPolicy } from '../schema.js';
+import { assertKeys } from './patch.js';
 import {
   createAssignment,
   deleteAssignment,
@@ -54,6 +55,7 @@ export function saveConflictPolicy(
   policy: AutoResolvePolicy,
   actor: string,
 ): AutoResolvePolicy {
+  assertKeys(policy, ['enabled', 'maxCostDelta', 'maxFairnessDrop'], 'conflict policy');
   if (!(policy.maxCostDelta >= 0) || !(policy.maxFairnessDrop >= 0)) {
     throw new Error('Auto-resolve thresholds must be zero or positive numbers');
   }

@@ -244,6 +244,53 @@ describe('cost configuration', () => {
     });
   });
 
+  it('refuses to change anything but the amount or start date of a rate, and writes nothing', () => {
+    const rate = createPayRate(
+      handle.db,
+      { nurseId: null, role: 'RN', hourlyRate: 48, effectiveFrom: isoDate('2026-01-01') },
+      ACTOR,
+    );
+    expect(() => updatePayRate(handle.db, rate.id, { unitId: 'x' } as never, ACTOR)).toThrow(
+      "A pay rate update cannot change 'unitId'",
+    );
+    expect(listPayRatesForUnit(handle.db, unitId)).toEqual([rate]);
+    expect(auditHistoryFor(handle.db, 'pay_rate', rate.id).map((e) => e.action)).toEqual([
+      'create',
+    ]);
+  });
+
+  it('refuses a rate that is not a number of dollars, zero or more', () => {
+    const rate = createPayRate(
+      handle.db,
+      { nurseId: null, role: 'RN', hourlyRate: 48, effectiveFrom: isoDate('2026-01-01') },
+      ACTOR,
+    );
+    for (const bad of [Number.NaN, -1, Number.POSITIVE_INFINITY]) {
+      expect(() => updatePayRate(handle.db, rate.id, { hourlyRate: bad }, ACTOR)).toThrow(
+        'An hourly rate must be a number of dollars, zero or more.',
+      );
+    }
+    expect(listPayRatesForUnit(handle.db, unitId)).toEqual([rate]);
+    expect(auditHistoryFor(handle.db, 'pay_rate', rate.id).map((e) => e.action)).toEqual([
+      'create',
+    ]);
+  });
+
+  it('refuses a start date that is not a date', () => {
+    const rate = createPayRate(
+      handle.db,
+      { nurseId: null, role: 'RN', hourlyRate: 48, effectiveFrom: isoDate('2026-01-01') },
+      ACTOR,
+    );
+    expect(() =>
+      updatePayRate(handle.db, rate.id, { effectiveFrom: 'next spring' as IsoDate }, ACTOR),
+    ).toThrow('Effective from must be a date.');
+    expect(listPayRatesForUnit(handle.db, unitId)).toEqual([rate]);
+    expect(auditHistoryFor(handle.db, 'pay_rate', rate.id).map((e) => e.action)).toEqual([
+      'create',
+    ]);
+  });
+
   it('deletes a pay rate and audits what was removed', () => {
     const rate = createPayRate(
       handle.db,

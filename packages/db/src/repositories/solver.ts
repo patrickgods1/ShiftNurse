@@ -17,6 +17,7 @@ import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import { solverSettings } from '../schema.js';
+import { assertKeys } from './patch.js';
 
 function toSettings(row: typeof solverSettings.$inferSelect): SolverSettings {
   return row.maxIterations === null
@@ -36,6 +37,7 @@ export function saveSolverSettings(
   settings: SolverSettings,
   actor: string,
 ): SolverSettings & { id: Id } {
+  assertKeys(settings, ['solverId', 'maxIterations'], 'solver setting');
   if (!isSolverId(settings.solverId)) {
     throw new Error(`Unknown solver "${String(settings.solverId)}"`);
   }

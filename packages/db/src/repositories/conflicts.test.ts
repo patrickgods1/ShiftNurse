@@ -170,6 +170,20 @@ describe('auto-resolve policy', () => {
     expect(history[0]?.before).toMatchObject({ enabled: true, maxCostDelta: 500 });
   });
 
+  it('refuses a stray field in the policy and saves nothing', () => {
+    const saved = { enabled: true, maxCostDelta: 300, maxFairnessDrop: 4 };
+    saveConflictPolicy(handle.db, unitId, saved, ACTOR);
+    expect(() =>
+      saveConflictPolicy(
+        handle.db,
+        unitId,
+        { enabled: true, maxCostDelta: 1, maxFairnessDrop: 1, unitId: 'other' } as never,
+        ACTOR,
+      ),
+    ).toThrow("A conflict policy cannot include 'unitId'");
+    expect(getConflictPolicy(handle.db, unitId)).toEqual(saved);
+  });
+
   it('refuses a negative threshold', () => {
     expect(() =>
       saveConflictPolicy(
