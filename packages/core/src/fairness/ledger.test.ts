@@ -12,7 +12,12 @@ import {
   scenario,
   testUnit,
 } from '../testing/fixtures.js';
-import { deriveCounters, isUndesirable, preferenceSatisfaction } from './ledger.js';
+import {
+  deriveCounters,
+  isUndesirable,
+  preferenceSatisfaction,
+  preferencesBroken,
+} from './ledger.js';
 import type { CounterContext } from './types.js';
 
 beforeEach(() => {
@@ -125,6 +130,47 @@ describe('undesirable shifts', () => {
 
     const counters = deriveCounters(s.schedule, baseCtx({ preferences: [avoidNights] }));
     expect(counters.get(nurse.id)?.undesirableShifts).toBe(1);
+  });
+});
+
+describe('which preferences a shift goes against', () => {
+  it('names both of Tyler’s preferences a Saturday night breaks, and none a Monday day', () => {
+    const nurse = makeNurse();
+    // 2026-01-10 is a Saturday; 2026-01-05 a Monday.
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, NIGHT_12, '2026-01-10'),
+        assign(nurse.id, DAY_12, '2026-01-05'),
+      ],
+    });
+    const avoidNights = {
+      id: 'p1',
+      nurseId: nurse.id,
+      kind: 'avoid_shift_type' as const,
+      shiftTypeId: NIGHT_12.id,
+      weight: 5,
+    };
+    const fewerWeekends = {
+      id: 'p2',
+      nurseId: nurse.id,
+      kind: 'weekend_appetite' as const,
+      level: -1 as const,
+      weight: 1,
+    };
+    const prefer = {
+      id: 'p3',
+      nurseId: nurse.id,
+      kind: 'prefer_weekday' as const,
+      weekday: 1 as const,
+      weight: 2,
+    };
+    const views = s.schedule.assignmentsFor(nurse.id);
+    const night = views.find((v) => v.assignment.date === '2026-01-10')!;
+    const day = views.find((v) => v.assignment.date === '2026-01-05')!;
+    const prefs = [avoidNights, fewerWeekends, prefer];
+    expect(preferencesBroken(night, prefs, DEFAULT_WEEKEND).map((p) => p.id)).toEqual(['p1', 'p2']);
+    expect(preferencesBroken(day, prefs, DEFAULT_WEEKEND)).toEqual([]);
   });
 });
 

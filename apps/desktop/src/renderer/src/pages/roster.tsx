@@ -12,7 +12,7 @@ import { AsyncState } from '../components/async-state.js';
 import { type Column, DataTable } from '../components/data-table.js';
 import { PageHeader } from '../components/page-header.js';
 import { PRIMARY, SECONDARY } from '../components/ui.js';
-import { formatDate } from '../format.js';
+import { formatDate, fteLabel } from '../format.js';
 import { useUnit } from '../unit-context.js';
 import { ImportDialog } from './roster/import-dialog.js';
 import { IncompatibilitySection } from './roster/incompatibility.js';
@@ -64,7 +64,7 @@ export default function RosterPage() {
       {
         key: 'fte',
         header: 'FTE',
-        render: (nurse) => nurse.fte.toFixed(2),
+        render: (nurse) => fteLabel(nurse),
         sortValue: (nurse) => nurse.fte,
       },
       {
@@ -153,6 +153,7 @@ export default function RosterPage() {
       ) : (
         <div data-testid="roster-table">
           <DataTable
+            initialSortKey="name"
             columns={columns}
             rows={filtered}
             rowKey={(nurse) => nurse.id}

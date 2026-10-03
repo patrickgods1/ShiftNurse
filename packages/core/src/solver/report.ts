@@ -17,6 +17,7 @@ import { scoreFairness } from '../fairness/score.js';
 import { evaluateSchedule } from '../rules/registry.js';
 import type { Violation } from '../rules/types.js';
 import { ScheduleView } from '../schedule/view.js';
+import { digestSchedule } from './digest.js';
 import { SolverModel } from './model.js';
 import type { SolveInput, SolveReport, UnfilledSlot } from './types.js';
 
@@ -55,15 +56,16 @@ function scoreModel(model: SolverModel, assignments: Assignment[]): ScheduleScor
   const evaluation = evaluateSchedule(view, input.ruleSet, model.ctx);
 
   const activeNurses = model.candidates.map((i) => model.nurses[i]!);
+  const counters = deriveCounters(view, {
+    unit: input.unit,
+    holidayDates: model.ctx.holidayDates,
+    weekendDefinition: input.ruleSet.weekendDefinition,
+    preferences: input.preferences,
+    timeOff: input.timeOff,
+  });
   const fairness = scoreFairness({
     nurses: activeNurses,
-    current: deriveCounters(view, {
-      unit: input.unit,
-      holidayDates: model.ctx.holidayDates,
-      weekendDefinition: input.ruleSet.weekendDefinition,
-      preferences: input.preferences,
-      timeOff: input.timeOff,
-    }),
+    current: counters,
     history: input.ledgerHistory,
     preferences: input.preferences,
     weights: input.ruleSet.fairnessWeights,
@@ -75,6 +77,11 @@ function scoreModel(model: SolverModel, assignments: Assignment[]): ScheduleScor
     softViolations: evaluation.softViolations,
     objective: model.breakdown(),
     fairness,
+    digest: digestSchedule({
+      nurses: activeNurses,
+      counters,
+      violations: [...evaluation.hardViolations, ...evaluation.softViolations],
+    }),
     ...(model.costCtx ? { cost: costSchedule(view, model.costCtx) } : {}),
   };
 }

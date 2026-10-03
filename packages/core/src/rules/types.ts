@@ -78,7 +78,9 @@ export type ViolationCode =
   | 'incompatible_staff_together'
   | 'incompatible_staff_unbuffered'
   | 'holiday_rotation'
-  | 'holiday_pair_both';
+  | 'holiday_pair_both'
+  | 'short_recovery_after_nights'
+  | 'works_during_pending_time_off';
 
 /**
  * One nurse worked one past holiday. Derived from published schedules, or recorded by hand for

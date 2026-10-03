@@ -26,6 +26,7 @@ import {
 import type { ShiftNurseApi } from '../../shared/api.js';
 import { analyse, approveExchange, autoResolve } from './conflicts.js';
 import { ACTOR, buildConflictInput } from './context.js';
+import { approveAndCover, coverOptions } from './leave.js';
 
 export function requestsApi(
   db: ShiftNurseDb,
@@ -43,6 +44,10 @@ export function requestsApi(
         transact(db, (tx) => withdrawApproval(tx, id, ACTOR, reason)),
       impact: (periodId, requestId, decision) =>
         timeOffImpact(buildConflictInput(db, periodId), requestId, decision),
+      coverOptions: (periodId, requestId) => coverOptions(db, periodId, requestId),
+      approveAndCover: (periodId, requestId, reason, covers) => {
+        approveAndCover(db, periodId, requestId, reason, covers);
+      },
     },
     conflicts: {
       analyse: (periodId) => analyse(db, periodId),

@@ -12,7 +12,7 @@ import type { Nurse, SchedulePeriod } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useCostReport, useSetBudget } from '../../api-cost.js';
 import { AsyncState } from '../../components/async-state.js';
-import { formatDate } from '../../format.js';
+import { periodLabel } from '../../format.js';
 import { formatDollars, formatHours, formatSignedDollars } from '../../money.js';
 
 interface CostPanelProps {
@@ -107,9 +107,7 @@ export function CostPanel({ period, nurses }: CostPanelProps) {
       <div className="rounded-md border border-border bg-surface p-4">
         <div className="flex items-start justify-between gap-2">
           <div>
-            <p className="text-sm text-text-muted">
-              {period.name} · {formatDate(period.startDate)} – {formatDate(period.endDate)}
-            </p>
+            <p className="text-sm text-text-muted">{periodLabel(period)}</p>
             <p className="mt-1 text-2xl font-semibold text-text" data-testid="cost-total">
               {formatDollars(cost.totals.total)}
             </p>
@@ -117,7 +115,12 @@ export function CostPanel({ period, nurses }: CostPanelProps) {
           <BudgetEditor period={period} current={budget?.targetDollars} />
         </div>
 
-        {variance !== undefined ? (
+        {cost.assignments.length === 0 ? (
+          // An empty draft is not "$443,000 under budget": there is nothing to compare yet.
+          <p className="mt-1 text-sm text-text-muted">
+            Not built yet{variance ? ` · budget ${formatDollars(variance.targetDollars)}` : ''}.
+          </p>
+        ) : variance !== undefined ? (
           <p className={`mt-1 text-sm ${overBudget ? 'text-danger' : 'text-success'}`}>
             {formatSignedDollars(variance.variance)} against a budget of{' '}
             {formatDollars(variance.targetDollars)}
@@ -149,7 +152,9 @@ export function CostPanel({ period, nurses }: CostPanelProps) {
           </p>
         ) : null}
         {cost.assignments.length === 0 ? (
-          <p className="mt-3 text-sm text-text-muted">Nothing scheduled yet.</p>
+          <p className="mt-3 text-sm text-text-muted">
+            Nothing scheduled yet: generate the schedule to see what it costs.
+          </p>
         ) : null}
       </div>
 

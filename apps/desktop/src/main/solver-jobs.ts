@@ -318,6 +318,19 @@ export class SolverJobs {
     );
   }
 
+  /**
+   * Finished variations in batches nothing has been saved from: what quitting would throw away,
+   * since batches live in memory only. A stale batch is not counted — it cannot be saved.
+   */
+  unsavedVariations(): number {
+    let count = 0;
+    for (const batch of this.batches.values()) {
+      if (batch.status.stale || batch.status.saved !== undefined) continue;
+      count += batch.runs.filter((r) => r.status.state === 'done' && r.report).length;
+    }
+    return count;
+  }
+
   markSaved(batchId: Id, index: number): void {
     const batch = this.batches.get(batchId);
     if (batch) batch.status.saved = index;
@@ -444,6 +457,13 @@ export class SolverJobs {
         if (!batch.status.stale) run.report = report;
         run.status.summary = {
           objective: report.objective.total,
+          digest: report.digest,
+          ...(report.cost
+            ? {
+                costTotal: report.cost.totals.total,
+                overtimeHours: report.cost.totals.overtimeHours,
+              }
+            : {}),
           floorsShort: report.unfilled.reduce((sum, slot) => sum + slot.shortfall, 0),
           unfilledSlots: report.unfilled.length,
           hardViolations: report.hardViolations.length,

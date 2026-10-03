@@ -74,12 +74,11 @@ function SolverForm({
       className="rounded-md border border-border bg-surface p-4"
       data-testid="solver-settings"
     >
-      <h2 className="text-sm font-semibold text-text">Solver</h2>
+      <h2 className="text-sm font-semibold text-text">How Generate builds a schedule</h2>
       <p className="mt-1 max-w-prose text-sm text-text-muted">
-        The engine Generate uses to build a schedule. Every engine obeys the same rules and is
-        checked by the same validation the grid shows; they differ in how hard they search and
-        whether they can prove the result is close to the best possible. You can still pick a
-        different one for a single run in the Generate dialog.
+        Every method follows the same rules and is checked the same way the grid checks your own
+        edits; they differ in how long they search. Most units never need to change this. You can
+        also pick a different one for a single run in the Generate dialog.
       </p>
       <form
         className="mt-4 flex max-w-xl flex-col gap-3"
@@ -110,6 +109,10 @@ function SolverForm({
                 <span className="flex flex-col gap-0.5">
                   <span className="font-medium text-text">{SOLVER_LABELS[id].name}</span>
                   <span className="text-text-muted">{SOLVER_LABELS[id].summary}</span>
+                  <details className="text-xs text-text-muted">
+                    <summary className="cursor-pointer select-none">How it works</summary>
+                    {SOLVER_LABELS[id].technical}
+                  </details>
                   {unavailable ? (
                     <span className="text-warn">Not available here: {entry?.reason}</span>
                   ) : null}
@@ -136,7 +139,7 @@ function SolverForm({
         ) : null}
         <div>
           <button type="submit" className={PRIMARY} disabled={!dirty || save.isPending}>
-            {save.isPending ? 'Saving…' : 'Save solver'}
+            {save.isPending ? 'Saving…' : 'Save'}
           </button>
         </div>
       </form>

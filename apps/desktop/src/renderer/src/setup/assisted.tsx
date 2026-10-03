@@ -12,13 +12,18 @@ import {
   type SetupStepId,
 } from '@shiftnurse/core';
 import { useNavigate } from '@tanstack/react-router';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAdvanceSetup, useCompleteSetup } from '../api-setup.js';
 import { ThemeToggle } from '../components/theme-toggle.js';
 import { errorMessage, PRIMARY, SECONDARY } from '../components/ui.js';
 import { useUnit } from '../unit-context.js';
-import { StepBody } from './assisted-steps.js';
-import { STEP_TITLES } from './steps.js';
+import {
+  PresetRegistry,
+  type RegisteredPreset,
+  StepBody,
+  useSetupCounts,
+} from './assisted-steps.js';
+import { STEP_TITLES, stepStatus } from './steps.js';
 
 export function AssistedSetup({ state }: { state: SetupState }) {
   const unit = useUnit();
@@ -28,8 +33,33 @@ export function AssistedSetup({ state }: { state: SetupState }) {
   const step: SetupStepId = state.currentStep ?? SETUP_STEPS[0];
   const next = nextSetupStep(step);
   const previous = previousSetupStep(step);
-  const busy = advance.isPending || complete.isPending;
+  const counts = useSetupCounts(unit.id);
+  const [preset, setPreset] = useState<RegisteredPreset | undefined>(undefined);
+  const register = useCallback((p: RegisteredPreset | undefined) => setPreset(() => p), []);
+  const [applying, setApplying] = useState(false);
+  const busy = advance.isPending || complete.isPending || applying;
   const heading = useRef<HTMLHeadingElement>(null);
+  // A step with nothing set up yet: Continue applies its starting point rather than moving on
+  // with nothing — choosing "12-hour days and nights" and pressing Continue used to leave the
+  // unit with no shifts at all. With no starting point to apply, moving on counts as a skip.
+  const empty = step !== 'finish' && stepStatus(step, counts, []) === 'empty';
+  const applyOnContinue = empty && preset !== undefined && !preset.disabled();
+  const onContinue = async () => {
+    if (applyOnContinue) {
+      setApplying(true);
+      try {
+        await preset.run();
+      } catch {
+        // The preset card shows the error; stay on the step so it can be read.
+        return;
+      } finally {
+        setApplying(false);
+      }
+      go(next, false);
+      return;
+    }
+    go(next, empty);
+  };
 
   // A new step replaces the whole body; move focus to its heading so a keyboard or screen
   // reader user is not left on a button that no longer exists.
@@ -74,7 +104,9 @@ export function AssistedSetup({ state }: { state: SetupState }) {
           <ThemeToggle />
         </header>
         <main className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
-          <StepBody step={step} skipped={state.skippedSteps} />
+          <PresetRegistry.Provider value={register}>
+            <StepBody step={step} skipped={state.skippedSteps} onGoTo={(to) => go(to, false)} />
+          </PresetRegistry.Provider>
         </main>
         <footer className="flex items-center justify-between gap-3 border-t border-border bg-surface px-6 py-3">
           <button
@@ -107,10 +139,14 @@ export function AssistedSetup({ state }: { state: SetupState }) {
                   type="button"
                   className={PRIMARY}
                   disabled={busy}
-                  onClick={() => go(next, false)}
+                  onClick={() => void onContinue()}
                   data-testid="setup-continue"
                 >
-                  Continue
+                  {applying
+                    ? 'Applying…'
+                    : applyOnContinue
+                      ? `${preset.label()} and continue`
+                      : 'Continue'}
                 </button>
               </>
             ) : (

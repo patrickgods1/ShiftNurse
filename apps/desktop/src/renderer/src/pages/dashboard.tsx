@@ -4,14 +4,15 @@
  * credential lapsed last week.
  */
 
-import type { ExpiringCredentialView } from '@shared/api.js';
+import type { DashboardSummary, ExpiringCredentialView } from '@shared/api.js';
 import { Link } from '@tanstack/react-router';
-import { useDashboard, useNurses } from '../api.js';
+import { useDashboard, useNurses, useShiftTypes } from '../api.js';
+import { useCoverage } from '../api-config.js';
 import { AsyncState } from '../components/async-state.js';
 import { HppdSummary } from '../components/hppd-summary.js';
 import { PageHeader } from '../components/page-header.js';
 import { StatCard } from '../components/stat-card.js';
-import { daysFromToday, formatDate } from '../format.js';
+import { daysFromToday, formatDate, listName, periodLabel } from '../format.js';
 import { useUnitId } from '../unit-context.js';
 import { CostPanel } from './dashboard/cost-panel.js';
 
@@ -37,10 +38,7 @@ function PeriodCard({
         <p className="mt-1 text-text-muted">None yet</p>
       ) : (
         <>
-          <p className="mt-1 font-medium text-text">{period.name}</p>
-          <p className="text-sm text-text-muted">
-            {formatDate(period.startDate)} – {formatDate(period.endDate)}
-          </p>
+          <p className="mt-1 font-medium text-text">{periodLabel(period)}</p>
           <p className="mt-1 text-xs uppercase tracking-wide text-text-muted">{period.status}</p>
         </>
       )}
@@ -75,9 +73,7 @@ function ExpiringCredentialsTable({ rows }: { rows: ExpiringCredentialView[] }) 
               tone === 'danger' ? 'text-danger' : tone === 'warn' ? 'text-warn' : 'text-text';
             return (
               <tr key={row.nurseCredential.id} className="border-b border-border last:border-0">
-                <td className="px-3 py-2 text-text">
-                  {row.nurse.firstName} {row.nurse.lastName}
-                </td>
+                <td className="px-3 py-2 text-text">{listName(row.nurse)}</td>
                 <td className="px-3 py-2 text-text">{row.credential.name}</td>
                 <td className={`px-3 py-2 font-medium ${toneClass}`}>
                   {row.nurseCredential.expiresOn !== undefined
@@ -93,10 +89,114 @@ function ExpiringCredentialsTable({ rows }: { rows: ExpiringCredentialView[] }) 
   );
 }
 
+/** Hover and focus for the stat cards that open the page where the number is acted on. */
+const CARD_LINK =
+  'block rounded-md hover:ring-2 hover:ring-accent/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent';
+
+/**
+ * What to do next, in the order a manager would: cover today, decide requests, then build or
+ * publish the next schedule, then chase credentials. Nothing to do reads as such.
+ */
+function NextSteps({
+  summary,
+  shiftTypes,
+  coverageRows,
+}: {
+  summary: DashboardSummary;
+  shiftTypes: number;
+  coverageRows: number;
+}) {
+  const soon = summary.expiringCredentials.filter(
+    (c) =>
+      c.nurseCredential.expiresOn !== undefined && daysFromToday(c.nurseCredential.expiresOn) <= 30,
+  ).length;
+  const steps: {
+    text: string;
+    to?: '/today' | '/requests' | '/schedule' | '/roster' | '/settings';
+    urgent?: boolean;
+  }[] = [];
+  // A unit that cannot be scheduled yet: what it is missing comes first.
+  if (shiftTypes === 0) {
+    steps.push({
+      text: 'Add the shifts your unit works (Settings › Shift types)',
+      to: '/settings',
+    });
+  } else if (coverageRows === 0) {
+    steps.push({
+      text: 'Set the staffing floors for each shift (Settings › Coverage floors)',
+      to: '/settings',
+    });
+  }
+  if (summary.activeNurses === 0) {
+    steps.push({ text: 'Add your nurses, or import them from a spreadsheet', to: '/roster' });
+  }
+  if (!summary.currentDraft && shiftTypes > 0 && summary.activeNurses > 0) {
+    steps.push({ text: 'Create your next schedule period', to: '/schedule' });
+  }
+  if (summary.openCallOffs > 0) {
+    steps.push({
+      text: `Cover ${summary.openCallOffs} open call-off${summary.openCallOffs === 1 ? '' : 's'}`,
+      to: '/today',
+      urgent: true,
+    });
+  }
+  if (summary.pendingTimeOff > 0) {
+    steps.push({
+      text: `Decide ${summary.pendingTimeOff} time-off request${summary.pendingTimeOff === 1 ? '' : 's'}`,
+      to: '/requests',
+    });
+  }
+  if (summary.currentDraft) {
+    steps.push({
+      text:
+        summary.draftShifts === 0
+          ? `Generate the ${periodLabel(summary.currentDraft)} schedule`
+          : `Review and publish the ${periodLabel(summary.currentDraft)} schedule`,
+      to: '/schedule',
+    });
+  }
+  if (soon > 0) {
+    steps.push({
+      text: `Follow up ${soon} credential${soon === 1 ? '' : 's'} expiring within 30 days`,
+    });
+  }
+  return (
+    <section
+      data-testid="next-steps"
+      className="mb-4 rounded-md border border-border bg-surface p-4"
+    >
+      <h2 className="text-sm font-semibold text-text">Next steps</h2>
+      {steps.length === 0 ? (
+        <p className="mt-1 text-sm text-text-muted">Nothing waiting on you right now.</p>
+      ) : (
+        <ol className="mt-2 flex flex-col gap-1 text-sm">
+          {steps.map((step, i) => (
+            <li key={step.text} className="flex items-baseline gap-2">
+              <span className="text-text-muted">{i + 1}.</span>
+              {step.to ? (
+                <Link
+                  to={step.to}
+                  className={`underline underline-offset-2 ${step.urgent ? 'text-danger' : 'text-accent'}`}
+                >
+                  {step.text}
+                </Link>
+              ) : (
+                <span className="text-text">{step.text}</span>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
 export default function DashboardPage() {
   const unitId = useUnitId();
   const dashboardQuery = useDashboard(unitId);
   const nursesQuery = useNurses(unitId);
+  const shiftTypesQuery = useShiftTypes(unitId);
+  const coverageQuery = useCoverage(unitId);
 
   if (dashboardQuery.isPending) {
     return <AsyncState status="loading" label="Loading dashboard" />;
@@ -114,25 +214,46 @@ export default function DashboardPage() {
     <div>
       <PageHeader title="Dashboard" description={`As of ${formatDate(summary.today)}`} />
 
+      <NextSteps
+        summary={summary}
+        shiftTypes={(shiftTypesQuery.data ?? []).filter((s) => s.active).length}
+        coverageRows={(coverageQuery.data ?? []).length}
+      />
+
       <div className="grid grid-cols-4 gap-4">
-        <StatCard label="Active nurses" value={summary.activeNurses} />
-        <Link to="/requests" aria-label="Pending time off — open Requests" className="block">
+        <Link to="/roster" aria-label="Active nurses — open Roster" className={CARD_LINK}>
+          <StatCard label="Active nurses" value={summary.activeNurses} />
+        </Link>
+        <Link to="/requests" aria-label="Pending time off — open Requests" className={CARD_LINK}>
           <StatCard
             label="Pending time off"
             value={summary.pendingTimeOff}
             tone={summary.pendingTimeOff > 0 ? 'warn' : 'neutral'}
           />
         </Link>
-        <StatCard
-          label="Open call-offs"
-          value={summary.openCallOffs}
-          tone={summary.openCallOffs > 0 ? 'danger' : 'neutral'}
-        />
-        <StatCard
-          label="Credentials expiring"
-          value={summary.expiringCredentials.length}
-          tone={summary.expiringCredentials.length > 0 ? 'warn' : 'neutral'}
-        />
+        <Link to="/today" aria-label="Open call-offs — open Today" className={CARD_LINK}>
+          <StatCard
+            label="Open call-offs"
+            value={summary.openCallOffs}
+            tone={summary.openCallOffs > 0 ? 'danger' : 'neutral'}
+          />
+        </Link>
+        <button
+          type="button"
+          aria-label="Credentials expiring — jump to the list"
+          className={`${CARD_LINK} text-left`}
+          onClick={() =>
+            document
+              .getElementById('expiring-credentials')
+              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }
+        >
+          <StatCard
+            label="Credentials expiring"
+            value={summary.expiringCredentials.length}
+            tone={summary.expiringCredentials.length > 0 ? 'warn' : 'neutral'}
+          />
+        </button>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-4">
@@ -178,11 +299,11 @@ export default function DashboardPage() {
                   <span className="text-sm text-text-muted">{group.shiftType.name}</span>
                 </div>
                 <ul className="space-y-1 text-sm text-text">
-                  {group.nurses.map((nurse) => (
-                    <li key={nurse.id}>
-                      {nurse.firstName} {nurse.lastName}
-                    </li>
-                  ))}
+                  {[...group.nurses]
+                    .sort((a, b) => a.lastName.localeCompare(b.lastName))
+                    .map((nurse) => (
+                      <li key={nurse.id}>{listName(nurse)}</li>
+                    ))}
                 </ul>
               </div>
             ))}
@@ -190,7 +311,7 @@ export default function DashboardPage() {
         )}
       </div>
 
-      <div className="mt-6">
+      <div className="mt-6" id="expiring-credentials">
         <h2 className="mb-2 text-sm font-semibold text-text">Expiring credentials</h2>
         <ExpiringCredentialsTable rows={summary.expiringCredentials} />
       </div>

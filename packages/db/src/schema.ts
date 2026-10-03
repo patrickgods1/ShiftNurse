@@ -507,6 +507,8 @@ export const schedulePeriod = sqliteTable(
       .references(() => ruleSet.id)
       .$type<Id>(),
     ruleSetVersion: integer('rule_set_version').notNull(),
+    /** Last day time-off requests for this period are on time (advisory; see `setRequestsCloseOn`). */
+    requestsCloseOn: isoDate('requests_close_on'),
   },
   (t) => [index('period_unit_range_idx').on(t.unitId, t.startDate, t.endDate)],
 );

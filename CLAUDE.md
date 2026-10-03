@@ -101,7 +101,7 @@ self-service later becomes an intake surface rather than a new data model.
   smoke-tests it, and creates a **draft** release (`.github/release-notes.md`); it dry-runs on PRs
   touching packaging. Builds are unsigned.
 - **M15 — Selectable solvers** (complete; plan of record `docs/SOLVER_PLAN.md`, results
-  `docs/solver-bench.md`): Settings › Solver picks **hybrid** (default), **SA + LNS** or **CP-SAT**
+  `docs/solver-bench.md`): Settings › Generate (the solver tab) picks **hybrid** (default), **SA + LNS** or **CP-SAT**
   per unit; the Generate dialog overrides per run. `native/cpsat-runner` is the C++ OR-Tools
   runner (JSON lines, `runner.proto`), built by `.github/workflows/cpsat-runner.yml` and released
   as `cpsat-runner-v*`; `apps/desktop/scripts/fetch-cpsat.mjs` pins tag + SHA-256 and fills
@@ -292,6 +292,11 @@ violations of their own.
   policy: `will-navigate` is blocked for any other URL (a file dropped on the grid would
   otherwise load with the preload bridge), `ipc.ts` refuses untrusted sender frames, and
   `openExternal` takes only `https:`/`mailto:`.
+- **A shift's broken preferences reach the grid.** `fairness/ledger.ts`'s `preferencesBroken`
+  is the one definition (`isUndesirable` is its yes/no, which the ledger and digest count);
+  `schedule.validate` returns `againstPreference` per assignment and the grid marks those chips.
+- **Swapping two shifts is both moves in one `transact`** (`schedule.swapAssignments`): a refusal
+  of either half — a lock, a nurse already on that shift — leaves both where they were.
 - **Moving a shift is delete + create in one `transact`.** `nurseId` is immutable on an
   assignment; the move carries `isCharge`/`isOvertime`/`notes` across and refuses locked rows.
 - **The smoke test creates data through the raw bridge**, which bypasses the renderer's
@@ -315,6 +320,33 @@ violations of their own.
   cascades into its children.
 - **The ledger's `periodId` has no foreign key on purpose:** imported history uses synthetic
   `import:<start>` ids for pay periods that predate the app.
+- **A finding keeps the severity its rule gave it** unless the rule set overrides the rule
+  (`PreparedRule.override`): `fte-target-hours` refuses hours past the contract (hard) but only
+  advises on a shortfall (soft) — being short is a manager's decision, not a breach — and a
+  contract that guarantees full hours sets the rule hard, which makes both hard.
+- **Days off after nights** (`rules/night-recovery.ts`, soft, nurse scope): a day or evening
+  shift within `daysOffAfterNights` (2) days of a night is flagged once, against the last night,
+  lookback nights included. Both solvers price it per such shift at `nightRecovery` (45, in the
+  preferences bucket): `SolverModel.recoveryFor` and CP-SAT's `nightRecoveryTerms`; hard, it is
+  `encodeNightRecovery`'s forbidden pairs. Rest hours alone allowed Night, Day, Night in four days.
+- **Time off is decided before the schedule, and late requests are covered, not regenerated.**
+  `rules/pending-time-off.ts` (soft, nurse scope) flags a shift inside a request still pending;
+  both solvers price it per shift at `pendingTimeOff` (80, preferences bucket; `SolverModel.
+  pendingPenaltyOf`, CP-SAT `perShiftTerms`; hard: `encodePendingTimeOff`), so Generate keeps
+  asked-for days free when it can. A request is judged by `conflicts/capacity.ts`'s
+  `leaveCapacity` — per day and role, shifts the floors need against what contracted staff not on
+  leave supply at their contracted hours, plus per diem — never by the draft (`TimeOffImpact.
+  capacity`). It judges against the unit's *usual* day, not a perfect one: "tight" only when leave
+  adds a whole shift to the usual per-diem gap, or a unit built to lean on per diem (the community
+  demo) reads every request on every day as tight. `main/api/leave.ts` is the late path: `coverOptions` ranks legal cover for each
+  freed shift (the day-of `findReplacements`, with the leave approved) and `approveAndCover`
+  approves, takes the shifts off (a published period's too, under a reason, in the change log)
+  and writes the chosen cover in one transaction, re-checking every pick first. A period's
+  optional `requestsCloseOn` (migration 0014) marks later requests as late; it never refuses one.
+- **Generate speaks in the manager's numbers.** `buildReport` adds `SolveReport.digest`
+  (`solver/digest.ts`: nights per nurse who works nights, weekends per contracted nurse, quick
+  flips, nurses under contract, shifts against preferences), which the Generate dialog, the
+  candidates bar and the comparison show in place of the solver's score.
 - **Every rule declares a `scope`** (`'nurse'` or `'shift'`). The solver evaluates hard rules
   incrementally on a view holding one nurse's timeline or one shift's roster, so a rule that
   secretly reads more than its scope passes in the solver and fails on the grid. Nurse-scope hard
@@ -485,7 +517,10 @@ violations of their own.
   `paidHours` (the shifts it pays, not every calendar day; the request dialog suggests them with
   `suggestedPaidLeaveHours`), and a call-off can be paid from sick leave (`paidSickHours`,
   credited only once the shift is off the schedule, so an uncovered call-off is not counted
-  twice). `rules/paid-leave.ts` turns both into per-day credits in `RuleContext.paidLeaveByNurse`;
+  twice). `rules/paid-leave.ts` turns both into dated credits in `RuleContext.paidLeaveByNurse`,
+  a request's paid hours cut into **whole shifts** of the unit's worked lengths and spaced over
+  its days — never spread by the hour: 36h over a week that crossed a pay period read as 5.1h and
+  30.9h, targets no run of 12s can meet, so an approved week off left the nurse "short";
   the contracted-hours rule adds them (`paidLeaveCountsTowardHours`, on), the max-hours rule adds
   them to the overtime threshold only when `paidLeaveCountsTowardOvertime` is on (off: federal
   wage-and-hour law does not treat leave as hours worked) and never to the absolute weekly cap.

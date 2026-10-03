@@ -19,23 +19,42 @@ import {
   useTimeOffInRange,
   useWithdrawApproval,
 } from '../api-requests.js';
+import { useSetRequestsCloseOn } from '../api-schedule.js';
 import { AsyncState } from '../components/async-state.js';
 import { type Column, DataTable } from '../components/data-table.js';
 import { PageHeader } from '../components/page-header.js';
+import { PeriodOptions } from '../components/period-options.js';
 import { PRIMARY, SMALL } from '../components/ui.js';
 import { defaultPeriod } from '../default-period.js';
-import { formatDate } from '../format.js';
+import { formatDate, periodRange } from '../format.js';
 import { useUnitId } from '../unit-context.js';
 import { ConflictsPanel } from './requests/conflicts-panel.js';
 import { DecideDialog, nurseLabel } from './requests/decide-dialog.js';
 import { ExchangePanel } from './requests/exchange-panel.js';
 import { RequestHeatmap } from './requests/heatmap.js';
 import { bucketByDay } from './requests/heatmap-data.js';
+import { isLateRequest } from './requests/late.js';
 import { NewRequestDialog } from './requests/new-request-dialog.js';
 import { periodForRequest } from './requests/period-for-request.js';
 import { ReasonDialog } from './requests/reason-dialog.js';
 
 type FilterValue = TimeOffStatus | 'all';
+
+const LEAVE_TYPE_LABEL: Record<TimeOffRequest['type'], string> = {
+  pto: 'PTO',
+  sick: 'Sick leave',
+  fmla: 'FMLA',
+  unpaid: 'Unpaid leave',
+  education: 'Education',
+  bereavement: 'Bereavement',
+};
+
+/** When a request came in: an instant, shown in the manager's own calendar. */
+const SUBMITTED = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+});
 
 const FILTERS: { value: FilterValue; label: string }[] = [
   { value: 'pending', label: 'Pending' },
@@ -53,6 +72,7 @@ function fallbackRange(): { start: IsoDate; end: IsoDate } {
 export default function RequestsPage() {
   const unitId = useUnitId();
   const periodsQuery = usePeriods(unitId);
+  const setCloseOn = useSetRequestsCloseOn(unitId);
   const nursesQuery = useNurses(unitId);
   const shiftTypesQuery = useShiftTypes(unitId);
   const periods = periodsQuery.data ?? [];
@@ -119,6 +139,14 @@ export default function RequestsPage() {
     cancelling ? periodForRequest(periods, cancelling)?.id : undefined,
   );
 
+  // A pending request named in a "competing time off" conflict would take a shift below its
+  // minimum if approved: worth knowing before opening it, not only inside Review.
+  const tightRequests = new Set(
+    (conflictsQuery.data?.conflicts ?? [])
+      .filter((c) => c.kind === 'competing_time_off')
+      .flatMap((c) => c.timeOffIds),
+  );
+
   const columns: Column<TimeOffRequest>[] = [
     {
       key: 'nurse',
@@ -129,16 +157,70 @@ export default function RequestsPage() {
     {
       key: 'dates',
       header: 'Dates',
-      render: (r) => `${formatDate(r.startDate)} – ${formatDate(r.endDate)}`,
+      render: (r) => (
+        <span className="whitespace-nowrap">
+          {r.startDate === r.endDate
+            ? formatDate(r.startDate)
+            : periodRange({ startDate: r.startDate, endDate: r.endDate })}
+        </span>
+      ),
       sortValue: (r) => r.startDate,
     },
     {
       key: 'type',
       header: 'Type',
       // Paid hours count toward the nurse's contract once approved, so they show with the type.
-      render: (r) => (r.paidHours ? `${r.type} · ${r.paidHours}h paid` : r.type),
+      render: (r) =>
+        r.paidHours
+          ? `${LEAVE_TYPE_LABEL[r.type]} · ${r.paidHours}h paid`
+          : LEAVE_TYPE_LABEL[r.type],
     },
-    { key: 'status', header: 'Status', render: (r) => r.status },
+    {
+      key: 'submitted',
+      header: 'Submitted',
+      // First-come-first-served and seniority both start from when the request came in.
+      render: (r) => (
+        <span className="whitespace-nowrap">
+          {r.submittedAt > 0 ? SUBMITTED.format(new Date(r.submittedAt)) : '—'}
+          {period && isLateRequest(r.submittedAt, period.requestsCloseOn) ? (
+            <span
+              data-testid="request-late"
+              title="Made after requests closed for this schedule: decide first-come, with a cover plan"
+              className="ml-1.5 rounded-full bg-warn/15 px-1.5 py-0.5 text-xs font-medium text-warn"
+            >
+              Late
+            </span>
+          ) : null}
+        </span>
+      ),
+      sortValue: (r) => String(r.submittedAt).padStart(15, '0'),
+    },
+    // On the Pending tab every row says "pending"; elsewhere the status tells them apart.
+    ...(filter === 'pending'
+      ? []
+      : [
+          {
+            key: 'status',
+            header: 'Status',
+            render: (r: TimeOffRequest) => <span className="capitalize">{r.status}</span>,
+          },
+        ]),
+    {
+      key: 'coverage',
+      header: 'Coverage',
+      render: (r) =>
+        r.status !== 'pending' ? null : tightRequests.has(r.id) ? (
+          <span
+            data-testid="request-tight"
+            title="Approving it as things stand would take a shift below its minimum"
+            className="whitespace-nowrap rounded-full bg-warn/15 px-2 py-0.5 text-xs font-medium text-warn"
+          >
+            Leaves a shift short
+          </span>
+        ) : conflictsQuery.data ? (
+          <span className="text-xs text-text-muted">Covered</span>
+        ) : null,
+    },
     {
       key: 'reason',
       header: 'Reason',
@@ -184,11 +266,7 @@ export default function RequestsPage() {
                 onChange={(e) => setSelectedPeriodId(e.target.value)}
                 className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-text"
               >
-                {periods.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} · {formatDate(p.startDate)} – {formatDate(p.endDate)}
-                  </option>
-                ))}
+                <PeriodOptions periods={periods} />
               </select>
             ) : null}
             <button
@@ -202,6 +280,18 @@ export default function RequestsPage() {
           </>
         }
       />
+
+      {period ? (
+        <RequestWindow
+          period={period}
+          lateCount={
+            (rangeQuery.data ?? []).filter(
+              (r) => r.status === 'pending' && isLateRequest(r.submittedAt, period.requestsCloseOn),
+            ).length
+          }
+          onChange={(date) => setCloseOn.mutate({ periodId: period.id, date })}
+        />
+      ) : null}
 
       <fieldset className="mb-6 flex gap-2 border-0 p-0">
         <legend className="sr-only">Requests or exchanges</legend>
@@ -389,6 +479,44 @@ export default function RequestsPage() {
           );
         }}
       />
+    </div>
+  );
+}
+
+/**
+ * The request window: requests are decided together before the schedule is built, and those
+ * that come later are late — decided first-come, with a cover plan, not by regenerating.
+ */
+function RequestWindow({
+  period,
+  lateCount,
+  onChange,
+}: {
+  period: SchedulePeriod;
+  lateCount: number;
+  onChange: (date: IsoDate | null) => void;
+}) {
+  return (
+    <div
+      data-testid="request-window"
+      className="mb-4 flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-sm"
+    >
+      <label className="flex items-center gap-2 text-text">
+        Requests for this schedule close on
+        <input
+          type="date"
+          className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-text"
+          value={period.requestsCloseOn ?? ''}
+          onChange={(e) => onChange(e.target.value ? (e.target.value as IsoDate) : null)}
+        />
+      </label>
+      <span className="text-xs text-text-muted">
+        {period.requestsCloseOn
+          ? lateCount > 0
+            ? `${lateCount} pending request${lateCount === 1 ? ' came' : 's came'} in after that: decide ${lateCount === 1 ? 'it' : 'them'} first-come and cover the shifts, rather than regenerating.`
+            : 'Decide the requests made by then together, before you generate.'
+          : 'Set the date your unit stops taking requests for this schedule, so late ones stand out.'}
+      </span>
     </div>
   );
 }

@@ -16,20 +16,35 @@
  * in as plain maps, so this component never re-walks the violations array itself.
  */
 
-import type { Assignment, Id, IsoDate, Nurse, ShiftType, Violation } from '@shiftnurse/core';
+import type {
+  Assignment,
+  Id,
+  IsoDate,
+  Nurse,
+  Preference,
+  ShiftDemand,
+  ShiftType,
+  Violation,
+} from '@shiftnurse/core';
 import { type KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePanelFocus } from '../../components/use-panel-focus.js';
-import { formatDateWithWeekday } from '../../format.js';
+import { formatDateWithWeekday, fteLabel, listName } from '../../format.js';
+import { describePreference } from '../../preferences.js';
 import { AssignmentChip } from './chip.js';
 import type { DragPayload } from './dnd.js';
 import { readDragPayload } from './dnd.js';
-import { buildCellIndex, cellKey, SHORT_WEEKDAY, sortNurses } from './grid-utils.js';
+import { buildCellIndex, cellKey, headcountRows, SHORT_WEEKDAY, sortNurses } from './grid-utils.js';
 
 export interface GridColumn {
   date: IsoDate;
   weekday: number;
   isWeekend: boolean;
+  /** The first day of a new week after the first: drawn with a heavier divider. */
+  weekStart?: boolean;
 }
+
+/** The divider that separates weeks, so six weeks of columns read as weeks, not a blur. */
+const WEEK_DIVIDER = 'border-l-2 border-l-text-muted/40';
 
 const EMPTY_VIOLATIONS: readonly Violation[] = [];
 
@@ -74,11 +89,13 @@ interface GridCellProps {
   highlightKeys: ReadonlySet<string> | undefined;
   isDragOver: boolean;
   isWeekend: boolean;
+  weekStart: boolean;
   readOnly: boolean;
   onDrop: (payload: DragPayload) => void;
   onDragOverChange: (over: boolean) => void;
   onChipOpen: (assignment: Assignment) => void;
   onChipDelete: (assignment: Assignment) => void;
+  preferenceNotes: ReadonlyMap<Id, string>;
 }
 
 function GridCell({
@@ -97,11 +114,13 @@ function GridCell({
   highlightKeys,
   isDragOver,
   isWeekend,
+  weekStart,
   readOnly,
   onDrop,
   onDragOverChange,
   onChipOpen,
   onChipDelete,
+  preferenceNotes,
 }: GridCellProps) {
   return (
     // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header)
@@ -125,7 +144,7 @@ function GridCell({
       }}
       className={`flex h-14 w-16 shrink-0 flex-col items-center justify-center border-b border-r
         border-border px-0.5 focus-visible:outline focus-visible:outline-2
-        focus-visible:-outline-offset-2 focus-visible:outline-accent ${isWeekend ? 'bg-bg' : 'bg-surface'} ${
+        focus-visible:-outline-offset-2 focus-visible:outline-accent ${weekStart ? WEEK_DIVIDER : ''} ${isWeekend ? 'bg-bg' : 'bg-surface'} ${
           isDragOver ? 'outline outline-2 -outline-offset-2 outline-accent' : ''
         }`}
       onDragEnter={
@@ -180,6 +199,7 @@ function GridCell({
           onOpen={onChipOpen}
           onDelete={onChipDelete}
           tabbable={tabbable}
+          preferenceNote={preferenceNotes.get(assignment.id)}
         />
       ))}
     </div>
@@ -207,6 +227,7 @@ interface GridRowProps {
   onDragOverCell: (nurseId: Id, date: IsoDate, over: boolean) => void;
   onChipOpen: (assignment: Assignment) => void;
   onChipDelete: (assignment: Assignment) => void;
+  preferenceNotes: ReadonlyMap<Id, string>;
 }
 
 const EMPTY_ASSIGNMENTS: readonly Assignment[] = [];
@@ -231,6 +252,7 @@ const GridRow = memo(function GridRow({
   onDragOverCell,
   onChipOpen,
   onChipDelete,
+  preferenceNotes,
 }: GridRowProps) {
   const counts = severityCounts(nurseViolations);
   const nurseLabel = `${nurse.firstName} ${nurse.lastName}`;
@@ -246,7 +268,7 @@ const GridRow = memo(function GridRow({
           border-r border-border bg-surface px-3 py-1"
       >
         <p className="flex items-center text-sm font-medium text-text">
-          {nurse.lastName}, {nurse.firstName}
+          {listName(nurse)}
           <CountBadge
             hard={counts.hard}
             soft={counts.soft}
@@ -254,7 +276,7 @@ const GridRow = memo(function GridRow({
           />
         </p>
         <p className="text-xs text-text-muted">
-          {nurse.role} · {nurse.fte.toFixed(2)} FTE
+          {nurse.role} · {fteLabel(nurse)}
         </p>
       </div>
       {columns.map((column, col) => {
@@ -277,11 +299,13 @@ const GridRow = memo(function GridRow({
             highlightKeys={highlightKeys}
             isDragOver={dragOverDate === column.date}
             isWeekend={column.isWeekend}
+            weekStart={column.weekStart ?? false}
             readOnly={readOnly}
             onDrop={(payload) => onDrop(nurse.id, column.date, payload)}
             onDragOverChange={(over) => onDragOverCell(nurse.id, column.date, over)}
             onChipOpen={onChipOpen}
             onChipDelete={onChipDelete}
+            preferenceNotes={preferenceNotes}
           />
         );
       })}
@@ -305,6 +329,10 @@ export interface ScheduleGridProps {
   onCreate: (input: { nurseId: Id; shiftTypeId: Id; date: IsoDate }) => void;
   onChipOpen: (assignment: Assignment) => void;
   onChipDelete: (assignment: Assignment) => void;
+  /** The period's staffing demand, for the headcount rows under the grid. */
+  demand?: readonly ShiftDemand[];
+  /** Assignment id → the preferences that shift goes against (`schedule.validate`). */
+  againstPreference?: Readonly<Record<Id, readonly Preference[]>>;
 }
 
 export function ScheduleGrid({
@@ -322,6 +350,8 @@ export function ScheduleGrid({
   onCreate,
   onChipOpen,
   onChipDelete,
+  demand,
+  againstPreference,
 }: ScheduleGridProps) {
   const [dragOver, setDragOver] = useState<{ nurseId: Id; date: IsoDate } | undefined>(undefined);
   // `dragenter` on the next cell fires before `dragleave` on the last one, so a leave only
@@ -375,6 +405,32 @@ export function ScheduleGrid({
   };
   const shiftTypesById = useMemo(() => new Map(shiftTypes.map((st) => [st.id, st])), [shiftTypes]);
   const assignmentsByCell = useMemo(() => buildCellIndex(assignments), [assignments]);
+  const preferenceNotes = useMemo(() => {
+    const notes = new Map<Id, string>();
+    if (!againstPreference) return notes;
+    const names = new Map(shiftTypes.map((st) => [st.id, st.name]));
+    const nurseById = new Map(nurses.map((n) => [n.id, n]));
+    for (const [assignmentId, prefs] of Object.entries(againstPreference)) {
+      const nurse = nurseById.get(prefs[0]?.nurseId ?? '');
+      const who = nurse ? `${nurse.firstName} ${nurse.lastName}` : 'the nurse';
+      notes.set(
+        assignmentId,
+        `Goes against ${who}'s request: ${prefs.map((p) => describePreference(p, names)).join('; ')}`,
+      );
+    }
+    return notes;
+  }, [againstPreference, shiftTypes, nurses]);
+  const headcount = useMemo(
+    () =>
+      headcountRows({
+        shiftTypes,
+        nurses,
+        assignments,
+        demand: demand ?? [],
+        dates: columns.map((c) => c.date),
+      }),
+    [shiftTypes, nurses, assignments, demand, columns],
+  );
   const nursesWithPending = useMemo(() => {
     const out = new Set<Id>();
     if (pendingIds.size === 0) return out;
@@ -408,7 +464,7 @@ export function ScheduleGrid({
       aria-colcount={columns.length + 1}
       data-testid="schedule-grid"
       onKeyDown={handleGridKeyDown}
-      className="isolate max-h-[65vh] overflow-auto rounded-md border border-border"
+      className="isolate max-h-[calc(100vh-9rem)] overflow-auto rounded-md border border-border"
     >
       <div className="inline-block min-w-full">
         {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header) */}
@@ -431,11 +487,12 @@ export function ScheduleGrid({
               // biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops
               <div
                 key={column.date}
+                data-date={column.date}
                 role="columnheader"
                 className={`sticky top-0 z-20 flex h-14 w-16 shrink-0 flex-col items-center
                   justify-center border-b border-r border-border text-xs ${
-                    column.isWeekend ? 'bg-bg' : 'bg-surface'
-                  }`}
+                    column.weekStart ? WEEK_DIVIDER : ''
+                  } ${column.isWeekend ? 'bg-bg' : 'bg-surface'}`}
               >
                 <span className="text-text-muted">{SHORT_WEEKDAY[column.weekday]}</span>
                 <span className="flex items-center font-medium text-text">
@@ -472,7 +529,51 @@ export function ScheduleGrid({
             onDragOverCell={handleDragOverCell}
             onChipOpen={onChipOpen}
             onChipDelete={onChipDelete}
+            preferenceNotes={preferenceNotes}
           />
+        ))}
+        {headcount.map((line, i) => (
+          // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header)
+          // biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops
+          <div
+            key={`${line.shiftType.id}:${line.role}`}
+            role="row"
+            data-testid="headcount-row"
+            className="sticky z-10 flex"
+            style={{ bottom: `${(headcount.length - 1 - i) * 1.75}rem` }}
+          >
+            {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header) */}
+            {/* biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops */}
+            <div
+              role="rowheader"
+              className={`sticky left-0 z-20 flex h-7 w-48 shrink-0 items-center border-r
+                border-border bg-bg px-3 text-xs text-text-muted ${i === 0 ? 'border-t-2 border-t-text-muted/40' : ''}`}
+            >
+              {line.shiftType.abbreviation} {line.role}s on shift
+            </div>
+            {line.cells.map((cell, col) => {
+              const short = cell.staffed < cell.required;
+              return (
+                // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header)
+                // biome-ignore lint/a11y/useFocusableInteractive: a read-only total; the roving tab stop stays on the nurse cells
+                <div
+                  key={cell.date}
+                  role="gridcell"
+                  title={
+                    cell.required > 0
+                      ? `${cell.staffed} of ${cell.required} ${line.role}s needed on ${line.shiftType.name}, ${formatDateWithWeekday(cell.date)}`
+                      : `${cell.staffed} ${line.role}s on ${line.shiftType.name}, ${formatDateWithWeekday(cell.date)}`
+                  }
+                  className={`flex h-7 w-16 shrink-0 items-center justify-center border-r
+                    border-border bg-bg text-xs ${columns[col]?.weekStart ? WEEK_DIVIDER : ''} ${
+                      i === 0 ? 'border-t-2 border-t-text-muted/40' : ''
+                    } ${short ? 'font-semibold text-danger' : 'text-text-muted'}`}
+                >
+                  {cell.required > 0 ? `${cell.staffed}/${cell.required}` : cell.staffed}
+                </div>
+              );
+            })}
+          </div>
         ))}
       </div>
       {picker ? (

@@ -8,7 +8,7 @@
 import type { SolveBatchStatus } from '@shared/api.js';
 import type { ReactNode } from 'react';
 import { SOLVER_LABELS } from '../../solver-labels.js';
-import { bestChoice, finishedRuns, variationNumber } from './candidates.js';
+import { bestChoice, digestLine, finishedRuns, variationNumber } from './candidates.js';
 
 interface CandidatesBarProps {
   batch: SolveBatchStatus;
@@ -161,42 +161,55 @@ export function CandidatesBar({
           <button type="button" onClick={onDiscard} className={secondaryButton}>
             Discard
           </button>
-          <button
-            type="button"
-            data-testid="candidate-save"
-            disabled={saving || current === undefined}
-            onClick={onSave}
-            className={primaryButton}
-          >
-            {saving ? 'Saving…' : 'Save this schedule'}
-          </button>
+          {current && batch.saved === current.index ? (
+            <span
+              data-testid="candidate-saved"
+              className="self-center rounded-md px-3 py-1.5 text-sm font-medium text-success"
+            >
+              ✓ Saved — this is the draft now
+            </span>
+          ) : (
+            <button
+              type="button"
+              data-testid="candidate-save"
+              disabled={saving || current === undefined}
+              onClick={onSave}
+              className={primaryButton}
+            >
+              {saving ? 'Saving…' : 'Save this schedule'}
+            </button>
+          )}
         </div>
       </div>
       {summary ? (
         <p className="mt-1 text-xs text-text-muted">
-          <span className={summary.floorsShort > 0 ? 'text-danger' : 'text-success'}>
-            {summary.floorsShort === 0
-              ? 'Every floor filled'
-              : `${summary.floorsShort} nurse-slot${summary.floorsShort === 1 ? '' : 's'} short`}
-          </span>
-          {' · '}
-          {summary.hardViolations} hard · {summary.softViolations} soft
-          {' · '}
-          score {Math.round(summary.objective).toLocaleString()}
-          {batch.draftObjective !== undefined
-            ? ` against ${Math.round(batch.draftObjective).toLocaleString()} on the grid`
-            : ''}{' '}
-          (lower is better)
+          {digestLine(summary).map((part, i) => (
+            <span
+              key={part}
+              className={
+                i === 0
+                  ? summary.floorsShort > 0
+                    ? 'text-danger'
+                    : 'text-success'
+                  : part.includes('rule break')
+                    ? 'text-danger'
+                    : undefined
+              }
+            >
+              {i > 0 ? ' · ' : ''}
+              {part}
+            </span>
+          ))}
           {current?.fellBackFrom
             ? ` · ran ${SOLVER_LABELS[current.solver].name} instead of ${SOLVER_LABELS[current.fellBackFrom.solver].name}`
             : ''}
         </p>
       ) : null}
-      {choice?.kind === 'grid' ? (
+      {choice?.kind === 'grid' && batch.saved === undefined ? (
         <p data-testid="grid-is-best" className="mt-1 text-xs font-medium text-success">
           {choice.tie
-            ? `The schedule on the grid already scores as well as the best variation (${choice.gridScore.toLocaleString()}).`
-            : `The schedule on the grid scores ${choice.gridScore.toLocaleString()}, better than every variation (best ${choice.bestScore.toLocaleString()}). Keeping it is the strongest choice.`}
+            ? 'The schedule on the grid is already as good as the best variation.'
+            : 'The schedule on the grid is better balanced than every variation — keep it.'}
         </p>
       ) : null}
       {error !== undefined ? (

@@ -1,7 +1,7 @@
 /** Pay rates: per nurse or per role, each effective from a date. */
 
 import type { Id, IsoDate, Nurse, NurseRole, PayRate } from '@shiftnurse/core';
-import { NURSE_ROLES } from '@shiftnurse/core';
+import { NURSE_ROLES, today } from '@shiftnurse/core';
 import { useState } from 'react';
 import {
   useCreatePayRate,
@@ -40,6 +40,8 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
   const [error, setError] = useState<string | undefined>(undefined);
   const [editingId, setEditingId] = useState<Id | undefined>(undefined);
   const [editHourly, setEditHourly] = useState('');
+  const [search, setSearch] = useState('');
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
 
   if (ratesQuery.isPending) return <AsyncState status="loading" label="Loading pay rates" />;
   if (ratesQuery.isError) {
@@ -56,6 +58,33 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
     const bScope = b.nurseId === null ? `0:${b.role}` : `1:${describeScope(b, nursesById)}`;
     return aScope.localeCompare(bScope) || b.effectiveFrom.localeCompare(a.effectiveFrom);
   });
+  // One line per role default or nurse: the rate in force today and any raise still to come.
+  // Older rates still price older shifts, so they stay — folded behind "+N earlier".
+  const now = today();
+  const needle = search.trim().toLowerCase();
+  const visible: {
+    rate: (typeof sorted)[number];
+    earlier: number;
+    history: boolean;
+    scope: string;
+  }[] = [];
+  const scopes = new Map<string, typeof sorted>();
+  for (const rate of sorted) {
+    const scope = describeScope(rate, nursesById);
+    if (needle && !scope.toLowerCase().includes(needle)) continue;
+    scopes.set(scope, [...(scopes.get(scope) ?? []), rate]);
+  }
+  for (const [scope, rates] of scopes) {
+    const currentIdx = rates.findIndex((r) => r.effectiveFrom <= now);
+    const cut = currentIdx === -1 ? rates.length : currentIdx + 1;
+    const older = rates.slice(cut);
+    for (const [i, rate] of rates.slice(0, cut).entries()) {
+      visible.push({ rate, earlier: i === cut - 1 ? older.length : 0, history: false, scope });
+    }
+    if (expanded.has(scope)) {
+      for (const rate of older) visible.push({ rate, earlier: 0, history: true, scope });
+    }
+  }
 
   return (
     <section className="mb-8">
@@ -145,6 +174,14 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
         {error !== undefined ? <span className="text-xs text-danger">{error}</span> : null}
       </form>
 
+      <input
+        type="search"
+        aria-label="Find a rate by nurse or role"
+        placeholder="Find a nurse or role…"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        className={`${INPUT} mb-2 w-72`}
+      />
       <div className="overflow-x-auto rounded-md border border-border bg-surface">
         <table
           className="w-full min-w-[520px] border-collapse text-sm"
@@ -174,9 +211,35 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
                 </td>
               </tr>
             ) : (
-              sorted.map((rate) => (
-                <tr key={rate.id} className="border-b border-border last:border-0">
-                  <td className={TD}>{describeScope(rate, nursesById)}</td>
+              visible.map(({ rate, earlier, history, scope }) => (
+                <tr
+                  key={rate.id}
+                  className={`border-b border-border last:border-0 ${history ? 'bg-bg text-text-muted' : ''}`}
+                >
+                  <td className={TD}>
+                    {history ? <span className="pl-4 text-xs">earlier rate</span> : scope}
+                    {rate.effectiveFrom > now ? (
+                      <span className="ml-2 rounded-full bg-accent/15 px-1.5 py-0.5 text-xs text-accent">
+                        upcoming
+                      </span>
+                    ) : null}
+                    {earlier > 0 ? (
+                      <button
+                        type="button"
+                        className="ml-2 text-xs text-accent underline underline-offset-2"
+                        onClick={() =>
+                          setExpanded((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(scope)) next.delete(scope);
+                            else next.add(scope);
+                            return next;
+                          })
+                        }
+                      >
+                        {expanded.has(scope) ? 'hide earlier' : `+${earlier} earlier`}
+                      </button>
+                    ) : null}
+                  </td>
                   <td className={TD}>
                     {editingId === rate.id ? (
                       <input

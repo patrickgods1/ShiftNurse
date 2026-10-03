@@ -11,9 +11,15 @@
  *
  * A request carries the hours it pays (`TimeOffRequest.paidHours`) — the shifts the nurse would
  * have worked, not every calendar day it covers — because leave is approved before the
- * schedule exists and nothing else knows which of those days were workdays. The credit is
- * spread evenly over the request's days, which is what splits a request across two pay
- * periods.
+ * schedule exists and nothing else knows which of those days were workdays. The credit is cut
+ * into whole shifts of the unit's lengths and the shifts are spaced evenly over the request's
+ * days, which is what splits a request across two pay periods.
+ *
+ * Whole shifts, because payroll charges leave a shift at a time and because a credit has to be
+ * something the nurse's own shifts can top up to the contract. Spread by the day, a week off
+ * paid at 36 hours that began on a pay period's last Saturday put 5.1h in that period and 30.9h
+ * in the next: targets of 66.9h and 41.1h, which no run of 12-hour shifts can meet, so an
+ * approved, paid week off left the nurse "short" in both.
  */
 
 import type { Id, TimeOffRequest, TimeOffType } from '../domain/entities.js';
@@ -36,17 +42,51 @@ export interface PaidLeaveCredit {
 /** Leave types that are normally paid, and so default to paid hours. */
 export const PAID_LEAVE_TYPES: readonly TimeOffType[] = ['pto', 'sick', 'bereavement', 'education'];
 
-/** Every approved request's paid hours, spread over its days, plus each paid sick call. */
+const EPSILON = 1e-9;
+
+/**
+ * `hours` as whole shifts, longest first, with what is left (less than the shortest shift) as one
+ * last part shift: 36 of 12s is three 12s; 20 of 12s and 8s is a 12 and an 8.
+ */
+function asShifts(hours: number, shiftHours: readonly number[]): number[] {
+  const lengths = [...new Set(shiftHours.filter((h) => h > 0))].sort((a, b) => b - a);
+  const shifts: number[] = [];
+  let left = hours;
+  while (left > EPSILON) {
+    const fits = lengths.find((h) => h <= left + EPSILON);
+    if (fits === undefined) {
+      shifts.push(left);
+      break;
+    }
+    shifts.push(fits);
+    left -= fits;
+  }
+  return shifts;
+}
+
+/**
+ * Every approved request's paid hours as whole shifts over its days, plus each paid sick call.
+ * `shiftHours` are the unit's shift lengths; with none, a request is one credit mid-request.
+ */
 export function paidLeaveCredits(
   timeOff: readonly TimeOffRequest[],
   sickCalls: readonly PaidSickCall[] = [],
+  shiftHours: readonly number[] = [],
 ): PaidLeaveCredit[] {
   const credits: PaidLeaveCredit[] = [];
   for (const request of timeOff) {
     if (request.status !== 'approved' || !request.paidHours || request.paidHours <= 0) continue;
     const dates = datesInRange(request.startDate, request.endDate);
-    const perDay = request.paidHours / dates.length;
-    for (const date of dates) credits.push({ nurseId: request.nurseId, date, hours: perDay });
+    const shifts = asShifts(request.paidHours, shiftHours);
+    // Shift i sits at the middle of its share of the days: three shifts over seven days land on
+    // the 2nd, 4th and 6th, never bunched at either end of the request.
+    shifts.forEach((hours, i) => {
+      const day = Math.min(
+        dates.length - 1,
+        Math.floor(((i + 0.5) * dates.length) / shifts.length),
+      );
+      credits.push({ nurseId: request.nurseId, date: dates[day]!, hours });
+    });
   }
   for (const call of sickCalls) {
     if (call.hours > 0) credits.push({ nurseId: call.nurseId, date: call.date, hours: call.hours });

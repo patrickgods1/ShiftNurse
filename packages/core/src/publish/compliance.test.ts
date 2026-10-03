@@ -57,7 +57,7 @@ describe('complianceAlerts', () => {
       assignmentIds: ['on-expiry', 'after'],
     });
     expect(alerts[0]!.message).toContain('ACLS');
-    expect(alerts[0]!.message).toContain('2026-01-10');
+    expect(alerts[0]!.message).toContain('expires Sat Jan 10');
   });
 
   it('only warns when a credential expires in the period but the nurse has no shifts after it', () => {
@@ -178,7 +178,7 @@ describe('complianceAlerts', () => {
     });
     const over = overtime(extra, { payPeriodOvertime });
     expect(over).toMatchObject([{ nurseId: 'n1', date: '2026-01-04', hours: 92 }]);
-    expect(over[0]!.message).toMatch(/12h overtime in the pay period from 2026-01-04/);
+    expect(over[0]!.message).toMatch(/12h overtime in the pay period from Sun Jan 4/);
   });
 
   it('marks a night staffed exactly at the patient ratio as ratio-risk: one call-off breaches it', () => {

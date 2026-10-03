@@ -29,6 +29,7 @@ import {
   publishPeriod,
   replaceAssignments,
   setLocked,
+  setRequestsCloseOn,
   updateAssignment,
   updatePeriodStatus,
 } from './schedule.js';
@@ -154,6 +155,17 @@ describe('periods', () => {
 
     expect(getPeriod(handle.db, period.id)?.name).toBe('Pay Period 3');
     expect(getCurrentDraft(handle.db, unitId)?.id).toBe(period.id);
+  });
+
+  it('records when time-off requests close for a period, and can clear it again', () => {
+    const period = createPeriod(handle.db, basePeriod({}), ACTOR);
+    expect(getPeriod(handle.db, period.id)?.requestsCloseOn).toBeUndefined();
+    setRequestsCloseOn(handle.db, period.id, isoDate('2026-01-01'), ACTOR);
+    expect(getPeriod(handle.db, period.id)?.requestsCloseOn).toBe('2026-01-01');
+    setRequestsCloseOn(handle.db, period.id, undefined, ACTOR);
+    expect(getPeriod(handle.db, period.id)?.requestsCloseOn).toBeUndefined();
+    const audit = auditHistoryFor(handle.db, 'schedule_period', period.id);
+    expect(audit.filter((a) => a.action === 'update')).toHaveLength(2);
   });
 
   it('lists periods for a unit newest-first', () => {

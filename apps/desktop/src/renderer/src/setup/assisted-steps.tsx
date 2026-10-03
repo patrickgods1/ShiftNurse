@@ -10,6 +10,7 @@ import {
   type AcuityPresetId,
   acuityPresetForUnitType,
   type NurseRole,
+  type SetupPreset,
   type SetupPresetResult,
   type SetupStepId,
   SHIFT_PATTERNS,
@@ -17,7 +18,7 @@ import {
   today,
   usFederalHolidays,
 } from '@shiftnurse/core';
-import { type ReactNode, useState } from 'react';
+import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from 'react';
 import { useNurses } from '../api.js';
 import {
   useAcuityTiers,
@@ -55,17 +56,30 @@ function PresetCard({
   title,
   children,
   applyLabel,
-  onApply,
+  preset,
   disabled = false,
 }: {
   title: string;
   children?: ReactNode;
   applyLabel: string;
-  onApply: (apply: ReturnType<typeof useApplyPreset>) => void;
+  preset: () => SetupPreset;
   disabled?: boolean;
 }) {
   const unit = useUnit();
   const apply = useApplyPreset(unit.id);
+  const onApply = () => apply.mutate(preset());
+  // Offered to the guide's Continue: on a step still empty, Continue applies this preset.
+  const register = useContext(PresetRegistry);
+  const latest = useRef({ preset, disabled, applyLabel, mutateAsync: apply.mutateAsync });
+  latest.current = { preset, disabled, applyLabel, mutateAsync: apply.mutateAsync };
+  useEffect(() => {
+    register?.({
+      label: () => latest.current.applyLabel,
+      disabled: () => latest.current.disabled,
+      run: () => latest.current.mutateAsync(latest.current.preset()),
+    });
+    return () => register?.(undefined);
+  }, [register]);
   return (
     <section
       className="flex flex-col gap-3 rounded-md border border-accent/40 bg-surface p-4"
@@ -78,7 +92,7 @@ function PresetCard({
           type="button"
           className={PRIMARY}
           disabled={disabled || apply.isPending}
-          onClick={() => onApply(apply)}
+          onClick={onApply}
         >
           {apply.isPending ? 'Applying…' : applyLabel}
         </button>
@@ -104,7 +118,7 @@ function ShiftTypesStep() {
       <PresetCard
         title="Start from a common shift pattern"
         applyLabel="Add these shifts"
-        onApply={(apply) => apply.mutate({ kind: 'shift-pattern', pattern })}
+        preset={() => ({ kind: 'shift-pattern', pattern })}
       >
         <fieldset className="flex flex-col gap-2">
           <legend className="sr-only">Shift pattern</legend>
@@ -155,13 +169,11 @@ function CoverageStep() {
         title="Set the same minimum on every shift, every day"
         applyLabel="Set these floors"
         disabled={chosen.length === 0 || !valid}
-        onApply={(apply) =>
-          apply.mutate({
-            kind: 'coverage',
-            shiftTypeIds: chosen.map((s) => s.id),
-            counts: parsed,
-          })
-        }
+        preset={() => ({
+          kind: 'coverage',
+          shiftTypeIds: chosen.map((s) => s.id),
+          counts: parsed,
+        })}
       >
         {staffed.length === 0 ? (
           <p className="text-sm text-text-muted">
@@ -224,7 +236,7 @@ function AcuityStep() {
       <PresetCard
         title="Start from typical ratios for your kind of unit"
         applyLabel="Add these tiers and ratios"
-        onApply={(apply) => apply.mutate({ kind: 'acuity', preset: presetId })}
+        preset={() => ({ kind: 'acuity', preset: presetId })}
       >
         <label className={LABEL}>
           Unit type
@@ -270,7 +282,7 @@ function HolidaysStep() {
       <PresetCard
         title="Add the US federal holidays"
         applyLabel={`Add holidays for ${years.join(' and ')}`}
-        onApply={(apply) => apply.mutate({ kind: 'holidays', years })}
+        preset={() => ({ kind: 'holidays', years })}
       >
         <p className="text-sm text-text">
           {usFederalHolidays(year)
@@ -295,7 +307,7 @@ function RulesStep() {
       <PresetCard
         title="Use the recommended contract rules"
         applyLabel="Use recommended rules"
-        onApply={(apply) => apply.mutate({ kind: 'rules' })}
+        preset={() => ({ kind: 'rules' })}
       >
         <p className="text-sm text-text">
           Rest between shifts, consecutive-shift limits, weekly hours, coverage and charge-nurse
@@ -320,7 +332,7 @@ function PayStep() {
         title="Base hourly rates by role"
         applyLabel="Save base rates"
         disabled={!valid}
-        onApply={(apply) => apply.mutate({ kind: 'base-rates', rates: parsed })}
+        preset={() => ({ kind: 'base-rates', rates: parsed })}
       >
         <div className="flex gap-3">
           {ROLES.map((role) => (
@@ -388,21 +400,61 @@ function RosterStep() {
   );
 }
 
-function FinishStep({ skipped }: { skipped: readonly SetupStepId[] }) {
-  const unit = useUnit();
-  const counts: SetupCounts = {
-    shiftTypes: (useShiftTypesList(unit.id).data ?? []).filter((s) => s.active).length,
-    coverage: (useCoverage(unit.id).data ?? []).length,
-    acuityTiers: (useAcuityTiers(unit.id).data ?? []).length,
-    ratioRules: (useRatioRules(unit.id).data ?? []).filter((r) => r.active).length,
-    holidays: (useHolidays(unit.id).data ?? []).length,
-    roleRates: (usePayRates(unit.id).data ?? []).filter((r) => r.nurseId === null).length,
-    nurses: (useNurses(unit.id).data ?? []).filter((n) => n.active).length,
+/** What each step has set up so far, read from the same data its editor shows. */
+export function useSetupCounts(unitId: string): SetupCounts {
+  return {
+    shiftTypes: (useShiftTypesList(unitId).data ?? []).filter((s) => s.active).length,
+    coverage: (useCoverage(unitId).data ?? []).length,
+    acuityTiers: (useAcuityTiers(unitId).data ?? []).length,
+    ratioRules: (useRatioRules(unitId).data ?? []).filter((r) => r.active).length,
+    holidays: (useHolidays(unitId).data ?? []).length,
+    roleRates: (usePayRates(unitId).data ?? []).filter((r) => r.nurseId === null).length,
+    nurses: (useNurses(unitId).data ?? []).filter((n) => n.active).length,
   };
+}
+
+/** A step's starting point, offered to the guide's Continue button. */
+export interface RegisteredPreset {
+  label: () => string;
+  disabled: () => boolean;
+  run: () => Promise<unknown>;
+}
+
+/** Steps register their preset here so Continue can apply it on a step left empty. */
+export const PresetRegistry = createContext<
+  ((preset: RegisteredPreset | undefined) => void) | undefined
+>(undefined);
+
+/** What a unit must have before Generate can build anything. */
+const NEEDED_TO_SCHEDULE: readonly (keyof typeof STEP_HOME)[] = [
+  'shift-types',
+  'coverage',
+  'roster',
+];
+
+function FinishStep({
+  skipped,
+  onGoTo,
+}: {
+  skipped: readonly SetupStepId[];
+  onGoTo: (step: SetupStepId) => void;
+}) {
+  const unit = useUnit();
+  const counts = useSetupCounts(unit.id);
   const steps = Object.keys(STEP_HOME) as (keyof typeof STEP_HOME)[];
+  const missing = NEEDED_TO_SCHEDULE.filter((s) => stepStatus(s, counts, skipped) !== 'done');
   return (
     <section className="rounded-md border border-border bg-surface p-4" data-testid="setup-summary">
-      <h2 className="mb-3 text-sm font-semibold text-text">{unit.name} is ready</h2>
+      <h2 className="mb-1 text-sm font-semibold text-text">
+        {missing.length === 0
+          ? `${unit.name} is ready to schedule`
+          : `${unit.name} needs ${missing.length} more thing${missing.length === 1 ? '' : 's'} before you can schedule`}
+      </h2>
+      <p className="mb-3 text-xs text-text-muted">
+        {missing.length === 0
+          ? 'Anything left for later can be set up any time; the Dashboard lists it.'
+          : `Still needed: ${missing.map((s) => STEP_TITLES[s].toLowerCase()).join(', ')}. You can open ShiftNurse now and finish them later — the Dashboard will list them.`}
+      </p>
       <ul className="flex flex-col gap-2 text-sm">
         {steps.map((step) => {
           const status = stepStatus(step, counts, skipped);
@@ -417,8 +469,17 @@ function FinishStep({ skipped }: { skipped: readonly SetupStepId[] }) {
                   ? step === 'rules'
                     ? 'in force'
                     : 'set up'
-                  : `${status === 'skipped' ? 'left for later' : 'not set up yet'}, in ${STEP_HOME[step]}`}
+                  : `${status === 'skipped' ? 'left for later' : 'not set up yet'} — later in ${STEP_HOME[step]}`}
               </span>
+              {status !== 'done' ? (
+                <button
+                  type="button"
+                  className="text-xs text-accent underline underline-offset-2"
+                  onClick={() => onGoTo(step)}
+                >
+                  Set it up now
+                </button>
+              ) : null}
             </li>
           );
         })}
@@ -434,9 +495,11 @@ function FinishStep({ skipped }: { skipped: readonly SetupStepId[] }) {
 export function StepBody({
   step,
   skipped,
+  onGoTo,
 }: {
   step: SetupStepId;
   skipped: readonly SetupStepId[];
+  onGoTo: (step: SetupStepId) => void;
 }) {
   switch (step) {
     case 'shift-types':
@@ -454,6 +517,6 @@ export function StepBody({
     case 'roster':
       return <RosterStep />;
     case 'finish':
-      return <FinishStep skipped={skipped} />;
+      return <FinishStep skipped={skipped} onGoTo={onGoTo} />;
   }
 }

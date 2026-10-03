@@ -24,6 +24,8 @@ interface AssignmentChipProps {
   onDelete: (assignment: Assignment) => void;
   /** In the grid's active cell: only then is the chip a tab stop (see `grid.tsx`). */
   tabbable?: boolean;
+  /** "Goes against Tyler Clark's request: avoids Night 12 (strong)", when it does. */
+  preferenceNote?: string | undefined;
 }
 
 export const AssignmentChip = memo(function AssignmentChip({
@@ -36,6 +38,7 @@ export const AssignmentChip = memo(function AssignmentChip({
   onOpen,
   onDelete,
   tabbable = true,
+  preferenceNote,
 }: AssignmentChipProps) {
   const optimistic = pending || isPendingId(assignment.id);
   const interactive = !readOnly && !optimistic;
@@ -48,6 +51,7 @@ export const AssignmentChip = memo(function AssignmentChip({
   if (assignment.isLocked) titleParts.push('Locked');
   if (highlighted) titleParts.push('Differs from the draft');
   if (violations.length > 0) titleParts.push(...violations.map((v) => v.message));
+  if (preferenceNote) titleParts.push(preferenceNote);
   const title =
     titleParts.length > 0
       ? titleParts.join('\n')
@@ -65,7 +69,7 @@ export const AssignmentChip = memo(function AssignmentChip({
         assignment.isLocked ? ', locked' : ''
       }${assignment.isCharge ? ', charge nurse' : ''}${hard ? ', hard violation' : soft ? ', soft violation' : ''}${
         highlighted ? ', differs from the draft' : ''
-      }`}
+      }${preferenceNote ? ', against a stated preference' : ''}`}
       onDragStart={(event) => {
         if (!draggable) {
           event.preventDefault();
@@ -102,6 +106,14 @@ export const AssignmentChip = memo(function AssignmentChip({
       {assignment.isCharge ? (
         <span className="absolute -bottom-1 -right-1 rounded-full bg-surface px-1 text-[9px] font-bold text-text">
           C
+        </span>
+      ) : null}
+      {preferenceNote ? (
+        <span
+          aria-hidden
+          className="absolute -left-1 -top-1 rounded-full bg-surface px-0.5 text-[9px] leading-none text-warn"
+        >
+          ♡
         </span>
       ) : null}
       {hard || soft ? (

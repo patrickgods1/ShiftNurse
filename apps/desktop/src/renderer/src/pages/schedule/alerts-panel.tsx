@@ -4,22 +4,56 @@
  * exactly at their floor. None of these is a rule violation today, which is exactly why they
  * need their own readout: the violation summary would say "0 hard" and the unit would find
  * out on the day.
+ *
+ * Grouped by kind, critical first. A tight unit has a shift at exactly its ratio most days, and
+ * as a flat list those dozens of "one call-off breaches it" lines buried the two credentials
+ * that actually lapse mid-schedule. So each kind is a heading with a count, the ones that need
+ * action open by default, and the routine ones (ratio slack) folded until asked for.
  */
 
-import type { ComplianceAlert } from '@shiftnurse/core';
+import type { ComplianceAlert, ComplianceAlertKind } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useAlerts } from '../../api-publish.js';
 import { errorMessage } from '../../components/ui.js';
+import { formatDateWithWeekday } from '../../format.js';
 import { PreviewTag } from './preview-tag.js';
 
 interface AlertsPanelProps {
   periodId: string;
   /** While a Generate variation is previewed: its alerts, judged by main, and its name. */
   preview?: { alerts: readonly ComplianceAlert[]; label: string } | undefined;
+  /** Scroll the grid to a day, from an alert that names one. */
+  onShowDate?: (date: string) => void;
+  /** Already published: the critical ones are to act on now, not "before publishing". */
+  published?: boolean;
 }
 
-export function AlertsPanel({ periodId, preview }: AlertsPanelProps) {
+const KINDS: { kind: ComplianceAlertKind; title: string; hint: string }[] = [
+  {
+    kind: 'credential_expiry',
+    title: 'Credentials expiring',
+    hint: 'Renew them, or move the shifts after the expiry date.',
+  },
+  {
+    kind: 'overtime',
+    title: 'Overtime',
+    hint: 'Weeks where a nurse goes past the overtime threshold.',
+  },
+  {
+    kind: 'hours_drift',
+    title: 'Hours off contract',
+    hint: 'Nurses scheduled noticeably over or under their contracted hours.',
+  },
+  {
+    kind: 'ratio_risk',
+    title: 'No slack on the ratio',
+    hint: 'Shifts staffed exactly at the patient ratio: one call-off breaks it. Routine on a tight unit.',
+  },
+];
+
+export function AlertsPanel({ periodId, preview, onShowDate, published }: AlertsPanelProps) {
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState<ReadonlySet<ComplianceAlertKind>>(new Set());
   // The draft's alerts are not asked for while a variation stands in for it.
   const alertsQuery = useAlerts(preview ? undefined : periodId);
   const alerts = preview ? preview.alerts : (alertsQuery.data ?? []);
@@ -39,6 +73,15 @@ export function AlertsPanel({ periodId, preview }: AlertsPanelProps) {
   if ((!preview && alertsQuery.isPending) || alerts.length === 0) return null;
   const critical = alerts.filter((a) => a.severity === 'critical').length;
   const tone = critical > 0 ? 'text-danger' : 'text-warn';
+  const groups = KINDS.map((k) => ({ ...k, items: alerts.filter((a) => a.kind === k.kind) }))
+    .filter((g) => g.items.length > 0)
+    // Anything critical first, then in the order above.
+    .sort(
+      (a, b) =>
+        Number(b.items.some((i) => i.severity === 'critical')) -
+        Number(a.items.some((i) => i.severity === 'critical')),
+    );
+  const summary = groups.map((g) => `${g.items.length} ${g.title.toLowerCase()}`).join(' · ');
 
   return (
     <div
@@ -48,30 +91,76 @@ export function AlertsPanel({ periodId, preview }: AlertsPanelProps) {
       <div className="flex items-center justify-between gap-3">
         <p className={`font-medium ${tone}`}>
           <PreviewTag label={preview?.label} />
-          {alerts.length} compliance alert{alerts.length === 1 ? '' : 's'}
-          {critical > 0 ? ` · ${critical} critical` : ''}
+          {critical > 0 ? `${critical} to act on${published ? '' : ' before publishing'} · ` : ''}
+          <span className="font-normal text-text-muted">{summary}</span>
         </p>
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="text-xs text-accent underline underline-offset-2 hover:no-underline"
+          className="shrink-0 text-xs text-accent underline underline-offset-2 hover:no-underline"
         >
           {open ? 'Hide list' : 'Show list'}
         </button>
       </div>
       {open ? (
-        <ul className="mt-2 flex max-h-48 flex-col gap-1 overflow-y-auto border-t border-border pt-2">
-          {alerts.map((alert) => (
-            <li
-              key={`${alert.kind}:${alert.nurseId ?? ''}:${alert.date ?? ''}:${alert.shiftTypeId ?? ''}`}
-              className={`text-xs ${alert.severity === 'critical' ? 'text-danger' : 'text-warn'}`}
-            >
-              <span className="font-medium capitalize">{alert.kind.replace('_', ' ')}</span>
-              {' — '}
-              {alert.message}
-            </li>
-          ))}
-        </ul>
+        <div className="mt-2 flex max-h-72 flex-col gap-3 overflow-y-auto border-t border-border pt-2">
+          {groups.map((group) => {
+            const hasCritical = group.items.some((i) => i.severity === 'critical');
+            const isOpen = expanded.has(group.kind) || group.kind !== 'ratio_risk';
+            return (
+              <section key={group.kind} data-testid={`alerts-${group.kind}`}>
+                <div className="flex items-baseline justify-between gap-3">
+                  <h3
+                    className={`text-xs font-semibold ${hasCritical ? 'text-danger' : 'text-text'}`}
+                  >
+                    {group.title} ({group.items.length})
+                  </h3>
+                  {group.kind === 'ratio_risk' ? (
+                    <button
+                      type="button"
+                      className="text-xs text-accent underline underline-offset-2"
+                      onClick={() =>
+                        setExpanded((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(group.kind)) next.delete(group.kind);
+                          else next.add(group.kind);
+                          return next;
+                        })
+                      }
+                    >
+                      {isOpen ? 'Fold' : 'Show each shift'}
+                    </button>
+                  ) : null}
+                </div>
+                <p className="text-xs text-text-muted">{group.hint}</p>
+                {isOpen ? (
+                  <ul className="mt-1 flex flex-col gap-1">
+                    {group.items.map((alert) => (
+                      <li
+                        key={`${alert.kind}:${alert.nurseId ?? ''}:${alert.date ?? ''}:${alert.shiftTypeId ?? ''}:${alert.message}`}
+                        className={`flex items-baseline justify-between gap-3 text-xs ${
+                          alert.severity === 'critical' ? 'text-danger' : 'text-text'
+                        }`}
+                      >
+                        <span>{alert.message}</span>
+                        {alert.date && onShowDate ? (
+                          <button
+                            type="button"
+                            onClick={() => onShowDate(alert.date!)}
+                            className="shrink-0 text-accent underline underline-offset-2"
+                            aria-label={`Show ${formatDateWithWeekday(alert.date)} on the grid`}
+                          >
+                            Show on grid
+                          </button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </section>
+            );
+          })}
+        </div>
       ) : null}
     </div>
   );

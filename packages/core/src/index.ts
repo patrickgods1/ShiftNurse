@@ -32,7 +32,9 @@ export * from './rules/coverage-rules.js';
 export * from './rules/holiday-rotation.js';
 export * from './rules/hours-rules.js';
 export * from './rules/incompatibility-rules.js';
+export * from './rules/night-recovery.js';
 export * from './rules/paid-leave.js';
+export * from './rules/pending-time-off.js';
 export * from './rules/registry.js';
 export * from './rules/rest-rules.js';
 // Rule engine
@@ -45,6 +47,7 @@ export * from './schedule/view.js';
 export * from './setup/index.js';
 // Solver
 export * from './solver/cpsat/index.js';
+export * from './solver/digest.js';
 export * from './solver/hybrid.js';
 export * from './solver/registry.js';
 export { type ScheduleScore, scoreAssignments } from './solver/report.js';

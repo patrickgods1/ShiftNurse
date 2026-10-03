@@ -332,6 +332,11 @@ export interface SchedulePeriod {
   /** Snapshot of the rules in force, so a published schedule stays explainable forever. */
   ruleSetId: Id;
   ruleSetVersion: number;
+  /**
+   * The last day time-off requests for this period are on time. Units close requests a few
+   * weeks before building the schedule; later ones are decided first-come, with a cover plan.
+   */
+  requestsCloseOn?: IsoDate;
 }
 
 export type AssignmentSource = 'solver' | 'manual' | 'resolution' | 'callout';

@@ -124,6 +124,42 @@ app.on('web-contents-created', (_, contents) => {
 });
 
 /**
+ * Generated variations live in memory until one is saved, so quitting throws them away — minutes
+ * of solving the manager may not realise they are leaving behind. Ask first. On Windows closing
+ * the window quits; on macOS it does not (the variations survive a closed window), so there the
+ * question is asked when the app itself quits.
+ */
+function guardUnsavedVariations(win: BrowserWindow, unsaved: () => number): void {
+  let confirmed = false;
+  const keep = (): boolean => {
+    if (confirmed || isSmokeRun()) return false;
+    const count = unsaved();
+    if (count === 0) return false;
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'question',
+      buttons: ['Quit anyway', 'Keep ShiftNurse open'],
+      defaultId: 1,
+      cancelId: 1,
+      message: `${count} generated schedule${count === 1 ? ' is' : 's are'} not saved.`,
+      detail:
+        'Generated variations are kept only while ShiftNurse is open. Save the one you want ' +
+        'to the draft first, or quit and lose them.',
+    });
+    if (choice === 0) confirmed = true;
+    return choice !== 0;
+  };
+  if (process.platform === 'darwin') {
+    app.on('before-quit', (event) => {
+      if (keep()) event.preventDefault();
+    });
+  } else {
+    win.on('close', (event) => {
+      if (keep()) event.preventDefault();
+    });
+  }
+}
+
+/**
  * Open the database, copying it first when an update is about to migrate it. The copy cannot
  * be audited until the schema is current, so its audit row is written after the migration.
  */
@@ -160,6 +196,7 @@ async function start(): Promise<void> {
   // slow disk must not delay the window.
   onQuit.push(startDailyBackups(db, { info: console.log, error: console.error }));
   mainWindow = createWindow();
+  guardUnsavedVariations(mainWindow, () => solverJobs.unsavedVariations());
   if (isSmokeRun()) runSmoke(mainWindow);
   // Deleted backups wait 30 days in the trash; anything past that goes now. Off the startup
   // path like the daily copy: it is disk I/O and audit writes the first paint need not wait for.

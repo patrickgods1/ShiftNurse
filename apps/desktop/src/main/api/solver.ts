@@ -126,8 +126,11 @@ function column(
   score: ScheduleScore,
   budgetDollars: number | undefined,
   shiftsChanged: number,
+  contracted: ReadonlySet<Id>,
 ): ComparisonColumn {
-  const scores = score.fairness.scores;
+  // Per-diem staff have no fair share to fall short of: the least fairly treated nurse is one
+  // with contracted hours, or the column names a per-diem nurse who simply picked up little.
+  const scores = score.fairness.scores.filter((s) => contracted.has(s.nurseId));
   const worst = scores.reduce<(typeof scores)[number] | undefined>(
     (low, s) => (low === undefined || s.score < low.score ? s : low),
     undefined,
@@ -153,6 +156,7 @@ function column(
         }
       : {}),
     shiftsChanged,
+    digest: score.digest,
   };
 }
 
@@ -168,16 +172,19 @@ export function compareCandidates(db: DbLike, jobs: SolverJobs, batchId: Id): Ca
   const input = buildSolveInput(db, status.periodId);
   const draft = input.assignments;
   const budget = getBudget(db, status.periodId)?.targetDollars;
+  const contracted = new Set(
+    input.nurses.filter((n) => n.contractedHoursPerPeriod > 0).map((n) => n.id),
+  );
   const size = (a: SolveReport['assignments']) => {
     const d = diffAssignments(draft, a);
     return d.added + d.removed + d.changed;
   };
   return {
     batchId,
-    draft: column(scoreAssignments(input, draft), budget, 0),
+    draft: column(scoreAssignments(input, draft), budget, 0, contracted),
     candidates: candidates.map(({ index, report }) => {
       return {
-        ...column(report, budget, size(report.assignments)),
+        ...column(report, budget, size(report.assignments), contracted),
         index,
         seed: report.stats.seed,
         solver: report.stats.solver,

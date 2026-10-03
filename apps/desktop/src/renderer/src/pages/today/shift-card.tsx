@@ -32,8 +32,12 @@ function StaffingRow({ role }: { role: RoleStaffing }) {
       <td className="px-3 py-1.5">
         {role.role}
         {role.bindingConstraint === 'ratio' || role.bindingConstraint === 'both' ? (
-          <span className="ml-2 rounded bg-danger/15 px-1.5 py-0.5 text-xs font-semibold uppercase text-danger">
-            ratio
+          // Not a problem: it says the patient ratio, not the floor, sets this number.
+          <span
+            title="The patient ratio sets how many are required on this shift"
+            className="ml-2 rounded bg-bg px-1.5 py-0.5 text-xs text-text-muted"
+          >
+            set by ratio
           </span>
         ) : null}
       </td>
@@ -89,9 +93,13 @@ export function ShiftCard({ unitId, shift }: { unitId: Id; shift: TodayShiftView
             </tr>
           </thead>
           <tbody>
-            {Object.values(shift.staffing.byRole).map((role) => (
-              <StaffingRow key={role.role} role={role} />
-            ))}
+            {Object.values(shift.staffing.byRole)
+              // A role the unit neither needs nor has on the shift (LPNs on an RN-and-CNA unit)
+              // is a row of zeros that only looks like something to check.
+              .filter((role) => role.required > 0 || role.staffed > 0)
+              .map((role) => (
+                <StaffingRow key={role.role} role={role} />
+              ))}
           </tbody>
         </table>
       </div>

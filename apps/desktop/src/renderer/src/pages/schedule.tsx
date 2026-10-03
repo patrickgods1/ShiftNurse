@@ -10,9 +10,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { usePeriods } from '../api.js';
 import { AsyncState } from '../components/async-state.js';
 import { PageHeader } from '../components/page-header.js';
+import { PeriodOptions } from '../components/period-options.js';
 import { PRIMARY } from '../components/ui.js';
 import { defaultPeriod } from '../default-period.js';
-import { formatDate } from '../format.js';
 import { useUnitId } from '../unit-context.js';
 import { ScheduleBoard } from './schedule/board.js';
 import { NewPeriodDialog } from './schedule/new-period-dialog.js';
@@ -74,11 +74,7 @@ export default function SchedulePage() {
               onChange={(e) => setSelectedId(e.target.value)}
               className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-text"
             >
-              {periods.map((period) => (
-                <option key={period.id} value={period.id}>
-                  {period.name} · {formatDate(period.startDate)} – {formatDate(period.endDate)}
-                </option>
-              ))}
+              <PeriodOptions periods={periods} />
             </select>
             {selected !== undefined ? (
               <span

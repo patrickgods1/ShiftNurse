@@ -26,6 +26,7 @@
 import type { Id, IncompatibilityGroup } from '../domain/entities.js';
 import {
   compareDates,
+  describeDate,
   formatTimeOfDay,
   fromDayNumber,
   type IsoDate,
@@ -321,8 +322,9 @@ function span(startMinute: number, endMinute: number): string {
   const endDay = Math.floor((endMinute - 1) / MINUTES_PER_DAY);
   const from = formatTimeOfDay(startMinute);
   const to = formatTimeOfDay(endMinute);
-  if (startDay === endDay) return `from ${from} to ${to} on ${fromDayNumber(startDay)}`;
-  return `from ${from} on ${fromDayNumber(startDay)} to ${to} on ${fromDayNumber(endDay)}`;
+  if (startDay === endDay)
+    return `from ${from} to ${to} on ${describeDate(fromDayNumber(startDay))}`;
+  return `from ${from} on ${describeDate(fromDayNumber(startDay))} to ${to} on ${describeDate(fromDayNumber(endDay))}`;
 }
 
 /** Groups that apply to any shift dated inside a period — what a period's solve needs. */

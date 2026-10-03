@@ -63,6 +63,7 @@ import type { IsoDate } from '../domain/time.js';
 import type { FairnessReport } from '../fairness/types.js';
 import type { PaidSickCall } from '../rules/paid-leave.js';
 import type { HolidayWorkRecord, RuleSet, Violation } from '../rules/types.js';
+import type { ScheduleDigest } from './digest.js';
 
 // ---------------------------------------------------------------------------
 // Input
@@ -154,6 +155,20 @@ export interface ObjectiveWeights {
    * target, so the rotation gives way before a shift goes short.
    */
   holidayRotation: number;
+  /**
+   * Per day or evening shift a nurse works too soon after nights, while the days-off-after-
+   * nights rule is soft. Counted with preferences: it is about the nurse, not the unit. Below a
+   * holiday breach and an unfilled target, above most single preferences, so the solver keeps a
+   * rotation steady unless that leaves something short.
+   */
+  nightRecovery: number;
+  /**
+   * Per worked shift inside a time-off request still waiting for a decision, while that rule is
+   * soft. Above any single preference (5 × 10) — the nurse has asked for the day, not merely
+   * leaned against it — and far below an hour of contract or a short shift, so a day asked off
+   * gives way before anyone is left short. Counted with preferences.
+   */
+  pendingTimeOff: number;
   /** Per dollar of straight-time cost. */
   cost: number;
 }
@@ -167,6 +182,8 @@ export const DEFAULT_OBJECTIVE_WEIGHTS: ObjectiveWeights = {
   fairness: 30,
   preference: 10,
   holidayRotation: 55,
+  nightRecovery: 45,
+  pendingTimeOff: 80,
   cost: 0.05,
 };
 
@@ -284,6 +301,8 @@ export interface SolveReport {
   softViolations: Violation[];
   objective: ObjectiveBreakdown;
   fairness: FairnessReport;
+  /** The schedule in a manager's terms: nights and weekends spread, quick flips, short hours. */
+  digest: ScheduleDigest;
   /** Present when `SolveInput.cost` was given. */
   cost?: ScheduleCost;
   stats: SolveStats;

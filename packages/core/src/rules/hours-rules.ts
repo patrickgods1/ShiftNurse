@@ -14,6 +14,8 @@ import {
   compareDates,
   dayNumber,
   daysBetween,
+  describeDate,
+  describeDateRange,
   fromDayNumber,
   type IsoDate,
   type Weekday,
@@ -24,8 +26,13 @@ import { leaveHoursBetween } from './paid-leave.js';
 import { isWorked, nurseName, type Rule, type Violation, violation } from './types.js';
 
 /** " plus 12h paid leave", for violation messages; empty when there is none. */
+/** Hours to one decimal place, with no trailing `.0`: "48h", "6.5h". */
+function hoursText(hours: number): string {
+  return `${Math.round(hours * 10) / 10}h`;
+}
+
 function leaveNote(hours: number): string {
-  return hours > 0 ? ` plus ${Math.round(hours * 10) / 10}h paid leave` : '';
+  return hours > 0 ? ` plus ${hoursText(hours)} paid leave` : '';
 }
 
 export interface DateWindow {
@@ -117,7 +124,8 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
   name: 'Contracted hours (FTE)',
   description:
     "Each nurse's scheduled hours must land within tolerance of the hours their FTE entitles them " +
-    'to, per pay period. Reports both shortfalls and overages.',
+    'to, per pay period. Hours past the contract are refused; a shortfall is reported as advice ' +
+    '(soft) unless the rule is set to hard, for contracts that guarantee full hours.',
   severity: 'hard',
   category: 'hours',
   scope: 'nurse',
@@ -212,11 +220,14 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
           violations.push(
             violation(
               contractedHoursRule,
-              'hard',
+              // Advisory: a shortfall is the manager's call (a nurse who asked for fewer
+              // shifts, a unit over-staffed that week). A rule set can make it hard.
+              'soft',
               'under_contracted_hours',
-              `${nurseName(nurse)} is scheduled ${hours}h${leaveNote(paidLeaveHours)} in the pay ` +
-                `period starting ${period.start}, ${Math.abs(delta)}h short of their contracted ` +
-                `${target}h (${nurse.fte} FTE).`,
+              `${nurseName(nurse)} is scheduled ${hoursText(hours)}${leaveNote(paidLeaveHours)} ` +
+                `in the pay period ${describeDateRange(period.start, period.end)}, ` +
+                `${hoursText(Math.abs(delta))} short of their contracted ${hoursText(target)} ` +
+                `(${nurse.fte} FTE).`,
               {
                 nurseIds: [nurse.id],
                 dates: [period.start, period.end],
@@ -237,9 +248,9 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
               contractedHoursRule,
               'hard',
               'over_contracted_hours',
-              `${nurseName(nurse)} is scheduled ${hours}h${leaveNote(paidLeaveHours)} in the pay ` +
-                `period starting ${period.start}, ${delta}h over their contracted ${target}h ` +
-                `(${nurse.fte} FTE).`,
+              `${nurseName(nurse)} is scheduled ${hoursText(hours)}${leaveNote(paidLeaveHours)} ` +
+                `in the pay period ${describeDateRange(period.start, period.end)}, ` +
+                `${hoursText(delta)} over their contracted ${hoursText(target)} (${nurse.fte} FTE).`,
               {
                 nurseIds: [nurse.id],
                 dates: [period.start, period.end],
@@ -321,8 +332,8 @@ export function overtimeThreshold(params: MaxHoursParams): number {
 /** "the week of 2026-01-04" or "the pay period from 2026-01-04", for messages. */
 function windowName(window: DateWindow, params: MaxHoursParams): string {
   return params.overtimeByPayPeriod
-    ? `the pay period from ${window.start}`
-    : `the week of ${window.start}`;
+    ? `the pay period from ${describeDate(window.start)}`
+    : `the week of ${describeDate(window.start)}`;
 }
 
 interface WindowHours {
@@ -480,7 +491,7 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
               maxHoursRule,
               'hard',
               'over_max_hours',
-              `${nurseName(nurse)} is scheduled ${found.hours}h in the week of ${week.start}, ` +
+              `${nurseName(nurse)} is scheduled ${found.hours}h in the week of ${describeDate(week.start)}, ` +
                 `over the ${params.maxHoursPerWeek}h cap.`,
               {
                 nurseIds: [nurse.id],

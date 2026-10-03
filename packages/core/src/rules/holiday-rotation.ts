@@ -22,7 +22,7 @@
  */
 
 import type { Holiday, Id } from '../domain/entities.js';
-import { addDays, compareDates, type IsoDate } from '../domain/time.js';
+import { addDays, compareDates, describeDate, type IsoDate } from '../domain/time.js';
 import type { HolidayWorkRecord, Rule, RuleContext, Violation } from './types.js';
 import { isWorked, nurseName, violation } from './types.js';
 
@@ -245,8 +245,8 @@ export const holidayRotationRule: Rule<HolidayRotationParams> = {
             holidayRotationRule,
             'soft',
             'holiday_rotation',
-            `${nurseName(nurse)} worked ${previous.name} last year (${previous.date}) and is ` +
-              `scheduled on it again on ${holiday.date}. The rotation gives it to someone who ` +
+            `${nurseName(nurse)} worked ${previous.name} last year (${describeDate(previous.date, { year: true })}) and is ` +
+              `scheduled on it again on ${describeDate(holiday.date)}. The rotation gives it to someone who ` +
               'had it off.',
             {
               nurseIds: [nurse.id],
@@ -277,8 +277,8 @@ export const holidayRotationRule: Rule<HolidayRotationParams> = {
             holidayRotationRule,
             'soft',
             'holiday_pair_both',
-            `${nurseName(nurse)} works both ${minor.name} (${minor.date}) and ${major.name} ` +
-              `(${major.date}). Paired holidays go to different people.`,
+            `${nurseName(nurse)} works both ${minor.name} (${describeDate(minor.date)}) and ${major.name} ` +
+              `(${describeDate(major.date)}). Paired holidays go to different people.`,
             {
               nurseIds: [nurse.id],
               dates: [first.date, second.date],

@@ -121,6 +121,67 @@ function CoverageCell({
   );
 }
 
+/**
+ * Most units staff a shift the same every day: set one day, then copy it to the other six rather
+ * than typing fourteen numbers. Copies the first day that has numbers, Sunday first.
+ */
+function FillWeekButton({
+  unitId,
+  shiftTypeId,
+  role,
+  requirements,
+}: {
+  unitId: Id;
+  shiftTypeId: Id;
+  role: NurseRole;
+  requirements: readonly CoverageRequirement[];
+}) {
+  const upsert = useUpsertCoverage();
+  const [busy, setBusy] = useState(false);
+  const source = WEEKDAYS.map((d) => requirements.find((r) => r.weekday === d)).find(Boolean);
+  const allSame =
+    source !== undefined &&
+    WEEKDAYS.every((d) => {
+      const r = requirements.find((x) => x.weekday === d);
+      return r && r.minCount === source.minCount && r.targetCount === source.targetCount;
+    });
+  return (
+    <button
+      type="button"
+      className="whitespace-nowrap text-xs text-accent underline underline-offset-2 disabled:text-text-muted disabled:no-underline"
+      disabled={source === undefined || allSame || busy}
+      title={
+        source === undefined
+          ? 'Fill in one day first'
+          : `Copy ${source.minCount} / ${source.targetCount} to every day`
+      }
+      onClick={async () => {
+        if (!source) return;
+        setBusy(true);
+        try {
+          for (const weekday of WEEKDAYS) {
+            const existing = requirements.find((r) => r.weekday === weekday);
+            await upsert.mutateAsync({
+              id: existing?.id,
+              unitId,
+              shiftTypeId,
+              weekday,
+              date: null,
+              role,
+              minCount: source.minCount,
+              targetCount: source.targetCount,
+            });
+          }
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? 'Copying…' : 'Same all week'}
+    </button>
+  );
+}
+
 function AddRowForm({
   shiftTypes,
   existingKeys,
@@ -359,12 +420,15 @@ export default function CoverageFloors({ unitId, shiftTypes, requirements }: Cov
                   {WEEKDAY_NAMES[weekday]?.slice(0, 3)}
                 </th>
               ))}
+              <th scope="col" className="px-2 py-2">
+                <span className="sr-only">Fill the week</span>
+              </th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-3 py-6 text-center text-text-muted">
+                <td colSpan={10} className="px-3 py-6 text-center text-text-muted">
                   No coverage floors defined yet.
                 </td>
               </tr>
@@ -385,6 +449,8 @@ export default function CoverageFloors({ unitId, shiftTypes, requirements }: Cov
                       return (
                         <td key={weekday} className="px-1 py-1 text-center">
                           <CoverageCell
+                            // Remounts with the saved numbers after "Same all week" fills it.
+                            key={`${requirement?.minCount ?? ''}/${requirement?.targetCount ?? ''}`}
                             unitId={unitId}
                             shiftTypeId={row.shiftTypeId}
                             role={row.role}
@@ -394,6 +460,16 @@ export default function CoverageFloors({ unitId, shiftTypes, requirements }: Cov
                         </td>
                       );
                     })}
+                    <td className="px-2 py-1">
+                      <FillWeekButton
+                        unitId={unitId}
+                        shiftTypeId={row.shiftTypeId}
+                        role={row.role}
+                        requirements={weekdayRequirements.filter(
+                          (r) => r.shiftTypeId === row.shiftTypeId && r.role === row.role,
+                        )}
+                      />
+                    </td>
                   </tr>
                 );
               })

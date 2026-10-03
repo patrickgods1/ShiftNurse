@@ -16,7 +16,7 @@ import { useCancelExchange, useExchangesForPeriod } from '../../api-exchange.js'
 import { AsyncState } from '../../components/async-state.js';
 import { type Column, DataTable } from '../../components/data-table.js';
 import { PRIMARY, SMALL } from '../../components/ui.js';
-import { formatDateWithWeekday } from '../../format.js';
+import { formatDateWithWeekday, periodLabel } from '../../format.js';
 import { nurseLabel } from './decide-dialog.js';
 import { DecideExchangeDialog } from './decide-exchange-dialog.js';
 import { NewExchangeDialog } from './new-exchange-dialog.js';
@@ -91,7 +91,7 @@ export function ExchangePanel({
     <section aria-labelledby="exchange-heading">
       <div className="mb-3 flex items-center justify-between">
         <h2 id="exchange-heading" className="text-sm font-semibold text-text">
-          Exchanges {period ? `· ${period.name}` : ''}
+          Exchanges {period ? `· ${periodLabel(period)}` : ''}
         </h2>
         <button
           type="button"
@@ -113,7 +113,7 @@ export function ExchangePanel({
           columns={columns}
           rows={swapsQuery.data ?? []}
           rowKey={(s) => s.id}
-          emptyLabel="No exchanges recorded for this period yet."
+          emptyLabel="No exchanges yet. An exchange is a nurse trading a shift with a colleague, or giving one away: record it here and ShiftNurse checks it against the rules before you approve it."
         />
       )}
 

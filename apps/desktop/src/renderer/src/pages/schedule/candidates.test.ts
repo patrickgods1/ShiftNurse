@@ -1,6 +1,6 @@
 import type { SolveBatchStatus, SolveRunStatus } from '@shared/api.js';
 import { describe, expect, it } from 'vitest';
-import { bestChoice } from './candidates.js';
+import { bestChoice, digestLine, spread } from './candidates.js';
 
 function run(index: number, objective: number | undefined): SolveRunStatus {
   return {
@@ -13,6 +13,14 @@ function run(index: number, objective: number | undefined): SolveRunStatus {
       : {
           summary: {
             objective,
+            digest: {
+              nights: { min: 0, max: 0 },
+              weekends: { min: 0, max: 0 },
+              quickFlips: 0,
+              nursesUnderContract: 0,
+              againstPreference: 0,
+              onDaysAskedOff: 0,
+            },
             floorsShort: 0,
             unfilledSlots: 0,
             hardViolations: 0,
@@ -74,5 +82,58 @@ describe('which schedule to keep', () => {
 
   it('recommends nothing when no variation finished', () => {
     expect(bestChoice(batch([undefined, undefined]))).toBeUndefined();
+  });
+});
+
+describe('a variation in a manager’s words', () => {
+  const digest = {
+    nights: { min: 2, max: 9 },
+    weekends: { min: 1, max: 3 },
+    quickFlips: 0,
+    nursesUnderContract: 1,
+    againstPreference: 4,
+    onDaysAskedOff: 0,
+  };
+
+  it('writes a spread as fewest to most, and a single number when everyone has the same', () => {
+    expect(spread({ min: 2, max: 9 })).toBe('2–9');
+    expect(spread({ min: 3, max: 3 })).toBe('3');
+  });
+
+  it('says what a manager checks first: gaps, nights, flips, short hours and cost', () => {
+    expect(digestLine({ floorsShort: 0, hardViolations: 0, digest, costTotal: 421_449.4 })).toEqual(
+      [
+        'Every shift staffed',
+        'nights 2–9 per nurse',
+        'weekends 1–3',
+        'no quick night-to-day flips',
+        '4 shifts against preferences',
+        '1 nurse under contract',
+        '$421,449',
+      ],
+    );
+  });
+
+  it('says when a variation could not keep someone off a day they asked for', () => {
+    expect(
+      digestLine({ floorsShort: 0, hardViolations: 0, digest: { ...digest, onDaysAskedOff: 2 } }),
+    ).toContain('2 shifts on days asked off');
+  });
+
+  it('puts gaps and rule breaks first when there are any', () => {
+    expect(
+      digestLine({
+        floorsShort: 2,
+        hardViolations: 1,
+        digest: { ...digest, quickFlips: 3, nursesUnderContract: 0 },
+      }),
+    ).toEqual([
+      '2 short shifts',
+      '1 rule break to fix',
+      'nights 2–9 per nurse',
+      'weekends 1–3',
+      '3 quick night-to-day flips',
+      '4 shifts against preferences',
+    ]);
   });
 });

@@ -173,7 +173,12 @@ export default function DemandPage() {
       ) : (
         <>
           <section className="mb-8">
-            <h2 className="mb-2 text-sm font-semibold text-text">Census</h2>
+            <h2 className="text-sm font-semibold text-text">Census</h2>
+            <p className="mb-2 flex items-center gap-1.5 text-xs text-text-muted">
+              Patients expected on each shift. Click a number to change it.
+              <span aria-hidden className="ml-2 inline-block h-1.5 w-1.5 rounded-full bg-accent" />
+              forecast from history, not yet entered by hand
+            </p>
             <CensusGrid
               unitId={unitId}
               dates={dates}

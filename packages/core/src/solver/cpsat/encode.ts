@@ -42,6 +42,8 @@ import { encodeConsecutive } from './rules/consecutive.js';
 import { encodeCoverage, encodeRatio } from './rules/coverage.js';
 import { encodeHolidayRotation } from './rules/holidays.js';
 import { encodeContractCap, encodeWeeklyHours } from './rules/hours.js';
+import { encodePendingTimeOff } from './rules/pending.js';
+import { encodeNightRecovery } from './rules/recovery.js';
 import { encodeOverlap, encodeRest } from './rules/rest.js';
 
 export type { ShiftVar } from './context.js';
@@ -64,6 +66,10 @@ export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'
   'incompatible-staff-cap': 'by-construction',
   // Priced in the objective while soft (`holidayTerms`); forbidden outright when hard.
   'holiday-rotation': encodeHolidayRotation,
+  // Priced in the objective while soft (`nightRecoveryTerms`); forbidden pairs when hard.
+  'recovery-after-nights': encodeNightRecovery,
+  // Priced per shift while soft (`perShiftTerms`); those shifts forbidden when hard.
+  'avoid-pending-time-off': encodePendingTimeOff,
 };
 
 export interface EncodeOptions {

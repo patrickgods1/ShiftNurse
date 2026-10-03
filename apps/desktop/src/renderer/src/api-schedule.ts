@@ -69,6 +69,16 @@ export function useMoveAssignment(periodId: Id | undefined, unitId: Id | undefin
   });
 }
 
+/** Two nurses trade shifts in one step (main runs both moves in one transaction). */
+export function useSwapAssignments(periodId: Id | undefined, unitId: Id | undefined) {
+  const invalidate = useInvalidateSchedule(periodId, unitId);
+  return useMutation({
+    mutationFn: ({ firstId, secondId, reason }: { firstId: Id; secondId: Id } & WithReason) =>
+      api.schedule.swapAssignments(firstId, secondId, reason),
+    onSettled: invalidate,
+  });
+}
+
 export function useUpdateAssignment(periodId: Id | undefined, unitId: Id | undefined) {
   const invalidate = useInvalidateSchedule(periodId, unitId);
   return useMutation({
@@ -100,11 +110,29 @@ export function useSetLocked(periodId: Id | undefined, unitId: Id | undefined) {
   });
 }
 
+/** Set or clear when time-off requests close for a period. */
+export function useSetRequestsCloseOn(unitId: Id | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ periodId, date }: { periodId: Id; date: IsoDate | null }) =>
+      api.periods.setRequestsCloseOn(periodId, date),
+    onSuccess: () => {
+      if (unitId !== undefined) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.periods(unitId) });
+      }
+    },
+  });
+}
+
 export function useCreatePeriod(unitId: Id | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { name: string; startDate: IsoDate; endDate: IsoDate }) =>
-      api.periods.create({ unitId: unitId as Id, ...input }),
+    mutationFn: (input: {
+      name: string;
+      startDate: IsoDate;
+      endDate: IsoDate;
+      requestsCloseOn?: IsoDate;
+    }) => api.periods.create({ unitId: unitId as Id, ...input }),
     onSuccess: () => {
       if (unitId !== undefined) {
         void queryClient.invalidateQueries({ queryKey: queryKeys.periods(unitId) });

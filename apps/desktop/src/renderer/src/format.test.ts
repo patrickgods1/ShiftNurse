@@ -1,5 +1,13 @@
+import { makeNurse } from '@shiftnurse/core/testing';
 import { describe, expect, it } from 'vitest';
-import { formatDate, formatDateWithWeekday } from './format.js';
+import {
+  formatDate,
+  formatDateWithWeekday,
+  fteLabel,
+  listName,
+  periodLabel,
+  periodRange,
+} from './format.js';
 
 describe('display date formatting', () => {
   it('prints the correct weekday — 2026-09-20 is a Sunday, not a Wednesday', () => {
@@ -10,5 +18,40 @@ describe('display date formatting', () => {
 
   it('prints a long date without touching the local timezone', () => {
     expect(formatDate('2026-03-05')).toBe('Mar 5, 2026');
+  });
+});
+
+describe('people and periods as the unit names them', () => {
+  it('lists a nurse surname first, the way the roster is called', () => {
+    expect(listName(makeNurse({ firstName: 'Grace', lastName: 'Campbell' }))).toBe(
+      'Campbell, Grace',
+    );
+  });
+
+  it('calls a per-diem nurse per diem rather than "0.00 FTE"', () => {
+    expect(fteLabel(makeNurse({ employmentType: 'per_diem', fte: 0 }))).toBe('Per diem');
+    expect(fteLabel(makeNurse({ employmentType: 'agency', fte: 0 }))).toBe('Agency');
+    expect(fteLabel(makeNurse({ fte: 0.9 }))).toBe('0.9 FTE');
+    expect(fteLabel(makeNurse({ fte: 1 }))).toBe('1.0 FTE');
+  });
+
+  const period = (name: string, startDate: string, endDate: string) =>
+    ({ name, startDate, endDate }) as Parameters<typeof periodLabel>[0];
+
+  it('writes a period as its dates, with the year once when it does not change', () => {
+    expect(periodRange(period('x', '2026-10-04', '2026-11-14'))).toBe('Oct 4 – Nov 14, 2026');
+    expect(periodRange(period('x', '2026-12-27', '2027-01-09'))).toBe('Dec 27, 2026 – Jan 9, 2027');
+  });
+
+  it('replaces a name the app made up from ISO dates, and keeps one the manager typed', () => {
+    expect(
+      periodLabel(period('Schedule 2026-10-04 to 2026-11-14', '2026-10-04', '2026-11-14')),
+    ).toBe('Oct 4 – Nov 14, 2026');
+    expect(periodLabel(period('Pay period 2026-09-20', '2026-09-20', '2026-10-03'))).toBe(
+      'Sep 20 – Oct 3, 2026',
+    );
+    expect(periodLabel(period('Fall block', '2026-10-04', '2026-11-14'))).toBe(
+      'Fall block (Oct 4 – Nov 14, 2026)',
+    );
   });
 });

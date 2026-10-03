@@ -180,6 +180,67 @@ describe('contracted hours', () => {
     expect(v?.details).toMatchObject({ scheduledHours: 24, targetHours: 72 });
   });
 
+  it('treats a nurse scheduled short of their hours as a decision to make, not a breach', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 72 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: assignRun(nurse.id, DAY_12, '2026-01-05', 2),
+    });
+    const v = evaluate(s).violations.find((x) => x.code === 'under_contracted_hours');
+    expect(v?.severity).toBe('soft');
+  });
+
+  it('still refuses to schedule a nurse past their contract: over hours stays a breach', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 24 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-05'),
+        assign(nurse.id, DAY_12, '2026-01-07'),
+        assign(nurse.id, DAY_12, '2026-01-09'),
+      ],
+    });
+    const v = evaluate(s).violations.find((x) => x.code === 'over_contracted_hours');
+    expect(v?.severity).toBe('hard');
+  });
+
+  it('lets a contract that guarantees full hours mark a shortfall as a breach', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 72 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: assignRun(nurse.id, DAY_12, '2026-01-05', 2),
+    });
+    const ruleSet = {
+      ...s.ruleSet,
+      configs: s.ruleSet.configs.map((c) =>
+        c.ruleId === 'fte-target-hours' ? { ...c, severityOverride: 'hard' as const } : c,
+      ),
+    };
+    const v = evaluateSchedule(s.schedule, ruleSet, s.ctx).violations.find(
+      (x) => x.code === 'under_contracted_hours',
+    );
+    expect(v?.severity).toBe('hard');
+  });
+
+  it("says how short in whole hours and the pay period's dates, as a manager reads them", () => {
+    const nurse = makeNurse({
+      firstName: 'Nicole',
+      lastName: 'Brown',
+      contractedHoursPerPeriod: 72,
+      fte: 0.9,
+    });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: assignRun(nurse.id, DAY_12, '2026-01-05', 2),
+    });
+    const v = evaluate(s).violations.find((x) => x.code === 'under_contracted_hours');
+    // Pay period Sunday 4 – Saturday 17 January 2026; 24h worked against 72h.
+    expect(v?.message).toBe(
+      'Nicole Brown is scheduled 24h in the pay period Sun Jan 4 – Sat Jan 17, 48h short of ' +
+        'their contracted 72h (0.9 FTE).',
+    );
+  });
+
   it('accepts a nurse landing exactly on their contracted hours', () => {
     const nurse = makeNurse({ contractedHoursPerPeriod: 72 });
     const s = scenario({

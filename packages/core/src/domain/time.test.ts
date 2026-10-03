@@ -10,6 +10,8 @@ import {
   datesTouchedByWindow,
   dayNumber,
   daysBetween,
+  describeDate,
+  describeDateRange,
   formatTimeOfDay,
   fromDayNumber,
   isIsoDate,
@@ -138,6 +140,28 @@ describe('calendar arithmetic', () => {
         isoDate('2026-09-25'),
       ),
     ).toBe(false);
+  });
+});
+
+describe('dates as a manager reads them', () => {
+  it('names Sunday 4 January 2026 "Sun Jan 4"', () => {
+    expect(describeDate(isoDate('2026-01-04'))).toBe('Sun Jan 4');
+  });
+
+  it('names the last Saturday of October 2026 "Sat Oct 31"', () => {
+    expect(describeDate(isoDate('2026-10-31'))).toBe('Sat Oct 31');
+  });
+
+  it('writes a pay period as its first and last day', () => {
+    expect(describeDateRange(isoDate('2026-10-18'), isoDate('2026-10-31'))).toBe(
+      'Sun Oct 18 – Sat Oct 31',
+    );
+  });
+
+  it('adds the year when a range crosses into the next one', () => {
+    expect(describeDateRange(isoDate('2026-12-27'), isoDate('2027-01-09'))).toBe(
+      'Sun Dec 27, 2026 – Sat Jan 9, 2027',
+    );
   });
 });
 

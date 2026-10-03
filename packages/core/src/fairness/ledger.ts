@@ -48,22 +48,26 @@ export function isUndesirable(
   prefs: readonly Preference[],
   weekendDefinition: WeekendDefinition,
 ): boolean {
-  for (const pref of prefs) {
-    if (pref.kind === 'avoid_shift_type' && view.assignment.shiftTypeId === pref.shiftTypeId) {
-      return true;
-    }
-    if (pref.kind === 'avoid_weekday' && weekdayOf(view.assignment.date) === pref.weekday) {
-      return true;
-    }
-    if (
-      pref.kind === 'weekend_appetite' &&
-      pref.level < 0 &&
-      isWeekendWindow(view.window, weekendDefinition)
-    ) {
-      return true;
-    }
-  }
-  return false;
+  return preferencesBroken(view, prefs, weekendDefinition).length > 0;
+}
+
+/**
+ * The preferences this shift goes against: the same test as `isUndesirable`, kept as the list so
+ * the grid can say which ("avoids nights") rather than only that one was broken.
+ */
+export function preferencesBroken(
+  view: Pick<AssignmentView, 'assignment' | 'window'>,
+  prefs: readonly Preference[],
+  weekendDefinition: WeekendDefinition,
+): Preference[] {
+  return prefs.filter(
+    (pref) =>
+      (pref.kind === 'avoid_shift_type' && view.assignment.shiftTypeId === pref.shiftTypeId) ||
+      (pref.kind === 'avoid_weekday' && weekdayOf(view.assignment.date) === pref.weekday) ||
+      (pref.kind === 'weekend_appetite' &&
+        pref.level < 0 &&
+        isWeekendWindow(view.window, weekendDefinition)),
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@
  */
 
 import * as Dialog from '@radix-ui/react-dialog';
-import type { Id, IsoDate, SchedulePeriod } from '@shiftnurse/core';
+import { addDays, type Id, type IsoDate, isIsoDate, type SchedulePeriod } from '@shiftnurse/core';
 import { type FormEvent, useEffect, useId, useState } from 'react';
 import { useCreatePeriod } from '../../api-schedule.js';
 import { OVERLAY, PRIMARY, SECONDARY } from '../../components/ui.js';
@@ -21,6 +21,9 @@ export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPe
   const [name, setName] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  /** When requests close: four weeks before the start unless the manager picks another day. */
+  const [closeOn, setCloseOn] = useState('');
+  const [closeOnTouched, setCloseOnTouched] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const formId = useId();
   const createPeriod = useCreatePeriod(unitId);
@@ -33,6 +36,8 @@ export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPe
     setName('');
     setStartDate('');
     setEndDate('');
+    setCloseOn('');
+    setCloseOnTouched(false);
     setError(undefined);
     createPeriod.reset();
   }, [open]);
@@ -53,7 +58,12 @@ export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPe
     }
     setError(undefined);
     createPeriod.mutate(
-      { name: name.trim(), startDate: startDate as IsoDate, endDate: endDate as IsoDate },
+      {
+        name: name.trim(),
+        startDate: startDate as IsoDate,
+        endDate: endDate as IsoDate,
+        ...(closeOn ? { requestsCloseOn: closeOn as IsoDate } : {}),
+      },
       {
         onSuccess: (period) => {
           onCreated(period);
@@ -90,7 +100,12 @@ export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPe
                   type="date"
                   className={inputClass}
                   value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
+                  onChange={(e) => {
+                    setStartDate(e.target.value);
+                    if (!closeOnTouched && isIsoDate(e.target.value)) {
+                      setCloseOn(addDays(e.target.value as IsoDate, -28));
+                    }
+                  }}
                 />
               </label>
               <label className="block text-sm text-text-muted" htmlFor={`${formId}-end`}>
@@ -104,6 +119,23 @@ export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPe
                 />
               </label>
             </div>
+            <label className="mt-3 block text-sm text-text-muted" htmlFor={`${formId}-close`}>
+              Time-off requests close on (optional)
+              <input
+                id={`${formId}-close`}
+                type="date"
+                className={inputClass}
+                value={closeOn}
+                onChange={(e) => {
+                  setCloseOn(e.target.value);
+                  setCloseOnTouched(true);
+                }}
+              />
+              <span className="mt-1 block text-xs">
+                Decide the requests made by then before you generate; later ones are flagged as
+                late.
+              </span>
+            </label>
             {error !== undefined ? (
               <p role="alert" className="mt-3 text-sm text-danger">
                 {error}

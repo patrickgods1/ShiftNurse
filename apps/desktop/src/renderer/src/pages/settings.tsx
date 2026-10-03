@@ -29,7 +29,7 @@ const TABS = [
   { id: 'acuity', label: 'Acuity' },
   { id: 'rules', label: 'Rules' },
   { id: 'pay', label: 'Pay' },
-  { id: 'solver', label: 'Solver' },
+  { id: 'solver', label: 'Generate' },
   { id: 'conflicts', label: 'Conflicts' },
   { id: 'holidays', label: 'Holidays' },
   { id: 'backups', label: 'Backups' },

@@ -21,10 +21,21 @@ interface DataTableProps<T> {
   emptyLabel?: string;
   /** When present, rows are clickable (e.g. to open a detail view) and keyboard-activatable. */
   onRowClick?: (row: T) => void;
+  /** The column the table opens sorted by, ascending (e.g. a roster by surname). */
+  initialSortKey?: string;
 }
 
-export function DataTable<T>({ columns, rows, rowKey, emptyLabel, onRowClick }: DataTableProps<T>) {
-  const [sort, setSort] = useState<{ key: string; direction: 1 | -1 } | undefined>(undefined);
+export function DataTable<T>({
+  columns,
+  rows,
+  rowKey,
+  emptyLabel,
+  onRowClick,
+  initialSortKey,
+}: DataTableProps<T>) {
+  const [sort, setSort] = useState<{ key: string; direction: 1 | -1 } | undefined>(
+    initialSortKey !== undefined ? { key: initialSortKey, direction: 1 } : undefined,
+  );
 
   const sorted = useMemo(() => {
     if (sort === undefined) return rows;

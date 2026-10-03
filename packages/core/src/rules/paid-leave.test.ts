@@ -15,13 +15,44 @@ const request = (over: Partial<TimeOffRequest>): TimeOffRequest => ({
   ...over,
 });
 
+const TWELVES = [12];
+
 describe('paidLeaveCredits', () => {
-  it('spreads three days of PTO paid at 24 hours as 8 hours a day', () => {
-    expect(paidLeaveCredits([request({ paidHours: 24 })])).toEqual([
-      { nurseId: 'n1', date: '2026-10-05', hours: 8 },
-      { nurseId: 'n1', date: '2026-10-06', hours: 8 },
-      { nurseId: 'n1', date: '2026-10-07', hours: 8 },
+  it('pays three days off at 24 hours as two whole 12-hour shifts, not 8 hours a day', () => {
+    expect(paidLeaveCredits([request({ paidHours: 24 })], [], TWELVES)).toEqual([
+      { nurseId: 'n1', date: '2026-10-05', hours: 12 },
+      { nurseId: 'n1', date: '2026-10-07', hours: 12 },
     ]);
+  });
+
+  it('keeps a week off paid at three shifts whole when it straddles two pay periods', () => {
+    // Saturday Oct 31 to Friday Nov 6; the pay period turns over on Sunday Nov 1. Spread by
+    // the day it put 5.1h in one period and 30.9h in the next — targets of 66.9h and 41.1h no
+    // run of 12-hour shifts can meet, so the nurse read as short in the first.
+    const credits = paidLeaveCredits(
+      [
+        request({
+          startDate: isoDate('2026-10-31'),
+          endDate: isoDate('2026-11-06'),
+          paidHours: 36,
+        }),
+      ],
+      [],
+      TWELVES,
+    );
+    expect(leaveHoursBetween(credits, isoDate('2026-10-18'), isoDate('2026-10-31'))).toBe(0);
+    expect(leaveHoursBetween(credits, isoDate('2026-11-01'), isoDate('2026-11-14'))).toBe(36);
+    expect(credits.every((c) => c.hours === 12)).toBe(true);
+  });
+
+  it('pays a VA week of a 12 and an 8 as one of each', () => {
+    const credits = paidLeaveCredits([request({ paidHours: 20 })], [], [12, 8]);
+    expect(credits.map((c) => c.hours)).toEqual([12, 8]);
+  });
+
+  it('credits an odd remainder as one last part shift: 30 hours of 12s is 12, 12 and 6', () => {
+    const credits = paidLeaveCredits([request({ paidHours: 30 })], [], TWELVES);
+    expect(credits.map((c) => c.hours)).toEqual([12, 12, 6]);
   });
 
   it('credits nothing for a request that is pending, denied or unpaid', () => {
@@ -43,11 +74,19 @@ describe('paidLeaveCredits', () => {
 });
 
 describe('leaveHoursBetween', () => {
-  it('splits leave that straddles a pay-period boundary by day', () => {
+  it('splits leave that straddles a pay-period boundary by the shifts on each side', () => {
     // Saturday 3 to Monday 5 October, 36 paid hours: 12 fall before Sunday the 4th.
-    const credits = paidLeaveCredits([
-      request({ startDate: isoDate('2026-10-03'), endDate: isoDate('2026-10-05'), paidHours: 36 }),
-    ]);
+    const credits = paidLeaveCredits(
+      [
+        request({
+          startDate: isoDate('2026-10-03'),
+          endDate: isoDate('2026-10-05'),
+          paidHours: 36,
+        }),
+      ],
+      [],
+      TWELVES,
+    );
     expect(leaveHoursBetween(credits, isoDate('2026-09-20'), isoDate('2026-10-03'))).toBe(12);
     expect(leaveHoursBetween(credits, isoDate('2026-10-04'), isoDate('2026-10-17'))).toBe(24);
   });

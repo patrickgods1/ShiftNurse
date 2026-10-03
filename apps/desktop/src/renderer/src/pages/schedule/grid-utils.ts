@@ -4,7 +4,16 @@
  * indexing logic can be reasoned about without React.
  */
 
-import type { Assignment, Id, IsoDate, Nurse, Violation } from '@shiftnurse/core';
+import type {
+  Assignment,
+  Id,
+  IsoDate,
+  Nurse,
+  NurseRole,
+  ShiftDemand,
+  ShiftType,
+  Violation,
+} from '@shiftnurse/core';
 
 export function cellKey(nurseId: Id, date: IsoDate): string {
   return `${nurseId}__${date}`;
@@ -71,4 +80,63 @@ export function violationKey(violation: Violation): string {
     ...violation.assignmentIds,
     ...violation.dates,
   ].join('|');
+}
+
+export interface HeadcountCell {
+  date: IsoDate;
+  staffed: number;
+  /** The hard minimum for that shift and role (`RoleDemand.minCount`); 0 when none is set. */
+  required: number;
+}
+
+export interface HeadcountRow {
+  shiftType: ShiftType;
+  role: NurseRole;
+  cells: HeadcountCell[];
+}
+
+const ROLES: readonly NurseRole[] = ['RN', 'LPN', 'CNA'];
+
+/**
+ * The rows under the grid a manager reads first — "Monday days: 6 RNs of 6" — one per worked
+ * shift type and role that anyone needs or works this period. Required comes from the same
+ * demand the rules judge by, so a red cell here is a short shift on the violation list too.
+ */
+export function headcountRows(input: {
+  shiftTypes: readonly ShiftType[];
+  nurses: readonly Nurse[];
+  assignments: readonly Pick<Assignment, 'nurseId' | 'date' | 'shiftTypeId'>[];
+  demand: readonly ShiftDemand[];
+  dates: readonly IsoDate[];
+}): HeadcountRow[] {
+  const roleOf = new Map(input.nurses.map((n) => [n.id, n.role]));
+  const staffed = new Map<string, number>();
+  for (const a of input.assignments) {
+    const role = roleOf.get(a.nurseId);
+    if (!role) continue;
+    const key = `${a.date}|${a.shiftTypeId}|${role}`;
+    staffed.set(key, (staffed.get(key) ?? 0) + 1);
+  }
+  const required = new Map<string, number>();
+  for (const d of input.demand) {
+    for (const role of ROLES) {
+      required.set(`${d.date}|${d.shiftTypeId}|${role}`, d.byRole[role]?.minCount ?? 0);
+    }
+  }
+  const rows: HeadcountRow[] = [];
+  const worked = input.shiftTypes
+    .filter((st) => st.active && !st.isOnCall)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+  for (const shiftType of worked) {
+    for (const role of ROLES) {
+      const cells = input.dates.map((date) => {
+        const key = `${date}|${shiftType.id}|${role}`;
+        return { date, staffed: staffed.get(key) ?? 0, required: required.get(key) ?? 0 };
+      });
+      if (cells.some((c) => c.staffed > 0 || c.required > 0)) {
+        rows.push({ shiftType, role, cells });
+      }
+    }
+  }
+  return rows;
 }

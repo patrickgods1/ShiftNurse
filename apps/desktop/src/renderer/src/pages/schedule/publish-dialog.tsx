@@ -11,7 +11,7 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import type { Id, Nurse, SchedulePeriod, ShiftType } from '@shiftnurse/core';
 import { useEffect, useMemo, useState } from 'react';
-import { usePublish, usePublishPreview } from '../../api-publish.js';
+import { useExport, usePublish, usePublishPreview } from '../../api-publish.js';
 import { AsyncState } from '../../components/async-state.js';
 import {
   DIALOG,
@@ -22,7 +22,7 @@ import {
   PRIMARY,
   SECONDARY,
 } from '../../components/ui.js';
-import { formatDate } from '../../format.js';
+import { formatDate, periodLabel } from '../../format.js';
 
 interface PublishDialogProps {
   open: boolean;
@@ -46,10 +46,15 @@ export function PublishDialog({
   const previewQuery = usePublishPreview(period.id, open);
   const publish = usePublish(period.id, unitId);
   const [reason, setReason] = useState('');
+  const [acknowledged, setAcknowledged] = useState(false);
+  const exportFile = useExport(period.id);
+  const [shared, setShared] = useState<string | undefined>(undefined);
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset only when the dialog opens.
   useEffect(() => {
     if (open) {
       setReason('');
+      setAcknowledged(false);
+      setShared(undefined);
       publish.reset();
     }
   }, [open]);
@@ -68,10 +73,14 @@ export function PublishDialog({
 
   const preview = previewQuery.data;
   const republish = preview?.latestVersion !== undefined;
+  // A first publish of an empty grid would hand staff a blank schedule.
+  const empty = preview !== undefined && !republish && preview.diff.added === 0;
   const canPublish =
     preview !== undefined &&
     !preview.nothingToPublish &&
+    !empty &&
     !publish.isPending &&
+    (preview.hardViolations === 0 || acknowledged) &&
     (!republish || reason.trim().length > 0);
   const done = publish.data;
 
@@ -82,29 +91,58 @@ export function PublishDialog({
         <Dialog.Content data-testid="publish-dialog" className={`${DIALOG} w-[40rem]`}>
           <Dialog.Title className="text-base font-semibold text-text">
             {done
-              ? `Published version ${done.version.version}`
+              ? done.version.version === 1
+                ? `${periodLabel(period)} is published`
+                : `${periodLabel(period)} is published (version ${done.version.version})`
               : republish
-                ? `Publish changes to ${period.name}`
-                : `Publish ${period.name}`}
+                ? `Publish changes to ${periodLabel(period)}`
+                : `Publish ${periodLabel(period)}`}
           </Dialog.Title>
           <Dialog.Description className="mt-1 text-sm text-text-muted">
             {done
-              ? 'The schedule is now what staff hold. A backup was written first.'
+              ? 'This is now the schedule staff hold. ShiftNurse does not send it to anyone: print or export it to share it.'
               : 'Publishing freezes this version, books the fairness ledger and writes a backup. Edits after publishing need a reason and appear in the change log.'}
           </Dialog.Description>
 
           {done ? (
             <div className="mt-4 flex flex-col gap-2 text-sm text-text">
               <p>
-                {done.diff.added} added · {done.diff.removed} removed · {done.diff.changed} changed
-                · {done.ledgerEntries} ledger rows written
+                {done.version.version === 1
+                  ? `${done.diff.added} shifts for ${done.diff.affectedNurseIds.length} nurses.`
+                  : `${done.diff.added + done.diff.removed + done.diff.changed} shift changes affecting ${done.diff.affectedNurseIds.length} nurse${done.diff.affectedNurseIds.length === 1 ? '' : 's'}: let them know.`}{' '}
+                Their nights, weekends and holidays now count toward fairness in future schedules.
               </p>
               <p className="text-text-muted">
                 {done.backup
-                  ? `Backup: ${done.backup.fileName}`
+                  ? 'A copy of everything was saved first (Settings › Backups).'
                   : 'The backup could not be written — see Settings › Backups.'}
               </p>
-              <div className="mt-2 flex justify-end">
+              <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+                <span className="mr-auto text-xs text-text-muted">
+                  {shared ? `Saved ${shared}` : 'Next: share it with the unit.'}
+                </span>
+                <button
+                  type="button"
+                  className={SECONDARY}
+                  disabled={exportFile.isPending}
+                  onClick={() =>
+                    exportFile.mutate('pdf-grid', { onSuccess: (path) => path && setShared(path) })
+                  }
+                >
+                  Print unit grid (PDF)
+                </button>
+                <button
+                  type="button"
+                  className={SECONDARY}
+                  disabled={exportFile.isPending}
+                  onClick={() =>
+                    exportFile.mutate('pdf-nurses', {
+                      onSuccess: (path) => path && setShared(path),
+                    })
+                  }
+                >
+                  Per-nurse sheets (PDF)
+                </button>
                 <Dialog.Close asChild>
                   <button type="button" className={PRIMARY}>
                     Done
@@ -137,12 +175,32 @@ export function PublishDialog({
                       : 'text-success'
                 }`}
               >
-                {preview.hardViolations} hard · {preview.softViolations} soft violation
-                {preview.hardViolations + preview.softViolations === 1 ? '' : 's'}
-                {preview.hardViolations > 0
-                  ? ' — publishing anyway is your call; the violations stay on the grid.'
-                  : ''}
+                {preview.hardViolations === 0 && preview.softViolations === 0
+                  ? 'No rule breaks or warnings.'
+                  : `${preview.hardViolations} rule break${preview.hardViolations === 1 ? '' : 's'} · ${preview.softViolations} warning${preview.softViolations === 1 ? '' : 's'}`}
               </p>
+              {empty ? (
+                <p className="text-sm text-danger">
+                  There are no shifts on this schedule yet. Generate or add shifts before publishing
+                  it.
+                </p>
+              ) : null}
+              {preview.hardViolations > 0 && !empty ? (
+                <label className="flex items-start gap-2 text-sm text-text">
+                  <input
+                    type="checkbox"
+                    data-testid="publish-acknowledge"
+                    className="mt-0.5"
+                    checked={acknowledged}
+                    onChange={(e) => setAcknowledged(e.target.checked)}
+                  />
+                  <span>
+                    I have reviewed the {preview.hardViolations} rule break
+                    {preview.hardViolations === 1 ? '' : 's'} and want to publish anyway. They stay
+                    flagged on the grid and in the exports.
+                  </span>
+                </label>
+              ) : null}
 
               <section>
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
@@ -189,18 +247,27 @@ export function PublishDialog({
               {preview.alerts.length > 0 ? (
                 <section>
                   <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-                    Compliance alerts ({preview.alerts.length})
+                    Compliance alerts
                   </h3>
+                  {/* What to act on first; the routine heads-ups are a count, listed on the page. */}
                   <ul className="mt-1 flex max-h-32 flex-col gap-0.5 overflow-y-auto text-xs">
-                    {preview.alerts.map((a) => (
-                      <li
-                        key={`${a.kind}:${a.nurseId ?? ''}:${a.date ?? ''}:${a.shiftTypeId ?? ''}`}
-                        className={a.severity === 'critical' ? 'text-danger' : 'text-warn'}
-                      >
-                        {a.message}
-                      </li>
-                    ))}
+                    {preview.alerts
+                      .filter((a) => a.severity === 'critical')
+                      .map((a) => (
+                        <li
+                          key={`${a.kind}:${a.nurseId ?? ''}:${a.date ?? ''}:${a.shiftTypeId ?? ''}`}
+                          className="text-danger"
+                        >
+                          {a.message}
+                        </li>
+                      ))}
                   </ul>
+                  {preview.alerts.some((a) => a.severity !== 'critical') ? (
+                    <p className="mt-1 text-xs text-text-muted">
+                      And {preview.alerts.filter((a) => a.severity !== 'critical').length} heads-ups
+                      (shifts with no slack on the ratio, hours drifting), listed above the grid.
+                    </p>
+                  ) : null}
                 </section>
               ) : null}
 

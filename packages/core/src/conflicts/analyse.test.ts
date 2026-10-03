@@ -240,6 +240,9 @@ describe('time-off what-if', () => {
     expect(impact.competing.map((r) => r.nurseId)).toEqual([tom.id]);
     // The competing-time-off warning for that night goes away once the decision is made.
     expect(impact.cleared.some((c) => c.kind === 'competing_time_off')).toBe(true);
+    // Capacity is read for each day asked for that has a floor, whatever the draft holds:
+    // this unit only staffs Saturday's night, so Sunday needs nobody.
+    expect(impact.capacity.map((d) => d.date)).toEqual([SAT]);
   });
 
   it('denying the request orphans nothing and clears the competing warning', () => {

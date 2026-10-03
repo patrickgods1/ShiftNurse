@@ -15,7 +15,7 @@
 
 import { NURSE_ROLES } from '../acuity/demand.js';
 import type { Id, NurseCredential, NurseRole } from '../domain/entities.js';
-import { compareDates, type IsoDate } from '../domain/time.js';
+import { compareDates, describeDate, type IsoDate } from '../domain/time.js';
 import { coveringShift } from '../schedule/cover.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
 import { type Rule, type RuleContext, type Violation, violation } from './types.js';
@@ -125,7 +125,7 @@ export const coverageRule: Rule<CoverageParams> = {
               coverageRule,
               'hard',
               'understaffed',
-              `${shiftType.name} on ${date} has ${staffed} ${role}${staffed === 1 ? '' : 's'}, ` +
+              `${shiftType.name} on ${describeDate(date)} has ${staffed} ${role}${staffed === 1 ? '' : 's'}, ` +
                 `below the baseline of ${roleDemand.coverageFloorMin}.`,
               {
                 dates: [date],
@@ -159,7 +159,7 @@ export const coverageRule: Rule<CoverageParams> = {
                 coverageRule,
                 'hard',
                 'missing_charge_nurse',
-                `${shiftType.name} on ${date} has no designated charge nurse.`,
+                `${shiftType.name} on ${describeDate(date)} has no designated charge nurse.`,
                 {
                   dates: [date],
                   nurseIds: assigned.map((v) => v.nurse.id),
@@ -183,7 +183,7 @@ export const coverageRule: Rule<CoverageParams> = {
                 coverageRule,
                 'hard',
                 'all_novice_shift',
-                `${shiftType.name} on ${date} has a new grad with ${experienced} experienced ` +
+                `${shiftType.name} on ${describeDate(date)} has a new grad with ${experienced} experienced ` +
                   `RN${experienced === 1 ? '' : 's'} on the unit; ${params.minExperiencedPerShift} required.`,
                 {
                   dates: [date],
@@ -223,7 +223,7 @@ export const coverageRule: Rule<CoverageParams> = {
                 coverageRule,
                 'hard',
                 'missing_credential',
-                `${shiftType.name} on ${date} has ${holders.length} ${label}-certified ${scope}; ` +
+                `${shiftType.name} on ${describeDate(date)} has ${holders.length} ${label}-certified ${scope}; ` +
                   `${requirement.minCount} required.`,
                 {
                   dates: [date],
@@ -306,7 +306,7 @@ export const ratioComplianceRule: Rule<RatioParams> = {
               ratioComplianceRule,
               'hard',
               'ratio_breach',
-              `${shiftType.name} on ${date}: ${demand.projectedCensus} projected patients across ` +
+              `${shiftType.name} on ${describeDate(date)}: ${demand.projectedCensus} projected patients across ` +
                 `${staffed} ${role}${staffed === 1 ? '' : 's'} is ${perNurse} patients per nurse. ` +
                 `The acuity mix requires ${roleDemand.ratioDerived}.`,
               {

@@ -11,8 +11,8 @@ import { useNurses, usePeriods } from '../api.js';
 import { useFairnessReport, useFairnessTrend } from '../api-fairness.js';
 import { AsyncState } from '../components/async-state.js';
 import { PageHeader } from '../components/page-header.js';
+import { PeriodOptions } from '../components/period-options.js';
 import { defaultPeriod } from '../default-period.js';
-import { formatDate } from '../format.js';
 import { useUnitId } from '../unit-context.js';
 import { ImportHistoryDialog } from './fairness/import-dialog.js';
 import { NurseFairnessTable } from './fairness/nurse-table.js';
@@ -75,11 +75,7 @@ export default function FairnessPage() {
               onChange={(e) => setSelectedId(e.target.value)}
               className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-text"
             >
-              {periods.map((period) => (
-                <option key={period.id} value={period.id}>
-                  {period.name} · {formatDate(period.startDate)} – {formatDate(period.endDate)}
-                </option>
-              ))}
+              <PeriodOptions periods={periods} />
             </select>
           </div>
 
@@ -93,7 +89,16 @@ export default function FairnessPage() {
             />
           ) : (
             <div className="flex flex-col gap-6">
-              <FairnessSummary report={reportQuery.data} />
+              <FairnessSummary
+                report={reportQuery.data}
+                contracted={
+                  new Set(
+                    (nursesQuery.data ?? [])
+                      .filter((n) => n.contractedHoursPerPeriod > 0)
+                      .map((n) => n.id),
+                  )
+                }
+              />
               <ComponentDistributionStrip report={reportQuery.data} />
               <NurseFairnessTable
                 scores={reportQuery.data.scores}

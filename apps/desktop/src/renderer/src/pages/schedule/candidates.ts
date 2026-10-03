@@ -4,7 +4,9 @@
  * whole points — so a variation is never called better over a fraction nobody can see.
  */
 
-import type { SolveBatchStatus, SolveRunStatus } from '@shared/api.js';
+import type { SolveBatchStatus, SolveRunStatus, SolveRunSummary } from '@shared/api.js';
+import type { CountRange } from '@shiftnurse/core';
+import { formatDollars } from '../../money.js';
 
 export type BestChoice =
   | { kind: 'variation'; index: number; score: number; gridScore?: number }
@@ -40,4 +42,45 @@ export function bestChoice(batch: SolveBatchStatus): BestChoice | undefined {
     };
   }
   return { kind: 'variation', index: best.index, score, gridScore };
+}
+
+/** "2–9", or "3" when the fewest and the most are the same. */
+export function spread(range: CountRange): string {
+  return range.min === range.max ? String(range.min) : `${range.min}–${range.max}`;
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * A variation as the phrases a manager weighs, most urgent first: gaps and rule breaks, then
+ * how nights and weekends spread, quick flips from nights to days, short hours and cost. The
+ * solver's score stays out of it — it is the solver's number, not the manager's.
+ */
+export function digestLine(
+  summary: Pick<SolveRunSummary, 'floorsShort' | 'hardViolations' | 'digest' | 'costTotal'>,
+): string[] {
+  const { digest } = summary;
+  const parts: string[] = [];
+  parts.push(
+    summary.floorsShort === 0 ? 'Every shift staffed' : plural(summary.floorsShort, 'short shift'),
+  );
+  if (summary.hardViolations > 0)
+    parts.push(`${plural(summary.hardViolations, 'rule break')} to fix`);
+  parts.push(`nights ${spread(digest.nights)} per nurse`, `weekends ${spread(digest.weekends)}`);
+  parts.push(
+    digest.quickFlips === 0
+      ? 'no quick night-to-day flips'
+      : `${plural(digest.quickFlips, 'quick night-to-day flip')}`,
+  );
+  if (digest.onDaysAskedOff > 0) {
+    parts.push(`${plural(digest.onDaysAskedOff, 'shift')} on days asked off`);
+  }
+  if (digest.againstPreference > 0) {
+    parts.push(`${plural(digest.againstPreference, 'shift')} against preferences`);
+  }
+  if (digest.nursesUnderContract > 0) {
+    parts.push(`${plural(digest.nursesUnderContract, 'nurse')} under contract`);
+  }
+  if (summary.costTotal !== undefined) parts.push(formatDollars(summary.costTotal));
+  return parts;
 }

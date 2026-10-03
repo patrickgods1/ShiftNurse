@@ -8,7 +8,14 @@
  */
 
 import type { Id } from '../domain/entities.js';
-import { dayNumber, fromDayNumber, minutesToHours, restMinutesBetween } from '../domain/time.js';
+import {
+  dayNumber,
+  describeDate,
+  describeDateRange,
+  fromDayNumber,
+  minutesToHours,
+  restMinutesBetween,
+} from '../domain/time.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
 import { isWorked, nurseName, type Rule, type Violation, violation } from './types.js';
 
@@ -98,8 +105,8 @@ export const minRestRule: Rule<MinRestParams> = {
             'hard',
             'insufficient_rest',
             `${nurseName(nurse)} has only ${formatHours(restHours)} off between the ` +
-              `${previous.shiftType.name} on ${previous.assignment.date} and the ` +
-              `${current.shiftType.name} on ${current.assignment.date}. ` +
+              `${previous.shiftType.name} on ${describeDate(previous.assignment.date)} and the ` +
+              `${current.shiftType.name} on ${describeDate(current.assignment.date)}. ` +
               `${formatHours(requiredHours)} required.`,
             {
               nurseIds: [nurse.id],
@@ -294,7 +301,7 @@ export const consecutiveShiftsRule: Rule<ConsecutiveShiftsParams> = {
             stretchViolation(
               'missing_required_days_off',
               `${nurseName(nurse)} gets only ${daysOff} day${daysOff === 1 ? '' : 's'} off after a ` +
-                `${previous.length}-day stretch ending ${fromDayNumber(previous.endDay)}. ` +
+                `${previous.length}-day stretch ending ${describeDate(fromDayNumber(previous.endDay))}. ` +
                 `${params.minDaysOffAfterMaxStretch} required.`,
               nurse.id,
               next,
@@ -329,7 +336,7 @@ function stretchViolation(
 }
 
 function describeStretch(stretch: Stretch): string {
-  return `${fromDayNumber(stretch.startDay)} to ${fromDayNumber(stretch.endDay)}`;
+  return describeDateRange(fromDayNumber(stretch.startDay), fromDayNumber(stretch.endDay));
 }
 
 function formatHours(hours: number): string {

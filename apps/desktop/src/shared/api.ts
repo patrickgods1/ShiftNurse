@@ -58,6 +58,7 @@ import type {
   ScheduleChange,
   ScheduleCost,
   ScheduleDiff,
+  ScheduleDigest,
   SchedulePeriod,
   ScheduleVersion,
   SetupPhase,
@@ -120,6 +121,20 @@ export interface UpdateInfo {
   url: string;
 }
 
+/** One shift that approving a request would free, and who could take it, best first. */
+export interface LeaveCoverOption {
+  assignment: Assignment;
+  /** Nurse-slots the shift is short of its minimum without the requester. */
+  shortfall: number;
+  candidates: { nurseId: Id; label: string; payTier: string; overtime: boolean }[];
+}
+
+/** The manager's pick for one freed shift. */
+export interface LeaveCover {
+  assignmentId: Id;
+  nurseId: Id;
+}
+
 export interface ExpiringCredentialView {
   nurse: Nurse;
   credential: Credential;
@@ -136,6 +151,8 @@ export interface DashboardSummary {
   today: IsoDate;
   activeNurses: number;
   currentDraft: SchedulePeriod | undefined;
+  /** Shifts on the current draft: none means it still needs generating. */
+  draftShifts: number;
   latestPublished: SchedulePeriod | undefined;
   pendingTimeOff: number;
   openCallOffs: number;
@@ -249,6 +266,8 @@ export interface MoveAssignmentInput {
 export interface ScheduleValidation {
   ruleSet: RuleSet;
   result: EvaluationResult;
+  /** Assignment id → the preferences that shift goes against (only shifts with any). */
+  againstPreference: Record<Id, Preference[]>;
 }
 
 export interface RosterImportPreview {
@@ -418,6 +437,11 @@ export type SolveRunState = 'queued' | 'running' | 'done' | 'failed' | 'cancelle
 /** A finished run's headline numbers, from its solve report. */
 export interface SolveRunSummary {
   objective: number;
+  /** The schedule in a manager's terms (core's `ScheduleDigest`). */
+  digest: ScheduleDigest;
+  /** Total cost and overtime hours, when the unit has pay rates. */
+  costTotal?: number;
+  overtimeHours?: number;
   /** Nurse-slots still below a hard minimum, summed over every short shift. */
   floorsShort: number;
   /** Shifts (and roles) with any shortfall. */
@@ -534,6 +558,8 @@ export interface ComparisonColumn {
   budgetVariance?: BudgetVariance;
   /** Shifts added, removed or changed against the current draft; 0 for the draft itself. */
   shiftsChanged: number;
+  /** The schedule in a manager's terms (core's `ScheduleDigest`). */
+  digest: ScheduleDigest;
 }
 
 export interface CandidateComparison {
@@ -740,7 +766,11 @@ export interface ShiftNurseApi {
       name: string;
       startDate: IsoDate;
       endDate: IsoDate;
+      /** Last day time-off requests are on time; later ones are flagged as late. */
+      requestsCloseOn?: IsoDate;
     }): SchedulePeriod;
+    /** Set or clear when time-off requests close for this period (advisory). */
+    setRequestsCloseOn(periodId: Id, date: IsoDate | null): SchedulePeriod;
   };
   schedule: {
     /** Every hard/soft violation for the period's current assignments, under its rule set. */
@@ -751,6 +781,11 @@ export interface ShiftNurseApi {
      */
     createAssignment(input: CreateAssignmentInput, reason?: string): Assignment;
     moveAssignment(input: MoveAssignmentInput, reason?: string): Assignment;
+    /**
+     * Two nurses trade shifts in one step. Returns the first nurse's new shift, then the second's.
+     * Refused, and nothing changed, when either is locked.
+     */
+    swapAssignments(firstId: Id, secondId: Id, reason?: string): [Assignment, Assignment];
     updateAssignment(assignmentId: Id, patch: AssignmentPatch, reason?: string): Assignment;
     deleteAssignment(assignmentId: Id, reason?: string): void;
     /** A lock is the manager's pin, invisible to staff: no reason, no change-log entry. */
@@ -879,6 +914,18 @@ export interface ShiftNurseApi {
     withdrawApproval(id: Id, reason: string): TimeOffRequest;
     /** What approving or denying this request would do to the given period, before deciding. */
     impact(periodId: Id, requestId: Id, decision: 'approved' | 'denied'): TimeOffImpact;
+    /** For each shift approving would free in this period: the nurses who could take it. */
+    coverOptions(periodId: Id, requestId: Id): LeaveCoverOption[];
+    /**
+     * Approve and, in one transaction, take the nurse's shifts in this period off the schedule
+     * (published ones too, under `reason`) and give each chosen one to its cover.
+     */
+    approveAndCover(
+      periodId: Id,
+      requestId: Id,
+      reason: string | undefined,
+      covers: LeaveCover[],
+    ): void;
   };
   conflicts: {
     /** Read-only: works on a published period too. */
@@ -1009,11 +1056,12 @@ export const API_CHANNELS = {
     'hppd',
   ],
   roster: ['pickImportFile', 'importRows', 'exportToFile', 'exportCsv'],
-  periods: ['list', 'assignments', 'create'],
+  periods: ['list', 'assignments', 'create', 'setRequestsCloseOn'],
   schedule: [
     'validate',
     'createAssignment',
     'moveAssignment',
+    'swapAssignments',
     'updateAssignment',
     'deleteAssignment',
     'setLocked',
@@ -1056,6 +1104,8 @@ export const API_CHANNELS = {
     'list',
     'listInRange',
     'create',
+    'coverOptions',
+    'approveAndCover',
     'approve',
     'deny',
     'cancel',

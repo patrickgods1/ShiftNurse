@@ -13,6 +13,14 @@ import {
 import { AsyncState } from '../../components/async-state.js';
 import { daysFromToday } from '../../format.js';
 
+/** "expires in 24 months", "expires in 12 days", "expired 3 days ago". */
+function expiresIn(days: number): string {
+  if (days < 0) return `expired ${-days} day${days === -1 ? '' : 's'} ago`;
+  if (days === 0) return 'expires today';
+  if (days < 60) return `expires in ${days} day${days === 1 ? '' : 's'}`;
+  return `expires in ${Math.round(days / 30)} months`;
+}
+
 function expiryColor(expiresOn: IsoDate | undefined): string {
   if (expiresOn === undefined) return 'text-text';
   const days = daysFromToday(expiresOn);
@@ -116,7 +124,7 @@ function CredentialRow({
           />
           <span className={expiryColor(nurseCredential.expiresOn)}>
             {nurseCredential.expiresOn
-              ? `${daysFromToday(nurseCredential.expiresOn)}d`
+              ? expiresIn(daysFromToday(nurseCredential.expiresOn))
               : 'no expiry'}
           </span>
           <button

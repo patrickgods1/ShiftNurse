@@ -99,6 +99,13 @@
       "when": 1790878367902,
       "tag": "0013_audit_append_only",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1790994106560,
+      "tag": "0014_period_requests_close",
+      "breakpoints": true
     }
   ]
 }
