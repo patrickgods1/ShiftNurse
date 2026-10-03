@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import type { SolveInput, SolveReport } from '@shiftnurse/core';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -242,6 +243,31 @@ describe('when the inputs move under a batch', () => {
     workers[0]!.finish(10);
     expect(j.current('period-1')!.stale).toBeUndefined();
     expect(j.candidate(batch.id, 0).report.objective.total).toBe(10);
+  });
+});
+
+describe('a worker that dies with its CP-SAT runner still going', () => {
+  async function exited(pid: number): Promise<boolean> {
+    for (let i = 0; i < 100; i++) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return false;
+  }
+
+  it('kills the runner so it stops eating the manager machine', async () => {
+    const stand = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e6)'], {
+      stdio: 'ignore',
+    });
+    const j = jobs(3);
+    j.start('period-1', { count: 1, seed: 100 });
+    workers[0]!.emit('message', { type: 'runner', pid: stand.pid! } satisfies SolverWorkerMessage);
+    workers[0]!.emit('error', new Error('worker blew up'));
+    expect(await exited(stand.pid!)).toBe(true);
   });
 });
 

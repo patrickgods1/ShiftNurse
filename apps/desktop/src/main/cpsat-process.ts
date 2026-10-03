@@ -58,6 +58,12 @@ interface RunnerEvent {
  * schedule from the same inputs.
  */
 const READY_TIMEOUT_MS = 120_000;
+/**
+ * A safety valve like the solver's wall-clock limit, not a budget: windows and the full model
+ * carry their own time limits, so this only fires on a runner that stopped answering. Without it
+ * a hung runner holds its eight search threads and the Generate run waits forever.
+ */
+export const SOLVE_WATCHDOG_MS = 10 * 60_000;
 /** After a stop and EOF, how long a runner gets to finish before it is killed. */
 const EXIT_GRACE_MS = 2_000;
 const STDERR_TAIL = 2_000;
@@ -85,6 +91,11 @@ export function resolveRunnerPath(options: {
   return existsSync(path) ? path : undefined;
 }
 
+export interface CpsatSolveOptions {
+  /** How long a request may go unanswered before the runner is treated as hung. */
+  watchdogMs?: number;
+}
+
 interface Pending {
   id: string;
   resolve: (result: CpsatResult) => void;
@@ -105,6 +116,7 @@ export class CpsatRunner {
   constructor(
     private readonly command: string,
     private readonly args: readonly string[] = [],
+    private readonly readyTimeoutMs: number = READY_TIMEOUT_MS,
   ) {}
 
   /** The runner's process id while it is running. */
@@ -120,10 +132,13 @@ export class CpsatRunner {
     const child = spawn(this.command, [...this.args], { stdio: ['pipe', 'pipe', 'pipe'] });
     this.child = child;
     this.ready = new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`CP-SAT runner did not start within ${READY_TIMEOUT_MS}ms`)),
-        READY_TIMEOUT_MS,
-      );
+      const timer = setTimeout(() => {
+        // Rejecting alone would leave a live process behind that every later start() ignores.
+        // Marking it exited makes the next start() spawn afresh instead of returning this failure.
+        this.exited = true;
+        child.kill();
+        reject(new Error(`CP-SAT runner did not start within ${this.readyTimeoutMs}ms`));
+      }, this.readyTimeoutMs);
       const lines = createInterface({ input: child.stdout });
       lines.on('line', (line) => {
         const event = parseEvent(line);
@@ -140,12 +155,15 @@ export class CpsatRunner {
       });
       child.on('error', (err) => {
         clearTimeout(timer);
+        // A killed runner's late exit must not mark its replacement as gone.
+        if (this.child !== child) return;
         this.exited = true;
         reject(err);
         this.failPending(new Error(`CP-SAT runner failed: ${err.message}`));
       });
       child.on('exit', (code, signal) => {
         clearTimeout(timer);
+        if (this.child !== child) return;
         this.exited = true;
         const why = `CP-SAT runner exited (${signal ?? `code ${code}`})`;
         reject(new Error(why));
@@ -160,12 +178,33 @@ export class CpsatRunner {
     model: object,
     params: object,
     onProgress?: (progress: CpsatProgress) => void,
+    options: CpsatSolveOptions = {},
   ): Promise<CpsatResult> {
+    const watchdogMs = options.watchdogMs ?? SOLVE_WATCHDOG_MS;
     const run = async (): Promise<CpsatResult> => {
       await this.start();
       const id = `r${++this.counter}`;
       return new Promise<CpsatResult>((resolve, reject) => {
-        this.pending = { id, resolve, reject, ...(onProgress ? { onProgress } : {}) };
+        const timer = setTimeout(() => {
+          this.failPending(new Error('CP-SAT runner stopped responding'));
+          // dispose() would leave `exited` false for its grace period, and a solve queued in that
+          // window would write to a closed stdin. A hung runner gets no grace: kill it and let
+          // the next start() spawn afresh.
+          this.exited = true;
+          this.child?.kill();
+        }, watchdogMs);
+        this.pending = {
+          id,
+          resolve: (result) => {
+            clearTimeout(timer);
+            resolve(result);
+          },
+          reject: (error) => {
+            clearTimeout(timer);
+            reject(error);
+          },
+          ...(onProgress ? { onProgress } : {}),
+        };
         this.write({ id, model, params });
       });
     };

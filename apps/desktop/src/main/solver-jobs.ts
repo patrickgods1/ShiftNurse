@@ -491,7 +491,9 @@ export class SolverJobs {
     run.status.finishedAt = this.now();
     if (error !== undefined) run.status.error = error;
     delete run.worker;
-    delete run.runnerPid;
+    // A crashed worker thread never reaches its `runner.dispose()`; a finished one's runner is
+    // already gone, which the kill tolerates.
+    this.killRunner(run);
     this.pump(batch);
     this.settleIfIdle(batch);
   }
@@ -515,18 +517,22 @@ export class SolverJobs {
     for (const run of batch.runs) {
       if (!run.worker) continue;
       void run.worker.terminate();
-      // A terminated worker cannot stop the runner it spawned; closing its pipes would only let
-      // the search run out its budget. Kill it.
-      if (run.runnerPid !== undefined) {
-        try {
-          process.kill(run.runnerPid);
-        } catch {
-          // Already gone.
-        }
-      }
+      this.killRunner(run);
       delete run.worker;
-      delete run.runnerPid;
     }
+  }
+
+  private killRunner(run: Run): void {
+    // A terminated or crashed worker cannot stop the runner it spawned; closing its pipes would
+    // only let the search run out its budget. Kill it.
+    if (run.runnerPid !== undefined) {
+      try {
+        process.kill(run.runnerPid);
+      } catch {
+        // Already gone.
+      }
+    }
+    delete run.runnerPid;
   }
 
   private drop(batch: Batch): void {
