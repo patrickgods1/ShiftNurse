@@ -161,6 +161,16 @@ export {
   FAIRNESS_COMPONENTS,
 } from './fairness/types.js';
 export type {
+  BidResult,
+  LeaveAward,
+  LeaveBid,
+  LeaveBidChoice,
+  LeaveBidRound,
+  LeaveDenial,
+} from './leave/bidding.js';
+// Seniority leave bidding: awards in seniority order, every denial reasoned
+export { awardBids, seniorityOrder } from './leave/bidding.js';
+export type {
   ComplianceAlert,
   ComplianceAlertKind,
   GridSheet,
