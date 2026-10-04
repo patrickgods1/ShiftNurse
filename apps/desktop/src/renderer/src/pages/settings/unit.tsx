@@ -13,6 +13,7 @@ import { useResumeSetup, useStartOver, useUpdateUnit } from '../../api-setup.js'
 import { useConfirm } from '../../components/confirm.js';
 import { EditorShell } from '../../components/editor-shell.js';
 import { CheckField, describedBy, Field, InfoTip } from '../../components/field-help.js';
+import { StateLawSection } from '../../components/state-law.js';
 import { DANGER, errorMessage, INPUT, SECONDARY } from '../../components/ui.js';
 import { useUnit } from '../../unit-context.js';
 
@@ -252,6 +253,10 @@ export default function UnitPanel() {
           </form>
         </section>
       </EditorShell>
+
+      <section className="rounded-md border border-border bg-surface p-4">
+        <StateLawSection />
+      </section>
 
       <section className="rounded-md border border-border bg-surface p-4">
         <h2 className="mb-1 text-sm font-semibold text-text">Setup guide</h2>

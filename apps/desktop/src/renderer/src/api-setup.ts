@@ -7,7 +7,7 @@
  */
 
 import type { UnitInput, UnitPatch } from '@shared/api.js';
-import type { Id, SetupPreset, SetupStepId, UnitSetupMode } from '@shiftnurse/core';
+import type { Id, JurisdictionId, SetupPreset, SetupStepId, UnitSetupMode } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api.js';
 
@@ -94,6 +94,16 @@ export function useApplyPreset(unitId: Id) {
   return useMutation({
     meta: { inlineError: true },
     mutationFn: (preset: SetupPreset) => api.setup.applyPreset(unitId, preset),
+    onSuccess: invalidate,
+  });
+}
+
+/** Writes ratio rules, overtime rules and rule versions, so everything is refetched. */
+export function useApplyJurisdiction(unitId: Id) {
+  const invalidate = useInvalidateAll();
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (jurisdiction: JurisdictionId) => api.setup.applyJurisdiction(unitId, jurisdiction),
     onSuccess: invalidate,
   });
 }

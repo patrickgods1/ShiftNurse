@@ -72,5 +72,6 @@ export const setupSchemas = {
   complete: none,
   resume: none,
   applyPreset: z.tuple([id, preset]),
+  applyJurisdiction: z.tuple([id, z.enum(['CA', 'OR', 'NY', 'WA', 'MA', 'other'])]),
   startOver: none,
 } satisfies ResourceSchemas<'setup'>;

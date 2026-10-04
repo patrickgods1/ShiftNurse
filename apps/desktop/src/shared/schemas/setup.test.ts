@@ -24,4 +24,10 @@ describe('first-run setup arriving over IPC', () => {
     const preset = { kind: 'base-rates', rates: { RN: -5 } };
     expect(API_SCHEMAS.setup.applyPreset.safeParse(['u-1', preset]).success).toBe(false);
   });
+
+  it('accepts a state preset and refuses one the app has no law for', () => {
+    expect(API_SCHEMAS.setup.applyJurisdiction.safeParse(['u-1', 'OR']).success).toBe(true);
+    expect(API_SCHEMAS.setup.applyJurisdiction.safeParse(['u-1', 'TX']).success).toBe(false);
+    expect(API_SCHEMAS.setup.applyJurisdiction.safeParse(['u-1']).success).toBe(false);
+  });
 });

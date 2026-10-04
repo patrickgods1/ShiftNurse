@@ -43,6 +43,7 @@ import type {
   Id,
   IncompatibilityGroup,
   IsoDate,
+  JurisdictionId,
   Nurse,
   NurseCredential,
   NurseRole,
@@ -687,6 +688,11 @@ export interface ShiftNurseApi {
     resume(): SetupState;
     applyPreset(unitId: Id, preset: SetupPreset): SetupPresetResult;
     /**
+     * Applies a state's ratio ceilings, overtime rules and rule switches to the unit, only ever
+     * tightening, and remembers the choice on the unit. Pressing it twice changes nothing.
+     */
+    applyJurisdiction(unitId: Id, jurisdiction: JurisdictionId): SetupPresetResult;
+    /**
      * Saves the live database as a `pre-reset` backup, deletes it and relaunches into the
      * welcome screen. The call returns before the relaunch.
      */
@@ -1048,6 +1054,7 @@ export const API_CHANNELS = {
     'complete',
     'resume',
     'applyPreset',
+    'applyJurisdiction',
     'startOver',
   ],
   dashboard: ['summary'],

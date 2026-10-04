@@ -27,6 +27,7 @@ import type {
   Holiday,
   Id,
   IsoDate,
+  JurisdictionId,
   Nurse,
   NurseCredential,
   OvertimeRule,
@@ -64,6 +65,7 @@ export function toUnit(r: typeof s.unit.$inferSelect): Unit {
       chargeCoversBreaks: r.chargeCoversBreaks,
     },
     ...(r.postingLeadDays === null ? {} : { postingLeadDays: r.postingLeadDays }),
+    ...(r.jurisdiction === null ? {} : { jurisdiction: r.jurisdiction as JurisdictionId }),
   };
 }
 

@@ -23,6 +23,19 @@ afterEach(() => {
   cleanup();
 });
 
+describe('Settings › About', () => {
+  it('lists the nine things a manager still does by hand, and says the presets are not legal advice', async () => {
+    renderWithApp(<SettingsPage />, { route: '/settings?tab=about' });
+    const list = await screen.findByTestId('not-enforced');
+    expect(list.querySelectorAll('li')).toHaveLength(9);
+    expect(list.textContent).toContain('ORS 441.166');
+    expect(
+      screen.getByRole('heading', { name: 'What ShiftNurse does not enforce yet' }),
+    ).toBeTruthy();
+    expect(screen.getByText(/not legal advice/)).toBeTruthy();
+  });
+});
+
 describe('Settings navigation', () => {
   it('groups the sections under the headings a manager looks for', async () => {
     renderWithApp(<SettingsPage />, { route: '/settings' });

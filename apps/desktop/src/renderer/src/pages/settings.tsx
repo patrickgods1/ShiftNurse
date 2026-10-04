@@ -12,6 +12,7 @@ import { PageHeader } from '../components/page-header.js';
 import { ThemeToggle } from '../components/theme-toggle.js';
 import { SECONDARY } from '../components/ui.js';
 import { useConfirmDiscard } from '../components/unsaved-changes.js';
+import { NOT_ENFORCED, PRESETS_DISCLAIMER } from '../limits.js';
 import AcuityPanel from './settings/acuity.js';
 import BackupsPanel from './settings/backups.js';
 import ConflictsPanel from './settings/conflicts.js';
@@ -102,6 +103,19 @@ function AboutTab() {
       <button type="button" className={SECONDARY} onClick={() => void api.app.openLogs()}>
         Open logs folder
       </button>
+
+      <h2 className="mb-1 mt-6 text-sm font-semibold text-text">
+        What ShiftNurse does not enforce yet
+      </h2>
+      <p className="mb-2 text-sm text-text-muted">
+        Each of these is yours to do by hand until the app handles it.
+      </p>
+      <ul className="list-disc pl-5 text-sm text-text" data-testid="not-enforced">
+        {NOT_ENFORCED.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+      <p className="mt-2 text-sm text-text-muted">{PRESETS_DISCLAIMER}</p>
     </section>
   );
 }

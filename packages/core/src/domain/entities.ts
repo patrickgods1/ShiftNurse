@@ -4,6 +4,7 @@
  * this becomes a web app.
  */
 
+import type { JurisdictionId } from '../setup/jurisdictions.js';
 import type { IsoDate, Weekday } from './time.js';
 
 export type Id = string;
@@ -31,6 +32,8 @@ export interface Unit {
    * four weeks). Absent: no notice rule, and publishing is never flagged as late.
    */
   postingLeadDays?: number;
+  /** The state preset last applied (Settings › Unit); absent until one is. Not read by any rule. */
+  jurisdiction?: JurisdictionId;
 }
 
 /**

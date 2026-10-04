@@ -82,6 +82,8 @@ export const unit = sqliteTable('unit', {
   chargeCoversBreaks: integer('charge_covers_breaks', { mode: 'boolean' }).notNull().default(false),
   // Days of notice the unit owes staff before a schedule starts; null means no rule.
   postingLeadDays: integer('posting_lead_days'),
+  // The state preset last applied (core's JurisdictionId); null until one is.
+  jurisdiction: text('jurisdiction'),
 });
 
 export const shiftType = sqliteTable(

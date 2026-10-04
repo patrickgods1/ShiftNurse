@@ -13,6 +13,7 @@
 import { setupPhase } from '@shiftnurse/core';
 import {
   advanceSetup,
+  applyJurisdiction,
   applySetupPreset,
   completeSetup,
   createSetupUnit,
@@ -63,6 +64,8 @@ export function setupApi(
     },
     applyPreset: (unitId, preset) =>
       transact(db, (tx) => applySetupPreset(tx, unitId, preset, ACTOR)),
+    applyJurisdiction: (unitId, jurisdiction) =>
+      transact(db, (tx) => applyJurisdiction(tx, unitId, jurisdiction, ACTOR)),
     startOver,
   };
 }

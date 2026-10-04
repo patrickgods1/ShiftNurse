@@ -14,12 +14,13 @@ import type {
   Holiday,
   Id,
   IsoDate,
+  JurisdictionId,
   RatioStaffing,
   ShiftCredentialRequirement,
   ShiftType,
   Unit,
 } from '@shiftnurse/core';
-import { withinShiftProblem } from '@shiftnurse/core';
+import { JURISDICTION_PRESETS, withinShiftProblem } from '@shiftnurse/core';
 import { and, asc, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
@@ -78,6 +79,8 @@ export interface UnitPatch {
   ratioStaffing?: RatioStaffing;
   /** Null clears the notice rule. */
   postingLeadDays?: number | null;
+  /** Null forgets the state preset. */
+  jurisdiction?: JurisdictionId | null;
 }
 
 const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
@@ -87,6 +90,7 @@ const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
   payPeriodAnchor: true,
   ratioStaffing: true,
   postingLeadDays: true,
+  jurisdiction: true,
 };
 
 /** Break minutes are a whole number a shift can hold; anything else is a typing slip. */
@@ -125,6 +129,12 @@ export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string):
     validate: (values) => {
       validateRatioStaffing(values.ratioStaffing);
       validatePostingLead(values.postingLeadDays);
+      if (
+        values.jurisdiction !== undefined &&
+        values.jurisdiction !== null &&
+        !Object.hasOwn(JURISDICTION_PRESETS, values.jurisdiction)
+      )
+        throw new Error(`Unknown state preset "${values.jurisdiction}"`);
       if (values.name !== undefined && values.name.trim() === '')
         throw new Error('A unit needs a name');
     },

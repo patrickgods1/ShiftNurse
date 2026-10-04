@@ -1,0 +1,1 @@
+ALTER TABLE `unit` ADD `jurisdiction` text;

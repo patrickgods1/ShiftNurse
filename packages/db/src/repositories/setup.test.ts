@@ -11,18 +11,26 @@ import { isoDate, type SetupPreset } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
-import { getHppdTarget, listActiveRatioRulesForUnit, listAcuityTiersForUnit } from './acuity.js';
+import { auditLog } from '../schema.js';
+import {
+  createRatioRule,
+  getHppdTarget,
+  listActiveRatioRulesForUnit,
+  listAcuityTiersForUnit,
+} from './acuity.js';
 import {
   createUnit,
+  getUnit,
   listCoverageRequirementsForUnit,
   listHolidaysForUnit,
   listShiftTypesForUnit,
   listUnits,
 } from './config.js';
-import { listPayRatesForUnit } from './pay.js';
-import { getLatestRuleSet } from './rulesets.js';
+import { listOvertimeRulesForUnit, listPayRatesForUnit } from './pay.js';
+import { getLatestRuleSet, getRuleSet } from './rulesets.js';
 import {
   advanceSetup,
+  applyJurisdiction,
   applySetupPreset,
   completeSetup,
   createSetupUnit,
@@ -269,5 +277,87 @@ describe('presets', () => {
       ACTOR,
     );
     expect(() => apply('unit_missing', { kind: 'rules' })).toThrow(/not found/);
+  });
+});
+
+describe('applying a state preset', () => {
+  const applyState = (unitId: string, id: Parameters<typeof applyJurisdiction>[2]) =>
+    transact(handle.db, (tx) => applyJurisdiction(tx, unitId, id, ACTOR));
+  const auditRows = () => handle.db.select().from(auditLog).all().length;
+
+  it('gives a California med-surg unit its 1:5 ceiling, the overtime law and charge nurse off the bedside', () => {
+    const unit = newUnit();
+    const result = applyState(unit.id, 'CA');
+
+    expect(listActiveRatioRulesForUnit(handle.db, unit.id)).toEqual([
+      expect.objectContaining({ role: 'RN', acuityTierId: null, maxPatientsPerNurse: 5 }),
+    ]);
+    expect(listOvertimeRulesForUnit(handle.db, unit.id)).toHaveLength(5);
+    expect(getUnit(handle.db, unit.id)).toMatchObject({
+      jurisdiction: 'CA',
+      ratioStaffing: {
+        chargeNurseTakesPatients: false,
+        breakMinutesPerNurse: 60,
+        chargeCoversBreaks: true,
+      },
+    });
+    // 1 ratio rule + 5 overtime rules created; ratio staffing and the stored choice updated.
+    expect(result).toEqual({ created: 6, updated: 2, unchanged: 0 });
+  });
+
+  it('writes nothing the second time a manager presses Apply', () => {
+    const unit = newUnit();
+    applyState(unit.id, 'CA');
+    const before = auditRows();
+    const result = applyState(unit.id, 'CA');
+    expect(result).toEqual({ created: 0, updated: 0, unchanged: 1 });
+    expect(auditRows()).toBe(before);
+  });
+
+  it('lowers a looser catch-all ratio instead of adding a second one', () => {
+    const unit = newUnit();
+    transact(handle.db, (tx) =>
+      createRatioRule(
+        tx,
+        { unitId: unit.id, role: 'RN', acuityTierId: null, maxPatientsPerNurse: 8, active: true },
+        ACTOR,
+      ),
+    );
+    const result = applyState(unit.id, 'CA');
+    expect(listActiveRatioRulesForUnit(handle.db, unit.id)).toEqual([
+      expect.objectContaining({ maxPatientsPerNurse: 5 }),
+    ]);
+    expect(result.updated).toBeGreaterThanOrEqual(1);
+  });
+
+  it('switches on the ban on mandatory overtime in New York as a new rule-set version', () => {
+    const unit = newUnit();
+    apply(unit.id, { kind: 'rules' });
+    const v1 = getLatestRuleSet(handle.db, unit.id)!;
+    expect(v1.configs.find((c) => c.ruleId === 'no-mandatory-overtime')?.enabled ?? false).toBe(
+      false,
+    );
+
+    applyState(unit.id, 'NY');
+
+    const v2 = getLatestRuleSet(handle.db, unit.id)!;
+    expect(v2.version).toBe(v1.version + 1);
+    expect(v2.configs.find((c) => c.ruleId === 'no-mandatory-overtime')?.enabled).toBe(true);
+    const untouched = getRuleSet(handle.db, v1.id)!;
+    expect(
+      untouched.configs.find((c) => c.ruleId === 'no-mandatory-overtime')?.enabled ?? false,
+    ).toBe(false);
+    expect(getUnit(handle.db, unit.id)?.jurisdiction).toBe('NY');
+  });
+
+  it('remembers the choice for a state with nothing to add', () => {
+    const unit = newUnit();
+    expect(applyState(unit.id, 'other')).toEqual({ created: 0, updated: 1, unchanged: 0 });
+    expect(getUnit(handle.db, unit.id)?.jurisdiction).toBe('other');
+  });
+
+  it('refuses a state it has no preset for', () => {
+    const unit = newUnit();
+    expect(() => applyState(unit.id, 'ZZ' as never)).toThrow(/Unknown state preset/);
   });
 });
