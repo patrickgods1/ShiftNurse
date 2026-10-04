@@ -28,8 +28,16 @@ export default defineConfig({
         'packages/*/src/**/*.ts',
         'apps/desktop/src/main/**/*.ts',
         'apps/desktop/src/shared/**/*.ts',
+        'apps/desktop/src/renderer/src/**/*.{ts,tsx}',
       ],
-      exclude: ['**/*.test.ts', '**/*.run.ts'],
+      exclude: [
+        '**/*.test.{ts,tsx}',
+        '**/*.test-support.ts',
+        '**/*.run.ts',
+        // The in-app smoke driver: it runs only inside the real Electron app (npm run smoke).
+        'apps/desktop/src/main/smoke.ts',
+        'apps/desktop/src/renderer/src/test/**',
+      ],
       reporter: ['text-summary', 'json-summary'],
     },
   },

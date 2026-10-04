@@ -427,8 +427,8 @@ function waitScript(test: string, ms: number): string {
 /**
  * Generate from the Schedule page as a manager would: three SA + LNS variations through the dialog,
  * then the candidates bar, a preview with the differing shifts outlined, and the comparison table.
- * The API-level solver check above cannot see any of this render. Nothing is saved: the draft the
- * later checks work on stays the hybrid schedule.
+ * The API-level solver check above cannot see any of this render. The generate-save check then
+ * saves one of these options, so the draft the later checks work on is an SA + LNS schedule.
  */
 const GENERATE_UI_STEPS = {
   // A 20,000-iteration budget saved on the unit first, as the API checks pass one: this step
@@ -1012,6 +1012,266 @@ function dayOfScript(periodId: string): string {
   })()`;
 }
 
+/**
+ * Saving an option from the candidates bar: the bar's own Save button, not `solver.save` through
+ * the bridge, must write the option to the draft. The bar then says so, and the draft's rows
+ * (read back through the bridge) are no longer the schedule they were.
+ */
+const SAVE_CANDIDATE_SCRIPT = `
+  (async () => {
+    ${WAIT_FOR}
+    const api = window.shiftnurse;
+    const [unit] = await api.units.list();
+    const draft = (await api.periods.list(unit.id)).find((p) => p.status === 'draft');
+    const key = (a) => a.nurseId + '|' + a.date + '|' + a.shiftTypeId;
+    const before = (await api.periods.assignments(draft.id)).map(key).sort();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    const save = await waitFor('[data-testid="candidate-save"]',
+      () => !document.querySelector('[data-testid="generate-dialog"], [data-testid="compare-dialog"]'));
+    if (save.length === 0) return { error: 'the candidates bar has no Save button' };
+    save[0].click();
+    // Saving replaces the grid's unlocked shifts, so the page asks first.
+    const accept = await waitFor('[data-testid="confirm-accept"]');
+    if (accept.length === 0) return { error: 'Save did not ask for confirmation' };
+    accept[0].click();
+    const saved = await waitFor('[data-testid="candidate-saved"]');
+    const after = (await api.periods.assignments(draft.id)).map(key).sort();
+    const current = await api.solver.current(draft.id);
+    return {
+      saved: saved.length, text: saved[0]?.textContent ?? '',
+      changed: JSON.stringify(before) !== JSON.stringify(after),
+      savedIndex: current ? current.saved ?? null : null, before: before.length, after: after.length,
+    };
+  })()`;
+
+/**
+ * One drag of a chip to an empty day in the same row, then the toast's Undo: the shift must be
+ * back on its nurse, day and shift type. Keyed on nurse|date|shift because a move re-creates the
+ * row (new id), so ids cannot tell "back where it was" from "somewhere else".
+ */
+const UNDO_MOVE_SCRIPT = `
+  (async () => {
+    ${WAIT_FOR}
+    location.hash = '#/schedule';
+    const api = window.shiftnurse;
+    const [unit] = await api.units.list();
+    const draft = (await api.periods.list(unit.id)).find((p) => p.status === 'draft');
+    const key = (a) => a.nurseId + '|' + a.date + '|' + a.shiftTypeId;
+    const keys = async () => (await api.periods.assignments(draft.id)).map(key).sort();
+    const until = async (fn, ms = 10000) => {
+      const started = Date.now();
+      while (Date.now() - started < ms) {
+        const value = await fn();
+        if (value) return value;
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      return null;
+    };
+    const chips = await waitFor('[data-testid="assignment-chip"][draggable="true"]');
+    let chip, target;
+    for (const c of chips) {
+      const cell = c.closest('[data-cell]');
+      if (!cell) continue;
+      const [row, col] = cell.dataset.cell.split(':');
+      target = [...document.querySelectorAll('[data-cell^="' + row + ':"]')].find(
+        (el) => el.dataset.cell !== cell.dataset.cell && !el.querySelector('[data-testid="assignment-chip"]'));
+      if (target) { chip = c; break; }
+    }
+    if (!chip) return { error: 'no unlocked chip with an empty day beside it' };
+    const before = await keys();
+    const dt = new DataTransfer();
+    const fire = (el, type) => el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+    fire(chip, 'dragstart'); fire(target, 'dragenter'); fire(target, 'dragover'); fire(target, 'drop'); fire(chip, 'dragend');
+    const moved = await until(async () => { const k = await keys(); return JSON.stringify(k) !== JSON.stringify(before) ? k : null; });
+    if (!moved) return { error: 'dropping the chip on an empty day moved nothing' };
+    const added = moved.filter((k) => !before.includes(k)).length;
+    const removed = before.filter((k) => !moved.includes(k)).length;
+    const undo = await until(() => [...document.querySelectorAll('[role="status"] button')].find((b) => b.textContent === 'Undo'));
+    if (!undo) return { error: 'the move offered no Undo toast', added, removed };
+    undo.click();
+    const restored = await until(async () => JSON.stringify(await keys()) === JSON.stringify(before));
+    return { added, removed, restored: !!restored, total: before.length };
+  })()`;
+
+/**
+ * Time off with cover, as a manager does it: a pending request on a day the nurse works, the
+ * Requests page's Review dialog, a cover picked from its list, "Approve and cover". The request
+ * and the cover are then read back through the bridge. A request is made per candidate shift
+ * until one has legal cover; the others are cancelled with a reason.
+ */
+const LEAVE_PREPARE_SCRIPT = `
+  (async () => {
+    const api = window.shiftnurse;
+    const [unit] = await api.units.list();
+    const draft = (await api.periods.list(unit.id)).find((p) => p.status === 'draft');
+    const rows = (await api.periods.assignments(draft.id)).filter((a) => !a.isLocked && !a.isCharge);
+    let tried = 0;
+    for (const a of rows.slice(20, 80)) {
+      tried++;
+      const request = await api.timeOff.create({
+        nurseId: a.nurseId, startDate: a.date, endDate: a.date, type: 'pto', reason: 'smoke cover',
+      });
+      const options = await api.timeOff.coverOptions(draft.id, request.id);
+      const option = options.find((o) => o.candidates.length > 0);
+      if (option) {
+        return { periodId: draft.id, requestId: request.id, nurseId: a.nurseId, freed: options.map((o) => ({ id: o.assignment.id, date: o.assignment.date, shiftTypeId: o.assignment.shiftTypeId })) };
+      }
+      await api.timeOff.cancel(request.id, 'Smoke: nobody can cover this one, trying another');
+    }
+    return { error: 'no shift in the draft has legal cover (' + tried + ' tried)' };
+  })()`;
+
+const LEAVE_UI_SCRIPT = `
+  (async () => {
+    ${WAIT_FOR}
+    const until = async (fn, ms = 10000) => {
+      const started = Date.now();
+      while (Date.now() - started < ms) {
+        const value = await fn();
+        if (value) return value;
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      return null;
+    };
+    location.hash = '#/requests';
+    const review = await until(() => [...document.querySelectorAll('[data-testid="review-request"]')]
+      .find((b) => b.closest('tr')?.textContent.includes('smoke cover')));
+    if (!review) return { error: 'the pending request is not on the Requests page' };
+    review.click();
+    const picks = await waitFor('[data-testid="decide-dialog"] [data-testid="cover-pick"]');
+    if (picks.length === 0) return { error: 'the decide dialog offered no cover for the freed shift' };
+    // The dialog preselects the best candidate; take another when there is one, so the choice
+    // made in the list, not the default, is what must reach the schedule.
+    const chosen = [];
+    for (const pick of picks) {
+      const nurses = [...pick.options].map((o) => o.value).filter((v) => v !== '');
+      const value = nurses[Math.min(1, nurses.length - 1)];
+      if (value === undefined) continue;
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(pick, value);
+      pick.dispatchEvent(new Event('change', { bubbles: true }));
+      chosen.push(value);
+    }
+    await new Promise((r) => setTimeout(r, 200));
+    const approve = document.querySelector('[data-testid="approve-request"]');
+    if (!approve || approve.textContent !== 'Approve and cover') {
+      return { error: 'the approve button reads "' + (approve ? approve.textContent : 'missing') + '"' };
+    }
+    approve.click();
+    const closed = await until(() => !document.querySelector('[data-testid="decide-dialog"]'), 15000);
+    return { chosen, closed: !!closed, picks: picks.length };
+  })()`;
+
+function leaveCheckScript(requestId: string, periodId: string, freedIds: string[]): string {
+  return `
+  (async () => {
+    const api = window.shiftnurse;
+    const [unit] = await api.units.list();
+    const request = (await api.timeOff.list(unit.id)).find((r) => r.id === ${JSON.stringify(requestId)});
+    const after = await api.periods.assignments(${JSON.stringify(periodId)});
+    const freedIds = ${JSON.stringify(freedIds)};
+    return {
+      status: request ? request.status : 'missing',
+      freedGone: freedIds.every((id) => !after.some((a) => a.id === id)),
+      assignments: after.map((a) => ({ id: a.id, nurseId: a.nurseId, date: a.date, shiftTypeId: a.shiftTypeId })),
+    };
+  })()`;
+}
+
+/**
+ * "Someone called off" on Today, through the button: pick a nurse from the roster, confirm the
+ * report, and the card must appear and the bridge must list the call-off. Today is the host's
+ * date; the demo's published history covers it.
+ */
+const CALL_OFF_BUTTON_SCRIPT = `
+  (async () => {
+    ${WAIT_FOR}
+    const api = window.shiftnurse;
+    const [unit] = await api.units.list();
+    const until = async (fn, ms = 10000) => {
+      const started = Date.now();
+      while (Date.now() - started < ms) {
+        const value = await fn();
+        if (value) return value;
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      return null;
+    };
+    location.hash = '#/today';
+    const button = (await waitFor('[data-testid="someone-called-off"]'))[0];
+    if (!button) return { error: 'Today has no "Someone called off" button' };
+    const cardsBefore = document.querySelectorAll('[data-testid="call-off-card"]').length;
+    const openBefore = (await api.dayOf.today(unit.id)).openCallOffs.map((v) => v.callOff.id);
+    button.click();
+    const options = await waitFor('[data-testid="call-off-picker"] li button:not([disabled])');
+    if (options.length === 0) return { error: 'the picker offered nobody on today’s roster' };
+    const picked = options[0].textContent;
+    options[0].click();
+    const confirm = await until(() => [...document.querySelectorAll('[data-testid="reason-dialog"] button[type="submit"]')]
+      .find((b) => b.textContent === 'Report call-off'));
+    if (!confirm) return { error: 'picking a nurse did not open the report dialog' };
+    confirm.click();
+    const card = await until(() => document.querySelectorAll('[data-testid="call-off-card"]').length === cardsBefore + 1);
+    const open = (await api.dayOf.today(unit.id)).openCallOffs;
+    const added = open.filter((v) => !openBefore.includes(v.callOff.id));
+    return {
+      picked, cardShown: !!card, cardsBefore, added: added.map((v) => v.nurse.lastName + ', ' + v.nurse.firstName),
+    };
+  })()`;
+
+/**
+ * Settings is grouped tabs: one tab clicked in each group must select and show a panel with
+ * content, and the deep links the grid uses (`?tab=rules&rule=<id>`) must open Rules with that
+ * rule's card on screen. Opened cold, from another route, as a link does.
+ */
+const SETTINGS_GROUPS_SCRIPT = `
+  (async () => {
+    ${WAIT_FOR}
+    const api = window.shiftnurse;
+    const [unit] = await api.units.list();
+    const until = async (fn, ms = 10000) => {
+      const started = Date.now();
+      while (Date.now() - started < ms) {
+        const value = await fn();
+        if (value) return value;
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      return null;
+    };
+    await until(() => { location.hash = '#/settings'; return document.getElementById('settings-tab-unit'); });
+    const visited = [];
+    for (const [group, tab] of [['unit', 'unit'], ['contract', 'pay'], ['scheduling', 'solver'], ['data', 'about']]) {
+      const el = document.getElementById('settings-tab-' + tab);
+      const heading = document.getElementById('settings-group-' + group);
+      const inGroup = !!el && !!heading && el.closest('[role="tablist"]')?.getAttribute('aria-labelledby') === heading.id;
+      el?.click();
+      const panel = await until(() => {
+        const p = document.getElementById('settings-panel-' + tab);
+        return p && !p.hidden && el.getAttribute('aria-selected') === 'true' && p.innerText.trim().length > 20
+          && !/^Loading/.test(p.innerText.trim()) ? p : null;
+      });
+      visited.push({ tab, inGroup, shown: !!panel, text: panel ? panel.innerText.slice(0, 40) : document.body.innerText.slice(0, 120) });
+    }
+    const rules = await api.rules.getLatest(unit.id);
+    const ruleId = rules.configs[rules.configs.length - 1].ruleId;
+    location.hash = '#/';
+    await waitFor('[data-testid="stat-card"]');
+    location.hash = '#/settings?tab=rules&rule=' + ruleId;
+    const card = await until(() => document.querySelector('[data-testid="rule-card-' + ruleId + '"]'));
+    await new Promise((r) => setTimeout(r, 600));
+    const rect = card ? card.getBoundingClientRect() : null;
+    const selected = document.getElementById('settings-tab-rules')?.getAttribute('aria-selected');
+    const tabOnly = await (async () => {
+      location.hash = '#/';
+      await waitFor('[data-testid="stat-card"]');
+      location.hash = '#/settings?tab=backups';
+      return !!(await until(() => document.getElementById('settings-tab-backups')?.getAttribute('aria-selected') === 'true'));
+    })();
+    return {
+      visited, ruleId, selected, cardShown: !!card,
+      cardOnScreen: !!rect && rect.bottom > 0 && rect.top < window.innerHeight, tabOnly,
+    };
+  })()`;
+
 export function runSmoke(win: BrowserWindow): void {
   const timer = setTimeout(() => fail(`did not finish within ${TIMEOUT_MS}ms`), TIMEOUT_MS);
 
@@ -1283,6 +1543,29 @@ export function runSmoke(win: BrowserWindow): void {
       console.log(
         `[smoke] solver settings OK (3 options, hybrid checked, ${solverTab.unavailable} unavailable)`,
       );
+      const groups = (await win.webContents.executeJavaScript(SETTINGS_GROUPS_SCRIPT)) as {
+        visited: { tab: string; inGroup: boolean; shown: boolean; text: string }[];
+        ruleId: string;
+        selected: string | null | undefined;
+        cardShown: boolean;
+        cardOnScreen: boolean;
+        tabOnly: boolean;
+      };
+      for (const v of groups.visited) {
+        if (!v.inGroup) fail(`Settings tab "${v.tab}" is not in its group's tablist`);
+        if (!v.shown) fail(`clicking Settings › ${v.tab} showed no panel; page reads: ${v.text}`);
+      }
+      if (groups.selected !== 'true' || !groups.cardShown) {
+        fail(
+          `#/settings?tab=rules&rule=${groups.ruleId} did not open the Rules panel on that rule's card`,
+        );
+      }
+      if (!groups.cardOnScreen)
+        fail(`the deep link did not scroll rule ${groups.ruleId} into view`);
+      if (!groups.tabOnly) fail('#/settings?tab=backups did not open Backups');
+      console.log(
+        `[smoke] settings groups OK (${groups.visited.map((v) => v.tab).join(', ')} by click, one per group; deep links open Rules at ${groups.ruleId} and Backups)`,
+      );
       const grid = (await win.webContents.executeJavaScript(GRID_KEYBOARD_SCRIPT)) as {
         error?: string;
         tabStops: number;
@@ -1374,10 +1657,60 @@ export function runSmoke(win: BrowserWindow): void {
         );
       }
       await uiShot('generate-more');
+      const savedCandidate = (await run(SAVE_CANDIDATE_SCRIPT)) as {
+        error?: string;
+        saved: number;
+        text: string;
+        changed: boolean;
+        savedIndex: number | null;
+        before: number;
+        after: number;
+      };
+      if (savedCandidate.error) fail(`save from the candidates bar: ${savedCandidate.error}`);
+      if (savedCandidate.saved === 0) {
+        fail('pressing Save on the candidates bar never showed "Saved — this is the draft now"');
+      }
+      if (!savedCandidate.changed || savedCandidate.savedIndex === null) {
+        fail(
+          `the candidates bar said saved but the draft is unchanged (${JSON.stringify(savedCandidate)})`,
+        );
+      }
+      console.log(
+        `[smoke] generate save OK (Save on the bar wrote the option to the draft: ${savedCandidate.before} -> ${savedCandidate.after} shifts, bar reads "${savedCandidate.text.trim()}")`,
+      );
       const discarded = (await run(GENERATE_UI_STEPS.discard)) as { gone: boolean } | null;
       if (!discarded) fail('discarding the options left the candidates bar up');
       console.log(
         `[smoke] generate UI OK (${started.estimate}; summary of ${summary!.runs} with ${summary!.gridBest ? 'the grid' : 'an option'} best, reopens on the summary; preview outlines ${previewed!.outlined} changed shifts with ${previewed!.tagged} readouts on the option; compare ${compared!.rows} rows × ${compared!.columns - 2} options; "${more!.label}" after ${summary!.names.at(-1)} gave ${more!.names.join(', ')}; discarded)`,
+      );
+      // The save above went through the UI, but the bridge writes before it did not: start the
+      // undo check from a cold grid so the chips it drags are the saved draft's.
+      const reload = async () => {
+        const loaded = new Promise<void>((resolve) =>
+          win.webContents.once('did-finish-load', () => resolve()),
+        );
+        win.webContents.reload();
+        await loaded;
+      };
+      await reload();
+      const undone = (await run(UNDO_MOVE_SCRIPT)) as {
+        error?: string;
+        added?: number;
+        removed?: number;
+        restored?: boolean;
+        total?: number;
+      };
+      if (undone.error) fail(`undo after a move: ${undone.error}`);
+      if (undone.added !== 1 || undone.removed !== 1) {
+        fail(
+          `one drag changed ${undone.added} added / ${undone.removed} removed shifts, expected 1 / 1`,
+        );
+      }
+      if (!undone.restored) {
+        fail('Undo after a move did not put the shift back on its nurse, day and shift type');
+      }
+      console.log(
+        `[smoke] undo OK (dragged one of ${undone.total} shifts to an empty day, Undo toast put it back on its nurse, day and shift)`,
       );
       const requests = (await win.webContents.executeJavaScript(REQUESTS_SCRIPT)) as {
         error?: string;
@@ -1403,6 +1736,51 @@ export function runSmoke(win: BrowserWindow): void {
       if (!requests.denyWithoutReason) fail('a denial with a blank reason was accepted');
       console.log(
         `[smoke] requests OK (impact simulated, ${requests.conflicts} conflicts / ${requests.resolutions} options, auto-resolve off applied 0, blank denial refused)`,
+      );
+      const leavePrep = (await run(LEAVE_PREPARE_SCRIPT)) as {
+        error?: string;
+        periodId: string;
+        requestId: string;
+        nurseId: string;
+        freed: { id: string; date: string; shiftTypeId: string }[];
+      };
+      if (leavePrep.error) fail(`leave with cover: ${leavePrep.error}`);
+      // The request was filed through the bridge, so the page must start from a cold cache.
+      await reload();
+      const leaveUi = (await run(LEAVE_UI_SCRIPT)) as {
+        error?: string;
+        chosen: string[];
+        closed: boolean;
+        picks: number;
+      };
+      if (leaveUi.error) fail(`leave with cover: ${leaveUi.error}`);
+      if (!leaveUi.closed) fail('"Approve and cover" left the decide dialog open');
+      const leaveAfter = (await run(
+        leaveCheckScript(
+          leavePrep.requestId,
+          leavePrep.periodId,
+          leavePrep.freed.map((f) => f.id),
+        ),
+      )) as {
+        status: string;
+        freedGone: boolean;
+        assignments: { id: string; nurseId: string; date: string; shiftTypeId: string }[];
+      };
+      if (leaveAfter.status !== 'approved') {
+        fail(`the request is ${leaveAfter.status} after "Approve and cover", expected approved`);
+      }
+      if (!leaveAfter.freedGone) fail('the nurse’s shift is still on the schedule after approval');
+      if (leaveUi.chosen.length === 0) fail('the decide dialog offered no cover to choose');
+      for (const nurseId of leaveUi.chosen) {
+        const covered = leavePrep.freed.some((f) =>
+          leaveAfter.assignments.some(
+            (a) => a.nurseId === nurseId && a.date === f.date && a.shiftTypeId === f.shiftTypeId,
+          ),
+        );
+        if (!covered) fail(`the chosen cover ${nurseId} has no shift on the freed day`);
+      }
+      console.log(
+        `[smoke] leave cover OK (Review dialog freed ${leavePrep.freed.length} shift(s), ${leaveUi.chosen.length} cover(s) chosen from the list, request approved, cover shifts on the schedule)`,
       );
       const exchange = (await win.webContents.executeJavaScript(EXCHANGE_SCRIPT)) as {
         error?: string;
@@ -1578,6 +1956,30 @@ export function runSmoke(win: BrowserWindow): void {
       if (!dayOf.cancelled) fail('call-off cancellation with a reason did not succeed');
       console.log(
         `[smoke] day-of OK (${dayOf.shiftsCount} shifts on ${dayOf.date}, ${dayOf.candidateCount} candidates [${dayOf.tiers.join(',')}], ${dayOf.excludedCount} excluded (${dayOf.excludedReasons.join(' | ')}), backfill via change log)`,
+      );
+      // The day-of checks wrote through the bridge; Today must read them cold.
+      await reload();
+      const callOffButton = (await run(CALL_OFF_BUTTON_SCRIPT)) as {
+        error?: string;
+        picked: string;
+        cardShown: boolean;
+        cardsBefore: number;
+        added: string[];
+      };
+      if (callOffButton.error) fail(`"Someone called off": ${callOffButton.error}`);
+      if (!callOffButton.cardShown) {
+        fail('reporting through "Someone called off" showed no new call-off card on Today');
+      }
+      if (
+        callOffButton.added.length !== 1 ||
+        !callOffButton.picked.startsWith(callOffButton.added[0]!)
+      ) {
+        fail(
+          `the bridge lists ${JSON.stringify(callOffButton.added)} as new call-offs, picked "${callOffButton.picked}"`,
+        );
+      }
+      console.log(
+        `[smoke] someone-called-off OK (picked ${callOffButton.added[0]}, report confirmed, card ${callOffButton.cardsBefore + 1} on Today and the call-off is open on the bridge)`,
       );
       const shotDirAfter = process.env.SHIFTNURSE_SMOKE_SCREENSHOT;
       if (shotDirAfter?.endsWith('/')) {
