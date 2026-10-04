@@ -89,8 +89,10 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
     summary:
       'ORS 441.765 direct-care RN ratios (medical-surgical 1:4 from 1 July 2026, telemetry 1:4, ' +
       'ICU 1:2), with the charge nurse free of patients outside units of 10 beds or fewer; no ' +
-      'mandatory overtime past the agreed shift (ORS 441.166). The staffing plan, its permitted ' +
-      'deviations and the 12-hour and 48-hour caps of ORS 441.166 are not enforced here.',
+      'mandatory overtime past the agreed shift (ORS 441.166). A unit of 10 beds or fewer, whose ' +
+      'charge nurse may take patients, should tick that back on under Settings › Unit. The staffing ' +
+      'plan, its permitted deviations and the 12-hour and 48-hour caps of ORS 441.166 are not ' +
+      'enforced here.',
     ratioStaffing: {
       chargeNurseTakesPatients: false,
       breakMinutesPerNurse: 0,
