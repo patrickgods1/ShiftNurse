@@ -23,7 +23,7 @@ const STATUS_BADGE: Record<SchedulePeriod['status'], string> = {
   archived: 'bg-border text-text-muted',
 };
 
-export default function SchedulePage() {
+export default function SchedulePage({ focusNurseId }: { focusNurseId?: Id | undefined } = {}) {
   const unitId = useUnitId();
   const periodsQuery = usePeriods(unitId);
   const periods = periodsQuery.data ?? [];
@@ -88,7 +88,12 @@ export default function SchedulePage() {
           </div>
 
           {selected !== undefined ? (
-            <ScheduleBoard key={selected.id} unitId={unitId} period={selected} />
+            <ScheduleBoard
+              key={selected.id}
+              unitId={unitId}
+              period={selected}
+              focusNurseId={focusNurseId}
+            />
           ) : null}
         </>
       )}

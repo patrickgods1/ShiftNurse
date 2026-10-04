@@ -4,12 +4,16 @@
  * for — and drill into specifics ("Show list") without leaving the page.
  */
 
-import type { EvaluationResult } from '@shiftnurse/core';
+import { ALL_RULES, type EvaluationResult } from '@shiftnurse/core';
+import { Link } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
 import { formatDate } from '../../format.js';
 import { violationKey } from './grid-utils.js';
 import { PreviewTag } from './preview-tag.js';
 import { type ValidationStatus, violationReadout } from './violation-readout.js';
+
+// Only rules in the registry have a card in Settings › Rules to land on.
+const CONFIGURABLE_RULE_IDS: ReadonlySet<string> = new Set(ALL_RULES.map((r) => r.id));
 
 interface ViolationSummaryProps {
   status: ValidationStatus;
@@ -74,6 +78,15 @@ export function ViolationSummary({ status, result, previewLabel }: ViolationSumm
                   {' '}
                   ({violation.dates.map(formatDate).join(', ')})
                 </span>
+              ) : null}
+              {CONFIGURABLE_RULE_IDS.has(violation.ruleId) ? (
+                <Link
+                  to="/settings"
+                  search={{ tab: 'rules', rule: violation.ruleId }}
+                  className="ml-2 text-accent underline underline-offset-2 hover:no-underline"
+                >
+                  Change this rule
+                </Link>
               ) : null}
             </li>
           ))}

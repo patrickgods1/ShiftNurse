@@ -198,16 +198,16 @@ export function CompareDialog({
       onOpenChange={onOpenChange}
       data-testid="compare-dialog"
       size="xl"
-      title="Compare variations"
-      description="Each variation beside the schedule on the grid now. The best on each row is marked, the grid included; pick a variation to preview or save it."
+      title="Compare options"
+      description="Each option beside the schedule on the grid now. The best on each row is marked, the grid included; pick an option to preview or save it."
     >
       <div className="mt-4">
         {comparison.isPending ? (
-          <AsyncState status="loading" label="Scoring the variations" />
+          <AsyncState status="loading" label="Scoring the options" />
         ) : comparison.isError || !data ? (
           <AsyncState
             status="error"
-            label="Could not compare the variations"
+            label="Could not compare the options"
             error={comparison.error}
           />
         ) : (
@@ -228,7 +228,7 @@ export function CompareDialog({
                         aria-pressed={c.index === selected}
                         className="text-left text-text underline-offset-2 hover:underline"
                       >
-                        Variation {offset + c.index! + 1}
+                        Option {offset + c.index! + 1}
                       </button>
                       {c.fellBackFrom ? (
                         <span className="block text-[10px] text-warn" title={c.fellBackFrom.reason}>
@@ -291,7 +291,7 @@ export function CompareDialog({
             }}
             className={primaryButton}
           >
-            Preview variation {selected === undefined ? '' : offset + selected + 1} on the grid
+            Preview option {selected === undefined ? '' : offset + selected + 1} on the grid
           </button>
         </div>
       </div>

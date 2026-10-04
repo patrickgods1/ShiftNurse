@@ -1,5 +1,5 @@
 /**
- * The "Variation N" tag on each readout above the grid while a Generate variation is previewed.
+ * The "Option N" tag on each readout above the grid while a Generate variation is previewed.
  * The banner says a preview is on, but the numbers under it change quietly — a few hundred
  * dollars, the same violation counts — and a manager reading them must know they describe the
  * variation, not the saved draft.

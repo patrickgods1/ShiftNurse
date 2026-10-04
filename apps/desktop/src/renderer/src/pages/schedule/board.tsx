@@ -23,7 +23,7 @@ import {
   weekdayOf,
 } from '@shiftnurse/core';
 import { Link } from '@tanstack/react-router';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useAssignments, useNurses, useShiftTypes, useTimeOff } from '../../api.js';
 import { useCostReport } from '../../api-cost.js';
 import { useDemand } from '../../api-demand.js';
@@ -55,9 +55,11 @@ import { ViolationSummary } from './violation-summary.js';
 interface ScheduleBoardProps {
   unitId: Id;
   period: SchedulePeriod;
+  /** A nurse to scroll to and mark, from `/schedule?nurse=`. */
+  focusNurseId?: Id | undefined;
 }
 
-export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
+export function ScheduleBoard({ unitId, period, focusNurseId }: ScheduleBoardProps) {
   const unit = useUnit();
   const nursesQuery = useNurses(unitId);
   const shiftTypesQuery = useShiftTypes(unitId);
@@ -116,6 +118,16 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
   );
   const columnDates = useMemo(() => columns.map((c) => c.date), [columns]);
   const sortedNurses = useMemo(() => sortNurses(nursesQuery.data ?? []), [nursesQuery.data]);
+
+  // The grid renders no rows until the nurses load, so the row to scroll to exists only then.
+  const focusRowReady = focusNurseId !== undefined && nursesQuery.data !== undefined;
+  useEffect(() => {
+    if (!focusRowReady) return;
+    // Matched by comparison, not a selector, so an id never needs escaping.
+    [...document.querySelectorAll('[data-nurse-id]')]
+      .find((row) => row.getAttribute('data-nurse-id') === focusNurseId)
+      ?.scrollIntoView?.({ block: 'center' });
+  }, [focusRowReady, focusNurseId]);
 
   // An empty draft has not been built yet. Judged as a schedule it is every shift short — "378
   // hard violations" in red before the manager has done anything — so it is not judged at all.
@@ -259,7 +271,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
           saving={saveCandidate.isPending}
           error={
             saveCandidate.isError
-              ? `That variation was not saved: ${errorMessage(saveCandidate.error)}`
+              ? `That option was not saved: ${errorMessage(saveCandidate.error)}`
               : previewQuery.isError && previewActive
                 ? `Could not preview it: ${errorMessage(previewQuery.error)}`
                 : undefined
@@ -273,8 +285,8 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
           className="mb-3 flex items-center justify-between gap-3 rounded-md border border-accent bg-accent/10 px-3 py-2 text-sm text-text"
         >
           <p>
-            Previewing variation {batch ? variationNumber(batch, selectedIndex) : selectedIndex + 1}{' '}
-            — nothing is saved yet.{' '}
+            Previewing option {batch ? variationNumber(batch, selectedIndex) : selectedIndex + 1} —
+            nothing is saved yet.{' '}
             {preview
               ? `Outlined shifts differ from the draft (${preview.diff.added} added, ${preview.diff.removed} removed, ${preview.diff.changed} changed).`
               : 'Loading…'}
@@ -362,7 +374,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
       <div className="mb-3 flex items-start justify-between gap-3">
         {previewActive ? (
           <p className="text-sm text-text-muted">
-            A preview is read-only: save the variation, or exit the preview, to edit.
+            A preview is read-only: save the option, or exit the preview, to edit.
           </p>
         ) : !readOnly ? (
           <ShiftPalette shiftTypes={shiftTypesQuery.data} readOnly={false} />
@@ -422,6 +434,7 @@ export function ScheduleBoard({ unitId, period }: ScheduleBoardProps) {
         pendingIds={pendingIds}
         readOnly={readOnly || previewActive}
         highlightKeys={highlightKeys}
+        focusNurseId={focusNurseId}
         violationsByAssignment={violationsByAssignmentMap}
         violationsByNurse={violationsByNurseMap}
         violationsByDate={violationsByDateMap}

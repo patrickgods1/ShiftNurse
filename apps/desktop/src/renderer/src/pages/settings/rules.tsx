@@ -37,7 +37,8 @@ import {
   resolveConfigs,
   WEEKDAY_NAMES,
 } from '@shiftnurse/core';
-import { useState } from 'react';
+import { useSearch } from '@tanstack/react-router';
+import { useEffect, useState } from 'react';
 import { useRuleSet, useSaveRuleSet } from '../../api-config.js';
 import { AsyncState } from '../../components/async-state.js';
 import { EditorShell } from '../../components/editor-shell.js';
@@ -349,10 +350,12 @@ function RuleCard({
   rule,
   config,
   onChange,
+  highlighted,
 }: {
   rule: Rule<never>;
   config: RuleConfig;
   onChange: (next: RuleConfig) => void;
+  highlighted: boolean;
 }) {
   const effectiveSeverity: RuleSeverity = config.severityOverride ?? rule.severity;
   const alternateSeverity: RuleSeverity = rule.severity === 'hard' ? 'soft' : 'hard';
@@ -361,8 +364,12 @@ function RuleCard({
 
   return (
     <div
+      id={`rule-${rule.id}`}
+      data-rule-id={rule.id}
       data-testid={`rule-card-${rule.id}`}
-      className="rounded-md border border-border bg-surface p-4"
+      className={`rounded-md border bg-surface p-4 ${
+        highlighted ? 'border-accent ring-2 ring-accent' : 'border-border'
+      }`}
     >
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -624,6 +631,16 @@ export default function RulesPanel() {
 
   const data = ruleSetQuery.data;
 
+  // A "Change this rule" link from the grid names the rule it came from; the cards only exist
+  // once the rule set has loaded, so the scroll waits for that.
+  const ruleParam = useSearch({ strict: false }).rule;
+  const targetRule = typeof ruleParam === 'string' ? ruleParam : undefined;
+  const loaded = data !== undefined;
+  useEffect(() => {
+    if (!loaded || targetRule === undefined) return;
+    document.getElementById(`rule-${targetRule}`)?.scrollIntoView?.({ block: 'center' });
+  }, [loaded, targetRule]);
+
   // Sync local edit state from the loaded (or just-saved) version. Guarded on the version
   // number rather than run in an effect, so the first paint never flashes empty defaults
   // before settling on the real rule set — this is the "adjust state during render" pattern,
@@ -751,6 +768,7 @@ export default function RulesPanel() {
                     rule={rule}
                     config={config}
                     onChange={(next) => updateConfig(rule.id, next)}
+                    highlighted={rule.id === targetRule}
                   />
                 );
               })}

@@ -23,6 +23,7 @@ function run(index: number, objective: number | undefined): SolveRunStatus {
             },
             floorsShort: 0,
             unfilledSlots: 0,
+            unfilled: [],
             hardViolations: 0,
             softViolations: 0,
             elapsedMs: 1,

@@ -5,7 +5,7 @@
  * the chip writes to it on dragstart and the cell reads it back on drop, exactly as in Chromium.
  */
 
-import { type Assignment, isoDate, type Nurse } from '@shiftnurse/core';
+import { type Assignment, isoDate, type Nurse, type Violation } from '@shiftnurse/core';
 import {
   assign,
   DAY_12,
@@ -46,7 +46,7 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-function renderGrid(assignments: Assignment[], readOnly = false) {
+function renderGrid(assignments: Assignment[], readOnly = false, focusNurseId?: string) {
   const onMove = vi.fn();
   const onCreate = vi.fn();
   render(
@@ -59,6 +59,7 @@ function renderGrid(assignments: Assignment[], readOnly = false) {
         assignments={assignments}
         pendingIds={new Set()}
         readOnly={readOnly}
+        focusNurseId={focusNurseId}
         violationsByAssignment={new Map()}
         violationsByNurse={new Map()}
         violationsByDate={new Map()}
@@ -148,5 +149,64 @@ describe('dragging shifts on the schedule grid', () => {
     fireEvent.drop(cell(ben, '2026-10-05'), { dataTransfer: new FakeDataTransfer() });
     expect(onMove).not.toHaveBeenCalled();
     expect(onCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe('showing one nurse on the schedule grid', () => {
+  it("marks only Ben's row when a link asks to see Ben", () => {
+    renderGrid([], false, ben.id);
+    const rows = document.querySelectorAll('[role="row"][data-nurse-id]');
+    const marked = [...rows].filter((r) => r.getAttribute('data-highlighted') === 'true');
+    expect(marked.map((r) => r.getAttribute('data-nurse-id'))).toEqual([ben.id]);
+  });
+});
+
+describe('marking violations on a chip by shape as well as colour', () => {
+  function renderWith(severity: 'hard' | 'soft') {
+    const a = assign(alice.id, DAY_12, '2026-10-05');
+    const violation = {
+      ruleId: 'x',
+      severity,
+      message: 'Too much',
+      nurseIds: [alice.id],
+      dates: [],
+      assignmentIds: [a.id],
+    } as unknown as Violation;
+    render(
+      <ScheduleGrid
+        nurses={[alice]}
+        shiftTypes={[DAY_12]}
+        columns={COLUMNS}
+        assignments={[a]}
+        pendingIds={new Set()}
+        readOnly={false}
+        violationsByAssignment={new Map([[a.id, [violation]]])}
+        violationsByNurse={new Map()}
+        violationsByDate={new Map()}
+        onMove={vi.fn()}
+        onCreate={vi.fn()}
+        onChipOpen={vi.fn()}
+        onChipDelete={vi.fn()}
+      />,
+    );
+    return screen.getByTestId('assignment-chip');
+  }
+
+  it('draws an octagon on a hard breach and no triangle', () => {
+    const chip = renderWith('hard');
+    expect(chip.querySelector('[data-severity="hard"] polygon')?.getAttribute('points')).toContain(
+      '3,0.5',
+    );
+    expect(chip.querySelector('[data-severity="soft"]')).toBeNull();
+    expect(chip.className).toContain('border-solid');
+  });
+
+  it('draws a triangle on a soft breach and a dashed outline', () => {
+    const chip = renderWith('soft');
+    expect(chip.querySelector('[data-severity="soft"] polygon')?.getAttribute('points')).toBe(
+      '5,0.5 9.8,9.5 0.2,9.5',
+    );
+    expect(chip.querySelector('[data-severity="hard"]')).toBeNull();
+    expect(chip.className).toContain('border-dashed');
   });
 });

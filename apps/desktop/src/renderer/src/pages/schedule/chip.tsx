@@ -91,12 +91,12 @@ export const AssignmentChip = memo(function AssignmentChip({
           onDelete(assignment);
         }
       }}
-      className={`relative mb-1 flex items-center justify-center rounded px-1 text-[11px]
+      className={`relative mb-1 flex items-center justify-center rounded px-1 text-xs
         font-semibold leading-none last:mb-0 ${chipWidthClass(shiftType?.durationHours ?? 12)} ${chipHeightClass(
           shiftType?.durationHours ?? 12,
         )} ${draggable ? 'cursor-grab active:cursor-grabbing' : assignment.isLocked ? 'cursor-not-allowed' : ''} ${
           optimistic ? 'opacity-50' : ''
-        } ${hard ? 'ring-2 ring-danger' : soft ? 'ring-2 ring-warn' : ''} ${
+        } ${hard ? 'border-2 border-solid border-danger' : soft ? 'border-2 border-dashed border-warn' : ''} ${
           highlighted ? 'outline outline-2 outline-offset-1 outline-accent' : ''
         } ${!readOnly ? 'focus-visible:ring-2 focus-visible:ring-accent' : ''}`}
       style={{ backgroundColor: color, color: readableTextColor(color) }}
@@ -104,25 +104,42 @@ export const AssignmentChip = memo(function AssignmentChip({
       <span className="truncate">{shiftType?.abbreviation ?? '?'}</span>
       {assignment.isLocked ? <span className="ml-0.5">🔒</span> : null}
       {assignment.isCharge ? (
-        <span className="absolute -bottom-1 -right-1 rounded-full bg-surface px-1 text-[9px] font-bold text-text">
+        <span className="absolute -bottom-1 -right-1 rounded-full bg-surface px-1 text-xs font-bold text-text">
           C
         </span>
       ) : null}
       {preferenceNote ? (
         <span
           aria-hidden
-          className="absolute -left-1 -top-1 rounded-full bg-surface px-0.5 text-[9px] leading-none text-warn"
+          className="absolute -left-1 -top-1 rounded-full bg-surface px-0.5 text-xs leading-none text-warn"
         >
           ♡
         </span>
       ) : null}
-      {hard || soft ? (
-        <span
-          className={`absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full ${
-            hard ? 'bg-danger' : 'bg-warn'
-          }`}
-        />
-      ) : null}
+      {hard || soft ? <SeverityMark severity={hard ? 'hard' : 'soft'} /> : null}
     </button>
   );
 });
+
+/**
+ * Hard (solid border) and soft (dashed) differ by outline shape as well as colour (octagon = stop, triangle = caution),
+ * so a manager who cannot tell red from amber still can tell a breach from an advisory.
+ */
+export function SeverityMark({ severity }: { severity: 'hard' | 'soft' }) {
+  const hard = severity === 'hard';
+  return (
+    <svg
+      aria-hidden
+      data-severity={severity}
+      viewBox="0 0 10 10"
+      className={`absolute -right-1 -top-1 h-3 w-3 ${hard ? 'text-danger' : 'text-warn'}`}
+    >
+      <polygon
+        points={hard ? '3,0.5 7,0.5 9.5,3 9.5,7 7,9.5 3,9.5 0.5,7 0.5,3' : '5,0.5 9.8,9.5 0.2,9.5'}
+        fill="currentColor"
+        stroke="var(--color-surface, white)"
+        strokeWidth="0.8"
+      />
+    </svg>
+  );
+}

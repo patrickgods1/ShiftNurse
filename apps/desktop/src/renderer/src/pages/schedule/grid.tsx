@@ -64,7 +64,7 @@ function CountBadge({ hard, soft, title }: { hard: number; soft: number; title: 
     <span
       title={title}
       className={`ml-1 inline-flex min-w-[1rem] items-center justify-center rounded-full px-1
-        text-[10px] font-semibold ${hard > 0 ? 'bg-danger/15 text-danger' : 'bg-warn/15 text-warn'}`}
+        text-xs font-semibold ${hard > 0 ? 'bg-danger/15 text-danger' : 'bg-warn/15 text-warn'}`}
     >
       {hard > 0 ? hard : soft}
     </span>
@@ -214,6 +214,8 @@ interface GridRowProps {
   violationsByAssignment: ReadonlyMap<Id, Violation[]>;
   pendingIds: ReadonlySet<Id>;
   highlightKeys: ReadonlySet<string> | undefined;
+  /** This row is the nurse a link asked to see; a boolean so no other row re-renders. */
+  highlighted: boolean;
   nurseViolations: readonly Violation[] | undefined;
   /** The highlighted drop target's date, when it is in this row. */
   dragOverDate: IsoDate | undefined;
@@ -241,6 +243,7 @@ const GridRow = memo(function GridRow({
   violationsByAssignment,
   pendingIds,
   highlightKeys,
+  highlighted,
   nurseViolations,
   dragOverDate,
   row,
@@ -259,7 +262,12 @@ const GridRow = memo(function GridRow({
   return (
     // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header)
     // biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops
-    <div role="row" className="flex">
+    <div
+      role="row"
+      data-nurse-id={nurse.id}
+      data-highlighted={highlighted ? 'true' : undefined}
+      className={highlighted ? 'flex bg-accent/10 ring-2 ring-inset ring-accent' : 'flex'}
+    >
       {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header) */}
       {/* biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops */}
       <div
@@ -322,6 +330,8 @@ export interface ScheduleGridProps {
   readOnly: boolean;
   /** While previewing a Generate variation: its shifts that differ from the draft. */
   highlightKeys?: ReadonlySet<string>;
+  /** Marks this nurse's row (and the board scrolls to it). */
+  focusNurseId?: Id | undefined;
   violationsByAssignment: ReadonlyMap<Id, Violation[]>;
   violationsByNurse: ReadonlyMap<Id, Violation[]>;
   violationsByDate: ReadonlyMap<IsoDate, Violation[]>;
@@ -343,6 +353,7 @@ export function ScheduleGrid({
   pendingIds,
   readOnly,
   highlightKeys,
+  focusNurseId,
   violationsByAssignment,
   violationsByNurse,
   violationsByDate,
@@ -522,6 +533,7 @@ export function ScheduleGrid({
             violationsByAssignment={violationsByAssignment}
             pendingIds={nursesWithPending.has(nurse.id) ? pendingIds : NO_PENDING}
             highlightKeys={highlightKeys}
+            highlighted={nurse.id === focusNurseId}
             nurseViolations={violationsByNurse.get(nurse.id)}
             dragOverDate={dragOver?.nurseId === nurse.id ? dragOver.date : undefined}
             readOnly={readOnly}

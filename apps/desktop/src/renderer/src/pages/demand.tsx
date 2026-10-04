@@ -94,7 +94,7 @@ export default function DemandPage() {
   return (
     <div data-testid="demand-page">
       <PageHeader
-        title="Demand"
+        title="Staffing needs"
         description="Census forecasts, the staffing demand they imply, and how well the forecast holds up"
         actions={
           <button

@@ -60,6 +60,8 @@ const DEFAULT_MAX_ITERATIONS = 200_000;
 /** A safety valve well past any plausible run; only a runaway input ever hits it. */
 const TIME_LIMIT_MS = 5 * 60 * 1000;
 const PROGRESS_EVERY_ITERATIONS = 2000;
+/** How many short shifts a run's status carries; `unfilledSlots` stays the full count. */
+export const UNFILLED_LISTED = 50;
 
 /** The part of a `worker_threads` Worker a batch uses; a fake stands in for it in tests. */
 export interface SolverWorkerHandle {
@@ -485,6 +487,14 @@ export class SolverJobs {
             : {}),
           floorsShort: report.unfilled.reduce((sum, slot) => sum + slot.shortfall, 0),
           unfilledSlots: report.unfilled.length,
+          unfilled: report.unfilled
+            .slice(0, UNFILLED_LISTED)
+            .map(({ date, shiftTypeId, role, shortfall }) => ({
+              date,
+              shiftTypeId,
+              role,
+              shortfall,
+            })),
           hardViolations: report.hardViolations.length,
           softViolations: report.softViolations.length,
           elapsedMs: report.stats.elapsedMs,

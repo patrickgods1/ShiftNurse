@@ -16,6 +16,7 @@ import type {
   SolverAvailability,
 } from '@shared/api.js';
 import type { Id, SchedulePeriod, SolverId } from '@shiftnurse/core';
+import { Link } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import {
   useBatchEstimate,
@@ -30,6 +31,7 @@ import { periodLabel } from '../../format.js';
 import { formatDollars } from '../../money.js';
 import { SOLVER_LABELS, SOLVER_ORDER } from '../../solver-labels.js';
 import { bestChoice, digestLine, finishedRuns, spread, variationNumber } from './candidates.js';
+import { UnfilledList } from './unfilled-list.js';
 
 /** Matches `MAX_BATCH_SIZE` in main; main clamps whatever arrives. */
 const MAX_VARIATIONS = 10;
@@ -239,7 +241,7 @@ function Confirm({
       </p>
       <ul className="mt-3 list-disc pl-5 text-sm text-text-muted">
         <li>
-          You get a few versions to choose between: each one balances the same rules a little
+          You get a few options to choose between: each one balances the same rules a little
           differently.{' '}
           <span className="font-medium text-text">
             Nothing on the schedule changes until you pick one and save it.
@@ -273,7 +275,7 @@ function Confirm({
       ) : null}
       <div className="mt-4">
         <label className="flex w-40 flex-col gap-1 text-xs text-text-muted">
-          Versions to compare
+          Options to compare
           <input
             type="number"
             data-testid="generate-count"
@@ -308,6 +310,16 @@ function Confirm({
             ))}
           </select>
         </label>
+        <p className="mt-2">
+          <Link
+            to="/settings"
+            search={{ tab: 'solver' }}
+            data-testid="generate-change-default"
+            className="text-accent underline"
+          >
+            Change default builder
+          </Link>
+        </p>
       </details>
       {chosen?.available === false ? (
         <p className="mt-1 text-xs text-warn">
@@ -349,7 +361,7 @@ function Confirm({
               ? `Generate ${count} more`
               : count === 1
                 ? 'Generate'
-                : `Generate ${count} variations`}
+                : `Generate ${count} options`}
         </button>
       </div>
     </div>
@@ -389,21 +401,22 @@ function PreviousBatch({
           className="mt-0.5"
         />
         <span>
-          Try new seeds: variation{count === 1 ? ` ${first}` : `s ${first}–${last}`}
+          Try different options than last time (option
+          {count === 1 ? ` ${first}` : `s ${first}–${last}`})
           <span className="block text-xs text-text-muted">
             {continuing
-              ? 'Each new seed is a fresh search and may find a lower score than the last batch.'
-              : `Unticked, this starts again at variation 1 and repeats what the same inputs gave before.`}
+              ? 'Searches for schedules it has not tried yet; untick to start again from option 1.'
+              : 'Unticked, this starts again from option 1 and repeats what the same inputs gave before.'}
           </span>
         </span>
       </label>
       {done > 0 ? (
         <p className="mt-2 text-xs text-text-muted">
-          This replaces the {done} variation{done === 1 ? '' : 's'} waiting above the grid.
+          This replaces the {done} option{done === 1 ? '' : 's'} waiting above the grid.
           {unsavedWinner ? (
             <span className="font-medium text-warn">
               {' '}
-              Variation {variationNumber(previous, unsavedWinner.index)} scores better than the grid
+              Option {variationNumber(previous, unsavedWinner.index)} scores better than the grid
               and has not been saved — save it first to keep it.
             </span>
           ) : null}
@@ -463,7 +476,7 @@ function Running({
     <div data-testid="generate-running">
       <div className="flex items-center justify-between text-sm">
         <span className="font-medium text-text">
-          {batch.count === 1 ? 'Generating' : `Generating ${batch.count} variations`} with{' '}
+          {batch.count === 1 ? 'Generating' : `Generating ${batch.count} options`} with{' '}
           {SOLVER_LABELS[batch.solver].name}
         </span>
         <span className="text-text-muted">
@@ -492,7 +505,7 @@ function Running({
             className="flex justify-between gap-3 border-b border-border px-2 py-1.5 last:border-b-0"
           >
             <span className="font-medium text-text">
-              Variation {variationNumber(batch, run.index)}
+              Option {variationNumber(batch, run.index)}
             </span>
             <span
               className={
@@ -509,8 +522,8 @@ function Running({
         ))}
       </ol>
       <p className="mt-3 text-xs text-text-muted">
-        You can close this window: the variations keep running, and Show progress above the grid
-        brings you back here.
+        You can close this window: the options keep running, and Show progress above the grid brings
+        you back here.
       </p>
       <div className="mt-4 flex justify-end gap-2">
         <button
@@ -554,6 +567,7 @@ function Finished({
   const done = finishedRuns(batch);
   const choice = bestChoice(batch);
   const bestIndex = choice?.kind === 'variation' ? choice.index : choice?.bestVariation;
+  const bestSummary = batch.runs.find((r) => r.index === bestIndex)?.summary;
   const took =
     batch.finishedAt !== undefined
       ? ` in ${formatElapsed(batch.finishedAt - batch.startedAt)}`
@@ -563,7 +577,7 @@ function Finished({
     return (
       <div data-testid="generate-finished" data-state="stale">
         <p className="text-sm text-warn">
-          These variations are out of date: {batch.stale}. Generate again for ones that fit the
+          These options are out of date: {batch.stale}. Generate again for ones that fit the
           schedule as it is now.
         </p>
         <div className="mt-6 flex justify-end gap-2">
@@ -582,8 +596,8 @@ function Finished({
     <div data-testid="generate-finished" data-state={done.length > 0 ? 'done' : 'empty'}>
       <p className="text-sm font-medium text-text">
         {batch.cancelled
-          ? `Stopped: ${done.length} of ${batch.count} variations finished${took}.`
-          : `${done.length} of ${batch.count} variation${batch.count === 1 ? '' : 's'} finished${took}.`}
+          ? `Stopped: ${done.length} of ${batch.count} options finished${took}.`
+          : `${done.length} of ${batch.count} option${batch.count === 1 ? '' : 's'} finished${took}.`}
       </p>
       {choice?.kind === 'grid' ? (
         <p data-testid="generate-grid-best" className="mt-1 text-sm text-success">
@@ -593,9 +607,17 @@ function Finished({
         </p>
       ) : choice ? (
         <p className="mt-1 text-sm text-success">
-          Variation {variationNumber(batch, choice.index)} strikes the best balance of staffing,
+          Option {variationNumber(batch, choice.index)} strikes the best balance of staffing,
           fairness, preferences and cost.
         </p>
+      ) : null}
+      {bestSummary && bestSummary.floorsShort > 0 ? (
+        <div className="mt-2 text-sm">
+          <p className="text-danger">
+            Option {variationNumber(batch, bestIndex!)} leaves {bestSummary.floorsShort} short:
+          </p>
+          <UnfilledList summary={bestSummary} />
+        </div>
       ) : null}
       {batch.fellBackFrom ? (
         <p className="mt-1 text-sm text-warn" data-testid="generate-fallback">
@@ -657,7 +679,7 @@ function Finished({
                 className={`border-b border-border last:border-b-0 ${best ? 'font-semibold text-success' : 'text-text'}`}
               >
                 <th scope="row" className="px-2 py-1 text-left font-normal">
-                  Variation {variationNumber(batch, run.index)}
+                  Option {variationNumber(batch, run.index)}
                 </th>
                 {run.state === 'done' && s ? (
                   <>
@@ -729,7 +751,7 @@ function Finished({
             onClick={() => onPreview(bestIndex)}
             className={primaryButton}
           >
-            Preview variation {variationNumber(batch, bestIndex)} on the grid
+            Preview option {variationNumber(batch, bestIndex)} on the grid
           </button>
         ) : (
           <button type="button" className={primaryButton} onClick={onClose}>

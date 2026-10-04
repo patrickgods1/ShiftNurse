@@ -16,6 +16,11 @@ import {
 import { type CSSProperties, useEffect, useRef } from 'react';
 import { AsyncState } from './components/async-state.js';
 import { TipProvider } from './components/field-help.js';
+import {
+  RequestsBadge,
+  requestsLabel,
+  useWaitingRequestCount,
+} from './components/requests-badge.js';
 import { ThemeToggle } from './components/theme-toggle.js';
 import { SECONDARY } from './components/ui.js';
 import { NavigationGuard, UnsavedChangesProvider } from './components/unsaved-changes.js';
@@ -34,11 +39,11 @@ import { UnitProvider, useUnit } from './unit-context.js';
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard' },
   { to: '/today', label: 'Today' },
-  { to: '/schedule', label: 'Schedule' },
-  { to: '/demand', label: 'Demand' },
-  { to: '/fairness', label: 'Fairness' },
-  { to: '/roster', label: 'Roster' },
   { to: '/requests', label: 'Requests' },
+  { to: '/schedule', label: 'Schedule' },
+  { to: '/roster', label: 'Roster' },
+  { to: '/fairness', label: 'Fairness' },
+  { to: '/demand', label: 'Staffing needs' },
   { to: '/settings', label: 'Settings' },
 ] as const;
 
@@ -54,6 +59,7 @@ const DRAG_REGION = { WebkitAppRegion: 'drag' } as CSSProperties;
 
 function AppShell() {
   const unit = useUnit();
+  const waiting = useWaitingRequestCount(unit.id);
   // The pages share one scrolling container, so without this a page opened from another one
   // halfway down its list opened halfway down too.
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -86,8 +92,10 @@ function AppShell() {
                   [&.active]:bg-accent [&.active]:text-white"
                 activeProps={{ className: 'active' }}
                 activeOptions={{ exact: item.to === '/' }}
+                aria-label={item.to === '/requests' ? requestsLabel(waiting) : undefined}
               >
                 {item.label}
+                {item.to === '/requests' ? <RequestsBadge count={waiting} /> : null}
               </Link>
             </li>
           ))}
@@ -142,8 +150,16 @@ const todayRoute = createRoute({
 const scheduleRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/schedule',
-  component: SchedulePage,
+  // `?nurse=<id>` is the link target other pages use for "show me this nurse on the schedule".
+  validateSearch: (search: Record<string, unknown>): { nurse?: string } =>
+    typeof search.nurse === 'string' && search.nurse !== '' ? { nurse: search.nurse } : {},
+  component: ScheduleRoutePage,
 });
+
+function ScheduleRoutePage() {
+  const { nurse } = scheduleRoute.useSearch();
+  return <SchedulePage focusNurseId={nurse} />;
+}
 
 const demandRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -173,6 +189,11 @@ const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
   component: SettingsPage,
+  // Deep links: `?tab=rules&rule=<ruleId>`. Both optional, unknown values are the page's to ignore.
+  validateSearch: (search: Record<string, unknown>): { tab?: string; rule?: string } => ({
+    ...(typeof search.tab === 'string' ? { tab: search.tab } : {}),
+    ...(typeof search.rule === 'string' ? { rule: search.rule } : {}),
+  }),
 });
 
 const routeTree = rootRoute.addChildren([

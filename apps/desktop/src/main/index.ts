@@ -33,10 +33,17 @@ const APP_LOCATION: AppLocation = {
   devServerUrl: is.dev ? process.env.ELECTRON_RENDERER_URL : undefined,
 };
 
+/** `--window-size WxH` on the smoke launcher, to capture the app as a 1366x768 laptop shows it. */
+function smokeWindowSize(): { width: number; height: number } | undefined {
+  const match = /^(\d{3,5})x(\d{3,5})$/.exec(process.env.SHIFTNURSE_SMOKE_WINDOW_SIZE ?? '');
+  return isSmokeRun() && match ? { width: Number(match[1]), height: Number(match[2]) } : undefined;
+}
+
 function createWindow(): BrowserWindow {
+  const size = smokeWindowSize();
   const win = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: size?.width ?? 1400,
+    height: size?.height ?? 900,
     minWidth: 1000,
     minHeight: 640,
     show: false,

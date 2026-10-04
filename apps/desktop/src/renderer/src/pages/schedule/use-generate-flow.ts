@@ -81,7 +81,7 @@ export function useGenerateFlow({ period, unitId, assignments, onSaved }: Genera
   // Named from the preview's own index: while the next variation loads, the previous one's
   // numbers are still on show and must not be labelled as the next.
   const previewLabel =
-    preview && batch ? `Variation ${variationNumber(batch, preview.index)}` : undefined;
+    preview && batch ? `Option ${variationNumber(batch, preview.index)}` : undefined;
   const highlightKeys = useMemo(
     () => (preview ? new Set(preview.changedKeys) : undefined),
     [preview],
@@ -93,7 +93,7 @@ export function useGenerateFlow({ period, unitId, assignments, onSaved }: Genera
     // Nothing on the grid to lose: saving needs no second question.
     if (unlocked > 0) {
       const ok = await confirm({
-        title: `Save variation ${variationNumber(batch, selectedIndex)} as the draft?`,
+        title: `Save option ${variationNumber(batch, selectedIndex)} as the draft?`,
         description: `It replaces the ${unlocked} unlocked shift${unlocked === 1 ? '' : 's'} on the grid, hand edits included. Locked shifts stay exactly where they are.`,
         confirmLabel: 'Save',
         danger: false,

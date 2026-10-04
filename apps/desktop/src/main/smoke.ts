@@ -496,7 +496,7 @@ const GENERATE_UI_STEPS = {
               setup: !!dialog.querySelector('[data-testid="generate-confirm"]') };`,
     10_000,
   )})`,
-  // From the summary to the grid: "Preview variation N" when a variation wins, otherwise "Keep
+  // From the summary to the grid: "Preview option N" when an option wins, otherwise "Keep
   // the grid" and the bar's own preview button.
   preview: waitScript(
     `const best = document.querySelector('[data-testid="generate-preview-best"]');
@@ -531,8 +531,8 @@ const GENERATE_UI_STEPS = {
      return rows > 0 ? { rows, columns } : null;`,
     20_000,
   )}`,
-  // Generate again from the summary: it must carry on with new seeds (variations 4–6), not repeat
-  // variations 1–3, which on unchanged inputs would be the identical schedules.
+  // Generate again from the summary: it must carry on with new seeds (options 4–6), not repeat
+  // options 1–3, which on unchanged inputs would be the identical schedules.
   more: `
   (() => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -1226,12 +1226,10 @@ export function runSmoke(win: BrowserWindow): void {
       }
       const batch = solved.batchCheck;
       if (batch.runs.join() !== 'done,done' || batch.columns !== 2) {
-        fail(
-          `a batch of two finished as [${batch.runs}] with ${batch.columns} comparable variations`,
-        );
+        fail(`a batch of two finished as [${batch.runs}] with ${batch.columns} comparable options`);
       }
       if (batch.previewShifts === 0 || !batch.previewValidated) {
-        fail('previewing variation 2 returned no shifts or no validation');
+        fail('previewing option 2 returned no shifts or no validation');
       }
       // The demo unit is on the default solver (hybrid). Without the OR-Tools runner the job must
       // fall back to SA + LNS *and say so*; a silent substitution is the failure being guarded.
@@ -1328,7 +1326,7 @@ export function runSmoke(win: BrowserWindow): void {
         gridBest: boolean;
       } | null;
       if (summary?.runs !== 3) {
-        fail(`three variations generated from the page summarised as ${JSON.stringify(summary)}`);
+        fail(`three options generated from the page summarised as ${JSON.stringify(summary)}`);
       }
       await uiShot('generate-summary');
 
@@ -1347,7 +1345,7 @@ export function runSmoke(win: BrowserWindow): void {
       } | null;
       if (!previewed) {
         fail(
-          'previewing a variation outlined no shifts that differ from the draft, or left a readout above the grid on the draft',
+          'previewing an option outlined no shifts that differ from the draft, or left a readout above the grid on the draft',
         );
       }
       await uiShot('generate-preview');
@@ -1368,8 +1366,8 @@ export function runSmoke(win: BrowserWindow): void {
       } | null;
       if (more?.carried) fail('a preview of the previous batch carried over into Generate more');
       // The next three numbers after the batch it followed: new seeds, not a repeat.
-      const last = Number(summary!.names.at(-1)?.replace('Variation ', ''));
-      const expected = [1, 2, 3].map((k) => `Variation ${last + k}`).join();
+      const last = Number(summary!.names.at(-1)?.replace('Option ', ''));
+      const expected = [1, 2, 3].map((k) => `Option ${last + k}`).join();
       if (!more?.checked || more.names.join() !== expected) {
         fail(
           `Generate more after ${summary!.names.join(', ')} gave ${JSON.stringify(more)}, expected ${expected}`,
@@ -1377,9 +1375,9 @@ export function runSmoke(win: BrowserWindow): void {
       }
       await uiShot('generate-more');
       const discarded = (await run(GENERATE_UI_STEPS.discard)) as { gone: boolean } | null;
-      if (!discarded) fail('discarding the variations left the candidates bar up');
+      if (!discarded) fail('discarding the options left the candidates bar up');
       console.log(
-        `[smoke] generate UI OK (${started.estimate}; summary of ${summary!.runs} with ${summary!.gridBest ? 'the grid' : 'a variation'} best, reopens on the summary; preview outlines ${previewed!.outlined} changed shifts with ${previewed!.tagged} readouts on the variation; compare ${compared!.rows} rows × ${compared!.columns - 2} variations; "${more!.label}" after ${summary!.names.at(-1)} gave ${more!.names.join(', ')}; discarded)`,
+        `[smoke] generate UI OK (${started.estimate}; summary of ${summary!.runs} with ${summary!.gridBest ? 'the grid' : 'an option'} best, reopens on the summary; preview outlines ${previewed!.outlined} changed shifts with ${previewed!.tagged} readouts on the option; compare ${compared!.rows} rows × ${compared!.columns - 2} options; "${more!.label}" after ${summary!.names.at(-1)} gave ${more!.names.join(', ')}; discarded)`,
       );
       const requests = (await win.webContents.executeJavaScript(REQUESTS_SCRIPT)) as {
         error?: string;
@@ -1614,6 +1612,14 @@ export function runSmoke(win: BrowserWindow): void {
       const shot = process.env.SHIFTNURSE_SMOKE_SCREENSHOT;
       if (shot && !shot.endsWith('/')) {
         await win.webContents.executeJavaScript(visitScript('#/', 'stat-card'));
+        // Another page, for a visual check at a given window size; the pages have no common test
+        // id to wait on, so give the route time to render and its queries to land.
+        const shotRoute = process.env.SHIFTNURSE_SMOKE_SCREENSHOT_ROUTE;
+        if (shotRoute) {
+          await win.webContents.executeJavaScript(
+            `new Promise((resolve) => { location.hash = ${JSON.stringify(shotRoute)}; setTimeout(resolve, 2000); })`,
+          );
+        }
         const image = await win.webContents.capturePage();
         writeFileSync(shot, image.toPNG());
         console.log(`[smoke] screenshot written to ${shot}`);

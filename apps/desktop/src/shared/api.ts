@@ -45,6 +45,7 @@ import type {
   IsoDate,
   Nurse,
   NurseCredential,
+  NurseRole,
   OvertimeRule,
   PayRate,
   PlannedHoliday,
@@ -434,6 +435,14 @@ export interface SolverAvailability {
  */
 export type SolveRunState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
+/** One role on one shift a run left below its hard minimum. */
+export interface UnfilledShift {
+  date: IsoDate;
+  shiftTypeId: Id;
+  role: NurseRole;
+  shortfall: number;
+}
+
 /** A finished run's headline numbers, from its solve report. */
 export interface SolveRunSummary {
   objective: number;
@@ -446,6 +455,8 @@ export interface SolveRunSummary {
   floorsShort: number;
   /** Shifts (and roles) with any shortfall. */
   unfilledSlots: number;
+  /** The first 50 of them (main caps it, so a hopeless run ships no hundreds of rows), so the manager is told which shifts rather than a count. */
+  unfilled: UnfilledShift[];
   hardViolations: number;
   softViolations: number;
   elapsedMs: number;

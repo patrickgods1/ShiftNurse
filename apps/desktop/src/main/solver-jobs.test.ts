@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import type { SolveInput, SolveReport } from '@shiftnurse/core';
+import { isoDate, type SolveInput, type SolveReport } from '@shiftnurse/core';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { SolverWorkerHandle } from './solver-jobs.js';
 import { SolverJobs } from './solver-jobs.js';
@@ -15,12 +15,12 @@ class FakeWorker extends EventEmitter implements SolverWorkerHandle {
   terminate() {
     this.terminated = true;
   }
-  finish(objective: number, cancelled = false) {
+  finish(objective: number, cancelled = false, unfilled: SolveReport['unfilled'] = []) {
     const message: SolverWorkerMessage = {
       type: 'done',
       report: {
         assignments: [],
-        unfilled: [],
+        unfilled,
         hardViolations: [],
         softViolations: [],
         objective: {
@@ -159,6 +159,32 @@ describe('a batch of variations', () => {
     expect(done.best).toBe(1);
     expect(done.saved).toBeUndefined();
     expect(j.candidates(batch.id).map((c) => c.index)).toEqual([0, 1, 2]);
+  });
+
+  it('tells the manager which shifts a run left short, listing at most 50 of them', () => {
+    const j = jobs(8);
+    const batch = j.start('period-1', { count: 1 });
+    // 60 Saturday-night gaps, one of them two nurses short: 61 nurse-slots over 60 shifts.
+    const gaps: SolveReport['unfilled'] = Array.from({ length: 60 }, (_, i) => ({
+      date: isoDate(`2026-02-${String((i % 28) + 1).padStart(2, '0')}`),
+      shiftTypeId: 'night',
+      role: 'RN',
+      required: 3,
+      staffed: i === 0 ? 1 : 2,
+      shortfall: i === 0 ? 2 : 1,
+      standard: 'coverage_floor',
+    }));
+    workers[0]!.finish(100, false, gaps);
+    const summary = j.status(batch.id)!.runs[0]!.summary!;
+    expect(summary.unfilledSlots).toBe(60);
+    expect(summary.floorsShort).toBe(61);
+    expect(summary.unfilled).toHaveLength(50);
+    expect(summary.unfilled[0]).toEqual({
+      date: '2026-02-01',
+      shiftTypeId: 'night',
+      role: 'RN',
+      shortfall: 2,
+    });
   });
 
   it('keeps finished variations when the manager stops the rest', () => {
