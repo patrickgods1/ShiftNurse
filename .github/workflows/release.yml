@@ -172,5 +172,7 @@ jobs:
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
           sed -e "s/{{VERSION}}/${VERSION}/g" ../.github/release-notes.md > ../notes.md
+          # The sums on the page itself too, so checking a download needs no second file.
+          { printf '\n## SHA-256\n\n```\n'; grep -v '\.blockmap$' SHA256SUMS; printf '```\n'; } >> ../notes.md
           gh release create "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" --draft \
             --title "ShiftNurse ${VERSION}" --notes-file ../notes.md ./*

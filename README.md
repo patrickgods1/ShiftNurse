@@ -86,6 +86,31 @@ These are yours to do by hand until the app handles them (the same list is in Se
 
 The state presets in Settings › Unit are a starting point, not legal advice: check them against your contract and your state's law.
 
+## Installing
+
+Download the installer for your computer from the
+[releases page](https://github.com/patrickgods1/ShiftNurse/releases): `…-mac-arm64.dmg` for a Mac
+with Apple silicon (M1 or later), `…-mac-x64.dmg` for an Intel Mac, `…-win-x64.exe` for 64-bit
+Windows 10 or 11.
+
+The builds are not code-signed yet, so your computer warns that it cannot verify the developer the
+first time ShiftNurse opens:
+
+- **macOS**: open the `.dmg` and drag ShiftNurse to Applications, then open it once. macOS says
+  it cannot verify the developer: click **Done**. Then open **System Settings › Privacy &
+  Security**, scroll to **Security**, click **Open Anyway** next to "ShiftNurse was blocked", and
+  confirm with your password. ShiftNurse opens normally from then on. (On macOS 14 and earlier,
+  right-click ShiftNurse in Applications and choose **Open** instead; macOS 15 removed that
+  shortcut for unsigned apps.) If macOS says the app "is damaged and can't be opened", run this
+  once in Terminal and open it again: `xattr -dr com.apple.quarantine /Applications/ShiftNurse.app`
+- **Windows**: if SmartScreen says "Windows protected your PC", click **More info**, then
+  **Run anyway**.
+
+Each release lists the SHA-256 of every file in `SHA256SUMS`. To check a download, run
+`shasum -a 256 <file>` (macOS Terminal) or `certutil -hashfile <file> SHA256` (Windows PowerShell)
+and compare the output with the file's line. ShiftNurse keeps its database in your user folder;
+installing a newer version keeps it, and an update that changes the database backs it up first.
+
 ## Prerequisites
 
 - **Node.js ≥ 22.12** (see `engines` in [package.json](package.json); `.nvmrc` pins the major CI uses).
@@ -331,12 +356,13 @@ Notes:
   app's final `[smoke] PASS` line. Inside the repo, Node would find a module the app forgot to
   ship in the repo's own `node_modules`, and a crash-on-launch dialog exits 0 when dismissed —
   both let v0.1.0's first draft pass here and crash on every real install.
-- Installers are unsigned initially, so expect Gatekeeper (macOS) / SmartScreen (Windows)
-  warnings — code signing is planned for later. Unsigned builds cannot update themselves; a
+- Installers are unsigned (code signing, M17, is deferred), so Gatekeeper (macOS) and SmartScreen
+  (Windows) warn on first launch — [Installing](#installing) has the steps users follow. Unsigned builds cannot update themselves; a
   packaged app checks GitHub's latest published release at launch and shows a banner linking
   to it.
-- The app icon is `apps/desktop/build/icon.png`, drawn by `node apps/desktop/scripts/make-icon.mjs`;
-  electron-builder derives the `.icns` and `.ico` from it.
+- The app icon is drawn by `node apps/desktop/scripts/make-icon.mjs`, which writes
+  `build/icon.png`, `icon.icns` and `icon.ico` at every size from the same shapes. All three are
+  committed and named in `electron-builder.yml`, so every build machine ships the same icon.
 - Main's log is `userData/logs/main.log` (Settings › About › Open logs folder). Ask for it with
   any bug report: a packaged app has no visible console.
 - After any packaging-related change, run `npm run smoke:packaged -w @shiftnurse/desktop` to

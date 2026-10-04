@@ -468,8 +468,10 @@ fix in PR #6 reached nobody who had already installed the first draft. Nothing h
 - [ ] Windows Authenticode signing (e.g. Azure Trusted Signing) for the NSIS installer
 - [ ] `electron-updater` with `publish: github`: `latest*.yml` and blockmaps in the release,
       a "restart to update" prompt, never an unattended restart mid-shift
-- [ ] An app icon (`apps/desktop/build/icon.{icns,ico,png}`) — installers use Electron's default
+- [x] An app icon (`apps/desktop/build/icon.{icns,ico,png}`) — installers use Electron's default
       (drawn: `build/icon.png` from `scripts/make-icon.mjs`; tick once a packaged build shows it)
+      (M18 Phase 8: all three committed; both mac apps carry the .icns, the Windows exe all seven
+      .ico images)
 - [ ] An in-app "new version available" banner from GitHub's latest release (`main/updates.ts`;
       tick once a packaged v0.1.x has shown it for a published v0.1.y)
 - [ ] Verify: a signed dmg opens without a Gatekeeper prompt on a clean Mac; the signed installer
@@ -564,8 +566,14 @@ manager's experience and the contract rules a real hospital would check first. O
       weekend before.)
 
 **Phase 8 — Distribution without signing**
-- [ ] App icon in the dmg and installer
-- [ ] Install instructions for unsigned builds; checksums in the release
+- [x] App icon in the dmg and installer
+- [x] Install instructions for unsigned builds; checksums in the release
+      (verified 2026-10-04: `iconutil` decodes every size of the .icns; `npm run dist` mac and
+      Windows; `smoke:packaged` PASS. README › Installing and the release notes give macOS 15's
+      Privacy & Security › Open Anyway route, which replaced Control-click › Open, and SmartScreen's;
+      the release page lists each installer's SHA-256. No screenshots: the Gatekeeper and
+      SmartScreen prompts only appear on a quarantined download, so they wait for the next
+      release's first install.)
 
 ### M19–M26 — Union and HR features (after 1.0)
 Each is a milestone of its own: core algorithm and rules test-first, then entity, IPC and UI.
