@@ -85,8 +85,9 @@ export function assignmentOrThrow(db: DbLike, assignmentId: Id): Assignment {
   return existing;
 }
 
+/** A unit with no saved rules is judged by the defaults, shown as of now (core reads no clock). */
 export function latestRuleSetOrDefault(db: DbLike, unitId: Id): RuleSet {
-  return getLatestRuleSet(db, unitId) ?? defaultRuleSet(unitId);
+  return getLatestRuleSet(db, unitId) ?? defaultRuleSet(unitId, undefined, Date.now());
 }
 
 export interface ScheduleViewOptions {

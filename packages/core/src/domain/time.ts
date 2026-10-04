@@ -78,19 +78,30 @@ export function isIsoDate(value: string): value is IsoDate {
  * Both directions are memoised. A schedule touches a few dozen distinct dates, but the solver
  * and the rule engine convert them millions of times per run (every `compareDates`, every
  * `datesInRange` for a partial view); without the cache, parsing ISO strings was over half of
- * a solve. The maps are bounded by the number of distinct dates ever seen, which is tiny.
+ * a solve. A schedule's dates number in the hundreds; the caps only stop a process that runs
+ * for years, or is fed nonsense, from holding every date it ever saw.
  */
 const DAY_NUMBER_CACHE = new Map<string, number>();
 const ISO_DATE_CACHE = new Map<number, IsoDate>();
+export const DATE_CACHE_LIMIT = 10_000;
 
-/** Whole days since 1970-01-01. The canonical integer form of a calendar date. */
+function remember<K, V>(cache: Map<K, V>, key: K, value: V): V {
+  if (cache.size >= DATE_CACHE_LIMIT) cache.clear();
+  cache.set(key, value);
+  return value;
+}
+
+/**
+ * Whole days since 1970-01-01. The canonical integer form of a calendar date. A string that is
+ * not a real date throws: `IsoDate` is a brand a cast or bad JSON can forge, and Date.UTC would
+ * silently roll Feb 30 into Mar 2. The check runs once per distinct date, on a cache miss.
+ */
 export function dayNumber(date: IsoDate): number {
   const cached = DAY_NUMBER_CACHE.get(date);
   if (cached !== undefined) return cached;
+  isoDate(date);
   const [y, m, d] = date.split('-').map(Number) as [number, number, number];
-  const value = Date.UTC(y, m - 1, d) / MS_PER_DAY;
-  DAY_NUMBER_CACHE.set(date, value);
-  return value;
+  return remember(DAY_NUMBER_CACHE, date as string, Date.UTC(y, m - 1, d) / MS_PER_DAY);
 }
 
 export function fromDayNumber(days: number): IsoDate {
@@ -100,9 +111,7 @@ export function fromDayNumber(days: number): IsoDate {
   const y = String(dt.getUTCFullYear()).padStart(4, '0');
   const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
   const d = String(dt.getUTCDate()).padStart(2, '0');
-  const value = `${y}-${m}-${d}` as IsoDate;
-  ISO_DATE_CACHE.set(days, value);
-  return value;
+  return remember(ISO_DATE_CACHE, days, `${y}-${m}-${d}` as IsoDate);
 }
 
 export function addDays(date: IsoDate, days: number): IsoDate {
@@ -216,9 +225,7 @@ const TIME_OF_DAY_CACHE = new Map<string, number>();
 export function parseTimeOfDay(value: string): number {
   const cached = TIME_OF_DAY_CACHE.get(value);
   if (cached !== undefined) return cached;
-  const minutes = parseTimeOfDayUncached(value);
-  TIME_OF_DAY_CACHE.set(value, minutes);
-  return minutes;
+  return remember(TIME_OF_DAY_CACHE, value, parseTimeOfDayUncached(value));
 }
 
 function parseTimeOfDayUncached(value: string): number {

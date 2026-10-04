@@ -16,6 +16,7 @@ import type {
   ShiftCredentialRequirement,
   ShiftType,
   TimeOffRequest,
+  Timestamp,
   Unit,
 } from '../domain/entities.js';
 import { DEFAULT_WEEKEND, type IsoDate, type WeekendDefinition } from '../domain/time.js';
@@ -101,7 +102,16 @@ export function hardRuleIdsByScope(ruleSet: RuleSet, scope: RuleScope): string[]
 }
 
 /** A rule set enabling every rule at its shipped defaults. The starting point for a new unit. */
-export function defaultRuleSet(unitId: Id, name = 'Default contract rules'): RuleSet {
+/**
+ * The rules a new unit starts from — a template, not a saved version: `saveRuleSet` stamps the
+ * real time when one is saved, so `createdAt` here defaults to 0 instead of reading the clock,
+ * which kept every fixture built from it different from run to run.
+ */
+export function defaultRuleSet(
+  unitId: Id,
+  name = 'Default contract rules',
+  createdAt: Timestamp = 0,
+): RuleSet {
   return {
     id: `ruleset-${unitId}-default`,
     unitId,
@@ -109,7 +119,7 @@ export function defaultRuleSet(unitId: Id, name = 'Default contract rules'): Rul
     version: 1,
     weekendDefinition: DEFAULT_WEEKEND,
     fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
-    createdAt: Date.now(),
+    createdAt,
     configs: ALL_RULES.map<RuleConfig>((rule) => ({
       ruleId: rule.id,
       enabled: true,

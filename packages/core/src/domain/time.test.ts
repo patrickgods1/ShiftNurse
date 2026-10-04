@@ -14,6 +14,7 @@ import {
   describeDateRange,
   formatTimeOfDay,
   fromDayNumber,
+  type IsoDate,
   isIsoDate,
   isoDate,
   isWeekendWindow,
@@ -67,6 +68,14 @@ describe('isoDate', () => {
 });
 
 describe('calendar arithmetic', () => {
+  it('refuses a date that does not exist rather than rolling it into March', () => {
+    // A branded IsoDate can only come from isoDate(), but a cast or bad JSON can smuggle one
+    // in; Date.UTC would quietly turn Feb 30 into Mar 2 and every rest calculation with it.
+    expect(() => dayNumber('2026-02-30' as IsoDate)).toThrow(RangeError);
+    expect(() => dayNumber('not-a-date' as IsoDate)).toThrow(RangeError);
+    expect(() => addDays('2026-13-01' as IsoDate, 1)).toThrow(RangeError);
+  });
+
   it('round-trips through day numbers', () => {
     const d = isoDate('2026-09-17');
     expect(fromDayNumber(dayNumber(d))).toBe(d);
