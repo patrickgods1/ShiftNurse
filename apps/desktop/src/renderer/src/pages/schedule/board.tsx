@@ -1,13 +1,14 @@
 /**
- * Everything below the period picker for one scheduling period: the violation summary, the
- * palette, the grid, and the popover for editing a single assignment. Split out of `schedule.tsx`
- * (which only owns period selection) so remounting on period change — via `key={period.id}` at
- * the call site — cleanly resets all of this component's local drag/pending state instead of
- * needing to reconcile it against a different period's data.
+ * Everything below the page header for one scheduling period: the period picker row (passed in as
+ * `leading`, so the palette and actions share its line), the status pills, the grid, and the
+ * popover for editing a single assignment. Split out of `schedule.tsx` (which only owns period
+ * selection) so remounting on period change — via `key={period.id}` at the call site — cleanly
+ * resets all of this component's local drag/pending state instead of needing to reconcile it
+ * against a different period's data.
  *
- * A published period is still editable — that is what the change log exists for — but every
- * edit first collects a reason through `ReasonDialog`, and the same reason is what main writes
- * to `schedule_change` and refuses to proceed without. Only an archived period is read-only.
+ * A published period is still editable — that is what the change log exists for — but every edit
+ * first collects a reason through `ReasonDialog`, and the same reason is what main writes to
+ * `schedule_change` and refuses to proceed without. Only an archived period is read-only.
  */
 
 import type { Assignment, Id, IsoDate, SchedulePeriod, Violation } from '@shiftnurse/core';
@@ -22,8 +23,7 @@ import {
   rangesOverlap,
   weekdayOf,
 } from '@shiftnurse/core';
-import { Link } from '@tanstack/react-router';
-import { useCallback, useEffect, useMemo } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo } from 'react';
 import { useAssignments, useNurses, useShiftTypes, useTimeOff } from '../../api.js';
 import { useCostReport } from '../../api-cost.js';
 import { useDemand } from '../../api-demand.js';
@@ -33,33 +33,37 @@ import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { periodRange } from '../../format.js';
 import { useUnit } from '../../unit-context.js';
 import { ReasonDialog } from '../requests/reason-dialog.js';
-import { AlertsPanel } from './alerts-panel.js';
+import { useAlertsPill } from './alerts-panel.js';
 import { AssignmentDialog } from './assignment-dialog.js';
 import { variationNumber } from './candidates.js';
 import { CandidatesBar } from './candidates-bar.js';
 import { ChangeLog } from './change-log.js';
 import { CompareDialog } from './compare-dialog.js';
-import { CostSummary } from './cost-summary.js';
+import { costPill } from './cost-summary.js';
 import { ExportMenu } from './export-menu.js';
 import { GenerateDialog } from './generate-dialog.js';
 import type { GridColumn } from './grid.js';
 import { ScheduleGrid } from './grid.js';
+import { GridLegend } from './grid-legend.js';
 import { sortNurses } from './grid-utils.js';
 import { ShiftPalette } from './palette.js';
 import { PublishDialog } from './publish-dialog.js';
+import { type StatusItem, StatusRow } from './status-row.js';
 import { useGenerateFlow } from './use-generate-flow.js';
 import { useGridEdits } from './use-grid-edits.js';
 import { useScheduleDialogs } from './use-schedule-dialogs.js';
-import { ViolationSummary } from './violation-summary.js';
+import { violationPill } from './violation-summary.js';
 
 interface ScheduleBoardProps {
   unitId: Id;
   period: SchedulePeriod;
   /** A nurse to scroll to and mark, from `/schedule?nurse=`. */
   focusNurseId?: Id | undefined;
+  /** The period picker, which lives in the page but shares this board's toolbar row. */
+  leading?: ReactNode;
 }
 
-export function ScheduleBoard({ unitId, period, focusNurseId }: ScheduleBoardProps) {
+export function ScheduleBoard({ unitId, period, focusNurseId, leading }: ScheduleBoardProps) {
   const unit = useUnit();
   const nursesQuery = useNurses(unitId);
   const shiftTypesQuery = useShiftTypes(unitId);
@@ -154,6 +158,18 @@ export function ScheduleBoard({ unitId, period, focusNurseId }: ScheduleBoardPro
     [violationResult],
   );
 
+  const showDate = useCallback((date: string) => {
+    document
+      .querySelector(`[data-testid="schedule-grid"] [data-date="${date}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  }, []);
+  const alertsPill = useAlertsPill({
+    periodId: period.id,
+    published: period.status !== 'draft',
+    onShowDate: showDate,
+    preview: preview && previewLabel ? { alerts: preview.alerts, label: previewLabel } : undefined,
+  });
+
   const { openAssignment: openAssignmentById } = dialogs;
   const handleChipOpen = useCallback(
     (a: Assignment) => openAssignmentById(a.id),
@@ -161,15 +177,23 @@ export function ScheduleBoard({ unitId, period, focusNurseId }: ScheduleBoardPro
   );
 
   if (nursesQuery.isPending || shiftTypesQuery.isPending || assignmentsQuery.isPending) {
-    return <AsyncState status="loading" label="Loading schedule" />;
+    return (
+      <>
+        {leading}
+        <AsyncState status="loading" label="Loading schedule" />
+      </>
+    );
   }
   if (nursesQuery.isError || shiftTypesQuery.isError || assignmentsQuery.isError) {
     return (
-      <AsyncState
-        status="error"
-        label="Could not load schedule"
-        error={nursesQuery.error ?? shiftTypesQuery.error ?? assignmentsQuery.error}
-      />
+      <>
+        {leading}
+        <AsyncState
+          status="error"
+          label="Could not load schedule"
+          error={nursesQuery.error ?? shiftTypesQuery.error ?? assignmentsQuery.error}
+        />
+      </>
     );
   }
 
@@ -181,15 +205,35 @@ export function ScheduleBoard({ unitId, period, focusNurseId }: ScheduleBoardPro
   const undecided = (pendingTimeOff ?? []).filter((r) =>
     rangesOverlap(r.startDate, r.endDate, period.startDate, period.endDate),
   ).length;
+  const pills: StatusItem[] = [];
+  if (period.status === 'draft' && undecided > 0) {
+    pills.push({
+      id: 'requests',
+      testId: 'pending-requests-nudge',
+      tone: 'warn',
+      label: `${undecided} request${undecided === 1 ? '' : 's'} to decide`,
+      to: '/requests',
+      title: `${undecided} time-off request${undecided === 1 ? ' is' : 's are'} waiting for a decision in this period. Decide ${undecided === 1 ? 'it' : 'them'} before generating, so the schedule works around approved leave.`,
+    });
+  }
+  if (!emptyDraft) {
+    pills.push(
+      violationPill({
+        status: preview ? 'success' : validationQuery.status,
+        result: violationResult,
+        previewLabel,
+      }),
+    );
+    const cost = costPill({
+      report: preview ? preview.cost : costQuery.data,
+      previewLabel,
+    });
+    if (cost) pills.push(cost);
+    if (alertsPill) pills.push(alertsPill);
+  }
   const openGenerate = () => {
     // A run in progress is the thing to show; otherwise Generate means a new one.
     dialogs.openGenerateOn(batch?.state === 'running' ? 'batch' : 'setup');
-  };
-
-  const showDate = (date: string) => {
-    document
-      .querySelector(`[data-testid="schedule-grid"] [data-date="${date}"]`)
-      ?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
   };
 
   const openAssignment = allAssignments.find((a) => a.id === dialogs.openAssignmentId);
@@ -300,22 +344,6 @@ export function ScheduleBoard({ unitId, period, focusNurseId }: ScheduleBoardPro
           </button>
         </div>
       ) : null}
-      {period.status === 'draft' && undecided > 0 ? (
-        <div
-          role="status"
-          data-testid="pending-requests-nudge"
-          className="mb-3 flex items-center justify-between gap-3 rounded-md border border-warn bg-surface px-3 py-2 text-sm text-text"
-        >
-          <p>
-            {undecided} time-off request{undecided === 1 ? ' is' : 's are'} waiting for a decision
-            in this period. Decide {undecided === 1 ? 'it' : 'them'} before generating, so the
-            schedule works around approved leave.
-          </p>
-          <Link to="/requests" className="shrink-0 text-xs underline underline-offset-2">
-            Review requests
-          </Link>
-        </div>
-      ) : null}
       {emptyDraft && !batch ? (
         <div
           data-testid="empty-draft"
@@ -332,13 +360,6 @@ export function ScheduleBoard({ unitId, period, focusNurseId }: ScheduleBoardPro
           </button>
         </div>
       ) : null}
-      {emptyDraft ? null : (
-        <ViolationSummary
-          status={preview ? 'success' : validationQuery.status}
-          result={violationResult}
-          previewLabel={previewLabel}
-        />
-      )}
       {failedEdit ? (
         <div
           role="alert"
@@ -355,33 +376,23 @@ export function ScheduleBoard({ unitId, period, focusNurseId }: ScheduleBoardPro
           </button>
         </div>
       ) : null}
-      {emptyDraft ? null : (
-        <>
-          <CostSummary
-            report={preview ? preview.cost : costQuery.data}
-            previewLabel={previewLabel}
-          />
-          <AlertsPanel
-            periodId={period.id}
-            published={period.status !== 'draft'}
-            onShowDate={showDate}
-            preview={
-              preview && previewLabel ? { alerts: preview.alerts, label: previewLabel } : undefined
-            }
-          />
-        </>
-      )}
-      <div className="mb-3 flex items-start justify-between gap-3">
+      <StatusRow items={pills} />
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+        {leading}
         {previewActive ? (
-          <p className="text-sm text-text-muted">
+          <p className="min-w-0 flex-1 text-sm text-text-muted">
             A preview is read-only: save the option, or exit the preview, to edit.
           </p>
         ) : !readOnly ? (
-          <ShiftPalette shiftTypes={shiftTypesQuery.data} readOnly={false} />
+          <div className="min-w-0 flex-1">
+            <ShiftPalette shiftTypes={shiftTypesQuery.data} readOnly={false} />
+          </div>
         ) : (
-          <p className="text-sm text-text-muted">This period is archived and read-only.</p>
+          <p className="min-w-0 flex-1 text-sm text-text-muted">
+            This period is archived and read-only.
+          </p>
         )}
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           <ExportMenu periodId={period.id} />
           {published ? (
             <button
@@ -419,13 +430,7 @@ export function ScheduleBoard({ unitId, period, focusNurseId }: ScheduleBoardPro
         </div>
       </div>
       {published && dialogs.changeLogOpen ? <ChangeLog periodId={period.id} /> : null}
-      {emptyDraft ? null : (
-        <p className="mb-2 text-xs text-text-muted" data-testid="grid-legend">
-          A red number counts rule breaks: in a day's header for that day, beside a name for that
-          nurse — hover it to read them. On a shift, C marks the charge nurse and ♡ a shift that
-          goes against what the nurse asked for. The rows under the grid show staffed / needed.
-        </p>
-      )}
+      {emptyDraft ? null : <GridLegend />}
       <ScheduleGrid
         nurses={nursesQuery.data}
         shiftTypes={shiftTypesQuery.data}

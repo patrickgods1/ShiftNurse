@@ -38,6 +38,33 @@ export default function SchedulePage({ focusNurseId }: { focusNurseId?: Id | und
 
   const selected = periods.find((p) => p.id === selectedId) ?? fallback;
 
+  // Handed to the board so the picker, palette and actions share one row.
+  const periodPicker = (
+    <div className="flex items-center gap-3">
+      <label className="text-sm text-text-muted" htmlFor="period-select">
+        Period
+      </label>
+      <select
+        id="period-select"
+        data-testid="period-select"
+        value={selected?.id ?? ''}
+        onChange={(e) => setSelectedId(e.target.value)}
+        className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-text"
+      >
+        <PeriodOptions periods={periods} />
+      </select>
+      {selected !== undefined ? (
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${
+            STATUS_BADGE[selected.status]
+          }`}
+        >
+          {selected.status}
+        </span>
+      ) : null}
+    </div>
+  );
+
   return (
     <div>
       <PageHeader
@@ -61,42 +88,15 @@ export default function SchedulePage({ focusNurseId }: { focusNurseId?: Id | und
         <AsyncState status="error" label="Could not load periods" error={periodsQuery.error} />
       ) : periods.length === 0 ? (
         <AsyncState status="empty" label="No scheduling periods yet. Create one to start." />
-      ) : (
-        <>
-          <div className="mb-4 flex items-center gap-3">
-            <label className="text-sm text-text-muted" htmlFor="period-select">
-              Period
-            </label>
-            <select
-              id="period-select"
-              data-testid="period-select"
-              value={selected?.id ?? ''}
-              onChange={(e) => setSelectedId(e.target.value)}
-              className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-text"
-            >
-              <PeriodOptions periods={periods} />
-            </select>
-            {selected !== undefined ? (
-              <span
-                className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${
-                  STATUS_BADGE[selected.status]
-                }`}
-              >
-                {selected.status}
-              </span>
-            ) : null}
-          </div>
-
-          {selected !== undefined ? (
-            <ScheduleBoard
-              key={selected.id}
-              unitId={unitId}
-              period={selected}
-              focusNurseId={focusNurseId}
-            />
-          ) : null}
-        </>
-      )}
+      ) : selected !== undefined ? (
+        <ScheduleBoard
+          key={selected.id}
+          leading={periodPicker}
+          unitId={unitId}
+          period={selected}
+          focusNurseId={focusNurseId}
+        />
+      ) : null}
 
       <NewPeriodDialog
         open={newPeriodOpen}
