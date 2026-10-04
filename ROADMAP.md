@@ -547,15 +547,21 @@ manager's experience and the contract rules a real hospital would check first. O
 - [x] Smoke: generate→save, leave with cover, undo, call-off button, settings groups
 
 **Phase 6 — Contract rules for 1.0**
-- [ ] A charge nurse without patients does not count toward the ratio (`chargeNurseTakesPatients`)
-- [ ] Break relief so ratios hold at all times (`breakMinutesPerNurse`)
-- [ ] California overtime: daily by workday, banded 1.5×/2×, seventh day
-- [ ] No mandatory overtime: volunteer records and the `mandatory-overtime` rule
-- [ ] Weekend pattern rule (every other weekend, weekends per period)
-- [ ] Credential expiry day judged the same everywhere; 30-day look-ahead; the Dashboard's
+- [x] A charge nurse without patients does not count toward the ratio (`chargeNurseTakesPatients`)
+- [x] Break relief so ratios hold at all times (`breakMinutesPerNurse`)
+- [x] California overtime: daily by workday, banded 1.5×/2×, seventh day
+- [x] No mandatory overtime: volunteer records and the `no-mandatory-overtime` rule
+- [x] Weekend pattern rule (every other weekend, weekends per period)
+- [x] Credential expiry day judged the same everywhere; 30-day look-ahead; the Dashboard's
       next-steps count agrees with its "Credentials expiring" tile (1 vs 9 on the demo)
-- [ ] Posting lead time; jurisdiction presets (CA, OR, NY, MA) with citations
-- [ ] Stated limits: what 1.0 does not enforce, in the app and the README
+- [x] Posting lead time; jurisdiction presets (CA, OR, NY, WA, MA) with citations checked
+      against the statute text (2026-10-04)
+- [x] Stated limits: what 1.0 does not enforce, in the app and the README
+      (verified 2026-10-04: `npm run check` 1,771 tests, smoke PASS; SA + LNS output unchanged on
+      the fixed fixtures; the new rules ship off. The plan's "rank unvolunteered overtime last"
+      became "volunteers first within the overtime tier": a phoned nurse who says yes is not
+      mandated. Found on the way: `weekendKey` filed an 'overlaps' Friday night under the
+      weekend before.)
 
 **Phase 8 — Distribution without signing**
 - [ ] App icon in the dmg and installer

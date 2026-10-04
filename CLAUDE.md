@@ -607,6 +607,36 @@ violations of their own.
   CP-SAT encoder, compliance alerts and the exchange evaluator alike. The weekly cap
   (`maxHoursPerWeek`) binds every week either way. The DB's `effectiveRateForNurse` delegates to core's `resolvePayRate`; do not add a second
   definition of "the rate in force".
+- **A ratio holds at all times, so its count is more than the bedside.** `Unit.ratioStaffing`
+  (migration 0015; absent or the column defaults = the old reading) says whether the charge nurse
+  takes patients and how many break minutes each bedside nurse takes. `deriveDemand` is the one
+  place it applies: `ratioDerived = ratioBedside + chargeWithoutPatients + breakRelief`, the charge
+  nurse added only to a standalone RN shift, relief `ceil(bedside × minutes ÷ (shift − 120 min))`,
+  one fewer when a charge nurse free of patients covers breaks. The ratio rule, both solvers,
+  day-of and conflicts read `ratioDerived`/`minCount` and follow; the breach divides patients by
+  the nurses at the bedside.
+- **Overtime is paid by the hour, at the highest multiplier any rule gives it.** Every rule makes
+  the end of a shift overtime from some hour on (`attributeOvertime` in `cost/cost.ts`); a shift's
+  overtime is bands, one `overtime` line each. Daily rules count the workday (shifts by start
+  date), `seventh_day` the last day of a work week worked every day. With equal multipliers this
+  is the old "larger premium per shift", so existing units price unchanged.
+- **A rule a unit opts into ships off.** `Rule.enabledByDefault: false` keeps it disabled in
+  `defaultRuleSet` and in a stored rule set saved before it shipped (`resolveConfigs`), so adding
+  one never changes an existing unit. `no-mandatory-overtime` and `weekend-pattern` are such.
+- **No mandatory overtime is judged against offers, not flags.** `isOvertime` says overtime is
+  authorised; `no-mandatory-overtime` (hard, off by default) also wants an `OvertimeVolunteer`
+  offer covering the date or notes beginning `Emergency:`. Neither solver writes an overtime row,
+  so CP-SAT meets it by construction; day-of calls volunteers first within the overtime tier.
+- **Weekends are filed by `weekendKey`, everywhere.** Fairness, `weekend-pattern` and both
+  solvers' prices use it; under `'overlaps'` a Friday night belongs to the weekend it runs into.
+  `weekendBreaches` is the one count (`SolverModel.weekendFor`, CP-SAT `weekendBreachExprs`).
+- **A credential is valid through its expiry date.** `credentialLapsedOn` is the one definition,
+  for the rules, the publish alerts and the Dashboard's lapsed list.
+- **State presets only tighten.** `JURISDICTION_PRESETS` cites the provision behind every value
+  (checked against the statute text, October 2026) and says what it leaves to the hospital;
+  `planJurisdiction` lowers looser ratio ceilings, grows break minutes, adds missing overtime
+  rules and switches rules on, never the reverse, and plans nothing on a second run. A change to
+  a law is a change to its preset, its citation and its summary together.
 
 ## Development discipline
 
