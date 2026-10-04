@@ -203,6 +203,32 @@ describe('awarding leave by seniority', () => {
     );
   });
 
+  it('names approved-leave holders in the same order whatever order the leave arrives in', () => {
+    const leave = [
+      timeOff('cy', '2027-07-08', '2027-07-08'),
+      timeOff('bo', '2027-07-08', '2027-07-08'),
+    ];
+    const twoOff = { round: { offPerDay: { RN: 2 } } };
+    const forwards = award([bid(ana, ['2027-07-05', '2027-07-09'])], {
+      ...twoOff,
+      approved: leave,
+    });
+    const backwards = award([bid(ana, ['2027-07-05', '2027-07-09'])], {
+      ...twoOff,
+      approved: [...leave].reverse(),
+    });
+    expect(backwards.denials[0]!.reason).toBe(forwards.denials[0]!.reason);
+  });
+
+  it('says a choice overlaps a week the nurse already won, not that they took it from themselves', () => {
+    const result = award([bid(ana, ['2027-07-05', '2027-07-09'], ['2027-07-08', '2027-07-12'])], {
+      round: { maxAwardsPerNurse: 3 },
+    });
+    expect(result.denials[0]!.reason).toBe(
+      'Choice 2 (Thu Jul 8 – Mon Jul 12): it overlaps a week Ana Cruz has already won.',
+    );
+  });
+
   it('refuses a round that ends before it starts', () => {
     expect(() =>
       award([], {

@@ -220,11 +220,24 @@ export function awardBids(
           continue;
         }
         const days = datesInRange(choice.startDate, choice.endDate);
+        const own = days.some((d) =>
+          (held.get(key(nurse.role, d)) ?? []).some(
+            (p) => p.nurseId === nurse.id && p.by === 'award',
+          ),
+        );
+        if (own) {
+          deny(nurse, choice, pass, `it overlaps a week ${nameOf(nurse)} has already won`);
+          continue;
+        }
         const full = days.filter((d) => (held.get(key(nurse.role, d))?.length ?? 0) >= places);
         if (full.length > 0) {
           const taken = full.flatMap((d) => held.get(key(nurse.role, d)) ?? []);
+          // Bidders in service order, then nurses on leave only, each by id: the same text
+          // however the bids and the leave were listed.
           const holders = [...new Set(taken.map((p) => p.nurseId))].sort(
-            (a, b) => (rank.get(a) ?? -1) - (rank.get(b) ?? -1),
+            (a, b) =>
+              (rank.get(a) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b) ?? Number.MAX_SAFE_INTEGER) ||
+              a.localeCompare(b),
           );
           const names = holders.map((id) => {
             const ways = new Set(taken.filter((p) => p.nurseId === id).map((p) => p.by));
