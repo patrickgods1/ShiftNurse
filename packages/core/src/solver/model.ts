@@ -366,6 +366,7 @@ export class SolverModel {
         : {}),
       ...(input.holidayWork ? { holidayWork: input.holidayWork } : {}),
       ...(input.overtimeVolunteers ? { overtimeVolunteers: input.overtimeVolunteers } : {}),
+      ...(input.preceptorships ? { preceptorships: input.preceptorships } : {}),
     });
 
     const shifts = buildShifts(this.dates, this.shiftTypes, demand);

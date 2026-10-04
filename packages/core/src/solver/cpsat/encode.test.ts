@@ -912,6 +912,66 @@ describe('parity with the annealer', () => {
     });
   });
 
+  describe('orientees with their preceptors', () => {
+    it('prices random rosters the same as the annealer', () => {
+      const base = richInput();
+      // Nurse 5 (the new grad) is oriented by nurse 0 for the first week, nurse 2 after it.
+      const input: SolveInput = {
+        ...base,
+        preceptorships: [
+          {
+            id: 'pr1',
+            unitId: UNIT_ID,
+            orienteeId: base.nurses[5]!.id,
+            preceptorId: base.nurses[0]!.id,
+            startDate: isoDate('2026-01-04'),
+            endDate: isoDate('2026-01-10'),
+          },
+          {
+            id: 'pr2',
+            unitId: UNIT_ID,
+            orienteeId: base.nurses[5]!.id,
+            preceptorId: base.nurses[2]!.id,
+            startDate: isoDate('2026-01-11'),
+            endDate: isoDate('2026-01-24'),
+          },
+        ],
+      };
+      const encoding = encodeCpsat(input);
+      const rng = new Rng(37);
+      let alone = 0;
+      for (let trial = 0; trial < 60; trial++) {
+        const seen = new Set<string>();
+        const assignments = [...input.assignments];
+        for (const sv of encoding.shiftVars) {
+          const day = `${sv.nurseId}|${sv.shift.date}`;
+          if (seen.has(day) || !rng.chance(0.3)) continue;
+          seen.add(day);
+          assignments.push(assign(sv.nurseId, sv.shift.shiftType, sv.shift.date));
+        }
+        const evaluation = evaluate(encoding, assignments);
+        const model = new SolverModel(input);
+        for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+        const view = new ScheduleView({
+          period: input.period,
+          assignments: model.assignments(),
+          priorAssignments: input.priorAssignments,
+          nurses: model.nurses,
+          shiftTypes: model.shiftTypes,
+        });
+        if (
+          evaluateSchedule(view, input.ruleSet, model.ctx).violations.some(
+            (v) => v.code === 'orientee_without_preceptor',
+          )
+        )
+          alone++;
+        expect(evaluation.objective, `trial ${trial}`).toBeCloseTo(model.breakdown().total, 0);
+      }
+      // Most rosters must leave the orientee alone somewhere, or this proves nothing.
+      expect(alone).toBeGreaterThan(40);
+    });
+  });
+
   describe('weekends in a row and per schedule', () => {
     it('prices random rosters the same as the annealer', () => {
       const base = richInput();

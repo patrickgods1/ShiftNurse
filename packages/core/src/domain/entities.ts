@@ -384,6 +384,21 @@ export interface Assignment {
 }
 
 /**
+ * An orientee working under a named preceptor over some dates: a new hire, or a nurse floated in
+ * to learn the unit, who may only work when that preceptor is on the floor with them. Dates are
+ * inclusive and compare with the shift's start date. An orientee may have more than one
+ * preceptor in force; any one of them on the shift is enough.
+ */
+export interface Preceptorship {
+  id: Id;
+  unitId: Id;
+  orienteeId: Id;
+  preceptorId: Id;
+  startDate: IsoDate;
+  endDate: IsoDate;
+}
+
+/**
  * A nurse's standing offer to work overtime over some dates. New York (Labor Law § 167),
  * Washington (RCW 49.28.140), Oregon (ORS 441.166) and Massachusetts (c.111 § 226) forbid
  * *requiring* a nurse to work overtime outside an emergency; this record is what makes an

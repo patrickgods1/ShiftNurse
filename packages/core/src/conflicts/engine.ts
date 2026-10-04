@@ -196,6 +196,7 @@ export class ConflictEngine {
       ...(this.input.overtimeVolunteers
         ? { overtimeVolunteers: this.input.overtimeVolunteers }
         : {}),
+      ...(this.input.preceptorships ? { preceptorships: this.input.preceptorships } : {}),
     });
   }
 

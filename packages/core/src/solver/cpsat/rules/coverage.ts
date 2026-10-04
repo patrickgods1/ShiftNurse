@@ -36,7 +36,7 @@ export function staffedExpr(
  * Staff matching `keep` on the shift covering this one (`schedule/cover.ts`): its variables and
  * locked rows, or the lookback tail's roster of a night begun the day before the period.
  */
-function coverExpr(
+export function coverExpr(
   ctx: EncodeContext,
   shift: Shift,
   keep: (nurseIdx: number, locked: Assignment | null) => boolean,

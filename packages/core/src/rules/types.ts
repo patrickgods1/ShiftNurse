@@ -28,6 +28,7 @@ import type {
   Nurse,
   NurseCredential,
   OvertimeVolunteer,
+  Preceptorship,
   ShiftCredentialRequirement,
   ShiftType,
   TimeOffRequest,
@@ -82,7 +83,8 @@ export type ViolationCode =
   | 'holiday_pair_both'
   | 'short_recovery_after_nights'
   | 'works_during_pending_time_off'
-  | 'mandatory_overtime';
+  | 'mandatory_overtime'
+  | 'orientee_without_preceptor';
 
 /**
  * One nurse worked one past holiday. Derived from published schedules, or recorded by hand for
@@ -148,6 +150,8 @@ export interface RuleContext {
   incompatibilityGroups: readonly IncompatibilityGroup[];
   /** Each nurse's standing offers to work overtime. */
   overtimeVolunteersByNurse: ReadonlyMap<Id, readonly OvertimeVolunteer[]>;
+  /** Each orientee's preceptorships, by orientee id. */
+  preceptorshipsByOrientee: ReadonlyMap<Id, readonly Preceptorship[]>;
 }
 
 /**
