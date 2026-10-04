@@ -123,10 +123,11 @@ describe('who may be offered', () => {
     // A pending request is not silently scheduled over: the only way to use Priya is to deny it.
     expect(options.some((r) => r.kind === 'assign_available')).toBe(false);
     const deny = options.find((r) => r.kind === 'deny_time_off');
-    expect(deny).toBeDefined();
-    expect(deny!.actions.map((a) => a.type)).toEqual(['deny_time_off', 'create_assignment']);
-    expect(deny!.impact.coverage.delta).toBe(-1);
-    expect(deny!.title).toContain('Priya Nair');
+    expect(deny).toMatchObject({
+      actions: [{ type: 'deny_time_off' }, { type: 'create_assignment' }],
+      impact: { coverage: { delta: -1 } },
+      title: expect.stringContaining('Priya Nair'),
+    });
   });
 
   it('moves a nurse off an over-target day shift onto the short night when that is legal', () => {
@@ -273,9 +274,10 @@ describe('pricing and ranking', () => {
 
     const { conflicts, resolutions } = analyse(input);
     const night = conflicts.find((c) => c.id === NIGHT_ID);
-    expect(night).toBeDefined();
-    expect(night!.magnitude).toBe(2);
-    expect(night!.timeOffIds).toHaveLength(2);
+    expect(night).toMatchObject({
+      magnitude: 2,
+      timeOffIds: [expect.any(String), expect.any(String)],
+    });
 
     const options = forConflict(resolutions, NIGHT_ID);
     const real = options.filter((r) => r.kind !== 'accept_shortfall');
@@ -350,10 +352,9 @@ describe('rostered during approved leave', () => {
     const deleteOnly = options.find(
       (r) => r.actions.length === 1 && r.actions[0]!.type === 'delete_assignment',
     );
-    expect(deleteOnly).toBeDefined();
-    expect(deleteOnly!.actions).toEqual([
-      { type: 'delete_assignment', assignmentId: priyasNight.id },
-    ]);
+    expect(deleteOnly).toMatchObject({
+      actions: [{ type: 'delete_assignment', assignmentId: priyasNight.id }],
+    });
     // Taking her off leaves the one-RN night empty, and saves her $600.
     expect(deleteOnly!.impact.coverage.delta).toBe(1);
     expect(deleteOnly!.impact.cost.delta).toBe(-600);

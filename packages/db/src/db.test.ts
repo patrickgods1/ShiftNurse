@@ -156,7 +156,7 @@ describe('round-tripping domain entities', () => {
     seedUnit();
     seedNurse();
     const row = handle.db.select().from(s.nurse).get();
-    expect(row).toBeDefined();
+    expect(row).toMatchObject({ employeeId: 'E0001' });
     const nurse = toNurse(row!);
     expect(nurse).toMatchObject({
       employeeId: 'E0001',

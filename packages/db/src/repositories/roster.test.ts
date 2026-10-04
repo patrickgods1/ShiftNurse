@@ -24,6 +24,7 @@ import {
   listShiftTypesForUnit,
   updateShiftType,
 } from './config.js';
+import { nextEmployeeId } from './employee-ids.test-support.js';
 import {
   createNurse,
   credentialsExpiringBetween,
@@ -48,7 +49,7 @@ let unitId: string;
 function baseNurse(overrides: Partial<Omit<Nurse, 'id'>> = {}): Omit<Nurse, 'id'> {
   return {
     unitId,
-    employeeId: `E${Math.random().toString().slice(2, 8)}`,
+    employeeId: nextEmployeeId(),
     firstName: 'Test',
     lastName: 'Nurse',
     role: 'RN',

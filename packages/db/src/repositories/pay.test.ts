@@ -10,6 +10,7 @@ import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { ids } from '../ids.js';
 import * as s from '../schema.js';
 import { createShiftType, createUnit } from './config.js';
+import { nextEmployeeId } from './employee-ids.test-support.js';
 import {
   createDifferential,
   createOvertimeRule,
@@ -42,7 +43,7 @@ function mkNurse(firstName: string): string {
     handle.db,
     {
       unitId,
-      employeeId: `E${Math.random().toString().slice(2, 8)}`,
+      employeeId: nextEmployeeId(),
       firstName,
       lastName: 'Nurse',
       role: 'RN',

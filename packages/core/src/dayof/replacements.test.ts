@@ -112,8 +112,7 @@ describe('findReplacements', () => {
     const report = findReplacements(input);
 
     const excludedBen = report.excluded.find((e) => e.nurseId === nightNurse.id);
-    expect(excludedBen).toBeDefined();
-    expect(excludedBen!.reason).toMatch(/minimum rest/i);
+    expect(excludedBen).toMatchObject({ reason: expect.stringMatching(/minimum rest/i) });
     expect(report.candidates.some((c) => c.nurseId === nightNurse.id)).toBe(false);
   });
 
@@ -143,8 +142,7 @@ describe('findReplacements', () => {
     const report = findReplacements(input);
 
     const excludedWes = report.excluded.find((e) => e.nurseId === noCred.id);
-    expect(excludedWes).toBeDefined();
-    expect(excludedWes!.reason).toMatch(/acls/i);
+    expect(excludedWes).toMatchObject({ reason: expect.stringMatching(/acls/i) });
     expect(report.candidates.some((c) => c.nurseId === withCred.id)).toBe(true);
     expect(report.candidates.some((c) => c.nurseId === noCred.id)).toBe(false);
   });
@@ -384,8 +382,7 @@ describe('findReplacements with nurses kept apart', () => {
       }),
     );
     const card = report.candidates.find((c) => c.nurseId === ben.id);
-    expect(card).toBeDefined();
-    expect(card!.softViolationsIntroduced.map((v) => v.code)).toContain(
+    expect(card?.softViolationsIntroduced.map((v) => v.code)).toContain(
       'incompatible_staff_together',
     );
     const other = report.candidates.find((c) => c.nurseId === cy.id);

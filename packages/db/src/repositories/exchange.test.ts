@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { createShiftType, createUnit } from './config.js';
+import { nextEmployeeId } from './employee-ids.test-support.js';
 import {
   approveSwap,
   cancelSwap,
@@ -47,7 +48,7 @@ function mkNurse(firstName: string): string {
     handle.db,
     {
       unitId,
-      employeeId: `E${Math.random().toString().slice(2, 8)}`,
+      employeeId: nextEmployeeId(),
       firstName,
       lastName: 'Nurse',
       role: 'RN',

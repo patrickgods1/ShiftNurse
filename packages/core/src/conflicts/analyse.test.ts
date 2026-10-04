@@ -312,8 +312,7 @@ describe('auto-resolve and leave clashes', () => {
     const clash = report.conflicts.find((c) => c.kind === 'scheduled_on_leave');
     expect(clash).toBeDefined();
     const top = report.resolutions.find((r) => r.conflictId === clash!.id);
-    expect(top!.closesConflict).toBe(true);
-    expect(top!.impact.coverage.delta).toBe(1);
+    expect(top).toMatchObject({ closesConflict: true, impact: { coverage: { delta: 1 } } });
     const chosen = selectAutoResolutions(report, {
       enabled: true,
       maxCostDelta: 10_000,

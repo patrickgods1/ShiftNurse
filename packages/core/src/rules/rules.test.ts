@@ -64,8 +64,7 @@ describe('minimum rest', () => {
       ],
     });
     const rest = evaluate(s).violations.find((v) => v.code === 'insufficient_rest');
-    expect(rest).toBeDefined();
-    expect(rest?.details?.restHours).toBe(0);
+    expect(rest).toMatchObject({ details: { restHours: 0 } });
   });
 
   it('accepts a 12-hour gap between consecutive day shifts', () => {

@@ -75,8 +75,7 @@ describe('evaluateExchange', () => {
     expect(result.verdict).toBe('blocked');
     expect(result.blockers.length).toBeGreaterThan(0);
     const blocker = result.blockers.find((b) => /minimum rest/i.test(b));
-    expect(blocker).toBeDefined();
-    expect(blocker).toContain('Aisha Haddad');
+    expect(blocker).toEqual(expect.stringContaining('Aisha Haddad'));
   });
 
   it('a legal trade between two day shifts is ok with no warnings', () => {
