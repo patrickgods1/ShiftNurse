@@ -32,11 +32,19 @@ export function hasValidCredential(
   return held.some((record) => isCredentialValidOn(record, credentialId, onDate));
 }
 
+/**
+ * A credential lapses the day *after* its expiry date: a card "valid through the 10th" covers a
+ * shift on the 10th. The one definition, shared by the rules and the publish alerts — the alerts
+ * once counted the expiry day as lapsed, so a grid with no violation published "critical".
+ */
+export function credentialLapsedOn(record: NurseCredential, onDate: IsoDate): boolean {
+  return !!record.expiresOn && compareDates(record.expiresOn, onDate) < 0;
+}
+
 function isCredentialValidOn(record: NurseCredential, credentialId: Id, onDate: IsoDate): boolean {
   if (record.credentialId !== credentialId) return false;
   if (record.issuedOn && compareDates(record.issuedOn, onDate) > 0) return false;
-  if (record.expiresOn && compareDates(record.expiresOn, onDate) < 0) return false;
-  return true;
+  return !credentialLapsedOn(record, onDate);
 }
 
 // ---------------------------------------------------------------------------

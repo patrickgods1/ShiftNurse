@@ -51,13 +51,29 @@ describe('complianceAlerts', () => {
     });
     const alerts = alertsFor(s).filter((a) => a.kind === 'credential_expiry');
     expect(alerts).toHaveLength(1);
+    // The card is valid through the 10th, as the grid's credential rule reads it: only the 12th
+    // is worked on a lapsed card.
     expect(alerts[0]).toMatchObject({
       severity: 'critical',
       nurseId: 'n1',
-      assignmentIds: ['on-expiry', 'after'],
+      assignmentIds: ['after'],
     });
     expect(alerts[0]!.message).toContain('ACLS');
     expect(alerts[0]!.message).toContain('expires Sat Jan 10');
+    expect(alerts[0]!.message).toContain('1 shift after that date');
+  });
+
+  it('treats a shift on the expiry date as worked on a valid card, as the grid does', () => {
+    resetFixtureCounters();
+    const nurse = makeNurse({ id: 'n1', contractedHoursPerPeriod: 36 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign('n1', DAY_12, '2026-01-10', { id: 'on-expiry' })],
+      nurseCredentials: [nurseCredential('n1', CRED_ACLS, { expiresOn: '2026-01-10' as never })],
+    });
+    const alerts = alertsFor(s).filter((a) => a.kind === 'credential_expiry');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ severity: 'warning', assignmentIds: [] });
   });
 
   it('only warns when a credential expires in the period but the nurse has no shifts after it', () => {
@@ -74,14 +90,44 @@ describe('complianceAlerts', () => {
     expect(alerts[0]!.assignmentIds).toEqual([]);
   });
 
-  it('stays quiet about a credential that outlives the period', () => {
+  it('stays quiet about a credential that outlives the period by more than a month', () => {
     resetFixtureCounters();
+    // The period ends Sat 17 Jan; 1 March is 43 days later.
     const s = scenario({
       nurses: [makeNurse({ id: 'n1', contractedHoursPerPeriod: 12 })],
       assignments: [assign('n1', DAY_12, '2026-01-05')],
       nurseCredentials: [nurseCredential('n1', CRED_ACLS, { expiresOn: '2026-03-01' as never })],
     });
     expect(alertsFor(s).filter((a) => a.kind === 'credential_expiry')).toEqual([]);
+  });
+
+  it('warns a month ahead about a card that lapses soon after the period, before the next one', () => {
+    resetFixtureCounters();
+    // The period ends Sat 17 Jan; Fri 30 Jan is 13 days later, inside the 30-day look-ahead, and
+    // 16 Feb (30 days later) is its last day. 17 Feb is outside it.
+    const s = scenario({
+      nurses: [
+        makeNurse({ id: 'soon', contractedHoursPerPeriod: 12 }),
+        makeNurse({ id: 'edge', contractedHoursPerPeriod: 12 }),
+        makeNurse({ id: 'later', contractedHoursPerPeriod: 12 }),
+      ],
+      assignments: [
+        assign('soon', DAY_12, '2026-01-05'),
+        assign('edge', DAY_12, '2026-01-06'),
+        assign('later', DAY_12, '2026-01-07'),
+      ],
+      nurseCredentials: [
+        nurseCredential('soon', CRED_ACLS, { expiresOn: '2026-01-30' as never }),
+        nurseCredential('edge', CRED_ACLS, { expiresOn: '2026-02-16' as never }),
+        nurseCredential('later', CRED_ACLS, { expiresOn: '2026-02-17' as never }),
+      ],
+    });
+    const alerts = alertsFor(s).filter((a) => a.kind === 'credential_expiry');
+    expect(alerts.map((a) => a.nurseId).sort()).toEqual(['edge', 'soon']);
+    const soon = alerts.find((a) => a.nurseId === 'soon')!;
+    expect(soon).toMatchObject({ severity: 'warning', assignmentIds: [] });
+    expect(soon.message).toContain('expires Fri Jan 30');
+    expect(soon.message).toContain('13 days after this period ends');
   });
 
   it('flags a 72-hour nurse scheduled for 96 hours as drifting over contract, and one at 48 as under', () => {
