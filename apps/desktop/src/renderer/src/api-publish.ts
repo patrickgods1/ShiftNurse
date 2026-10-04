@@ -4,14 +4,18 @@
  * Publishing changes more than the period row: the versions list, the change log, the
  * dashboard's "latest published", the fairness ledger (so the Fairness page's history and
  * trend), and the lookback tail every *other* period's validation reads. `usePublish`
- * therefore invalidates broadly rather than surgically — a stale "draft" badge after a
- * publish is exactly the kind of lie this screen must not tell.
+ * therefore refreshes the period's whole family plus those named lists — a stale "draft" badge
+ * after a publish is exactly the kind of lie this screen must not tell, but refetching every
+ * query in the app (the settings tabs, the roster) is noise.
  */
 
 import type { Id } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { OutputFormat } from '../../shared/api.js';
 import { api, queryKeys } from './api.js';
+import { fairnessQueryKeys } from './api-fairness.js';
+import { scheduleKeys } from './api-schedule.js';
+import { invalidatePeriod } from './period-cache.js';
 
 export const publishKeys = {
   preview: (periodId: Id) => ['publish', 'preview', periodId] as const,
@@ -58,12 +62,31 @@ export function useAlerts(periodId: Id | undefined) {
 export function usePublish(periodId: Id | undefined, unitId: Id | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (reason: string | undefined) => api.publish.publish(periodId as Id, reason),
     onSettled: () => {
-      // Publication touches nearly every read model; a full invalidation is the honest one.
-      void queryClient.invalidateQueries();
+      if (periodId !== undefined) {
+        invalidatePeriod(queryClient, periodId);
+        void queryClient.invalidateQueries({ queryKey: publishKeys.versions(periodId) });
+      }
+      // Publishing takes a backup, becomes the lookback tail every other period's validation
+      // reads, and writes the ledger every period's fairness report reads.
+      for (const queryKey of [
+        publishKeys.backups(),
+        scheduleKeys.validation('').slice(0, 1),
+        fairnessQueryKeys.report('').slice(0, 2),
+      ]) {
+        void queryClient.invalidateQueries({ queryKey });
+      }
       if (unitId !== undefined) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.periods(unitId) });
+        for (const queryKey of [
+          queryKeys.periods(unitId),
+          queryKeys.dashboard(unitId),
+          fairnessQueryKeys.history(unitId),
+          fairnessQueryKeys.trend(unitId),
+        ]) {
+          void queryClient.invalidateQueries({ queryKey });
+        }
       }
     },
   });
@@ -82,13 +105,17 @@ export function useBackups() {
 export function useCreateBackup() {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: () => api.backups.create(),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: publishKeys.backups() }),
   });
 }
 
 export function useRestoreBackup() {
-  return useMutation({ mutationFn: (fileName: string) => api.backups.restore(fileName) });
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (fileName: string) => api.backups.restore(fileName),
+  });
 }
 
 export function useDeletedBackups() {
@@ -102,6 +129,7 @@ export function useDeletedBackups() {
 function useBackupFileMutation<T>(mutationFn: (vars: T) => Promise<unknown>) {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn,
     onSettled: () => void queryClient.invalidateQueries({ queryKey: publishKeys.backups() }),
   });

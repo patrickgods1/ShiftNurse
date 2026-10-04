@@ -68,6 +68,7 @@ function useInvalidateDayOf(unitId: Id | undefined) {
 export function useReportCallOff(unitId: Id | undefined) {
   const invalidate = useInvalidateDayOf(unitId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({
       assignmentId,
       reason,
@@ -115,6 +116,7 @@ export function useBackfill(unitId: Id | undefined) {
 export function useMarkUncovered(unitId: Id | undefined) {
   const invalidate = useInvalidateDayOf(unitId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ callOffId, reason }: { callOffId: Id; reason: string }) =>
       api.dayOf.markUncovered(callOffId, reason),
     onSettled: invalidate,
@@ -124,6 +126,7 @@ export function useMarkUncovered(unitId: Id | undefined) {
 export function useCancelCallOff(unitId: Id | undefined) {
   const invalidate = useInvalidateDayOf(unitId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ callOffId, reason }: { callOffId: Id; reason: string }) =>
       api.dayOf.cancelCallOff(callOffId, reason),
     onSettled: invalidate,

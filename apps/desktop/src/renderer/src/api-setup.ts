@@ -36,6 +36,7 @@ export function useDemos() {
 export function useLoadDemo() {
   const invalidate = useInvalidateAll();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (demoId: string) => api.setup.loadDemo(demoId),
     onSuccess: invalidate,
   });
@@ -43,12 +44,17 @@ export function useLoadDemo() {
 
 export function useLoadScenarios() {
   const invalidate = useInvalidateAll();
-  return useMutation({ mutationFn: () => api.setup.loadScenarios(), onSuccess: invalidate });
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: () => api.setup.loadScenarios(),
+    onSuccess: invalidate,
+  });
 }
 
 export function useCreateSetupUnit() {
   const invalidate = useInvalidateAll();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (vars: { input: UnitInput; mode: UnitSetupMode }) =>
       api.setup.createUnit(vars.input, vars.mode),
     onSuccess: invalidate,
@@ -58,6 +64,7 @@ export function useCreateSetupUnit() {
 export function useAdvanceSetup() {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (move: { from: SetupStepId; to: SetupStepId; skipped: boolean }) =>
       api.setup.advance(move),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: setupKeys.status() }),
@@ -66,17 +73,26 @@ export function useAdvanceSetup() {
 
 export function useCompleteSetup() {
   const invalidate = useInvalidateAll();
-  return useMutation({ mutationFn: () => api.setup.complete(), onSuccess: invalidate });
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: () => api.setup.complete(),
+    onSuccess: invalidate,
+  });
 }
 
 export function useResumeSetup() {
   const invalidate = useInvalidateAll();
-  return useMutation({ mutationFn: () => api.setup.resume(), onSuccess: invalidate });
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: () => api.setup.resume(),
+    onSuccess: invalidate,
+  });
 }
 
 export function useApplyPreset(unitId: Id) {
   const invalidate = useInvalidateAll();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (preset: SetupPreset) => api.setup.applyPreset(unitId, preset),
     onSuccess: invalidate,
   });
@@ -84,12 +100,13 @@ export function useApplyPreset(unitId: Id) {
 
 /** Resolves just before the app relaunches; nothing to invalidate. */
 export function useStartOver() {
-  return useMutation({ mutationFn: () => api.setup.startOver() });
+  return useMutation({ meta: { inlineError: true }, mutationFn: () => api.setup.startOver() });
 }
 
 export function useUpdateUnit() {
   const invalidate = useInvalidateAll();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (vars: { id: Id; patch: UnitPatch }) => api.units.update(vars.id, vars.patch),
     onSuccess: invalidate,
   });

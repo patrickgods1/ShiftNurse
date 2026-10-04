@@ -41,6 +41,7 @@ export function useSolverSettings(unitId: Id | undefined) {
 export function useSaveSolverSettings(unitId: Id | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (settings: SolverSettings) => api.solverSettings.save(unitId as Id, settings),
     onSettled: () => {
       if (unitId !== undefined) {
@@ -90,6 +91,7 @@ export function useCurrentBatch(periodId: Id) {
 export function useStartBatch(periodId: Id) {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (options: SolveBatchOptions) => api.solver.start(periodId, options),
     onSuccess: (status) => queryClient.setQueryData(solverKeys.current(periodId), status),
   });
@@ -117,6 +119,7 @@ export function useDiscardBatch(periodId: Id) {
 export function useSaveCandidate(periodId: Id, unitId: Id) {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ batchId, index }: { batchId: Id; index: number }) =>
       api.solver.save(batchId, index),
     onSettled: () => {

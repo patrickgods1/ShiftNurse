@@ -11,6 +11,8 @@ export default defineConfig({
     // Component tests opt into jsdom per file (`// @vitest-environment jsdom`); the rest of
     // the suite is pure logic and runs faster under node.
     environment: 'node',
+    // Puts the fake `window.shiftnurse` proxy in place before any jsdom test imports api.ts.
+    setupFiles: ['apps/desktop/src/renderer/src/test/setup.ts'],
     coverage: {
       provider: 'v8',
       include: [

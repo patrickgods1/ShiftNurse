@@ -17,6 +17,7 @@ import { type CSSProperties, useEffect, useRef } from 'react';
 import { AsyncState } from './components/async-state.js';
 import { TipProvider } from './components/field-help.js';
 import { ThemeToggle } from './components/theme-toggle.js';
+import { SECONDARY } from './components/ui.js';
 import { NavigationGuard, UnsavedChangesProvider } from './components/unsaved-changes.js';
 import { UpdateBanner } from './components/update-banner.js';
 import DashboardPage from './pages/dashboard.js';
@@ -192,8 +193,15 @@ const routeTree = rootRoute.addChildren([
 export const router = createRouter({
   routeTree,
   history: createHashHistory(),
-  defaultErrorComponent: ({ error }) => (
-    <AsyncState status="error" label="This page failed to load" error={error} />
+  // `reset` re-renders the failed route, so a transient failure recovers without reloading the
+  // window; the nav is outside the error component and stays usable either way.
+  defaultErrorComponent: ({ error, reset }) => (
+    <div className="flex flex-col items-center">
+      <AsyncState status="error" label="This page failed to load" error={error} />
+      <button type="button" className={`${SECONDARY} mt-3`} onClick={reset}>
+        Try again
+      </button>
+    </div>
   ),
 });
 

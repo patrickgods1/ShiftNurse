@@ -18,7 +18,8 @@ import type {
   PayRateInput,
   PayRatePatch,
 } from '../../shared/api.js';
-import { api } from './api.js';
+import { api, queryKeys } from './api.js';
+import { invalidateUnitDerived } from './period-cache.js';
 
 export const costKeys = {
   payRates: (unitId: Id) => ['cost', 'payRates', unitId] as const,
@@ -43,6 +44,8 @@ export function useSetBudget(periodId: Id | undefined) {
       if (periodId !== undefined) {
         void queryClient.invalidateQueries({ queryKey: costKeys.report(periodId) });
       }
+      // Budget versus actual is on the dashboard; the hook is not told the unit.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard('').slice(0, 1) });
     },
   });
 }
@@ -53,6 +56,8 @@ function useInvalidateConfig(unitId: Id, key: (typeof costKeys)[keyof typeof cos
   return () => {
     void queryClient.invalidateQueries({ queryKey: key(unitId) });
     void queryClient.invalidateQueries({ queryKey: ['cost', 'report'] });
+    // Pay also feeds publish alerts and Generate's cost.
+    invalidateUnitDerived(queryClient, unitId);
   };
 }
 

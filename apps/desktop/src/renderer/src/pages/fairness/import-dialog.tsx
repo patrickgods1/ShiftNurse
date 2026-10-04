@@ -11,7 +11,7 @@ import type { Id } from '@shiftnurse/core';
 import { useState } from 'react';
 import type { HistoryImportPreview, HistoryImportSummary } from '../../../../shared/api.js';
 import { useImportHistory, usePickHistoryImportFile } from '../../api-fairness.js';
-import { OVERLAY, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { errorMessage, OVERLAY, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { formatDate } from '../../format.js';
 
 interface ImportHistoryDialogProps {
@@ -201,7 +201,7 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
 
               {importHistory.isError ? (
                 <p role="alert" className="mb-3 text-sm text-danger">
-                  Import failed. Nothing was changed.
+                  Import failed. Nothing was changed. {errorMessage(importHistory.error)}
                 </p>
               ) : null}
 

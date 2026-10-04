@@ -68,6 +68,7 @@ function useInvalidateExchanges(unitId: Id | undefined, periodId: Id | undefined
 export function useProposeExchange(unitId: Id | undefined, periodId: Id | undefined) {
   const invalidate = useInvalidateExchanges(unitId, periodId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ proposal, reason }: { proposal: ExchangeProposal; reason?: string }) =>
       api.exchange.propose(periodId as Id, proposal, reason),
     onSettled: invalidate,
@@ -77,6 +78,7 @@ export function useProposeExchange(unitId: Id | undefined, periodId: Id | undefi
 export function useApproveExchange(unitId: Id | undefined, periodId: Id | undefined) {
   const invalidate = useInvalidateExchanges(unitId, periodId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason?: string }) => api.exchange.approve(id, reason),
     onSettled: invalidate,
   });
@@ -85,6 +87,7 @@ export function useApproveExchange(unitId: Id | undefined, periodId: Id | undefi
 export function useDenyExchange(unitId: Id | undefined, periodId: Id | undefined) {
   const invalidate = useInvalidateExchanges(unitId, periodId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason: string }) => api.exchange.deny(id, reason),
     onSettled: invalidate,
   });
@@ -93,6 +96,7 @@ export function useDenyExchange(unitId: Id | undefined, periodId: Id | undefined
 export function useCancelExchange(unitId: Id | undefined, periodId: Id | undefined) {
   const invalidate = useInvalidateExchanges(unitId, periodId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason?: string }) => api.exchange.cancel(id, reason),
     onSettled: invalidate,
   });

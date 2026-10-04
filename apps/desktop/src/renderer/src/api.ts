@@ -21,6 +21,7 @@ import type {
   NursePatch,
   PreferenceInput,
 } from '../../shared/api.js';
+import { invalidateUnitDerived, invalidateUnitDerivedAnyUnit } from './period-cache.js';
 
 export const api = window.shiftnurse;
 
@@ -134,6 +135,11 @@ function useInvalidateRoster(unitId: Id | undefined) {
     if (unitId !== undefined) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.nurses(unitId) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });
+      // Who is on the roster, and with what contract, feeds every schedule check.
+      invalidateUnitDerived(queryClient, unitId);
+    } else {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.nurses('').slice(0, 1) });
+      invalidateUnitDerivedAnyUnit(queryClient);
     }
   };
 }
@@ -141,6 +147,7 @@ function useInvalidateRoster(unitId: Id | undefined) {
 export function useCreateNurse(unitId: Id | undefined) {
   const invalidate = useInvalidateRoster(unitId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (input: NurseInput) => api.nurses.create(input),
     onSuccess: invalidate,
   });
@@ -150,6 +157,7 @@ export function useUpdateNurse(unitId: Id | undefined) {
   const invalidate = useInvalidateRoster(unitId);
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ id, patch }: { id: Id; patch: NursePatch }) => api.nurses.update(id, patch),
     onSuccess: (nurse) => {
       invalidate();
@@ -192,6 +200,7 @@ export function useCreateCredential() {
     mutationFn: (input: Omit<Credential, 'id'>) => api.credentials.create(input),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.credentials() });
+      invalidateUnitDerivedAnyUnit(queryClient);
     },
   });
 }
@@ -201,6 +210,8 @@ function useInvalidateNurseCredentials(nurseId: Id | undefined) {
   return () => {
     if (nurseId !== undefined) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.nurseCredentials(nurseId) });
+      // A credential decides who may fill a requirement, in every period.
+      invalidateUnitDerivedAnyUnit(queryClient);
     }
   };
 }
@@ -245,11 +256,14 @@ export function useNursePreferences(nurseId: Id | undefined) {
 export function useReplacePreferences(nurseId: Id | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (preferences: PreferenceInput[]) =>
       api.preferences.replace(nurseId as Id, preferences),
     onSuccess: () => {
       if (nurseId !== undefined) {
         void queryClient.invalidateQueries({ queryKey: queryKeys.preferences(nurseId) });
+        // Preferences are what "against preference" and fairness are judged by.
+        invalidateUnitDerivedAnyUnit(queryClient);
       }
     },
   });
@@ -276,9 +290,9 @@ function useInvalidateIncompatibility(unitId: Id | undefined) {
   return () => {
     if (unitId !== undefined) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.incompatibility(unitId) });
-    }
-    for (const prefix of ['validation', 'solver', 'conflicts', 'dayOf', 'exchange']) {
-      void queryClient.invalidateQueries({ queryKey: [prefix] });
+      invalidateUnitDerived(queryClient, unitId);
+    } else {
+      invalidateUnitDerivedAnyUnit(queryClient);
     }
   };
 }
@@ -286,6 +300,7 @@ function useInvalidateIncompatibility(unitId: Id | undefined) {
 export function useCreateIncompatibilityGroup(unitId: Id | undefined) {
   const invalidate = useInvalidateIncompatibility(unitId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ input, reason }: { input: IncompatibilityGroupInput; reason: string }) =>
       api.incompatibility.create(input, reason),
     onSuccess: invalidate,
@@ -295,6 +310,7 @@ export function useCreateIncompatibilityGroup(unitId: Id | undefined) {
 export function useUpdateIncompatibilityGroup(unitId: Id | undefined) {
   const invalidate = useInvalidateIncompatibility(unitId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({
       id,
       patch,
@@ -311,6 +327,7 @@ export function useUpdateIncompatibilityGroup(unitId: Id | undefined) {
 export function useRemoveIncompatibilityGroup(unitId: Id | undefined) {
   const invalidate = useInvalidateIncompatibility(unitId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason: string }) =>
       api.incompatibility.remove(id, reason),
     onSuccess: invalidate,
@@ -322,12 +339,16 @@ export function useRemoveIncompatibilityGroup(unitId: Id | undefined) {
 // ---------------------------------------------------------------------------
 
 export function usePickRosterImportFile() {
-  return useMutation({ mutationFn: (unitId: Id) => api.roster.pickImportFile(unitId) });
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (unitId: Id) => api.roster.pickImportFile(unitId),
+  });
 }
 
 export function useImportRosterRows(unitId: Id | undefined) {
   const invalidate = useInvalidateRoster(unitId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (rows: RosterCsvRow[]) => api.roster.importRows(unitId as Id, rows),
     onSuccess: invalidate,
   });

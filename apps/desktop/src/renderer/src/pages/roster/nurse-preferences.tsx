@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import type { PreferenceInput } from '../../../../shared/api.js';
 import { useNursePreferences, useReplacePreferences, useShiftTypes } from '../../api.js';
 import { AsyncState } from '../../components/async-state.js';
-import { PRIMARY } from '../../components/ui.js';
+import { errorMessage, PRIMARY } from '../../components/ui.js';
 import { strengthLabel } from '../../preferences.js';
 
 const WEEKDAY_NAMES = [
@@ -127,7 +127,11 @@ export function PreferencesSection({ nurseId, unitId }: { nurseId: Id; unitId: I
               {replace.isPending ? 'Saving…' : 'Save preferences'}
             </button>
             {replace.isSuccess ? <span className="text-xs text-success">Saved</span> : null}
-            {replace.isError ? <span className="text-xs text-danger">Could not save</span> : null}
+            {replace.isError ? (
+              <span className="text-xs text-danger">
+                Could not save: {errorMessage(replace.error)}
+              </span>
+            ) : null}
           </div>
         </>
       )}
