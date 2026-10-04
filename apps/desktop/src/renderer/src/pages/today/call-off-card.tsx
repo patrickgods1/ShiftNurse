@@ -62,7 +62,14 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
   }
 
   return (
-    <div className="rounded-md border border-border bg-surface p-4" data-testid="call-off-card">
+    <div
+      id={`call-off-${callOff.callOff.id}`}
+      data-call-off-id={callOff.callOff.id}
+      // Focusable so a fresh report can take the manager's eye (and screen reader) straight here.
+      tabIndex={-1}
+      className="rounded-md border border-border bg-surface p-4 outline-none focus:ring-2 focus:ring-accent"
+      data-testid="call-off-card"
+    >
       <div>
         <p className="font-medium text-text">
           {callOff.nurse.lastName}, {callOff.nurse.firstName} ({callOff.nurse.role}) —{' '}

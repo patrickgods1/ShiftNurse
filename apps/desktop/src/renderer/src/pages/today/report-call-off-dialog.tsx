@@ -20,17 +20,23 @@ import { ReasonDialog } from '../requests/reason-dialog.js';
 interface ReportCallOffDialogProps {
   unitId: Id;
   entry: RosterEntryView | undefined;
+  /** False keeps `entry` for the title while Radix closes and returns focus to the trigger. */
+  open?: boolean;
   shiftType: ShiftType;
   date: IsoDate;
   onClose: () => void;
+  /** Called with the new call-off's id once it is saved, so the page can bring its card into view. */
+  onReported?: (callOffId: Id) => void;
 }
 
 export function ReportCallOffDialog({
   unitId,
   entry,
+  open = true,
   shiftType,
   date,
   onClose,
+  onReported,
 }: ReportCallOffDialogProps) {
   const reportCallOff = useReportCallOff(unitId);
   const employee =
@@ -39,7 +45,7 @@ export function ReportCallOffDialog({
 
   return (
     <ReasonDialog
-      open={entry !== undefined}
+      open={entry !== undefined && open}
       onOpenChange={(next) => !next && onClose()}
       title={
         entry
@@ -63,7 +69,12 @@ export function ReportCallOffDialog({
             ...(reason ? { reason } : {}),
             ...(paidSick ? { paidSickHours: shiftType.durationHours } : {}),
           },
-          { onSuccess: onClose },
+          {
+            onSuccess: (callOff) => {
+              onClose();
+              onReported?.(callOff.id);
+            },
+          },
         );
       }}
     >

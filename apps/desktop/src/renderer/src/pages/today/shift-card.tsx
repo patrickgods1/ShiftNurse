@@ -7,11 +7,9 @@
 
 import type { RosterEntryView, TodayShiftView } from '@shared/api.js';
 import type { Id, RoleStaffing } from '@shiftnurse/core';
-import { useState } from 'react';
 import { SMALL } from '../../components/ui.js';
 import { formatDateWithWeekday } from '../../format.js';
 import { CensusEntry } from './census-entry.js';
-import { ReportCallOffDialog } from './report-call-off-dialog.js';
 
 const STATUS_LABEL: Record<TodayShiftView['status'], string | undefined> = {
   current: 'Now',
@@ -52,8 +50,16 @@ function rosterLabel(entry: RosterEntryView): string {
   return `${entry.nurse.lastName}, ${entry.nurse.firstName} (${entry.nurse.role})`;
 }
 
-export function ShiftCard({ unitId, shift }: { unitId: Id; shift: TodayShiftView }) {
-  const [reporting, setReporting] = useState<RosterEntryView | undefined>(undefined);
+export function ShiftCard({
+  unitId,
+  shift,
+  onReport,
+}: {
+  unitId: Id;
+  shift: TodayShiftView;
+  /** The page owns the one report dialog, which the header's picker also opens. */
+  onReport: (entry: RosterEntryView) => void;
+}) {
   const statusLabel = STATUS_LABEL[shift.status];
 
   return (
@@ -124,22 +130,13 @@ export function ShiftCard({ unitId, shift }: { unitId: Id; shift: TodayShiftView
                 Called off
               </span>
             ) : (
-              <button type="button" className={SMALL} onClick={() => setReporting(entry)}>
+              <button type="button" className={SMALL} onClick={() => onReport(entry)}>
                 Report call-off
               </button>
             )}
           </li>
         ))}
       </ul>
-
-      <ReportCallOffDialog
-        key={reporting?.assignment.id ?? 'closed'}
-        unitId={unitId}
-        entry={reporting}
-        shiftType={shift.shiftType}
-        date={shift.date}
-        onClose={() => setReporting(undefined)}
-      />
     </div>
   );
 }
