@@ -335,6 +335,16 @@ describe('weekends', () => {
     expect(daysBetween(isoDate(thisWeekend!), isoDate(nextWeekend!))).toBe(7);
   });
 
+  it("files a Friday night under 'overlaps' with the weekend it runs into, not the one before", () => {
+    // Fri 18 Sep 19:00 – Sat 07:00 overlaps the weekend opening Sat 19 Sep 00:00. The previous
+    // weekend (12–13 Sep) ended five days earlier.
+    const overlapping: WeekendDefinition = { ...DEFAULT_WEEKEND, mode: 'overlaps' };
+    const friday = shiftWindow(isoDate('2026-09-18'), NIGHT_12H);
+    const saturday = shiftWindow(isoDate('2026-09-19'), DAY_12H);
+    expect(weekendKey(friday, overlapping)).toBe('2026-09-19');
+    expect(weekendKey(saturday, overlapping)).toBe('2026-09-19');
+  });
+
   it('returns no key for a weekday shift', () => {
     expect(weekendKey(shiftWindow(isoDate('2026-09-17'), DAY_12H))).toBeNull();
   });

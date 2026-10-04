@@ -402,7 +402,13 @@ export function weekendKey(
 ): string | null {
   if (!isWeekendWindow(window, def)) return null;
   const candidate = weekendWindowFor(window.startMinute, def);
-  return fromDayNumber(Math.floor(candidate.startMinute / MINUTES_PER_DAY));
+  // Under 'overlaps' a shift that starts before a weekend opens (a Friday night) belongs to the
+  // weekend it runs into, not the one before it, which ended days earlier.
+  const weekend =
+    def.mode === 'overlaps' && !windowsOverlap(window, candidate)
+      ? candidate.startMinute + 7 * MINUTES_PER_DAY
+      : candidate.startMinute;
+  return fromDayNumber(Math.floor(weekend / MINUTES_PER_DAY));
 }
 
 export function isWeekendDate(date: IsoDate): boolean {
