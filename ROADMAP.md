@@ -495,13 +495,14 @@ manager's experience and the contract rules a real hospital would check first. O
       (mac arm64); SA + LNS output unchanged on fixed inputs (no core change in this phase)
 
 **Phase 2 — Renderer correctness**
-- [ ] Configuration edits refresh every read model derived from them (`invalidateUnitDerived`);
+- [x] Configuration edits refresh every read model derived from them (`invalidateUnitDerived`);
       publish no longer refetches the whole app
-- [ ] A failed save always reaches the manager (toast for any mutation without an inline error)
-- [ ] Undo for grid edits (toast + Cmd/Ctrl-Z), published edits carrying an "Undo:" reason
-- [ ] `board.tsx` split into edit, generate and dialog hooks; shared `Modal`, `EditorShell`,
+- [x] A failed save always reaches the manager (toast for any mutation without an inline error)
+- [x] Undo for grid edits (toast + Cmd/Ctrl-Z), published edits carrying an "Undo:" reason
+- [x] `board.tsx` split into edit, generate and dialog hooks; shared `Modal`, `EditorShell`,
       `DateField`; instants formatted once
-- [ ] Verify: invalidation matrix test, undo tests, smoke
+- [x] Verify: invalidation matrix and mounted-query tests, 17 undo tests (incl. concurrent edits),
+      `npm run check` (1,386 tests), `npm run smoke`
 
 **Phase 3 — The manager's experience**
 - [ ] Settings grouped (My unit, Contract & pay, Scheduling, Data) with links from where the
@@ -538,7 +539,8 @@ manager's experience and the contract rules a real hospital would check first. O
 - [ ] California overtime: daily by workday, banded 1.5×/2×, seventh day
 - [ ] No mandatory overtime: volunteer records and the `mandatory-overtime` rule
 - [ ] Weekend pattern rule (every other weekend, weekends per period)
-- [ ] Credential expiry day judged the same everywhere; 30-day look-ahead
+- [ ] Credential expiry day judged the same everywhere; 30-day look-ahead; the Dashboard's
+      next-steps count agrees with its "Credentials expiring" tile (1 vs 9 on the demo)
 - [ ] Posting lead time; jurisdiction presets (CA, OR, NY, MA) with citations
 - [ ] Stated limits: what 1.0 does not enforce, in the app and the README
 
