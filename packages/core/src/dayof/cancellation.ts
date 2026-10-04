@@ -8,7 +8,9 @@
  * diem, then the unit's own staff in rotation — the nurse cancelled fewest times so far goes
  * first, then whoever was cancelled longest ago, then the most junior. The tiers are the unit's
  * policy and may be reordered; the charge nurse is never cancelled, since someone must run the
- * shift. Each place carries its reason, as the call-off list's do.
+ * shift. Within the agency, overtime and per diem tiers the most junior goes first (reverse
+ * `seniorityOrder`); volunteers go in the order they offered. Each place carries its reason, as
+ * the call-off list's do.
  */
 
 import type { Assignment, Id, Nurse } from '../domain/entities.js';

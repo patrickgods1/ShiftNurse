@@ -169,6 +169,14 @@ export {
   FAIRNESS_COMPONENT_LABELS,
   FAIRNESS_COMPONENTS,
 } from './fairness/types.js';
+export type { AccrualPolicy, BalanceCheck } from './leave/balances.js';
+// Leave balances and FMLA: accrual, balance checks, the rolling-year entitlement
+export {
+  accruedHours,
+  checkLeaveBalance,
+  fmlaEligibility,
+  fmlaRemaining,
+} from './leave/balances.js';
 export type {
   BidResult,
   LeaveAward,
