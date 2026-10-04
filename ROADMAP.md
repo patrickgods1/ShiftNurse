@@ -516,16 +516,25 @@ manager's experience and the contract rules a real hospital would check first. O
       rows and the staffing footer visible, up from two or three)
 
 **Phase 4 — Core maintainability**
-- [ ] Typed rule parameters (no `as unknown as` params) and typed violation details
-- [ ] `SolverModel` split into hours, coverage, preference and holiday parts; shift types by map
-- [ ] Soft-rule pricing parity test between the rule engine and `SolverModel`
-- [ ] `dayNumber` refuses a malformed date; memo caches bounded; `defaultRuleSet` takes its clock
-- [ ] Conflicts analysis fast enough to run on every Requests view: fairness impact scored
-      incrementally (today ~68% of `analyseConflicts`, 2.5 s on the scenario period), target
-      < 500 ms; auto-resolve without re-running the whole analysis per applied fix (one run with
-      a permissive policy took 6.7 minutes on the main thread)
-- [ ] Named core exports; conflicts engine indexes; shared audited update in `packages/db`
-- [ ] Verify: SA + LNS output unchanged; `bench:solvers` no slower
+- [x] Typed rule parameters (`paramsOf`/`requireParams`/`asParams`; no `as unknown as` params
+      outside the one accessor) and violation details read through `detailNumber`/`detailString`,
+      which refuse a missing value instead of reading it as zero
+- [x] `SolverModel`'s fixed setup (shifts, work calendar, hours buckets, pay context, carried
+      history) moved to `model-setup.ts`; shift types by map. The incremental pricing state stays
+      in the class: splitting it further risks the hash-identical guarantee for little gain
+- [x] Soft-rule pricing parity test between the rule engine and `SolverModel` (every natively
+      soft rule accounted for)
+- [x] `dayNumber` refuses a malformed date; memo caches bounded; `defaultRuleSet` takes its clock
+- [x] Conflicts analysis: fairness scored by `FairnessEvaluator` (bit-identical to
+      `scoreFairness`), a fix priced against the state it came from, indexes instead of `.find`
+      in loops — 2.5 s → ~640 ms on the scenario period; auto-resolve applies independent fixes
+      per analysis (minutes → seconds). Target was < 500 ms: the rest is one full `ScheduleView`
+      per simulated fix, which needs a copy-on-write view (follow-up below)
+- [ ] Follow-up: copy-on-write `ScheduleView` for simulated fixes, to reach < 500 ms
+- [x] Named core exports (243, from ~470); conflicts engine indexes and `resolve.ts` split into
+      candidates and scoring; shared audited update in `packages/db`
+- [x] Verify: SA + LNS output hashes unchanged on fixed inputs after every solver-touching change;
+      deterministic conflicts fixture hash unchanged; `bench:solvers` re-run
 
 **Phase 5 — Tests**
 - [ ] Renderer harness (fake bridge) and dialog tests: decide, publish, generate/save, call-off,
