@@ -40,6 +40,7 @@ import { costContext, demandInputs, loadPeriodInput } from '../../repositories/s
 import { listTimeOffForUnit } from '../../repositories/timeoff.js';
 import { type DemoId, seedDemoUnit } from '../demo.js';
 import type { SeedResult } from '../types.js';
+import { slow } from './slow.test-support.js';
 
 /** Seeding six months of history takes about a second locally, several on a slow CI runner. */
 const SEED_TIMEOUT_MS = 60_000;
@@ -222,16 +223,20 @@ export function realisticDemoChecks(f: DemoFixture, demo: DemoId, today: IsoDate
     ).toBeGreaterThanOrEqual(8);
   });
 
-  it('lets Generate fill every floor of the next schedule without breaking a nurse-level rule', () => {
-    const input = loadPeriodInput(f.handle.db, getPeriod(f.handle.db, f.result.draftPeriodId)!);
-    // The app's default budget (`solver-jobs.ts`).
-    const report = solve(input, { seed: 1, maxIterations: 200_000 });
-    expect(report.unfilled).toEqual([]);
-    const nurseLevel = report.hardViolations.filter(
-      (v) => v.code !== 'under_contracted_hours' && v.code !== 'over_contracted_hours',
-    );
-    expect(nurseLevel).toEqual([]);
-  }, 60_000);
+  it(
+    'lets Generate fill every floor of the next schedule without breaking a nurse-level rule',
+    () => {
+      const input = loadPeriodInput(f.handle.db, getPeriod(f.handle.db, f.result.draftPeriodId)!);
+      // The app's default budget (`solver-jobs.ts`).
+      const report = solve(input, { seed: 1, maxIterations: 200_000 });
+      expect(report.unfilled).toEqual([]);
+      const nurseLevel = report.hardViolations.filter(
+        (v) => v.code !== 'under_contracted_hours' && v.code !== 'over_contracted_hours',
+      );
+      expect(nurseLevel).toEqual([]);
+    },
+    slow(60_000),
+  );
 
   it(
     'is the same unit every time for the same seed and date',

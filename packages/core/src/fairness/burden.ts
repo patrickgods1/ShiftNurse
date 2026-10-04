@@ -75,7 +75,7 @@ function foldCounters(rows: readonly WeightedRow[]): BurdenCounters {
   return carried;
 }
 
-interface NurseInterim {
+export interface NurseInterim {
   nurseId: Id;
   carried: BurdenCounters;
   shareWeight: number;
@@ -86,29 +86,72 @@ interface NurseInterim {
   hasContributingRow: boolean;
 }
 
+/** Each nurse's ledger rows inside the window, newest first. */
+export type HistoryWindows = ReadonlyMap<Id, readonly FairnessLedgerEntry[]>;
+
 /**
- * Fold one nurse's ledger history (plus the current period, if given) into carried totals and
- * a fair-share basis. Kept separate from the team-aggregate pass below so that pass can read
- * every nurse's `carried`/`shareWeight` before any deviation is computed.
+ * Grouping and sorting the ledger was most of the cost of scoring fairness, and the conflicts
+ * engine scores the same history once per simulated fix. A history array is never mutated once
+ * built (inputs are plain data), so its windows are computed once per array and window size.
  */
-function buildInterim(
+const WINDOWS = new WeakMap<readonly FairnessLedgerEntry[], Map<number, HistoryWindows>>();
+
+export function historyWindows(
+  history: readonly FairnessLedgerEntry[],
+  windowPeriods: number,
+): HistoryWindows {
+  let bySize = WINDOWS.get(history);
+  if (!bySize) {
+    bySize = new Map();
+    WINDOWS.set(history, bySize);
+  }
+  const cached = bySize.get(windowPeriods);
+  if (cached) return cached;
+
+  const byNurse = new Map<Id, FairnessLedgerEntry[]>();
+  for (const row of history) {
+    const rows = byNurse.get(row.nurseId);
+    if (rows) rows.push(row);
+    else byNurse.set(row.nurseId, [row]);
+  }
+  const windows = new Map<Id, readonly FairnessLedgerEntry[]>();
+  for (const [nurseId, rows] of byNurse) {
+    windows.set(
+      nurseId,
+      rows
+        .slice()
+        .sort(
+          (a, b) =>
+            dayNumber(b.periodStart) - dayNumber(a.periodStart) ||
+            a.periodId.localeCompare(b.periodId),
+        )
+        .slice(0, windowPeriods),
+    );
+  }
+  bySize.set(windowPeriods, windows);
+  return windows;
+}
+
+const NO_ROWS: readonly FairnessLedgerEntry[] = [];
+
+/**
+ * Fold one nurse's ledger window (plus the current period, if given) into carried totals and
+ * a fair-share basis. Kept separate from the team-aggregate pass below so that pass can read
+ * every nurse's `carried`/`shareWeight` before any deviation is computed — and so the conflicts
+ * engine can reuse a nurse's interim when a simulated fix left their counters unchanged.
+ */
+export function buildInterim(
   nurse: Nurse,
-  historyByNurse: ReadonlyMap<Id, FairnessLedgerEntry[]>,
+  windows: HistoryWindows,
   options: BurdenOptions,
-  current: ReadonlyMap<Id, BurdenCounters> | undefined,
+  current: BurdenCounters | undefined,
 ): NurseInterim {
-  const rows = (historyByNurse.get(nurse.id) ?? [])
-    .slice()
-    .sort(
-      (a, b) =>
-        dayNumber(b.periodStart) - dayNumber(a.periodStart) || a.periodId.localeCompare(b.periodId),
-    )
-    .slice(0, options.windowPeriods);
+  const rows = windows.get(nurse.id) ?? NO_ROWS;
 
   const hasCurrent = current !== undefined;
   const weightedRows: WeightedRow[] = [];
   if (hasCurrent) {
-    weightedRows.push({ counters: current.get(nurse.id) ?? zeroCounters(), weight: 1 });
+    weightedRows.push({ counters: current, weight: 1 });
   }
   // k = 0 is the most recent historical row. With a current row present it decays starting
   // one step back (decay^(k+1)); without one, the most recent historical row itself carries
@@ -143,16 +186,30 @@ export function computeBurden(
   current?: ReadonlyMap<Id, BurdenCounters>,
 ): BurdenReport {
   const opts: BurdenOptions = { ...DEFAULT_BURDEN_OPTIONS, ...options };
+  const windows = historyWindows(history, opts.windowPeriods);
+  const interims = nurses.map((nurse) =>
+    buildInterim(
+      nurse,
+      windows,
+      opts,
+      current === undefined ? undefined : (current.get(nurse.id) ?? zeroCounters()),
+    ),
+  );
+  const byNurse = burdenByNurse(interims, opts);
+  const ranked = [...byNurse.values()].sort(
+    (a, b) => b.index - a.index || a.nurseId.localeCompare(b.nurseId),
+  );
+  return { byNurse, ranked, options: opts };
+}
 
-  const historyByNurse = new Map<Id, FairnessLedgerEntry[]>();
-  for (const row of history) {
-    const rows = historyByNurse.get(row.nurseId);
-    if (rows) rows.push(row);
-    else historyByNurse.set(row.nurseId, [row]);
-  }
-
-  const interims = nurses.map((nurse) => buildInterim(nurse, historyByNurse, opts, current));
-
+/**
+ * The team pass: fair shares, deviations and the burden index, from every nurse's interim.
+ * Everyone's deviation depends on the team totals, so this always runs over the whole roster.
+ */
+export function burdenByNurse(
+  interims: readonly NurseInterim[],
+  opts: BurdenOptions,
+): Map<Id, NurseBurden> {
   // Team aggregates for burden components: only nurses with a share weight can be measured
   // against a fair share, so non-comparable nurses (per-diem with no history) drop out of
   // both the numerator and denominator rather than silently reading as "carries nothing".
@@ -220,11 +277,7 @@ export function computeBurden(
     });
   }
 
-  const ranked = [...byNurse.values()].sort(
-    (a, b) => b.index - a.index || a.nurseId.localeCompare(b.nurseId),
-  );
-
-  return { byNurse, ranked, options: opts };
+  return byNurse;
 }
 
 /**

@@ -8,12 +8,13 @@
  * off, a pair straddling an overlap is still forbidden; that is stricter, never illegal.)
  */
 
-import type { OverlapParams } from '../../../rules/availability-rules.js';
-import type { MinRestParams } from '../../../rules/rest-rules.js';
+import { overlapRule } from '../../../rules/availability-rules.js';
+import { asParams } from '../../../rules/registry.js';
+import { minRestRule } from '../../../rules/rest-rules.js';
 import { describe, type EncodeContext, forbidPair } from '../context.js';
 
 export function encodeOverlap(ctx: EncodeContext, raw: Record<string, unknown>): void {
-  const params = raw as unknown as OverlapParams;
+  const params = asParams(overlapRule, raw);
   for (const [n, vars] of ctx.byNurse.entries()) {
     if (vars.length === 0) continue;
     const timeline = ctx.timeline(n);
@@ -33,7 +34,7 @@ export function encodeOverlap(ctx: EncodeContext, raw: Record<string, unknown>):
 }
 
 export function encodeRest(ctx: EncodeContext, raw: Record<string, unknown>): void {
-  const params = raw as unknown as MinRestParams;
+  const params = asParams(minRestRule, raw);
   for (const [n, vars] of ctx.byNurse.entries()) {
     if (vars.length === 0) continue;
     const timeline = ctx

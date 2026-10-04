@@ -1,56 +1,302 @@
-// Domain
+// The public API: exactly what packages/db, the desktop app and the web client consume.
+// Everything else stays exported from its own module for core's internal use.
 
-// Acuity-driven demand
-export * from './acuity/demand.js';
-export * from './acuity/forecast.js';
-export * from './acuity/hppd.js';
-// Conflicts
-export * from './conflicts/index.js';
-// Cost
-export * from './cost/cost.js';
-export * from './cost/rates.js';
-export * from './cost/types.js';
-// Day-of: call-off replacement finder, live staffing check
-export * from './dayof/index.js';
-export * from './domain/entities.js';
-export * from './domain/time.js';
-// Exchange
-export * from './exchange/index.js';
-// Fairness
-export * from './fairness/burden.js';
-export * from './fairness/distribution.js';
-export * from './fairness/history-csv.js';
-export * from './fairness/ledger.js';
-export * from './fairness/score.js';
-export * from './fairness/seniority.js';
-export * from './fairness/types.js';
-// Publish: diff, compliance alerts, printable projections
-export * from './publish/index.js';
-export * from './roster/csv.js';
-export * from './rules/availability-rules.js';
-export * from './rules/coverage-rules.js';
-export * from './rules/holiday-rotation.js';
-export * from './rules/hours-rules.js';
-export * from './rules/incompatibility-rules.js';
-export * from './rules/night-recovery.js';
-export * from './rules/paid-leave.js';
-export * from './rules/pending-time-off.js';
-export * from './rules/registry.js';
-export * from './rules/rest-rules.js';
-// Rule engine
-export * from './rules/types.js';
-// Schedule read model
-export * from './schedule/cover.js';
-export * from './schedule/overlap.js';
-export * from './schedule/view.js';
-// First-run setup presets
-export * from './setup/index.js';
-// Solver
-export * from './solver/cpsat/index.js';
-export * from './solver/digest.js';
-export * from './solver/hybrid.js';
-export * from './solver/registry.js';
-export { type ScheduleScore, scoreAssignments } from './solver/report.js';
-export * from './solver/rng.js';
-export * from './solver/solver.js';
-export * from './solver/types.js';
+export type { BindingConstraint, RatioStaffing, RoleDemand, ShiftDemand } from './acuity/demand.js';
+// Census and ratios to the staffing each shift needs
+export { deriveDemand, NURSE_ROLES, nursesRequiredForMix } from './acuity/demand.js';
+export type {
+  BacktestResult,
+  CensusProposal,
+  ErrorSummary,
+  ForecastOptions,
+} from './acuity/forecast.js';
+// Census forecasting and its back-test
+export { backtest, proposeCensus, validateAcuityMix } from './acuity/forecast.js';
+export type { HppdReport } from './acuity/hppd.js';
+// Scheduled hours per patient day against the target
+export { scheduledHppd } from './acuity/hppd.js';
+export type {
+  AutoResolvePolicy,
+  CapacityVerdict,
+  Conflict,
+  ConflictInput,
+  ConflictReport,
+  DayCapacity,
+  Resolution,
+  ResolutionImpact,
+  TimeOffImpact,
+} from './conflicts/index.js';
+// Time-off, coverage and overlap conflicts with ranked resolutions
+export {
+  analyseConflicts,
+  DEFAULT_AUTO_RESOLVE_POLICY,
+  independentFixes,
+  selectAutoResolutions,
+  timeOffImpact,
+} from './conflicts/index.js';
+// Pricing a schedule, marginal cost and budget comparison
+export { compareToBudget, costSchedule } from './cost/cost.js';
+// The pay rate in force for a nurse on a date
+export { resolvePayRate } from './cost/rates.js';
+export type { BudgetVariance, CostContext, ScheduleCost } from './cost/types.js';
+// Pay model contract types
+export { COST_LINE_LABELS, DIFFERENTIAL_ORDER } from './cost/types.js';
+export type {
+  PayTier,
+  ReplacementCandidate,
+  ReplacementReport,
+  RoleStaffing,
+  ShiftStaffingCheck,
+} from './dayof/index.js';
+// Call-off replacement finder and live staffing check
+export { checkStaffing, findReplacements, shiftsAround } from './dayof/index.js';
+export type {
+  AcuityTier,
+  Assignment,
+  AssignmentSource,
+  AuditAction,
+  AuditLogEntry,
+  Budget,
+  CallAttempt,
+  CallOff,
+  CallOffStatus,
+  CallOutcome,
+  CensusForecast,
+  CoverageRequirement,
+  Credential,
+  Differential,
+  DifferentialKind,
+  EmploymentType,
+  FairnessLedgerEntry,
+  Holiday,
+  HppdTarget,
+  Id,
+  IncompatibilityGroup,
+  Nurse,
+  NurseCredential,
+  NurseRole,
+  OvertimeRule,
+  OvertimeVolunteer,
+  PayRate,
+  PeriodStatus,
+  Preference,
+  PreferenceKind,
+  RatioRule,
+  RequestOrigin,
+  ScheduleChange,
+  ScheduleChangeKind,
+  ScheduleChangeSource,
+  SchedulePeriod,
+  ScheduleVersion,
+  ShiftCredentialRequirement,
+  ShiftType,
+  TimeOffRequest,
+  TimeOffStatus,
+  TimeOffType,
+  Unit,
+} from './domain/entities.js';
+// Plain-data entities and their enums
+export { EMPLOYMENT_TYPE_LABELS, EMPLOYMENT_TYPES } from './domain/entities.js';
+export type { IsoDate, Weekday, WeekendDefinition } from './domain/time.js';
+// The wall-clock time model: every date and minute calculation goes through here
+export {
+  addDays,
+  compareDates,
+  DEFAULT_WEEKEND,
+  dateInRange,
+  datesInRange,
+  dayNumber,
+  daysBetween,
+  formatTimeOfDay,
+  hoursToMinutes,
+  isIsoDate,
+  isoDate,
+  isWeekendDate,
+  MINUTES_PER_DAY,
+  MS_PER_DAY,
+  minutesToHours,
+  parseTimeOfDay,
+  rangesOverlap,
+  restMinutesBetween,
+  shiftWindow,
+  today,
+  WEEKDAY_NAMES,
+  weekdayOf,
+  windowEndDate,
+  windowsOverlap,
+} from './domain/time.js';
+export type {
+  ExchangeApplication,
+  ExchangeEvaluation,
+  ExchangeProposal,
+  ShiftSwap,
+  ShiftSwapKind,
+  ShiftSwapStatus,
+} from './exchange/index.js';
+// Shift trade and giveaway verdicts
+export { evaluateExchange, planExchange } from './exchange/index.js';
+// Unit-wide spread of burdens
+export { gini } from './fairness/distribution.js';
+// Importing prior burden history from CSV
+export { groupIntoPayPeriods, parseHistoricalScheduleCsv } from './fairness/history-csv.js';
+// Per-nurse burden counts and broken preferences
+export { deriveCounters, deriveOccurrences, preferencesBroken } from './fairness/ledger.js';
+// The fairness score and per-nurse breakdown
+export { scoreFairness } from './fairness/score.js';
+export type {
+  BurdenCounters,
+  ComponentScore,
+  CounterContext,
+  FairnessComponent,
+  FairnessReport,
+  FairnessWeights,
+  HistoricalCsvError,
+  HistoricalShiftRow,
+  NurseFairnessScore,
+} from './fairness/types.js';
+// Fairness contract types
+export {
+  DEFAULT_FAIRNESS_WEIGHTS,
+  FAIRNESS_COMPONENT_LABELS,
+  FAIRNESS_COMPONENTS,
+} from './fairness/types.js';
+export type {
+  ComplianceAlert,
+  ComplianceAlertKind,
+  GridSheet,
+  NurseSheet,
+  ScheduleDiff,
+} from './publish/index.js';
+// Publish diff, compliance alerts and printable projections
+export {
+  buildGridSheet,
+  buildNurseSheets,
+  complianceAlerts,
+  diffAssignments,
+  formatAssignmentsCsv,
+  formatGridCsv,
+} from './publish/index.js';
+export type { RosterCsvError, RosterCsvRow } from './roster/csv.js';
+// The one roster CSV parser and formatter
+export { formatRosterCsv, parseRosterCsv, ROSTER_COLUMNS, serializeCsv } from './roster/csv.js';
+export { credentialLapsedOn } from './rules/coverage-rules.js';
+export type { HolidayRotationParams } from './rules/holiday-rotation.js';
+// Holiday rotation facts
+export { holidayRotationRule, previousOccurrence } from './rules/holiday-rotation.js';
+export type { ContractedHoursParams, MaxHoursParams } from './rules/hours-rules.js';
+// Overtime and hours rule parameters
+export {
+  contractedHoursRule,
+  maxHoursRule,
+  payPeriodIndex,
+  payPeriodWindow,
+} from './rules/hours-rules.js';
+// Kept-apart group rule helpers
+export { groupInForce, groupsForPeriod } from './rules/incompatibility-rules.js';
+// No mandatory overtime: the note prefix that records an emergency, and the rule itself
+export {
+  EMERGENCY_NOTE_PREFIX,
+  mandatoryOvertimeRule,
+  volunteeredOn,
+} from './rules/mandatory-overtime.js';
+export type { PaidLeaveCredit, PaidSickCall } from './rules/paid-leave.js';
+// Paid leave credits as dated whole shifts
+export { paidLeaveCredits, suggestedPaidLeaveHours } from './rules/paid-leave.js';
+// The rule registry the solver, grid and compliance report share
+export {
+  ALL_RULES,
+  buildRuleContext,
+  defaultRuleSet,
+  evaluateSchedule,
+  resolveConfigs,
+  violationsByAssignment,
+  violationsByDate,
+  violationsByNurse,
+} from './rules/registry.js';
+// Rule engine contract types
+export type {
+  EvaluationResult,
+  HolidayWorkRecord,
+  ParamDoc,
+  Rule,
+  RuleConfig,
+  RuleSet,
+  RuleSeverity,
+  Violation,
+} from './rules/types.js';
+// Which dated shift covers which
+export { containingDate, coveringShift, withinShiftProblem } from './schedule/cover.js';
+// The schedule read model
+export { ScheduleView } from './schedule/view.js';
+export type {
+  AcuityPresetId,
+  HolidayYearPlan,
+  JurisdictionId,
+  JurisdictionPlan,
+  JurisdictionPlanInput,
+  JurisdictionPreset,
+  PairTarget,
+  PlannedHoliday,
+  SetupMode,
+  SetupPhase,
+  SetupPreset,
+  SetupPresetResult,
+  SetupState,
+  SetupStepId,
+  ShiftPatternId,
+  UnitSetupMode,
+} from './setup/index.js';
+// First-run setup presets and holiday helpers
+export {
+  ACUITY_PRESETS,
+  acuityPresetForUnitType,
+  coverageQuickFill,
+  isSetupStep,
+  JURISDICTION_PRESETS,
+  nextSetupStep,
+  planHolidayYear,
+  planJurisdiction,
+  previousSetupStep,
+  SETUP_STEPS,
+  SHIFT_PATTERNS,
+  setupPhase,
+  usFederalHolidays,
+} from './setup/index.js';
+// CP-SAT preparation and finishing (pure halves)
+export {
+  DEFAULT_DETERMINISTIC_TIME,
+  decisionsFor,
+  finishCpsat,
+  prepareCpsat,
+  SEARCH_WORKERS,
+} from './solver/cpsat/index.js';
+// The manager-facing digest of a solve
+export type { CountRange, ScheduleDigest } from './solver/digest.js';
+// Chunked annealing plus CP-SAT windows
+export { LocalSearch } from './solver/hybrid.js';
+export type { ResolvedSolver, SolverSettings } from './solver/registry.js';
+// Which solver backends exist and their fallback order
+export {
+  DEFAULT_SOLVER_SETTINGS,
+  FALLBACK_ORDER,
+  isSolverId,
+  PURE_SOLVERS,
+  requiresOrTools,
+  resolveSolverId,
+  SOLVER_IDS,
+} from './solver/registry.js';
+export type { ScheduleScore } from './solver/report.js';
+// Scoring an arbitrary set of assignments
+export { scoreAssignments } from './solver/report.js';
+// The seeded RNG shared with the seeder
+export { Rng } from './solver/rng.js';
+// Solver entry point
+export { solve } from './solver/solver.js';
+// Solver contract types
+export type {
+  SolveInput,
+  SolveOptions,
+  SolveProgress,
+  SolveReport,
+  SolverId,
+} from './solver/types.js';

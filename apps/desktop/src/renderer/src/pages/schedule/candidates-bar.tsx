@@ -1,5 +1,5 @@
 /**
- * The variations a Generate produced, above the grid: page through them, preview one in place of
+ * The options a Generate produced, above the grid: page through them, preview one in place of
  * the draft, compare them all, and save the one to keep. While the batch runs it shows progress;
  * once anything the solver read has changed it says so, because a variation solved against last
  * week's leave is not an answer to this week's.
@@ -9,6 +9,7 @@ import type { SolveBatchStatus } from '@shared/api.js';
 import type { ReactNode } from 'react';
 import { SOLVER_LABELS } from '../../solver-labels.js';
 import { bestChoice, digestLine, finishedRuns, variationNumber } from './candidates.js';
+import { UnfilledList } from './unfilled-list.js';
 
 interface CandidatesBarProps {
   batch: SolveBatchStatus;
@@ -49,7 +50,7 @@ export function CandidatesBar({
     return (
       <Panel tone="warn">
         <p className="text-sm text-text">
-          These variations are out of date: {batch.stale}. Generate again for ones that fit the
+          These options are out of date: {batch.stale}. Generate again for ones that fit the
           schedule as it is now.
         </p>
         <button type="button" onClick={onDiscard} className={secondaryButton}>
@@ -63,7 +64,7 @@ export function CandidatesBar({
     return (
       <Panel>
         <p className="text-sm text-text">
-          Generating {batch.count === 1 ? 'a schedule' : `${batch.count} variations`} with{' '}
+          Generating {batch.count === 1 ? 'a schedule' : `${batch.count} options`} with{' '}
           {SOLVER_LABELS[batch.solver].name} · {done.length} of {batch.count} done
         </p>
         <div className="flex shrink-0 gap-2">
@@ -84,8 +85,8 @@ export function CandidatesBar({
       <Panel tone="danger">
         <p className="text-sm text-text">
           {batch.cancelled
-            ? 'Generate was stopped before any variation finished.'
-            : `No variation finished${failure ? `: ${failure}` : '.'}`}
+            ? 'Generate was stopped before any option finished.'
+            : `No option finished${failure ? `: ${failure}` : '.'}`}
         </p>
         <button type="button" onClick={onDiscard} className={secondaryButton}>
           Dismiss
@@ -104,7 +105,7 @@ export function CandidatesBar({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            aria-label="Previous variation"
+            aria-label="Previous option"
             disabled={position <= 0}
             onClick={() => onSelect(done[position - 1]!.index)}
             className={pagerButton}
@@ -112,14 +113,14 @@ export function CandidatesBar({
             ‹
           </button>
           <span className="text-sm font-medium text-text" data-testid="candidate-position">
-            Variation {current ? variationNumber(batch, current.index) : '—'}{' '}
+            Option {current ? variationNumber(batch, current.index) : '—'}{' '}
             <span className="font-normal text-text-muted">
               ({position + 1} of {done.length})
             </span>
           </span>
           <button
             type="button"
-            aria-label="Next variation"
+            aria-label="Next option"
             disabled={position < 0 || position >= done.length - 1}
             onClick={() => onSelect(done[position + 1]!.index)}
             className={pagerButton}
@@ -205,11 +206,12 @@ export function CandidatesBar({
             : ''}
         </p>
       ) : null}
+      {summary && summary.floorsShort > 0 ? <UnfilledList summary={summary} /> : null}
       {choice?.kind === 'grid' && batch.saved === undefined ? (
         <p data-testid="grid-is-best" className="mt-1 text-xs font-medium text-success">
           {choice.tie
-            ? 'The schedule on the grid is already as good as the best variation.'
-            : 'The schedule on the grid is better balanced than every variation — keep it.'}
+            ? 'The schedule on the grid is already as good as the best option.'
+            : 'The schedule on the grid is better balanced than every option — keep it.'}
         </p>
       ) : null}
       {error !== undefined ? (

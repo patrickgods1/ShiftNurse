@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FairnessLedgerEntry } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
+import { defaultRuleSet } from '../rules/registry.js';
 import {
   assign,
   CRED_ACLS,
@@ -112,8 +113,7 @@ describe('findReplacements', () => {
     const report = findReplacements(input);
 
     const excludedBen = report.excluded.find((e) => e.nurseId === nightNurse.id);
-    expect(excludedBen).toBeDefined();
-    expect(excludedBen!.reason).toMatch(/minimum rest/i);
+    expect(excludedBen).toMatchObject({ reason: expect.stringMatching(/minimum rest/i) });
     expect(report.candidates.some((c) => c.nurseId === nightNurse.id)).toBe(false);
   });
 
@@ -143,8 +143,7 @@ describe('findReplacements', () => {
     const report = findReplacements(input);
 
     const excludedWes = report.excluded.find((e) => e.nurseId === noCred.id);
-    expect(excludedWes).toBeDefined();
-    expect(excludedWes!.reason).toMatch(/acls/i);
+    expect(excludedWes).toMatchObject({ reason: expect.stringMatching(/acls/i) });
     expect(report.candidates.some((c) => c.nurseId === withCred.id)).toBe(true);
     expect(report.candidates.some((c) => c.nurseId === noCred.id)).toBe(false);
   });
@@ -227,6 +226,65 @@ describe('findReplacements', () => {
       true,
     );
     expect(report.candidates.find((c) => c.nurseId === idle.id)!.assignment.isOvertime).toBe(false);
+  });
+
+  describe('overtime nobody volunteered for', () => {
+    // Ben and Dee each have 36h Mon–Wed; Saturday's 12h takes either past the 40h week.
+    function overtimeCall(extra: Partial<SolveScenarioOptions> = {}) {
+      resetFixtureCounters();
+      const absent = makeNurse({ firstName: 'Priya', lastName: 'Nair' });
+      const ben = makeNurse({ id: 'a-ben', firstName: 'Ben', lastName: 'Ortiz' });
+      const dee = makeNurse({ id: 'b-dee', firstName: 'Dee', lastName: 'Shah' });
+      const absentShift = assign(absent.id, DAY_12, SAT);
+      const worked = [ben, dee].flatMap((n) =>
+        ['2026-01-05', '2026-01-06', '2026-01-07'].map((d) => assign(n.id, DAY_12, d)),
+      );
+      const input = replacementInput({
+        nurses: [absent, ben, dee],
+        assignments: [absentShift, ...worked],
+        cost: {
+          payRates: [payRate(50)],
+          differentials: [],
+          overtimeRules: [overtimeRule('weekly', 40)],
+        },
+        // Dee offered overtime this week; Ben has not.
+        overtimeVolunteers: [
+          {
+            id: 'vol-dee',
+            unitId: 'unit-1',
+            nurseId: dee.id,
+            startDate: isoDate('2026-01-04'),
+            endDate: isoDate('2026-01-10'),
+          },
+        ],
+        absentAssignmentId: absentShift.id,
+        ...extra,
+      });
+      return { input, ben, dee };
+    }
+
+    it('calls the nurse who offered overtime before one who has not', () => {
+      const { input, ben, dee } = overtimeCall();
+      const report = findReplacements(input);
+      expect(report.candidates.map((c) => c.nurseId)).toEqual([dee.id, ben.id]);
+      expect(report.candidates.map((c) => c.volunteeredForOvertime)).toEqual([true, false]);
+    });
+
+    it('leaves out the nurse who has not offered when the unit bans mandatory overtime', () => {
+      const rules = defaultRuleSet('unit-1');
+      const ruleSet = {
+        ...rules,
+        configs: rules.configs.map((c) =>
+          c.ruleId === 'no-mandatory-overtime' ? { ...c, enabled: true } : c,
+        ),
+      };
+      const { input, ben, dee } = overtimeCall({ ruleSet });
+      const report = findReplacements(input);
+      expect(report.candidates.map((c) => c.nurseId)).toEqual([dee.id]);
+      const reason = report.excluded.find((e) => e.nurseId === ben.id)?.reason;
+      expect(reason).toContain('No mandatory overtime');
+      expect(reason).toContain('without having volunteered');
+    });
   });
 
   it('within a tier, calls the nurse who has been called least recently first', () => {
@@ -384,8 +442,7 @@ describe('findReplacements with nurses kept apart', () => {
       }),
     );
     const card = report.candidates.find((c) => c.nurseId === ben.id);
-    expect(card).toBeDefined();
-    expect(card!.softViolationsIntroduced.map((v) => v.code)).toContain(
+    expect(card?.softViolationsIntroduced.map((v) => v.code)).toContain(
       'incompatible_staff_together',
     );
     const other = report.candidates.find((c) => c.nurseId === cy.id);

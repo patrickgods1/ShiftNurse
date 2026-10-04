@@ -11,7 +11,6 @@
  * the approval and the cover in one step instead of regenerating the whole schedule.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import type { LeaveCoverOption } from '@shared/api.js';
 import type {
   CapacityVerdict,
@@ -33,16 +32,8 @@ import {
   useTimeOffImpact,
 } from '../../api-requests.js';
 import { AsyncState } from '../../components/async-state.js';
-import {
-  DANGER,
-  DIALOG,
-  errorMessage,
-  INPUT,
-  LABEL,
-  OVERLAY,
-  PRIMARY,
-  SECONDARY,
-} from '../../components/ui.js';
+import { Modal } from '../../components/modal.js';
+import { DANGER, errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { formatDate, formatDateWithWeekday, periodLabel } from '../../format.js';
 
 interface DecideDialogProps {
@@ -102,121 +93,124 @@ export function DecideDialog({
   const needsReason = freesShifts && period?.status === 'published';
 
   return (
-    <Dialog.Root open={open} onOpenChange={(next) => !next && !busy && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content data-testid="decide-dialog" className={`${DIALOG} w-[40rem]`}>
-          {request === undefined ? null : (
-            <>
-              <Dialog.Title className="text-base font-semibold text-text">
-                Review request — {nurseLabel(nursesById, request.nurseId)}
-              </Dialog.Title>
-              <Dialog.Description className="mt-1 text-sm text-text-muted">
-                {request.type.toUpperCase()} · {formatDateWithWeekday(request.startDate)} –{' '}
-                {formatDateWithWeekday(request.endDate)}
-                {request.reason ? ` · “${request.reason}”` : ''}
-              </Dialog.Description>
+    <Modal
+      open={open}
+      onOpenChange={(next) => !next && !busy && onClose()}
+      data-testid="decide-dialog"
+      size="lg"
+      title={
+        request === undefined ? '' : <>Review request — {nurseLabel(nursesById, request.nurseId)}</>
+      }
+      description={
+        request === undefined ? undefined : (
+          <>
+            {request.type.toUpperCase()} · {formatDateWithWeekday(request.startDate)} –{' '}
+            {formatDateWithWeekday(request.endDate)}
+            {request.reason ? ` · “${request.reason}”` : ''}
+          </>
+        )
+      }
+    >
+      {request === undefined ? null : (
+        <>
+          <section className="mt-4" aria-label="Projected impact of approving">
+            <h3 className="text-sm font-semibold text-text">If approved</h3>
+            {period === undefined ? (
+              <p className="mt-1 text-sm text-text-muted">
+                No scheduling period covers these dates yet, so there is no staffing impact to show.
+                The request can still be decided.
+              </p>
+            ) : impactQuery.isPending ? (
+              <AsyncState status="loading" label="Simulating the approval…" />
+            ) : impactQuery.isError ? (
+              <AsyncState status="error" label="Could not simulate" error={impactQuery.error} />
+            ) : (
+              <ImpactView
+                impact={impactQuery.data}
+                period={period}
+                nursesById={nursesById}
+                shiftTypesById={shiftTypesById}
+                options={options}
+                covers={covers}
+                onCover={(assignmentId, nurseId) =>
+                  setCovers((prev) => ({ ...prev, [assignmentId]: nurseId }))
+                }
+              />
+            )}
+          </section>
 
-              <section className="mt-4" aria-label="Projected impact of approving">
-                <h3 className="text-sm font-semibold text-text">If approved</h3>
-                {period === undefined ? (
-                  <p className="mt-1 text-sm text-text-muted">
-                    No scheduling period covers these dates yet, so there is no staffing impact to
-                    show. The request can still be decided.
-                  </p>
-                ) : impactQuery.isPending ? (
-                  <AsyncState status="loading" label="Simulating the approval…" />
-                ) : impactQuery.isError ? (
-                  <AsyncState status="error" label="Could not simulate" error={impactQuery.error} />
-                ) : (
-                  <ImpactView
-                    impact={impactQuery.data}
-                    period={period}
-                    nursesById={nursesById}
-                    shiftTypesById={shiftTypesById}
-                    options={options}
-                    covers={covers}
-                    onCover={(assignmentId, nurseId) =>
-                      setCovers((prev) => ({ ...prev, [assignmentId]: nurseId }))
-                    }
-                  />
-                )}
-              </section>
-
-              <form
-                className="mt-4 flex flex-col gap-3 border-t border-border pt-4"
-                onSubmit={(e) => e.preventDefault()}
+          <form
+            className="mt-4 flex flex-col gap-3 border-t border-border pt-4"
+            onSubmit={(e) => e.preventDefault()}
+          >
+            <label className={LABEL}>
+              {needsReason
+                ? 'Reason (required: staff already hold this schedule)'
+                : 'Reason for denial (required to deny; optional note on approval)'}
+              <textarea
+                className={`${INPUT} min-h-16`}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                data-testid="decision-reason"
+              />
+            </label>
+            {error !== undefined ? (
+              <p role="alert" className="text-sm text-danger">
+                {error}
+              </p>
+            ) : null}
+            <div className="flex justify-end gap-2">
+              <button type="button" className={SECONDARY} disabled={busy} onClick={onClose}>
+                Close
+              </button>
+              <button
+                type="button"
+                className={DANGER}
+                data-testid="deny-request"
+                disabled={busy || reason.trim().length === 0}
+                onClick={() =>
+                  deny.mutate({ id: request.id, reason: reason.trim() }, { onSuccess: onClose })
+                }
               >
-                <label className={LABEL}>
-                  {needsReason
-                    ? 'Reason (required: staff already hold this schedule)'
-                    : 'Reason for denial (required to deny; optional note on approval)'}
-                  <textarea
-                    className={`${INPUT} min-h-16`}
-                    value={reason}
-                    onChange={(e) => setReason(e.target.value)}
-                    data-testid="decision-reason"
-                  />
-                </label>
-                {error !== undefined ? (
-                  <p role="alert" className="text-sm text-danger">
-                    {error}
-                  </p>
-                ) : null}
-                <div className="flex justify-end gap-2">
-                  <button type="button" className={SECONDARY} disabled={busy} onClick={onClose}>
-                    Close
-                  </button>
-                  <button
-                    type="button"
-                    className={DANGER}
-                    data-testid="deny-request"
-                    disabled={busy || reason.trim().length === 0}
-                    onClick={() =>
-                      deny.mutate({ id: request.id, reason: reason.trim() }, { onSuccess: onClose })
-                    }
-                  >
-                    {deny.isPending ? 'Denying…' : 'Deny'}
-                  </button>
-                  <button
-                    type="button"
-                    className={PRIMARY}
-                    data-testid="approve-request"
-                    disabled={busy || (needsReason && reason.trim().length === 0)}
-                    onClick={() => {
-                      const note = reason.trim() ? { reason: reason.trim() } : {};
-                      if (freesShifts) {
-                        approveAndCover.mutate(
-                          {
-                            id: request.id,
-                            ...note,
-                            covers: Object.entries(covers)
-                              .filter(([, nurseId]) => nurseId !== '')
-                              .map(([assignmentId, nurseId]) => ({
-                                assignmentId,
-                                nurseId: nurseId as Id,
-                              })),
-                          },
-                          { onSuccess: onClose },
-                        );
-                      } else {
-                        approve.mutate({ id: request.id, ...note }, { onSuccess: onClose });
-                      }
-                    }}
-                  >
-                    {approve.isPending || approveAndCover.isPending
-                      ? 'Approving…'
-                      : freesShifts
-                        ? 'Approve and cover'
-                        : 'Approve'}
-                  </button>
-                </div>
-              </form>
-            </>
-          )}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+                {deny.isPending ? 'Denying…' : 'Deny'}
+              </button>
+              <button
+                type="button"
+                className={PRIMARY}
+                data-testid="approve-request"
+                disabled={busy || (needsReason && reason.trim().length === 0)}
+                onClick={() => {
+                  const note = reason.trim() ? { reason: reason.trim() } : {};
+                  if (freesShifts) {
+                    approveAndCover.mutate(
+                      {
+                        id: request.id,
+                        ...note,
+                        covers: Object.entries(covers)
+                          .filter(([, nurseId]) => nurseId !== '')
+                          .map(([assignmentId, nurseId]) => ({
+                            assignmentId,
+                            nurseId: nurseId as Id,
+                          })),
+                      },
+                      { onSuccess: onClose },
+                    );
+                  } else {
+                    approve.mutate({ id: request.id, ...note }, { onSuccess: onClose });
+                  }
+                }}
+              >
+                {approve.isPending || approveAndCover.isPending
+                  ? 'Approving…'
+                  : freesShifts
+                    ? 'Approve and cover'
+                    : 'Approve'}
+              </button>
+            </div>
+          </form>
+        </>
+      )}
+    </Modal>
   );
 }
 

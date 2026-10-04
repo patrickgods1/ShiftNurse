@@ -13,6 +13,7 @@ import { listIncompatibilityGroups } from '../../repositories/incompatibility.js
 import { getPeriod, listPeriodsForUnit } from '../../repositories/schedule.js';
 import { costContext, loadPeriodInput } from '../../repositories/solve-input.js';
 import { historyViolations, realisticDemoChecks, useDemo } from './checks.test-support.js';
+import { slow } from './slow.test-support.js';
 
 // A Thursday whose next Sunday (27 September) is not a federal pay-period start.
 const TODAY = isoDate('2026-09-24');
@@ -285,15 +286,19 @@ describe('the VA San Francisco med-surg demo', () => {
       expect(onTogether.every((r) => r.n <= 2)).toBe(true);
     });
 
-    it('lets Generate keep them apart on the next schedule', () => {
-      const input = loadPeriodInput(f.handle.db, getPeriod(f.handle.db, f.result.draftPeriodId)!);
-      expect(input.incompatibilityGroups).toHaveLength(3);
-      const report = solve(input, { seed: 1, maxIterations: 200_000 });
-      expect(report.softViolations.filter((v) => v.code === 'incompatible_staff_together')).toEqual(
-        [],
-      );
-      expect(report.objective.incompatibility).toBe(0);
-    }, 60_000);
+    it(
+      'lets Generate keep them apart on the next schedule',
+      () => {
+        const input = loadPeriodInput(f.handle.db, getPeriod(f.handle.db, f.result.draftPeriodId)!);
+        expect(input.incompatibilityGroups).toHaveLength(3);
+        const report = solve(input, { seed: 1, maxIterations: 200_000 });
+        expect(
+          report.softViolations.filter((v) => v.code === 'incompatible_staff_together'),
+        ).toEqual([]);
+        expect(report.objective.incompatibility).toBe(0);
+      },
+      slow(60_000),
+    );
   });
 
   realisticDemoChecks(f, 'va-sf-med-surg', TODAY);

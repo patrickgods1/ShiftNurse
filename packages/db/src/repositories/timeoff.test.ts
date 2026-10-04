@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase } from '../client.js';
 import { createUnit } from './config.js';
+import { nextEmployeeId } from './employee-ids.test-support.js';
 import { createNurse } from './roster.js';
 import {
   approvedTimeOffInRange,
@@ -33,7 +34,7 @@ function mkNurse(firstName: string): string {
     handle.db,
     {
       unitId,
-      employeeId: `E${Math.random().toString().slice(2, 8)}`,
+      employeeId: nextEmployeeId(),
       firstName,
       lastName: 'Nurse',
       role: 'RN',
@@ -303,6 +304,32 @@ describe('listTimeOffOverlappingForUnit', () => {
     expect(ids).toContain(denied.id);
     expect(ids).not.toContain(outside.id);
     expect(ids).not.toContain(foreign.id);
+  });
+});
+
+describe('listTimeOffOverlappingForUnit window edges', () => {
+  const window = [isoDate('2026-03-10'), isoDate('2026-03-20')] as const;
+
+  it('leaves out a request that ended the day before the window', () => {
+    const req = request(mkNurse('Ada'), '2026-03-05', '2026-03-09');
+    const ids = listTimeOffOverlappingForUnit(handle.db, unitId, ...window).map((r) => r.id);
+    expect(ids).not.toContain(req.id);
+  });
+
+  it('leaves out a request that starts the day after the window', () => {
+    const req = request(mkNurse('Ada'), '2026-03-21', '2026-03-25');
+    const ids = listTimeOffOverlappingForUnit(handle.db, unitId, ...window).map((r) => r.id);
+    expect(ids).not.toContain(req.id);
+  });
+
+  it('returns a request straddling either edge whole, whatever its status', () => {
+    const ada = mkNurse('Ada');
+    const early = approveTimeOff(handle.db, request(ada, '2026-03-05', '2026-03-12').id, ACTOR);
+    const late = request(ada, '2026-03-18', '2026-03-26');
+    const found = listTimeOffOverlappingForUnit(handle.db, unitId, ...window);
+    const byId = new Map(found.map((r) => [r.id, r]));
+    expect(byId.get(early.id)).toMatchObject({ startDate: '2026-03-05', endDate: '2026-03-12' });
+    expect(byId.get(late.id)).toMatchObject({ startDate: '2026-03-18', endDate: '2026-03-26' });
   });
 });
 

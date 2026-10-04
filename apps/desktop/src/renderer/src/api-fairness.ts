@@ -45,6 +45,7 @@ export function useFairnessTrend(unitId: Id | undefined) {
 
 export function usePickHistoryImportFile() {
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (unitId: Id) => api.fairness.pickHistoryImportFile(unitId),
   });
 }
@@ -52,6 +53,7 @@ export function usePickHistoryImportFile() {
 export function useImportHistory(unitId: Id | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (rows: HistoricalShiftRow[]) => api.fairness.importHistory(unitId as Id, rows),
     onSuccess: () => {
       if (unitId === undefined) return;

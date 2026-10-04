@@ -3,16 +3,18 @@
  * manager never regenerates a whole schedule — hundreds of shifts reshuffled — to fill two.
  */
 
-import { addDays } from '@shiftnurse/core';
+import { addDays, paidLeaveCredits } from '@shiftnurse/core';
 import {
   createTimeOffRequest,
+  denyTimeOff,
   getTimeOffRequest,
   listAssignmentsForPeriod,
   listChanges,
   publishSchedule,
+  recentAudit,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ACTOR } from './context.js';
+import { ACTOR, buildConflictInput } from './context.js';
 import { approveAndCover, coverOptions } from './leave.js';
 import { scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
@@ -110,5 +112,133 @@ describe('approving leave and covering it in one step', () => {
     const changes = listChanges(f.handle.db, f.seeded.draftPeriodId);
     expect(changes.map((c) => c.kind).sort()).toEqual(['added', 'removed']);
     expect(changes.every((c) => c.reason === 'Approved late: family')).toBe(true);
+  });
+});
+
+describe('a request that was already decided, or cover that went stale', () => {
+  const auditCount = () => recentAudit(f.handle.db, 100_000).length;
+  const rosterIds = () =>
+    listAssignmentsForPeriod(f.handle.db, f.seeded.draftPeriodId)
+      .map((a) => a.id)
+      .sort();
+
+  it('refuses to approve a request that was already approved, and writes nothing', () => {
+    const { request } = annAsksOff();
+    approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, undefined, []);
+    const rosterBefore = rosterIds();
+    const auditBefore = auditCount();
+    expect(() =>
+      approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, undefined, []),
+    ).toThrow('That request is already approved');
+    expect(rosterIds()).toEqual(rosterBefore);
+    expect(auditCount()).toBe(auditBefore);
+  });
+
+  it('refuses to approve a request the manager already denied, and keeps Ann on her shift', () => {
+    const { date, request, shift } = annAsksOff();
+    denyTimeOff(f.handle.db, request.id, ACTOR, 'Short-staffed that week');
+    const auditBefore = auditCount();
+    expect(() =>
+      approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, undefined, []),
+    ).toThrow('That request is already denied');
+    expect(onDay(date, f.rns[0]!.id).map((a) => a.id)).toEqual([shift.id]);
+    expect(getTimeOffRequest(f.handle.db, request.id)?.status).toBe('denied');
+    expect(auditCount()).toBe(auditBefore);
+  });
+
+  it('refuses cover that was booked elsewhere while the manager was deciding', () => {
+    const { date, request, shift } = annAsksOff();
+    const [option] = coverOptions(f.handle.db, f.seeded.draftPeriodId, request.id);
+    const cover = option!.candidates[0]!.nurseId;
+    // Someone else puts the chosen nurse on that very shift after the list was shown.
+    scheduleApi(f.handle.db).createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: cover,
+      shiftTypeId: f.day.id,
+      date,
+    });
+    const rosterBefore = rosterIds();
+    const auditBefore = auditCount();
+
+    expect(() =>
+      approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, undefined, [
+        { assignmentId: shift.id, nurseId: cover },
+      ]),
+    ).toThrow(/cannot cover/);
+
+    // Not half-applied: still pending, Ann still rostered, no row or audit entry written.
+    expect(getTimeOffRequest(f.handle.db, request.id)?.status).toBe('pending');
+    expect(onDay(date, f.rns[0]!.id).map((a) => a.id)).toEqual([shift.id]);
+    expect(rosterIds()).toEqual(rosterBefore);
+    expect(auditCount()).toBe(auditBefore);
+  });
+});
+
+describe('which shifts a week off takes away', () => {
+  const grid = () => scheduleApi(f.handle.db);
+  const ann = () => f.rns[0]!;
+
+  function put(dayIndex: number, shiftTypeId: string) {
+    return grid().createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: ann().id,
+      shiftTypeId,
+      date: addDays(f.seeded.draftStart, dayIndex),
+    });
+  }
+
+  function askOff(fromDay: number, toDay: number, paidHours: number) {
+    return createTimeOffRequest(
+      f.handle.db,
+      {
+        nurseId: ann().id,
+        startDate: addDays(f.seeded.draftStart, fromDay),
+        endDate: addDays(f.seeded.draftStart, toDay),
+        type: 'pto',
+        paidHours,
+      },
+      ACTOR,
+    );
+  }
+
+  const datesOf = () =>
+    listAssignmentsForPeriod(f.handle.db, f.seeded.draftPeriodId)
+      .filter((a) => a.nurseId === ann().id)
+      .map((a) => a.date)
+      .sort();
+
+  it('leaves the night that ends on the first morning of leave, and takes the night that starts on it', () => {
+    // Nights on day 2 (runs into day 3's morning) and day 3. Leave is day 3 only.
+    put(2, f.night.id);
+    put(3, f.night.id);
+    const request = askOff(3, 3, 0);
+    const options = coverOptions(f.handle.db, f.seeded.draftPeriodId, request.id);
+    expect(options.map((o) => o.assignment.date)).toEqual([addDays(f.seeded.draftStart, 3)]);
+
+    approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, undefined, []);
+    expect(datesOf()).toEqual([addDays(f.seeded.draftStart, 2)]);
+  });
+
+  it('splits a week off across the pay-period boundary: shifts and paid hours each in their own', () => {
+    // The scenario's pay periods are 14 days, anchored four weeks before the draft, so the draft's
+    // day 14 starts a new one: days 0-13 are one pay period, days 14-27 the next.
+    put(11, f.day.id);
+    put(13, f.day.id); // last day of the first pay period
+    put(14, f.day.id); // first day of the second
+    put(17, f.day.id);
+    // Five days off, days 12-16, paying two 12s: one lands on the 2nd day, one on the 4th
+    // (floor(0.5*5/2) = 1 -> day 13; floor(1.5*5/2) = 3 -> day 15).
+    const request = askOff(12, 16, 24);
+    approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, undefined, []);
+
+    expect(datesOf()).toEqual([addDays(f.seeded.draftStart, 11), addDays(f.seeded.draftStart, 17)]);
+
+    const input = buildConflictInput(f.handle.db, f.seeded.draftPeriodId);
+    const credits = paidLeaveCredits(input.timeOff, [], [12]);
+    // 12h on day 13 (last day of the first pay period), 12h on day 15 (second).
+    expect(credits.map((c) => [c.date, c.hours])).toEqual([
+      [addDays(f.seeded.draftStart, 13), 12],
+      [addDays(f.seeded.draftStart, 15), 12],
+    ]);
   });
 });

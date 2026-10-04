@@ -6,6 +6,7 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ToastProvider } from '../../components/toast.js';
 import { ReasonDialog } from './reason-dialog.js';
 
 afterEach(cleanup);
@@ -13,16 +14,18 @@ afterEach(cleanup);
 function renderDialog(props: Partial<Parameters<typeof ReasonDialog>[0]> = {}) {
   const onConfirm = vi.fn();
   render(
-    <ReasonDialog
-      open
-      onOpenChange={vi.fn()}
-      title="Deny time off"
-      confirmLabel="Deny"
-      pending={false}
-      error={undefined}
-      onConfirm={onConfirm}
-      {...props}
-    />,
+    <ToastProvider>
+      <ReasonDialog
+        open
+        onOpenChange={vi.fn()}
+        title="Deny time off"
+        confirmLabel="Deny"
+        pending={false}
+        error={undefined}
+        onConfirm={onConfirm}
+        {...props}
+      />
+    </ToastProvider>,
   );
   return { onConfirm, reason: screen.getByRole('textbox', { name: /reason/i }) };
 }

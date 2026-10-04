@@ -43,9 +43,12 @@ import type {
   Id,
   IncompatibilityGroup,
   IsoDate,
+  JurisdictionId,
   Nurse,
   NurseCredential,
+  NurseRole,
   OvertimeRule,
+  OvertimeVolunteer,
   PayRate,
   PlannedHoliday,
   Preference,
@@ -103,8 +106,11 @@ export interface DemoSummary {
 }
 
 export type UnitInput = Omit<Unit, 'id'>;
-/** A unit's name and type. Its pay-period calendar is fixed once hours have been counted in it. */
-export type UnitPatch = Partial<Pick<Unit, 'name' | 'unitType'>>;
+/** A unit's name, type and ratio staffing. Its pay-period calendar is fixed once hours have been counted in it. */
+export type UnitPatch = Partial<Pick<Unit, 'name' | 'unitType' | 'ratioStaffing'>> & {
+  /** `null` clears the notice rule. */
+  postingLeadDays?: number | null;
+};
 
 export interface AppInfo {
   version: string;
@@ -153,11 +159,15 @@ export interface DashboardSummary {
   currentDraft: SchedulePeriod | undefined;
   /** Shifts on the current draft: none means it still needs generating. */
   draftShifts: number;
+  /** The last day to post the current draft under the unit's notice rule; absent without one. */
+  postBy?: IsoDate;
   latestPublished: SchedulePeriod | undefined;
   pendingTimeOff: number;
   openCallOffs: number;
-  /** Credentials lapsing in the next 90 days, soonest first. */
+  /** Credentials expiring from today through the next 90 days, soonest first. */
   expiringCredentials: ExpiringCredentialView[];
+  /** Credentials already past their expiry (within the last year) with no valid renewal. */
+  lapsedCredentials: ExpiringCredentialView[];
   /** Who is on each shift today, from the published schedule. */
   todayOnShift: OnShiftView[];
 }
@@ -174,6 +184,16 @@ export interface IncompatibilityGroupPatch {
   maxTogether?: number;
   startsOn?: IsoDate | null;
   endsOn?: IsoDate | null;
+}
+
+/** A standing offer to work overtime. The unit and nurse are fixed once recorded. */
+export type OvertimeVolunteerInput = Omit<OvertimeVolunteer, 'id'>;
+
+/** `note: null` clears the note; an omitted key is left untouched. */
+export interface OvertimeVolunteerPatch {
+  startDate?: IsoDate;
+  endDate?: IsoDate;
+  note?: string | null;
 }
 
 /** Optional-and-clearable fields take `null` to clear; an omitted key is left untouched. */
@@ -434,6 +454,14 @@ export interface SolverAvailability {
  */
 export type SolveRunState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
+/** One role on one shift a run left below its hard minimum. */
+export interface UnfilledShift {
+  date: IsoDate;
+  shiftTypeId: Id;
+  role: NurseRole;
+  shortfall: number;
+}
+
 /** A finished run's headline numbers, from its solve report. */
 export interface SolveRunSummary {
   objective: number;
@@ -446,6 +474,8 @@ export interface SolveRunSummary {
   floorsShort: number;
   /** Shifts (and roles) with any shortfall. */
   unfilledSlots: number;
+  /** The first 50 of them (main caps it, so a hopeless run ships no hundreds of rows), so the manager is told which shifts rather than a count. */
+  unfilled: UnfilledShift[];
   hardViolations: number;
   softViolations: number;
   elapsedMs: number;
@@ -658,6 +688,11 @@ export interface ShiftNurseApi {
     resume(): SetupState;
     applyPreset(unitId: Id, preset: SetupPreset): SetupPresetResult;
     /**
+     * Applies a state's ratio ceilings, overtime rules and rule switches to the unit, only ever
+     * tightening, and remembers the choice on the unit. Pressing it twice changes nothing.
+     */
+    applyJurisdiction(unitId: Id, jurisdiction: JurisdictionId): SetupPresetResult;
+    /**
      * Saves the live database as a `pre-reset` backup, deletes it and relaunches into the
      * welcome screen. The call returns before the relaunch.
      */
@@ -692,6 +727,13 @@ export interface ShiftNurseApi {
     create(input: IncompatibilityGroupInput, reason: string): IncompatibilityGroup;
     update(id: Id, patch: IncompatibilityGroupPatch, reason: string): IncompatibilityGroup;
     remove(id: Id, reason: string): void;
+  };
+  /** Nurses' recorded offers to work overtime, which make an overtime shift voluntary. */
+  overtimeVolunteers: {
+    list(unitId: Id): OvertimeVolunteer[];
+    create(input: OvertimeVolunteerInput): OvertimeVolunteer;
+    update(id: Id, patch: OvertimeVolunteerPatch): OvertimeVolunteer;
+    remove(id: Id): void;
   };
   shiftTypes: {
     list(unitId: Id): ShiftType[];
@@ -1012,6 +1054,7 @@ export const API_CHANNELS = {
     'complete',
     'resume',
     'applyPreset',
+    'applyJurisdiction',
     'startOver',
   ],
   dashboard: ['summary'],
@@ -1019,6 +1062,7 @@ export const API_CHANNELS = {
   credentials: ['list', 'create', 'forNurse', 'grant', 'updateExpiry', 'revoke'],
   preferences: ['forNurse', 'replace'],
   incompatibility: ['list', 'create', 'update', 'remove'],
+  overtimeVolunteers: ['list', 'create', 'update', 'remove'],
   shiftTypes: ['list', 'create', 'update', 'deactivate'],
   coverage: ['list', 'upsert', 'delete'],
   holidays: [

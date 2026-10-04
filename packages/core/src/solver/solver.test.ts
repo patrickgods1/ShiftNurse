@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { DemandTable } from '../acuity/demand.js';
 import type { Assignment, FairnessLedgerEntry, Nurse, Preference } from '../domain/entities.js';
-import { dateInRange, isoDate } from '../domain/time.js';
+import { addDays, dateInRange, isoDate } from '../domain/time.js';
 import { ALL_RULES, buildRuleContext, evaluateSchedule } from '../rules/registry.js';
 import type { Violation } from '../rules/types.js';
 import { ScheduleView } from '../schedule/view.js';
 import {
   assign,
+  census,
   coverageAllWeek,
   DAY_8,
   DAY_12,
@@ -18,6 +19,7 @@ import {
   resetFixtureCounters,
   type SolveScenarioOptions,
   solveInputFrom,
+  TIER_ROUTINE,
   testUnit,
   timeOff,
 } from '../testing/fixtures.js';
@@ -140,6 +142,50 @@ describe('a unit the roster can cover', () => {
     const i = input();
     const report = solve(i, QUICK);
     expect(rejudge(i, report)).toEqual([]);
+  });
+});
+
+describe('a unit whose charge nurse takes no patients', () => {
+  // 10 routine patients on every day shift at 1:5 is 2 bedside RNs; the charge nurse is a third.
+  // Floors ask for 2 a shift, so only the ratio setting can explain a third RN on days.
+  const input = (nurses: Nurse[], chargeNurseTakesPatients: boolean) =>
+    twelveHourUnit(nurses, 2, {
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      censusForecasts: Array.from({ length: 14 }, (_, d) =>
+        census(addDays(isoDate('2026-01-04'), d), DAY_12, { [TIER_ROUTINE.id]: 10 }),
+      ),
+      ratioStaffing: {
+        chargeNurseTakesPatients,
+        breakMinutesPerNurse: 0,
+        chargeCoversBreaks: false,
+      },
+    });
+  const dayCounts = (report: SolveReport) => [
+    ...countBy(
+      report.assignments.filter((a) => a.shiftTypeId === DAY_12.id),
+      (a) => a.date,
+    ).values(),
+  ];
+
+  it('puts a third RN on every day shift so two are free for the patients', () => {
+    const unit = input(fullTimers(14), false);
+    const report = solve(unit, QUICK);
+    expect(report.unfilled).toEqual([]);
+    expect(dayCounts(report).every((n) => n >= 3)).toBe(true);
+    expect(rejudge(unit, report).filter((v) => v.code === 'ratio_breach')).toEqual([]);
+  });
+
+  it('judges a day shift of two short, where a charge nurse with patients would do', () => {
+    // The same roster solved as if the charge nurse took patients, then judged as if she does not.
+    const nurses = fullTimers(14);
+    const twoADay = solve(input(nurses, true), QUICK);
+    const breaches = rejudge(input(nurses, false), twoADay).filter(
+      (v) => v.code === 'ratio_breach',
+    );
+    const daysWithTwo = dayCounts(twoADay).filter((n) => n === 2).length;
+    expect(daysWithTwo).toBeGreaterThan(0);
+    expect(breaches).toHaveLength(daysWithTwo);
   });
 });
 

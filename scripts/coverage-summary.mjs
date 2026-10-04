@@ -1,5 +1,5 @@
 // Turns vitest's coverage/coverage-summary.json into a Markdown table for the CI run summary:
-// one row per package (core, db, desktop main) plus the total, so a drop is visible on the
+// one row per package (core, db, desktop main, renderer, shared) plus the total, so a drop is visible on the
 // pull request without downloading an artifact.
 import { readFileSync } from 'node:fs';
 import { relative, sep } from 'node:path';

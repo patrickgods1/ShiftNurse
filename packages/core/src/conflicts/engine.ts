@@ -40,9 +40,9 @@ import type {
   TimeOffRequest,
 } from '../domain/entities.js';
 import { addDays, dateInRange, datesInRange, type IsoDate } from '../domain/time.js';
+import { FairnessEvaluator } from '../fairness/evaluator.js';
 import { deriveCounters } from '../fairness/ledger.js';
-import { scoreFairness } from '../fairness/score.js';
-import type { CounterContext } from '../fairness/types.js';
+import type { BurdenCounters, CounterContext } from '../fairness/types.js';
 import { type MaxHoursParams, maxHoursRule } from '../rules/hours-rules.js';
 import {
   buildRuleContext,
@@ -80,11 +80,14 @@ export class ConflictEngine {
   readonly nurses: readonly Nurse[];
   readonly activeNurses: readonly Nurse[];
   readonly nursesById: ReadonlyMap<Id, Nurse>;
+  readonly timeOffById: ReadonlyMap<Id, TimeOffRequest>;
   readonly shiftTypes: readonly ShiftType[];
   readonly shiftTypesById: ReadonlyMap<Id, ShiftType>;
   readonly dates: readonly IsoDate[];
   readonly demand: DemandTable;
   readonly slots: readonly Slot[];
+  /** The slots of one date × shift type, keyed `date|shiftTypeId`, for re-pricing a changed cell. */
+  readonly slotsByCell: ReadonlyMap<string, readonly Slot[]>;
   readonly nurseRuleIds: readonly string[];
   readonly shiftRuleIds: readonly string[];
   /** Resolved once per engine; every simulated state evaluates against these. */
@@ -93,13 +96,23 @@ export class ConflictEngine {
   readonly maxHoursParams: MaxHoursParams;
   readonly costCtx: CostContext | undefined;
   readonly counterCtx: Omit<CounterContext, 'timeOff'>;
+  /** Every candidate fix is priced for fairness; history and weights are fixed per analysis. */
+  readonly fairnessEvaluator: FairnessEvaluator;
   private readonly baseCtx: RuleContext;
 
   constructor(input: ConflictInput) {
     this.input = input;
     this.nurses = [...input.nurses].sort((a, b) => a.id.localeCompare(b.id));
     this.activeNurses = this.nurses.filter((n) => n.active);
+    this.fairnessEvaluator = new FairnessEvaluator({
+      nurses: this.activeNurses,
+      history: input.ledgerHistory,
+      weights: input.ruleSet.fairnessWeights,
+    });
     this.nursesById = new Map(this.nurses.map((n) => [n.id, n]));
+    // Built once so per-request and per-candidate lookups are O(1): `.find` inside those loops
+    // made the analysis quadratic on a busy period, and it runs on every Requests view.
+    this.timeOffById = new Map(input.timeOff.map((r) => [r.id, r]));
     this.shiftTypes = [...input.shiftTypes].sort((a, b) => a.sortOrder - b.sortOrder);
     this.shiftTypesById = new Map(this.shiftTypes.map((s) => [s.id, s]));
     this.dates = datesInRange(input.period.startDate, input.period.endDate);
@@ -129,6 +142,14 @@ export class ConflictEngine {
       }
     }
     this.slots = slots;
+    const byCell = new Map<string, Slot[]>();
+    for (const slot of slots) {
+      const key = cellKey(slot.date, slot.shiftType.id);
+      const list = byCell.get(key);
+      if (list) list.push(slot);
+      else byCell.set(key, [slot]);
+    }
+    this.slotsByCell = byCell;
 
     this.costCtx = input.cost
       ? {
@@ -172,6 +193,9 @@ export class ConflictEngine {
         ? { incompatibilityGroups: this.input.incompatibilityGroups }
         : {}),
       ...(this.input.holidayWork ? { holidayWork: this.input.holidayWork } : {}),
+      ...(this.input.overtimeVolunteers
+        ? { overtimeVolunteers: this.input.overtimeVolunteers }
+        : {}),
     });
   }
 
@@ -185,8 +209,16 @@ export class ConflictEngine {
     return new SimState(this, this.input.assignments, this.input.timeOff);
   }
 
-  state(assignments: readonly Assignment[], timeOff: readonly TimeOffRequest[]): SimState {
-    return new SimState(this, assignments, timeOff);
+  /**
+   * A version of the period. Given the state it was derived from, its staffing shortfall and
+   * fairness counters are re-priced only where the two differ — see `SimState.changes`.
+   */
+  state(
+    assignments: readonly Assignment[],
+    timeOff: readonly TimeOffRequest[],
+    base?: SimState,
+  ): SimState {
+    return new SimState(this, assignments, timeOff, base);
   }
 
   nurse(id: Id): Nurse {
@@ -225,13 +257,18 @@ export class SimState {
   private shortfall: number | undefined;
   private fairnessSnapshot: FairnessSnapshot | undefined;
   private scheduleCost: number | undefined;
+  private counterCache: Map<Id, BurdenCounters> | undefined;
+  private readonly base: SimState | undefined;
+  private delta: { nurses: Set<Id>; cells: Set<string> } | undefined;
 
   constructor(
     engine: ConflictEngine,
     assignments: readonly Assignment[],
     timeOff: readonly TimeOffRequest[],
+    base?: SimState,
   ) {
     this.engine = engine;
+    this.base = base;
     this.assignments = assignments;
     this.timeOff = timeOff;
     this.ctx = engine.contextFor(timeOff);
@@ -350,6 +387,19 @@ export class SimState {
 
   /** Nurse-slots below a hard minimum across the whole period. */
   hardShortfall(): number {
+    if (this.shortfall === undefined && this.base) {
+      // The base's total, plus the change on each cell whose roster differs: a cell's
+      // shortfall reads only its own roster, so every other cell is the same as in the base.
+      let total = this.base.hardShortfall();
+      for (const key of this.changes().cells) {
+        for (const slot of this.engine.slotsByCell.get(key) ?? []) {
+          const now = this.staffed(slot.date, slot.shiftType.id, slot.role);
+          const was = this.base.staffed(slot.date, slot.shiftType.id, slot.role);
+          total += Math.max(0, slot.min - now) - Math.max(0, slot.min - was);
+        }
+      }
+      this.shortfall = total;
+    }
     if (this.shortfall === undefined) {
       let total = 0;
       for (const slot of this.engine.slots) {
@@ -361,20 +411,59 @@ export class SimState {
     return this.shortfall;
   }
 
+  /**
+   * Each nurse's burden counters for this version. A nurse's counters read only her own shifts,
+   * requests and preferences, so a derived state re-derives just the nurses whose shifts or
+   * requests differ from its base's and keeps the base's counters for everyone else.
+   */
+  counters(): Map<Id, BurdenCounters> {
+    if (!this.counterCache) {
+      const ctx = { ...this.engine.counterCtx, timeOff: this.timeOff };
+      if (this.base) {
+        const counters = new Map(this.base.counters());
+        for (const [id, c] of deriveCounters(this.view, ctx, this.changes().nurses)) {
+          counters.set(id, c);
+        }
+        this.counterCache = counters;
+      } else {
+        this.counterCache = deriveCounters(this.view, ctx);
+      }
+    }
+    return this.counterCache;
+  }
+
+  /**
+   * Who and which cells differ from the base, by object identity: a simulated change keeps
+   * every untouched assignment and request object and replaces or drops the ones it changes.
+   * Computed here rather than trusted from the caller, so a fix that forgets to report a nurse
+   * can never be priced against her old counters.
+   */
+  private changes(): { nurses: Set<Id>; cells: Set<string> } {
+    if (!this.delta) {
+      const base = this.base!;
+      const nurses = new Set<Id>();
+      const cells = new Set<string>();
+      const mark = (a: Assignment) => {
+        nurses.add(a.nurseId);
+        cells.add(cellKey(a.date, a.shiftTypeId));
+      };
+      const was = new Set(base.assignments);
+      const now = new Set(this.assignments);
+      for (const a of this.assignments) if (!was.has(a)) mark(a);
+      for (const a of base.assignments) if (!now.has(a)) mark(a);
+      const wasOff = new Set(base.timeOff);
+      const nowOff = new Set(this.timeOff);
+      for (const r of this.timeOff) if (!wasOff.has(r)) nurses.add(r.nurseId);
+      for (const r of base.timeOff) if (!nowOff.has(r)) nurses.add(r.nurseId);
+      this.delta = { nurses, cells };
+    }
+    return this.delta;
+  }
+
   fairness(): FairnessSnapshot {
     if (!this.fairnessSnapshot) {
       const { engine } = this;
-      const report = scoreFairness({
-        nurses: engine.activeNurses,
-        current: deriveCounters(this.view, { ...engine.counterCtx, timeOff: this.timeOff }),
-        history: engine.input.ledgerHistory,
-        preferences: engine.input.preferences,
-        weights: engine.input.ruleSet.fairnessWeights,
-      });
-      this.fairnessSnapshot = {
-        mean: report.distribution.score.mean,
-        byNurse: new Map(report.scores.map((s) => [s.nurseId, s.score])),
-      };
+      this.fairnessSnapshot = engine.fairnessEvaluator.score(this.counters());
     }
     return this.fairnessSnapshot;
   }
@@ -415,4 +504,8 @@ export class SimState {
         dateInRange(date, r.startDate, r.endDate),
     );
   }
+}
+
+function cellKey(date: IsoDate, shiftTypeId: Id): string {
+  return `${date}|${shiftTypeId}`;
 }

@@ -5,13 +5,13 @@
  * "Use published schedules" goes back.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import type { Holiday, Id, Nurse } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useNurses } from '../../../api.js';
 import { useClearHolidayWork, useHolidayWork, useRecordHolidayWork } from '../../../api-config.js';
 import { AsyncState } from '../../../components/async-state.js';
-import { DIALOG, errorMessage, OVERLAY, PRIMARY, SECONDARY } from '../../../components/ui.js';
+import { Modal } from '../../../components/modal.js';
+import { errorMessage, PRIMARY, SECONDARY } from '../../../components/ui.js';
 import { formatDateWithWeekday } from '../../../format.js';
 
 function fullName(nurse: Nurse): string {
@@ -28,16 +28,24 @@ export function HolidayWorkDialog({
   onClose: () => void;
 }) {
   return (
-    <Dialog.Root open={holiday !== undefined} onOpenChange={(open) => !open && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content className={`${DIALOG} w-[480px]`} aria-describedby="holiday-work-help">
-          {holiday !== undefined ? (
-            <WorkForm key={holiday.id} unitId={unitId} holiday={holiday} onClose={onClose} />
-          ) : null}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Modal
+      open={holiday !== undefined}
+      onOpenChange={(open) => !open && onClose()}
+      title={`Who worked ${holiday?.name ?? ''}`}
+      description={
+        holiday !== undefined ? (
+          <>
+            {formatDateWithWeekday(holiday.date)}. The holiday rotation keeps these nurses off{' '}
+            {holiday.name} next year and gives it to the rest.
+          </>
+        ) : undefined
+      }
+      size="md"
+    >
+      {holiday !== undefined ? (
+        <WorkForm key={holiday.id} unitId={unitId} holiday={holiday} onClose={onClose} />
+      ) : null}
+    </Modal>
   );
 }
 
@@ -66,14 +74,6 @@ function WorkForm({
 
   return (
     <>
-      <Dialog.Title className="text-base font-semibold text-text">
-        Who worked {holiday.name}
-      </Dialog.Title>
-      <p id="holiday-work-help" className="mt-1 text-sm text-text-muted">
-        {formatDateWithWeekday(holiday.date)}. The holiday rotation keeps these nurses off{' '}
-        {holiday.name} next year and gives it to the rest.
-      </p>
-
       {workQuery.isPending || nursesQuery.isPending ? (
         <AsyncState status="loading" label="Loading who worked" />
       ) : workQuery.isError ? (

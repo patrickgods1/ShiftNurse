@@ -14,16 +14,19 @@ import type {
   Holiday,
   Id,
   IsoDate,
+  JurisdictionId,
+  RatioStaffing,
   ShiftCredentialRequirement,
   ShiftType,
   Unit,
 } from '@shiftnurse/core';
-import { withinShiftProblem } from '@shiftnurse/core';
+import { JURISDICTION_PRESETS, withinShiftProblem } from '@shiftnurse/core';
 import { and, asc, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import {
+  ratioStaffingColumns,
   toCoverageRequirement,
   toCredentialRequirement,
   toHoliday,
@@ -37,7 +40,7 @@ import {
   shiftType as shiftTypeTable,
   unit as unitTable,
 } from '../schema.js';
-import { type PatchKeys, patchOf } from './patch.js';
+import { auditedUpdate, type PatchKeys } from './patch.js';
 
 // ---------------------------------------------------------------------------
 // Unit
@@ -54,9 +57,16 @@ export function getUnit(db: DbLike, id: Id): Unit | undefined {
 
 export function createUnit(db: DbLike, input: Omit<Unit, 'id'>, actor: string): Unit {
   const id = ids.unit();
-  const row: typeof unitTable.$inferInsert = { id, ...input };
+  const { ratioStaffing, ...fields } = input;
+  validateRatioStaffing(ratioStaffing);
+  validatePostingLead(fields.postingLeadDays);
+  const row: typeof unitTable.$inferInsert = {
+    id,
+    ...fields,
+    ...ratioStaffingColumns(ratioStaffing),
+  };
   db.insert(unitTable).values(row).run();
-  const after = toUnit(row as typeof unitTable.$inferSelect);
+  const after = getUnit(db, id)!;
   recordAudit(db, { entityType: 'unit', entityId: id, action: 'create', actor, after });
   return after;
 }
@@ -66,6 +76,11 @@ export interface UnitPatch {
   unitType?: string;
   payPeriodDays?: number;
   payPeriodAnchor?: IsoDate;
+  ratioStaffing?: RatioStaffing;
+  /** Null clears the notice rule. */
+  postingLeadDays?: number | null;
+  /** Null forgets the state preset. */
+  jurisdiction?: JurisdictionId | null;
 }
 
 const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
@@ -73,18 +88,58 @@ const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
   unitType: true,
   payPeriodDays: true,
   payPeriodAnchor: true,
+  ratioStaffing: true,
+  postingLeadDays: true,
+  jurisdiction: true,
 };
 
+/** Break minutes are a whole number a shift can hold; anything else is a typing slip. */
+function validateRatioStaffing(staffing: RatioStaffing | undefined): void {
+  if (!staffing) return;
+  const minutes = staffing.breakMinutesPerNurse;
+  if (!Number.isInteger(minutes) || minutes < 0 || minutes > 240)
+    throw new Error('Break minutes per nurse must be a whole number from 0 to 240');
+}
+
+function validatePostingLead(lead: number | null | undefined): void {
+  if (lead === undefined || lead === null) return;
+  if (!Number.isInteger(lead) || lead < 0 || lead > 90)
+    throw new Error('Posting notice must be a whole number of days from 0 to 90');
+}
+
 export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string): Unit {
-  const row = db.select().from(unitTable).where(eq(unitTable.id, id)).get();
-  if (!row) throw new Error(`Unit ${id} not found`);
-  const before = toUnit(row);
-  if (patch.name !== undefined && patch.name.trim() === '') throw new Error('A unit needs a name');
-  const merged = { ...row, ...patchOf(patch, UNIT_PATCH_KEYS, 'unit') };
-  db.update(unitTable).set(merged).where(eq(unitTable.id, id)).run();
-  const after = toUnit(merged);
-  recordAudit(db, { entityType: 'unit', entityId: id, action: 'update', actor, before, after });
-  return after;
+  return auditedUpdate<Unit, UnitPatch>(db, {
+    id,
+    entityType: 'unit',
+    entityLabel: 'unit',
+    allowed: UNIT_PATCH_KEYS,
+    patch,
+    read: (rowId) => {
+      const row = db.select().from(unitTable).where(eq(unitTable.id, rowId)).get();
+      return row ? toUnit(row) : undefined;
+    },
+    // The id rides along so an empty patch still writes, as the full-row update always did.
+    write: (rowId, { ratioStaffing, ...values }) =>
+      db
+        .update(unitTable)
+        .set({ ...values, ...ratioStaffingColumns(ratioStaffing), id: rowId })
+        .where(eq(unitTable.id, rowId))
+        .run(),
+    notFound: `Unit ${id} not found`,
+    validate: (values) => {
+      validateRatioStaffing(values.ratioStaffing);
+      validatePostingLead(values.postingLeadDays);
+      if (
+        values.jurisdiction !== undefined &&
+        values.jurisdiction !== null &&
+        !Object.hasOwn(JURISDICTION_PRESETS, values.jurisdiction)
+      )
+        throw new Error(`Unknown state preset "${values.jurisdiction}"`);
+      if (values.name !== undefined && values.name.trim() === '')
+        throw new Error('A unit needs a name');
+    },
+    actor,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -176,23 +231,28 @@ export function updateShiftType(
   patch: ShiftTypePatch,
   actor: string,
 ): ShiftType {
-  const row = db.select().from(shiftTypeTable).where(eq(shiftTypeTable.id, id)).get();
-  if (!row) throw new Error(`Shift type ${id} not found`);
-  const before = toShiftType(row);
-  const merged = { ...row, ...patchOf(patch, SHIFT_TYPE_PATCH_KEYS, 'shift type') };
-  const after = toShiftType(merged);
-  // A new time or length can stop it fitting inside its shift, or stop another fitting inside it.
-  assertCoverFits(db, after);
-  db.update(shiftTypeTable).set(merged).where(eq(shiftTypeTable.id, id)).run();
-  recordAudit(db, {
+  return auditedUpdate<ShiftType, ShiftTypePatch>(db, {
+    id,
     entityType: 'shift_type',
-    entityId: id,
-    action: 'update',
+    entityLabel: 'shift type',
+    allowed: SHIFT_TYPE_PATCH_KEYS,
+    patch,
+    read: (rowId) => {
+      const row = db.select().from(shiftTypeTable).where(eq(shiftTypeTable.id, rowId)).get();
+      return row ? toShiftType(row) : undefined;
+    },
+    // The id rides along so an empty patch still writes, as the full-row update always did.
+    write: (rowId, values) =>
+      db
+        .update(shiftTypeTable)
+        .set({ ...values, id: rowId })
+        .where(eq(shiftTypeTable.id, rowId))
+        .run(),
+    notFound: `Shift type ${id} not found`,
+    // A new time or length can stop it fitting inside its shift, or stop another fitting inside it.
+    validate: (values, before) => assertCoverFits(db, { ...before, ...values }),
     actor,
-    before,
-    after,
   });
-  return after;
 }
 
 /**

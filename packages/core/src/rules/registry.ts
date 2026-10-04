@@ -13,9 +13,11 @@ import type {
   IncompatibilityGroup,
   Nurse,
   NurseCredential,
+  OvertimeVolunteer,
   ShiftCredentialRequirement,
   ShiftType,
   TimeOffRequest,
+  Timestamp,
   Unit,
 } from '../domain/entities.js';
 import { DEFAULT_WEEKEND, type IsoDate, type WeekendDefinition } from '../domain/time.js';
@@ -27,6 +29,7 @@ import { coverageRule, ratioComplianceRule } from './coverage-rules.js';
 import { holidayIndexes, holidayRotationRule } from './holiday-rotation.js';
 import { contractedHoursRule, maxHoursRule } from './hours-rules.js';
 import { incompatibleBufferRule, incompatibleTogetherRule } from './incompatibility-rules.js';
+import { mandatoryOvertimeRule } from './mandatory-overtime.js';
 import { nightRecoveryRule } from './night-recovery.js';
 import { type PaidLeaveCredit, type PaidSickCall, paidLeaveCredits } from './paid-leave.js';
 import { pendingTimeOffRule } from './pending-time-off.js';
@@ -42,6 +45,7 @@ import type {
   RuleSeverity,
   Violation,
 } from './types.js';
+import { weekendPatternRule } from './weekend-pattern.js';
 
 /**
  * Every rule the app ships with.
@@ -63,6 +67,8 @@ export const ALL_RULES: readonly Rule<never>[] = [
   holidayRotationRule,
   nightRecoveryRule,
   pendingTimeOffRule,
+  mandatoryOvertimeRule,
+  weekendPatternRule,
 ] as unknown as readonly Rule<never>[];
 
 const RULES_BY_ID = new Map<string, Rule<never>>(ALL_RULES.map((r) => [r.id, r]));
@@ -100,8 +106,17 @@ export function hardRuleIdsByScope(ruleSet: RuleSet, scope: RuleScope): string[]
   return ruleIdsByScope(ruleSet, scope, { hardOnly: true });
 }
 
-/** A rule set enabling every rule at its shipped defaults. The starting point for a new unit. */
-export function defaultRuleSet(unitId: Id, name = 'Default contract rules'): RuleSet {
+/**
+ * Every rule enabled at its shipped defaults: the rules a new unit starts from. A template, not
+ * a saved version — `saveRuleSet` stamps the
+ * real time when one is saved, so `createdAt` here defaults to 0 instead of reading the clock,
+ * which kept every fixture built from it different from run to run.
+ */
+export function defaultRuleSet(
+  unitId: Id,
+  name = 'Default contract rules',
+  createdAt: Timestamp = 0,
+): RuleSet {
   return {
     id: `ruleset-${unitId}-default`,
     unitId,
@@ -109,10 +124,10 @@ export function defaultRuleSet(unitId: Id, name = 'Default contract rules'): Rul
     version: 1,
     weekendDefinition: DEFAULT_WEEKEND,
     fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
-    createdAt: Date.now(),
+    createdAt,
     configs: ALL_RULES.map<RuleConfig>((rule) => ({
       ruleId: rule.id,
-      enabled: true,
+      enabled: rule.enabledByDefault ?? true,
       params: rule.defaultParams as Record<string, unknown>,
     })),
   };
@@ -125,6 +140,29 @@ export function defaultRuleSet(unitId: Id, name = 'Default contract rules'): Rul
  * existing rule — must not silently disable that rule or crash on a missing parameter. Any
  * gap falls back to the registry default.
  */
+/**
+ * The parameters `configs` give `rule`, typed by the rule itself. Stored params are a plain
+ * record (they come from the database and from IPC), so reading them as a rule's `P` is an
+ * assumption; this is the one place it is made, instead of a cast at every reader. Pass
+ * resolved configs (`resolveConfigs`), whose params have the rule's defaults merged in.
+ */
+export function paramsOf<P>(rule: Rule<P>, configs: readonly RuleConfig[]): P | undefined {
+  const config = configs.find((c) => c.ruleId === rule.id);
+  return config === undefined ? undefined : asParams(rule, config.params);
+}
+
+/** As `paramsOf`, for a rule the caller has established is configured; names it if not. */
+export function requireParams<P>(rule: Rule<P>, configs: readonly RuleConfig[]): P {
+  const params = paramsOf(rule, configs);
+  if (params === undefined) throw new Error(`The rule set has no configuration for ${rule.name}`);
+  return params;
+}
+
+/** A rule's raw stored params read as its parameter type — for code handed `params` directly. */
+export function asParams<P>(_rule: Rule<P>, raw: Record<string, unknown>): P {
+  return raw as unknown as P;
+}
+
 export function resolveConfigs(ruleSet: RuleSet): RuleConfig[] {
   const stored = new Map(ruleSet.configs.map((c) => [c.ruleId, c]));
   return ALL_RULES.map((rule) => {
@@ -132,7 +170,7 @@ export function resolveConfigs(ruleSet: RuleSet): RuleConfig[] {
     if (!config) {
       return {
         ruleId: rule.id,
-        enabled: true,
+        enabled: rule.enabledByDefault ?? true,
         params: rule.defaultParams as Record<string, unknown>,
       };
     }
@@ -164,6 +202,8 @@ export interface RuleContextInput {
   incompatibilityGroups?: readonly IncompatibilityGroup[];
   /** Who worked each past holiday, for the holiday rotation. Absent: nobody is owed a holiday. */
   holidayWork?: readonly HolidayWorkRecord[];
+  /** Standing offers to work overtime. Absent: nobody has volunteered. */
+  overtimeVolunteers?: readonly OvertimeVolunteer[];
 }
 
 /** Precompute the joins and indexes every rule needs, once per evaluation pass. */
@@ -211,7 +251,18 @@ export function buildRuleContext(input: RuleContextInput): RuleContext {
     majorHolidayDates: new Set<IsoDate>(input.holidays.filter((h) => h.isMajor).map((h) => h.date)),
     ...holidayIndexes(input.holidays, input.holidayWork ?? []),
     incompatibilityGroups: input.incompatibilityGroups ?? [],
+    overtimeVolunteersByNurse: groupByNurse(input.overtimeVolunteers ?? []),
   };
+}
+
+function groupByNurse<T extends { nurseId: Id }>(rows: readonly T[]): Map<Id, T[]> {
+  const out = new Map<Id, T[]>();
+  for (const row of rows) {
+    const existing = out.get(row.nurseId);
+    if (existing) existing.push(row);
+    else out.set(row.nurseId, [row]);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

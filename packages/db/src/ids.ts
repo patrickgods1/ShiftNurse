@@ -23,6 +23,7 @@ export const ids = {
   credentialRequirement: () => newId('creq'),
   preference: () => newId('pref'),
   incompatibilityGroup: () => newId('incg'),
+  overtimeVolunteer: () => newId('otv'),
   timeOff: () => newId('to'),
   shiftSwap: () => newId('swp'),
   acuityTier: () => newId('tier'),

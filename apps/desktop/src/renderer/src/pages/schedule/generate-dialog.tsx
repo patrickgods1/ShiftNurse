@@ -9,7 +9,6 @@
  * That trade is the manager's to make, so Generate offers it rather than picking silently.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import type {
   SolveBatchStatus,
   SolveEstimate,
@@ -17,6 +16,7 @@ import type {
   SolverAvailability,
 } from '@shared/api.js';
 import type { Id, SchedulePeriod, SolverId } from '@shiftnurse/core';
+import { Link } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import {
   useBatchEstimate,
@@ -25,11 +25,13 @@ import {
   useSolverSettings,
   useStartBatch,
 } from '../../api-solver.js';
-import { errorMessage, OVERLAY, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { Modal } from '../../components/modal.js';
+import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { periodLabel } from '../../format.js';
 import { formatDollars } from '../../money.js';
 import { SOLVER_LABELS, SOLVER_ORDER } from '../../solver-labels.js';
 import { bestChoice, digestLine, finishedRuns, spread, variationNumber } from './candidates.js';
+import { UnfilledList } from './unfilled-list.js';
 
 /** Matches `MAX_BATCH_SIZE` in main; main clamps whatever arrives. */
 const MAX_VARIATIONS = 10;
@@ -104,70 +106,66 @@ export function GenerateDialog({
   }, [open]);
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content
-          data-testid="generate-dialog"
-          className="fixed z-50 left-1/2 top-1/2 w-[34rem] max-w-[calc(100vw-2rem)] -translate-x-1/2
-            -translate-y-1/2 rounded-lg border border-border bg-surface p-6 shadow-lg"
-        >
-          <Dialog.Title className="mb-1 text-lg font-semibold text-text">
-            Generate schedule
-          </Dialog.Title>
-          <Dialog.Description className="mb-4 text-sm text-text-muted">
-            {periodLabel(period)}
-          </Dialog.Description>
-
-          {running && batch ? (
-            <Running
-              batch={batch}
-              cancelling={cancel.isPending}
-              onCancel={() => cancel.mutate(batch.id)}
-            />
-          ) : !showSetup && batch ? (
-            <Finished
-              batch={batch}
-              onGenerateAgain={() => {
-                start.reset();
-                setContinueSeeds(true);
-                // More of the same: the solver these variations asked for, not the unit default
-                // (reopening the dialog to reach this summary reset the choice).
-                setSolver(batch.fellBackFrom?.solver ?? batch.solver);
-                onViewChange('setup');
-              }}
-              onCompare={() => {
-                onOpenChange(false);
-                onCompare();
-              }}
-              onPreview={(index) => {
-                onOpenChange(false);
-                onPreview(index);
-              }}
-            />
-          ) : (
-            <Confirm
-              undecidedRequests={undecidedRequests}
-              lockedCount={lockedCount}
-              unlockedCount={unlockedCount}
-              previous={previous}
-              continuing={continuing}
-              onContinueChange={setContinueSeeds}
-              count={count}
-              onCountChange={setCount}
-              estimate={estimate.data}
-              pending={start.isPending}
-              error={start.isError ? errorMessage(start.error) : undefined}
-              solver={solver ?? savedSolver}
-              savedSolver={savedSolver}
-              availability={availability}
-              onSolverChange={setSolver}
-              onGenerate={() => start.mutate(options, { onSuccess: () => onViewChange('batch') })}
-            />
-          )}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      data-testid="generate-dialog"
+      size="md"
+      title="Generate schedule"
+      description={periodLabel(period)}
+    >
+      <div className="mt-4">
+        {running && batch ? (
+          <Running
+            onClose={() => onOpenChange(false)}
+            batch={batch}
+            cancelling={cancel.isPending}
+            onCancel={() => cancel.mutate(batch.id)}
+          />
+        ) : !showSetup && batch ? (
+          <Finished
+            onClose={() => onOpenChange(false)}
+            batch={batch}
+            onGenerateAgain={() => {
+              start.reset();
+              setContinueSeeds(true);
+              // More of the same: the solver these variations asked for, not the unit default
+              // (reopening the dialog to reach this summary reset the choice).
+              setSolver(batch.fellBackFrom?.solver ?? batch.solver);
+              onViewChange('setup');
+            }}
+            onCompare={() => {
+              onOpenChange(false);
+              onCompare();
+            }}
+            onPreview={(index) => {
+              onOpenChange(false);
+              onPreview(index);
+            }}
+          />
+        ) : (
+          <Confirm
+            onClose={() => onOpenChange(false)}
+            undecidedRequests={undecidedRequests}
+            lockedCount={lockedCount}
+            unlockedCount={unlockedCount}
+            previous={previous}
+            continuing={continuing}
+            onContinueChange={setContinueSeeds}
+            count={count}
+            onCountChange={setCount}
+            estimate={estimate.data}
+            pending={start.isPending}
+            error={start.isError ? errorMessage(start.error) : undefined}
+            solver={solver ?? savedSolver}
+            savedSolver={savedSolver}
+            availability={availability}
+            onSolverChange={setSolver}
+            onGenerate={() => start.mutate(options, { onSuccess: () => onViewChange('batch') })}
+          />
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -194,6 +192,7 @@ function describeEstimate(estimate: SolveEstimate): string {
 }
 
 function Confirm({
+  onClose,
   lockedCount,
   undecidedRequests,
   unlockedCount,
@@ -211,6 +210,7 @@ function Confirm({
   onSolverChange,
   onGenerate,
 }: {
+  onClose: () => void;
   lockedCount: number;
   undecidedRequests: number;
   unlockedCount: number;
@@ -241,7 +241,7 @@ function Confirm({
       </p>
       <ul className="mt-3 list-disc pl-5 text-sm text-text-muted">
         <li>
-          You get a few versions to choose between: each one balances the same rules a little
+          You get a few options to choose between: each one balances the same rules a little
           differently.{' '}
           <span className="font-medium text-text">
             Nothing on the schedule changes until you pick one and save it.
@@ -275,7 +275,7 @@ function Confirm({
       ) : null}
       <div className="mt-4">
         <label className="flex w-40 flex-col gap-1 text-xs text-text-muted">
-          Versions to compare
+          Options to compare
           <input
             type="number"
             data-testid="generate-count"
@@ -310,6 +310,16 @@ function Confirm({
             ))}
           </select>
         </label>
+        <p className="mt-2">
+          <Link
+            to="/settings"
+            search={{ tab: 'solver' }}
+            data-testid="generate-change-default"
+            className="text-accent underline"
+          >
+            Change default builder
+          </Link>
+        </p>
       </details>
       {chosen?.available === false ? (
         <p className="mt-1 text-xs text-warn">
@@ -335,11 +345,9 @@ function Confirm({
         </p>
       ) : null}
       <div className="mt-6 flex justify-end gap-2">
-        <Dialog.Close asChild>
-          <button type="button" className={secondaryButton}>
-            Cancel
-          </button>
-        </Dialog.Close>
+        <button type="button" className={secondaryButton} onClick={onClose}>
+          Cancel
+        </button>
         <button
           type="button"
           data-testid="generate-confirm"
@@ -353,7 +361,7 @@ function Confirm({
               ? `Generate ${count} more`
               : count === 1
                 ? 'Generate'
-                : `Generate ${count} variations`}
+                : `Generate ${count} options`}
         </button>
       </div>
     </div>
@@ -393,21 +401,22 @@ function PreviousBatch({
           className="mt-0.5"
         />
         <span>
-          Try new seeds: variation{count === 1 ? ` ${first}` : `s ${first}–${last}`}
+          Try different options than last time (option
+          {count === 1 ? ` ${first}` : `s ${first}–${last}`})
           <span className="block text-xs text-text-muted">
             {continuing
-              ? 'Each new seed is a fresh search and may find a lower score than the last batch.'
-              : `Unticked, this starts again at variation 1 and repeats what the same inputs gave before.`}
+              ? 'Searches for schedules it has not tried yet; untick to start again from option 1.'
+              : 'Unticked, this starts again from option 1 and repeats what the same inputs gave before.'}
           </span>
         </span>
       </label>
       {done > 0 ? (
         <p className="mt-2 text-xs text-text-muted">
-          This replaces the {done} variation{done === 1 ? '' : 's'} waiting above the grid.
+          This replaces the {done} option{done === 1 ? '' : 's'} waiting above the grid.
           {unsavedWinner ? (
             <span className="font-medium text-warn">
               {' '}
-              Variation {variationNumber(previous, unsavedWinner.index)} scores better than the grid
+              Option {variationNumber(previous, unsavedWinner.index)} scores better than the grid
               and has not been saved — save it first to keep it.
             </span>
           ) : null}
@@ -451,10 +460,12 @@ function describeRun(run: SolveRunStatus): string {
 }
 
 function Running({
+  onClose,
   batch,
   cancelling,
   onCancel,
 }: {
+  onClose: () => void;
   batch: SolveBatchStatus;
   cancelling: boolean;
   onCancel: () => void;
@@ -465,7 +476,7 @@ function Running({
     <div data-testid="generate-running">
       <div className="flex items-center justify-between text-sm">
         <span className="font-medium text-text">
-          {batch.count === 1 ? 'Generating' : `Generating ${batch.count} variations`} with{' '}
+          {batch.count === 1 ? 'Generating' : `Generating ${batch.count} options`} with{' '}
           {SOLVER_LABELS[batch.solver].name}
         </span>
         <span className="text-text-muted">
@@ -494,7 +505,7 @@ function Running({
             className="flex justify-between gap-3 border-b border-border px-2 py-1.5 last:border-b-0"
           >
             <span className="font-medium text-text">
-              Variation {variationNumber(batch, run.index)}
+              Option {variationNumber(batch, run.index)}
             </span>
             <span
               className={
@@ -511,8 +522,8 @@ function Running({
         ))}
       </ol>
       <p className="mt-3 text-xs text-text-muted">
-        You can close this window: the variations keep running, and Show progress above the grid
-        brings you back here.
+        You can close this window: the options keep running, and Show progress above the grid brings
+        you back here.
       </p>
       <div className="mt-4 flex justify-end gap-2">
         <button
@@ -524,11 +535,9 @@ function Running({
         >
           {cancelling ? 'Stopping…' : 'Stop'}
         </button>
-        <Dialog.Close asChild>
-          <button type="button" className={primaryButton}>
-            Close
-          </button>
-        </Dialog.Close>
+        <button type="button" className={primaryButton} onClick={onClose}>
+          Close
+        </button>
       </div>
     </div>
   );
@@ -543,11 +552,13 @@ export function formatElapsed(ms: number): string {
 }
 
 function Finished({
+  onClose,
   batch,
   onGenerateAgain,
   onCompare,
   onPreview,
 }: {
+  onClose: () => void;
   batch: SolveBatchStatus;
   onGenerateAgain: () => void;
   onCompare: () => void;
@@ -556,6 +567,7 @@ function Finished({
   const done = finishedRuns(batch);
   const choice = bestChoice(batch);
   const bestIndex = choice?.kind === 'variation' ? choice.index : choice?.bestVariation;
+  const bestSummary = batch.runs.find((r) => r.index === bestIndex)?.summary;
   const took =
     batch.finishedAt !== undefined
       ? ` in ${formatElapsed(batch.finishedAt - batch.startedAt)}`
@@ -565,15 +577,13 @@ function Finished({
     return (
       <div data-testid="generate-finished" data-state="stale">
         <p className="text-sm text-warn">
-          These variations are out of date: {batch.stale}. Generate again for ones that fit the
+          These options are out of date: {batch.stale}. Generate again for ones that fit the
           schedule as it is now.
         </p>
         <div className="mt-6 flex justify-end gap-2">
-          <Dialog.Close asChild>
-            <button type="button" className={secondaryButton}>
-              Close
-            </button>
-          </Dialog.Close>
+          <button type="button" className={secondaryButton} onClick={onClose}>
+            Close
+          </button>
           <button type="button" onClick={onGenerateAgain} className={primaryButton}>
             Generate again
           </button>
@@ -586,8 +596,8 @@ function Finished({
     <div data-testid="generate-finished" data-state={done.length > 0 ? 'done' : 'empty'}>
       <p className="text-sm font-medium text-text">
         {batch.cancelled
-          ? `Stopped: ${done.length} of ${batch.count} variations finished${took}.`
-          : `${done.length} of ${batch.count} variation${batch.count === 1 ? '' : 's'} finished${took}.`}
+          ? `Stopped: ${done.length} of ${batch.count} options finished${took}.`
+          : `${done.length} of ${batch.count} option${batch.count === 1 ? '' : 's'} finished${took}.`}
       </p>
       {choice?.kind === 'grid' ? (
         <p data-testid="generate-grid-best" className="mt-1 text-sm text-success">
@@ -597,9 +607,17 @@ function Finished({
         </p>
       ) : choice ? (
         <p className="mt-1 text-sm text-success">
-          Variation {variationNumber(batch, choice.index)} strikes the best balance of staffing,
+          Option {variationNumber(batch, choice.index)} strikes the best balance of staffing,
           fairness, preferences and cost.
         </p>
+      ) : null}
+      {bestSummary && bestSummary.floorsShort > 0 ? (
+        <div className="mt-2 text-sm">
+          <p className="text-danger">
+            Option {variationNumber(batch, bestIndex!)} leaves {bestSummary.floorsShort} short:
+          </p>
+          <UnfilledList summary={bestSummary} />
+        </div>
       ) : null}
       {batch.fellBackFrom ? (
         <p className="mt-1 text-sm text-warn" data-testid="generate-fallback">
@@ -661,7 +679,7 @@ function Finished({
                 className={`border-b border-border last:border-b-0 ${best ? 'font-semibold text-success' : 'text-text'}`}
               >
                 <th scope="row" className="px-2 py-1 text-left font-normal">
-                  Variation {variationNumber(batch, run.index)}
+                  Option {variationNumber(batch, run.index)}
                 </th>
                 {run.state === 'done' && s ? (
                   <>
@@ -718,11 +736,14 @@ function Finished({
           </button>
         ) : null}
         {choice?.kind === 'grid' ? (
-          <Dialog.Close asChild>
-            <button type="button" data-testid="generate-keep" className={primaryButton}>
-              Keep the grid
-            </button>
-          </Dialog.Close>
+          <button
+            type="button"
+            data-testid="generate-keep"
+            className={primaryButton}
+            onClick={onClose}
+          >
+            Keep the grid
+          </button>
         ) : bestIndex !== undefined ? (
           <button
             type="button"
@@ -730,14 +751,12 @@ function Finished({
             onClick={() => onPreview(bestIndex)}
             className={primaryButton}
           >
-            Preview variation {variationNumber(batch, bestIndex)} on the grid
+            Preview option {variationNumber(batch, bestIndex)} on the grid
           </button>
         ) : (
-          <Dialog.Close asChild>
-            <button type="button" className={primaryButton}>
-              Close
-            </button>
-          </Dialog.Close>
+          <button type="button" className={primaryButton} onClick={onClose}>
+            Close
+          </button>
         )}
       </div>
     </div>

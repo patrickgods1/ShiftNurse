@@ -458,8 +458,9 @@ problem is often a group of three or more, not a pair.
       mutation-checked; `npm run check`; `npm run smoke`. `bench:solvers` not re-run: with no
       groups every new term is zero and no rule list changes, so its inputs price identically
 
-### M17 — Signed installers and updates (proposed)
-v0.1.0 ships unsigned: macOS users are told to run `xattr` and Windows users to click past
+### M17 — Signed installers and updates (deferred)
+Deferred by decision (2026-10-03): 1.0 ships unsigned with install instructions (M18 › Phase 8);
+the icon moves to M18. v0.1.0 ships unsigned: macOS users are told to run `xattr` and Windows users to click past
 SmartScreen, and an installed copy has no way to learn that a fix exists — the crash-on-launch
 fix in PR #6 reached nobody who had already installed the first draft. Nothing here is started.
 - [ ] Apple Developer ID signing with hardened runtime and entitlements, and notarisation
@@ -467,12 +468,123 @@ fix in PR #6 reached nobody who had already installed the first draft. Nothing h
 - [ ] Windows Authenticode signing (e.g. Azure Trusted Signing) for the NSIS installer
 - [ ] `electron-updater` with `publish: github`: `latest*.yml` and blockmaps in the release,
       a "restart to update" prompt, never an unattended restart mid-shift
-- [ ] An app icon (`apps/desktop/build/icon.{icns,ico,png}`) — installers use Electron's default
+- [x] An app icon (`apps/desktop/build/icon.{icns,ico,png}`) — installers use Electron's default
       (drawn: `build/icon.png` from `scripts/make-icon.mjs`; tick once a packaged build shows it)
+      (M18 Phase 8: all three committed; both mac apps carry the .icns, the Windows exe all seven
+      .ico images)
 - [ ] An in-app "new version available" banner from GitHub's latest release (`main/updates.ts`;
       tick once a packaged v0.1.x has shown it for a published v0.1.y)
 - [ ] Verify: a signed dmg opens without a Gatekeeper prompt on a clean Mac; the signed installer
       passes SmartScreen on real Windows 11; v0.1.x updates itself to v0.1.y from a draft release
+
+### M18 — Release hardening (in progress)
+The 2026-10-03 release audit: data safety, renderer correctness, maintainability, tests, the
+manager's experience and the contract rules a real hospital would check first. One PR per phase.
+
+**Phase 1 — Data safety and robustness**
+- [x] Backups written to `.partial`, `quick_check`ed, then renamed; quit waits for one in flight
+- [x] Restore refuses a damaged backup or one from a newer version; the restore is audited in the
+      restored database
+- [x] Backup trash moves and their audit rows succeed or fail together
+- [x] The CP-SAT runner is killed on a failed start, a hung solve and a crashed worker
+- [x] Hardening: CSP `object-src`/`base-uri`/`form-action`, redirect and frame navigation guards,
+      permission check handler, smoke harness loaded only in a smoke run, xlsx control characters
+- [x] Every patch goes through an allow-list (`updatePayRate`, conflict policy, solver settings)
+- [x] Every IPC call's arguments are checked at runtime (`shared/schemas`, zod) before main runs it
+- [x] Time off loaded for the period and its lookback only; Generate's freshness check recomputes
+      the fingerprint only after a write
+- [x] Verify: `npm run check` (1,283 tests); `npm run smoke`; `npm run dist` + `smoke:packaged`
+      (mac arm64); SA + LNS output unchanged on fixed inputs (no core change in this phase)
+
+**Phase 2 — Renderer correctness**
+- [x] Configuration edits refresh every read model derived from them (`invalidateUnitDerived`);
+      publish no longer refetches the whole app
+- [x] A failed save always reaches the manager (toast for any mutation without an inline error)
+- [x] Undo for grid edits (toast + Cmd/Ctrl-Z), published edits carrying an "Undo:" reason
+- [x] `board.tsx` split into edit, generate and dialog hooks; shared `Modal`, `EditorShell`,
+      `DateField`; instants formatted once
+- [x] Verify: invalidation matrix and mounted-query tests, 17 undo tests (incl. concurrent edits),
+      `npm run check` (1,386 tests), `npm run smoke`
+
+**Phase 3 — The manager's experience**
+- [x] Settings grouped (My unit, Contract & pay, Scheduling, Data) with links from where the
+      question comes up; navigation in workflow order with a pending-requests badge
+- [x] Generate says "options", not variations or seeds; unfilled shifts explained in words
+- [x] Fairness lists the actual nights, weekends and holidays, with "Show on schedule"
+- [x] Violation chips distinguishable without colour; 12px minimum on the grid at 1366×768
+- [x] "Someone called off" as the first action on Today
+- [x] Status banners collapsed into one row of pills so the grid has the screen at 1366×768
+- [x] Verify: `npm run check` (1,416+ tests); `npm run smoke`; screenshots at 1366×768 (five nurse
+      rows and the staffing footer visible, up from two or three)
+
+**Phase 4 — Core maintainability**
+- [x] Typed rule parameters (`paramsOf`/`requireParams`/`asParams`; no `as unknown as` params
+      outside the one accessor) and violation details read through `detailNumber`/`detailString`,
+      which refuse a missing value instead of reading it as zero
+- [x] `SolverModel`'s fixed setup (shifts, work calendar, hours buckets, pay context, carried
+      history) moved to `model-setup.ts`; shift types by map. The incremental pricing state stays
+      in the class: splitting it further risks the hash-identical guarantee for little gain
+- [x] Soft-rule pricing parity test between the rule engine and `SolverModel` (every natively
+      soft rule accounted for)
+- [x] `dayNumber` refuses a malformed date; memo caches bounded; `defaultRuleSet` takes its clock
+- [x] Conflicts analysis: fairness scored by `FairnessEvaluator` (bit-identical to
+      `scoreFairness`), a fix priced against the state it came from, indexes instead of `.find`
+      in loops — 2.5 s → ~640 ms on the scenario period; auto-resolve applies independent fixes
+      per analysis (minutes → seconds). Target was < 500 ms: the rest is one full `ScheduleView`
+      per simulated fix, which needs a copy-on-write view (follow-up below)
+- [ ] Follow-up: copy-on-write `ScheduleView` for simulated fixes, to reach < 500 ms
+- [x] Named core exports (243, from ~470); conflicts engine indexes and `resolve.ts` split into
+      candidates and scoring; shared audited update in `packages/db`
+- [x] Verify: SA + LNS output hashes unchanged on fixed inputs after every solver-touching change;
+      deterministic conflicts fixture hash unchanged; `bench:solvers` re-run
+
+**Phase 5 — Tests**
+- [x] Renderer harness (fake bridge) and dialog tests: decide, publish, generate/save, call-off,
+      new period, rules, assisted setup
+- [x] IPC channel-table test; DST and leap-day solver/cost/fairness tests; leave and day-of API
+      cases; property tests (diff, exchange, locks, dates, overtime)
+- [x] Coverage run passes first time; CP-SAT suites required on one CI leg; desktop main ≥ 70%
+      (measured 2026-10-04: main 77.1% lines, renderer 47.8% and now in the table, core 96.1%,
+      db 91.5%; the in-app smoke driver is excluded, Electron bootstrap is left to smoke)
+- [x] Smoke: generate→save, leave with cover, undo, call-off button, settings groups
+
+**Phase 6 — Contract rules for 1.0**
+- [x] A charge nurse without patients does not count toward the ratio (`chargeNurseTakesPatients`)
+- [x] Break relief so ratios hold at all times (`breakMinutesPerNurse`)
+- [x] California overtime: daily by workday, banded 1.5×/2×, seventh day
+- [x] No mandatory overtime: volunteer records and the `no-mandatory-overtime` rule
+- [x] Weekend pattern rule (every other weekend, weekends per period)
+- [x] Credential expiry day judged the same everywhere; 30-day look-ahead; the Dashboard's
+      next-steps count agrees with its "Credentials expiring" tile (1 vs 9 on the demo)
+- [x] Posting lead time; jurisdiction presets (CA, OR, NY, WA, MA) with citations checked
+      against the statute text (2026-10-04)
+- [x] Stated limits: what 1.0 does not enforce, in the app and the README
+      (verified 2026-10-04: `npm run check` 1,771 tests, smoke PASS; SA + LNS output unchanged on
+      the fixed fixtures; the new rules ship off. The plan's "rank unvolunteered overtime last"
+      became "volunteers first within the overtime tier": a phoned nurse who says yes is not
+      mandated. Found on the way: `weekendKey` filed an 'overlaps' Friday night under the
+      weekend before.)
+
+**Phase 8 — Distribution without signing**
+- [x] App icon in the dmg and installer
+- [x] Install instructions for unsigned builds; checksums in the release
+      (verified 2026-10-04: `iconutil` decodes every size of the .icns; `npm run dist` mac and
+      Windows; `smoke:packaged` PASS. README › Installing and the release notes give macOS 15's
+      Privacy & Security › Open Anyway route, which replaced Control-click › Open, and SmartScreen's;
+      the release page lists each installer's SHA-256. No screenshots: the Gatekeeper and
+      SmartScreen prompts only appear on a quarantined download, so they wait for the next
+      release's first install.)
+
+### M19–M26 — Union and HR features (after 1.0)
+Each is a milestone of its own: core algorithm and rules test-first, then entity, IPC and UI.
+- [ ] M19 Seniority leave bidding (bid rounds awarded in seniority order, every denial reasoned)
+- [ ] M20 Low-census cancellation order (policy tiers, rotation in the ledger, Today flow)
+- [ ] M21 Float pool and multi-unit staff (other-unit shifts as busy time, float rotation)
+- [ ] M22 Leave balances and FMLA (accrual, certifications, balance warnings)
+- [ ] M23 Pay realism (missed-break premium, call-back, minimum reporting and on-call pay)
+- [ ] M24 Pooled licensed-nurse ratios with a minimum RN share
+- [ ] M25 Preceptor pairing rule
+- [ ] M26 Grievance export of the audit trail
 
 ---
 

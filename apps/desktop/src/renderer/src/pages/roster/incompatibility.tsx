@@ -9,7 +9,6 @@
  * nowhere else: violation text on the grid and in exports names the people and the hours only.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import type { Id, IncompatibilityGroup, IsoDate, Nurse } from '@shiftnurse/core';
 import { type FormEvent, useId, useState } from 'react';
 import {
@@ -19,13 +18,13 @@ import {
   useUpdateIncompatibilityGroup,
 } from '../../api.js';
 import { AsyncState } from '../../components/async-state.js';
+import { DateField } from '../../components/date-field.js';
+import { Modal } from '../../components/modal.js';
 import {
   DANGER,
-  DIALOG,
   errorMessage,
   INPUT,
   LABEL,
-  OVERLAY,
   PRIMARY,
   SECONDARY,
   SMALL,
@@ -227,138 +226,120 @@ function GroupDialog({ unitId, nurses, group, onClose }: DialogProps) {
   };
 
   return (
-    <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content className={`${DIALOG} w-[520px]`}>
-          <Dialog.Title className="mb-1 text-lg font-semibold text-text">
-            {group ? 'Edit group' : 'New group'}
-          </Dialog.Title>
-          <Dialog.Description className="mb-4 text-sm text-text-muted">
-            Judged by the hours people share: a mid shift overlapping a day shift counts.
-          </Dialog.Description>
-          <form onSubmit={onSubmit} className="flex flex-col gap-4">
-            <label className={LABEL}>
-              Name
-              <input
-                className={INPUT}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Nights conflict"
-              />
-            </label>
+    <Modal
+      open
+      onOpenChange={(open) => !open && onClose()}
+      size="lg"
+      variant="popup"
+      title={group ? 'Edit group' : 'New group'}
+      description="Judged by the hours people share: a mid shift overlapping a day shift counts."
+    >
+      <form onSubmit={onSubmit} className="mt-4 flex flex-col gap-4">
+        <label className={LABEL}>
+          Name
+          <input
+            className={INPUT}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Nights conflict"
+          />
+        </label>
 
-            <fieldset className="flex flex-col gap-2">
-              <legend className="mb-1 text-xs text-text-muted">
-                Members ({members.size} chosen)
-              </legend>
-              <input
-                type="search"
-                aria-label="Filter nurses"
-                className={INPUT}
-                placeholder="Filter by name…"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-              />
-              <div className="max-h-48 overflow-y-auto rounded-md border border-border p-2">
-                {choices.map((n) => (
-                  <label key={n.id} className="flex items-center gap-2 py-0.5 text-sm text-text">
-                    <input
-                      type="checkbox"
-                      checked={members.has(n.id)}
-                      onChange={() => toggle(n.id)}
-                    />
-                    {n.lastName}, {n.firstName}
-                    <span className="text-xs text-text-muted">
-                      {n.role}
-                      {n.active ? '' : ' · inactive'}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-
-            <label className={LABEL}>
-              How many of them may be on the floor at once
-              <input
-                type="number"
-                min={1}
-                max={Math.max(1, members.size - 1)}
-                className={`${INPUT} w-24`}
-                value={maxTogether}
-                onChange={(e) => setMaxTogether(e.target.value)}
-              />
-            </label>
-
-            <div className="grid grid-cols-2 gap-4">
-              <label className={LABEL} htmlFor={`${ids}-starts`}>
-                Starts (optional)
-                <input
-                  id={`${ids}-starts`}
-                  type="date"
-                  className={INPUT}
-                  value={startsOn}
-                  onChange={(e) => setStartsOn(e.target.value)}
-                />
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-1 text-xs text-text-muted">Members ({members.size} chosen)</legend>
+          <input
+            type="search"
+            aria-label="Filter nurses"
+            className={INPUT}
+            placeholder="Filter by name…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <div className="max-h-48 overflow-y-auto rounded-md border border-border p-2">
+            {choices.map((n) => (
+              <label key={n.id} className="flex items-center gap-2 py-0.5 text-sm text-text">
+                <input type="checkbox" checked={members.has(n.id)} onChange={() => toggle(n.id)} />
+                {n.lastName}, {n.firstName}
+                <span className="text-xs text-text-muted">
+                  {n.role}
+                  {n.active ? '' : ' · inactive'}
+                </span>
               </label>
-              <label className={LABEL} htmlFor={`${ids}-ends`}>
-                Ends (optional)
-                <input
-                  id={`${ids}-ends`}
-                  type="date"
-                  className={INPUT}
-                  value={endsOn}
-                  onChange={(e) => setEndsOn(e.target.value)}
-                />
-              </label>
-            </div>
+            ))}
+          </div>
+        </fieldset>
 
-            <label className={LABEL}>
-              Reason for this change
-              <textarea
-                className={INPUT}
-                rows={2}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="Recorded in the audit log. Not shown on the schedule."
-              />
-            </label>
+        <label className={LABEL}>
+          How many of them may be on the floor at once
+          <input
+            type="number"
+            min={1}
+            max={Math.max(1, members.size - 1)}
+            className={`${INPUT} w-24`}
+            value={maxTogether}
+            onChange={(e) => setMaxTogether(e.target.value)}
+          />
+        </label>
 
-            {problem && (name || members.size > 0 || reason) ? (
-              <p className="text-xs text-text-muted">{problem}</p>
-            ) : null}
-            {error ? (
-              <p role="alert" className="text-sm text-danger">
-                {error}
-              </p>
-            ) : null}
+        <div className="grid grid-cols-2 gap-4">
+          <DateField
+            id={`${ids}-starts`}
+            label="Starts (optional)"
+            value={startsOn as IsoDate | ''}
+            onChange={setStartsOn}
+          />
+          <DateField
+            id={`${ids}-ends`}
+            label="Ends (optional)"
+            value={endsOn as IsoDate | ''}
+            onChange={setEndsOn}
+          />
+        </div>
 
-            <div className="flex items-center justify-between gap-2">
-              {group ? (
-                <button
-                  type="button"
-                  className={DANGER}
-                  disabled={pending || !reason.trim()}
-                  onClick={onRemove}
-                  title={reason.trim() ? undefined : 'Enter a reason first'}
-                >
-                  Remove group
-                </button>
-              ) : (
-                <span />
-              )}
-              <div className="flex gap-2">
-                <button type="button" className={SECONDARY} onClick={onClose}>
-                  Cancel
-                </button>
-                <button type="submit" className={PRIMARY} disabled={pending || !!problem}>
-                  {pending ? 'Saving…' : 'Save'}
-                </button>
-              </div>
-            </div>
-          </form>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        <label className={LABEL}>
+          Reason for this change
+          <textarea
+            className={INPUT}
+            rows={2}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Recorded in the audit log. Not shown on the schedule."
+          />
+        </label>
+
+        {problem && (name || members.size > 0 || reason) ? (
+          <p className="text-xs text-text-muted">{problem}</p>
+        ) : null}
+        {error ? (
+          <p role="alert" className="text-sm text-danger">
+            {error}
+          </p>
+        ) : null}
+
+        <div className="flex items-center justify-between gap-2">
+          {group ? (
+            <button
+              type="button"
+              className={DANGER}
+              disabled={pending || !reason.trim()}
+              onClick={onRemove}
+              title={reason.trim() ? undefined : 'Enter a reason first'}
+            >
+              Remove group
+            </button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
+            <button type="button" className={SECONDARY} onClick={onClose}>
+              Cancel
+            </button>
+            <button type="submit" className={PRIMARY} disabled={pending || !!problem}>
+              {pending ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      </form>
+    </Modal>
   );
 }

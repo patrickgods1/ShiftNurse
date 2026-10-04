@@ -6,6 +6,7 @@ import {
   type BurdenCounters,
   compareDates,
   deriveCounters,
+  deriveOccurrences,
   type FairnessLedgerEntry,
   groupIntoPayPeriods,
   type HistoricalShiftRow,
@@ -52,12 +53,13 @@ export function fairnessReport(db: DbLike, periodId: Id) {
   const nurses = listNursesForUnit(db, period.unitId);
   // No lookback: the counters are what *this* period scheduled; history comes from the ledger.
   const schedule = scheduleViewFor(db, period, { lookback: false, nurses });
-  const ctx = counterContext(db, period.unitId, ruleSet);
+  const ctx = counterContext(db, period.unitId, ruleSet, period);
   // Only rows strictly before this period: if this period was published before, its own
   // ledger row would otherwise be counted as history *and* as the current draft.
   return scoreFairness({
     nurses: nurses.filter((n) => n.active),
     current: deriveCounters(schedule, ctx),
+    occurrences: deriveOccurrences(schedule, ctx),
     history: ledgerHistory(db, period.unitId, period.startDate),
     preferences: ctx.preferences,
     weights: ruleSet.fairnessWeights,

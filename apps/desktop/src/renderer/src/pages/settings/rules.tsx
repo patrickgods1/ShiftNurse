@@ -37,12 +37,14 @@ import {
   resolveConfigs,
   WEEKDAY_NAMES,
 } from '@shiftnurse/core';
-import { useState } from 'react';
+import { useSearch } from '@tanstack/react-router';
+import { useEffect, useState } from 'react';
 import { useRuleSet, useSaveRuleSet } from '../../api-config.js';
 import { AsyncState } from '../../components/async-state.js';
+import { EditorShell } from '../../components/editor-shell.js';
 import { CheckField, describedBy, Field, InfoTip } from '../../components/field-help.js';
-import { INPUT, PRIMARY, SECONDARY } from '../../components/ui.js';
-import { useUnsavedChanges } from '../../components/unsaved-changes.js';
+import { INPUT } from '../../components/ui.js';
+import { formatInstant } from '../../format.js';
 import { useUnitId } from '../../unit-context.js';
 import { invalidParams, numberFieldValue, paramError, withNumberParam } from './rule-params.js';
 
@@ -101,15 +103,6 @@ const FAIRNESS_TIPS: Record<FairnessComponent, string> = {
     "How often each nurse's time-off requests are approved. Raise it so denials do not keep " +
     'landing on the same people.',
 };
-
-/** "Oct 2, 2026, 5:53 PM": the app's date style, with the time a version was saved. */
-const SAVED_AT = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' });
-
-function formatSavedAt(createdAt: number): string {
-  // `createdAt` is an audit-style instant, not schedule geometry, so a plain `Date` is the
-  // right tool here (see the time-model header in packages/core/src/domain/time.ts).
-  return SAVED_AT.format(new Date(createdAt));
-}
 
 function clearSeverityOverride(config: RuleConfig): RuleConfig {
   const { ruleId, enabled, params } = config;
@@ -357,10 +350,12 @@ function RuleCard({
   rule,
   config,
   onChange,
+  highlighted,
 }: {
   rule: Rule<never>;
   config: RuleConfig;
   onChange: (next: RuleConfig) => void;
+  highlighted: boolean;
 }) {
   const effectiveSeverity: RuleSeverity = config.severityOverride ?? rule.severity;
   const alternateSeverity: RuleSeverity = rule.severity === 'hard' ? 'soft' : 'hard';
@@ -369,8 +364,12 @@ function RuleCard({
 
   return (
     <div
+      id={`rule-${rule.id}`}
+      data-rule-id={rule.id}
       data-testid={`rule-card-${rule.id}`}
-      className="rounded-md border border-border bg-surface p-4"
+      className={`rounded-md border bg-surface p-4 ${
+        highlighted ? 'border-accent ring-2 ring-accent' : 'border-border'
+      }`}
     >
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -629,8 +628,19 @@ export default function RulesPanel() {
   const [weekendDefinition, setWeekendDefinition] = useState<WeekendDefinition>(DEFAULT_WEEKEND);
   const [fairnessWeights, setFairnessWeights] = useState<FairnessWeights>(DEFAULT_FAIRNESS_WEIGHTS);
   const [savedMessage, setSavedMessage] = useState<string | undefined>(undefined);
+  const [savedVersion, setSavedVersion] = useState<number | undefined>(undefined);
 
   const data = ruleSetQuery.data;
+
+  // A "Change this rule" link from the grid names the rule it came from; the cards only exist
+  // once the rule set has loaded, so the scroll waits for that.
+  const ruleParam = useSearch({ strict: false }).rule;
+  const targetRule = typeof ruleParam === 'string' ? ruleParam : undefined;
+  const loaded = data !== undefined;
+  useEffect(() => {
+    if (!loaded || targetRule === undefined) return;
+    document.getElementById(`rule-${targetRule}`)?.scrollIntoView?.({ block: 'center' });
+  }, [loaded, targetRule]);
 
   // Sync local edit state from the loaded (or just-saved) version. Guarded on the version
   // number rather than run in an effect, so the first paint never flashes empty defaults
@@ -642,7 +652,9 @@ export default function RulesPanel() {
     setConfigs(resolveConfigs(data));
     setWeekendDefinition(data.weekendDefinition);
     setFairnessWeights(data.fairnessWeights);
-    setSavedMessage(undefined);
+    // The refetch after our own save lands here too; it is the version the message names, so
+    // only a different version (another window, a unit switch) clears it.
+    if (data.version !== savedVersion) setSavedMessage(undefined);
   }
 
   const dirty =
@@ -651,7 +663,6 @@ export default function RulesPanel() {
       JSON.stringify(configs) !== JSON.stringify(resolveConfigs(data)) ||
       JSON.stringify(weekendDefinition) !== JSON.stringify(data.weekendDefinition) ||
       JSON.stringify(fairnessWeights) !== JSON.stringify(data.fairnessWeights));
-  useUnsavedChanges('Rules', dirty);
 
   if (ruleSetQuery.isPending) {
     return <AsyncState status="loading" label="Loading rules" />;
@@ -681,7 +692,10 @@ export default function RulesPanel() {
     saveMutation.mutate(
       { unitId, name, configs, weekendDefinition, fairnessWeights },
       {
-        onSuccess: (saved) => setSavedMessage(`Saved version ${saved.version}`),
+        onSuccess: (saved) => {
+          setSavedVersion(saved.version);
+          setSavedMessage(`Saved version ${saved.version}`);
+        },
       },
     );
   }
@@ -694,97 +708,86 @@ export default function RulesPanel() {
   }
 
   return (
-    <div data-testid="rules-panel" className="flex flex-col gap-4 pb-24">
-      <section className="rounded-md border border-border bg-surface p-4">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <Field
-            id="rule-set-name"
-            label="Rule set name"
-            className="min-w-[240px] flex-1"
-            tip="A name for your own reference, such as the contract it follows. Each save keeps the name with the new version."
-          >
-            <input
-              id="rule-set-name"
-              type="text"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              className={INPUT}
-            />
-          </Field>
-          <p className="text-sm text-text-muted">
-            Version {data.version} · saved {formatSavedAt(data.createdAt)}
-          </p>
-        </div>
-        <p className="mt-3 text-xs text-text-muted">
-          Saving creates version {nextVersion}. It never rewrites version {data.version} — schedules
-          already built under it keep reading it, so a compliance report never changes
-          retroactively.
-        </p>
-      </section>
-
-      {CATEGORY_ORDER.map(({ id, label, intro }) => {
-        const rulesInCategory = rulesByCategory.get(id) ?? [];
-        if (rulesInCategory.length === 0 && id !== 'equity') return null;
-
-        return (
-          <section key={id} className="flex flex-col gap-3">
-            <div>
-              <h2 className="text-base font-semibold text-text">{label}</h2>
-              <p className="text-sm text-text-muted">{intro}</p>
-            </div>
-            {id === 'equity' ? (
-              <>
-                <FairnessWeightsSection value={fairnessWeights} onChange={setFairnessWeights} />
-                <WeekendSection value={weekendDefinition} onChange={setWeekendDefinition} />
-              </>
-            ) : null}
-            {rulesInCategory.map((rule) => {
-              const config = configs.find((c) => c.ruleId === rule.id);
-              if (config === undefined) return null;
-              return (
-                <RuleCard
-                  key={rule.id}
-                  rule={rule}
-                  config={config}
-                  onChange={(next) => updateConfig(rule.id, next)}
-                />
-              );
-            })}
-          </section>
-        );
-      })}
-
-      <div
-        data-sticky-footer
-        className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-border bg-bg px-4 py-3"
+    <div data-testid="rules-panel" className="pb-24">
+      <EditorShell
+        label="Rules"
+        dirty={dirty}
+        saving={saveMutation.isPending}
+        error={
+          saveMutation.error ??
+          (problems.length > 0 ? `Fix before saving: ${problems.join('; ')}` : undefined)
+        }
+        canSave={problems.length === 0}
+        onSave={save}
+        onDiscard={discard}
+        saveLabel={`Save as version ${nextVersion}`}
       >
-        {saveMutation.error instanceof Error ? (
-          <p role="alert" className="mr-auto text-sm text-danger">
-            {saveMutation.error.message}
+        <section className="rounded-md border border-border bg-surface p-4">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <Field
+              id="rule-set-name"
+              label="Rule set name"
+              className="min-w-[240px] flex-1"
+              tip="A name for your own reference, such as the contract it follows. Each save keeps the name with the new version."
+            >
+              <input
+                id="rule-set-name"
+                type="text"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                className={INPUT}
+              />
+            </Field>
+            <p className="text-sm text-text-muted">
+              Version {data.version} · saved {formatInstant(data.createdAt)}
+            </p>
+          </div>
+          <p className="mt-3 text-xs text-text-muted">
+            Saving creates version {nextVersion}. It never rewrites version {data.version} —
+            schedules already built under it keep reading it, so a compliance report never changes
+            retroactively.
           </p>
-        ) : problems.length > 0 ? (
-          <p role="alert" className="mr-auto text-sm text-danger">
-            Fix before saving: {problems.join('; ')}
-          </p>
-        ) : savedMessage !== undefined ? (
-          <p role="status" className="mr-auto text-sm text-success">
+        </section>
+
+        {CATEGORY_ORDER.map(({ id, label, intro }) => {
+          const rulesInCategory = rulesByCategory.get(id) ?? [];
+          if (rulesInCategory.length === 0 && id !== 'equity') return null;
+
+          return (
+            <section key={id} className="flex flex-col gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-text">{label}</h2>
+                <p className="text-sm text-text-muted">{intro}</p>
+              </div>
+              {id === 'equity' ? (
+                <>
+                  <FairnessWeightsSection value={fairnessWeights} onChange={setFairnessWeights} />
+                  <WeekendSection value={weekendDefinition} onChange={setWeekendDefinition} />
+                </>
+              ) : null}
+              {rulesInCategory.map((rule) => {
+                const config = configs.find((c) => c.ruleId === rule.id);
+                if (config === undefined) return null;
+                return (
+                  <RuleCard
+                    key={rule.id}
+                    rule={rule}
+                    config={config}
+                    onChange={(next) => updateConfig(rule.id, next)}
+                    highlighted={rule.id === targetRule}
+                  />
+                );
+              })}
+            </section>
+          );
+        })}
+
+        {savedMessage !== undefined && !dirty ? (
+          <p role="status" className="text-sm text-success">
             {savedMessage}
           </p>
-        ) : dirty ? (
-          <p className="mr-auto text-sm text-text-muted">Unsaved changes</p>
         ) : null}
-        <button type="button" disabled={!dirty} onClick={discard} className={SECONDARY}>
-          Discard changes
-        </button>
-        <button
-          type="button"
-          disabled={!dirty || problems.length > 0 || saveMutation.isPending}
-          onClick={save}
-          className={PRIMARY}
-        >
-          {saveMutation.isPending ? 'Saving…' : `Save as version ${nextVersion}`}
-        </button>
-      </div>
+      </EditorShell>
     </div>
   );
 }

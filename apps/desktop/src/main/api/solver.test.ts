@@ -18,6 +18,7 @@ import {
   listAssignmentsForPeriod,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { slow } from '../slow.test-support.js';
 import { SolverJobs, seedFor } from '../solver-jobs.js';
 import type { SolverWorkerData } from '../solver-worker.js';
 import { alertsFor } from './alerts.js';
@@ -37,7 +38,7 @@ const ITERATIONS = 3000;
 
 // Each test seeds the scenario unit and solves it up to five times: under 2 s locally, several
 // times that on a Windows CI runner.
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: slow(30_000) });
 
 /** The worker's job, done on the next tick of this thread. */
 function inProcessWorker(data: SolverWorkerData) {

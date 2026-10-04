@@ -26,7 +26,16 @@ import type {
   ShiftType,
   Violation,
 } from '@shiftnurse/core';
-import { type KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type KeyboardEvent,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { usePanelFocus } from '../../components/use-panel-focus.js';
 import { formatDateWithWeekday, fteLabel, listName } from '../../format.js';
 import { describePreference } from '../../preferences.js';
@@ -64,7 +73,7 @@ function CountBadge({ hard, soft, title }: { hard: number; soft: number; title: 
     <span
       title={title}
       className={`ml-1 inline-flex min-w-[1rem] items-center justify-center rounded-full px-1
-        text-[10px] font-semibold ${hard > 0 ? 'bg-danger/15 text-danger' : 'bg-warn/15 text-warn'}`}
+        text-xs font-semibold ${hard > 0 ? 'bg-danger/15 text-danger' : 'bg-warn/15 text-warn'}`}
     >
       {hard > 0 ? hard : soft}
     </span>
@@ -214,6 +223,8 @@ interface GridRowProps {
   violationsByAssignment: ReadonlyMap<Id, Violation[]>;
   pendingIds: ReadonlySet<Id>;
   highlightKeys: ReadonlySet<string> | undefined;
+  /** This row is the nurse a link asked to see; a boolean so no other row re-renders. */
+  highlighted: boolean;
   nurseViolations: readonly Violation[] | undefined;
   /** The highlighted drop target's date, when it is in this row. */
   dragOverDate: IsoDate | undefined;
@@ -241,6 +252,7 @@ const GridRow = memo(function GridRow({
   violationsByAssignment,
   pendingIds,
   highlightKeys,
+  highlighted,
   nurseViolations,
   dragOverDate,
   row,
@@ -259,7 +271,12 @@ const GridRow = memo(function GridRow({
   return (
     // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header)
     // biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops
-    <div role="row" className="flex">
+    <div
+      role="row"
+      data-nurse-id={nurse.id}
+      data-highlighted={highlighted ? 'true' : undefined}
+      className={highlighted ? 'flex bg-accent/10 ring-2 ring-inset ring-accent' : 'flex'}
+    >
       {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header) */}
       {/* biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops */}
       <div
@@ -322,6 +339,8 @@ export interface ScheduleGridProps {
   readOnly: boolean;
   /** While previewing a Generate variation: its shifts that differ from the draft. */
   highlightKeys?: ReadonlySet<string>;
+  /** Marks this nurse's row (and the board scrolls to it). */
+  focusNurseId?: Id | undefined;
   violationsByAssignment: ReadonlyMap<Id, Violation[]>;
   violationsByNurse: ReadonlyMap<Id, Violation[]>;
   violationsByDate: ReadonlyMap<IsoDate, Violation[]>;
@@ -343,6 +362,7 @@ export function ScheduleGrid({
   pendingIds,
   readOnly,
   highlightKeys,
+  focusNurseId,
   violationsByAssignment,
   violationsByNurse,
   violationsByDate,
@@ -365,6 +385,41 @@ export function ScheduleGrid({
 
   const activeNurses = useMemo(() => sortNurses(nurses), [nurses]);
   const gridRef = useRef<HTMLDivElement>(null);
+
+  // The grid's own scroll area ends at the window bottom, whatever sits above it (the status
+  // row, an open detail panel, the candidates bar): a fixed `calc(100vh - N)` was right for one
+  // layout and a second page scrollbar for every other. 1.5rem is the page's bottom padding.
+  useLayoutEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const fit = () => {
+      const room = window.innerHeight - el.getBoundingClientRect().top - 24;
+      el.style.maxHeight = `${Math.max(240, Math.floor(room))}px`;
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    // Content above the grid growing or shrinking moves its top without a window resize.
+    // Re-fit on the next frame: resizing inside the observer's own callback is the "loop
+    // completed with undelivered notifications" error.
+    let frame = 0;
+    const refit = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(fit);
+    };
+    // The page scrolls under a fixed window, so the grid's top moves while scrolling too.
+    window.addEventListener('scroll', refit, { passive: true, capture: true });
+    const observer =
+      typeof ResizeObserver === 'undefined' || !el.parentElement
+        ? undefined
+        : new ResizeObserver(refit);
+    if (observer && el.parentElement) observer.observe(el.parentElement);
+    return () => {
+      window.removeEventListener('resize', fit);
+      window.removeEventListener('scroll', refit, { capture: true });
+      observer?.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, []);
   const [active, setActive] = useState<{ row: number; col: number }>({ row: 0, col: 0 });
   const [picker, setPicker] = useState<
     { nurseId: Id; date: IsoDate; top: number; left: number } | undefined
@@ -464,7 +519,7 @@ export function ScheduleGrid({
       aria-colcount={columns.length + 1}
       data-testid="schedule-grid"
       onKeyDown={handleGridKeyDown}
-      className="isolate max-h-[calc(100vh-9rem)] overflow-auto rounded-md border border-border"
+      className="isolate max-h-[calc(100vh-14rem)] overflow-auto rounded-md border border-border"
     >
       <div className="inline-block min-w-full">
         {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header) */}
@@ -522,6 +577,7 @@ export function ScheduleGrid({
             violationsByAssignment={violationsByAssignment}
             pendingIds={nursesWithPending.has(nurse.id) ? pendingIds : NO_PENDING}
             highlightKeys={highlightKeys}
+            highlighted={nurse.id === focusNurseId}
             nurseViolations={violationsByNurse.get(nurse.id)}
             dragOverDate={dragOver?.nurseId === nurse.id ? dragOver.date : undefined}
             readOnly={readOnly}

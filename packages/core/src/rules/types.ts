@@ -27,6 +27,7 @@ import type {
   IncompatibilityGroup,
   Nurse,
   NurseCredential,
+  OvertimeVolunteer,
   ShiftCredentialRequirement,
   ShiftType,
   TimeOffRequest,
@@ -80,7 +81,8 @@ export type ViolationCode =
   | 'holiday_rotation'
   | 'holiday_pair_both'
   | 'short_recovery_after_nights'
-  | 'works_during_pending_time_off';
+  | 'works_during_pending_time_off'
+  | 'mandatory_overtime';
 
 /**
  * One nurse worked one past holiday. Derived from published schedules, or recorded by hand for
@@ -144,6 +146,8 @@ export interface RuleContext {
 
   /** Nurses who should not be on the floor together, with their dates in force. */
   incompatibilityGroups: readonly IncompatibilityGroup[];
+  /** Each nurse's standing offers to work overtime. */
+  overtimeVolunteersByNurse: ReadonlyMap<Id, readonly OvertimeVolunteer[]>;
 }
 
 /**
@@ -181,6 +185,11 @@ export interface Rule<P = Record<string, unknown>> {
   /** Whether the verdict reads one nurse's timeline or one shift's roster. See {@link RuleScope}. */
   scope: RuleScope;
   defaultParams: P;
+  /**
+   * False for a rule a unit opts into (a law or contract term only some units have): it starts
+   * disabled in a new rule set and in any stored rule set saved before it shipped. Absent: on.
+   */
+  enabledByDefault?: boolean;
   /**
    * What each parameter means to a manager, keyed like `P`. The Rules screen builds its form
    * from this, so the type demands a doc for every key — optional ones included, which is how a
@@ -237,6 +246,34 @@ export function nurseName(nurse: Nurse): string {
 }
 
 /** Build a violation, defaulting the id/name/severity from the rule that raised it. */
+/**
+ * A number a rule put in `details`, for code that computes with it. Throws when it is missing
+ * or not a number: these payloads are loosely typed, and reading a renamed key as `?? 0` once
+ * turned "short 2 RNs" into a shortfall of zero — a silently wrong staffing number, which is
+ * worse than a crash. Use `detailOptional` only where the rule may legitimately omit the field.
+ */
+export function detailNumber(v: Violation, key: string): number {
+  const value = v.details?.[key];
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    throw new Error(`Violation ${v.code} from ${v.ruleId} has no number "${key}" in its details`);
+  }
+  return value;
+}
+
+/** A string a rule put in `details` — an id, a role. Throws when missing, like `detailNumber`. */
+export function detailString(v: Violation, key: string): string {
+  const value = v.details?.[key];
+  if (typeof value !== 'string') {
+    throw new Error(`Violation ${v.code} from ${v.ruleId} has no "${key}" in its details`);
+  }
+  return value;
+}
+
+/** A detail the rule may leave out (a requirement for any role has no `role`). */
+export function detailOptional<T = unknown>(v: Violation, key: string): T | undefined {
+  return v.details?.[key] as T | undefined;
+}
+
 export function violation(
   rule: Pick<Rule<never>, 'id' | 'name' | 'severity'>,
   severity: RuleSeverity,

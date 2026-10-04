@@ -70,6 +70,7 @@ export function weeksOf(
   for (let i = lead; i > 0; i -= 1) cells.push({ date: addDays(first.date, -i) });
   for (const day of days) cells.push({ date: day.date, day });
   const last = cells[cells.length - 1]!;
+  // A cell count padding the last row to a full week, not weekday maths.
   for (let i = 1; cells.length % 7 !== 0; i += 1) cells.push({ date: addDays(last.date, i) });
   const weeks: HeatmapCell[][] = [];
   for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));

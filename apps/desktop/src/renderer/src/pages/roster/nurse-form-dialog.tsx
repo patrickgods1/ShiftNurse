@@ -6,13 +6,14 @@
  * than omitting the key.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
-import type { EmploymentType, Id, Nurse, NurseRole } from '@shiftnurse/core';
+import type { EmploymentType, Id, IsoDate, Nurse, NurseRole } from '@shiftnurse/core';
 import { EMPLOYMENT_TYPE_LABELS, EMPLOYMENT_TYPES } from '@shiftnurse/core';
 import { type FormEvent, type ReactNode, useEffect, useId, useState } from 'react';
 import type { NurseInput, NursePatch } from '../../../../shared/api.js';
 import { useCreateNurse, useUpdateNurse } from '../../api.js';
-import { OVERLAY, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { DateField } from '../../components/date-field.js';
+import { Modal } from '../../components/modal.js';
+import { PRIMARY, SECONDARY } from '../../components/ui.js';
 
 const ROLES: readonly NurseRole[] = ['RN', 'LPN', 'CNA'];
 
@@ -238,204 +239,192 @@ export function NurseFormDialog({
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content
-          className="fixed z-50 left-1/2 top-1/2 max-h-[85vh] w-[560px] -translate-x-1/2 -translate-y-1/2
-            overflow-y-auto rounded-lg border border-border bg-surface p-6 shadow-lg"
-        >
-          <Dialog.Title className="mb-4 text-lg font-semibold text-text">
-            {isEdit ? `Edit ${nurse.firstName} ${nurse.lastName}` : 'Add nurse'}
-          </Dialog.Title>
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      size="lg"
+      title={isEdit ? `Edit ${nurse.firstName} ${nurse.lastName}` : 'Add nurse'}
+    >
+      <form
+        id={formId}
+        data-testid="nurse-form"
+        className="mt-4"
+        onSubmit={handleSubmit}
+        noValidate
+      >
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Employee ID" error={errors.employeeId} htmlFor={`${formId}-empid`}>
+            <input
+              id={`${formId}-empid`}
+              className={inputClass}
+              value={form.employeeId}
+              onChange={(e) => setField('employeeId', e.target.value)}
+            />
+          </Field>
+          <Field label="Role" htmlFor={`${formId}-role`}>
+            <select
+              id={`${formId}-role`}
+              className={inputClass}
+              value={form.role}
+              onChange={(e) => setField('role', e.target.value as NurseRole)}
+            >
+              {ROLES.map((role) => (
+                <option key={role} value={role}>
+                  {role}
+                </option>
+              ))}
+            </select>
+          </Field>
 
-          <form id={formId} data-testid="nurse-form" onSubmit={handleSubmit} noValidate>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Employee ID" error={errors.employeeId} htmlFor={`${formId}-empid`}>
-                <input
-                  id={`${formId}-empid`}
-                  className={inputClass}
-                  value={form.employeeId}
-                  onChange={(e) => setField('employeeId', e.target.value)}
-                />
-              </Field>
-              <Field label="Role" htmlFor={`${formId}-role`}>
-                <select
-                  id={`${formId}-role`}
-                  className={inputClass}
-                  value={form.role}
-                  onChange={(e) => setField('role', e.target.value as NurseRole)}
-                >
-                  {ROLES.map((role) => (
-                    <option key={role} value={role}>
-                      {role}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+          <Field label="First name" error={errors.firstName} htmlFor={`${formId}-first`}>
+            <input
+              id={`${formId}-first`}
+              className={inputClass}
+              value={form.firstName}
+              onChange={(e) => setField('firstName', e.target.value)}
+            />
+          </Field>
+          <Field label="Last name" error={errors.lastName} htmlFor={`${formId}-last`}>
+            <input
+              id={`${formId}-last`}
+              className={inputClass}
+              value={form.lastName}
+              onChange={(e) => setField('lastName', e.target.value)}
+            />
+          </Field>
 
-              <Field label="First name" error={errors.firstName} htmlFor={`${formId}-first`}>
-                <input
-                  id={`${formId}-first`}
-                  className={inputClass}
-                  value={form.firstName}
-                  onChange={(e) => setField('firstName', e.target.value)}
-                />
-              </Field>
-              <Field label="Last name" error={errors.lastName} htmlFor={`${formId}-last`}>
-                <input
-                  id={`${formId}-last`}
-                  className={inputClass}
-                  value={form.lastName}
-                  onChange={(e) => setField('lastName', e.target.value)}
-                />
-              </Field>
+          <Field label="Employment type" htmlFor={`${formId}-employment`}>
+            <select
+              id={`${formId}-employment`}
+              className={inputClass}
+              value={form.employmentType}
+              onChange={(e) => setField('employmentType', e.target.value as EmploymentType)}
+            >
+              {EMPLOYMENT_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {EMPLOYMENT_TYPE_LABELS[type]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="FTE" error={errors.fte} htmlFor={`${formId}-fte`}>
+            <input
+              id={`${formId}-fte`}
+              type="number"
+              step="0.05"
+              min={0}
+              max={1.5}
+              className={inputClass}
+              value={form.fte}
+              onChange={(e) => setField('fte', e.target.value)}
+            />
+          </Field>
 
-              <Field label="Employment type" htmlFor={`${formId}-employment`}>
-                <select
-                  id={`${formId}-employment`}
-                  className={inputClass}
-                  value={form.employmentType}
-                  onChange={(e) => setField('employmentType', e.target.value as EmploymentType)}
-                >
-                  {EMPLOYMENT_TYPES.map((type) => (
-                    <option key={type} value={type}>
-                      {EMPLOYMENT_TYPE_LABELS[type]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="FTE" error={errors.fte} htmlFor={`${formId}-fte`}>
-                <input
-                  id={`${formId}-fte`}
-                  type="number"
-                  step="0.05"
-                  min={0}
-                  max={1.5}
-                  className={inputClass}
-                  value={form.fte}
-                  onChange={(e) => setField('fte', e.target.value)}
-                />
-              </Field>
+          <Field
+            label="Contracted hours / period"
+            error={errors.contractedHoursPerPeriod}
+            htmlFor={`${formId}-hours`}
+          >
+            <input
+              id={`${formId}-hours`}
+              type="number"
+              min={0}
+              className={inputClass}
+              value={form.contractedHoursPerPeriod}
+              onChange={(e) => {
+                setHoursTouched(true);
+                setField('contractedHoursPerPeriod', e.target.value);
+              }}
+            />
+            <span className="mt-1 block text-xs">
+              Worked out from FTE ({defaultContractedHours(1, payPeriodDays)}h a pay period at 1.0).
+              Change it to match the contract, e.g. 72h for three 12s a week.
+            </span>
+          </Field>
+          <div>
+            <DateField
+              id={`${formId}-seniority`}
+              label="Seniority date"
+              value={form.seniorityDate as IsoDate | ''}
+              onChange={(v) => setField('seniorityDate', v)}
+            />
+            {errors.seniorityDate !== undefined ? (
+              <span className="mt-1 block text-xs text-danger">{errors.seniorityDate}</span>
+            ) : null}
+          </div>
+        </div>
 
-              <Field
-                label="Contracted hours / period"
-                error={errors.contractedHoursPerPeriod}
-                htmlFor={`${formId}-hours`}
-              >
-                <input
-                  id={`${formId}-hours`}
-                  type="number"
-                  min={0}
-                  className={inputClass}
-                  value={form.contractedHoursPerPeriod}
-                  onChange={(e) => {
-                    setHoursTouched(true);
-                    setField('contractedHoursPerPeriod', e.target.value);
-                  }}
-                />
-                <span className="mt-1 block text-xs">
-                  Worked out from FTE ({defaultContractedHours(1, payPeriodDays)}h a pay period at
-                  1.0). Change it to match the contract, e.g. 72h for three 12s a week.
-                </span>
-              </Field>
-              <Field
-                label="Seniority date"
-                error={errors.seniorityDate}
-                htmlFor={`${formId}-seniority`}
-              >
-                <input
-                  id={`${formId}-seniority`}
-                  type="date"
-                  className={inputClass}
-                  value={form.seniorityDate}
-                  onChange={(e) => setField('seniorityDate', e.target.value)}
-                />
-              </Field>
-            </div>
+        <fieldset className="mt-4 flex gap-6">
+          <legend className="mb-1 text-sm font-medium text-text">On shift, this nurse can</legend>
+          <Checkbox
+            id={`${formId}-charge`}
+            label="Be charge nurse"
+            checked={form.isChargeEligible}
+            onChange={(v) => setField('isChargeEligible', v)}
+          />
+          <Checkbox
+            id={`${formId}-novice`}
+            label="New grad (needs an experienced RN on shift)"
+            checked={form.isNovice}
+            onChange={(v) => setField('isNovice', v)}
+          />
+          <Checkbox
+            id={`${formId}-float`}
+            label="Float to other units"
+            checked={form.isFloatEligible}
+            onChange={(v) => setField('isFloatEligible', v)}
+          />
+        </fieldset>
 
-            <fieldset className="mt-4 flex gap-6">
-              <legend className="mb-1 text-sm font-medium text-text">
-                On shift, this nurse can
-              </legend>
-              <Checkbox
-                id={`${formId}-charge`}
-                label="Be charge nurse"
-                checked={form.isChargeEligible}
-                onChange={(v) => setField('isChargeEligible', v)}
-              />
-              <Checkbox
-                id={`${formId}-novice`}
-                label="New grad (needs an experienced RN on shift)"
-                checked={form.isNovice}
-                onChange={(v) => setField('isNovice', v)}
-              />
-              <Checkbox
-                id={`${formId}-float`}
-                label="Float to other units"
-                checked={form.isFloatEligible}
-                onChange={(v) => setField('isFloatEligible', v)}
-              />
-            </fieldset>
-
-            <fieldset className="mt-4">
-              <legend className="mb-1 text-sm font-medium text-text">Contact (optional)</legend>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Phone" htmlFor={`${formId}-phone`}>
-                  <input
-                    id={`${formId}-phone`}
-                    className={inputClass}
-                    value={form.phone}
-                    onChange={(e) => setField('phone', e.target.value)}
-                  />
-                </Field>
-                <Field label="Email" error={errors.email} htmlFor={`${formId}-email`}>
-                  <input
-                    id={`${formId}-email`}
-                    type="email"
-                    className={inputClass}
-                    value={form.email}
-                    onChange={(e) => setField('email', e.target.value)}
-                  />
-                </Field>
-              </div>
-            </fieldset>
-
-            <Field label="Notes" htmlFor={`${formId}-notes`} className="mt-4">
-              <textarea
-                id={`${formId}-notes`}
+        <fieldset className="mt-4">
+          <legend className="mb-1 text-sm font-medium text-text">Contact (optional)</legend>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Phone" htmlFor={`${formId}-phone`}>
+              <input
+                id={`${formId}-phone`}
                 className={inputClass}
-                rows={2}
-                value={form.notes}
-                onChange={(e) => setField('notes', e.target.value)}
+                value={form.phone}
+                onChange={(e) => setField('phone', e.target.value)}
               />
             </Field>
+            <Field label="Email" error={errors.email} htmlFor={`${formId}-email`}>
+              <input
+                id={`${formId}-email`}
+                type="email"
+                className={inputClass}
+                value={form.email}
+                onChange={(e) => setField('email', e.target.value)}
+              />
+            </Field>
+          </div>
+        </fieldset>
 
-            {mutationError !== null && mutationError !== undefined ? (
-              <p role="alert" className="mt-3 text-sm text-danger">
-                {mutationError instanceof Error ? mutationError.message : String(mutationError)}
-              </p>
-            ) : null}
+        <Field label="Notes" htmlFor={`${formId}-notes`} className="mt-4">
+          <textarea
+            id={`${formId}-notes`}
+            className={inputClass}
+            rows={2}
+            value={form.notes}
+            onChange={(e) => setField('notes', e.target.value)}
+          />
+        </Field>
 
-            <div className="mt-6 flex justify-end gap-2">
-              <Dialog.Close asChild>
-                <button type="button" className={SECONDARY}>
-                  Cancel
-                </button>
-              </Dialog.Close>
-              <button
-                type="submit"
-                data-testid="nurse-form-save"
-                disabled={saving}
-                className={PRIMARY}
-              >
-                {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Add nurse'}
-              </button>
-            </div>
-          </form>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        {mutationError !== null && mutationError !== undefined ? (
+          <p role="alert" className="mt-3 text-sm text-danger">
+            {mutationError instanceof Error ? mutationError.message : String(mutationError)}
+          </p>
+        ) : null}
+
+        <div className="mt-6 flex justify-end gap-2">
+          <button type="button" className={SECONDARY} onClick={() => onOpenChange(false)}>
+            Cancel
+          </button>
+          <button type="submit" data-testid="nurse-form-save" disabled={saving} className={PRIMARY}>
+            {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Add nurse'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

@@ -25,7 +25,7 @@ export function ShiftPalette({ shiftTypes, readOnly }: ShiftPaletteProps) {
   return (
     <div
       data-testid="shift-palette"
-      className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface p-2"
+      className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface px-2 py-1"
     >
       <span className="text-xs font-medium text-text-muted">
         {readOnly ? 'Published — drag disabled' : 'Drag onto the grid to add a shift:'}

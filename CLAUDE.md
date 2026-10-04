@@ -100,6 +100,10 @@ self-service later becomes an intake surface rather than a new data model.
   protection; `.github/workflows/release.yml` builds each installer natively on a `vX.Y.Z` tag,
   smoke-tests it, and creates a **draft** release (`.github/release-notes.md`); it dry-runs on PRs
   touching packaging. Builds are unsigned.
+- **M18 — Release hardening** (in progress; boxes in `ROADMAP.md`): the 2026-10-03 release
+  audit's fixes, one PR per phase — data safety, renderer correctness, the manager's experience,
+  core maintainability, tests, contract rules for 1.0, unsigned distribution. M17 (signing) is
+  deferred; M19–M26 are the union and HR features planned for after 1.0.
 - **M15 — Selectable solvers** (complete; plan of record `docs/SOLVER_PLAN.md`, results
   `docs/solver-bench.md`): Settings › Generate (the solver tab) picks **hybrid** (default), **SA + LNS** or **CP-SAT**
   per unit; the Generate dialog overrides per run. `native/cpsat-runner` is the C++ OR-Tools
@@ -179,7 +183,7 @@ violations of their own.
 |---|---|
 | `npm test` | `vitest run` over `packages/*/src/**/*.test.ts`, renderer tests and `apps/desktop/src/main/**/*.test.ts`. The real gate. |
 | `npm run test:watch` | Vitest in watch mode. |
-| `npm run test:coverage` | Tests with v8 coverage over `packages/*` and desktop `main`; CI's ubuntu leg posts a per-area table (`scripts/coverage-summary.mjs`) to the run summary. |
+| `npm run test:coverage` | Tests with v8 coverage over `packages/*` and desktop `main`; CI's ubuntu leg posts a per-area table (`scripts/coverage-summary.mjs`) to the run summary. Coverage scales test timeouts 3× (config sets `COVERAGE=1`; explicit ones use `slow()`); CI's macOS leg sets `SHIFTNURSE_REQUIRE_CPSAT=1`, so a missing CP-SAT runner fails the cpsat tests instead of skipping them. |
 | `npm run lint` | `biome check .` — format + lint, no writes. |
 | `npm run lint:fix` | Biome check with `--write`. |
 | `npm run format` | `biome format --write .`. |
@@ -303,8 +307,12 @@ violations of their own.
   mutation hooks and their invalidation; it reloads the window before asserting on the grid.
   Do not read that as a cache bug in the app.
 - **Adding an IPC method:** add it to `ShiftNurseApi` and `API_CHANNELS` in `shared/api.ts`,
-  implement it in `main/api.ts` (logic in the matching `main/api/` module). Preload and renderer types follow; a missing implementation
-  is a type error, not a runtime "no handler".
+  its argument schema to `shared/schemas/<resource>.ts`, and implement it in `main/api.ts`
+  (logic in the matching `main/api/` module). Preload and renderer types follow; a missing
+  implementation or schema is a type error, not a runtime "no handler". `ipc.ts` parses every
+  call's arguments against `API_SCHEMAS` before the handler runs: object schemas are strict
+  (`object` in `schemas/primitives.ts`), so an unknown key is refused rather than dropped, and a
+  schema must never be stricter than what the renderer actually sends.
 - Bad data throws loudly (`ScheduleView` throws on an unknown nurse id). Silently dropping a
   row hides corruption; in scheduling that becomes a grievance.
 - **Fairness fair-share is pinned to `contractedHoursPerPeriod`, never worked hours.** That is
@@ -599,6 +607,36 @@ violations of their own.
   CP-SAT encoder, compliance alerts and the exchange evaluator alike. The weekly cap
   (`maxHoursPerWeek`) binds every week either way. The DB's `effectiveRateForNurse` delegates to core's `resolvePayRate`; do not add a second
   definition of "the rate in force".
+- **A ratio holds at all times, so its count is more than the bedside.** `Unit.ratioStaffing`
+  (migration 0015; absent or the column defaults = the old reading) says whether the charge nurse
+  takes patients and how many break minutes each bedside nurse takes. `deriveDemand` is the one
+  place it applies: `ratioDerived = ratioBedside + chargeWithoutPatients + breakRelief`, the charge
+  nurse added only to a standalone RN shift, relief `ceil(bedside × minutes ÷ (shift − 120 min))`,
+  one fewer when a charge nurse free of patients covers breaks. The ratio rule, both solvers,
+  day-of and conflicts read `ratioDerived`/`minCount` and follow; the breach divides patients by
+  the nurses at the bedside.
+- **Overtime is paid by the hour, at the highest multiplier any rule gives it.** Every rule makes
+  the end of a shift overtime from some hour on (`attributeOvertime` in `cost/cost.ts`); a shift's
+  overtime is bands, one `overtime` line each. Daily rules count the workday (shifts by start
+  date), `seventh_day` the last day of a work week worked every day. With equal multipliers this
+  is the old "larger premium per shift", so existing units price unchanged.
+- **A rule a unit opts into ships off.** `Rule.enabledByDefault: false` keeps it disabled in
+  `defaultRuleSet` and in a stored rule set saved before it shipped (`resolveConfigs`), so adding
+  one never changes an existing unit. `no-mandatory-overtime` and `weekend-pattern` are such.
+- **No mandatory overtime is judged against offers, not flags.** `isOvertime` says overtime is
+  authorised; `no-mandatory-overtime` (hard, off by default) also wants an `OvertimeVolunteer`
+  offer covering the date or notes beginning `Emergency:`. Neither solver writes an overtime row,
+  so CP-SAT meets it by construction; day-of calls volunteers first within the overtime tier.
+- **Weekends are filed by `weekendKey`, everywhere.** Fairness, `weekend-pattern` and both
+  solvers' prices use it; under `'overlaps'` a Friday night belongs to the weekend it runs into.
+  `weekendBreaches` is the one count (`SolverModel.weekendFor`, CP-SAT `weekendBreachExprs`).
+- **A credential is valid through its expiry date.** `credentialLapsedOn` is the one definition,
+  for the rules, the publish alerts and the Dashboard's lapsed list.
+- **State presets only tighten.** `JURISDICTION_PRESETS` cites the provision behind every value
+  (checked against the statute text, October 2026) and says what it leaves to the hospital;
+  `planJurisdiction` lowers looser ratio ceilings, grows break minutes, adds missing overtime
+  rules and switches rules on, never the reverse, and plans nothing on a second run. A change to
+  a law is a change to its preset, its citation and its summary together.
 
 ## Development discipline
 

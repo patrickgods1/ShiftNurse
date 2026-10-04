@@ -24,11 +24,26 @@ function credentialTone(expiresOn: string | undefined): 'neutral' | 'warn' | 'da
   return 'neutral';
 }
 
+/** Expiring credentials inside a month: the one definition the tile and Next steps share. */
+function dueWithin30Days(rows: ExpiringCredentialView[]): number {
+  return rows.filter(
+    (c) =>
+      c.nurseCredential.expiresOn !== undefined && daysFromToday(c.nurseCredential.expiresOn) <= 30,
+  ).length;
+}
+
+function plural(n: number, one: string, many: string): string {
+  return n === 1 ? one : many;
+}
+
 function PeriodCard({
   title,
   period,
+  note,
 }: {
   title: string;
+  /** A line under the status, e.g. when the schedule is due. */
+  note?: string | undefined;
   period: { name: string; startDate: string; endDate: string; status: string } | undefined;
 }) {
   return (
@@ -40,16 +55,35 @@ function PeriodCard({
         <>
           <p className="mt-1 font-medium text-text">{periodLabel(period)}</p>
           <p className="mt-1 text-xs uppercase tracking-wide text-text-muted">{period.status}</p>
+          {note ? (
+            <p className="mt-1 text-sm text-text-muted" data-testid="post-by">
+              {note}
+            </p>
+          ) : null}
         </>
       )}
     </div>
   );
 }
 
-function ExpiringCredentialsTable({ rows }: { rows: ExpiringCredentialView[] }) {
-  if (rows.length === 0) {
-    return <p className="text-sm text-text-muted">No credentials expiring in the next 90 days.</p>;
+function ExpiringCredentialsTable({
+  lapsed,
+  expiring,
+}: {
+  lapsed: ExpiringCredentialView[];
+  expiring: ExpiringCredentialView[];
+}) {
+  if (lapsed.length === 0 && expiring.length === 0) {
+    return (
+      <p className="text-sm text-text-muted">
+        No credentials have lapsed or expire in the next 90 days.
+      </p>
+    );
   }
+  const rows = [
+    ...lapsed.map((row) => ({ row, isLapsed: true })),
+    ...expiring.map((row) => ({ row, isLapsed: false })),
+  ];
   return (
     <div className="overflow-x-auto rounded-md border border-border bg-surface">
       <table className="w-full border-collapse text-sm">
@@ -67,8 +101,8 @@ function ExpiringCredentialsTable({ rows }: { rows: ExpiringCredentialView[] }) 
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => {
-            const tone = credentialTone(row.nurseCredential.expiresOn);
+          {rows.map(({ row, isLapsed }) => {
+            const tone = isLapsed ? 'danger' : credentialTone(row.nurseCredential.expiresOn);
             const toneClass =
               tone === 'danger' ? 'text-danger' : tone === 'warn' ? 'text-warn' : 'text-text';
             return (
@@ -76,9 +110,11 @@ function ExpiringCredentialsTable({ rows }: { rows: ExpiringCredentialView[] }) 
                 <td className="px-3 py-2 text-text">{listName(row.nurse)}</td>
                 <td className="px-3 py-2 text-text">{row.credential.name}</td>
                 <td className={`px-3 py-2 font-medium ${toneClass}`}>
-                  {row.nurseCredential.expiresOn !== undefined
-                    ? formatDate(row.nurseCredential.expiresOn)
-                    : '—'}
+                  {row.nurseCredential.expiresOn === undefined
+                    ? '—'
+                    : isLapsed
+                      ? `Lapsed ${formatDate(row.nurseCredential.expiresOn)}`
+                      : formatDate(row.nurseCredential.expiresOn)}
                 </td>
               </tr>
             );
@@ -106,10 +142,8 @@ function NextSteps({
   shiftTypes: number;
   coverageRows: number;
 }) {
-  const soon = summary.expiringCredentials.filter(
-    (c) =>
-      c.nurseCredential.expiresOn !== undefined && daysFromToday(c.nurseCredential.expiresOn) <= 30,
-  ).length;
+  const soon = dueWithin30Days(summary.expiringCredentials);
+  const lapsed = summary.lapsedCredentials.length;
   const steps: {
     text: string;
     to?: '/today' | '/requests' | '/schedule' | '/roster' | '/settings';
@@ -155,9 +189,16 @@ function NextSteps({
       to: '/schedule',
     });
   }
+  if (lapsed > 0) {
+    steps.push({
+      text: `${lapsed} ${plural(lapsed, 'credential has', 'credentials have')} lapsed — Roster`,
+      to: '/roster',
+      urgent: true,
+    });
+  }
   if (soon > 0) {
     steps.push({
-      text: `Follow up ${soon} credential${soon === 1 ? '' : 's'} expiring within 30 days`,
+      text: `Follow up ${soon} ${plural(soon, 'credential', 'credentials')} expiring within 30 days`,
     });
   }
   return (
@@ -209,6 +250,9 @@ export default function DashboardPage() {
   const summary = dashboardQuery.data;
   // Price what the manager is working on; fall back to the last thing that went out.
   const costPeriod = summary.currentDraft ?? summary.latestPublished;
+  const lapsedCount = summary.lapsedCredentials.length;
+  const soonCount = dueWithin30Days(summary.expiringCredentials);
+  const credentialTotal = lapsedCount + summary.expiringCredentials.length;
 
   return (
     <div>
@@ -240,7 +284,7 @@ export default function DashboardPage() {
         </Link>
         <button
           type="button"
-          aria-label="Credentials expiring — jump to the list"
+          aria-label="Credentials lapsed or expiring — jump to the list"
           className={`${CARD_LINK} text-left`}
           onClick={() =>
             document
@@ -249,15 +293,26 @@ export default function DashboardPage() {
           }
         >
           <StatCard
-            label="Credentials expiring"
-            value={summary.expiringCredentials.length}
-            tone={summary.expiringCredentials.length > 0 ? 'warn' : 'neutral'}
+            label="Credentials lapsed or expiring (90 days)"
+            value={credentialTotal}
+            detail={`${lapsedCount} lapsed · ${soonCount} within 30 days`}
+            tone={
+              lapsedCount > 0 || soonCount > 0 ? 'danger' : credentialTotal > 0 ? 'warn' : 'neutral'
+            }
           />
         </button>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-4">
-        <PeriodCard title="Current draft" period={summary.currentDraft} />
+        <PeriodCard
+          title="Current draft"
+          period={summary.currentDraft}
+          note={
+            summary.postBy
+              ? `Next schedule should be posted by ${formatDate(summary.postBy)}`
+              : undefined
+          }
+        />
         <PeriodCard title="Latest published" period={summary.latestPublished} />
       </div>
 
@@ -312,8 +367,11 @@ export default function DashboardPage() {
       </div>
 
       <div className="mt-6" id="expiring-credentials">
-        <h2 className="mb-2 text-sm font-semibold text-text">Expiring credentials</h2>
-        <ExpiringCredentialsTable rows={summary.expiringCredentials} />
+        <h2 className="mb-2 text-sm font-semibold text-text">Lapsed and expiring credentials</h2>
+        <ExpiringCredentialsTable
+          lapsed={summary.lapsedCredentials}
+          expiring={summary.expiringCredentials}
+        />
       </div>
     </div>
   );

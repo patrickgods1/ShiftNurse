@@ -5,7 +5,10 @@
  * absent: VS Code's terminal exports it, and with it set the Electron binary behaves as a
  * bare Node runtime and `import { app } from 'electron'` has nothing to import.
  *
- *   node scripts/smoke.mjs [--screenshot <file.png>]
+ *   node scripts/smoke.mjs [--screenshot <file.png>] [--window-size <WxH>] [--screenshot-route <#/route>]
+ *
+ * `--window-size 1366x768` opens the window at that size (default 1400x900); `--screenshot-route
+ * '#/schedule'` captures that page instead of the dashboard (single-file screenshots only).
  *
  * `--packaged` boots the electron-builder output under `release/` (the real `.app`/`.exe`)
  * instead of the dev `electron` binary running `out/`. Unit tests and the plain dev-binary
@@ -44,6 +47,14 @@ const appIndex = args.indexOf('--app');
 const appOverride = appIndex !== -1 ? args[appIndex + 1] : undefined;
 const shotIndex = args.indexOf('--screenshot');
 const screenshot = shotIndex !== -1 ? args[shotIndex + 1] : undefined;
+const sizeIndex = args.indexOf('--window-size');
+const windowSize = sizeIndex !== -1 ? args[sizeIndex + 1] : undefined;
+if (windowSize !== undefined && !/^\d{3,5}x\d{3,5}$/.test(windowSize)) {
+  console.error(`[smoke] --window-size wants WIDTHxHEIGHT, e.g. 1366x768 (got "${windowSize}")`);
+  process.exit(1);
+}
+const routeIndex = args.indexOf('--screenshot-route');
+const screenshotRoute = routeIndex !== -1 ? args[routeIndex + 1] : undefined;
 
 function packagedExecutablePath() {
   const root = join(import.meta.dirname, '..');
@@ -91,6 +102,8 @@ if (packaged) {
 const env = { ...process.env, SHIFTNURSE_SMOKE: '1' };
 delete env.ELECTRON_RUN_AS_NODE;
 if (screenshot) env.SHIFTNURSE_SMOKE_SCREENSHOT = screenshot;
+if (windowSize) env.SHIFTNURSE_SMOKE_WINDOW_SIZE = windowSize;
+if (screenshotRoute) env.SHIFTNURSE_SMOKE_SCREENSHOT_ROUTE = screenshotRoute;
 
 const PASS = '[smoke] PASS';
 // The app enforces its own limit (SHIFTNURSE_SMOKE_TIMEOUT_MS, default 240 s); this one only

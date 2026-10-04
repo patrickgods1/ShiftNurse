@@ -30,6 +30,7 @@ import {
   SMALL,
   SMALL_DANGER,
 } from '../../components/ui.js';
+import { formatInstant } from '../../format.js';
 
 const KIND_LABEL: Record<string, string> = {
   publish: 'On publish',
@@ -98,7 +99,7 @@ export default function BackupsPanel() {
           <tbody>
             {backupsQuery.data.map((b) => (
               <tr key={b.fileName} className="border-t border-border">
-                <td className="py-1.5 pr-3 text-text">{new Date(b.createdAt).toLocaleString()}</td>
+                <td className="py-1.5 pr-3 text-text">{formatInstant(b.createdAt)}</td>
                 <td className="py-1.5 pr-3 text-text-muted">{KIND_LABEL[b.kind] ?? b.kind}</td>
                 <td className="py-1.5 pr-3 font-mono text-xs text-text-muted" title={b.path}>
                   {b.fileName}
@@ -281,17 +282,13 @@ function DeletedBackups() {
         <tbody>
           {deletedQuery.data.map((b) => (
             <tr key={b.fileName} className="border-t border-border">
-              <td className="py-1.5 pr-3 text-text">{new Date(b.createdAt).toLocaleString()}</td>
+              <td className="py-1.5 pr-3 text-text">{formatInstant(b.createdAt)}</td>
               <td className="py-1.5 pr-3 text-text-muted">{KIND_LABEL[b.kind] ?? b.kind}</td>
               <td className="py-1.5 pr-3 font-mono text-xs text-text-muted" title={b.path}>
                 {b.fileName}
               </td>
-              <td className="py-1.5 pr-3 text-text-muted">
-                {new Date(b.deletedAt).toLocaleDateString()}
-              </td>
-              <td className="py-1.5 pr-3 text-text-muted">
-                {new Date(b.purgeAt).toLocaleDateString()}
-              </td>
+              <td className="py-1.5 pr-3 text-text-muted">{formatInstant(b.deletedAt)}</td>
+              <td className="py-1.5 pr-3 text-text-muted">{formatInstant(b.purgeAt)}</td>
               <td className="py-1.5 text-right">
                 <div className="flex justify-end gap-2">
                   <button

@@ -22,6 +22,7 @@ import { isDaySide, isWorkedNight, tooSoonAfterNight } from '../../rules/night-r
 import { type Expr, evalExpr, expr, scale, sum } from './builder.js';
 import { countExpr, type EncodeContext, HOURS, hoursExpr, type TimelineEntry } from './context.js';
 import { isMovable, roleExpr } from './rules/coverage.js';
+import { nurseWeekendExprs, weekendBreachExprs } from './rules/weekends.js';
 
 /** Fixed-point scale for fair-share arithmetic: shares are fractions of the team. */
 const FAIR = 10_000;
@@ -32,6 +33,7 @@ export function encodeObjective(ctx: EncodeContext): void {
   hoursTerms(ctx);
   fairnessTerms(ctx);
   holidayTerms(ctx);
+  weekendPatternTerms(ctx);
   nightRecoveryTerms(ctx);
   perShiftTerms(ctx);
 }
@@ -351,6 +353,25 @@ function holidayTerms(ctx: EncodeContext): void {
       if (onMinor === undefined || onMajor === undefined) continue;
       priced(ctx, sum(onMinor, onMajor, expr([], -1)), price, label);
     }
+  }
+}
+
+/**
+ * Weekends in a row and per schedule, as `SolverModel.weekendFor` counts them: one per in-period
+ * weekend ending too long a run, one per weekend over the schedule's limit. Priced only while the
+ * rule is soft (`weekendPrice`); a hard rule is `encodeWeekendPattern`'s.
+ */
+function weekendPatternTerms(ctx: EncodeContext): void {
+  const { model } = ctx;
+  const params = model.weekendParams;
+  const price = model.weekendPrice;
+  if (!params || price === 0) return;
+  for (let n = 0; n < model.nurses.length; n++) {
+    const { runs, excess } = weekendBreachExprs(nurseWeekendExprs(ctx, n), params);
+    for (const { weekend, over } of runs) {
+      priced(ctx, over, price, `weekends in a row: ${ctx.name(n)} to ${weekend}`);
+    }
+    if (excess) priced(ctx, excess, price, `weekends per schedule: ${ctx.name(n)}`);
   }
 }
 

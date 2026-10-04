@@ -10,7 +10,7 @@ import { useMemo } from 'react';
 import { useNurses, useShiftTypes } from '../../api.js';
 import { useChanges, useVersions } from '../../api-publish.js';
 import { AsyncState } from '../../components/async-state.js';
-import { formatDate } from '../../format.js';
+import { formatDate, formatInstant } from '../../format.js';
 import { useUnitId } from '../../unit-context.js';
 
 const KIND_LABEL: Record<ScheduleChange['kind'], string> = {
@@ -79,7 +79,7 @@ export function ChangeLog({ periodId }: { periodId: string }) {
           {versions.map((v) => (
             <li key={v.id} className="text-xs">
               <span className="font-medium text-text">v{v.version}</span>{' '}
-              <span className="text-text-muted">{new Date(v.publishedAt).toLocaleString()}</span>
+              <span className="text-text-muted">{formatInstant(v.publishedAt)}</span>
               <br />
               <span className="text-text-muted">
                 {v.version === 1 ? `${v.added} shifts` : `+${v.added} −${v.removed} ~${v.changed}`}
@@ -109,7 +109,7 @@ export function ChangeLog({ periodId }: { periodId: string }) {
                   <br />
                   <span className="text-text">“{c.reason}”</span>{' '}
                   <span className="text-text-muted">
-                    · {SOURCE_LABEL[c.source]} · v{c.version} · {new Date(c.at).toLocaleString()}
+                    · {SOURCE_LABEL[c.source]} · v{c.version} · {formatInstant(c.at)}
                   </span>
                 </li>
               );

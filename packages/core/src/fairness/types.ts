@@ -238,8 +238,21 @@ export interface ComponentScore {
   explanation: string;
 }
 
+/**
+ * The dates behind a nurse's burden counters for the period scored. `nights` and `holidays`
+ * are per shift's start date and equal `nightShifts` / `holidaysWorked`; `weekends` is per
+ * weekend *day* worked, whereas `weekendsWorked` counts distinct weekends (Sat + Sun = 1).
+ */
+export interface NurseOccurrences {
+  nights: IsoDate[];
+  weekends: IsoDate[];
+  holidays: IsoDate[];
+}
+
 export interface NurseFairnessScore {
   nurseId: Id;
+  /** In-period dates of nights, weekend days and holidays worked; empty when not supplied. */
+  occurrences: NurseOccurrences;
   /** 0–100 composite: weighted mean of the component scores. */
   score: number;
   components: ComponentScore[];
@@ -284,6 +297,8 @@ export interface ScoreInput {
   nurses: readonly Nurse[];
   /** This period's counters per nurse, from `deriveCounters`. Missing nurses count as empty. */
   current: ReadonlyMap<Id, BurdenCounters>;
+  /** The dates behind `current`, from `deriveOccurrences`; absent nurses get empty lists. */
+  occurrences?: ReadonlyMap<Id, NurseOccurrences>;
   /** Historical ledger rows, any order; the window and decay are applied inside. */
   history: readonly FairnessLedgerEntry[];
   preferences: readonly Preference[];

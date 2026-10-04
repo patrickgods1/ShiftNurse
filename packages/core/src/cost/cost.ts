@@ -36,23 +36,10 @@ import {
 // Overtime attribution
 // ---------------------------------------------------------------------------
 
-interface OvertimeShare {
+/** A run of a shift's hours paid at one overtime multiplier. */
+interface OvertimeBand {
   hours: number;
   multiplier: number;
-}
-
-/** Overtime hours per worked in-period view under a daily rule: whatever exceeds the threshold. */
-function dailyOvertime(
-  timeline: readonly AssignmentView[],
-  threshold: number,
-): Map<AssignmentView, number> {
-  const out = new Map<AssignmentView, number>();
-  for (const view of timeline) {
-    if (!view.inPeriod || !isWorked(view)) continue;
-    const over = view.paidHours - threshold;
-    if (over > 0) out.set(view, over);
-  }
-  return out;
 }
 
 /** The date a work week containing `date` starts on. */
@@ -61,17 +48,20 @@ function workWeekStart(date: IsoDate, startsOn: number): IsoDate {
 }
 
 /**
- * Overtime hours per worked in-period view under a weekly or pay-period rule; `windowOf` names
- * the window (by its first date) a shift's hours accrue in. Hours accrue in chronological order
- * — the timeline is sorted by shift start — so the tail's hours consume the threshold first and
- * only the shifts that cross it carry overtime. Tail views accrue but are never attributed
- * overtime: a previous period's shift is not this schedule's cost.
+ * Overtime hours per worked in-period view under one rule; `windowOf` names the window (by a
+ * date) a shift's hours accrue in — the shift's own start date for a workday, the week or pay
+ * period's first date otherwise. Hours accrue in chronological order — the timeline is sorted
+ * by shift start — so earlier hours consume the threshold first and only the shifts that cross
+ * it carry overtime, and only the hours past it: always the *end* of the shift. Tail views
+ * accrue but are never attributed overtime: a previous period's shift is not this schedule's
+ * cost. `counts` leaves a view out of the accrual altogether (the seventh-day rule).
  */
 function windowOvertime(
   timeline: readonly AssignmentView[],
   threshold: number,
   windowOf: (date: IsoDate) => IsoDate,
   leave: readonly PaidLeaveCredit[] | undefined,
+  counts: (view: AssignmentView) => boolean = () => true,
 ): Map<AssignmentView, number> {
   // Counted leave uses up the threshold first: a window's PTO day is not attributable to one
   // shift, and putting it first is what makes the shifts that cross the threshold the overtime
@@ -84,7 +74,7 @@ function windowOvertime(
   const out = new Map<AssignmentView, number>();
   const runningByWindow = new Map<IsoDate, number>();
   for (const view of timeline) {
-    if (!isWorked(view)) continue;
+    if (!isWorked(view) || !counts(view)) continue;
     const window = windowOf(view.assignment.date);
     const before = runningByWindow.get(window) ?? leaveByWindow.get(window) ?? 0;
     const after = before + view.paidHours;
@@ -97,38 +87,78 @@ function windowOvertime(
 }
 
 /**
- * The overtime each in-period view carries once every active rule has had its say. An hour is
- * overtime once: where rules disagree, the one paying the larger premium for that shift wins.
- * Comparing `hours × (multiplier − 1)` is enough because a shift's straight rate is the same
- * under either rule.
+ * Whether a shift falls on the seventh consecutive day worked in its work week: the week's last
+ * day, with a worked shift dated on every day of it. Lookback shifts count toward the six before.
+ */
+function seventhDayTest(
+  timeline: readonly AssignmentView[],
+  startsOn: number,
+): (view: AssignmentView) => boolean {
+  const worked = new Set<IsoDate>();
+  for (const view of timeline) if (isWorked(view)) worked.add(view.assignment.date);
+  return (view) => {
+    const date = view.assignment.date;
+    if ((weekdayOf(date) - startsOn + 7) % 7 !== 6) return false;
+    for (let back = 1; back <= 6; back++) if (!worked.has(addDays(date, -back))) return false;
+    return true;
+  };
+}
+
+/**
+ * The overtime bands of each in-period view once every active rule has had its say. Each rule
+ * makes the end of a shift overtime from some hour on; an hour is overtime once, at the highest
+ * multiplier of any rule that reaches it. So a 13-hour shift under California's daily rules is
+ * 4 hours at 1.5× and 1 at 2×, not 5 at whichever single rule pays more. Bands run in the order
+ * the hours are worked.
  */
 function attributeOvertime(
   timeline: readonly AssignmentView[],
   ctx: CostContext,
-): Map<AssignmentView, OvertimeShare> {
-  const best = new Map<AssignmentView, OvertimeShare>();
+): Map<AssignmentView, OvertimeBand[]> {
+  // Per view, where each rule's overtime starts (hours into the shift) and at what multiplier.
+  const startsByView = new Map<AssignmentView, { from: number; multiplier: number }[]>();
   const nurseId = timeline[0]?.assignment.nurseId;
   const leave = nurseId === undefined ? undefined : ctx.overtimeLeave?.get(nurseId);
+  const isSeventhDay = seventhDayTest(timeline, ctx.workWeekStartsOn);
   for (const rule of ctx.overtimeRules) {
+    if (rule.multiplier <= 1) continue;
     const hoursByView =
       rule.basis === 'daily'
-        ? dailyOvertime(timeline, rule.thresholdHours)
-        : windowOvertime(
-            timeline,
-            rule.thresholdHours,
-            rule.basis === 'pay_period'
-              ? (date) => payPeriodWindow(payPeriodIndex(date, ctx.unit), ctx.unit).start
-              : (date) => workWeekStart(date, ctx.workWeekStartsOn),
-            leave,
-          );
+        ? windowOvertime(timeline, rule.thresholdHours, (date) => date, undefined)
+        : rule.basis === 'seventh_day'
+          ? windowOvertime(timeline, rule.thresholdHours, (date) => date, undefined, isSeventhDay)
+          : windowOvertime(
+              timeline,
+              rule.thresholdHours,
+              rule.basis === 'pay_period'
+                ? (date) => payPeriodWindow(payPeriodIndex(date, ctx.unit), ctx.unit).start
+                : (date) => workWeekStart(date, ctx.workWeekStartsOn),
+              leave,
+            );
     for (const [view, hours] of hoursByView) {
-      const candidate = { hours, multiplier: rule.multiplier };
-      const current = best.get(view);
-      const premiumOf = (s: OvertimeShare) => s.hours * (s.multiplier - 1);
-      if (!current || premiumOf(candidate) > premiumOf(current)) best.set(view, candidate);
+      const starts = startsByView.get(view) ?? [];
+      starts.push({ from: view.paidHours - hours, multiplier: rule.multiplier });
+      startsByView.set(view, starts);
     }
   }
-  return best;
+
+  const out = new Map<AssignmentView, OvertimeBand[]>();
+  for (const [view, starts] of startsByView) {
+    const cuts = [...new Set([...starts.map((s) => s.from), view.paidHours])].sort((a, b) => a - b);
+    const bands: OvertimeBand[] = [];
+    for (let i = 0; i + 1 < cuts.length; i++) {
+      const from = cuts[i]!;
+      const hours = cuts[i + 1]! - from;
+      let multiplier = 1;
+      for (const s of starts)
+        if (s.from <= from && s.multiplier > multiplier) multiplier = s.multiplier;
+      const last = bands[bands.length - 1];
+      if (last && last.multiplier === multiplier) last.hours += hours;
+      else bands.push({ hours, multiplier });
+    }
+    out.set(view, bands);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +207,7 @@ function sum(lines: readonly CostLine[]): number {
 function priceView(
   view: AssignmentView,
   ctx: CostContext,
-  overtime: OvertimeShare | undefined,
+  overtime: readonly OvertimeBand[] | undefined,
 ): AssignmentCost {
   const hours = view.paidHours;
   const identity = {
@@ -238,10 +268,11 @@ function priceView(
   const straightRate = running;
 
   let overtimeHours = 0;
-  if (overtime && overtime.hours > 0) {
-    overtimeHours = overtime.hours;
-    const rate = straightRate * (overtime.multiplier - 1);
-    lines.push({ kind: 'overtime', hours: overtimeHours, rate, amount: overtimeHours * rate });
+  for (const band of overtime ?? []) {
+    if (band.hours <= 0) continue;
+    overtimeHours += band.hours;
+    const rate = straightRate * (band.multiplier - 1);
+    lines.push({ kind: 'overtime', hours: band.hours, rate, amount: band.hours * rate });
   }
 
   return {

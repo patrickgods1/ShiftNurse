@@ -12,12 +12,34 @@ const REAL = resolveRunnerPath({
   resourcesPath: '',
   appPath: fileURLToPath(new URL('../..', import.meta.url)),
 });
+/**
+ * CI sets SHIFTNURSE_REQUIRE_CPSAT=1 on the leg that fetches the runner, so a runner that went
+ * missing there fails this file instead of skipping it and passing green untested.
+ */
+const REQUIRE_RUNNER = process.env.SHIFTNURSE_REQUIRE_CPSAT === '1';
+
 const runners: CpsatRunner[] = [];
 
 function fakeRunner(): CpsatRunner {
   const runner = new CpsatRunner(process.execPath, [FAKE]);
   runners.push(runner);
   return runner;
+}
+
+/** The child's pid, read before the runner hides it by marking itself exited. */
+const childPid = (runner: CpsatRunner): number =>
+  (runner as unknown as { child: { pid: number } }).child.pid;
+
+async function gone(pid: number): Promise<boolean> {
+  for (let i = 0; i < 100; i++) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return false;
 }
 
 afterEach(() => {
@@ -28,6 +50,35 @@ afterEach(() => {
 // Windows CI VM, where process start-up (and antivirus scanning it) alone took most of it: the
 // queueing test failed there at 5.2 s after passing on the previous run.
 describe('the CP-SAT runner client', { timeout: 30_000 }, () => {
+  it('kills a runner that never says ready, and starts a fresh one next time', async () => {
+    const silent = new CpsatRunner(process.execPath, ['-e', 'setInterval(() => {}, 1e6)'], 300);
+    runners.push(silent);
+    const starting = silent.start();
+    const pid = childPid(silent);
+    await expect(starting).rejects.toThrow(/did not start within 300ms/);
+    expect(silent.pid).toBeUndefined();
+    expect(await gone(pid)).toBe(true);
+    // The failure is not cached: the next start spawns a new process.
+    const again = silent.start();
+    expect(childPid(silent)).not.toBe(pid);
+    await expect(again).rejects.toThrow(/did not start/);
+  });
+
+  it('gives up on a runner that is ready but stops answering, and kills it', async () => {
+    const runner = fakeRunner();
+    await runner.start();
+    const pid = childPid(runner);
+    await expect(
+      runner.solve({ fake: 'hang' }, {}, undefined, { watchdogMs: 200 }),
+    ).rejects.toThrow('CP-SAT runner stopped responding');
+    expect(await gone(pid)).toBe(true);
+    // A start() right after the watchdog gets a fresh runner, not the dead one's closed stdin.
+    expect(runner.pid).toBeUndefined();
+    const next = runner.start();
+    expect(childPid(runner)).not.toBe(pid);
+    await expect(next).resolves.toBe('fake-1');
+  });
+
   it('reports the solver version once the runner is up', async () => {
     expect(await fakeRunner().start()).toBe('fake-1');
   });
@@ -78,6 +129,15 @@ describe('the CP-SAT runner client', { timeout: 30_000 }, () => {
     ]);
     expect(first.status).toBe('OPTIMAL');
     expect(second.status).toBe('OPTIMAL');
+  });
+});
+
+describe.runIf(REQUIRE_RUNNER)('the CP-SAT runner CI requires', () => {
+  it('is installed, so the real-runner suites below run rather than skip', () => {
+    expect(
+      REAL,
+      'SHIFTNURSE_REQUIRE_CPSAT=1 but no runner under apps/desktop/.cpsat',
+    ).toBeDefined();
   });
 });
 

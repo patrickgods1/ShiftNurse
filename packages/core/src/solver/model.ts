@@ -46,7 +46,6 @@ import type {
 } from '../domain/entities.js';
 import {
   addDays,
-  dateInRange,
   datesInRange,
   dayNumber,
   type IsoDate,
@@ -56,20 +55,12 @@ import {
   weekdayOf,
   weekendKey,
 } from '../domain/time.js';
-import { computeBurden } from '../fairness/burden.js';
 import { isUndesirable } from '../fairness/ledger.js';
 import { seniorityMultipliers } from '../fairness/seniority.js';
-import {
-  BURDEN_COMPONENTS,
-  BURDEN_COUNTER,
-  type BurdenComponent,
-  type BurdenCounters,
-  EMPTY_COUNTERS,
-} from '../fairness/types.js';
+import { BURDEN_COMPONENTS, type BurdenComponent } from '../fairness/types.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import {
   type HolidayRotationFacts,
-  type HolidayRotationParams,
   holidayRotationFacts,
   holidayRotationRule,
   workedInHistory,
@@ -79,19 +70,15 @@ import {
   contractedHoursRule,
   type MaxHoursParams,
   maxHoursRule,
-  overtimeThreshold,
-  payPeriodIndex,
-  payPeriodsIn,
 } from '../rules/hours-rules.js';
 import {
   groupsForPeriod,
-  type IncompatibleBufferParams,
   incompatibleBufferRule,
   incompatibleTogetherRule,
   judgeFloor,
   type OnFloor,
 } from '../rules/incompatibility-rules.js';
-import { type NightRecoveryParams, nightRecoveryRule } from '../rules/night-recovery.js';
+import { nightRecoveryRule } from '../rules/night-recovery.js';
 import { pendingRequestOn, pendingTimeOffRule } from '../rules/pending-time-off.js';
 import {
   buildRuleContext,
@@ -99,13 +86,27 @@ import {
   getRule,
   hardRuleIdsByScope,
   type PreparedRule,
+  paramsOf,
   prepareRules,
+  requireParams,
   resolveConfigs,
 } from '../rules/registry.js';
 import type { RuleContext, RuleSet, RuleSeverity } from '../rules/types.js';
+import {
+  type WeekendPatternParams,
+  weekendBreaches,
+  weekendPatternRule,
+} from '../rules/weekend-pattern.js';
 import { coveringShift } from '../schedule/cover.js';
 import { floorSegments } from '../schedule/overlap.js';
 import { type AssignmentView, ScheduleView } from '../schedule/view.js';
+import {
+  buildShifts,
+  costContextFor,
+  historyFairness,
+  hoursBuckets,
+  workCalendar,
+} from './model-setup.js';
 import {
   DEFAULT_OBJECTIVE_WEIGHTS,
   type ObjectiveBreakdown,
@@ -142,6 +143,7 @@ export interface AddToken {
   coverageBefore: number;
   hoursBefore: number;
   recoveryBefore: number;
+  weekendBefore: number;
   /** The coverage of the shifts inside this one, in `innerShifts` order, when it has any. */
   innerBefore?: readonly number[];
   /** The incompatibility price of the stretches this shift covers, in `stretchesOf` order. */
@@ -174,6 +176,8 @@ export class SolverModel {
   readonly dates: readonly IsoDate[];
   readonly dateIdx: ReadonlyMap<IsoDate, number>;
   readonly shiftTypes: readonly ShiftType[];
+  /** `shiftOf` runs on every move; a linear search per call was measurable in a solve. */
+  private readonly shiftTypeById: ReadonlyMap<Id, ShiftType>;
   readonly shifts: readonly Shift[];
   /** Shifts the solver may place nurses on, in date then sort order. */
   readonly solvableShifts: readonly Shift[];
@@ -203,6 +207,9 @@ export class SolverModel {
   private recoverySum = 0;
   /** Worked shifts inside a pending time-off request (see `pending-time-off.ts`). */
   private pendingSum = 0;
+  /** Per nurse: weekend-pattern breaches (see `weekend-pattern.ts`). */
+  private readonly weekendPenalty: number[];
+  private weekendSum = 0;
 
   // --- Per-nurse counters feeding fairness and hours ---------------------------
   private readonly workedHours: number[];
@@ -306,6 +313,12 @@ export class SolverModel {
   readonly recoveryPrice: number;
   /** Points per worked shift inside a pending request; 0 unless that rule is soft. */
   readonly pendingPrice: number;
+  /** The weekend-pattern limits while that rule is on; undefined while it is off. */
+  readonly weekendParams: WeekendPatternParams | undefined;
+  /** Points per weekend-pattern breach; 0 unless that rule is soft. */
+  readonly weekendPrice: number;
+  /** Per nurse: weekends worked in the lookback tail, which start a run. */
+  private readonly priorWeekends: ReadonlySet<IsoDate>[];
   /** nurse × date index → the date falls inside a pending request of theirs. */
   private readonly pendingOn: boolean[][];
   /** nurse × date index → worked night shifts / worked day-side shifts on that date. */
@@ -352,33 +365,17 @@ export class SolverModel {
         ? { incompatibilityGroups: input.incompatibilityGroups }
         : {}),
       ...(input.holidayWork ? { holidayWork: input.holidayWork } : {}),
+      ...(input.overtimeVolunteers ? { overtimeVolunteers: input.overtimeVolunteers } : {}),
     });
 
-    const shifts: Shift[] = [];
-    for (const [dateIdx, date] of this.dates.entries()) {
-      for (const shiftType of this.shiftTypes) {
-        const row = demand.get(date, shiftType.id);
-        const wanted =
-          row !== undefined &&
-          NURSE_ROLES.some(
-            (role) => Math.max(row.byRole[role].minCount, row.byRole[role].targetCount) > 0,
-          );
-        shifts.push({
-          idx: shifts.length,
-          date,
-          dateIdx,
-          shiftType,
-          demand: row,
-          solvable: shiftType.active && wanted,
-        });
-      }
-    }
+    const shifts = buildShifts(this.dates, this.shiftTypes, demand);
     this.shifts = shifts;
     this.solvableShifts = shifts.filter((s) => s.solvable);
 
     // A shift inside another is judged with the containing shift's roster as cover, so a change
     // to the containing shift re-prices the ones inside it (`refresh`).
     const shiftTypesById = new Map(this.shiftTypes.map((t) => [t.id, t]));
+    this.shiftTypeById = shiftTypesById;
     this.innerShifts = shifts.map(() => []);
     this.coverShift = shifts.map((shift) => {
       const cover = coveringShift(shift.shiftType, shift.date, shiftTypesById);
@@ -418,8 +415,7 @@ export class SolverModel {
           ? this.weights.hardShortfall / 12
           : this.weights.incompatibility;
     const bufferSeverity = severityOf(incompatibleBufferRule.id);
-    const bufferParams = configs.find((c) => c.ruleId === incompatibleBufferRule.id)
-      ?.params as unknown as IncompatibleBufferParams | undefined;
+    const bufferParams = paramsOf(incompatibleBufferRule, configs);
     this.incompatibilityPrice = {
       excess: perHour(severityOf(incompatibleTogetherRule.id)),
       shortfall: perHour(bufferSeverity),
@@ -430,17 +426,14 @@ export class SolverModel {
     this.holidayFacts =
       rotationSeverity === null
         ? { owedOff: new Map(), pairs: [] }
-        : holidayRotationFacts(
-            this.ctx,
-            configs.find((c) => c.ruleId === holidayRotationRule.id)!
-              .params as unknown as HolidayRotationParams,
-            { start: input.period.startDate, end: input.period.endDate },
-          );
+        : holidayRotationFacts(this.ctx, requireParams(holidayRotationRule, configs), {
+            start: input.period.startDate,
+            end: input.period.endDate,
+          });
     this.holidayPrice = rotationSeverity === 'soft' ? this.weights.holidayRotation : 0;
     // --- Days off after nights: priced while soft; a hard rule is the gate's to enforce. ---
     const recoverySeverity = severityOf(nightRecoveryRule.id);
-    const recoveryParams = configs.find((c) => c.ruleId === nightRecoveryRule.id)
-      ?.params as unknown as NightRecoveryParams | undefined;
+    const recoveryParams = paramsOf(nightRecoveryRule, configs);
     this.recoveryDays =
       recoverySeverity === null
         ? 0
@@ -448,6 +441,11 @@ export class SolverModel {
     this.recoveryPrice = recoverySeverity === 'soft' ? this.weights.nightRecovery : 0;
     this.pendingPrice =
       severityOf(pendingTimeOffRule.id) === 'soft' ? this.weights.pendingTimeOff : 0;
+    // --- Weekends in a row and per schedule: priced while soft, gated while hard. ---
+    const weekendSeverity = severityOf(weekendPatternRule.id);
+    this.weekendParams =
+      weekendSeverity === null ? undefined : paramsOf(weekendPatternRule, configs);
+    this.weekendPrice = weekendSeverity === 'soft' ? this.weights.weekendPattern : 0;
     this.owedOffDates = this.nurses.map((nurse) => this.holidayFacts.owedOff.get(nurse.id));
     for (const [pair, { minor, major }] of this.holidayFacts.pairs.entries()) {
       for (const [side, date] of [minor.date, major.date].entries()) {
@@ -472,102 +470,41 @@ export class SolverModel {
       for (const shift of stretch.shifts) this.stretchesOf[shift.idx]!.push(stretch);
     }
     this.incompat = this.stretches.map(() => 0);
-    this.fteParams = (configs.find((c) => c.ruleId === contractedHoursRule.id)?.params ??
-      contractedHoursRule.defaultParams) as ContractedHoursParams;
-    const maxHours = (configs.find((c) => c.ruleId === maxHoursRule.id)?.params ??
-      maxHoursRule.defaultParams) as MaxHoursParams;
+    this.fteParams = paramsOf(contractedHoursRule, configs) ?? contractedHoursRule.defaultParams;
+    const maxHours = paramsOf(maxHoursRule, configs) ?? maxHoursRule.defaultParams;
     this.maxHoursParams = maxHours;
-    const firstDay = dayNumber(input.period.startDate);
-    const weekStart =
-      firstDay - ((weekdayOf(input.period.startDate) - maxHours.workWeekStartsOn + 7) % 7);
-    this.weekOf = (date) => Math.floor((dayNumber(date) - weekStart) / 7);
-    this.weekOfDate = this.dates.map((date) => this.weekOf(date));
-    this.weekCount = (this.weekOfDate[this.weekOfDate.length - 1] ?? 0) + 1;
-    const firstPayPeriod = payPeriodIndex(input.period.startDate, input.unit);
-    this.overtimeOf = maxHours.overtimeByPayPeriod
-      ? (date) => payPeriodIndex(date, input.unit) - firstPayPeriod
-      : this.weekOf;
-    this.overtimeOfDate = this.dates.map((date) => this.overtimeOf(date));
-    this.overtimeCount = (this.overtimeOfDate[this.overtimeOfDate.length - 1] ?? 0) + 1;
-    this.overtimeThreshold = overtimeThreshold(maxHours);
+    const calendar = workCalendar(input, this.dates, maxHours);
+    this.weekOf = calendar.weekOf;
+    this.weekOfDate = calendar.weekOfDate;
+    this.weekCount = calendar.weekCount;
+    this.overtimeOf = calendar.overtimeOf;
+    this.overtimeOfDate = calendar.overtimeOfDate;
+    this.overtimeCount = calendar.overtimeCount;
+    this.overtimeThreshold = calendar.overtimeThreshold;
 
-    this.costCtx = input.cost
-      ? {
-          unit: input.unit,
-          payRates: input.cost.payRates,
-          differentials: input.cost.differentials.filter((d) => d.active),
-          overtimeRules: input.cost.overtimeRules.filter((r) => r.active),
-          holidayDates: this.ctx.holidayDates,
-          majorHolidayDates: this.ctx.majorHolidayDates,
-          weekendDefinition: input.ruleSet.weekendDefinition,
-          workWeekStartsOn: maxHours.workWeekStartsOn,
-          ...(maxHours.paidLeaveCountsTowardOvertime
-            ? { overtimeLeave: this.ctx.paidLeaveByNurse }
-            : {}),
-        }
-      : undefined;
+    this.costCtx = costContextFor(input, this.ctx, maxHours);
 
     // --- Hours buckets: the complete pay periods the FTE rule judges, plus any remainder. ---
-    const periods = payPeriodsIn(
-      { start: input.period.startDate, end: input.period.endDate },
-      input.unit,
-      true,
+    const buckets = hoursBuckets(
+      input,
+      this.dates,
+      this.dateIdx,
+      this.nurses,
+      this.fteParams,
+      this.ctx,
     );
-    this.bucketOfDate = this.dates.map((date) => {
-      const i = periods.findIndex((p) => dateInRange(date, p.start, p.end));
-      return i === -1 ? periods.length : i;
-    });
-    const bucketDays = new Array<number>(periods.length + 1).fill(0);
-    for (const b of this.bucketOfDate) bucketDays[b] = (bucketDays[b] ?? 0) + 1;
-    const bucketCount = bucketDays[periods.length] === 0 ? periods.length : periods.length + 1;
-
+    this.bucketOfDate = buckets.bucketOfDate;
+    const bucketCount = buckets.bucketCount;
+    this.hoursTarget = buckets.hoursTarget;
+    this.hoursCapped = buckets.hoursCapped;
+    this.contractedProRata = buckets.contractedProRata;
     const n = this.nurses.length;
-    // Paid leave counts toward the contract, so it comes off the hours still to schedule:
-    // "worked + leave within tolerance of target" is "worked within tolerance of target − leave".
-    const leaveInBucket = (nurseId: Id, b: number) => {
-      if (!this.fteParams.paidLeaveCountsTowardHours) return 0;
-      let hours = 0;
-      for (const c of this.ctx.paidLeaveByNurse.get(nurseId) ?? []) {
-        const idx = this.dateIdx.get(c.date);
-        if (idx !== undefined && this.bucketOfDate[idx] === b) hours += c.hours;
-      }
-      return hours;
-    };
-    this.hoursTarget = this.nurses.map((nurse) =>
-      Array.from({ length: bucketCount }, (_, b) =>
-        nurse.contractedHoursPerPeriod > 0
-          ? (nurse.contractedHoursPerPeriod * (bucketDays[b] ?? 0)) / input.unit.payPeriodDays -
-            leaveInBucket(nurse.id, b)
-          : 0,
-      ),
-    );
-    this.hoursCapped = this.nurses.map(
-      (nurse) =>
-        nurse.contractedHoursPerPeriod > 0 &&
-        !this.fteParams.exemptEmploymentTypes.includes(nurse.employmentType),
-    );
-    this.contractedProRata = this.nurses.map((nurse) =>
-      nurse.contractedHoursPerPeriod > 0
-        ? (nurse.contractedHoursPerPeriod * this.dates.length) / input.unit.payPeriodDays
-        : 0,
-    );
 
     // --- Historical burden, weighted exactly as computeBurden weights it under a current row. ---
     const activeNurses = this.candidates.map((i) => this.nurses[i]!);
-    const zero = new Map<Id, BurdenCounters>(activeNurses.map((x) => [x.id, EMPTY_COUNTERS]));
-    const burden = computeBurden(
-      activeNurses,
-      input.ledgerHistory,
-      { weights: input.ruleSet.fairnessWeights },
-      zero,
-    );
-    this.histCarried = this.nurses.map((nurse) => {
-      const row = burden.byNurse.get(nurse.id);
-      const out = {} as Record<BurdenComponent, number>;
-      for (const c of BURDEN_COMPONENTS) out[c] = row ? row.carried[BURDEN_COUNTER[c]] : 0;
-      return out;
-    });
-    this.shareWeight = this.nurses.map((nurse) => burden.byNurse.get(nurse.id)?.shareWeight ?? 0);
+    const history = historyFairness(this.nurses, activeNurses, input);
+    this.histCarried = history.histCarried;
+    this.shareWeight = history.shareWeight;
     this.teamShare = this.shareWeight.reduce((sum, w) => sum + w, 0);
     this.sharers = this.candidates.filter((i) => this.shareWeight[i]! > 0);
     this.fairnessScratch = new Array<number>(this.sharers.length).fill(0);
@@ -612,7 +549,7 @@ export class SolverModel {
     });
     for (const [i, list] of prior.entries()) {
       for (const a of list) {
-        const st = this.shiftTypes.find((s) => s.id === a.shiftTypeId);
+        const st = this.shiftTypeById.get(a.shiftTypeId);
         if (!st || (st.isOnCall && !maxHours.onCallCountsTowardHours)) continue;
         const week = this.weekOf(a.date);
         if (week >= 0 && week < this.weekCount) this.weekHours[i]![week]! += st.durationHours;
@@ -631,7 +568,7 @@ export class SolverModel {
     );
     for (const [i, list] of prior.entries()) {
       for (const a of list) {
-        const st = this.shiftTypes.find((s) => s.id === a.shiftTypeId);
+        const st = this.shiftTypeById.get(a.shiftTypeId);
         if (!st || st.isOnCall) continue;
         for (const { pair, side } of this.pairSidesOn.get(a.date) ?? []) {
           this.pairWork[i]![pair * 2 + side]! += 1;
@@ -644,7 +581,7 @@ export class SolverModel {
     this.priorNightOffsets = prior.map((list) => {
       const offsets: number[] = [];
       for (const a of list) {
-        const st = this.shiftTypes.find((s) => s.id === a.shiftTypeId);
+        const st = this.shiftTypeById.get(a.shiftTypeId);
         if (!st || st.isOnCall || !st.isNight) continue;
         const k = periodFirstDay - dayNumber(a.date);
         if (k >= 1 && k <= this.recoveryDays) offsets.push(k);
@@ -652,6 +589,17 @@ export class SolverModel {
       return offsets;
     });
     this.recovery = new Array<number>(n).fill(0);
+    this.priorWeekends = prior.map((list) => {
+      const keys = new Set<IsoDate>();
+      for (const a of list) {
+        const st = this.shiftTypeById.get(a.shiftTypeId);
+        if (!st || st.isOnCall) continue;
+        const key = weekendKey(shiftWindow(a.date, st), this.ctx.weekendDefinition);
+        if (key !== null) keys.add(key as IsoDate);
+      }
+      return keys;
+    });
+    this.weekendPenalty = new Array<number>(n).fill(0);
     this.pendingOn = this.nurses.map((nurse) =>
       this.dates.map((date) => pendingRequestOn(this.ctx, nurse.id, date) !== undefined),
     );
@@ -671,11 +619,14 @@ export class SolverModel {
     // they touched, and an empty shift already owes its whole floor.
     this.hoursSum = 0;
     this.recoverySum = 0;
+    this.weekendSum = 0;
     for (let i = 0; i < n; i++) {
       this.hoursPenalty[i] = this.hoursPenaltyFor(i);
       this.hoursSum += this.hoursPenalty[i]!;
       this.recovery[i] = this.recoveryFor(i);
       this.recoverySum += this.recovery[i]!;
+      this.weekendPenalty[i] = this.weekendFor(i);
+      this.weekendSum += this.weekendPenalty[i]!;
     }
     this.coverageSum = 0;
     for (const shift of this.shifts) {
@@ -731,7 +682,7 @@ export class SolverModel {
 
   shiftOf(a: Assignment): Shift {
     const dateIdx = this.dateIdx.get(a.date);
-    const type = this.shiftTypes.find((s) => s.id === a.shiftTypeId);
+    const type = this.shiftTypeById.get(a.shiftTypeId);
     if (dateIdx === undefined || !type) {
       throw new Error(`Assignment ${a.id} on ${a.date}/${a.shiftTypeId} is outside the period`);
     }
@@ -932,6 +883,7 @@ export class SolverModel {
       coverageBefore: this.coverage[shift.idx]!,
       hoursBefore: this.hoursPenalty[n]!,
       recoveryBefore: this.recovery[n]!,
+      weekendBefore: this.weekendPenalty[n]!,
     };
     const inner = this.innerShifts[shift.idx]!;
     if (inner.length > 0) token.innerBefore = inner.map((s) => this.coverage[s.idx]!);
@@ -985,6 +937,8 @@ export class SolverModel {
     this.hoursPenalty[n] = token.hoursBefore;
     this.recoverySum += token.recoveryBefore - this.recovery[n]!;
     this.recovery[n] = token.recoveryBefore;
+    this.weekendSum += token.weekendBefore - this.weekendPenalty[n]!;
+    this.weekendPenalty[n] = token.weekendBefore;
   }
 
   private refresh(n: number, shift: Shift): void {
@@ -1004,6 +958,9 @@ export class SolverModel {
     const recovery = this.recoveryFor(n);
     this.recoverySum += recovery - this.recovery[n]!;
     this.recovery[n] = recovery;
+    const weekend = this.weekendFor(n);
+    this.weekendSum += weekend - this.weekendPenalty[n]!;
+    this.weekendPenalty[n] = weekend;
   }
 
   /** Update every per-nurse counter and the preference/cost sums for one assignment. */
@@ -1070,6 +1027,25 @@ export class SolverModel {
     return this.recoverySum;
   }
 
+  /** Weekend-pattern breaches, as the schedule stands. */
+  weekendBreaches(): number {
+    return this.weekendSum;
+  }
+
+  /**
+   * One nurse's weekend-pattern breaches, counted by the rule's own `weekendBreaches`: each
+   * in-period weekend ending too long a run, plus each weekend over the per-schedule limit.
+   */
+  private weekendFor(n: number): number {
+    const params = this.weekendParams;
+    if (!params) return 0;
+    const inPeriod = new Set(this.weekendKeys[n]!.keys() as Iterable<IsoDate>);
+    if (inPeriod.size === 0) return 0;
+    const worked = new Set<IsoDate>([...this.priorWeekends[n]!, ...inPeriod]);
+    const { runs, excess } = weekendBreaches({ worked, inPeriod }, params);
+    return runs.length + excess;
+  }
+
   /** Worked shifts inside pending time-off requests, as the schedule stands. */
   pendingBreaches(): number {
     return this.pendingSum;
@@ -1129,6 +1105,7 @@ export class SolverModel {
       this.hoursSum +
       this.fairness() +
       this.holidaySum * this.holidayPrice +
+      this.weekendSum * this.weekendPrice +
       this.recoverySum * this.recoveryPrice +
       this.pendingSum * this.pendingPrice +
       this.prefSum * this.weights.preference +
@@ -1141,7 +1118,8 @@ export class SolverModel {
     const incompatibility = this.incompatSum;
     const hours = this.hoursSum;
     // The holiday rotation is fairness between nurses, so it is reported with it.
-    const fairness = this.fairness() + this.holidaySum * this.holidayPrice;
+    const fairness =
+      this.fairness() + this.holidaySum * this.holidayPrice + this.weekendSum * this.weekendPrice;
     // Days off after nights are about the nurse, so they are reported with preferences.
     const preferences =
       this.prefSum * this.weights.preference +

@@ -24,7 +24,7 @@ import type { Id, Nurse, NurseRole, TimeOffRequest } from '../domain/entities.js
 import { compareDates, dateInRange, describeDateRange, type IsoDate } from '../domain/time.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import { hasValidCredential } from '../rules/coverage-rules.js';
-import type { Violation } from '../rules/types.js';
+import { detailNumber, detailOptional, detailString, type Violation } from '../rules/types.js';
 import { ConflictEngine, type SimState } from './engine.js';
 import { dayLabel, dollars, leaveLabel, nameList, nurseName, plural } from './text.js';
 import type { Conflict, ConflictInput, ConflictSeverity } from './types.js';
@@ -86,17 +86,16 @@ function staffingConflicts(
   const cells = new Map<string, ShortCell>();
   for (const v of violations) {
     if (v.code !== 'understaffed' && v.code !== 'ratio_breach') continue;
-    const d = v.details ?? {};
     const date = v.dates[0];
     if (!date) continue;
-    const shiftTypeId = String(d.shiftTypeId) as Id;
-    const role = d.role as NurseRole;
+    const shiftTypeId = detailString(v, 'shiftTypeId') as Id;
+    const role = detailString(v, 'role') as NurseRole;
     const key = `${date}::${shiftTypeId}::${role}`;
     const cell = cells.get(key) ?? {
       date,
       shiftTypeId,
       role,
-      staffed: Number(d.staffed ?? 0),
+      staffed: detailNumber(v, 'staffed'),
       floorRequired: 0,
       ratioRequired: 0,
       ratioBreached: false,
@@ -104,9 +103,9 @@ function staffingConflicts(
     };
     if (v.code === 'ratio_breach') {
       cell.ratioBreached = true;
-      cell.ratioRequired = Number(d.required ?? 0);
+      cell.ratioRequired = detailNumber(v, 'required');
     } else {
-      cell.floorRequired = Number(d.required ?? 0);
+      cell.floorRequired = detailNumber(v, 'required');
     }
     if (v.severity === 'hard') cell.hard = true;
     cells.set(key, cell);
@@ -247,17 +246,16 @@ function hoursConflicts(violations: readonly Violation[]): Conflict[] {
   const out: Conflict[] = [];
   for (const v of violations) {
     let magnitude: number;
-    const d = v.details ?? {};
     switch (v.code) {
       case 'under_contracted_hours':
       case 'over_contracted_hours':
-        magnitude = Math.abs(Number(d.deltaHours ?? 0));
+        magnitude = Math.abs(detailNumber(v, 'deltaHours'));
         break;
       case 'over_max_hours':
-        magnitude = Number(d.scheduledHours ?? 0) - Number(d.maxHours ?? 0);
+        magnitude = detailNumber(v, 'scheduledHours') - detailNumber(v, 'maxHours');
         break;
       case 'unauthorised_overtime':
-        magnitude = Number(d.overtimeHours ?? 0);
+        magnitude = detailNumber(v, 'overtimeHours');
         break;
       default:
         continue;
@@ -272,7 +270,7 @@ function hoursConflicts(violations: readonly Violation[]): Conflict[] {
       timeOffIds: [],
       message: v.message,
       magnitude,
-      details: { code: v.code, ruleId: v.ruleId, assignmentIds: v.assignmentIds, ...d },
+      details: { code: v.code, ruleId: v.ruleId, assignmentIds: v.assignmentIds, ...v.details },
     });
   }
   return out;
@@ -349,14 +347,13 @@ function credentialConflicts(
   const out: Conflict[] = [];
   for (const v of violations) {
     if (v.code !== 'missing_credential') continue;
-    const d = v.details ?? {};
     const date = v.dates[0];
     if (!date) continue;
-    const shiftTypeId = String(d.shiftTypeId) as Id;
-    const credentialId = String(d.credentialId) as Id;
-    const role = (d.role ?? null) as NurseRole | null;
-    const required = Number(d.required ?? 0);
-    const held = Number(d.held ?? 0);
+    const shiftTypeId = detailString(v, 'shiftTypeId') as Id;
+    const credentialId = detailString(v, 'credentialId') as Id;
+    const role = detailOptional<NurseRole>(v, 'role') ?? null;
+    const required = detailNumber(v, 'required');
+    const held = detailNumber(v, 'held');
     out.push({
       id: `credential:missing:${date}:${shiftTypeId}:${credentialId}`,
       kind: 'credential',
@@ -368,7 +365,13 @@ function credentialConflicts(
       timeOffIds: [],
       message: `${dayLabel(date)} ${engine.shiftType(shiftTypeId).abbreviation}: ${v.message}`,
       magnitude: required - held,
-      details: { kind: 'missing', credentialId, credentialCode: d.credentialCode, required, held },
+      details: {
+        kind: 'missing',
+        credentialId,
+        credentialCode: detailOptional(v, 'credentialCode'),
+        required,
+        held,
+      },
     });
   }
 

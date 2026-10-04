@@ -3,7 +3,6 @@
  * day. Deleting one is refused while ratio rules or census rows still cite it.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import type { AcuityTier } from '@shiftnurse/core';
 import { useState } from 'react';
 import type { AcuityTierInput, AcuityTierPatch } from '../../../../../shared/api.js';
@@ -13,7 +12,8 @@ import {
   useUpdateAcuityTier,
 } from '../../../api-config.js';
 import { describedBy, Field } from '../../../components/field-help.js';
-import { INPUT, OVERLAY, POPUP, PRIMARY, SECONDARY } from '../../../components/ui.js';
+import { Modal } from '../../../components/modal.js';
+import { INPUT, PRIMARY, SECONDARY } from '../../../components/ui.js';
 
 interface TierFormState {
   name: string;
@@ -71,7 +71,7 @@ function TierForm({
 
   return (
     <form
-      className="flex flex-col gap-3"
+      className="mt-3 flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
         if (!valid) return;
@@ -156,20 +156,14 @@ function TierDialog({
   submitLabel: string;
 }) {
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content className={`${POPUP} w-[420px]`}>
-          <Dialog.Title className="mb-3 text-sm font-semibold text-text">{title}</Dialog.Title>
-          <TierForm
-            initial={initial}
-            submitLabel={submitLabel}
-            onCancel={() => onOpenChange(false)}
-            onSubmit={onSubmit}
-          />
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Modal open={open} onOpenChange={onOpenChange} title={title} variant="popup" size="md">
+      <TierForm
+        initial={initial}
+        submitLabel={submitLabel}
+        onCancel={() => onOpenChange(false)}
+        onSubmit={onSubmit}
+      />
+    </Modal>
   );
 }
 
@@ -299,48 +293,45 @@ export function AcuityTiersSection({ unitId, tiers }: { unitId: string; tiers: A
         />
       ) : null}
 
-      <Dialog.Root
+      <Modal
         open={confirmingDelete !== undefined}
         onOpenChange={(open) => {
           if (!open) setConfirmingDelete(undefined);
         }}
+        title="Delete acuity tier?"
+        variant="popup"
+        size="sm"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setConfirmingDelete(undefined)}
+              className={SECONDARY}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (confirmingDelete === undefined) return;
+                deleteMutation.mutate(
+                  { id: confirmingDelete.id, unitId },
+                  { onSuccess: () => setConfirmingDelete(undefined) },
+                );
+              }}
+              className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+            >
+              Delete
+            </button>
+          </>
+        }
       >
-        <Dialog.Portal>
-          <Dialog.Overlay className={OVERLAY} />
-          <Dialog.Content className={`${POPUP} w-[360px]`}>
-            <Dialog.Title className="mb-2 text-sm font-semibold text-text">
-              Delete acuity tier?
-            </Dialog.Title>
-            <p className="mb-4 text-sm text-text-muted">
-              {confirmingDelete !== undefined
-                ? `"${confirmingDelete.name}" will be removed. Any ratio rule or census mix that references it should be updated first.`
-                : ''}
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmingDelete(undefined)}
-                className={SECONDARY}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirmingDelete === undefined) return;
-                  deleteMutation.mutate(
-                    { id: confirmingDelete.id, unitId },
-                    { onSuccess: () => setConfirmingDelete(undefined) },
-                  );
-                }}
-                className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
-              >
-                Delete
-              </button>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+        <p className="mt-2 text-sm text-text-muted">
+          {confirmingDelete !== undefined
+            ? `"${confirmingDelete.name}" will be removed. Any ratio rule or census mix that references it should be updated first.`
+            : ''}
+        </p>
+      </Modal>
     </section>
   );
 }

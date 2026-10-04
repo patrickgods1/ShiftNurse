@@ -14,6 +14,7 @@ import {
   describeDateRange,
   formatTimeOfDay,
   fromDayNumber,
+  type IsoDate,
   isIsoDate,
   isoDate,
   isWeekendWindow,
@@ -67,6 +68,14 @@ describe('isoDate', () => {
 });
 
 describe('calendar arithmetic', () => {
+  it('refuses a date that does not exist rather than rolling it into March', () => {
+    // A branded IsoDate can only come from isoDate(), but a cast or bad JSON can smuggle one
+    // in; Date.UTC would quietly turn Feb 30 into Mar 2 and every rest calculation with it.
+    expect(() => dayNumber('2026-02-30' as IsoDate)).toThrow(RangeError);
+    expect(() => dayNumber('not-a-date' as IsoDate)).toThrow(RangeError);
+    expect(() => addDays('2026-13-01' as IsoDate, 1)).toThrow(RangeError);
+  });
+
   it('round-trips through day numbers', () => {
     const d = isoDate('2026-09-17');
     expect(fromDayNumber(dayNumber(d))).toBe(d);
@@ -324,6 +333,16 @@ describe('weekends', () => {
     const nextWeekend = weekendKey(shiftWindow(isoDate('2026-09-26'), DAY_12H));
     expect(thisWeekend).not.toBe(nextWeekend);
     expect(daysBetween(isoDate(thisWeekend!), isoDate(nextWeekend!))).toBe(7);
+  });
+
+  it("files a Friday night under 'overlaps' with the weekend it runs into, not the one before", () => {
+    // Fri 18 Sep 19:00 – Sat 07:00 overlaps the weekend opening Sat 19 Sep 00:00. The previous
+    // weekend (12–13 Sep) ended five days earlier.
+    const overlapping: WeekendDefinition = { ...DEFAULT_WEEKEND, mode: 'overlaps' };
+    const friday = shiftWindow(isoDate('2026-09-18'), NIGHT_12H);
+    const saturday = shiftWindow(isoDate('2026-09-19'), DAY_12H);
+    expect(weekendKey(friday, overlapping)).toBe('2026-09-19');
+    expect(weekendKey(saturday, overlapping)).toBe('2026-09-19');
   });
 
   it('returns no key for a weekday shift', () => {

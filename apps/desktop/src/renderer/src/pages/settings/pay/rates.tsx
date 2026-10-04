@@ -11,6 +11,7 @@ import {
 } from '../../../api-cost.js';
 import { AsyncState } from '../../../components/async-state.js';
 import { useConfirm } from '../../../components/confirm.js';
+import { DateField } from '../../../components/date-field.js';
 import { INPUT, LABEL, PRIMARY, SMALL, SMALL_DANGER, TD, TH } from '../../../components/ui.js';
 import { formatDate } from '../../../format.js';
 import { formatDollars } from '../../../money.js';
@@ -36,7 +37,7 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
 
   const [scope, setScope] = useState<string>('role:RN');
   const [hourly, setHourly] = useState('');
-  const [effectiveFrom, setEffectiveFrom] = useState('');
+  const [effectiveFrom, setEffectiveFrom] = useState<IsoDate | ''>('');
   const [error, setError] = useState<string | undefined>(undefined);
   const [editingId, setEditingId] = useState<Id | undefined>(undefined);
   const [editHourly, setEditHourly] = useState('');
@@ -110,7 +111,7 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
               nurseId: kind === 'nurse' ? value : null,
               role: kind === 'role' ? (value as NurseRole) : null,
               hourlyRate,
-              effectiveFrom: effectiveFrom as IsoDate,
+              effectiveFrom,
             },
             {
               onSuccess: () => {
@@ -158,16 +159,12 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
             data-testid="pay-rate-hourly"
           />
         </label>
-        <label className={LABEL}>
-          Effective from
-          <input
-            type="date"
-            required
-            value={effectiveFrom}
-            onChange={(event) => setEffectiveFrom(event.target.value)}
-            className={INPUT}
-          />
-        </label>
+        <DateField
+          label="Effective from"
+          required
+          value={effectiveFrom}
+          onChange={setEffectiveFrom}
+        />
         <button type="submit" className={PRIMARY} disabled={createRate.isPending}>
           Add rate
         </button>

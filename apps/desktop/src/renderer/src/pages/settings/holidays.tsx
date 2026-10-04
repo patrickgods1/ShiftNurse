@@ -26,6 +26,7 @@ import {
 import { useDifferentials } from '../../api-cost.js';
 import { AsyncState } from '../../components/async-state.js';
 import { useConfirm } from '../../components/confirm.js';
+import { DateField } from '../../components/date-field.js';
 import { CheckField, Field, InfoTip } from '../../components/field-help.js';
 import { errorMessage, INPUT, PRIMARY, SMALL, SMALL_DANGER } from '../../components/ui.js';
 import { formatDateWithWeekday } from '../../format.js';
@@ -165,7 +166,7 @@ function AddHolidayForm({
   pairing: boolean;
 }) {
   const createHoliday = useCreateHoliday();
-  const [date, setDate] = useState('');
+  const [date, setDate] = useState<Holiday['date'] | ''>('');
   const [name, setName] = useState('');
   const [isMajor, setIsMajor] = useState(false);
   const [pairedWith, setPairedWith] = useState('');
@@ -177,7 +178,7 @@ function AddHolidayForm({
       : {
           id: '',
           unitId,
-          date: date as Holiday['date'],
+          date,
           name,
           isMajor,
           pairedHolidayId: null,
@@ -197,7 +198,7 @@ function AddHolidayForm({
         createHoliday.mutate(
           {
             unitId,
-            date: date as Holiday['date'],
+            date,
             name: name.trim(),
             isMajor,
             pairedHolidayId: !isMajor && pairedWith !== '' ? (pairedWith as Id) : null,
@@ -213,16 +214,7 @@ function AddHolidayForm({
         );
       }}
     >
-      <Field id="holiday-date" label="Date" compact>
-        <input
-          id="holiday-date"
-          type="date"
-          required
-          value={date}
-          onChange={(event) => setDate(event.target.value)}
-          className={INPUT}
-        />
-      </Field>
+      <DateField id="holiday-date" label="Date" required value={date} onChange={setDate} />
       <Field id="holiday-name" label="Name" compact>
         <input
           id="holiday-name"

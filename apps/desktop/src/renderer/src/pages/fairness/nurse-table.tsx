@@ -13,9 +13,10 @@ import type {
   NurseFairnessScore,
 } from '@shiftnurse/core';
 import { FAIRNESS_COMPONENT_LABELS, FAIRNESS_COMPONENTS } from '@shiftnurse/core';
+import { Link } from '@tanstack/react-router';
 import { useId, useState } from 'react';
 import type { FairnessTrendPoint } from '../../../../shared/api.js';
-import { fteLabel, listName } from '../../format.js';
+import { formatDateWithWeekday, fteLabel, listName } from '../../format.js';
 import { SCORE_BAR_CLASSES, SCORE_TONE_CLASSES, scoreTone } from './score-tone.js';
 import { Sparkline } from './sparkline.js';
 
@@ -66,8 +67,32 @@ function ComponentBar({ component }: { component: ComponentScore }) {
   );
 }
 
-function NurseBreakdown({ score }: { score: NurseFairnessScore }) {
+function dateLine(label: string, dates: readonly string[]): string | null {
+  return dates.length === 0 ? null : `${label}: ${dates.map(formatDateWithWeekday).join(', ')}`;
+}
+
+/** Against the unit's mean over comparable nurses, so per-diem staff do not drag it down. */
+export function weekendComparison(score: NurseFairnessScore, all: NurseFairnessScore[]): string {
+  const peers = all.filter((s) => s.comparable);
+  if (peers.length === 0) return '';
+  const mean = peers.reduce((sum, s) => sum + s.occurrences.weekends.length, 0) / peers.length;
+  const own = score.occurrences.weekends.length;
+  const rounded = Math.round(mean * 10) / 10;
+  const diff = Math.round((own - mean) * 10) / 10;
+  const unitText = `the unit average of ${rounded}`;
+  if (diff === 0) return `${own} weekend days, the same as ${unitText}.`;
+  const amount = Math.abs(diff);
+  return `${amount} ${diff > 0 ? 'more' : 'fewer'} weekend ${amount === 1 ? 'day' : 'days'} than ${unitText}.`;
+}
+
+function NurseBreakdown({ score, all }: { score: NurseFairnessScore; all: NurseFairnessScore[] }) {
   const byKey = componentsByKey(score.components);
+  const lines = [
+    dateLine('Nights', score.occurrences.nights),
+    dateLine('Weekends', score.occurrences.weekends),
+    dateLine('Holidays', score.occurrences.holidays),
+  ].filter((line): line is string => line !== null);
+  const comparison = weekendComparison(score, all);
   return (
     <div className="px-4 py-3">
       <div className="flex flex-col divide-y divide-border">
@@ -84,16 +109,31 @@ function NurseBreakdown({ score }: { score: NurseFairnessScore }) {
           );
         })}
       </div>
+      <div className="mt-3 flex flex-col gap-1 text-sm text-text">
+        {lines.map((line) => (
+          <p key={line}>{line}</p>
+        ))}
+        {comparison !== '' ? <p className="text-text-muted">{comparison}</p> : null}
+        <Link
+          to="/schedule"
+          search={{ nurse: score.nurseId }}
+          className="self-start text-accent hover:underline"
+        >
+          Show on schedule
+        </Link>
+      </div>
     </div>
   );
 }
 
 function NurseRow({
   score,
+  all,
   nurse,
   trendValues,
 }: {
   score: NurseFairnessScore;
+  all: NurseFairnessScore[];
   nurse: Nurse | undefined;
   trendValues: number[];
 }) {
@@ -148,7 +188,7 @@ function NurseRow({
       {expanded ? (
         <tr>
           <td colSpan={7} id={panelId} className="border-b border-border bg-bg last:border-0">
-            <NurseBreakdown score={score} />
+            <NurseBreakdown score={score} all={all} />
           </td>
         </tr>
       ) : null}
@@ -170,6 +210,7 @@ export function NurseFairnessTable({ scores, nurses, trend }: NurseFairnessTable
       <NurseRow
         key={score.nurseId}
         score={score}
+        all={scores}
         nurse={nursesById.get(score.nurseId)}
         trendValues={trend
           .map((point) => point.scores[score.nurseId])

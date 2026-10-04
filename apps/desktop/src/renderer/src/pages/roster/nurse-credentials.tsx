@@ -11,7 +11,9 @@ import {
   useUpdateCredentialExpiry,
 } from '../../api.js';
 import { AsyncState } from '../../components/async-state.js';
+import { DateField } from '../../components/date-field.js';
 import { daysFromToday } from '../../format.js';
+import { CredentialBadge, standingOf } from './credential-badge.js';
 
 /** "expires in 24 months", "expires in 12 days", "expired 3 days ago". */
 function expiresIn(days: number): string {
@@ -99,6 +101,7 @@ function CredentialRow({
 }) {
   const [expiry, setExpiry] = useState(nurseCredential.expiresOn ?? '');
   const inputId = useId();
+  const standing = standingOf(nurseCredential.expiresOn);
 
   return (
     <li className="rounded-md border border-border p-2 text-sm">
@@ -112,21 +115,18 @@ function CredentialRow({
       </div>
       {credential?.tracksExpiry !== false ? (
         <div className="mt-1 flex items-center gap-2">
-          <label htmlFor={inputId} className="text-text-muted">
-            Expires
-          </label>
-          <input
+          <DateField
             id={inputId}
-            type="date"
-            value={expiry}
-            onChange={(e) => setExpiry(e.target.value)}
-            className="rounded-md border border-border bg-bg px-1.5 py-0.5 text-text"
+            label="Expires"
+            value={expiry as IsoDate | ''}
+            onChange={setExpiry}
           />
           <span className={expiryColor(nurseCredential.expiresOn)}>
             {nurseCredential.expiresOn
               ? expiresIn(daysFromToday(nurseCredential.expiresOn))
               : 'no expiry'}
           </span>
+          {standing === undefined ? null : <CredentialBadge standing={standing} />}
           <button
             type="button"
             onClick={() => onUpdateExpiry((expiry || undefined) as IsoDate | undefined)}
@@ -245,15 +245,9 @@ function GrantCredentialForm({
         </div>
       )}
 
-      <label className="mt-2 block text-text-muted">
-        Expires on
-        <input
-          type="date"
-          value={expiresOn}
-          onChange={(e) => setExpiresOn(e.target.value)}
-          className="mt-1 block w-full rounded-md border border-border bg-surface px-2 py-1"
-        />
-      </label>
+      <div className="mt-2">
+        <DateField label="Expires on" value={expiresOn as IsoDate | ''} onChange={setExpiresOn} />
+      </div>
 
       <div className="mt-3 flex justify-end gap-2">
         <button

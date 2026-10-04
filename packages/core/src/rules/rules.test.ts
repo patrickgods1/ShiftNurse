@@ -64,8 +64,7 @@ describe('minimum rest', () => {
       ],
     });
     const rest = evaluate(s).violations.find((v) => v.code === 'insufficient_rest');
-    expect(rest).toBeDefined();
-    expect(rest?.details?.restHours).toBe(0);
+    expect(rest).toMatchObject({ details: { restHours: 0 } });
   });
 
   it('accepts a 12-hour gap between consecutive day shifts', () => {
@@ -909,6 +908,46 @@ describe('patient ratio compliance', () => {
     });
     const v = evaluate(s).violations.find((x) => x.code === 'ratio_breach');
     expect(v?.details).toMatchObject({ staffed: 2, required: 4, projectedCensus: 20 });
+  });
+
+  it('counts a charge nurse without patients toward staffing but not toward the bedside load', () => {
+    const nurses = [makeNurse({ isChargeEligible: true }), makeNurse(), makeNurse(), makeNurse()];
+    const s = scenario({
+      nurses,
+      // 20 routine patients at 1:5 is 4 bedside RNs, plus a charge nurse who takes none: 5.
+      // Four are scheduled, one of them charge, so 3 carry the 20 patients: 6.7 each.
+      censusForecasts: [census('2026-01-05', DAY_12, { [TIER_ROUTINE.id]: 20 })],
+      ratioStaffing: {
+        chargeNurseTakesPatients: false,
+        breakMinutesPerNurse: 0,
+        chargeCoversBreaks: false,
+      },
+      assignments: nurses.map((n, i) => assign(n.id, DAY_12, '2026-01-05', { isCharge: i === 0 })),
+    });
+    const v = evaluate(s).violations.find((x) => x.code === 'ratio_breach');
+    expect(v?.details).toMatchObject({ staffed: 4, required: 5, shortfall: 1 });
+    expect(v?.message).toContain('3 at the bedside is 6.7 patients per nurse');
+    expect(v?.message).toContain(
+      'requires 5 (4 at the bedside and a charge nurse without patients)',
+    );
+  });
+
+  it('names the break relief a ratio needs when the unit plans for breaks', () => {
+    const nurses = [makeNurse({ isChargeEligible: true }), makeNurse(), makeNurse(), makeNurse()];
+    const s = scenario({
+      nurses,
+      // 4 bedside RNs × 60 min = 240 minutes in a 600-minute break window: one relief.
+      censusForecasts: [census('2026-01-05', DAY_12, { [TIER_ROUTINE.id]: 20 })],
+      ratioStaffing: {
+        chargeNurseTakesPatients: true,
+        breakMinutesPerNurse: 60,
+        chargeCoversBreaks: false,
+      },
+      assignments: nurses.map((n, i) => assign(n.id, DAY_12, '2026-01-05', { isCharge: i === 0 })),
+    });
+    const v = evaluate(s).violations.find((x) => x.code === 'ratio_breach');
+    expect(v?.details).toMatchObject({ staffed: 4, required: 5 });
+    expect(v?.message).toContain('requires 5 (4 at the bedside and 1 to relieve breaks)');
   });
 
   it('accepts staffing that meets the ratio exactly', () => {

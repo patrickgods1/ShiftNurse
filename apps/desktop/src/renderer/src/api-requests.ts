@@ -15,7 +15,7 @@ import type { AutoResolvePolicy, Id, IsoDate, Resolution } from '@shiftnurse/cor
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CreateTimeOffInput, LeaveCover } from '../../shared/api.js';
 import { api, queryKeys } from './api.js';
-import { invalidatePeriod } from './period-cache.js';
+import { invalidatePeriod, invalidateUnitDerived } from './period-cache.js';
 
 export const requestKeys = {
   inRange: (unitId: Id, start: IsoDate, end: IsoDate) =>
@@ -74,10 +74,13 @@ export function useConflictPolicy(unitId: Id | undefined) {
 export function useSaveConflictPolicy(unitId: Id | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (policy: AutoResolvePolicy) => api.conflicts.savePolicy(unitId as Id, policy),
     onSettled: () => {
       if (unitId !== undefined) {
         void queryClient.invalidateQueries({ queryKey: requestKeys.policy(unitId) });
+        // The policy decides what the conflicts list offers to resolve on its own.
+        invalidateUnitDerived(queryClient, unitId);
       }
     },
   });
@@ -98,6 +101,7 @@ function useInvalidateRequests(unitId: Id | undefined, periodId: Id | undefined)
 export function useCreateTimeOff(unitId: Id | undefined, periodId: Id | undefined) {
   const invalidate = useInvalidateRequests(unitId, periodId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (input: CreateTimeOffInput) => api.timeOff.create(input),
     onSettled: invalidate,
   });
@@ -106,6 +110,7 @@ export function useCreateTimeOff(unitId: Id | undefined, periodId: Id | undefine
 export function useApproveTimeOff(unitId: Id | undefined, periodId: Id | undefined) {
   const invalidate = useInvalidateRequests(unitId, periodId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason?: string }) => api.timeOff.approve(id, reason),
     onSettled: invalidate,
   });
@@ -115,6 +120,7 @@ export function useApproveTimeOff(unitId: Id | undefined, periodId: Id | undefin
 export function useApproveAndCover(unitId: Id | undefined, periodId: Id | undefined) {
   const invalidate = useInvalidateRequests(unitId, periodId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ id, reason, covers }: { id: Id; reason?: string; covers: LeaveCover[] }) =>
       api.timeOff.approveAndCover(periodId as Id, id, reason, covers),
     onSettled: invalidate,
@@ -124,6 +130,7 @@ export function useApproveAndCover(unitId: Id | undefined, periodId: Id | undefi
 export function useDenyTimeOff(unitId: Id | undefined, periodId: Id | undefined) {
   const invalidate = useInvalidateRequests(unitId, periodId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason: string }) => api.timeOff.deny(id, reason),
     onSettled: invalidate,
   });
@@ -132,6 +139,7 @@ export function useDenyTimeOff(unitId: Id | undefined, periodId: Id | undefined)
 export function useCancelTimeOff(unitId: Id | undefined, periodId: Id | undefined) {
   const invalidate = useInvalidateRequests(unitId, periodId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason?: string }) => api.timeOff.cancel(id, reason),
     onSettled: invalidate,
   });
@@ -140,6 +148,7 @@ export function useCancelTimeOff(unitId: Id | undefined, periodId: Id | undefine
 export function useWithdrawApproval(unitId: Id | undefined, periodId: Id | undefined) {
   const invalidate = useInvalidateRequests(unitId, periodId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason: string }) =>
       api.timeOff.withdrawApproval(id, reason),
     onSettled: invalidate,
@@ -149,6 +158,7 @@ export function useWithdrawApproval(unitId: Id | undefined, periodId: Id | undef
 export function useResolveConflict(unitId: Id | undefined, periodId: Id | undefined) {
   const invalidate = useInvalidateRequests(unitId, periodId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ resolution, reason }: { resolution: Resolution; reason: string }) =>
       api.conflicts.resolve(periodId as Id, resolution, reason),
     onSettled: invalidate,
@@ -158,6 +168,7 @@ export function useResolveConflict(unitId: Id | undefined, periodId: Id | undefi
 export function useAutoResolve(unitId: Id | undefined, periodId: Id | undefined) {
   const invalidate = useInvalidateRequests(unitId, periodId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: () => api.conflicts.autoResolve(periodId as Id),
     onSettled: invalidate,
   });

@@ -63,6 +63,7 @@ import {
   type OvertimeRule,
   type Preference,
   type RatioRule,
+  type RatioStaffing,
   Rng,
   type RuleConfig,
   restMinutesBetween,
@@ -194,7 +195,7 @@ export interface DemoKeptApart {
 
 export interface DemoProfile {
   id: string;
-  unit: { name: string; unitType: string };
+  unit: { name: string; unitType: string; ratioStaffing?: RatioStaffing };
   /** Weeks in the upcoming schedule. */
   scheduleWeeks: number;
   /**
@@ -1299,7 +1300,16 @@ export function seedFromProfile(
           const r = role as NurseRole;
           // Scheduled to the forecast (which the period is judged by), and up again when the day
           // turned out busier.
-          const ratio = Math.max(0, ...mixes.map((m) => nursesRequiredForMix(m, r, ratioRules)));
+          const bedside = Math.max(0, ...mixes.map((m) => nursesRequiredForMix(m, r, ratioRules)));
+          // A charge nurse kept free of patients is not one of the nurses the ratio counts, so a
+          // standalone shift needs one more RN (as `deriveDemand` reads it). Break relief is not
+          // modelled: a profile that sets break minutes would need it added here.
+          const keepsChargeFree =
+            r === 'RN' &&
+            bedside > 0 &&
+            shift.withinShiftTypeId === null &&
+            profile.unit.ratioStaffing?.chargeNurseTakesPatients === false;
+          const ratio = bedside + (keepsChargeFree ? 1 : 0);
           const min = Math.max(floor.min, ratio);
           const target = Math.max(min, floor.target);
           let staffed = 0;

@@ -4,6 +4,7 @@
  * this becomes a web app.
  */
 
+import type { JurisdictionId } from '../setup/jurisdictions.js';
 import type { IsoDate, Weekday } from './time.js';
 
 export type Id = string;
@@ -24,6 +25,31 @@ export interface Unit {
   payPeriodDays: number;
   /** Anchor date so pay-period boundaries are unambiguous across the year. */
   payPeriodAnchor: IsoDate;
+  /** How the unit keeps its ratios at all times. Absent: the charge nurse counts, no breaks. */
+  ratioStaffing?: RatioStaffing;
+  /**
+   * Days before a period starts by which its schedule must be posted (many contracts say two to
+   * four weeks). Absent: no notice rule, and publishing is never flagged as late.
+   */
+  postingLeadDays?: number;
+  /** The state preset last applied (Settings › Unit); absent until one is. Not read by any rule. */
+  jurisdiction?: JurisdictionId;
+}
+
+/**
+ * How a unit keeps a ratio "at all times" (Title 22 § 70217(a); ORS 441.765). Read by
+ * `deriveDemand`, so every consumer of a shift's ratio requirement follows it.
+ */
+export interface RatioStaffing {
+  /**
+   * False where the charge nurse counts toward the ratio only while caring for patients and is
+   * usually kept free of them (California, Oregon): a standalone shift then needs one RN more.
+   */
+  chargeNurseTakesPatients: boolean;
+  /** Break minutes each bedside nurse takes per shift (e.g. a 30-minute meal and two 15s). */
+  breakMinutesPerNurse: number;
+  /** A charge nurse without patients relieves for breaks (Title 22 allows it): one relief fewer. */
+  chargeCoversBreaks: boolean;
 }
 
 export interface ShiftType {
@@ -358,6 +384,23 @@ export interface Assignment {
 }
 
 /**
+ * A nurse's standing offer to work overtime over some dates. New York (Labor Law § 167),
+ * Washington (RCW 49.28.140), Oregon (ORS 441.166) and Massachusetts (c.111 § 226) forbid
+ * *requiring* a nurse to work overtime outside an emergency; this record is what makes an
+ * overtime shift voluntary rather than mandatory. Dates are inclusive and compare with the shift's
+ * start date.
+ */
+export interface OvertimeVolunteer {
+  id: Id;
+  unitId: Id;
+  nurseId: Id;
+  startDate: IsoDate;
+  endDate: IsoDate;
+  /** How the offer was made — "texted 3 Oct, any nights that week" — quoted if it is disputed. */
+  note?: string;
+}
+
+/**
  * One publication of a period. A period is published once and then republished after every
  * batch of post-publish edits; each publication snapshots the assignments as they went out,
  * so "what did the nurses actually receive on the 3rd" is answerable without replaying the
@@ -491,10 +534,12 @@ export interface OvertimeRule {
   id: Id;
   unitId: Id;
   /**
-   * 'daily' compares against hours in one shift; 'weekly' against the contract's work week;
-   * 'pay_period' against the unit's pay period (a 14-day overtime period, as under 8/80).
+   * 'daily' compares against hours in one workday (the shifts that start on a date); 'weekly'
+   * against the contract's work week; 'pay_period' against the unit's pay period (a 14-day
+   * overtime period, as under 8/80); 'seventh_day' against hours on the seventh consecutive day
+   * worked in one work week (California Labor Code § 510: threshold 0 at 1.5×, 8 at 2×).
    */
-  basis: 'daily' | 'weekly' | 'pay_period';
+  basis: 'daily' | 'weekly' | 'pay_period' | 'seventh_day';
   thresholdHours: number;
   multiplier: number;
   active: boolean;

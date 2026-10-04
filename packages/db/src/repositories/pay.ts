@@ -13,14 +13,14 @@ import type {
   OvertimeRule,
   PayRate,
 } from '@shiftnurse/core';
-import { resolvePayRate } from '@shiftnurse/core';
+import { isIsoDate, resolvePayRate } from '@shiftnurse/core';
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import { toBudget, toDifferential, toOvertimeRule, toPayRate } from '../mappers.js';
 import { budget, differential, nurse, overtimeRule, payRate } from '../schema.js';
-import { type PatchKeys, patchOf } from './patch.js';
+import { auditedUpdate, type PatchKeys } from './patch.js';
 
 // ---------------------------------------------------------------------------
 // Cost configuration
@@ -106,19 +106,39 @@ export function createPayRate(db: DbLike, input: PayRateInput, actor: string): P
 
 export type PayRatePatch = Partial<Pick<PayRate, 'hourlyRate' | 'effectiveFrom'>>;
 
+const PAY_RATE_PATCH_KEYS: PatchKeys<PayRatePatch> = { hourlyRate: true, effectiveFrom: true };
+
 /** Correct a rate's amount or start date. Scope is fixed: re-scoping is a delete and a create. */
 export function updatePayRate(db: DbLike, id: Id, patch: PayRatePatch, actor: string): PayRate {
-  const row = db.select().from(payRate).where(eq(payRate.id, id)).get();
-  if (!row) throw new Error(`Pay rate ${id} not found`);
-  const before = toPayRate(row);
-  const values = {
-    ...(patch.hourlyRate !== undefined ? { hourlyRate: patch.hourlyRate } : {}),
-    ...(patch.effectiveFrom !== undefined ? { effectiveFrom: patch.effectiveFrom } : {}),
-  };
-  db.update(payRate).set(values).where(eq(payRate.id, id)).run();
-  const after: PayRate = { ...before, ...values };
-  recordAudit(db, { entityType: 'pay_rate', entityId: id, action: 'update', actor, before, after });
-  return after;
+  return auditedUpdate<PayRate, PayRatePatch>(db, {
+    id,
+    entityType: 'pay_rate',
+    entityLabel: 'pay rate',
+    allowed: PAY_RATE_PATCH_KEYS,
+    patch,
+    read: (rowId) => {
+      const row = db.select().from(payRate).where(eq(payRate.id, rowId)).get();
+      return row ? toPayRate(row) : undefined;
+    },
+    write: (rowId, values) => db.update(payRate).set(values).where(eq(payRate.id, rowId)).run(),
+    notFound: `Pay rate ${id} not found`,
+    validate: (values) => {
+      // A NaN or negative rate would misprice every shift it covers without failing anywhere.
+      if (
+        values.hourlyRate !== undefined &&
+        !(Number.isFinite(values.hourlyRate) && values.hourlyRate >= 0)
+      ) {
+        throw new Error('An hourly rate must be a number of dollars, zero or more.');
+      }
+      if (
+        values.effectiveFrom !== undefined &&
+        !(typeof values.effectiveFrom === 'string' && isIsoDate(values.effectiveFrom))
+      ) {
+        throw new Error('Effective from must be a date.');
+      }
+    },
+    actor,
+  });
 }
 
 export function deletePayRate(db: DbLike, id: Id, actor: string): void {
@@ -178,21 +198,26 @@ export function updateDifferential(
   patch: DifferentialPatch,
   actor: string,
 ): Differential {
-  const row = db.select().from(differential).where(eq(differential.id, id)).get();
-  if (!row) throw new Error(`Differential ${id} not found`);
-  const before = toDifferential(row);
-  const merged = { ...row, ...patchOf(patch, DIFFERENTIAL_PATCH_KEYS, 'differential') };
-  db.update(differential).set(merged).where(eq(differential.id, id)).run();
-  const after = toDifferential(merged);
-  recordAudit(db, {
+  return auditedUpdate<Differential, DifferentialPatch>(db, {
+    id,
     entityType: 'differential',
-    entityId: id,
-    action: 'update',
+    entityLabel: 'differential',
+    allowed: DIFFERENTIAL_PATCH_KEYS,
+    patch,
+    read: (rowId) => {
+      const row = db.select().from(differential).where(eq(differential.id, rowId)).get();
+      return row ? toDifferential(row) : undefined;
+    },
+    // The id rides along so an empty patch still writes, as the full-row update always did.
+    write: (rowId, values) =>
+      db
+        .update(differential)
+        .set({ ...values, id: rowId })
+        .where(eq(differential.id, rowId))
+        .run(),
+    notFound: `Differential ${id} not found`,
     actor,
-    before,
-    after,
   });
-  return after;
 }
 
 export function deleteDifferential(db: DbLike, id: Id, actor: string): void {
@@ -254,21 +279,26 @@ export function updateOvertimeRule(
   patch: OvertimeRulePatch,
   actor: string,
 ): OvertimeRule {
-  const row = db.select().from(overtimeRule).where(eq(overtimeRule.id, id)).get();
-  if (!row) throw new Error(`Overtime rule ${id} not found`);
-  const before = toOvertimeRule(row);
-  const merged = { ...row, ...patchOf(patch, OVERTIME_RULE_PATCH_KEYS, 'overtime rule') };
-  db.update(overtimeRule).set(merged).where(eq(overtimeRule.id, id)).run();
-  const after = toOvertimeRule(merged);
-  recordAudit(db, {
+  return auditedUpdate<OvertimeRule, OvertimeRulePatch>(db, {
+    id,
     entityType: 'overtime_rule',
-    entityId: id,
-    action: 'update',
+    entityLabel: 'overtime rule',
+    allowed: OVERTIME_RULE_PATCH_KEYS,
+    patch,
+    read: (rowId) => {
+      const row = db.select().from(overtimeRule).where(eq(overtimeRule.id, rowId)).get();
+      return row ? toOvertimeRule(row) : undefined;
+    },
+    // The id rides along so an empty patch still writes, as the full-row update always did.
+    write: (rowId, values) =>
+      db
+        .update(overtimeRule)
+        .set({ ...values, id: rowId })
+        .where(eq(overtimeRule.id, rowId))
+        .run(),
+    notFound: `Overtime rule ${id} not found`,
     actor,
-    before,
-    after,
   });
-  return after;
 }
 
 export function deleteOvertimeRule(db: DbLike, id: Id, actor: string): void {

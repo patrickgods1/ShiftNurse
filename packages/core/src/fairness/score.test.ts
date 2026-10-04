@@ -254,3 +254,31 @@ describe('fairness score monotonicity', () => {
     }
   });
 });
+
+describe('occurrences on the report', () => {
+  it("carries the dates behind each nurse's burden, and empty lists when none were given", () => {
+    resetFixtureCounters();
+    const a = makeNurse({ contractedHoursPerPeriod: 72 });
+    const b = makeNurse({ contractedHoursPerPeriod: 72 });
+    const occurrences = new Map([
+      [a.id, { nights: [isoDate('2026-10-03')], weekends: [isoDate('2026-10-03')], holidays: [] }],
+    ]);
+    const report = scoreFairness({
+      nurses: [a, b],
+      current: new Map(),
+      history: [],
+      preferences: [],
+      occurrences,
+    });
+    expect(report.scores.find((s) => s.nurseId === a.id)?.occurrences).toEqual({
+      nights: ['2026-10-03'],
+      weekends: ['2026-10-03'],
+      holidays: [],
+    });
+    expect(report.scores.find((s) => s.nurseId === b.id)?.occurrences).toEqual({
+      nights: [],
+      weekends: [],
+      holidays: [],
+    });
+  });
+});

@@ -1,5 +1,6 @@
+import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import type { SolveInput, SolveReport } from '@shiftnurse/core';
+import { isoDate, type SolveInput, type SolveReport } from '@shiftnurse/core';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { SolverWorkerHandle } from './solver-jobs.js';
 import { SolverJobs } from './solver-jobs.js';
@@ -14,12 +15,12 @@ class FakeWorker extends EventEmitter implements SolverWorkerHandle {
   terminate() {
     this.terminated = true;
   }
-  finish(objective: number, cancelled = false) {
+  finish(objective: number, cancelled = false, unfilled: SolveReport['unfilled'] = []) {
     const message: SolverWorkerMessage = {
       type: 'done',
       report: {
         assignments: [],
-        unfilled: [],
+        unfilled,
         hardViolations: [],
         softViolations: [],
         objective: {
@@ -71,9 +72,16 @@ function input(): SolveInput {
   } as unknown as SolveInput;
 }
 
+let loads: number;
+let changes: number | undefined;
+
 function jobs(cores = 3) {
   return new SolverJobs({
-    loadInput: () => input(),
+    loadInput: () => {
+      loads++;
+      return input();
+    },
+    ...(changes !== undefined ? { changeCount: () => changes! } : {}),
     settings: () => ({ solverId: 'sa-lns' }),
     availability: () => [{ id: 'sa-lns', available: true }],
     spawnWorker: (data) => {
@@ -89,6 +97,8 @@ function jobs(cores = 3) {
 beforeEach(() => {
   workers = [];
   inputVersion = 0;
+  loads = 0;
+  changes = undefined;
 });
 
 describe('a batch of variations', () => {
@@ -149,6 +159,32 @@ describe('a batch of variations', () => {
     expect(done.best).toBe(1);
     expect(done.saved).toBeUndefined();
     expect(j.candidates(batch.id).map((c) => c.index)).toEqual([0, 1, 2]);
+  });
+
+  it('tells the manager which shifts a run left short, listing at most 50 of them', () => {
+    const j = jobs(8);
+    const batch = j.start('period-1', { count: 1 });
+    // 60 Saturday-night gaps, one of them two nurses short: 61 nurse-slots over 60 shifts.
+    const gaps: SolveReport['unfilled'] = Array.from({ length: 60 }, (_, i) => ({
+      date: isoDate(`2026-02-${String((i % 28) + 1).padStart(2, '0')}`),
+      shiftTypeId: 'night',
+      role: 'RN',
+      required: 3,
+      staffed: i === 0 ? 1 : 2,
+      shortfall: i === 0 ? 2 : 1,
+      standard: 'coverage_floor',
+    }));
+    workers[0]!.finish(100, false, gaps);
+    const summary = j.status(batch.id)!.runs[0]!.summary!;
+    expect(summary.unfilledSlots).toBe(60);
+    expect(summary.floorsShort).toBe(61);
+    expect(summary.unfilled).toHaveLength(50);
+    expect(summary.unfilled[0]).toEqual({
+      date: '2026-02-01',
+      shiftTypeId: 'night',
+      role: 'RN',
+      shortfall: 2,
+    });
   });
 
   it('keeps finished variations when the manager stops the rest', () => {
@@ -245,6 +281,39 @@ describe('when the inputs move under a batch', () => {
   });
 });
 
+describe('a worker that dies with its CP-SAT runner still going', () => {
+  async function exited(pid: number): Promise<boolean> {
+    for (let i = 0; i < 100; i++) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return false;
+  }
+
+  it('kills the runner so it stops eating the manager machine', async () => {
+    const stand = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e6)'], {
+      stdio: 'ignore',
+    });
+    try {
+      const j = jobs(3);
+      j.start('period-1', { count: 1, seed: 100 });
+      workers[0]!.emit('message', {
+        type: 'runner',
+        pid: stand.pid!,
+      } satisfies SolverWorkerMessage);
+      workers[0]!.emit('error', new Error('worker blew up'));
+      expect(await exited(stand.pid!)).toBe(true);
+    } finally {
+      // A failed or timed-out run must not leave the stand-in running on the developer's machine.
+      stand.kill();
+    }
+  });
+});
+
 describe('the estimate', () => {
   it('uses the last finished run of the same solver on the unit once there is one', () => {
     const j = jobs(3);
@@ -262,5 +331,42 @@ describe('the estimate', () => {
     workers[0]!.finish(500);
     expect(j.estimate('period-1', { count: 1, maxIterations: 20_000 }).basis).toBe('observed');
     expect(j.estimate('period-1', { count: 1 }).basis).toBe('rough');
+  });
+});
+
+describe('checking candidates against the database on every poll', () => {
+  it('does not reload and re-hash the period while nothing has been written', () => {
+    changes = 10;
+    const j = jobs(3);
+    const batch = j.start('period-1', { count: 1 });
+    workers[0]!.finish(10);
+    const afterStart = loads;
+    j.current('period-1');
+    j.current('period-1');
+    j.candidate(batch.id, 0);
+    expect(loads).toBe(afterStart);
+  });
+
+  it('rechecks after a write and keeps candidates when the write left the input as it was', () => {
+    changes = 10;
+    const j = jobs(3);
+    const batch = j.start('period-1', { count: 1 });
+    workers[0]!.finish(10);
+    const afterStart = loads;
+    changes = 11; // an audit row, say: nothing the solver reads
+    expect(j.current('period-1')!.stale).toBeUndefined();
+    expect(loads).toBe(afterStart + 1);
+    j.candidate(batch.id, 0);
+    expect(loads).toBe(afterStart + 1);
+  });
+
+  it('drops candidates after a write that changed what the solver reads', () => {
+    changes = 10;
+    const j = jobs(3);
+    j.start('period-1', { count: 1 });
+    workers[0]!.finish(10);
+    inputVersion = 1;
+    changes = 11;
+    expect(j.current('period-1')!.stale).toMatch(/changed since they were generated/);
   });
 });

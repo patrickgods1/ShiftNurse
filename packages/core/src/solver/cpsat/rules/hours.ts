@@ -8,13 +8,14 @@
 
 import { compareDates } from '../../../domain/time.js';
 import {
-  type ContractedHoursParams,
-  type MaxHoursParams,
+  contractedHoursRule,
+  maxHoursRule,
   overtimeThreshold,
   payPeriodsIn,
   workWeeksIn,
 } from '../../../rules/hours-rules.js';
 import { leaveHoursBetween } from '../../../rules/paid-leave.js';
+import { asParams } from '../../../rules/registry.js';
 import { type EncodeContext, HOURS, hoursExpr, type TimelineEntry } from '../context.js';
 
 /**
@@ -31,7 +32,7 @@ function within(e: TimelineEntry, start: string, end: string): boolean {
 }
 
 export function encodeWeeklyHours(ctx: EncodeContext, raw: Record<string, unknown>): void {
-  const params = raw as unknown as MaxHoursParams;
+  const params = asParams(maxHoursRule, raw);
   const { period, unit } = ctx.input;
   const window = { start: period.startDate, end: period.endDate };
   const weeks = workWeeksIn(window, params.workWeekStartsOn);
@@ -84,7 +85,7 @@ export function encodeWeeklyHours(ctx: EncodeContext, raw: Record<string, unknow
 }
 
 export function encodeContractCap(ctx: EncodeContext, raw: Record<string, unknown>): void {
-  const params = raw as unknown as ContractedHoursParams;
+  const params = asParams(contractedHoursRule, raw);
   const { period, unit } = ctx.input;
   const periods = payPeriodsIn(
     { start: period.startDate, end: period.endDate },

@@ -21,14 +21,15 @@ import {
   resolveConfigs,
   type SchedulePeriod,
   type ScheduleView,
+  today,
 } from '@shiftnurse/core';
 import {
   type DbLike,
   demandInputs,
   listCredentials,
   listNurseCredentialsForUnit,
-  listTimeOffForUnit,
   paidSickCallsForUnit,
+  timeOffForPeriod,
 } from '@shiftnurse/db';
 import { periodOrThrow, ruleSetFor, scheduleViewFor, unitOrThrow } from './context.js';
 
@@ -50,13 +51,20 @@ export function alertsForView(
   // Paid leave counts as the hours rules count it, so a nurse back from vacation is not "drift".
   const paidLeaveByNurse = new Map<Id, PaidLeaveCredit[]>();
   const credits = paidLeaveCredits(
-    listTimeOffForUnit(db, period.unitId),
+    timeOffForPeriod(db, unit, period),
     paidSickCallsForUnit(db, period.unitId, { start: period.startDate, end: period.endDate }),
   );
   for (const c of credits) {
     paidLeaveByNurse.set(c.nurseId, [...(paidLeaveByNurse.get(c.nurseId) ?? []), c]);
   }
+  // Only an unpublished period is still to be posted; a published one was posted when it was
+  // published, and judging it by today's date would call every old schedule late.
+  const posting =
+    unit.postingLeadDays !== undefined && period.status === 'draft'
+      ? { leadDays: unit.postingLeadDays, publishDate: today() }
+      : undefined;
   return complianceAlerts({
+    ...(posting ? { posting } : {}),
     paidLeaveByNurse,
     paidLeaveCountsTowardHours: fte.paidLeaveCountsTowardHours,
     paidLeaveCountsTowardOvertime: params.paidLeaveCountsTowardOvertime,

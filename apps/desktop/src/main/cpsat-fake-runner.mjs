@@ -56,6 +56,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       process.stderr.write('boom: segfault in the solver\n');
       process.exit(3);
       break;
+    case 'hang':
+      // Reads the request and never answers: the runner that stopped responding.
+      break;
     case 'slow':
       emit({ type: 'progress', id, objective: 7, bound: 5, wall_ms: '1' });
       waiting = id;

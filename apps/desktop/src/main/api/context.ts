@@ -40,6 +40,7 @@ import {
   listTimeOffForUnit,
   loadPeriodInput,
   priorAssignmentsBefore,
+  timeOffForPeriod,
 } from '@shiftnurse/db';
 
 /**
@@ -84,8 +85,9 @@ export function assignmentOrThrow(db: DbLike, assignmentId: Id): Assignment {
   return existing;
 }
 
+/** A unit with no saved rules is judged by the defaults, shown as of now (core reads no clock). */
 export function latestRuleSetOrDefault(db: DbLike, unitId: Id): RuleSet {
-  return getLatestRuleSet(db, unitId) ?? defaultRuleSet(unitId);
+  return getLatestRuleSet(db, unitId) ?? defaultRuleSet(unitId, undefined, Date.now());
 }
 
 export interface ScheduleViewOptions {
@@ -126,13 +128,20 @@ export function scheduleViewFor(
 }
 
 /** Everything `deriveCounters` needs for a unit under a given rule set, loaded once. */
-export function counterContext(db: DbLike, unitId: Id, ruleSet: RuleSet): CounterContext {
+export function counterContext(
+  db: DbLike,
+  unitId: Id,
+  ruleSet: RuleSet,
+  // The period being counted; history import counts many periods, so it passes none and reads all.
+  period?: SchedulePeriod,
+): CounterContext {
+  const unit = unitOrThrow(db, unitId);
   return {
-    unit: unitOrThrow(db, unitId),
+    unit,
     holidayDates: new Set<IsoDate>(listHolidaysForUnit(db, unitId).map((h) => h.date)),
     weekendDefinition: ruleSet.weekendDefinition,
     preferences: listPreferencesForUnit(db, unitId),
-    timeOff: listTimeOffForUnit(db, unitId),
+    timeOff: period ? timeOffForPeriod(db, unit, period) : listTimeOffForUnit(db, unitId),
   };
 }
 

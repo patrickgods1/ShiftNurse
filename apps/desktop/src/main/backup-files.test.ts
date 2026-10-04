@@ -1,17 +1,35 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { openDatabase } from '@shiftnurse/db';
+import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   backupFileName,
+  clearRestoreMarker,
   dailyBackupDue,
   listBackupFiles,
   listTrash,
   moveToTrash,
   purgeExpired,
   purgeFromTrash,
+  readRestoreMarker,
+  removeStalePartials,
   replaceDatabaseFile,
   restoreFromTrash,
+  restoreRefusal,
+  verifyDatabaseFile,
+  writeRestoreMarker,
 } from './backup-files.js';
 
 const DAY = 86_400_000;
@@ -153,5 +171,100 @@ describe('backup names', () => {
     const name = backupFileName('pre-migrate', 'v0.1.0 → 14 changes', NOW);
     writeFileSync(join(dir, name), 'SQLite format 3\0');
     expect(listBackupFiles(dir).find((b) => b.fileName === name)?.kind).toBe('pre-migrate');
+  });
+});
+
+describe('checking a backup before it is trusted', () => {
+  const FOLDER = fileURLToPath(new URL('../../../../packages/db/drizzle', import.meta.url));
+
+  function realDatabase(name: string): string {
+    const path = join(dir, name);
+    openDatabase({ url: path, migrateOnOpen: true, migrationsFolder: FOLDER }).close();
+    return path;
+  }
+
+  it('accepts a good, migrated backup', () => {
+    expect(verifyDatabaseFile(realDatabase('good.sqlite'), FOLDER)).toEqual({ ok: true });
+  });
+
+  it('reports a backup that is no longer on disk', () => {
+    expect(verifyDatabaseFile(join(dir, 'gone.sqlite'), FOLDER)).toMatchObject({
+      ok: false,
+      reason: 'missing',
+    });
+  });
+
+  it('refuses a backup cut off half way', () => {
+    const path = realDatabase('cut.sqlite');
+    truncateSync(path, Math.floor(statSync(path).size / 2));
+    const verdict = verifyDatabaseFile(path, FOLDER);
+    expect(verdict.ok).toBe(false);
+    expect(['damaged', 'not-sqlite']).toContain((verdict as { reason: string }).reason);
+  });
+
+  it('refuses a file that is not a database at all', () => {
+    const path = join(dir, 'notes.sqlite');
+    writeFileSync(path, 'these are my shift notes, not a database, and long enough to be read');
+    expect(verifyDatabaseFile(path, FOLDER)).toMatchObject({ ok: false, reason: 'not-sqlite' });
+  });
+
+  it('refuses a backup made by a newer version', () => {
+    const path = realDatabase('future.sqlite');
+    const sqlite = new Database(path);
+    sqlite
+      .prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)')
+      .run('from-the-future', Date.UTC(2999, 0, 1));
+    sqlite.close();
+    expect(verifyDatabaseFile(path, FOLDER)).toMatchObject({ ok: false, reason: 'newer' });
+  });
+});
+
+describe('a backup that was still being written', () => {
+  it('is never listed, and the next launch removes it', () => {
+    const partial = `${MANUAL}.partial`;
+    writeFileSync(join(dir, partial), 'half a copy');
+    writeFileSync(join(dir, 'readme.txt'), 'not ours');
+
+    expect(listBackupFiles(dir).map((b) => b.fileName)).not.toContain(partial);
+    expect(removeStalePartials(dir)).toEqual([partial]);
+    expect(existsSync(join(dir, partial))).toBe(false);
+    expect(existsSync(join(dir, 'readme.txt'))).toBe(true);
+    expect(existsSync(join(dir, MANUAL))).toBe(true);
+  });
+});
+
+describe('the note a restore leaves for the next launch', () => {
+  it('is read back as written and gone once recorded', () => {
+    const marker = { fileName: MANUAL, restoredFrom: join(dir, MANUAL), savedAs: PUBLISH, at: NOW };
+    expect(readRestoreMarker(dir)).toBeUndefined();
+    writeRestoreMarker(dir, marker);
+    expect(readRestoreMarker(dir)).toEqual(marker);
+    clearRestoreMarker(dir);
+    expect(readRestoreMarker(dir)).toBeUndefined();
+  });
+});
+
+describe('what the manager is told when a restore is refused', () => {
+  const refusal = (reason: 'missing' | 'not-sqlite' | 'damaged' | 'newer') =>
+    restoreRefusal({ ok: false, reason, detail: 'x' });
+
+  it('says nothing for a backup that checks out', () => {
+    expect(restoreRefusal({ ok: true })).toBeUndefined();
+  });
+
+  it('tells them to update the app for a backup made by a newer version', () => {
+    expect(refusal('newer')).toBe(
+      'This backup was made by a newer version of ShiftNurse. Update the app, then restore it.',
+    );
+  });
+
+  it('tells them to choose another backup when the file is damaged or not a database', () => {
+    const sentence = 'This backup file is damaged and cannot be restored. Choose another backup.';
+    expect(refusal('damaged')).toBe(sentence);
+    expect(refusal('not-sqlite')).toBe(sentence);
+  });
+
+  it('says a vanished backup is no longer on disk', () => {
+    expect(refusal('missing')).toBe('This backup file is no longer on disk.');
   });
 });

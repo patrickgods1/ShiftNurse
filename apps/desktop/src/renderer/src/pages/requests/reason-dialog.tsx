@@ -4,18 +4,9 @@
  * typed — the form and the repository enforce the same rule, and the form just says so first.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import { type ReactNode, useEffect, useState } from 'react';
-import {
-  DANGER,
-  DIALOG,
-  errorMessage,
-  INPUT,
-  LABEL,
-  OVERLAY,
-  PRIMARY,
-  SECONDARY,
-} from '../../components/ui.js';
+import { Modal } from '../../components/modal.js';
+import { DANGER, errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from '../../components/ui.js';
 
 interface ReasonDialogProps {
   open: boolean;
@@ -55,56 +46,55 @@ export function ReasonDialog({
   const message = errorMessage(error);
 
   return (
-    <Dialog.Root open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content data-testid="reason-dialog" className={`${DIALOG} w-[28rem]`}>
-          <Dialog.Title className="text-base font-semibold text-text">{title}</Dialog.Title>
-          <Dialog.Description className="mt-1 text-sm text-text-muted">
-            {description ??
-              'This reason is written to the audit log and quoted if the decision is challenged.'}
-          </Dialog.Description>
-          <form
-            className="mt-4 flex flex-col gap-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (canConfirm) onConfirm(reason.trim());
-            }}
+    <Modal
+      open={open}
+      onOpenChange={(next) => !pending && onOpenChange(next)}
+      data-testid="reason-dialog"
+      size="sm"
+      title={title}
+      description={
+        description ??
+        'This reason is written to the audit log and quoted if the decision is challenged.'
+      }
+    >
+      <form
+        className="mt-4 flex flex-col gap-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (canConfirm) onConfirm(reason.trim());
+        }}
+      >
+        <label className={LABEL}>
+          Reason{required ? '' : ' (optional)'}
+          <textarea
+            className={`${INPUT} min-h-20`}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            required={required}
+            // biome-ignore lint/a11y/noAutofocus: the dialog exists to collect this one field.
+            autoFocus
+          />
+        </label>
+        {children}
+        {message !== undefined ? (
+          <p role="alert" className="text-sm text-danger">
+            {message}
+          </p>
+        ) : null}
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            className={SECONDARY}
+            onClick={() => onOpenChange(false)}
+            disabled={pending}
           >
-            <label className={LABEL}>
-              Reason{required ? '' : ' (optional)'}
-              <textarea
-                className={`${INPUT} min-h-20`}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                required={required}
-                // biome-ignore lint/a11y/noAutofocus: the dialog exists to collect this one field.
-                autoFocus
-              />
-            </label>
-            {children}
-            {message !== undefined ? (
-              <p role="alert" className="text-sm text-danger">
-                {message}
-              </p>
-            ) : null}
-            <div className="flex justify-end gap-2">
-              <Dialog.Close asChild>
-                <button type="button" className={SECONDARY} disabled={pending}>
-                  Cancel
-                </button>
-              </Dialog.Close>
-              <button
-                type="submit"
-                className={destructive ? DANGER : PRIMARY}
-                disabled={!canConfirm}
-              >
-                {pending ? 'Saving…' : confirmLabel}
-              </button>
-            </div>
-          </form>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+            Cancel
+          </button>
+          <button type="submit" className={destructive ? DANGER : PRIMARY} disabled={!canConfirm}>
+            {pending ? 'Saving…' : confirmLabel}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }

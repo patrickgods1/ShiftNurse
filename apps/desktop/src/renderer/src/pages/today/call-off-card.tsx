@@ -18,7 +18,7 @@ import {
 } from '../../api-dayof.js';
 import { AsyncState } from '../../components/async-state.js';
 import { DANGER, INPUT, SECONDARY, SMALL } from '../../components/ui.js';
-import { formatDateWithWeekday } from '../../format.js';
+import { formatDateWithWeekday, formatInstant } from '../../format.js';
 import { formatSignedDollars } from '../../money.js';
 import { ReasonDialog } from '../requests/reason-dialog.js';
 import { payTierLabel, payTierTone, TONE_CLASSES } from './tier-pill.js';
@@ -62,7 +62,14 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
   }
 
   return (
-    <div className="rounded-md border border-border bg-surface p-4" data-testid="call-off-card">
+    <div
+      id={`call-off-${callOff.callOff.id}`}
+      data-call-off-id={callOff.callOff.id}
+      // Focusable so a fresh report can take the manager's eye (and screen reader) straight here.
+      tabIndex={-1}
+      className="rounded-md border border-border bg-surface p-4 outline-none focus:ring-2 focus:ring-accent"
+      data-testid="call-off-card"
+    >
       <div>
         <p className="font-medium text-text">
           {callOff.nurse.lastName}, {callOff.nurse.firstName} ({callOff.nurse.role}) —{' '}
@@ -72,7 +79,7 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
           <p className="text-sm text-text-muted">{callOff.callOff.reason}</p>
         ) : null}
         <p className="text-xs text-text-muted">
-          Reported {new Date(callOff.callOff.reportedAt).toLocaleString()}
+          Reported {formatInstant(callOff.callOff.reportedAt)}
         </p>
       </div>
 
@@ -115,9 +122,16 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
                     <span className="text-xs text-text-muted">
                       burden {c.burdenIndex.toFixed(2)}
                     </span>
+                    {c.volunteeredForOvertime !== undefined ? (
+                      <span className="text-xs text-text-muted">
+                        {c.volunteeredForOvertime
+                          ? 'Offered overtime'
+                          : 'No standing offer — ask, don’t require'}
+                      </span>
+                    ) : null}
                     <span className="text-xs text-text-muted">
                       {c.lastCalledAt !== undefined
-                        ? new Date(c.lastCalledAt).toLocaleString()
+                        ? formatInstant(c.lastCalledAt)
                         : 'never called'}
                     </span>
                   </div>
@@ -203,7 +217,7 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
           <ul className="mt-1 flex flex-col gap-0.5 text-xs text-text-muted">
             {callOff.attempts.map((a) => (
               <li key={a.id}>
-                {new Date(a.attemptedAt).toLocaleString()} — {nurseLabel(a.nurseId)} — {a.outcome}
+                {formatInstant(a.attemptedAt)} — {nurseLabel(a.nurseId)} — {a.outcome}
                 {a.notes !== undefined ? ` — ${a.notes}` : ''}
               </li>
             ))}

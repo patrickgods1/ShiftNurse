@@ -16,13 +16,25 @@
 
 import { NURSE_ROLES, type ShiftDemand } from '../acuity/demand.js';
 import type { Credential, Id, NurseCredential, NurseRole } from '../domain/entities.js';
-import { compareDates, describeDate, type IsoDate, type Weekday } from '../domain/time.js';
+import {
+  compareDates,
+  daysBetween,
+  describeDate,
+  type IsoDate,
+  type Weekday,
+} from '../domain/time.js';
+import { credentialLapsedOn } from '../rules/coverage-rules.js';
 import { payPeriodsIn, workWeeksIn } from '../rules/hours-rules.js';
 import { leaveHoursBetween, type PaidLeaveCredit } from '../rules/paid-leave.js';
 import { nurseName } from '../rules/types.js';
 import type { ScheduleView } from '../schedule/view.js';
 
-export type ComplianceAlertKind = 'credential_expiry' | 'hours_drift' | 'overtime' | 'ratio_risk';
+export type ComplianceAlertKind =
+  | 'credential_expiry'
+  | 'hours_drift'
+  | 'overtime'
+  | 'ratio_risk'
+  | 'late_posting';
 export type ComplianceSeverity = 'warning' | 'critical';
 
 export interface ComplianceAlert {
@@ -68,6 +80,11 @@ export interface ComplianceInput {
   paidLeaveCountsTowardHours?: boolean;
   /** The max-hours rule's setting; paid leave counts toward overtime only when true. */
   paidLeaveCountsTowardOvertime?: boolean;
+  /**
+   * The unit's notice rule and the day the schedule would go out. The caller supplies the date:
+   * core never reads the clock. Absent means no check (no notice rule, or already published).
+   */
+  posting?: { leadDays: number; publishDate: IsoDate };
 }
 
 const SEVERITY_ORDER: Record<ComplianceSeverity, number> = { critical: 0, warning: 1 };
@@ -76,7 +93,11 @@ const KIND_ORDER: Record<ComplianceAlertKind, number> = {
   ratio_risk: 1,
   overtime: 2,
   hours_drift: 3,
+  late_posting: 4,
 };
+
+/** How far past the period's end a lapsing credential is still worth a warning. */
+const CREDENTIAL_LOOKAHEAD_DAYS = 30;
 
 function credentialExpiry(input: ComplianceInput): ComplianceAlert[] {
   const { schedule } = input;
@@ -86,12 +107,24 @@ function credentialExpiry(input: ComplianceInput): ComplianceAlert[] {
     const credential = credentialsById.get(nc.credentialId);
     const nurse = schedule.nursesById.get(nc.nurseId);
     if (!credential || !nurse || !nc.expiresOn) continue;
-    if (compareDates(nc.expiresOn, schedule.period.endDate) > 0) continue;
+    const expiresOn = nc.expiresOn;
     const views = schedule.assignmentsFor(nc.nurseId);
     if (views.length === 0) continue;
-    const expiresOn = nc.expiresOn;
-    // A shift *on* the expiry date is already past it: expiry is the last valid day's end.
-    const lapsed = views.filter((v) => compareDates(v.assignment.date, expiresOn) >= 0);
+    // A card lapsing within a month of the period's end is renewed now or not before the next
+    // schedule is built: warn while there is still time to book the class.
+    const daysAfter = daysBetween(schedule.period.endDate, expiresOn);
+    if (daysAfter > CREDENTIAL_LOOKAHEAD_DAYS) continue;
+    if (daysAfter > 0) {
+      alerts.push({
+        kind: 'credential_expiry',
+        severity: 'warning',
+        nurseId: nc.nurseId,
+        assignmentIds: [],
+        message: `${nurseName(nurse)}'s ${credential.code} expires ${describeDate(expiresOn)}, ${daysAfter} day${daysAfter === 1 ? '' : 's'} after this period ends`,
+      });
+      continue;
+    }
+    const lapsed = views.filter((v) => credentialLapsedOn(nc, v.assignment.date));
     if (lapsed.length === 0 && compareDates(expiresOn, schedule.period.startDate) < 0) continue;
     alerts.push({
       kind: 'credential_expiry',
@@ -100,7 +133,7 @@ function credentialExpiry(input: ComplianceInput): ComplianceAlert[] {
       assignmentIds: lapsed.map((v) => v.assignment.id),
       message:
         lapsed.length > 0
-          ? `${nurseName(nurse)}'s ${credential.code} expires ${describeDate(expiresOn)}; ${lapsed.length} shift${lapsed.length === 1 ? '' : 's'} on or after that date`
+          ? `${nurseName(nurse)}'s ${credential.code} expires ${describeDate(expiresOn)}; ${lapsed.length} shift${lapsed.length === 1 ? '' : 's'} after that date`
           : `${nurseName(nurse)}'s ${credential.code} expires ${describeDate(expiresOn)}, inside this period (no shifts after it)`,
     });
   }
@@ -231,6 +264,25 @@ function ratioRisk(input: ComplianceInput): ComplianceAlert[] {
   return alerts;
 }
 
+function latePosting(input: ComplianceInput): ComplianceAlert[] {
+  if (!input.posting) return [];
+  const { leadDays, publishDate } = input.posting;
+  // Days of notice staff actually get is the gap to the first day; a day short of the lead is late.
+  const notice = daysBetween(publishDate, input.schedule.period.startDate);
+  const daysLate = leadDays - notice;
+  if (daysLate <= 0) return [];
+  const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
+  return [
+    {
+      kind: 'late_posting',
+      severity: 'warning',
+      assignmentIds: [],
+      // Judged before publishing, so it says what publishing now would give staff.
+      message: `Publishing on ${describeDate(publishDate)} gives ${notice === 1 ? "1 day's" : `${notice} days'`} notice, ${days(daysLate)} short of the unit's ${leadDays}-day notice`,
+    },
+  ];
+}
+
 /** Every alert for the period, critical first, then by kind, then by date and nurse. */
 export function complianceAlerts(input: ComplianceInput): ComplianceAlert[] {
   const alerts = [
@@ -238,6 +290,7 @@ export function complianceAlerts(input: ComplianceInput): ComplianceAlert[] {
     ...hoursDrift(input),
     ...overtime(input),
     ...ratioRisk(input),
+    ...latePosting(input),
   ];
   return alerts.sort(
     (a, b) =>

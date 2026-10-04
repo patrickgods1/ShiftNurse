@@ -34,10 +34,10 @@ import {
   listHolidaysForUnit,
   listIncompatibilityGroups,
   listNurseCredentialsForUnit,
+  listOvertimeVolunteers,
   listPeriodsForUnit,
   listPreferencesForUnit,
   listShiftCredentialRequirementsForUnit,
-  listTimeOffForUnit,
   moveAssignment,
   paidSickCallsForUnit,
   recordScheduleChange,
@@ -48,6 +48,7 @@ import {
   saveRuleSet,
   setLocked as setAssignmentLocked,
   setRequestsCloseOn,
+  timeOffForPeriod,
   transact,
   updateAssignment as updateAssignmentDb,
 } from '@shiftnurse/db';
@@ -71,15 +72,16 @@ export function validateView(
 ): ScheduleValidation {
   const nurses = [...schedule.nursesById.values()];
   const shiftTypes = [...schedule.shiftTypesById.values()];
+  const unit = unitOrThrow(db, period.unitId);
   const ctx = buildRuleContext({
-    unit: unitOrThrow(db, period.unitId),
+    unit,
     demand: deriveDemand(
       datesInRange(period.startDate, period.endDate),
       demandInputs(db, period.unitId, period.startDate, period.endDate),
     ),
     nurses,
     shiftTypes,
-    timeOff: listTimeOffForUnit(db, period.unitId),
+    timeOff: timeOffForPeriod(db, unit, period),
     credentials: listCredentials(db),
     nurseCredentials: listNurseCredentialsForUnit(db, period.unitId),
     shiftCredentialRequirements: listShiftCredentialRequirementsForUnit(db, period.unitId),
@@ -90,6 +92,7 @@ export function validateView(
       end: period.endDate,
     }),
     incompatibilityGroups: listIncompatibilityGroups(db, period.unitId),
+    overtimeVolunteers: listOvertimeVolunteers(db, period.unitId),
     holidayWork: holidayWorkForPeriod(db, period),
   });
   // Which preferences each worked shift goes against, so the grid can say "avoids nights"

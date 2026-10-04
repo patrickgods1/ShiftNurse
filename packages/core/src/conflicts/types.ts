@@ -59,7 +59,9 @@ export interface ConflictInput extends SolveInput {
  *   expires before the shift.
  * - `budget`: the priced schedule exceeds the period budget.
  * - `scheduled_on_leave`: a nurse is rostered during leave that is already approved — leave
- *   approved after the draft was built, or a locked assignment the approval could not lift.
+ *   approved after the draft was built, or on a published period, whose shifts an approval does
+ *   not lift. Its fixes may lift a locked shift: approved leave outranks a lock (an approval
+ *   lifts locked draft shifts too), since a nurse on leave cannot work it.
  */
 export type ConflictKind =
   | 'understaffing'

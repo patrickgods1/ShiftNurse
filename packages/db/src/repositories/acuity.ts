@@ -14,7 +14,7 @@ import {
   hppdTarget as hppdTargetTable,
   ratioRule as ratioRuleTable,
 } from '../schema.js';
-import { type PatchKeys, patchOf } from './patch.js';
+import { auditedUpdate, type PatchKeys } from './patch.js';
 
 // ---------------------------------------------------------------------------
 // Acuity tiers
@@ -61,21 +61,26 @@ export function updateAcuityTier(
   patch: AcuityTierPatch,
   actor: string,
 ): AcuityTier {
-  const row = db.select().from(acuityTierTable).where(eq(acuityTierTable.id, id)).get();
-  if (!row) throw new Error(`Acuity tier ${id} not found`);
-  const before = toAcuityTier(row);
-  const merged = { ...row, ...patchOf(patch, ACUITY_TIER_PATCH_KEYS, 'acuity tier') };
-  db.update(acuityTierTable).set(merged).where(eq(acuityTierTable.id, id)).run();
-  const after = toAcuityTier(merged);
-  recordAudit(db, {
+  return auditedUpdate<AcuityTier, AcuityTierPatch>(db, {
+    id,
     entityType: 'acuity_tier',
-    entityId: id,
-    action: 'update',
+    entityLabel: 'acuity tier',
+    allowed: ACUITY_TIER_PATCH_KEYS,
+    patch,
+    read: (rowId) => {
+      const row = db.select().from(acuityTierTable).where(eq(acuityTierTable.id, rowId)).get();
+      return row ? toAcuityTier(row) : undefined;
+    },
+    // The id rides along so an empty patch still writes, as the full-row update always did.
+    write: (rowId, values) =>
+      db
+        .update(acuityTierTable)
+        .set({ ...values, id: rowId })
+        .where(eq(acuityTierTable.id, rowId))
+        .run(),
+    notFound: `Acuity tier ${id} not found`,
     actor,
-    before,
-    after,
   });
-  return after;
 }
 
 export function deleteAcuityTier(db: DbLike, id: Id, actor: string): void {
@@ -152,21 +157,26 @@ export function updateRatioRule(
   patch: RatioRulePatch,
   actor: string,
 ): RatioRule {
-  const row = db.select().from(ratioRuleTable).where(eq(ratioRuleTable.id, id)).get();
-  if (!row) throw new Error(`Ratio rule ${id} not found`);
-  const before = toRatioRule(row);
-  const merged = { ...row, ...patchOf(patch, RATIO_RULE_PATCH_KEYS, 'ratio rule') };
-  db.update(ratioRuleTable).set(merged).where(eq(ratioRuleTable.id, id)).run();
-  const after = toRatioRule(merged);
-  recordAudit(db, {
+  return auditedUpdate<RatioRule, RatioRulePatch>(db, {
+    id,
     entityType: 'ratio_rule',
-    entityId: id,
-    action: 'update',
+    entityLabel: 'ratio rule',
+    allowed: RATIO_RULE_PATCH_KEYS,
+    patch,
+    read: (rowId) => {
+      const row = db.select().from(ratioRuleTable).where(eq(ratioRuleTable.id, rowId)).get();
+      return row ? toRatioRule(row) : undefined;
+    },
+    // The id rides along so an empty patch still writes, as the full-row update always did.
+    write: (rowId, values) =>
+      db
+        .update(ratioRuleTable)
+        .set({ ...values, id: rowId })
+        .where(eq(ratioRuleTable.id, rowId))
+        .run(),
+    notFound: `Ratio rule ${id} not found`,
     actor,
-    before,
-    after,
   });
-  return after;
 }
 
 /** Deactivate rather than delete: past periods were solved under this rule and must stay explainable. */

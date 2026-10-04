@@ -1,6 +1,6 @@
 /**
- * Overtime rules: the daily, weekly or pay-period thresholds and multipliers costing prices
- * against.
+ * Overtime rules: the daily, weekly, pay-period or seventh-day thresholds and multipliers
+ * costing prices against.
  */
 
 import type { Id, OvertimeRule } from '@shiftnurse/core';
@@ -16,12 +16,14 @@ import { useConfirm } from '../../../components/confirm.js';
 import { INPUT, LABEL, PRIMARY, SMALL_DANGER, TD, TH } from '../../../components/ui.js';
 
 const BASIS_SPAN: Record<OvertimeRule['basis'], string> = {
-  daily: 'one shift',
+  daily: 'a workday',
   weekly: 'a work week',
   pay_period: 'a pay period',
+  seventh_day: 'the seventh day in a row of a work week',
 };
 
 function describeRule(rule: OvertimeRule): string {
+  if (rule.thresholdHours === 0) return `Every hour on ${BASIS_SPAN[rule.basis]}`;
   return `Over ${rule.thresholdHours}h in ${BASIS_SPAN[rule.basis]}`;
 }
 
@@ -47,10 +49,12 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
       <h2 className="mb-1 text-sm font-semibold text-text">Overtime</h2>
       <p className="mb-3 text-xs text-text-muted">
         Hours past the threshold earn the multiplier on the shift's full rate, differentials
-        included. An hour is overtime once: where several rules apply, the one paying more for that
-        shift wins. The work week starts on the day set in the Rules tab; a pay-period rule (such as
-        80 hours in 14 days) counts over the unit's pay period instead, for schedules where one week
-        runs long and the next short.
+        included. An hour is overtime once, at the highest multiplier any rule gives it: with 1.5×
+        past 8 hours a day and 2× past 12, a 13-hour shift is 4 hours at 1.5× and 1 at 2×. A workday
+        is every shift that starts on that date. The work week starts on the day set in the Rules
+        tab; a pay-period rule (such as 80 hours in 14 days) counts over the unit's pay period
+        instead. A seventh-day rule applies on the seventh day in a row worked in one work week
+        (California: threshold 0 at 1.5×, and 8 at 2×).
       </p>
 
       <form
@@ -59,8 +63,8 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
           event.preventDefault();
           const thresholdHours = Number(threshold);
           const parsedMultiplier = Number(multiplier);
-          if (!(thresholdHours > 0) || !(parsedMultiplier >= 1)) {
-            setError('A threshold above zero and a multiplier of at least 1 are required');
+          if (!(thresholdHours >= 0) || !(parsedMultiplier >= 1)) {
+            setError('A threshold of zero or more and a multiplier of at least 1 are required');
             return;
           }
           setError(undefined);
@@ -79,7 +83,8 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
           >
             <option value="weekly">Per work week</option>
             <option value="pay_period">Per pay period</option>
-            <option value="daily">Per shift</option>
+            <option value="daily">Per workday</option>
+            <option value="seventh_day">Seventh day in a row</option>
           </select>
         </label>
         <label className={LABEL}>

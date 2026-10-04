@@ -106,4 +106,15 @@ describe('whether saved candidates still match the inputs', () => {
     } as unknown as SolveInput;
     expect(inputFingerprint(changed)).not.toBe(before);
   });
+
+  it('drops the candidates when a nurse\u2019s overtime offer is recorded', () => {
+    const before = inputFingerprint(input([]));
+    const changed = {
+      ...input([]),
+      overtimeVolunteers: [
+        { id: 'o', unitId: 'u', nurseId: 'n1', startDate: '2026-10-05', endDate: '2026-10-06' },
+      ],
+    } as unknown as SolveInput;
+    expect(inputFingerprint(changed)).not.toBe(before);
+  });
 });

@@ -16,15 +16,21 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { today } from '@shiftnurse/core';
+import { migrationStatus } from '@shiftnurse/db';
+import Database from 'better-sqlite3';
 import type { BackupInfo, DeletedBackupInfo } from '../shared/api.js';
 
 export const TRASH_RETENTION_DAYS = 30;
+/** The name a file wears while its permanent removal is being recorded. */
+export const PURGING_SUFFIX = '.purging';
 const DAY_MS = 86_400_000;
 
 export type BackupKind =
@@ -130,13 +136,13 @@ export function listTrash(dir: string): DeletedBackupInfo[] {
  * Looks the name up in the listing rather than joining it onto the folder: an IPC caller's
  * `../live.sqlite` must never reach a rename.
  */
-function requireLive(dir: string, fileName: string): BackupInfo {
+export function requireLive(dir: string, fileName: string): BackupInfo {
   const found = listBackupFiles(dir).find((b) => b.fileName === fileName);
   if (!found) throw new Error(`Unknown backup ${fileName}`);
   return found;
 }
 
-function requireTrashed(dir: string, fileName: string): DeletedBackupInfo {
+export function requireTrashed(dir: string, fileName: string): DeletedBackupInfo {
   const found = listTrash(dir).find((b) => b.fileName === fileName);
   if (!found) throw new Error(`Backup ${fileName} is not in the trash`);
   return found;
@@ -177,4 +183,110 @@ export function purgeExpired(dir: string, now: number): DeletedBackupInfo[] {
   const expired = listTrash(dir).filter((b) => b.purgeAt <= now);
   for (const b of expired) rmSync(b.path, { force: true });
   return expired;
+}
+
+/** A backup is written under this suffix and renamed once verified, so a crash never leaves a half file under a real name. */
+export const PARTIAL_SUFFIX = '.partial';
+
+/**
+ * Remove backups a crash or full disk left half-written. Only `<backup>.sqlite.partial` names
+ * go: anything else in the folder is not ours to delete. Run at startup, before any backup of
+ * this run could be in flight.
+ */
+export function removeStalePartials(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const stale = readdirSync(dir).filter((name) => name.endsWith(`.sqlite${PARTIAL_SUFFIX}`));
+  for (const name of stale) rmSync(join(dir, name), { force: true });
+  return stale;
+}
+
+export type DatabaseVerdict =
+  | { ok: true }
+  | { ok: false; reason: 'missing' | 'not-sqlite' | 'damaged' | 'newer'; detail: string };
+
+/**
+ * Whether `path` is a database this build can open: a real SQLite file, internally consistent,
+ * and not migrated by a newer release. A header check alone passed a truncated copy, and a
+ * restored newer-schema file made the app refuse to start. Opened read-only so verifying can
+ * never change the file; the handle is always closed.
+ */
+export function verifyDatabaseFile(path: string, migrationsFolder: string): DatabaseVerdict {
+  if (!existsSync(path)) return { ok: false, reason: 'missing', detail: `${path} does not exist` };
+  let sqlite: Database.Database | undefined;
+  try {
+    sqlite = new Database(path, { readonly: true, fileMustExist: true });
+    const rows = sqlite.pragma('quick_check') as { quick_check: string }[];
+    if (rows.length !== 1 || rows[0]!.quick_check !== 'ok') {
+      return {
+        ok: false,
+        reason: 'damaged',
+        detail: rows.map((r) => r.quick_check).join('; ') || 'quick_check returned nothing',
+      };
+    }
+    if (migrationStatus(sqlite, migrationsFolder).newerThanApp) {
+      return { ok: false, reason: 'newer', detail: 'migrated by a newer release' };
+    }
+    return { ok: true };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    // SQLITE_NOTADB is a file that is not a database at all; anything else that fails while
+    // reading it (a truncated page, a bad schema) is damage.
+    const notDb =
+      /not a database/i.test(detail) || (err as { code?: string }).code === 'SQLITE_NOTADB';
+    return { ok: false, reason: notDb ? 'not-sqlite' : 'damaged', detail };
+  } finally {
+    sqlite?.close();
+  }
+}
+
+/** What a manager is told when a backup cannot be restored; undefined when it can. Reaches the UI verbatim. */
+export function restoreRefusal(verdict: DatabaseVerdict): string | undefined {
+  if (verdict.ok) return undefined;
+  switch (verdict.reason) {
+    case 'newer':
+      return 'This backup was made by a newer version of ShiftNurse. Update the app, then restore it.';
+    case 'missing':
+      return 'This backup file is no longer on disk.';
+    default:
+      return 'This backup file is damaged and cannot be restored. Choose another backup.';
+  }
+}
+
+/**
+ * Left next to the live database by a restore and consumed on the next open: the audit row
+ * must be written into the *restored* database, which does not exist until the swap is done.
+ */
+export interface RestoreMarker {
+  fileName: string;
+  restoredFrom: string;
+  savedAs: string;
+  at: number;
+}
+
+const MARKER_FILE = 'restore-pending.json';
+
+export function writeRestoreMarker(dir: string, marker: RestoreMarker): void {
+  writeFileSync(join(dir, MARKER_FILE), JSON.stringify(marker));
+}
+
+/** Undefined when there is no marker or it is unreadable: a bad marker must not stop the app starting. */
+export function readRestoreMarker(dir: string): RestoreMarker | undefined {
+  try {
+    const m = JSON.parse(readFileSync(join(dir, MARKER_FILE), 'utf8')) as Partial<RestoreMarker>;
+    if (
+      typeof m.fileName !== 'string' ||
+      typeof m.restoredFrom !== 'string' ||
+      typeof m.savedAs !== 'string' ||
+      typeof m.at !== 'number'
+    ) {
+      return undefined;
+    }
+    return { fileName: m.fileName, restoredFrom: m.restoredFrom, savedAs: m.savedAs, at: m.at };
+  } catch {
+    return undefined;
+  }
+}
+
+export function clearRestoreMarker(dir: string): void {
+  rmSync(join(dir, MARKER_FILE), { force: true });
 }

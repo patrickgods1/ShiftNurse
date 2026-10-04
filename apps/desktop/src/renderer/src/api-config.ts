@@ -22,6 +22,7 @@ import type {
   ShiftTypePatch,
 } from '../../shared/api.js';
 import { api, queryKeys } from './api.js';
+import { invalidateUnitDerived, invalidateUnitDerivedAnyUnit } from './period-cache.js';
 
 export const configKeys = {
   // Same spelling as `queryKeys.shiftTypes` in api.ts, so a mutation here and the existing
@@ -55,10 +56,12 @@ export function useShiftTypesList(unitId: Id | undefined) {
 export function useCreateShiftType() {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (input: ShiftTypeInput) => api.shiftTypes.create(input),
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: configKeys.shiftTypes(created.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(created.unitId) });
+      invalidateUnitDerived(queryClient, created.unitId);
     },
   });
 }
@@ -66,11 +69,13 @@ export function useCreateShiftType() {
 export function useUpdateShiftType() {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ id, patch }: { id: Id; patch: ShiftTypePatch }) =>
       api.shiftTypes.update(id, patch),
     onSuccess: (updated) => {
       queryClient.invalidateQueries({ queryKey: configKeys.shiftTypes(updated.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(updated.unitId) });
+      invalidateUnitDerived(queryClient, updated.unitId);
     },
   });
 }
@@ -82,6 +87,7 @@ export function useDeactivateShiftType() {
     onSuccess: (deactivated) => {
       queryClient.invalidateQueries({ queryKey: configKeys.shiftTypes(deactivated.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(deactivated.unitId) });
+      invalidateUnitDerived(queryClient, deactivated.unitId);
     },
   });
 }
@@ -105,6 +111,7 @@ export function useUpsertCoverage() {
     onSuccess: (saved) => {
       queryClient.invalidateQueries({ queryKey: configKeys.coverage(saved.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(saved.unitId) });
+      invalidateUnitDerived(queryClient, saved.unitId);
     },
   });
 }
@@ -112,12 +119,14 @@ export function useUpsertCoverage() {
 export function useDeleteCoverage() {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     // `coverage.delete` returns void, so the unit id has to travel with the call for
     // cache invalidation — the caller always has it (it's reading the unit's own grid).
     mutationFn: ({ id }: { id: Id; unitId: Id }) => api.coverage.delete(id),
     onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: configKeys.coverage(variables.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(variables.unitId) });
+      invalidateUnitDerived(queryClient, variables.unitId);
     },
   });
 }
@@ -137,10 +146,12 @@ export function useHolidays(unitId: Id | undefined) {
 export function useCreateHoliday() {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (input: HolidayInput) => api.holidays.create(input),
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: configKeys.holidays(created.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(created.unitId) });
+      invalidateUnitDerived(queryClient, created.unitId);
     },
   });
 }
@@ -149,11 +160,13 @@ export function useCreateHoliday() {
 export function useUpdateHoliday() {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ id, patch }: { id: Id; unitId: Id; patch: HolidayPatch }) =>
       api.holidays.update(id, patch),
     onSuccess: (_updated, variables) => {
       queryClient.invalidateQueries({ queryKey: configKeys.holidays(variables.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(variables.unitId) });
+      invalidateUnitDerived(queryClient, variables.unitId);
     },
   });
 }
@@ -171,10 +184,12 @@ export function useHolidayWork(holidayId: Id | undefined) {
 export function useRecordHolidayWork() {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ holidayId, nurseIds }: { holidayId: Id; nurseIds: Id[] }) =>
       api.holidays.recordWork(holidayId, nurseIds),
     onSuccess: (summary) => {
       queryClient.setQueryData(configKeys.holidayWork(summary.holidayId), summary);
+      invalidateUnitDerivedAnyUnit(queryClient);
     },
   });
 }
@@ -182,9 +197,11 @@ export function useRecordHolidayWork() {
 export function useClearHolidayWork() {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (holidayId: Id) => api.holidays.clearWork(holidayId),
     onSuccess: (summary) => {
       queryClient.setQueryData(configKeys.holidayWork(summary.holidayId), summary);
+      invalidateUnitDerivedAnyUnit(queryClient);
     },
   });
 }
@@ -202,11 +219,13 @@ export function useHolidayYearPlan(unitId: Id | undefined, year: number | undefi
 export function useAddHolidayYear() {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ unitId, input }: { unitId: Id; input: HolidayYearInput }) =>
       api.holidays.addYear(unitId, input),
     onSuccess: (_added, variables) => {
       queryClient.invalidateQueries({ queryKey: configKeys.holidays(variables.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(variables.unitId) });
+      invalidateUnitDerived(queryClient, variables.unitId);
     },
   });
 }
@@ -219,6 +238,7 @@ export function useDeleteHoliday() {
     onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: configKeys.holidays(variables.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(variables.unitId) });
+      invalidateUnitDerived(queryClient, variables.unitId);
     },
   });
 }
@@ -246,6 +266,7 @@ export function useCreateAcuityTier() {
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: configKeys.acuityTiers(created.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(created.unitId) });
+      invalidateUnitDerived(queryClient, created.unitId);
     },
   });
 }
@@ -258,6 +279,7 @@ export function useUpdateAcuityTier() {
     onSuccess: (updated) => {
       queryClient.invalidateQueries({ queryKey: configKeys.acuityTiers(updated.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(updated.unitId) });
+      invalidateUnitDerived(queryClient, updated.unitId);
     },
   });
 }
@@ -271,6 +293,7 @@ export function useDeleteAcuityTier() {
     onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: configKeys.acuityTiers(variables.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(variables.unitId) });
+      invalidateUnitDerived(queryClient, variables.unitId);
     },
   });
 }
@@ -290,6 +313,7 @@ export function useCreateRatioRule() {
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: configKeys.ratioRules(created.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(created.unitId) });
+      invalidateUnitDerived(queryClient, created.unitId);
     },
   });
 }
@@ -302,6 +326,7 @@ export function useUpdateRatioRule() {
     onSuccess: (updated) => {
       queryClient.invalidateQueries({ queryKey: configKeys.ratioRules(updated.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(updated.unitId) });
+      invalidateUnitDerived(queryClient, updated.unitId);
     },
   });
 }
@@ -313,6 +338,7 @@ export function useDeactivateRatioRule() {
     onSuccess: (deactivated) => {
       queryClient.invalidateQueries({ queryKey: configKeys.ratioRules(deactivated.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(deactivated.unitId) });
+      invalidateUnitDerived(queryClient, deactivated.unitId);
     },
   });
 }
@@ -328,11 +354,13 @@ export function useHppdTarget(unitId: Id | undefined) {
 export function useSetHppdTarget() {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ unitId, targetHours }: { unitId: Id; targetHours: number }) =>
       api.acuity.setHppd(unitId, targetHours),
     onSuccess: (saved) => {
       queryClient.invalidateQueries({ queryKey: configKeys.hppd(saved.unitId) });
       queryClient.invalidateQueries({ queryKey: dashboardKey(saved.unitId) });
+      invalidateUnitDerived(queryClient, saved.unitId);
     },
   });
 }
@@ -357,6 +385,7 @@ export function useRuleSet(unitId: Id | undefined) {
 export function useSaveRuleSet() {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({
       unitId,
       name,
@@ -372,6 +401,7 @@ export function useSaveRuleSet() {
     }) => api.rules.save(unitId, name, configs, weekendDefinition, fairnessWeights),
     onSuccess: (saved) => {
       queryClient.invalidateQueries({ queryKey: configKeys.rules(saved.unitId) });
+      invalidateUnitDerived(queryClient, saved.unitId);
     },
   });
 }

@@ -9,12 +9,11 @@
  * score — the manager should see that rather than be steered to a worse variation.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import type { ComparisonColumn } from '@shared/api.js';
 import type { Id, Nurse } from '@shiftnurse/core';
 import { useComparison } from '../../api-solver.js';
 import { AsyncState } from '../../components/async-state.js';
-import { DIALOG, OVERLAY } from '../../components/ui.js';
+import { Modal } from '../../components/modal.js';
 import { formatDollars, formatHours, formatSignedDollars } from '../../money.js';
 import { SOLVER_LABELS } from '../../solver-labels.js';
 import { spread } from './candidates.js';
@@ -194,117 +193,109 @@ export function CompareDialog({
   const rows = ROWS.filter((r) => r.label !== 'Against budget' || hasBudget);
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content data-testid="compare-dialog" className={`${DIALOG} w-[60rem]`}>
-          <Dialog.Title className="mb-1 text-lg font-semibold text-text">
-            Compare variations
-          </Dialog.Title>
-          <Dialog.Description className="mb-4 text-sm text-text-muted">
-            Each variation beside the schedule on the grid now. The best on each row is marked, the
-            grid included; pick a variation to preview or save it.
-          </Dialog.Description>
-          {comparison.isPending ? (
-            <AsyncState status="loading" label="Scoring the variations" />
-          ) : comparison.isError || !data ? (
-            <AsyncState
-              status="error"
-              label="Could not compare the variations"
-              error={comparison.error}
-            />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-sm">
-                <thead>
-                  <tr className="border-b border-border text-left text-xs text-text-muted">
-                    <th className="px-2 py-2 font-medium">&nbsp;</th>
-                    <th className="px-2 py-2 font-medium">On the grid</th>
-                    {data.candidates.map((c) => (
-                      <th
-                        key={c.index}
-                        className={`px-2 py-2 font-medium ${c.index === selected ? 'bg-accent/10' : ''}`}
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      data-testid="compare-dialog"
+      size="xl"
+      title="Compare options"
+      description="Each option beside the schedule on the grid now. The best on each row is marked, the grid included; pick an option to preview or save it."
+    >
+      <div className="mt-4">
+        {comparison.isPending ? (
+          <AsyncState status="loading" label="Scoring the options" />
+        ) : comparison.isError || !data ? (
+          <AsyncState
+            status="error"
+            label="Could not compare the options"
+            error={comparison.error}
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-xs text-text-muted">
+                  <th className="px-2 py-2 font-medium">&nbsp;</th>
+                  <th className="px-2 py-2 font-medium">On the grid</th>
+                  {data.candidates.map((c) => (
+                    <th
+                      key={c.index}
+                      className={`px-2 py-2 font-medium ${c.index === selected ? 'bg-accent/10' : ''}`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onSelect(c.index!)}
+                        aria-pressed={c.index === selected}
+                        className="text-left text-text underline-offset-2 hover:underline"
                       >
-                        <button
-                          type="button"
-                          onClick={() => onSelect(c.index!)}
-                          aria-pressed={c.index === selected}
-                          className="text-left text-text underline-offset-2 hover:underline"
-                        >
-                          Variation {offset + c.index! + 1}
-                        </button>
-                        {c.fellBackFrom ? (
-                          <span
-                            className="block text-[10px] text-warn"
-                            title={c.fellBackFrom.reason}
-                          >
-                            ran {c.solver ? SOLVER_LABELS[c.solver].name : 'fallback'}
-                          </span>
+                        Option {offset + c.index! + 1}
+                      </button>
+                      {c.fellBackFrom ? (
+                        <span className="block text-[10px] text-warn" title={c.fellBackFrom.reason}>
+                          ran {c.solver ? SOLVER_LABELS[c.solver].name : 'fallback'}
+                        </span>
+                      ) : null}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => {
+                  // Column 0 is the grid; variation i is column i + 1.
+                  const best = bestOf(row, [data.draft, ...data.candidates]);
+                  return (
+                    <tr key={row.label} className="border-b border-border last:border-b-0">
+                      <th scope="row" className="px-2 py-1.5 text-left font-normal text-text">
+                        {row.label}
+                        {row.hint ? (
+                          <span className="block text-[11px] text-text-muted">{row.hint}</span>
                         ) : null}
                       </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => {
-                    // Column 0 is the grid; variation i is column i + 1.
-                    const best = bestOf(row, [data.draft, ...data.candidates]);
-                    return (
-                      <tr key={row.label} className="border-b border-border last:border-b-0">
-                        <th scope="row" className="px-2 py-1.5 text-left font-normal text-text">
-                          {row.label}
-                          {row.hint ? (
-                            <span className="block text-[11px] text-text-muted">{row.hint}</span>
-                          ) : null}
-                        </th>
+                      <td
+                        className={`px-2 py-1.5 ${
+                          best.has(0) ? 'font-semibold text-success' : 'text-text-muted'
+                        }`}
+                      >
+                        {row.show(data.draft, names)}
+                        {best.has(0) ? <span className="sr-only"> (best)</span> : null}
+                      </td>
+                      {data.candidates.map((c, i) => (
                         <td
-                          className={`px-2 py-1.5 ${
-                            best.has(0) ? 'font-semibold text-success' : 'text-text-muted'
+                          key={c.index}
+                          className={`px-2 py-1.5 ${c.index === selected ? 'bg-accent/10' : ''} ${
+                            best.has(i + 1) ? 'font-semibold text-success' : 'text-text'
                           }`}
                         >
-                          {row.show(data.draft, names)}
-                          {best.has(0) ? <span className="sr-only"> (best)</span> : null}
+                          {row.show(c, names)}
+                          {best.has(i + 1) ? <span className="sr-only"> (best)</span> : null}
                         </td>
-                        {data.candidates.map((c, i) => (
-                          <td
-                            key={c.index}
-                            className={`px-2 py-1.5 ${c.index === selected ? 'bg-accent/10' : ''} ${
-                              best.has(i + 1) ? 'font-semibold text-success' : 'text-text'
-                            }`}
-                          >
-                            {row.show(c, names)}
-                            {best.has(i + 1) ? <span className="sr-only"> (best)</span> : null}
-                          </td>
-                        ))}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <div className="mt-6 flex justify-end gap-2">
-            <Dialog.Close asChild>
-              <button type="button" className={secondaryButton}>
-                Close
-              </button>
-            </Dialog.Close>
-            <button
-              type="button"
-              disabled={selected === undefined}
-              onClick={() => {
-                if (selected === undefined) return;
-                onPreview(selected);
-                onOpenChange(false);
-              }}
-              className={primaryButton}
-            >
-              Preview variation {selected === undefined ? '' : offset + selected + 1} on the grid
-            </button>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        )}
+        <div className="mt-6 flex justify-end gap-2">
+          <button type="button" className={secondaryButton} onClick={() => onOpenChange(false)}>
+            Close
+          </button>
+          <button
+            type="button"
+            disabled={selected === undefined}
+            onClick={() => {
+              if (selected === undefined) return;
+              onPreview(selected);
+              onOpenChange(false);
+            }}
+            className={primaryButton}
+          >
+            Preview option {selected === undefined ? '' : offset + selected + 1} on the grid
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

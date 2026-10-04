@@ -17,6 +17,7 @@ import type {
   Resolution,
   SchedulePeriod,
 } from '@shiftnurse/core';
+import { Link } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useAutoResolve, useResolveConflict } from '../../api-requests.js';
 import { StatCard } from '../../components/stat-card.js';
@@ -77,6 +78,13 @@ export function ConflictsPanel({
           Conflicts · {periodLabel(period)}
         </h2>
         <div className="flex items-center gap-2">
+          <Link
+            to="/settings"
+            search={{ tab: 'conflicts' }}
+            className="text-xs text-accent underline underline-offset-2 hover:no-underline"
+          >
+            Auto-resolve settings
+          </Link>
           {auto.data !== undefined ? (
             <span className="text-xs text-text-muted" data-testid="auto-resolve-result">
               {auto.data.applied.length === 0

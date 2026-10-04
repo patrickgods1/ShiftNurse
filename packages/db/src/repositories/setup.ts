@@ -19,7 +19,10 @@ import {
   type Id,
   isoDate,
   isSetupStep,
+  JURISDICTION_PRESETS,
+  type JurisdictionId,
   type NurseRole,
+  planJurisdiction,
   SETUP_STEPS,
   type SetupMode,
   type SetupPreset,
@@ -44,6 +47,7 @@ import {
   getHppdTarget,
   listActiveRatioRulesForUnit,
   listAcuityTiersForUnit,
+  updateRatioRule,
   upsertHppdTarget,
 } from './acuity.js';
 import {
@@ -54,10 +58,16 @@ import {
   listHolidaysForUnit,
   listShiftTypesForUnit,
   listUnits,
+  updateUnit,
   upsertCoverageRequirement,
 } from './config.js';
 import { createHoliday } from './holidays.js';
-import { createPayRate, listPayRatesForUnit } from './pay.js';
+import {
+  createOvertimeRule,
+  createPayRate,
+  listOvertimeRulesForUnit,
+  listPayRatesForUnit,
+} from './pay.js';
 import { getLatestRuleSet, saveRuleSet } from './rulesets.js';
 
 const ROW_ID = 'app';
@@ -434,4 +444,69 @@ export function applySetupPreset(
       throw new Error(`Unknown setup preset ${JSON.stringify(unknown)}`);
     }
   }
+}
+
+/**
+ * Apply a state's staffing and overtime preset to `unitId`: core plans what to add or tighten,
+ * and each change goes through the same audited create/update the Settings editors use. The
+ * choice is remembered on the unit even when nothing else changed, so Settings › Unit can show
+ * it; rules a preset switches on arrive as a new rule-set version, never an edit to the old one.
+ */
+export function applyJurisdiction(
+  tx: ShiftNurseTx,
+  unitId: Id,
+  id: JurisdictionId,
+  actor: string,
+): SetupPresetResult {
+  if (!Object.hasOwn(JURISDICTION_PRESETS, id)) throw new Error(`Unknown state preset "${id}"`);
+  const unit = getUnit(tx, unitId);
+  if (!unit) throw new Error(`Unit ${unitId} not found`);
+  // A unit that never saved rules runs the defaults, so those are what the preset switches on.
+  const latest = getLatestRuleSet(tx, unitId);
+  const plan = planJurisdiction(id, {
+    unitType: unit.unitType,
+    ratioRules: listActiveRatioRulesForUnit(tx, unitId),
+    overtimeRules: listOvertimeRulesForUnit(tx, unitId),
+    ruleSet: latest ?? defaultRuleSet(unitId),
+    ratioStaffing: unit.ratioStaffing,
+  });
+
+  const result = { created: 0, updated: 0, unchanged: 0 };
+  for (const rule of plan.addRatioRules) {
+    createRatioRule(tx, { ...rule, unitId }, actor);
+    result.created++;
+  }
+  for (const rule of plan.tightenRatioRules) {
+    updateRatioRule(tx, rule.id, { maxPatientsPerNurse: rule.maxPatientsPerNurse }, actor);
+    result.updated++;
+  }
+  for (const rule of plan.addOvertimeRules) {
+    createOvertimeRule(tx, { ...rule, unitId }, actor);
+    result.created++;
+  }
+  if (plan.ratioStaffing) {
+    updateUnit(tx, unitId, { ratioStaffing: plan.ratioStaffing }, actor);
+    result.updated++;
+  }
+  if (plan.ruleConfigs) {
+    const base = latest ?? defaultRuleSet(unitId);
+    saveRuleSet(
+      tx,
+      {
+        unitId,
+        name: base.name,
+        configs: plan.ruleConfigs,
+        weekendDefinition: latest?.weekendDefinition ?? DEFAULT_WEEKEND,
+        fairnessWeights: base.fairnessWeights,
+      },
+      actor,
+    );
+    result.created++;
+  }
+  if (unit.jurisdiction !== id) {
+    updateUnit(tx, unitId, { jurisdiction: id }, actor);
+    result.updated++;
+  }
+  if (result.created + result.updated === 0) result.unchanged = 1;
+  return result;
 }

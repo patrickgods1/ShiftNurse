@@ -5,7 +5,7 @@
  * and because a fixture that drifts from the real entity definitions is worse than none.
  */
 
-import { type DemandInputs, deriveDemand } from '../acuity/demand.js';
+import { type DemandInputs, deriveDemand, type RatioStaffing } from '../acuity/demand.js';
 import type {
   AcuityTier,
   Assignment,
@@ -23,6 +23,7 @@ import type {
   NurseCredential,
   NurseRole,
   OvertimeRule,
+  OvertimeVolunteer,
   PayRate,
   Preference,
   RatioRule,
@@ -248,6 +249,10 @@ export interface ScenarioOptions {
   censusForecasts?: CensusForecast[];
   holidays?: Holiday[];
   ratioRules?: RatioRule[];
+  /** Standing offers to work overtime. */
+  overtimeVolunteers?: OvertimeVolunteer[];
+  /** How the unit keeps its ratios: a charge nurse without patients, break relief. */
+  ratioStaffing?: RatioStaffing;
   acuityTiers?: AcuityTier[];
   hppdTarget?: HppdTarget;
   unit?: Unit;
@@ -299,6 +304,7 @@ export function scenario(options: ScenarioOptions = {}): Scenario {
     coverageRequirements: options.coverageRequirements ?? [],
     censusForecasts: options.censusForecasts ?? [],
     ...(options.hppdTarget !== undefined ? { hppdTarget: options.hppdTarget } : {}),
+    ...(options.ratioStaffing !== undefined ? { ratioStaffing: options.ratioStaffing } : {}),
   };
 
   // Demand must cover the lookback tail too, or prior assignments have nothing to sit against.
@@ -321,6 +327,7 @@ export function scenario(options: ScenarioOptions = {}): Scenario {
       ? { incompatibilityGroups: options.incompatibilityGroups }
       : {}),
     ...(options.holidayWork ? { holidayWork: options.holidayWork } : {}),
+    ...(options.overtimeVolunteers ? { overtimeVolunteers: options.overtimeVolunteers } : {}),
   });
 
   const schedule = new ScheduleView({
@@ -395,6 +402,7 @@ export function solveInputFrom(options: SolveScenarioOptions = {}): SolveInput {
       ? { incompatibilityGroups: options.incompatibilityGroups }
       : {}),
     ...(options.holidayWork ? { holidayWork: options.holidayWork } : {}),
+    ...(options.overtimeVolunteers ? { overtimeVolunteers: options.overtimeVolunteers } : {}),
     ...(options.cost ? { cost: options.cost } : {}),
   };
 }

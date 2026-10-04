@@ -27,9 +27,11 @@ import type {
   Holiday,
   Id,
   IsoDate,
+  JurisdictionId,
   Nurse,
   NurseCredential,
   OvertimeRule,
+  OvertimeVolunteer,
   PayRate,
   Preference,
   RatioRule,
@@ -57,7 +59,27 @@ export function toUnit(r: typeof s.unit.$inferSelect): Unit {
     unitType: r.unitType,
     payPeriodDays: r.payPeriodDays,
     payPeriodAnchor: r.payPeriodAnchor as Unit['payPeriodAnchor'],
+    ratioStaffing: {
+      chargeNurseTakesPatients: r.chargeNurseTakesPatients,
+      breakMinutesPerNurse: r.breakMinutesPerNurse,
+      chargeCoversBreaks: r.chargeCoversBreaks,
+    },
+    ...(r.postingLeadDays === null ? {} : { postingLeadDays: r.postingLeadDays }),
+    ...(r.jurisdiction === null ? {} : { jurisdiction: r.jurisdiction as JurisdictionId }),
   };
+}
+
+/** The unit's columns for a `RatioStaffing`; absent leaves the column defaults. */
+export function ratioStaffingColumns(
+  staffing: Unit['ratioStaffing'],
+): Partial<typeof s.unit.$inferInsert> {
+  return staffing
+    ? {
+        chargeNurseTakesPatients: staffing.chargeNurseTakesPatients,
+        breakMinutesPerNurse: staffing.breakMinutesPerNurse,
+        chargeCoversBreaks: staffing.chargeCoversBreaks,
+      }
+    : {};
 }
 
 export function toShiftType(r: typeof s.shiftType.$inferSelect): ShiftType {
@@ -206,6 +228,17 @@ export function toTimeOffRequest(r: typeof s.timeOffRequest.$inferSelect): TimeO
     reason: opt(r.reason),
     decisionReason: opt(r.decisionReason),
     paidHours: opt(r.paidHours),
+  };
+}
+
+export function toOvertimeVolunteer(r: typeof s.overtimeVolunteer.$inferSelect): OvertimeVolunteer {
+  return {
+    id: r.id,
+    unitId: r.unitId,
+    nurseId: r.nurseId,
+    startDate: r.startDate as IsoDate,
+    endDate: r.endDate as IsoDate,
+    ...(r.note ? { note: r.note } : {}),
   };
 }
 

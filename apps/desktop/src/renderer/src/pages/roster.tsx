@@ -7,17 +7,19 @@
 import type { Id, Nurse } from '@shiftnurse/core';
 import { EMPLOYMENT_TYPE_LABELS } from '@shiftnurse/core';
 import { useMemo, useState } from 'react';
-import { useExportRosterToFile, useNurses } from '../api.js';
+import { useDashboard, useExportRosterToFile, useNurses } from '../api.js';
 import { AsyncState } from '../components/async-state.js';
 import { type Column, DataTable } from '../components/data-table.js';
 import { PageHeader } from '../components/page-header.js';
 import { PRIMARY, SECONDARY } from '../components/ui.js';
-import { formatDate, fteLabel } from '../format.js';
+import { daysFromToday, formatDate, fteLabel } from '../format.js';
 import { useUnit } from '../unit-context.js';
+import { CredentialBadge } from './roster/credential-badge.js';
 import { ImportDialog } from './roster/import-dialog.js';
 import { IncompatibilitySection } from './roster/incompatibility.js';
 import { NurseDetail } from './roster/nurse-detail.js';
 import { NurseFormDialog } from './roster/nurse-form-dialog.js';
+import { OvertimeVolunteersSection } from './roster/overtime-volunteers.js';
 
 function matchesSearch(nurse: Nurse, term: string): boolean {
   const haystack = `${nurse.firstName} ${nurse.lastName} ${nurse.employeeId}`.toLowerCase();
@@ -28,6 +30,26 @@ export default function RosterPage() {
   const unit = useUnit();
   const nursesQuery = useNurses(unit.id);
   const exportRoster = useExportRosterToFile();
+  // The dashboard's credential lists are already the unit's authority on who has lapsed (a
+  // renewal cleared) and who is inside the 90-day window; the badge only narrows to 30 days.
+  const dashboardQuery = useDashboard(unit.id);
+  const lapsedNurseIds = useMemo(
+    () => new Set((dashboardQuery.data?.lapsedCredentials ?? []).map((c) => c.nurse.id)),
+    [dashboardQuery.data],
+  );
+  const soonNurseIds = useMemo(
+    () =>
+      new Set(
+        (dashboardQuery.data?.expiringCredentials ?? [])
+          .filter(
+            (c) =>
+              c.nurseCredential.expiresOn !== undefined &&
+              daysFromToday(c.nurseCredential.expiresOn) <= 30,
+          )
+          .map((c) => c.nurse.id),
+      ),
+    [dashboardQuery.data],
+  );
 
   const [search, setSearch] = useState('');
   const [showInactive, setShowInactive] = useState(false);
@@ -81,11 +103,25 @@ export default function RosterPage() {
           if (nurse.isChargeEligible) flags.push('Charge');
           if (nurse.isNovice) flags.push('Novice');
           if (!nurse.active) flags.push('Inactive');
-          return flags.length > 0 ? flags.join(', ') : '—';
+          const badges = (
+            <>
+              {lapsedNurseIds.has(nurse.id) ? <CredentialBadge standing="lapsed" /> : null}
+              {soonNurseIds.has(nurse.id) ? <CredentialBadge standing="soon" /> : null}
+            </>
+          );
+          if (flags.length === 0 && !lapsedNurseIds.has(nurse.id) && !soonNurseIds.has(nurse.id)) {
+            return '—';
+          }
+          return (
+            <span className="flex flex-wrap items-center gap-1">
+              {flags.length > 0 ? <span>{flags.join(', ')}</span> : null}
+              {badges}
+            </span>
+          );
         },
       },
     ],
-    [],
+    [lapsedNurseIds, soonNurseIds],
   );
 
   const filtered = (nursesQuery.data ?? []).filter((nurse) => {
@@ -165,6 +201,10 @@ export default function RosterPage() {
 
       {nursesQuery.data ? (
         <IncompatibilitySection unitId={unit.id} nurses={nursesQuery.data} />
+      ) : null}
+
+      {nursesQuery.data ? (
+        <OvertimeVolunteersSection unitId={unit.id} nurses={nursesQuery.data} />
       ) : null}
 
       <NurseFormDialog

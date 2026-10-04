@@ -60,6 +60,8 @@ const DEFAULT_MAX_ITERATIONS = 200_000;
 /** A safety valve well past any plausible run; only a runaway input ever hits it. */
 const TIME_LIMIT_MS = 5 * 60 * 1000;
 const PROGRESS_EVERY_ITERATIONS = 2000;
+/** How many short shifts a run's status carries; `unfilledSlots` stays the full count. */
+export const UNFILLED_LISTED = 50;
 
 /** The part of a `worker_threads` Worker a batch uses; a fake stands in for it in tests. */
 export interface SolverWorkerHandle {
@@ -87,6 +89,11 @@ export interface SolverJobsDeps {
   scoreDraft?(input: SolveInput): number | undefined;
   /** Logical CPUs available to the batch. */
   cores(): number;
+  /**
+   * A counter that moves whenever the database may have changed (the connection's
+   * `total_changes()`); absent, every freshness check reloads the input.
+   */
+  changeCount?(): number;
   now?: () => number;
 }
 
@@ -104,6 +111,8 @@ interface Batch {
   runs: Run[];
   input: SolveInput;
   fingerprint: string;
+  /** `changeCount` when the input last matched `fingerprint`; the same count means no write since. */
+  verifiedAt?: number;
   workerData: Omit<SolverWorkerData, 'options' | 'cancelFlag'> & {
     options: Omit<SolverWorkerData['options'], 'seed'>;
   };
@@ -166,6 +175,9 @@ export class SolverJobs {
     const offset = this.offsetAfter(periodId, options.continueAfter);
     if (previous) this.drop(previous);
 
+    // Read before loading: a write can only make the count higher than the load saw, which costs
+    // one needless recheck, never a missed change.
+    const verifiedAt = this.deps.changeCount?.();
     const input = this.deps.loadInput(periodId);
     const count = clampCount(options.count);
     const baseSeed = options.seed ?? seedFor(periodId);
@@ -198,6 +210,7 @@ export class SolverJobs {
       })),
       input,
       fingerprint: inputFingerprint(input),
+      ...(verifiedAt !== undefined ? { verifiedAt } : {}),
       workerData: {
         input,
         solverId: choice.id,
@@ -363,6 +376,13 @@ export class SolverJobs {
 
   private checkFresh(batch: Batch): void {
     if (batch.status.stale) return;
+    // Hashing the whole input is main-thread work the renderer's poll would repeat every few
+    // hundred ms. This process's connection is the only writer, and `total_changes()` counts every
+    // row it has inserted, updated or deleted since it opened, so an unchanged count means the
+    // database is as it was when the fingerprint last matched. A restore relaunches the app (a new
+    // connection), so a count never carries across a file swap.
+    const changes = this.deps.changeCount?.();
+    if (changes !== undefined && changes === batch.verifiedAt) return;
     let reason: string | undefined;
     try {
       const input = this.deps.loadInput(batch.status.periodId);
@@ -373,6 +393,7 @@ export class SolverJobs {
         // The grid may have changed (a hand edit, a saved variation) without making the batch
         // stale: its score is what the variations are measured against.
         this.scoreDraftInto(batch, input);
+        if (changes !== undefined) batch.verifiedAt = changes;
       }
     } catch (err) {
       reason = err instanceof Error ? err.message : String(err);
@@ -466,6 +487,14 @@ export class SolverJobs {
             : {}),
           floorsShort: report.unfilled.reduce((sum, slot) => sum + slot.shortfall, 0),
           unfilledSlots: report.unfilled.length,
+          unfilled: report.unfilled
+            .slice(0, UNFILLED_LISTED)
+            .map(({ date, shiftTypeId, role, shortfall }) => ({
+              date,
+              shiftTypeId,
+              role,
+              shortfall,
+            })),
           hardViolations: report.hardViolations.length,
           softViolations: report.softViolations.length,
           elapsedMs: report.stats.elapsedMs,
@@ -491,7 +520,9 @@ export class SolverJobs {
     run.status.finishedAt = this.now();
     if (error !== undefined) run.status.error = error;
     delete run.worker;
-    delete run.runnerPid;
+    // A crashed worker thread never reaches its `runner.dispose()`; a finished one's runner is
+    // already gone, which the kill tolerates.
+    this.killRunner(run);
     this.pump(batch);
     this.settleIfIdle(batch);
   }
@@ -515,18 +546,22 @@ export class SolverJobs {
     for (const run of batch.runs) {
       if (!run.worker) continue;
       void run.worker.terminate();
-      // A terminated worker cannot stop the runner it spawned; closing its pipes would only let
-      // the search run out its budget. Kill it.
-      if (run.runnerPid !== undefined) {
-        try {
-          process.kill(run.runnerPid);
-        } catch {
-          // Already gone.
-        }
-      }
+      this.killRunner(run);
       delete run.worker;
-      delete run.runnerPid;
     }
+  }
+
+  private killRunner(run: Run): void {
+    // A terminated or crashed worker cannot stop the runner it spawned; closing its pipes would
+    // only let the search run out its budget. Kill it.
+    if (run.runnerPid !== undefined) {
+      try {
+        process.kill(run.runnerPid);
+      } catch {
+        // Already gone.
+      }
+    }
+    delete run.runnerPid;
   }
 
   private drop(batch: Batch): void {

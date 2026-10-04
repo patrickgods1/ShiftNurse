@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { createShiftType, createUnit } from './config.js';
+import { nextEmployeeId } from './employee-ids.test-support.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
 import {
@@ -67,7 +68,7 @@ function mkNurse(firstName: string): string {
     handle.db,
     {
       unitId,
-      employeeId: `E${Math.random().toString().slice(2, 8)}`,
+      employeeId: nextEmployeeId(),
       firstName,
       lastName: 'Nurse',
       role: 'RN',
@@ -200,8 +201,7 @@ describe('periods', () => {
 
     const history = auditHistoryFor(handle.db, 'schedule_period', period.id);
     const publishEntry = history.find((h) => h.action === 'publish');
-    expect(publishEntry).toBeDefined();
-    expect(publishEntry?.reason).toBe('Ready for the floor');
+    expect(publishEntry).toMatchObject({ reason: 'Ready for the floor' });
   });
 
   it('deletes a draft but refuses to delete a published period', () => {
@@ -280,11 +280,8 @@ describe('assignment CRUD', () => {
 
     const history = auditHistoryFor(handle.db, 'assignment', created.id);
     const deleteEntry = history.find((h) => h.action === 'delete');
-    expect(deleteEntry).toBeDefined();
-    expect(deleteEntry?.before).toMatchObject({
-      id: created.id,
-      nurseId,
-      isCharge: true,
+    expect(deleteEntry).toMatchObject({
+      before: { id: created.id, nurseId, isCharge: true },
     });
   });
 

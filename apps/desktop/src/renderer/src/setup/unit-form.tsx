@@ -5,8 +5,9 @@
  */
 
 import type { UnitInput } from '@shared/api.js';
-import { ACUITY_PRESETS, isIsoDate, isoDate, today } from '@shiftnurse/core';
+import { ACUITY_PRESETS, type IsoDate, isIsoDate, isoDate, today } from '@shiftnurse/core';
 import { type FormEvent, useId, useState } from 'react';
+import { DateField } from '../components/date-field.js';
 import { errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from '../components/ui.js';
 import { defaultPayPeriodAnchor } from './steps.js';
 
@@ -83,15 +84,11 @@ export function UnitForm({ submitLabel, pending, error, onSubmit, onBack }: Unit
             <option value={14}>Every two weeks (14 days)</option>
           </select>
         </label>
-        <label className={LABEL}>
-          A pay period starts on
-          <input
-            type="date"
-            className={INPUT}
-            value={anchor}
-            onChange={(e) => setAnchor(e.target.value)}
-          />
-        </label>
+        <DateField
+          label="A pay period starts on"
+          value={anchor as IsoDate | ''}
+          onChange={setAnchor}
+        />
       </div>
       <p className="text-xs text-text-muted">
         Contracted hours are checked per pay period, so these cannot be changed once schedules

@@ -13,6 +13,7 @@ import {
   assign,
   DAY_8,
   DAY_12,
+  EVENING_8,
   makeNurse,
   NIGHT_12,
   ON_CALL,
@@ -394,6 +395,151 @@ describe('overtime', () => {
     const report = costSchedule(s.schedule, ctx({ overtimeRules: [WEEKLY_40], overtimeLeave }));
     // 12h leave, then 24, 36, 48: the Wednesday is the shift that crosses forty.
     expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 8]);
+  });
+});
+
+describe('California overtime: by workday, banded, and the seventh day', () => {
+  // Labor Code § 510: past 8 hours in a workday at 1.5×, past 12 at 2×; on the seventh
+  // consecutive day of a workweek, the first 8 hours at 1.5× and the rest at 2×.
+  const DAILY_8_HALF: OvertimeRule = { ...DAILY_8, id: 'ot-ca-8' };
+  const DAILY_12_DOUBLE: OvertimeRule = {
+    ...DAILY_8,
+    id: 'ot-ca-12',
+    thresholdHours: 12,
+    multiplier: 2,
+  };
+  const SEVENTH_HALF: OvertimeRule = {
+    ...DAILY_8,
+    id: 'ot-ca-7th',
+    basis: 'seventh_day',
+    thresholdHours: 0,
+  };
+  const SEVENTH_DOUBLE: OvertimeRule = {
+    ...DAILY_8,
+    id: 'ot-ca-7th-8',
+    basis: 'seventh_day',
+    thresholdHours: 8,
+    multiplier: 2,
+  };
+  const CA_DAILY = [DAILY_8_HALF, DAILY_12_DOUBLE];
+  const DAY_13 = {
+    ...DAY_12,
+    id: 'st-d13',
+    name: 'Day 13',
+    abbreviation: 'D13',
+    durationHours: 13,
+  };
+
+  it('pays a 13-hour shift 8 straight, 4 at time and a half and 1 at double time', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_12, DAY_13],
+      assignments: [assign(nurse.id, DAY_13, '2026-01-05')],
+    });
+    const [cost] = costSchedule(s.schedule, ctx({ overtimeRules: CA_DAILY })).assignments;
+    expect(cost?.overtimeHours).toBe(5);
+    // 13 × $48 = $624; 4 × $24 = $96 at time and a half; 1 × $48 = $48 at double time.
+    expect(cost?.lines.filter((l) => l.kind === 'overtime')).toEqual([
+      { kind: 'overtime', hours: 4, rate: 24, amount: 96 },
+      { kind: 'overtime', hours: 1, rate: 48, amount: 48 },
+    ]);
+    expect(cost?.total).toBe(768);
+  });
+
+  it('counts a double by the workday: the second eight of a sixteen-hour day is all premium', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_8, EVENING_8],
+      assignments: [
+        assign(nurse.id, DAY_8, '2026-01-05'),
+        assign(nurse.id, EVENING_8, '2026-01-05'),
+      ],
+    });
+    const report = costSchedule(s.schedule, ctx({ overtimeRules: CA_DAILY }));
+    // The day shift is hours 0–8 of the workday; the evening is 8–16: 4 at 1.5×, 4 at 2×.
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 8]);
+    expect(report.totals.overtimePremium).toBe(4 * 24 + 4 * 48);
+  });
+
+  it('keeps a night across midnight in the workday it started on', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, NIGHT_12, '2026-01-05')],
+    });
+    const [cost] = costSchedule(s.schedule, ctx({ overtimeRules: CA_DAILY })).assignments;
+    // One 12-hour workday: 4 hours past eight at half the $52.50 night rate again.
+    expect(cost?.overtimeHours).toBe(4);
+    expect(cost?.total).toBe(630 + 4 * 26.25);
+  });
+
+  it('pays the seventh straight day of the workweek at premium from its first hour', () => {
+    const nurse = makeNurse();
+    // Sun 4 Jan to Fri 9 Jan, six eights; Saturday 10 Jan a twelve, the seventh day in a row.
+    const days = [
+      '2026-01-04',
+      '2026-01-05',
+      '2026-01-06',
+      '2026-01-07',
+      '2026-01-08',
+      '2026-01-09',
+    ];
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_8, DAY_12],
+      assignments: [
+        ...days.map((d) => assign(nurse.id, DAY_8, d)),
+        assign(nurse.id, DAY_12, '2026-01-10'),
+      ],
+    });
+    const report = costSchedule(s.schedule, ctx({ overtimeRules: [SEVENTH_HALF, SEVENTH_DOUBLE] }));
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 0, 0, 0, 12]);
+    // Saturday earns the $3 weekend differential, so the straight rate is $51: 8 × $25.50 at
+    // time and a half, then 4 × $51 at double time.
+    expect(report.totals.overtimePremium).toBe(8 * 25.5 + 4 * 51);
+  });
+
+  it('does not treat a seventh shift as the seventh day when the week had a day off', () => {
+    const nurse = makeNurse();
+    // Mon 5 to Sat 10 Jan is six days in a row, but Sunday 4 Jan, the week's first, was off.
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_8],
+      assignments: [
+        '2026-01-05',
+        '2026-01-06',
+        '2026-01-07',
+        '2026-01-08',
+        '2026-01-09',
+        '2026-01-10',
+      ].map((d) => assign(nurse.id, DAY_8, d)),
+    });
+    const report = costSchedule(s.schedule, ctx({ overtimeRules: [SEVENTH_HALF, SEVENTH_DOUBLE] }));
+    expect(report.totals.overtimeHours).toBe(0);
+  });
+
+  it('pays each hour once, at the highest rate any rule gives it', () => {
+    const nurse = makeNurse();
+    // Mon–Wed twelves, Thu a thirteen: weekly 40 makes the Thursday's last 9 hours overtime at
+    // 1.5×; the daily rules make hours 8–12 1.5× and hour 13 2×. Per hour, the highest wins:
+    // hours 4–12 at 1.5× (8 hours) and hour 13 at 2×.
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_12, DAY_13],
+      assignments: [
+        ...['2026-01-05', '2026-01-06', '2026-01-07'].map((d) => assign(nurse.id, DAY_12, d)),
+        assign(nurse.id, DAY_13, '2026-01-08'),
+      ],
+    });
+    const report = costSchedule(s.schedule, ctx({ overtimeRules: [WEEKLY_40, ...CA_DAILY] }));
+    // Mon–Wed: 4 hours past eight each at 1.5×.
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([4, 4, 4, 9]);
+    expect(report.assignments[3]?.lines.filter((l) => l.kind === 'overtime')).toEqual([
+      { kind: 'overtime', hours: 8, rate: 24, amount: 192 },
+      { kind: 'overtime', hours: 1, rate: 48, amount: 48 },
+    ]);
   });
 });
 

@@ -6,12 +6,12 @@
  * under-count a nurse's carried burden instead of asking the manager to fix the spreadsheet.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import type { Id } from '@shiftnurse/core';
 import { useState } from 'react';
 import type { HistoryImportPreview, HistoryImportSummary } from '../../../../shared/api.js';
 import { useImportHistory, usePickHistoryImportFile } from '../../api-fairness.js';
-import { OVERLAY, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { Modal } from '../../components/modal.js';
+import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { formatDate } from '../../format.js';
 
 interface ImportHistoryDialogProps {
@@ -56,174 +56,159 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
   const replacingCount = preview?.periods.filter((p) => p.replacesExisting).length ?? 0;
 
   return (
-    <Dialog.Root open={open} onOpenChange={handleOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content
-          className="fixed z-50 left-1/2 top-1/2 max-h-[85vh] w-[680px] -translate-x-1/2 -translate-y-1/2
-            overflow-y-auto rounded-lg border border-border bg-surface p-6 shadow-lg"
-        >
-          <Dialog.Title className="mb-4 text-lg font-semibold text-text">
-            Import history from CSV
-          </Dialog.Title>
-
-          {summary !== undefined ? (
-            <div className="text-sm text-text">
-              <p className="mb-2 font-medium text-success">Import complete.</p>
-              <ul className="list-inside list-disc space-y-1">
-                <li>{summary.periodsImported} period(s) imported</li>
-                <li>
-                  {summary.entriesWritten} ledger entr{summary.entriesWritten === 1 ? 'y' : 'ies'}{' '}
-                  written
-                </li>
-                <li>
-                  {summary.entriesReplaced} entr{summary.entriesReplaced === 1 ? 'y' : 'ies'}{' '}
-                  replaced
-                </li>
-              </ul>
-              <div className="mt-4 flex justify-end">
-                <Dialog.Close asChild>
-                  <button type="button" className={PRIMARY}>
-                    Done
-                  </button>
-                </Dialog.Close>
-              </div>
+    <Modal open={open} onOpenChange={handleOpenChange} size="lg" title="Import history from CSV">
+      <div className="mt-4">
+        {summary !== undefined ? (
+          <div className="text-sm text-text">
+            <p className="mb-2 font-medium text-success">Import complete.</p>
+            <ul className="list-inside list-disc space-y-1">
+              <li>{summary.periodsImported} period(s) imported</li>
+              <li>
+                {summary.entriesWritten} ledger entr{summary.entriesWritten === 1 ? 'y' : 'ies'}{' '}
+                written
+              </li>
+              <li>
+                {summary.entriesReplaced} entr{summary.entriesReplaced === 1 ? 'y' : 'ies'} replaced
+              </li>
+            </ul>
+            <div className="mt-4 flex justify-end">
+              <button type="button" className={PRIMARY} onClick={() => handleOpenChange(false)}>
+                Done
+              </button>
             </div>
-          ) : preview === undefined ? (
-            <div>
-              <p className="mb-4 text-sm text-text-muted">
-                Choose a CSV of past shifts to seed the fairness ledger. Expected columns:{' '}
-                <code className="rounded bg-bg px-1 py-0.5">employee_id</code>,{' '}
-                <code className="rounded bg-bg px-1 py-0.5">date</code>,{' '}
-                <code className="rounded bg-bg px-1 py-0.5">shift</code> — where shift is the shift
-                type abbreviation (e.g. D12, N12).
+          </div>
+        ) : preview === undefined ? (
+          <div>
+            <p className="mb-4 text-sm text-text-muted">
+              Choose a CSV of past shifts to seed the fairness ledger. Expected columns:{' '}
+              <code className="rounded bg-bg px-1 py-0.5">employee_id</code>,{' '}
+              <code className="rounded bg-bg px-1 py-0.5">date</code>,{' '}
+              <code className="rounded bg-bg px-1 py-0.5">shift</code> — where shift is the shift
+              type abbreviation (e.g. D12, N12).
+            </p>
+            {pickFile.isError ? (
+              <p role="alert" className="mb-3 text-sm text-danger">
+                Could not read that file.
               </p>
-              {pickFile.isError ? (
-                <p role="alert" className="mb-3 text-sm text-danger">
-                  Could not read that file.
+            ) : null}
+            <div className="flex justify-end gap-2">
+              <button type="button" className={SECONDARY} onClick={() => handleOpenChange(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handlePickFile}
+                disabled={pickFile.isPending}
+                className={PRIMARY}
+              >
+                {pickFile.isPending ? 'Opening…' : 'Choose file…'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <p className="mb-2 text-sm text-text-muted">{preview.path}</p>
+            <p className="mb-3 text-sm text-text">
+              {preview.periods.length} pay period(s) found, {replacingCount} already on record and
+              will be replaced.
+            </p>
+
+            {preview.errors.length > 0 ? (
+              <div className="mb-4">
+                <p className="mb-2 text-sm font-medium text-danger">
+                  {preview.errors.length} row(s) have errors — fix the file and re-import.
                 </p>
-              ) : null}
-              <div className="flex justify-end gap-2">
-                <Dialog.Close asChild>
-                  <button type="button" className={SECONDARY}>
-                    Cancel
-                  </button>
-                </Dialog.Close>
-                <button
-                  type="button"
-                  onClick={handlePickFile}
-                  disabled={pickFile.isPending}
-                  className={PRIMARY}
-                >
-                  {pickFile.isPending ? 'Opening…' : 'Choose file…'}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <p className="mb-2 text-sm text-text-muted">{preview.path}</p>
-              <p className="mb-3 text-sm text-text">
-                {preview.periods.length} pay period(s) found, {replacingCount} already on record and
-                will be replaced.
-              </p>
-
-              {preview.errors.length > 0 ? (
-                <div className="mb-4">
-                  <p className="mb-2 text-sm font-medium text-danger">
-                    {preview.errors.length} row(s) have errors — fix the file and re-import.
-                  </p>
-                  <div className="max-h-40 overflow-y-auto rounded-md border border-border">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-border text-text-muted">
-                          <th scope="col" className="px-2 py-1">
-                            Line
-                          </th>
-                          <th scope="col" className="px-2 py-1">
-                            Message
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {preview.errors.map((err) => (
-                          <tr
-                            key={`${err.line}:${err.message}`}
-                            className="border-b border-border last:border-0"
-                          >
-                            <td className="px-2 py-1 text-text">{err.line}</td>
-                            <td className="px-2 py-1 text-text">{err.message}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ) : null}
-
-              {preview.periods.length > 0 ? (
-                <div className="mb-4 max-h-56 overflow-y-auto rounded-md border border-border">
+                <div className="max-h-40 overflow-y-auto rounded-md border border-border">
                   <table className="w-full text-left text-xs">
                     <thead>
                       <tr className="border-b border-border text-text-muted">
                         <th scope="col" className="px-2 py-1">
-                          Period
+                          Line
                         </th>
                         <th scope="col" className="px-2 py-1">
-                          Shifts
+                          Message
                         </th>
-                        <th scope="col" className="px-2 py-1">
-                          Nurses
-                        </th>
-                        <th scope="col" className="px-2 py-1" />
                       </tr>
                     </thead>
                     <tbody>
-                      {preview.periods.map((period) => (
-                        <tr key={period.periodId} className="border-b border-border last:border-0">
-                          <td className="px-2 py-1 text-text">
-                            {formatDate(period.start)} – {formatDate(period.end)}
-                          </td>
-                          <td className="px-2 py-1 text-text">{period.shifts}</td>
-                          <td className="px-2 py-1 text-text">{period.nurses}</td>
-                          <td className="px-2 py-1">
-                            {period.replacesExisting ? (
-                              <span className="rounded-full bg-warn/15 px-2 py-0.5 text-warn">
-                                replaces existing
-                              </span>
-                            ) : null}
-                          </td>
+                      {preview.errors.map((err) => (
+                        <tr
+                          key={`${err.line}:${err.message}`}
+                          className="border-b border-border last:border-0"
+                        >
+                          <td className="px-2 py-1 text-text">{err.line}</td>
+                          <td className="px-2 py-1 text-text">{err.message}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-              ) : null}
-
-              {importHistory.isError ? (
-                <p role="alert" className="mb-3 text-sm text-danger">
-                  Import failed. Nothing was changed.
-                </p>
-              ) : null}
-
-              <div className="flex justify-end gap-2">
-                <button type="button" onClick={() => setPreview(undefined)} className={SECONDARY}>
-                  Choose a different file
-                </button>
-                <button
-                  type="button"
-                  onClick={handleImport}
-                  disabled={preview.errors.length > 0 || importHistory.isPending}
-                  className={PRIMARY}
-                >
-                  {importHistory.isPending
-                    ? 'Importing…'
-                    : `Import ${preview.periods.length} period(s)`}
-                </button>
               </div>
+            ) : null}
+
+            {preview.periods.length > 0 ? (
+              <div className="mb-4 max-h-56 overflow-y-auto rounded-md border border-border">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-border text-text-muted">
+                      <th scope="col" className="px-2 py-1">
+                        Period
+                      </th>
+                      <th scope="col" className="px-2 py-1">
+                        Shifts
+                      </th>
+                      <th scope="col" className="px-2 py-1">
+                        Nurses
+                      </th>
+                      <th scope="col" className="px-2 py-1" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.periods.map((period) => (
+                      <tr key={period.periodId} className="border-b border-border last:border-0">
+                        <td className="px-2 py-1 text-text">
+                          {formatDate(period.start)} – {formatDate(period.end)}
+                        </td>
+                        <td className="px-2 py-1 text-text">{period.shifts}</td>
+                        <td className="px-2 py-1 text-text">{period.nurses}</td>
+                        <td className="px-2 py-1">
+                          {period.replacesExisting ? (
+                            <span className="rounded-full bg-warn/15 px-2 py-0.5 text-warn">
+                              replaces existing
+                            </span>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            {importHistory.isError ? (
+              <p role="alert" className="mb-3 text-sm text-danger">
+                Import failed. Nothing was changed. {errorMessage(importHistory.error)}
+              </p>
+            ) : null}
+
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setPreview(undefined)} className={SECONDARY}>
+                Choose a different file
+              </button>
+              <button
+                type="button"
+                onClick={handleImport}
+                disabled={preview.errors.length > 0 || importHistory.isPending}
+                className={PRIMARY}
+              >
+                {importHistory.isPending
+                  ? 'Importing…'
+                  : `Import ${preview.periods.length} period(s)`}
+              </button>
             </div>
-          )}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }

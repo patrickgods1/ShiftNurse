@@ -5,20 +5,14 @@
  * skipped and which pairs must wait for a later year.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import type { Holiday, HolidayYearPlan, Id, IsoDate, PairTarget } from '@shiftnurse/core';
 import { isIsoDate } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useAddHolidayYear, useHolidayYearPlan } from '../../../api-config.js';
 import { AsyncState } from '../../../components/async-state.js';
-import {
-  DIALOG,
-  errorMessage,
-  INPUT,
-  OVERLAY,
-  PRIMARY,
-  SECONDARY,
-} from '../../../components/ui.js';
+import { DateField } from '../../../components/date-field.js';
+import { Modal } from '../../../components/modal.js';
+import { errorMessage, INPUT, PRIMARY, SECONDARY } from '../../../components/ui.js';
 import { applyPlanEdits, type PlanEdit } from './model.js';
 
 export function HolidayYearDialog({
@@ -35,21 +29,21 @@ export function HolidayYearDialog({
   onClose: () => void;
 }) {
   return (
-    <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content className={`${DIALOG} w-[720px]`} aria-describedby="holiday-year-help">
-          {open ? (
-            <YearForm
-              unitId={unitId}
-              holidays={holidays}
-              defaultYear={defaultYear}
-              onClose={onClose}
-            />
-          ) : null}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Modal
+      open={open}
+      onOpenChange={(next) => !next && onClose()}
+      title="Add a year of holidays"
+      description={
+        "Proposed from last year's list with the same names, major/minor split and pairings. The " +
+        'federal holidays that move (Thanksgiving, Memorial Day) get their new dates; others keep ' +
+        'their month and day. Check each date, then add.'
+      }
+      size="lg"
+    >
+      {open ? (
+        <YearForm unitId={unitId} holidays={holidays} defaultYear={defaultYear} onClose={onClose} />
+      ) : null}
+    </Modal>
   );
 }
 
@@ -82,15 +76,6 @@ function YearForm({
 
   return (
     <>
-      <Dialog.Title className="text-base font-semibold text-text">
-        Add a year of holidays
-      </Dialog.Title>
-      <p id="holiday-year-help" className="mt-1 text-sm text-text-muted">
-        Proposed from last year's list with the same names, major/minor split and pairings. The
-        federal holidays that move (Thanksgiving, Memorial Day) get their new dates; others keep
-        their month and day. Check each date, then add.
-      </p>
-
       <label className="mt-3 flex items-center gap-2 text-sm text-text">
         Year
         <input
@@ -151,14 +136,16 @@ function YearForm({
                         />
                       </td>
                       <td className="py-1 pr-2">
-                        <input
-                          type="date"
-                          aria-label={`Date of ${label}`}
-                          disabled={!included}
-                          value={e.date ?? p.date}
-                          onChange={(event) => edit(p.key, { date: event.target.value as IsoDate })}
-                          className={`${INPUT} py-0.5`}
-                        />
+                        {/* The label stays for the accessible name; the column header shows it. */}
+                        <div className="[&_label]:sr-only">
+                          <DateField
+                            label={`Date of ${label}`}
+                            disabled={!included}
+                            value={e.date ?? p.date}
+                            // A half-typed date stays '' so `badDate` still blocks the add.
+                            onChange={(date) => edit(p.key, { date: date as IsoDate })}
+                          />
+                        </div>
                       </td>
                       <td className="py-1 pr-2">
                         <input

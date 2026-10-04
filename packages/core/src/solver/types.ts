@@ -51,6 +51,7 @@ import type {
   NurseCredential,
   NurseRole,
   OvertimeRule,
+  OvertimeVolunteer,
   PayRate,
   Preference,
   SchedulePeriod,
@@ -108,6 +109,8 @@ export interface SolveInput {
   holidays: readonly Holiday[];
   /** Who worked each past holiday, for the holiday rotation. Absent: nobody is owed one. */
   holidayWork?: readonly HolidayWorkRecord[];
+  /** Standing offers to work overtime, for the no-mandatory-overtime rule. */
+  overtimeVolunteers?: readonly OvertimeVolunteer[];
   preferences: readonly Preference[];
   /** Ledger rows strictly before this period, for the burden index the seed and objective read. */
   ledgerHistory: readonly FairnessLedgerEntry[];
@@ -169,6 +172,12 @@ export interface ObjectiveWeights {
    * gives way before anyone is left short. Counted with preferences.
    */
   pendingTimeOff: number;
+  /**
+   * Per weekend-pattern breach while that rule is soft: a weekend ending too long a run, or one
+   * over the per-schedule limit. Counted in the fairness bucket. Just above a strong preference
+   * (5 × 10) and just below a holiday-rotation breach.
+   */
+  weekendPattern: number;
   /** Per dollar of straight-time cost. */
   cost: number;
 }
@@ -184,6 +193,7 @@ export const DEFAULT_OBJECTIVE_WEIGHTS: ObjectiveWeights = {
   holidayRotation: 55,
   nightRecovery: 45,
   pendingTimeOff: 80,
+  weekendPattern: 50,
   cost: 0.05,
 };
 

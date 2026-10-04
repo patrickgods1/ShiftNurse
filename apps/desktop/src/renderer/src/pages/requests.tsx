@@ -22,11 +22,12 @@ import {
 import { useSetRequestsCloseOn } from '../api-schedule.js';
 import { AsyncState } from '../components/async-state.js';
 import { type Column, DataTable } from '../components/data-table.js';
+import { DateField } from '../components/date-field.js';
 import { PageHeader } from '../components/page-header.js';
 import { PeriodOptions } from '../components/period-options.js';
 import { PRIMARY, SMALL } from '../components/ui.js';
 import { defaultPeriod } from '../default-period.js';
-import { formatDate, periodRange } from '../format.js';
+import { formatDate, formatInstant, periodRange } from '../format.js';
 import { useUnitId } from '../unit-context.js';
 import { ConflictsPanel } from './requests/conflicts-panel.js';
 import { DecideDialog, nurseLabel } from './requests/decide-dialog.js';
@@ -48,13 +49,6 @@ const LEAVE_TYPE_LABEL: Record<TimeOffRequest['type'], string> = {
   education: 'Education',
   bereavement: 'Bereavement',
 };
-
-/** When a request came in: an instant, shown in the manager's own calendar. */
-const SUBMITTED = new Intl.DateTimeFormat('en-US', {
-  month: 'short',
-  day: 'numeric',
-  year: 'numeric',
-});
 
 const FILTERS: { value: FilterValue; label: string }[] = [
   { value: 'pending', label: 'Pending' },
@@ -181,7 +175,7 @@ export default function RequestsPage() {
       // First-come-first-served and seniority both start from when the request came in.
       render: (r) => (
         <span className="whitespace-nowrap">
-          {r.submittedAt > 0 ? SUBMITTED.format(new Date(r.submittedAt)) : '—'}
+          {r.submittedAt > 0 ? formatInstant(r.submittedAt) : '—'}
           {period && isLateRequest(r.submittedAt, period.requestsCloseOn) ? (
             <span
               data-testid="request-late"
@@ -501,15 +495,11 @@ function RequestWindow({
       data-testid="request-window"
       className="mb-4 flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-sm"
     >
-      <label className="flex items-center gap-2 text-text">
-        Requests for this schedule close on
-        <input
-          type="date"
-          className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-text"
-          value={period.requestsCloseOn ?? ''}
-          onChange={(e) => onChange(e.target.value ? (e.target.value as IsoDate) : null)}
-        />
-      </label>
+      <DateField
+        label="Requests for this schedule close on"
+        value={period.requestsCloseOn ?? ''}
+        onChange={(date) => onChange(date === '' ? null : date)}
+      />
       <span className="text-xs text-text-muted">
         {period.requestsCloseOn
           ? lateCount > 0

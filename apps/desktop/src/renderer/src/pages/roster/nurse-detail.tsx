@@ -5,12 +5,12 @@
  * `roster.tsx`, not a page.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import type { Id, Nurse } from '@shiftnurse/core';
 import { useRef, useState } from 'react';
 import { useDeactivateNurse, useIncompatibilityGroups, useNurse } from '../../api.js';
 import { AsyncState } from '../../components/async-state.js';
-import { OVERLAY, SECONDARY } from '../../components/ui.js';
+import { Modal } from '../../components/modal.js';
+import { SECONDARY } from '../../components/ui.js';
 import { usePanelFocus } from '../../components/use-panel-focus.js';
 import { formatDate } from '../../format.js';
 import { CredentialsSection } from './nurse-credentials.js';
@@ -94,42 +94,38 @@ function NurseDetailBody({
         )}
       </div>
 
-      <Dialog.Root open={confirmingDeactivate} onOpenChange={setConfirmingDeactivate}>
-        <Dialog.Portal>
-          <Dialog.Overlay className={OVERLAY} />
-          <Dialog.Content
-            className="fixed z-50 left-1/2 top-1/2 w-[380px] -translate-x-1/2 -translate-y-1/2
-              rounded-lg border border-border bg-surface p-5 shadow-lg"
-          >
-            <Dialog.Title className="mb-2 text-base font-semibold text-text">
-              Deactivate {nurse.firstName} {nurse.lastName}?
-            </Dialog.Title>
-            <p className="mb-4 text-sm text-text-muted">
-              This removes them from future scheduling. Their history is kept.
-            </p>
-            <div className="flex justify-end gap-2">
-              <Dialog.Close asChild>
-                <button type="button" className={SECONDARY}>
-                  Cancel
-                </button>
-              </Dialog.Close>
-              <button
-                type="button"
-                disabled={deactivateNurse.isPending}
-                onClick={() =>
-                  deactivateNurse.mutate(nurseId, {
-                    onSuccess: () => setConfirmingDeactivate(false),
-                  })
-                }
-                className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white
-                  disabled:opacity-60"
-              >
-                {deactivateNurse.isPending ? 'Deactivating…' : 'Deactivate'}
-              </button>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+      <Modal
+        open={confirmingDeactivate}
+        onOpenChange={setConfirmingDeactivate}
+        variant="popup"
+        size="sm"
+        title={`Deactivate ${nurse.firstName} ${nurse.lastName}?`}
+        description="This removes them from future scheduling. Their history is kept."
+        footer={
+          <>
+            <button
+              type="button"
+              className={SECONDARY}
+              onClick={() => setConfirmingDeactivate(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={deactivateNurse.isPending}
+              onClick={() =>
+                deactivateNurse.mutate(nurseId, {
+                  onSuccess: () => setConfirmingDeactivate(false),
+                })
+              }
+              className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white
+                disabled:opacity-60"
+            >
+              {deactivateNurse.isPending ? 'Deactivating…' : 'Deactivate'}
+            </button>
+          </>
+        }
+      />
 
       <CredentialsSection nurseId={nurseId} />
       <PreferencesSection nurseId={nurseId} unitId={nurse.unitId} />

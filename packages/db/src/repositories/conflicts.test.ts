@@ -19,6 +19,7 @@ import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { createShiftType, createUnit } from './config.js';
 import { applyResolution, getConflictPolicy, saveConflictPolicy } from './conflicts.js';
+import { nextEmployeeId } from './employee-ids.test-support.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
 import {
@@ -40,7 +41,7 @@ function mkNurse(firstName: string): string {
     handle.db,
     {
       unitId,
-      employeeId: `E${Math.random().toString().slice(2, 8)}`,
+      employeeId: nextEmployeeId(),
       firstName,
       lastName: 'Nurse',
       role: 'RN',
@@ -168,6 +169,20 @@ describe('auto-resolve policy', () => {
     const history = auditHistoryFor(handle.db, 'conflict_policy', policyIdFor(unitId));
     expect(history.map((h) => h.action)).toEqual(['update', 'create']);
     expect(history[0]?.before).toMatchObject({ enabled: true, maxCostDelta: 500 });
+  });
+
+  it('refuses a stray field in the policy and saves nothing', () => {
+    const saved = { enabled: true, maxCostDelta: 300, maxFairnessDrop: 4 };
+    saveConflictPolicy(handle.db, unitId, saved, ACTOR);
+    expect(() =>
+      saveConflictPolicy(
+        handle.db,
+        unitId,
+        { enabled: true, maxCostDelta: 1, maxFairnessDrop: 1, unitId: 'other' } as never,
+        ACTOR,
+      ),
+    ).toThrow("A conflict policy cannot include 'unitId'");
+    expect(getConflictPolicy(handle.db, unitId)).toEqual(saved);
   });
 
   it('refuses a negative threshold', () => {

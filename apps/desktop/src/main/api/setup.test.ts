@@ -7,6 +7,8 @@
 import { isoDate } from '@shiftnurse/core';
 import {
   createUnit,
+  getUnit,
+  listActiveRatioRulesForUnit,
   listShiftTypesForUnit,
   type OpenedDatabase,
   openTestDatabase,
@@ -117,5 +119,25 @@ describe('first launch', () => {
 
   it('refuses to resume the guide before any unit exists', () => {
     expect(() => setup.resume()).toThrow(/Set up a unit/);
+  });
+});
+
+describe('applying a state preset', () => {
+  it("sets a telemetry unit to California's 1:4 and remembers the state on the unit", () => {
+    const unit = setup.createUnit(unitInput, 'manual');
+    expect(setup.applyJurisdiction(unit.id, 'CA')).toMatchObject({ created: 6 });
+    expect(listActiveRatioRulesForUnit(handle.db, unit.id)).toEqual([
+      expect.objectContaining({ role: 'RN', maxPatientsPerNurse: 4 }),
+    ]);
+    expect(getUnit(handle.db, unit.id)?.jurisdiction).toBe('CA');
+    expect(setup.applyJurisdiction(unit.id, 'CA')).toEqual({
+      created: 0,
+      updated: 0,
+      unchanged: 1,
+    });
+  });
+
+  it('refuses a unit that does not exist', () => {
+    expect(() => setup.applyJurisdiction('unit_missing', 'NY')).toThrow(/not found/);
   });
 });

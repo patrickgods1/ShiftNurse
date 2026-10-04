@@ -60,11 +60,14 @@ function shiftKey(date: IsoDate, shiftTypeId: Id): string {
  * same period, so the period's date list is shared (frozen: every view hands out the same one).
  */
 const DATES_CACHE = new Map<string, readonly IsoDate[]>();
+/** A long-running app sees a few periods; this only stops nonsense from growing forever. */
+const PERIOD_DATES_LIMIT = 256;
 function periodDates(start: IsoDate, end: IsoDate): readonly IsoDate[] {
   const key = `${start}|${end}`;
   let dates = DATES_CACHE.get(key);
   if (!dates) {
     dates = Object.freeze(datesInRange(start, end));
+    if (DATES_CACHE.size >= PERIOD_DATES_LIMIT) DATES_CACHE.clear();
     DATES_CACHE.set(key, dates);
   }
   return dates;

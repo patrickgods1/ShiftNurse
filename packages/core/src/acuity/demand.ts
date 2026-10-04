@@ -29,9 +29,12 @@ import type {
   Id,
   NurseRole,
   RatioRule,
+  RatioStaffing,
   ShiftType,
 } from '../domain/entities.js';
 import { type IsoDate, type Weekday, weekdayOf } from '../domain/time.js';
+
+export type { RatioStaffing };
 
 export const NURSE_ROLES: readonly NurseRole[] = ['RN', 'LPN', 'CNA'] as const;
 
@@ -46,10 +49,23 @@ export interface RoleDemand {
   targetCount: number;
   coverageFloorMin: number;
   coverageFloorTarget: number;
-  /** Nurses required purely by patients-per-nurse ceilings. */
+  /**
+   * Nurses the ratio calls for on this shift: `ratioBedside + chargeWithoutPatients +
+   * breakRelief`. Every consumer (the ratio rule, both solvers, day-of, conflicts) reads this, so
+   * the unit's ratio staffing settings reach them all from here.
+   */
   ratioDerived: number;
+  /** Nurses at the bedside the patients-per-nurse ceilings alone require. */
+  ratioBedside: number;
+  /** 1 when this shift's charge nurse carries no patients and so is not one of `ratioBedside`. */
+  chargeWithoutPatients: number;
+  /** Nurses who keep the ratio while the bedside nurses take their breaks. */
+  breakRelief: number;
   bindingConstraint: BindingConstraint;
 }
+
+/** No breaks in a shift's first or last hour, so break cover fits in its length minus two. */
+const BREAKLESS_MINUTES = 120;
 
 export interface ShiftDemand {
   date: IsoDate;
@@ -75,6 +91,7 @@ export interface DemandInputs {
   coverageRequirements: readonly CoverageRequirement[];
   censusForecasts: readonly CensusForecast[];
   hppdTarget?: HppdTarget;
+  ratioStaffing?: RatioStaffing;
 }
 
 /**
@@ -224,8 +241,15 @@ export function coverageFloorFor(
 
 /** Build the staffing demand for every date and shift type across a range. */
 export function deriveDemand(dates: readonly IsoDate[], inputs: DemandInputs): DemandTable {
-  const { shiftTypes, acuityTiers, ratioRules, coverageRequirements, censusForecasts, hppdTarget } =
-    inputs;
+  const {
+    shiftTypes,
+    acuityTiers,
+    ratioRules,
+    coverageRequirements,
+    censusForecasts,
+    hppdTarget,
+    ratioStaffing,
+  } = inputs;
 
   const forecastIndex = new Map<string, CensusForecast>();
   for (const f of censusForecasts) forecastIndex.set(key(f.date, f.shiftTypeId), f);
@@ -254,9 +278,16 @@ export function deriveDemand(dates: readonly IsoDate[], inputs: DemandInputs): D
         const floor = coverageFloorFor(coverageRequirements, date, shiftType.id, role);
         // On-call shifts stand outside ratio maths: they are standby capacity, not
         // bedside coverage, so only the explicit coverage floor applies.
-        const ratioDerived = shiftType.isOnCall
+        const ratioBedside = shiftType.isOnCall
           ? 0
           : nursesRequiredForMix(acuityMix, role, ratioRules);
+        const { chargeWithoutPatients, breakRelief } = ratioSupport(
+          role,
+          shiftType,
+          ratioBedside,
+          ratioStaffing,
+        );
+        const ratioDerived = ratioBedside + chargeWithoutPatients + breakRelief;
 
         const minCount = Math.max(floor.min, ratioDerived);
         const bindingConstraint: BindingConstraint =
@@ -273,6 +304,9 @@ export function deriveDemand(dates: readonly IsoDate[], inputs: DemandInputs): D
           coverageFloorMin: floor.min,
           coverageFloorTarget: floor.target,
           ratioDerived,
+          ratioBedside,
+          chargeWithoutPatients,
+          breakRelief,
           bindingConstraint,
         };
       }
@@ -293,6 +327,37 @@ export function deriveDemand(dates: readonly IsoDate[], inputs: DemandInputs): D
   }
 
   return new DemandTable(demands);
+}
+
+/**
+ * The nurses a ratio needs beyond its bedside count. Only a shift the ratio governs (a census and
+ * a ratio rule for the role) needs either: with no patients there is no ratio to keep.
+ *
+ * A charge nurse without patients is added to standalone RN shifts only; a shift inside another
+ * works under that shift's charge nurse. Break relief is `ceil(bedside × break minutes ÷ the
+ * shift's break window)`: the minutes the bedside nurses are away, carried by relief nurses who
+ * can each cover the whole window. A charge nurse free of patients may carry one of them.
+ */
+function ratioSupport(
+  role: NurseRole,
+  shiftType: ShiftType,
+  ratioBedside: number,
+  staffing: RatioStaffing | undefined,
+): { chargeWithoutPatients: number; breakRelief: number } {
+  if (!staffing || ratioBedside <= 0) return { chargeWithoutPatients: 0, breakRelief: 0 };
+  const chargeWithoutPatients =
+    role === 'RN' && !staffing.chargeNurseTakesPatients && shiftType.withinShiftTypeId === null
+      ? 1
+      : 0;
+  const window = shiftType.durationHours * 60 - BREAKLESS_MINUTES;
+  if (staffing.breakMinutesPerNurse <= 0 || window <= 0) {
+    return { chargeWithoutPatients, breakRelief: 0 };
+  }
+  const needed = Math.ceil(
+    roundForFloatSafety((ratioBedside * staffing.breakMinutesPerNurse) / window),
+  );
+  const chargeRelieves = chargeWithoutPatients === 1 && staffing.chargeCoversBreaks ? 1 : 0;
+  return { chargeWithoutPatients, breakRelief: Math.max(0, needed - chargeRelieves) };
 }
 
 /**

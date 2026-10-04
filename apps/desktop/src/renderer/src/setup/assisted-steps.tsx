@@ -29,6 +29,7 @@ import {
 } from '../api-config.js';
 import { usePayRates } from '../api-cost.js';
 import { useApplyPreset } from '../api-setup.js';
+import { StateLawSection } from '../components/state-law.js';
 import { errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from '../components/ui.js';
 import { ImportDialog } from '../pages/roster/import-dialog.js';
 import { NurseFormDialog } from '../pages/roster/nurse-form-dialog.js';
@@ -269,6 +270,9 @@ function AcuityStep() {
           them against your state's law and your contract.
         </p>
       </PresetCard>
+      <section className="rounded-md border border-border bg-surface p-4">
+        <StateLawSection />
+      </section>
       <AcuityPanel />
     </>
   );

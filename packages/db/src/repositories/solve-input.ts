@@ -25,6 +25,7 @@ import {
   type RuleSet,
   type SchedulePeriod,
   type SolveInput,
+  type Unit,
 } from '@shiftnurse/core';
 import type { DbLike } from '../client.js';
 import { getHppdTarget, listActiveRatioRulesForUnit, listAcuityTiersForUnit } from './acuity.js';
@@ -40,6 +41,7 @@ import {
 import { holidayWorkFor, holidayWorkIn } from './holidays.js';
 import { listIncompatibilityGroups } from './incompatibility.js';
 import { ledgerSince } from './ledger.js';
+import { listOvertimeVolunteersOverlapping } from './overtime-volunteers.js';
 import { listActiveDifferentials, listActiveOvertimeRules, listPayRatesForUnit } from './pay.js';
 import {
   listCredentials,
@@ -49,7 +51,7 @@ import {
 } from './roster.js';
 import { getRuleSet } from './rulesets.js';
 import { listAssignmentsForPeriod, priorAssignmentsBefore } from './schedule.js';
-import { listTimeOffForUnit } from './timeoff.js';
+import { listTimeOffForUnit, listTimeOffOverlappingForUnit } from './timeoff.js';
 
 function unitOrThrow(db: DbLike, unitId: Id) {
   const unit = getUnit(db, unitId);
@@ -94,6 +96,7 @@ export function holidayWorkForPeriod(db: DbLike, period: SchedulePeriod): Holida
 
 /** Everything `deriveDemand` needs for a unit, loaded once per call. */
 export function demandInputs(db: DbLike, unitId: Id, start: IsoDate, end: IsoDate) {
+  const ratioStaffing = getUnit(db, unitId)?.ratioStaffing;
   return {
     shiftTypes: listShiftTypesForUnit(db, unitId),
     acuityTiers: listAcuityTiersForUnit(db, unitId),
@@ -101,6 +104,7 @@ export function demandInputs(db: DbLike, unitId: Id, start: IsoDate, end: IsoDat
     coverageRequirements: listCoverageRequirementsForUnit(db, unitId),
     censusForecasts: listCensusForecastsInRange(db, unitId, start, end),
     hppdTarget: getHppdTarget(db, unitId),
+    ...(ratioStaffing ? { ratioStaffing } : {}),
   };
 }
 
@@ -116,7 +120,13 @@ export function ledgerHistory(db: DbLike, unitId: Id, before: IsoDate): Fairness
  * rule engine polices — two different "weeks" would let a shift be flagged as overtime by the
  * rules and priced as straight time, or the reverse.
  */
-export function costContext(db: DbLike, unitId: Id, ruleSet: RuleSet): CostContext {
+export function costContext(
+  db: DbLike,
+  unitId: Id,
+  ruleSet: RuleSet,
+  // The period being priced bounds the leave read; without one all of the unit's leave is read.
+  period?: SchedulePeriod,
+): CostContext {
   const maxHours = ruleSet.configs.find((c) => c.ruleId === maxHoursRule.id);
   const params = (maxHours?.params ?? maxHoursRule.defaultParams) as Partial<MaxHoursParams>;
   const holidays = listHolidaysForUnit(db, unitId);
@@ -129,19 +139,48 @@ export function costContext(db: DbLike, unitId: Id, ruleSet: RuleSet): CostConte
     majorHolidayDates: new Set<IsoDate>(holidays.filter((h) => h.isMajor).map((h) => h.date)),
     weekendDefinition: ruleSet.weekendDefinition,
     workWeekStartsOn: params.workWeekStartsOn ?? maxHoursRule.defaultParams.workWeekStartsOn,
-    ...(params.paidLeaveCountsTowardOvertime ? { overtimeLeave: overtimeLeave(db, unitId) } : {}),
+    ...(params.paidLeaveCountsTowardOvertime
+      ? { overtimeLeave: overtimeLeave(db, unitId, period) }
+      : {}),
   };
 }
 
 /** Paid leave by nurse, for a contract that counts it toward overtime. */
-function overtimeLeave(db: DbLike, unitId: Id) {
+function overtimeLeave(db: DbLike, unitId: Id, period?: SchedulePeriod) {
   const byNurse = new Map<Id, PaidLeaveCredit[]>();
   const credits = paidLeaveCredits(
-    listTimeOffForUnit(db, unitId),
+    period ? timeOffForPeriod(db, unitOrThrow(db, unitId), period) : listTimeOffForUnit(db, unitId),
     paidSickCallsForUnit(db, unitId),
   );
   for (const c of credits) byNurse.set(c.nurseId, [...(byNurse.get(c.nurseId) ?? []), c]);
   return byNurse;
+}
+
+/**
+ * The dates a period's leave is read over: the 14-day lookback tail (as the prior assignments)
+ * plus the pay periods and work weeks that touch the period. Contracted-hours and pay-period
+ * overtime credit paid leave over a whole pay period, which starts up to payPeriodDays-1 before
+ * the period and ends as far after it, and cost prices overtime over the tail's own weeks and
+ * pay periods; one pay period (at least a week) either side of the tail covers every one of
+ * them. Nothing else (ledger, pending-leave, capacity, conflicts) looks at a request outside
+ * the period itself. One definition, so validation, alerts, cost and Generate read the same rows.
+ */
+export function timeOffWindow(
+  unit: Pick<Unit, 'payPeriodDays'>,
+  period: Pick<SchedulePeriod, 'startDate' | 'endDate'>,
+): { start: IsoDate; end: IsoDate } {
+  const slack = Math.max(7, unit.payPeriodDays);
+  return { start: addDays(period.startDate, -(14 + slack)), end: addDays(period.endDate, slack) };
+}
+
+/** Requests overlapping `timeOffWindow`, whole: a straddling request keeps its full paid-hours spread. */
+export function timeOffForPeriod(
+  db: DbLike,
+  unit: Pick<Unit, 'payPeriodDays'>,
+  period: SchedulePeriod,
+) {
+  const { start, end } = timeOffWindow(unit, period);
+  return listTimeOffOverlappingForUnit(db, period.unitId, start, end);
 }
 
 /** Shared loader behind the solver and the conflict detector: one definition of "the period". */
@@ -152,8 +191,10 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
   // Each table read once: the demand inputs carry the shift types, and the solver's cost data is
   // just the three pay tables (it takes unit, holidays and the work week from the input itself).
   const demand = demandInputs(db, unitId, period.startDate, period.endDate);
+  const unit = unitOrThrow(db, unitId);
+  const timeOff = timeOffForPeriod(db, unit, period);
   return {
-    unit: unitOrThrow(db, unitId),
+    unit,
     period,
     ruleSet,
     nurses: listNursesForUnit(db, unitId),
@@ -161,7 +202,7 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     demand: deriveDemand(datesInRange(period.startDate, period.endDate), demand).all(),
     assignments: listAssignmentsForPeriod(db, period.id),
     priorAssignments: priorAssignmentsBefore(db, unitId, period.startDate, 14),
-    timeOff: listTimeOffForUnit(db, unitId),
+    timeOff,
     // From the lookback tail on, as far as the weekly rules read.
     paidSickCalls: paidSickCallsForUnit(db, unitId, {
       start: addDays(period.startDate, -14),
@@ -179,6 +220,14 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     incompatibilityGroups: groupsForPeriod(
       listIncompatibilityGroups(db, unitId),
       addDays(period.startDate, -1),
+      period.endDate,
+    ),
+    // The lookback tail is judged too (its overtime counts toward the first week), so offers are
+    // read from there on; one covering only other periods would make Generate's candidates stale.
+    overtimeVolunteers: listOvertimeVolunteersOverlapping(
+      db,
+      unitId,
+      addDays(period.startDate, -14),
       period.endDate,
     ),
     cost: {

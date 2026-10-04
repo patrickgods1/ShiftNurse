@@ -6,17 +6,20 @@
  * ones the cost screen would resolve.
  */
 
-import { addDays, isoDate } from '@shiftnurse/core';
+import { addDays, isoDate, type SchedulePeriod } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { seedScenarioUnit } from '../seed/scenarios.js';
 import type { SeedResult } from '../seed/types.js';
-import { createUnit, listShiftTypesForUnit } from './config.js';
+import { createUnit, getUnit, listShiftTypesForUnit, updateUnit } from './config.js';
 import { createIncompatibilityGroup } from './incompatibility.js';
+import { createOvertimeVolunteer } from './overtime-volunteers.js';
 import { createPayRate, listPayRatesForUnit } from './pay.js';
 import { createNurse, listNursesForUnit } from './roster.js';
 import { getPeriod } from './schedule.js';
-import { loadPeriodInput } from './solve-input.js';
+import { loadPeriodInput, timeOffForPeriod, timeOffWindow } from './solve-input.js';
+import { createTimeOffRequest, listTimeOffForUnit } from './timeoff.js';
 
 const ACTOR = 'manager';
 let handle: OpenedDatabase;
@@ -112,6 +115,23 @@ describe('loadPeriodInput', () => {
     );
   });
 
+  it('carries the overtime offers from the lookback tail to the period end, and no others', () => {
+    const period = getPeriod(handle.db, seeded.draftPeriodId)!;
+    const [a] = listNursesForUnit(handle.db, seeded.unitId);
+    const offer = (start: string, end: string) =>
+      createOvertimeVolunteer(
+        handle.db,
+        { unitId: seeded.unitId, nurseId: a!.id, startDate: isoDate(start), endDate: isoDate(end) },
+        ACTOR,
+      );
+    const inTail = offer(addDays(period.startDate, -14), addDays(period.startDate, -14));
+    const inPeriod = offer(period.startDate, period.endDate);
+    offer(addDays(period.startDate, -20), addDays(period.startDate, -15));
+    offer(addDays(period.endDate, 1), addDays(period.endDate, 3));
+    const input = loadPeriodInput(handle.db, period);
+    expect(input.overtimeVolunteers!.map((v) => v.id)).toEqual([inTail.id, inPeriod.id]);
+  });
+
   it('prices with the role defaults and this unit’s own rates, never another unit’s nurse rate', () => {
     const other = otherUnitNurseWithRate();
     const unitNurseIds = new Set(listNursesForUnit(handle.db, seeded.unitId).map((n) => n.id));
@@ -137,5 +157,206 @@ describe('loadPeriodInput', () => {
     // take effect on the same day, so a reordered list would change what a shift costs.
     expect(rates.at(-1)?.id).toBe(ownRate.id);
     expect(listPayRatesForUnit(handle.db, seeded.unitId)).toEqual(rates);
+  });
+});
+
+describe('the leave a period reads', () => {
+  const march = { startDate: isoDate('2026-03-01'), endDate: isoDate('2026-03-14') };
+
+  it('reaches back a lookback and a pay period, and forward a pay period', () => {
+    // 14-day pay period: 03-01 less (14 + 14) days is 02-01; 03-14 plus 14 days is 03-28.
+    expect(timeOffWindow({ payPeriodDays: 14 }, march)).toEqual({
+      start: '2026-02-01',
+      end: '2026-03-28',
+    });
+  });
+
+  it('never shrinks the slack below a work week on a short pay period', () => {
+    // 7-day pay period: 03-01 less (14 + 7) is 02-08; 03-14 plus 7 is 03-21.
+    expect(timeOffWindow({ payPeriodDays: 7 }, march)).toEqual({
+      start: '2026-02-08',
+      end: '2026-03-21',
+    });
+    // A 5-day one still gets 7: 03-01 less 21 and 03-14 plus 7.
+    expect(timeOffWindow({ payPeriodDays: 5 }, march)).toEqual({
+      start: '2026-02-08',
+      end: '2026-03-21',
+    });
+  });
+
+  it('keeps a request from the window edge and drops one a day outside it', () => {
+    const nurseId = listNursesForUnit(handle.db, seeded.unitId)[0]!.id;
+    const ask = (start: string, end: string) =>
+      createTimeOffRequest(
+        handle.db,
+        { nurseId, startDate: isoDate(start), endDate: isoDate(end), type: 'pto' },
+        ACTOR,
+      ).id;
+    const endedBefore = ask('2026-01-25', '2026-01-31');
+    const endsOnStart = ask('2026-01-25', '2026-02-01');
+    const startsOnEnd = ask('2026-03-28', '2026-04-05');
+    const startsAfter = ask('2026-03-29', '2026-04-05');
+
+    const period = { ...march, unitId: seeded.unitId } as SchedulePeriod;
+    const ids = timeOffForPeriod(handle.db, { payPeriodDays: 14 }, period).map((r) => r.id);
+
+    expect(ids).not.toContain(endedBefore);
+    expect(ids).toContain(endsOnStart);
+    expect(ids).toContain(startsOnEnd);
+    expect(ids).not.toContain(startsAfter);
+  });
+
+  it('hands the solver a long paid leave that straddles the window start, whole', () => {
+    const period = getPeriod(handle.db, seeded.draftPeriodId)!;
+    const unit = listNursesForUnit(handle.db, seeded.unitId)[0]!;
+    const { start } = timeOffWindow({ payPeriodDays: 14 }, period);
+    const leave = createTimeOffRequest(
+      handle.db,
+      {
+        nurseId: unit.id,
+        startDate: addDays(start, -10),
+        endDate: addDays(start, 10),
+        type: 'pto',
+        paidHours: 36,
+      },
+      ACTOR,
+    );
+    const input = loadPeriodInput(handle.db, period);
+    const found = input.timeOff.find((r) => r.id === leave.id);
+    expect(found).toMatchObject({
+      startDate: addDays(start, -10),
+      endDate: addDays(start, 10),
+      paidHours: 36,
+    });
+  });
+
+  it('lists leave in start-date order whatever the order it was entered in', () => {
+    const nurseId = listNursesForUnit(handle.db, seeded.unitId)[0]!.id;
+    for (const [s, e] of [
+      ['2027-05-10', '2027-05-11'],
+      ['2027-05-01', '2027-05-02'],
+      ['2027-05-05', '2027-05-06'],
+    ] as const) {
+      createTimeOffRequest(
+        handle.db,
+        { nurseId, startDate: isoDate(s), endDate: isoDate(e), type: 'pto' },
+        ACTOR,
+      );
+    }
+    const starts = listTimeOffForUnit(handle.db, seeded.unitId)
+      .filter((r) => r.startDate.startsWith('2027-05'))
+      .map((r) => r.startDate);
+    expect(starts).toEqual(['2027-05-01', '2027-05-05', '2027-05-10']);
+  });
+});
+
+describe('how the unit keeps its ratios', () => {
+  function draftInput() {
+    return loadPeriodInput(handle.db, getPeriod(handle.db, seeded.draftPeriodId)!);
+  }
+  /** Demand rows for RNs where the ratio governs a shift with its own charge nurse. */
+  function standaloneRatioRows(input: ReturnType<typeof draftInput>) {
+    const standalone = new Set(
+      input.shiftTypes.filter((t) => t.withinShiftTypeId === null && !t.isOnCall).map((t) => t.id),
+    );
+    return input.demand
+      .filter((d) => standalone.has(d.shiftTypeId) && d.byRole.RN.ratioBedside > 0)
+      .map((d) => d.byRole.RN);
+  }
+
+  it('reads an existing unit as before: the charge nurse at the bedside, no break cover', () => {
+    const rows = standaloneRatioRows(draftInput());
+    expect(rows.length).toBeGreaterThan(0);
+    for (const rn of rows) {
+      expect(rn.ratioDerived).toBe(rn.ratioBedside);
+      expect(rn.chargeWithoutPatients).toBe(0);
+      expect(rn.breakRelief).toBe(0);
+    }
+  });
+
+  it('asks every forecast shift for one more RN once the charge nurse takes no patients', () => {
+    transact(handle.db, (tx) =>
+      updateUnit(
+        tx,
+        seeded.unitId,
+        {
+          ratioStaffing: {
+            chargeNurseTakesPatients: false,
+            breakMinutesPerNurse: 0,
+            chargeCoversBreaks: false,
+          },
+        },
+        ACTOR,
+      ),
+    );
+    const rows = standaloneRatioRows(draftInput());
+    expect(rows.length).toBeGreaterThan(0);
+    for (const rn of rows) expect(rn.ratioDerived).toBe(rn.ratioBedside + 1);
+  });
+
+  it('keeps the setting on the unit with the change in the audit log', () => {
+    const before = getUnit(handle.db, seeded.unitId)!;
+    expect(before.ratioStaffing).toEqual({
+      chargeNurseTakesPatients: true,
+      breakMinutesPerNurse: 0,
+      chargeCoversBreaks: false,
+    });
+    const staffing = {
+      chargeNurseTakesPatients: false,
+      breakMinutesPerNurse: 60,
+      chargeCoversBreaks: true,
+    };
+    transact(handle.db, (tx) => updateUnit(tx, seeded.unitId, { ratioStaffing: staffing }, ACTOR));
+    expect(getUnit(handle.db, seeded.unitId)!.ratioStaffing).toEqual(staffing);
+    const [latest] = auditHistoryFor(handle.db, 'unit', seeded.unitId);
+    expect(latest).toMatchObject({
+      action: 'update',
+      before: { ratioStaffing: { chargeNurseTakesPatients: true } },
+      after: { ratioStaffing: staffing },
+    });
+  });
+
+  it('refuses break minutes that are not a whole number a shift can hold', () => {
+    const bad = (breakMinutesPerNurse: number) => () =>
+      transact(handle.db, (tx) =>
+        updateUnit(
+          tx,
+          seeded.unitId,
+          {
+            ratioStaffing: {
+              chargeNurseTakesPatients: true,
+              breakMinutesPerNurse,
+              chargeCoversBreaks: false,
+            },
+          },
+          ACTOR,
+        ),
+      );
+    expect(bad(-15)).toThrow('Break minutes per nurse must be a whole number from 0 to 240');
+    expect(bad(22.5)).toThrow('whole number');
+    expect(bad(300)).toThrow('whole number');
+    expect(getUnit(handle.db, seeded.unitId)!.ratioStaffing!.breakMinutesPerNurse).toBe(0);
+  });
+});
+
+describe("the unit's schedule posting notice", () => {
+  const setLead = (postingLeadDays: number | null) =>
+    transact(handle.db, (tx) => updateUnit(tx, seeded.unitId, { postingLeadDays }, ACTOR));
+
+  it('keeps a 14-day notice on the unit and clears it again', () => {
+    expect(getUnit(handle.db, seeded.unitId)!.postingLeadDays).toBeUndefined();
+    setLead(14);
+    expect(getUnit(handle.db, seeded.unitId)!.postingLeadDays).toBe(14);
+    const [latest] = auditHistoryFor(handle.db, 'unit', seeded.unitId);
+    expect(latest).toMatchObject({ action: 'update', after: { postingLeadDays: 14 } });
+    setLead(null);
+    expect(getUnit(handle.db, seeded.unitId)!.postingLeadDays).toBeUndefined();
+  });
+
+  it('refuses a notice that is not a whole number of days up to 90', () => {
+    expect(() => setLead(-1)).toThrow('whole number of days from 0 to 90');
+    expect(() => setLead(10.5)).toThrow('whole number of days from 0 to 90');
+    expect(() => setLead(91)).toThrow('whole number of days from 0 to 90');
+    expect(getUnit(handle.db, seeded.unitId)!.postingLeadDays).toBeUndefined();
   });
 });

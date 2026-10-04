@@ -7,16 +7,14 @@
 import {
   isDaySide,
   isWorkedNight,
-  type NightRecoveryParams,
+  nightRecoveryRule,
   tooSoonAfterNight,
 } from '../../../rules/night-recovery.js';
+import { asParams } from '../../../rules/registry.js';
 import { describe, type EncodeContext, forbidPair } from '../context.js';
 
 export function encodeNightRecovery(ctx: EncodeContext, raw: Record<string, unknown>): void {
-  const required = Math.max(
-    0,
-    Math.floor((raw as unknown as NightRecoveryParams).daysOffAfterNights),
-  );
+  const required = Math.max(0, Math.floor(asParams(nightRecoveryRule, raw).daysOffAfterNights));
   if (required === 0) return;
   for (const [n, vars] of ctx.byNurse.entries()) {
     if (vars.length === 0) continue;

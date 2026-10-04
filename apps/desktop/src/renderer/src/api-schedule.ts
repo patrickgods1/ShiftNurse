@@ -54,6 +54,7 @@ function useInvalidateSchedule(periodId: Id | undefined, unitId: Id | undefined)
 export function useCreateAssignment(periodId: Id | undefined, unitId: Id | undefined) {
   const invalidate = useInvalidateSchedule(periodId, unitId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ reason, ...input }: CreateAssignmentInput & WithReason) =>
       api.schedule.createAssignment(input, reason),
     onSettled: invalidate,
@@ -63,6 +64,7 @@ export function useCreateAssignment(periodId: Id | undefined, unitId: Id | undef
 export function useMoveAssignment(periodId: Id | undefined, unitId: Id | undefined) {
   const invalidate = useInvalidateSchedule(periodId, unitId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ reason, ...input }: MoveAssignmentInput & WithReason) =>
       api.schedule.moveAssignment(input, reason),
     onSettled: invalidate,
@@ -73,6 +75,7 @@ export function useMoveAssignment(periodId: Id | undefined, unitId: Id | undefin
 export function useSwapAssignments(periodId: Id | undefined, unitId: Id | undefined) {
   const invalidate = useInvalidateSchedule(periodId, unitId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ firstId, secondId, reason }: { firstId: Id; secondId: Id } & WithReason) =>
       api.schedule.swapAssignments(firstId, secondId, reason),
     onSettled: invalidate,
@@ -82,6 +85,7 @@ export function useSwapAssignments(periodId: Id | undefined, unitId: Id | undefi
 export function useUpdateAssignment(periodId: Id | undefined, unitId: Id | undefined) {
   const invalidate = useInvalidateSchedule(periodId, unitId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({
       assignmentId,
       patch,
@@ -95,6 +99,7 @@ export function useUpdateAssignment(periodId: Id | undefined, unitId: Id | undef
 export function useDeleteAssignment(periodId: Id | undefined, unitId: Id | undefined) {
   const invalidate = useInvalidateSchedule(periodId, unitId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ assignmentId, reason }: { assignmentId: Id } & WithReason) =>
       api.schedule.deleteAssignment(assignmentId, reason),
     onSettled: invalidate,
@@ -104,6 +109,7 @@ export function useDeleteAssignment(periodId: Id | undefined, unitId: Id | undef
 export function useSetLocked(periodId: Id | undefined, unitId: Id | undefined) {
   const invalidate = useInvalidateSchedule(periodId, unitId);
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: ({ assignmentId, locked }: { assignmentId: Id; locked: boolean }) =>
       api.schedule.setLocked(assignmentId, locked),
     onSettled: invalidate,
@@ -127,6 +133,7 @@ export function useSetRequestsCloseOn(unitId: Id | undefined) {
 export function useCreatePeriod(unitId: Id | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { inlineError: true },
     mutationFn: (input: {
       name: string;
       startDate: IsoDate;

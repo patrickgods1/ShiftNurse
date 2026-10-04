@@ -54,13 +54,12 @@ describe('checkStaffing', () => {
     };
 
     const [check] = checkStaffing(input);
-    expect(check).toBeDefined();
-    expect(check?.basis).toBe('forecast');
-    expect(check?.census).toBe(20);
-    expect(check?.byRole.RN.required).toBe(4);
-    expect(check?.byRole.RN.staffed).toBe(4);
-    expect(check?.byRole.RN.shortfall).toBe(0);
-    expect(check?.short).toBe(false);
+    expect(check).toMatchObject({
+      basis: 'forecast',
+      census: 20,
+      byRole: { RN: { required: 4, staffed: 4, shortfall: 0 } },
+      short: false,
+    });
   });
 
   it('re-derives the requirement from the actual census once it is entered', () => {

@@ -63,6 +63,22 @@ describe('solver settings', () => {
     expect(getSolverSettings(handle.db, unitId)).toEqual({ solverId: 'hybrid' });
   });
 
+  it('refuses a stray field in the solver settings and saves nothing', () => {
+    saveSolverSettings(handle.db, unitId, { solverId: 'cp-sat', maxIterations: 7000 }, ACTOR);
+    expect(() =>
+      saveSolverSettings(
+        handle.db,
+        unitId,
+        { solverId: 'sa-lns', unitId: 'other' } as never,
+        ACTOR,
+      ),
+    ).toThrow("A solver setting cannot include 'unitId'");
+    expect(getSolverSettings(handle.db, unitId)).toEqual({
+      solverId: 'cp-sat',
+      maxIterations: 7000,
+    });
+  });
+
   it('refuses an iteration budget that is not a positive whole number', () => {
     expect(() =>
       saveSolverSettings(handle.db, unitId, { solverId: 'sa-lns', maxIterations: 0 }, ACTOR),
