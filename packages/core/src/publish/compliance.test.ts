@@ -330,13 +330,20 @@ describe('late posting', () => {
     const alerts = late('2026-10-19');
     expect(alerts).toHaveLength(1);
     expect(alerts[0]).toMatchObject({ severity: 'warning', assignmentIds: [] });
-    expect(alerts[0]!.message).toContain("posted 1 day later than the unit's 14-day notice");
+    // 19 October to 1 November is 13 days.
+    expect(alerts[0]!.message).toBe(
+      "Publishing on Mon Oct 19 gives 13 days' notice, 1 day short of the unit's 14-day notice",
+    );
   });
 
   it('counts several days late in the plural', () => {
     expect(late('2026-10-21')[0]!.message).toContain(
-      "posted 3 days later than the unit's 14-day notice",
+      "gives 11 days' notice, 3 days short of the unit's 14-day notice",
     );
+  });
+
+  it("says a day's notice, not a days' one, the day before the period starts", () => {
+    expect(late('2026-10-31')[0]!.message).toContain("gives 1 day's notice, 13 days short");
   });
 
   it('does not check a unit with no posting notice', () => {

@@ -268,14 +268,17 @@ function latePosting(input: ComplianceInput): ComplianceAlert[] {
   if (!input.posting) return [];
   const { leadDays, publishDate } = input.posting;
   // Days of notice staff actually get is the gap to the first day; a day short of the lead is late.
-  const daysLate = leadDays - daysBetween(publishDate, input.schedule.period.startDate);
+  const notice = daysBetween(publishDate, input.schedule.period.startDate);
+  const daysLate = leadDays - notice;
   if (daysLate <= 0) return [];
+  const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
   return [
     {
       kind: 'late_posting',
       severity: 'warning',
       assignmentIds: [],
-      message: `Published ${describeDate(publishDate)}, this schedule is posted ${daysLate} day${daysLate === 1 ? '' : 's'} later than the unit's ${leadDays}-day notice`,
+      // Judged before publishing, so it says what publishing now would give staff.
+      message: `Publishing on ${describeDate(publishDate)} gives ${notice === 1 ? "1 day's" : `${notice} days'`} notice, ${days(daysLate)} short of the unit's ${leadDays}-day notice`,
     },
   ];
 }
