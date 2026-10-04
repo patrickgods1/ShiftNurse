@@ -628,6 +628,7 @@ export default function RulesPanel() {
   const [weekendDefinition, setWeekendDefinition] = useState<WeekendDefinition>(DEFAULT_WEEKEND);
   const [fairnessWeights, setFairnessWeights] = useState<FairnessWeights>(DEFAULT_FAIRNESS_WEIGHTS);
   const [savedMessage, setSavedMessage] = useState<string | undefined>(undefined);
+  const [savedVersion, setSavedVersion] = useState<number | undefined>(undefined);
 
   const data = ruleSetQuery.data;
 
@@ -651,7 +652,9 @@ export default function RulesPanel() {
     setConfigs(resolveConfigs(data));
     setWeekendDefinition(data.weekendDefinition);
     setFairnessWeights(data.fairnessWeights);
-    setSavedMessage(undefined);
+    // The refetch after our own save lands here too; it is the version the message names, so
+    // only a different version (another window, a unit switch) clears it.
+    if (data.version !== savedVersion) setSavedMessage(undefined);
   }
 
   const dirty =
@@ -689,7 +692,10 @@ export default function RulesPanel() {
     saveMutation.mutate(
       { unitId, name, configs, weekendDefinition, fairnessWeights },
       {
-        onSuccess: (saved) => setSavedMessage(`Saved version ${saved.version}`),
+        onSuccess: (saved) => {
+          setSavedVersion(saved.version);
+          setSavedMessage(`Saved version ${saved.version}`);
+        },
       },
     );
   }
