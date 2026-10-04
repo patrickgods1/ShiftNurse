@@ -48,6 +48,17 @@ describe('FMLA', () => {
     );
   });
 
+  it('starts the year back on 1 March when the date is 29 February', () => {
+    // 2027 has no 29 February, so the rolling year to 29 Feb 2028 opens on 1 Mar 2027.
+    const usedHours = [
+      { date: isoDate('2027-02-28'), hours: 12 }, // outside
+      { date: isoDate('2027-03-01'), hours: 24 }, // inside
+    ];
+    expect(fmlaRemaining({ weeklyHours: 36, usedHours, onDate: isoDate('2028-02-29') })).toBe(
+      432 - 24,
+    );
+  });
+
   it('never goes below zero', () => {
     expect(
       fmlaRemaining({
