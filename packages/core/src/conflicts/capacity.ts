@@ -19,7 +19,7 @@
  * approved too, because a manager deciding one is deciding against the rest.
  */
 
-import type { Id, NurseRole, TimeOffRequest } from '../domain/entities.js';
+import type { Id, Nurse, NurseRole, TimeOffRequest } from '../domain/entities.js';
 import { dateInRange, type IsoDate } from '../domain/time.js';
 import type { SolveInput } from '../solver/types.js';
 
@@ -69,10 +69,23 @@ function offOn(requests: readonly TimeOffRequest[], nurseId: Id, date: IsoDate, 
   );
 }
 
-export function leaveCapacity(input: SolveInput, requestId: Id): DayCapacity[] {
-  const request = input.timeOff.find((r) => r.id === requestId);
+/** Prebuilt lookups a caller that already holds a `ConflictEngine` can share. */
+export interface CapacityIndex {
+  timeOffById: ReadonlyMap<Id, TimeOffRequest>;
+  nursesById: ReadonlyMap<Id, Nurse>;
+}
+
+export function leaveCapacity(
+  input: SolveInput,
+  requestId: Id,
+  index: CapacityIndex = {
+    timeOffById: new Map(input.timeOff.map((r) => [r.id, r])),
+    nursesById: new Map(input.nurses.map((n) => [n.id, n])),
+  },
+): DayCapacity[] {
+  const request = index.timeOffById.get(requestId);
   if (!request) throw new Error(`Time-off request ${requestId} is not in this period's input`);
-  const requester = input.nurses.find((n) => n.id === request.nurseId);
+  const requester = index.nursesById.get(request.nurseId);
   const shiftTypes = new Map(input.shiftTypes.map((s) => [s.id, s]));
   const others = input.timeOff.filter((r) => r.id !== requestId);
   const out: DayCapacity[] = [];

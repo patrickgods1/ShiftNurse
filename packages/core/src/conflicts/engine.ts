@@ -80,6 +80,7 @@ export class ConflictEngine {
   readonly nurses: readonly Nurse[];
   readonly activeNurses: readonly Nurse[];
   readonly nursesById: ReadonlyMap<Id, Nurse>;
+  readonly timeOffById: ReadonlyMap<Id, TimeOffRequest>;
   readonly shiftTypes: readonly ShiftType[];
   readonly shiftTypesById: ReadonlyMap<Id, ShiftType>;
   readonly dates: readonly IsoDate[];
@@ -107,6 +108,9 @@ export class ConflictEngine {
       weights: input.ruleSet.fairnessWeights,
     });
     this.nursesById = new Map(this.nurses.map((n) => [n.id, n]));
+    // Built once so per-request and per-candidate lookups are O(1): `.find` inside those loops
+    // made the analysis quadratic on a busy period, and it runs on every Requests view.
+    this.timeOffById = new Map(input.timeOff.map((r) => [r.id, r]));
     this.shiftTypes = [...input.shiftTypes].sort((a, b) => a.sortOrder - b.sortOrder);
     this.shiftTypesById = new Map(this.shiftTypes.map((s) => [s.id, s]));
     this.dates = datesInRange(input.period.startDate, input.period.endDate);

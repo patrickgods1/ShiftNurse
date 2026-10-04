@@ -228,10 +228,9 @@ export function timeOffImpact(
   requestId: Id,
   decision: 'approved' | 'denied',
 ): TimeOffImpact {
-  const request = input.timeOff.find((r) => r.id === requestId);
-  if (!request) throw new Error(`Time-off request ${requestId} is not in this period's input`);
-
   const engine = new ConflictEngine(input);
+  const request = engine.timeOffById.get(requestId);
+  if (!request) throw new Error(`Time-off request ${requestId} is not in this period's input`);
   const before = engine.baseline();
 
   const displacedAssignments: Assignment[] =
@@ -276,6 +275,6 @@ export function timeOffImpact(
       delta: shortfallAfter - shortfallBefore,
     },
     competing,
-    capacity: leaveCapacity(input, requestId),
+    capacity: leaveCapacity(input, requestId, engine),
   };
 }
