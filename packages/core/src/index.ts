@@ -42,6 +42,15 @@ export type { BudgetVariance, CostContext, ScheduleCost } from './cost/types.js'
 // Pay model contract types
 export { COST_LINE_LABELS, DIFFERENTIAL_ORDER } from './cost/types.js';
 export type {
+  CancellationHistory,
+  CancellationInput,
+  CancellationOrder,
+  CancellationPlace,
+  CancellationTier,
+} from './dayof/cancellation.js';
+// Low-census cancellation order: who goes home first, each with the reason
+export { cancellationOrder, DEFAULT_CANCELLATION_TIERS } from './dayof/cancellation.js';
+export type {
   PayTier,
   ReplacementCandidate,
   ReplacementReport,
