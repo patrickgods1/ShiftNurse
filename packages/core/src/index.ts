@@ -36,6 +36,9 @@ export {
 } from './conflicts/index.js';
 // Pricing a schedule, marginal cost and budget comparison
 export { compareToBudget, costSchedule } from './cost/cost.js';
+export type { DayOfPay, DayOfPayEvent, DayOfPayLine, DayOfPayPolicy } from './cost/events.js';
+// Pay for what happened on the day: missed breaks, reporting-time pay, call-backs
+export { priceDayOfEvents } from './cost/events.js';
 // The pay rate in force for a nurse on a date
 export { resolvePayRate } from './cost/rates.js';
 export type { BudgetVariance, CostContext, ScheduleCost } from './cost/types.js';
