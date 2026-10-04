@@ -26,6 +26,7 @@ import {
   type FairnessWeights,
   type NurseBurden,
   type NurseFairnessScore,
+  type NurseOccurrences,
   type ScoreInput,
 } from './types.js';
 
@@ -145,6 +146,7 @@ function scoreNurse(
   byNurse: ReadonlyMap<Id, NurseBurden>,
   weights: FairnessWeights,
   seniorityMultiplier: number,
+  occurrences: NurseOccurrences,
 ): NurseFairnessScore {
   const components: ComponentScore[] = [];
   for (const component of BURDEN_COMPONENTS) {
@@ -167,6 +169,7 @@ function scoreNurse(
 
   return {
     nurseId: nurse.id,
+    occurrences,
     score,
     components,
     seniorityMultiplier,
@@ -197,6 +200,7 @@ export function scoreFairness(input: ScoreInput): FairnessReport {
         burden.byNurse,
         weights,
         multipliers.get(nurse.id) ?? 1,
+        input.occurrences?.get(nurse.id) ?? { nights: [], weekends: [], holidays: [] },
       );
     });
 

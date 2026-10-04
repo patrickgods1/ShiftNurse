@@ -29,7 +29,7 @@ import {
 import { buildStretches } from '../rules/rest-rules.js';
 import { isWorked } from '../rules/types.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
-import type { BurdenCounters, CounterContext } from './types.js';
+import type { BurdenCounters, CounterContext, NurseOccurrences } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Undesirable shifts
@@ -199,6 +199,17 @@ function weightedPreferenceHitRate(
 }
 
 // ---------------------------------------------------------------------------
+// What counts as a burden — the one definition, shared by the counters and the date lists
+// ---------------------------------------------------------------------------
+
+const countsAsNight = (view: AssignmentView): boolean => view.shiftType.isNight;
+
+// Shifts are dated by their start day, so a night shift running into a holiday morning
+// is not "worked on" the holiday — the nurse clocked in the day before.
+const countsAsHoliday = (view: AssignmentView, ctx: CounterContext): boolean =>
+  ctx.holidayDates.has(view.assignment.date);
+
+// ---------------------------------------------------------------------------
 // Counter derivation
 // ---------------------------------------------------------------------------
 
@@ -226,10 +237,8 @@ export function deriveCounters(
     let totalHours = 0;
     const weekendKeysWorked = new Set<string>();
     for (const view of workedViews) {
-      if (view.shiftType.isNight) nightShifts++;
-      // Shifts are dated by their start day, so a night shift running into a holiday morning
-      // is not "worked on" the holiday — the nurse clocked in the day before.
-      if (ctx.holidayDates.has(view.assignment.date)) holidaysWorked++;
+      if (countsAsNight(view)) nightShifts++;
+      if (countsAsHoliday(view, ctx)) holidaysWorked++;
       if (isUndesirable(view, nursePrefs, ctx.weekendDefinition)) undesirableShifts++;
       totalHours += view.paidHours;
       const key = weekendKey(view.window, ctx.weekendDefinition);
@@ -286,5 +295,37 @@ export function deriveCounters(
     });
   }
 
+  return result;
+}
+
+/**
+ * The dates behind the counters, per nurse, for the same in-period worked shifts: "why is Ana
+ * on four weekends" needs the days, not the tally. Sorted, one entry per date (a weekend day
+ * with two shifts is one day). Weekends are listed per day worked where the ledger counts per
+ * weekend, so a Saturday plus Sunday is two entries against `weekendsWorked` of 1.
+ */
+export function deriveOccurrences(
+  schedule: ScheduleView,
+  ctx: CounterContext,
+): Map<Id, NurseOccurrences> {
+  const result = new Map<Id, NurseOccurrences>();
+  for (const nurseId of schedule.nursesById.keys()) {
+    const nights = new Set<IsoDate>();
+    const weekends = new Set<IsoDate>();
+    const holidays = new Set<IsoDate>();
+    for (const view of schedule.assignmentsFor(nurseId).filter(isWorked)) {
+      const date = view.assignment.date;
+      if (countsAsNight(view)) nights.add(date);
+      if (weekendKey(view.window, ctx.weekendDefinition) !== null) weekends.add(date);
+      if (countsAsHoliday(view, ctx)) holidays.add(date);
+    }
+    // ISO dates sort in calendar order as strings.
+    const sorted = (set: Set<IsoDate>): IsoDate[] => [...set].sort();
+    result.set(nurseId, {
+      nights: sorted(nights),
+      weekends: sorted(weekends),
+      holidays: sorted(holidays),
+    });
+  }
   return result;
 }

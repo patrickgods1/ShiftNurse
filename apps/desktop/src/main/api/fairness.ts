@@ -6,6 +6,7 @@ import {
   type BurdenCounters,
   compareDates,
   deriveCounters,
+  deriveOccurrences,
   type FairnessLedgerEntry,
   groupIntoPayPeriods,
   type HistoricalShiftRow,
@@ -58,6 +59,7 @@ export function fairnessReport(db: DbLike, periodId: Id) {
   return scoreFairness({
     nurses: nurses.filter((n) => n.active),
     current: deriveCounters(schedule, ctx),
+    occurrences: deriveOccurrences(schedule, ctx),
     history: ledgerHistory(db, period.unitId, period.startDate),
     preferences: ctx.preferences,
     weights: ruleSet.fairnessWeights,

@@ -14,6 +14,7 @@ import {
 } from '../testing/fixtures.js';
 import {
   deriveCounters,
+  deriveOccurrences,
   isUndesirable,
   preferenceSatisfaction,
   preferencesBroken,
@@ -390,5 +391,74 @@ describe('coverage of the roster', () => {
       overtimeHours: 0,
       preferenceHitRate: 1,
     });
+  });
+});
+
+describe("where a nurse's burden fell", () => {
+  it('lists the exact nights, weekend days and holidays Ana worked, once each', () => {
+    const ana = makeNurse();
+    // Fri Oct 2 night; Sat Oct 3 day AND night (one weekend day, two shifts); Sun Oct 4 day;
+    // Mon Oct 5 day on a holiday. Out of date order on purpose.
+    const s = scenario({
+      nurses: [ana],
+      assignments: [
+        assign(ana.id, DAY_12, '2026-10-05'),
+        assign(ana.id, NIGHT_12, '2026-10-03'),
+        assign(ana.id, DAY_12, '2026-10-03'),
+        assign(ana.id, DAY_12, '2026-10-04'),
+        assign(ana.id, NIGHT_12, '2026-10-02'),
+      ],
+    });
+    const ctx = baseCtx({ holidayDates: new Set([isoDate('2026-10-05')]) });
+
+    const found = deriveOccurrences(s.schedule, ctx).get(ana.id);
+    expect(found).toEqual({
+      nights: ['2026-10-02', '2026-10-03'],
+      weekends: ['2026-10-03', '2026-10-04'],
+      holidays: ['2026-10-05'],
+    });
+
+    // Nights and holidays are counted per shift, so they match the ledger; weekends are counted
+    // per weekend (one here) while the list is per weekend day (two).
+    const counters = deriveCounters(s.schedule, ctx).get(ana.id)!;
+    expect(counters.nightShifts).toBe(2);
+    expect(counters.holidaysWorked).toBe(1);
+    expect(counters.weekendsWorked).toBe(1);
+  });
+
+  it('does not count standby on a holiday, or a shift carried in from the last period', () => {
+    const ana = makeNurse();
+    const s = scenario({
+      nurses: [ana],
+      assignments: [assign(ana.id, ON_CALL, '2026-01-06')],
+      // Sat Jan 3 night, a holiday: the previous period's, so it is nobody's burden here.
+      priorAssignments: [assign(ana.id, NIGHT_12, '2026-01-03')],
+    });
+    const ctx = baseCtx({ holidayDates: new Set([isoDate('2026-01-06'), isoDate('2026-01-03')]) });
+    expect(deriveOccurrences(s.schedule, ctx).get(ana.id)).toEqual({
+      nights: [],
+      weekends: [],
+      holidays: [],
+    });
+  });
+
+  it('lists a Friday night that runs into the weekend under Friday, the day it starts', () => {
+    const ana = makeNurse();
+    // 19:00 Fri Jan 9 -> 07:00 Sat Jan 10.
+    const s = scenario({
+      nurses: [ana],
+      assignments: [assign(ana.id, NIGHT_12, '2026-01-09')],
+    });
+    const overlaps: WeekendDefinition = {
+      startWeekday: 6,
+      startMinute: 0,
+      durationMinutes: 2 * 1440,
+      mode: 'overlaps',
+    };
+    expect(
+      deriveOccurrences(s.schedule, baseCtx({ weekendDefinition: overlaps })).get(ana.id)?.weekends,
+    ).toEqual(['2026-01-09']);
+    // Under the default (starts within) it is not a weekend shift at all.
+    expect(deriveOccurrences(s.schedule, baseCtx()).get(ana.id)?.weekends).toEqual([]);
   });
 });
