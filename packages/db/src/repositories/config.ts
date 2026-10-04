@@ -37,7 +37,7 @@ import {
   shiftType as shiftTypeTable,
   unit as unitTable,
 } from '../schema.js';
-import { type PatchKeys, patchOf } from './patch.js';
+import { auditedUpdate, type PatchKeys } from './patch.js';
 
 // ---------------------------------------------------------------------------
 // Unit
@@ -76,15 +76,30 @@ const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
 };
 
 export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string): Unit {
-  const row = db.select().from(unitTable).where(eq(unitTable.id, id)).get();
-  if (!row) throw new Error(`Unit ${id} not found`);
-  const before = toUnit(row);
-  if (patch.name !== undefined && patch.name.trim() === '') throw new Error('A unit needs a name');
-  const merged = { ...row, ...patchOf(patch, UNIT_PATCH_KEYS, 'unit') };
-  db.update(unitTable).set(merged).where(eq(unitTable.id, id)).run();
-  const after = toUnit(merged);
-  recordAudit(db, { entityType: 'unit', entityId: id, action: 'update', actor, before, after });
-  return after;
+  return auditedUpdate<Unit, UnitPatch>(db, {
+    id,
+    entityType: 'unit',
+    entityLabel: 'unit',
+    allowed: UNIT_PATCH_KEYS,
+    patch,
+    read: (rowId) => {
+      const row = db.select().from(unitTable).where(eq(unitTable.id, rowId)).get();
+      return row ? toUnit(row) : undefined;
+    },
+    // The id rides along so an empty patch still writes, as the full-row update always did.
+    write: (rowId, values) =>
+      db
+        .update(unitTable)
+        .set({ ...values, id: rowId })
+        .where(eq(unitTable.id, rowId))
+        .run(),
+    notFound: `Unit ${id} not found`,
+    validate: (values) => {
+      if (values.name !== undefined && values.name.trim() === '')
+        throw new Error('A unit needs a name');
+    },
+    actor,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -176,23 +191,28 @@ export function updateShiftType(
   patch: ShiftTypePatch,
   actor: string,
 ): ShiftType {
-  const row = db.select().from(shiftTypeTable).where(eq(shiftTypeTable.id, id)).get();
-  if (!row) throw new Error(`Shift type ${id} not found`);
-  const before = toShiftType(row);
-  const merged = { ...row, ...patchOf(patch, SHIFT_TYPE_PATCH_KEYS, 'shift type') };
-  const after = toShiftType(merged);
-  // A new time or length can stop it fitting inside its shift, or stop another fitting inside it.
-  assertCoverFits(db, after);
-  db.update(shiftTypeTable).set(merged).where(eq(shiftTypeTable.id, id)).run();
-  recordAudit(db, {
+  return auditedUpdate<ShiftType, ShiftTypePatch>(db, {
+    id,
     entityType: 'shift_type',
-    entityId: id,
-    action: 'update',
+    entityLabel: 'shift type',
+    allowed: SHIFT_TYPE_PATCH_KEYS,
+    patch,
+    read: (rowId) => {
+      const row = db.select().from(shiftTypeTable).where(eq(shiftTypeTable.id, rowId)).get();
+      return row ? toShiftType(row) : undefined;
+    },
+    // The id rides along so an empty patch still writes, as the full-row update always did.
+    write: (rowId, values) =>
+      db
+        .update(shiftTypeTable)
+        .set({ ...values, id: rowId })
+        .where(eq(shiftTypeTable.id, rowId))
+        .run(),
+    notFound: `Shift type ${id} not found`,
+    // A new time or length can stop it fitting inside its shift, or stop another fitting inside it.
+    validate: (values, before) => assertCoverFits(db, { ...before, ...values }),
     actor,
-    before,
-    after,
   });
-  return after;
 }
 
 /**

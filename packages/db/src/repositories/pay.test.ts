@@ -305,6 +305,21 @@ describe('cost configuration', () => {
     });
   });
 
+  it('keeps a differential as it was and records the save when nothing was changed', () => {
+    const night = createDifferential(
+      handle.db,
+      { unitId, kind: 'night', mode: 'flat', amount: 4.5, active: true },
+      ACTOR,
+    );
+    expect(updateDifferential(handle.db, night.id, {}, ACTOR)).toEqual(night);
+    const updates = auditHistoryFor(handle.db, 'differential', night.id).filter(
+      (e) => e.action === 'update',
+    );
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.before).toEqual(night);
+    expect(updates[0]?.after).toEqual(night);
+  });
+
   it('lists every differential for the unit but only active ones for pricing', () => {
     const night = createDifferential(
       handle.db,
