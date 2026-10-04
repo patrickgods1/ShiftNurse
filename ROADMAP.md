@@ -537,12 +537,14 @@ manager's experience and the contract rules a real hospital would check first. O
       deterministic conflicts fixture hash unchanged; `bench:solvers` re-run
 
 **Phase 5 — Tests**
-- [ ] Renderer harness (fake bridge) and dialog tests: decide, publish, generate/save, call-off,
+- [x] Renderer harness (fake bridge) and dialog tests: decide, publish, generate/save, call-off,
       new period, rules, assisted setup
-- [ ] IPC channel-table test; DST and leap-day solver/cost/fairness tests; leave and day-of API
+- [x] IPC channel-table test; DST and leap-day solver/cost/fairness tests; leave and day-of API
       cases; property tests (diff, exchange, locks, dates, overtime)
-- [ ] Coverage run passes first time; CP-SAT suites required on one CI leg; desktop main ≥ 70%
-- [ ] Smoke: generate→save, leave with cover, undo, call-off button, settings groups
+- [x] Coverage run passes first time; CP-SAT suites required on one CI leg; desktop main ≥ 70%
+      (measured 2026-10-04: main 77.1% lines, renderer 47.8% and now in the table, core 96.1%,
+      db 91.5%; the in-app smoke driver is excluded, Electron bootstrap is left to smoke)
+- [x] Smoke: generate→save, leave with cover, undo, call-off button, settings groups
 
 **Phase 6 — Contract rules for 1.0**
 - [ ] A charge nurse without patients does not count toward the ratio (`chargeNurseTakesPatients`)

@@ -208,17 +208,17 @@ describe('the auto-resolve policy and conflicts', () => {
 describe('shift exchanges', () => {
   // The unit's day shift needs a PRECEPTOR on it, and the seeded ids are random, so the two
   // nurses are chosen by credential: a handover between two preceptors cannot leave it short.
-  function preceptors() {
+  function preceptors(): [(typeof f.rns)[0], (typeof f.rns)[0]] {
     const code = listCredentials(f.handle.db).find((c) => c.code === 'PRECEPTOR')!;
-    return f.rns
-      .filter((n) =>
-        listNurseCredentials(f.handle.db, n.id).some((c) => c.credentialId === code.id),
-      )
-      .slice(0, 2);
+    const held = f.rns.filter((n) =>
+      listNurseCredentials(f.handle.db, n.id).some((c) => c.credentialId === code.id),
+    );
+    expect(held.length, 'the scenario unit needs two preceptor RNs').toBeGreaterThanOrEqual(2);
+    return [held[0]!, held[1]!];
   }
 
   function annGivesAwayToBea() {
-    const [ann, bea] = preceptors() as [(typeof f.rns)[0], (typeof f.rns)[0]];
+    const [ann, bea] = preceptors();
     const date = addDays(f.seeded.draftStart, 2);
     const shift = scheduleApi(f.handle.db).createAssignment({
       periodId: draft(),
