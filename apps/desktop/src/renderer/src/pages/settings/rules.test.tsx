@@ -59,6 +59,16 @@ function restInput(card: HTMLElement) {
   return card.querySelector(`#${REST}-minRestHours`) as HTMLInputElement;
 }
 
+/**
+ * The name field by its id. `screen.getByLabelText` resolves every label on a form of a few
+ * hundred fields, which took the discard test past its limit on a Windows runner.
+ */
+function nameInput(): HTMLInputElement {
+  const input = document.getElementById('rule-set-name');
+  if (!(input instanceof HTMLInputElement)) throw new Error('no rule set name field');
+  return input;
+}
+
 function savedConfig(ruleId: string): RuleConfig {
   const [call] = bridge.callsTo('rules', 'save');
   return call![2].find((c) => c.ruleId === ruleId)!;
@@ -115,13 +125,13 @@ describe('editing the contract rules', () => {
   it('puts the loaded values back when the manager discards', async () => {
     const card = await renderRules();
     fireEvent.change(restInput(card), { target: { value: '14' } });
-    fireEvent.change(screen.getByLabelText('Rule set name'), { target: { value: 'Draft' } });
+    fireEvent.change(nameInput(), { target: { value: 'Draft' } });
     expect(restInput(card).value).toBe('14');
 
     fireEvent.click(discardButton());
 
     await waitFor(() => expect(restInput(card).value).toBe('10'));
-    expect((screen.getByLabelText('Rule set name') as HTMLInputElement).value).toBe('Contract');
+    expect(nameInput().value).toBe('Contract');
     expect((saveButton() as HTMLButtonElement).disabled).toBe(true);
     expect(bridge.callsTo('rules', 'save')).toHaveLength(0);
   });
