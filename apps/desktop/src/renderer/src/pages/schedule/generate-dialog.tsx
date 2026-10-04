@@ -9,7 +9,6 @@
  * That trade is the manager's to make, so Generate offers it rather than picking silently.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import type {
   SolveBatchStatus,
   SolveEstimate,
@@ -25,7 +24,8 @@ import {
   useSolverSettings,
   useStartBatch,
 } from '../../api-solver.js';
-import { errorMessage, OVERLAY, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { Modal } from '../../components/modal.js';
+import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { periodLabel } from '../../format.js';
 import { formatDollars } from '../../money.js';
 import { SOLVER_LABELS, SOLVER_ORDER } from '../../solver-labels.js';
@@ -104,70 +104,66 @@ export function GenerateDialog({
   }, [open]);
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content
-          data-testid="generate-dialog"
-          className="fixed z-50 left-1/2 top-1/2 w-[34rem] max-w-[calc(100vw-2rem)] -translate-x-1/2
-            -translate-y-1/2 rounded-lg border border-border bg-surface p-6 shadow-lg"
-        >
-          <Dialog.Title className="mb-1 text-lg font-semibold text-text">
-            Generate schedule
-          </Dialog.Title>
-          <Dialog.Description className="mb-4 text-sm text-text-muted">
-            {periodLabel(period)}
-          </Dialog.Description>
-
-          {running && batch ? (
-            <Running
-              batch={batch}
-              cancelling={cancel.isPending}
-              onCancel={() => cancel.mutate(batch.id)}
-            />
-          ) : !showSetup && batch ? (
-            <Finished
-              batch={batch}
-              onGenerateAgain={() => {
-                start.reset();
-                setContinueSeeds(true);
-                // More of the same: the solver these variations asked for, not the unit default
-                // (reopening the dialog to reach this summary reset the choice).
-                setSolver(batch.fellBackFrom?.solver ?? batch.solver);
-                onViewChange('setup');
-              }}
-              onCompare={() => {
-                onOpenChange(false);
-                onCompare();
-              }}
-              onPreview={(index) => {
-                onOpenChange(false);
-                onPreview(index);
-              }}
-            />
-          ) : (
-            <Confirm
-              undecidedRequests={undecidedRequests}
-              lockedCount={lockedCount}
-              unlockedCount={unlockedCount}
-              previous={previous}
-              continuing={continuing}
-              onContinueChange={setContinueSeeds}
-              count={count}
-              onCountChange={setCount}
-              estimate={estimate.data}
-              pending={start.isPending}
-              error={start.isError ? errorMessage(start.error) : undefined}
-              solver={solver ?? savedSolver}
-              savedSolver={savedSolver}
-              availability={availability}
-              onSolverChange={setSolver}
-              onGenerate={() => start.mutate(options, { onSuccess: () => onViewChange('batch') })}
-            />
-          )}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      data-testid="generate-dialog"
+      size="md"
+      title="Generate schedule"
+      description={periodLabel(period)}
+    >
+      <div className="mt-4">
+        {running && batch ? (
+          <Running
+            onClose={() => onOpenChange(false)}
+            batch={batch}
+            cancelling={cancel.isPending}
+            onCancel={() => cancel.mutate(batch.id)}
+          />
+        ) : !showSetup && batch ? (
+          <Finished
+            onClose={() => onOpenChange(false)}
+            batch={batch}
+            onGenerateAgain={() => {
+              start.reset();
+              setContinueSeeds(true);
+              // More of the same: the solver these variations asked for, not the unit default
+              // (reopening the dialog to reach this summary reset the choice).
+              setSolver(batch.fellBackFrom?.solver ?? batch.solver);
+              onViewChange('setup');
+            }}
+            onCompare={() => {
+              onOpenChange(false);
+              onCompare();
+            }}
+            onPreview={(index) => {
+              onOpenChange(false);
+              onPreview(index);
+            }}
+          />
+        ) : (
+          <Confirm
+            onClose={() => onOpenChange(false)}
+            undecidedRequests={undecidedRequests}
+            lockedCount={lockedCount}
+            unlockedCount={unlockedCount}
+            previous={previous}
+            continuing={continuing}
+            onContinueChange={setContinueSeeds}
+            count={count}
+            onCountChange={setCount}
+            estimate={estimate.data}
+            pending={start.isPending}
+            error={start.isError ? errorMessage(start.error) : undefined}
+            solver={solver ?? savedSolver}
+            savedSolver={savedSolver}
+            availability={availability}
+            onSolverChange={setSolver}
+            onGenerate={() => start.mutate(options, { onSuccess: () => onViewChange('batch') })}
+          />
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -194,6 +190,7 @@ function describeEstimate(estimate: SolveEstimate): string {
 }
 
 function Confirm({
+  onClose,
   lockedCount,
   undecidedRequests,
   unlockedCount,
@@ -211,6 +208,7 @@ function Confirm({
   onSolverChange,
   onGenerate,
 }: {
+  onClose: () => void;
   lockedCount: number;
   undecidedRequests: number;
   unlockedCount: number;
@@ -335,11 +333,9 @@ function Confirm({
         </p>
       ) : null}
       <div className="mt-6 flex justify-end gap-2">
-        <Dialog.Close asChild>
-          <button type="button" className={secondaryButton}>
-            Cancel
-          </button>
-        </Dialog.Close>
+        <button type="button" className={secondaryButton} onClick={onClose}>
+          Cancel
+        </button>
         <button
           type="button"
           data-testid="generate-confirm"
@@ -451,10 +447,12 @@ function describeRun(run: SolveRunStatus): string {
 }
 
 function Running({
+  onClose,
   batch,
   cancelling,
   onCancel,
 }: {
+  onClose: () => void;
   batch: SolveBatchStatus;
   cancelling: boolean;
   onCancel: () => void;
@@ -524,11 +522,9 @@ function Running({
         >
           {cancelling ? 'Stopping…' : 'Stop'}
         </button>
-        <Dialog.Close asChild>
-          <button type="button" className={primaryButton}>
-            Close
-          </button>
-        </Dialog.Close>
+        <button type="button" className={primaryButton} onClick={onClose}>
+          Close
+        </button>
       </div>
     </div>
   );
@@ -543,11 +539,13 @@ export function formatElapsed(ms: number): string {
 }
 
 function Finished({
+  onClose,
   batch,
   onGenerateAgain,
   onCompare,
   onPreview,
 }: {
+  onClose: () => void;
   batch: SolveBatchStatus;
   onGenerateAgain: () => void;
   onCompare: () => void;
@@ -569,11 +567,9 @@ function Finished({
           schedule as it is now.
         </p>
         <div className="mt-6 flex justify-end gap-2">
-          <Dialog.Close asChild>
-            <button type="button" className={secondaryButton}>
-              Close
-            </button>
-          </Dialog.Close>
+          <button type="button" className={secondaryButton} onClick={onClose}>
+            Close
+          </button>
           <button type="button" onClick={onGenerateAgain} className={primaryButton}>
             Generate again
           </button>
@@ -718,11 +714,14 @@ function Finished({
           </button>
         ) : null}
         {choice?.kind === 'grid' ? (
-          <Dialog.Close asChild>
-            <button type="button" data-testid="generate-keep" className={primaryButton}>
-              Keep the grid
-            </button>
-          </Dialog.Close>
+          <button
+            type="button"
+            data-testid="generate-keep"
+            className={primaryButton}
+            onClick={onClose}
+          >
+            Keep the grid
+          </button>
         ) : bestIndex !== undefined ? (
           <button
             type="button"
@@ -733,11 +732,9 @@ function Finished({
             Preview variation {variationNumber(batch, bestIndex)} on the grid
           </button>
         ) : (
-          <Dialog.Close asChild>
-            <button type="button" className={primaryButton}>
-              Close
-            </button>
-          </Dialog.Close>
+          <button type="button" className={primaryButton} onClick={onClose}>
+            Close
+          </button>
         )}
       </div>
     </div>

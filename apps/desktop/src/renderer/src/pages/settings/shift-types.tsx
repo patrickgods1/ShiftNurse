@@ -6,7 +6,6 @@
  * explainability.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import type { Id, ShiftType } from '@shiftnurse/core';
 import { useState } from 'react';
 import type { ShiftTypeInput, ShiftTypePatch } from '../../../../shared/api.js';
@@ -18,7 +17,8 @@ import {
 } from '../../api-config.js';
 import { AsyncState } from '../../components/async-state.js';
 import { CheckField, describedBy, Field } from '../../components/field-help.js';
-import { INPUT, OVERLAY, POPUP, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { Modal } from '../../components/modal.js';
+import { INPUT, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { useUnitId } from '../../unit-context.js';
 
 interface FormState {
@@ -99,7 +99,7 @@ function ShiftTypeForm({
 
   return (
     <form
-      className="flex flex-col gap-3"
+      className="mt-3 flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
         onSubmit(form);
@@ -283,26 +283,20 @@ function ShiftTypeDialog({
   submitLabel: string;
 }) {
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content className={`${POPUP} w-[420px]`}>
-          <Dialog.Title className="mb-3 text-sm font-semibold text-text">{title}</Dialog.Title>
-          {error ? (
-            <p role="alert" className="mb-3 text-xs text-danger">
-              {error.message}
-            </p>
-          ) : null}
-          <ShiftTypeForm
-            initial={initial}
-            containers={containers}
-            submitLabel={submitLabel}
-            onCancel={() => onOpenChange(false)}
-            onSubmit={onSubmit}
-          />
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Modal open={open} onOpenChange={onOpenChange} title={title} variant="popup" size="md">
+      {error ? (
+        <p role="alert" className="mt-3 text-xs text-danger">
+          {error.message}
+        </p>
+      ) : null}
+      <ShiftTypeForm
+        initial={initial}
+        containers={containers}
+        submitLabel={submitLabel}
+        onCancel={() => onOpenChange(false)}
+        onSubmit={onSubmit}
+      />
+    </Modal>
   );
 }
 
@@ -523,47 +517,44 @@ export default function ShiftTypesPanel() {
         />
       ) : null}
 
-      <Dialog.Root
+      <Modal
         open={confirmingDeactivate !== undefined}
         onOpenChange={(open) => {
           if (!open) setConfirmingDeactivate(undefined);
         }}
+        title="Deactivate shift type?"
+        variant="popup"
+        size="sm"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setConfirmingDeactivate(undefined)}
+              className={SECONDARY}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (confirmingDeactivate === undefined) return;
+                deactivateMutation.mutate(confirmingDeactivate.id, {
+                  onSuccess: () => setConfirmingDeactivate(undefined),
+                });
+              }}
+              className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+            >
+              Deactivate
+            </button>
+          </>
+        }
       >
-        <Dialog.Portal>
-          <Dialog.Overlay className={OVERLAY} />
-          <Dialog.Content className={`${POPUP} w-[360px]`}>
-            <Dialog.Title className="mb-2 text-sm font-semibold text-text">
-              Deactivate shift type?
-            </Dialog.Title>
-            <p className="mb-4 text-sm text-text-muted">
-              {confirmingDeactivate !== undefined
-                ? `"${confirmingDeactivate.name}" will no longer be offered when building new schedules. Existing assignments are unaffected, and you can reactivate it later.`
-                : ''}
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmingDeactivate(undefined)}
-                className={SECONDARY}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirmingDeactivate === undefined) return;
-                  deactivateMutation.mutate(confirmingDeactivate.id, {
-                    onSuccess: () => setConfirmingDeactivate(undefined),
-                  });
-                }}
-                className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
-              >
-                Deactivate
-              </button>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+        <p className="mt-2 text-sm text-text-muted">
+          {confirmingDeactivate !== undefined
+            ? `"${confirmingDeactivate.name}" will no longer be offered when building new schedules. Existing assignments are unaffected, and you can reactivate it later.`
+            : ''}
+        </p>
+      </Modal>
     </section>
   );
 }

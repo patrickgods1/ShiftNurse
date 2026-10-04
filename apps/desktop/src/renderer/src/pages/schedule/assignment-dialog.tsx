@@ -10,11 +10,11 @@
  * shift type in place (days to nights) and swap with someone working that day.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import type { Assignment, Id, IsoDate, Nurse, ShiftType, Violation } from '@shiftnurse/core';
 import { useEffect, useState } from 'react';
 import { useConfirm } from '../../components/confirm.js';
-import { INPUT, LABEL, OVERLAY, SECONDARY } from '../../components/ui.js';
+import { Modal } from '../../components/modal.js';
+import { INPUT, LABEL, SECONDARY } from '../../components/ui.js';
 import { formatDateWithWeekday, listName } from '../../format.js';
 import { violationKey } from './grid-utils.js';
 
@@ -71,152 +71,140 @@ export function AssignmentDialog({
   const open = assignment !== undefined;
 
   return (
-    <Dialog.Root
+    <Modal
       open={open}
       onOpenChange={(next) => {
         if (!next) onClose();
       }}
+      size="sm"
+      title={
+        assignment !== undefined
+          ? `${shiftType?.name ?? 'Shift'}${nurse !== undefined ? ` — ${nurse.firstName} ${nurse.lastName}` : ''}`
+          : 'Shift'
+      }
+      description={assignment !== undefined ? formatDateWithWeekday(assignment.date) : undefined}
     >
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content
-          className="fixed z-50 left-1/2 top-1/2 max-h-[calc(100vh-2rem)] w-[26rem] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg
-            border border-border bg-surface p-5 shadow-lg"
-        >
-          {assignment !== undefined ? (
-            <>
-              <Dialog.Title className="text-base font-semibold text-text">
-                {shiftType?.name ?? 'Shift'}
-                {nurse !== undefined ? ` — ${nurse.firstName} ${nurse.lastName}` : ''}
-              </Dialog.Title>
-              <Dialog.Description className="mt-1 text-sm text-text-muted">
-                {formatDateWithWeekday(assignment.date)}
-              </Dialog.Description>
-              {context ? (
-                <div className="mt-2 flex flex-col gap-1 text-xs text-text-muted">
-                  <p data-testid="assignment-hours">
-                    {context.contractedHours > 0
-                      ? `${context.hoursThisPayPeriod}h of ${context.contractedHours}h`
-                      : `${context.hoursThisPayPeriod}h`}{' '}
-                    scheduled in the pay period {context.payPeriodLabel}
-                  </p>
-                  <p>
-                    {context.alsoOnShift.length === 0
-                      ? 'Nobody else on this shift yet.'
-                      : `Also on: ${context.alsoOnShift
-                          .slice(0, 8)
-                          .map((n) => listName(n))
-                          .join(
-                            '; ',
-                          )}${context.alsoOnShift.length > 8 ? ` and ${context.alsoOnShift.length - 8} more` : ''}`}
-                  </p>
-                </div>
-              ) : null}
-
-              {violations.length > 0 ? (
-                <ul className="mt-3 flex flex-col gap-1 rounded-md border border-border p-2">
-                  {violations.map((violation) => (
-                    <li
-                      key={violationKey(violation)}
-                      className={`text-xs ${
-                        violation.severity === 'hard' ? 'text-danger' : 'text-warn'
-                      }`}
-                    >
-                      {violation.message}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-
-              <div className="mt-4 flex flex-col gap-2">
-                <button
-                  type="button"
-                  data-testid="assignment-toggle-lock"
-                  disabled={pending}
-                  onClick={() => onToggleLock(assignment)}
-                  className={secondaryBtn}
-                >
-                  {assignment.isLocked ? 'Unlock' : 'Lock'}
-                </button>
-                <button
-                  type="button"
-                  data-testid="assignment-toggle-charge"
-                  disabled={pending}
-                  onClick={() => onToggleCharge(assignment)}
-                  className={secondaryBtn}
-                >
-                  {assignment.isCharge ? 'Remove charge nurse' : 'Mark charge nurse'}
-                </button>
-                <button
-                  type="button"
-                  data-testid="assignment-toggle-overtime"
-                  disabled={pending}
-                  onClick={() => onToggleOvertime(assignment)}
-                  className={secondaryBtn}
-                >
-                  {assignment.isOvertime ? 'Remove overtime authorisation' : 'Authorise overtime'}
-                </button>
-                <button
-                  type="button"
-                  data-testid="assignment-remove"
-                  disabled={pending}
-                  onClick={async () => {
-                    if (
-                      await confirm({ title: 'Remove this assignment?', confirmLabel: 'Remove' })
-                    ) {
-                      onRemove(assignment);
-                    }
-                  }}
-                  className="rounded-md border border-danger px-3 py-1.5 text-sm text-danger
-                    hover:bg-danger/10 disabled:opacity-60"
-                >
-                  Remove
-                </button>
-              </div>
-
-              <ChangeSection
-                assignment={assignment}
-                shiftTypes={shiftTypes}
-                swapOptions={swapOptions}
-                disabled={pending}
-                onChangeType={(shiftTypeId) => {
-                  onClose();
-                  onMove({
-                    assignmentId: assignment.id,
-                    nurseId: assignment.nurseId,
-                    shiftTypeId,
-                    date: assignment.date,
-                  });
-                }}
-                onSwap={(otherId) => {
-                  onClose();
-                  onSwap(assignment.id, otherId);
-                }}
-              />
-
-              <MoveSection
-                assignment={assignment}
-                nurses={nurses}
-                dates={dates}
-                disabled={pending}
-                onMove={(input) => {
-                  onClose();
-                  onMove(input);
-                }}
-              />
-
-              <div className="mt-4 flex justify-end">
-                <Dialog.Close asChild>
-                  <button type="button" className={SECONDARY}>
-                    Close
-                  </button>
-                </Dialog.Close>
-              </div>
-            </>
+      {assignment !== undefined ? (
+        <>
+          {context ? (
+            <div className="mt-2 flex flex-col gap-1 text-xs text-text-muted">
+              <p data-testid="assignment-hours">
+                {context.contractedHours > 0
+                  ? `${context.hoursThisPayPeriod}h of ${context.contractedHours}h`
+                  : `${context.hoursThisPayPeriod}h`}{' '}
+                scheduled in the pay period {context.payPeriodLabel}
+              </p>
+              <p>
+                {context.alsoOnShift.length === 0
+                  ? 'Nobody else on this shift yet.'
+                  : `Also on: ${context.alsoOnShift
+                      .slice(0, 8)
+                      .map((n) => listName(n))
+                      .join(
+                        '; ',
+                      )}${context.alsoOnShift.length > 8 ? ` and ${context.alsoOnShift.length - 8} more` : ''}`}
+              </p>
+            </div>
           ) : null}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+
+          {violations.length > 0 ? (
+            <ul className="mt-3 flex flex-col gap-1 rounded-md border border-border p-2">
+              {violations.map((violation) => (
+                <li
+                  key={violationKey(violation)}
+                  className={`text-xs ${
+                    violation.severity === 'hard' ? 'text-danger' : 'text-warn'
+                  }`}
+                >
+                  {violation.message}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          <div className="mt-4 flex flex-col gap-2">
+            <button
+              type="button"
+              data-testid="assignment-toggle-lock"
+              disabled={pending}
+              onClick={() => onToggleLock(assignment)}
+              className={secondaryBtn}
+            >
+              {assignment.isLocked ? 'Unlock' : 'Lock'}
+            </button>
+            <button
+              type="button"
+              data-testid="assignment-toggle-charge"
+              disabled={pending}
+              onClick={() => onToggleCharge(assignment)}
+              className={secondaryBtn}
+            >
+              {assignment.isCharge ? 'Remove charge nurse' : 'Mark charge nurse'}
+            </button>
+            <button
+              type="button"
+              data-testid="assignment-toggle-overtime"
+              disabled={pending}
+              onClick={() => onToggleOvertime(assignment)}
+              className={secondaryBtn}
+            >
+              {assignment.isOvertime ? 'Remove overtime authorisation' : 'Authorise overtime'}
+            </button>
+            <button
+              type="button"
+              data-testid="assignment-remove"
+              disabled={pending}
+              onClick={async () => {
+                if (await confirm({ title: 'Remove this assignment?', confirmLabel: 'Remove' })) {
+                  onRemove(assignment);
+                }
+              }}
+              className="rounded-md border border-danger px-3 py-1.5 text-sm text-danger
+                    hover:bg-danger/10 disabled:opacity-60"
+            >
+              Remove
+            </button>
+          </div>
+
+          <ChangeSection
+            assignment={assignment}
+            shiftTypes={shiftTypes}
+            swapOptions={swapOptions}
+            disabled={pending}
+            onChangeType={(shiftTypeId) => {
+              onClose();
+              onMove({
+                assignmentId: assignment.id,
+                nurseId: assignment.nurseId,
+                shiftTypeId,
+                date: assignment.date,
+              });
+            }}
+            onSwap={(otherId) => {
+              onClose();
+              onSwap(assignment.id, otherId);
+            }}
+          />
+
+          <MoveSection
+            assignment={assignment}
+            nurses={nurses}
+            dates={dates}
+            disabled={pending}
+            onMove={(input) => {
+              onClose();
+              onMove(input);
+            }}
+          />
+
+          <div className="mt-4 flex justify-end">
+            <button type="button" className={SECONDARY} onClick={onClose}>
+              Close
+            </button>
+          </div>
+        </>
+      ) : null}
+    </Modal>
   );
 }
 

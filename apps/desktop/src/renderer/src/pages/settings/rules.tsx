@@ -40,9 +40,9 @@ import {
 import { useState } from 'react';
 import { useRuleSet, useSaveRuleSet } from '../../api-config.js';
 import { AsyncState } from '../../components/async-state.js';
+import { EditorShell } from '../../components/editor-shell.js';
 import { CheckField, describedBy, Field, InfoTip } from '../../components/field-help.js';
-import { INPUT, PRIMARY, SECONDARY } from '../../components/ui.js';
-import { useUnsavedChanges } from '../../components/unsaved-changes.js';
+import { INPUT } from '../../components/ui.js';
 import { formatInstant } from '../../format.js';
 import { useUnitId } from '../../unit-context.js';
 import { invalidParams, numberFieldValue, paramError, withNumberParam } from './rule-params.js';
@@ -643,7 +643,6 @@ export default function RulesPanel() {
       JSON.stringify(configs) !== JSON.stringify(resolveConfigs(data)) ||
       JSON.stringify(weekendDefinition) !== JSON.stringify(data.weekendDefinition) ||
       JSON.stringify(fairnessWeights) !== JSON.stringify(data.fairnessWeights));
-  useUnsavedChanges('Rules', dirty);
 
   if (ruleSetQuery.isPending) {
     return <AsyncState status="loading" label="Loading rules" />;
@@ -686,97 +685,85 @@ export default function RulesPanel() {
   }
 
   return (
-    <div data-testid="rules-panel" className="flex flex-col gap-4 pb-24">
-      <section className="rounded-md border border-border bg-surface p-4">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <Field
-            id="rule-set-name"
-            label="Rule set name"
-            className="min-w-[240px] flex-1"
-            tip="A name for your own reference, such as the contract it follows. Each save keeps the name with the new version."
-          >
-            <input
-              id="rule-set-name"
-              type="text"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              className={INPUT}
-            />
-          </Field>
-          <p className="text-sm text-text-muted">
-            Version {data.version} · saved {formatInstant(data.createdAt)}
-          </p>
-        </div>
-        <p className="mt-3 text-xs text-text-muted">
-          Saving creates version {nextVersion}. It never rewrites version {data.version} — schedules
-          already built under it keep reading it, so a compliance report never changes
-          retroactively.
-        </p>
-      </section>
-
-      {CATEGORY_ORDER.map(({ id, label, intro }) => {
-        const rulesInCategory = rulesByCategory.get(id) ?? [];
-        if (rulesInCategory.length === 0 && id !== 'equity') return null;
-
-        return (
-          <section key={id} className="flex flex-col gap-3">
-            <div>
-              <h2 className="text-base font-semibold text-text">{label}</h2>
-              <p className="text-sm text-text-muted">{intro}</p>
-            </div>
-            {id === 'equity' ? (
-              <>
-                <FairnessWeightsSection value={fairnessWeights} onChange={setFairnessWeights} />
-                <WeekendSection value={weekendDefinition} onChange={setWeekendDefinition} />
-              </>
-            ) : null}
-            {rulesInCategory.map((rule) => {
-              const config = configs.find((c) => c.ruleId === rule.id);
-              if (config === undefined) return null;
-              return (
-                <RuleCard
-                  key={rule.id}
-                  rule={rule}
-                  config={config}
-                  onChange={(next) => updateConfig(rule.id, next)}
-                />
-              );
-            })}
-          </section>
-        );
-      })}
-
-      <div
-        data-sticky-footer
-        className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-border bg-bg px-4 py-3"
+    <div data-testid="rules-panel" className="pb-24">
+      <EditorShell
+        label="Rules"
+        dirty={dirty}
+        saving={saveMutation.isPending}
+        error={
+          saveMutation.error ??
+          (problems.length > 0 ? `Fix before saving: ${problems.join('; ')}` : undefined)
+        }
+        canSave={problems.length === 0}
+        onSave={save}
+        onDiscard={discard}
+        saveLabel={`Save as version ${nextVersion}`}
       >
-        {saveMutation.error instanceof Error ? (
-          <p role="alert" className="mr-auto text-sm text-danger">
-            {saveMutation.error.message}
+        <section className="rounded-md border border-border bg-surface p-4">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <Field
+              id="rule-set-name"
+              label="Rule set name"
+              className="min-w-[240px] flex-1"
+              tip="A name for your own reference, such as the contract it follows. Each save keeps the name with the new version."
+            >
+              <input
+                id="rule-set-name"
+                type="text"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                className={INPUT}
+              />
+            </Field>
+            <p className="text-sm text-text-muted">
+              Version {data.version} · saved {formatInstant(data.createdAt)}
+            </p>
+          </div>
+          <p className="mt-3 text-xs text-text-muted">
+            Saving creates version {nextVersion}. It never rewrites version {data.version} —
+            schedules already built under it keep reading it, so a compliance report never changes
+            retroactively.
           </p>
-        ) : problems.length > 0 ? (
-          <p role="alert" className="mr-auto text-sm text-danger">
-            Fix before saving: {problems.join('; ')}
-          </p>
-        ) : savedMessage !== undefined ? (
-          <p role="status" className="mr-auto text-sm text-success">
+        </section>
+
+        {CATEGORY_ORDER.map(({ id, label, intro }) => {
+          const rulesInCategory = rulesByCategory.get(id) ?? [];
+          if (rulesInCategory.length === 0 && id !== 'equity') return null;
+
+          return (
+            <section key={id} className="flex flex-col gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-text">{label}</h2>
+                <p className="text-sm text-text-muted">{intro}</p>
+              </div>
+              {id === 'equity' ? (
+                <>
+                  <FairnessWeightsSection value={fairnessWeights} onChange={setFairnessWeights} />
+                  <WeekendSection value={weekendDefinition} onChange={setWeekendDefinition} />
+                </>
+              ) : null}
+              {rulesInCategory.map((rule) => {
+                const config = configs.find((c) => c.ruleId === rule.id);
+                if (config === undefined) return null;
+                return (
+                  <RuleCard
+                    key={rule.id}
+                    rule={rule}
+                    config={config}
+                    onChange={(next) => updateConfig(rule.id, next)}
+                  />
+                );
+              })}
+            </section>
+          );
+        })}
+
+        {savedMessage !== undefined && !dirty ? (
+          <p role="status" className="text-sm text-success">
             {savedMessage}
           </p>
-        ) : dirty ? (
-          <p className="mr-auto text-sm text-text-muted">Unsaved changes</p>
         ) : null}
-        <button type="button" disabled={!dirty} onClick={discard} className={SECONDARY}>
-          Discard changes
-        </button>
-        <button
-          type="button"
-          disabled={!dirty || problems.length > 0 || saveMutation.isPending}
-          onClick={save}
-          className={PRIMARY}
-        >
-          {saveMutation.isPending ? 'Saving…' : `Save as version ${nextVersion}`}
-        </button>
-      </div>
+      </EditorShell>
     </div>
   );
 }

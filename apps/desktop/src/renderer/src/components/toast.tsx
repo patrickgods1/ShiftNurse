@@ -151,7 +151,13 @@ function ToastStack({
  */
 export function ToastOutlet({ className = 'mt-3' }: { className?: string }) {
   const store = useContext(StoreContext);
-  if (store === undefined) throw new Error('ToastOutlet must be used inside <ToastProvider>');
+  // Every Modal mounts an outlet; one rendered without the app's providers (a component test)
+  // has no toasts to show, and should not take the dialog down with it.
+  if (store === undefined) return null;
+  return <BoundOutlet store={store} className={className} />;
+}
+
+function BoundOutlet({ store, className }: { store: Store; className: string }) {
   const id = useId();
   const { setOutlet } = store;
   useEffect(() => {

@@ -8,7 +8,7 @@
  */
 
 import type { Id, IsoDate, SchedulePeriod, ShiftType } from '@shiftnurse/core';
-import { addDays, datesInRange, isoDate, today } from '@shiftnurse/core';
+import { addDays, datesInRange, today } from '@shiftnurse/core';
 import { useMemo, useState } from 'react';
 import { usePeriods, useShiftTypes } from '../api.js';
 import {
@@ -23,6 +23,7 @@ import {
   useUpsertManyCensus,
 } from '../api-demand.js';
 import { AsyncState } from '../components/async-state.js';
+import { DateField } from '../components/date-field.js';
 import { HppdSummary } from '../components/hppd-summary.js';
 import { PageHeader } from '../components/page-header.js';
 import { PRIMARY } from '../components/ui.js';
@@ -113,30 +114,18 @@ export default function DemandPage() {
       />
 
       <div className="mb-6 flex flex-wrap items-end gap-4 rounded-md border border-border bg-surface p-4">
-        <div>
-          <label htmlFor="demand-start" className="block text-xs font-medium text-text-muted">
-            Start date
-          </label>
-          <input
-            id="demand-start"
-            type="date"
-            value={rangeStart}
-            onChange={(e) => setStart(isoDate(e.target.value))}
-            className="mt-1 rounded border border-border bg-bg px-2 py-1 text-sm text-text"
-          />
-        </div>
-        <div>
-          <label htmlFor="demand-end" className="block text-xs font-medium text-text-muted">
-            End date
-          </label>
-          <input
-            id="demand-end"
-            type="date"
-            value={rangeEnd}
-            onChange={(e) => setEnd(isoDate(e.target.value))}
-            className="mt-1 rounded border border-border bg-bg px-2 py-1 text-sm text-text"
-          />
-        </div>
+        <DateField
+          id="demand-start"
+          label="Start date"
+          value={rangeStart}
+          onChange={(v) => setStart(v === '' ? undefined : v)}
+        />
+        <DateField
+          id="demand-end"
+          label="End date"
+          value={rangeEnd}
+          onChange={(v) => setEnd(v === '' ? undefined : v)}
+        />
         <div>
           <label htmlFor="lookback-weeks" className="block text-xs font-medium text-text-muted">
             Lookback weeks

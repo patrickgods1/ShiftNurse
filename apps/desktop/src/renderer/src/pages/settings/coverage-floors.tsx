@@ -19,6 +19,7 @@ import { WEEKDAY_NAMES } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useDeleteCoverage, useUpsertCoverage } from '../../api-config.js';
 import { useConfirm } from '../../components/confirm.js';
+import { DateField } from '../../components/date-field.js';
 import { errorMessage, PRIMARY } from '../../components/ui.js';
 
 const ROLES: NurseRole[] = ['RN', 'LPN', 'CNA'];
@@ -255,7 +256,7 @@ function OverrideForm({
 }) {
   const upsert = useUpsertCoverage();
   const firstShiftType = shiftTypes[0];
-  const [date, setDate] = useState('');
+  const [date, setDate] = useState<IsoDate | ''>('');
   const [shiftTypeId, setShiftTypeId] = useState<Id>(firstShiftType?.id ?? '');
   const [role, setRole] = useState<NurseRole>('RN');
   const [min, setMin] = useState('0');
@@ -285,7 +286,7 @@ function OverrideForm({
             unitId,
             shiftTypeId,
             weekday: null,
-            date: date as IsoDate,
+            date,
             role,
             minCount,
             targetCount,
@@ -295,16 +296,7 @@ function OverrideForm({
         setDate('');
       }}
     >
-      <label className="flex flex-col gap-1 text-xs text-text-muted">
-        Date
-        <input
-          type="date"
-          required
-          value={date}
-          onChange={(event) => setDate(event.target.value)}
-          className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-text"
-        />
-      </label>
+      <DateField label="Date" required value={date} onChange={setDate} />
       <label className="flex flex-col gap-1 text-xs text-text-muted">
         Shift type
         <select

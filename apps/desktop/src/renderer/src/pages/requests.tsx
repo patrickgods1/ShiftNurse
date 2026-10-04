@@ -22,6 +22,7 @@ import {
 import { useSetRequestsCloseOn } from '../api-schedule.js';
 import { AsyncState } from '../components/async-state.js';
 import { type Column, DataTable } from '../components/data-table.js';
+import { DateField } from '../components/date-field.js';
 import { PageHeader } from '../components/page-header.js';
 import { PeriodOptions } from '../components/period-options.js';
 import { PRIMARY, SMALL } from '../components/ui.js';
@@ -494,15 +495,11 @@ function RequestWindow({
       data-testid="request-window"
       className="mb-4 flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-sm"
     >
-      <label className="flex items-center gap-2 text-text">
-        Requests for this schedule close on
-        <input
-          type="date"
-          className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-text"
-          value={period.requestsCloseOn ?? ''}
-          onChange={(e) => onChange(e.target.value ? (e.target.value as IsoDate) : null)}
-        />
-      </label>
+      <DateField
+        label="Requests for this schedule close on"
+        value={period.requestsCloseOn ?? ''}
+        onChange={(date) => onChange(date === '' ? null : date)}
+      />
       <span className="text-xs text-text-muted">
         {period.requestsCloseOn
           ? lateCount > 0

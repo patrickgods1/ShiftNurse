@@ -4,7 +4,6 @@
  * challenged, and published schedules were staffed against it.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import type { AcuityTier, NurseRole, RatioRule } from '@shiftnurse/core';
 import { NURSE_ROLES } from '@shiftnurse/core';
 import { useState } from 'react';
@@ -15,7 +14,8 @@ import {
   useUpdateRatioRule,
 } from '../../../api-config.js';
 import { describedBy, Field } from '../../../components/field-help.js';
-import { INPUT, OVERLAY, POPUP, PRIMARY, SECONDARY } from '../../../components/ui.js';
+import { Modal } from '../../../components/modal.js';
+import { INPUT, PRIMARY, SECONDARY } from '../../../components/ui.js';
 
 const ALL_TIERS_VALUE = '__all__';
 
@@ -79,7 +79,7 @@ function RatioForm({
 
   return (
     <form
-      className="flex flex-col gap-3"
+      className="mt-3 flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
         if (!valid) return;
@@ -190,21 +190,15 @@ function RatioDialog({
   submitLabel: string;
 }) {
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content className={`${POPUP} w-[420px]`}>
-          <Dialog.Title className="mb-3 text-sm font-semibold text-text">{title}</Dialog.Title>
-          <RatioForm
-            tiers={tiers}
-            initial={initial}
-            submitLabel={submitLabel}
-            onCancel={() => onOpenChange(false)}
-            onSubmit={onSubmit}
-          />
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Modal open={open} onOpenChange={onOpenChange} title={title} variant="popup" size="md">
+      <RatioForm
+        tiers={tiers}
+        initial={initial}
+        submitLabel={submitLabel}
+        onCancel={() => onOpenChange(false)}
+        onSubmit={onSubmit}
+      />
+    </Modal>
   );
 }
 
@@ -385,47 +379,44 @@ export function RatioRulesSection({
         />
       ) : null}
 
-      <Dialog.Root
+      <Modal
         open={confirmingDeactivate !== undefined}
         onOpenChange={(open) => {
           if (!open) setConfirmingDeactivate(undefined);
         }}
+        title="Deactivate ratio rule?"
+        variant="popup"
+        size="sm"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setConfirmingDeactivate(undefined)}
+              className={SECONDARY}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (confirmingDeactivate === undefined) return;
+                deactivateMutation.mutate(confirmingDeactivate.id, {
+                  onSuccess: () => setConfirmingDeactivate(undefined),
+                });
+              }}
+              className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+            >
+              Deactivate
+            </button>
+          </>
+        }
       >
-        <Dialog.Portal>
-          <Dialog.Overlay className={OVERLAY} />
-          <Dialog.Content className={`${POPUP} w-[360px]`}>
-            <Dialog.Title className="mb-2 text-sm font-semibold text-text">
-              Deactivate ratio rule?
-            </Dialog.Title>
-            <p className="mb-4 text-sm text-text-muted">
-              {confirmingDeactivate !== undefined
-                ? `This ${confirmingDeactivate.role} ceiling of ${confirmingDeactivate.maxPatientsPerNurse} will no longer constrain new schedules. Existing assignments are unaffected.`
-                : ''}
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmingDeactivate(undefined)}
-                className={SECONDARY}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirmingDeactivate === undefined) return;
-                  deactivateMutation.mutate(confirmingDeactivate.id, {
-                    onSuccess: () => setConfirmingDeactivate(undefined),
-                  });
-                }}
-                className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
-              >
-                Deactivate
-              </button>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+        <p className="mt-2 text-sm text-text-muted">
+          {confirmingDeactivate !== undefined
+            ? `This ${confirmingDeactivate.role} ceiling of ${confirmingDeactivate.maxPatientsPerNurse} will no longer constrain new schedules. Existing assignments are unaffected.`
+            : ''}
+        </p>
+      </Modal>
     </section>
   );
 }

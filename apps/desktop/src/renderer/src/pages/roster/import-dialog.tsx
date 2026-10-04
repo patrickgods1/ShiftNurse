@@ -5,12 +5,12 @@
  * because the missing nurses won't be noticed until the schedule comes up short.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import type { Id } from '@shiftnurse/core';
 import { useState } from 'react';
 import type { RosterImportPreview, RosterImportSummary } from '../../../../shared/api.js';
 import { useImportRosterRows, usePickRosterImportFile } from '../../api.js';
-import { errorMessage, OVERLAY, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { Modal } from '../../components/modal.js';
+import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
 
 interface ImportDialogProps {
   open: boolean;
@@ -57,122 +57,108 @@ export function ImportDialog({ open, onOpenChange, unitId }: ImportDialogProps) 
   const updateCount = preview ? preview.rows.length - newCount : 0;
 
   return (
-    <Dialog.Root open={open} onOpenChange={handleOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content
-          className="fixed z-50 left-1/2 top-1/2 max-h-[85vh] w-[640px] -translate-x-1/2 -translate-y-1/2
-            overflow-y-auto rounded-lg border border-border bg-surface p-6 shadow-lg"
-        >
-          <Dialog.Title className="mb-4 text-lg font-semibold text-text">
-            Import roster from CSV
-          </Dialog.Title>
-
-          {summary !== undefined ? (
-            <div className="text-sm text-text">
-              <p className="mb-2 font-medium text-success">Import complete.</p>
-              <ul className="list-inside list-disc space-y-1">
-                <li>{summary.created} nurse(s) created</li>
-                <li>{summary.updated} nurse(s) updated</li>
-                <li>{summary.credentialsCreated.length} new credential type(s) added</li>
-                <li>{summary.credentialsGranted} credential(s) granted</li>
-                <li>{summary.credentialsUpdated} credential expiry update(s)</li>
-              </ul>
-              <div className="mt-4 flex justify-end">
-                <Dialog.Close asChild>
-                  <button type="button" className={PRIMARY}>
-                    Done
-                  </button>
-                </Dialog.Close>
-              </div>
+    <Modal open={open} onOpenChange={handleOpenChange} size="lg" title="Import roster from CSV">
+      <div className="mt-4">
+        {summary !== undefined ? (
+          <div className="text-sm text-text">
+            <p className="mb-2 font-medium text-success">Import complete.</p>
+            <ul className="list-inside list-disc space-y-1">
+              <li>{summary.created} nurse(s) created</li>
+              <li>{summary.updated} nurse(s) updated</li>
+              <li>{summary.credentialsCreated.length} new credential type(s) added</li>
+              <li>{summary.credentialsGranted} credential(s) granted</li>
+              <li>{summary.credentialsUpdated} credential expiry update(s)</li>
+            </ul>
+            <div className="mt-4 flex justify-end">
+              <button type="button" className={PRIMARY} onClick={() => handleOpenChange(false)}>
+                Done
+              </button>
             </div>
-          ) : preview === undefined ? (
-            <div>
-              <p className="mb-4 text-sm text-text-muted">
-                Choose a CSV file exported from ShiftNurse or matching its column layout.
+          </div>
+        ) : preview === undefined ? (
+          <div>
+            <p className="mb-4 text-sm text-text-muted">
+              Choose a CSV file exported from ShiftNurse or matching its column layout.
+            </p>
+            {pickFile.isError ? (
+              <p role="alert" className="mb-3 text-sm text-danger">
+                Could not read that file.
               </p>
-              {pickFile.isError ? (
-                <p role="alert" className="mb-3 text-sm text-danger">
-                  Could not read that file.
+            ) : null}
+            <div className="flex justify-end gap-2">
+              <button type="button" className={SECONDARY} onClick={() => handleOpenChange(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handlePickFile}
+                disabled={pickFile.isPending}
+                className={PRIMARY}
+              >
+                {pickFile.isPending ? 'Opening…' : 'Choose file…'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <p className="mb-2 text-sm text-text-muted">{preview.path}</p>
+            <p className="mb-3 text-sm text-text">
+              {newCount} new nurse(s), {updateCount} existing nurse(s) to update.
+            </p>
+
+            {preview.errors.length > 0 ? (
+              <div className="mb-4">
+                <p className="mb-2 text-sm font-medium text-danger">
+                  {preview.errors.length} row(s) have errors — fix the spreadsheet and re-import.
                 </p>
-              ) : null}
-              <div className="flex justify-end gap-2">
-                <Dialog.Close asChild>
-                  <button type="button" className={SECONDARY}>
-                    Cancel
-                  </button>
-                </Dialog.Close>
-                <button
-                  type="button"
-                  onClick={handlePickFile}
-                  disabled={pickFile.isPending}
-                  className={PRIMARY}
-                >
-                  {pickFile.isPending ? 'Opening…' : 'Choose file…'}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <p className="mb-2 text-sm text-text-muted">{preview.path}</p>
-              <p className="mb-3 text-sm text-text">
-                {newCount} new nurse(s), {updateCount} existing nurse(s) to update.
-              </p>
-
-              {preview.errors.length > 0 ? (
-                <div className="mb-4">
-                  <p className="mb-2 text-sm font-medium text-danger">
-                    {preview.errors.length} row(s) have errors — fix the spreadsheet and re-import.
-                  </p>
-                  <div className="max-h-56 overflow-y-auto rounded-md border border-border">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-border text-text-muted">
-                          <th className="px-2 py-1">Line</th>
-                          <th className="px-2 py-1">Column</th>
-                          <th className="px-2 py-1">Message</th>
+                <div className="max-h-56 overflow-y-auto rounded-md border border-border">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-border text-text-muted">
+                        <th className="px-2 py-1">Line</th>
+                        <th className="px-2 py-1">Column</th>
+                        <th className="px-2 py-1">Message</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.errors.map((err) => (
+                        <tr
+                          key={`${err.line}:${err.column}:${err.message}`}
+                          className="border-b border-border last:border-0"
+                        >
+                          <td className="px-2 py-1 text-text">{err.line}</td>
+                          <td className="px-2 py-1 text-text">{err.column}</td>
+                          <td className="px-2 py-1 text-text">{err.message}</td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {preview.errors.map((err) => (
-                          <tr
-                            key={`${err.line}:${err.column}:${err.message}`}
-                            className="border-b border-border last:border-0"
-                          >
-                            <td className="px-2 py-1 text-text">{err.line}</td>
-                            <td className="px-2 py-1 text-text">{err.column}</td>
-                            <td className="px-2 py-1 text-text">{err.message}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              ) : null}
-
-              {importRows.isError ? (
-                <p role="alert" className="mb-3 text-sm text-danger">
-                  Import failed. Nothing was changed. {errorMessage(importRows.error)}
-                </p>
-              ) : null}
-
-              <div className="flex justify-end gap-2">
-                <button type="button" onClick={() => setPreview(undefined)} className={SECONDARY}>
-                  Choose a different file
-                </button>
-                <button
-                  type="button"
-                  onClick={handleImport}
-                  disabled={preview.errors.length > 0 || importRows.isPending}
-                  className={PRIMARY}
-                >
-                  {importRows.isPending ? 'Importing…' : `Import ${preview.rows.length} nurses`}
-                </button>
               </div>
+            ) : null}
+
+            {importRows.isError ? (
+              <p role="alert" className="mb-3 text-sm text-danger">
+                Import failed. Nothing was changed. {errorMessage(importRows.error)}
+              </p>
+            ) : null}
+
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setPreview(undefined)} className={SECONDARY}>
+                Choose a different file
+              </button>
+              <button
+                type="button"
+                onClick={handleImport}
+                disabled={preview.errors.length > 0 || importRows.isPending}
+                className={PRIMARY}
+              >
+                {importRows.isPending ? 'Importing…' : `Import ${preview.rows.length} nurses`}
+              </button>
             </div>
-          )}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }

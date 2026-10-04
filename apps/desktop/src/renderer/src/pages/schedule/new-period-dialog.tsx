@@ -4,11 +4,12 @@
  * on the grid, so this form stays deliberately small.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
-import { addDays, type Id, type IsoDate, isIsoDate, type SchedulePeriod } from '@shiftnurse/core';
+import { addDays, type Id, type IsoDate, type SchedulePeriod } from '@shiftnurse/core';
 import { type FormEvent, useEffect, useId, useState } from 'react';
 import { useCreatePeriod } from '../../api-schedule.js';
-import { OVERLAY, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { DateField } from '../../components/date-field.js';
+import { Modal } from '../../components/modal.js';
+import { PRIMARY, SECONDARY } from '../../components/ui.js';
 
 interface NewPeriodDialogProps {
   open: boolean;
@@ -19,10 +20,10 @@ interface NewPeriodDialogProps {
 
 export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPeriodDialogProps) {
   const [name, setName] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [startDate, setStartDate] = useState<IsoDate | ''>('');
+  const [endDate, setEndDate] = useState<IsoDate | ''>('');
   /** When requests close: four weeks before the start unless the manager picks another day. */
-  const [closeOn, setCloseOn] = useState('');
+  const [closeOn, setCloseOn] = useState<IsoDate | ''>('');
   const [closeOnTouched, setCloseOnTouched] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const formId = useId();
@@ -60,9 +61,9 @@ export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPe
     createPeriod.mutate(
       {
         name: name.trim(),
-        startDate: startDate as IsoDate,
-        endDate: endDate as IsoDate,
-        ...(closeOn ? { requestsCloseOn: closeOn as IsoDate } : {}),
+        startDate,
+        endDate,
+        ...(closeOn ? { requestsCloseOn: closeOn } : {}),
       },
       {
         onSuccess: (period) => {
@@ -74,99 +75,68 @@ export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPe
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className={OVERLAY} />
-        <Dialog.Content
-          className="fixed z-50 left-1/2 top-1/2 w-96 -translate-x-1/2 -translate-y-1/2 rounded-lg
-            border border-border bg-surface p-6 shadow-lg"
-        >
-          <Dialog.Title className="mb-4 text-lg font-semibold text-text">New period</Dialog.Title>
-          <form id={formId} data-testid="new-period-form" onSubmit={handleSubmit} noValidate>
-            <label className="block text-sm text-text-muted" htmlFor={`${formId}-name`}>
-              Name
-              <input
-                id={`${formId}-name`}
-                className={inputClass}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </label>
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <label className="block text-sm text-text-muted" htmlFor={`${formId}-start`}>
-                Start date
-                <input
-                  id={`${formId}-start`}
-                  type="date"
-                  className={inputClass}
-                  value={startDate}
-                  onChange={(e) => {
-                    setStartDate(e.target.value);
-                    if (!closeOnTouched && isIsoDate(e.target.value)) {
-                      setCloseOn(addDays(e.target.value as IsoDate, -28));
-                    }
-                  }}
-                />
-              </label>
-              <label className="block text-sm text-text-muted" htmlFor={`${formId}-end`}>
-                End date
-                <input
-                  id={`${formId}-end`}
-                  type="date"
-                  className={inputClass}
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                />
-              </label>
-            </div>
-            <label className="mt-3 block text-sm text-text-muted" htmlFor={`${formId}-close`}>
-              Time-off requests close on (optional)
-              <input
-                id={`${formId}-close`}
-                type="date"
-                className={inputClass}
-                value={closeOn}
-                onChange={(e) => {
-                  setCloseOn(e.target.value);
-                  setCloseOnTouched(true);
-                }}
-              />
-              <span className="mt-1 block text-xs">
-                Decide the requests made by then before you generate; later ones are flagged as
-                late.
-              </span>
-            </label>
-            {error !== undefined ? (
-              <p role="alert" className="mt-3 text-sm text-danger">
-                {error}
-              </p>
-            ) : null}
-            {createPeriod.error !== null && createPeriod.error !== undefined ? (
-              <p role="alert" className="mt-3 text-sm text-danger">
-                {createPeriod.error instanceof Error
-                  ? createPeriod.error.message
-                  : String(createPeriod.error)}
-              </p>
-            ) : null}
-            <div className="mt-6 flex justify-end gap-2">
-              <Dialog.Close asChild>
-                <button type="button" className={SECONDARY}>
-                  Cancel
-                </button>
-              </Dialog.Close>
-              <button
-                type="submit"
-                data-testid="new-period-save"
-                disabled={createPeriod.isPending}
-                className={PRIMARY}
-              >
-                {createPeriod.isPending ? 'Creating…' : 'Create'}
-              </button>
-            </div>
-          </form>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Modal open={open} onOpenChange={onOpenChange} size="sm" title="New period">
+      <form id={formId} data-testid="new-period-form" onSubmit={handleSubmit} noValidate>
+        <label className="block text-sm text-text-muted" htmlFor={`${formId}-name`}>
+          Name
+          <input
+            id={`${formId}-name`}
+            className={inputClass}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <DateField
+            id={`${formId}-start`}
+            label="Start date"
+            value={startDate}
+            onChange={(value) => {
+              setStartDate(value);
+              if (!closeOnTouched && value !== '') setCloseOn(addDays(value, -28));
+            }}
+          />
+          <DateField id={`${formId}-end`} label="End date" value={endDate} onChange={setEndDate} />
+        </div>
+        <div className="mt-3">
+          <DateField
+            id={`${formId}-close`}
+            label="Time-off requests close on (optional)"
+            hint="Decide the requests made by then before you generate; later ones are flagged as late."
+            value={closeOn}
+            onChange={(value) => {
+              setCloseOn(value);
+              setCloseOnTouched(true);
+            }}
+          />
+        </div>
+        {error !== undefined ? (
+          <p role="alert" className="mt-3 text-sm text-danger">
+            {error}
+          </p>
+        ) : null}
+        {createPeriod.error !== null && createPeriod.error !== undefined ? (
+          <p role="alert" className="mt-3 text-sm text-danger">
+            {createPeriod.error instanceof Error
+              ? createPeriod.error.message
+              : String(createPeriod.error)}
+          </p>
+        ) : null}
+        <div className="mt-6 flex justify-end gap-2">
+          <button type="button" className={SECONDARY} onClick={() => onOpenChange(false)}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            data-testid="new-period-save"
+            disabled={createPeriod.isPending}
+            className={PRIMARY}
+          >
+            {createPeriod.isPending ? 'Creating…' : 'Create'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
