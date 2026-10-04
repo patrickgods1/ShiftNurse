@@ -337,8 +337,11 @@ export function competingOptions(
   conflict: Conflict,
   weights: ObjectiveWeights,
 ): Resolution[] {
+  // Read from the state given, not the engine's input: a caller may pass a world where some
+  // of these requests are already decided. One map per conflict, not a scan per id.
+  const byId = new Map(base.timeOff.map((r) => [r.id, r]));
   const requests = conflict.timeOffIds
-    .map((id) => engine.timeOffById.get(id))
+    .map((id) => byId.get(id))
     .filter((r): r is TimeOffRequest => r !== undefined && r.status === 'pending');
   if (requests.length === 0) return [];
   const date = conflict.dates[0]!;
