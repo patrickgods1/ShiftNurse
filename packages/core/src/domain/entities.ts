@@ -509,10 +509,12 @@ export interface OvertimeRule {
   id: Id;
   unitId: Id;
   /**
-   * 'daily' compares against hours in one shift; 'weekly' against the contract's work week;
-   * 'pay_period' against the unit's pay period (a 14-day overtime period, as under 8/80).
+   * 'daily' compares against hours in one workday (the shifts that start on a date); 'weekly'
+   * against the contract's work week; 'pay_period' against the unit's pay period (a 14-day
+   * overtime period, as under 8/80); 'seventh_day' against hours on the seventh consecutive day
+   * worked in one work week (California Labor Code § 510: threshold 0 at 1.5×, 8 at 2×).
    */
-  basis: 'daily' | 'weekly' | 'pay_period';
+  basis: 'daily' | 'weekly' | 'pay_period' | 'seventh_day';
   thresholdHours: number;
   multiplier: number;
   active: boolean;

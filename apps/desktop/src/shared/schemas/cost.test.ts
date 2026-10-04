@@ -41,6 +41,24 @@ describe('pay settings arriving over IPC', () => {
     expect(costSchemas.createOvertimeRule.safeParse([rule]).success).toBe(true);
   });
 
+  it('accepts California’s seventh-day rules, the first paying from hour zero', () => {
+    const first8 = {
+      unitId: 'u-1',
+      basis: 'seventh_day',
+      thresholdHours: 0,
+      multiplier: 1.5,
+      active: true,
+    };
+    expect(costSchemas.createOvertimeRule.safeParse([first8]).success).toBe(true);
+    expect(
+      costSchemas.createOvertimeRule.safeParse([{ ...first8, thresholdHours: 8, multiplier: 2 }])
+        .success,
+    ).toBe(true);
+    expect(
+      costSchemas.createOvertimeRule.safeParse([{ ...first8, thresholdHours: -1 }]).success,
+    ).toBe(false);
+  });
+
   it('refuses overtime that pays less than straight time', () => {
     const rule = {
       unitId: 'u-1',

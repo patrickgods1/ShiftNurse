@@ -22,7 +22,7 @@ const differentialKind = z.enum([
   'agency',
 ]);
 const differentialMode = z.enum(['multiplier', 'flat']);
-const overtimeBasis = z.enum(['daily', 'weekly', 'pay_period']);
+const overtimeBasis = z.enum(['daily', 'weekly', 'pay_period', 'seventh_day']);
 
 /** A rate belongs to one nurse or to a role's default — the repository refuses both or neither. */
 const payRateInput = object({
@@ -43,8 +43,9 @@ const differentialInput = object({
 const overtimeRuleInput = object({
   unitId: id,
   basis: overtimeBasis,
-  // A daily threshold is a few hours, a pay-period one up to 80 or more: any positive number.
-  thresholdHours: z.number().gt(0, 'must be more than zero'),
+  // A daily threshold is a few hours, a pay-period one up to 80 or more. Zero is meaningful: a
+  // seventh-day rule pays its premium from the first hour.
+  thresholdHours: z.number().min(0, 'must not be negative'),
   multiplier,
   active: z.boolean(),
 });

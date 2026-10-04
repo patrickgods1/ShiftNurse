@@ -26,14 +26,22 @@
  *   *premium* of `(multiplier − 1) × straight rate`. So an overtime hour on a holiday night
  *   earns the holiday and night premiums *and* half of that rate again — the multipliers
  *   compound, which is what "time-and-a-half on the holiday rate" means in a contract.
- * - **Daily, weekly and pay-period overtime do not stack.** An hour is overtime once. When
- *   several kinds of rule are active, each assignment is priced under whichever rule yields the
- *   larger premium for it.
+ * - **Overtime rules do not stack; they band.** An hour is overtime once, at the highest
+ *   multiplier any active rule gives it. Every rule makes the *end* of a shift overtime from
+ *   some hour on, so a shift's overtime is a run of bands: under California's 1.5× past 8 hours
+ *   a day and 2× past 12, a 13-hour shift is 4 hours at 1.5× and 1 at 2× (two `overtime` lines),
+ *   not 5 hours at whichever one rule pays more.
+ * - **Daily overtime is judged per workday**: the shifts that start on a date, summed in order,
+ *   so the second shift of a double is overtime from the first hour past the threshold. A night
+ *   that runs past midnight belongs to the workday it started on.
  * - **Weekly overtime falls on the later shifts of the week**, and pay-period overtime on the
  *   later shifts of the pay period. The first `threshold` hours of the window are straight
  *   time, in chronological order, including hours carried in from the previous period's
  *   lookback tail; only shifts that push past the threshold carry overtime, and only the hours
  *   past it.
+ * - **Seventh-day overtime** (`basis: 'seventh_day'`) applies to a shift on the last day of a
+ *   work week when every day of that week was worked (lookback shifts count): California pays
+ *   its first 8 hours at 1.5× (threshold 0) and the rest at 2× (threshold 8).
  * - **On-call standby** is not worked time: it earns the `on_call` differential alone (a flat
  *   amount per standby hour, or a multiplier on the base rate), never base pay, never other
  *   differentials, and never overtime. `call_back` — being called in while on standby — is
