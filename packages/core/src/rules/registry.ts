@@ -45,6 +45,7 @@ import type {
   RuleSeverity,
   Violation,
 } from './types.js';
+import { weekendPatternRule } from './weekend-pattern.js';
 
 /**
  * Every rule the app ships with.
@@ -67,6 +68,7 @@ export const ALL_RULES: readonly Rule<never>[] = [
   nightRecoveryRule,
   pendingTimeOffRule,
   mandatoryOvertimeRule,
+  weekendPatternRule,
 ] as unknown as readonly Rule<never>[];
 
 const RULES_BY_ID = new Map<string, Rule<never>>(ALL_RULES.map((r) => [r.id, r]));

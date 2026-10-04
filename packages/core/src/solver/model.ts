@@ -92,6 +92,11 @@ import {
   resolveConfigs,
 } from '../rules/registry.js';
 import type { RuleContext, RuleSet, RuleSeverity } from '../rules/types.js';
+import {
+  type WeekendPatternParams,
+  weekendBreaches,
+  weekendPatternRule,
+} from '../rules/weekend-pattern.js';
 import { coveringShift } from '../schedule/cover.js';
 import { floorSegments } from '../schedule/overlap.js';
 import { type AssignmentView, ScheduleView } from '../schedule/view.js';
@@ -138,6 +143,7 @@ export interface AddToken {
   coverageBefore: number;
   hoursBefore: number;
   recoveryBefore: number;
+  weekendBefore: number;
   /** The coverage of the shifts inside this one, in `innerShifts` order, when it has any. */
   innerBefore?: readonly number[];
   /** The incompatibility price of the stretches this shift covers, in `stretchesOf` order. */
@@ -201,6 +207,9 @@ export class SolverModel {
   private recoverySum = 0;
   /** Worked shifts inside a pending time-off request (see `pending-time-off.ts`). */
   private pendingSum = 0;
+  /** Per nurse: weekend-pattern breaches (see `weekend-pattern.ts`). */
+  private readonly weekendPenalty: number[];
+  private weekendSum = 0;
 
   // --- Per-nurse counters feeding fairness and hours ---------------------------
   private readonly workedHours: number[];
@@ -304,6 +313,12 @@ export class SolverModel {
   readonly recoveryPrice: number;
   /** Points per worked shift inside a pending request; 0 unless that rule is soft. */
   readonly pendingPrice: number;
+  /** The weekend-pattern limits while that rule is on; undefined while it is off. */
+  readonly weekendParams: WeekendPatternParams | undefined;
+  /** Points per weekend-pattern breach; 0 unless that rule is soft. */
+  readonly weekendPrice: number;
+  /** Per nurse: weekends worked in the lookback tail, which start a run. */
+  private readonly priorWeekends: ReadonlySet<IsoDate>[];
   /** nurse × date index → the date falls inside a pending request of theirs. */
   private readonly pendingOn: boolean[][];
   /** nurse × date index → worked night shifts / worked day-side shifts on that date. */
@@ -426,6 +441,11 @@ export class SolverModel {
     this.recoveryPrice = recoverySeverity === 'soft' ? this.weights.nightRecovery : 0;
     this.pendingPrice =
       severityOf(pendingTimeOffRule.id) === 'soft' ? this.weights.pendingTimeOff : 0;
+    // --- Weekends in a row and per schedule: priced while soft, gated while hard. ---
+    const weekendSeverity = severityOf(weekendPatternRule.id);
+    this.weekendParams =
+      weekendSeverity === null ? undefined : paramsOf(weekendPatternRule, configs);
+    this.weekendPrice = weekendSeverity === 'soft' ? this.weights.weekendPattern : 0;
     this.owedOffDates = this.nurses.map((nurse) => this.holidayFacts.owedOff.get(nurse.id));
     for (const [pair, { minor, major }] of this.holidayFacts.pairs.entries()) {
       for (const [side, date] of [minor.date, major.date].entries()) {
@@ -569,6 +589,17 @@ export class SolverModel {
       return offsets;
     });
     this.recovery = new Array<number>(n).fill(0);
+    this.priorWeekends = prior.map((list) => {
+      const keys = new Set<IsoDate>();
+      for (const a of list) {
+        const st = this.shiftTypeById.get(a.shiftTypeId);
+        if (!st || st.isOnCall) continue;
+        const key = weekendKey(shiftWindow(a.date, st), this.ctx.weekendDefinition);
+        if (key !== null) keys.add(key as IsoDate);
+      }
+      return keys;
+    });
+    this.weekendPenalty = new Array<number>(n).fill(0);
     this.pendingOn = this.nurses.map((nurse) =>
       this.dates.map((date) => pendingRequestOn(this.ctx, nurse.id, date) !== undefined),
     );
@@ -588,11 +619,14 @@ export class SolverModel {
     // they touched, and an empty shift already owes its whole floor.
     this.hoursSum = 0;
     this.recoverySum = 0;
+    this.weekendSum = 0;
     for (let i = 0; i < n; i++) {
       this.hoursPenalty[i] = this.hoursPenaltyFor(i);
       this.hoursSum += this.hoursPenalty[i]!;
       this.recovery[i] = this.recoveryFor(i);
       this.recoverySum += this.recovery[i]!;
+      this.weekendPenalty[i] = this.weekendFor(i);
+      this.weekendSum += this.weekendPenalty[i]!;
     }
     this.coverageSum = 0;
     for (const shift of this.shifts) {
@@ -849,6 +883,7 @@ export class SolverModel {
       coverageBefore: this.coverage[shift.idx]!,
       hoursBefore: this.hoursPenalty[n]!,
       recoveryBefore: this.recovery[n]!,
+      weekendBefore: this.weekendPenalty[n]!,
     };
     const inner = this.innerShifts[shift.idx]!;
     if (inner.length > 0) token.innerBefore = inner.map((s) => this.coverage[s.idx]!);
@@ -902,6 +937,8 @@ export class SolverModel {
     this.hoursPenalty[n] = token.hoursBefore;
     this.recoverySum += token.recoveryBefore - this.recovery[n]!;
     this.recovery[n] = token.recoveryBefore;
+    this.weekendSum += token.weekendBefore - this.weekendPenalty[n]!;
+    this.weekendPenalty[n] = token.weekendBefore;
   }
 
   private refresh(n: number, shift: Shift): void {
@@ -921,6 +958,9 @@ export class SolverModel {
     const recovery = this.recoveryFor(n);
     this.recoverySum += recovery - this.recovery[n]!;
     this.recovery[n] = recovery;
+    const weekend = this.weekendFor(n);
+    this.weekendSum += weekend - this.weekendPenalty[n]!;
+    this.weekendPenalty[n] = weekend;
   }
 
   /** Update every per-nurse counter and the preference/cost sums for one assignment. */
@@ -987,6 +1027,25 @@ export class SolverModel {
     return this.recoverySum;
   }
 
+  /** Weekend-pattern breaches, as the schedule stands. */
+  weekendBreaches(): number {
+    return this.weekendSum;
+  }
+
+  /**
+   * One nurse's weekend-pattern breaches, counted by the rule's own `weekendBreaches`: each
+   * in-period weekend ending too long a run, plus each weekend over the per-schedule limit.
+   */
+  private weekendFor(n: number): number {
+    const params = this.weekendParams;
+    if (!params) return 0;
+    const inPeriod = new Set(this.weekendKeys[n]!.keys() as Iterable<IsoDate>);
+    if (inPeriod.size === 0) return 0;
+    const worked = new Set<IsoDate>([...this.priorWeekends[n]!, ...inPeriod]);
+    const { runs, excess } = weekendBreaches({ worked, inPeriod }, params);
+    return runs.length + excess;
+  }
+
   /** Worked shifts inside pending time-off requests, as the schedule stands. */
   pendingBreaches(): number {
     return this.pendingSum;
@@ -1046,6 +1105,7 @@ export class SolverModel {
       this.hoursSum +
       this.fairness() +
       this.holidaySum * this.holidayPrice +
+      this.weekendSum * this.weekendPrice +
       this.recoverySum * this.recoveryPrice +
       this.pendingSum * this.pendingPrice +
       this.prefSum * this.weights.preference +
@@ -1058,7 +1118,8 @@ export class SolverModel {
     const incompatibility = this.incompatSum;
     const hours = this.hoursSum;
     // The holiday rotation is fairness between nurses, so it is reported with it.
-    const fairness = this.fairness() + this.holidaySum * this.holidayPrice;
+    const fairness =
+      this.fairness() + this.holidaySum * this.holidayPrice + this.weekendSum * this.weekendPrice;
     // Days off after nights are about the nurse, so they are reported with preferences.
     const preferences =
       this.prefSum * this.weights.preference +

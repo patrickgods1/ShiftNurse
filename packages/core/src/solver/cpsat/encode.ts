@@ -45,6 +45,7 @@ import { encodeContractCap, encodeWeeklyHours } from './rules/hours.js';
 import { encodePendingTimeOff } from './rules/pending.js';
 import { encodeNightRecovery } from './rules/recovery.js';
 import { encodeOverlap, encodeRest } from './rules/rest.js';
+import { encodeWeekendPattern } from './rules/weekends.js';
 
 export type { ShiftVar } from './context.js';
 
@@ -73,6 +74,8 @@ export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'
   // Judges only shifts flagged `isOvertime`, and every row either solver writes is straight time
   // (decoded answers become rows through `SolverModel`, which never sets the flag).
   'no-mandatory-overtime': 'by-construction',
+  // Priced in the objective while soft (`weekendPatternTerms`); runs and totals capped when hard.
+  'weekend-pattern': encodeWeekendPattern,
 };
 
 export interface EncodeOptions {

@@ -451,6 +451,26 @@ describe('agreement with the rule engine', () => {
     });
   });
 
+  it('agrees with the rules when weekends in a row and per schedule are hard', () => {
+    // Ada's lookback night on Sat 3 Jan starts a run; three weekends in the period.
+    const ruleSet = withParams('weekend-pattern', {
+      maxConsecutiveWeekends: 1,
+      maxWeekendsPerPeriod: 1,
+    });
+    expectParity(
+      parityInput({
+        ruleSet: {
+          ...ruleSet,
+          configs: ruleSet.configs.map((c) =>
+            c.ruleId === 'weekend-pattern'
+              ? { ...c, enabled: true, severityOverride: 'hard' as const }
+              : c,
+          ),
+        },
+      }),
+    );
+  });
+
   it('agrees with the rules when overtime is judged over the pay period', () => {
     // 60h a pay period, so the threshold binds below both nurses' contract caps.
     const ruleSet = withParams('max-hours-per-week', {
@@ -889,6 +909,45 @@ describe('parity with the annealer', () => {
         expect(evaluation.objective, `trial ${trial}`).toBeCloseTo(model.breakdown().total, 0);
       }
       expect(onPending).toBeGreaterThan(40);
+    });
+  });
+
+  describe('weekends in a row and per schedule', () => {
+    it('prices random rosters the same as the annealer', () => {
+      const base = richInput();
+      const rules = withParams(
+        'weekend-pattern',
+        { maxConsecutiveWeekends: 1, maxWeekendsPerPeriod: 2 },
+        base.ruleSet,
+      );
+      const input: SolveInput = {
+        ...base,
+        ruleSet: {
+          ...rules,
+          configs: rules.configs.map((c) =>
+            c.ruleId === 'weekend-pattern' ? { ...c, enabled: true } : c,
+          ),
+        },
+      };
+      const encoding = encodeCpsat(input);
+      const rng = new Rng(31);
+      let breaching = 0;
+      for (let trial = 0; trial < 60; trial++) {
+        const seen = new Set<string>();
+        const assignments = [...input.assignments];
+        for (const sv of encoding.shiftVars) {
+          const day = `${sv.nurseId}|${sv.shift.date}`;
+          if (seen.has(day) || !rng.chance(0.3)) continue;
+          seen.add(day);
+          assignments.push(assign(sv.nurseId, sv.shift.shiftType, sv.shift.date));
+        }
+        const evaluation = evaluate(encoding, assignments);
+        const model = new SolverModel(input);
+        for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+        if (model.weekendBreaches() > 0) breaching++;
+        expect(evaluation.objective, `trial ${trial}`).toBeCloseTo(model.breakdown().total, 0);
+      }
+      expect(breaching).toBeGreaterThan(40);
     });
   });
 

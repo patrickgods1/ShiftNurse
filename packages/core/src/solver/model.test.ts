@@ -14,7 +14,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { NURSE_ROLES } from '../acuity/demand.js';
 import type { Assignment, Nurse, NurseRole, Preference } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
-import { ALL_RULES, evaluateSchedule } from '../rules/registry.js';
+import { ALL_RULES, defaultRuleSet, evaluateSchedule } from '../rules/registry.js';
 import { ScheduleView } from '../schedule/view.js';
 import {
   assign,
@@ -50,6 +50,7 @@ function scenario({
   groups = false,
   holidays = false,
   pending = false,
+  weekends = false,
 } = {}): SolveInput {
   const nurses: Nurse[] = [
     ...Array.from({ length: 8 }, (_, i) =>
@@ -80,6 +81,18 @@ function scenario({
   const pinned = assign(nurses[3]!.id, DAY_12, '2026-01-06', { isLocked: true });
   // A night ending on the period's first morning, so the lookback tail is in play.
   const prior = assign(nurses[4]!.id, NIGHT_12, '2026-01-03', { periodId: 'prior' });
+  // A weekend worked last period, so a run can start in the lookback tail.
+  const priorWeekend = assign(nurses[1]!.id, DAY_12, '2025-12-27', { periodId: 'prior' });
+  const base = defaultRuleSet('unit-1');
+  // Every other weekend, at most one in the schedule (low, so the excess term fires too).
+  const weekendRules = {
+    ...base,
+    configs: base.configs.map((c) =>
+      c.ruleId === 'weekend-pattern'
+        ? { ...c, enabled: true, params: { maxConsecutiveWeekends: 1, maxWeekendsPerPeriod: 1 } }
+        : c,
+    ),
+  };
   return solveInputFrom({
     startDate: isoDate('2026-01-04'),
     endDate: isoDate('2026-01-17'),
@@ -122,7 +135,8 @@ function scenario({
         }
       : {}),
     assignments: [pinned],
-    priorAssignments: [prior],
+    priorAssignments: weekends ? [priorWeekend, prior] : [prior],
+    ...(weekends ? { ruleSet: weekendRules } : {}),
     ...(pending
       ? {
           timeOff: [
@@ -227,6 +241,34 @@ describe('SolverModel bookkeeping', () => {
     // Two breaches at 55 points each; nothing else differs between the two models.
     expect(priced.breakdown().fairness - free.breakdown().fairness).toBeCloseTo(110, 6);
     expect(priced.objective() - free.objective()).toBeCloseTo(110, 6);
+  });
+
+  it('keeps weekend runs priced right as shifts land on and leave weekends', () => {
+    walk(scenario({ weekends: true }), 1);
+  });
+
+  it('prices each weekend-pattern breach at the weekend weight', () => {
+    const input = scenario({ weekends: true });
+    // Nurse 1 worked Sat 27 Dec last period and works Sun 4 Jan (day 0): two in a row. Nurse 2
+    // works Sat 10 (day 6) and Sat 17 Jan (day 13): two in a row again, and two weekends in a
+    // schedule that allows one. Three breaches.
+    const place = (model: SolverModel) => {
+      for (const [i, day] of [
+        [1, 0],
+        [2, 6],
+        [2, 13],
+      ] as const) {
+        const n = model.nurseIdx.get(input.nurses[i]!.id)!;
+        model.add(model.make(n, model.shiftAt(day, DAY_12)));
+      }
+      return model;
+    };
+    const priced = place(new SolverModel(input));
+    const free = place(new SolverModel(input, { weekendPattern: 0 }));
+    expect(priced.weekendBreaches()).toBe(3);
+    // Three breaches at 50 points each, in the fairness bucket.
+    expect(priced.breakdown().fairness - free.breakdown().fairness).toBeCloseTo(150, 6);
+    expect(priced.objective() - free.objective()).toBeCloseTo(150, 6);
   });
 
   it('keeps days asked off priced right as shifts land on and leave them', () => {
@@ -579,6 +621,7 @@ describe('soft rules priced the way the grid judges them', () => {
     'recovery-after-nights': (m) => m.recoveryBreaches(),
     'avoid-pending-time-off': (m) => m.pendingBreaches(),
     'holiday-rotation': (m) => m.holidayBreaches(),
+    'weekend-pattern': (m) => m.weekendBreaches(),
     'incompatible-staff-cap':
       'priced per person-hour over floor stretches; checked against the rule in the walk above',
   };
@@ -609,6 +652,7 @@ describe('soft rules priced the way the grid judges them', () => {
       { pending: true },
       { holidays: true },
       { pending: true, holidays: true },
+      { weekends: true },
     ]) {
       for (let seed = 1; seed <= 12; seed++) {
         resetFixtureCounters();
