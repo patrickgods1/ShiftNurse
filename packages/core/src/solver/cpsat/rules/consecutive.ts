@@ -8,12 +8,13 @@
  */
 
 import { fromDayNumber } from '../../../domain/time.js';
-import type { ConsecutiveShiftsParams } from '../../../rules/rest-rules.js';
+import { asParams } from '../../../rules/registry.js';
+import { consecutiveShiftsRule } from '../../../rules/rest-rules.js';
 import { type Expr, expr, scale, sum } from '../builder.js';
 import type { EncodeContext, TimelineEntry } from '../context.js';
 
 export function encodeConsecutive(ctx: EncodeContext, raw: Record<string, unknown>): void {
-  const params = raw as unknown as ConsecutiveShiftsParams;
+  const params = asParams(consecutiveShiftsRule, raw);
   const k = params.maxConsecutiveShifts;
   const m = params.maxConsecutiveNights;
 

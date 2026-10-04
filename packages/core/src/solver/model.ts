@@ -69,7 +69,6 @@ import {
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import {
   type HolidayRotationFacts,
-  type HolidayRotationParams,
   holidayRotationFacts,
   holidayRotationRule,
   workedInHistory,
@@ -85,13 +84,12 @@ import {
 } from '../rules/hours-rules.js';
 import {
   groupsForPeriod,
-  type IncompatibleBufferParams,
   incompatibleBufferRule,
   incompatibleTogetherRule,
   judgeFloor,
   type OnFloor,
 } from '../rules/incompatibility-rules.js';
-import { type NightRecoveryParams, nightRecoveryRule } from '../rules/night-recovery.js';
+import { nightRecoveryRule } from '../rules/night-recovery.js';
 import { pendingRequestOn, pendingTimeOffRule } from '../rules/pending-time-off.js';
 import {
   buildRuleContext,
@@ -99,7 +97,9 @@ import {
   getRule,
   hardRuleIdsByScope,
   type PreparedRule,
+  paramsOf,
   prepareRules,
+  requireParams,
   resolveConfigs,
 } from '../rules/registry.js';
 import type { RuleContext, RuleSet, RuleSeverity } from '../rules/types.js';
@@ -418,8 +418,7 @@ export class SolverModel {
           ? this.weights.hardShortfall / 12
           : this.weights.incompatibility;
     const bufferSeverity = severityOf(incompatibleBufferRule.id);
-    const bufferParams = configs.find((c) => c.ruleId === incompatibleBufferRule.id)
-      ?.params as unknown as IncompatibleBufferParams | undefined;
+    const bufferParams = paramsOf(incompatibleBufferRule, configs);
     this.incompatibilityPrice = {
       excess: perHour(severityOf(incompatibleTogetherRule.id)),
       shortfall: perHour(bufferSeverity),
@@ -430,17 +429,14 @@ export class SolverModel {
     this.holidayFacts =
       rotationSeverity === null
         ? { owedOff: new Map(), pairs: [] }
-        : holidayRotationFacts(
-            this.ctx,
-            configs.find((c) => c.ruleId === holidayRotationRule.id)!
-              .params as unknown as HolidayRotationParams,
-            { start: input.period.startDate, end: input.period.endDate },
-          );
+        : holidayRotationFacts(this.ctx, requireParams(holidayRotationRule, configs), {
+            start: input.period.startDate,
+            end: input.period.endDate,
+          });
     this.holidayPrice = rotationSeverity === 'soft' ? this.weights.holidayRotation : 0;
     // --- Days off after nights: priced while soft; a hard rule is the gate's to enforce. ---
     const recoverySeverity = severityOf(nightRecoveryRule.id);
-    const recoveryParams = configs.find((c) => c.ruleId === nightRecoveryRule.id)
-      ?.params as unknown as NightRecoveryParams | undefined;
+    const recoveryParams = paramsOf(nightRecoveryRule, configs);
     this.recoveryDays =
       recoverySeverity === null
         ? 0
@@ -472,10 +468,8 @@ export class SolverModel {
       for (const shift of stretch.shifts) this.stretchesOf[shift.idx]!.push(stretch);
     }
     this.incompat = this.stretches.map(() => 0);
-    this.fteParams = (configs.find((c) => c.ruleId === contractedHoursRule.id)?.params ??
-      contractedHoursRule.defaultParams) as ContractedHoursParams;
-    const maxHours = (configs.find((c) => c.ruleId === maxHoursRule.id)?.params ??
-      maxHoursRule.defaultParams) as MaxHoursParams;
+    this.fteParams = paramsOf(contractedHoursRule, configs) ?? contractedHoursRule.defaultParams;
+    const maxHours = paramsOf(maxHoursRule, configs) ?? maxHoursRule.defaultParams;
     this.maxHoursParams = maxHours;
     const firstDay = dayNumber(input.period.startDate);
     const weekStart =

@@ -11,10 +11,11 @@
 import { NURSE_ROLES } from '../../../acuity/demand.js';
 import type { Assignment, NurseRole } from '../../../domain/entities.js';
 import {
-  type CoverageParams,
+  coverageRule,
   hasValidCredential,
-  type RatioParams,
+  ratioComplianceRule,
 } from '../../../rules/coverage-rules.js';
+import { asParams } from '../../../rules/registry.js';
 import type { Shift } from '../../model.js';
 import { type Expr, expr, scale, sum } from '../builder.js';
 import type { EncodeContext, ShiftVar } from '../context.js';
@@ -71,7 +72,7 @@ function variableShifts(ctx: EncodeContext): Shift[] {
 }
 
 export function encodeCoverage(ctx: EncodeContext, raw: Record<string, unknown>): void {
-  const params = raw as unknown as CoverageParams;
+  const params = asParams(coverageRule, raw);
   const cost = ctx.weights.hardShortfall;
   for (const shift of variableShifts(ctx)) {
     const demand = shift.demand;
@@ -244,7 +245,7 @@ function shortOfAtLeast(
 }
 
 export function encodeRatio(ctx: EncodeContext, raw: Record<string, unknown>): void {
-  const params = raw as unknown as RatioParams;
+  const params = asParams(ratioComplianceRule, raw);
   for (const shift of variableShifts(ctx)) {
     const demand = shift.demand;
     if (!shift.shiftType.active || shift.shiftType.isOnCall || !demand) continue;

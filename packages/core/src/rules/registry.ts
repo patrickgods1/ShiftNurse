@@ -135,6 +135,29 @@ export function defaultRuleSet(
  * existing rule — must not silently disable that rule or crash on a missing parameter. Any
  * gap falls back to the registry default.
  */
+/**
+ * The parameters `configs` give `rule`, typed by the rule itself. Stored params are a plain
+ * record (they come from the database and from IPC), so reading them as a rule's `P` is an
+ * assumption; this is the one place it is made, instead of a cast at every reader. Pass
+ * resolved configs (`resolveConfigs`), whose params have the rule's defaults merged in.
+ */
+export function paramsOf<P>(rule: Rule<P>, configs: readonly RuleConfig[]): P | undefined {
+  const config = configs.find((c) => c.ruleId === rule.id);
+  return config === undefined ? undefined : asParams(rule, config.params);
+}
+
+/** As `paramsOf`, for a rule the caller has established is configured; names it if not. */
+export function requireParams<P>(rule: Rule<P>, configs: readonly RuleConfig[]): P {
+  const params = paramsOf(rule, configs);
+  if (params === undefined) throw new Error(`The rule set has no configuration for ${rule.name}`);
+  return params;
+}
+
+/** A rule's raw stored params read as its parameter type — for code handed `params` directly. */
+export function asParams<P>(_rule: Rule<P>, raw: Record<string, unknown>): P {
+  return raw as unknown as P;
+}
+
 export function resolveConfigs(ruleSet: RuleSet): RuleConfig[] {
   const stored = new Map(ruleSet.configs.map((c) => [c.ruleId, c]));
   return ALL_RULES.map((rule) => {
