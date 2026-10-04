@@ -112,7 +112,7 @@ export function findReplacements(input: ReplacementInput): ReplacementReport {
           ? { lastCalledAt: input.lastCalledAt[nurse.id] }
           : {}),
         softViolationsIntroduced: outcome.softViolationsIntroduced,
-        ...(outcome.payTier === 'overtime'
+        ...(outcome.row.isOvertime
           ? { volunteeredForOvertime: volunteeredOn(world.ctx, nurse.id, date) }
           : {}),
         rank: 0,
