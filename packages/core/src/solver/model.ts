@@ -46,7 +46,6 @@ import type {
 } from '../domain/entities.js';
 import {
   addDays,
-  dateInRange,
   datesInRange,
   dayNumber,
   type IsoDate,
@@ -56,16 +55,9 @@ import {
   weekdayOf,
   weekendKey,
 } from '../domain/time.js';
-import { computeBurden } from '../fairness/burden.js';
 import { isUndesirable } from '../fairness/ledger.js';
 import { seniorityMultipliers } from '../fairness/seniority.js';
-import {
-  BURDEN_COMPONENTS,
-  BURDEN_COUNTER,
-  type BurdenComponent,
-  type BurdenCounters,
-  EMPTY_COUNTERS,
-} from '../fairness/types.js';
+import { BURDEN_COMPONENTS, type BurdenComponent } from '../fairness/types.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import {
   type HolidayRotationFacts,
@@ -78,9 +70,6 @@ import {
   contractedHoursRule,
   type MaxHoursParams,
   maxHoursRule,
-  overtimeThreshold,
-  payPeriodIndex,
-  payPeriodsIn,
 } from '../rules/hours-rules.js';
 import {
   groupsForPeriod,
@@ -106,6 +95,13 @@ import type { RuleContext, RuleSet, RuleSeverity } from '../rules/types.js';
 import { coveringShift } from '../schedule/cover.js';
 import { floorSegments } from '../schedule/overlap.js';
 import { type AssignmentView, ScheduleView } from '../schedule/view.js';
+import {
+  buildShifts,
+  costContextFor,
+  historyFairness,
+  hoursBuckets,
+  workCalendar,
+} from './model-setup.js';
 import {
   DEFAULT_OBJECTIVE_WEIGHTS,
   type ObjectiveBreakdown,
@@ -174,6 +170,8 @@ export class SolverModel {
   readonly dates: readonly IsoDate[];
   readonly dateIdx: ReadonlyMap<IsoDate, number>;
   readonly shiftTypes: readonly ShiftType[];
+  /** `shiftOf` runs on every move; a linear search per call was measurable in a solve. */
+  private readonly shiftTypeById: ReadonlyMap<Id, ShiftType>;
   readonly shifts: readonly Shift[];
   /** Shifts the solver may place nurses on, in date then sort order. */
   readonly solvableShifts: readonly Shift[];
@@ -354,31 +352,14 @@ export class SolverModel {
       ...(input.holidayWork ? { holidayWork: input.holidayWork } : {}),
     });
 
-    const shifts: Shift[] = [];
-    for (const [dateIdx, date] of this.dates.entries()) {
-      for (const shiftType of this.shiftTypes) {
-        const row = demand.get(date, shiftType.id);
-        const wanted =
-          row !== undefined &&
-          NURSE_ROLES.some(
-            (role) => Math.max(row.byRole[role].minCount, row.byRole[role].targetCount) > 0,
-          );
-        shifts.push({
-          idx: shifts.length,
-          date,
-          dateIdx,
-          shiftType,
-          demand: row,
-          solvable: shiftType.active && wanted,
-        });
-      }
-    }
+    const shifts = buildShifts(this.dates, this.shiftTypes, demand);
     this.shifts = shifts;
     this.solvableShifts = shifts.filter((s) => s.solvable);
 
     // A shift inside another is judged with the containing shift's roster as cover, so a change
     // to the containing shift re-prices the ones inside it (`refresh`).
     const shiftTypesById = new Map(this.shiftTypes.map((t) => [t.id, t]));
+    this.shiftTypeById = shiftTypesById;
     this.innerShifts = shifts.map(() => []);
     this.coverShift = shifts.map((shift) => {
       const cover = coveringShift(shift.shiftType, shift.date, shiftTypesById);
@@ -471,97 +452,38 @@ export class SolverModel {
     this.fteParams = paramsOf(contractedHoursRule, configs) ?? contractedHoursRule.defaultParams;
     const maxHours = paramsOf(maxHoursRule, configs) ?? maxHoursRule.defaultParams;
     this.maxHoursParams = maxHours;
-    const firstDay = dayNumber(input.period.startDate);
-    const weekStart =
-      firstDay - ((weekdayOf(input.period.startDate) - maxHours.workWeekStartsOn + 7) % 7);
-    this.weekOf = (date) => Math.floor((dayNumber(date) - weekStart) / 7);
-    this.weekOfDate = this.dates.map((date) => this.weekOf(date));
-    this.weekCount = (this.weekOfDate[this.weekOfDate.length - 1] ?? 0) + 1;
-    const firstPayPeriod = payPeriodIndex(input.period.startDate, input.unit);
-    this.overtimeOf = maxHours.overtimeByPayPeriod
-      ? (date) => payPeriodIndex(date, input.unit) - firstPayPeriod
-      : this.weekOf;
-    this.overtimeOfDate = this.dates.map((date) => this.overtimeOf(date));
-    this.overtimeCount = (this.overtimeOfDate[this.overtimeOfDate.length - 1] ?? 0) + 1;
-    this.overtimeThreshold = overtimeThreshold(maxHours);
+    const calendar = workCalendar(input, this.dates, maxHours);
+    this.weekOf = calendar.weekOf;
+    this.weekOfDate = calendar.weekOfDate;
+    this.weekCount = calendar.weekCount;
+    this.overtimeOf = calendar.overtimeOf;
+    this.overtimeOfDate = calendar.overtimeOfDate;
+    this.overtimeCount = calendar.overtimeCount;
+    this.overtimeThreshold = calendar.overtimeThreshold;
 
-    this.costCtx = input.cost
-      ? {
-          unit: input.unit,
-          payRates: input.cost.payRates,
-          differentials: input.cost.differentials.filter((d) => d.active),
-          overtimeRules: input.cost.overtimeRules.filter((r) => r.active),
-          holidayDates: this.ctx.holidayDates,
-          majorHolidayDates: this.ctx.majorHolidayDates,
-          weekendDefinition: input.ruleSet.weekendDefinition,
-          workWeekStartsOn: maxHours.workWeekStartsOn,
-          ...(maxHours.paidLeaveCountsTowardOvertime
-            ? { overtimeLeave: this.ctx.paidLeaveByNurse }
-            : {}),
-        }
-      : undefined;
+    this.costCtx = costContextFor(input, this.ctx, maxHours);
 
     // --- Hours buckets: the complete pay periods the FTE rule judges, plus any remainder. ---
-    const periods = payPeriodsIn(
-      { start: input.period.startDate, end: input.period.endDate },
-      input.unit,
-      true,
+    const buckets = hoursBuckets(
+      input,
+      this.dates,
+      this.dateIdx,
+      this.nurses,
+      this.fteParams,
+      this.ctx,
     );
-    this.bucketOfDate = this.dates.map((date) => {
-      const i = periods.findIndex((p) => dateInRange(date, p.start, p.end));
-      return i === -1 ? periods.length : i;
-    });
-    const bucketDays = new Array<number>(periods.length + 1).fill(0);
-    for (const b of this.bucketOfDate) bucketDays[b] = (bucketDays[b] ?? 0) + 1;
-    const bucketCount = bucketDays[periods.length] === 0 ? periods.length : periods.length + 1;
-
+    this.bucketOfDate = buckets.bucketOfDate;
+    const bucketCount = buckets.bucketCount;
+    this.hoursTarget = buckets.hoursTarget;
+    this.hoursCapped = buckets.hoursCapped;
+    this.contractedProRata = buckets.contractedProRata;
     const n = this.nurses.length;
-    // Paid leave counts toward the contract, so it comes off the hours still to schedule:
-    // "worked + leave within tolerance of target" is "worked within tolerance of target − leave".
-    const leaveInBucket = (nurseId: Id, b: number) => {
-      if (!this.fteParams.paidLeaveCountsTowardHours) return 0;
-      let hours = 0;
-      for (const c of this.ctx.paidLeaveByNurse.get(nurseId) ?? []) {
-        const idx = this.dateIdx.get(c.date);
-        if (idx !== undefined && this.bucketOfDate[idx] === b) hours += c.hours;
-      }
-      return hours;
-    };
-    this.hoursTarget = this.nurses.map((nurse) =>
-      Array.from({ length: bucketCount }, (_, b) =>
-        nurse.contractedHoursPerPeriod > 0
-          ? (nurse.contractedHoursPerPeriod * (bucketDays[b] ?? 0)) / input.unit.payPeriodDays -
-            leaveInBucket(nurse.id, b)
-          : 0,
-      ),
-    );
-    this.hoursCapped = this.nurses.map(
-      (nurse) =>
-        nurse.contractedHoursPerPeriod > 0 &&
-        !this.fteParams.exemptEmploymentTypes.includes(nurse.employmentType),
-    );
-    this.contractedProRata = this.nurses.map((nurse) =>
-      nurse.contractedHoursPerPeriod > 0
-        ? (nurse.contractedHoursPerPeriod * this.dates.length) / input.unit.payPeriodDays
-        : 0,
-    );
 
     // --- Historical burden, weighted exactly as computeBurden weights it under a current row. ---
     const activeNurses = this.candidates.map((i) => this.nurses[i]!);
-    const zero = new Map<Id, BurdenCounters>(activeNurses.map((x) => [x.id, EMPTY_COUNTERS]));
-    const burden = computeBurden(
-      activeNurses,
-      input.ledgerHistory,
-      { weights: input.ruleSet.fairnessWeights },
-      zero,
-    );
-    this.histCarried = this.nurses.map((nurse) => {
-      const row = burden.byNurse.get(nurse.id);
-      const out = {} as Record<BurdenComponent, number>;
-      for (const c of BURDEN_COMPONENTS) out[c] = row ? row.carried[BURDEN_COUNTER[c]] : 0;
-      return out;
-    });
-    this.shareWeight = this.nurses.map((nurse) => burden.byNurse.get(nurse.id)?.shareWeight ?? 0);
+    const history = historyFairness(this.nurses, activeNurses, input);
+    this.histCarried = history.histCarried;
+    this.shareWeight = history.shareWeight;
     this.teamShare = this.shareWeight.reduce((sum, w) => sum + w, 0);
     this.sharers = this.candidates.filter((i) => this.shareWeight[i]! > 0);
     this.fairnessScratch = new Array<number>(this.sharers.length).fill(0);
@@ -606,7 +528,7 @@ export class SolverModel {
     });
     for (const [i, list] of prior.entries()) {
       for (const a of list) {
-        const st = this.shiftTypes.find((s) => s.id === a.shiftTypeId);
+        const st = this.shiftTypeById.get(a.shiftTypeId);
         if (!st || (st.isOnCall && !maxHours.onCallCountsTowardHours)) continue;
         const week = this.weekOf(a.date);
         if (week >= 0 && week < this.weekCount) this.weekHours[i]![week]! += st.durationHours;
@@ -625,7 +547,7 @@ export class SolverModel {
     );
     for (const [i, list] of prior.entries()) {
       for (const a of list) {
-        const st = this.shiftTypes.find((s) => s.id === a.shiftTypeId);
+        const st = this.shiftTypeById.get(a.shiftTypeId);
         if (!st || st.isOnCall) continue;
         for (const { pair, side } of this.pairSidesOn.get(a.date) ?? []) {
           this.pairWork[i]![pair * 2 + side]! += 1;
@@ -638,7 +560,7 @@ export class SolverModel {
     this.priorNightOffsets = prior.map((list) => {
       const offsets: number[] = [];
       for (const a of list) {
-        const st = this.shiftTypes.find((s) => s.id === a.shiftTypeId);
+        const st = this.shiftTypeById.get(a.shiftTypeId);
         if (!st || st.isOnCall || !st.isNight) continue;
         const k = periodFirstDay - dayNumber(a.date);
         if (k >= 1 && k <= this.recoveryDays) offsets.push(k);
@@ -725,7 +647,7 @@ export class SolverModel {
 
   shiftOf(a: Assignment): Shift {
     const dateIdx = this.dateIdx.get(a.date);
-    const type = this.shiftTypes.find((s) => s.id === a.shiftTypeId);
+    const type = this.shiftTypeById.get(a.shiftTypeId);
     if (dateIdx === undefined || !type) {
       throw new Error(`Assignment ${a.id} on ${a.date}/${a.shiftTypeId} is outside the period`);
     }
