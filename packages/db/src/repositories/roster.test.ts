@@ -32,12 +32,15 @@ import {
   getNurse,
   grantCredential,
   insertNurses,
+  lapsedCredentialsForUnit,
   listActiveNursesForUnit,
+  listNurseCredentials,
   listNursesForUnit,
   listPreferencesForNurse,
   listPreferencesForUnit,
   nursesBySeniority,
   replaceNursePreferences,
+  updateCredentialExpiry,
   updateNurse,
 } from './roster.js';
 import { getLatestRuleSet, getRuleSet, saveRuleSet } from './rulesets.js';
@@ -227,6 +230,85 @@ describe('credentials', () => {
     expect(
       credentialsExpiringBetween(handle.db, isoDate('2000-01-01'), isoDate('2099-01-01')),
     ).toHaveLength(0);
+  });
+
+  describe('credentials that have already lapsed', () => {
+    const TODAY = isoDate('2026-10-04');
+
+    function lapsed() {
+      return lapsedCredentialsForUnit(handle.db, unitId, TODAY).map((e) => e.nurse.firstName);
+    }
+
+    it('lists a credential that expired yesterday', () => {
+      const acls = seedCredential('ACLS');
+      const nurse = createNurse(handle.db, baseNurse({ firstName: 'Lapsed' }), ACTOR);
+      grantCredential(
+        handle.db,
+        { nurseId: nurse.id, credentialId: acls, expiresOn: isoDate('2026-10-03') },
+        ACTOR,
+      );
+      expect(lapsed()).toEqual(['Lapsed']);
+    });
+
+    it('still counts a credential as valid on its expiry day', () => {
+      const acls = seedCredential('ACLS');
+      const nurse = createNurse(handle.db, baseNurse({ firstName: 'LastDay' }), ACTOR);
+      grantCredential(
+        handle.db,
+        { nurseId: nurse.id, credentialId: acls, expiresOn: TODAY },
+        ACTOR,
+      );
+      expect(lapsed()).toEqual([]);
+    });
+
+    it('clears the alert once the renewal date is recorded', () => {
+      const acls = seedCredential('ACLS');
+      const nurse = createNurse(handle.db, baseNurse({ firstName: 'Renewed' }), ACTOR);
+      grantCredential(
+        handle.db,
+        { nurseId: nurse.id, credentialId: acls, expiresOn: isoDate('2026-09-01') },
+        ACTOR,
+      );
+      expect(lapsed()).toEqual(['Renewed']);
+      const record = listNurseCredentials(handle.db, nurse.id)[0]!;
+      updateCredentialExpiry(handle.db, record.id, isoDate('2028-09-01'), ACTOR);
+      expect(lapsed()).toEqual([]);
+    });
+
+    it('is not cleared by a valid record of a different credential', () => {
+      const acls = seedCredential('ACLS');
+      const bls = seedCredential('BLS');
+      const nurse = createNurse(handle.db, baseNurse({ firstName: 'Mixed' }), ACTOR);
+      grantCredential(
+        handle.db,
+        { nurseId: nurse.id, credentialId: acls, expiresOn: isoDate('2026-09-01') },
+        ACTOR,
+      );
+      grantCredential(
+        handle.db,
+        { nurseId: nurse.id, credentialId: bls, expiresOn: isoDate('2028-09-01') },
+        ACTOR,
+      );
+      expect(lapsed()).toEqual(['Mixed']);
+    });
+
+    it('ignores lapses older than a year and nurses who have left', () => {
+      const acls = seedCredential('ACLS');
+      const old = createNurse(handle.db, baseNurse({ firstName: 'Ancient' }), ACTOR);
+      grantCredential(
+        handle.db,
+        { nurseId: old.id, credentialId: acls, expiresOn: isoDate('2025-09-01') },
+        ACTOR,
+      );
+      const gone = createNurse(handle.db, baseNurse({ firstName: 'Gone' }), ACTOR);
+      grantCredential(
+        handle.db,
+        { nurseId: gone.id, credentialId: acls, expiresOn: isoDate('2026-09-01') },
+        ACTOR,
+      );
+      deactivateNurse(handle.db, gone.id, ACTOR);
+      expect(lapsed()).toEqual([]);
+    });
   });
 });
 

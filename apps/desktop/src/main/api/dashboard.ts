@@ -12,6 +12,7 @@ import {
   credentialsExpiringBetween,
   type DbLike,
   getCurrentDraft,
+  lapsedCredentialsForUnit,
   listActiveNursesForUnit,
   listAssignmentsForPeriod,
   listAssignmentsForPeriodOnDate,
@@ -54,13 +55,16 @@ export function dashboardSummary(db: DbLike, unitId: Id): DashboardSummary {
   const unit = unitOrThrow(db, unitId);
   const now = today();
   const periods = listPeriodsForUnit(db, unitId);
-  const unitNurseIds = new Set(listNursesForUnit(db, unitId).map((n) => n.id));
+  // Only nurses still on the unit: someone who has left has no credential to chase, and the
+  // lapsed list beside it already reads active nurses only.
+  const activeNurses = listActiveNursesForUnit(db, unitId);
+  const unitNurseIds = new Set(activeNurses.map((n) => n.id));
   const currentDraft = getCurrentDraft(db, unitId);
 
   return {
     unit,
     today: now,
-    activeNurses: listActiveNursesForUnit(db, unitId).length,
+    activeNurses: activeNurses.length,
     currentDraft,
     draftShifts: currentDraft ? listAssignmentsForPeriod(db, currentDraft.id).length : 0,
     latestPublished: latestPublished(periods),
@@ -71,6 +75,7 @@ export function dashboardSummary(db: DbLike, unitId: Id): DashboardSummary {
       now,
       addDays(now, CREDENTIAL_LOOKAHEAD_DAYS),
     ).filter((e) => unitNurseIds.has(e.nurse.id)),
+    lapsedCredentials: lapsedCredentialsForUnit(db, unitId, now),
     todayOnShift: onShiftOn(db, unitId, now),
   };
 }

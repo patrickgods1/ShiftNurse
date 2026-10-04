@@ -17,7 +17,8 @@ import type {
   NurseRole,
   Preference,
 } from '@shiftnurse/core';
-import { and, asc, eq, gte, isNotNull, lte } from 'drizzle-orm';
+import { addDays } from '@shiftnurse/core';
+import { and, asc, eq, gte, isNotNull, lt, lte } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
@@ -317,6 +318,47 @@ export function credentialsExpiringBetween(
         lte(nurseCredentialTable.expiresOn, end),
       ),
     )
+    .all();
+  return rows.map((r) => ({
+    nurse: toNurse(r.nurse),
+    credential: toCredential(r.credential),
+    nurseCredential: toNurseCredential(r.nurseCredential),
+  }));
+}
+
+/**
+ * Credentials of active nurses on the unit that lapsed in the `lookbackDays` before `onDate`,
+ * oldest first. The expiry day itself is the last valid day (`credentialLapsedOn`). A renewal is
+ * recorded by editing the date in place (`updateCredentialExpiry`): `nurse_credential` is unique
+ * per nurse and credential, so there is never a second, newer record to look for. The window is
+ * bounded so years-old history never floods the list.
+ */
+export function lapsedCredentialsForUnit(
+  db: DbLike,
+  unitId: Id,
+  onDate: IsoDate,
+  lookbackDays = 365,
+): ExpiringCredential[] {
+  const earliest = addDays(onDate, -lookbackDays);
+  const rows = db
+    .select({
+      nurse: nurseTable,
+      credential: credentialTable,
+      nurseCredential: nurseCredentialTable,
+    })
+    .from(nurseCredentialTable)
+    .innerJoin(nurseTable, eq(nurseCredentialTable.nurseId, nurseTable.id))
+    .innerJoin(credentialTable, eq(nurseCredentialTable.credentialId, credentialTable.id))
+    .where(
+      and(
+        eq(nurseTable.unitId, unitId),
+        eq(nurseTable.active, true),
+        isNotNull(nurseCredentialTable.expiresOn),
+        gte(nurseCredentialTable.expiresOn, earliest),
+        lt(nurseCredentialTable.expiresOn, onDate),
+      ),
+    )
+    .orderBy(asc(nurseCredentialTable.expiresOn))
     .all();
   return rows.map((r) => ({
     nurse: toNurse(r.nurse),

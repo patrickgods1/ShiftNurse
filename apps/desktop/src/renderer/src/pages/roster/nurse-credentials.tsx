@@ -13,6 +13,7 @@ import {
 import { AsyncState } from '../../components/async-state.js';
 import { DateField } from '../../components/date-field.js';
 import { daysFromToday } from '../../format.js';
+import { CredentialBadge, standingOf } from './credential-badge.js';
 
 /** "expires in 24 months", "expires in 12 days", "expired 3 days ago". */
 function expiresIn(days: number): string {
@@ -100,6 +101,7 @@ function CredentialRow({
 }) {
   const [expiry, setExpiry] = useState(nurseCredential.expiresOn ?? '');
   const inputId = useId();
+  const standing = standingOf(nurseCredential.expiresOn);
 
   return (
     <li className="rounded-md border border-border p-2 text-sm">
@@ -124,6 +126,7 @@ function CredentialRow({
               ? expiresIn(daysFromToday(nurseCredential.expiresOn))
               : 'no expiry'}
           </span>
+          {standing === undefined ? null : <CredentialBadge standing={standing} />}
           <button
             type="button"
             onClick={() => onUpdateExpiry((expiry || undefined) as IsoDate | undefined)}

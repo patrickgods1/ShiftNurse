@@ -157,8 +157,10 @@ export interface DashboardSummary {
   latestPublished: SchedulePeriod | undefined;
   pendingTimeOff: number;
   openCallOffs: number;
-  /** Credentials lapsing in the next 90 days, soonest first. */
+  /** Credentials expiring from today through the next 90 days, soonest first. */
   expiringCredentials: ExpiringCredentialView[];
+  /** Credentials already past their expiry (within the last year) with no valid renewal. */
+  lapsedCredentials: ExpiringCredentialView[];
   /** Who is on each shift today, from the published schedule. */
   todayOnShift: OnShiftView[];
 }
