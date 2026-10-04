@@ -505,13 +505,15 @@ manager's experience and the contract rules a real hospital would check first. O
       `npm run check` (1,386 tests), `npm run smoke`
 
 **Phase 3 — The manager's experience**
-- [ ] Settings grouped (My unit, Contract & pay, Scheduling, Data) with links from where the
+- [x] Settings grouped (My unit, Contract & pay, Scheduling, Data) with links from where the
       question comes up; navigation in workflow order with a pending-requests badge
-- [ ] Generate says "options", not variations or seeds; unfilled shifts explained in words
-- [ ] Fairness lists the actual nights, weekends and holidays, with "Show on schedule"
-- [ ] Violation chips distinguishable without colour; 12px minimum on the grid at 1366×768
-- [ ] "Someone called off" as the first action on Today
-- [ ] Verify: smoke with the new paths; screenshot at 1366×768
+- [x] Generate says "options", not variations or seeds; unfilled shifts explained in words
+- [x] Fairness lists the actual nights, weekends and holidays, with "Show on schedule"
+- [x] Violation chips distinguishable without colour; 12px minimum on the grid at 1366×768
+- [x] "Someone called off" as the first action on Today
+- [x] Status banners collapsed into one row of pills so the grid has the screen at 1366×768
+- [x] Verify: `npm run check` (1,416+ tests); `npm run smoke`; screenshots at 1366×768 (five nurse
+      rows and the staffing footer visible, up from two or three)
 
 **Phase 4 — Core maintainability**
 - [ ] Typed rule parameters (no `as unknown as` params) and typed violation details
