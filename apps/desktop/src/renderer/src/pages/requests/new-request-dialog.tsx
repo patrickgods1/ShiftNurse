@@ -10,6 +10,7 @@ import { compareDates, daysBetween, isIsoDate, suggestedPaidLeaveHours } from '@
 import { useEffect, useState } from 'react';
 import { useShiftTypesList } from '../../api-config.js';
 import { useCreateTimeOff } from '../../api-requests.js';
+import { DateField } from '../../components/date-field.js';
 import {
   DIALOG,
   errorMessage,
@@ -147,26 +148,19 @@ export function NewRequestDialog({
               </select>
             </label>
             <div className="grid grid-cols-2 gap-3">
-              <label className={LABEL}>
-                First day off
-                <input
-                  type="date"
-                  className={INPUT}
-                  value={start}
-                  onChange={(e) => setStart(e.target.value)}
-                  required
-                />
-              </label>
-              <label className={LABEL}>
-                Last day off
-                <input
-                  type="date"
-                  className={INPUT}
-                  value={end}
-                  onChange={(e) => setEnd(e.target.value)}
-                  required
-                />
-              </label>
+              <DateField
+                label="First day off"
+                value={isIsoDate(start) ? start : ''}
+                onChange={setStart}
+                required
+              />
+              <DateField
+                label="Last day off"
+                value={isIsoDate(end) ? end : ''}
+                onChange={setEnd}
+                min={isIsoDate(start) ? start : undefined}
+                required
+              />
             </div>
             <label className={LABEL}>
               Type
