@@ -24,6 +24,24 @@ export interface Unit {
   payPeriodDays: number;
   /** Anchor date so pay-period boundaries are unambiguous across the year. */
   payPeriodAnchor: IsoDate;
+  /** How the unit keeps its ratios at all times. Absent: the charge nurse counts, no breaks. */
+  ratioStaffing?: RatioStaffing;
+}
+
+/**
+ * How a unit keeps a ratio "at all times" (Title 22 § 70217(a); ORS 441.765). Read by
+ * `deriveDemand`, so every consumer of a shift's ratio requirement follows it.
+ */
+export interface RatioStaffing {
+  /**
+   * False where the charge nurse counts toward the ratio only while caring for patients and is
+   * usually kept free of them (California, Oregon): a standalone shift then needs one RN more.
+   */
+  chargeNurseTakesPatients: boolean;
+  /** Break minutes each bedside nurse takes per shift (e.g. a 30-minute meal and two 15s). */
+  breakMinutesPerNurse: number;
+  /** A charge nurse without patients relieves for breaks (Title 22 allows it): one relief fewer. */
+  chargeCoversBreaks: boolean;
 }
 
 export interface ShiftType {

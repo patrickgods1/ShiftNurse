@@ -14,6 +14,7 @@ import type {
   Holiday,
   Id,
   IsoDate,
+  RatioStaffing,
   ShiftCredentialRequirement,
   ShiftType,
   Unit,
@@ -24,6 +25,7 @@ import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import {
+  ratioStaffingColumns,
   toCoverageRequirement,
   toCredentialRequirement,
   toHoliday,
@@ -54,9 +56,15 @@ export function getUnit(db: DbLike, id: Id): Unit | undefined {
 
 export function createUnit(db: DbLike, input: Omit<Unit, 'id'>, actor: string): Unit {
   const id = ids.unit();
-  const row: typeof unitTable.$inferInsert = { id, ...input };
+  const { ratioStaffing, ...fields } = input;
+  validateRatioStaffing(ratioStaffing);
+  const row: typeof unitTable.$inferInsert = {
+    id,
+    ...fields,
+    ...ratioStaffingColumns(ratioStaffing),
+  };
   db.insert(unitTable).values(row).run();
-  const after = toUnit(row as typeof unitTable.$inferSelect);
+  const after = getUnit(db, id)!;
   recordAudit(db, { entityType: 'unit', entityId: id, action: 'create', actor, after });
   return after;
 }
@@ -66,6 +74,7 @@ export interface UnitPatch {
   unitType?: string;
   payPeriodDays?: number;
   payPeriodAnchor?: IsoDate;
+  ratioStaffing?: RatioStaffing;
 }
 
 const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
@@ -73,7 +82,16 @@ const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
   unitType: true,
   payPeriodDays: true,
   payPeriodAnchor: true,
+  ratioStaffing: true,
 };
+
+/** Break minutes are a whole number a shift can hold; anything else is a typing slip. */
+function validateRatioStaffing(staffing: RatioStaffing | undefined): void {
+  if (!staffing) return;
+  const minutes = staffing.breakMinutesPerNurse;
+  if (!Number.isInteger(minutes) || minutes < 0 || minutes > 240)
+    throw new Error('Break minutes per nurse must be a whole number from 0 to 240');
+}
 
 export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string): Unit {
   return auditedUpdate<Unit, UnitPatch>(db, {
@@ -87,14 +105,15 @@ export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string):
       return row ? toUnit(row) : undefined;
     },
     // The id rides along so an empty patch still writes, as the full-row update always did.
-    write: (rowId, values) =>
+    write: (rowId, { ratioStaffing, ...values }) =>
       db
         .update(unitTable)
-        .set({ ...values, id: rowId })
+        .set({ ...values, ...ratioStaffingColumns(ratioStaffing), id: rowId })
         .where(eq(unitTable.id, rowId))
         .run(),
     notFound: `Unit ${id} not found`,
     validate: (values) => {
+      validateRatioStaffing(values.ratioStaffing);
       if (values.name !== undefined && values.name.trim() === '')
         throw new Error('A unit needs a name');
     },

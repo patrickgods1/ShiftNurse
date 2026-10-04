@@ -8,10 +8,11 @@
 
 import { addDays, isoDate, type SchedulePeriod } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { seedScenarioUnit } from '../seed/scenarios.js';
 import type { SeedResult } from '../seed/types.js';
-import { createUnit, listShiftTypesForUnit } from './config.js';
+import { createUnit, getUnit, listShiftTypesForUnit, updateUnit } from './config.js';
 import { createIncompatibilityGroup } from './incompatibility.js';
 import { createPayRate, listPayRatesForUnit } from './pay.js';
 import { createNurse, listNursesForUnit } from './roster.js';
@@ -228,5 +229,94 @@ describe('the leave a period reads', () => {
       .filter((r) => r.startDate.startsWith('2027-05'))
       .map((r) => r.startDate);
     expect(starts).toEqual(['2027-05-01', '2027-05-05', '2027-05-10']);
+  });
+});
+
+describe('how the unit keeps its ratios', () => {
+  function draftInput() {
+    return loadPeriodInput(handle.db, getPeriod(handle.db, seeded.draftPeriodId)!);
+  }
+  /** Demand rows for RNs where the ratio governs a shift with its own charge nurse. */
+  function standaloneRatioRows(input: ReturnType<typeof draftInput>) {
+    const standalone = new Set(
+      input.shiftTypes.filter((t) => t.withinShiftTypeId === null && !t.isOnCall).map((t) => t.id),
+    );
+    return input.demand
+      .filter((d) => standalone.has(d.shiftTypeId) && d.byRole.RN.ratioBedside > 0)
+      .map((d) => d.byRole.RN);
+  }
+
+  it('reads an existing unit as before: the charge nurse at the bedside, no break cover', () => {
+    const rows = standaloneRatioRows(draftInput());
+    expect(rows.length).toBeGreaterThan(0);
+    for (const rn of rows) {
+      expect(rn.ratioDerived).toBe(rn.ratioBedside);
+      expect(rn.chargeWithoutPatients).toBe(0);
+      expect(rn.breakRelief).toBe(0);
+    }
+  });
+
+  it('asks every forecast shift for one more RN once the charge nurse takes no patients', () => {
+    transact(handle.db, (tx) =>
+      updateUnit(
+        tx,
+        seeded.unitId,
+        {
+          ratioStaffing: {
+            chargeNurseTakesPatients: false,
+            breakMinutesPerNurse: 0,
+            chargeCoversBreaks: false,
+          },
+        },
+        ACTOR,
+      ),
+    );
+    const rows = standaloneRatioRows(draftInput());
+    expect(rows.length).toBeGreaterThan(0);
+    for (const rn of rows) expect(rn.ratioDerived).toBe(rn.ratioBedside + 1);
+  });
+
+  it('keeps the setting on the unit with the change in the audit log', () => {
+    const before = getUnit(handle.db, seeded.unitId)!;
+    expect(before.ratioStaffing).toEqual({
+      chargeNurseTakesPatients: true,
+      breakMinutesPerNurse: 0,
+      chargeCoversBreaks: false,
+    });
+    const staffing = {
+      chargeNurseTakesPatients: false,
+      breakMinutesPerNurse: 60,
+      chargeCoversBreaks: true,
+    };
+    transact(handle.db, (tx) => updateUnit(tx, seeded.unitId, { ratioStaffing: staffing }, ACTOR));
+    expect(getUnit(handle.db, seeded.unitId)!.ratioStaffing).toEqual(staffing);
+    const [latest] = auditHistoryFor(handle.db, 'unit', seeded.unitId);
+    expect(latest).toMatchObject({
+      action: 'update',
+      before: { ratioStaffing: { chargeNurseTakesPatients: true } },
+      after: { ratioStaffing: staffing },
+    });
+  });
+
+  it('refuses break minutes that are not a whole number a shift can hold', () => {
+    const bad = (breakMinutesPerNurse: number) => () =>
+      transact(handle.db, (tx) =>
+        updateUnit(
+          tx,
+          seeded.unitId,
+          {
+            ratioStaffing: {
+              chargeNurseTakesPatients: true,
+              breakMinutesPerNurse,
+              chargeCoversBreaks: false,
+            },
+          },
+          ACTOR,
+        ),
+      );
+    expect(bad(-15)).toThrow('Break minutes per nurse must be a whole number from 0 to 240');
+    expect(bad(22.5)).toThrow('whole number');
+    expect(bad(300)).toThrow('whole number');
+    expect(getUnit(handle.db, seeded.unitId)!.ratioStaffing!.breakMinutesPerNurse).toBe(0);
   });
 });

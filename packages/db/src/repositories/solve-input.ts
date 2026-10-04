@@ -95,6 +95,7 @@ export function holidayWorkForPeriod(db: DbLike, period: SchedulePeriod): Holida
 
 /** Everything `deriveDemand` needs for a unit, loaded once per call. */
 export function demandInputs(db: DbLike, unitId: Id, start: IsoDate, end: IsoDate) {
+  const ratioStaffing = getUnit(db, unitId)?.ratioStaffing;
   return {
     shiftTypes: listShiftTypesForUnit(db, unitId),
     acuityTiers: listAcuityTiersForUnit(db, unitId),
@@ -102,6 +103,7 @@ export function demandInputs(db: DbLike, unitId: Id, start: IsoDate, end: IsoDat
     coverageRequirements: listCoverageRequirementsForUnit(db, unitId),
     censusForecasts: listCensusForecastsInRange(db, unitId, start, end),
     hppdTarget: getHppdTarget(db, unitId),
+    ...(ratioStaffing ? { ratioStaffing } : {}),
   };
 }
 

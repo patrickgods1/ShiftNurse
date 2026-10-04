@@ -73,6 +73,13 @@ export const unit = sqliteTable('unit', {
   unitType: text('unit_type').notNull(),
   payPeriodDays: integer('pay_period_days').notNull(),
   payPeriodAnchor: isoDate('pay_period_anchor').notNull(),
+  // How the unit keeps its ratios (core's RatioStaffing). The defaults are the reading before
+  // these columns existed: the charge nurse counts at the bedside and nobody's break is covered.
+  chargeNurseTakesPatients: integer('charge_nurse_takes_patients', { mode: 'boolean' })
+    .notNull()
+    .default(true),
+  breakMinutesPerNurse: integer('break_minutes_per_nurse').notNull().default(0),
+  chargeCoversBreaks: integer('charge_covers_breaks', { mode: 'boolean' }).notNull().default(false),
 });
 
 export const shiftType = sqliteTable(

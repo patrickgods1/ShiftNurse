@@ -5,7 +5,7 @@
  * and because a fixture that drifts from the real entity definitions is worse than none.
  */
 
-import { type DemandInputs, deriveDemand } from '../acuity/demand.js';
+import { type DemandInputs, deriveDemand, type RatioStaffing } from '../acuity/demand.js';
 import type {
   AcuityTier,
   Assignment,
@@ -248,6 +248,8 @@ export interface ScenarioOptions {
   censusForecasts?: CensusForecast[];
   holidays?: Holiday[];
   ratioRules?: RatioRule[];
+  /** How the unit keeps its ratios: a charge nurse without patients, break relief. */
+  ratioStaffing?: RatioStaffing;
   acuityTiers?: AcuityTier[];
   hppdTarget?: HppdTarget;
   unit?: Unit;
@@ -299,6 +301,7 @@ export function scenario(options: ScenarioOptions = {}): Scenario {
     coverageRequirements: options.coverageRequirements ?? [],
     censusForecasts: options.censusForecasts ?? [],
     ...(options.hppdTarget !== undefined ? { hppdTarget: options.hppdTarget } : {}),
+    ...(options.ratioStaffing !== undefined ? { ratioStaffing: options.ratioStaffing } : {}),
   };
 
   // Demand must cover the lookback tail too, or prior assignments have nothing to sit against.

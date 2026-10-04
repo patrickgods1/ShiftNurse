@@ -57,7 +57,25 @@ export function toUnit(r: typeof s.unit.$inferSelect): Unit {
     unitType: r.unitType,
     payPeriodDays: r.payPeriodDays,
     payPeriodAnchor: r.payPeriodAnchor as Unit['payPeriodAnchor'],
+    ratioStaffing: {
+      chargeNurseTakesPatients: r.chargeNurseTakesPatients,
+      breakMinutesPerNurse: r.breakMinutesPerNurse,
+      chargeCoversBreaks: r.chargeCoversBreaks,
+    },
   };
+}
+
+/** The unit's columns for a `RatioStaffing`; absent leaves the column defaults. */
+export function ratioStaffingColumns(
+  staffing: Unit['ratioStaffing'],
+): Partial<typeof s.unit.$inferInsert> {
+  return staffing
+    ? {
+        chargeNurseTakesPatients: staffing.chargeNurseTakesPatients,
+        breakMinutesPerNurse: staffing.breakMinutesPerNurse,
+        chargeCoversBreaks: staffing.chargeCoversBreaks,
+      }
+    : {};
 }
 
 export function toShiftType(r: typeof s.shiftType.$inferSelect): ShiftType {

@@ -13,7 +13,7 @@
  * manager needs when deciding how hard to fight for the extra nurse.
  */
 
-import { NURSE_ROLES } from '../acuity/demand.js';
+import { NURSE_ROLES, type RoleDemand } from '../acuity/demand.js';
 import type { Id, NurseCredential, NurseRole } from '../domain/entities.js';
 import { compareDates, describeDate, type IsoDate } from '../domain/time.js';
 import { coveringShift } from '../schedule/cover.js';
@@ -308,15 +308,22 @@ export const ratioComplianceRule: Rule<RatioParams> = {
           const staffed = countRole(assigned, role);
           if (staffed >= roleDemand.ratioDerived) continue;
 
-          const perNurse = staffed > 0 ? (demand.projectedCensus / staffed).toFixed(1) : '∞';
+          // A charge nurse without patients is on the shift but not at the bedside. Relief
+          // nurses carry patients outside the breaks they cover, so they stay in the divisor.
+          const bedside = Math.max(0, staffed - roleDemand.chargeWithoutPatients);
+          const perNurse = bedside > 0 ? (demand.projectedCensus / bedside).toFixed(1) : '∞';
+          const across =
+            roleDemand.chargeWithoutPatients > 0
+              ? `${staffed} ${role}${staffed === 1 ? '' : 's'}, ${bedside} at the bedside`
+              : `${staffed} ${role}${staffed === 1 ? '' : 's'}`;
           violations.push(
             violation(
               ratioComplianceRule,
               'hard',
               'ratio_breach',
               `${shiftType.name} on ${describeDate(date)}: ${demand.projectedCensus} projected patients across ` +
-                `${staffed} ${role}${staffed === 1 ? '' : 's'} is ${perNurse} patients per nurse. ` +
-                `The acuity mix requires ${roleDemand.ratioDerived}.`,
+                `${across} is ${perNurse} patients per nurse. ` +
+                `The acuity mix requires ${roleDemand.ratioDerived}${ratioMakeup(roleDemand)}.`,
               {
                 dates: [date],
                 nurseIds: assigned.map((v) => v.nurse.id),
@@ -327,7 +334,10 @@ export const ratioComplianceRule: Rule<RatioParams> = {
                   required: roleDemand.ratioDerived,
                   shortfall: roleDemand.ratioDerived - staffed,
                   projectedCensus: demand.projectedCensus,
-                  patientsPerNurse: staffed > 0 ? demand.projectedCensus / staffed : null,
+                  patientsPerNurse: bedside > 0 ? demand.projectedCensus / bedside : null,
+                  ratioBedside: roleDemand.ratioBedside,
+                  chargeWithoutPatients: roleDemand.chargeWithoutPatients,
+                  breakRelief: roleDemand.breakRelief,
                   shiftTypeId: shiftType.id,
                   standard: 'ratio',
                 },
@@ -341,6 +351,15 @@ export const ratioComplianceRule: Rule<RatioParams> = {
     return violations;
   },
 };
+
+/** " (4 at the bedside and a charge nurse without patients)" — empty when the ratio is all bedside. */
+function ratioMakeup(demand: RoleDemand): string {
+  const extras: string[] = [];
+  if (demand.chargeWithoutPatients > 0) extras.push('a charge nurse without patients');
+  if (demand.breakRelief > 0) extras.push(`${demand.breakRelief} to relieve breaks`);
+  if (extras.length === 0) return '';
+  return ` (${demand.ratioBedside} at the bedside and ${extras.join(' and ')})`;
+}
 
 function countRole(assigned: readonly AssignmentView[], role: NurseRole): number {
   let count = 0;

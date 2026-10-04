@@ -1,7 +1,7 @@
 // The public API: exactly what packages/db, the desktop app and the web client consume.
 // Everything else stays exported from its own module for core's internal use.
 
-export type { BindingConstraint, ShiftDemand } from './acuity/demand.js';
+export type { BindingConstraint, RatioStaffing, RoleDemand, ShiftDemand } from './acuity/demand.js';
 // Census and ratios to the staffing each shift needs
 export { deriveDemand, NURSE_ROLES, nursesRequiredForMix } from './acuity/demand.js';
 export type {
@@ -178,6 +178,7 @@ export {
 export type { RosterCsvError, RosterCsvRow } from './roster/csv.js';
 // The one roster CSV parser and formatter
 export { formatRosterCsv, parseRosterCsv, ROSTER_COLUMNS, serializeCsv } from './roster/csv.js';
+export { credentialLapsedOn } from './rules/coverage-rules.js';
 export type { HolidayRotationParams } from './rules/holiday-rotation.js';
 // Holiday rotation facts
 export { holidayRotationRule, previousOccurrence } from './rules/holiday-rotation.js';
