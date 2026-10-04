@@ -134,6 +134,13 @@
       "when": 1791140795244,
       "tag": "0018_unit_jurisdiction",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1791155128894,
+      "tag": "0019_leave_bidding",
+      "breakpoints": true
     }
   ]
 }

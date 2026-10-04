@@ -28,6 +28,7 @@ import type {
   EmploymentType,
   Id,
   IsoDate,
+  LeaveBidChoice,
   NurseRole,
   OvertimeRule,
   PeriodStatus,
@@ -334,6 +335,69 @@ export const timeOffRequest = sqliteTable(
     index('time_off_range_idx').on(t.startDate, t.endDate),
     index('time_off_status_idx').on(t.status),
   ],
+);
+
+// ---------------------------------------------------------------------------
+// Leave bidding
+// ---------------------------------------------------------------------------
+
+/** Where a bidding round stands; it only moves forward. */
+export type LeaveBidRoundStatus = 'open' | 'closed' | 'awarded';
+
+/**
+ * A season's bidding round (`LeaveBidRound` plus its `LeaveBidRoundRecord` bookkeeping). `status`
+ * only moves forward: open (bids may change), closed (they may not), awarded (decided, once).
+ * `opensOn`/`closesOn` are the manager's announced window; the status, not the calendar, decides
+ * whether a bid is accepted, so the same round gives the same answer on any day.
+ */
+export const leaveBidRound = sqliteTable(
+  'leave_bid_round',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    name: text('name').notNull(),
+    coversStart: isoDate('covers_start').notNull().$type<IsoDate>(),
+    coversEnd: isoDate('covers_end').notNull().$type<IsoDate>(),
+    opensOn: isoDate('opens_on').notNull().$type<IsoDate>(),
+    closesOn: isoDate('closes_on').notNull().$type<IsoDate>(),
+    /** Places off a day per role; keyed by role because the set of roles is closed and tiny. */
+    offPerDay: text('off_per_day', { mode: 'json' })
+      .notNull()
+      .$type<Partial<Record<NurseRole, number>>>(),
+    maxAwardsPerNurse: integer('max_awards_per_nurse'),
+    status: text('status').notNull().default('open').$type<LeaveBidRoundStatus>(),
+    awardedAt: timestamp('awarded_at'),
+  },
+  (t) => [index('leave_bid_round_unit_idx').on(t.unitId)],
+);
+
+/**
+ * One nurse's bid. The ranked choices are JSON on the row: they are only ever read and replaced
+ * together (a bid is one sheet of paper), never queried by date, and a separate choice table
+ * would need the contiguous-rank rule enforced across rows instead of once in the repository.
+ */
+export const leaveBid = sqliteTable(
+  'leave_bid',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    roundId: text('round_id')
+      .notNull()
+      .references(() => leaveBidRound.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    choices: text('choices', { mode: 'json' }).notNull().$type<LeaveBidChoice[]>(),
+    /** Always 'manager' in v1; the seam that lets nurse self-service reuse this table. */
+    enteredBy: text('entered_by').notNull().default('manager').$type<RequestOrigin>(),
+    submittedAt: timestamp('submitted_at').notNull(),
+  },
+  // One bid per nurse per round: replacing a bid rewrites this row.
+  (t) => [uniqueIndex('leave_bid_round_nurse_idx').on(t.roundId, t.nurseId)],
 );
 
 // ---------------------------------------------------------------------------

@@ -229,7 +229,11 @@ export {
 } from './rules/mandatory-overtime.js';
 export type { PaidLeaveCredit, PaidSickCall } from './rules/paid-leave.js';
 // Paid leave credits as dated whole shifts
-export { paidLeaveCredits, suggestedPaidLeaveHours } from './rules/paid-leave.js';
+export {
+  paidLeaveCredits,
+  suggestedPaidLeaveHours,
+  typicalShiftHours,
+} from './rules/paid-leave.js';
 // Orientees work with their preceptor
 export { preceptorRule, preceptorsOn } from './rules/preceptor.js';
 // The rule registry the solver, grid and compliance report share

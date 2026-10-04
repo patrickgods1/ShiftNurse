@@ -18,6 +18,7 @@ import { exchangeSchemas } from './exchange.js';
 import { fairnessSchemas } from './fairness.js';
 import { holidaysSchemas } from './holidays.js';
 import { incompatibilitySchemas } from './incompatibility.js';
+import { leaveBiddingSchemas } from './leaveBidding.js';
 import { nursesSchemas } from './nurses.js';
 import { outputSchemas } from './output.js';
 import { overtimeVolunteersSchemas } from './overtimeVolunteers.js';
@@ -45,6 +46,7 @@ export const API_SCHEMAS: ApiSchemas = {
   preferences: preferencesSchemas,
   incompatibility: incompatibilitySchemas,
   overtimeVolunteers: overtimeVolunteersSchemas,
+  leaveBidding: leaveBiddingSchemas,
   shiftTypes: shiftTypesSchemas,
   coverage: coverageSchemas,
   holidays: holidaysSchemas,

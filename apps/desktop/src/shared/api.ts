@@ -44,6 +44,11 @@ import type {
   IncompatibilityGroup,
   IsoDate,
   JurisdictionId,
+  LeaveAward,
+  LeaveBid,
+  LeaveBidChoice,
+  LeaveBidRound,
+  LeaveDenial,
   Nurse,
   NurseCredential,
   NurseRole,
@@ -54,6 +59,7 @@ import type {
   Preference,
   RatioRule,
   ReplacementReport,
+  RequestOrigin,
   Resolution,
   RosterCsvError,
   RosterCsvRow,
@@ -194,6 +200,61 @@ export interface OvertimeVolunteerPatch {
   startDate?: IsoDate;
   endDate?: IsoDate;
   note?: string | null;
+}
+
+/** Where a bidding round stands; it only moves forward. */
+export type LeaveBidRoundStatus = 'open' | 'closed' | 'awarded';
+
+/** A bidding round as the manager manages it: core's judging fields plus the window and status. */
+export interface LeaveBidRoundRecord extends LeaveBidRound {
+  /** The announced bidding window. Informational: the status decides whether a bid is taken. */
+  opensOn: IsoDate;
+  closesOn: IsoDate;
+  status: LeaveBidRoundStatus;
+  /** When the award ran (epoch millis); absent until it has. */
+  awardedAt?: number;
+}
+
+/** A nurse's bid with when it was last entered. */
+export interface LeaveBidRecord extends LeaveBid {
+  submittedAt: number;
+  /** 'manager' in v1; 'nurse' once self-service ships. */
+  enteredBy: RequestOrigin;
+}
+
+export type LeaveBidRoundInput = Omit<LeaveBidRoundRecord, 'id' | 'status' | 'awardedAt'>;
+
+/** The unit never changes; `maxAwardsPerNurse: null` removes the limit. */
+export interface LeaveBidRoundPatch {
+  name?: string;
+  coversStart?: IsoDate;
+  coversEnd?: IsoDate;
+  opensOn?: IsoDate;
+  closesOn?: IsoDate;
+  offPerDay?: Partial<Record<NurseRole, number>>;
+  maxAwardsPerNurse?: number | null;
+}
+
+/** One award: the week, the nurse's name and the approved request it became. */
+export interface LeaveAwardView extends LeaveAward {
+  nurseName: string;
+  requestId: Id;
+  /** Draft shifts the approval took off the grid. */
+  liftedShifts: number;
+  /** Published-period shifts left in place, now a conflict to resolve. */
+  stillRostered: number;
+}
+
+export interface LeaveDenialView extends LeaveDenial {
+  nurseName: string;
+}
+
+/** What an award did, in the order nurses were served and with every denial's reason. */
+export interface LeaveBidAwardResult {
+  round: LeaveBidRoundRecord;
+  order: { nurseId: Id; nurseName: string }[];
+  awards: LeaveAwardView[];
+  denials: LeaveDenialView[];
 }
 
 /** Optional-and-clearable fields take `null` to clear; an omitted key is left untouched. */
@@ -735,6 +796,18 @@ export interface ShiftNurseApi {
     update(id: Id, patch: OvertimeVolunteerPatch): OvertimeVolunteer;
     remove(id: Id): void;
   };
+  /** Seniority leave bidding: rounds, the bids in them, and the one-time award in seniority order. */
+  leaveBidding: {
+    rounds(unitId: Id): LeaveBidRoundRecord[];
+    createRound(input: LeaveBidRoundInput): LeaveBidRoundRecord;
+    updateRound(id: Id, patch: LeaveBidRoundPatch): LeaveBidRoundRecord;
+    closeRound(id: Id): LeaveBidRoundRecord;
+    bids(roundId: Id): LeaveBidRecord[];
+    /** Enter or replace a nurse's ranked choices; v1 is the manager entering them. */
+    submitBid(roundId: Id, nurseId: Id, choices: LeaveBidChoice[]): LeaveBidRecord;
+    /** Approves each award as PTO and lifts draft shifts; once only. */
+    award(roundId: Id): LeaveBidAwardResult;
+  };
   shiftTypes: {
     list(unitId: Id): ShiftType[];
     create(input: ShiftTypeInput): ShiftType;
@@ -1063,6 +1136,15 @@ export const API_CHANNELS = {
   preferences: ['forNurse', 'replace'],
   incompatibility: ['list', 'create', 'update', 'remove'],
   overtimeVolunteers: ['list', 'create', 'update', 'remove'],
+  leaveBidding: [
+    'rounds',
+    'createRound',
+    'updateRound',
+    'closeRound',
+    'bids',
+    'submitBid',
+    'award',
+  ],
   shiftTypes: ['list', 'create', 'update', 'deactivate'],
   coverage: ['list', 'upsert', 'delete'],
   holidays: [
