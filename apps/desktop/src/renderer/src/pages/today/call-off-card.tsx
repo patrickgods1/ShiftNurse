@@ -18,7 +18,7 @@ import {
 } from '../../api-dayof.js';
 import { AsyncState } from '../../components/async-state.js';
 import { DANGER, INPUT, SECONDARY, SMALL } from '../../components/ui.js';
-import { formatDateWithWeekday } from '../../format.js';
+import { formatDateWithWeekday, formatInstant } from '../../format.js';
 import { formatSignedDollars } from '../../money.js';
 import { ReasonDialog } from '../requests/reason-dialog.js';
 import { payTierLabel, payTierTone, TONE_CLASSES } from './tier-pill.js';
@@ -72,7 +72,7 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
           <p className="text-sm text-text-muted">{callOff.callOff.reason}</p>
         ) : null}
         <p className="text-xs text-text-muted">
-          Reported {new Date(callOff.callOff.reportedAt).toLocaleString()}
+          Reported {formatInstant(callOff.callOff.reportedAt)}
         </p>
       </div>
 
@@ -117,7 +117,7 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
                     </span>
                     <span className="text-xs text-text-muted">
                       {c.lastCalledAt !== undefined
-                        ? new Date(c.lastCalledAt).toLocaleString()
+                        ? formatInstant(c.lastCalledAt)
                         : 'never called'}
                     </span>
                   </div>
@@ -203,7 +203,7 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
           <ul className="mt-1 flex flex-col gap-0.5 text-xs text-text-muted">
             {callOff.attempts.map((a) => (
               <li key={a.id}>
-                {new Date(a.attemptedAt).toLocaleString()} — {nurseLabel(a.nurseId)} — {a.outcome}
+                {formatInstant(a.attemptedAt)} — {nurseLabel(a.nurseId)} — {a.outcome}
                 {a.notes !== undefined ? ` — ${a.notes}` : ''}
               </li>
             ))}

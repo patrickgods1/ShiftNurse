@@ -97,3 +97,18 @@ export function periodLabel(period: { name: string; startDate: string; endDate: 
   const range = periodRange(period);
   return GENERATED_NAME.test(period.name) ? range : `${period.name} (${range})`;
 }
+
+// Real instants (audit, backup and request timestamps, epoch millis) are events, not schedule
+// geometry, so the host's own zone and locale are right for them — unlike an `IsoDate`, which
+// must never be turned into a `Date`. One formatter keeps every screen reading alike.
+/** The instant formatter; the arguments exist so tests can pin locale and zone. */
+export function instantFormat(locales?: string, timeZone?: string): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat(locales, { dateStyle: 'medium', timeStyle: 'short', timeZone });
+}
+
+const INSTANT = instantFormat();
+
+/** "Oct 3, 2026, 5:35 PM". */
+export function formatInstant(ms: number): string {
+  return INSTANT.format(ms);
+}

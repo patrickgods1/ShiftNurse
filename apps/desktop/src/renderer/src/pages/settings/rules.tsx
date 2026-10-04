@@ -43,6 +43,7 @@ import { AsyncState } from '../../components/async-state.js';
 import { CheckField, describedBy, Field, InfoTip } from '../../components/field-help.js';
 import { INPUT, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { useUnsavedChanges } from '../../components/unsaved-changes.js';
+import { formatInstant } from '../../format.js';
 import { useUnitId } from '../../unit-context.js';
 import { invalidParams, numberFieldValue, paramError, withNumberParam } from './rule-params.js';
 
@@ -101,15 +102,6 @@ const FAIRNESS_TIPS: Record<FairnessComponent, string> = {
     "How often each nurse's time-off requests are approved. Raise it so denials do not keep " +
     'landing on the same people.',
 };
-
-/** "Oct 2, 2026, 5:53 PM": the app's date style, with the time a version was saved. */
-const SAVED_AT = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' });
-
-function formatSavedAt(createdAt: number): string {
-  // `createdAt` is an audit-style instant, not schedule geometry, so a plain `Date` is the
-  // right tool here (see the time-model header in packages/core/src/domain/time.ts).
-  return SAVED_AT.format(new Date(createdAt));
-}
 
 function clearSeverityOverride(config: RuleConfig): RuleConfig {
   const { ruleId, enabled, params } = config;
@@ -712,7 +704,7 @@ export default function RulesPanel() {
             />
           </Field>
           <p className="text-sm text-text-muted">
-            Version {data.version} · saved {formatSavedAt(data.createdAt)}
+            Version {data.version} · saved {formatInstant(data.createdAt)}
           </p>
         </div>
         <p className="mt-3 text-xs text-text-muted">

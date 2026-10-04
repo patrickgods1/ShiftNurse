@@ -4,6 +4,7 @@ import {
   formatDate,
   formatDateWithWeekday,
   fteLabel,
+  instantFormat,
   listName,
   periodLabel,
   periodRange,
@@ -53,5 +54,13 @@ describe('people and periods as the unit names them', () => {
     expect(periodLabel(period('Fall block', '2026-10-04', '2026-11-14'))).toBe(
       'Fall block (Oct 4 – Nov 14, 2026)',
     );
+  });
+});
+
+describe('instant formatting', () => {
+  it('shows a backup taken at 5:35 PM UTC with its date and time', () => {
+    // 2026-10-03T17:35:00Z; ICU may put a narrow no-break space before PM.
+    const text = instantFormat('en-US', 'UTC').format(Date.UTC(2026, 9, 3, 17, 35));
+    expect(text.replace(/\s/g, ' ')).toBe('Oct 3, 2026, 5:35 PM');
   });
 });
