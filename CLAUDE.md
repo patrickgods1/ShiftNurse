@@ -183,7 +183,7 @@ violations of their own.
 |---|---|
 | `npm test` | `vitest run` over `packages/*/src/**/*.test.ts`, renderer tests and `apps/desktop/src/main/**/*.test.ts`. The real gate. |
 | `npm run test:watch` | Vitest in watch mode. |
-| `npm run test:coverage` | Tests with v8 coverage over `packages/*` and desktop `main`; CI's ubuntu leg posts a per-area table (`scripts/coverage-summary.mjs`) to the run summary. |
+| `npm run test:coverage` | Tests with v8 coverage over `packages/*` and desktop `main`; CI's ubuntu leg posts a per-area table (`scripts/coverage-summary.mjs`) to the run summary. Coverage scales test timeouts 3× (config sets `COVERAGE=1`; explicit ones use `slow()`); CI's macOS leg sets `SHIFTNURSE_REQUIRE_CPSAT=1`, so a missing CP-SAT runner fails the cpsat tests instead of skipping them. |
 | `npm run lint` | `biome check .` — format + lint, no writes. |
 | `npm run lint:fix` | Biome check with `--write`. |
 | `npm run format` | `biome format --write .`. |

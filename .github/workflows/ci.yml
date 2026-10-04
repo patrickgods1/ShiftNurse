@@ -6,7 +6,7 @@
 # which Biome's format check would flag in every file. Tests run on all three platforms the
 # app ships to or is developed on; on macOS and Windows `npm ci`'s postinstall fetches the
 # pinned CP-SAT runner, so the real-runner tests run there too (there is no Linux runner, and
-# they skip).
+# they skip, except on macOS, which requires it).
 name: ci
 
 on:
@@ -59,6 +59,11 @@ jobs:
       - uses: ./.github/actions/setup
       - if: runner.os != 'Linux'
         run: npm test
+        # One leg is enough to insist on the runner (a missing one would otherwise skip the
+        # real-runner suites and pass green); macOS fetches it on every run, and the rest still
+        # skip rather than fail if a download flakes.
+        env:
+          SHIFTNURSE_REQUIRE_CPSAT: ${{ matrix.os == 'macos-15' && '1' || '' }}
       # Coverage once, on the fastest runner; the summary lands on the run's page.
       - if: runner.os == 'Linux'
         shell: bash

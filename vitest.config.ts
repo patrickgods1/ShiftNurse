@@ -1,7 +1,16 @@
 import { defineConfig } from 'vitest/config';
 
+// v8 instrumentation slows the solver-heavy tests 2-3x, so a coverage run gets longer limits (a
+// plain `npm test` still fails a hang fast). Detected from the flag rather than set in the npm
+// script, because `VAR=1 cmd` does not work in Windows' cmd; the env var lets the per-test
+// `slow()` helpers see it in the workers, which inherit the environment.
+if (process.argv.includes('--coverage')) process.env.COVERAGE = '1';
+const SCALE = process.env.COVERAGE ? 3 : 1;
+
 export default defineConfig({
   test: {
+    testTimeout: 5_000 * SCALE,
+    hookTimeout: 10_000 * SCALE,
     include: [
       'packages/*/src/**/*.test.ts',
       'apps/desktop/src/renderer/src/**/*.test.{ts,tsx}',
