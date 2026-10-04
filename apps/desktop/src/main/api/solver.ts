@@ -224,6 +224,7 @@ export function createSolverJobs(
     spawnWorker,
     scoreDraft: scoreDraftObjective,
     cores: availableParallelism,
+    changeCount: () => (db.$client.prepare('select total_changes() as n').get() as { n: number }).n,
   });
 }
 

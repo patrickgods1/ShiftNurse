@@ -87,6 +87,11 @@ export interface SolverJobsDeps {
   scoreDraft?(input: SolveInput): number | undefined;
   /** Logical CPUs available to the batch. */
   cores(): number;
+  /**
+   * A counter that moves whenever the database may have changed (the connection's
+   * `total_changes()`); absent, every freshness check reloads the input.
+   */
+  changeCount?(): number;
   now?: () => number;
 }
 
@@ -104,6 +109,8 @@ interface Batch {
   runs: Run[];
   input: SolveInput;
   fingerprint: string;
+  /** `changeCount` when the input last matched `fingerprint`; the same count means no write since. */
+  verifiedAt?: number;
   workerData: Omit<SolverWorkerData, 'options' | 'cancelFlag'> & {
     options: Omit<SolverWorkerData['options'], 'seed'>;
   };
@@ -166,6 +173,9 @@ export class SolverJobs {
     const offset = this.offsetAfter(periodId, options.continueAfter);
     if (previous) this.drop(previous);
 
+    // Read before loading: a write can only make the count higher than the load saw, which costs
+    // one needless recheck, never a missed change.
+    const verifiedAt = this.deps.changeCount?.();
     const input = this.deps.loadInput(periodId);
     const count = clampCount(options.count);
     const baseSeed = options.seed ?? seedFor(periodId);
@@ -198,6 +208,7 @@ export class SolverJobs {
       })),
       input,
       fingerprint: inputFingerprint(input),
+      ...(verifiedAt !== undefined ? { verifiedAt } : {}),
       workerData: {
         input,
         solverId: choice.id,
@@ -363,6 +374,13 @@ export class SolverJobs {
 
   private checkFresh(batch: Batch): void {
     if (batch.status.stale) return;
+    // Hashing the whole input is main-thread work the renderer's poll would repeat every few
+    // hundred ms. This process's connection is the only writer, and `total_changes()` counts every
+    // row it has inserted, updated or deleted since it opened, so an unchanged count means the
+    // database is as it was when the fingerprint last matched. A restore relaunches the app (a new
+    // connection), so a count never carries across a file swap.
+    const changes = this.deps.changeCount?.();
+    if (changes !== undefined && changes === batch.verifiedAt) return;
     let reason: string | undefined;
     try {
       const input = this.deps.loadInput(batch.status.periodId);
@@ -373,6 +391,7 @@ export class SolverJobs {
         // The grid may have changed (a hand edit, a saved variation) without making the batch
         // stale: its score is what the variations are measured against.
         this.scoreDraftInto(batch, input);
+        if (changes !== undefined) batch.verifiedAt = changes;
       }
     } catch (err) {
       reason = err instanceof Error ? err.message : String(err);

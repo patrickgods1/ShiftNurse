@@ -72,9 +72,16 @@ function input(): SolveInput {
   } as unknown as SolveInput;
 }
 
+let loads: number;
+let changes: number | undefined;
+
 function jobs(cores = 3) {
   return new SolverJobs({
-    loadInput: () => input(),
+    loadInput: () => {
+      loads++;
+      return input();
+    },
+    ...(changes !== undefined ? { changeCount: () => changes! } : {}),
     settings: () => ({ solverId: 'sa-lns' }),
     availability: () => [{ id: 'sa-lns', available: true }],
     spawnWorker: (data) => {
@@ -90,6 +97,8 @@ function jobs(cores = 3) {
 beforeEach(() => {
   workers = [];
   inputVersion = 0;
+  loads = 0;
+  changes = undefined;
 });
 
 describe('a batch of variations', () => {
@@ -263,11 +272,19 @@ describe('a worker that dies with its CP-SAT runner still going', () => {
     const stand = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e6)'], {
       stdio: 'ignore',
     });
-    const j = jobs(3);
-    j.start('period-1', { count: 1, seed: 100 });
-    workers[0]!.emit('message', { type: 'runner', pid: stand.pid! } satisfies SolverWorkerMessage);
-    workers[0]!.emit('error', new Error('worker blew up'));
-    expect(await exited(stand.pid!)).toBe(true);
+    try {
+      const j = jobs(3);
+      j.start('period-1', { count: 1, seed: 100 });
+      workers[0]!.emit('message', {
+        type: 'runner',
+        pid: stand.pid!,
+      } satisfies SolverWorkerMessage);
+      workers[0]!.emit('error', new Error('worker blew up'));
+      expect(await exited(stand.pid!)).toBe(true);
+    } finally {
+      // A failed or timed-out run must not leave the stand-in running on the developer's machine.
+      stand.kill();
+    }
   });
 });
 
@@ -288,5 +305,42 @@ describe('the estimate', () => {
     workers[0]!.finish(500);
     expect(j.estimate('period-1', { count: 1, maxIterations: 20_000 }).basis).toBe('observed');
     expect(j.estimate('period-1', { count: 1 }).basis).toBe('rough');
+  });
+});
+
+describe('checking candidates against the database on every poll', () => {
+  it('does not reload and re-hash the period while nothing has been written', () => {
+    changes = 10;
+    const j = jobs(3);
+    const batch = j.start('period-1', { count: 1 });
+    workers[0]!.finish(10);
+    const afterStart = loads;
+    j.current('period-1');
+    j.current('period-1');
+    j.candidate(batch.id, 0);
+    expect(loads).toBe(afterStart);
+  });
+
+  it('rechecks after a write and keeps candidates when the write left the input as it was', () => {
+    changes = 10;
+    const j = jobs(3);
+    const batch = j.start('period-1', { count: 1 });
+    workers[0]!.finish(10);
+    const afterStart = loads;
+    changes = 11; // an audit row, say: nothing the solver reads
+    expect(j.current('period-1')!.stale).toBeUndefined();
+    expect(loads).toBe(afterStart + 1);
+    j.candidate(batch.id, 0);
+    expect(loads).toBe(afterStart + 1);
+  });
+
+  it('drops candidates after a write that changed what the solver reads', () => {
+    changes = 10;
+    const j = jobs(3);
+    j.start('period-1', { count: 1 });
+    workers[0]!.finish(10);
+    inputVersion = 1;
+    changes = 11;
+    expect(j.current('period-1')!.stale).toMatch(/changed since they were generated/);
   });
 });
