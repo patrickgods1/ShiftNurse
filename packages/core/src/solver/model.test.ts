@@ -14,6 +14,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { NURSE_ROLES } from '../acuity/demand.js';
 import type { Assignment, Nurse, NurseRole, Preference } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
+import { ALL_RULES, evaluateSchedule } from '../rules/registry.js';
+import { ScheduleView } from '../schedule/view.js';
 import {
   assign,
   CRED_ACLS,
@@ -562,5 +564,78 @@ describe('charge nurses', () => {
     const day = model.dateIdx.get(isoDate('2026-01-05'))!;
     expect(model.roster(model.shiftAt(day, DAY_12)).map((a) => a.isCharge)).toEqual([true]);
     expect(model.roster(model.shiftAt(day, MID_8)).map((a) => a.isCharge)).toEqual([false]);
+  });
+});
+
+/**
+ * A soft rule the solver prices is judged twice: by the rule engine, which the grid shows, and
+ * by `SolverModel`'s own incremental counter, which Generate optimises. Hand-worked cases above
+ * pin each price; this checks the two counts agree on random schedules, and that every soft rule
+ * has been accounted for — so a new soft rule cannot ship priced by convention alone.
+ */
+describe('soft rules priced the way the grid judges them', () => {
+  /** How the solver counts each natively soft rule, or why it needs no counter of its own. */
+  const PRICED: Record<string, ((m: SolverModel) => number) | string> = {
+    'recovery-after-nights': (m) => m.recoveryBreaches(),
+    'avoid-pending-time-off': (m) => m.pendingBreaches(),
+    'holiday-rotation': (m) => m.holidayBreaches(),
+    'incompatible-staff-cap':
+      'priced per person-hour over floor stretches; checked against the rule in the walk above',
+  };
+
+  it('accounts for every soft rule in the registry', () => {
+    const soft = ALL_RULES.filter((r) => r.severity === 'soft').map((r) => r.id);
+    expect(soft.filter((id) => !(id in PRICED))).toEqual([]);
+  });
+
+  function engineCount(input: SolveInput, model: SolverModel, ruleId: string): number {
+    const view = new ScheduleView({
+      period: input.period,
+      assignments: model.assignments(),
+      priorAssignments: input.priorAssignments,
+      nurses: model.nurses,
+      shiftTypes: model.shiftTypes,
+    });
+    return evaluateSchedule(view, input.ruleSet, model.ctx).violations.filter(
+      (v) => v.ruleId === ruleId && v.severity === 'soft',
+    ).length;
+  }
+
+  it('counts the same breaches as the rule engine on random schedules', () => {
+    // Agreement on all-zero schedules would prove nothing: every rule must fire somewhere.
+    const seen = new Map<string, number>();
+    for (const options of [
+      {},
+      { pending: true },
+      { holidays: true },
+      { pending: true, holidays: true },
+    ]) {
+      for (let seed = 1; seed <= 12; seed++) {
+        resetFixtureCounters();
+        const input = scenario(options);
+        const model = new SolverModel(input);
+        const rng = new Rng(seed);
+        for (let step = 0; step < 60; step++) {
+          const n = rng.nextInt(0, model.nurses.length - 1);
+          const shift = model.shifts[rng.nextInt(0, model.shifts.length - 1)]!;
+          const mine = model.timeline(n).filter((a) => !a.isLocked);
+          if (mine.length > 0 && rng.chance(0.3)) {
+            model.remove(rng.pick(mine));
+            continue;
+          }
+          const candidate = model.make(n, shift);
+          if (model.canAdd(n, candidate)) model.add(candidate);
+        }
+        for (const [ruleId, count] of Object.entries(PRICED)) {
+          if (typeof count === 'string') continue;
+          const judged = engineCount(input, model, ruleId);
+          expect(count(model), `${ruleId} ${JSON.stringify(options)} seed ${seed}`).toBe(judged);
+          seen.set(ruleId, (seen.get(ruleId) ?? 0) + judged);
+        }
+      }
+    }
+    for (const [ruleId, count] of Object.entries(PRICED)) {
+      if (typeof count !== 'string') expect(seen.get(ruleId), ruleId).toBeGreaterThan(0);
+    }
   });
 });
