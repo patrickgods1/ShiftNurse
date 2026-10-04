@@ -218,18 +218,33 @@ const countsAsHoliday = (view: AssignmentView, ctx: CounterContext): boolean =>
  * assignments only (`schedule.assignmentsFor`) — see the module header for why the lookback
  * tail is deliberately excluded.
  */
+function groupByNurse<T extends { nurseId: Id }>(rows: readonly T[]): Map<Id, T[]> {
+  const out = new Map<Id, T[]>();
+  for (const row of rows) {
+    const list = out.get(row.nurseId);
+    if (list) list.push(row);
+    else out.set(row.nurseId, [row]);
+  }
+  return out;
+}
+
 export function deriveCounters(
   schedule: ScheduleView,
   ctx: CounterContext,
+  /** Only these nurses: a simulated fix re-derives the few it touched and keeps the rest. */
+  only?: ReadonlySet<Id>,
 ): Map<Id, BurdenCounters> {
   const result = new Map<Id, BurdenCounters>();
   const periodDays = schedule.dates.length;
-  const timeOff = ctx.timeOff ?? [];
+  // Grouped once: filtering every preference and request per nurse made this quadratic.
+  const prefsByNurse = groupByNurse(ctx.preferences);
+  const timeOffByNurse = groupByNurse(ctx.timeOff ?? []);
 
   for (const [nurseId, nurse] of schedule.nursesById) {
+    if (only !== undefined && !only.has(nurseId)) continue;
     const views = schedule.assignmentsFor(nurseId);
     const workedViews = views.filter(isWorked);
-    const nursePrefs = ctx.preferences.filter((p) => p.nurseId === nurseId);
+    const nursePrefs = prefsByNurse.get(nurseId) ?? [];
 
     let nightShifts = 0;
     let holidaysWorked = 0;
@@ -254,8 +269,7 @@ export function deriveCounters(
 
     let requestsApproved = 0;
     let requestsDenied = 0;
-    for (const request of timeOff) {
-      if (request.nurseId !== nurseId) continue;
+    for (const request of timeOffByNurse.get(nurseId) ?? []) {
       if (!dateInRange(request.startDate, schedule.period.startDate, schedule.period.endDate)) {
         continue;
       }

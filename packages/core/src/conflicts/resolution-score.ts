@@ -93,7 +93,7 @@ export function simulate(
   weights: ObjectiveWeights,
   known: SimState = before,
 ): Simulated {
-  const after = engine.state(change.assignments, change.timeOff);
+  const after = engine.state(change.assignments, change.timeOff, before);
 
   const wasThere = collectViolations(before, change);
   if (known !== before) {
