@@ -26,6 +26,11 @@ export interface Unit {
   payPeriodAnchor: IsoDate;
   /** How the unit keeps its ratios at all times. Absent: the charge nurse counts, no breaks. */
   ratioStaffing?: RatioStaffing;
+  /**
+   * Days before a period starts by which its schedule must be posted (many contracts say two to
+   * four weeks). Absent: no notice rule, and publishing is never flagged as late.
+   */
+  postingLeadDays?: number;
 }
 
 /**

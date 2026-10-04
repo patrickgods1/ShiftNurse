@@ -320,3 +320,25 @@ describe('how the unit keeps its ratios', () => {
     expect(getUnit(handle.db, seeded.unitId)!.ratioStaffing!.breakMinutesPerNurse).toBe(0);
   });
 });
+
+describe("the unit's schedule posting notice", () => {
+  const setLead = (postingLeadDays: number | null) =>
+    transact(handle.db, (tx) => updateUnit(tx, seeded.unitId, { postingLeadDays }, ACTOR));
+
+  it('keeps a 14-day notice on the unit and clears it again', () => {
+    expect(getUnit(handle.db, seeded.unitId)!.postingLeadDays).toBeUndefined();
+    setLead(14);
+    expect(getUnit(handle.db, seeded.unitId)!.postingLeadDays).toBe(14);
+    const [latest] = auditHistoryFor(handle.db, 'unit', seeded.unitId);
+    expect(latest).toMatchObject({ action: 'update', after: { postingLeadDays: 14 } });
+    setLead(null);
+    expect(getUnit(handle.db, seeded.unitId)!.postingLeadDays).toBeUndefined();
+  });
+
+  it('refuses a notice that is not a whole number of days up to 90', () => {
+    expect(() => setLead(-1)).toThrow('whole number of days from 0 to 90');
+    expect(() => setLead(10.5)).toThrow('whole number of days from 0 to 90');
+    expect(() => setLead(91)).toThrow('whole number of days from 0 to 90');
+    expect(getUnit(handle.db, seeded.unitId)!.postingLeadDays).toBeUndefined();
+  });
+});

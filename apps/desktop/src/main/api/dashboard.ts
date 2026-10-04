@@ -67,6 +67,9 @@ export function dashboardSummary(db: DbLike, unitId: Id): DashboardSummary {
     activeNurses: activeNurses.length,
     currentDraft,
     draftShifts: currentDraft ? listAssignmentsForPeriod(db, currentDraft.id).length : 0,
+    ...(currentDraft && unit.postingLeadDays !== undefined
+      ? { postBy: addDays(currentDraft.startDate, -unit.postingLeadDays) }
+      : {}),
     latestPublished: latestPublished(periods),
     pendingTimeOff: listTimeOffForUnit(db, unitId, 'pending').length,
     openCallOffs: listCallOffsForUnit(db, unitId, { status: 'open' }).length,

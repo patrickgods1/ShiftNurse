@@ -46,6 +46,11 @@ const KINDS: { kind: ComplianceAlertKind; title: string; hint: string }[] = [
     hint: 'Nurses scheduled noticeably over or under their contracted hours.',
   },
   {
+    kind: 'late_posting',
+    title: 'Late posting',
+    hint: "Publishing today would give staff less notice than the unit's posting rule. Publish sooner, or change the rule in Settings › Unit.",
+  },
+  {
     kind: 'ratio_risk',
     title: 'No slack on the ratio',
     hint: 'Shifts staffed exactly at the patient ratio: one call-off breaks it. Routine on a tight unit.',

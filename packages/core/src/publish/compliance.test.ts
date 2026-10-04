@@ -308,3 +308,38 @@ describe('complianceAlerts', () => {
     expect(overtime(true)).toMatchObject([{ nurseId: 'n1', hours: 48 }]);
   });
 });
+
+describe('late posting', () => {
+  // The period starts Sunday 2026-11-01; with 14 days' notice the schedule is due Sunday 2026-10-18.
+  const november = () =>
+    scenario({
+      nurses: [makeNurse({ id: 'n1', contractedHoursPerPeriod: 36 })],
+      startDate: isoDate('2026-11-01'),
+      endDate: isoDate('2026-11-14'),
+    });
+  const late = (publishDate: string, leadDays = 14) =>
+    alertsFor(november(), { posting: { leadDays, publishDate: isoDate(publishDate) } }).filter(
+      (a) => a.kind === 'late_posting',
+    );
+
+  it('says nothing when the schedule goes out on the last day of the notice', () => {
+    expect(late('2026-10-18')).toEqual([]);
+  });
+
+  it('warns that a schedule posted a day after the notice date is a day late', () => {
+    const alerts = late('2026-10-19');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ severity: 'warning', assignmentIds: [] });
+    expect(alerts[0]!.message).toContain("posted 1 day later than the unit's 14-day notice");
+  });
+
+  it('counts several days late in the plural', () => {
+    expect(late('2026-10-21')[0]!.message).toContain(
+      "posted 3 days later than the unit's 14-day notice",
+    );
+  });
+
+  it('does not check a unit with no posting notice', () => {
+    expect(alertsFor(november()).filter((a) => a.kind === 'late_posting')).toEqual([]);
+  });
+});

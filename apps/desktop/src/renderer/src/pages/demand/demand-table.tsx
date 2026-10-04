@@ -4,7 +4,7 @@
  * the coverage/ratio settings pages to answer.
  */
 
-import type { BindingConstraint, ShiftDemand, ShiftType } from '@shiftnurse/core';
+import type { BindingConstraint, RoleDemand, ShiftDemand, ShiftType } from '@shiftnurse/core';
 import { NURSE_ROLES } from '@shiftnurse/core';
 import { LabelWithTip } from '../../components/field-help.js';
 import { formatDateWithWeekday } from '../../format.js';
@@ -112,6 +112,9 @@ export function DemandTable({ demand, shiftTypesById }: DemandTableProps) {
                         <span className="rounded bg-bg px-1.5 py-0.5 text-xs text-text-muted">
                           {CONSTRAINT_LABEL[roleDemand.bindingConstraint]}
                         </span>
+                        {roleDemand.bindingConstraint !== 'coverage_floor' ? (
+                          <RatioMakeUp demand={roleDemand} />
+                        ) : null}
                       </td>
                     );
                   })
@@ -128,5 +131,18 @@ export function DemandTable({ demand, shiftTypesById }: DemandTableProps) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** Why the ratio asks for what it does, when it asks for more than the bedside nurses alone. */
+function RatioMakeUp({ demand }: { demand: RoleDemand }) {
+  const parts = [`${demand.ratioBedside} at the bedside`];
+  if (demand.chargeWithoutPatients > 0) parts.push('charge without patients');
+  if (demand.breakRelief > 0) parts.push(`${demand.breakRelief} break relief`);
+  if (parts.length === 1) return null;
+  return (
+    <span className="mt-0.5 block text-xs text-text-muted">
+      Ratio {demand.ratioDerived} = {parts.join(' + ')}
+    </span>
   );
 }

@@ -80,6 +80,8 @@ export const unit = sqliteTable('unit', {
     .default(true),
   breakMinutesPerNurse: integer('break_minutes_per_nurse').notNull().default(0),
   chargeCoversBreaks: integer('charge_covers_breaks', { mode: 'boolean' }).notNull().default(false),
+  // Days of notice the unit owes staff before a schedule starts; null means no rule.
+  postingLeadDays: integer('posting_lead_days'),
 });
 
 export const shiftType = sqliteTable(

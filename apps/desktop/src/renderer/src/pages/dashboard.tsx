@@ -39,8 +39,11 @@ function plural(n: number, one: string, many: string): string {
 function PeriodCard({
   title,
   period,
+  note,
 }: {
   title: string;
+  /** A line under the status, e.g. when the schedule is due. */
+  note?: string | undefined;
   period: { name: string; startDate: string; endDate: string; status: string } | undefined;
 }) {
   return (
@@ -52,6 +55,11 @@ function PeriodCard({
         <>
           <p className="mt-1 font-medium text-text">{periodLabel(period)}</p>
           <p className="mt-1 text-xs uppercase tracking-wide text-text-muted">{period.status}</p>
+          {note ? (
+            <p className="mt-1 text-sm text-text-muted" data-testid="post-by">
+              {note}
+            </p>
+          ) : null}
         </>
       )}
     </div>
@@ -296,7 +304,15 @@ export default function DashboardPage() {
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-4">
-        <PeriodCard title="Current draft" period={summary.currentDraft} />
+        <PeriodCard
+          title="Current draft"
+          period={summary.currentDraft}
+          note={
+            summary.postBy
+              ? `Next schedule should be posted by ${formatDate(summary.postBy)}`
+              : undefined
+          }
+        />
         <PeriodCard title="Latest published" period={summary.latestPublished} />
       </div>
 

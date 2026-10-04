@@ -29,7 +29,12 @@ import { leaveHoursBetween, type PaidLeaveCredit } from '../rules/paid-leave.js'
 import { nurseName } from '../rules/types.js';
 import type { ScheduleView } from '../schedule/view.js';
 
-export type ComplianceAlertKind = 'credential_expiry' | 'hours_drift' | 'overtime' | 'ratio_risk';
+export type ComplianceAlertKind =
+  | 'credential_expiry'
+  | 'hours_drift'
+  | 'overtime'
+  | 'ratio_risk'
+  | 'late_posting';
 export type ComplianceSeverity = 'warning' | 'critical';
 
 export interface ComplianceAlert {
@@ -75,6 +80,11 @@ export interface ComplianceInput {
   paidLeaveCountsTowardHours?: boolean;
   /** The max-hours rule's setting; paid leave counts toward overtime only when true. */
   paidLeaveCountsTowardOvertime?: boolean;
+  /**
+   * The unit's notice rule and the day the schedule would go out. The caller supplies the date:
+   * core never reads the clock. Absent means no check (no notice rule, or already published).
+   */
+  posting?: { leadDays: number; publishDate: IsoDate };
 }
 
 const SEVERITY_ORDER: Record<ComplianceSeverity, number> = { critical: 0, warning: 1 };
@@ -83,6 +93,7 @@ const KIND_ORDER: Record<ComplianceAlertKind, number> = {
   ratio_risk: 1,
   overtime: 2,
   hours_drift: 3,
+  late_posting: 4,
 };
 
 /** How far past the period's end a lapsing credential is still worth a warning. */
@@ -253,6 +264,22 @@ function ratioRisk(input: ComplianceInput): ComplianceAlert[] {
   return alerts;
 }
 
+function latePosting(input: ComplianceInput): ComplianceAlert[] {
+  if (!input.posting) return [];
+  const { leadDays, publishDate } = input.posting;
+  // Days of notice staff actually get is the gap to the first day; a day short of the lead is late.
+  const daysLate = leadDays - daysBetween(publishDate, input.schedule.period.startDate);
+  if (daysLate <= 0) return [];
+  return [
+    {
+      kind: 'late_posting',
+      severity: 'warning',
+      assignmentIds: [],
+      message: `Published ${describeDate(publishDate)}, this schedule is posted ${daysLate} day${daysLate === 1 ? '' : 's'} later than the unit's ${leadDays}-day notice`,
+    },
+  ];
+}
+
 /** Every alert for the period, critical first, then by kind, then by date and nurse. */
 export function complianceAlerts(input: ComplianceInput): ComplianceAlert[] {
   const alerts = [
@@ -260,6 +287,7 @@ export function complianceAlerts(input: ComplianceInput): ComplianceAlert[] {
     ...hoursDrift(input),
     ...overtime(input),
     ...ratioRisk(input),
+    ...latePosting(input),
   ];
   return alerts.sort(
     (a, b) =>

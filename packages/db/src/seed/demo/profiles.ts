@@ -387,7 +387,17 @@ const icuRoster: DemoRosterRow[] = [
 
 export const CA_ICU: DemoProfile = {
   id: 'ca-icu',
-  unit: { name: '3 West Medical-Surgical ICU', unitType: 'ICU' },
+  unit: {
+    name: '3 West Medical-Surgical ICU',
+    unitType: 'ICU',
+    // Title 22 counts a charge nurse toward the ratio only while caring for patients, and an ICU
+    // charge nurse is kept free of them. Breaks are left at zero: the roster is sized to the floors.
+    ratioStaffing: {
+      chargeNurseTakesPatients: false,
+      breakMinutesPerNurse: 0,
+      chargeCoversBreaks: false,
+    },
+  },
   scheduleWeeks: 6,
   shifts: [
     {

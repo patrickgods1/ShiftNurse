@@ -58,6 +58,7 @@ export function createUnit(db: DbLike, input: Omit<Unit, 'id'>, actor: string): 
   const id = ids.unit();
   const { ratioStaffing, ...fields } = input;
   validateRatioStaffing(ratioStaffing);
+  validatePostingLead(fields.postingLeadDays);
   const row: typeof unitTable.$inferInsert = {
     id,
     ...fields,
@@ -75,6 +76,8 @@ export interface UnitPatch {
   payPeriodDays?: number;
   payPeriodAnchor?: IsoDate;
   ratioStaffing?: RatioStaffing;
+  /** Null clears the notice rule. */
+  postingLeadDays?: number | null;
 }
 
 const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
@@ -83,6 +86,7 @@ const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
   payPeriodDays: true,
   payPeriodAnchor: true,
   ratioStaffing: true,
+  postingLeadDays: true,
 };
 
 /** Break minutes are a whole number a shift can hold; anything else is a typing slip. */
@@ -91,6 +95,12 @@ function validateRatioStaffing(staffing: RatioStaffing | undefined): void {
   const minutes = staffing.breakMinutesPerNurse;
   if (!Number.isInteger(minutes) || minutes < 0 || minutes > 240)
     throw new Error('Break minutes per nurse must be a whole number from 0 to 240');
+}
+
+function validatePostingLead(lead: number | null | undefined): void {
+  if (lead === undefined || lead === null) return;
+  if (!Number.isInteger(lead) || lead < 0 || lead > 90)
+    throw new Error('Posting notice must be a whole number of days from 0 to 90');
 }
 
 export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string): Unit {
@@ -114,6 +124,7 @@ export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string):
     notFound: `Unit ${id} not found`,
     validate: (values) => {
       validateRatioStaffing(values.ratioStaffing);
+      validatePostingLead(values.postingLeadDays);
       if (values.name !== undefined && values.name.trim() === '')
         throw new Error('A unit needs a name');
     },

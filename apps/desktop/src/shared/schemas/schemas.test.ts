@@ -48,3 +48,40 @@ describe('a pay-rate edit arriving over IPC', () => {
     expect(update.safeParse(['rate-1', {}, 'extra']).success).toBe(false);
   });
 });
+
+describe('a unit edit arriving over IPC', () => {
+  const update = API_SCHEMAS.units.update;
+  const staffing = {
+    chargeNurseTakesPatients: false,
+    breakMinutesPerNurse: 60,
+    chargeCoversBreaks: true,
+  };
+
+  it('accepts how the unit keeps its ratios', () => {
+    expect(update.safeParse(['unit-1', { ratioStaffing: staffing }]).success).toBe(true);
+  });
+
+  it('refuses break minutes that are not whole, or a day of breaks', () => {
+    const minutes = (breakMinutesPerNurse: number) =>
+      update.safeParse(['unit-1', { ratioStaffing: { ...staffing, breakMinutesPerNurse } }]);
+    expect(minutes(22.5).success).toBe(false);
+    expect(minutes(-5).success).toBe(false);
+    expect(minutes(241).success).toBe(false);
+  });
+
+  it('refuses a ratio setting it does not know', () => {
+    expect(
+      update.safeParse(['unit-1', { ratioStaffing: { ...staffing, breakMinutes: 30 } }]).success,
+    ).toBe(false);
+  });
+
+  it('accepts a posting notice, and null to clear it', () => {
+    expect(update.safeParse(['unit-1', { postingLeadDays: 14 }]).success).toBe(true);
+    expect(update.safeParse(['unit-1', { postingLeadDays: null }]).success).toBe(true);
+  });
+
+  it('refuses a posting notice that is not whole days up to 90', () => {
+    for (const days of [-1, 10.5, 91])
+      expect(update.safeParse(['unit-1', { postingLeadDays: days }]).success).toBe(false);
+  });
+});

@@ -21,6 +21,7 @@ import {
   resolveConfigs,
   type SchedulePeriod,
   type ScheduleView,
+  today,
 } from '@shiftnurse/core';
 import {
   type DbLike,
@@ -56,7 +57,14 @@ export function alertsForView(
   for (const c of credits) {
     paidLeaveByNurse.set(c.nurseId, [...(paidLeaveByNurse.get(c.nurseId) ?? []), c]);
   }
+  // Only an unpublished period is still to be posted; a published one was posted when it was
+  // published, and judging it by today's date would call every old schedule late.
+  const posting =
+    unit.postingLeadDays !== undefined && period.status === 'draft'
+      ? { leadDays: unit.postingLeadDays, publishDate: today() }
+      : undefined;
   return complianceAlerts({
+    ...(posting ? { posting } : {}),
     paidLeaveByNurse,
     paidLeaveCountsTowardHours: fte.paidLeaveCountsTowardHours,
     paidLeaveCountsTowardOvertime: params.paidLeaveCountsTowardOvertime,

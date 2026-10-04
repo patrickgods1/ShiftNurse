@@ -8,8 +8,10 @@ import type { DashboardSummary, ExpiringCredentialView } from '@shared/api.js';
 import {
   addDays,
   type Credential,
+  type IsoDate,
   type Nurse,
   type NurseCredential,
+  type SchedulePeriod,
   today,
   type Unit,
 } from '@shiftnurse/core';
@@ -98,5 +100,35 @@ describe('credentials on the dashboard', () => {
       await screen.findByText('No credentials have lapsed or expire in the next 90 days.'),
     ).toBeTruthy();
     expect(screen.getByText('0 lapsed · 0 within 30 days')).toBeTruthy();
+  });
+});
+
+describe('the posting notice on the dashboard', () => {
+  const draft = {
+    id: 'p1',
+    unitId: 'unit-1',
+    name: 'November',
+    startDate: '2026-11-01',
+    endDate: '2026-11-14',
+    status: 'draft',
+  } as SchedulePeriod;
+
+  it('says when the next schedule should be posted', async () => {
+    bridge.respond(
+      'dashboard',
+      'summary',
+      summary({ currentDraft: draft, postBy: '2026-10-18' as IsoDate }),
+    );
+    renderWithApp(<DashboardPage />, { unit });
+    expect((await screen.findByTestId('post-by')).textContent).toBe(
+      'Next schedule should be posted by Oct 18, 2026',
+    );
+  });
+
+  it('says nothing about posting when the unit has no notice rule', async () => {
+    bridge.respond('dashboard', 'summary', summary({ currentDraft: draft }));
+    renderWithApp(<DashboardPage />, { unit });
+    await screen.findByText('Current draft');
+    expect(screen.queryByTestId('post-by')).toBeNull();
   });
 });

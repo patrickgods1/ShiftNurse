@@ -68,3 +68,21 @@ export const none = z.tuple([]);
  * a nurse's phone number lost on save, with nothing to say why.
  */
 export const object = z.strictObject;
+
+/** How a unit keeps its ratios at all times; minutes are a whole number a shift can hold. */
+export const ratioStaffing = z.strictObject({
+  chargeNurseTakesPatients: z.boolean(),
+  breakMinutesPerNurse: z
+    .number()
+    .int('must be a whole number')
+    .min(0, 'must be zero or more')
+    .max(240, 'must be 240 or fewer'),
+  chargeCoversBreaks: z.boolean(),
+});
+
+/** Days of notice before a period starts by which its schedule must be posted. */
+export const postingLeadDays = z
+  .number()
+  .int('must be a whole number')
+  .min(0, 'must be zero or more')
+  .max(90, 'must be 90 or fewer');

@@ -8,7 +8,9 @@ import {
   money,
   none,
   object,
+  postingLeadDays,
   type ResourceSchemas,
+  ratioStaffing,
   text,
 } from './primitives.js';
 
@@ -18,6 +20,8 @@ const unitInput = object({
   unitType: text,
   payPeriodDays: z.number().int('must be a whole number').min(1, 'must be 1 or more'),
   payPeriodAnchor: isoDate,
+  ratioStaffing: ratioStaffing.optional(),
+  postingLeadDays: postingLeadDays.optional(),
 });
 
 const setupStep = z.enum([

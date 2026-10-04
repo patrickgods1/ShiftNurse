@@ -104,8 +104,11 @@ export interface DemoSummary {
 }
 
 export type UnitInput = Omit<Unit, 'id'>;
-/** A unit's name and type. Its pay-period calendar is fixed once hours have been counted in it. */
-export type UnitPatch = Partial<Pick<Unit, 'name' | 'unitType'>>;
+/** A unit's name, type and ratio staffing. Its pay-period calendar is fixed once hours have been counted in it. */
+export type UnitPatch = Partial<Pick<Unit, 'name' | 'unitType' | 'ratioStaffing'>> & {
+  /** `null` clears the notice rule. */
+  postingLeadDays?: number | null;
+};
 
 export interface AppInfo {
   version: string;
@@ -154,6 +157,8 @@ export interface DashboardSummary {
   currentDraft: SchedulePeriod | undefined;
   /** Shifts on the current draft: none means it still needs generating. */
   draftShifts: number;
+  /** The last day to post the current draft under the unit's notice rule; absent without one. */
+  postBy?: IsoDate;
   latestPublished: SchedulePeriod | undefined;
   pendingTimeOff: number;
   openCallOffs: number;

@@ -62,6 +62,7 @@ export function toUnit(r: typeof s.unit.$inferSelect): Unit {
       breakMinutesPerNurse: r.breakMinutesPerNurse,
       chargeCoversBreaks: r.chargeCoversBreaks,
     },
+    ...(r.postingLeadDays === null ? {} : { postingLeadDays: r.postingLeadDays }),
   };
 }
 
