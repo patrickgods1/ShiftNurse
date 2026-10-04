@@ -101,9 +101,9 @@ export function hardRuleIdsByScope(ruleSet: RuleSet, scope: RuleScope): string[]
   return ruleIdsByScope(ruleSet, scope, { hardOnly: true });
 }
 
-/** A rule set enabling every rule at its shipped defaults. The starting point for a new unit. */
 /**
- * The rules a new unit starts from — a template, not a saved version: `saveRuleSet` stamps the
+ * Every rule enabled at its shipped defaults: the rules a new unit starts from. A template, not
+ * a saved version — `saveRuleSet` stamps the
  * real time when one is saved, so `createdAt` here defaults to 0 instead of reading the clock,
  * which kept every fixture built from it different from run to run.
  */

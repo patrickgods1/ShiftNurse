@@ -15,7 +15,7 @@ import type { IsoDate } from '../domain/time.js';
 import { deriveCounters } from '../fairness/ledger.js';
 import { scoreFairness } from '../fairness/score.js';
 import { evaluateSchedule } from '../rules/registry.js';
-import type { Violation } from '../rules/types.js';
+import { detailNumber, detailString, type Violation } from '../rules/types.js';
 import { ScheduleView } from '../schedule/view.js';
 import { digestSchedule } from './digest.js';
 import { SolverModel } from './model.js';
@@ -94,16 +94,15 @@ function unfilledFrom(violations: readonly Violation[]): UnfilledSlot[] {
   const out: UnfilledSlot[] = [];
   for (const v of violations) {
     if (v.code !== 'understaffed' && v.code !== 'ratio_breach') continue;
-    const d = v.details ?? {};
     const date = v.dates[0];
     if (!date) continue;
     out.push({
       date: date as IsoDate,
-      shiftTypeId: String(d.shiftTypeId ?? '') as Id,
-      role: d.role as NurseRole,
-      required: Number(d.required ?? 0),
-      staffed: Number(d.staffed ?? 0),
-      shortfall: Number(d.shortfall ?? 0),
+      shiftTypeId: detailString(v, 'shiftTypeId') as Id,
+      role: detailString(v, 'role') as NurseRole,
+      required: detailNumber(v, 'required'),
+      staffed: detailNumber(v, 'staffed'),
+      shortfall: detailNumber(v, 'shortfall'),
       standard: v.code === 'ratio_breach' ? 'ratio' : 'coverage_floor',
     });
   }

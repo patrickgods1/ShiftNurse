@@ -237,6 +237,34 @@ export function nurseName(nurse: Nurse): string {
 }
 
 /** Build a violation, defaulting the id/name/severity from the rule that raised it. */
+/**
+ * A number a rule put in `details`, for code that computes with it. Throws when it is missing
+ * or not a number: these payloads are loosely typed, and reading a renamed key as `?? 0` once
+ * turned "short 2 RNs" into a shortfall of zero — a silently wrong staffing number, which is
+ * worse than a crash. Use `detailOptional` only where the rule may legitimately omit the field.
+ */
+export function detailNumber(v: Violation, key: string): number {
+  const value = v.details?.[key];
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    throw new Error(`Violation ${v.code} from ${v.ruleId} has no number "${key}" in its details`);
+  }
+  return value;
+}
+
+/** A string a rule put in `details` — an id, a role. Throws when missing, like `detailNumber`. */
+export function detailString(v: Violation, key: string): string {
+  const value = v.details?.[key];
+  if (typeof value !== 'string') {
+    throw new Error(`Violation ${v.code} from ${v.ruleId} has no "${key}" in its details`);
+  }
+  return value;
+}
+
+/** A detail the rule may leave out (a requirement for any role has no `role`). */
+export function detailOptional<T = unknown>(v: Violation, key: string): T | undefined {
+  return v.details?.[key] as T | undefined;
+}
+
 export function violation(
   rule: Pick<Rule<never>, 'id' | 'name' | 'severity'>,
   severity: RuleSeverity,
