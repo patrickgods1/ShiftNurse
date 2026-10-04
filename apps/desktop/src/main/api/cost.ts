@@ -45,7 +45,7 @@ export function costReportForView(
 ): PeriodCostReport {
   // The period's own snapshot: the weekend definition and work week it was solved under.
   const ruleSet = ruleSetFor(db, period);
-  const cost = costSchedule(schedule, costContext(db, period.unitId, ruleSet));
+  const cost = costSchedule(schedule, costContext(db, period.unitId, ruleSet, period));
   const budget = getBudget(db, period.id);
   return {
     period,

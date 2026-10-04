@@ -15,7 +15,7 @@ import {
   type TimeOffRequest,
   type TimeOffStatus,
 } from '@shiftnurse/core';
-import { and, eq, gte, lte } from 'drizzle-orm';
+import { and, asc, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
 import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
@@ -36,13 +36,18 @@ export function listTimeOffForUnit(
   const conditions = status
     ? and(eq(nurse.unitId, unitId), eq(timeOffRequest.status, status))
     : eq(nurse.unitId, unitId);
-  return db
-    .select({ req: timeOffRequest })
-    .from(timeOffRequest)
-    .innerJoin(nurse, eq(timeOffRequest.nurseId, nurse.id))
-    .where(conditions)
-    .all()
-    .map((r) => toTimeOffRequest(r.req));
+  return (
+    db
+      .select({ req: timeOffRequest })
+      .from(timeOffRequest)
+      .innerJoin(nurse, eq(timeOffRequest.nurseId, nurse.id))
+      .where(conditions)
+      // The solver reads this list in order and must give identical schedules for identical
+      // inputs; with no ORDER BY SQLite returns rows in whatever order the query plan finds them.
+      .orderBy(asc(timeOffRequest.startDate), asc(timeOffRequest.id))
+      .all()
+      .map((r) => toTimeOffRequest(r.req))
+  );
 }
 
 export function listTimeOffForNurse(db: DbLike, nurseId: Id): TimeOffRequest[] {
@@ -70,19 +75,23 @@ export function listTimeOffOverlappingForUnit(
   start: IsoDate,
   end: IsoDate,
 ): TimeOffRequest[] {
-  return db
-    .select({ req: timeOffRequest })
-    .from(timeOffRequest)
-    .innerJoin(nurse, eq(timeOffRequest.nurseId, nurse.id))
-    .where(
-      and(
-        eq(nurse.unitId, unitId),
-        lte(timeOffRequest.startDate, end),
-        gte(timeOffRequest.endDate, start),
-      ),
-    )
-    .all()
-    .map((r) => toTimeOffRequest(r.req));
+  return (
+    db
+      .select({ req: timeOffRequest })
+      .from(timeOffRequest)
+      .innerJoin(nurse, eq(timeOffRequest.nurseId, nurse.id))
+      .where(
+        and(
+          eq(nurse.unitId, unitId),
+          lte(timeOffRequest.startDate, end),
+          gte(timeOffRequest.endDate, start),
+        ),
+      )
+      // Same order as listTimeOffForUnit, so a bounded read is the unbounded one minus rows.
+      .orderBy(asc(timeOffRequest.startDate), asc(timeOffRequest.id))
+      .all()
+      .map((r) => toTimeOffRequest(r.req))
+  );
 }
 
 /**

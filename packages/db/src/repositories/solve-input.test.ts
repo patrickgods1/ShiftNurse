@@ -6,7 +6,7 @@
  * ones the cost screen would resolve.
  */
 
-import { addDays, isoDate } from '@shiftnurse/core';
+import { addDays, isoDate, type SchedulePeriod } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { seedScenarioUnit } from '../seed/scenarios.js';
@@ -16,7 +16,8 @@ import { createIncompatibilityGroup } from './incompatibility.js';
 import { createPayRate, listPayRatesForUnit } from './pay.js';
 import { createNurse, listNursesForUnit } from './roster.js';
 import { getPeriod } from './schedule.js';
-import { loadPeriodInput } from './solve-input.js';
+import { loadPeriodInput, timeOffForPeriod, timeOffWindow } from './solve-input.js';
+import { createTimeOffRequest, listTimeOffForUnit } from './timeoff.js';
 
 const ACTOR = 'manager';
 let handle: OpenedDatabase;
@@ -137,5 +138,95 @@ describe('loadPeriodInput', () => {
     // take effect on the same day, so a reordered list would change what a shift costs.
     expect(rates.at(-1)?.id).toBe(ownRate.id);
     expect(listPayRatesForUnit(handle.db, seeded.unitId)).toEqual(rates);
+  });
+});
+
+describe('the leave a period reads', () => {
+  const march = { startDate: isoDate('2026-03-01'), endDate: isoDate('2026-03-14') };
+
+  it('reaches back a lookback and a pay period, and forward a pay period', () => {
+    // 14-day pay period: 03-01 less (14 + 14) days is 02-01; 03-14 plus 14 days is 03-28.
+    expect(timeOffWindow({ payPeriodDays: 14 }, march)).toEqual({
+      start: '2026-02-01',
+      end: '2026-03-28',
+    });
+  });
+
+  it('never shrinks the slack below a work week on a short pay period', () => {
+    // 7-day pay period: 03-01 less (14 + 7) is 02-08; 03-14 plus 7 is 03-21.
+    expect(timeOffWindow({ payPeriodDays: 7 }, march)).toEqual({
+      start: '2026-02-08',
+      end: '2026-03-21',
+    });
+    // A 5-day one still gets 7: 03-01 less 21 and 03-14 plus 7.
+    expect(timeOffWindow({ payPeriodDays: 5 }, march)).toEqual({
+      start: '2026-02-08',
+      end: '2026-03-21',
+    });
+  });
+
+  it('keeps a request from the window edge and drops one a day outside it', () => {
+    const nurseId = listNursesForUnit(handle.db, seeded.unitId)[0]!.id;
+    const ask = (start: string, end: string) =>
+      createTimeOffRequest(
+        handle.db,
+        { nurseId, startDate: isoDate(start), endDate: isoDate(end), type: 'pto' },
+        ACTOR,
+      ).id;
+    const endedBefore = ask('2026-01-25', '2026-01-31');
+    const endsOnStart = ask('2026-01-25', '2026-02-01');
+    const startsOnEnd = ask('2026-03-28', '2026-04-05');
+    const startsAfter = ask('2026-03-29', '2026-04-05');
+
+    const period = { ...march, unitId: seeded.unitId } as SchedulePeriod;
+    const ids = timeOffForPeriod(handle.db, { payPeriodDays: 14 }, period).map((r) => r.id);
+
+    expect(ids).not.toContain(endedBefore);
+    expect(ids).toContain(endsOnStart);
+    expect(ids).toContain(startsOnEnd);
+    expect(ids).not.toContain(startsAfter);
+  });
+
+  it('hands the solver a long paid leave that straddles the window start, whole', () => {
+    const period = getPeriod(handle.db, seeded.draftPeriodId)!;
+    const unit = listNursesForUnit(handle.db, seeded.unitId)[0]!;
+    const { start } = timeOffWindow({ payPeriodDays: 14 }, period);
+    const leave = createTimeOffRequest(
+      handle.db,
+      {
+        nurseId: unit.id,
+        startDate: addDays(start, -10),
+        endDate: addDays(start, 10),
+        type: 'pto',
+        paidHours: 36,
+      },
+      ACTOR,
+    );
+    const input = loadPeriodInput(handle.db, period);
+    const found = input.timeOff.find((r) => r.id === leave.id);
+    expect(found).toMatchObject({
+      startDate: addDays(start, -10),
+      endDate: addDays(start, 10),
+      paidHours: 36,
+    });
+  });
+
+  it('lists leave in start-date order whatever the order it was entered in', () => {
+    const nurseId = listNursesForUnit(handle.db, seeded.unitId)[0]!.id;
+    for (const [s, e] of [
+      ['2027-05-10', '2027-05-11'],
+      ['2027-05-01', '2027-05-02'],
+      ['2027-05-05', '2027-05-06'],
+    ] as const) {
+      createTimeOffRequest(
+        handle.db,
+        { nurseId, startDate: isoDate(s), endDate: isoDate(e), type: 'pto' },
+        ACTOR,
+      );
+    }
+    const starts = listTimeOffForUnit(handle.db, seeded.unitId)
+      .filter((r) => r.startDate.startsWith('2027-05'))
+      .map((r) => r.startDate);
+    expect(starts).toEqual(['2027-05-01', '2027-05-05', '2027-05-10']);
   });
 });

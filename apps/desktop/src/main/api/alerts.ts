@@ -27,8 +27,8 @@ import {
   demandInputs,
   listCredentials,
   listNurseCredentialsForUnit,
-  listTimeOffForUnit,
   paidSickCallsForUnit,
+  timeOffForPeriod,
 } from '@shiftnurse/db';
 import { periodOrThrow, ruleSetFor, scheduleViewFor, unitOrThrow } from './context.js';
 
@@ -50,7 +50,7 @@ export function alertsForView(
   // Paid leave counts as the hours rules count it, so a nurse back from vacation is not "drift".
   const paidLeaveByNurse = new Map<Id, PaidLeaveCredit[]>();
   const credits = paidLeaveCredits(
-    listTimeOffForUnit(db, period.unitId),
+    timeOffForPeriod(db, unit, period),
     paidSickCallsForUnit(db, period.unitId, { start: period.startDate, end: period.endDate }),
   );
   for (const c of credits) {

@@ -40,6 +40,7 @@ import {
   listTimeOffForUnit,
   loadPeriodInput,
   priorAssignmentsBefore,
+  timeOffForPeriod,
 } from '@shiftnurse/db';
 
 /**
@@ -126,13 +127,20 @@ export function scheduleViewFor(
 }
 
 /** Everything `deriveCounters` needs for a unit under a given rule set, loaded once. */
-export function counterContext(db: DbLike, unitId: Id, ruleSet: RuleSet): CounterContext {
+export function counterContext(
+  db: DbLike,
+  unitId: Id,
+  ruleSet: RuleSet,
+  // The period being counted; history import counts many periods, so it passes none and reads all.
+  period?: SchedulePeriod,
+): CounterContext {
+  const unit = unitOrThrow(db, unitId);
   return {
-    unit: unitOrThrow(db, unitId),
+    unit,
     holidayDates: new Set<IsoDate>(listHolidaysForUnit(db, unitId).map((h) => h.date)),
     weekendDefinition: ruleSet.weekendDefinition,
     preferences: listPreferencesForUnit(db, unitId),
-    timeOff: listTimeOffForUnit(db, unitId),
+    timeOff: period ? timeOffForPeriod(db, unit, period) : listTimeOffForUnit(db, unitId),
   };
 }
 

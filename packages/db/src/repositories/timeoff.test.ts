@@ -306,6 +306,32 @@ describe('listTimeOffOverlappingForUnit', () => {
   });
 });
 
+describe('listTimeOffOverlappingForUnit window edges', () => {
+  const window = [isoDate('2026-03-10'), isoDate('2026-03-20')] as const;
+
+  it('leaves out a request that ended the day before the window', () => {
+    const req = request(mkNurse('Ada'), '2026-03-05', '2026-03-09');
+    const ids = listTimeOffOverlappingForUnit(handle.db, unitId, ...window).map((r) => r.id);
+    expect(ids).not.toContain(req.id);
+  });
+
+  it('leaves out a request that starts the day after the window', () => {
+    const req = request(mkNurse('Ada'), '2026-03-21', '2026-03-25');
+    const ids = listTimeOffOverlappingForUnit(handle.db, unitId, ...window).map((r) => r.id);
+    expect(ids).not.toContain(req.id);
+  });
+
+  it('returns a request straddling either edge whole, whatever its status', () => {
+    const ada = mkNurse('Ada');
+    const early = approveTimeOff(handle.db, request(ada, '2026-03-05', '2026-03-12').id, ACTOR);
+    const late = request(ada, '2026-03-18', '2026-03-26');
+    const found = listTimeOffOverlappingForUnit(handle.db, unitId, ...window);
+    const byId = new Map(found.map((r) => [r.id, r]));
+    expect(byId.get(early.id)).toMatchObject({ startDate: '2026-03-05', endDate: '2026-03-12' });
+    expect(byId.get(late.id)).toMatchObject({ startDate: '2026-03-18', endDate: '2026-03-26' });
+  });
+});
+
 describe('withdrawApproval', () => {
   it('flips status back to pending and records a reason', () => {
     const nurseId = mkNurse('Ada');

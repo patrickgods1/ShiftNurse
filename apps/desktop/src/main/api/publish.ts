@@ -74,7 +74,7 @@ export async function publish(
     const ledger: UpsertFairnessLedgerInput[] = [];
     for (const [nurseId, counters] of deriveCounters(
       schedule,
-      counterContext(tx, period.unitId, ruleSet),
+      counterContext(tx, period.unitId, ruleSet, period),
     )) {
       if (!present.has(nurseId)) continue;
       ledger.push({ nurseId, periodId, periodStart: period.startDate, ...counters });
