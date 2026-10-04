@@ -37,6 +37,7 @@ import { describeDate, type IsoDate } from '../domain/time.js';
 import { deriveCounters } from '../fairness/ledger.js';
 import { scoreFairness } from '../fairness/score.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
+import { volunteeredOn } from '../rules/mandatory-overtime.js';
 import type { Violation } from '../rules/types.js';
 import {
   type ExcludedNurse,
@@ -111,6 +112,9 @@ export function findReplacements(input: ReplacementInput): ReplacementReport {
           ? { lastCalledAt: input.lastCalledAt[nurse.id] }
           : {}),
         softViolationsIntroduced: outcome.softViolationsIntroduced,
+        ...(outcome.payTier === 'overtime'
+          ? { volunteeredForOvertime: volunteeredOn(world.ctx, nurse.id, date) }
+          : {}),
         rank: 0,
       });
     } else {
@@ -267,6 +271,11 @@ function tryNurse(
 function compareCandidates(a: ReplacementCandidate, b: ReplacementCandidate): number {
   const tier = PAY_TIER_ORDER.indexOf(a.payTier) - PAY_TIER_ORDER.indexOf(b.payTier);
   if (tier !== 0) return tier;
+
+  // Overtime someone offered before overtime they would have to be asked for.
+  const offered =
+    Number(b.volunteeredForOvertime ?? false) - Number(a.volunteeredForOvertime ?? false);
+  if (offered !== 0) return offered;
 
   const cost = a.cost.delta - b.cost.delta;
   if (cost !== 0) return cost;

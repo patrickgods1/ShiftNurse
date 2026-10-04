@@ -193,6 +193,9 @@ export class ConflictEngine {
         ? { incompatibilityGroups: this.input.incompatibilityGroups }
         : {}),
       ...(this.input.holidayWork ? { holidayWork: this.input.holidayWork } : {}),
+      ...(this.input.overtimeVolunteers
+        ? { overtimeVolunteers: this.input.overtimeVolunteers }
+        : {}),
     });
   }
 

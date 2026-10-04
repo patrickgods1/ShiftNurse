@@ -23,6 +23,7 @@ import type {
   NurseCredential,
   NurseRole,
   OvertimeRule,
+  OvertimeVolunteer,
   PayRate,
   Preference,
   RatioRule,
@@ -248,6 +249,8 @@ export interface ScenarioOptions {
   censusForecasts?: CensusForecast[];
   holidays?: Holiday[];
   ratioRules?: RatioRule[];
+  /** Standing offers to work overtime. */
+  overtimeVolunteers?: OvertimeVolunteer[];
   /** How the unit keeps its ratios: a charge nurse without patients, break relief. */
   ratioStaffing?: RatioStaffing;
   acuityTiers?: AcuityTier[];
@@ -324,6 +327,7 @@ export function scenario(options: ScenarioOptions = {}): Scenario {
       ? { incompatibilityGroups: options.incompatibilityGroups }
       : {}),
     ...(options.holidayWork ? { holidayWork: options.holidayWork } : {}),
+    ...(options.overtimeVolunteers ? { overtimeVolunteers: options.overtimeVolunteers } : {}),
   });
 
   const schedule = new ScheduleView({
@@ -398,6 +402,7 @@ export function solveInputFrom(options: SolveScenarioOptions = {}): SolveInput {
       ? { incompatibilityGroups: options.incompatibilityGroups }
       : {}),
     ...(options.holidayWork ? { holidayWork: options.holidayWork } : {}),
+    ...(options.overtimeVolunteers ? { overtimeVolunteers: options.overtimeVolunteers } : {}),
     ...(options.cost ? { cost: options.cost } : {}),
   };
 }

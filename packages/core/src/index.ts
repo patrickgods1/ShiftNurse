@@ -76,6 +76,7 @@ export type {
   NurseCredential,
   NurseRole,
   OvertimeRule,
+  OvertimeVolunteer,
   PayRate,
   PeriodStatus,
   Preference,
@@ -192,6 +193,12 @@ export {
 } from './rules/hours-rules.js';
 // Kept-apart group rule helpers
 export { groupInForce, groupsForPeriod } from './rules/incompatibility-rules.js';
+// No mandatory overtime: the note prefix that records an emergency, and the rule itself
+export {
+  EMERGENCY_NOTE_PREFIX,
+  mandatoryOvertimeRule,
+  volunteeredOn,
+} from './rules/mandatory-overtime.js';
 export type { PaidLeaveCredit, PaidSickCall } from './rules/paid-leave.js';
 // Paid leave credits as dated whole shifts
 export { paidLeaveCredits, suggestedPaidLeaveHours } from './rules/paid-leave.js';

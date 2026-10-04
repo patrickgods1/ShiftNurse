@@ -70,6 +70,9 @@ export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'
   'recovery-after-nights': encodeNightRecovery,
   // Priced per shift while soft (`perShiftTerms`); those shifts forbidden when hard.
   'avoid-pending-time-off': encodePendingTimeOff,
+  // Judges only shifts flagged `isOvertime`, and every row either solver writes is straight time
+  // (decoded answers become rows through `SolverModel`, which never sets the flag).
+  'no-mandatory-overtime': 'by-construction',
 };
 
 export interface EncodeOptions {

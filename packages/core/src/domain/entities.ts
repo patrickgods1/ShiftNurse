@@ -381,6 +381,23 @@ export interface Assignment {
 }
 
 /**
+ * A nurse's standing offer to work overtime over some dates. New York (Labor Law § 167),
+ * Washington (RCW 49.28.140), Oregon (ORS 441.166) and Massachusetts (c.111 § 226) forbid
+ * *requiring* a nurse to work overtime outside an emergency; this record is what makes an
+ * overtime shift voluntary rather than mandatory. Dates are inclusive and compare with the shift's
+ * start date.
+ */
+export interface OvertimeVolunteer {
+  id: Id;
+  unitId: Id;
+  nurseId: Id;
+  startDate: IsoDate;
+  endDate: IsoDate;
+  /** How the offer was made — "texted 3 Oct, any nights that week" — quoted if it is disputed. */
+  note?: string;
+}
+
+/**
  * One publication of a period. A period is published once and then republished after every
  * batch of post-publish edits; each publication snapshots the assignments as they went out,
  * so "what did the nurses actually receive on the 3rd" is answerable without replaying the

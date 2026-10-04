@@ -13,6 +13,7 @@ import type {
   IncompatibilityGroup,
   Nurse,
   NurseCredential,
+  OvertimeVolunteer,
   ShiftCredentialRequirement,
   ShiftType,
   TimeOffRequest,
@@ -28,6 +29,7 @@ import { coverageRule, ratioComplianceRule } from './coverage-rules.js';
 import { holidayIndexes, holidayRotationRule } from './holiday-rotation.js';
 import { contractedHoursRule, maxHoursRule } from './hours-rules.js';
 import { incompatibleBufferRule, incompatibleTogetherRule } from './incompatibility-rules.js';
+import { mandatoryOvertimeRule } from './mandatory-overtime.js';
 import { nightRecoveryRule } from './night-recovery.js';
 import { type PaidLeaveCredit, type PaidSickCall, paidLeaveCredits } from './paid-leave.js';
 import { pendingTimeOffRule } from './pending-time-off.js';
@@ -64,6 +66,7 @@ export const ALL_RULES: readonly Rule<never>[] = [
   holidayRotationRule,
   nightRecoveryRule,
   pendingTimeOffRule,
+  mandatoryOvertimeRule,
 ] as unknown as readonly Rule<never>[];
 
 const RULES_BY_ID = new Map<string, Rule<never>>(ALL_RULES.map((r) => [r.id, r]));
@@ -122,7 +125,7 @@ export function defaultRuleSet(
     createdAt,
     configs: ALL_RULES.map<RuleConfig>((rule) => ({
       ruleId: rule.id,
-      enabled: true,
+      enabled: rule.enabledByDefault ?? true,
       params: rule.defaultParams as Record<string, unknown>,
     })),
   };
@@ -165,7 +168,7 @@ export function resolveConfigs(ruleSet: RuleSet): RuleConfig[] {
     if (!config) {
       return {
         ruleId: rule.id,
-        enabled: true,
+        enabled: rule.enabledByDefault ?? true,
         params: rule.defaultParams as Record<string, unknown>,
       };
     }
@@ -197,6 +200,8 @@ export interface RuleContextInput {
   incompatibilityGroups?: readonly IncompatibilityGroup[];
   /** Who worked each past holiday, for the holiday rotation. Absent: nobody is owed a holiday. */
   holidayWork?: readonly HolidayWorkRecord[];
+  /** Standing offers to work overtime. Absent: nobody has volunteered. */
+  overtimeVolunteers?: readonly OvertimeVolunteer[];
 }
 
 /** Precompute the joins and indexes every rule needs, once per evaluation pass. */
@@ -244,7 +249,18 @@ export function buildRuleContext(input: RuleContextInput): RuleContext {
     majorHolidayDates: new Set<IsoDate>(input.holidays.filter((h) => h.isMajor).map((h) => h.date)),
     ...holidayIndexes(input.holidays, input.holidayWork ?? []),
     incompatibilityGroups: input.incompatibilityGroups ?? [],
+    overtimeVolunteersByNurse: groupByNurse(input.overtimeVolunteers ?? []),
   };
+}
+
+function groupByNurse<T extends { nurseId: Id }>(rows: readonly T[]): Map<Id, T[]> {
+  const out = new Map<Id, T[]>();
+  for (const row of rows) {
+    const existing = out.get(row.nurseId);
+    if (existing) existing.push(row);
+    else out.set(row.nurseId, [row]);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

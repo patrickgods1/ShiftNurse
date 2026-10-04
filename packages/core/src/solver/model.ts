@@ -350,6 +350,7 @@ export class SolverModel {
         ? { incompatibilityGroups: input.incompatibilityGroups }
         : {}),
       ...(input.holidayWork ? { holidayWork: input.holidayWork } : {}),
+      ...(input.overtimeVolunteers ? { overtimeVolunteers: input.overtimeVolunteers } : {}),
     });
 
     const shifts = buildShifts(this.dates, this.shiftTypes, demand);

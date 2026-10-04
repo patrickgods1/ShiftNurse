@@ -51,6 +51,7 @@ import type {
   NurseCredential,
   NurseRole,
   OvertimeRule,
+  OvertimeVolunteer,
   PayRate,
   Preference,
   SchedulePeriod,
@@ -108,6 +109,8 @@ export interface SolveInput {
   holidays: readonly Holiday[];
   /** Who worked each past holiday, for the holiday rotation. Absent: nobody is owed one. */
   holidayWork?: readonly HolidayWorkRecord[];
+  /** Standing offers to work overtime, for the no-mandatory-overtime rule. */
+  overtimeVolunteers?: readonly OvertimeVolunteer[];
   preferences: readonly Preference[];
   /** Ledger rows strictly before this period, for the burden index the seed and objective read. */
   ledgerHistory: readonly FairnessLedgerEntry[];

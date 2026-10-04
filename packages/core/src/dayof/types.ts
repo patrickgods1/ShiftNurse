@@ -77,6 +77,12 @@ export interface ReplacementCandidate {
   lastCalledAt?: Timestamp;
   /** Soft rules the pickup would trip; shown on the card, never a reason to exclude. */
   softViolationsIntroduced: Violation[];
+  /**
+   * On the overtime tier only: whether the nurse has a standing offer to work overtime that day.
+   * Without one the call is a request the nurse may decline, never an order; under the
+   * no-mandatory-overtime rule such a nurse is excluded instead.
+   */
+  volunteeredForOvertime?: boolean;
   /** 1-based position after ordering. */
   rank: number;
 }
