@@ -480,19 +480,19 @@ The 2026-10-03 release audit: data safety, renderer correctness, maintainability
 manager's experience and the contract rules a real hospital would check first. One PR per phase.
 
 **Phase 1 — Data safety and robustness**
-- [ ] Backups written to `.partial`, `quick_check`ed, then renamed; quit waits for one in flight
-- [ ] Restore refuses a damaged backup or one from a newer version; the restore is audited in the
+- [x] Backups written to `.partial`, `quick_check`ed, then renamed; quit waits for one in flight
+- [x] Restore refuses a damaged backup or one from a newer version; the restore is audited in the
       restored database
-- [ ] Backup trash moves and their audit rows succeed or fail together
-- [ ] The CP-SAT runner is killed on a failed start, a hung solve and a crashed worker
-- [ ] Hardening: CSP `object-src`/`base-uri`/`form-action`, redirect and frame navigation guards,
+- [x] Backup trash moves and their audit rows succeed or fail together
+- [x] The CP-SAT runner is killed on a failed start, a hung solve and a crashed worker
+- [x] Hardening: CSP `object-src`/`base-uri`/`form-action`, redirect and frame navigation guards,
       permission check handler, smoke harness loaded only in a smoke run, xlsx control characters
-- [ ] Every patch goes through an allow-list (`updatePayRate`, conflict policy, solver settings)
-- [ ] Every IPC call's arguments are checked at runtime (`shared/schemas`, zod) before main runs it
-- [ ] Time off loaded for the period and its lookback only; Generate's freshness check recomputes
+- [x] Every patch goes through an allow-list (`updatePayRate`, conflict policy, solver settings)
+- [x] Every IPC call's arguments are checked at runtime (`shared/schemas`, zod) before main runs it
+- [x] Time off loaded for the period and its lookback only; Generate's freshness check recomputes
       the fingerprint only after a write
-- [ ] Verify: `npm run check`; `npm run smoke`; `npm run dist` + `smoke:packaged`; SA + LNS
-      output unchanged on fixed inputs
+- [x] Verify: `npm run check` (1,283 tests); `npm run smoke`; `npm run dist` + `smoke:packaged`
+      (mac arm64); SA + LNS output unchanged on fixed inputs (no core change in this phase)
 
 **Phase 2 — Renderer correctness**
 - [ ] Configuration edits refresh every read model derived from them (`invalidateUnitDerived`);
@@ -517,6 +517,10 @@ manager's experience and the contract rules a real hospital would check first. O
 - [ ] `SolverModel` split into hours, coverage, preference and holiday parts; shift types by map
 - [ ] Soft-rule pricing parity test between the rule engine and `SolverModel`
 - [ ] `dayNumber` refuses a malformed date; memo caches bounded; `defaultRuleSet` takes its clock
+- [ ] Conflicts analysis fast enough to run on every Requests view: fairness impact scored
+      incrementally (today ~68% of `analyseConflicts`, 2.5 s on the scenario period), target
+      < 500 ms; auto-resolve without re-running the whole analysis per applied fix (one run with
+      a permissive policy took 6.7 minutes on the main thread)
 - [ ] Named core exports; conflicts engine indexes; shared audited update in `packages/db`
 - [ ] Verify: SA + LNS output unchanged; `bench:solvers` no slower
 
