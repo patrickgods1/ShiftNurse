@@ -20,6 +20,7 @@ import { holidaysSchemas } from './holidays.js';
 import { incompatibilitySchemas } from './incompatibility.js';
 import { nursesSchemas } from './nurses.js';
 import { outputSchemas } from './output.js';
+import { overtimeVolunteersSchemas } from './overtimeVolunteers.js';
 import { periodsSchemas } from './periods.js';
 import { preferencesSchemas } from './preferences.js';
 import type { ApiSchemas } from './primitives.js';
@@ -43,6 +44,7 @@ export const API_SCHEMAS: ApiSchemas = {
   credentials: credentialsSchemas,
   preferences: preferencesSchemas,
   incompatibility: incompatibilitySchemas,
+  overtimeVolunteers: overtimeVolunteersSchemas,
   shiftTypes: shiftTypesSchemas,
   coverage: coverageSchemas,
   holidays: holidaysSchemas,

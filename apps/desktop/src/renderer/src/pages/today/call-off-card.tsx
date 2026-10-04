@@ -122,6 +122,13 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
                     <span className="text-xs text-text-muted">
                       burden {c.burdenIndex.toFixed(2)}
                     </span>
+                    {c.volunteeredForOvertime !== undefined ? (
+                      <span className="text-xs text-text-muted">
+                        {c.volunteeredForOvertime
+                          ? 'Offered overtime'
+                          : 'No standing offer — ask, don’t require'}
+                      </span>
+                    ) : null}
                     <span className="text-xs text-text-muted">
                       {c.lastCalledAt !== undefined
                         ? formatInstant(c.lastCalledAt)

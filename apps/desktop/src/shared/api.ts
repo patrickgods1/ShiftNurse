@@ -47,6 +47,7 @@ import type {
   NurseCredential,
   NurseRole,
   OvertimeRule,
+  OvertimeVolunteer,
   PayRate,
   PlannedHoliday,
   Preference,
@@ -182,6 +183,16 @@ export interface IncompatibilityGroupPatch {
   maxTogether?: number;
   startsOn?: IsoDate | null;
   endsOn?: IsoDate | null;
+}
+
+/** A standing offer to work overtime. The unit and nurse are fixed once recorded. */
+export type OvertimeVolunteerInput = Omit<OvertimeVolunteer, 'id'>;
+
+/** `note: null` clears the note; an omitted key is left untouched. */
+export interface OvertimeVolunteerPatch {
+  startDate?: IsoDate;
+  endDate?: IsoDate;
+  note?: string | null;
 }
 
 /** Optional-and-clearable fields take `null` to clear; an omitted key is left untouched. */
@@ -711,6 +722,13 @@ export interface ShiftNurseApi {
     update(id: Id, patch: IncompatibilityGroupPatch, reason: string): IncompatibilityGroup;
     remove(id: Id, reason: string): void;
   };
+  /** Nurses' recorded offers to work overtime, which make an overtime shift voluntary. */
+  overtimeVolunteers: {
+    list(unitId: Id): OvertimeVolunteer[];
+    create(input: OvertimeVolunteerInput): OvertimeVolunteer;
+    update(id: Id, patch: OvertimeVolunteerPatch): OvertimeVolunteer;
+    remove(id: Id): void;
+  };
   shiftTypes: {
     list(unitId: Id): ShiftType[];
     create(input: ShiftTypeInput): ShiftType;
@@ -1037,6 +1055,7 @@ export const API_CHANNELS = {
   credentials: ['list', 'create', 'forNurse', 'grant', 'updateExpiry', 'revoke'],
   preferences: ['forNurse', 'replace'],
   incompatibility: ['list', 'create', 'update', 'remove'],
+  overtimeVolunteers: ['list', 'create', 'update', 'remove'],
   shiftTypes: ['list', 'create', 'update', 'deactivate'],
   coverage: ['list', 'upsert', 'delete'],
   holidays: [

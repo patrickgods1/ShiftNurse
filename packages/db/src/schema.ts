@@ -271,6 +271,35 @@ export const incompatibilityMember = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// Overtime volunteers
+// ---------------------------------------------------------------------------
+
+/**
+ * A nurse's standing offer to work overtime over a date range (`OvertimeVolunteer`). Where the law
+ * bans mandatory overtime, this record is what makes an overtime shift voluntary. `createdAt` is
+ * the instant the offer was recorded, not the offer's dates; the domain type leaves it out.
+ */
+export const overtimeVolunteer = sqliteTable(
+  'overtime_volunteer',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    startDate: isoDate('start_date').notNull().$type<IsoDate>(),
+    endDate: isoDate('end_date').notNull().$type<IsoDate>(),
+    note: text('note'),
+    createdAt: timestamp('created_at').notNull(),
+  },
+  (t) => [index('overtime_volunteer_nurse_start_idx').on(t.nurseId, t.startDate)],
+);
+
+// ---------------------------------------------------------------------------
 // Time off
 // ---------------------------------------------------------------------------
 

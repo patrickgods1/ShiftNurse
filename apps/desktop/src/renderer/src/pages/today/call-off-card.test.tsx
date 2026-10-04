@@ -129,3 +129,29 @@ describe('closing a call-off without a backfill', () => {
     );
   });
 });
+
+describe('overtime offers on the call list', () => {
+  it('says whether each candidate offered overtime, in words', async () => {
+    bridge.respond('dayOf', 'replacements', {
+      shortfall: 1,
+      candidates: [
+        { ...candidate('n-ana', 'Ana Martinez (RN)', 1), volunteeredForOvertime: true },
+        { ...candidate('n-maya', 'Maya Lindqvist (RN)', 2), volunteeredForOvertime: false },
+        candidate('n-lee', 'Lee Park (RN)', 3),
+      ],
+      excluded: [
+        { nurseId: 'n-ben', label: 'Ben Okafor (RN)', reason: 'Overtime they have not offered' },
+      ],
+    } as unknown as ReplacementReport);
+    renderWithApp(<CallOffCard unitId="unit-1" callOff={callOffView} />);
+    const row = async (label: string) => within((await screen.findByText(label)).closest('li')!);
+    expect((await row('Ana Martinez (RN)')).getByText('Offered overtime')).toBeTruthy();
+    expect(
+      (await row('Maya Lindqvist (RN)')).getByText('No standing offer — ask, don\u2019t require'),
+    ).toBeTruthy();
+    const lee = await row('Lee Park (RN)');
+    expect(lee.queryByText(/Offered overtime|No standing offer/)).toBeNull();
+    fireEvent.click(screen.getByText('Not eligible (1)'));
+    expect(screen.getByText(/Ben Okafor \(RN\) — Overtime they have not offered/)).toBeTruthy();
+  });
+});

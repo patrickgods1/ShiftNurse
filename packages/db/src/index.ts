@@ -47,6 +47,7 @@ export * from './repositories/exchange.js';
 export * from './repositories/holidays.js';
 export * from './repositories/incompatibility.js';
 export * from './repositories/ledger.js';
+export * from './repositories/overtime-volunteers.js';
 export * from './repositories/pay.js';
 export * from './repositories/publish.js';
 export * from './repositories/roster.js';

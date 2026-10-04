@@ -30,6 +30,7 @@ import type {
   Nurse,
   NurseCredential,
   OvertimeRule,
+  OvertimeVolunteer,
   PayRate,
   Preference,
   RatioRule,
@@ -225,6 +226,17 @@ export function toTimeOffRequest(r: typeof s.timeOffRequest.$inferSelect): TimeO
     reason: opt(r.reason),
     decisionReason: opt(r.decisionReason),
     paidHours: opt(r.paidHours),
+  };
+}
+
+export function toOvertimeVolunteer(r: typeof s.overtimeVolunteer.$inferSelect): OvertimeVolunteer {
+  return {
+    id: r.id,
+    unitId: r.unitId,
+    nurseId: r.nurseId,
+    startDate: r.startDate as IsoDate,
+    endDate: r.endDate as IsoDate,
+    ...(r.note ? { note: r.note } : {}),
   };
 }
 

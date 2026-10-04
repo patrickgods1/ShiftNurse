@@ -14,6 +14,7 @@ import { seedScenarioUnit } from '../seed/scenarios.js';
 import type { SeedResult } from '../seed/types.js';
 import { createUnit, getUnit, listShiftTypesForUnit, updateUnit } from './config.js';
 import { createIncompatibilityGroup } from './incompatibility.js';
+import { createOvertimeVolunteer } from './overtime-volunteers.js';
 import { createPayRate, listPayRatesForUnit } from './pay.js';
 import { createNurse, listNursesForUnit } from './roster.js';
 import { getPeriod } from './schedule.js';
@@ -112,6 +113,23 @@ describe('loadPeriodInput', () => {
     expect(input.incompatibilityGroups!.map((g) => g.id).sort()).toEqual(
       [current.id, lastNight.id].sort(),
     );
+  });
+
+  it('carries the overtime offers from the lookback tail to the period end, and no others', () => {
+    const period = getPeriod(handle.db, seeded.draftPeriodId)!;
+    const [a] = listNursesForUnit(handle.db, seeded.unitId);
+    const offer = (start: string, end: string) =>
+      createOvertimeVolunteer(
+        handle.db,
+        { unitId: seeded.unitId, nurseId: a!.id, startDate: isoDate(start), endDate: isoDate(end) },
+        ACTOR,
+      );
+    const inTail = offer(addDays(period.startDate, -14), addDays(period.startDate, -14));
+    const inPeriod = offer(period.startDate, period.endDate);
+    offer(addDays(period.startDate, -20), addDays(period.startDate, -15));
+    offer(addDays(period.endDate, 1), addDays(period.endDate, 3));
+    const input = loadPeriodInput(handle.db, period);
+    expect(input.overtimeVolunteers!.map((v) => v.id)).toEqual([inTail.id, inPeriod.id]);
   });
 
   it('prices with the role defaults and this unit’s own rates, never another unit’s nurse rate', () => {

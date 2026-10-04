@@ -34,6 +34,7 @@ import {
   listHolidaysForUnit,
   listIncompatibilityGroups,
   listNurseCredentialsForUnit,
+  listOvertimeVolunteers,
   listPeriodsForUnit,
   listPreferencesForUnit,
   listShiftCredentialRequirementsForUnit,
@@ -91,6 +92,7 @@ export function validateView(
       end: period.endDate,
     }),
     incompatibilityGroups: listIncompatibilityGroups(db, period.unitId),
+    overtimeVolunteers: listOvertimeVolunteers(db, period.unitId),
     holidayWork: holidayWorkForPeriod(db, period),
   });
   // Which preferences each worked shift goes against, so the grid can say "avoids nights"

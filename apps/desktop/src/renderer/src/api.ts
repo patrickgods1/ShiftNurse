@@ -19,6 +19,8 @@ import type {
   IncompatibilityGroupPatch,
   NurseInput,
   NursePatch,
+  OvertimeVolunteerInput,
+  OvertimeVolunteerPatch,
   PreferenceInput,
 } from '../../shared/api.js';
 import { invalidateUnitDerived, invalidateUnitDerivedAnyUnit } from './period-cache.js';
@@ -40,6 +42,7 @@ export const queryKeys = {
   nurseCredentials: (nurseId: Id) => ['nurseCredentials', nurseId] as const,
   preferences: (nurseId: Id) => ['preferences', nurseId] as const,
   incompatibility: (unitId: Id) => ['incompatibility', unitId] as const,
+  overtimeVolunteers: (unitId: Id) => ['overtimeVolunteers', unitId] as const,
 };
 
 export function useUnits() {
@@ -330,6 +333,58 @@ export function useRemoveIncompatibilityGroup(unitId: Id | undefined) {
     meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason: string }) =>
       api.incompatibility.remove(id, reason),
+    onSuccess: invalidate,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Overtime volunteers
+// ---------------------------------------------------------------------------
+
+export function useOvertimeVolunteers(unitId: Id | undefined) {
+  return useQuery({
+    queryKey: queryKeys.overtimeVolunteers(unitId ?? ''),
+    queryFn: () => api.overtimeVolunteers.list(unitId as Id),
+    enabled: unitId !== undefined,
+  });
+}
+
+/**
+ * An offer decides whether an overtime shift is voluntary, so the grid's validation, Generate's
+ * candidates, conflicts and the day-of replacement list all refresh with it.
+ */
+function useInvalidateOvertimeVolunteers(unitId: Id) {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.overtimeVolunteers(unitId) });
+    invalidateUnitDerived(queryClient, unitId);
+  };
+}
+
+export function useCreateOvertimeVolunteer(unitId: Id) {
+  const invalidate = useInvalidateOvertimeVolunteers(unitId);
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (input: OvertimeVolunteerInput) => api.overtimeVolunteers.create(input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateOvertimeVolunteer(unitId: Id) {
+  const invalidate = useInvalidateOvertimeVolunteers(unitId);
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: ({ id, patch }: { id: Id; patch: OvertimeVolunteerPatch }) =>
+      api.overtimeVolunteers.update(id, patch),
+    onSuccess: invalidate,
+  });
+}
+
+export function useRemoveOvertimeVolunteer(unitId: Id) {
+  const invalidate = useInvalidateOvertimeVolunteers(unitId);
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (id: Id) => api.overtimeVolunteers.remove(id),
     onSuccess: invalidate,
   });
 }

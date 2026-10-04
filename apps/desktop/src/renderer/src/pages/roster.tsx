@@ -19,6 +19,7 @@ import { ImportDialog } from './roster/import-dialog.js';
 import { IncompatibilitySection } from './roster/incompatibility.js';
 import { NurseDetail } from './roster/nurse-detail.js';
 import { NurseFormDialog } from './roster/nurse-form-dialog.js';
+import { OvertimeVolunteersSection } from './roster/overtime-volunteers.js';
 
 function matchesSearch(nurse: Nurse, term: string): boolean {
   const haystack = `${nurse.firstName} ${nurse.lastName} ${nurse.employeeId}`.toLowerCase();
@@ -200,6 +201,10 @@ export default function RosterPage() {
 
       {nursesQuery.data ? (
         <IncompatibilitySection unitId={unit.id} nurses={nursesQuery.data} />
+      ) : null}
+
+      {nursesQuery.data ? (
+        <OvertimeVolunteersSection unitId={unit.id} nurses={nursesQuery.data} />
       ) : null}
 
       <NurseFormDialog

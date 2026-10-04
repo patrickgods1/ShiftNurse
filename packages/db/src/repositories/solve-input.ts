@@ -41,6 +41,7 @@ import {
 import { holidayWorkFor, holidayWorkIn } from './holidays.js';
 import { listIncompatibilityGroups } from './incompatibility.js';
 import { ledgerSince } from './ledger.js';
+import { listOvertimeVolunteersOverlapping } from './overtime-volunteers.js';
 import { listActiveDifferentials, listActiveOvertimeRules, listPayRatesForUnit } from './pay.js';
 import {
   listCredentials,
@@ -219,6 +220,14 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     incompatibilityGroups: groupsForPeriod(
       listIncompatibilityGroups(db, unitId),
       addDays(period.startDate, -1),
+      period.endDate,
+    ),
+    // The lookback tail is judged too (its overtime counts toward the first week), so offers are
+    // read from there on; one covering only other periods would make Generate's candidates stale.
+    overtimeVolunteers: listOvertimeVolunteersOverlapping(
+      db,
+      unitId,
+      addDays(period.startDate, -14),
       period.endDate,
     ),
     cost: {
