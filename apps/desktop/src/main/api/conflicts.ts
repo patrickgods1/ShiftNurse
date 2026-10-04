@@ -8,6 +8,7 @@ import {
   type ExchangeProposal,
   evaluateExchange,
   type Id,
+  independentFixes,
   planExchange,
   type Resolution,
   selectAutoResolutions,
@@ -30,9 +31,11 @@ export function analyse(db: DbLike, periodId: Id): ConflictReport {
 }
 
 /**
- * Each resolution is applied in its own transaction and the period is re-analysed between
- * them: applying one option can close (or change) a neighbouring conflict, and a stale option
- * must be dropped rather than double-booked. The pass stops at the first refusal so a
+ * Each resolution is applied in its own transaction, and the period is re-analysed between
+ * batches: applying one option can close (or change) a neighbouring conflict, and a stale option
+ * must be dropped rather than double-booked. A batch is only the fixes that cannot interact
+ * (`independentFixes`: different nurses, dates at least two days apart) — re-analysing after
+ * every single fix took minutes on a busy period. The pass stops at the first refusal so a
  * surprising state is left for the manager to see, not papered over.
  */
 export function autoResolve(db: ShiftNurseDb, periodId: Id): AutoResolveResult {
@@ -43,12 +46,16 @@ export function autoResolve(db: ShiftNurseDb, periodId: Id): AutoResolveResult {
 
   const seen = new Set<string>();
   for (;;) {
-    const report = analyse(db, periodId);
-    const next = selectAutoResolutions(report, policy).find((r) => !seen.has(r.id));
-    if (!next) return { applied, report };
-    seen.add(next.id);
-    transact(db, (tx) => applyResolution(tx, periodId, next, ACTOR, { auto: true }));
-    applied.push(next);
+    const input = buildConflictInput(db, periodId);
+    const report = analyseConflicts(input);
+    const fresh = selectAutoResolutions(report, policy).filter((r) => !seen.has(r.id));
+    const batch = independentFixes(fresh, input.assignments);
+    if (batch.length === 0) return { applied, report };
+    for (const next of batch) {
+      seen.add(next.id);
+      transact(db, (tx) => applyResolution(tx, periodId, next, ACTOR, { auto: true }));
+      applied.push(next);
+    }
   }
 }
 

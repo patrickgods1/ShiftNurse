@@ -40,8 +40,8 @@ import type {
   TimeOffRequest,
 } from '../domain/entities.js';
 import { addDays, dateInRange, datesInRange, type IsoDate } from '../domain/time.js';
+import { FairnessEvaluator } from '../fairness/evaluator.js';
 import { deriveCounters } from '../fairness/ledger.js';
-import { scoreFairness } from '../fairness/score.js';
 import type { CounterContext } from '../fairness/types.js';
 import { type MaxHoursParams, maxHoursRule } from '../rules/hours-rules.js';
 import {
@@ -93,12 +93,19 @@ export class ConflictEngine {
   readonly maxHoursParams: MaxHoursParams;
   readonly costCtx: CostContext | undefined;
   readonly counterCtx: Omit<CounterContext, 'timeOff'>;
+  /** Every candidate fix is priced for fairness; history and weights are fixed per analysis. */
+  readonly fairnessEvaluator: FairnessEvaluator;
   private readonly baseCtx: RuleContext;
 
   constructor(input: ConflictInput) {
     this.input = input;
     this.nurses = [...input.nurses].sort((a, b) => a.id.localeCompare(b.id));
     this.activeNurses = this.nurses.filter((n) => n.active);
+    this.fairnessEvaluator = new FairnessEvaluator({
+      nurses: this.activeNurses,
+      history: input.ledgerHistory,
+      weights: input.ruleSet.fairnessWeights,
+    });
     this.nursesById = new Map(this.nurses.map((n) => [n.id, n]));
     this.shiftTypes = [...input.shiftTypes].sort((a, b) => a.sortOrder - b.sortOrder);
     this.shiftTypesById = new Map(this.shiftTypes.map((s) => [s.id, s]));
@@ -364,17 +371,9 @@ export class SimState {
   fairness(): FairnessSnapshot {
     if (!this.fairnessSnapshot) {
       const { engine } = this;
-      const report = scoreFairness({
-        nurses: engine.activeNurses,
-        current: deriveCounters(this.view, { ...engine.counterCtx, timeOff: this.timeOff }),
-        history: engine.input.ledgerHistory,
-        preferences: engine.input.preferences,
-        weights: engine.input.ruleSet.fairnessWeights,
-      });
-      this.fairnessSnapshot = {
-        mean: report.distribution.score.mean,
-        byNurse: new Map(report.scores.map((s) => [s.nurseId, s.score])),
-      };
+      this.fairnessSnapshot = engine.fairnessEvaluator.score(
+        deriveCounters(this.view, { ...engine.counterCtx, timeOff: this.timeOff }),
+      );
     }
     return this.fairnessSnapshot;
   }

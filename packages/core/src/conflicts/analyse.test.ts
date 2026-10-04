@@ -15,8 +15,13 @@ import {
   solveInputFrom,
   timeOff,
 } from '../testing/fixtures.js';
-import { analyseConflicts, selectAutoResolutions, timeOffImpact } from './analyse.js';
-import { type ConflictInput, DEFAULT_AUTO_RESOLVE_POLICY } from './types.js';
+import {
+  analyseConflicts,
+  independentFixes,
+  selectAutoResolutions,
+  timeOffImpact,
+} from './analyse.js';
+import { type ConflictInput, DEFAULT_AUTO_RESOLVE_POLICY, type Resolution } from './types.js';
 
 beforeEach(() => {
   resetFixtureCounters();
@@ -182,6 +187,114 @@ describe('auto-resolve', () => {
       maxFairnessDrop: 100,
     });
     expect(chosen).toEqual([]);
+  });
+});
+
+describe('auto-resolve applying several fixes from one analysis', () => {
+  // A fix as auto-resolve would take it; only the actions and nurses matter here.
+  function fix(id: string, nurseIds: string[], actions: Resolution['actions']): Resolution {
+    return {
+      id,
+      conflictId: `conflict-${id}`,
+      kind: 'assign_available',
+      title: id,
+      description: id,
+      actions,
+      impact: {} as Resolution['impact'],
+      score: 0,
+      nurseIds,
+      closesConflict: true,
+    };
+  }
+  const night = (nurseId: string, date: string): Resolution['actions'][number] => ({
+    type: 'create_assignment',
+    nurseId,
+    shiftTypeId: NIGHT_12.id,
+    date: isoDate(date),
+    isCharge: false,
+    isOvertime: false,
+  });
+
+  it('takes fixes for different nurses a week apart together', () => {
+    const fixes = [
+      fix('a', ['ana'], [night('ana', '2026-01-06')]),
+      fix('b', ['ben'], [night('ben', '2026-01-13')]),
+    ];
+    expect(independentFixes(fixes, []).map((f) => f.id)).toEqual(['a', 'b']);
+  });
+
+  it('keeps a second fix for the same nurse for the next pass, even a week later', () => {
+    // Her rest, stretch and hours rules span days: the second fix must see the first.
+    const fixes = [
+      fix('a', ['ana'], [night('ana', '2026-01-06')]),
+      fix('b', ['ana'], [night('ana', '2026-01-13')]),
+    ];
+    expect(independentFixes(fixes, []).map((f) => f.id)).toEqual(['a']);
+  });
+
+  it('keeps fixes on the same or the next day for the next pass', () => {
+    // A night dated the 6th runs into the 7th: a fix on the 7th could share its floor hours.
+    const fixes = [
+      fix('a', ['ana'], [night('ana', '2026-01-06')]),
+      fix('b', ['ben'], [night('ben', '2026-01-07')]),
+      fix('c', ['cy'], [night('cy', '2026-01-06')]),
+      fix('d', ['dee'], [night('dee', '2026-01-08')]),
+    ];
+    expect(independentFixes(fixes, []).map((f) => f.id)).toEqual(['a', 'd']);
+  });
+
+  it('places a moved or removed shift by the day it is on now', () => {
+    const fixes = [
+      fix('a', ['ana'], [night('ana', '2026-01-06')]),
+      fix('b', ['ben'], [{ type: 'delete_assignment', assignmentId: 'ben-7th' }]),
+      fix(
+        'c',
+        ['cy'],
+        [
+          {
+            type: 'move_assignment',
+            assignmentId: 'cy-15th',
+            toDate: isoDate('2026-01-07'),
+            toShiftTypeId: NIGHT_12.id,
+          },
+        ],
+      ),
+    ];
+    const assignments = [
+      { ...assign('ben', NIGHT_12, '2026-01-07'), id: 'ben-7th' },
+      { ...assign('cy', NIGHT_12, '2026-01-15'), id: 'cy-15th' },
+    ];
+    expect(independentFixes(fixes, assignments).map((f) => f.id)).toEqual(['a']);
+  });
+
+  it('places a moved shift by where it is now, not only where it goes', () => {
+    // Ben's night on the 7th moves to the 20th: lifting it off the 7th changes the floor next
+    // to the fix on the 6th.
+    const fixes = [
+      fix('a', ['ana'], [night('ana', '2026-01-06')]),
+      fix(
+        'b',
+        ['ben'],
+        [
+          {
+            type: 'move_assignment',
+            assignmentId: 'ben-7th',
+            toDate: isoDate('2026-01-20'),
+            toShiftTypeId: NIGHT_12.id,
+          },
+        ],
+      ),
+    ];
+    const assignments = [{ ...assign('ben', NIGHT_12, '2026-01-07'), id: 'ben-7th' }];
+    expect(independentFixes(fixes, assignments).map((f) => f.id)).toEqual(['a']);
+  });
+
+  it('applies a fix it cannot place on its own, and waits with it behind others', () => {
+    const lost = fix('x', ['ana'], [{ type: 'delete_assignment', assignmentId: 'gone' }]);
+    const later = fix('b', ['ben'], [night('ben', '2026-01-20')]);
+    expect(independentFixes([lost, later], []).map((f) => f.id)).toEqual(['x']);
+    const first = fix('a', ['cy'], [night('cy', '2026-01-06')]);
+    expect(independentFixes([first, lost, later], []).map((f) => f.id)).toEqual(['a']);
   });
 });
 

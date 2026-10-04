@@ -140,6 +140,35 @@ function equityComponent(
   };
 }
 
+/**
+ * The composite score alone, without the explanations — what the conflicts engine needs for
+ * every simulated fix. `scoreNurse` uses it too, so the number on the Fairness page and the one
+ * a resolution card compares against are computed by the same arithmetic in the same order:
+ * each burden component, then preferences (scaled by seniority), then time off.
+ */
+export function compositeScore(
+  burden: NurseBurden,
+  weights: FairnessWeights,
+  seniorityMultiplier: number,
+): number {
+  let weightTotal = 0;
+  let weighted = 0;
+  const add = (weight: number, score: number) => {
+    weightTotal += weight;
+    weighted += weight * score;
+  };
+  for (const component of BURDEN_COMPONENTS) {
+    add(
+      weights[component],
+      burden.shareWeight <= 0 ? 100 : componentScore(burden.deviation[component]),
+    );
+  }
+  add(weights.preferences * seniorityMultiplier, componentScore(burden.deviation.preferences));
+  const decisions = burden.carried.requestsApproved + burden.carried.requestsDenied;
+  add(weights.timeOff, decisions === 0 ? 100 : componentScore(burden.deviation.timeOff));
+  return weightTotal > 0 ? Math.round((weighted / weightTotal) * 10) / 10 : 100;
+}
+
 function scoreNurse(
   nurse: Nurse,
   burden: NurseBurden,
@@ -159,13 +188,7 @@ function scoreNurse(
   );
   components.push(equityComponent('timeOff', burden, weights.timeOff));
 
-  let weightTotal = 0;
-  let weighted = 0;
-  for (const c of components) {
-    weightTotal += c.weight;
-    weighted += c.weight * c.score;
-  }
-  const score = weightTotal > 0 ? Math.round((weighted / weightTotal) * 10) / 10 : 100;
+  const score = compositeScore(burden, weights, seniorityMultiplier);
 
   return {
     nurseId: nurse.id,

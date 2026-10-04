@@ -5,9 +5,9 @@
  */
 
 import { addDays } from '@shiftnurse/core';
-import { getSwap, proposeSwap } from '@shiftnurse/db';
+import { getSwap, proposeSwap, saveConflictPolicy } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { approveExchange } from './conflicts.js';
+import { approveExchange, autoResolve } from './conflicts.js';
 import { ACTOR } from './context.js';
 import { scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
@@ -57,4 +57,24 @@ describe('approving a shift exchange', () => {
     );
     expect(getSwap(f.handle.db, swap.id)?.status).toBe('proposed');
   });
+});
+
+describe('auto-resolve on a busy period', () => {
+  it('fills what a generous policy allows, then finds nothing left to do', () => {
+    saveConflictPolicy(
+      f.handle.db,
+      f.seeded.unitId,
+      { enabled: true, maxCostDelta: 1_000_000, maxFairnessDrop: 100 },
+      ACTOR,
+    );
+    const started = performance.now();
+    const first = autoResolve(f.handle.db, f.seeded.draftPeriodId);
+    const ms = performance.now() - started;
+    expect(first.applied.length).toBeGreaterThan(1);
+    // Every fix the first pass applied is in its last report, so a second pass has nothing
+    // left to take.
+    const second = autoResolve(f.handle.db, f.seeded.draftPeriodId);
+    expect(second.applied).toEqual([]);
+    console.info(`[auto-resolve] ${first.applied.length} fixes in ${Math.round(ms)} ms`);
+  }, 300_000);
 });

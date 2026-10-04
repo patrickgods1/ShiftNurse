@@ -27,7 +27,7 @@
  */
 
 import type { Assignment, Id, TimeOffRequest } from '../domain/entities.js';
-import { dateInRange, rangesOverlap } from '../domain/time.js';
+import { dateInRange, daysBetween, type IsoDate, rangesOverlap } from '../domain/time.js';
 import { leaveCapacity } from './capacity.js';
 import { detectWith } from './detect.js';
 import { ConflictEngine } from './engine.js';
@@ -123,6 +123,80 @@ export function selectAutoResolutions(
     chosen.push(top);
   }
   return chosen;
+}
+
+/**
+ * Which of `selectAutoResolutions`' picks can be applied together without re-analysing between
+ * them, in order: auto-resolve applies this batch, then analyses again for the rest.
+ *
+ * Two fixes interact through a nurse — her rest, stretch, hours and holiday rules span days,
+ * so a second fix for her must see the first — or through the floor on overlapping days: a
+ * night dated the 6th runs into the 7th, and a fix on the 7th could share its hours (the
+ * incompatibility and cover-by-the-hour rules). So a fix joins the batch only if it touches no
+ * nurse already in it and none of its dates is within a day of the batch's. A fix whose dates
+ * cannot be placed (an assignment no longer in the input) waits for the next pass.
+ *
+ * The policy limits each fix, as it did when every fix was re-checked one at a time. Cost is
+ * priced per nurse, so a batch member's cost delta is exactly what it would have been alone;
+ * fairness is team-relative, so its delta can drift by a fraction once its neighbours land —
+ * the same drift a sequential pass would have shown on the next fix's card.
+ *
+ * Re-analysing after each fix was a whole analysis per change — minutes on a busy period.
+ */
+export function independentFixes(
+  chosen: readonly Resolution[],
+  assignments: readonly Assignment[],
+): Resolution[] {
+  const datesById = new Map(assignments.map((a) => [a.id, a.date]));
+  const nurses = new Set<Id>();
+  const dates: IsoDate[] = [];
+  const batch: Resolution[] = [];
+  for (const resolution of chosen) {
+    const own = fixDates(resolution, datesById);
+    if (own === undefined) {
+      if (batch.length === 0) batch.push(resolution);
+      break;
+    }
+    if (resolution.nurseIds.some((id) => nurses.has(id))) continue;
+    if (own.some((d) => dates.some((taken) => Math.abs(daysBetween(d, taken)) <= 1))) continue;
+    batch.push(resolution);
+    for (const id of resolution.nurseIds) nurses.add(id);
+    dates.push(...own);
+  }
+  return batch;
+}
+
+/** Every date a fix changes: where shifts are added, moved from and to, or removed. */
+function fixDates(
+  resolution: Resolution,
+  datesById: ReadonlyMap<Id, IsoDate>,
+): IsoDate[] | undefined {
+  const out: IsoDate[] = [];
+  for (const action of resolution.actions) {
+    switch (action.type) {
+      case 'create_assignment':
+        out.push(action.date);
+        break;
+      case 'move_assignment': {
+        const from = datesById.get(action.assignmentId);
+        if (from === undefined) return undefined;
+        out.push(from, action.toDate);
+        break;
+      }
+      case 'delete_assignment': {
+        const on = datesById.get(action.assignmentId);
+        if (on === undefined) return undefined;
+        out.push(on);
+        break;
+      }
+      case 'deny_time_off':
+      case 'accept_shortfall':
+        // Never chosen by a policy (`selectAutoResolutions` skips both); placing them would
+        // need the request's range, so they are kept out of any batch.
+        return undefined;
+    }
+  }
+  return out;
 }
 
 /** `nurseId@date` for every nurse-day a resolution's actions commit. */
