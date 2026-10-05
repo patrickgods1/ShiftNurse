@@ -22,15 +22,16 @@ import {
 } from '@shiftnurse/core';
 import {
   cancellationHistory,
+  createDayOfPayEvent,
   type DbLike,
   deleteAssignment,
   demandInputs,
   getCancellationPolicy,
   getShiftType,
   listAssignmentsForPeriodOnDate,
-  listNursesForUnit,
   listShiftTypesForUnit,
   recordShiftCancellation,
+  rosterForPeriod,
   type ShiftNurseDb,
 } from '@shiftnurse/db';
 import type {
@@ -86,7 +87,7 @@ export function cancellationOrderFor(
   volunteers: readonly Id[],
 ): CancellationOrderView {
   const period = periodOrThrow(db, periodId);
-  const nurses = listNursesForUnit(db, period.unitId);
+  const nurses = rosterForPeriod(db, period);
   const nurseById = new Map(nurses.map((n) => [n.id, n]));
   const onDate: Assignment[] = listAssignmentsForPeriodOnDate(db, periodId, date);
   const check = checkStaffing({
@@ -187,6 +188,23 @@ export function cancelForCensus(
     const record = recordShiftCancellation(
       tx,
       { periodId, nurseId, shiftTypeId, date, reason: current.reason },
+      ACTOR,
+    );
+    // Sent home on arrival is paid reporting time (half the shift, 2-4 hours) whether or not the
+    // schedule shows the shift any more, so the pay event is written with the cancellation, never
+    // later. Hours worked start at 0; the manager edits them if the nurse stayed a while.
+    createDayOfPayEvent(
+      tx,
+      {
+        kind: 'sent_home',
+        unitId: periodOrThrow(tx, periodId).unitId,
+        nurseId,
+        date,
+        shiftTypeId,
+        scheduledHours: shiftType.durationHours,
+        hoursWorked: 0,
+        note: 'Low-census cancellation',
+      },
       ACTOR,
     );
     deleteAssignment(tx, assignment.id, ACTOR, reason);

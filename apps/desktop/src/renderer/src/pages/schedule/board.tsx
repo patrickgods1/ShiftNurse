@@ -24,9 +24,10 @@ import {
   weekdayOf,
 } from '@shiftnurse/core';
 import { type ReactNode, useCallback, useEffect, useMemo } from 'react';
-import { useAssignments, useNurses, useShiftTypes, useTimeOff } from '../../api.js';
+import { useAssignments, useShiftTypes, useTimeOff } from '../../api.js';
 import { useCostReport } from '../../api-cost.js';
 import { useDemand } from '../../api-demand.js';
+import { usePeriodRoster } from '../../api-nurse-units.js';
 import { useValidation } from '../../api-schedule.js';
 import { AsyncState } from '../../components/async-state.js';
 import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
@@ -65,7 +66,7 @@ interface ScheduleBoardProps {
 
 export function ScheduleBoard({ unitId, period, focusNurseId, leading }: ScheduleBoardProps) {
   const unit = useUnit();
-  const nursesQuery = useNurses(unitId);
+  const nursesQuery = usePeriodRoster(unitId, period.id);
   const shiftTypesQuery = useShiftTypes(unitId);
   const assignmentsQuery = useAssignments(period.id);
   const validationQuery = useValidation(period.id);

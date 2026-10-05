@@ -34,13 +34,13 @@ import {
   listCallAttempts,
   listCallOffsForUnit,
   listCensusForecastsInRange,
-  listNursesForUnit,
   listShiftTypesForUnit,
   logCallAttempt,
   markCallOffCovered,
   markCallOffUncovered,
   openCallOffForAssignment,
   reportCallOff,
+  rosterForPeriod,
   type ShiftNurseDb,
   type ShiftNurseTx,
   saveCancellationPolicy,
@@ -167,7 +167,7 @@ function dayOfSummary(db: DbLike, unitId: Id, date?: IsoDate): DayOfSummary {
   const d = date ?? today();
   const minuteOfDay = hostMinuteOfDay();
   const shiftTypes = listShiftTypesForUnit(db, unitId);
-  const nurses = listNursesForUnit(db, unitId);
+  const nurses = rosterForPeriod(db, { unitId, startDate: d, endDate: d });
   const shiftTypeById = new Map(shiftTypes.map((t) => [t.id, t]));
   const nurseById = new Map(nurses.map((n) => [n.id, n]));
 

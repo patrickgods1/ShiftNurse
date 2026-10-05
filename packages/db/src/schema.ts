@@ -336,6 +336,38 @@ export const preceptorship = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// Float pool
+// ---------------------------------------------------------------------------
+
+/**
+ * A nurse who also works on a unit other than their home unit (`nurse.unitId`). One row per nurse
+ * and unit: the dates, when given, are the span the membership holds, and `competency` is the
+ * manager's note on what the nurse may be asked to do there. The home unit is never a row.
+ */
+export const nurseUnit = sqliteTable(
+  'nurse_unit',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    competency: text('competency'),
+    startDate: isoDate('start_date').$type<IsoDate>(),
+    endDate: isoDate('end_date').$type<IsoDate>(),
+    createdAt: timestamp('created_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('nurse_unit_nurse_unit_idx').on(t.nurseId, t.unitId),
+    index('nurse_unit_unit_idx').on(t.unitId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // Leave balances and FMLA
 // ---------------------------------------------------------------------------
 
@@ -965,6 +997,59 @@ export const shiftCancellation = sqliteTable(
     index('shift_cancellation_period_date_idx').on(t.periodId, t.date),
   ],
 );
+
+/**
+ * Something that happened on the day and is paid for outside the schedule: a missed meal or rest
+ * break, a nurse sent home on arrival, a standby nurse called back in (`DayOfPayEvent` in core).
+ * It is not an assignment and outlives the one it came from (a send-home deletes the shift), so
+ * the shift type is a plain reference and the hours are copied onto the row.
+ */
+export const dayOfPayEvent = sqliteTable(
+  'day_of_pay_event',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    kind: text('kind').notNull().$type<'missed_break' | 'sent_home' | 'call_back'>(),
+    date: isoDate('date').notNull().$type<IsoDate>(),
+    shiftTypeId: text('shift_type_id')
+      .references(() => shiftType.id)
+      .$type<Id>(),
+    /** Missed breaks only. */
+    breakKind: text('break_kind').$type<'meal' | 'rest'>(),
+    /** Sent home: the shift's paid length. */
+    scheduledHours: real('scheduled_hours'),
+    /** Sent home and call-back: the hours actually worked. */
+    hoursWorked: real('hours_worked'),
+    note: text('note'),
+    /** 'manager' in v1; never inferred at read time. */
+    enteredBy: text('entered_by').notNull().$type<'manager' | 'nurse'>(),
+    createdAt: timestamp('created_at').notNull(),
+  },
+  (t) => [
+    index('day_of_pay_event_unit_date_idx').on(t.unitId, t.date),
+    index('day_of_pay_event_nurse_date_idx').on(t.nurseId, t.date),
+  ],
+);
+
+/**
+ * A unit's pay settings that are not rates, differentials or overtime rules. One row per unit,
+ * absent until saved (the defaults apply): the contract's minimum hours a call-back pays.
+ */
+export const paySettings = sqliteTable('pay_settings', {
+  unitId: text('unit_id')
+    .primaryKey()
+    .references(() => unit.id, { onDelete: 'cascade' })
+    .$type<Id>(),
+  callBackMinimumHours: real('call_back_minimum_hours').notNull().default(0),
+  updatedAt: timestamp('updated_at').notNull(),
+});
 
 // ---------------------------------------------------------------------------
 // Conflicts

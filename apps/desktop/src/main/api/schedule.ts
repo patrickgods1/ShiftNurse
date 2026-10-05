@@ -27,7 +27,9 @@ import {
   type DbLike,
   deleteAssignment,
   demandInputs,
+  floatExtras,
   getLatestRuleSet,
+  getNurse,
   holidayWorkForPeriod,
   listAssignmentsForPeriod,
   listCredentials,
@@ -44,6 +46,7 @@ import {
   recordScheduleChange,
   requireChangeReason,
   requirePeriodEditable,
+  rosterForPeriod,
   type ShiftNurseDb,
   type ShiftNurseTx,
   saveRuleSet,
@@ -74,6 +77,7 @@ export function validateView(
   const nurses = [...schedule.nursesById.values()];
   const shiftTypes = [...schedule.shiftTypesById.values()];
   const unit = unitOrThrow(db, period.unitId);
+  const floats = floatExtras(db, unit, period, nurses);
   const ctx = buildRuleContext({
     unit,
     demand: deriveDemand(
@@ -82,9 +86,14 @@ export function validateView(
     ),
     nurses,
     shiftTypes,
-    timeOff: timeOffForPeriod(db, unit, period),
+    // Nurses floated in from other units bring their own leave and credentials; the unit-scoped
+    // lists miss them, as loadPeriodInput's do (it reads the same `floatExtras`).
+    timeOff: [...timeOffForPeriod(db, unit, period), ...floats.timeOff],
     credentials: listCredentials(db),
-    nurseCredentials: listNurseCredentialsForUnit(db, period.unitId),
+    nurseCredentials: [
+      ...listNurseCredentialsForUnit(db, period.unitId),
+      ...floats.nurseCredentials,
+    ],
     shiftCredentialRequirements: listShiftCredentialRequirementsForUnit(db, period.unitId),
     holidays: listHolidaysForUnit(db, period.unitId),
     weekendDefinition: ruleSet.weekendDefinition,
@@ -105,7 +114,7 @@ export function validateView(
   });
   // Which preferences each worked shift goes against, so the grid can say "avoids nights"
   // rather than leave a broken request invisible until the nurse complains.
-  const preferences = listPreferencesForUnit(db, period.unitId);
+  const preferences = [...listPreferencesForUnit(db, period.unitId), ...floats.preferences];
   const byNurse = new Map<Id, Preference[]>();
   for (const p of preferences) byNurse.set(p.nurseId, [...(byNurse.get(p.nurseId) ?? []), p]);
   const againstPreference: Record<Id, Preference[]> = {};
@@ -200,6 +209,22 @@ export function periodsApi(db: ShiftNurseDb): ShiftNurseApi['periods'] {
   };
 }
 
+/**
+ * Refuse a shift for a nurse the period's roster does not hold — a float whose membership does
+ * not reach these dates. Validation and Generate judge that roster, so such a shift could not be
+ * judged at all; the refusal says what to do instead.
+ */
+export function requireOnRoster(db: DbLike, periodId: Id, nurseId: Id): void {
+  const period = periodOrThrow(db, periodId);
+  if (rosterForPeriod(db, period).some((n) => n.id === nurseId)) return;
+  const nurse = getNurse(db, nurseId);
+  const who = nurse ? `${nurse.firstName} ${nurse.lastName}` : 'That nurse';
+  throw new Error(
+    `${who} is not on this unit's roster for ${period.name}. Add a float membership covering ` +
+      'these dates under Roster first.',
+  );
+}
+
 export function scheduleApi(db: ShiftNurseDb): ShiftNurseApi['schedule'] {
   return {
     validate: (periodId) => buildScheduleValidation(db, periodId),
@@ -209,6 +234,7 @@ export function scheduleApi(db: ShiftNurseDb): ShiftNurseApi['schedule'] {
         // input — a hand-placed shift is 'manual' whatever the renderer sent.
         const { periodId, nurseId, shiftTypeId, date, isLocked, isCharge, isOvertime, notes } =
           input;
+        requireOnRoster(tx, periodId, nurseId);
         const created = createAssignment(
           tx,
           {
@@ -231,6 +257,7 @@ export function scheduleApi(db: ShiftNurseDb): ShiftNurseApi['schedule'] {
     moveAssignment: ({ assignmentId, nurseId, shiftTypeId, date }, reason) => {
       const existing = assignmentOrThrow(db, assignmentId);
       return editSchedule(db, existing.periodId, reason, 'manual', (tx, log) => {
+        requireOnRoster(tx, existing.periodId, nurseId);
         const moved = moveAssignment(
           tx,
           assignmentId,

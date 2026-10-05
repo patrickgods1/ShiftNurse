@@ -14,13 +14,16 @@ import { coverageSchemas } from './coverage.js';
 import { credentialsSchemas } from './credentials.js';
 import { dashboardSchemas } from './dashboard.js';
 import { dayOfSchemas } from './dayOf.js';
+import { dayOfPaySchemas } from './dayOfPay.js';
 import { exchangeSchemas } from './exchange.js';
 import { fairnessSchemas } from './fairness.js';
 import { holidaysSchemas } from './holidays.js';
 import { incompatibilitySchemas } from './incompatibility.js';
 import { leaveBalancesSchemas } from './leaveBalances.js';
 import { leaveBiddingSchemas } from './leaveBidding.js';
+import { nurseRecordSchemas } from './nurseRecord.js';
 import { nursesSchemas } from './nurses.js';
+import { nurseUnitsSchemas } from './nurseUnits.js';
 import { outputSchemas } from './output.js';
 import { overtimeVolunteersSchemas } from './overtimeVolunteers.js';
 import { periodsSchemas } from './periods.js';
@@ -48,6 +51,8 @@ export const API_SCHEMAS: ApiSchemas = {
   preferences: preferencesSchemas,
   incompatibility: incompatibilitySchemas,
   overtimeVolunteers: overtimeVolunteersSchemas,
+  nurseRecord: nurseRecordSchemas,
+  nurseUnits: nurseUnitsSchemas,
   preceptorships: preceptorshipsSchemas,
   leaveBalances: leaveBalancesSchemas,
   leaveBidding: leaveBiddingSchemas,
@@ -67,6 +72,7 @@ export const API_SCHEMAS: ApiSchemas = {
   rules: rulesSchemas,
   fairness: fairnessSchemas,
   cost: costSchemas,
+  dayOfPay: dayOfPaySchemas,
   timeOff: timeOffSchemas,
   conflicts: conflictsSchemas,
   exchange: exchangeSchemas,

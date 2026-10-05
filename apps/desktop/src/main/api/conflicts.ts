@@ -25,6 +25,7 @@ import {
 import type { AutoResolveResult } from '../../shared/api.js';
 
 import { ACTOR, buildConflictInput, periodOrThrow } from './context.js';
+import { requireOnRoster } from './schedule.js';
 
 export function analyse(db: DbLike, periodId: Id): ConflictReport {
   return analyseConflicts(buildConflictInput(db, periodId));
@@ -79,6 +80,9 @@ export function approveExchange(db: ShiftNurseDb, id: Id, reason?: string) {
       offeredAssignmentId: swap.offeredAssignmentId,
       requestedAssignmentId: swap.requestedAssignmentId,
     };
+    // Both nurses must be on the period's roster before the exchange can even be judged.
+    requireOnRoster(tx, swap.periodId, swap.requestingNurseId);
+    if (swap.counterpartyNurseId) requireOnRoster(tx, swap.periodId, swap.counterpartyNurseId);
     const exchangeInput = { ...buildConflictInput(tx, swap.periodId), proposal };
     const evaluation: ExchangeEvaluation = evaluateExchange(exchangeInput);
     if (evaluation.verdict === 'blocked') {

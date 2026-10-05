@@ -20,11 +20,15 @@ import {
   type IsoDate,
   type MaxHoursParams,
   maxHoursRule,
+  type Nurse,
+  type NurseCredential,
   type PaidLeaveCredit,
+  type Preference,
   paidLeaveCredits,
   type RuleSet,
   type SchedulePeriod,
   type SolveInput,
+  type TimeOffRequest,
   type Unit,
 } from '@shiftnurse/core';
 import type { DbLike } from '../client.js';
@@ -41,18 +45,25 @@ import {
 import { holidayWorkFor, holidayWorkIn } from './holidays.js';
 import { listIncompatibilityGroups } from './incompatibility.js';
 import { ledgerSince } from './ledger.js';
+import { busyElsewhereFor, elsewhereWindow, listFloatNurses } from './nurse-units.js';
 import { listOvertimeVolunteersOverlapping } from './overtime-volunteers.js';
 import { listActiveDifferentials, listActiveOvertimeRules, listPayRatesForUnit } from './pay.js';
 import { listPreceptorshipsOverlapping } from './preceptorships.js';
 import {
   listCredentials,
+  listNurseCredentials,
   listNurseCredentialsForUnit,
   listNursesForUnit,
+  listPreferencesForNurse,
   listPreferencesForUnit,
 } from './roster.js';
 import { getRuleSet } from './rulesets.js';
 import { listAssignmentsForPeriod, priorAssignmentsBefore } from './schedule.js';
-import { listTimeOffForUnit, listTimeOffOverlappingForUnit } from './timeoff.js';
+import {
+  listTimeOffForNurse,
+  listTimeOffForUnit,
+  listTimeOffOverlappingForUnit,
+} from './timeoff.js';
 
 function unitOrThrow(db: DbLike, unitId: Id) {
   const unit = getUnit(db, unitId);
@@ -184,6 +195,60 @@ export function timeOffForPeriod(
   return listTimeOffOverlappingForUnit(db, period.unitId, start, end);
 }
 
+/**
+ * The unit's nurses for a period: the home roster, then nurses floated in from other units. The
+ * order is behaviour (the solver samples by index), so floats only ever append, and a unit with
+ * no memberships gets exactly `listNursesForUnit`.
+ */
+export function rosterForPeriod(
+  db: DbLike,
+  period: Pick<SchedulePeriod, 'unitId' | 'startDate' | 'endDate'>,
+): Nurse[] {
+  const { start, end } = elsewhereWindow(period);
+  return [
+    ...listNursesForUnit(db, period.unitId),
+    ...listFloatNurses(db, period.unitId, start, end),
+  ];
+}
+
+/**
+ * What a floated-in nurse brings that the unit-scoped lists miss, because those join through the
+ * nurse's home unit: their credentials (a float nurse would otherwise read as holding none),
+ * preferences, and the leave requests their home unit approved. Empty with no floats.
+ */
+export function floatExtras(
+  db: DbLike,
+  unit: Pick<Unit, 'id' | 'payPeriodDays'>,
+  period: SchedulePeriod,
+  nurses: readonly Nurse[],
+): {
+  nurseCredentials: NurseCredential[];
+  preferences: Preference[];
+  timeOff: TimeOffRequest[];
+} {
+  const { start, end } = timeOffWindow(unit, period);
+  const floats = nurses.filter((n) => n.unitId !== unit.id);
+  return {
+    nurseCredentials: floats.flatMap((n) => listNurseCredentials(db, n.id)),
+    preferences: floats.flatMap((n) => listPreferencesForNurse(db, n.id)),
+    timeOff: floats
+      .flatMap((n) => listTimeOffForNurse(db, n.id))
+      .filter((r) => compareDates(r.startDate, end) <= 0 && compareDates(r.endDate, start) >= 0),
+  };
+}
+
+/** The other units' shifts for this period's nurses, over the period and its lookback tail. */
+export function elsewhereForPeriod(db: DbLike, period: SchedulePeriod, nurses: readonly Nurse[]) {
+  const { start, end } = elsewhereWindow(period);
+  return busyElsewhereFor(
+    db,
+    period.unitId,
+    nurses.map((n) => n.id),
+    start,
+    end,
+  );
+}
+
 /** Shared loader behind the solver and the conflict detector: one definition of "the period". */
 export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput {
   const ruleSet = getRuleSet(db, period.ruleSetId);
@@ -193,16 +258,24 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
   // just the three pay tables (it takes unit, holidays and the work week from the input itself).
   const demand = demandInputs(db, unitId, period.startDate, period.endDate);
   const unit = unitOrThrow(db, unitId);
-  const timeOff = timeOffForPeriod(db, unit, period);
+  const nurses = rosterForPeriod(db, period);
+  const floats = floatExtras(db, unit, period, nurses);
+  const elsewhere = elsewhereForPeriod(db, period, nurses);
+  const timeOff = [...timeOffForPeriod(db, unit, period), ...floats.timeOff];
   return {
     unit,
     period,
     ruleSet,
-    nurses: listNursesForUnit(db, unitId),
-    shiftTypes: demand.shiftTypes,
+    nurses,
+    // Other units' shift types are inactive: demand, coverage and the solvers leave them alone.
+    shiftTypes: [...demand.shiftTypes, ...elsewhere.shiftTypes],
     demand: deriveDemand(datesInRange(period.startDate, period.endDate), demand).all(),
     assignments: listAssignmentsForPeriod(db, period.id),
-    priorAssignments: priorAssignmentsBefore(db, unitId, period.startDate, 14),
+    // Other units' shifts ride with the lookback tail: judged by every nurse rule, never moved.
+    priorAssignments: [
+      ...priorAssignmentsBefore(db, unitId, period.startDate, 14),
+      ...elsewhere.assignments,
+    ],
     timeOff,
     // From the lookback tail on, as far as the weekly rules read.
     paidSickCalls: paidSickCallsForUnit(db, unitId, {
@@ -210,11 +283,11 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
       end: period.endDate,
     }),
     credentials: listCredentials(db),
-    nurseCredentials: listNurseCredentialsForUnit(db, unitId),
+    nurseCredentials: [...listNurseCredentialsForUnit(db, unitId), ...floats.nurseCredentials],
     shiftCredentialRequirements: listShiftCredentialRequirementsForUnit(db, unitId),
     holidays: listHolidaysForUnit(db, unitId),
     holidayWork: holidayWorkForPeriod(db, period),
-    preferences: listPreferencesForUnit(db, unitId),
+    preferences: [...listPreferencesForUnit(db, unitId), ...floats.preferences],
     ledgerHistory: ledgerHistory(db, unitId, period.startDate),
     // Only groups that can apply to this period (its first morning shares the night before),
     // so ending an unrelated group does not make Generate's candidates stale.

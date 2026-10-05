@@ -19,12 +19,19 @@ import type { ShiftNurseApi, UpdateInfo } from '../shared/api.js';
 import { configApi } from './api/config.js';
 import { costApi } from './api/cost.js';
 import { dashboardSummary } from './api/dashboard.js';
+import { dayOfPayApi } from './api/day-of-pay.js';
 import { dayOfApi } from './api/dayof.js';
 import { censusApi } from './api/demand.js';
 import { fairnessApi } from './api/fairness.js';
-import { exportRosterToFile, pickHistoryImportFile, pickRosterImportFile } from './api/files.js';
+import {
+  exportNurseRecordToFile,
+  exportRosterToFile,
+  pickHistoryImportFile,
+  pickRosterImportFile,
+} from './api/files.js';
 import { leaveBalancesApi } from './api/leave-balances.js';
 import { leaveBiddingApi } from './api/leave-bidding.js';
+import { nurseUnitsApi } from './api/nurse-units.js';
 import { overtimeVolunteersApi } from './api/overtime-volunteers.js';
 import { preceptorshipsApi } from './api/preceptorships.js';
 import { outputInput, publishApi } from './api/publish.js';
@@ -80,6 +87,12 @@ export function createApi(db: ShiftNurseDb, solverJobs: SolverJobs, host: AppHos
     },
     ...roster,
     overtimeVolunteers: overtimeVolunteersApi(db),
+    nurseUnits: nurseUnitsApi(db),
+    nurseRecord: {
+      exportToFile: (nurseId, start, end, format) =>
+        exportNurseRecordToFile(db, nurseId, start, end, format),
+    },
+    dayOfPay: dayOfPayApi(db),
     preceptorships: preceptorshipsApi(db),
     leaveBalances: leaveBalancesApi(db),
     leaveBidding: leaveBiddingApi(db),

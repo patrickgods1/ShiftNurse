@@ -11,6 +11,7 @@ import { SMALL } from '../../components/ui.js';
 import { formatDateWithWeekday } from '../../format.js';
 import { CensusDrop } from './census-drop.js';
 import { CensusEntry } from './census-entry.js';
+import { NursePayActions, ShiftPayEvents } from './day-of-pay.js';
 
 const STATUS_LABEL: Record<TodayShiftView['status'], string | undefined> = {
   current: 'Now',
@@ -120,28 +121,35 @@ export function ShiftCard({
 
       <ul className="mt-3 flex flex-col gap-1 border-t border-border pt-3 text-sm">
         {shift.roster.map((entry) => (
-          <li key={entry.assignment.id} className="flex items-center justify-between gap-2">
-            <span className="text-text">
-              {rosterLabel(entry)}
-              {entry.assignment.isCharge ? (
-                <span className="ml-2 text-xs uppercase text-text-muted">Charge</span>
-              ) : null}
-              {entry.assignment.isOvertime ? (
-                <span className="ml-2 text-xs uppercase text-text-muted">OT</span>
-              ) : null}
-            </span>
-            {entry.callOff !== undefined ? (
-              <span className="rounded bg-danger/15 px-1.5 py-0.5 text-xs font-semibold uppercase text-danger">
-                Called off
+          <li key={entry.assignment.id} className="flex flex-col gap-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-text">
+                {rosterLabel(entry)}
+                {entry.assignment.isCharge ? (
+                  <span className="ml-2 text-xs uppercase text-text-muted">Charge</span>
+                ) : null}
+                {entry.assignment.isOvertime ? (
+                  <span className="ml-2 text-xs uppercase text-text-muted">OT</span>
+                ) : null}
               </span>
-            ) : (
-              <button type="button" className={SMALL} onClick={() => onReport(entry)}>
-                Report call-off
-              </button>
-            )}
+              {entry.callOff !== undefined ? (
+                <span className="rounded bg-danger/15 px-1.5 py-0.5 text-xs font-semibold uppercase text-danger">
+                  Called off
+                </span>
+              ) : (
+                <button type="button" className={SMALL} onClick={() => onReport(entry)}>
+                  Report call-off
+                </button>
+              )}
+            </div>
+            {entry.callOff === undefined ? (
+              <NursePayActions unitId={unitId} shift={shift} entry={entry} />
+            ) : null}
           </li>
         ))}
       </ul>
+
+      <ShiftPayEvents unitId={unitId} shift={shift} />
     </div>
   );
 }

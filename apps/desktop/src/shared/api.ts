@@ -29,6 +29,7 @@ import type {
   ConflictReport,
   CoverageRequirement,
   Credential,
+  DayOfPay,
   Differential,
   EvaluationResult,
   ExchangeEvaluation,
@@ -328,6 +329,34 @@ export interface PreceptorshipPatch {
   endDate?: IsoDate;
 }
 
+/**
+ * A nurse who also works on a unit other than their home unit. Dates are inclusive and open on
+ * a side that is absent; `competency` is what the nurse may be asked to do there.
+ */
+export interface NurseUnit {
+  id: Id;
+  nurseId: Id;
+  unitId: Id;
+  competency?: string;
+  startDate?: IsoDate;
+  endDate?: IsoDate;
+}
+
+export interface NurseUnitInput {
+  nurseId: Id;
+  unitId: Id;
+  competency?: string;
+  startDate?: IsoDate;
+  endDate?: IsoDate;
+}
+
+/** The nurse and the unit are fixed once recorded; `null` clears a field. */
+export interface NurseUnitPatch {
+  competency?: string | null;
+  startDate?: IsoDate | null;
+  endDate?: IsoDate | null;
+}
+
 /** Optional-and-clearable fields take `null` to clear; an omitted key is left untouched. */
 export type NursePatch = Partial<Omit<Nurse, 'id' | 'unitId' | 'phone' | 'email' | 'notes'>> & {
   phone?: string | null;
@@ -491,6 +520,71 @@ export interface PeriodCostReport {
   cost: ScheduleCost;
   budget: Budget | undefined;
   variance: BudgetVariance | undefined;
+  /**
+   * What the period's day-of events cost (missed breaks, send-homes, call-backs), priced beside
+   * the schedule and never added into `cost`: a schedule's price is the same before and after
+   * the day. `unpriced` counts events for nurses with no pay rate, which are not $0.
+   */
+  dayOf: DayOfPay;
+}
+
+/** Pay settings that are not rates, differentials or overtime rules. */
+export interface PaySettings {
+  /** The fewest hours a call-back pays, from the contract. 0 pays the hours worked. */
+  callBackMinimumHours: number;
+}
+
+/** A day-of event as recorded: paid outside the schedule, priced beside its cost. */
+export interface DayOfPayRecord {
+  id: Id;
+  unitId: Id;
+  nurseId: Id;
+  kind: 'missed_break' | 'sent_home' | 'call_back';
+  date: IsoDate;
+  shiftTypeId?: Id;
+  break?: 'meal' | 'rest';
+  scheduledHours?: number;
+  hoursWorked?: number;
+  note?: string;
+  enteredBy: 'manager' | 'nurse';
+  createdAt: number;
+}
+
+/** What the day-of console records; hours are the ones the kind needs. */
+export type DayOfPayEntry =
+  | {
+      kind: 'missed_break';
+      unitId: Id;
+      nurseId: Id;
+      date: IsoDate;
+      shiftTypeId?: Id;
+      break: 'meal' | 'rest';
+      note?: string;
+    }
+  | {
+      kind: 'sent_home';
+      unitId: Id;
+      nurseId: Id;
+      date: IsoDate;
+      shiftTypeId?: Id;
+      scheduledHours: number;
+      hoursWorked?: number;
+      note?: string;
+    }
+  | {
+      kind: 'call_back';
+      unitId: Id;
+      nurseId: Id;
+      date: IsoDate;
+      shiftTypeId?: Id;
+      hoursWorked: number;
+      note?: string;
+    };
+
+/** What can be filled in afterwards: a send-home's or call-back's real hours, and the note. */
+export interface DayOfPayPatch {
+  hoursWorked?: number;
+  note?: string | null;
 }
 
 export interface CreateTimeOffInput {
@@ -540,6 +634,8 @@ export interface PublishOutcome {
   /** The backup written on publish, if the file system allowed one. */
   backup: BackupInfo | undefined;
 }
+
+export type NurseRecordFormat = 'csv' | 'pdf';
 
 export type OutputFormat = 'pdf-grid' | 'pdf-nurses' | 'csv-grid' | 'csv-long' | 'xlsx';
 
@@ -897,6 +993,30 @@ export interface ShiftNurseApi {
     update(id: Id, patch: NursePatch): Nurse;
     deactivate(id: Id): Nurse;
   };
+  /** A nurse's record for a grievance: their audit entries and published-shift changes. */
+  nurseRecord: {
+    /**
+     * Writes the record for the inclusive date range through a native save dialog; resolves to
+     * the path, or undefined when the manager cancels. Kept-apart entries are never included.
+     */
+    exportToFile(
+      nurseId: Id,
+      start: IsoDate,
+      end: IsoDate,
+      format: NurseRecordFormat,
+    ): Promise<string | undefined>;
+  };
+  /** The float pool: units a nurse works on besides their home unit. */
+  nurseUnits: {
+    forNurse(nurseId: Id): NurseUnit[];
+    /** Nurses from other units who may work on this one, for the grid's rows and names. */
+    floatingIn(unitId: Id): Nurse[];
+    /** Who a period's schedule may hold: the home roster, then floats whose dates touch it. */
+    roster(periodId: Id): Nurse[];
+    create(input: NurseUnitInput): NurseUnit;
+    update(id: Id, patch: NurseUnitPatch): NurseUnit;
+    remove(id: Id): void;
+  };
   credentials: {
     /** The catalogue of credential types (ACLS, BLS…). */
     list(): Credential[];
@@ -1172,6 +1292,16 @@ export interface ShiftNurseApi {
     /** Prices every assignment in the period and compares the total to its budget. */
     report(periodId: Id): PeriodCostReport;
     setBudget(periodId: Id, targetDollars: number): Budget;
+    paySettings(unitId: Id): PaySettings;
+    savePaySettings(unitId: Id, settings: PaySettings): PaySettings;
+  };
+  /** Events paid outside the schedule, recorded from the Today screen. */
+  dayOfPay: {
+    /** Events dated in the inclusive range, oldest first. */
+    list(unitId: Id, start: IsoDate, end: IsoDate): DayOfPayRecord[];
+    record(entry: DayOfPayEntry): DayOfPayRecord;
+    update(id: Id, patch: DayOfPayPatch): DayOfPayRecord;
+    remove(id: Id): void;
   };
   timeOff: {
     list(unitId: Id, status?: TimeOffStatus): TimeOffRequest[];
@@ -1320,6 +1450,8 @@ export const API_CHANNELS = {
   ],
   dashboard: ['summary'],
   nurses: ['list', 'get', 'create', 'update', 'deactivate'],
+  nurseRecord: ['exportToFile'],
+  nurseUnits: ['forNurse', 'floatingIn', 'roster', 'create', 'update', 'remove'],
   credentials: ['list', 'create', 'forNurse', 'grant', 'updateExpiry', 'revoke'],
   preferences: ['forNurse', 'replace'],
   incompatibility: ['list', 'create', 'update', 'remove'],
@@ -1422,7 +1554,10 @@ export const API_CHANNELS = {
     'deleteOvertimeRule',
     'report',
     'setBudget',
+    'paySettings',
+    'savePaySettings',
   ],
+  dayOfPay: ['list', 'record', 'update', 'remove'],
   timeOff: [
     'list',
     'listInRange',
