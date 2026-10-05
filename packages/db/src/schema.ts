@@ -24,14 +24,17 @@ import type {
   AuditAction,
   CallOffStatus,
   CallOutcome,
+  CancellationTier,
   DifferentialKind,
   EmploymentType,
   Id,
   IsoDate,
+  LeaveBidChoice,
   NurseRole,
   OvertimeRule,
   PeriodStatus,
   PreferenceKind,
+  RatioRole,
   RequestOrigin,
   ScheduleChangeKind,
   ScheduleChangeSource,
@@ -302,6 +305,116 @@ export const overtimeVolunteer = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// Orientation
+// ---------------------------------------------------------------------------
+
+/**
+ * One orientee and one of their preceptors over a date range (`Preceptorship`). An orientee with
+ * two preceptors has two rows: `orientee-with-preceptor` accepts a shift any one of them is on.
+ */
+export const preceptorship = sqliteTable(
+  'preceptorship',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    orienteeId: text('orientee_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    preceptorId: text('preceptor_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    startDate: isoDate('start_date').notNull().$type<IsoDate>(),
+    endDate: isoDate('end_date').notNull().$type<IsoDate>(),
+    createdAt: timestamp('created_at').notNull(),
+  },
+  (t) => [index('preceptorship_orientee_start_idx').on(t.orienteeId, t.startDate)],
+);
+
+// ---------------------------------------------------------------------------
+// Float pool
+// ---------------------------------------------------------------------------
+
+/**
+ * A nurse who also works on a unit other than their home unit (`nurse.unitId`). One row per nurse
+ * and unit: the dates, when given, are the span the membership holds, and `competency` is the
+ * manager's note on what the nurse may be asked to do there. The home unit is never a row.
+ */
+export const nurseUnit = sqliteTable(
+  'nurse_unit',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    competency: text('competency'),
+    startDate: isoDate('start_date').$type<IsoDate>(),
+    endDate: isoDate('end_date').$type<IsoDate>(),
+    createdAt: timestamp('created_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('nurse_unit_nurse_unit_idx').on(t.nurseId, t.unitId),
+    index('nurse_unit_unit_idx').on(t.unitId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Leave balances and FMLA
+// ---------------------------------------------------------------------------
+
+/**
+ * A nurse's paid-leave balance as the manager last entered it from payroll. One row per nurse and
+ * type (`pto` or `sick`); `asOf` is the payroll date the figure was true on, so a stale balance
+ * reads as stale. The app does not accrue: payroll owns the number, the manager copies it in.
+ */
+export const leaveBalance = sqliteTable(
+  'leave_balance',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    type: text('type').notNull().$type<'pto' | 'sick'>(),
+    balanceHours: real('balance_hours').notNull(),
+    asOf: isoDate('as_of').notNull().$type<IsoDate>(),
+    updatedAt: timestamp('updated_at').notNull(),
+  },
+  (t) => [uniqueIndex('leave_balance_nurse_type_idx').on(t.nurseId, t.type)],
+);
+
+/**
+ * A nurse's FMLA certification: the span the certifying provider covers, and whether leave may be
+ * taken intermittently. Dates are inclusive. The hours used against the 12 weeks come from
+ * approved `fmla` time off, not from here.
+ */
+export const fmlaCertification = sqliteTable(
+  'fmla_certification',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    startDate: isoDate('start_date').notNull().$type<IsoDate>(),
+    endDate: isoDate('end_date').notNull().$type<IsoDate>(),
+    intermittent: bool('intermittent').notNull().default(false),
+    note: text('note'),
+    createdAt: timestamp('created_at').notNull(),
+  },
+  (t) => [index('fmla_certification_nurse_start_idx').on(t.nurseId, t.startDate)],
+);
+
+// ---------------------------------------------------------------------------
 // Time off
 // ---------------------------------------------------------------------------
 
@@ -337,6 +450,69 @@ export const timeOffRequest = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// Leave bidding
+// ---------------------------------------------------------------------------
+
+/** Where a bidding round stands; it only moves forward. */
+export type LeaveBidRoundStatus = 'open' | 'closed' | 'awarded';
+
+/**
+ * A season's bidding round (`LeaveBidRound` plus its `LeaveBidRoundRecord` bookkeeping). `status`
+ * only moves forward: open (bids may change), closed (they may not), awarded (decided, once).
+ * `opensOn`/`closesOn` are the manager's announced window; the status, not the calendar, decides
+ * whether a bid is accepted, so the same round gives the same answer on any day.
+ */
+export const leaveBidRound = sqliteTable(
+  'leave_bid_round',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    name: text('name').notNull(),
+    coversStart: isoDate('covers_start').notNull().$type<IsoDate>(),
+    coversEnd: isoDate('covers_end').notNull().$type<IsoDate>(),
+    opensOn: isoDate('opens_on').notNull().$type<IsoDate>(),
+    closesOn: isoDate('closes_on').notNull().$type<IsoDate>(),
+    /** Places off a day per role; keyed by role because the set of roles is closed and tiny. */
+    offPerDay: text('off_per_day', { mode: 'json' })
+      .notNull()
+      .$type<Partial<Record<NurseRole, number>>>(),
+    maxAwardsPerNurse: integer('max_awards_per_nurse'),
+    status: text('status').notNull().default('open').$type<LeaveBidRoundStatus>(),
+    awardedAt: timestamp('awarded_at'),
+  },
+  (t) => [index('leave_bid_round_unit_idx').on(t.unitId)],
+);
+
+/**
+ * One nurse's bid. The ranked choices are JSON on the row: they are only ever read and replaced
+ * together (a bid is one sheet of paper), never queried by date, and a separate choice table
+ * would need the contiguous-rank rule enforced across rows instead of once in the repository.
+ */
+export const leaveBid = sqliteTable(
+  'leave_bid',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    roundId: text('round_id')
+      .notNull()
+      .references(() => leaveBidRound.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    choices: text('choices', { mode: 'json' }).notNull().$type<LeaveBidChoice[]>(),
+    /** Always 'manager' in v1; the seam that lets nurse self-service reuse this table. */
+    enteredBy: text('entered_by').notNull().default('manager').$type<RequestOrigin>(),
+    submittedAt: timestamp('submitted_at').notNull(),
+  },
+  // One bid per nurse per round: replacing a bid rewrites this row.
+  (t) => [uniqueIndex('leave_bid_round_nurse_idx').on(t.roundId, t.nurseId)],
+);
+
+// ---------------------------------------------------------------------------
 // Acuity & demand
 // ---------------------------------------------------------------------------
 
@@ -359,13 +535,16 @@ export const ratioRule = sqliteTable(
       .notNull()
       .references(() => unit.id, { onDelete: 'cascade' })
       .$type<Id>(),
-    role: text('role').notNull().$type<NurseRole>(),
+    /** A nurse role, or 'licensed' for RNs and LPNs pooled. */
+    role: text('role').notNull().$type<RatioRole>(),
     /** Null applies the rule to every acuity tier. */
     acuityTierId: text('acuity_tier_id')
       .references(() => acuityTier.id, { onDelete: 'cascade' })
       .$type<Id>(),
     maxPatientsPerNurse: real('max_patients_per_nurse').notNull(),
     citation: text('citation'),
+    /** For a 'licensed' rule: the least share of RNs among the licensed nurses (0–1). */
+    minRnShare: real('min_rn_share'),
     active: bool('active').notNull().default(true),
   },
   (t) => [index('ratio_rule_unit_idx').on(t.unitId, t.active)],
@@ -769,6 +948,108 @@ export const budget = sqliteTable(
   // One budget per period: `setBudget` upserts, and a second row would never be read.
   (t) => [uniqueIndex('budget_period_idx').on(t.periodId)],
 );
+
+/**
+ * The unit's low-census cancellation order (`CancellationTier`s, first to go home first). One row
+ * per unit, absent until the manager first saves it; the repository returns core's
+ * `DEFAULT_CANCELLATION_TIERS` for a missing row, so the contract's usual order applies from day one.
+ */
+export const cancellationPolicy = sqliteTable('cancellation_policy', {
+  id: text('id').primaryKey().$type<Id>(),
+  unitId: text('unit_id')
+    .notNull()
+    .unique()
+    .references(() => unit.id, { onDelete: 'cascade' })
+    .$type<Id>(),
+  tiers: text('tiers', { mode: 'json' }).notNull().$type<CancellationTier[]>(),
+});
+
+/**
+ * A nurse sent home because the census dropped. The rotation counts these, so the row must
+ * outlive the shift it describes: no foreign key on the assignment, which the cancellation deletes
+ * (the same reason `call_off` has none). `reason` is the order's own words for the place the
+ * nurse held, quoted if the cancellation is grieved.
+ */
+export const shiftCancellation = sqliteTable(
+  'shift_cancellation',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    periodId: text('period_id')
+      .notNull()
+      .references(() => schedulePeriod.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    shiftTypeId: text('shift_type_id')
+      .notNull()
+      .references(() => shiftType.id)
+      .$type<Id>(),
+    date: isoDate('date').notNull().$type<IsoDate>(),
+    reason: text('reason').notNull(),
+    cancelledAt: timestamp('cancelled_at').notNull(),
+    /** 'manager' in v1; never inferred at read time. */
+    enteredBy: text('entered_by').notNull().$type<'manager' | 'nurse'>(),
+  },
+  (t) => [
+    index('shift_cancellation_nurse_date_idx').on(t.nurseId, t.date),
+    index('shift_cancellation_period_date_idx').on(t.periodId, t.date),
+  ],
+);
+
+/**
+ * Something that happened on the day and is paid for outside the schedule: a missed meal or rest
+ * break, a nurse sent home on arrival, a standby nurse called back in (`DayOfPayEvent` in core).
+ * It is not an assignment and outlives the one it came from (a send-home deletes the shift), so
+ * the shift type is a plain reference and the hours are copied onto the row.
+ */
+export const dayOfPayEvent = sqliteTable(
+  'day_of_pay_event',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    kind: text('kind').notNull().$type<'missed_break' | 'sent_home' | 'call_back'>(),
+    date: isoDate('date').notNull().$type<IsoDate>(),
+    shiftTypeId: text('shift_type_id')
+      .references(() => shiftType.id)
+      .$type<Id>(),
+    /** Missed breaks only. */
+    breakKind: text('break_kind').$type<'meal' | 'rest'>(),
+    /** Sent home: the shift's paid length. */
+    scheduledHours: real('scheduled_hours'),
+    /** Sent home and call-back: the hours actually worked. */
+    hoursWorked: real('hours_worked'),
+    note: text('note'),
+    /** 'manager' in v1; never inferred at read time. */
+    enteredBy: text('entered_by').notNull().$type<'manager' | 'nurse'>(),
+    createdAt: timestamp('created_at').notNull(),
+  },
+  (t) => [
+    index('day_of_pay_event_unit_date_idx').on(t.unitId, t.date),
+    index('day_of_pay_event_nurse_date_idx').on(t.nurseId, t.date),
+  ],
+);
+
+/**
+ * A unit's pay settings that are not rates, differentials or overtime rules. One row per unit,
+ * absent until saved (the defaults apply): the contract's minimum hours a call-back pays.
+ */
+export const paySettings = sqliteTable('pay_settings', {
+  unitId: text('unit_id')
+    .primaryKey()
+    .references(() => unit.id, { onDelete: 'cascade' })
+    .$type<Id>(),
+  callBackMinimumHours: real('call_back_minimum_hours').notNull().default(0),
+  updatedAt: timestamp('updated_at').notNull(),
+});
 
 // ---------------------------------------------------------------------------
 // Conflicts

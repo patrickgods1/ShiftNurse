@@ -15,6 +15,7 @@ import { useConfirmDiscard } from '../components/unsaved-changes.js';
 import { NOT_ENFORCED, PRESETS_DISCLAIMER } from '../limits.js';
 import AcuityPanel from './settings/acuity.js';
 import BackupsPanel from './settings/backups.js';
+import CancellationOrderPanel from './settings/cancellation-order.js';
 import ConflictsPanel from './settings/conflicts.js';
 import { CoverageTab } from './settings/coverage-tab.js';
 import HolidaysPanel from './settings/holidays.js';
@@ -232,7 +233,10 @@ export default function SettingsPage() {
                 ) : tab.id === 'solver' ? (
                   <SolverPanel />
                 ) : tab.id === 'conflicts' ? (
-                  <ConflictsPanel />
+                  <div className="flex flex-col gap-4">
+                    <ConflictsPanel />
+                    <CancellationOrderPanel />
+                  </div>
                 ) : tab.id === 'holidays' ? (
                   <HolidaysPanel />
                 ) : tab.id === 'backups' ? (

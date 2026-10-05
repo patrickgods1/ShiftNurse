@@ -22,3 +22,18 @@ describe('a call-off arriving over IPC', () => {
     expect(API_SCHEMAS.dayOf.markUncovered.safeParse(['c-1', '']).success).toBe(true);
   });
 });
+
+describe('sending a nurse home for low census over IPC', () => {
+  it('accepts a cancellation naming the shift, the role and who volunteered', () => {
+    const args = ['p-1', '2026-10-05', 'st-d', 'RN', ['n-2'], 'n-2'];
+    expect(API_SCHEMAS.dayOf.cancelForCensus.safeParse(args).success).toBe(true);
+  });
+
+  it('refuses a made-up role, and a tier the order does not know', () => {
+    const args = ['p-1', '2026-10-05', 'st-d', 'Doctor', [], 'n-2'];
+    expect(API_SCHEMAS.dayOf.cancelForCensus.safeParse(args).success).toBe(false);
+    expect(API_SCHEMAS.dayOf.saveCancellationPolicy.safeParse(['u-1', ['seniority']]).success).toBe(
+      false,
+    );
+  });
+});

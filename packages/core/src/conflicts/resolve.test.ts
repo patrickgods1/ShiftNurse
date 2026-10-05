@@ -5,6 +5,7 @@ import { isoDate } from '../domain/time.js';
 import {
   assign,
   CRED_ACLS,
+  census,
   coverage,
   credentialRequirement,
   DAY_12,
@@ -18,6 +19,7 @@ import {
   resetFixtureCounters,
   type SolveScenarioOptions,
   solveInputFrom,
+  TIER_ROUTINE,
   timeOff,
 } from '../testing/fixtures.js';
 import { detectConflicts } from './detect.js';
@@ -374,5 +376,51 @@ describe('rostered during approved leave', () => {
     }
     expect(options.some((r) => r.kind === 'move_assignment')).toBe(false);
     expect(options[options.length - 1]!.kind).toBe('accept_shortfall');
+  });
+});
+
+describe('a licensed-nurse ratio pooling RNs and LVNs', () => {
+  it('offers an idle LVN for a pooled shortfall, and names the LVN on leave behind it', () => {
+    resetFixtureCounters();
+    const rn1 = makeNurse({ id: 'rn1', isChargeEligible: true });
+    const rn2 = makeNurse({ id: 'rn2' });
+    const lvnOn = makeNurse({ id: 'lvn-on', role: 'LPN' });
+    const lvnLeave = makeNurse({ id: 'lvn-leave', role: 'LPN' });
+    const lvnFree = makeNurse({ id: 'lvn-free', role: 'LPN', firstName: 'Lu', lastName: 'Tran' });
+    const SAT = isoDate('2026-01-10');
+    // 20 patients at a licensed 1:5, half RNs: four licensed, two RNs. Two RNs and one LVN are
+    // on, the second LVN is on approved leave: one licensed nurse short.
+    const input: ConflictInput = solveInputFrom({
+      startDate: isoDate('2026-01-05'),
+      endDate: isoDate('2026-01-17'),
+      nurses: [rn1, rn2, lvnOn, lvnLeave, lvnFree],
+      shiftTypes: [DAY_12],
+      ratioRules: [
+        {
+          id: 'lic',
+          unitId: 'unit-1',
+          role: 'licensed',
+          acuityTierId: null,
+          maxPatientsPerNurse: 5,
+          minRnShare: 0.5,
+          active: true,
+        },
+      ],
+      censusForecasts: [census(SAT, DAY_12, { [TIER_ROUTINE.id]: 20 })],
+      assignments: [
+        assign('rn1', DAY_12, SAT, { isCharge: true }),
+        assign('rn2', DAY_12, SAT),
+        assign('lvn-on', DAY_12, SAT),
+      ],
+      timeOff: [timeOff('lvn-leave', SAT, SAT)],
+    });
+    const conflicts = detectConflicts(input);
+    const pool = conflicts.find((c) => c.kind === 'ratio_breach' && c.role === 'licensed');
+    expect(pool).toBeDefined();
+    expect(pool!.nurseIds).toContain('lvn-leave');
+    const offers = generateResolutions(input, conflicts)
+      .filter((r) => r.conflictId === pool!.id && r.kind === 'assign_available')
+      .flatMap((r) => r.nurseIds);
+    expect(offers).toContain('lvn-free');
   });
 });

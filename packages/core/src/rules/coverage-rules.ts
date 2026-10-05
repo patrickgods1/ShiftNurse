@@ -13,7 +13,7 @@
  * manager needs when deciding how hard to fight for the extra nurse.
  */
 
-import { NURSE_ROLES, type RoleDemand } from '../acuity/demand.js';
+import { NURSE_ROLES, type RoleDemand, type ShiftDemand } from '../acuity/demand.js';
 import type { Id, NurseCredential, NurseRole } from '../domain/entities.js';
 import { compareDates, describeDate, type IsoDate } from '../domain/time.js';
 import { coveringShift } from '../schedule/cover.js';
@@ -345,12 +345,99 @@ export const ratioComplianceRule: Rule<RatioParams> = {
             ),
           );
         }
+
+        if (demand.licensed) {
+          violations.push(
+            ...licensedBreaches(demand, assigned, shiftType.name, date, shiftType.id),
+          );
+        }
       }
     }
 
     return violations;
   },
 };
+
+/**
+ * A `licensed` ratio's two checks: RNs alone against the share the rule requires, and RNs and
+ * LPN/LVNs together against the pooled count. Every RN the share needs also counts toward the pool,
+ * so the pooled breach reports only what is left after them — one RN and one LVN against "four,
+ * two of them RNs" is one RN and one more of either, two nurses, not three. Each breach carries its
+ * shortfall, which is what both solvers price, so the total is the fewest nurses that fix it.
+ */
+function licensedBreaches(
+  demand: ShiftDemand,
+  assigned: readonly AssignmentView[],
+  shiftName: string,
+  date: IsoDate,
+  shiftTypeId: Id,
+): Violation[] {
+  const licensed = demand.licensed!;
+  const rns = countRole(assigned, 'RN');
+  const lvns = countRole(assigned, 'LPN');
+  const staffed = rns + lvns;
+  const where = `${shiftName} on ${describeDate(date)}`;
+  const parts = {
+    dates: [date],
+    nurseIds: assigned.map((v) => v.nurse.id),
+    assignmentIds: assigned.map((v) => v.assignment.id),
+  };
+  const out: Violation[] = [];
+  const rnShort = Math.max(0, licensed.minRn - rns);
+  const poolShort = Math.max(0, licensed.ratioDerived - staffed);
+  const poolExtra = poolShort - Math.min(poolShort, rnShort);
+  if (poolExtra > 0) {
+    const bedside = Math.max(0, staffed - licensed.chargeWithoutPatients);
+    const perNurse = bedside > 0 ? (demand.projectedCensus / bedside).toFixed(1) : '∞';
+    out.push(
+      violation(
+        ratioComplianceRule,
+        'hard',
+        'ratio_breach',
+        `${where}: ${demand.projectedCensus} projected patients across ${staffed} licensed nurses ` +
+          `(${rns} RN${rns === 1 ? '' : 's'}, ${lvns} LVN${lvns === 1 ? '' : 's'}) is ${perNurse} ` +
+          `patients per nurse. The licensed ratio requires ${licensed.ratioDerived}` +
+          (rnShort > 0 ? `: ${poolExtra} more of either after the RNs below.` : '.'),
+        {
+          ...parts,
+          details: {
+            role: 'licensed',
+            staffed,
+            required: licensed.ratioDerived,
+            shortfall: poolExtra,
+            projectedCensus: demand.projectedCensus,
+            shiftTypeId,
+            standard: 'ratio',
+          },
+        },
+      ),
+    );
+  }
+  if (rnShort > 0) {
+    const share = Math.round((licensed.minRn / Math.max(1, licensed.ratioDerived)) * 100);
+    out.push(
+      violation(
+        ratioComplianceRule,
+        'hard',
+        'ratio_breach',
+        `${where}: ${rns} of ${staffed} licensed nurses ${rns === 1 ? 'is an RN' : 'are RNs'}; ` +
+          `at least ${licensed.minRn} must be (${share}%).`,
+        {
+          ...parts,
+          details: {
+            role: 'RN',
+            staffed: rns,
+            required: licensed.minRn,
+            shortfall: rnShort,
+            shiftTypeId,
+            standard: 'rn_share',
+          },
+        },
+      ),
+    );
+  }
+  return out;
+}
 
 /** " (4 at the bedside and a charge nurse without patients)" — empty when the ratio is all bedside. */
 function ratioMakeup(demand: RoleDemand): string {

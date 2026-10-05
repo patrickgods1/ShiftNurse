@@ -26,6 +26,7 @@ import {
   demandInputs,
   getAssignment,
   getCallOff,
+  getCancellationPolicy,
   getNurse,
   getShiftType,
   lastCalledAt,
@@ -33,15 +34,16 @@ import {
   listCallAttempts,
   listCallOffsForUnit,
   listCensusForecastsInRange,
-  listNursesForUnit,
   listShiftTypesForUnit,
   logCallAttempt,
   markCallOffCovered,
   markCallOffUncovered,
   openCallOffForAssignment,
   reportCallOff,
+  rosterForPeriod,
   type ShiftNurseDb,
   type ShiftNurseTx,
+  saveCancellationPolicy,
   transact,
 } from '@shiftnurse/db';
 import type {
@@ -53,6 +55,7 @@ import type {
   TodayShiftView,
 } from '../../shared/api.js';
 
+import { cancelForCensus, cancellationOrderFor, overstaffedRoles } from './census-cancellation.js';
 import {
   ACTOR,
   assignmentOrThrow,
@@ -164,7 +167,7 @@ function dayOfSummary(db: DbLike, unitId: Id, date?: IsoDate): DayOfSummary {
   const d = date ?? today();
   const minuteOfDay = hostMinuteOfDay();
   const shiftTypes = listShiftTypesForUnit(db, unitId);
-  const nurses = listNursesForUnit(db, unitId);
+  const nurses = rosterForPeriod(db, { unitId, startDate: d, endDate: d });
   const shiftTypeById = new Map(shiftTypes.map((t) => [t.id, t]));
   const nurseById = new Map(nurses.map((n) => [n.id, n]));
 
@@ -210,6 +213,7 @@ function dayOfSummary(db: DbLike, unitId: Id, date?: IsoDate): DayOfSummary {
       shiftType,
       ...(census ? { census } : {}),
       staffing,
+      overstaffed: plan.period ? overstaffedRoles(plan.period.id, staffing) : [],
       roster,
       status: slot.status,
     };
@@ -348,5 +352,12 @@ export function dayOfApi(db: ShiftNurseDb): ShiftNurseApi['dayOf'] {
     cancelCallOff: (callOffId, reason) =>
       transact(db, (tx) => cancelCallOff(tx, callOffId, ACTOR, reason)),
     callLog: (callOffId) => listCallAttempts(db, callOffId),
+    cancellationPolicy: (unitId) => getCancellationPolicy(db, unitId),
+    saveCancellationPolicy: (unitId, tiers) =>
+      transact(db, (tx) => saveCancellationPolicy(tx, unitId, tiers, ACTOR)),
+    cancellationOrder: (periodId, date, shiftTypeId, role, volunteers) =>
+      cancellationOrderFor(db, periodId, date, shiftTypeId, role, volunteers),
+    cancelForCensus: (periodId, date, shiftTypeId, role, volunteers, nurseId) =>
+      cancelForCensus(db, periodId, date, shiftTypeId, role, volunteers, nurseId),
   };
 }

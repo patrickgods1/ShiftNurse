@@ -25,6 +25,7 @@ import {
 } from '@shiftnurse/core';
 import {
   type DbLike,
+  elsewhereForPeriod,
   getAssignment,
   getBudget,
   getLatestRuleSet,
@@ -33,13 +34,13 @@ import {
   getUnit,
   listAssignmentsForPeriod,
   listHolidaysForUnit,
-  listNursesForUnit,
   listPeriodsForUnit,
   listPreferencesForUnit,
   listShiftTypesForUnit,
   listTimeOffForUnit,
   loadPeriodInput,
   priorAssignmentsBefore,
+  rosterForPeriod,
   timeOffForPeriod,
 } from '@shiftnurse/db';
 
@@ -109,21 +110,27 @@ export function scheduleViewFor(
   period: SchedulePeriod,
   options: ScheduleViewOptions,
 ): ScheduleView {
+  const nurses = options.nurses ?? rosterForPeriod(db, period);
+  // Other units' shifts are part of the lookback tail: judged by rest, overlap and hours, never
+  // flagged or drawn as this unit's chips (the grid lists `periods.assignments`, not the view).
+  // A counting view (no lookback) leaves them out: they are not this unit's work.
+  const elsewhere = options.lookback ? elsewhereForPeriod(db, period, nurses) : undefined;
   return new ScheduleView({
     period,
     assignments: options.assignments ?? listAssignmentsForPeriod(db, period.id),
     ...(options.lookback
       ? {
-          priorAssignments: priorAssignmentsBefore(
-            db,
-            period.unitId,
-            period.startDate,
-            LOOKBACK_DAYS,
-          ),
+          priorAssignments: [
+            ...priorAssignmentsBefore(db, period.unitId, period.startDate, LOOKBACK_DAYS),
+            ...(elsewhere?.assignments ?? []),
+          ],
         }
       : {}),
-    nurses: options.nurses ?? listNursesForUnit(db, period.unitId),
-    shiftTypes: options.shiftTypes ?? listShiftTypesForUnit(db, period.unitId),
+    nurses,
+    shiftTypes: [
+      ...(options.shiftTypes ?? listShiftTypesForUnit(db, period.unitId)),
+      ...(elsewhere?.shiftTypes ?? []),
+    ],
   });
 }
 

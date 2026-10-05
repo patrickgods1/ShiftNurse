@@ -1,0 +1,1 @@
+ALTER TABLE `ratio_rule` ADD `min_rn_share` real;

@@ -17,6 +17,7 @@ import type {
   OvertimeRulePatch,
   PayRateInput,
   PayRatePatch,
+  PaySettings,
 } from '../../shared/api.js';
 import { api, queryKeys } from './api.js';
 import { invalidateUnitDerived } from './period-cache.js';
@@ -169,5 +170,30 @@ export function useDeleteOvertimeRule(unitId: Id) {
   return useMutation({
     mutationFn: (id: Id) => api.cost.deleteOvertimeRule(id),
     onSuccess: invalidate,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Pay settings
+// ---------------------------------------------------------------------------
+
+export function usePaySettings(unitId: Id | undefined) {
+  return useQuery({
+    queryKey: ['cost', 'paySettings', unitId ?? ''] as const,
+    queryFn: () => api.cost.paySettings(unitId as Id),
+    enabled: unitId !== undefined,
+  });
+}
+
+export function useSavePaySettings(unitId: Id) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (settings: PaySettings) => api.cost.savePaySettings(unitId, settings),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['cost', 'paySettings', unitId] });
+      // The minimum re-prices every call-back already recorded.
+      void queryClient.invalidateQueries({ queryKey: ['cost', 'report'] });
+    },
   });
 }

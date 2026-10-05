@@ -134,6 +134,55 @@
       "when": 1791140795244,
       "tag": "0018_unit_jurisdiction",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1791155128894,
+      "tag": "0019_leave_bidding",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1791179116699,
+      "tag": "0020_ratio_licensed",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1791182084219,
+      "tag": "0021_census_cancellation",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1791182832003,
+      "tag": "0022_preceptorship",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1791183116597,
+      "tag": "0023_leave_balance",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1791218938159,
+      "tag": "0024_nurse_unit",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1791219513751,
+      "tag": "0025_day_of_pay_event",
+      "breakpoints": true
     }
   ]
 }

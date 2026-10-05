@@ -19,7 +19,7 @@ import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import { toBudget, toDifferential, toOvertimeRule, toPayRate } from '../mappers.js';
-import { budget, differential, nurse, overtimeRule, payRate } from '../schema.js';
+import { budget, differential, nurse, overtimeRule, payRate, paySettings } from '../schema.js';
 import { auditedUpdate, type PatchKeys } from './patch.js';
 
 // ---------------------------------------------------------------------------
@@ -342,4 +342,53 @@ export function setBudget(
   const created = toBudget(row);
   recordAudit(db, { entityType: 'budget', entityId: id, action: 'create', actor, after: created });
   return created;
+}
+
+// ---------------------------------------------------------------------------
+// Pay settings
+// ---------------------------------------------------------------------------
+
+/** Settings that are not rates, differentials or overtime rules. */
+export interface PaySettings {
+  /** The fewest hours a call-back pays, from the contract. 0 pays the hours worked. */
+  callBackMinimumHours: number;
+}
+
+export const DEFAULT_PAY_SETTINGS: PaySettings = { callBackMinimumHours: 0 };
+
+/** A unit that has saved nothing is paid by the defaults. */
+export function getPaySettings(db: DbLike, unitId: Id): PaySettings {
+  const row = db.select().from(paySettings).where(eq(paySettings.unitId, unitId)).get();
+  return row ? { callBackMinimumHours: row.callBackMinimumHours } : { ...DEFAULT_PAY_SETTINGS };
+}
+
+export function savePaySettings(
+  db: DbLike,
+  unitId: Id,
+  settings: PaySettings,
+  actor: string,
+): PaySettings {
+  const hours = settings.callBackMinimumHours;
+  // IPC input is typed, not checked: a negative or absurd minimum would price every call-back wrong.
+  if (!Number.isFinite(hours) || hours < 0 || hours > 24) {
+    throw new Error('The call-back minimum must be between 0 and 24 hours');
+  }
+  const before = getPaySettings(db, unitId);
+  const after: PaySettings = { callBackMinimumHours: hours };
+  db.insert(paySettings)
+    .values({ unitId, callBackMinimumHours: hours, updatedAt: Date.now() })
+    .onConflictDoUpdate({
+      target: paySettings.unitId,
+      set: { callBackMinimumHours: hours, updatedAt: Date.now() },
+    })
+    .run();
+  recordAudit(db, {
+    entityType: 'pay_settings',
+    entityId: unitId,
+    action: 'update',
+    actor,
+    before,
+    after,
+  });
+  return after;
 }

@@ -19,8 +19,8 @@
  * the one to fight for — with both required counts in `details`.
  */
 
-import { NURSE_ROLES } from '../acuity/demand.js';
-import type { Id, Nurse, NurseRole, TimeOffRequest } from '../domain/entities.js';
+import { fillsRatioRole, NURSE_ROLES } from '../acuity/demand.js';
+import type { Id, Nurse, NurseRole, RatioRole, TimeOffRequest } from '../domain/entities.js';
 import { compareDates, dateInRange, describeDateRange, type IsoDate } from '../domain/time.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import { hasValidCredential } from '../rules/coverage-rules.js';
@@ -70,7 +70,7 @@ function severityRank(severity: ConflictSeverity): number {
 interface ShortCell {
   date: IsoDate;
   shiftTypeId: Id;
-  role: NurseRole;
+  role: RatioRole;
   staffed: number;
   floorRequired: number;
   ratioRequired: number;
@@ -89,7 +89,7 @@ function staffingConflicts(
     const date = v.dates[0];
     if (!date) continue;
     const shiftTypeId = detailString(v, 'shiftTypeId') as Id;
-    const role = detailString(v, 'role') as NurseRole;
+    const role = detailString(v, 'role') as RatioRole;
     const key = `${date}::${shiftTypeId}::${role}`;
     const cell = cells.get(key) ?? {
       date,
@@ -119,12 +119,15 @@ function staffingConflicts(
     const kind = cell.ratioBreached ? 'ratio_breach' : 'understaffing';
 
     const onLeave = engine.nurses.filter(
-      (n) => n.role === cell.role && approvedLeaveOn(state.ctx, n.id, cell.date) !== undefined,
+      (n) =>
+        fillsRatioRole(cell.role, n.role) &&
+        approvedLeaveOn(state.ctx, n.id, cell.date) !== undefined,
     );
     const leaveIds = onLeave.map((n) => approvedLeaveOn(state.ctx, n.id, cell.date)!.id);
-    const pending = pendingCovering(state.timeOff, cell.date).filter(
-      (r) => engine.nursesById.get(r.nurseId)?.role === cell.role,
-    );
+    const pending = pendingCovering(state.timeOff, cell.date).filter((r) => {
+      const nurseRole = engine.nursesById.get(r.nurseId)?.role;
+      return nurseRole !== undefined && fillsRatioRole(cell.role, nurseRole);
+    });
 
     const standard = !cell.ratioBreached
       ? 'floor'

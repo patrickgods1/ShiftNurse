@@ -4,6 +4,7 @@ import {
   compareToBudget,
   costSchedule,
   type Id,
+  priceDayOfEvents,
   type SchedulePeriod,
   type ScheduleView,
 } from '@shiftnurse/core';
@@ -13,14 +14,19 @@ import {
   createOvertimeRule,
   createPayRate,
   type DbLike,
+  dayOfPayEventsOf,
   deleteDifferential,
   deleteOvertimeRule,
   deletePayRate,
   getBudget,
+  getPaySettings,
+  listDayOfPayEvents,
   listDifferentialsForUnit,
   listOvertimeRulesForUnit,
   listPayRatesForUnit,
+  rosterForPeriod,
   type ShiftNurseDb,
+  savePaySettings,
   setBudget,
   transact,
   updateDifferential,
@@ -45,13 +51,22 @@ export function costReportForView(
 ): PeriodCostReport {
   // The period's own snapshot: the weekend definition and work week it was solved under.
   const ruleSet = ruleSetFor(db, period);
-  const cost = costSchedule(schedule, costContext(db, period.unitId, ruleSet, period));
+  const ctx = costContext(db, period.unitId, ruleSet, period);
+  const cost = costSchedule(schedule, ctx);
   const budget = getBudget(db, period.id);
+  // Beside the schedule's cost, never in it. A floated-in nurse's missed break is this unit's pay.
+  const dayOf = priceDayOfEvents(
+    dayOfPayEventsOf(listDayOfPayEvents(db, period.unitId, period.startDate, period.endDate)),
+    ctx,
+    rosterForPeriod(db, period),
+    getPaySettings(db, period.unitId),
+  );
   return {
     period,
     cost,
     budget,
     variance: budget ? compareToBudget(cost.totals.total, budget.targetDollars) : undefined,
+    dayOf,
   };
 }
 
@@ -81,5 +96,8 @@ export function costApi(db: ShiftNurseDb): ShiftNurseApi['cost'] {
     deleteOvertimeRule: (id) => transact(db, (tx) => deleteOvertimeRule(tx, id, ACTOR)),
     report: (periodId) => costReport(db, periodId),
     setBudget: (periodId, targetDollars) => setPeriodBudget(db, periodId, targetDollars),
+    paySettings: (unitId) => getPaySettings(db, unitId),
+    savePaySettings: (unitId, settings) =>
+      transact(db, (tx) => savePaySettings(tx, unitId, settings, ACTOR)),
   };
 }

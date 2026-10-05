@@ -36,7 +36,7 @@ export function staffedExpr(
  * Staff matching `keep` on the shift covering this one (`schedule/cover.ts`): its variables and
  * locked rows, or the lookback tail's roster of a night begun the day before the period.
  */
-function coverExpr(
+export function coverExpr(
   ctx: EncodeContext,
   shift: Shift,
   keep: (nurseIdx: number, locked: Assignment | null) => boolean,
@@ -258,6 +258,33 @@ export function encodeRatio(ctx: EncodeContext, raw: Record<string, unknown>): v
         `ratio: ${label(shift)} ${role}`,
       );
       ctx.b.minimise(expr([[short, 1]]), ctx.weights.hardShortfall);
+    }
+    // A `licensed` rule: RNs and LPNs together against the pooled count, and RNs alone against
+    // the share — the ratio rule's two breaches, each priced by its shortfall.
+    // The pool is priced only beyond the RNs the share needs, as the rule reports it, so the
+    // total is the fewest nurses that fix both.
+    const licensed = demand.licensed;
+    if (licensed) {
+      const rns = roleExpr(ctx, shift, 'RN');
+      const pooled = sum(rns, roleExpr(ctx, shift, 'LPN'));
+      const rnShort =
+        licensed.minRn > 0
+          ? expr([
+              [
+                ctx.b.positivePart(
+                  sum(expr([], licensed.minRn), scale(rns, -1)),
+                  `RN share: ${label(shift)}`,
+                ),
+                1,
+              ],
+            ])
+          : expr();
+      if (licensed.minRn > 0) ctx.b.minimise(rnShort, ctx.weights.hardShortfall);
+      const poolExtra = ctx.b.positivePart(
+        sum(expr([], licensed.ratioDerived), scale(pooled, -1), scale(rnShort, -1)),
+        `licensed ratio: ${label(shift)}`,
+      );
+      ctx.b.minimise(expr([[poolExtra, 1]]), ctx.weights.hardShortfall);
     }
   }
 }

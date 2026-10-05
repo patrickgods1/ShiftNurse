@@ -11,6 +11,7 @@
 import { useNurses } from '../../api.js';
 import { AsyncState } from '../../components/async-state.js';
 import { useUnitId } from '../../unit-context.js';
+import { CallBackSection } from './pay/call-back.js';
 import { DifferentialsSection } from './pay/differentials.js';
 import { OvertimeSection } from './pay/overtime.js';
 import { PayRatesSection } from './pay/rates.js';
@@ -33,6 +34,7 @@ export default function PayPanel() {
       <PayRatesSection unitId={unitId} nurses={nursesQuery.data} />
       <DifferentialsSection unitId={unitId} />
       <OvertimeSection unitId={unitId} />
+      <CallBackSection unitId={unitId} />
     </div>
   );
 }

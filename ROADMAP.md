@@ -577,14 +577,20 @@ manager's experience and the contract rules a real hospital would check first. O
 
 ### M19–M26 — Union and HR features (after 1.0)
 Each is a milestone of its own: core algorithm and rules test-first, then entity, IPC and UI.
-- [ ] M19 Seniority leave bidding (bid rounds awarded in seniority order, every denial reasoned)
-- [ ] M20 Low-census cancellation order (policy tiers, rotation in the ledger, Today flow)
-- [ ] M21 Float pool and multi-unit staff (other-unit shifts as busy time, float rotation)
-- [ ] M22 Leave balances and FMLA (accrual, certifications, balance warnings)
-- [ ] M23 Pay realism (missed-break premium, call-back, minimum reporting and on-call pay)
-- [ ] M24 Pooled licensed-nurse ratios with a minimum RN share
-- [ ] M25 Preceptor pairing rule
-- [ ] M26 Grievance export of the audit trail
+- [x] M19 Seniority leave bidding (bid rounds awarded in seniority order, every denial reasoned)
+- [x] M20 Low-census cancellation order (policy tiers, rotation from cancellation history, Today flow)
+- [x] M21 Float pool and multi-unit staff (other-unit shifts as busy time, float members on the roster;
+      float rotation is a stated limit)
+- [x] M22 Leave balances and FMLA (balances entered from payroll, certifications, balance and FMLA
+      warnings; accrual from hours worked is a stated limit)
+- [x] M23 Pay realism (missed-break premium, reporting-time pay, call-back with a minimum; on-call pay
+      was already priced)
+- [x] M24 Pooled licensed-nurse ratios with a minimum RN share
+- [x] M25 Preceptor pairing rule
+- [x] M26 Grievance export of the audit trail (kept-apart groups and FMLA certifications excluded)
+      (verified 2026-10-05: `npm run check` 2,043 tests, smoke PASS; each core written test-first and
+      mutation-checked; SA + LNS output on the fixed fixtures unchanged, as the new rules and
+      settings are absent there)
 
 ---
 

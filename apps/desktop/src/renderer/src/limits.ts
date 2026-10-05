@@ -5,15 +5,14 @@
  */
 
 export const NOT_ENFORCED: readonly string[] = [
-  'Seniority-ordered leave bidding: decide who gets contested days off by seniority yourself, then enter the approved leave.',
-  'Low-census cancellation order: choose by hand who is cancelled first when the census drops, as your contract orders it.',
-  'Float pool and staff who work on several units: a nurse is on one unit here, so check a floated nurse’s hours and rest across units yourself.',
-  'Leave balances and FMLA: track accrued hours and FMLA eligibility outside the app; it records leave but never checks it against a balance.',
-  'Ratios that pool RNs and LVNs: Title 22 lets LVNs be up to half of licensed staff, but ShiftNurse counts RNs only, which is stricter, so relax it by hand where your unit uses LVNs.',
-  'Meal- and rest-break premium pay: add the premium for a missed break to payroll yourself; costing prices hours worked only.',
-  'Preceptor pairing for orientees: pair each orientee with their preceptor on the grid yourself; the app only requires an experienced RN on the shift.',
   'Hour caps on overtime in Oregon (ORS 441.166) and Massachusetts (16 hours): watch the total hours in a row for nurses on overtime yourself.',
   'Oregon’s staffing-plan deviations: record and justify any departure from the unit’s staffing plan yourself.',
+  'Leave accrual: balances are entered from payroll; the app checks requests against them but does not accrue leave from hours worked, so update them each pay period.',
+  'FMLA eligibility uses the seniority date as the hire date: check a nurse whose bargained seniority predates their hire against HR’s records.',
+  'FMLA leave already taken is counted at the nurse’s current contract: if their FTE changed during the year, check the hours used with HR.',
+  'Break premiums are priced at the base rate: California pays them at the regular rate, which includes differentials, so add the difference in payroll.',
+  'Float staff: other units’ shifts count as busy time, but who floats is not rotated fairly across the team, and Generate may offer a float nurse on any day of the period, not only the dates of their membership; keep the turn and check the dates yourself.',
+  'Leave bids and other requests are entered by the manager: nurses do not submit them in the app yet.',
 ];
 
 export const PRESETS_DISCLAIMER =

@@ -9,6 +9,7 @@ import {
   formatRosterCsv,
   groupIntoPayPeriods,
   type Id,
+  type IsoDate,
   parseHistoricalScheduleCsv,
   parseRosterCsv,
   today,
@@ -21,10 +22,16 @@ import {
   listNursesForUnit,
   listShiftTypesForUnit,
 } from '@shiftnurse/db';
-import type { HistoryImportPreview, RosterImportPreview } from '../../shared/api.js';
+import type {
+  HistoryImportPreview,
+  NurseRecordFormat,
+  RosterImportPreview,
+} from '../../shared/api.js';
 import { openFile, saveFile } from '../native-dialogs.js';
+import { htmlToPdf } from '../output.js';
 
 import { unitOrThrow } from './context.js';
+import { nurseRecordDocument } from './nurse-record.js';
 
 export async function pickRosterImportFile(
   db: DbLike,
@@ -83,4 +90,25 @@ export async function pickHistoryImportFile(
     replacesExisting: existing.has(p.periodId),
   }));
   return { path, rows, errors, periods };
+}
+
+/** The nurse's record in the range, to a file the manager picks; undefined when they cancel. */
+export async function exportNurseRecordToFile(
+  db: DbLike,
+  nurseId: Id,
+  start: IsoDate,
+  end: IsoDate,
+  format: NurseRecordFormat,
+): Promise<string | undefined> {
+  // Built before the dialog so a refusal (a range backwards, an unknown nurse) shows first.
+  const doc = nurseRecordDocument(db, nurseId, start, end, today());
+  const extension = format === 'pdf' ? 'pdf' : 'csv';
+  const path = await saveFile({
+    title: `Export nurse record (${extension.toUpperCase()})`,
+    defaultPath: `${doc.baseName}.${extension}`,
+    filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
+  });
+  if (!path) return undefined;
+  writeFileSync(path, format === 'pdf' ? await htmlToPdf(doc.html, false) : doc.csv, 'utf8');
+  return path;
 }

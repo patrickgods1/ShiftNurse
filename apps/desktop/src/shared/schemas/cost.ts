@@ -2,6 +2,7 @@
 
 import { z } from 'zod';
 import {
+  hours,
   id,
   isoDate,
   money,
@@ -76,4 +77,6 @@ export const costSchemas = {
   deleteOvertimeRule: z.tuple([id]),
   report: z.tuple([id]),
   setBudget: z.tuple([id, money]),
+  paySettings: z.tuple([id]),
+  savePaySettings: z.tuple([id, object({ callBackMinimumHours: hours })]),
 } satisfies ResourceSchemas<'cost'>;

@@ -14,6 +14,7 @@ import type {
   Nurse,
   NurseCredential,
   OvertimeVolunteer,
+  Preceptorship,
   ShiftCredentialRequirement,
   ShiftType,
   TimeOffRequest,
@@ -33,6 +34,7 @@ import { mandatoryOvertimeRule } from './mandatory-overtime.js';
 import { nightRecoveryRule } from './night-recovery.js';
 import { type PaidLeaveCredit, type PaidSickCall, paidLeaveCredits } from './paid-leave.js';
 import { pendingTimeOffRule } from './pending-time-off.js';
+import { preceptorRule } from './preceptor.js';
 import { consecutiveShiftsRule, minRestRule } from './rest-rules.js';
 import type {
   EvaluationResult,
@@ -69,6 +71,7 @@ export const ALL_RULES: readonly Rule<never>[] = [
   pendingTimeOffRule,
   mandatoryOvertimeRule,
   weekendPatternRule,
+  preceptorRule,
 ] as unknown as readonly Rule<never>[];
 
 const RULES_BY_ID = new Map<string, Rule<never>>(ALL_RULES.map((r) => [r.id, r]));
@@ -204,6 +207,8 @@ export interface RuleContextInput {
   holidayWork?: readonly HolidayWorkRecord[];
   /** Standing offers to work overtime. Absent: nobody has volunteered. */
   overtimeVolunteers?: readonly OvertimeVolunteer[];
+  /** Orientees and their preceptors. Absent: nobody is in orientation. */
+  preceptorships?: readonly Preceptorship[];
 }
 
 /** Precompute the joins and indexes every rule needs, once per evaluation pass. */
@@ -252,6 +257,9 @@ export function buildRuleContext(input: RuleContextInput): RuleContext {
     ...holidayIndexes(input.holidays, input.holidayWork ?? []),
     incompatibilityGroups: input.incompatibilityGroups ?? [],
     overtimeVolunteersByNurse: groupByNurse(input.overtimeVolunteers ?? []),
+    preceptorshipsByOrientee: groupByNurse(
+      (input.preceptorships ?? []).map((p) => ({ ...p, nurseId: p.orienteeId })),
+    ),
   };
 }
 

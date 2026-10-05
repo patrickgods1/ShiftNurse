@@ -42,6 +42,8 @@ const alice = () => makeNurse({ firstName: 'Alice', lastName: 'Adams' });
 
 function renderBoard(nurses: Nurse[], focusNurseId?: string) {
   bridge.respond('nurses', 'list', nurses);
+  // The board's rows are the period's roster: here the home nurses, with no floats.
+  bridge.respond('nurseUnits', 'roster', nurses);
   bridge.respond('shiftTypes', 'list', [DAY_12]);
   renderWithApp(
     <ScheduleBoard unitId={testUnit.id} period={period} focusNurseId={focusNurseId} />,
