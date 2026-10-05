@@ -264,6 +264,9 @@ export type {
 } from './rules/types.js';
 // Which dated shift covers which
 export { containingDate, coveringShift, withinShiftProblem } from './schedule/cover.js';
+export type { BusyElsewhere } from './schedule/elsewhere.js';
+// Another unit's shifts as busy time on this one (float and multi-unit staff)
+export { busyElsewhere } from './schedule/elsewhere.js';
 // The schedule read model
 export { ScheduleView } from './schedule/view.js';
 export type {
