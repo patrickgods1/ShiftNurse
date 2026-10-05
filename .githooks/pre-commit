@@ -86,8 +86,11 @@ echo "${bold}pre-commit: AI review of $(echo "$files" | wc -l | tr -d ' ') stage
 
 prompt=$(cat <<PROMPT
 You are the pre-commit reviewer for ShiftNurse, a nurse-scheduling desktop app. Review the
-STAGED DIFF below. Read CLAUDE.md and .claude/skills/scheduling-review/SKILL.md first, and
-read any surrounding source you need to judge the change — the diff alone is not enough.
+STAGED DIFF below. The root CLAUDE.md is already in your context. First read
+.claude/skills/scheduling-review/SKILL.md and, for each folder the diff touches, the nearest
+CLAUDE.md under it (packages/core, packages/core/src/solver, packages/core/src/cost,
+packages/db, packages/db/src/seed, apps/desktop, .github, .githooks) — those hold the
+invariants for that area. Read any surrounding source you need to judge the change; the diff alone is not enough.
 
 Report only findings you have verified against the code. For each: file:line, what is
 wrong, and a concrete failure scenario. Classify each as:
