@@ -133,7 +133,9 @@ export interface ShiftStaffingCheck {
   /** The census the check used (actual or projected); 0 under `floor`. */
   census: number;
   byRole: Record<NurseRole, RoleStaffing>;
-  /** Any role short of its minimum. */
+  /** RNs and LPNs together against a `licensed` ratio, when one governs the shift. */
+  licensed?: { required: number; staffed: number; shortfall: number };
+  /** Any role, or the licensed pool, short of its minimum. */
   short: boolean;
   /**
    * Any role short of a minimum that the patient ratio (not just the coverage floor) sets —

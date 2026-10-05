@@ -49,11 +49,12 @@ import type {
   IncompatibilityGroup,
   Nurse,
   NurseCredential,
-  NurseRole,
   OvertimeRule,
   OvertimeVolunteer,
   PayRate,
+  Preceptorship,
   Preference,
+  RatioRole,
   SchedulePeriod,
   ShiftCredentialRequirement,
   ShiftType,
@@ -111,6 +112,8 @@ export interface SolveInput {
   holidayWork?: readonly HolidayWorkRecord[];
   /** Standing offers to work overtime, for the no-mandatory-overtime rule. */
   overtimeVolunteers?: readonly OvertimeVolunteer[];
+  /** Orientees and their preceptors, for the orientee-with-preceptor rule. */
+  preceptorships?: readonly Preceptorship[];
   preferences: readonly Preference[];
   /** Ledger rows strictly before this period, for the burden index the seed and objective read. */
   ledgerHistory: readonly FairnessLedgerEntry[];
@@ -262,7 +265,8 @@ export interface SolveOptions {
 export interface UnfilledSlot {
   date: IsoDate;
   shiftTypeId: Id;
-  role: NurseRole;
+  /** A role, or `licensed` for a short RN + LPN pool. */
+  role: RatioRole;
   required: number;
   staffed: number;
   shortfall: number;

@@ -6,18 +6,28 @@
  * ones the cost screen would resolve.
  */
 
-import { addDays, isoDate, type SchedulePeriod } from '@shiftnurse/core';
+import { addDays, defaultRuleSet, isoDate, type SchedulePeriod } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { seedScenarioUnit } from '../seed/scenarios.js';
 import type { SeedResult } from '../seed/types.js';
-import { createUnit, getUnit, listShiftTypesForUnit, updateUnit } from './config.js';
+import { createRatioRule, listActiveRatioRulesForUnit, updateRatioRule } from './acuity.js';
+import {
+  createShiftType,
+  createUnit,
+  getUnit,
+  listShiftTypesForUnit,
+  updateUnit,
+} from './config.js';
 import { createIncompatibilityGroup } from './incompatibility.js';
+import { createNurseUnit } from './nurse-units.js';
 import { createOvertimeVolunteer } from './overtime-volunteers.js';
 import { createPayRate, listPayRatesForUnit } from './pay.js';
+import { createPreceptorship } from './preceptorships.js';
 import { createNurse, listNursesForUnit } from './roster.js';
-import { getPeriod } from './schedule.js';
+import { saveRuleSet } from './rulesets.js';
+import { createAssignment, createPeriod, getPeriod, updatePeriodStatus } from './schedule.js';
 import { loadPeriodInput, timeOffForPeriod, timeOffWindow } from './solve-input.js';
 import { createTimeOffRequest, listTimeOffForUnit } from './timeoff.js';
 
@@ -130,6 +140,29 @@ describe('loadPeriodInput', () => {
     offer(addDays(period.endDate, 1), addDays(period.endDate, 3));
     const input = loadPeriodInput(handle.db, period);
     expect(input.overtimeVolunteers!.map((v) => v.id)).toEqual([inTail.id, inPeriod.id]);
+  });
+
+  it('carries the preceptorships from the lookback tail to the period end, and no others', () => {
+    const period = getPeriod(handle.db, seeded.draftPeriodId)!;
+    const [a, b] = listNursesForUnit(handle.db, seeded.unitId);
+    const pair = (start: string, end: string) =>
+      createPreceptorship(
+        handle.db,
+        {
+          unitId: seeded.unitId,
+          orienteeId: a!.id,
+          preceptorId: b!.id,
+          startDate: isoDate(start),
+          endDate: isoDate(end),
+        },
+        ACTOR,
+      );
+    const inTail = pair(addDays(period.startDate, -14), addDays(period.startDate, -14));
+    const inPeriod = pair(period.startDate, period.endDate);
+    pair(addDays(period.startDate, -30), addDays(period.startDate, -15));
+    pair(addDays(period.endDate, 1), addDays(period.endDate, 30));
+    const input = loadPeriodInput(handle.db, period);
+    expect(input.preceptorships!.map((p) => p.id)).toEqual([inTail.id, inPeriod.id]);
   });
 
   it('prices with the role defaults and this unit’s own rates, never another unit’s nurse rate', () => {
@@ -358,5 +391,182 @@ describe("the unit's schedule posting notice", () => {
     expect(() => setLead(10.5)).toThrow('whole number of days from 0 to 90');
     expect(() => setLead(91)).toThrow('whole number of days from 0 to 90');
     expect(getUnit(handle.db, seeded.unitId)!.postingLeadDays).toBeUndefined();
+  });
+});
+
+describe('a licensed-nurse ratio', () => {
+  function licensedRule(minRnShare?: number) {
+    return createRatioRule(
+      handle.db,
+      {
+        unitId: seeded.unitId,
+        role: 'licensed',
+        acuityTierId: null,
+        maxPatientsPerNurse: 5,
+        citation: 'Cal. Code Regs. tit. 22 § 70217(a)(11)',
+        ...(minRnShare !== undefined ? { minRnShare } : {}),
+        active: true,
+      },
+      ACTOR,
+    );
+  }
+
+  it('keeps its RN share and reaches the period as a pooled requirement', () => {
+    const rule = licensedRule(0.5);
+    expect(
+      listActiveRatioRulesForUnit(handle.db, seeded.unitId).find((r) => r.id === rule.id),
+    ).toMatchObject({ role: 'licensed', minRnShare: 0.5 });
+    const input = loadPeriodInput(handle.db, getPeriod(handle.db, seeded.draftPeriodId)!);
+    const pooled = input.demand.filter((d) => d.licensed !== undefined);
+    expect(pooled.length).toBeGreaterThan(0);
+    for (const d of pooled) {
+      // Half the licensed nurses, rounded up, must be RNs.
+      expect(d.licensed!.minRn).toBe(Math.ceil(d.licensed!.ratioDerived / 2));
+    }
+  });
+
+  it('clears the share with null, and refuses one on a single-role rule or past 100%', () => {
+    const rule = licensedRule(0.5);
+    const cleared = transact(handle.db, (tx) =>
+      updateRatioRule(tx, rule.id, { minRnShare: null }, ACTOR),
+    );
+    expect(cleared.minRnShare).toBeUndefined();
+    expect(() =>
+      transact(handle.db, (tx) => updateRatioRule(tx, rule.id, { minRnShare: 1.5 }, ACTOR)),
+    ).toThrow('The share of RNs must be more than 0% and at most 100%');
+    expect(() =>
+      transact(handle.db, (tx) =>
+        updateRatioRule(tx, rule.id, { role: 'RN', minRnShare: 0.5 }, ACTOR),
+      ),
+    ).toThrow('Only a licensed-nurse ratio can require a share of RNs');
+  });
+});
+
+describe('nurses who work on two units', () => {
+  function westWing() {
+    const west = createUnit(
+      handle.db,
+      {
+        name: '5 West',
+        unitType: 'ICU',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    const night = createShiftType(
+      handle.db,
+      {
+        unitId: west.id,
+        name: 'Night 12',
+        abbreviation: 'N12',
+        startTime: '19:00',
+        durationHours: 12,
+        isNight: true,
+        isOnCall: false,
+        color: '#000',
+        sortOrder: 1,
+        active: true,
+      },
+      ACTOR,
+    );
+    const rules = transact(handle.db, (tx) => saveRuleSet(tx, defaultRuleSet(west.id), ACTOR));
+    const period = getPeriod(handle.db, seeded.draftPeriodId)!;
+    const mkPeriod = () =>
+      createPeriod(
+        handle.db,
+        {
+          unitId: west.id,
+          name: 'West',
+          startDate: period.startDate,
+          endDate: period.endDate,
+          ruleSetId: rules.id,
+          ruleSetVersion: rules.version,
+        },
+        ACTOR,
+      );
+    return { west, night, period, mkPeriod };
+  }
+
+  const floater = (unitId: string, employeeId: string) =>
+    createNurse(
+      handle.db,
+      {
+        unitId,
+        employeeId,
+        firstName: 'Fran',
+        lastName: 'Float',
+        role: 'RN',
+        employmentType: 'full_time',
+        fte: 1,
+        contractedHoursPerPeriod: 72,
+        seniorityDate: isoDate('2020-01-01'),
+        isChargeEligible: false,
+        isNovice: false,
+        isFloatEligible: true,
+        active: true,
+      },
+      ACTOR,
+    );
+
+  it('carries a night worked on 5 West as locked busy time on an inactive shift type', () => {
+    const { night, period, mkPeriod } = westWing();
+    const [ana] = listNursesForUnit(handle.db, seeded.unitId);
+    const westPeriod = mkPeriod();
+    const shift = createAssignment(
+      handle.db,
+      { periodId: westPeriod.id, nurseId: ana!.id, shiftTypeId: night.id, date: period.startDate },
+      ACTOR,
+    );
+    const input = loadPeriodInput(handle.db, period);
+    const busy = input.priorAssignments!.filter((a) => a.shiftTypeId.startsWith('elsewhere:'));
+    expect(busy).toEqual([
+      { ...shift, shiftTypeId: `elsewhere:${night.id}`, isLocked: true, isCharge: false },
+    ]);
+    expect(input.shiftTypes.find((t) => t.id === `elsewhere:${night.id}`)).toMatchObject({
+      name: 'Night 12 on 5 West',
+      active: false,
+      startTime: '19:00',
+    });
+  });
+
+  it('counts a draft on 5 West as busy time, but not a period archived there', () => {
+    const { night, period, mkPeriod } = westWing();
+    const [ana] = listNursesForUnit(handle.db, seeded.unitId);
+    const draft = mkPeriod();
+    const old = mkPeriod();
+    const place = (periodId: string, date: string) =>
+      createAssignment(
+        handle.db,
+        { periodId, nurseId: ana!.id, shiftTypeId: night.id, date: isoDate(date) },
+        ACTOR,
+      );
+    const planned = place(draft.id, period.startDate);
+    place(old.id, addDays(period.startDate, 1));
+    updatePeriodStatus(handle.db, old.id, 'archived', ACTOR);
+    const busy = loadPeriodInput(handle.db, period).priorAssignments!.filter((a) =>
+      a.shiftTypeId.startsWith('elsewhere:'),
+    );
+    expect(busy.map((a) => a.id)).toEqual([planned.id]);
+  });
+
+  it('puts nurses floated in from 5 West after the home roster, with their own credentials', () => {
+    const { west, period } = westWing();
+    const fran = floater(west.id, 'W-100');
+    createNurseUnit(handle.db, { nurseId: fran.id, unitId: seeded.unitId }, ACTOR);
+    const input = loadPeriodInput(handle.db, period);
+    const home = listNursesForUnit(handle.db, seeded.unitId);
+    expect(input.nurses.map((n) => n.id)).toEqual([...home.map((n) => n.id), fran.id]);
+  });
+
+  it('reads a unit nobody floats to exactly as before: its own nurses, no busy time', () => {
+    westWing();
+    const period = getPeriod(handle.db, seeded.draftPeriodId)!;
+    const input = loadPeriodInput(handle.db, period);
+    expect(input.nurses).toEqual(listNursesForUnit(handle.db, seeded.unitId));
+    expect(input.shiftTypes.every((t) => !t.id.startsWith('elsewhere:'))).toBe(true);
+    expect(input.priorAssignments!.every((a) => !a.shiftTypeId.startsWith('elsewhere:'))).toBe(
+      true,
+    );
   });
 });

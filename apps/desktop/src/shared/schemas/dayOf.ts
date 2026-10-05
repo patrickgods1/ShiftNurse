@@ -1,9 +1,13 @@
 /** Argument schemas for `dayOf`. */
 
 import { z } from 'zod';
-import { hours, id, isoDate, type ResourceSchemas, text } from './primitives.js';
+import { hours, id, isoDate, nurseRole, type ResourceSchemas, text } from './primitives.js';
 
 // `accepted` is deliberately absent: an accepted call goes through `backfill`.
+const cancellationTiers = z.array(
+  z.enum(['volunteer', 'agency', 'overtime', 'per_diem', 'rotation']),
+);
+
 const unansweredOutcome = z.enum(['declined', 'no_answer', 'left_message', 'ineligible']);
 
 export const dayOfSchemas = {
@@ -16,4 +20,8 @@ export const dayOfSchemas = {
   markUncovered: z.tuple([id, text]),
   cancelCallOff: z.tuple([id, text]),
   callLog: z.tuple([id]),
+  cancellationPolicy: z.tuple([id]),
+  saveCancellationPolicy: z.tuple([id, cancellationTiers]),
+  cancellationOrder: z.tuple([id, isoDate, id, nurseRole, z.array(id)]),
+  cancelForCensus: z.tuple([id, isoDate, id, nurseRole, z.array(id), id]),
 } satisfies ResourceSchemas<'dayOf'>;

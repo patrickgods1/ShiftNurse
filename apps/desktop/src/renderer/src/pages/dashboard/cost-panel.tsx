@@ -97,10 +97,11 @@ export function CostPanel({ period, nurses }: CostPanelProps) {
     );
   }
 
-  const { cost, budget, variance } = reportQuery.data;
+  const { cost, budget, variance, dayOf } = reportQuery.data;
   const nursesById = new Map(nurses.map((n) => [n.id, n]));
   const overBudget = variance !== undefined && variance.variance > 0;
   const ranked = cost.overtime.ranked.slice(0, 8);
+  const seen = new Map<string, number>();
 
   return (
     <div data-testid="cost-panel" className="grid grid-cols-2 gap-4">
@@ -223,6 +224,74 @@ export function CostPanel({ period, nurses }: CostPanelProps) {
             </table>
           </>
         )}
+      </div>
+
+      <div
+        data-testid="day-of-pay"
+        className="col-span-2 rounded-md border border-border bg-surface p-4"
+      >
+        <div className="flex items-baseline justify-between">
+          <h3 className="text-sm font-semibold text-text">Day-of pay</h3>
+          <p className="text-sm text-text" data-testid="day-of-pay-total">
+            {formatDollars(dayOf.total, { cents: true })}
+          </p>
+        </div>
+        <p className="mt-1 text-xs text-text-muted">
+          Missed-break premiums, reporting-time pay for nurses sent home, and call-backs, recorded
+          on Today. Shown beside the schedule’s cost, not added to it.
+        </p>
+        {dayOf.lines.length === 0 ? (
+          <p className="mt-2 text-sm text-text-muted">Nothing recorded for this period.</p>
+        ) : (
+          <table className="mt-2 w-full border-collapse text-sm" data-testid="day-of-pay-table">
+            <thead>
+              <tr className="border-b border-border text-left text-text-muted">
+                <th scope="col" className="py-1 pr-2 font-medium">
+                  Nurse
+                </th>
+                <th scope="col" className="py-1 pr-2 font-medium">
+                  What
+                </th>
+                <th scope="col" className="py-1 pr-2 text-right font-medium">
+                  Hours
+                </th>
+                <th scope="col" className="py-1 text-right font-medium">
+                  Amount
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {dayOf.lines.map((line) => {
+                const nurse = nursesById.get(line.nurseId);
+                const base = `${line.nurseId}|${line.date}|${line.kind}|${line.hours}`;
+                const nth = (seen.get(base) ?? 0) + 1;
+                seen.set(base, nth);
+                return (
+                  <tr
+                    // Lines have no id of their own; two call-backs of equal length on one day repeat.
+                    key={`${base}#${nth}`}
+                    className="border-b border-border last:border-0"
+                  >
+                    <td className="py-1 pr-2 text-text">
+                      {nurse ? `${nurse.firstName} ${nurse.lastName}` : line.nurseId}
+                    </td>
+                    <td className="py-1 pr-2 text-text">{line.note}</td>
+                    <td className="py-1 pr-2 text-right text-text">{formatHours(line.hours)}</td>
+                    <td className="py-1 text-right text-text">
+                      {formatDollars(line.amount, { cents: true })}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        {dayOf.unpriced > 0 ? (
+          <p className="mt-2 text-sm text-danger" data-testid="day-of-pay-unpriced">
+            {dayOf.unpriced} event{dayOf.unpriced === 1 ? '' : 's'} could not be priced: the nurse
+            has no pay rate. Set one under Settings › Pay.
+          </p>
+        ) : null}
       </div>
     </div>
   );

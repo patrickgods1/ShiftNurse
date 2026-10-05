@@ -43,6 +43,7 @@ import { encodeCoverage, encodeRatio } from './rules/coverage.js';
 import { encodeHolidayRotation } from './rules/holidays.js';
 import { encodeContractCap, encodeWeeklyHours } from './rules/hours.js';
 import { encodePendingTimeOff } from './rules/pending.js';
+import { encodePreceptor } from './rules/preceptor.js';
 import { encodeNightRecovery } from './rules/recovery.js';
 import { encodeOverlap, encodeRest } from './rules/rest.js';
 import { encodeWeekendPattern } from './rules/weekends.js';
@@ -76,6 +77,8 @@ export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'
   'no-mandatory-overtime': 'by-construction',
   // Priced in the objective while soft (`weekendPatternTerms`); runs and totals capped when hard.
   'weekend-pattern': encodeWeekendPattern,
+  // Shift scope, so priced at hardShortfall per orientee left without a preceptor.
+  'orientee-with-preceptor': encodePreceptor,
 };
 
 export interface EncodeOptions {

@@ -17,10 +17,10 @@ import {
   listAssignmentsForPeriod,
   listAssignmentsForPeriodOnDate,
   listCallOffsForUnit,
-  listNursesForUnit,
   listPeriodsForUnit,
   listShiftTypesForUnit,
   listTimeOffForUnit,
+  rosterForPeriod,
 } from '@shiftnurse/db';
 import type { DashboardSummary, OnShiftView } from '../../shared/api.js';
 
@@ -38,7 +38,7 @@ function latestPublished(periods: SchedulePeriod[]): SchedulePeriod | undefined 
 export function onShiftOn(db: DbLike, unitId: Id, date: IsoDate): OnShiftView[] {
   const period = periodCoveringDate(db, unitId, date);
   if (!period) return [];
-  const nurses = new Map(listNursesForUnit(db, unitId).map((n) => [n.id, n]));
+  const nurses = new Map(rosterForPeriod(db, period).map((n) => [n.id, n]));
   const shiftTypes = listShiftTypesForUnit(db, unitId);
   const byShift = new Map<Id, OnShiftView>(
     shiftTypes.map((st: ShiftType) => [st.id, { shiftType: st, nurses: [] }]),

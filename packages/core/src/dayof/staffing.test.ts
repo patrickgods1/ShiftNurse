@@ -204,6 +204,71 @@ describe('checkStaffing', () => {
   });
 });
 
+describe('checkStaffing with a licensed-nurse ratio', () => {
+  it('reads two RNs and one LVN as one licensed nurse short of four', () => {
+    resetFixtureCounters();
+    // 20 patients at a licensed 1:5 with half RNs: four licensed, at least two RNs.
+    const nurses = [makeNurse(), makeNurse(), makeNurse({ role: 'LPN' })];
+    const [check] = checkStaffing({
+      date: DATE,
+      shiftTypes: [DAY_12],
+      nurses,
+      assignments: nurses.map((n) => assign(n.id, DAY_12, DATE)),
+      demand: baseDemand({
+        ratioRules: [
+          {
+            id: 'lic',
+            unitId: 'unit-1',
+            role: 'licensed',
+            acuityTierId: null,
+            maxPatientsPerNurse: 5,
+            minRnShare: 0.5,
+            active: true,
+          },
+        ],
+        censusForecasts: [census(DATE, DAY_12, { [TIER_ROUTINE.id]: 20 })],
+      }),
+    });
+    expect(check).toMatchObject({
+      byRole: { RN: { required: 2, staffed: 2, shortfall: 0 } },
+      licensed: { required: 4, staffed: 3, shortfall: 1 },
+      short: true,
+      ratioBreached: true,
+    });
+  });
+});
+
+describe('checkStaffing with a licensed ratio, one RN and one LVN on', () => {
+  it('shows one RN short and one more of either, not a pool three short', () => {
+    resetFixtureCounters();
+    const nurses = [makeNurse(), makeNurse({ role: 'LPN' })];
+    const [check] = checkStaffing({
+      date: DATE,
+      shiftTypes: [DAY_12],
+      nurses,
+      assignments: nurses.map((n) => assign(n.id, DAY_12, DATE)),
+      demand: baseDemand({
+        ratioRules: [
+          {
+            id: 'lic',
+            unitId: 'unit-1',
+            role: 'licensed',
+            acuityTierId: null,
+            maxPatientsPerNurse: 5,
+            minRnShare: 0.5,
+            active: true,
+          },
+        ],
+        censusForecasts: [census(DATE, DAY_12, { [TIER_ROUTINE.id]: 20 })],
+      }),
+    });
+    expect(check).toMatchObject({
+      byRole: { RN: { required: 2, staffed: 1, shortfall: 1 } },
+      licensed: { required: 4, staffed: 2, shortfall: 1 },
+    });
+  });
+});
+
 describe('shiftsAround', () => {
   const shiftTypes = [DAY_12, NIGHT_12, DAY_8, EVENING_8, NIGHT_8, ON_CALL];
   const today = isoDate('2026-09-10');

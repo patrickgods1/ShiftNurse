@@ -36,11 +36,23 @@ export {
 } from './conflicts/index.js';
 // Pricing a schedule, marginal cost and budget comparison
 export { compareToBudget, costSchedule } from './cost/cost.js';
+export type { DayOfPay, DayOfPayEvent, DayOfPayLine, DayOfPayPolicy } from './cost/events.js';
+// Pay for what happened on the day: missed breaks, reporting-time pay, call-backs
+export { priceDayOfEvents } from './cost/events.js';
 // The pay rate in force for a nurse on a date
 export { resolvePayRate } from './cost/rates.js';
 export type { BudgetVariance, CostContext, ScheduleCost } from './cost/types.js';
 // Pay model contract types
 export { COST_LINE_LABELS, DIFFERENTIAL_ORDER } from './cost/types.js';
+export type {
+  CancellationHistory,
+  CancellationInput,
+  CancellationOrder,
+  CancellationPlace,
+  CancellationTier,
+} from './dayof/cancellation.js';
+// Low-census cancellation order: who goes home first, each with the reason
+export { cancellationOrder, DEFAULT_CANCELLATION_TIERS } from './dayof/cancellation.js';
 export type {
   PayTier,
   ReplacementCandidate,
@@ -79,8 +91,10 @@ export type {
   OvertimeVolunteer,
   PayRate,
   PeriodStatus,
+  Preceptorship,
   Preference,
   PreferenceKind,
+  RatioRole,
   RatioRule,
   RequestOrigin,
   ScheduleChange,
@@ -160,6 +174,24 @@ export {
   FAIRNESS_COMPONENT_LABELS,
   FAIRNESS_COMPONENTS,
 } from './fairness/types.js';
+export type { AccrualPolicy, BalanceCheck } from './leave/balances.js';
+// Leave balances and FMLA: accrual, balance checks, the rolling-year entitlement
+export {
+  accruedHours,
+  checkLeaveBalance,
+  fmlaEligibility,
+  fmlaRemaining,
+} from './leave/balances.js';
+export type {
+  BidResult,
+  LeaveAward,
+  LeaveBid,
+  LeaveBidChoice,
+  LeaveBidRound,
+  LeaveDenial,
+} from './leave/bidding.js';
+// Seniority leave bidding: awards in seniority order, every denial reasoned
+export { awardBids, seniorityOrder } from './leave/bidding.js';
 export type {
   ComplianceAlert,
   ComplianceAlertKind,
@@ -201,7 +233,13 @@ export {
 } from './rules/mandatory-overtime.js';
 export type { PaidLeaveCredit, PaidSickCall } from './rules/paid-leave.js';
 // Paid leave credits as dated whole shifts
-export { paidLeaveCredits, suggestedPaidLeaveHours } from './rules/paid-leave.js';
+export {
+  paidLeaveCredits,
+  suggestedPaidLeaveHours,
+  typicalShiftHours,
+} from './rules/paid-leave.js';
+// Orientees work with their preceptor
+export { preceptorRule, preceptorsOn } from './rules/preceptor.js';
 // The rule registry the solver, grid and compliance report share
 export {
   ALL_RULES,
@@ -226,6 +264,9 @@ export type {
 } from './rules/types.js';
 // Which dated shift covers which
 export { containingDate, coveringShift, withinShiftProblem } from './schedule/cover.js';
+export type { BusyElsewhere } from './schedule/elsewhere.js';
+// Another unit's shifts as busy time on this one (float and multi-unit staff)
+export { busyElsewhere } from './schedule/elsewhere.js';
 // The schedule read model
 export { ScheduleView } from './schedule/view.js';
 export type {

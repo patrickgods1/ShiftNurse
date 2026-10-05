@@ -366,6 +366,7 @@ export class SolverModel {
         : {}),
       ...(input.holidayWork ? { holidayWork: input.holidayWork } : {}),
       ...(input.overtimeVolunteers ? { overtimeVolunteers: input.overtimeVolunteers } : {}),
+      ...(input.preceptorships ? { preceptorships: input.preceptorships } : {}),
     });
 
     const shifts = buildShifts(this.dates, this.shiftTypes, demand);
@@ -712,26 +713,32 @@ export class SolverModel {
     return this.onDate[nurseIdx]![dateIdx]! > 0;
   }
 
-  /** Solvable shifts with at least one role below its hard minimum, in calendar order. */
+  /** Solvable shifts with a role, or a licensed pool, below its hard minimum, in calendar order. */
   shortShifts(): Shift[] {
-    const out: Shift[] = [];
-    for (const shift of this.solvableShifts) {
-      if (!shift.demand) continue;
-      for (const role of NURSE_ROLES) {
-        if (this.staffed(shift, role) < shift.demand.byRole[role].minCount) {
-          out.push(shift);
-          break;
-        }
-      }
-    }
-    return out;
+    return this.solvableShifts.filter((shift) => this.shortRoles(shift).length > 0);
   }
 
-  /** Roles below their hard minimum on one shift. */
+  /**
+   * Roles that would close a hard shortfall on one shift: each role below its minimum, then —
+   * when a licensed ratio's RN + LPN pool is short — the roles that fill it, LPN first so RNs
+   * stay free for shifts only an RN can fill. No single role's minimum covers the pool, so
+   * without naming it here the seed and the annealer's fill moves would never aim at it.
+   */
   shortRoles(shift: Shift): NurseRole[] {
     if (!shift.demand) return [];
     const demand = shift.demand;
-    return NURSE_ROLES.filter((role) => this.staffed(shift, role) < demand.byRole[role].minCount);
+    const roles = NURSE_ROLES.filter(
+      (role) => this.staffed(shift, role) < demand.byRole[role].minCount,
+    );
+    for (const role of this.poolRoles(shift)) if (!roles.includes(role)) roles.push(role);
+    return roles;
+  }
+
+  /** The roles that fill a short licensed pool on this shift, LPN first; empty when it is not short. */
+  poolRoles(shift: Shift): NurseRole[] {
+    const pooled = shift.demand?.licensed?.ratioDerived ?? 0;
+    if (pooled <= 0) return [];
+    return this.staffed(shift, 'RN') + this.staffed(shift, 'LPN') < pooled ? ['LPN', 'RN'] : [];
   }
 
   /** Candidate nurses still owed contracted hours. */
@@ -1160,6 +1167,14 @@ export class SolverModel {
       for (const role of NURSE_ROLES) {
         const min = shift.demand.byRole[role].minCount;
         if (min > 0) total += Math.max(0, min - this.staffed(shift, role));
+      }
+      // A licensed ratio's RN + LPN pool, which no single role's minimum covers — beyond the RNs
+      // the share needs, counted above, as the ratio rule counts it.
+      const licensed = shift.demand.licensed;
+      if (licensed) {
+        const rns = this.staffed(shift, 'RN');
+        const short = Math.max(0, licensed.ratioDerived - rns - this.staffed(shift, 'LPN'));
+        total += short - Math.min(short, Math.max(0, licensed.minRn - rns));
       }
     }
     return total;

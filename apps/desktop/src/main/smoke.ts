@@ -8,11 +8,14 @@
  */
 
 import { existsSync, writeFileSync } from 'node:fs';
+import { addDays, today } from '@shiftnurse/core';
+import { getPeriod, listNursesForUnit } from '@shiftnurse/db';
 import type { BrowserWindow } from 'electron';
 import { app } from 'electron';
+import { nurseRecordDocument } from './api/nurse-record.js';
 import { outputInput } from './api.js';
 import { getDb } from './database.js';
-import { renderOutput } from './output.js';
+import { htmlToPdf, renderOutput } from './output.js';
 
 /**
  * The whole run. With the OR-Tools runner installed the solver section generates six times —
@@ -1862,6 +1865,24 @@ export function runSmoke(win: BrowserWindow): void {
       if (sheets.subarray(0, 4).toString() !== '%PDF') fail('nurse-sheet PDF did not render');
       const xlsx = await renderOutput(outputInput(getDb(), published.periodId), 'xlsx');
       if (xlsx.subarray(0, 2).toString() !== 'PK') fail('xlsx export is not a zip');
+      // A nurse's grievance record: the same hidden-window PDF path as the grid.
+      const recordPeriod = getPeriod(getDb(), published.periodId);
+      const recordNurse = recordPeriod
+        ? listNursesForUnit(getDb(), recordPeriod.unitId)[0]
+        : undefined;
+      if (!recordNurse) fail('no nurse to export a record for');
+      else {
+        const recordDoc = nurseRecordDocument(
+          getDb(),
+          recordNurse.id,
+          addDays(today(), -30),
+          today(),
+          today(),
+        );
+        const recordPdf = await htmlToPdf(recordDoc.html, false);
+        if (recordPdf.subarray(0, 4).toString() !== '%PDF') fail('nurse record PDF did not render');
+        if (!recordDoc.csv.includes('Entries about kept-apart')) fail('record CSV lacks its note');
+      }
       console.log(
         `[smoke] publish OK (v1 with ${published.previewHard} hard violations, alerts ${JSON.stringify(published.alertKinds)}, ${published.ledgerEntries} ledger rows, backup ${published.firstBackup}; reasonless edit refused; change log + republish v2 ${published.versions[1]}; grid PDF ${pdf.length}B, sheets PDF ${sheets.length}B, xlsx ${xlsx.length}B)`,
       );

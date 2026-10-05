@@ -23,6 +23,9 @@ import type {
 } from '@shiftnurse/core';
 import { isWeekendDate, WEEKDAY_NAMES, weekdayOf } from '@shiftnurse/core';
 
+import type { RecordSheet } from './nurse-record-sheet.js';
+import { KEPT_APART_NOTE } from './nurse-record-sheet.js';
+
 export interface PrintContext {
   unit: Unit;
   version: ScheduleVersion | undefined;
@@ -149,4 +152,43 @@ export function nurseSheetsHtml(sheets: readonly NurseSheet[], ctx: PrintContext
   return `<!doctype html><html><head><meta charset="utf-8"><title>Nurse sheets</title>
 <style>@page { size: letter portrait; margin: 14mm; } ${BASE_CSS} .page { break-after: page; } .page:last-child { break-after: auto; }</style></head>
 <body>${pages || '<p class="meta">No nurse has a shift in this period.</p>'}</body></html>`;
+}
+
+/**
+ * A nurse's record: who, the dates, the unit and when it was generated, then every entry and
+ * every change to a published shift, oldest first, then the note on what is left out. Portrait,
+ * with the reason column wide because the reason is what gets quoted.
+ */
+export function recordHtml(sheet: RecordSheet): string {
+  const audit = sheet.audit
+    .map(
+      (r) =>
+        `<tr><td>${esc(r.time)}</td><td class="name">${esc(r.what)}</td><td>${esc(r.action)}</td><td>${esc(
+          r.actor,
+        )}</td><td>${esc(r.concerns)}</td><td class="name">${esc(r.reason)}</td></tr>`,
+    )
+    .join('');
+  const changes = sheet.changes
+    .map(
+      (c) =>
+        `<tr><td>${esc(c.time)}</td><td>${esc(c.kind)}</td><td class="name">${esc(c.shift)}</td><td>${esc(
+          c.period,
+        )}</td><td>${esc(c.actor)}</td><td class="name">${esc(c.reason)}</td></tr>`,
+    )
+    .join('');
+  const none = (cols: number) =>
+    `<tr><td colspan="${cols}" class="name">Nothing recorded in these dates.</td></tr>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Record of ${esc(sheet.nurseName)}</title>
+<style>@page { size: letter portrait; margin: 14mm; } ${BASE_CSS} td, th { font-size: 8.5pt; } h2 { font-size: 11pt; margin: 12pt 0 4pt; } .note { margin-top: 12pt; font-size: 8.5pt; color: #333; }</style></head>
+<body>
+<h1>Record of ${esc(sheet.nurseName)}</h1>
+<div class="meta">Employee ${esc(sheet.employeeId)} · ${esc(sheet.unitName)} · ${sheet.start} to ${sheet.end}<br>Generated ${sheet.generatedOn} by ShiftNurse</div>
+<h2>Entries about this nurse</h2>
+<table><thead><tr><th>When</th><th class="name">What</th><th>Action</th><th>By</th><th>Concerns</th><th class="name">Reason</th></tr></thead>
+<tbody>${audit || none(6)}</tbody></table>
+<h2>Changes to published shifts</h2>
+<table><thead><tr><th>When</th><th>Change</th><th class="name">Shift</th><th>Schedule</th><th>By</th><th class="name">Reason</th></tr></thead>
+<tbody>${changes || none(6)}</tbody></table>
+<p class="note">Times are UTC. ${esc(KEPT_APART_NOTE)}</p>
+</body></html>`;
 }

@@ -114,12 +114,29 @@ export function checkStaffing(input: StaffingCheckInput): ShiftStaffingCheck[] {
       };
     }
 
-    const short = NURSE_ROLES.some((role) => byRole[role].shortfall > 0);
-    const ratioBreached = NURSE_ROLES.some(
-      (role) =>
-        byRole[role].shortfall > 0 &&
-        (byRole[role].bindingConstraint === 'ratio' || byRole[role].bindingConstraint === 'both'),
-    );
+    // A pooled ratio counts RNs and LPNs together; its RN share is already the RN minimum.
+    // Short only beyond the RNs the share needs (shown on the RN line), as the ratio rule counts it.
+    const licensed = row.licensed
+      ? (() => {
+          const pool = staffedByRole.RN + staffedByRole.LPN;
+          const short = Math.max(0, row.licensed.ratioDerived - pool);
+          const rnShort = Math.max(0, row.licensed.minRn - staffedByRole.RN);
+          return {
+            required: row.licensed.ratioDerived,
+            staffed: pool,
+            shortfall: short - Math.min(short, rnShort),
+          };
+        })()
+      : undefined;
+    const poolShort = (licensed?.shortfall ?? 0) > 0;
+    const short = poolShort || NURSE_ROLES.some((role) => byRole[role].shortfall > 0);
+    const ratioBreached =
+      poolShort ||
+      NURSE_ROLES.some(
+        (role) =>
+          byRole[role].shortfall > 0 &&
+          (byRole[role].bindingConstraint === 'ratio' || byRole[role].bindingConstraint === 'both'),
+      );
 
     checks.push({
       date,
@@ -127,6 +144,7 @@ export function checkStaffing(input: StaffingCheckInput): ShiftStaffingCheck[] {
       basis,
       census: row.projectedCensus,
       byRole,
+      ...(licensed ? { licensed } : {}),
       short,
       ratioBreached,
     });

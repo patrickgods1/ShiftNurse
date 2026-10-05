@@ -7,7 +7,8 @@
 
 import type { Nurse, ScheduleChange, ShiftType } from '@shiftnurse/core';
 import { useMemo } from 'react';
-import { useNurses, useShiftTypes } from '../../api.js';
+import { useShiftTypes } from '../../api.js';
+import { useGridNurses } from '../../api-nurse-units.js';
 import { useChanges, useVersions } from '../../api-publish.js';
 import { AsyncState } from '../../components/async-state.js';
 import { formatDate, formatInstant } from '../../format.js';
@@ -25,6 +26,7 @@ const SOURCE_LABEL: Record<ScheduleChange['source'], string> = {
   time_off: 'time off',
   resolution: 'conflict resolution',
   backfill: 'call-off backfill',
+  census: 'low-census cancellation',
 };
 
 function describe(change: ScheduleChange, shiftTypes: ReadonlyMap<string, ShiftType>): string {
@@ -39,7 +41,7 @@ export function ChangeLog({ periodId }: { periodId: string }) {
   const unitId = useUnitId();
   const versionsQuery = useVersions(periodId);
   const changesQuery = useChanges(periodId);
-  const nursesQuery = useNurses(unitId);
+  const nursesQuery = useGridNurses(unitId);
   const shiftTypesQuery = useShiftTypes(unitId);
 
   const nurses = useMemo(
