@@ -16,11 +16,13 @@ import type {
   Assignment,
   AutoResolvePolicy,
   BacktestResult,
+  BalanceCheck,
   Budget,
   BudgetVariance,
   CallAttempt,
   CallOff,
   CallOutcome,
+  CancellationTier,
   CensusForecast,
   CensusProposal,
   ComplianceAlert,
@@ -56,6 +58,7 @@ import type {
   OvertimeVolunteer,
   PayRate,
   PlannedHoliday,
+  Preceptorship,
   Preference,
   RatioRole,
   RatioRule,
@@ -256,6 +259,73 @@ export interface LeaveBidAwardResult {
   order: { nurseId: Id; nurseName: string }[];
   awards: LeaveAwardView[];
   denials: LeaveDenialView[];
+}
+
+/** A nurse's PTO or sick balance as entered from payroll, true on `asOf`. */
+export interface LeaveBalanceRecord {
+  id: Id;
+  nurseId: Id;
+  type: 'pto' | 'sick';
+  balanceHours: number;
+  asOf: IsoDate;
+}
+
+/** An FMLA certification; the dates are inclusive. */
+export interface FmlaCertificationRecord {
+  id: Id;
+  nurseId: Id;
+  startDate: IsoDate;
+  endDate: IsoDate;
+  intermittent: boolean;
+  note?: string;
+}
+
+export type FmlaCertificationInput = Omit<FmlaCertificationRecord, 'id'>;
+
+/** The nurse is fixed once recorded. `note: null` clears the note. */
+export interface FmlaCertificationPatch {
+  startDate?: IsoDate;
+  endDate?: IsoDate;
+  intermittent?: boolean;
+  note?: string | null;
+}
+
+/** What the request dialogs show about a nurse's leave before a request is saved or decided. */
+export interface LeaveRequestCheck {
+  /** PTO and sick requests: the balance on file measured against the paid hours. */
+  balance?: { type: 'pto' | 'sick'; balanceHours: number; asOf: IsoDate; check: BalanceCheck };
+  /** PTO or sick request for a nurse with no balance entered: nothing to check against. */
+  noBalanceFor?: 'pto' | 'sick';
+  /** FMLA requests: the 12-week entitlement and the two eligibility tests. */
+  fmla?: {
+    /** The nurse's usual hours a week, from their contract. */
+    weeklyHours: number;
+    /** Hours this request uses: its days at the usual week's pace. */
+    requestHours: number;
+    /** Left of the 12 work weeks before this request, in the year back from its first day. */
+    remainingHours: number;
+    eligibility: { eligible: true } | { eligible: false; reason: string };
+    /** A certification on file covers the request's first day. */
+    certified: boolean;
+  };
+}
+
+/**
+ * An orientation: one orientee and the preceptor(s) who oversee them over the same dates. One
+ * record is stored per preceptor; an orientee may work any shift one of them is on.
+ */
+export interface PreceptorshipInput {
+  unitId: Id;
+  orienteeId: Id;
+  preceptorIds: Id[];
+  startDate: IsoDate;
+  endDate: IsoDate;
+}
+
+/** The unit and the pair are fixed once recorded; only the dates change. */
+export interface PreceptorshipPatch {
+  startDate?: IsoDate;
+  endDate?: IsoDate;
 }
 
 /** Optional-and-clearable fields take `null` to clear; an omitted key is left untouched. */
@@ -680,6 +750,20 @@ export interface RosterEntryView {
   callOff?: CallOff;
 }
 
+/**
+ * A role with more nurses on a shift than its requirement, computed in main from the staffing
+ * check: the census dropped (or was never as high as forecast) and the unit may send someone home.
+ */
+export interface OverstaffedRole {
+  /** The period whose assignments these are; the cancellation calls take it back. */
+  periodId: Id;
+  role: NurseRole;
+  required: number;
+  staffed: number;
+  /** `staffed − required`, always above zero. */
+  excess: number;
+}
+
 /** A shift as the Today screen shows it: who is on it, and whether it is staffed. */
 export interface TodayShiftView {
   date: IsoDate;
@@ -687,6 +771,8 @@ export interface TodayShiftView {
   /** The census row for this slot, if one exists (projected and, once entered, actual). */
   census?: CensusForecast;
   staffing: ShiftStaffingCheck;
+  /** Roles over their requirement; empty when the shift is staffed to need or short. */
+  overstaffed: OverstaffedRole[];
   roster: RosterEntryView[];
   /** `current` when the wall clock is inside its window, `next` for the one starting soonest. */
   status: 'current' | 'next' | 'other';
@@ -702,6 +788,43 @@ export interface DayOfSummary {
   shifts: TodayShiftView[];
   /** Every open call-off on this unit, whatever the date, soonest shift first. */
   openCallOffs: CallOffView[];
+}
+
+/** One place in the cancellation order, with the name the console prints. */
+export interface CancellationPlaceView {
+  nurseId: Id;
+  assignmentId: Id;
+  name: string;
+  tier: CancellationTier;
+  /** The order's own words for why this nurse holds this place, shown verbatim. */
+  reason: string;
+}
+
+/** Who goes home first on a shift that has more nurses than it needs. */
+export interface CancellationOrderView {
+  periodId: Id;
+  date: IsoDate;
+  shiftTypeId: Id;
+  role: NurseRole;
+  required: number;
+  staffed: number;
+  /** How many more than needed; zero means nobody should be cancelled. */
+  excess: number;
+  order: CancellationPlaceView[];
+  /** On the shift but never cancelled (the charge nurse), with why. */
+  excluded: { nurseId: Id; name: string; reason: string }[];
+}
+
+/** A nurse sent home for low census. The shift itself is gone from the schedule. */
+export interface ShiftCancellationRecord {
+  id: Id;
+  periodId: Id;
+  nurseId: Id;
+  shiftTypeId: Id;
+  date: IsoDate;
+  reason: string;
+  cancelledAt: number;
+  enteredBy: 'manager' | 'nurse';
 }
 
 /** A call-off with everything the console needs to act on it, joined in main. */
@@ -812,6 +935,39 @@ export interface ShiftNurseApi {
     submitBid(roundId: Id, nurseId: Id, choices: LeaveBidChoice[]): LeaveBidRecord;
     /** Approves each award as PTO and lifts draft shifts; once only. */
     award(roundId: Id): LeaveBidAwardResult;
+  };
+  /** Leave balances and FMLA certifications, and the check a request is shown against them. */
+  leaveBalances: {
+    forNurse(nurseId: Id): {
+      balances: LeaveBalanceRecord[];
+      certifications: FmlaCertificationRecord[];
+    };
+    /** Replaces the nurse's balance of that type; the previous figure is kept in the audit log. */
+    setBalance(
+      nurseId: Id,
+      type: 'pto' | 'sick',
+      balanceHours: number,
+      asOf: IsoDate,
+    ): LeaveBalanceRecord;
+    addCertification(input: FmlaCertificationInput): FmlaCertificationRecord;
+    updateCertification(id: Id, patch: FmlaCertificationPatch): FmlaCertificationRecord;
+    removeCertification(id: Id): void;
+    /** Warnings only: a short balance or an ineligible nurse never blocks the request. */
+    checkRequest(
+      nurseId: Id,
+      type: TimeOffType,
+      startDate: IsoDate,
+      endDate: IsoDate,
+      paidHours: number,
+    ): LeaveRequestCheck;
+  };
+  /** Who is oriented by whom, which keeps an orientee on shifts a preceptor works. */
+  preceptorships: {
+    list(unitId: Id): Preceptorship[];
+    /** One record per preceptor, all or none. */
+    create(input: PreceptorshipInput): Preceptorship[];
+    update(id: Id, patch: PreceptorshipPatch): Preceptorship;
+    remove(id: Id): void;
   };
   shiftTypes: {
     list(unitId: Id): ShiftType[];
@@ -1102,6 +1258,33 @@ export interface ShiftNurseApi {
     /** The nurse turned up after all, or it was logged in error. Reason required. */
     cancelCallOff(callOffId: Id, reason: string): CallOff;
     callLog(callOffId: Id): CallAttempt[];
+    /** The unit's low-census order, first tier first; the contract's usual order until changed. */
+    cancellationPolicy(unitId: Id): CancellationTier[];
+    saveCancellationPolicy(unitId: Id, tiers: CancellationTier[]): CancellationTier[];
+    /**
+     * Who goes home first on a shift over its requirement for `role`. `volunteers` are the nurses
+     * who offered to go, in the order they offered; the rotation's history is read in main.
+     */
+    cancellationOrder(
+      periodId: Id,
+      date: IsoDate,
+      shiftTypeId: Id,
+      role: NurseRole,
+      volunteers: Id[],
+    ): CancellationOrderView;
+    /**
+     * Sends `nurseId` home: re-ranks in main and refuses anyone but the next in the order (or any
+     * nurse once the shift is no longer over), records the cancellation, removes the shift
+     * through the change log under the order's reason, and audits — one transaction.
+     */
+    cancelForCensus(
+      periodId: Id,
+      date: IsoDate,
+      shiftTypeId: Id,
+      role: NurseRole,
+      volunteers: Id[],
+      nurseId: Id,
+    ): ShiftCancellationRecord;
   };
 }
 
@@ -1141,6 +1324,15 @@ export const API_CHANNELS = {
   preferences: ['forNurse', 'replace'],
   incompatibility: ['list', 'create', 'update', 'remove'],
   overtimeVolunteers: ['list', 'create', 'update', 'remove'],
+  preceptorships: ['list', 'create', 'update', 'remove'],
+  leaveBalances: [
+    'forNurse',
+    'setBalance',
+    'addCertification',
+    'updateCertification',
+    'removeCertification',
+    'checkRequest',
+  ],
   leaveBidding: [
     'rounds',
     'createRound',
@@ -1255,6 +1447,10 @@ export const API_CHANNELS = {
     'markUncovered',
     'cancelCallOff',
     'callLog',
+    'cancellationPolicy',
+    'saveCancellationPolicy',
+    'cancellationOrder',
+    'cancelForCensus',
   ],
 } as const satisfies { [R in keyof ShiftNurseApi]: readonly (keyof ShiftNurseApi[R])[] };
 

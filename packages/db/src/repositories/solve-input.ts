@@ -43,6 +43,7 @@ import { listIncompatibilityGroups } from './incompatibility.js';
 import { ledgerSince } from './ledger.js';
 import { listOvertimeVolunteersOverlapping } from './overtime-volunteers.js';
 import { listActiveDifferentials, listActiveOvertimeRules, listPayRatesForUnit } from './pay.js';
+import { listPreceptorshipsOverlapping } from './preceptorships.js';
 import {
   listCredentials,
   listNurseCredentialsForUnit,
@@ -225,6 +226,14 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     // The lookback tail is judged too (its overtime counts toward the first week), so offers are
     // read from there on; one covering only other periods would make Generate's candidates stale.
     overtimeVolunteers: listOvertimeVolunteersOverlapping(
+      db,
+      unitId,
+      addDays(period.startDate, -14),
+      period.endDate,
+    ),
+    // Judged over the lookback too, like the offers above: a preceptorship that ended inside it
+    // still decides whether the first days of the period read as oriented.
+    preceptorships: listPreceptorshipsOverlapping(
       db,
       unitId,
       addDays(period.startDate, -14),

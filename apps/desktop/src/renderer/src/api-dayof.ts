@@ -9,8 +9,8 @@
  * period family for the assignment it just wrote — copied from `useInvalidateExchanges`.
  */
 
-import type { CallOutcome, Id, IsoDate } from '@shiftnurse/core';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { CallOutcome, CancellationTier, Id, IsoDate, NurseRole } from '@shiftnurse/core';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, queryKeys } from './api.js';
 import { invalidatePeriod } from './period-cache.js';
 
@@ -20,6 +20,14 @@ export const dayOfKeys = {
     ['dayOf', 'callOffs', unitId, start, end] as const,
   replacements: (callOffId: Id) => ['dayOf', 'replacements', callOffId] as const,
   callLog: (callOffId: Id) => ['dayOf', 'callLog', callOffId] as const,
+  cancellationPolicy: (unitId: Id) => ['dayOf', 'cancellationPolicy', unitId] as const,
+  cancellationOrder: (
+    periodId: Id,
+    date: IsoDate,
+    shiftTypeId: Id,
+    role: NurseRole,
+    volunteers: readonly Id[],
+  ) => ['dayOf', 'cancellationOrder', periodId, date, shiftTypeId, role, [...volunteers]] as const,
 };
 
 export function useToday(unitId: Id | undefined, date?: IsoDate) {
@@ -129,6 +137,68 @@ export function useCancelCallOff(unitId: Id | undefined) {
     meta: { inlineError: true },
     mutationFn: ({ callOffId, reason }: { callOffId: Id; reason: string }) =>
       api.dayOf.cancelCallOff(callOffId, reason),
+    onSettled: invalidate,
+  });
+}
+
+export function useCancellationPolicy(unitId: Id | undefined) {
+  return useQuery({
+    queryKey: dayOfKeys.cancellationPolicy(unitId ?? ''),
+    queryFn: () => api.dayOf.cancellationPolicy(unitId as Id),
+    enabled: unitId !== undefined,
+  });
+}
+
+export function useSaveCancellationPolicy(unitId: Id | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (tiers: CancellationTier[]) =>
+      api.dayOf.saveCancellationPolicy(unitId as Id, tiers),
+    // The order is what every open "who goes home" list is ranked by.
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ['dayOf'] }),
+  });
+}
+
+/** Who goes home first on a shift over its requirement; volunteers re-rank it. */
+export function useCancellationOrder(
+  periodId: Id,
+  date: IsoDate,
+  shiftTypeId: Id,
+  role: NurseRole,
+  volunteers: readonly Id[],
+) {
+  return useQuery({
+    queryKey: dayOfKeys.cancellationOrder(periodId, date, shiftTypeId, role, volunteers),
+    queryFn: () => api.dayOf.cancellationOrder(periodId, date, shiftTypeId, role, [...volunteers]),
+    // Ticking a volunteer re-ranks the list; keep the old one up rather than flashing a spinner.
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Removes a shift like a backfill does, so the grid, cost and conflicts refresh with Today. */
+export function useCancelForCensus(unitId: Id | undefined) {
+  const invalidate = useInvalidateDayOf(unitId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (args: {
+      periodId: Id;
+      date: IsoDate;
+      shiftTypeId: Id;
+      role: NurseRole;
+      volunteers: readonly Id[];
+      nurseId: Id;
+    }) =>
+      api.dayOf.cancelForCensus(
+        args.periodId,
+        args.date,
+        args.shiftTypeId,
+        args.role,
+        [...args.volunteers],
+        args.nurseId,
+      ),
+    onSuccess: (result) => invalidatePeriod(queryClient, result.periodId),
     onSettled: invalidate,
   });
 }

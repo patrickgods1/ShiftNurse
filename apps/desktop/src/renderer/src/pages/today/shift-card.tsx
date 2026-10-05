@@ -9,6 +9,7 @@ import type { RosterEntryView, TodayShiftView } from '@shared/api.js';
 import type { Id, RoleStaffing } from '@shiftnurse/core';
 import { SMALL } from '../../components/ui.js';
 import { formatDateWithWeekday } from '../../format.js';
+import { CensusDrop } from './census-drop.js';
 import { CensusEntry } from './census-entry.js';
 
 const STATUS_LABEL: Record<TodayShiftView['status'], string | undefined> = {
@@ -112,6 +113,10 @@ export function ShiftCard({
       <p className="mt-1 text-xs text-text-muted">{basisLine(shift)}</p>
 
       <CensusEntry unitId={unitId} shift={shift} />
+
+      {shift.overstaffed.map((over) => (
+        <CensusDrop key={over.role} unitId={unitId} shift={shift} over={over} />
+      ))}
 
       <ul className="mt-3 flex flex-col gap-1 border-t border-border pt-3 text-sm">
         {shift.roster.map((entry) => (

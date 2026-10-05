@@ -35,6 +35,7 @@ import { AsyncState } from '../../components/async-state.js';
 import { Modal } from '../../components/modal.js';
 import { DANGER, errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { formatDate, formatDateWithWeekday, periodLabel } from '../../format.js';
+import { LeaveStanding } from './leave-standing.js';
 
 interface DecideDialogProps {
   request: TimeOffRequest | undefined;
@@ -113,6 +114,16 @@ export function DecideDialog({
     >
       {request === undefined ? null : (
         <>
+          <section className="mt-4" aria-label="Leave balance">
+            <LeaveStanding
+              nurseId={request.nurseId}
+              type={request.type}
+              start={request.startDate}
+              end={request.endDate}
+              paidHours={request.paidHours ?? 0}
+            />
+          </section>
+
           <section className="mt-4" aria-label="Projected impact of approving">
             <h3 className="text-sm font-semibold text-text">If approved</h3>
             {period === undefined ? (

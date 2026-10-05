@@ -24,6 +24,7 @@ import type {
   AuditAction,
   CallOffStatus,
   CallOutcome,
+  CancellationTier,
   DifferentialKind,
   EmploymentType,
   Id,
@@ -301,6 +302,84 @@ export const overtimeVolunteer = sqliteTable(
     createdAt: timestamp('created_at').notNull(),
   },
   (t) => [index('overtime_volunteer_nurse_start_idx').on(t.nurseId, t.startDate)],
+);
+
+// ---------------------------------------------------------------------------
+// Orientation
+// ---------------------------------------------------------------------------
+
+/**
+ * One orientee and one of their preceptors over a date range (`Preceptorship`). An orientee with
+ * two preceptors has two rows: `orientee-with-preceptor` accepts a shift any one of them is on.
+ */
+export const preceptorship = sqliteTable(
+  'preceptorship',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    orienteeId: text('orientee_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    preceptorId: text('preceptor_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    startDate: isoDate('start_date').notNull().$type<IsoDate>(),
+    endDate: isoDate('end_date').notNull().$type<IsoDate>(),
+    createdAt: timestamp('created_at').notNull(),
+  },
+  (t) => [index('preceptorship_orientee_start_idx').on(t.orienteeId, t.startDate)],
+);
+
+// ---------------------------------------------------------------------------
+// Leave balances and FMLA
+// ---------------------------------------------------------------------------
+
+/**
+ * A nurse's paid-leave balance as the manager last entered it from payroll. One row per nurse and
+ * type (`pto` or `sick`); `asOf` is the payroll date the figure was true on, so a stale balance
+ * reads as stale. The app does not accrue: payroll owns the number, the manager copies it in.
+ */
+export const leaveBalance = sqliteTable(
+  'leave_balance',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    type: text('type').notNull().$type<'pto' | 'sick'>(),
+    balanceHours: real('balance_hours').notNull(),
+    asOf: isoDate('as_of').notNull().$type<IsoDate>(),
+    updatedAt: timestamp('updated_at').notNull(),
+  },
+  (t) => [uniqueIndex('leave_balance_nurse_type_idx').on(t.nurseId, t.type)],
+);
+
+/**
+ * A nurse's FMLA certification: the span the certifying provider covers, and whether leave may be
+ * taken intermittently. Dates are inclusive. The hours used against the 12 weeks come from
+ * approved `fmla` time off, not from here.
+ */
+export const fmlaCertification = sqliteTable(
+  'fmla_certification',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    startDate: isoDate('start_date').notNull().$type<IsoDate>(),
+    endDate: isoDate('end_date').notNull().$type<IsoDate>(),
+    intermittent: bool('intermittent').notNull().default(false),
+    note: text('note'),
+    createdAt: timestamp('created_at').notNull(),
+  },
+  (t) => [index('fmla_certification_nurse_start_idx').on(t.nurseId, t.startDate)],
 );
 
 // ---------------------------------------------------------------------------
@@ -836,6 +915,55 @@ export const budget = sqliteTable(
   },
   // One budget per period: `setBudget` upserts, and a second row would never be read.
   (t) => [uniqueIndex('budget_period_idx').on(t.periodId)],
+);
+
+/**
+ * The unit's low-census cancellation order (`CancellationTier`s, first to go home first). One row
+ * per unit, absent until the manager first saves it; the repository returns core's
+ * `DEFAULT_CANCELLATION_TIERS` for a missing row, so the contract's usual order applies from day one.
+ */
+export const cancellationPolicy = sqliteTable('cancellation_policy', {
+  id: text('id').primaryKey().$type<Id>(),
+  unitId: text('unit_id')
+    .notNull()
+    .unique()
+    .references(() => unit.id, { onDelete: 'cascade' })
+    .$type<Id>(),
+  tiers: text('tiers', { mode: 'json' }).notNull().$type<CancellationTier[]>(),
+});
+
+/**
+ * A nurse sent home because the census dropped. The rotation counts these, so the row must
+ * outlive the shift it describes: no foreign key on the assignment, which the cancellation deletes
+ * (the same reason `call_off` has none). `reason` is the order's own words for the place the
+ * nurse held, quoted if the cancellation is grieved.
+ */
+export const shiftCancellation = sqliteTable(
+  'shift_cancellation',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    periodId: text('period_id')
+      .notNull()
+      .references(() => schedulePeriod.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    shiftTypeId: text('shift_type_id')
+      .notNull()
+      .references(() => shiftType.id)
+      .$type<Id>(),
+    date: isoDate('date').notNull().$type<IsoDate>(),
+    reason: text('reason').notNull(),
+    cancelledAt: timestamp('cancelled_at').notNull(),
+    /** 'manager' in v1; never inferred at read time. */
+    enteredBy: text('entered_by').notNull().$type<'manager' | 'nurse'>(),
+  },
+  (t) => [
+    index('shift_cancellation_nurse_date_idx').on(t.nurseId, t.date),
+    index('shift_cancellation_period_date_idx').on(t.periodId, t.date),
+  ],
 );
 
 // ---------------------------------------------------------------------------

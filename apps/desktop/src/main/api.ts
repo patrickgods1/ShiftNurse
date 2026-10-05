@@ -23,8 +23,10 @@ import { dayOfApi } from './api/dayof.js';
 import { censusApi } from './api/demand.js';
 import { fairnessApi } from './api/fairness.js';
 import { exportRosterToFile, pickHistoryImportFile, pickRosterImportFile } from './api/files.js';
+import { leaveBalancesApi } from './api/leave-balances.js';
 import { leaveBiddingApi } from './api/leave-bidding.js';
 import { overtimeVolunteersApi } from './api/overtime-volunteers.js';
+import { preceptorshipsApi } from './api/preceptorships.js';
 import { outputInput, publishApi } from './api/publish.js';
 import { requestsApi } from './api/requests.js';
 import { rosterApi } from './api/roster.js';
@@ -78,6 +80,8 @@ export function createApi(db: ShiftNurseDb, solverJobs: SolverJobs, host: AppHos
     },
     ...roster,
     overtimeVolunteers: overtimeVolunteersApi(db),
+    preceptorships: preceptorshipsApi(db),
+    leaveBalances: leaveBalancesApi(db),
     leaveBidding: leaveBiddingApi(db),
     roster: {
       ...roster.roster,

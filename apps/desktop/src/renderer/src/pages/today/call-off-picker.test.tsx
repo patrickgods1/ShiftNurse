@@ -46,6 +46,7 @@ const summary = {
       shiftType: dayShift,
       status: 'current',
       staffing: { basis: 'floor', census: 0, short: false, ratioBreached: false, byRole: {} },
+      overstaffed: [],
       roster: [
         entry('n1', 'Ana', 'Martinez'),
         entry('n2', 'Ben', 'Okafor', { id: 'co-1' } as CallOff),

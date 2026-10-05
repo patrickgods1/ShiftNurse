@@ -25,6 +25,7 @@ const SOURCE_LABEL: Record<ScheduleChange['source'], string> = {
   time_off: 'time off',
   resolution: 'conflict resolution',
   backfill: 'call-off backfill',
+  census: 'low-census cancellation',
 };
 
 function describe(change: ScheduleChange, shiftTypes: ReadonlyMap<string, ShiftType>): string {

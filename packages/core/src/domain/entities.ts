@@ -451,7 +451,14 @@ export interface ScheduleVersion {
 export type ScheduleChangeKind = 'added' | 'removed' | 'changed';
 
 /** What produced a post-publish edit; the change log groups and explains by this. */
-export type ScheduleChangeSource = 'manual' | 'exchange' | 'time_off' | 'resolution' | 'backfill';
+export type ScheduleChangeSource =
+  | 'manual'
+  | 'exchange'
+  | 'time_off'
+  | 'resolution'
+  | 'backfill'
+  /** A nurse sent home when the census dropped, in the unit's cancellation order. */
+  | 'census';
 
 /**
  * One edit to a published schedule, with the manager's reason. A published schedule is a

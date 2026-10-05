@@ -26,6 +26,7 @@ import {
   demandInputs,
   getAssignment,
   getCallOff,
+  getCancellationPolicy,
   getNurse,
   getShiftType,
   lastCalledAt,
@@ -42,6 +43,7 @@ import {
   reportCallOff,
   type ShiftNurseDb,
   type ShiftNurseTx,
+  saveCancellationPolicy,
   transact,
 } from '@shiftnurse/db';
 import type {
@@ -53,6 +55,7 @@ import type {
   TodayShiftView,
 } from '../../shared/api.js';
 
+import { cancelForCensus, cancellationOrderFor, overstaffedRoles } from './census-cancellation.js';
 import {
   ACTOR,
   assignmentOrThrow,
@@ -210,6 +213,7 @@ function dayOfSummary(db: DbLike, unitId: Id, date?: IsoDate): DayOfSummary {
       shiftType,
       ...(census ? { census } : {}),
       staffing,
+      overstaffed: plan.period ? overstaffedRoles(plan.period.id, staffing) : [],
       roster,
       status: slot.status,
     };
@@ -348,5 +352,12 @@ export function dayOfApi(db: ShiftNurseDb): ShiftNurseApi['dayOf'] {
     cancelCallOff: (callOffId, reason) =>
       transact(db, (tx) => cancelCallOff(tx, callOffId, ACTOR, reason)),
     callLog: (callOffId) => listCallAttempts(db, callOffId),
+    cancellationPolicy: (unitId) => getCancellationPolicy(db, unitId),
+    saveCancellationPolicy: (unitId, tiers) =>
+      transact(db, (tx) => saveCancellationPolicy(tx, unitId, tiers, ACTOR)),
+    cancellationOrder: (periodId, date, shiftTypeId, role, volunteers) =>
+      cancellationOrderFor(db, periodId, date, shiftTypeId, role, volunteers),
+    cancelForCensus: (periodId, date, shiftTypeId, role, volunteers, nurseId) =>
+      cancelForCensus(db, periodId, date, shiftTypeId, role, volunteers, nurseId),
   };
 }

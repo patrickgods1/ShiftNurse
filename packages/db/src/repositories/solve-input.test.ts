@@ -17,6 +17,7 @@ import { createUnit, getUnit, listShiftTypesForUnit, updateUnit } from './config
 import { createIncompatibilityGroup } from './incompatibility.js';
 import { createOvertimeVolunteer } from './overtime-volunteers.js';
 import { createPayRate, listPayRatesForUnit } from './pay.js';
+import { createPreceptorship } from './preceptorships.js';
 import { createNurse, listNursesForUnit } from './roster.js';
 import { getPeriod } from './schedule.js';
 import { loadPeriodInput, timeOffForPeriod, timeOffWindow } from './solve-input.js';
@@ -131,6 +132,29 @@ describe('loadPeriodInput', () => {
     offer(addDays(period.endDate, 1), addDays(period.endDate, 3));
     const input = loadPeriodInput(handle.db, period);
     expect(input.overtimeVolunteers!.map((v) => v.id)).toEqual([inTail.id, inPeriod.id]);
+  });
+
+  it('carries the preceptorships from the lookback tail to the period end, and no others', () => {
+    const period = getPeriod(handle.db, seeded.draftPeriodId)!;
+    const [a, b] = listNursesForUnit(handle.db, seeded.unitId);
+    const pair = (start: string, end: string) =>
+      createPreceptorship(
+        handle.db,
+        {
+          unitId: seeded.unitId,
+          orienteeId: a!.id,
+          preceptorId: b!.id,
+          startDate: isoDate(start),
+          endDate: isoDate(end),
+        },
+        ACTOR,
+      );
+    const inTail = pair(addDays(period.startDate, -14), addDays(period.startDate, -14));
+    const inPeriod = pair(period.startDate, period.endDate);
+    pair(addDays(period.startDate, -30), addDays(period.startDate, -15));
+    pair(addDays(period.endDate, 1), addDays(period.endDate, 30));
+    const input = loadPeriodInput(handle.db, period);
+    expect(input.preceptorships!.map((p) => p.id)).toEqual([inTail.id, inPeriod.id]);
   });
 
   it('prices with the role defaults and this unit’s own rates, never another unit’s nurse rate', () => {

@@ -148,6 +148,27 @@
       "when": 1791179116699,
       "tag": "0020_ratio_licensed",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1791182084219,
+      "tag": "0021_census_cancellation",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1791182832003,
+      "tag": "0022_preceptorship",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1791183116597,
+      "tag": "0023_leave_balance",
+      "breakpoints": true
     }
   ]
 }

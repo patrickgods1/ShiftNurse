@@ -14,6 +14,7 @@ import { SECONDARY } from '../../components/ui.js';
 import { usePanelFocus } from '../../components/use-panel-focus.js';
 import { formatDate } from '../../format.js';
 import { CredentialsSection } from './nurse-credentials.js';
+import { LeaveSection } from './nurse-leave.js';
 import { PreferencesSection } from './nurse-preferences.js';
 
 interface NurseDetailProps {
@@ -128,6 +129,7 @@ function NurseDetailBody({
       />
 
       <CredentialsSection nurseId={nurseId} />
+      <LeaveSection nurseId={nurseId} />
       <PreferencesSection nurseId={nurseId} unitId={nurse.unitId} />
     </>
   );

@@ -36,6 +36,7 @@ import {
   listNurseCredentialsForUnit,
   listOvertimeVolunteers,
   listPeriodsForUnit,
+  listPreceptorshipsOverlapping,
   listPreferencesForUnit,
   listShiftCredentialRequirementsForUnit,
   moveAssignment,
@@ -93,6 +94,13 @@ export function validateView(
     }),
     incompatibilityGroups: listIncompatibilityGroups(db, period.unitId),
     overtimeVolunteers: listOvertimeVolunteers(db, period.unitId),
+    // The same window loadPeriodInput reads, lookback included.
+    preceptorships: listPreceptorshipsOverlapping(
+      db,
+      period.unitId,
+      addDays(period.startDate, -14),
+      period.endDate,
+    ),
     holidayWork: holidayWorkForPeriod(db, period),
   });
   // Which preferences each worked shift goes against, so the grid can say "avoids nights"
