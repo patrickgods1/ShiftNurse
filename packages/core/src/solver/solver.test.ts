@@ -189,6 +189,49 @@ describe('a unit whose charge nurse takes no patients', () => {
   });
 });
 
+describe('a unit whose ratio counts licensed nurses', () => {
+  it('fills each day shift to four licensed nurses, two of them RNs, with LVNs', () => {
+    // 20 patients every day shift at a licensed 1:5, half RNs: 4 licensed, at least 2 RNs. Ten
+    // full-timers give 60 RN shifts against the 42 the RN minimums need (2 a day, 1 a night),
+    // short of the 70 the pool and the nights take, so per-diem LVNs, whom only the pool calls
+    // for, must fill the rest.
+    const nurses = [
+      ...fullTimers(10),
+      // Per diem, so no contracted hours pull them onto shifts: only the pool can.
+      ...Array.from({ length: 8 }, () =>
+        makeNurse({ role: 'LPN', employmentType: 'per_diem', contractedHoursPerPeriod: 0 }),
+      ),
+    ];
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses,
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: [
+        ...coverageAllWeek(DAY_12, 'RN', 1),
+        ...coverageAllWeek(NIGHT_12, 'RN', 1),
+      ],
+      ratioRules: [
+        {
+          id: 'lic',
+          unitId: 'unit-1',
+          role: 'licensed',
+          acuityTierId: null,
+          maxPatientsPerNurse: 5,
+          minRnShare: 0.5,
+          active: true,
+        },
+      ],
+      censusForecasts: Array.from({ length: 14 }, (_, d) =>
+        census(addDays(isoDate('2026-01-04'), d), DAY_12, { [TIER_ROUTINE.id]: 20 }),
+      ),
+    });
+    const report = solve(input, QUICK);
+    expect(report.unfilled).toEqual([]);
+    expect(rejudge(input, report).filter((v) => v.code === 'ratio_breach')).toEqual([]);
+  });
+});
+
 describe('a short-staffed unit', () => {
   it('names every shortfall instead of failing, and still breaks no nurse-level rule', () => {
     // Three RNs cannot staff 3 per shift, day and night, for two weeks.

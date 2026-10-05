@@ -19,6 +19,7 @@ import { ScheduleView } from '../schedule/view.js';
 import {
   assign,
   CRED_ACLS,
+  census,
   coverageAllWeek,
   credentialRequirement,
   DAY_8,
@@ -29,6 +30,7 @@ import {
   nurseCredential,
   resetFixtureCounters,
   solveInputFrom,
+  TIER_ROUTINE,
   timeOff,
 } from '../testing/fixtures.js';
 import { SolverModel } from './model.js';
@@ -584,6 +586,45 @@ describe('cover from the day 12', () => {
     expect(model.coveragePenaltyOf(mid)).toBe(alone);
     model.undoRemove(onDay, token);
     expect(model.coveragePenaltyOf(mid)).toBe(covered);
+  });
+});
+
+describe('a short licensed pool', () => {
+  it('names the LVN, then the RN, as what would fill it, so the search aims there', () => {
+    const rns = [makeNurse({ id: 'rn1', isChargeEligible: true }), makeNurse({ id: 'rn2' })];
+    const lvn = makeNurse({ id: 'lvn', role: 'LPN' });
+    const model = new SolverModel(
+      solveInputFrom({
+        nurses: [...rns, lvn],
+        shiftTypes: [DAY_12],
+        ratioRules: [
+          {
+            id: 'lic',
+            unitId: 'unit-1',
+            role: 'licensed',
+            acuityTierId: null,
+            maxPatientsPerNurse: 5,
+            minRnShare: 0.5,
+            active: true,
+          },
+        ],
+        // 20 patients: four licensed nurses, at least two of them RNs.
+        censusForecasts: [census('2026-01-05', DAY_12, { [TIER_ROUTINE.id]: 20 })],
+      }),
+    );
+    const day = model.shiftAt(model.dateIdx.get(isoDate('2026-01-05'))!, DAY_12);
+    model.add(assign('rn1', DAY_12, '2026-01-05'));
+    // One RN on: one more RN for the share and two of either for the pool, three nurses (not
+    // four: the share's RN counts toward the pool).
+    expect(model.hardShortfall()).toBe(3);
+    model.add(assign('rn2', DAY_12, '2026-01-05'));
+    expect(model.hardShortfall()).toBe(2);
+    // The RN share is met; the pool is two short.
+    expect(model.shortRoles(day)).toEqual(['LPN', 'RN']);
+    expect(model.shortShifts()).toContain(day);
+    model.add(assign('lvn', DAY_12, '2026-01-05'));
+    expect(model.shortRoles(day)).toEqual(['LPN', 'RN']);
+    expect(model.hardShortfall()).toBe(1);
   });
 });
 

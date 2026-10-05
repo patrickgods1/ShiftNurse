@@ -7,7 +7,8 @@
  * adding an option is a change here and never touches the gate or the score.
  */
 
-import type { Assignment, Id, NurseRole, TimeOffRequest } from '../domain/entities.js';
+import { fillsRatioRole } from '../acuity/demand.js';
+import type { Assignment, Id, RatioRole, TimeOffRequest } from '../domain/entities.js';
 import { describeDateRange, type IsoDate } from '../domain/time.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import { hasValidCredential } from '../rules/coverage-rules.js';
@@ -22,7 +23,7 @@ import type { Conflict, Resolution, ResolutionAction, ResolutionImpact } from '.
 // ---------------------------------------------------------------------------
 
 export interface SlotTarget {
-  role: NurseRole | null;
+  role: RatioRole | null;
   credentialId: Id | null;
 }
 
@@ -90,7 +91,7 @@ function staffingOptions(
 
   const fits = (nurseId: Id): boolean => {
     const nurse = engine.nurse(nurseId);
-    if (target.role && nurse.role !== target.role) return false;
+    if (target.role && !fillsRatioRole(target.role, nurse.role)) return false;
     if (target.credentialId && !hasValidCredential(world.ctx, nurseId, target.credentialId, date)) {
       return false;
     }

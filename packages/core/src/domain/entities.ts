@@ -306,14 +306,25 @@ export interface CensusForecast {
  * A hard ceiling on patients per nurse. `acuityTierId: null` means the rule applies to all
  * tiers. The most restrictive applicable rule wins.
  */
+/**
+ * Who a ratio counts: one role, or `licensed` — RNs and LPN/LVNs together, as California's Title
+ * 22 counts "licensed nurses" (LVNs up to half of them).
+ */
+export type RatioRole = NurseRole | 'licensed';
+
 export interface RatioRule {
   id: Id;
   unitId: Id;
-  role: NurseRole;
+  role: RatioRole;
   acuityTierId: Id | null;
   maxPatientsPerNurse: number;
   /** Where this came from, e.g. "CA Title 22 §70217" or "Local 1199 Art. 12". */
   citation?: string;
+  /**
+   * For a `licensed` rule: the least share of the licensed nurses that must be RNs (0.5 where
+   * LVNs may be up to half). Absent: none.
+   */
+  minRnShare?: number;
   active: boolean;
 }
 
@@ -384,6 +395,21 @@ export interface Assignment {
 }
 
 /**
+ * An orientee working under a named preceptor over some dates: a new hire, or a nurse floated in
+ * to learn the unit, who may only work when that preceptor is on the floor with them. Dates are
+ * inclusive and compare with the shift's start date. An orientee may have more than one
+ * preceptor in force; any one of them on the shift is enough.
+ */
+export interface Preceptorship {
+  id: Id;
+  unitId: Id;
+  orienteeId: Id;
+  preceptorId: Id;
+  startDate: IsoDate;
+  endDate: IsoDate;
+}
+
+/**
  * A nurse's standing offer to work overtime over some dates. New York (Labor Law § 167),
  * Washington (RCW 49.28.140), Oregon (ORS 441.166) and Massachusetts (c.111 § 226) forbid
  * *requiring* a nurse to work overtime outside an emergency; this record is what makes an
@@ -425,7 +451,14 @@ export interface ScheduleVersion {
 export type ScheduleChangeKind = 'added' | 'removed' | 'changed';
 
 /** What produced a post-publish edit; the change log groups and explains by this. */
-export type ScheduleChangeSource = 'manual' | 'exchange' | 'time_off' | 'resolution' | 'backfill';
+export type ScheduleChangeSource =
+  | 'manual'
+  | 'exchange'
+  | 'time_off'
+  | 'resolution'
+  | 'backfill'
+  /** A nurse sent home when the census dropped, in the unit's cancellation order. */
+  | 'census';
 
 /**
  * One edit to a published schedule, with the manager's reason. A published schedule is a

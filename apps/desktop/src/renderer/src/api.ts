@@ -21,6 +21,8 @@ import type {
   NursePatch,
   OvertimeVolunteerInput,
   OvertimeVolunteerPatch,
+  PreceptorshipInput,
+  PreceptorshipPatch,
   PreferenceInput,
 } from '../../shared/api.js';
 import { invalidateUnitDerived, invalidateUnitDerivedAnyUnit } from './period-cache.js';
@@ -43,6 +45,7 @@ export const queryKeys = {
   preferences: (nurseId: Id) => ['preferences', nurseId] as const,
   incompatibility: (unitId: Id) => ['incompatibility', unitId] as const,
   overtimeVolunteers: (unitId: Id) => ['overtimeVolunteers', unitId] as const,
+  preceptorships: (unitId: Id) => ['preceptorships', unitId] as const,
 };
 
 export function useUnits() {
@@ -385,6 +388,55 @@ export function useRemoveOvertimeVolunteer(unitId: Id) {
   return useMutation({
     meta: { inlineError: true },
     mutationFn: (id: Id) => api.overtimeVolunteers.remove(id),
+    onSuccess: invalidate,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Orientation (preceptorships)
+// ---------------------------------------------------------------------------
+
+export function usePreceptorships(unitId: Id | undefined) {
+  return useQuery({
+    queryKey: queryKeys.preceptorships(unitId ?? ''),
+    queryFn: () => api.preceptorships.list(unitId as Id),
+    enabled: unitId !== undefined,
+  });
+}
+
+/** An orientation changes which shifts the grid flags, so validation and Generate refresh too. */
+function useInvalidatePreceptorships(unitId: Id) {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.preceptorships(unitId) });
+    invalidateUnitDerived(queryClient, unitId);
+  };
+}
+
+export function useCreatePreceptorship(unitId: Id) {
+  const invalidate = useInvalidatePreceptorships(unitId);
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (input: PreceptorshipInput) => api.preceptorships.create(input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdatePreceptorship(unitId: Id) {
+  const invalidate = useInvalidatePreceptorships(unitId);
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: ({ id, patch }: { id: Id; patch: PreceptorshipPatch }) =>
+      api.preceptorships.update(id, patch),
+    onSuccess: invalidate,
+  });
+}
+
+export function useRemovePreceptorship(unitId: Id) {
+  const invalidate = useInvalidatePreceptorships(unitId);
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (id: Id) => api.preceptorships.remove(id),
     onSuccess: invalidate,
   });
 }

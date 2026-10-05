@@ -13,6 +13,7 @@ import { DateField } from '../../components/date-field.js';
 import { Modal } from '../../components/modal.js';
 import { errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { useUnit } from '../../unit-context.js';
+import { LeaveStanding } from './leave-standing.js';
 import { typicalShiftHours } from './paid-hours.js';
 
 const TYPES: { value: TimeOffType; label: string }[] = [
@@ -184,6 +185,13 @@ export function NewRequestDialog({
               : 'The shifts this nurse would have worked. Counts toward contracted hours once approved.'}
           </span>
         </label>
+        <LeaveStanding
+          nurseId={nurseId || undefined}
+          type={type}
+          start={days > 0 && isIsoDate(start) ? start : undefined}
+          end={days > 0 && isIsoDate(end) ? end : undefined}
+          paidHours={Number.isFinite(Number(paidValue)) ? Math.max(0, Number(paidValue)) : 0}
+        />
         <label className={LABEL}>
           Reason (optional)
           <textarea

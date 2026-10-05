@@ -3,7 +3,7 @@
  * HPPD target. Together with census these are what `deriveDemand` turns into required staff.
  */
 
-import type { AcuityTier, HppdTarget, Id, NurseRole, RatioRule } from '@shiftnurse/core';
+import type { AcuityTier, HppdTarget, Id, RatioRole, RatioRule } from '@shiftnurse/core';
 import { and, asc, eq } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
@@ -127,8 +127,10 @@ export function createRatioRule(
     acuityTierId: input.acuityTierId,
     maxPatientsPerNurse: input.maxPatientsPerNurse,
     citation: input.citation ?? null,
+    minRnShare: input.minRnShare ?? null,
     active: input.active,
   };
+  validateRatioRule(input.role, input.minRnShare);
   db.insert(ratioRuleTable).values(row).run();
   const after = toRatioRule(row as typeof ratioRuleTable.$inferSelect);
   recordAudit(db, { entityType: 'ratio_rule', entityId: id, action: 'create', actor, after });
@@ -136,10 +138,12 @@ export function createRatioRule(
 }
 
 export interface RatioRulePatch {
-  role?: NurseRole;
+  role?: RatioRole;
   acuityTierId?: Id | null;
   maxPatientsPerNurse?: number;
   citation?: string | null;
+  /** null clears it. */
+  minRnShare?: number | null;
   active?: boolean;
 }
 
@@ -148,8 +152,20 @@ const RATIO_RULE_PATCH_KEYS: PatchKeys<RatioRulePatch> = {
   acuityTierId: true,
   maxPatientsPerNurse: true,
   citation: true,
+  minRnShare: true,
   active: true,
 };
+
+/** An RN share belongs to a licensed rule only, and is a fraction of the licensed nurses. */
+function validateRatioRule(role: RatioRole, minRnShare: number | null | undefined): void {
+  if (minRnShare === null || minRnShare === undefined) return;
+  if (role !== 'licensed') {
+    throw new Error('Only a licensed-nurse ratio can require a share of RNs');
+  }
+  if (!(minRnShare > 0 && minRnShare <= 1)) {
+    throw new Error('The share of RNs must be more than 0% and at most 100%');
+  }
+}
 
 export function updateRatioRule(
   db: DbLike,
@@ -175,6 +191,11 @@ export function updateRatioRule(
         .where(eq(ratioRuleTable.id, rowId))
         .run(),
     notFound: `Ratio rule ${id} not found`,
+    validate: (values, before) =>
+      validateRatioRule(
+        values.role ?? before.role,
+        values.minRnShare === undefined ? before.minRnShare : values.minRnShare,
+      ),
     actor,
   });
 }

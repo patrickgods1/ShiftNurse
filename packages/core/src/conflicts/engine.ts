@@ -35,7 +35,7 @@ import type {
   Assignment,
   Id,
   Nurse,
-  NurseRole,
+  RatioRole,
   ShiftType,
   TimeOffRequest,
 } from '../domain/entities.js';
@@ -63,9 +63,12 @@ import type { ConflictInput } from './types.js';
 export interface Slot {
   date: IsoDate;
   shiftType: ShiftType;
-  role: NurseRole;
+  /** A role, or `licensed` for the RN + LPN pool a licensed ratio requires. */
+  role: RatioRole;
   min: number;
   target: number;
+  /** On a `licensed` slot: the RNs the share needs, which the pool counts only once. */
+  rnMin?: number;
 }
 
 export interface FairnessSnapshot {
@@ -139,6 +142,17 @@ export class ConflictEngine {
           if (minCount <= 0 && targetCount <= 0) continue;
           slots.push({ date, shiftType, role, min: minCount, target: targetCount });
         }
+        if (row.licensed) {
+          const pooled = row.licensed.ratioDerived;
+          slots.push({
+            date,
+            shiftType,
+            role: 'licensed',
+            min: pooled,
+            target: pooled,
+            rnMin: row.licensed.minRn,
+          });
+        }
       }
     }
     this.slots = slots;
@@ -196,6 +210,7 @@ export class ConflictEngine {
       ...(this.input.overtimeVolunteers
         ? { overtimeVolunteers: this.input.overtimeVolunteers }
         : {}),
+      ...(this.input.preceptorships ? { preceptorships: this.input.preceptorships } : {}),
     });
   }
 
@@ -375,14 +390,40 @@ export class SimState {
     return out;
   }
 
-  staffed(date: IsoDate, shiftTypeId: Id, role: NurseRole): number {
+  staffed(date: IsoDate, shiftTypeId: Id, role: RatioRole): number {
+    if (role === 'licensed') {
+      return (
+        this.view.countOnShift(date, shiftTypeId, 'RN') +
+        this.view.countOnShift(date, shiftTypeId, 'LPN')
+      );
+    }
     return this.view.countOnShift(date, shiftTypeId, role);
   }
 
   /** Nurse-slots short of the hard minimum on one cell. */
-  slotShortfall(date: IsoDate, shiftTypeId: Id, role: NurseRole): number {
+  slotShortfall(date: IsoDate, shiftTypeId: Id, role: RatioRole): number {
     const min = this.engine.demand.minFor(date, shiftTypeId, role);
-    return Math.max(0, min - this.staffed(date, shiftTypeId, role));
+    const rnMin =
+      role === 'licensed' ? this.engine.demand.get(date, shiftTypeId)?.licensed?.minRn : undefined;
+    return this.shortOf({ date, shiftTypeId, role, min, rnMin });
+  }
+
+  /**
+   * One slot's shortfall. A licensed pool is short only beyond the RNs its share needs, as the
+   * ratio rule reports it: those RNs count toward the pool too, so counting them twice would make
+   * one RN and one LVN against "four, two RNs" look three short instead of two.
+   */
+  private shortOf(slot: {
+    date: IsoDate;
+    shiftTypeId: Id;
+    role: RatioRole;
+    min: number;
+    rnMin?: number | undefined;
+  }): number {
+    const short = Math.max(0, slot.min - this.staffed(slot.date, slot.shiftTypeId, slot.role));
+    if (slot.role !== 'licensed' || !slot.rnMin) return short;
+    const rnShort = Math.max(0, slot.rnMin - this.staffed(slot.date, slot.shiftTypeId, 'RN'));
+    return short - Math.min(short, rnShort);
   }
 
   /** Nurse-slots below a hard minimum across the whole period. */
@@ -393,9 +434,8 @@ export class SimState {
       let total = this.base.hardShortfall();
       for (const key of this.changes().cells) {
         for (const slot of this.engine.slotsByCell.get(key) ?? []) {
-          const now = this.staffed(slot.date, slot.shiftType.id, slot.role);
-          const was = this.base.staffed(slot.date, slot.shiftType.id, slot.role);
-          total += Math.max(0, slot.min - now) - Math.max(0, slot.min - was);
+          const at = { ...slot, shiftTypeId: slot.shiftType.id };
+          total += this.shortOf(at) - this.base.shortOf(at);
         }
       }
       this.shortfall = total;
@@ -404,7 +444,7 @@ export class SimState {
       let total = 0;
       for (const slot of this.engine.slots) {
         if (slot.min <= 0) continue;
-        total += Math.max(0, slot.min - this.staffed(slot.date, slot.shiftType.id, slot.role));
+        total += this.shortOf({ ...slot, shiftTypeId: slot.shiftType.id });
       }
       this.shortfall = total;
     }

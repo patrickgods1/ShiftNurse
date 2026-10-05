@@ -86,8 +86,12 @@ function mostConstrained(
   let best: Slot | undefined;
   for (const shift of model.solvableShifts) {
     if (!inScope(shift) || !shift.demand) continue;
-    for (const role of NURSE_ROLES) {
-      if (level(shift.demand, role) <= model.staffed(shift, role)) continue;
+    const demand = shift.demand;
+    // Each role below this level, then the roles a short licensed pool takes (its minimum and
+    // target are the same), which no single role's level covers.
+    const roles = NURSE_ROLES.filter((role) => level(demand, role) > model.staffed(shift, role));
+    for (const role of model.poolRoles(shift)) if (!roles.includes(role)) roles.push(role);
+    for (const role of roles) {
       if (dead.has(`${shift.idx}:${role}`)) continue;
       let eligible = 0;
       for (const i of model.candidates) if (model.eligible(i, shift, role)) eligible++;

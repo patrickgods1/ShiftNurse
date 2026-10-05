@@ -19,6 +19,7 @@ import { ImportDialog } from './roster/import-dialog.js';
 import { IncompatibilitySection } from './roster/incompatibility.js';
 import { NurseDetail } from './roster/nurse-detail.js';
 import { NurseFormDialog } from './roster/nurse-form-dialog.js';
+import { OrientationSection } from './roster/orientation.js';
 import { OvertimeVolunteersSection } from './roster/overtime-volunteers.js';
 
 function matchesSearch(nurse: Nurse, term: string): boolean {
@@ -206,6 +207,8 @@ export default function RosterPage() {
       {nursesQuery.data ? (
         <OvertimeVolunteersSection unitId={unit.id} nurses={nursesQuery.data} />
       ) : null}
+
+      {nursesQuery.data ? <OrientationSection unitId={unit.id} nurses={nursesQuery.data} /> : null}
 
       <NurseFormDialog
         open={formTarget !== undefined}

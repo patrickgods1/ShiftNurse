@@ -10,7 +10,7 @@
  */
 
 import { costSchedule } from '../cost/cost.js';
-import type { Assignment, Id, NurseRole } from '../domain/entities.js';
+import type { Assignment, Id, RatioRole } from '../domain/entities.js';
 import type { IsoDate } from '../domain/time.js';
 import { deriveCounters } from '../fairness/ledger.js';
 import { scoreFairness } from '../fairness/score.js';
@@ -99,7 +99,7 @@ function unfilledFrom(violations: readonly Violation[]): UnfilledSlot[] {
     out.push({
       date: date as IsoDate,
       shiftTypeId: detailString(v, 'shiftTypeId') as Id,
-      role: detailString(v, 'role') as NurseRole,
+      role: detailString(v, 'role') as RatioRole,
       required: detailNumber(v, 'required'),
       staffed: detailNumber(v, 'staffed'),
       shortfall: detailNumber(v, 'shortfall'),

@@ -29,6 +29,7 @@ import { PRIMARY, SMALL } from '../components/ui.js';
 import { defaultPeriod } from '../default-period.js';
 import { formatDate, formatInstant, periodRange } from '../format.js';
 import { useUnitId } from '../unit-context.js';
+import { BidRoundsPanel } from './requests/bid-rounds-panel.js';
 import { ConflictsPanel } from './requests/conflicts-panel.js';
 import { DecideDialog, nurseLabel } from './requests/decide-dialog.js';
 import { ExchangePanel } from './requests/exchange-panel.js';
@@ -80,7 +81,7 @@ export default function RequestsPage() {
     periods.find((p) => p.id === selectedPeriodId) ?? fallback;
   const assignmentsQuery = useAssignments(period?.id);
 
-  const [tab, setTab] = useState<'timeOff' | 'exchanges'>('timeOff');
+  const [tab, setTab] = useState<'timeOff' | 'exchanges' | 'bidRounds'>('timeOff');
 
   const range = useMemo(
     () => (period ? { start: period.startDate, end: period.endDate } : fallbackRange()),
@@ -293,6 +294,7 @@ export default function RequestsPage() {
           [
             { value: 'timeOff', label: 'Time off' },
             { value: 'exchanges', label: 'Exchanges' },
+            { value: 'bidRounds', label: 'Bid rounds' },
           ] as const
         ).map((option) => (
           <button
@@ -309,7 +311,9 @@ export default function RequestsPage() {
         ))}
       </fieldset>
 
-      {tab === 'exchanges' ? (
+      {tab === 'bidRounds' ? (
+        <BidRoundsPanel unitId={unitId} nurses={nursesQuery.data ?? []} />
+      ) : tab === 'exchanges' ? (
         <ExchangePanel
           unitId={unitId}
           period={period}

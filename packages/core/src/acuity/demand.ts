@@ -28,6 +28,7 @@ import type {
   HppdTarget,
   Id,
   NurseRole,
+  RatioRole,
   RatioRule,
   RatioStaffing,
   ShiftType,
@@ -35,6 +36,11 @@ import type {
 import { type IsoDate, type Weekday, weekdayOf } from '../domain/time.js';
 
 export type { RatioStaffing };
+
+/** Whether a nurse of `nurseRole` counts toward `role`: a `licensed` slot takes RNs and LPNs. */
+export function fillsRatioRole(role: RatioRole, nurseRole: NurseRole): boolean {
+  return role === 'licensed' ? nurseRole === 'RN' || nurseRole === 'LPN' : role === nurseRole;
+}
 
 export const NURSE_ROLES: readonly NurseRole[] = ['RN', 'LPN', 'CNA'] as const;
 
@@ -67,6 +73,18 @@ export interface RoleDemand {
 /** No breaks in a shift's first or last hour, so break cover fits in its length minus two. */
 const BREAKLESS_MINUTES = 120;
 
+/** A pooled RN + LPN requirement from a `licensed` ratio rule, and the RNs its share needs. */
+export interface LicensedDemand {
+  /** Licensed nurses at the bedside the ceilings require. */
+  ratioBedside: number;
+  chargeWithoutPatients: number;
+  breakRelief: number;
+  /** RNs and LPNs together: `ratioBedside + chargeWithoutPatients + breakRelief`. */
+  ratioDerived: number;
+  /** The least RNs among them: `ceil(ratioDerived × minRnShare)`. */
+  minRn: number;
+}
+
 export interface ShiftDemand {
   date: IsoDate;
   shiftTypeId: Id;
@@ -80,6 +98,8 @@ export interface ShiftDemand {
   /** Soft, unit-level: nurses this shift's care hours call for (care hours ÷ shift length). */
   careHoursRecommendedNurses: number;
   byRole: Record<NurseRole, RoleDemand>;
+  /** Present when a `licensed` ratio rule governs the shift. */
+  licensed?: LicensedDemand;
   /** True when no forecast existed and only the static coverage floor applied. */
   fromCoverageFloorOnly: boolean;
 }
@@ -109,9 +129,11 @@ export class DemandTable {
     return this.byKey.get(key(date, shiftTypeId));
   }
 
-  /** The hard minimum for one role on one shift. Zero when nothing is required. */
-  minFor(date: IsoDate, shiftTypeId: Id, role: NurseRole): number {
-    return this.get(date, shiftTypeId)?.byRole[role]?.minCount ?? 0;
+  /** The hard minimum for one role, or for the licensed pool, on one shift. Zero when none. */
+  minFor(date: IsoDate, shiftTypeId: Id, role: RatioRole): number {
+    const row = this.get(date, shiftTypeId);
+    if (role === 'licensed') return row?.licensed?.ratioDerived ?? 0;
+    return row?.byRole[role]?.minCount ?? 0;
   }
 
   targetFor(date: IsoDate, shiftTypeId: Id, role: NurseRole): number {
@@ -145,7 +167,7 @@ function key(date: IsoDate, shiftTypeId: Id): string {
  */
 export function bindingRatio(
   rules: readonly RatioRule[],
-  role: NurseRole,
+  role: RatioRole,
   acuityTierId: Id,
 ): number | null {
   let best: number | null = null;
@@ -169,7 +191,7 @@ export function bindingRatio(
  */
 export function nursesRequiredForMix(
   acuityMix: Record<Id, number>,
-  role: NurseRole,
+  role: RatioRole,
   ratioRules: readonly RatioRule[],
 ): number {
   let load = 0;
@@ -311,9 +333,24 @@ export function deriveDemand(dates: readonly IsoDate[], inputs: DemandInputs): D
         };
       }
 
+      const licensed = shiftType.isOnCall
+        ? undefined
+        : licensedDemand(acuityMix, shiftType, ratioRules, ratioStaffing);
+      if (licensed && licensed.minRn > byRole.RN.minCount) {
+        // The RNs the share needs are the RN minimum Generate aims for.
+        // The share is a ratio requirement, so a shortfall against it is a ratio breach.
+        byRole.RN = {
+          ...byRole.RN,
+          minCount: licensed.minRn,
+          targetCount: Math.max(byRole.RN.targetCount, licensed.minRn),
+          bindingConstraint: 'ratio',
+        };
+      }
+
       demands.push({
         date,
         shiftTypeId: shiftType.id,
+        ...(licensed ? { licensed } : {}),
         projectedCensus,
         weightedCareHoursPerDay: careHoursPerDay,
         careHoursThisShift,
@@ -358,6 +395,33 @@ function ratioSupport(
   );
   const chargeRelieves = chargeWithoutPatients === 1 && staffing.chargeCoversBreaks ? 1 : 0;
   return { chargeWithoutPatients, breakRelief: Math.max(0, needed - chargeRelieves) };
+}
+
+/**
+ * The pooled requirement of `licensed` rules: bedside licensed nurses from the ceilings, the
+ * charge nurse and break relief as for RNs (the charge nurse is an RN, counted once), and the RNs
+ * the strictest `minRnShare` among the rules that apply needs. Undefined with no such rule.
+ */
+function licensedDemand(
+  acuityMix: Record<Id, number>,
+  shiftType: ShiftType,
+  rules: readonly RatioRule[],
+  staffing: RatioStaffing | undefined,
+): LicensedDemand | undefined {
+  const pooled = rules.filter((r) => r.active && r.role === 'licensed');
+  if (pooled.length === 0) return undefined;
+  const ratioBedside = nursesRequiredForMix(acuityMix, 'licensed', rules);
+  if (ratioBedside <= 0) return undefined;
+  const { chargeWithoutPatients, breakRelief } = ratioSupport(
+    'RN',
+    shiftType,
+    ratioBedside,
+    staffing,
+  );
+  const ratioDerived = ratioBedside + chargeWithoutPatients + breakRelief;
+  const share = Math.max(0, ...pooled.map((r) => r.minRnShare ?? 0));
+  const minRn = Math.ceil(roundForFloatSafety(ratioDerived * Math.min(1, share)));
+  return { ratioBedside, chargeWithoutPatients, breakRelief, ratioDerived, minRn };
 }
 
 /**

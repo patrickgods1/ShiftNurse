@@ -113,6 +113,26 @@ export function leaveHoursBetween(
  * knows the nurse's actual rota corrects it; the point is not to start from zero or from
  * "every calendar day".
  */
+/**
+ * The shift length a day of paid leave is worth when the manager has not said otherwise: what
+ * most of the unit's worked shift types run (the longer on a tie). A 12-hour unit's PTO day is 12
+ * hours, a VA tour 8. One definition for the request dialog and for leave awarded by bidding.
+ */
+export function typicalShiftHours(
+  shiftTypes: readonly { durationHours: number; active: boolean; isOnCall: boolean }[],
+): number {
+  const counts = new Map<number, number>();
+  for (const s of shiftTypes) {
+    if (!s.active || s.isOnCall) continue;
+    counts.set(s.durationHours, (counts.get(s.durationHours) ?? 0) + 1);
+  }
+  let best: [number, number] | undefined;
+  for (const [hours, n] of counts) {
+    if (!best || n > best[1] || (n === best[1] && hours > best[0])) best = [hours, n];
+  }
+  return best?.[0] ?? 8;
+}
+
 export function suggestedPaidLeaveHours(input: {
   type: TimeOffType;
   days: number;

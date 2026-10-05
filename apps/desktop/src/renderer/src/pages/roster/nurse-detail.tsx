@@ -14,7 +14,10 @@ import { SECONDARY } from '../../components/ui.js';
 import { usePanelFocus } from '../../components/use-panel-focus.js';
 import { formatDate } from '../../format.js';
 import { CredentialsSection } from './nurse-credentials.js';
+import { LeaveSection } from './nurse-leave.js';
 import { PreferencesSection } from './nurse-preferences.js';
+import { ExportRecordButton } from './nurse-record.js';
+import { AlsoWorksOnSection } from './nurse-units.js';
 
 interface NurseDetailProps {
   nurseId: Id;
@@ -81,6 +84,7 @@ function NurseDetailBody({
         <button type="button" onClick={() => onEdit(nurse)} className={SECONDARY}>
           Edit
         </button>
+        <ExportRecordButton nurse={nurse} />
         {nurse.active ? (
           <button
             type="button"
@@ -128,6 +132,8 @@ function NurseDetailBody({
       />
 
       <CredentialsSection nurseId={nurseId} />
+      <AlsoWorksOnSection nurse={nurse} />
+      <LeaveSection nurseId={nurseId} />
       <PreferencesSection nurseId={nurseId} unitId={nurse.unitId} />
     </>
   );

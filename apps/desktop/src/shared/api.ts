@@ -16,17 +16,20 @@ import type {
   Assignment,
   AutoResolvePolicy,
   BacktestResult,
+  BalanceCheck,
   Budget,
   BudgetVariance,
   CallAttempt,
   CallOff,
   CallOutcome,
+  CancellationTier,
   CensusForecast,
   CensusProposal,
   ComplianceAlert,
   ConflictReport,
   CoverageRequirement,
   Credential,
+  DayOfPay,
   Differential,
   EvaluationResult,
   ExchangeEvaluation,
@@ -44,6 +47,11 @@ import type {
   IncompatibilityGroup,
   IsoDate,
   JurisdictionId,
+  LeaveAward,
+  LeaveBid,
+  LeaveBidChoice,
+  LeaveBidRound,
+  LeaveDenial,
   Nurse,
   NurseCredential,
   NurseRole,
@@ -51,9 +59,12 @@ import type {
   OvertimeVolunteer,
   PayRate,
   PlannedHoliday,
+  Preceptorship,
   Preference,
+  RatioRole,
   RatioRule,
   ReplacementReport,
+  RequestOrigin,
   Resolution,
   RosterCsvError,
   RosterCsvRow,
@@ -196,6 +207,156 @@ export interface OvertimeVolunteerPatch {
   note?: string | null;
 }
 
+/** Where a bidding round stands; it only moves forward. */
+export type LeaveBidRoundStatus = 'open' | 'closed' | 'awarded';
+
+/** A bidding round as the manager manages it: core's judging fields plus the window and status. */
+export interface LeaveBidRoundRecord extends LeaveBidRound {
+  /** The announced bidding window. Informational: the status decides whether a bid is taken. */
+  opensOn: IsoDate;
+  closesOn: IsoDate;
+  status: LeaveBidRoundStatus;
+  /** When the award ran (epoch millis); absent until it has. */
+  awardedAt?: number;
+}
+
+/** A nurse's bid with when it was last entered. */
+export interface LeaveBidRecord extends LeaveBid {
+  submittedAt: number;
+  /** 'manager' in v1; 'nurse' once self-service ships. */
+  enteredBy: RequestOrigin;
+}
+
+export type LeaveBidRoundInput = Omit<LeaveBidRoundRecord, 'id' | 'status' | 'awardedAt'>;
+
+/** The unit never changes; `maxAwardsPerNurse: null` removes the limit. */
+export interface LeaveBidRoundPatch {
+  name?: string;
+  coversStart?: IsoDate;
+  coversEnd?: IsoDate;
+  opensOn?: IsoDate;
+  closesOn?: IsoDate;
+  offPerDay?: Partial<Record<NurseRole, number>>;
+  maxAwardsPerNurse?: number | null;
+}
+
+/** One award: the week, the nurse's name and the approved request it became. */
+export interface LeaveAwardView extends LeaveAward {
+  nurseName: string;
+  requestId: Id;
+  /** Draft shifts the approval took off the grid. */
+  liftedShifts: number;
+  /** Published-period shifts left in place, now a conflict to resolve. */
+  stillRostered: number;
+}
+
+export interface LeaveDenialView extends LeaveDenial {
+  nurseName: string;
+}
+
+/** What an award did, in the order nurses were served and with every denial's reason. */
+export interface LeaveBidAwardResult {
+  round: LeaveBidRoundRecord;
+  order: { nurseId: Id; nurseName: string }[];
+  awards: LeaveAwardView[];
+  denials: LeaveDenialView[];
+}
+
+/** A nurse's PTO or sick balance as entered from payroll, true on `asOf`. */
+export interface LeaveBalanceRecord {
+  id: Id;
+  nurseId: Id;
+  type: 'pto' | 'sick';
+  balanceHours: number;
+  asOf: IsoDate;
+}
+
+/** An FMLA certification; the dates are inclusive. */
+export interface FmlaCertificationRecord {
+  id: Id;
+  nurseId: Id;
+  startDate: IsoDate;
+  endDate: IsoDate;
+  intermittent: boolean;
+  note?: string;
+}
+
+export type FmlaCertificationInput = Omit<FmlaCertificationRecord, 'id'>;
+
+/** The nurse is fixed once recorded. `note: null` clears the note. */
+export interface FmlaCertificationPatch {
+  startDate?: IsoDate;
+  endDate?: IsoDate;
+  intermittent?: boolean;
+  note?: string | null;
+}
+
+/** What the request dialogs show about a nurse's leave before a request is saved or decided. */
+export interface LeaveRequestCheck {
+  /** PTO and sick requests: the balance on file measured against the paid hours. */
+  balance?: { type: 'pto' | 'sick'; balanceHours: number; asOf: IsoDate; check: BalanceCheck };
+  /** PTO or sick request for a nurse with no balance entered: nothing to check against. */
+  noBalanceFor?: 'pto' | 'sick';
+  /** FMLA requests: the 12-week entitlement and the two eligibility tests. */
+  fmla?: {
+    /** The nurse's usual hours a week, from their contract. */
+    weeklyHours: number;
+    /** Hours this request uses: its days at the usual week's pace. */
+    requestHours: number;
+    /** Left of the 12 work weeks before this request, in the year back from its first day. */
+    remainingHours: number;
+    eligibility: { eligible: true } | { eligible: false; reason: string };
+    /** A certification on file covers the request's first day. */
+    certified: boolean;
+  };
+}
+
+/**
+ * An orientation: one orientee and the preceptor(s) who oversee them over the same dates. One
+ * record is stored per preceptor; an orientee may work any shift one of them is on.
+ */
+export interface PreceptorshipInput {
+  unitId: Id;
+  orienteeId: Id;
+  preceptorIds: Id[];
+  startDate: IsoDate;
+  endDate: IsoDate;
+}
+
+/** The unit and the pair are fixed once recorded; only the dates change. */
+export interface PreceptorshipPatch {
+  startDate?: IsoDate;
+  endDate?: IsoDate;
+}
+
+/**
+ * A nurse who also works on a unit other than their home unit. Dates are inclusive and open on
+ * a side that is absent; `competency` is what the nurse may be asked to do there.
+ */
+export interface NurseUnit {
+  id: Id;
+  nurseId: Id;
+  unitId: Id;
+  competency?: string;
+  startDate?: IsoDate;
+  endDate?: IsoDate;
+}
+
+export interface NurseUnitInput {
+  nurseId: Id;
+  unitId: Id;
+  competency?: string;
+  startDate?: IsoDate;
+  endDate?: IsoDate;
+}
+
+/** The nurse and the unit are fixed once recorded; `null` clears a field. */
+export interface NurseUnitPatch {
+  competency?: string | null;
+  startDate?: IsoDate | null;
+  endDate?: IsoDate | null;
+}
+
 /** Optional-and-clearable fields take `null` to clear; an omitted key is left untouched. */
 export type NursePatch = Partial<Omit<Nurse, 'id' | 'unitId' | 'phone' | 'email' | 'notes'>> & {
   phone?: string | null;
@@ -241,8 +402,11 @@ export interface HolidayWorkSummary {
 export type AcuityTierInput = Omit<AcuityTier, 'id'>;
 export type AcuityTierPatch = Partial<Omit<AcuityTier, 'id' | 'unitId'>>;
 export type RatioRuleInput = Omit<RatioRule, 'id'>;
-export type RatioRulePatch = Partial<Omit<RatioRule, 'id' | 'unitId' | 'citation'>> & {
+export type RatioRulePatch = Partial<
+  Omit<RatioRule, 'id' | 'unitId' | 'citation' | 'minRnShare'>
+> & {
   citation?: string | null;
+  minRnShare?: number | null;
 };
 
 export interface CensusForecastInput {
@@ -356,6 +520,71 @@ export interface PeriodCostReport {
   cost: ScheduleCost;
   budget: Budget | undefined;
   variance: BudgetVariance | undefined;
+  /**
+   * What the period's day-of events cost (missed breaks, send-homes, call-backs), priced beside
+   * the schedule and never added into `cost`: a schedule's price is the same before and after
+   * the day. `unpriced` counts events for nurses with no pay rate, which are not $0.
+   */
+  dayOf: DayOfPay;
+}
+
+/** Pay settings that are not rates, differentials or overtime rules. */
+export interface PaySettings {
+  /** The fewest hours a call-back pays, from the contract. 0 pays the hours worked. */
+  callBackMinimumHours: number;
+}
+
+/** A day-of event as recorded: paid outside the schedule, priced beside its cost. */
+export interface DayOfPayRecord {
+  id: Id;
+  unitId: Id;
+  nurseId: Id;
+  kind: 'missed_break' | 'sent_home' | 'call_back';
+  date: IsoDate;
+  shiftTypeId?: Id;
+  break?: 'meal' | 'rest';
+  scheduledHours?: number;
+  hoursWorked?: number;
+  note?: string;
+  enteredBy: 'manager' | 'nurse';
+  createdAt: number;
+}
+
+/** What the day-of console records; hours are the ones the kind needs. */
+export type DayOfPayEntry =
+  | {
+      kind: 'missed_break';
+      unitId: Id;
+      nurseId: Id;
+      date: IsoDate;
+      shiftTypeId?: Id;
+      break: 'meal' | 'rest';
+      note?: string;
+    }
+  | {
+      kind: 'sent_home';
+      unitId: Id;
+      nurseId: Id;
+      date: IsoDate;
+      shiftTypeId?: Id;
+      scheduledHours: number;
+      hoursWorked?: number;
+      note?: string;
+    }
+  | {
+      kind: 'call_back';
+      unitId: Id;
+      nurseId: Id;
+      date: IsoDate;
+      shiftTypeId?: Id;
+      hoursWorked: number;
+      note?: string;
+    };
+
+/** What can be filled in afterwards: a send-home's or call-back's real hours, and the note. */
+export interface DayOfPayPatch {
+  hoursWorked?: number;
+  note?: string | null;
 }
 
 export interface CreateTimeOffInput {
@@ -405,6 +634,8 @@ export interface PublishOutcome {
   /** The backup written on publish, if the file system allowed one. */
   backup: BackupInfo | undefined;
 }
+
+export type NurseRecordFormat = 'csv' | 'pdf';
 
 export type OutputFormat = 'pdf-grid' | 'pdf-nurses' | 'csv-grid' | 'csv-long' | 'xlsx';
 
@@ -458,7 +689,8 @@ export type SolveRunState = 'queued' | 'running' | 'done' | 'failed' | 'cancelle
 export interface UnfilledShift {
   date: IsoDate;
   shiftTypeId: Id;
-  role: NurseRole;
+  /** A role, or `licensed` for a short RN + LPN pool. */
+  role: RatioRole;
   shortfall: number;
 }
 
@@ -614,6 +846,20 @@ export interface RosterEntryView {
   callOff?: CallOff;
 }
 
+/**
+ * A role with more nurses on a shift than its requirement, computed in main from the staffing
+ * check: the census dropped (or was never as high as forecast) and the unit may send someone home.
+ */
+export interface OverstaffedRole {
+  /** The period whose assignments these are; the cancellation calls take it back. */
+  periodId: Id;
+  role: NurseRole;
+  required: number;
+  staffed: number;
+  /** `staffed − required`, always above zero. */
+  excess: number;
+}
+
 /** A shift as the Today screen shows it: who is on it, and whether it is staffed. */
 export interface TodayShiftView {
   date: IsoDate;
@@ -621,6 +867,8 @@ export interface TodayShiftView {
   /** The census row for this slot, if one exists (projected and, once entered, actual). */
   census?: CensusForecast;
   staffing: ShiftStaffingCheck;
+  /** Roles over their requirement; empty when the shift is staffed to need or short. */
+  overstaffed: OverstaffedRole[];
   roster: RosterEntryView[];
   /** `current` when the wall clock is inside its window, `next` for the one starting soonest. */
   status: 'current' | 'next' | 'other';
@@ -636,6 +884,43 @@ export interface DayOfSummary {
   shifts: TodayShiftView[];
   /** Every open call-off on this unit, whatever the date, soonest shift first. */
   openCallOffs: CallOffView[];
+}
+
+/** One place in the cancellation order, with the name the console prints. */
+export interface CancellationPlaceView {
+  nurseId: Id;
+  assignmentId: Id;
+  name: string;
+  tier: CancellationTier;
+  /** The order's own words for why this nurse holds this place, shown verbatim. */
+  reason: string;
+}
+
+/** Who goes home first on a shift that has more nurses than it needs. */
+export interface CancellationOrderView {
+  periodId: Id;
+  date: IsoDate;
+  shiftTypeId: Id;
+  role: NurseRole;
+  required: number;
+  staffed: number;
+  /** How many more than needed; zero means nobody should be cancelled. */
+  excess: number;
+  order: CancellationPlaceView[];
+  /** On the shift but never cancelled (the charge nurse), with why. */
+  excluded: { nurseId: Id; name: string; reason: string }[];
+}
+
+/** A nurse sent home for low census. The shift itself is gone from the schedule. */
+export interface ShiftCancellationRecord {
+  id: Id;
+  periodId: Id;
+  nurseId: Id;
+  shiftTypeId: Id;
+  date: IsoDate;
+  reason: string;
+  cancelledAt: number;
+  enteredBy: 'manager' | 'nurse';
 }
 
 /** A call-off with everything the console needs to act on it, joined in main. */
@@ -708,6 +993,30 @@ export interface ShiftNurseApi {
     update(id: Id, patch: NursePatch): Nurse;
     deactivate(id: Id): Nurse;
   };
+  /** A nurse's record for a grievance: their audit entries and published-shift changes. */
+  nurseRecord: {
+    /**
+     * Writes the record for the inclusive date range through a native save dialog; resolves to
+     * the path, or undefined when the manager cancels. Kept-apart entries are never included.
+     */
+    exportToFile(
+      nurseId: Id,
+      start: IsoDate,
+      end: IsoDate,
+      format: NurseRecordFormat,
+    ): Promise<string | undefined>;
+  };
+  /** The float pool: units a nurse works on besides their home unit. */
+  nurseUnits: {
+    forNurse(nurseId: Id): NurseUnit[];
+    /** Nurses from other units who may work on this one, for the grid's rows and names. */
+    floatingIn(unitId: Id): Nurse[];
+    /** Who a period's schedule may hold: the home roster, then floats whose dates touch it. */
+    roster(periodId: Id): Nurse[];
+    create(input: NurseUnitInput): NurseUnit;
+    update(id: Id, patch: NurseUnitPatch): NurseUnit;
+    remove(id: Id): void;
+  };
   credentials: {
     /** The catalogue of credential types (ACLS, BLS…). */
     list(): Credential[];
@@ -733,6 +1042,51 @@ export interface ShiftNurseApi {
     list(unitId: Id): OvertimeVolunteer[];
     create(input: OvertimeVolunteerInput): OvertimeVolunteer;
     update(id: Id, patch: OvertimeVolunteerPatch): OvertimeVolunteer;
+    remove(id: Id): void;
+  };
+  /** Seniority leave bidding: rounds, the bids in them, and the one-time award in seniority order. */
+  leaveBidding: {
+    rounds(unitId: Id): LeaveBidRoundRecord[];
+    createRound(input: LeaveBidRoundInput): LeaveBidRoundRecord;
+    updateRound(id: Id, patch: LeaveBidRoundPatch): LeaveBidRoundRecord;
+    closeRound(id: Id): LeaveBidRoundRecord;
+    bids(roundId: Id): LeaveBidRecord[];
+    /** Enter or replace a nurse's ranked choices; v1 is the manager entering them. */
+    submitBid(roundId: Id, nurseId: Id, choices: LeaveBidChoice[]): LeaveBidRecord;
+    /** Approves each award as PTO and lifts draft shifts; once only. */
+    award(roundId: Id): LeaveBidAwardResult;
+  };
+  /** Leave balances and FMLA certifications, and the check a request is shown against them. */
+  leaveBalances: {
+    forNurse(nurseId: Id): {
+      balances: LeaveBalanceRecord[];
+      certifications: FmlaCertificationRecord[];
+    };
+    /** Replaces the nurse's balance of that type; the previous figure is kept in the audit log. */
+    setBalance(
+      nurseId: Id,
+      type: 'pto' | 'sick',
+      balanceHours: number,
+      asOf: IsoDate,
+    ): LeaveBalanceRecord;
+    addCertification(input: FmlaCertificationInput): FmlaCertificationRecord;
+    updateCertification(id: Id, patch: FmlaCertificationPatch): FmlaCertificationRecord;
+    removeCertification(id: Id): void;
+    /** Warnings only: a short balance or an ineligible nurse never blocks the request. */
+    checkRequest(
+      nurseId: Id,
+      type: TimeOffType,
+      startDate: IsoDate,
+      endDate: IsoDate,
+      paidHours: number,
+    ): LeaveRequestCheck;
+  };
+  /** Who is oriented by whom, which keeps an orientee on shifts a preceptor works. */
+  preceptorships: {
+    list(unitId: Id): Preceptorship[];
+    /** One record per preceptor, all or none. */
+    create(input: PreceptorshipInput): Preceptorship[];
+    update(id: Id, patch: PreceptorshipPatch): Preceptorship;
     remove(id: Id): void;
   };
   shiftTypes: {
@@ -938,6 +1292,16 @@ export interface ShiftNurseApi {
     /** Prices every assignment in the period and compares the total to its budget. */
     report(periodId: Id): PeriodCostReport;
     setBudget(periodId: Id, targetDollars: number): Budget;
+    paySettings(unitId: Id): PaySettings;
+    savePaySettings(unitId: Id, settings: PaySettings): PaySettings;
+  };
+  /** Events paid outside the schedule, recorded from the Today screen. */
+  dayOfPay: {
+    /** Events dated in the inclusive range, oldest first. */
+    list(unitId: Id, start: IsoDate, end: IsoDate): DayOfPayRecord[];
+    record(entry: DayOfPayEntry): DayOfPayRecord;
+    update(id: Id, patch: DayOfPayPatch): DayOfPayRecord;
+    remove(id: Id): void;
   };
   timeOff: {
     list(unitId: Id, status?: TimeOffStatus): TimeOffRequest[];
@@ -1024,6 +1388,33 @@ export interface ShiftNurseApi {
     /** The nurse turned up after all, or it was logged in error. Reason required. */
     cancelCallOff(callOffId: Id, reason: string): CallOff;
     callLog(callOffId: Id): CallAttempt[];
+    /** The unit's low-census order, first tier first; the contract's usual order until changed. */
+    cancellationPolicy(unitId: Id): CancellationTier[];
+    saveCancellationPolicy(unitId: Id, tiers: CancellationTier[]): CancellationTier[];
+    /**
+     * Who goes home first on a shift over its requirement for `role`. `volunteers` are the nurses
+     * who offered to go, in the order they offered; the rotation's history is read in main.
+     */
+    cancellationOrder(
+      periodId: Id,
+      date: IsoDate,
+      shiftTypeId: Id,
+      role: NurseRole,
+      volunteers: Id[],
+    ): CancellationOrderView;
+    /**
+     * Sends `nurseId` home: re-ranks in main and refuses anyone but the next in the order (or any
+     * nurse once the shift is no longer over), records the cancellation, removes the shift
+     * through the change log under the order's reason, and audits — one transaction.
+     */
+    cancelForCensus(
+      periodId: Id,
+      date: IsoDate,
+      shiftTypeId: Id,
+      role: NurseRole,
+      volunteers: Id[],
+      nurseId: Id,
+    ): ShiftCancellationRecord;
   };
 }
 
@@ -1059,10 +1450,30 @@ export const API_CHANNELS = {
   ],
   dashboard: ['summary'],
   nurses: ['list', 'get', 'create', 'update', 'deactivate'],
+  nurseRecord: ['exportToFile'],
+  nurseUnits: ['forNurse', 'floatingIn', 'roster', 'create', 'update', 'remove'],
   credentials: ['list', 'create', 'forNurse', 'grant', 'updateExpiry', 'revoke'],
   preferences: ['forNurse', 'replace'],
   incompatibility: ['list', 'create', 'update', 'remove'],
   overtimeVolunteers: ['list', 'create', 'update', 'remove'],
+  preceptorships: ['list', 'create', 'update', 'remove'],
+  leaveBalances: [
+    'forNurse',
+    'setBalance',
+    'addCertification',
+    'updateCertification',
+    'removeCertification',
+    'checkRequest',
+  ],
+  leaveBidding: [
+    'rounds',
+    'createRound',
+    'updateRound',
+    'closeRound',
+    'bids',
+    'submitBid',
+    'award',
+  ],
   shiftTypes: ['list', 'create', 'update', 'deactivate'],
   coverage: ['list', 'upsert', 'delete'],
   holidays: [
@@ -1143,7 +1554,10 @@ export const API_CHANNELS = {
     'deleteOvertimeRule',
     'report',
     'setBudget',
+    'paySettings',
+    'savePaySettings',
   ],
+  dayOfPay: ['list', 'record', 'update', 'remove'],
   timeOff: [
     'list',
     'listInRange',
@@ -1168,6 +1582,10 @@ export const API_CHANNELS = {
     'markUncovered',
     'cancelCallOff',
     'callLog',
+    'cancellationPolicy',
+    'saveCancellationPolicy',
+    'cancellationOrder',
+    'cancelForCensus',
   ],
 } as const satisfies { [R in keyof ShiftNurseApi]: readonly (keyof ShiftNurseApi[R])[] };
 

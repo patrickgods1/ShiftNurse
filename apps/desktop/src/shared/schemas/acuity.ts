@@ -10,12 +10,17 @@ const tierInput = object({
   careHoursPerPatientDay: z.number().gt(0, 'must be more than zero'),
 });
 
+/** A ratio counts one role, or `licensed`: RNs and LPN/LVNs together (Title 22). */
+const ratioRole = z.union([nurseRole, z.literal('licensed')]);
+const rnShare = z.number().gt(0, 'must be more than 0%').max(1, 'must be at most 100%');
+
 const ratioRuleInput = object({
   unitId: id,
-  role: nurseRole,
+  role: ratioRole,
   acuityTierId: id.nullable(),
   maxPatientsPerNurse: z.number().gt(0, 'must be more than zero'),
   citation: text.optional(),
+  minRnShare: rnShare.optional(),
   active: z.boolean(),
 });
 
@@ -30,9 +35,9 @@ export const acuitySchemas = {
   updateRatioRule: z.tuple([
     id,
     ratioRuleInput
-      .omit({ unitId: true, citation: true })
+      .omit({ unitId: true, citation: true, minRnShare: true })
       .partial()
-      .extend({ citation: text.nullable().optional() }),
+      .extend({ citation: text.nullable().optional(), minRnShare: rnShare.nullable().optional() }),
   ]),
   deactivateRatioRule: z.tuple([id]),
   hppd: z.tuple([id]),

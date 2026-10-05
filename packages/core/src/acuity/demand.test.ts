@@ -170,3 +170,80 @@ describe('break relief, so the ratio holds while nurses are at lunch', () => {
     expect(cna.ratioDerived).toBe(3);
   });
 });
+
+describe('a licensed-nurse ratio that pools RNs and LVNs', () => {
+  // Title 22 counts licensed nurses: RNs and LVNs together, LVNs at most half.
+  const LICENSED_1_TO_5: RatioRule = {
+    id: 'ratio-licensed',
+    unitId: UNIT_ID,
+    role: 'licensed',
+    acuityTierId: null,
+    maxPatientsPerNurse: 5,
+    minRnShare: 0.5,
+    active: true,
+  };
+
+  function licensed(patients: number, staffing?: RatioStaffing) {
+    const row = deriveDemand([DATE], {
+      shiftTypes: [DAY_12],
+      acuityTiers: testAcuityTiers,
+      ratioRules: [LICENSED_1_TO_5],
+      coverageRequirements: [],
+      censusForecasts: [census(DATE, DAY_12, { [TIER_ROUTINE.id]: patients })],
+      ...(staffing ? { ratioStaffing: staffing } : {}),
+    }).get(DATE, DAY_12.id)!;
+    return row;
+  }
+
+  it('asks for four licensed nurses for 20 patients, at least two of them RNs', () => {
+    const row = licensed(20);
+    expect(row.licensed).toMatchObject({ ratioBedside: 4, ratioDerived: 4, minRn: 2 });
+    // The RNs the share needs are the RN minimum Generate aims for; LVNs are not forced.
+    expect(row.byRole.RN.minCount).toBe(2);
+    expect(row.byRole.LPN.minCount).toBe(0);
+  });
+
+  it('rounds the RN share up: five licensed at half is three RNs', () => {
+    const row = licensed(25);
+    expect(row.licensed).toMatchObject({ ratioDerived: 5, minRn: 3 });
+  });
+
+  it('adds the charge nurse kept free of patients to the licensed count', () => {
+    const row = licensed(20, {
+      chargeNurseTakesPatients: false,
+      breakMinutesPerNurse: 0,
+      chargeCoversBreaks: false,
+    });
+    // 4 at the bedside + the charge RN = 5 licensed; half of 5, rounded up, is 3 RNs.
+    expect(row.licensed).toMatchObject({
+      ratioBedside: 4,
+      chargeWithoutPatients: 1,
+      ratioDerived: 5,
+      minRn: 3,
+    });
+  });
+
+  it('reads an RN short of the share as a ratio shortfall, though a lower floor exists', () => {
+    // An RN floor of 1 and a share of 2 RNs: the share binds, and it is the ratio.
+    const row = deriveDemand([DATE], {
+      shiftTypes: [DAY_12],
+      acuityTiers: testAcuityTiers,
+      ratioRules: [LICENSED_1_TO_5],
+      coverageRequirements: [coverage(DAY_12, 'RN', 1, 1, null, DATE)],
+      censusForecasts: [census(DATE, DAY_12, { [TIER_ROUTINE.id]: 20 })],
+    }).get(DATE, DAY_12.id)!;
+    expect(row.byRole.RN).toMatchObject({ minCount: 2, bindingConstraint: 'ratio' });
+  });
+
+  it('asks nothing pooled of a unit without a licensed rule', () => {
+    expect(demandFor(DAY_12, 20).RN.minCount).toBe(4);
+    const row = deriveDemand([DATE], {
+      shiftTypes: [DAY_12],
+      acuityTiers: testAcuityTiers,
+      ratioRules: [RN_1_TO_5],
+      coverageRequirements: [],
+      censusForecasts: [census(DATE, DAY_12, { [TIER_ROUTINE.id]: 20 })],
+    }).get(DATE, DAY_12.id)!;
+    expect(row.licensed).toBeUndefined();
+  });
+});
