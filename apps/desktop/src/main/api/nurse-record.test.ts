@@ -85,7 +85,11 @@ describe('a nurse’s record as a CSV', () => {
     );
     denyTimeOff(f.handle.db, request.id, 'manager', 'Two nurses already off that week');
     const rows = rowsOf(ana);
-    const denial = rows.find((r) => r[4] === 'Time-off request' && r[5] === 'deny');
+    // Found by its own dates: \`ana\` is whichever RN sorts first by a random id, and the seeded
+    // history may already hold a denial of hers, which as the older entry would come first.
+    const denial = rows.find(
+      (r) => r[4] === 'Time-off request' && r[5] === 'deny' && r[7] === '2026-11-02 to 2026-11-04',
+    );
     expect(denial).toMatchObject({
       0: `${ana.firstName} ${ana.lastName}`,
       1: ana.employeeId,
