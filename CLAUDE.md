@@ -638,6 +638,46 @@ violations of their own.
   `planJurisdiction` lowers looser ratio ceilings, grows break minutes, adds missing overtime
   rules and switches rules on, never the reverse, and plans nothing on a second run. A change to
   a law is a change to its preset, its citation and its summary together.
+- **Leave bids are awarded in seniority order, one a nurse a pass.** `leave/bidding.ts`'s
+  `awardBids` is pure and deterministic (seniority date, then employee number); leave already
+  approved takes its places first; every choice not awarded carries a quotable reason naming the
+  full days and who holds them, labelled by how (an award, or leave approved before the round).
+  `awardRound` (ShiftNurseTx) turns awards into approved PTO through the ordinary approval, with
+  `suggestedPaidLeaveHours`, and records each denial with `recordAuditStrict`.
+- **A licensed ratio pools RNs and LVNs, and counts the RN share once.** `RatioRule.role` may be
+  `'licensed'` with `minRnShare` (migration 0020); `ShiftDemand.licensed` holds the pool. Every RN
+  the share needs counts toward the pool too, so the pool is short only beyond them —
+  `short − min(short, rnShort)` — in the ratio rule, both solvers, `SolverModel.hardShortfall`,
+  the conflicts engine (`fillsRatioRole`; a `licensed` slot) and Today. The search aims at a short
+  pool through `SolverModel.shortRoles` (LPN first). A census cancellation shares the pool's
+  slack between RNs and LVNs (`overstaffedRoles`), LVNs first.
+- **Sending staff home follows the unit's cancellation order.** `dayof/cancellation.ts`'s
+  `cancellationOrder` ranks volunteers, agency, overtime, per diem, then a rotation (fewest
+  cancellations, longest ago, most junior); the charge nurse is never cancelled. Main cancels only
+  the next in order, and the removal is logged under the change source `'census'`.
+- **Another unit's shifts are busy time, not this unit's.** `schedule/elsewhere.ts`'s
+  `busyElsewhere` copies the other unit's shift types as inactive `elsewhere:<id>` types and its
+  shifts as locked rows in `priorAssignments`, so every nurse rule judges them and nothing staffs,
+  flags or prices them here. `loadPeriodInput` and the grid's validation read them from other
+  units' draft and published periods. Float members (`nurse_unit`, migration 0024) join the
+  roster *after* the home nurses — order is behaviour — with their own leave, credentials and
+  preferences (`rosterForPeriod`, `floatExtras`).
+- **An orientee works with their preceptor.** `rules/preceptor.ts` (`orientee-with-preceptor`,
+  hard, shift scope, on by default and silent without preceptorships) counts a preceptor on the
+  shift or on the one it runs inside; standby is not judged. CP-SAT prices it at `hardShortfall`
+  (`encodePreceptor`).
+- **Day-of pay sits beside the schedule's cost, never in it.** `cost/events.ts`'s
+  `priceDayOfEvents` prices missed meal and rest breaks (one hour a day each), reporting-time pay
+  (half the shift, 2–4 hours) and call-backs (at least the contract minimum) at the base rate.
+  Events are `day_of_pay_event` rows (migration 0025); the call-back minimum is `pay_settings`.
+- **Leave balances and FMLA warn, never block.** `leave/balances.ts`: `checkLeaveBalance`, and
+  FMLA as 12 of the nurse's usual weeks over the rolling year back from the date
+  (`fmlaRemaining`; 29 February goes to 1 March) with `fmlaEligibility`'s two tests.
+- **A nurse's record leaves the app without HR or medical matters.** The grievance export
+  (`repositories/nurse-record.ts`, Roster › nurse › Export record…) carries every audit entry
+  about a nurse — time, action, actor, reason, never the before/after snapshots — and their
+  published-shift changes, but `RECORD_EXCLUDED_ENTITIES` keeps kept-apart groups and FMLA
+  certifications out, and every record's footer says so whether or not the nurse has either.
 
 ## Development discipline
 
