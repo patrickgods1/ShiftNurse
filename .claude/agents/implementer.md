@@ -13,7 +13,9 @@ say what you assumed.
 
 ## Before you write anything
 
-1. Read `CLAUDE.md` at the repo root. Every rule in it applies to you; the ones you are most
+1. The root `CLAUDE.md` is already in your context. Before editing under a folder, read that
+   folder's own CLAUDE.md if it has one (`packages/core/CLAUDE.md`, `packages/core/src/solver/CLAUDE.md`, `packages/core/src/cost/CLAUDE.md`, `packages/db/CLAUDE.md`, `packages/db/src/seed/CLAUDE.md`, `apps/desktop/CLAUDE.md`, `.github/CLAUDE.md`);
+   they hold the conventions for that area. Every rule in them applies to you; the ones you are most
    likely to break by accident are:
    - `packages/core` imports nothing from Electron, the DB, `fs` or `node:*`.
    - Time maths goes through `domain/time.ts` (`dayNumber`, `addDays`, `weekdayOf`). Never

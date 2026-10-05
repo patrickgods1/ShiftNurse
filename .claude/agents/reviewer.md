@@ -17,7 +17,9 @@ author meant.
 
 ## How to review
 
-1. Read `CLAUDE.md` at the repo root. The invariants there are the checklist; the ones that
+1. The root `CLAUDE.md` is already in your context. For each folder the change touches, read
+   its own CLAUDE.md if it has one (`packages/core/CLAUDE.md`, `packages/core/src/solver/CLAUDE.md`, `packages/core/src/cost/CLAUDE.md`, `packages/db/CLAUDE.md`, `packages/db/src/seed/CLAUDE.md`, `apps/desktop/CLAUDE.md`, `.github/CLAUDE.md`).
+   The invariants in them are the checklist; the ones that
    fail silently and matter most in a review are:
    - `packages/core` imports nothing from Electron, the DB, `fs` or `node:*`.
    - No local-timezone `Date` in scheduling arithmetic; shift length comes from

@@ -38,7 +38,10 @@ $diff
 PROMPT
 )
 
-draft=$(claude -p "$prompt" --model sonnet --tools "" --no-session-persistence --output-format text 2>/dev/null) || exit 0
+# Run from outside the repo: the diff is all it needs, and inside the checkout claude would load
+# every CLAUDE.md (~15k tokens) on each commit. (`--bare` would skip them too, but also skips the
+# keychain login.)
+draft=$(cd "${TMPDIR:-/tmp}" && claude -p "$prompt" --model sonnet --tools "" --no-session-persistence --output-format text 2>/dev/null) || exit 0
 [[ -z "$draft" ]] && exit 0
 
 {

@@ -114,7 +114,7 @@ installing a newer version keeps it, and an update that changes the database bac
 
 - **Node.js ≥ 22.12** (see `engines` in [package.json](package.json); `.nvmrc` pins the major CI uses).
 - **npm** — this is an npm-workspaces monorepo. Do not introduce a pnpm lockfile; pnpm is
-  intentionally not used here (see [CLAUDE.md](CLAUDE.md#conventions)).
+  intentionally not used here (see [CLAUDE.md](CLAUDE.md#conventions-cross-cutting)).
 - A C/C++ toolchain capable of building native Node modules (`better-sqlite3` ships
   prebuilds for common platforms, but npm may need to compile it if none matches):
   - **macOS**: Xcode Command Line Tools (`xcode-select --install`).
