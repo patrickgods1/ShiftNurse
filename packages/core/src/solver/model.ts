@@ -1168,10 +1168,13 @@ export class SolverModel {
         const min = shift.demand.byRole[role].minCount;
         if (min > 0) total += Math.max(0, min - this.staffed(shift, role));
       }
-      // A licensed ratio's RN + LPN pool, which no single role's minimum covers.
-      const pooled = shift.demand.licensed?.ratioDerived ?? 0;
-      if (pooled > 0) {
-        total += Math.max(0, pooled - this.staffed(shift, 'RN') - this.staffed(shift, 'LPN'));
+      // A licensed ratio's RN + LPN pool, which no single role's minimum covers — beyond the RNs
+      // the share needs, counted above, as the ratio rule counts it.
+      const licensed = shift.demand.licensed;
+      if (licensed) {
+        const rns = this.staffed(shift, 'RN');
+        const short = Math.max(0, licensed.ratioDerived - rns - this.staffed(shift, 'LPN'));
+        total += short - Math.min(short, Math.max(0, licensed.minRn - rns));
       }
     }
     return total;

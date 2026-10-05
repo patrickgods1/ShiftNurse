@@ -614,12 +614,17 @@ describe('a short licensed pool', () => {
     );
     const day = model.shiftAt(model.dateIdx.get(isoDate('2026-01-05'))!, DAY_12);
     model.add(assign('rn1', DAY_12, '2026-01-05'));
+    // One RN on: one more RN for the share and two of either for the pool, three nurses (not
+    // four: the share's RN counts toward the pool).
+    expect(model.hardShortfall()).toBe(3);
     model.add(assign('rn2', DAY_12, '2026-01-05'));
+    expect(model.hardShortfall()).toBe(2);
     // The RN share is met; the pool is two short.
     expect(model.shortRoles(day)).toEqual(['LPN', 'RN']);
     expect(model.shortShifts()).toContain(day);
     model.add(assign('lvn', DAY_12, '2026-01-05'));
     expect(model.shortRoles(day)).toEqual(['LPN', 'RN']);
+    expect(model.hardShortfall()).toBe(1);
   });
 });
 
