@@ -27,7 +27,11 @@ export function UnfilledList({
   const lines: { key: string; date: string; shift: string; short: string[] }[] = [];
   for (const slot of summary.unfilled) {
     const key = `${slot.date}|${slot.shiftTypeId}`;
-    const text = `${slot.shortfall} ${slot.role}`;
+    // A short pool can be filled by either an RN or an LVN, so it says so.
+    const text =
+      slot.role === 'licensed'
+        ? `${slot.shortfall} licensed nurse${slot.shortfall === 1 ? '' : 's'} (RN or LVN)`
+        : `${slot.shortfall} ${slot.role}`;
     const line = lines.find((l) => l.key === key);
     if (line) line.short.push(text);
     else

@@ -49,12 +49,12 @@ import type {
   IncompatibilityGroup,
   Nurse,
   NurseCredential,
-  NurseRole,
   OvertimeRule,
   OvertimeVolunteer,
   PayRate,
   Preceptorship,
   Preference,
+  RatioRole,
   SchedulePeriod,
   ShiftCredentialRequirement,
   ShiftType,
@@ -265,7 +265,8 @@ export interface SolveOptions {
 export interface UnfilledSlot {
   date: IsoDate;
   shiftTypeId: Id;
-  role: NurseRole;
+  /** A role, or `licensed` for a short RN + LPN pool. */
+  role: RatioRole;
   required: number;
   staffed: number;
   shortfall: number;

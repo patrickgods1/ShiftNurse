@@ -12,6 +12,7 @@ import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { seedScenarioUnit } from '../seed/scenarios.js';
 import type { SeedResult } from '../seed/types.js';
+import { createRatioRule, listActiveRatioRulesForUnit, updateRatioRule } from './acuity.js';
 import { createUnit, getUnit, listShiftTypesForUnit, updateUnit } from './config.js';
 import { createIncompatibilityGroup } from './incompatibility.js';
 import { createOvertimeVolunteer } from './overtime-volunteers.js';
@@ -358,5 +359,53 @@ describe("the unit's schedule posting notice", () => {
     expect(() => setLead(10.5)).toThrow('whole number of days from 0 to 90');
     expect(() => setLead(91)).toThrow('whole number of days from 0 to 90');
     expect(getUnit(handle.db, seeded.unitId)!.postingLeadDays).toBeUndefined();
+  });
+});
+
+describe('a licensed-nurse ratio', () => {
+  function licensedRule(minRnShare?: number) {
+    return createRatioRule(
+      handle.db,
+      {
+        unitId: seeded.unitId,
+        role: 'licensed',
+        acuityTierId: null,
+        maxPatientsPerNurse: 5,
+        citation: 'Cal. Code Regs. tit. 22 § 70217(a)(11)',
+        ...(minRnShare !== undefined ? { minRnShare } : {}),
+        active: true,
+      },
+      ACTOR,
+    );
+  }
+
+  it('keeps its RN share and reaches the period as a pooled requirement', () => {
+    const rule = licensedRule(0.5);
+    expect(
+      listActiveRatioRulesForUnit(handle.db, seeded.unitId).find((r) => r.id === rule.id),
+    ).toMatchObject({ role: 'licensed', minRnShare: 0.5 });
+    const input = loadPeriodInput(handle.db, getPeriod(handle.db, seeded.draftPeriodId)!);
+    const pooled = input.demand.filter((d) => d.licensed !== undefined);
+    expect(pooled.length).toBeGreaterThan(0);
+    for (const d of pooled) {
+      // Half the licensed nurses, rounded up, must be RNs.
+      expect(d.licensed!.minRn).toBe(Math.ceil(d.licensed!.ratioDerived / 2));
+    }
+  });
+
+  it('clears the share with null, and refuses one on a single-role rule or past 100%', () => {
+    const rule = licensedRule(0.5);
+    const cleared = transact(handle.db, (tx) =>
+      updateRatioRule(tx, rule.id, { minRnShare: null }, ACTOR),
+    );
+    expect(cleared.minRnShare).toBeUndefined();
+    expect(() =>
+      transact(handle.db, (tx) => updateRatioRule(tx, rule.id, { minRnShare: 1.5 }, ACTOR)),
+    ).toThrow('The share of RNs must be more than 0% and at most 100%');
+    expect(() =>
+      transact(handle.db, (tx) =>
+        updateRatioRule(tx, rule.id, { role: 'RN', minRnShare: 0.5 }, ACTOR),
+      ),
+    ).toThrow('Only a licensed-nurse ratio can require a share of RNs');
   });
 });

@@ -14,7 +14,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Assignment, FairnessLedgerEntry, Nurse, Preference } from '../../domain/entities.js';
-import { isoDate } from '../../domain/time.js';
+import { addDays, isoDate } from '../../domain/time.js';
 import {
   ALL_RULES,
   defaultRuleSet,
@@ -27,6 +27,7 @@ import {
   assign,
   assignRun,
   CRED_ACLS,
+  census,
   coverageAllWeek,
   credentialRequirement,
   DAY_8,
@@ -41,6 +42,7 @@ import {
   resetFixtureCounters,
   type SolveScenarioOptions,
   solveInputFrom,
+  TIER_ROUTINE,
   timeOff,
   UNIT_ID,
 } from '../../testing/fixtures.js';
@@ -909,6 +911,74 @@ describe('parity with the annealer', () => {
         expect(evaluation.objective, `trial ${trial}`).toBeCloseTo(model.breakdown().total, 0);
       }
       expect(onPending).toBeGreaterThan(40);
+    });
+  });
+
+  describe('a licensed-nurse ratio pooling RNs and LVNs', () => {
+    it('prices random rosters the same as the annealer', () => {
+      const nurses = [
+        ...Array.from({ length: 6 }, (_, i) => makeNurse({ isChargeEligible: i % 2 === 0 })),
+        ...Array.from({ length: 3 }, () => makeNurse({ role: 'LPN' })),
+      ];
+      const input = solveInputFrom({
+        startDate: isoDate('2026-01-04'),
+        endDate: isoDate('2026-01-17'),
+        nurses,
+        shiftTypes: [DAY_12, NIGHT_12],
+        coverageRequirements: [
+          ...coverageAllWeek(DAY_12, 'RN', 1, 2),
+          ...coverageAllWeek(NIGHT_12, 'RN', 1, 1),
+        ],
+        // 20 patients every day shift at a licensed 1:5, half of them RNs: 4 licensed, 2 RNs.
+        ratioRules: [
+          {
+            id: 'ratio-licensed',
+            unitId: UNIT_ID,
+            role: 'licensed',
+            acuityTierId: null,
+            maxPatientsPerNurse: 5,
+            minRnShare: 0.5,
+            active: true,
+          },
+        ],
+        censusForecasts: Array.from({ length: 14 }, (_, d) =>
+          census(addDays(isoDate('2026-01-04'), d), DAY_12, { [TIER_ROUTINE.id]: 20 }),
+        ),
+      });
+      const encoding = encodeCpsat(input);
+      const rng = new Rng(41);
+      let breaching = 0;
+      for (let trial = 0; trial < 60; trial++) {
+        const seen = new Set<string>();
+        const assignments = [...input.assignments];
+        for (const sv of encoding.shiftVars) {
+          const day = `${sv.nurseId}|${sv.shift.date}`;
+          if (seen.has(day) || !rng.chance(0.35)) continue;
+          seen.add(day);
+          assignments.push(assign(sv.nurseId, sv.shift.shiftType, sv.shift.date));
+        }
+        const evaluation = evaluate(encoding, assignments);
+        const model = new SolverModel(input);
+        for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+        const view = new ScheduleView({
+          period: input.period,
+          assignments: model.assignments(),
+          priorAssignments: input.priorAssignments,
+          nurses: model.nurses,
+          shiftTypes: model.shiftTypes,
+        });
+        const breaches = evaluateSchedule(view, input.ruleSet, model.ctx).violations.filter(
+          (v) => v.code === 'ratio_breach',
+        );
+        if (
+          breaches.some((v) => v.details?.role === 'licensed') &&
+          breaches.some((v) => v.details?.standard === 'rn_share')
+        )
+          breaching++;
+        expect(evaluation.objective, `trial ${trial}`).toBeCloseTo(model.breakdown().total, 0);
+      }
+      // Both kinds of breach must happen together in many rosters, or this proves little.
+      expect(breaching).toBeGreaterThan(10);
     });
   });
 

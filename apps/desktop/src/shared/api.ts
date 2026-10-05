@@ -57,6 +57,7 @@ import type {
   PayRate,
   PlannedHoliday,
   Preference,
+  RatioRole,
   RatioRule,
   ReplacementReport,
   RequestOrigin,
@@ -302,8 +303,11 @@ export interface HolidayWorkSummary {
 export type AcuityTierInput = Omit<AcuityTier, 'id'>;
 export type AcuityTierPatch = Partial<Omit<AcuityTier, 'id' | 'unitId'>>;
 export type RatioRuleInput = Omit<RatioRule, 'id'>;
-export type RatioRulePatch = Partial<Omit<RatioRule, 'id' | 'unitId' | 'citation'>> & {
+export type RatioRulePatch = Partial<
+  Omit<RatioRule, 'id' | 'unitId' | 'citation' | 'minRnShare'>
+> & {
   citation?: string | null;
+  minRnShare?: number | null;
 };
 
 export interface CensusForecastInput {
@@ -519,7 +523,8 @@ export type SolveRunState = 'queued' | 'running' | 'done' | 'failed' | 'cancelle
 export interface UnfilledShift {
   date: IsoDate;
   shiftTypeId: Id;
-  role: NurseRole;
+  /** A role, or `licensed` for a short RN + LPN pool. */
+  role: RatioRole;
   shortfall: number;
 }
 

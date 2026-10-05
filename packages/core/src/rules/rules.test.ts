@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import type { RatioRule } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
 import {
   assign,
@@ -948,6 +949,70 @@ describe('patient ratio compliance', () => {
     const v = evaluate(s).violations.find((x) => x.code === 'ratio_breach');
     expect(v?.details).toMatchObject({ staffed: 4, required: 5 });
     expect(v?.message).toContain('requires 5 (4 at the bedside and 1 to relieve breaks)');
+  });
+
+  describe('a licensed-nurse ratio pooling RNs and LVNs', () => {
+    const LICENSED: RatioRule = {
+      id: 'ratio-licensed',
+      unitId: 'unit-1',
+      role: 'licensed',
+      acuityTierId: null,
+      maxPatientsPerNurse: 5,
+      minRnShare: 0.5,
+      active: true,
+    };
+    // 20 routine patients at a licensed 1:5: four licensed nurses, at least two of them RNs.
+    function pooled(rns: number, lvns: number) {
+      const nurses = [
+        ...Array.from({ length: rns }, (_, i) => makeNurse({ isChargeEligible: i === 0 })),
+        ...Array.from({ length: lvns }, () => makeNurse({ role: 'LPN' })),
+      ];
+      const s = scenario({
+        nurses,
+        ratioRules: [LICENSED],
+        censusForecasts: [census('2026-01-05', DAY_12, { [TIER_ROUTINE.id]: 20 })],
+        assignments: nurses.map((n, i) =>
+          assign(n.id, DAY_12, '2026-01-05', { isCharge: i === 0 }),
+        ),
+      });
+      return evaluate(s).violations.filter((v) => v.code === 'ratio_breach');
+    }
+
+    it('accepts two RNs and two LVNs', () => {
+      expect(pooled(2, 2)).toEqual([]);
+    });
+
+    it('flags one RN among four licensed nurses as an RN short of the share', () => {
+      const [v, ...rest] = pooled(1, 3);
+      expect(rest).toEqual([]);
+      expect(v?.details).toMatchObject({
+        role: 'RN',
+        staffed: 1,
+        required: 2,
+        shortfall: 1,
+        standard: 'rn_share',
+      });
+      expect(v?.message).toContain('1 of 4 licensed nurses is an RN; at least 2 must be (50%)');
+    });
+
+    it('counts the RN the share needs once: one RN and one LVN are two nurses short, not three', () => {
+      // Two more are needed and one must be an RN: the share says 1 RN, the pool 1 more of either.
+      const breaches = pooled(1, 1);
+      expect(
+        breaches.map((v) => [v.details?.standard, v.details?.role, v.details?.shortfall]),
+      ).toEqual([
+        ['ratio', 'licensed', 1],
+        ['rn_share', 'RN', 1],
+      ]);
+      expect(breaches[0]!.message).toContain('1 more of either after the RNs');
+    });
+
+    it('flags three licensed nurses as one short of the pooled ratio', () => {
+      const [v, ...rest] = pooled(2, 1);
+      expect(rest).toEqual([]);
+      expect(v?.details).toMatchObject({ role: 'licensed', staffed: 3, required: 4, shortfall: 1 });
+      expect(v?.message).toContain('3 licensed nurses (2 RNs, 1 LVN) is 6.7 patients per nurse');
+    });
   });
 
   it('accepts staffing that meets the ratio exactly', () => {

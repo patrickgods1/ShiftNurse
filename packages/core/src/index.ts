@@ -94,6 +94,7 @@ export type {
   Preceptorship,
   Preference,
   PreferenceKind,
+  RatioRole,
   RatioRule,
   RequestOrigin,
   ScheduleChange,

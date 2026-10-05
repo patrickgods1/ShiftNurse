@@ -33,6 +33,7 @@ import type {
   OvertimeRule,
   PeriodStatus,
   PreferenceKind,
+  RatioRole,
   RequestOrigin,
   ScheduleChangeKind,
   ScheduleChangeSource,
@@ -423,13 +424,16 @@ export const ratioRule = sqliteTable(
       .notNull()
       .references(() => unit.id, { onDelete: 'cascade' })
       .$type<Id>(),
-    role: text('role').notNull().$type<NurseRole>(),
+    /** A nurse role, or 'licensed' for RNs and LPNs pooled. */
+    role: text('role').notNull().$type<RatioRole>(),
     /** Null applies the rule to every acuity tier. */
     acuityTierId: text('acuity_tier_id')
       .references(() => acuityTier.id, { onDelete: 'cascade' })
       .$type<Id>(),
     maxPatientsPerNurse: real('max_patients_per_nurse').notNull(),
     citation: text('citation'),
+    /** For a 'licensed' rule: the least share of RNs among the licensed nurses (0–1). */
+    minRnShare: real('min_rn_share'),
     active: bool('active').notNull().default(true),
   },
   (t) => [index('ratio_rule_unit_idx').on(t.unitId, t.active)],

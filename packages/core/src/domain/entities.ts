@@ -306,14 +306,25 @@ export interface CensusForecast {
  * A hard ceiling on patients per nurse. `acuityTierId: null` means the rule applies to all
  * tiers. The most restrictive applicable rule wins.
  */
+/**
+ * Who a ratio counts: one role, or `licensed` — RNs and LPN/LVNs together, as California's Title
+ * 22 counts "licensed nurses" (LVNs up to half of them).
+ */
+export type RatioRole = NurseRole | 'licensed';
+
 export interface RatioRule {
   id: Id;
   unitId: Id;
-  role: NurseRole;
+  role: RatioRole;
   acuityTierId: Id | null;
   maxPatientsPerNurse: number;
   /** Where this came from, e.g. "CA Title 22 §70217" or "Local 1199 Art. 12". */
   citation?: string;
+  /**
+   * For a `licensed` rule: the least share of the licensed nurses that must be RNs (0.5 where
+   * LVNs may be up to half). Absent: none.
+   */
+  minRnShare?: number;
   active: boolean;
 }
 

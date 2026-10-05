@@ -314,6 +314,7 @@ export function toRatioRule(r: typeof s.ratioRule.$inferSelect): RatioRule {
     acuityTierId: r.acuityTierId,
     maxPatientsPerNurse: r.maxPatientsPerNurse,
     citation: opt(r.citation),
+    ...(r.minRnShare !== null ? { minRnShare: r.minRnShare } : {}),
     active: r.active,
   };
 }

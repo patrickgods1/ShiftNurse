@@ -4,7 +4,7 @@
  * challenged, and published schedules were staffed against it.
  */
 
-import type { AcuityTier, NurseRole, RatioRule } from '@shiftnurse/core';
+import type { AcuityTier, RatioRole, RatioRule } from '@shiftnurse/core';
 import { NURSE_ROLES } from '@shiftnurse/core';
 import { useState } from 'react';
 import type { RatioRuleInput, RatioRulePatch } from '../../../../../shared/api.js';
@@ -20,14 +20,27 @@ import { INPUT, PRIMARY, SECONDARY } from '../../../components/ui.js';
 const ALL_TIERS_VALUE = '__all__';
 
 interface RatioFormState {
-  role: NurseRole;
+  role: RatioRole;
   acuityTierId: string;
   maxPatientsPerNurse: string;
   citation: string;
+  /** For a licensed rule: the least share of RNs, in percent; '' for none. */
+  rnSharePercent: string;
+}
+
+/** A licensed rule counts RNs and LVNs together; every other role counts itself. */
+function roleLabel(role: RatioRole): string {
+  return role === 'licensed' ? 'Licensed (RN + LVN)' : role;
 }
 
 function emptyRatioForm(): RatioFormState {
-  return { role: 'RN', acuityTierId: ALL_TIERS_VALUE, maxPatientsPerNurse: '', citation: '' };
+  return {
+    role: 'RN',
+    acuityTierId: ALL_TIERS_VALUE,
+    maxPatientsPerNurse: '',
+    citation: '',
+    rnSharePercent: '',
+  };
 }
 
 function ratioToFormState(rule: RatioRule): RatioFormState {
@@ -36,7 +49,14 @@ function ratioToFormState(rule: RatioRule): RatioFormState {
     acuityTierId: rule.acuityTierId ?? ALL_TIERS_VALUE,
     maxPatientsPerNurse: String(rule.maxPatientsPerNurse),
     citation: rule.citation ?? '',
+    rnSharePercent: rule.minRnShare === undefined ? '' : String(Math.round(rule.minRnShare * 100)),
   };
+}
+
+/** The share as stored (a fraction), or undefined: only a licensed rule carries one. */
+function rnShareOf(form: RatioFormState): number | undefined {
+  if (form.role !== 'licensed' || form.rnSharePercent.trim() === '') return undefined;
+  return Number(form.rnSharePercent) / 100;
 }
 
 function diffRatioPatch(original: RatioRule, form: RatioFormState): RatioRulePatch {
@@ -52,12 +72,16 @@ function diffRatioPatch(original: RatioRule, form: RatioFormState): RatioRulePat
   if (form.citation !== originalCitation) {
     patch.citation = form.citation === '' ? null : form.citation;
   }
+  const share = rnShareOf(form);
+  if (share !== original.minRnShare) patch.minRnShare = share ?? null;
   return patch;
 }
 
 function ratioFormValid(form: RatioFormState): boolean {
   const max = Number(form.maxPatientsPerNurse);
-  return Number.isFinite(max) && max > 0;
+  const share = rnShareOf(form);
+  const shareValid = share === undefined || (share > 0 && share <= 1);
+  return Number.isFinite(max) && max > 0 && shareValid;
 }
 
 function RatioForm({
@@ -90,7 +114,7 @@ function RatioForm({
         <select
           id="ratio-role"
           value={form.role}
-          onChange={(event) => setForm({ ...form, role: event.target.value as NurseRole })}
+          onChange={(event) => setForm({ ...form, role: event.target.value as RatioRole })}
           className={INPUT}
         >
           {NURSE_ROLES.map((role) => (
@@ -98,8 +122,32 @@ function RatioForm({
               {role}
             </option>
           ))}
+          <option value="licensed">{roleLabel('licensed')}</option>
         </select>
       </Field>
+      {form.role === 'licensed' ? (
+        <Field
+          id="ratio-rn-share"
+          label="Least share of RNs (%)"
+          hint="RNs and LVNs count together toward this ratio; at least this share must be RNs."
+          tip={
+            "California's Title 22 lets LVNs be up to half of the licensed nurses, so 50. " +
+            'Leave it blank if any mix of RNs and LVNs will do.'
+          }
+        >
+          <input
+            id="ratio-rn-share"
+            type="number"
+            min={1}
+            max={100}
+            step={1}
+            value={form.rnSharePercent}
+            aria-describedby={describedBy('ratio-rn-share', { hint: true })}
+            onChange={(event) => setForm({ ...form, rnSharePercent: event.target.value })}
+            className={INPUT}
+          />
+        </Field>
+      ) : null}
       <Field
         id="ratio-tier"
         label="Acuity tier"
@@ -237,6 +285,7 @@ export function RatioRulesSection({
       acuityTierId: form.acuityTierId === ALL_TIERS_VALUE ? null : form.acuityTierId,
       maxPatientsPerNurse: Number(form.maxPatientsPerNurse),
       citation: form.citation === '' ? undefined : form.citation,
+      ...(rnShareOf(form) !== undefined ? { minRnShare: rnShareOf(form)! } : {}),
       active: true,
     };
     createMutation.mutate(input, { onSuccess: () => setCreating(false) });
@@ -319,7 +368,12 @@ export function RatioRulesSection({
                     rule.active ? '' : 'text-text-muted opacity-60'
                   }`}
                 >
-                  <td className="px-3 py-2 text-text">{rule.role}</td>
+                  <td className="px-3 py-2 text-text">
+                    {roleLabel(rule.role)}
+                    {rule.minRnShare !== undefined
+                      ? `, at least ${Math.round(rule.minRnShare * 100)}% RNs`
+                      : ''}
+                  </td>
                   <td className="px-3 py-2 text-text">
                     {rule.acuityTierId !== null
                       ? (tierById.get(rule.acuityTierId)?.name ?? 'Unknown tier')

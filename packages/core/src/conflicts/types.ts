@@ -29,7 +29,7 @@
  * cards on them and the audit log quotes them.
  */
 
-import type { Assignment, Budget, Id, NurseRole, TimeOffRequest } from '../domain/entities.js';
+import type { Assignment, Budget, Id, RatioRole, TimeOffRequest } from '../domain/entities.js';
 import type { IsoDate } from '../domain/time.js';
 import type { Violation } from '../rules/types.js';
 import type { ObjectiveWeights, SolveInput } from '../solver/types.js';
@@ -82,7 +82,7 @@ export interface Conflict {
   /** Every date the conflict touches; a single-shift conflict has exactly one. */
   dates: IsoDate[];
   shiftTypeId?: Id;
-  role?: NurseRole;
+  role?: RatioRole;
   nurseIds: Id[];
   /** Requests implicated — the competing PTO, or the approved leave that emptied a shift. */
   timeOffIds: Id[];
