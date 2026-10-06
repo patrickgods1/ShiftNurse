@@ -13,8 +13,11 @@ import { CallBackSection } from './call-back.js';
 let bridge: FakeBridge;
 beforeEach(() => {
   bridge = installFakeBridge();
-  bridge.respond('cost', 'paySettings', { callBackMinimumHours: 2 });
-  bridge.respond('cost', 'savePaySettings', { callBackMinimumHours: 4 });
+  bridge.respond('cost', 'paySettings', { callBackMinimumHours: 2, premiumStacking: 'additive' });
+  bridge.respond('cost', 'savePaySettings', {
+    callBackMinimumHours: 4,
+    premiumStacking: 'additive',
+  });
 });
 afterEach(() => {
   cleanup();
@@ -41,7 +44,7 @@ describe('the call-back minimum in Settings › Pay', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
       expect(bridge.callsTo('cost', 'savePaySettings')).toEqual([
-        ['u-1', { callBackMinimumHours: 4 }],
+        ['u-1', { callBackMinimumHours: 4, premiumStacking: 'additive' }],
       ]),
     );
   });

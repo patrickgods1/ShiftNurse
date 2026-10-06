@@ -53,6 +53,32 @@ const openForm = (nurse: Nurse) =>
 const tourSelect = async () =>
   (await screen.findByRole('combobox', { name: /Permanent tour/ })) as HTMLSelectElement;
 
+describe('editing a nurse’s scheduled days per week', () => {
+  const daysInput = async () =>
+    (await screen.findByLabelText(/Scheduled days per week/)) as HTMLInputElement;
+
+  it('sets three days for a 3×12 nurse', async () => {
+    openForm(ana);
+    fireEvent.change(await daysInput(), { target: { value: '3' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('nurses', 'update')).toEqual([['n-ana', { scheduledDaysPerWeek: 3 }]]),
+    );
+  });
+
+  it('clears it by sending null, not by leaving the key out', async () => {
+    openForm({ ...ana, scheduledDaysPerWeek: 3 });
+    const input = await daysInput();
+    expect(input.value).toBe('3');
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(bridge.callsTo('nurses', 'update')).toHaveLength(1));
+    const patch = bridge.callsTo('nurses', 'update')[0]![1];
+    expect(patch).toEqual({ scheduledDaysPerWeek: null });
+    expect('scheduledDaysPerWeek' in patch).toBe(true);
+  });
+});
+
 describe('editing a nurse’s permanent tour', () => {
   it('starts on "Rotates (none)" for a nurse with no permanent tour', async () => {
     openForm(ana);

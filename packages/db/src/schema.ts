@@ -153,6 +153,8 @@ export const nurse = sqliteTable(
     hireDate: isoDate('hire_date'),
     // A permanent tour the nurse is not rotated off (core's Tour); null means they rotate.
     permanentTour: text('permanent_tour').$type<Tour>(),
+    // Regular workdays a week, read by 'beyond_scheduled_days' overtime; null means not set.
+    scheduledDaysPerWeek: integer('scheduled_days_per_week'),
     isChargeEligible: bool('is_charge_eligible').notNull().default(false),
     isNovice: bool('is_novice').notNull().default(false),
     isFloatEligible: bool('is_float_eligible').notNull().default(true),
@@ -1035,6 +1037,9 @@ export const overtimeRule = sqliteTable('overtime_rule', {
   thresholdHours: real('threshold_hours').notNull(),
   multiplier: real('multiplier').notNull(),
   active: bool('active').notNull().default(true),
+  // Null means 'stack' / no minimum, as core reads an absent field.
+  pyramiding: text('pyramiding').$type<'stack' | 'none'>(),
+  minimumMinutes: integer('minimum_minutes'),
 });
 
 export const budget = sqliteTable(
@@ -1154,6 +1159,8 @@ export const paySettings = sqliteTable('pay_settings', {
     .references(() => unit.id, { onDelete: 'cascade' })
     .$type<Id>(),
   callBackMinimumHours: real('call_back_minimum_hours').notNull().default(0),
+  // Null means compound, the FLSA regular rate.
+  premiumStacking: text('premium_stacking').$type<'compound' | 'additive'>(),
   updatedAt: timestamp('updated_at').notNull(),
 });
 

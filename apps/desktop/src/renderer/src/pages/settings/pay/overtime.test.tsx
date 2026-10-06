@@ -44,4 +44,49 @@ describe('overtime bases in Settings › Pay', () => {
       ]),
     );
   });
+
+  it('offers the extra-day basis and explains its threshold', async () => {
+    renderWithApp(<OvertimeSection unitId="u-1" />);
+    const basis = (await screen.findByLabelText('Basis')) as HTMLSelectElement;
+    expect(Array.from(basis.options).map((o) => [o.value, o.text])).toContainEqual([
+      'beyond_scheduled_days',
+      'Workday beyond the scheduled days per week',
+    ]);
+    fireEvent.change(basis, { target: { value: 'beyond_scheduled_days' } });
+    expect(screen.getByText(/Wage Order 5 § 3\(B\)\(8\): 8/)).toBeTruthy();
+    expect(screen.queryByLabelText(/Don't count daily overtime/)).toBeNull();
+  });
+
+  it('sends pyramiding none for a weekly rule when the box is ticked, and omits it otherwise', async () => {
+    renderWithApp(<OvertimeSection unitId="u-1" />);
+    await screen.findByLabelText('Basis');
+    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+    await waitFor(() => expect(bridge.callsTo('cost', 'createOvertimeRule')).toHaveLength(1));
+    fireEvent.click(screen.getByLabelText("Don't count daily overtime toward this threshold"));
+    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+    await waitFor(() => expect(bridge.callsTo('cost', 'createOvertimeRule')).toHaveLength(2));
+    const [plain, ticked] = bridge.callsTo('cost', 'createOvertimeRule').map((c) => c[0]);
+    expect('pyramiding' in plain!).toBe(false);
+    expect(ticked).toMatchObject({ basis: 'weekly', pyramiding: 'none' });
+  });
+
+  it('sends the minimum minutes only when one is entered', async () => {
+    renderWithApp(<OvertimeSection unitId="u-1" />);
+    fireEvent.change(await screen.findByLabelText('Minimum minutes'), { target: { value: '15' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('cost', 'createOvertimeRule')).toEqual([
+        [
+          {
+            unitId: 'u-1',
+            basis: 'weekly',
+            thresholdHours: 40,
+            multiplier: 1.5,
+            active: true,
+            minimumMinutes: 15,
+          },
+        ],
+      ]),
+    );
+  });
 });

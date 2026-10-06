@@ -161,6 +161,13 @@ export interface Nurse {
    * (VA–NNU Master Agreement Art. 13). Absent: rotates.
    */
   permanentTour?: Tour;
+  /**
+   * The workdays a week this nurse is regularly scheduled for (3 for a three-twelve line). A
+   * `beyond_scheduled_days` overtime rule reads it: under IWC Wage Order 5 § 3(B)(8), on a
+   * health-care alternative workweek the hours past 8 on a day beyond the regularly scheduled
+   * workdays are double time. Absent: the rule prices nothing for this nurse.
+   */
+  scheduledDaysPerWeek?: number;
   isChargeEligible: boolean;
   /** New graduates / recent hires. Used by the no-all-novice coverage guard. */
   isNovice: boolean;
@@ -831,7 +838,9 @@ export interface OvertimeRule {
    * 'beyond_scheduled_tour' makes a shift's holdover overtime from `thresholdHours` past its
    * scheduled end (VA–NNU Art. 14: overtime is work beyond the scheduled tour); 'consecutive'
    * makes hours overtime past `thresholdHours` worked without a break (38 U.S.C. §7453(e)(1):
-   * "in excess of eight consecutive hours").
+   * "in excess of eight consecutive hours"). 'beyond_scheduled_days' makes a workday's hours past
+   * `thresholdHours` overtime on each date worked in a work week beyond the nurse's
+   * `scheduledDaysPerWeek` (IWC Wage Order 5 § 3(B)(8): past 8 on an extra day is double time).
    */
   basis:
     | 'daily'
@@ -839,10 +848,25 @@ export interface OvertimeRule {
     | 'pay_period'
     | 'seventh_day'
     | 'beyond_scheduled_tour'
-    | 'consecutive';
+    | 'consecutive'
+    | 'beyond_scheduled_days';
   thresholdHours: number;
   multiplier: number;
   active: boolean;
+  /**
+   * Whether hours another rule already pays as overtime still count toward this one's threshold.
+   * Honoured only by 'weekly' and 'pay_period'. Under 'none' a shift adds only its straight hours
+   * (those before any other basis's overtime starts): Cal. Lab. Code § 510 as the DLSE reads it
+   * does not count hours paid at a daily premium toward the weekly 40, and UC–CNA Art. 14 §M
+   * credits daily overtime toward the 80. Absent: 'stack', every worked hour counts.
+   */
+  pyramiding?: 'stack' | 'none';
+  /**
+   * Overtime under this rule shorter than this many minutes on one shift is not paid (VA: overtime
+   * under 15 minutes is not paid); the shift is straight time under this rule. Judged per rule per
+   * shift, not per workday. Absent: 0, every minute counts.
+   */
+  minimumMinutes?: number;
 }
 
 export interface Budget {

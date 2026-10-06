@@ -18,6 +18,7 @@ import {
   makeNurse,
   NIGHT_12,
   ON_CALL,
+  overtimeRule,
   payRate,
   resetFixtureCounters,
   scenario,
@@ -1080,5 +1081,387 @@ describe('overtime beyond the scheduled tour and past consecutive hours', () => 
     });
     const report = costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [consecutive(8)] }));
     expect(report.assignments.map((a) => a.overtimeHours)).toEqual([12]);
+  });
+});
+
+describe('California and UC overtime: daily premium hours do not pyramid into weekly', () => {
+  // Cal. Lab. Code § 510 / DLSE: hours already paid at a daily premium are not counted again
+  // toward the weekly 40; UC–CNA Art. 14 §M credits daily overtime toward the 80.
+  const WEEKLY_40_NO_PYRAMID: OvertimeRule = { ...WEEKLY_40, pyramiding: 'none' };
+  const DAILY_12_DOUBLE = overtimeRule('daily', 12, 2);
+  const DAY_13 = {
+    ...DAY_12,
+    id: 'st-d13',
+    name: 'Day 13',
+    abbreviation: 'D13',
+    durationHours: 13,
+  };
+  const DAY_9 = { ...DAY_8, id: 'st-d9', name: 'Day 9', abbreviation: 'D9', durationHours: 9 };
+  const monToThu = ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08'];
+
+  it('pays a four-twelve week four hours of daily overtime a shift and nothing weekly on top', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: monToThu.map((d) => assign(nurse.id, DAY_12, d)),
+    });
+    // Straight hours are 8 a shift: 32 for the week, short of 40, so only the daily 4s remain.
+    const none = costSchedule(s.schedule, ctx({ overtimeRules: [WEEKLY_40_NO_PYRAMID, DAILY_8] }));
+    expect(none.assignments.map((a) => a.overtimeHours)).toEqual([4, 4, 4, 4]);
+    expect(none.totals.overtimePremium).toBe(384); // 16h × $24
+
+    const stacked = costSchedule(s.schedule, ctx({ overtimeRules: [WEEKLY_40, DAILY_8] }));
+    expect(stacked.assignments.map((a) => a.overtimeHours)).toEqual([4, 4, 4, 8]);
+  });
+
+  it('pays a thirteen at the end of a California week by the day alone', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_12, DAY_13],
+      assignments: [
+        ...monToThu.slice(0, 3).map((d) => assign(nurse.id, DAY_12, d)),
+        assign(nurse.id, DAY_13, '2026-01-08'),
+      ],
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({ overtimeRules: [WEEKLY_40_NO_PYRAMID, DAILY_8, DAILY_12_DOUBLE] }),
+    );
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([4, 4, 4, 5]);
+    expect(report.assignments[3]?.lines.filter((l) => l.kind === 'overtime')).toEqual([
+      { kind: 'overtime', hours: 4, rate: 24, amount: 96 },
+      { kind: 'overtime', hours: 1, rate: 48, amount: 48 },
+    ]);
+  });
+
+  it('counts only the straight hours of last period’s twelves toward this week’s forty', () => {
+    const nurse = makeNurse();
+    // The period starts Thu 8 Jan; Mon 5 – Wed 7 Jan were last period's twelves, 8 straight hours
+    // each: 24 toward the forty. Thursday takes it to 32 and Friday to 40, so neither is weekly
+    // overtime and each pays only its 4 daily hours.
+    const s = scenario({
+      nurses: [nurse],
+      startDate: isoDate('2026-01-08'),
+      priorAssignments: ['2026-01-05', '2026-01-06', '2026-01-07'].map((d) =>
+        assign(nurse.id, DAY_12, d, { periodId: 'period-0' }),
+      ),
+      assignments: [assign(nurse.id, DAY_12, '2026-01-08'), assign(nurse.id, DAY_12, '2026-01-09')],
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({ overtimeRules: [WEEKLY_40_NO_PYRAMID, DAILY_8] }),
+    );
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([4, 4]);
+  });
+
+  it('ignores a pyramiding setting on a daily rule', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: monToThu.map((d) => assign(nurse.id, DAY_12, d)),
+    });
+    // Only weekly and pay-period rules can be told not to pyramid; a daily 8 still pays each
+    // twelve its last 4 hours, with or without the setting.
+    const dailyNone = overtimeRule('daily', 8, 1.5, { pyramiding: 'none' });
+    const withSetting = costSchedule(s.schedule, ctx({ overtimeRules: [dailyNone] }));
+    const without = costSchedule(s.schedule, ctx({ overtimeRules: [DAILY_8] }));
+    expect(withSetting.assignments.map((a) => a.overtimeHours)).toEqual([4, 4, 4, 4]);
+    expect(without.assignments.map((a) => a.overtimeHours)).toEqual([4, 4, 4, 4]);
+  });
+
+  it('makes the sixth eight of the week weekly overtime, counted once', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_8],
+      assignments: [
+        '2026-01-05',
+        '2026-01-06',
+        '2026-01-07',
+        '2026-01-08',
+        '2026-01-09',
+        '2026-01-10',
+      ].map((d) => assign(nurse.id, DAY_8, d)),
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({ overtimeRules: [WEEKLY_40_NO_PYRAMID, DAILY_8] }),
+    );
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 0, 0, 8]);
+  });
+
+  it('a UC eight-hour nurse’s daily overtime counts toward the eighty', () => {
+    const nurse = makeNurse();
+    const PAY_PERIOD_80_NO_PYRAMID = overtimeRule('pay_period', 80, 1.5, { pyramiding: 'none' });
+    // Ten eights (80 straight hours) in the Sun 4 – Sat 17 Jan pay period, then a nine on Fri 16:
+    // its ninth hour is daily overtime, and its first eight are past the 80.
+    const eights = [
+      '2026-01-04',
+      '2026-01-05',
+      '2026-01-06',
+      '2026-01-07',
+      '2026-01-08',
+      '2026-01-09',
+      '2026-01-12',
+      '2026-01-13',
+      '2026-01-14',
+      '2026-01-15',
+    ];
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_8, DAY_9],
+      assignments: [
+        ...eights.map((d) => assign(nurse.id, DAY_8, d)),
+        assign(nurse.id, DAY_9, '2026-01-16'),
+      ],
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({ overtimeRules: [PAY_PERIOD_80_NO_PYRAMID, DAILY_8] }),
+    );
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9,
+    ]);
+    expect(report.nurses[0]?.overtimeHours).toBe(9);
+  });
+});
+
+describe('a minimum on weekly overtime that does not pyramid', () => {
+  // Weekly 40 at 1.5× with a one-hour minimum, not counting daily premium hours, beside daily 8.
+  const WEEKLY_40_MIN_HOUR = overtimeRule('weekly', 40, 1.5, {
+    pyramiding: 'none',
+    minimumMinutes: 60,
+  });
+  const WEEKLY_40_NO_MINIMUM = overtimeRule('weekly', 40, 1.5, { pyramiding: 'none' });
+  const rules = [WEEKLY_40_MIN_HOUR, DAILY_8];
+  const monToThu = ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08'];
+
+  function week(nurseId: string, extra: Assignment[]) {
+    return scenario({
+      nurses: [makeNurse({ id: nurseId })],
+      shiftTypes: [DAY_8, DAY_12],
+      assignments: [...monToThu.map((d) => assign(nurseId, DAY_8, d)), ...extra],
+    });
+  }
+
+  it('pays a Friday twelve only its daily hours when the week’s straight time comes to forty', () => {
+    // 32 straight Mon–Thu, Friday's first 8 make 40: no weekly overtime, 4 daily hours.
+    const s = week('n', [assign('n', DAY_12, '2026-01-09')]);
+    const report = costSchedule(s.schedule, ctx({ overtimeRules: rules }));
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 0, 4]);
+  });
+
+  it('pays a Saturday twelve after a forty-hour week overtime from its first hour', () => {
+    // 40 straight by Friday; Saturday's 8 straight hours are all past forty (8h ≥ the 1h
+    // minimum), and hours 8–12 are daily overtime: 12 hours at 1.5×.
+    const s = week('n', [assign('n', DAY_8, '2026-01-09'), assign('n', DAY_12, '2026-01-10')]);
+    const report = costSchedule(s.schedule, ctx({ overtimeRules: rules }));
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 0, 0, 12]);
+  });
+
+  it('leaves a half hour held over on Friday to the daily rule', () => {
+    // Friday 8h30 under daily 8: the half hour is daily overtime, so Friday's straight hours are
+    // 8 and the week's 40: no weekly overtime either way, and the daily half hour is paid.
+    const s = week('n', [assign('n', DAY_8, '2026-01-09', { holdoverMinutes: 30 })]);
+    const withMinimum = costSchedule(s.schedule, ctx({ overtimeRules: rules }));
+    expect(withMinimum.assignments[4]?.overtimeHours).toBe(0.5);
+    const noMinimum = costSchedule(
+      s.schedule,
+      ctx({ overtimeRules: [WEEKLY_40_NO_MINIMUM, DAILY_8] }),
+    );
+    expect(noMinimum.assignments[4]?.overtimeHours).toBe(0.5);
+  });
+
+  it('drops half an hour of weekly overtime under the hour minimum, keeping the daily four', () => {
+    // Half an hour of paid leave counted toward overtime opens the week, so Mon–Thu reach 32.5
+    // and Friday's 8 straight hours 40.5: weekly overtime is the half hour before hour 8, under
+    // the one-hour minimum, so Friday pays only daily hours 8–12. Without the minimum, 4.5.
+    const s = week('n', [assign('n', DAY_12, '2026-01-09')]);
+    const overtimeLeave = new Map([
+      ['n', [{ nurseId: 'n', date: isoDate('2026-01-05'), hours: 0.5 }]],
+    ]);
+    const withMinimum = costSchedule(s.schedule, ctx({ overtimeRules: rules, overtimeLeave }));
+    expect(withMinimum.assignments[4]?.overtimeHours).toBe(4);
+    const noMinimum = costSchedule(
+      s.schedule,
+      ctx({
+        overtimeRules: [WEEKLY_40_NO_MINIMUM, DAILY_8],
+        overtimeLeave,
+      }),
+    );
+    expect(noMinimum.assignments[4]?.overtimeHours).toBe(4.5);
+  });
+});
+
+describe('double time on a day beyond the regularly scheduled workdays', () => {
+  // IWC Wage Order 5 § 3(B)(8): on a health-care alternative workweek, hours past 8 on a day
+  // beyond the regularly scheduled workdays are paid at double time.
+  const EXTRA_DAY_8_DOUBLE = overtimeRule('beyond_scheduled_days', 8, 2);
+  const DAILY_12_DOUBLE = overtimeRule('daily', 12, 2);
+  const rules = [EXTRA_DAY_8_DOUBLE, WEEKLY_40, DAILY_12_DOUBLE];
+  const monToThu = ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08'];
+
+  it('pays a three-twelve nurse’s fourth day double time past eight', () => {
+    const nurse = makeNurse({ scheduledDaysPerWeek: 3 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: monToThu.map((d) => assign(nurse.id, DAY_12, d)),
+    });
+    const report = costSchedule(s.schedule, ctx({ overtimeRules: rules }));
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 8]);
+    // Hours 0–4 straight, 4–8 past forty at 1.5×, 8–12 on the extra day at 2×.
+    expect(report.assignments[3]?.lines.filter((l) => l.kind === 'overtime')).toEqual([
+      { kind: 'overtime', hours: 4, rate: 24, amount: 96 },
+      { kind: 'overtime', hours: 4, rate: 48, amount: 192 },
+    ]);
+  });
+
+  it('pays a nurse with no scheduled days on file only the weekly overtime', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: monToThu.map((d) => assign(nurse.id, DAY_12, d)),
+    });
+    const report = costSchedule(s.schedule, ctx({ overtimeRules: rules }));
+    expect(report.assignments[3]?.lines.filter((l) => l.kind === 'overtime')).toEqual([
+      { kind: 'overtime', hours: 8, rate: 24, amount: 192 },
+    ]);
+  });
+
+  it('counts last period’s days toward the scheduled three but never prices them', () => {
+    const nurse = makeNurse({ scheduledDaysPerWeek: 3 });
+    // Contract week runs Thursday–Wednesday: Thu 1 – Sat 3 Jan (last period) are the three
+    // scheduled days, so Monday 5 Jan is the fourth day worked.
+    const s = scenario({
+      nurses: [nurse],
+      priorAssignments: ['2026-01-01', '2026-01-02', '2026-01-03'].map((d) =>
+        assign(nurse.id, DAY_12, d, { periodId: 'period-0' }),
+      ),
+      assignments: [assign(nurse.id, DAY_12, '2026-01-05')],
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({ overtimeRules: [EXTRA_DAY_8_DOUBLE], workWeekStartsOn: 4 }),
+    );
+    expect(report.assignments).toHaveLength(1);
+    expect(report.assignments[0]?.lines.filter((l) => l.kind === 'overtime')).toEqual([
+      { kind: 'overtime', hours: 4, rate: 48, amount: 192 },
+    ]);
+  });
+});
+
+describe('premiums that add rather than compound', () => {
+  // UC–CNA Art. 14 §N: no duplication, pyramiding or compounding of premiums; Title 38 pays each
+  // differential as a percentage of basic pay. $50 base, night +$6, charge +$3.
+  const differentials = [
+    differential('night', 'flat', 6),
+    differential('charge', 'flat', 3),
+    differential('holiday', 'multiplier', 1.5),
+  ];
+  const DAILY_10_DOUBLE = overtimeRule('daily', 10, 2);
+
+  function chargeNight(premiumStacking: CostContext['premiumStacking'], holiday: boolean) {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, NIGHT_12, '2026-01-05', { isCharge: true })],
+    });
+    return costSchedule(
+      s.schedule,
+      ctx({
+        payRates: [payRate(50)],
+        differentials,
+        overtimeRules: [DAILY_10_DOUBLE],
+        holidayDates: holiday ? new Set([isoDate('2026-01-05')]) : new Set(),
+        ...(premiumStacking ? { premiumStacking } : {}),
+      }),
+    ).assignments[0]!;
+  }
+
+  it('pays the charge night’s two overtime hours double the base, not double the night rate', () => {
+    // Straight rate $59 either way; compound overtime premium $59/h, additive $50/h.
+    expect(chargeNight(undefined, false).total).toBe(826);
+    expect(chargeNight('compound', false).total).toBe(826);
+    const additive = chargeNight('additive', false);
+    expect(additive.straightRate).toBe(59);
+    expect(additive.total).toBe(808);
+  });
+
+  it('adds the holiday half-time on the base instead of on the night and charge rate', () => {
+    const compound = chargeNight('compound', true);
+    expect(compound.straightRate).toBe(88.5);
+    expect(compound.total).toBe(1239);
+
+    const additive = chargeNight('additive', true);
+    expect(additive.straightRate).toBe(84);
+    expect(additive.lines.find((l) => l.kind === 'holiday')?.rate).toBe(25);
+    expect(additive.lines.find((l) => l.kind === 'overtime')?.rate).toBe(50);
+    expect(additive.total).toBe(1108);
+  });
+});
+
+describe('overtime too short to pay', () => {
+  // VA: overtime of less than 15 minutes in a day is not paid. $50 base, no differentials.
+  const rn50 = { payRates: [payRate(50)], differentials: [] };
+  const consecutive8Min15 = overtimeRule('consecutive', 8, 1.5, { minimumMinutes: 15 });
+
+  function heldOver(minutes: number, rule: OvertimeRule) {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, DAY_8, '2026-01-05', { holdoverMinutes: minutes })],
+    });
+    return costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [rule] })).assignments[0]!;
+  }
+
+  it('pays nothing extra for a ten-minute stay past an eight-hour tour', () => {
+    expect(heldOver(10, consecutive8Min15).overtimeHours).toBe(0);
+  });
+
+  it('pays a quarter hour of overtime for a fifteen-minute stay', () => {
+    expect(heldOver(15, consecutive8Min15).overtimeHours).toBe(0.25);
+  });
+
+  it('pays the ten minutes when the rule sets no minimum', () => {
+    expect(heldOver(10, overtimeRule('consecutive', 8)).overtimeHours).toBeCloseTo(10 / 60);
+  });
+
+  it('still pays the ten minutes under the daily rule when only the consecutive rule has a minimum', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, DAY_8, '2026-01-05', { holdoverMinutes: 10 })],
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({ ...rn50, overtimeRules: [consecutive8Min15, DAILY_8] }),
+    );
+    // The minimum is judged per rule: the daily rule has none, so 8h10 pays 10 minutes over 8.
+    expect(report.assignments[0]?.overtimeHours).toBeCloseTo(10 / 60);
+  });
+
+  it('counts a held-over stay too short to pay as straight time toward a California forty', () => {
+    const nurse = makeNurse();
+    // Mon–Fri eights, each held 10 minutes: 490 minutes a day, 2450 in the week. The 10 minutes
+    // are under the consecutive rule's 15-minute minimum, so none of them is daily-style overtime
+    // and all count as straight hours: 2450 − 2400 = 50 minutes past forty, all on Friday.
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_8],
+      assignments: ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08', '2026-01-09'].map((d) =>
+        assign(nurse.id, DAY_8, d, { holdoverMinutes: 10 }),
+      ),
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({
+        ...rn50,
+        overtimeRules: [consecutive8Min15, { ...WEEKLY_40, pyramiding: 'none' }],
+      }),
+    );
+    const hours = report.assignments.map((a) => a.overtimeHours);
+    expect(hours.slice(0, 4)).toEqual([0, 0, 0, 0]);
+    expect(hours[4]).toBeCloseTo(50 / 60);
   });
 });

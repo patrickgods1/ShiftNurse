@@ -54,6 +54,21 @@
  *   since the nurse's stretch began (shifts with no break between them, lookback included) and
  *   makes those past `thresholdHours` overtime (38 U.S.C. § 7453(e)(1)): a 12 is 4 hours over 8,
  *   and an evening shift straight after a day shift is all overtime.
+ * - **Overtime on a day beyond the scheduled days** (`basis: 'beyond_scheduled_days'`): within a
+ *   work week the nurse's worked dates are counted in order, lookback included, and on each date
+ *   past their `scheduledDaysPerWeek` the workday's hours past `thresholdHours` are overtime (IWC
+ *   Wage Order 5 § 3(B)(8): past 8 on such a day is double time). No scheduled days, no overtime.
+ * - **Daily premiums need not pyramid into weekly overtime.** A weekly or pay-period rule with
+ *   `pyramiding: 'none'` counts only each shift's straight hours, lookback shifts included: those
+ *   before any other basis makes it overtime (Cal. Lab. Code § 510; UC–CNA Art. 14 §M). Its
+ *   overtime falls on the last straight hours, just before the daily premium ones. Absent,
+ *   every worked hour counts.
+ * - **Overtime too short to pay** (`minimumMinutes`) is dropped per rule per shift: under VA's 15
+ *   minutes, that rule prices the shift as straight time. Another rule may still reach the hours.
+ * - **Premiums add instead of compounding** under `CostContext.premiumStacking: 'additive'`: each
+ *   multiplier adds `base × (multiplier − 1)` an hour and each overtime band's premium is
+ *   `base × (multiplier − 1)`. So the straight rate is `base + Σflat + base × Σ(multiplier − 1)`
+ *   (UC–CNA Art. 14 §N; Title 38 percentages of basic pay). Absent, `'compound'` as above.
  * - **A holdover is worked time on every basis.** It lengthens the shift's paid hours, so daily,
  *   weekly and pay-period overtime count it like any other hour.
  * - **On-call standby** is not worked time: it earns the `on_call` differential alone (a flat
@@ -113,6 +128,15 @@ export interface CostContext {
    * dated in it.
    */
   overtimeLeave?: ReadonlyMap<Id, readonly PaidLeaveCredit[]>;
+  /**
+   * How multiplier differentials and the overtime premium combine. `'compound'` (absent) is the
+   * FLSA regular rate: `(base + Σflat) × Πmultiplier`, overtime on that. `'additive'` takes each
+   * multiplier and each overtime premium on the base alone: UC–CNA Art. 14 §N forbids
+   * duplication, pyramiding or compounding of premiums, and Title 38 pays differentials as
+   * percentages of basic pay. Standby and partial clock-window differentials are priced on the
+   * base either way.
+   */
+  premiumStacking?: 'compound' | 'additive';
 }
 
 // ---------------------------------------------------------------------------
@@ -172,7 +196,10 @@ export interface AssignmentCost {
   hours: number;
   baseRate: number;
   rateSource: RateSource;
-  /** Dollars per hour before overtime: `(base + Σflat) × Πmultiplier`. */
+  /**
+   * Dollars per hour before overtime: `(base + Σflat) × Πmultiplier`, or under additive stacking
+   * `base + Σflat + base × Σ(multiplier − 1)`.
+   */
   straightRate: number;
   overtimeHours: number;
   lines: CostLine[];

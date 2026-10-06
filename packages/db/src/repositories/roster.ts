@@ -58,6 +58,7 @@ function buildNurseRow(id: Id, input: Omit<Nurse, 'id'>): typeof nurseTable.$inf
     seniorityDate: input.seniorityDate,
     hireDate: input.hireDate ?? null,
     permanentTour: input.permanentTour ?? null,
+    scheduledDaysPerWeek: input.scheduledDaysPerWeek ?? null,
     isChargeEligible: input.isChargeEligible,
     isNovice: input.isNovice,
     isFloatEligible: input.isFloatEligible,
@@ -159,6 +160,8 @@ export interface NursePatch {
   hireDate?: IsoDate | null;
   /** `null` returns the nurse to the rotation. */
   permanentTour?: Tour | null;
+  /** `null` clears it: no 'beyond_scheduled_days' overtime is priced for the nurse. */
+  scheduledDaysPerWeek?: number | null;
   isChargeEligible?: boolean;
   isNovice?: boolean;
   isFloatEligible?: boolean;
@@ -179,6 +182,7 @@ const NURSE_PATCH_KEYS: PatchKeys<NursePatch> = {
   seniorityDate: true,
   hireDate: true,
   permanentTour: true,
+  scheduledDaysPerWeek: true,
   isChargeEligible: true,
   isNovice: true,
   isFloatEligible: true,

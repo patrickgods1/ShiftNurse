@@ -15,6 +15,7 @@ import { CallBackSection } from './pay/call-back.js';
 import { DifferentialsSection } from './pay/differentials.js';
 import { OvertimeSection } from './pay/overtime.js';
 import { PayRatesSection } from './pay/rates.js';
+import { StackingSection } from './pay/stacking.js';
 
 // ---------------------------------------------------------------------------
 // Panel
@@ -35,6 +36,7 @@ export default function PayPanel() {
       <DifferentialsSection unitId={unitId} />
       <OvertimeSection unitId={unitId} />
       <CallBackSection unitId={unitId} />
+      <StackingSection unitId={unitId} />
     </div>
   );
 }

@@ -169,6 +169,15 @@ describe('nurses', () => {
     expect(getNurse(handle.db, nurse.id)).not.toHaveProperty('permanentTour', expect.anything());
   });
 
+  it('keeps a three-twelve nurse’s scheduled days, and clears them with null', () => {
+    const nurse = createNurse(handle.db, baseNurse({ scheduledDaysPerWeek: 3 }), ACTOR);
+    expect(getNurse(handle.db, nurse.id)?.scheduledDaysPerWeek).toBe(3);
+
+    const cleared = updateNurse(handle.db, nurse.id, { scheduledDaysPerWeek: null }, ACTOR);
+    expect(cleared.scheduledDaysPerWeek).toBeUndefined();
+    expect(getNurse(handle.db, nurse.id)?.scheduledDaysPerWeek).toBeUndefined();
+  });
+
   it('refuses to move a nurse to another unit through an edit', () => {
     // Types stop this at compile time; nothing stops it in an IPC payload at runtime.
     const nurse = createNurse(handle.db, baseNurse({ firstName: 'Ada' }), ACTOR);

@@ -23,12 +23,12 @@ import {
 import { createIncompatibilityGroup } from './incompatibility.js';
 import { createNurseUnit } from './nurse-units.js';
 import { createOvertimeVolunteer } from './overtime-volunteers.js';
-import { createPayRate, listPayRatesForUnit } from './pay.js';
+import { createPayRate, listPayRatesForUnit, savePaySettings } from './pay.js';
 import { createPreceptorship } from './preceptorships.js';
 import { createNurse, listNursesForUnit } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
 import { createAssignment, createPeriod, getPeriod, updatePeriodStatus } from './schedule.js';
-import { loadPeriodInput, timeOffForPeriod, timeOffWindow } from './solve-input.js';
+import { costContext, loadPeriodInput, timeOffForPeriod, timeOffWindow } from './solve-input.js';
 import { createTimeOffRequest, listTimeOffForUnit } from './timeoff.js';
 
 const ACTOR = 'manager';
@@ -190,6 +190,21 @@ describe('loadPeriodInput', () => {
     // take effect on the same day, so a reordered list would change what a shift costs.
     expect(rates.at(-1)?.id).toBe(ownRate.id);
     expect(listPayRatesForUnit(handle.db, seeded.unitId)).toEqual(rates);
+  });
+});
+
+describe('the pay a period is costed under', () => {
+  it('prices compounding unless the unit has chosen additive premiums', () => {
+    const unitId = seeded.unitId;
+    const ruleSet = defaultRuleSet(unitId);
+    expect(costContext(handle.db, unitId, ruleSet).premiumStacking).toBe('compound');
+    savePaySettings(
+      handle.db,
+      unitId,
+      { callBackMinimumHours: 0, premiumStacking: 'additive' },
+      ACTOR,
+    );
+    expect(costContext(handle.db, unitId, ruleSet).premiumStacking).toBe('additive');
   });
 });
 

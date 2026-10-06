@@ -6,6 +6,7 @@
 
 import type { Id } from '@shiftnurse/core';
 import { useState } from 'react';
+import type { PaySettings } from '../../../../../shared/api.js';
 import { usePaySettings, useSavePaySettings } from '../../../api-cost.js';
 import { AsyncState } from '../../../components/async-state.js';
 import { describedBy, Field } from '../../../components/field-help.js';
@@ -18,10 +19,24 @@ export function CallBackSection({ unitId }: { unitId: Id }) {
   if (query.isError) {
     return <AsyncState status="error" label="Could not load pay settings" error={query.error} />;
   }
-  return <CallBackForm unitId={unitId} saved={query.data.callBackMinimumHours} />;
+  return (
+    <CallBackForm
+      unitId={unitId}
+      saved={query.data.callBackMinimumHours}
+      premiumStacking={query.data.premiumStacking}
+    />
+  );
 }
 
-function CallBackForm({ unitId, saved }: { unitId: Id; saved: number }) {
+function CallBackForm({
+  unitId,
+  saved,
+  premiumStacking,
+}: {
+  unitId: Id;
+  saved: number;
+  premiumStacking: PaySettings['premiumStacking'];
+}) {
   const save = useSavePaySettings(unitId);
   const [value, setValue] = useState(String(saved));
   const hours = Number(value);
@@ -38,7 +53,7 @@ function CallBackForm({ unitId, saved }: { unitId: Id; saved: number }) {
         className="flex max-w-md flex-col gap-2 rounded-md border border-border bg-surface p-3"
         onSubmit={(event) => {
           event.preventDefault();
-          if (valid) save.mutate({ callBackMinimumHours: hours });
+          if (valid) save.mutate({ callBackMinimumHours: hours, premiumStacking });
         }}
       >
         <Field

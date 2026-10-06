@@ -85,6 +85,40 @@ describe('pay settings arriving over IPC', () => {
     expect(costSchemas.createOvertimeRule.safeParse([unknown]).success).toBe(false);
   });
 
+  it('accepts a California extra-day rule that does not pyramid, and a VA 15-minute minimum', () => {
+    const rule = {
+      unitId: 'u-1',
+      basis: 'beyond_scheduled_days',
+      thresholdHours: 8,
+      multiplier: 2,
+      active: true,
+      pyramiding: 'none',
+      minimumMinutes: 15,
+    };
+    expect(costSchemas.createOvertimeRule.safeParse([rule]).success).toBe(true);
+    expect(
+      costSchemas.createOvertimeRule.safeParse([{ ...rule, minimumMinutes: -1 }]).success,
+    ).toBe(false);
+    expect(
+      costSchemas.createOvertimeRule.safeParse([{ ...rule, pyramiding: 'maybe' }]).success,
+    ).toBe(false);
+    expect(
+      costSchemas.updateOvertimeRule.safeParse(['r-1', { pyramiding: null, minimumMinutes: null }])
+        .success,
+    ).toBe(true);
+  });
+
+  it('needs the premium stacking whenever pay settings are saved', () => {
+    const save = costSchemas.savePaySettings;
+    expect(save.safeParse(['u-1', { callBackMinimumHours: 2 }]).success).toBe(false);
+    expect(
+      save.safeParse(['u-1', { callBackMinimumHours: 2, premiumStacking: 'additive' }]).success,
+    ).toBe(true);
+    expect(
+      save.safeParse(['u-1', { callBackMinimumHours: 2, premiumStacking: 'stacked' }]).success,
+    ).toBe(false);
+  });
+
   it('accepts a budget of zero and refuses a negative one', () => {
     expect(costSchemas.setBudget.safeParse(['p-1', 0]).success).toBe(true);
     expect(costSchemas.setBudget.safeParse(['p-1', -100]).success).toBe(false);

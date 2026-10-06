@@ -28,6 +28,16 @@ describe('a nurse arriving over IPC', () => {
     ).toBe(false);
   });
 
+  it('takes scheduled days per week from one to seven, and lets an edit clear it with null', () => {
+    const create = API_SCHEMAS.nurses.create;
+    expect(create.safeParse([{ ...nurse, scheduledDaysPerWeek: 3 }]).success).toBe(true);
+    expect(create.safeParse([{ ...nurse, scheduledDaysPerWeek: 0 }]).success).toBe(false);
+    expect(create.safeParse([{ ...nurse, scheduledDaysPerWeek: 8 }]).success).toBe(false);
+    expect(
+      API_SCHEMAS.nurses.update.safeParse(['n-1', { scheduledDaysPerWeek: null }]).success,
+    ).toBe(true);
+  });
+
   it('lets an edit clear a phone number with null but never move the nurse to another unit', () => {
     const update = API_SCHEMAS.nurses.update;
     expect(update.safeParse(['n-1', { phone: null, fte: 0.9 }]).success).toBe(true);

@@ -596,6 +596,7 @@ export function overtimeRule(
   basis: OvertimeRule['basis'],
   thresholdHours: number,
   multiplier = 1.5,
+  overrides: Partial<OvertimeRule> = {},
 ): OvertimeRule {
   return {
     id: `ot-${basis}-${thresholdHours}`,
@@ -604,5 +605,6 @@ export function overtimeRule(
     thresholdHours,
     multiplier,
     active: true,
+    ...overrides,
   };
 }

@@ -220,22 +220,65 @@ describe('the events core prices', () => {
 
 describe('the unit’s call-back minimum', () => {
   it('is zero until saved, then kept with the audit before and after', () => {
-    expect(getPaySettings(handle.db, unitId)).toEqual({ callBackMinimumHours: 0 });
-    savePaySettings(handle.db, unitId, { callBackMinimumHours: 4 }, ACTOR);
-    savePaySettings(handle.db, unitId, { callBackMinimumHours: 3 }, ACTOR);
-    expect(getPaySettings(handle.db, unitId)).toEqual({ callBackMinimumHours: 3 });
+    expect(getPaySettings(handle.db, unitId)).toEqual({
+      callBackMinimumHours: 0,
+      premiumStacking: 'compound',
+    });
+    savePaySettings(
+      handle.db,
+      unitId,
+      { callBackMinimumHours: 4, premiumStacking: 'compound' },
+      ACTOR,
+    );
+    savePaySettings(
+      handle.db,
+      unitId,
+      { callBackMinimumHours: 3, premiumStacking: 'compound' },
+      ACTOR,
+    );
+    expect(getPaySettings(handle.db, unitId)).toEqual({
+      callBackMinimumHours: 3,
+      premiumStacking: 'compound',
+    });
     expect(auditHistoryFor(handle.db, 'pay_settings', unitId)[0]).toMatchObject({
       before: { callBackMinimumHours: 4 },
       after: { callBackMinimumHours: 3 },
     });
   });
 
+  it('keeps additive premium stacking beside the minimum, and audits the change', () => {
+    savePaySettings(
+      handle.db,
+      unitId,
+      { callBackMinimumHours: 2, premiumStacking: 'additive' },
+      ACTOR,
+    );
+    expect(getPaySettings(handle.db, unitId)).toEqual({
+      callBackMinimumHours: 2,
+      premiumStacking: 'additive',
+    });
+    expect(auditHistoryFor(handle.db, 'pay_settings', unitId)[0]).toMatchObject({
+      before: { premiumStacking: 'compound' },
+      after: { premiumStacking: 'additive' },
+    });
+  });
+
   it('refuses a minimum a day cannot hold', () => {
-    expect(() => savePaySettings(handle.db, unitId, { callBackMinimumHours: 30 }, ACTOR)).toThrow(
-      'between 0 and 24 hours',
-    );
-    expect(() => savePaySettings(handle.db, unitId, { callBackMinimumHours: -1 }, ACTOR)).toThrow(
-      'between 0 and 24 hours',
-    );
+    expect(() =>
+      savePaySettings(
+        handle.db,
+        unitId,
+        { callBackMinimumHours: 30, premiumStacking: 'compound' },
+        ACTOR,
+      ),
+    ).toThrow('between 0 and 24 hours');
+    expect(() =>
+      savePaySettings(
+        handle.db,
+        unitId,
+        { callBackMinimumHours: -1, premiumStacking: 'compound' },
+        ACTOR,
+      ),
+    ).toThrow('between 0 and 24 hours');
   });
 });

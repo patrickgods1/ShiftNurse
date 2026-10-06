@@ -28,6 +28,19 @@
   `consecutive` starts it once `thresholdHours` have been on the clock in a `workedStretches`
   stretch, lookback included but never priced. `overtimeStarts` switches exhaustively on `basis` —
   add a basis there, never let it fall through to weekly.
+- **Daily premium hours need not count toward weekly overtime.** `OvertimeRule.pyramiding: 'none'`
+  (weekly and pay-period rules only; absent is `'stack'`) makes them accrue each shift's straight
+  hours — before any non-window basis's overtime starts, lookback shifts' included — because Cal. Lab. Code § 510 and UC–CNA
+  Art. 14 §M do not pay an hour twice. `attributeOvertime` therefore prices non-window bases first.
+- **A day past the scheduled days is its own basis.** `beyond_scheduled_days` reads
+  `Nurse.scheduledDaysPerWeek` (absent: nothing) and makes hours past the threshold overtime on the
+  (n+1)th and later worked dates of a work week, lookback counted, never priced (`extraDayTest`):
+  a 3×12 nurse's fourth day is double time past 8 (IWC Wage Order 5 § 3(B)(8)).
+- **Premiums compound or add, by unit.** `CostContext.premiumStacking: 'additive'` (absent:
+  `'compound'`) puts every multiplier and overtime premium on the base rate in `priceView`
+  (UC–CNA Art. 14 §N, Title 38); compound is the FLSA regular rate and stays the default.
+- **Overtime under a rule's `minimumMinutes` is not paid**, judged per rule per shift in
+  `overtimeStarts` (VA: under 15 minutes), never per workday.
 - **Day-of pay sits beside the schedule's cost, never in it.** `cost/events.ts`'s
   `priceDayOfEvents` prices missed meal and rest breaks (one hour a day each), reporting-time pay
   (half the shift, 2–4 hours) and call-backs (at least the contract minimum) at the base rate.
