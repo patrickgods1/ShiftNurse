@@ -301,8 +301,25 @@ describe('applying a state preset', () => {
         chargeCoversBreaks: true,
       },
     });
-    // 1 ratio rule + 5 overtime rules created; ratio staffing and the stored choice updated.
-    expect(result).toEqual({ created: 6, updated: 2, unchanged: 0 });
+    // 1 ratio rule + 5 overtime rules created; ratio staffing, the leave policy (California
+    // sick leave) and the stored choice updated.
+    expect(result).toEqual({ created: 6, updated: 3, unchanged: 0 });
+  });
+
+  it('gives a VA unit its Title 5 leave policy once, and leaves it alone on a second Apply', () => {
+    const unit = newUnit();
+    expect(getUnit(handle.db, unit.id)?.leavePolicy).toBeUndefined();
+    applyState(unit.id, 'US-VA');
+    const stored = getUnit(handle.db, unit.id)!.leavePolicy!;
+    expect(stored.fmla).toEqual({ regime: 'title5', yearMethod: 'rolling_forward' });
+    expect(stored.leaveYearStart).toBe('first_full_pay_period');
+    expect(stored.accrual.length).toBeGreaterThan(0);
+
+    const before = auditRows();
+    const again = applyState(unit.id, 'US-VA');
+    expect(again).toEqual({ created: 0, updated: 0, unchanged: 1 });
+    expect(auditRows()).toBe(before);
+    expect(getUnit(handle.db, unit.id)?.leavePolicy).toEqual(stored);
   });
 
   it('writes nothing the second time a manager presses Apply', () => {

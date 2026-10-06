@@ -15,6 +15,7 @@ const rosterRow = object({
     fte: hours,
     contractedHoursPerPeriod: hours,
     seniorityDate: isoDate,
+    hireDate: isoDate.optional(),
     isChargeEligible: z.boolean(),
     isNovice: z.boolean(),
     isFloatEligible: z.boolean(),

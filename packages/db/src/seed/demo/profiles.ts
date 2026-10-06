@@ -232,6 +232,7 @@ export const VA_SF_MED_SURG: DemoProfile = {
   id: 'va-sf-med-surg',
   unit: { name: '4A Medicine-Surgery (VA San Francisco sample)', unitType: 'Medical-Surgical' },
   jurisdiction: 'US-VA',
+  bridgedService: true,
   scheduleWeeks: 4,
   // Federal pay period 1 of 2025 began Sunday 12 January; every pay period since is 14 days on.
   payPeriodCycle: isoDate('2025-01-12'),
@@ -342,7 +343,10 @@ export const VA_SF_MED_SURG: DemoProfile = {
   leaveBalances: {
     // 5 U.S.C. §6303: 4 hours of annual leave a pay period under 3 years of service, 6 from 3
     // to 15 and 8 beyond; Title 38 RNs earn 8 from the start. Sick leave is 4 hours.
-    carryoverCapHours: 240,
+    vacationType: 'annual',
+    // VA Handbook 5011 pt. III ch. 2: Title 38 full-time nurses carry up to 685 hours; LVNs and
+    // nursing assistants are Title 5, whose ceiling is 240 (5 U.S.C. § 6304(a)).
+    carryoverCapHours: (role) => (role === 'RN' ? 685 : 240),
     accrual: ({ role, years }) => ({
       annual: role === 'RN' ? 8 : years < 3 ? 4 : years <= 15 ? 6 : 8,
       sick: 4,

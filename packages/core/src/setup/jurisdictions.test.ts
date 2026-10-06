@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { OvertimeRule, RatioRule } from '../domain/entities.js';
+import { DEFAULT_LEAVE_POLICY, type OvertimeRule, type RatioRule } from '../domain/entities.js';
 import { defaultRuleSet } from '../rules/registry.js';
 import type { RuleSet } from '../rules/types.js';
-import { type JurisdictionPlanInput, planJurisdiction } from './jurisdictions.js';
+import {
+  JURISDICTION_PRESETS,
+  type JurisdictionPlanInput,
+  planJurisdiction,
+} from './jurisdictions.js';
 
 const UNIT = 'unit-1';
 
@@ -213,5 +217,138 @@ describe('applying a state preset', () => {
       );
       expect(second.ruleConfigs).toBeUndefined();
     });
+  });
+});
+
+describe('proposing a leave policy', () => {
+  it('proposes the VA policy whole to a unit that has none', () => {
+    const plan = planJurisdiction('US-VA', input());
+    expect(plan.leavePolicy).toBe(JURISDICTION_PRESETS['US-VA'].leavePolicy);
+    expect(plan.leavePolicy?.fmla).toEqual({ regime: 'title5', yearMethod: 'rolling_forward' });
+    expect(plan.leavePolicy?.leaveYearStart).toBe('first_full_pay_period');
+  });
+
+  it('gives full-time VA RNs 8 hours a pay period with a 685 hour ceiling, ahead of the LVN rule', () => {
+    const rules = planJurisdiction('US-VA', input()).leavePolicy?.accrual ?? [];
+    expect(rules[0]).toMatchObject({
+      balanceType: 'annual',
+      roles: ['RN'],
+      employmentTypes: ['full_time'],
+      tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 8 }],
+      carryoverCapHours: 685,
+    });
+    expect(rules[2]).toMatchObject({ roles: ['LPN', 'CNA'], carryoverCapHours: 240 });
+  });
+
+  it('proposes California’s sick leave, 1 hour per 30 worked up to 80, to a unit that has none', () => {
+    const policy = planJurisdiction('CA', input()).leavePolicy;
+    expect(policy?.leaveYearStart).toBe('calendar');
+    expect(policy?.fmla).toEqual(DEFAULT_LEAVE_POLICY.fmla);
+    expect(policy?.accrual).toEqual([
+      expect.objectContaining({
+        balanceType: 'sick',
+        tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 30 }],
+        balanceCapHours: 80,
+      }),
+    ]);
+  });
+
+  it('leaves alone a policy the manager already set', () => {
+    const own = { ...DEFAULT_LEAVE_POLICY, leaveYearStart: 'first_full_pay_period' as const };
+    expect(planJurisdiction('US-VA', input({ leavePolicy: own })).leavePolicy).toBeUndefined();
+    expect(planJurisdiction('CA', input({ leavePolicy: own })).leavePolicy).toBeUndefined();
+  });
+
+  it('proposes nothing the second time', () => {
+    const first = planJurisdiction('US-VA', input());
+    const second = planJurisdiction('US-VA', input({ leavePolicy: first.leavePolicy }));
+    expect(second.leavePolicy).toBeUndefined();
+  });
+
+  it('proposes no policy for states whose preset has none', () => {
+    expect(planJurisdiction('NY', input()).leavePolicy).toBeUndefined();
+  });
+});
+
+describe('what the VA and California presets say about leave', () => {
+  const sick = (hoursPerPayPeriod: number) => [{ fromYearsOfService: 0, hoursPerPayPeriod }];
+  const VA_HANDBOOK = 'VA Handbook 5011 pt. III ch. 2 (38 U.S.C. § 7421)';
+
+  it('lists all six VA accrual rules in order', () => {
+    expect(JURISDICTION_PRESETS['US-VA'].leavePolicy?.accrual).toEqual([
+      {
+        balanceType: 'annual',
+        roles: ['RN'],
+        employmentTypes: ['full_time'],
+        tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 8 }],
+        carryoverCapHours: 685,
+        citation: `${VA_HANDBOOK}: 8 h a pay period, 685 h ceiling`,
+      },
+      {
+        balanceType: 'annual',
+        roles: ['RN'],
+        employmentTypes: ['part_time'],
+        tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 10 }],
+        carryoverCapHours: 240,
+        citation: `${VA_HANDBOOK}: 1 h per 10 in pay status, 240 h ceiling`,
+      },
+      {
+        balanceType: 'annual',
+        roles: ['LPN', 'CNA'],
+        employmentTypes: ['full_time'],
+        tiers: [
+          { fromYearsOfService: 0, hoursPerPayPeriod: 4 },
+          { fromYearsOfService: 3, hoursPerPayPeriod: 6 },
+          { fromYearsOfService: 15, hoursPerPayPeriod: 8 },
+        ],
+        carryoverCapHours: 240,
+        citation: '5 U.S.C. §§ 6303(a), 6304(a)',
+      },
+      {
+        balanceType: 'annual',
+        roles: ['LPN', 'CNA'],
+        employmentTypes: ['part_time'],
+        tiers: [
+          { fromYearsOfService: 0, hoursPerAccruedHour: 20 },
+          { fromYearsOfService: 3, hoursPerAccruedHour: 13 },
+          { fromYearsOfService: 15, hoursPerAccruedHour: 10 },
+        ],
+        carryoverCapHours: 240,
+        citation: '5 U.S.C. §§ 6303(a), 6304(a)',
+      },
+      {
+        balanceType: 'sick',
+        employmentTypes: ['full_time'],
+        tiers: sick(4),
+        citation: '5 U.S.C. § 6307(a)',
+      },
+      {
+        balanceType: 'sick',
+        employmentTypes: ['part_time'],
+        tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 20 }],
+        citation: '5 U.S.C. § 6307(b)',
+      },
+    ]);
+  });
+
+  it('lists California’s one sick-leave rule', () => {
+    expect(JURISDICTION_PRESETS.CA.leavePolicy?.accrual).toEqual([
+      {
+        balanceType: 'sick',
+        tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 30 }],
+        balanceCapHours: 80,
+        citation: 'Lab. Code § 246(b) (SB 616, 2023): 1 h per 30 worked, cap 80 h',
+      },
+    ]);
+  });
+
+  it('cites a provision for every rule and says in its summary that it sets leave', () => {
+    for (const id of ['US-VA', 'CA'] as const) {
+      const preset = JURISDICTION_PRESETS[id];
+      expect(preset.summary).toMatch(/leave/i);
+      for (const rule of preset.leavePolicy?.accrual ?? []) {
+        expect(rule.citation?.trim().length ?? 0).toBeGreaterThan(0);
+      }
+    }
   });
 });

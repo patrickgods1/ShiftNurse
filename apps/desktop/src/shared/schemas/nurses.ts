@@ -15,6 +15,7 @@ const nurseInput = object({
   fte: z.number().min(0, 'must be zero or more').max(1.5, 'must be 1.5 or fewer'),
   contractedHoursPerPeriod: hours,
   seniorityDate: isoDate,
+  hireDate: isoDate.optional(),
   isChargeEligible: z.boolean(),
   isNovice: z.boolean(),
   isFloatEligible: z.boolean(),
@@ -24,11 +25,12 @@ const nurseInput = object({
   notes: text.optional(),
 });
 
-/** A patch clears phone, email and notes with `null`; an omitted key is left alone. */
+/** A patch clears hire date, phone, email and notes with `null`; an omitted key is left alone. */
 const nursePatch = nurseInput
-  .omit({ unitId: true, phone: true, email: true, notes: true })
+  .omit({ unitId: true, phone: true, email: true, notes: true, hireDate: true })
   .partial()
   .extend({
+    hireDate: isoDate.nullable().optional(),
     phone: text.nullable().optional(),
     email: text.nullable().optional(),
     notes: text.nullable().optional(),

@@ -1,14 +1,44 @@
 /**
- * What the nurse has to take leave from: shown in the request form and again when deciding. A PTO
- * or sick request is measured against the balance payroll gave the manager; an FMLA request
- * against the 12 work weeks and the two eligibility tests. These are warnings in the manager's
- * words and never stop the request — payroll's figure can be stale, and the manager may know a
+ * What the nurse has to take leave from: shown in the request form and again when deciding. A
+ * request on a balance (PTO, annual, sick, comp time) is measured against what the nurse will
+ * have on its first day — payroll's figure carried forward, with the breakdown underneath so the
+ * manager can see where the difference came from; an FMLA request against the entitlement under
+ * the unit's regime and the eligibility tests. These are warnings in the manager's words and
+ * never stop the request — payroll's figure can be stale, and the manager may know a
  * certification has come in. The sums are made in main; nothing here counts hours.
  */
 
-import type { Id, IsoDate, TimeOffType } from '@shiftnurse/core';
+import type { LeaveRequestCheck } from '@shared/api.js';
+import {
+  type FmlaEntitlementBasis,
+  type FmlaRegime,
+  type Id,
+  type IsoDate,
+  TIME_OFF_TYPE_LABELS,
+  type TimeOffType,
+} from '@shiftnurse/core';
 import { useLeaveRequestCheck } from '../../api-leave-balances.js';
 import { formatDate } from '../../format.js';
+
+const REGIME_LABEL: Record<FmlaRegime, string> = {
+  title5: 'Title 5 (federal)',
+  title1: 'Title I',
+};
+
+const BASIS_LABEL: Record<FmlaEntitlementBasis, string> = {
+  contract: '12 × usual week',
+  average: '12 × average week over the last year',
+  title5_tour: '6 × biweekly tour',
+};
+
+/** "Payroll: 100 h on 1 Oct · +24 accrued · −8 approved since", zero parts left out. */
+function payrollLine(balance: NonNullable<LeaveRequestCheck['balance']>): string {
+  const parts = [`Payroll: ${balance.balanceHours} h on ${formatDate(balance.asOf)}`];
+  if (balance.accruedHours !== 0) parts.push(`+${balance.accruedHours} accrued`);
+  if (balance.usedHours !== 0) parts.push(`−${balance.usedHours} approved since`);
+  if (balance.forfeitedHours !== 0) parts.push(`−${balance.forfeitedHours} forfeited at year end`);
+  return parts.join(' · ');
+}
 
 export function LeaveStanding({
   nurseId,
@@ -39,9 +69,10 @@ export function LeaveStanding({
       {balance ? (
         <>
           <p>
-            {balance.type === 'pto' ? 'PTO' : 'Sick'} balance: {balance.balanceHours} hours, as of{' '}
-            {formatDate(balance.asOf)}.
+            {TIME_OFF_TYPE_LABELS[balance.type]}: {balance.projectedHours} h projected on{' '}
+            {formatDate(start as IsoDate)}.
           </p>
+          <p className="text-[11px]">{payrollLine(balance)}</p>
           {balance.check.ok ? null : (
             <p role="alert" className="font-medium text-warn">
               {balance.check.message}
@@ -51,15 +82,19 @@ export function LeaveStanding({
       ) : null}
       {noBalanceFor ? (
         <p>
-          No {noBalanceFor === 'pto' ? 'PTO' : 'sick'} balance is recorded for this nurse, so the
-          request cannot be checked. Enter it on the Roster.
+          No {TIME_OFF_TYPE_LABELS[noBalanceFor]} balance is recorded for this nurse, so the request
+          cannot be checked. Enter it on the Roster.
         </p>
       ) : null}
       {fmla ? (
         <>
           <p>
-            FMLA: {fmla.remainingHours} hours left of 12 work weeks ({fmla.weeklyHours} hours a
-            week); this request uses {fmla.requestHours}.
+            FMLA, {REGIME_LABEL[fmla.regime]}: {fmla.remainingHours} hours left of{' '}
+            {fmla.entitlementHours} ({BASIS_LABEL[fmla.basis]}); this request uses{' '}
+            {fmla.requestHours}.
+          </p>
+          <p className="text-[11px]">
+            Counted in the 12 months {formatDate(fmla.period.from)} to {formatDate(fmla.period.to)}.
           </p>
           {fmla.requestHours > fmla.remainingHours ? (
             <p role="alert" className="font-medium text-warn">

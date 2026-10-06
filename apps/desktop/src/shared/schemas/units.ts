@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   id,
   isoDate,
+  leavePolicy,
   object,
   postingLeadDays,
   type ResourceSchemas,
@@ -28,7 +29,10 @@ export const unitsSchemas = {
     id,
     unitInput
       .pick({ name: true, unitType: true, ratioStaffing: true })
-      .extend({ postingLeadDays: postingLeadDays.nullable().optional() })
+      .extend({
+        postingLeadDays: postingLeadDays.nullable().optional(),
+        leavePolicy: leavePolicy.nullable().optional(),
+      })
       .partial(),
   ]),
 } satisfies ResourceSchemas<'units'>;

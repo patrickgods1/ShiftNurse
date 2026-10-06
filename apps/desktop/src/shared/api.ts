@@ -36,6 +36,8 @@ import type {
   ExchangeProposal,
   FairnessLedgerEntry,
   FairnessReport,
+  FmlaEntitlementBasis,
+  FmlaRegime,
   ForecastOptions,
   HistoricalCsvError,
   HistoricalShiftRow,
@@ -48,10 +50,12 @@ import type {
   IsoDate,
   JurisdictionId,
   LeaveAward,
+  LeaveBalanceType,
   LeaveBid,
   LeaveBidChoice,
   LeaveBidRound,
   LeaveDenial,
+  LeavePolicy,
   Nurse,
   NurseCredential,
   NurseRole,
@@ -121,6 +125,8 @@ export type UnitInput = Omit<Unit, 'id'>;
 export type UnitPatch = Partial<Pick<Unit, 'name' | 'unitType' | 'ratioStaffing'>> & {
   /** `null` clears the notice rule. */
   postingLeadDays?: number | null;
+  /** `null` clears the policy: FMLA and balances revert to the pre-policy reading. */
+  leavePolicy?: LeavePolicy | null;
 };
 
 export interface AppInfo {
@@ -262,11 +268,11 @@ export interface LeaveBidAwardResult {
   denials: LeaveDenialView[];
 }
 
-/** A nurse's PTO or sick balance as entered from payroll, true on `asOf`. */
+/** A nurse's leave balance as entered from payroll, true on `asOf`. */
 export interface LeaveBalanceRecord {
   id: Id;
   nurseId: Id;
-  type: 'pto' | 'sick';
+  type: LeaveBalanceType;
   balanceHours: number;
   asOf: IsoDate;
 }
@@ -293,12 +299,36 @@ export interface FmlaCertificationPatch {
 
 /** What the request dialogs show about a nurse's leave before a request is saved or decided. */
 export interface LeaveRequestCheck {
-  /** PTO and sick requests: the balance on file measured against the paid hours. */
-  balance?: { type: 'pto' | 'sick'; balanceHours: number; asOf: IsoDate; check: BalanceCheck };
-  /** PTO or sick request for a nurse with no balance entered: nothing to check against. */
-  noBalanceFor?: 'pto' | 'sick';
-  /** FMLA requests: the 12-week entitlement and the two eligibility tests. */
+  /**
+   * A request drawn on a balance (PTO, annual, sick, comp): payroll's figure carried forward to the
+   * request's first day, and the paid hours measured against that.
+   */
+  balance?: {
+    type: LeaveBalanceType;
+    /** Payroll's figure, true on `asOf`. */
+    balanceHours: number;
+    asOf: IsoDate;
+    /** What the nurse will have on the request's first day: payroll's figure plus the parts below. */
+    projectedHours: number;
+    accruedHours: number;
+    /** Approved leave of this type taken since `asOf`. */
+    usedHours: number;
+    /** Lost to the carryover cap at a leave-year turnover since `asOf`. */
+    forfeitedHours: number;
+    check: BalanceCheck;
+  };
+  /** A balance-type request for a nurse with no balance entered: nothing to check against. */
+  noBalanceFor?: LeaveBalanceType;
+  /** FMLA requests: the entitlement under the unit's regime and the eligibility tests. */
   fmla?: {
+    /** Which FMLA the unit's employer is under. */
+    regime: FmlaRegime;
+    /** The hours of leave the nurse has in a 12-month year. */
+    entitlementHours: number;
+    /** How the entitlement was worked out. */
+    basis: FmlaEntitlementBasis;
+    /** The 12 months this request is counted in, inclusive. */
+    period: { from: IsoDate; to: IsoDate };
     /** The nurse's usual hours a week, from their contract. */
     weeklyHours: number;
     /** Hours this request uses: its days at the usual week's pace. */
@@ -358,7 +388,10 @@ export interface NurseUnitPatch {
 }
 
 /** Optional-and-clearable fields take `null` to clear; an omitted key is left untouched. */
-export type NursePatch = Partial<Omit<Nurse, 'id' | 'unitId' | 'phone' | 'email' | 'notes'>> & {
+export type NursePatch = Partial<
+  Omit<Nurse, 'id' | 'unitId' | 'phone' | 'email' | 'notes' | 'hireDate'>
+> & {
+  hireDate?: IsoDate | null;
   phone?: string | null;
   email?: string | null;
   notes?: string | null;
@@ -1070,7 +1103,7 @@ export interface ShiftNurseApi {
     /** Replaces the nurse's balance of that type; the previous figure is kept in the audit log. */
     setBalance(
       nurseId: Id,
-      type: 'pto' | 'sick',
+      type: LeaveBalanceType,
       balanceHours: number,
       asOf: IsoDate,
     ): LeaveBalanceRecord;

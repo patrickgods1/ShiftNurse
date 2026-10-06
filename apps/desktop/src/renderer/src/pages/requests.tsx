@@ -9,7 +9,7 @@
  */
 
 import type { Id, IsoDate, SchedulePeriod, TimeOffRequest, TimeOffStatus } from '@shiftnurse/core';
-import { addDays, today } from '@shiftnurse/core';
+import { addDays, TIME_OFF_TYPE_LABELS, today } from '@shiftnurse/core';
 import { useEffect, useMemo, useState } from 'react';
 import { useAssignments, useNurses, usePeriods, useShiftTypes } from '../api.js';
 import {
@@ -41,15 +41,6 @@ import { periodForRequest } from './requests/period-for-request.js';
 import { ReasonDialog } from './requests/reason-dialog.js';
 
 type FilterValue = TimeOffStatus | 'all';
-
-const LEAVE_TYPE_LABEL: Record<TimeOffRequest['type'], string> = {
-  pto: 'PTO',
-  sick: 'Sick leave',
-  fmla: 'FMLA',
-  unpaid: 'Unpaid leave',
-  education: 'Education',
-  bereavement: 'Bereavement',
-};
 
 const FILTERS: { value: FilterValue; label: string }[] = [
   { value: 'pending', label: 'Pending' },
@@ -167,8 +158,8 @@ export default function RequestsPage() {
       // Paid hours count toward the nurse's contract once approved, so they show with the type.
       render: (r) =>
         r.paidHours
-          ? `${LEAVE_TYPE_LABEL[r.type]} · ${r.paidHours}h paid`
-          : LEAVE_TYPE_LABEL[r.type],
+          ? `${TIME_OFF_TYPE_LABELS[r.type]} · ${r.paidHours}h paid`
+          : TIME_OFF_TYPE_LABELS[r.type],
     },
     {
       key: 'submitted',

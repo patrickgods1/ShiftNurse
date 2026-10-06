@@ -11,7 +11,7 @@ import type {
   FmlaCertificationPatch,
   LeaveRequestCheck,
 } from '@shared/api.js';
-import type { Id, IsoDate, TimeOffType } from '@shiftnurse/core';
+import type { Id, IsoDate, LeaveBalanceType, TimeOffType } from '@shiftnurse/core';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api.js';
 
@@ -39,7 +39,7 @@ export function useSetLeaveBalance(nurseId: Id) {
   const invalidate = useInvalidateLeave();
   return useMutation({
     meta: { inlineError: true },
-    mutationFn: (v: { type: 'pto' | 'sick'; balanceHours: number; asOf: IsoDate }) =>
+    mutationFn: (v: { type: LeaveBalanceType; balanceHours: number; asOf: IsoDate }) =>
       api.leaveBalances.setBalance(nurseId, v.type, v.balanceHours, v.asOf),
     onSuccess: invalidate,
   });

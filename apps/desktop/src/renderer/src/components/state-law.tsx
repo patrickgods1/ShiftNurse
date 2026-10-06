@@ -11,7 +11,9 @@
 import {
   JURISDICTION_PRESETS,
   type JurisdictionId,
+  type JurisdictionPreset,
   type SetupPresetResult,
+  type Unit,
 } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useApplyJurisdiction } from '../api-setup.js';
@@ -28,6 +30,21 @@ function describeResult(result: SetupPresetResult): string {
   if (result.updated > 0) parts.push(`${result.updated} updated`);
   if (result.unchanged > 0) parts.push(`${result.unchanged} already there`);
   return parts.length > 0 ? `Done: ${parts.join(', ')}.` : 'Nothing to change.';
+}
+
+/**
+ * What applying will do to the leave policy. A preset's policy goes in whole and only into a unit
+ * with none (`planJurisdiction`), so the line says "leaves" when the manager already set one.
+ */
+function leavePolicyLine(preset: JurisdictionPreset, unit: Unit): string {
+  const policy = preset.leavePolicy;
+  if (policy === undefined || unit.leavePolicy !== undefined) {
+    return 'Leaves your leave policy as it is';
+  }
+  const rules = policy.accrual.length;
+  return `Sets the leave policy: ${policy.fmla.regime === 'title5' ? 'Title 5' : 'Title I'} FMLA, ${
+    policy.leaveYearStart === 'first_full_pay_period' ? 'federal' : 'calendar'
+  } leave year, ${rules} accrual ${rules === 1 ? 'rule' : 'rules'}`;
 }
 
 export function StateLawSection() {
@@ -88,6 +105,11 @@ export function StateLawSection() {
       {preset ? (
         <p className="text-sm text-text" data-testid="state-law-summary">
           {preset.summary}
+        </p>
+      ) : null}
+      {preset ? (
+        <p className="text-sm text-text" data-testid="state-law-leave">
+          {leavePolicyLine(preset, unit)}.
         </p>
       ) : null}
       <div className="flex items-center gap-3">

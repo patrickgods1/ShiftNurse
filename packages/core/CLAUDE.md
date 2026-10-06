@@ -208,6 +208,15 @@
   hard, shift scope, on by default and silent without preceptorships) counts a preceptor on the
   shift or on the one it runs inside; standby is not judged. CP-SAT prices it at `hardShortfall`
   (`encodePreceptor`).
-- **Leave balances and FMLA warn, never block.** `leave/balances.ts`: `checkLeaveBalance`, and
-  FMLA as 12 of the nurse's usual weeks over the rolling year back from the date
-  (`fmlaRemaining`; 29 February goes to 1 March) with `fmlaEligibility`'s two tests.
+- **Leave balances and FMLA warn, never block.** `leave/balances.ts`: `checkLeaveBalance`.
+  `leave/accrual.ts`: `projectBalance` carries payroll's figure forward to a date — accrual on
+  each closed pay period's last day by the nurse's `AccrualRule` (first match wins; tiers by
+  years since `hireDate ?? seniorityDate`), a balance cap, approved use, and the carryover cap
+  forfeiting the excess at each leave-year start (federal: the first full pay period of January).
+  Same-day order is forfeit, accrue, use. `leave/fmla.ts` is regime-aware: Title I (29 C.F.R.
+  § 825) has the 1,250-hour test, 12 × the usual (or 52-week average) week, and the unit's
+  choice of the four 12-month methods; Title 5 (5 C.F.R. § 630.1203, VA staff) has no hours test,
+  6 × the biweekly tour, and a period always measured forward from first use. Periods are
+  inclusive; rolling back is the 365 days ending on the date. `leave/policy.ts` validates a
+  unit's `LeavePolicy`; absent, a unit runs `DEFAULT_LEAVE_POLICY` (Title I, rolling back, no
+  accrual).

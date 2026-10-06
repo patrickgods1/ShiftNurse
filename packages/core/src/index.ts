@@ -63,6 +63,8 @@ export type {
 // Call-off replacement finder and live staffing check
 export { checkStaffing, findReplacements, shiftsAround } from './dayof/index.js';
 export type {
+  AccrualRule,
+  AccrualTier,
   AcuityTier,
   Assignment,
   AssignmentSource,
@@ -80,10 +82,16 @@ export type {
   DifferentialKind,
   EmploymentType,
   FairnessLedgerEntry,
+  FmlaPolicy,
+  FmlaRegime,
+  FmlaYearMethod,
   Holiday,
   HppdTarget,
   Id,
   IncompatibilityGroup,
+  LeaveBalanceType,
+  LeavePolicy,
+  LeaveYearStart,
   Nurse,
   NurseCredential,
   NurseRole,
@@ -110,7 +118,14 @@ export type {
   Unit,
 } from './domain/entities.js';
 // Plain-data entities and their enums
-export { EMPLOYMENT_TYPE_LABELS, EMPLOYMENT_TYPES } from './domain/entities.js';
+export {
+  DEFAULT_LEAVE_POLICY,
+  EMPLOYMENT_TYPE_LABELS,
+  EMPLOYMENT_TYPES,
+  LEAVE_BALANCE_TYPES,
+  TIME_OFF_TYPE_LABELS,
+  TIME_OFF_TYPES,
+} from './domain/entities.js';
 export type { IsoDate, Weekday, WeekendDefinition } from './domain/time.js';
 // The wall-clock time model: every date and minute calculation goes through here
 export {
@@ -175,14 +190,16 @@ export {
   FAIRNESS_COMPONENT_LABELS,
   FAIRNESS_COMPONENTS,
 } from './fairness/types.js';
-export type { AccrualPolicy, BalanceCheck } from './leave/balances.js';
-// Leave balances and FMLA: accrual, balance checks, the rolling-year entitlement
+export type { BalanceProjection } from './leave/accrual.js';
 export {
-  accruedHours,
-  checkLeaveBalance,
-  fmlaEligibility,
-  fmlaRemaining,
-} from './leave/balances.js';
+  accrualRuleFor,
+  leaveYearStarts,
+  projectBalance,
+  yearsOfService,
+} from './leave/accrual.js';
+export type { BalanceCheck } from './leave/balances.js';
+// Leave balances and FMLA: accrual, balance checks, the rolling-year entitlement
+export { checkLeaveBalance } from './leave/balances.js';
 export type {
   BidResult,
   LeaveAward,
@@ -193,6 +210,14 @@ export type {
 } from './leave/bidding.js';
 // Seniority leave bidding: awards in seniority order, every denial reasoned
 export { awardBids, seniorityOrder } from './leave/bidding.js';
+export type { FmlaEntitlementBasis, FmlaPeriod } from './leave/fmla.js';
+export {
+  fmlaEligibility,
+  fmlaEntitlementHours,
+  fmlaPeriod,
+  fmlaStanding,
+} from './leave/fmla.js';
+export { validateLeavePolicy } from './leave/policy.js';
 export type {
   ComplianceAlert,
   ComplianceAlertKind,

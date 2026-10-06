@@ -29,7 +29,9 @@ import type {
   EmploymentType,
   Id,
   IsoDate,
+  LeaveBalanceType,
   LeaveBidChoice,
+  LeavePolicy,
   NurseRole,
   OvertimeRule,
   PeriodStatus,
@@ -87,6 +89,9 @@ export const unit = sqliteTable('unit', {
   postingLeadDays: integer('posting_lead_days'),
   // The state preset last applied (core's JurisdictionId); null until one is.
   jurisdiction: text('jurisdiction'),
+  // How the employer runs FMLA, the leave year and accrual (core's LeavePolicy); null means the
+  // pre-policy reading, so every existing unit behaves as it did.
+  leavePolicy: text('leave_policy', { mode: 'json' }).$type<LeavePolicy>(),
 });
 
 export const shiftType = sqliteTable(
@@ -134,6 +139,8 @@ export const nurse = sqliteTable(
     fte: real('fte').notNull(),
     contractedHoursPerPeriod: real('contracted_hours_per_period').notNull(),
     seniorityDate: isoDate('seniority_date').notNull(),
+    // When employment began, if not the seniority date (bridged service); null means the same.
+    hireDate: isoDate('hire_date'),
     isChargeEligible: bool('is_charge_eligible').notNull().default(false),
     isNovice: bool('is_novice').notNull().default(false),
     isFloatEligible: bool('is_float_eligible').notNull().default(true),
@@ -384,7 +391,7 @@ export const leaveBalance = sqliteTable(
       .notNull()
       .references(() => nurse.id, { onDelete: 'cascade' })
       .$type<Id>(),
-    type: text('type').notNull().$type<'pto' | 'sick'>(),
+    type: text('type').notNull().$type<LeaveBalanceType>(),
     balanceHours: real('balance_hours').notNull(),
     asOf: isoDate('as_of').notNull().$type<IsoDate>(),
     updatedAt: timestamp('updated_at').notNull(),

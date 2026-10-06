@@ -160,6 +160,12 @@ function NurseSummary({ nurse }: { nurse: Nurse }) {
         <dd className="text-text">{nurse.contractedHoursPerPeriod}</dd>
         <dt>Seniority date</dt>
         <dd className="text-text">{formatDate(nurse.seniorityDate)}</dd>
+        {nurse.hireDate ? (
+          <>
+            <dt>Hire date</dt>
+            <dd className="text-text">{formatDate(nurse.hireDate)}</dd>
+          </>
+        ) : null}
         {nurse.phone ? (
           <>
             <dt>Phone</dt>

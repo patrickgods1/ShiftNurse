@@ -619,8 +619,13 @@ Directive 1351) against what a unit can configure. One PR per milestone.
       holdovers) (verified 2026-10-05: `npm run check` 2,105 tests passed, 2 skipped; the VA
       history passes every demo check seeded on eight dates across 2026–27; the community and ICU
       demos' data unchanged, table by table)
-- [ ] M29 Leave model: VA and state leave types, a hire date apart from seniority, FMLA by
+- [x] M29 Leave model: VA and state leave types, a hire date apart from seniority, FMLA by
       regime (Title I / Title 5) and leave-year method, accrual with carryover caps
+      (a unit `leavePolicy` set under Settings › Leave or by the `US-VA` and `CA` presets; balances
+      projected from payroll's figure to the request's first day; VA ceilings checked against the
+      VA's Title 38 leave fact sheet and 5 C.F.R. § 630.1203) (verified 2026-10-06: `npm run check`
+      lint and typecheck clean, 2,212 tests passed, 2 skipped; smoke PASS; the community and ICU
+      demos' tables byte-identical before and after)
 - [ ] M30 Contract rules: tour rotation limits, rest waivers, overtime rosters, float rotation,
       per-diem commitments, holiday priority, consent to change a posted shift, hard accommodations
 - [ ] M31 Holdovers: worked time past a shift's end, mandated or volunteered — the model has

@@ -5,7 +5,14 @@
  */
 
 import type { Id, IsoDate, Nurse, TimeOffType } from '@shiftnurse/core';
-import { compareDates, daysBetween, isIsoDate, suggestedPaidLeaveHours } from '@shiftnurse/core';
+import {
+  compareDates,
+  daysBetween,
+  isIsoDate,
+  suggestedPaidLeaveHours,
+  TIME_OFF_TYPE_LABELS,
+  TIME_OFF_TYPES,
+} from '@shiftnurse/core';
 import { useEffect, useState } from 'react';
 import { useShiftTypesList } from '../../api-config.js';
 import { useCreateTimeOff } from '../../api-requests.js';
@@ -16,14 +23,10 @@ import { useUnit } from '../../unit-context.js';
 import { LeaveStanding } from './leave-standing.js';
 import { typicalShiftHours } from './paid-hours.js';
 
-const TYPES: { value: TimeOffType; label: string }[] = [
-  { value: 'pto', label: 'PTO' },
-  { value: 'sick', label: 'Sick (paid)' },
-  { value: 'unpaid', label: 'Unpaid' },
-  { value: 'fmla', label: 'FMLA' },
-  { value: 'education', label: 'Education' },
-  { value: 'bereavement', label: 'Bereavement' },
-];
+const TYPES: { value: TimeOffType; label: string }[] = TIME_OFF_TYPES.map((value) => ({
+  value,
+  label: TIME_OFF_TYPE_LABELS[value],
+}));
 
 interface NewRequestDialogProps {
   open: boolean;

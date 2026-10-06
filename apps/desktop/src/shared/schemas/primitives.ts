@@ -80,6 +80,37 @@ export const ratioStaffing = z.strictObject({
   chargeCoversBreaks: z.boolean(),
 });
 
+/**
+ * A unit's leave policy, by shape only. Whether a tier is out of order or a fixed year has no
+ * start is `validateLeavePolicy`'s call, in words the manager can act on; a stricter schema here
+ * would refuse the policy with a zod message instead.
+ */
+const accrualTier = z.strictObject({
+  fromYearsOfService: z.number(),
+  hoursPerPayPeriod: z.number().optional(),
+  hoursPerAccruedHour: z.number().optional(),
+});
+
+const accrualRule = z.strictObject({
+  balanceType: z.enum(['pto', 'annual', 'sick', 'comp']),
+  roles: z.array(nurseRole).optional(),
+  employmentTypes: z.array(z.enum(['full_time', 'part_time', 'per_diem', 'agency'])).optional(),
+  tiers: z.array(accrualTier),
+  balanceCapHours: z.number().optional(),
+  carryoverCapHours: z.number().optional(),
+  citation: z.string().optional(),
+});
+
+export const leavePolicy = z.strictObject({
+  fmla: z.strictObject({
+    regime: z.enum(['title1', 'title5']),
+    yearMethod: z.enum(['calendar', 'fixed', 'rolling_forward', 'rolling_backward']),
+    fixedYearStart: z.string().optional(),
+  }),
+  leaveYearStart: z.enum(['calendar', 'first_full_pay_period']),
+  accrual: z.array(accrualRule),
+});
+
 /** Days of notice before a period starts by which its schedule must be posted. */
 export const postingLeadDays = z
   .number()

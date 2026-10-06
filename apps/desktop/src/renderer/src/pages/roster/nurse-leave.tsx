@@ -1,14 +1,22 @@
 /**
- * A nurse's leave: the PTO and sick balances payroll reports, and their FMLA certifications.
+ * A nurse's leave: the balances payroll reports (PTO, annual, sick, comp time), and their FMLA
+ * certifications.
  *
- * The app does not accrue leave — payroll owns the figure and the manager copies it in with the
- * date it was true on, so a request can be checked against it and a stale number reads as stale.
+ * Payroll owns the figure and the manager copies it in with the date it was true on; a request is
+ * checked against it carried forward by the unit's leave policy (Settings › Leave), so a stale
+ * number reads as stale. Only the balances a nurse has are listed; the rest are offered.
  * Every change is audited with what it was before. A certification is the record behind an FMLA
  * request; its dates are inclusive.
  */
 
 import type { FmlaCertificationRecord, LeaveBalanceRecord } from '@shared/api.js';
-import type { Id, IsoDate } from '@shiftnurse/core';
+import {
+  type Id,
+  type IsoDate,
+  LEAVE_BALANCE_TYPES,
+  type LeaveBalanceType,
+  TIME_OFF_TYPE_LABELS,
+} from '@shiftnurse/core';
 import { useId, useState } from 'react';
 import {
   useAddCertification,
@@ -23,13 +31,15 @@ import { DateField } from '../../components/date-field.js';
 import { errorMessage, INPUT, PRIMARY, SECONDARY, SMALL } from '../../components/ui.js';
 import { formatDate } from '../../format.js';
 
-const TYPES = [
-  { type: 'pto', label: 'PTO' },
-  { type: 'sick', label: 'Sick' },
-] as const;
-
 export function LeaveSection({ nurseId }: { nurseId: Id }) {
   const records = useLeaveRecords(nurseId);
+  // Types the manager has opened a row for but not yet saved: a balance on file always shows.
+  const [adding, setAdding] = useState<readonly LeaveBalanceType[]>([]);
+  const hasBalance = (type: LeaveBalanceType) =>
+    records.data?.balances.some((b) => b.type === type) ?? false;
+  const shown = LEAVE_BALANCE_TYPES.filter((t) => hasBalance(t) || adding.includes(t));
+  const offered = LEAVE_BALANCE_TYPES.filter((t) => !shown.includes(t));
+
   return (
     <section data-testid="nurse-leave" className="mt-6">
       <h3 className="mb-1 text-sm font-semibold text-text">Leave</h3>
@@ -44,16 +54,30 @@ export function LeaveSection({ nurseId }: { nurseId: Id }) {
       ) : (
         <>
           <div className="flex flex-col gap-3">
-            {TYPES.map(({ type, label }) => (
+            {shown.map((type) => (
               <BalanceRow
                 key={`${type}-${records.data.balances.find((b) => b.type === type)?.asOf ?? ''}`}
                 nurseId={nurseId}
                 type={type}
-                label={label}
+                label={TIME_OFF_TYPE_LABELS[type]}
                 saved={records.data.balances.find((b) => b.type === type)}
               />
             ))}
           </div>
+          {offered.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {offered.map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  className={SMALL}
+                  onClick={() => setAdding((prev) => [...prev, type])}
+                >
+                  {`Add ${TIME_OFF_TYPE_LABELS[type]} balance`}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <Certifications nurseId={nurseId} certifications={records.data.certifications} />
         </>
       )}
@@ -68,7 +92,7 @@ function BalanceRow({
   saved,
 }: {
   nurseId: Id;
-  type: 'pto' | 'sick';
+  type: LeaveBalanceType;
   label: string;
   saved: LeaveBalanceRecord | undefined;
 }) {

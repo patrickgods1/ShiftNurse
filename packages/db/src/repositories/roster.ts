@@ -55,6 +55,7 @@ function buildNurseRow(id: Id, input: Omit<Nurse, 'id'>): typeof nurseTable.$inf
     fte: input.fte,
     contractedHoursPerPeriod: input.contractedHoursPerPeriod,
     seniorityDate: input.seniorityDate,
+    hireDate: input.hireDate ?? null,
     isChargeEligible: input.isChargeEligible,
     isNovice: input.isNovice,
     isFloatEligible: input.isFloatEligible,
@@ -152,6 +153,8 @@ export interface NursePatch {
   fte?: number;
   contractedHoursPerPeriod?: number;
   seniorityDate?: IsoDate;
+  /** `null` clears it: the seniority date is then the start of employment. */
+  hireDate?: IsoDate | null;
   isChargeEligible?: boolean;
   isNovice?: boolean;
   isFloatEligible?: boolean;
@@ -170,6 +173,7 @@ const NURSE_PATCH_KEYS: PatchKeys<NursePatch> = {
   fte: true,
   contractedHoursPerPeriod: true,
   seniorityDate: true,
+  hireDate: true,
   isChargeEligible: true,
   isNovice: true,
   isFloatEligible: true,
