@@ -34,9 +34,11 @@ describe('the California ICU demo', () => {
   });
 
   it("pays overtime on California's 12-hour alternative workweek", () => {
-    expect(f.rows('SELECT basis, threshold_hours FROM overtime_rule ORDER BY basis')).toEqual([
-      { basis: 'daily', threshold_hours: 12 },
-      { basis: 'weekly', threshold_hours: 40 },
+    expect(
+      f.rows('SELECT basis, threshold_hours, multiplier FROM overtime_rule ORDER BY basis'),
+    ).toEqual([
+      { basis: 'daily', threshold_hours: 12, multiplier: 2 },
+      { basis: 'weekly', threshold_hours: 40, multiplier: 1.5 },
     ]);
   });
 

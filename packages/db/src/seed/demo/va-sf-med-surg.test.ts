@@ -141,6 +141,15 @@ describe('the VA San Francisco med-surg demo', () => {
     expect(patterns.filter((p) => p.hours > 80 && p.overtime === 0)).toEqual([]);
   });
 
+  it('prices overtime past the tour and past 80 hours a pay period, once each', () => {
+    expect(
+      f.rows('SELECT basis, threshold_hours, multiplier FROM overtime_rule ORDER BY basis'),
+    ).toEqual([
+      { basis: 'beyond_scheduled_tour', threshold_hours: 0, multiplier: 1.5 },
+      { basis: 'pay_period', threshold_hours: 80, multiplier: 1.5 },
+    ]);
+  });
+
   it('starts the next four-week schedule on a federal pay-period boundary', () => {
     // Federal pay periods run from Sunday 12 January 2025 in 14-day steps: 27 September 2026 is
     // mid-period, 4 October 2026 (630 days, 45 periods on) starts one.

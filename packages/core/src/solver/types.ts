@@ -156,7 +156,10 @@ export interface ObjectiveWeights {
    * rule set makes it hard — costs `hardShortfall` per missing (or excess) person per 12 hours.
    */
   incompatibility: number;
-  /** Scales the fairness term: weighted sum of squared positive burden deviations. */
+  /**
+   * Scales the fairness term: weighted sum of positive burden deviations (carried minus fair
+   * share, linear).
+   */
   fairness: number;
   /** Per unit of preference weight (1–5, seniority-scaled) an assignment runs against. */
   preference: number;

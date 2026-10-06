@@ -1,5 +1,6 @@
 /** Argument schemas for `setup`. */
 
+import { JURISDICTION_IDS } from '@shiftnurse/core';
 import { z } from 'zod';
 import {
   count,
@@ -72,6 +73,6 @@ export const setupSchemas = {
   complete: none,
   resume: none,
   applyPreset: z.tuple([id, preset]),
-  applyJurisdiction: z.tuple([id, z.enum(['CA', 'OR', 'NY', 'WA', 'MA', 'US-VA', 'other'])]),
+  applyJurisdiction: z.tuple([id, z.enum(JURISDICTION_IDS)]),
   startOver: none,
 } satisfies ResourceSchemas<'setup'>;
