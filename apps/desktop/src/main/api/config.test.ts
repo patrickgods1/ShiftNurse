@@ -6,9 +6,10 @@
  */
 
 import { isoDate } from '@shiftnurse/core';
-import { auditHistoryFor, recentAudit } from '@shiftnurse/db';
+import { applyJurisdiction, auditHistoryFor, recentAudit, transact } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { configApi } from './config.js';
+import { ACTOR } from './context.js';
 import { type Fixture, openFixture } from './test-fixture.js';
 
 let f: Fixture;
@@ -255,6 +256,26 @@ describe('the rule set', () => {
     expect(saved.configs).toHaveLength(latest.configs.length);
     expect(api().rules.getLatest(unitId()).id).toBe(saved.id);
     expect(auditsOf('rule_set', saved.id)[0]!.action).toBe('create');
+  });
+
+  it('asks for a reason before a Virginia unit switches off the ban on mandatory overtime', () => {
+    transact(f.handle.db, (tx) => applyJurisdiction(tx, unitId(), 'US-VA', ACTOR));
+    const latest = api().rules.getLatest(unitId());
+    const off = latest.configs.map((c) =>
+      c.ruleId === 'no-mandatory-overtime' ? { ...c, enabled: false } : c,
+    );
+    const save = (reason?: string) =>
+      api().rules.save(
+        unitId(),
+        'Without the ban',
+        off,
+        latest.weekendDefinition,
+        latest.fairnessWeights,
+        reason,
+      );
+    expect(() => save()).toThrow(/Switching off or softening/);
+    expect(() => save('   ')).toThrow(/Switching off or softening/);
+    expect(save('Union side letter, 2026-09')).toMatchObject({ name: 'Without the ban' });
   });
 
   it('saves nothing when a config fails after the header is written', () => {

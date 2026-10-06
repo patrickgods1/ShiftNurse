@@ -92,7 +92,7 @@ export function configApi(
     },
     rules: {
       getLatest: (unitId) => latestRuleSetOrDefault(db, unitId),
-      save: (unitId, name, configs, weekendDefinition, fairnessWeights) =>
+      save: (unitId, name, configs, weekendDefinition, fairnessWeights, reason) =>
         transact(db, (tx) =>
           saveRuleSet(
             tx,
@@ -104,6 +104,7 @@ export function configApi(
               fairnessWeights,
             },
             ACTOR,
+            { reason: reason?.trim() || undefined },
           ),
         ),
     },

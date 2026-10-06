@@ -43,5 +43,12 @@ const fairnessWeights = object({
 
 export const rulesSchemas = {
   getLatest: z.tuple([id]),
-  save: z.tuple([id, text, z.array(ruleConfig), weekendDefinition, fairnessWeights]),
+  save: z.tuple([
+    id,
+    text,
+    z.array(ruleConfig),
+    weekendDefinition,
+    fairnessWeights,
+    text.optional(),
+  ]),
 } satisfies ResourceSchemas<'rules'>;

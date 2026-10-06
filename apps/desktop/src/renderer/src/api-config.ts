@@ -392,13 +392,15 @@ export function useSaveRuleSet() {
       configs,
       weekendDefinition,
       fairnessWeights,
+      reason,
     }: {
       unitId: Id;
       name: string;
       configs: RuleSet['configs'];
       weekendDefinition: RuleSet['weekendDefinition'];
       fairnessWeights: RuleSet['fairnessWeights'];
-    }) => api.rules.save(unitId, name, configs, weekendDefinition, fairnessWeights),
+      reason?: string;
+    }) => api.rules.save(unitId, name, configs, weekendDefinition, fairnessWeights, reason),
     onSuccess: (saved) => {
       queryClient.invalidateQueries({ queryKey: configKeys.rules(saved.unitId) });
       invalidateUnitDerived(queryClient, saved.unitId);

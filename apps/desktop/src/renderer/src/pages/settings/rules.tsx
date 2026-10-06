@@ -34,6 +34,7 @@ import {
   hoursToMinutes,
   minutesToHours,
   parseTimeOfDay,
+  protectedRuleChanges,
   resolveConfigs,
   WEEKDAY_NAMES,
 } from '@shiftnurse/core';
@@ -45,7 +46,7 @@ import { EditorShell } from '../../components/editor-shell.js';
 import { CheckField, describedBy, Field, InfoTip } from '../../components/field-help.js';
 import { INPUT } from '../../components/ui.js';
 import { formatInstant } from '../../format.js';
-import { useUnitId } from '../../unit-context.js';
+import { useUnit } from '../../unit-context.js';
 import { invalidParams, numberFieldValue, paramError, withNumberParam } from './rule-params.js';
 
 type RuleCategory = (typeof ALL_RULES)[number]['category'];
@@ -618,7 +619,8 @@ function FairnessWeightsSection({
 // ---------------------------------------------------------------------------
 
 export default function RulesPanel() {
-  const unitId = useUnitId();
+  const unit = useUnit();
+  const unitId = unit.id;
   const ruleSetQuery = useRuleSet(unitId);
   const saveMutation = useSaveRuleSet();
 
@@ -628,6 +630,7 @@ export default function RulesPanel() {
   const [weekendDefinition, setWeekendDefinition] = useState<WeekendDefinition>(DEFAULT_WEEKEND);
   const [fairnessWeights, setFairnessWeights] = useState<FairnessWeights>(DEFAULT_FAIRNESS_WEIGHTS);
   const [savedMessage, setSavedMessage] = useState<string | undefined>(undefined);
+  const [reason, setReason] = useState('');
   const [savedVersion, setSavedVersion] = useState<number | undefined>(undefined);
 
   const data = ruleSetQuery.data;
@@ -675,6 +678,10 @@ export default function RulesPanel() {
   const problems = invalidParams(ALL_RULES, configs);
   const weekendError = weekendDurationError(weekendDefinition);
   if (weekendError !== undefined) problems.push('Weekend definition: Length (hours)');
+  // Switching off or softening a protected rule (the ratio rule, a rule a state preset turned on)
+  // must be explained, and the repository refuses it otherwise, so ask here rather than surface that.
+  const loosened = protectedRuleChanges(resolveConfigs(data), configs, unit.jurisdiction);
+  if (loosened.length > 0 && reason.trim() === '') problems.push('Reason for the change');
 
   function updateConfig(ruleId: string, next: RuleConfig) {
     setConfigs((prev) => prev.map((c) => (c.ruleId === ruleId ? next : c)));
@@ -685,15 +692,24 @@ export default function RulesPanel() {
     setConfigs(resolveConfigs(data!));
     setWeekendDefinition(data!.weekendDefinition);
     setFairnessWeights(data!.fairnessWeights);
+    setReason('');
     setSavedMessage(undefined);
   }
 
   function save() {
     saveMutation.mutate(
-      { unitId, name, configs, weekendDefinition, fairnessWeights },
+      {
+        unitId,
+        name,
+        configs,
+        weekendDefinition,
+        fairnessWeights,
+        reason: loosened.length > 0 ? reason.trim() : undefined,
+      },
       {
         onSuccess: (saved) => {
           setSavedVersion(saved.version);
+          setReason('');
           setSavedMessage(`Saved version ${saved.version}`);
         },
       },
@@ -781,6 +797,42 @@ export default function RulesPanel() {
             </section>
           );
         })}
+
+        {loosened.length > 0 ? (
+          <section
+            data-testid="rules-reason-section"
+            className="rounded-md border border-warn bg-surface p-4"
+          >
+            <p className="text-sm text-text">
+              {loosened
+                .map(
+                  (change) =>
+                    `${ALL_RULES.find((r) => r.id === change.ruleId)?.name ?? change.ruleId} ${
+                      change.change === 'disabled' ? 'is switched off' : 'is made advisory'
+                    }`,
+                )
+                .join('; ')}
+              . A change like this needs a reason.
+            </p>
+            <Field
+              id="rules-reason"
+              label="Reason"
+              hint="Recorded with this version; it is what gets quoted if the change is questioned."
+              className="mt-3"
+            >
+              <textarea
+                id="rules-reason"
+                data-testid="rules-reason"
+                required
+                rows={2}
+                value={reason}
+                aria-describedby={describedBy('rules-reason', { hint: true })}
+                onChange={(event) => setReason(event.target.value)}
+                className={INPUT}
+              />
+            </Field>
+          </section>
+        ) : null}
 
         {savedMessage !== undefined && !dirty ? (
           <p role="status" className="text-sm text-success">

@@ -38,6 +38,26 @@ describe('the community med-surg demo', () => {
     ).toEqual([{ max: 5 }]);
   });
 
+  it('runs under the California preset: 1:5 for every patient and no pyramided overtime', () => {
+    expect(f.rows(`SELECT jurisdiction FROM unit WHERE id = '${f.result.unitId}'`)).toEqual([
+      { jurisdiction: 'CA' },
+    ]);
+    // Title 22 § 70217(a): med-surg 1:5, for a patient at any acuity tier.
+    expect(
+      f.rows(`SELECT max_patients_per_nurse max FROM ratio_rule
+                WHERE role = 'RN' AND acuity_tier_id IS NULL AND active = 1`),
+    ).toEqual([{ max: 5 }]);
+    expect(
+      f.rows(`SELECT threshold_hours, multiplier, pyramiding FROM overtime_rule
+                WHERE basis = 'weekly'`),
+    ).toEqual([{ threshold_hours: 40, multiplier: 1.5, pyramiding: 'none' }]);
+    // Three 12s a week is the alternative workweek a full-time 12-hour nurse works.
+    expect(
+      f.rows(`SELECT DISTINCT scheduled_days_per_week days FROM nurse
+                WHERE employment_type = 'full_time'`),
+    ).toEqual([{ days: 3 }]);
+  });
+
   it('observes the six holidays hospitals usually pay premium for', () => {
     const names = new Set(listHolidaysForUnit(f.handle.db, f.result.unitId).map((h) => h.name));
     expect(names).toEqual(

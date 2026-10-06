@@ -5,8 +5,14 @@
  * preset that overstated the law would be worse than none.
  *
  * Federal employers are the exception to "a state's law": the VA preset sets the Title 38 cap on
- * required hours and leaves ratios and pay to the manager, because HPPD and the § 7453 premiums
- * are not ratios or overtime rules the preset can state.
+ * required hours, the § 7453 premiums and overtime, and the national contract's rest, posting and
+ * overtime-roster terms, and leaves ratios to the manager, because HPPD is not a ratio.
+ *
+ * A preset may ask yes/no questions at apply time (`options`) whose answers decide which of its
+ * rules apply (`when`): California's daily-8 overtime does not bind a 12-hour alternative
+ * workweek, and the VA's overtime turns on whether the nurse works a compressed tour. The app
+ * cannot tell either from the unit's data, and guessing would overstate the law for one kind of
+ * unit or the other. The answers are not stored; the plan is what they decided.
  *
  * A preset may also carry a leave policy: the FMLA regime, the leave year and the accrual rules
  * that project balances forward (`leave/accrual.ts`). It is proposed whole, and only to a unit
@@ -14,8 +20,12 @@
  *
  * Presets only tighten. A ratio arrives as a catch-all RN rule at the legal ceiling, which
  * `bindingRatio` combines with any stricter tier rule the unit already has; overtime rules are
- * added if missing; a rule is switched on, never off, and a cap parameter only lowers. Applying
- * one twice changes nothing.
+ * added if missing; a rule is switched on, never off, and a cap parameter only lowers. A
+ * differential is added only for a kind the unit pays nothing for, posting notice only lengthens
+ * and the overtime order is set only when the unit has none. A preset adds pay, it does not edit
+ * it: an overtime rule the unit already has is never retrofitted with the preset's pyramiding or
+ * minimum, because a manager's pay rule may follow a contract that says otherwise. Applying one
+ * twice changes nothing.
  *
  * Most state overtime laws restrict only hours a nurse is *required* to work: Oregon's 48-a-week
  * and 12-in-24 limits, Connecticut's, Rhode Island's. Those ride on `no-mandatory-overtime`, which
@@ -33,20 +43,21 @@
  *
  * Not legal advice, and not complete: a unit's contract usually goes further, and some of each
  * law (Oregon's staffing-plan deviations, its CNA limits, emergency-only exceptions) is stated in
- * the summary rather than enforced (as are the VA's § 7456 24-hour weekend-plan cap and its pay
- * premiums).
+ * the summary rather than enforced (as is the VA's § 7456 24-hour weekend-plan cap).
  */
 
 import {
   DEFAULT_LEAVE_POLICY,
+  type Differential,
   type LeavePolicy,
   type NurseRole,
+  type OvertimeOrder,
   type OvertimeRule,
   type RatioRule,
   type RatioStaffing,
   type Unit,
 } from '../domain/entities.js';
-import { resolveConfigs } from '../rules/registry.js';
+import { ALL_RULES, resolveConfigs } from '../rules/registry.js';
 import type { RuleConfig, RuleSet } from '../rules/types.js';
 import { type AcuityPresetId, acuityPresetForUnitType } from './presets.js';
 
@@ -131,16 +142,47 @@ export interface JurisdictionRatio {
   citation: string;
 }
 
+/** A yes/no question a preset asks when it is applied, about something the unit's data cannot say. */
+export interface JurisdictionOption {
+  id: string;
+  label: string;
+  hint: string;
+}
+
+/** Met when the manager's answer to `option` (absent = false) equals `is`. */
+export interface PresetCondition {
+  option: string;
+  is: boolean;
+}
+
+/** The manager's answers to a preset's options, by option id; an unanswered one is no. */
+export type JurisdictionChoices = Readonly<Record<string, boolean>>;
+
+export type PresetOvertimeRule = Pick<OvertimeRule, 'basis' | 'thresholdHours' | 'multiplier'> &
+  Partial<Pick<OvertimeRule, 'pyramiding' | 'minimumMinutes'>> & { when?: PresetCondition };
+
+/** A pay premium the law gives. `citation` documents the preset; a differential has no column for it. */
+export interface PresetDifferential
+  extends Pick<Differential, 'kind' | 'mode' | 'amount' | 'window'> {
+  citation: string;
+}
+
 export interface JurisdictionPreset {
   label: string;
   /** What applying it does and what it leaves to the hospital, for the manager to read first. */
   summary: string;
+  /** Questions asked at apply time; their answers decide which `when` rules apply. */
+  options?: readonly JurisdictionOption[];
   ratioStaffing?: RatioStaffing;
   /** Ceilings by the unit kinds the law names; other unit types get none. */
   ratios: Partial<Record<JurisdictionUnitKind, JurisdictionRatio>>;
-  overtimeRules: readonly Pick<OvertimeRule, 'basis' | 'thresholdHours' | 'multiplier'>[];
+  overtimeRules: readonly PresetOvertimeRule[];
   /** Rule ids switched on (with these parameters, if any): see {@link PresetRule}. */
   enableRules: readonly PresetRule[];
+  /** Added for each kind the unit pays no active differential for. */
+  differentials?: readonly PresetDifferential[];
+  /** Posting notice only lengthens; the overtime order is set only on a unit that has none. */
+  unit?: { postingLeadDays?: number; overtimeOrder?: OvertimeOrder };
   /** Proposed whole to a unit with no leave policy; never merged into one a manager set. */
   leavePolicy?: LeavePolicy;
 }
@@ -164,6 +206,8 @@ export interface PresetRule {
    * rule that has none tightens it.
    */
   absentCapIsUnlimited?: boolean;
+  /** Switched on only when the manager's answer meets this; absent, always. */
+  when?: PresetCondition;
 }
 
 const TITLE_22 = 'Cal. Code Regs. tit. 22 § 70217(a)';
@@ -177,6 +221,15 @@ const VA_HANDBOOK = 'VA Handbook 5011 pt. III ch. 2 (38 U.S.C. § 7421)';
 const TITLE_5_ANNUAL = '5 U.S.C. §§ 6303(a), 6304(a)';
 
 const NO_MANDATORY_OVERTIME = { ruleId: 'no-mandatory-overtime' } as const;
+
+const ALTERNATIVE_WORKWEEK = 'alternativeWorkweek';
+const ON_AWS: PresetCondition = { option: ALTERNATIVE_WORKWEEK, is: true };
+const OFF_AWS: PresetCondition = { option: ALTERNATIVE_WORKWEEK, is: false };
+
+const COMPRESSED_TOUR = 'compressedTour';
+const ON_COMPRESSED: PresetCondition = { option: COMPRESSED_TOUR, is: true };
+const OFF_COMPRESSED: PresetCondition = { option: COMPRESSED_TOUR, is: false };
+const TITLE_38_PAY = '38 U.S.C. § 7453';
 
 /** `long-stretch` with a state's numbers; any cap the law does not give stays unset. */
 function longStretch(params: Record<string, unknown>): PresetRule {
@@ -196,8 +249,15 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'turn on the patient, so set those as acuity-tier ratios. An hour of breaks per nurse on a 12-hour ' +
       'shift (a 30-minute meal and three 10-minute rests). Labor Code § 510 overtime: past 8 ' +
       'hours a workday at 1.5×, past 12 at 2×, past 40 a week at 1.5×, and the seventh day in a ' +
-      'row. A unit on a health-care alternative workweek (IWC Order 5 § 3(B)(8)) should remove ' +
-      'the 8-hour daily rule. Ratios here count RNs only; Title 22 lets LVNs (and psychiatric ' +
+      'row, with hours already paid at a daily premium not counted again toward the 40. Applying ' +
+      'asks whether the unit has adopted a health-care alternative workweek of 12-hour shifts ' +
+      '(IWC Order 5 § 3(B)(8)): if so the 8-hour daily rule is left out, work past 8 hours on a ' +
+      'day beyond the agreed number of workdays is paid double, and no nurse on a 12-hour shift ' +
+      'may be required to work more than 12 hours in 24. A declared health-care emergency, or a ' +
+      'relief nurse who does not come and gave less than 2 hours’ notice, is recorded on the ' +
+      'shift as "Emergency: …" and may run to 13; past that the rule refuses, so a longer ' +
+      'declared emergency needs the rule relaxed with a reason. Ratios here count RNs only; ' +
+      'Title 22 lets LVNs (and psychiatric ' +
       'technicians on a psychiatric unit) fill up to half. ' +
       'Sick leave accrues at 1 hour per 30 worked, up to 80 (Lab. Code § 246(b)): the statutory ' +
       'minimum, which a hospital PTO plan that meets it can replace.',
@@ -220,14 +280,46 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       oncology: rn(4, `${TITLE_22}(12): specialty care, oncology among it, 1:4`),
       psychiatric: rn(6, `${TITLE_22}(13): psychiatric 1:6`),
     },
+    options: [
+      {
+        id: ALTERNATIVE_WORKWEEK,
+        label:
+          'The unit has adopted a health-care alternative workweek of 12-hour shifts ' +
+          '(IWC Order 5 § 3(B)(8))',
+        hint:
+          'Leaves out overtime past 8 hours a day, pays double past 8 on a day beyond the ' +
+          'agreed workdays, and caps required hours at 12 in 24.',
+      },
+    ],
     overtimeRules: [
-      { basis: 'daily', thresholdHours: 8, multiplier: 1.5 },
+      { basis: 'daily', thresholdHours: 8, multiplier: 1.5, when: OFF_AWS },
+      // WO5 § 3(B)(8): "double the regular rate for any work in excess of eight (8) hours on those
+      // days worked beyond the regularly scheduled number of workdays established by the
+      // alternative workweek agreement".
+      { basis: 'beyond_scheduled_days', thresholdHours: 8, multiplier: 2, when: ON_AWS },
       { basis: 'daily', thresholdHours: 12, multiplier: 2 },
-      { basis: 'weekly', thresholdHours: 40, multiplier: 1.5 },
+      // Lab. Code § 510 as the DLSE reads it: hours paid at a daily premium are not counted again
+      // toward the weekly 40.
+      { basis: 'weekly', thresholdHours: 40, multiplier: 1.5, pyramiding: 'none' },
       { basis: 'seventh_day', thresholdHours: 0, multiplier: 1.5 },
       { basis: 'seventh_day', thresholdHours: 8, multiplier: 2 },
     ],
-    enableRules: [],
+    enableRules: [
+      // WO5 § 3(B)(8): "No employee assigned to work a 12-hour shift established pursuant to this
+      // order shall be required to work more than 12 hours in any 24-hour period unless the chief
+      // nursing officer or authorized executive declares that" a health-care emergency exists, and
+      // "An employee may be required to work up to 13 hours in any 24-hour period if the employee
+      // scheduled to relieve the subject employee does not report for duty as scheduled and does
+      // not inform the employer more than two (2) hours in advance." So 12 required hours is the
+      // cap; a declared emergency or a relief nurse's no-show is recorded on the shift as
+      // "Emergency: …" and may run to 13; past that the rule refuses, so a longer declared
+      // emergency needs the rule relaxed with a reason.
+      {
+        ...NO_MANDATORY_OVERTIME,
+        when: ON_AWS,
+        params: { maxRequiredConsecutiveHours: 12, emergencyMaxHoursPastShift: 1 },
+      },
+    ],
     leavePolicy: {
       fmla: DEFAULT_LEAVE_POLICY.fmla,
       leaveYearStart: 'calendar',
@@ -549,21 +641,87 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'plan: lower the cap under Settings › Rules for such nurses) or more than 8 consecutive ' +
       'hours (12 on a compressed tour, § 7456 or § 7456A), so a holdover recorded as required ' +
       'that runs a tour past those hours is refused; volunteers and emergencies recorded on the ' +
-      'shift as "Emergency: …" are outside it. Pay premiums are set under ' +
-      'Settings › Pay, not by this preset: 38 U.S.C. § 7453 gives a 10% night differential for ' +
-      'the whole tour when at least 4 hours fall between 6 pm and 6 am, a 25% weekend premium ' +
-      'for any tour touching Saturday or Sunday, double pay on holidays, and overtime past 40 ' +
-      'hours a week or 8 consecutive hours (or past the scheduled tour on a compressed ' +
-      'schedule). Contract terms such as 11 hours between tours or weekends off belong to the ' +
-      'local agreement, not the preset. Contract nurses employed by an agency may still be ' +
+      'shift as "Emergency: …" are outside it. The preset adds the 38 U.S.C. § 7453 premiums ' +
+      'a unit does not already pay: a 10% night differential for the whole tour when at least ' +
+      '4 hours fall between 6 pm and 6 am, a 25% weekend premium for any tour touching Saturday ' +
+      'or Sunday and double pay on holidays; and overtime at 1.5×, never for less than 15 ' +
+      'minutes, past 40 hours a week or 8 consecutive hours, or, when applying says the nurses ' +
+      'work compressed tours, past the scheduled tour or 80 hours in the pay period. Contract ' +
+      'terms come from the VA–NNU Master Agreement Art. 13–14: 11 hours between tours, the ' +
+      'weekend pattern, no more than two tours a schedule, five shifts in a row, posting four ' +
+      'weeks ahead and overtime called from the rosters; a unit under another local (San ' +
+      'Francisco: NFFE Local 1) should check its own agreement. Contract nurses employed by an agency may still be ' +
       'covered by state law. The preset also sets the unit’s leave policy: Title 5 FMLA, a leave ' +
       'year from the first full pay period, RN annual leave at 8 hours a pay period (685-hour ' +
       'carryover; 1 per 10 in pay status, 240, for part-time), sick leave at 4 hours a pay ' +
       'period (1 per 20 for part-time). VA LVNs and nursing assistants (hybrid Title 38) earn ' +
       'Title 5 leave, and the 6-hour tier’s extra 10 hours in the leave year’s last pay period ' +
       'is not added.',
+    options: [
+      {
+        id: COMPRESSED_TOUR,
+        label: 'Nurses work compressed 12-hour tours (38 U.S.C. § 7456 / § 7456A)',
+        hint:
+          'Pays overtime past the scheduled tour and past 80 hours in the pay period, instead of ' +
+          'past 40 a week and 8 consecutive hours.',
+      },
+    ],
     ratios: {},
-    overtimeRules: [],
+    // § 7453(e)(1); VA pays no overtime under 15 minutes. On a compressed tour, § 7453(e)(1) read
+    // with § 7456/7456A: overtime is work beyond the scheduled tour or past 80 in the pay period.
+    overtimeRules: [
+      {
+        basis: 'weekly',
+        thresholdHours: 40,
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        when: OFF_COMPRESSED,
+      },
+      {
+        basis: 'consecutive',
+        thresholdHours: 8,
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        when: OFF_COMPRESSED,
+      },
+      {
+        basis: 'beyond_scheduled_tour',
+        thresholdHours: 0,
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        when: ON_COMPRESSED,
+      },
+      {
+        basis: 'pay_period',
+        thresholdHours: 80,
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        when: ON_COMPRESSED,
+      },
+    ],
+    differentials: [
+      {
+        kind: 'night',
+        mode: 'multiplier',
+        amount: 1.1,
+        window: { startTime: '18:00', endTime: '06:00', wholeShiftAtHours: 4 },
+        citation: `${TITLE_38_PAY}(b): 10% for the whole tour with 4 hours between 6 pm and 6 am`,
+      },
+      {
+        kind: 'weekend',
+        mode: 'multiplier',
+        amount: 1.25,
+        citation: `${TITLE_38_PAY}(c): 25% for a tour on Saturday or Sunday`,
+      },
+      {
+        kind: 'holiday',
+        mode: 'multiplier',
+        amount: 2,
+        citation: `${TITLE_38_PAY}(d): double pay on a holiday`,
+      },
+    ],
+    // Art. 13: the schedule is posted four weeks ahead; Art. 14: overtime by the rosters.
+    unit: { postingLeadDays: 28, overtimeOrder: 'roster' },
     enableRules: [
       {
         ruleId: 'no-mandatory-overtime',
@@ -576,6 +734,13 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
           compressedTourConsecutiveHours: 12,
         },
       },
+      // The contract terms below are the VA–NNU Master Agreement (2023) Art. 13's.
+      { ruleId: 'min-rest-between-shifts', params: { minRestHours: 11 }, raise: ['minRestHours'] },
+      // Art. 13's "two weekends off in four" needs a per-four-weeks quota, which lands in a later
+      // phase; until then the rule's own pattern stands in for it.
+      { ruleId: 'weekend-pattern' },
+      { ruleId: 'tour-rotation', params: { maxToursPerPeriod: 2 } },
+      { ruleId: 'max-consecutive-shifts', params: { maxConsecutiveShifts: 5 } },
     ],
     leavePolicy: {
       fmla: { regime: 'title5', yearMethod: 'rolling_forward' },
@@ -654,6 +819,10 @@ export interface JurisdictionPlanInput {
   ratioStaffing?: Unit['ratioStaffing'];
   /** The unit's own leave policy, if it has set one. */
   leavePolicy?: LeavePolicy;
+  /** The unit's differentials; only active ones count as already paying a kind. */
+  differentials: readonly Differential[];
+  postingLeadDays?: number;
+  overtimeOrder?: OvertimeOrder;
 }
 
 /** The changes a preset makes, each list empty and each field absent when there is nothing to do. */
@@ -669,6 +838,10 @@ export interface JurisdictionPlan {
   ruleConfigs?: RuleConfig[];
   /** The preset's leave policy, only for a unit that has none. */
   leavePolicy?: LeavePolicy;
+  /** Premiums of a kind the unit pays nothing for. */
+  addDifferentials: Omit<Differential, 'id' | 'unitId'>[];
+  /** Only the unit fields that change. */
+  unit?: { postingLeadDays?: number; overtimeOrder?: OvertimeOrder };
 }
 
 /** The reading before a unit set anything: the charge nurse at the bedside, no break cover. */
@@ -693,14 +866,24 @@ export const JURISDICTION_IDS = Object.keys(JURISDICTION_PRESETS) as [
  * rule or adds one, never loosens; break minutes only grow; a charge nurse kept free of patients
  * stays free; the charge nurse covering breaks (which lowers the relief count) is taken from the
  * preset only by a unit that has never set break minutes. Missing overtime rules are added and
- * rules are switched on. Running the plan's result through it again plans nothing.
+ * rules are switched on. A rule with a `when` the manager's `choices` do not meet is left out.
+ * Running the plan's result through it again, with the same choices, plans nothing.
  */
 export function planJurisdiction(
   id: JurisdictionId,
   current: JurisdictionPlanInput,
+  choices: JurisdictionChoices = {},
 ): JurisdictionPlan {
   const preset = JURISDICTION_PRESETS[id];
-  const plan: JurisdictionPlan = { addRatioRules: [], tightenRatioRules: [], addOvertimeRules: [] };
+  const plan: JurisdictionPlan = {
+    addRatioRules: [],
+    tightenRatioRules: [],
+    addOvertimeRules: [],
+    addDifferentials: [],
+  };
+  const applies = (when: PresetCondition | undefined) =>
+    when === undefined || (choices[when.option] ?? false) === when.is;
+  const enableRules = preset.enableRules.filter((r) => applies(r.when));
 
   const kind = unitKindForUnitType(current.unitType);
   const ceiling = kind === undefined ? undefined : preset.ratios[kind];
@@ -724,7 +907,9 @@ export function planJurisdiction(
     }
   }
 
-  for (const rule of preset.overtimeRules) {
+  for (const { when, ...rule } of preset.overtimeRules) {
+    if (!applies(when)) continue;
+    // Matched on what the rule pays, not how: an existing rule keeps its own pyramiding and minimum.
     const present = current.overtimeRules.some(
       (r) =>
         r.active &&
@@ -756,11 +941,27 @@ export function planJurisdiction(
     if (changed) plan.ratioStaffing = next;
   }
 
-  if (preset.enableRules.length > 0) {
+  for (const { citation: _citation, ...d } of preset.differentials ?? []) {
+    const paid = current.differentials.some((have) => have.active && have.kind === d.kind);
+    if (!paid) plan.addDifferentials.push({ ...d, active: true });
+  }
+
+  const unit: NonNullable<JurisdictionPlan['unit']> = {};
+  const lead = preset.unit?.postingLeadDays;
+  if (
+    lead !== undefined &&
+    (current.postingLeadDays === undefined || current.postingLeadDays < lead)
+  )
+    unit.postingLeadDays = lead;
+  const order = preset.unit?.overtimeOrder;
+  if (order !== undefined && current.overtimeOrder === undefined) unit.overtimeOrder = order;
+  if (Object.keys(unit).length > 0) plan.unit = unit;
+
+  if (enableRules.length > 0) {
     const configs = resolveConfigs(current.ruleSet);
     let changed = false;
     const next = configs.map((c) => {
-      const wanted = preset.enableRules.find((e) => e.ruleId === c.ruleId);
+      const wanted = enableRules.find((e) => e.ruleId === c.ruleId);
       if (!wanted) return c;
       const params = { ...c.params };
       let touched = !c.enabled;
@@ -794,4 +995,46 @@ export function planJurisdiction(
     plan.leavePolicy = preset.leavePolicy;
 
   return plan;
+}
+
+/** The rule that holds a unit to its ratios, protected whatever the state. */
+const RATIO_RULE_ID = 'patient-ratio-compliance';
+
+export interface ProtectedRuleChange {
+  ruleId: string;
+  change: 'disabled' | 'softened';
+}
+
+/**
+ * The edits in `next` that loosen a rule the law put in force: the ratio rule, and every rule the
+ * unit's preset switches on (whatever the answers, since the app does not keep them). Disabling
+ * one, or making a hard one advisory, is named so the caller can ask for a reason; a preset only
+ * tightens, so this is the one place a unit can quietly fall below it. A rule absent from
+ * `previous` was never in force here and counts as untouched; one absent from `next` counts as
+ * switched off.
+ */
+export function protectedRuleChanges(
+  previous: readonly RuleConfig[],
+  next: readonly RuleConfig[],
+  jurisdiction: JurisdictionId | undefined,
+): ProtectedRuleChange[] {
+  const ids = new Set([RATIO_RULE_ID]);
+  if (jurisdiction !== undefined) {
+    for (const r of JURISDICTION_PRESETS[jurisdiction].enableRules) ids.add(r.ruleId);
+  }
+  const changes: ProtectedRuleChange[] = [];
+  for (const before of previous) {
+    if (!ids.has(before.ruleId) || !before.enabled) continue;
+    const after = next.find((c) => c.ruleId === before.ruleId);
+    if (!after?.enabled) {
+      changes.push({ ruleId: before.ruleId, change: 'disabled' });
+      continue;
+    }
+    const natural = ALL_RULES.find((r) => r.id === before.ruleId)?.severity;
+    const was = before.severityOverride ?? natural;
+    const now = after.severityOverride ?? natural;
+    if (was === 'hard' && now === 'soft')
+      changes.push({ ruleId: before.ruleId, change: 'softened' });
+  }
+  return changes;
 }

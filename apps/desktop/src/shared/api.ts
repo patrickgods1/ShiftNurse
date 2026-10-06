@@ -51,6 +51,7 @@ import type {
   Id,
   IncompatibilityGroup,
   IsoDate,
+  JurisdictionChoices,
   JurisdictionId,
   LeaveAward,
   LeaveBalanceType,
@@ -1121,8 +1122,14 @@ export interface ShiftNurseApi {
     /**
      * Applies a state's ratio ceilings, overtime rules and rule switches to the unit, only ever
      * tightening, and remembers the choice on the unit. Pressing it twice changes nothing.
+     * `choices` answers the preset's apply-time questions (`JurisdictionPreset.options`, e.g.
+     * California's alternative workweek) by option id; an unanswered one takes the default reading.
      */
-    applyJurisdiction(unitId: Id, jurisdiction: JurisdictionId): SetupPresetResult;
+    applyJurisdiction(
+      unitId: Id,
+      jurisdiction: JurisdictionId,
+      choices?: JurisdictionChoices,
+    ): SetupPresetResult;
     /**
      * Saves the live database as a `pre-reset` backup, deletes it and relaunches into the
      * welcome screen. The call returns before the relaunch.
@@ -1436,6 +1443,8 @@ export interface ShiftNurseApi {
       configs: RuleSet['configs'],
       weekendDefinition: RuleSet['weekendDefinition'],
       fairnessWeights: RuleSet['fairnessWeights'],
+      /** Why a protected rule was switched off or softened; refused without one, blank is absent. */
+      reason?: string,
     ): RuleSet;
   };
   fairness: {

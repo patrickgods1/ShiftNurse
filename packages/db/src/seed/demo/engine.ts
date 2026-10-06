@@ -63,6 +63,7 @@ import {
   type IncompatibilityGroup,
   type IsoDate,
   isWeekendDate,
+  type JurisdictionChoices,
   type JurisdictionId,
   type LeaveBalanceType,
   type Nurse,
@@ -103,6 +104,7 @@ import {
   createShiftCredentialRequirement,
   createShiftType,
   createUnit,
+  getUnit,
   upsertCoverageRequirement,
 } from '../../repositories/config.js';
 import { recordHoldover } from '../../repositories/holdovers.js';
@@ -191,6 +193,8 @@ export interface DemoRosterRow {
   count: number;
   /** How many of these are new graduates in their first year (RN rows only). */
   newGrads?: number;
+  /** Days a week the position is scheduled for; without it `beyond_scheduled_days` is inert. */
+  scheduledDaysPerWeek?: number;
 }
 
 export interface DemoPayInput {
@@ -317,6 +321,8 @@ export interface DemoProfile {
    * any period, so every published period snapshots the version the preset produced.
    */
   jurisdiction?: JurisdictionId;
+  /** The answers to the preset's apply-time questions (an alternative workweek, a compressed tour). */
+  jurisdictionChoices?: JurisdictionChoices;
   rules: {
     weekend: WeekendDefinition;
     /** Rule ids that are off by default and switched on for this unit (params below apply). */
@@ -1009,10 +1015,12 @@ export function seedFromProfile(
     bump('overtimeRule');
   }
   if (profile.jurisdiction) {
-    applyJurisdiction(db, unit.id, profile.jurisdiction, ACTOR);
+    applyJurisdiction(db, unit.id, profile.jurisdiction, ACTOR, profile.jurisdictionChoices);
     ruleSet = getLatestRuleSet(db, unit.id)!;
     configs = ruleSet.configs;
   }
+  // Read back, not from the profile: a preset may have set how the ratio counts the charge nurse.
+  const ratioStaffing = getUnit(db, unit.id)!.ratioStaffing;
   const nightIntoLeave = configs.find((c) => c.ruleId === 'approved-time-off-is-absolute')?.params
     ?.nightShiftEndingOnLeaveCounts;
   const limits: Limits = {
@@ -1129,6 +1137,9 @@ export function seedFromProfile(
         employmentType: row.employmentType,
         fte: row.fte,
         contractedHoursPerPeriod: row.contractedHoursPerPeriod,
+        ...(row.scheduledDaysPerWeek !== undefined
+          ? { scheduledDaysPerWeek: row.scheduledDaysPerWeek }
+          : {}),
         seniorityDate,
         ...(bridged ? { hireDate: addDays(seniorityDate, 365 * (2 + (index % 3))) } : {}),
         isChargeEligible: p.charge,
@@ -1735,12 +1746,13 @@ export function seedFromProfile(
           const bedside = Math.max(0, ...mixes.map((m) => nursesRequiredForMix(m, r, ratioRules)));
           // A charge nurse kept free of patients is not one of the nurses the ratio counts, so a
           // standalone shift needs one more RN (as `deriveDemand` reads it). Break relief is not
-          // modelled: a profile that sets break minutes would need it added here.
+          // modelled: the CA preset's hour of breaks, covered by that charge nurse, needs none up
+          // to ten nurses at the bedside, which no demo reaches; more would need it added here.
           const keepsChargeFree =
             r === 'RN' &&
             bedside > 0 &&
             shift.withinShiftTypeId === null &&
-            profile.unit.ratioStaffing?.chargeNurseTakesPatients === false;
+            ratioStaffing?.chargeNurseTakesPatients === false;
           const ratio = bedside + (keepsChargeFree ? 1 : 0);
           const min = Math.max(floor.min, ratio);
           const target = Math.max(min, floor.target);

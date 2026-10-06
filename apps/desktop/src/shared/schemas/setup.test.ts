@@ -36,4 +36,15 @@ describe('first-run setup arriving over IPC', () => {
     expect(API_SCHEMAS.setup.applyJurisdiction.safeParse(['u-1', 'ZZ']).success).toBe(false);
     expect(API_SCHEMAS.setup.applyJurisdiction.safeParse(['u-1']).success).toBe(false);
   });
+
+  it('accepts the answers to a preset’s questions and refuses one that is not yes or no', () => {
+    const ca = ['u-1', 'CA'];
+    expect(
+      API_SCHEMAS.setup.applyJurisdiction.safeParse([...ca, { alternativeWorkweek: true }]).success,
+    ).toBe(true);
+    expect(
+      API_SCHEMAS.setup.applyJurisdiction.safeParse([...ca, { alternativeWorkweek: 'yes' }])
+        .success,
+    ).toBe(false);
+  });
 });

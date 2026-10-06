@@ -7,7 +7,14 @@
  */
 
 import type { UnitInput, UnitPatch } from '@shared/api.js';
-import type { Id, JurisdictionId, SetupPreset, SetupStepId, UnitSetupMode } from '@shiftnurse/core';
+import type {
+  Id,
+  JurisdictionChoices,
+  JurisdictionId,
+  SetupPreset,
+  SetupStepId,
+  UnitSetupMode,
+} from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api.js';
 
@@ -103,7 +110,13 @@ export function useApplyJurisdiction(unitId: Id) {
   const invalidate = useInvalidateAll();
   return useMutation({
     meta: { inlineError: true },
-    mutationFn: (jurisdiction: JurisdictionId) => api.setup.applyJurisdiction(unitId, jurisdiction),
+    mutationFn: ({
+      jurisdiction,
+      choices,
+    }: {
+      jurisdiction: JurisdictionId;
+      choices?: JurisdictionChoices;
+    }) => api.setup.applyJurisdiction(unitId, jurisdiction, choices),
     onSuccess: invalidate,
   });
 }

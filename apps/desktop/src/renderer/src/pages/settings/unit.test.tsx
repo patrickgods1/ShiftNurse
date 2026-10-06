@@ -167,7 +167,7 @@ describe('Settings › Unit state law', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
     await waitFor(() =>
-      expect(bridge.callsTo('setup', 'applyJurisdiction')).toEqual([['unit-1', 'CA']]),
+      expect(bridge.callsTo('setup', 'applyJurisdiction')).toEqual([['unit-1', 'CA', {}]]),
     );
     expect((await screen.findByRole('status')).textContent).toBe('Done: 6 added, 2 updated.');
   });

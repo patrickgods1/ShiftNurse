@@ -168,3 +168,89 @@ describe('editing the contract rules', () => {
     await waitFor(() => expect((saveButton() as HTMLButtonElement).disabled).toBe(true));
   });
 });
+
+describe('explaining a loosened protected rule', () => {
+  const OT = 'no-mandatory-overtime';
+  const vaUnit = { id: 'unit-1', jurisdiction: 'US-VA' } as Unit;
+
+  it('holds Save until a reason is typed when the ban on mandatory overtime is switched off', async () => {
+    bridge.respond('rules', 'getLatest', {
+      ...loaded,
+      configs: [{ ruleId: OT, enabled: true, params: {} }],
+    });
+    renderWithApp(<RulesPanel />, { unit: vaUnit });
+    const card = await screen.findByTestId(`rule-card-${OT}`);
+    expect(screen.queryByTestId('rules-reason')).toBeNull();
+
+    fireEvent.click(within(card).getByLabelText('Enabled'));
+    const reason = await screen.findByTestId('rules-reason');
+    expect((saveButton() as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(reason, { target: { value: 'Union side letter' } });
+    await waitFor(() => expect((saveButton() as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(saveButton());
+
+    await waitFor(() => expect(bridge.callsTo('rules', 'save')).toHaveLength(1));
+    expect(bridge.callsTo('rules', 'save')[0]![5]).toBe('Union side letter');
+  });
+
+  it('asks for no reason when an unprotected rule is switched off', async () => {
+    const card = await renderRules();
+    fireEvent.click(within(card).getByLabelText('Enabled'));
+    await screen.findByText('Unsaved changes');
+    expect(screen.queryByTestId('rules-reason')).toBeNull();
+    expect((saveButton() as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('names the protected rule and says it is switched off', async () => {
+    bridge.respond('rules', 'getLatest', {
+      ...loaded,
+      configs: [{ ruleId: OT, enabled: true, params: {} }],
+    });
+    renderWithApp(<RulesPanel />, { unit: vaUnit });
+    const card = await screen.findByTestId(`rule-card-${OT}`);
+    fireEvent.click(within(card).getByLabelText('Enabled'));
+    expect((await screen.findByTestId('rules-reason-section')).textContent).toMatch(
+      /No mandatory overtime is switched off/,
+    );
+  });
+
+  it('names the protected rule and says it is made advisory when softened', async () => {
+    bridge.respond('rules', 'getLatest', {
+      ...loaded,
+      configs: [{ ruleId: OT, enabled: true, params: {} }],
+    });
+    renderWithApp(<RulesPanel />, { unit: vaUnit });
+    const card = await screen.findByTestId(`rule-card-${OT}`);
+    fireEvent.change(card.querySelector(`#${OT}-severity`) as HTMLSelectElement, {
+      target: { value: 'soft' },
+    });
+    expect((await screen.findByTestId('rules-reason-section')).textContent).toMatch(
+      /No mandatory overtime is made advisory/,
+    );
+  });
+
+  it('starts the next change with an empty reason after one was saved', async () => {
+    const enabled = { ruleId: OT, enabled: true, params: {} };
+    bridge.respond('rules', 'getLatest', { ...loaded, configs: [enabled] });
+    // The save lands as a version where the rule is on again, so the next switch-off is a new loosening.
+    bridge.respond('rules', 'save', () => {
+      const saved = { ...loaded, version: 4, configs: [enabled] };
+      bridge.respond('rules', 'getLatest', saved);
+      return saved;
+    });
+    renderWithApp(<RulesPanel />, { unit: vaUnit });
+    const card = await screen.findByTestId(`rule-card-${OT}`);
+    fireEvent.click(within(card).getByLabelText('Enabled'));
+    fireEvent.change(await screen.findByTestId('rules-reason'), {
+      target: { value: 'Union side letter' },
+    });
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(bridge.callsTo('rules', 'save')).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByTestId('rules-reason')).toBeNull());
+
+    const again = await screen.findByTestId(`rule-card-${OT}`);
+    fireEvent.click(within(again).getByLabelText('Enabled'));
+    expect(((await screen.findByTestId('rules-reason')) as HTMLTextAreaElement).value).toBe('');
+  });
+});
