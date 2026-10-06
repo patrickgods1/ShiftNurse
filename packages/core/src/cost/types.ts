@@ -21,6 +21,11 @@
  *   been added: `(base + Σflat) × Πmultiplier`. This is the FLSA "regular rate" treatment —
  *   a shift differential is part of the rate a premium multiplies, not something added on top
  *   of it. Holiday premiums are normally multipliers.
+ * - **Night and evening by the clock.** A `night` or `evening` differential with a `window` is
+ *   earned by the shift's hours inside that daily window, not by `ShiftType.isNight`. Reaching
+ *   `wholeShiftAtHours` in the window makes it a whole-shift differential like any other; short
+ *   of it, only the in-window hours earn it, priced on the *base* rate and kept out of the running
+ *   rate, so it neither compounds nor raises overtime.
  * - **Overtime** is itemised the way a payslip itemises it: every hour is paid at its straight
  *   rate (above), and hours past an {@link OvertimeRule} threshold earn an additional
  *   *premium* of `(multiplier − 1) × straight rate`. So an overtime hour on a holiday night
@@ -114,6 +119,7 @@ export type CostLineKind = 'base' | DifferentialKind | 'overtime';
  */
 export const DIFFERENTIAL_ORDER: readonly DifferentialKind[] = [
   'night',
+  'evening',
   'weekend',
   'holiday',
   'major_holiday',
@@ -126,6 +132,7 @@ export const DIFFERENTIAL_ORDER: readonly DifferentialKind[] = [
 export const COST_LINE_LABELS: Record<CostLineKind, string> = {
   base: 'Base pay',
   night: 'Night differential',
+  evening: 'Evening differential',
   weekend: 'Weekend differential',
   holiday: 'Holiday premium',
   major_holiday: 'Major holiday premium',

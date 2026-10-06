@@ -10,10 +10,12 @@ import {
   nurseRole,
   object,
   type ResourceSchemas,
+  timeOfDay,
 } from './primitives.js';
 
 const differentialKind = z.enum([
   'night',
+  'evening',
   'weekend',
   'holiday',
   'major_holiday',
@@ -33,12 +35,20 @@ const payRateInput = object({
   effectiveFrom: isoDate,
 });
 
+/** Earned by clock time (`Differential.window`); the repository refuses it on other kinds. */
+const differentialWindow = object({
+  startTime: timeOfDay,
+  endTime: timeOfDay,
+  wholeShiftAtHours: z.number().positive('must be more than 0').nullable(),
+});
+
 const differentialInput = object({
   unitId: id,
   kind: differentialKind,
   mode: differentialMode,
   amount: money,
   active: z.boolean(),
+  window: differentialWindow.optional(),
 });
 
 const overtimeRuleInput = object({
@@ -63,7 +73,11 @@ export const costSchemas = {
   createDifferential: z.tuple([differentialInput]),
   updateDifferential: z.tuple([
     id,
-    differentialInput.pick({ kind: true, mode: true, amount: true, active: true }).partial(),
+    differentialInput
+      .pick({ kind: true, mode: true, amount: true, active: true })
+      .partial()
+      // null clears the window; it is not part of the create shape.
+      .extend({ window: differentialWindow.nullable().optional() }),
   ]),
   deleteDifferential: z.tuple([id]),
   overtimeRules: z.tuple([id]),

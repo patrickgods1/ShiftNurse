@@ -917,6 +917,10 @@ export const differential = sqliteTable('differential', {
   mode: text('mode').notNull().$type<'multiplier' | 'flat'>(),
   amount: real('amount').notNull(),
   active: bool('active').notNull().default(true),
+  /** A night/evening differential earned by clock time (`Differential.window`); null = by flag. */
+  windowStart: text('window_start'),
+  windowEnd: text('window_end'),
+  windowWholeShiftAtHours: real('window_whole_shift_at_hours'),
 });
 
 export const overtimeRule = sqliteTable('overtime_rule', {

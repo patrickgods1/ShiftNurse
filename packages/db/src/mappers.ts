@@ -438,6 +438,15 @@ export function toDifferential(r: typeof s.differential.$inferSelect): Different
     mode: r.mode,
     amount: r.amount,
     active: r.active,
+    ...(r.windowStart !== null && r.windowEnd !== null
+      ? {
+          window: {
+            startTime: r.windowStart,
+            endTime: r.windowEnd,
+            wholeShiftAtHours: r.windowWholeShiftAtHours,
+          },
+        }
+      : {}),
   };
 }
 
