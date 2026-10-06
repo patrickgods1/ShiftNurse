@@ -9,7 +9,7 @@ import {
   resetFixtureCounters,
 } from '@shiftnurse/core/testing';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { headcountRows } from './grid-utils.js';
+import { headcountRows, staffingSummary } from './grid-utils.js';
 
 beforeEach(() => resetFixtureCounters());
 
@@ -77,5 +77,45 @@ describe('the headcount under the grid', () => {
     });
     expect(rows.map((r) => `${r.shiftType.abbreviation} ${r.role}`)).toEqual(['N12 RN']);
     expect(rows[0]!.cells[1]).toEqual({ date: TUE, staffed: 1, required: 0 });
+  });
+});
+
+describe('the one-line staffing summary under the grid', () => {
+  it('reads Monday as fully staffed and Tuesday as two short, naming who is missing', () => {
+    const [a, b, c] = [makeNurse(), makeNurse(), makeNurse({ role: 'CNA' })];
+    const rows = headcountRows({
+      shiftTypes: [DAY_12, NIGHT_12],
+      nurses: [a!, b!, c!],
+      assignments: [
+        assign(a!.id, DAY_12, '2026-10-05'),
+        assign(b!.id, DAY_12, '2026-10-05'),
+        assign(c!.id, DAY_12, '2026-10-05'),
+        assign(a!.id, DAY_12, '2026-10-06'),
+      ],
+      demand: [demand('2026-10-05', DAY_12.id, 2, 1), demand('2026-10-06', DAY_12.id, 2, 1)],
+      dates: [MON, TUE],
+    });
+    expect(staffingSummary(rows, [MON, TUE])).toEqual([
+      { date: MON, short: 0, details: [] },
+      { date: TUE, short: 2, details: ['D12 RN 1/2', 'D12 CNA 0/1'] },
+    ]);
+  });
+
+  it('does not let an extra RN hide a missing CNA', () => {
+    const [a, b, c] = [makeNurse(), makeNurse(), makeNurse()];
+    const rows = headcountRows({
+      shiftTypes: [DAY_12],
+      nurses: [a!, b!, c!],
+      assignments: [
+        assign(a!.id, DAY_12, '2026-10-05'),
+        assign(b!.id, DAY_12, '2026-10-05'),
+        assign(c!.id, DAY_12, '2026-10-05'),
+      ],
+      demand: [demand('2026-10-05', DAY_12.id, 2, 1)],
+      dates: [MON],
+    });
+    expect(staffingSummary(rows, [MON])).toEqual([
+      { date: MON, short: 1, details: ['D12 CNA 0/1'] },
+    ]);
   });
 });

@@ -12,6 +12,8 @@ interface StatCardProps {
   tone?: Tone;
   /** A line under the number, for what it is made of. */
   detail?: string;
+  /** 'lg' is for a phrase rather than a number, which would otherwise wrap into huge lines. */
+  valueSize?: 'lg' | 'default';
 }
 
 const TONE_CLASSES: Record<Tone, string> = {
@@ -20,11 +22,21 @@ const TONE_CLASSES: Record<Tone, string> = {
   danger: 'text-danger',
 };
 
-export function StatCard({ label, value, tone = 'neutral', detail }: StatCardProps) {
+export function StatCard({
+  label,
+  value,
+  tone = 'neutral',
+  detail,
+  valueSize = 'default',
+}: StatCardProps) {
   return (
     <div data-testid="stat-card" className="rounded-md border border-border bg-surface p-4">
       <p className="text-sm text-text-muted">{label}</p>
-      <p className={`mt-1 text-2xl font-semibold ${TONE_CLASSES[tone]}`}>{value}</p>
+      <p
+        className={`mt-1 ${valueSize === 'lg' ? 'text-lg' : 'text-2xl'} font-semibold ${TONE_CLASSES[tone]}`}
+      >
+        {value}
+      </p>
       {detail === undefined ? null : <p className="mt-1 text-xs text-text-muted">{detail}</p>}
     </div>
   );

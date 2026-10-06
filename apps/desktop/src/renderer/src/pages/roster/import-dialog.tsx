@@ -85,7 +85,7 @@ export function ImportDialog({ open, onOpenChange, unitId }: ImportDialogProps) 
                 Could not read that file.
               </p>
             ) : null}
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
               <button type="button" className={SECONDARY} onClick={() => handleOpenChange(false)}>
                 Cancel
               </button>
@@ -111,7 +111,7 @@ export function ImportDialog({ open, onOpenChange, unitId }: ImportDialogProps) 
                 <p className="mb-2 text-sm font-medium text-danger">
                   {preview.errors.length} row(s) have errors — fix the spreadsheet and re-import.
                 </p>
-                <div className="max-h-56 overflow-y-auto rounded-md border border-border">
+                <div className="max-h-56 overflow-auto rounded-md border border-border">
                   <table className="w-full text-left text-xs">
                     <thead>
                       <tr className="border-b border-border text-text-muted">
@@ -143,7 +143,7 @@ export function ImportDialog({ open, onOpenChange, unitId }: ImportDialogProps) 
               </p>
             ) : null}
 
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
               <button type="button" onClick={() => setPreview(undefined)} className={SECONDARY}>
                 Choose a different file
               </button>

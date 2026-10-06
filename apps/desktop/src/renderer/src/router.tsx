@@ -70,10 +70,10 @@ function AppShell() {
   }, [pathname]);
 
   return (
-    <div className="flex h-screen min-w-[1000px] bg-bg text-text">
+    <div className="flex h-screen min-w-[840px] bg-bg text-text">
       <nav
         aria-label="Primary"
-        className="flex w-52 shrink-0 flex-col border-r border-border bg-surface p-3"
+        className="flex w-52 max-lg:w-40 shrink-0 flex-col border-r border-border bg-surface p-3"
       >
         {isMacOs ? (
           // Reserves the row the traffic lights sit in (16px inset + 12px diameter, plus
@@ -107,7 +107,8 @@ function AppShell() {
           <ThemeToggle />
         </header>
         <UpdateBanner />
-        <main ref={mainRef} className="flex-1 overflow-y-auto p-6">
+        {/* @container: pages lay out by this content width, not the window, which the nav eats 208px of. */}
+        <main ref={mainRef} className="@container flex-1 overflow-y-auto p-6 max-lg:p-4 short:py-3">
           <Outlet />
         </main>
       </div>

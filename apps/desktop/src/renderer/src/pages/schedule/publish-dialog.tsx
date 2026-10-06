@@ -285,7 +285,7 @@ export function PublishDialog({
             </p>
           ) : null}
 
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <Dialog.Close asChild>
               <button type="button" className={SECONDARY} disabled={publish.isPending}>
                 Cancel

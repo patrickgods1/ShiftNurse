@@ -72,7 +72,7 @@ export function Modal({
           ) : null}
           {children}
           {footer !== undefined ? (
-            <div className="mt-4 flex justify-end gap-2">{footer}</div>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">{footer}</div>
           ) : null}
           {/* Radix aria-hides everything outside a modal, and a click on a toast out there would
               count as an outside click: raised inside, toasts are announced and safe to press. */}

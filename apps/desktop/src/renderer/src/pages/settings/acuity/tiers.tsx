@@ -128,7 +128,7 @@ function TierForm({
           className={INPUT}
         />
       </Field>
-      <div className="mt-2 flex justify-end gap-2">
+      <div className="mt-2 flex flex-wrap justify-end gap-2">
         <button type="button" onClick={onCancel} className={SECONDARY}>
           Cancel
         </button>
@@ -247,7 +247,7 @@ export function AcuityTiersSection({ unitId, tiers }: { unitId: string; tiers: A
                   <td className="px-3 py-2 text-text">{tier.name}</td>
                   <td className="px-3 py-2 text-text">{tier.careHoursPerPatientDay}</td>
                   <td className="px-3 py-2 text-right">
-                    <div className="flex justify-end gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
                       <button
                         type="button"
                         onClick={() => setEditing(tier)}

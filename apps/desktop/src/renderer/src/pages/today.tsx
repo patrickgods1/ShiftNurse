@@ -92,12 +92,12 @@ export default function TodayPage() {
       />
 
       {summary.period === undefined ? (
-        <div className="mb-4">
+        <div className="mb-4 short:mb-2">
           <AsyncState status="empty" label="No schedule covers today." />
         </div>
       ) : null}
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 gap-4 short:gap-2">
         <StatCard label="On shift now" value={onShiftNow} />
         <StatCard
           label="Open call-offs"

@@ -15,7 +15,7 @@ import type {
   TodayShiftView,
 } from '@shared/api.js';
 import type { Id, Nurse } from '@shiftnurse/core';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import {
   useDayOfPayEvents,
   useRecordDayOfPay,
@@ -25,6 +25,9 @@ import {
 import { useGridNurses } from '../../api-nurse-units.js';
 import { errorMessage, INPUT, SMALL } from '../../components/ui.js';
 import { formatHours } from '../../money.js';
+
+// The label is short now that the name is on the row; it must never wrap inside its border.
+const NOWRAP = `${SMALL} whitespace-nowrap`;
 
 function nameOf(nurse: Pick<Nurse, 'firstName' | 'lastName'> | undefined): string {
   return nurse ? `${nurse.firstName} ${nurse.lastName}` : 'A nurse';
@@ -49,10 +52,13 @@ export function NursePayActions({
   unitId,
   shift,
   entry,
+  trailing,
 }: {
   unitId: Id;
   shift: TodayShiftView;
   entry: RosterEntryView;
+  /** Rendered after the idle buttons, ahead of any open form, so it stays on the name's row. */
+  trailing?: ReactNode;
 }) {
   const record = useRecordDayOfPay();
   const [open, setOpen] = useState<'break' | 'call-back' | undefined>(undefined);
@@ -70,32 +76,60 @@ export function NursePayActions({
   const submit = (e: DayOfPayEntry) => record.mutate(e, done);
 
   return (
-    <div className="flex flex-wrap items-center gap-1">
-      {open === 'break' ? (
+    // Fragment, not a wrapper: the pay buttons and `trailing` (Report call-off) must be direct
+    // flex items of the nurse's row so they sit right-aligned beside the name, while an open
+    // sub-form and any error take `basis-full` and wrap onto their own line beneath it.
+    <>
+      {open === undefined ? (
         <>
           <button
             type="button"
-            className={SMALL}
+            className={NOWRAP}
+            aria-label={`Missed break for ${who}`}
+            onClick={() => setOpen('break')}
+          >
+            Missed break
+          </button>
+          {shift.shiftType.isOnCall ? (
+            <button
+              type="button"
+              className={NOWRAP}
+              aria-label={`Called back: ${who}`}
+              onClick={() => setOpen('call-back')}
+            >
+              Called back
+            </button>
+          ) : null}
+        </>
+      ) : null}
+      {trailing}
+      {open === 'break' ? (
+        <div className="flex basis-full flex-wrap items-center gap-1">
+          <button
+            type="button"
+            className={NOWRAP}
+            aria-label={`Missed meal break for ${who}`}
             disabled={record.isPending}
             onClick={() => submit({ kind: 'missed_break', ...where, break: 'meal' })}
           >
-            {`Missed meal break for ${who}`}
+            Missed meal break
           </button>
           <button
             type="button"
-            className={SMALL}
+            className={NOWRAP}
+            aria-label={`Missed rest break for ${who}`}
             disabled={record.isPending}
             onClick={() => submit({ kind: 'missed_break', ...where, break: 'rest' })}
           >
-            {`Missed rest break for ${who}`}
+            Missed rest break
           </button>
-          <button type="button" className={SMALL} onClick={() => setOpen(undefined)}>
+          <button type="button" className={NOWRAP} onClick={() => setOpen(undefined)}>
             Cancel
           </button>
-        </>
+        </div>
       ) : open === 'call-back' ? (
         <form
-          className="flex items-center gap-1"
+          className="flex basis-full items-center gap-1"
           onSubmit={(e) => {
             e.preventDefault();
             const worked = Number(hours);
@@ -118,33 +152,23 @@ export function NursePayActions({
           />
           <button
             type="submit"
-            className={SMALL}
+            className={NOWRAP}
+            aria-label={`Record call-back for ${who}`}
             disabled={record.isPending || !(Number(hours) > 0)}
           >
-            {`Record call-back for ${who}`}
+            Record call-back
           </button>
-          <button type="button" className={SMALL} onClick={() => setOpen(undefined)}>
+          <button type="button" className={NOWRAP} onClick={() => setOpen(undefined)}>
             Cancel
           </button>
         </form>
-      ) : (
-        <>
-          <button type="button" className={SMALL} onClick={() => setOpen('break')}>
-            {`Missed break for ${who}`}
-          </button>
-          {shift.shiftType.isOnCall ? (
-            <button type="button" className={SMALL} onClick={() => setOpen('call-back')}>
-              {`Called back: ${who}`}
-            </button>
-          ) : null}
-        </>
-      )}
+      ) : null}
       {error !== undefined ? (
-        <p role="alert" className="w-full text-xs text-danger">
+        <p role="alert" className="basis-full text-xs text-danger">
           {error}
         </p>
       ) : null}
-    </div>
+    </>
   );
 }
 

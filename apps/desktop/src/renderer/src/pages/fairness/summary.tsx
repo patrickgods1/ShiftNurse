@@ -84,6 +84,7 @@ export function FairnessSummary({ report, contracted }: FairnessSummaryProps) {
       />
       <StatCard
         label="Biggest gap"
+        valueSize="lg"
         value={worst !== undefined ? FAIRNESS_COMPONENT_LABELS[worst.component] : 'None'}
         tone={worst !== undefined ? giniTone(worst.gini) : 'neutral'}
       />

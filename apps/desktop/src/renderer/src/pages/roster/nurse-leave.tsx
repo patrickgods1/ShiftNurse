@@ -97,7 +97,7 @@ function BalanceRow({
         </label>
         <DateField label={`${label} balance as of`} value={asOf} onChange={setAsOf} />
       </div>
-      <div className="flex items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {errorMessage(set.error) !== undefined ? (
           <p role="alert" className="mr-auto text-xs text-danger">
             {errorMessage(set.error)}
@@ -270,7 +270,7 @@ function CertificationForm({
           {error}
         </p>
       ) : null}
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
         <button type="button" className={SECONDARY} onClick={onDone}>
           Cancel
         </button>

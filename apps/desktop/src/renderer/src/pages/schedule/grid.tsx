@@ -42,7 +42,14 @@ import { describePreference } from '../../preferences.js';
 import { AssignmentChip } from './chip.js';
 import type { DragPayload } from './dnd.js';
 import { readDragPayload } from './dnd.js';
-import { buildCellIndex, cellKey, headcountRows, SHORT_WEEKDAY, sortNurses } from './grid-utils.js';
+import {
+  buildCellIndex,
+  cellKey,
+  headcountRows,
+  SHORT_WEEKDAY,
+  sortNurses,
+  staffingSummary,
+} from './grid-utils.js';
 
 export interface GridColumn {
   date: IsoDate;
@@ -56,6 +63,35 @@ export interface GridColumn {
 const WEEK_DIVIDER = 'border-l-2 border-l-text-muted/40';
 
 const EMPTY_VIOLATIONS: readonly Violation[] = [];
+
+/** Height of one row under the grid, in rem; the sticky offsets stack in these units. */
+const FOOTER_ROW_REM = 1.75;
+const BREAKDOWN_KEY = 'shiftnurse.staffingBreakdownOpen';
+
+/**
+ * Whether the per-shift headcount rows are open. Closed by default: one row per shift type and
+ * role, all sticky, took a third of the grid's height at 1366×768 — the summary row says which
+ * days are short, and the breakdown is a click away. Remembered per viewer, as the legend is.
+ */
+function useBreakdownOpen(): [boolean, () => void] {
+  const [open, setOpen] = useState(() => {
+    try {
+      return window.localStorage.getItem(BREAKDOWN_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggle = useCallback(() => {
+    const next = !open;
+    setOpen(next);
+    try {
+      window.localStorage.setItem(BREAKDOWN_KEY, next ? '1' : '0');
+    } catch {
+      // Not remembering is harmless.
+    }
+  }, [open]);
+  return [open, toggle];
+}
 
 function severityCounts(violations: readonly Violation[] | undefined): {
   hard: number;
@@ -486,6 +522,16 @@ export function ScheduleGrid({
       }),
     [shiftTypes, nurses, assignments, demand, columns],
   );
+  const summary = useMemo(
+    () =>
+      staffingSummary(
+        headcount,
+        columns.map((c) => c.date),
+      ),
+    [headcount, columns],
+  );
+  const [breakdownOpen, toggleBreakdown] = useBreakdownOpen();
+  const breakdown = breakdownOpen ? headcount : [];
   const nursesWithPending = useMemo(() => {
     const out = new Set<Id>();
     if (pendingIds.size === 0) return out;
@@ -515,7 +561,7 @@ export function ScheduleGrid({
       ref={gridRef}
       role="grid"
       aria-label="Schedule: nurses by day"
-      aria-rowcount={activeNurses.length + 1}
+      aria-rowcount={activeNurses.length + 1 + (headcount.length > 0 ? 1 + breakdown.length : 0)}
       aria-colcount={columns.length + 1}
       data-testid="schedule-grid"
       onKeyDown={handleGridKeyDown}
@@ -588,7 +634,57 @@ export function ScheduleGrid({
             preferenceNotes={preferenceNotes}
           />
         ))}
-        {headcount.map((line, i) => (
+        {headcount.length > 0 ? (
+          // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header)
+          // biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops
+          <div
+            role="row"
+            data-testid="staffing-summary"
+            className="sticky z-10 flex"
+            style={{ bottom: `${breakdown.length * FOOTER_ROW_REM}rem` }}
+          >
+            {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header) */}
+            {/* biome-ignore lint/a11y/useFocusableInteractive: the toggle inside is the focusable part */}
+            <div
+              role="rowheader"
+              className="sticky left-0 z-20 flex h-7 w-48 shrink-0 items-center border-r
+                border-t-2 border-border border-t-text-muted/40 bg-bg px-1 text-xs text-text-muted"
+            >
+              <button
+                type="button"
+                data-testid="staffing-breakdown-toggle"
+                aria-expanded={breakdownOpen}
+                onClick={toggleBreakdown}
+                className="flex w-full items-center gap-1 rounded px-2 py-0.5 text-left
+                  hover:bg-border/40"
+              >
+                <span aria-hidden="true">{breakdownOpen ? '▾' : '▸'}</span>
+                Staffing
+                <span className="ml-auto">{breakdownOpen ? 'hide shifts' : 'by shift'}</span>
+              </button>
+            </div>
+            {summary.map((cell, col) => (
+              // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header)
+              // biome-ignore lint/a11y/useFocusableInteractive: a read-only total; the roving tab stop stays on the nurse cells
+              <div
+                key={cell.date}
+                role="gridcell"
+                title={
+                  cell.short > 0
+                    ? `${cell.short} short on ${formatDateWithWeekday(cell.date)}: ${cell.details.join(', ')} (staffed/needed)`
+                    : `Every shift has its minimum on ${formatDateWithWeekday(cell.date)}`
+                }
+                className={`flex h-7 w-16 shrink-0 items-center justify-center border-r border-t-2
+                  border-border border-t-text-muted/40 bg-bg text-xs ${
+                    columns[col]?.weekStart ? WEEK_DIVIDER : ''
+                  } ${cell.short > 0 ? 'font-semibold text-danger' : 'text-text-muted'}`}
+              >
+                {cell.short > 0 ? `${cell.short} short` : '✓'}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {breakdown.map((line, i) => (
           // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header)
           // biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops
           <div
@@ -596,14 +692,14 @@ export function ScheduleGrid({
             role="row"
             data-testid="headcount-row"
             className="sticky z-10 flex"
-            style={{ bottom: `${(headcount.length - 1 - i) * 1.75}rem` }}
+            style={{ bottom: `${(breakdown.length - 1 - i) * FOOTER_ROW_REM}rem` }}
           >
             {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header) */}
             {/* biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops */}
             <div
               role="rowheader"
-              className={`sticky left-0 z-20 flex h-7 w-48 shrink-0 items-center border-r
-                border-border bg-bg px-3 text-xs text-text-muted ${i === 0 ? 'border-t-2 border-t-text-muted/40' : ''}`}
+              className="sticky left-0 z-20 flex h-7 w-48 shrink-0 items-center border-r
+                border-border bg-bg px-3 pl-7 text-xs text-text-muted"
             >
               {line.shiftType.abbreviation} {line.role}s on shift
             </div>
@@ -622,8 +718,8 @@ export function ScheduleGrid({
                   }
                   className={`flex h-7 w-16 shrink-0 items-center justify-center border-r
                     border-border bg-bg text-xs ${columns[col]?.weekStart ? WEEK_DIVIDER : ''} ${
-                      i === 0 ? 'border-t-2 border-t-text-muted/40' : ''
-                    } ${short ? 'font-semibold text-danger' : 'text-text-muted'}`}
+                      short ? 'font-semibold text-danger' : 'text-text-muted'
+                    }`}
                 >
                   {cell.required > 0 ? `${cell.staffed}/${cell.required}` : cell.staffed}
                 </div>

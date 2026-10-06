@@ -208,7 +208,7 @@ function RatioForm({
           className={INPUT}
         />
       </Field>
-      <div className="mt-2 flex justify-end gap-2">
+      <div className="mt-2 flex flex-wrap justify-end gap-2">
         <button type="button" onClick={onCancel} className={SECONDARY}>
           Cancel
         </button>
@@ -383,7 +383,7 @@ export function RatioRulesSection({
                   <td className="px-3 py-2 text-text">{rule.citation ?? '—'}</td>
                   <td className="px-3 py-2 text-text">{rule.active ? 'Active' : 'Inactive'}</td>
                   <td className="px-3 py-2 text-right">
-                    <div className="flex justify-end gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
                       <button
                         type="button"
                         onClick={() => setEditing(rule)}

@@ -73,63 +73,67 @@ export function ProposeDialog({
           No history available yet for this range — nothing to propose.
         </p>
       ) : (
-        <table className="mt-4 w-full border-collapse text-sm">
-          <thead>
-            <tr className="border-b border-border text-left text-text-muted">
-              <th className="w-8 px-2 py-1.5" />
-              <th className="px-2 py-1.5 font-medium">Date</th>
-              <th className="px-2 py-1.5 font-medium">Shift</th>
-              <th className="px-2 py-1.5 font-medium">Census</th>
-              <th className="px-2 py-1.5 font-medium">Mix</th>
-              <th className="px-2 py-1.5 font-medium">Basis</th>
-            </tr>
-          </thead>
-          <tbody>
-            {proposals.map((p) => {
-              const key = proposalKey(p);
-              const wouldOverwriteManual = manualKeys.has(key);
-              const shiftType = shiftTypesById.get(p.shiftTypeId);
-              return (
-                <tr key={key} className="border-b border-border last:border-0 align-top">
-                  <td className="px-2 py-1.5">
-                    <input
-                      type="checkbox"
-                      aria-label={`Accept proposal for ${p.date} ${shiftType?.name ?? p.shiftTypeId}`}
-                      checked={checked.has(key)}
-                      onChange={(e) =>
-                        setChecked((prev) => {
-                          const next = new Set(prev);
-                          if (e.target.checked) next.add(key);
-                          else next.delete(key);
-                          return next;
-                        })
-                      }
-                    />
-                  </td>
-                  <td className="px-2 py-1.5 text-text">{formatDateWithWeekday(p.date)}</td>
-                  <td className="px-2 py-1.5 text-text">{shiftType?.name ?? p.shiftTypeId}</td>
-                  <td className="px-2 py-1.5 text-text">{p.projectedCensus}</td>
-                  <td className="px-2 py-1.5 text-text">{describeMix(p.acuityMix, tierNames)}</td>
-                  <td className="px-2 py-1.5 text-text-muted">
-                    <div>
-                      {p.basis.samples} sample{p.basis.samples === 1 ? '' : 's'}, weekday avg{' '}
-                      {p.basis.weekdayAverage.toFixed(1)}
-                      {p.basis.seasonalSamples > 0
-                        ? `, seasonal index ${p.basis.seasonalIndex.toFixed(2)}`
-                        : ''}
-                    </div>
-                    {wouldOverwriteManual ? (
-                      <div className="mt-0.5 text-warn">would overwrite manual entry</div>
-                    ) : null}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="overflow-x-auto mt-4">
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-text-muted">
+                <th className="w-8 px-2 py-1.5" />
+                <th className="px-2 py-1.5 font-medium">Date</th>
+                <th className="px-2 py-1.5 font-medium">Shift</th>
+                <th className="px-2 py-1.5 font-medium">Census</th>
+                <th className="px-2 py-1.5 font-medium">Mix</th>
+                <th className="px-2 py-1.5 font-medium">Basis</th>
+              </tr>
+            </thead>
+            <tbody>
+              {proposals.map((p) => {
+                const key = proposalKey(p);
+                const wouldOverwriteManual = manualKeys.has(key);
+                const shiftType = shiftTypesById.get(p.shiftTypeId);
+                return (
+                  <tr key={key} className="border-b border-border last:border-0 align-top">
+                    <td className="px-2 py-1.5">
+                      <input
+                        type="checkbox"
+                        aria-label={`Accept proposal for ${p.date} ${shiftType?.name ?? p.shiftTypeId}`}
+                        checked={checked.has(key)}
+                        onChange={(e) =>
+                          setChecked((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(key);
+                            else next.delete(key);
+                            return next;
+                          })
+                        }
+                      />
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1.5 text-text">
+                      {formatDateWithWeekday(p.date)}
+                    </td>
+                    <td className="px-2 py-1.5 text-text">{shiftType?.name ?? p.shiftTypeId}</td>
+                    <td className="whitespace-nowrap px-2 py-1.5 text-text">{p.projectedCensus}</td>
+                    <td className="px-2 py-1.5 text-text">{describeMix(p.acuityMix, tierNames)}</td>
+                    <td className="px-2 py-1.5 text-text-muted">
+                      <div>
+                        {p.basis.samples} sample{p.basis.samples === 1 ? '' : 's'}, weekday avg{' '}
+                        {p.basis.weekdayAverage.toFixed(1)}
+                        {p.basis.seasonalSamples > 0
+                          ? `, seasonal index ${p.basis.seasonalIndex.toFixed(2)}`
+                          : ''}
+                      </div>
+                      {wouldOverwriteManual ? (
+                        <div className="mt-0.5 text-warn">would overwrite manual entry</div>
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
-      <div className="mt-5 flex justify-end gap-2">
+      <div className="mt-5 flex flex-wrap justify-end gap-2">
         <button
           type="button"
           className="rounded-md border border-border px-3 py-1.5 text-sm font-medium text-text"

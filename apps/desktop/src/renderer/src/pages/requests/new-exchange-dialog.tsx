@@ -206,7 +206,7 @@ export function NewExchangeDialog({
           </p>
         ) : null}
 
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <button
             type="button"
             className={SECONDARY}

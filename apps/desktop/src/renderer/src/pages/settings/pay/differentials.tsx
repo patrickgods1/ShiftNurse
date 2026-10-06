@@ -189,7 +189,7 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
                     />
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <div className="flex justify-end gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
                       {editingId === d.id ? (
                         <>
                           <button

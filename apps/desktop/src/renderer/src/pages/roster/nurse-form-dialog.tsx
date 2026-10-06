@@ -415,7 +415,7 @@ export function NurseFormDialog({
           </p>
         ) : null}
 
-        <div className="mt-6 flex justify-end gap-2">
+        <div className="mt-6 flex flex-wrap justify-end gap-2">
           <button type="button" className={SECONDARY} onClick={() => onOpenChange(false)}>
             Cancel
           </button>

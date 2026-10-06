@@ -73,10 +73,10 @@ export function AssistedSetup({ state }: { state: SetupState }) {
   const finish = () => complete.mutate(undefined, { onSuccess: () => void navigate({ to: '/' }) });
 
   return (
-    <div className="flex h-screen min-w-[1000px] bg-bg text-text" data-testid="setup-assisted">
+    <div className="flex h-screen min-w-[840px] bg-bg text-text" data-testid="setup-assisted">
       <nav
         aria-label="Setup steps"
-        className="flex w-56 shrink-0 flex-col gap-1 border-r border-border bg-surface p-3 pt-12"
+        className="flex w-56 max-lg:w-48 shrink-0 flex-col gap-1 border-r border-border bg-surface p-3 pt-12"
       >
         <p className="mb-3 px-2 text-sm font-semibold text-text-muted">Setting up {unit.name}</p>
         <ol className="flex flex-col gap-1">

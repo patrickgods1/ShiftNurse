@@ -288,7 +288,7 @@ export default function RequestsPage() {
         />
       ) : null}
 
-      <fieldset className="mb-6 flex gap-2 border-0 p-0">
+      <fieldset className="mb-6 short:mb-3 flex gap-2 border-0 p-0">
         <legend className="sr-only">Requests or exchanges</legend>
         {(
           [
@@ -324,7 +324,7 @@ export default function RequestsPage() {
         />
       ) : (
         <>
-          <div className="grid grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)] gap-6">
+          <div className="grid grid-cols-1 gap-6 @4xl:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)]">
             <section aria-labelledby="queue-heading">
               <div className="mb-3 flex items-center gap-3">
                 <h2 id="queue-heading" className="text-sm font-semibold text-text">

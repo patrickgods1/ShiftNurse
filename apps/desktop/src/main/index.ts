@@ -9,7 +9,7 @@
 
 import { join } from 'node:path';
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
-import { app, BrowserWindow, dialog, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, screen, session, shell } from 'electron';
 import type { UpdateInfo } from '../shared/api.js';
 import { createApi, createSolverJobs } from './api.js';
 import {
@@ -41,11 +41,20 @@ function smokeWindowSize(): { width: number; height: number } | undefined {
 
 function createWindow(): BrowserWindow {
   const size = smokeWindowSize();
+  // Windows and macOS display scaling shrinks the logical screen: a 1366x768 laptop at 150% is
+  // 910x512 DIP before the taskbar, 1280x720 at 150% is 853x480. A fixed 1000x640 minimum is
+  // larger than those, so the title bar or right edge ended up off-screen and unreachable. Size
+  // from the work area instead. A smoke run asks for an exact size and a CI runner's virtual
+  // screen may be smaller, so the request is honoured unclamped (minimums stay within it).
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
+  const smoke = isSmokeRun();
+  const width = size?.width ?? (smoke ? 1400 : Math.min(1400, workArea.width));
+  const height = size?.height ?? (smoke ? 900 : Math.min(900, workArea.height));
   const win = new BrowserWindow({
-    width: size?.width ?? 1400,
-    height: size?.height ?? 900,
-    minWidth: 1000,
-    minHeight: 640,
+    width,
+    height,
+    minWidth: Math.min(840, smoke ? width : workArea.width, width),
+    minHeight: Math.min(440, smoke ? height : workArea.height, height),
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',

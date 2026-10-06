@@ -254,7 +254,7 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
                   </td>
                   <td className={TD}>{formatDate(rate.effectiveFrom)}</td>
                   <td className="px-3 py-2 text-right">
-                    <div className="flex justify-end gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
                       {editingId === rate.id ? (
                         <>
                           <button

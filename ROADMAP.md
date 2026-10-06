@@ -516,6 +516,15 @@ manager's experience and the contract rules a real hospital would check first. O
 - [x] Status banners collapsed into one row of pills so the grid has the screen at 1366×768
 - [x] Verify: `npm run check` (1,416+ tests); `npm run smoke`; screenshots at 1366×768 (five nurse
       rows and the staffing footer visible, up from two or three)
+- [x] Fit at small and scaled windows: Generate's summary in a wide dialog (Cost no longer cut
+      off); the grid's per-shift headcount collapsed into one "Staffing" row (✓ / "N short", the
+      breakdown a remembered click away); dialog button rows wrap, tables scroll sideways, pages
+      lay out by content width (`@container`); Today's pay actions on the nurse's own row; minimum
+      window 840×440 and clamped to the work area, slimmer nav below 1024px, a `short:` variant
+      (≤ 640px tall) that drops subtitles and explanations, never actions or data
+      (verified 2026-10-05: `npm run check` 2,050 tests; screenshots of every route at 840×440,
+      910×480 (1366×768 at 150%), 1000×640, 1097×617 (1920×1080 at 175%) and 1366×768; smoke PASS
+      at 910×480, 1097×617 and 1366×768)
 
 **Phase 4 — Core maintainability**
 - [x] Typed rule parameters (`paramsOf`/`requireParams`/`asParams`; no `as unknown as` params
