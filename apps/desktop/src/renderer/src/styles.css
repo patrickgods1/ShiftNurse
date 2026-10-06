@@ -10,6 +10,13 @@
 
 @import "tailwindcss";
 
+/*
+ * `short:` variant. A 1366x768 or 1280x720 laptop at 150% OS display scaling gives the window
+ * only ~480 CSS px of height, and the Schedule page's header, banner and toolbar would push the
+ * grid below the fold. Used to hide explanation and trim spacing, never titles, actions or data.
+ */
+@custom-variant short (@media (max-height: 640px));
+
 :root {
   --color-bg: #f4f5f7;
   --color-surface: #ffffff;
@@ -74,7 +81,8 @@ body {
 }
 
 /* A page with a sticky footer (the Rules save bar) reserves its height at the bottom of the
-   scroll area, so a field reached with Tab scrolls clear of the bar instead of under it. */
+   scroll area, so a field reached with Tab scrolls clear of the bar instead of under it. The
+   bar reaches the window edge through main's p-6 (-bottom-6 + pb-9), so it is 1.5rem taller. */
 main:has([data-sticky-footer]) {
-  scroll-padding-bottom: 5rem;
+  scroll-padding-bottom: 6.5rem;
 }

@@ -140,3 +140,33 @@ export function headcountRows(input: {
   }
   return rows;
 }
+
+export interface StaffingSummaryCell {
+  date: IsoDate;
+  /** People missing that day, summed over every shift and role that is under its minimum. */
+  short: number;
+  /** "D12 RN 1/2" for each shift and role under its minimum, for the cell's tooltip. */
+  details: string[];
+}
+
+/**
+ * The single row that stands in for the per-shift headcount rows on a small screen: one number a
+ * day. Shortfalls are summed per shift and role, never netted — a spare RN on days does not cover
+ * a missing CNA, and adding staffed and required across rows first would say it does.
+ */
+export function staffingSummary(
+  rows: readonly HeadcountRow[],
+  dates: readonly IsoDate[],
+): StaffingSummaryCell[] {
+  return dates.map((date, col) => {
+    let short = 0;
+    const details: string[] = [];
+    for (const row of rows) {
+      const cell = row.cells[col];
+      if (!cell || cell.staffed >= cell.required) continue;
+      short += cell.required - cell.staffed;
+      details.push(`${row.shiftType.abbreviation} ${row.role} ${cell.staffed}/${cell.required}`);
+    }
+    return { date, short, details };
+  });
+}

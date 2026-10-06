@@ -69,7 +69,7 @@ export default function RosterPage() {
       {
         key: 'employeeId',
         header: 'Employee ID',
-        render: (nurse) => nurse.employeeId,
+        render: (nurse) => <span className="whitespace-nowrap">{nurse.employeeId}</span>,
         sortValue: (nurse) => nurse.employeeId,
       },
       {
@@ -87,13 +87,15 @@ export default function RosterPage() {
       {
         key: 'fte',
         header: 'FTE',
-        render: (nurse) => fteLabel(nurse),
+        render: (nurse) => <span className="whitespace-nowrap">{fteLabel(nurse)}</span>,
         sortValue: (nurse) => nurse.fte,
       },
       {
         key: 'seniorityDate',
         header: 'Seniority date',
-        render: (nurse) => formatDate(nurse.seniorityDate),
+        render: (nurse) => (
+          <span className="whitespace-nowrap">{formatDate(nurse.seniorityDate)}</span>
+        ),
         sortValue: (nurse) => nurse.seniorityDate,
       },
       {

@@ -121,30 +121,36 @@ export function ShiftCard({
 
       <ul className="mt-3 flex flex-col gap-1 border-t border-border pt-3 text-sm">
         {shift.roster.map((entry) => (
-          <li key={entry.assignment.id} className="flex flex-col gap-1">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-text">
-                {rosterLabel(entry)}
-                {entry.assignment.isCharge ? (
-                  <span className="ml-2 text-xs uppercase text-text-muted">Charge</span>
-                ) : null}
-                {entry.assignment.isOvertime ? (
-                  <span className="ml-2 text-xs uppercase text-text-muted">OT</span>
-                ) : null}
-              </span>
-              {entry.callOff !== undefined ? (
-                <span className="rounded bg-danger/15 px-1.5 py-0.5 text-xs font-semibold uppercase text-danger">
-                  Called off
-                </span>
-              ) : (
-                <button type="button" className={SMALL} onClick={() => onReport(entry)}>
-                  Report call-off
-                </button>
-              )}
-            </div>
+          <li key={entry.assignment.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="mr-auto min-w-0 text-text">
+              {rosterLabel(entry)}
+              {entry.assignment.isCharge ? (
+                <span className="ml-2 text-xs uppercase text-text-muted">Charge</span>
+              ) : null}
+              {entry.assignment.isOvertime ? (
+                <span className="ml-2 text-xs uppercase text-text-muted">OT</span>
+              ) : null}
+            </span>
             {entry.callOff === undefined ? (
-              <NursePayActions unitId={unitId} shift={shift} entry={entry} />
-            ) : null}
+              <NursePayActions
+                unitId={unitId}
+                shift={shift}
+                entry={entry}
+                trailing={
+                  <button
+                    type="button"
+                    className={`${SMALL} whitespace-nowrap`}
+                    onClick={() => onReport(entry)}
+                  >
+                    Report call-off
+                  </button>
+                }
+              />
+            ) : (
+              <span className="rounded bg-danger/15 px-1.5 py-0.5 text-xs font-semibold uppercase text-danger">
+                Called off
+              </span>
+            )}
           </li>
         ))}
       </ul>

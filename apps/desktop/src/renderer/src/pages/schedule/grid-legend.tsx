@@ -41,7 +41,8 @@ export function GridLegend() {
       <p className="mt-1">
         A red number counts rule breaks: in a day's header for that day, beside a name for that
         nurse — hover it to read them. On a shift, C marks the charge nurse and ♡ a shift that goes
-        against what the nurse asked for. The rows under the grid show staffed / needed.
+        against what the nurse asked for. The Staffing row under the grid counts the people each day
+        is short; open it by shift for staffed / needed.
       </p>
     </details>
   );

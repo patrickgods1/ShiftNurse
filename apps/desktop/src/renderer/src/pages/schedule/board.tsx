@@ -348,15 +348,17 @@ export function ScheduleBoard({ unitId, period, focusNurseId, leading }: Schedul
       {emptyDraft && !batch ? (
         <div
           data-testid="empty-draft"
-          className="mb-3 rounded-md border border-accent/50 bg-surface px-4 py-4"
+          className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-accent/50 bg-surface px-4 py-3 short:py-2"
         >
-          <p className="text-sm font-medium text-text">This schedule hasn't been built yet.</p>
-          <p className="mt-1 text-sm text-text-muted">
-            Generate fills every shift from your staffing floors, contracts, approved leave and
-            preferences, and shares nights and weekends fairly. You can also drag shifts onto the
-            grid by hand.
-          </p>
-          <button type="button" onClick={openGenerate} className={`${PRIMARY} mt-3`}>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium text-text">This schedule hasn't been built yet.</p>
+            <p className="mt-1 text-sm text-text-muted short:hidden">
+              Generate fills every shift from your staffing floors, contracts, approved leave and
+              preferences, and shares nights and weekends fairly. You can also drag shifts onto the
+              grid by hand.
+            </p>
+          </div>
+          <button type="button" onClick={openGenerate} className={`${PRIMARY} shrink-0`}>
             Generate schedule
           </button>
         </div>
@@ -385,7 +387,7 @@ export function ScheduleBoard({ unitId, period, focusNurseId, leading }: Schedul
             A preview is read-only: save the option, or exit the preview, to edit.
           </p>
         ) : !readOnly ? (
-          <div className="min-w-0 flex-1">
+          <div className="min-w-fit flex-1">
             <ShiftPalette shiftTypes={shiftTypesQuery.data} readOnly={false} />
           </div>
         ) : (

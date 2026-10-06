@@ -5,7 +5,13 @@
  * the chip writes to it on dragstart and the cell reads it back on drop, exactly as in Chromium.
  */
 
-import { type Assignment, isoDate, type Nurse, type Violation } from '@shiftnurse/core';
+import {
+  type Assignment,
+  isoDate,
+  type Nurse,
+  type ShiftDemand,
+  type Violation,
+} from '@shiftnurse/core';
 import {
   assign,
   DAY_12,
@@ -208,5 +214,108 @@ describe('marking violations on a chip by shape as well as colour', () => {
     );
     expect(chip.querySelector('[data-severity="hard"]')).toBeNull();
     expect(chip.className).toContain('border-dashed');
+  });
+});
+
+function floorDemand(date: string, shiftTypeId: string, rn: number): ShiftDemand {
+  const role = (r: 'RN' | 'LPN' | 'CNA', minCount: number) => ({
+    role: r,
+    minCount,
+    targetCount: minCount,
+    coverageFloorMin: minCount,
+    coverageFloorTarget: minCount,
+    ratioDerived: 0,
+    bindingConstraint: 'coverage_floor' as const,
+  });
+  return {
+    date: isoDate(date),
+    shiftTypeId,
+    projectedCensus: 0,
+    weightedCareHoursPerDay: 0,
+    careHoursThisShift: 0,
+    hppdRecommendedNurses: 0,
+    careHoursRecommendedNurses: 0,
+    byRole: { RN: role('RN', rn), LPN: role('LPN', 0), CNA: role('CNA', 0) },
+    fromCoverageFloorOnly: true,
+  } as ShiftDemand;
+}
+
+describe('the staffing summary under the grid', () => {
+  beforeEach(() => localStorage.clear());
+
+  // Monday needs one day RN and nobody is on; Tuesday needs one and Alice is on.
+  function mountWithDemand() {
+    return render(
+      <ScheduleGrid
+        nurses={[alice, ben]}
+        shiftTypes={[DAY_12]}
+        columns={COLUMNS}
+        assignments={[assign(alice.id, DAY_12, '2026-10-06')]}
+        pendingIds={new Set()}
+        readOnly={false}
+        violationsByAssignment={new Map()}
+        violationsByNurse={new Map()}
+        violationsByDate={new Map()}
+        demand={[floorDemand('2026-10-05', DAY_12.id, 1), floorDemand('2026-10-06', DAY_12.id, 1)]}
+        onMove={vi.fn()}
+        onCreate={vi.fn()}
+        onChipOpen={vi.fn()}
+        onChipDelete={vi.fn()}
+      />,
+    );
+  }
+
+  it('says "1 short" on the day missing an RN and a tick on the fully staffed day', () => {
+    mountWithDemand();
+    const cells = within(screen.getByTestId('staffing-summary')).getAllByRole('gridcell');
+    expect(cells.map((c) => c.textContent)).toEqual(['1 short', '✓']);
+  });
+
+  it('keeps the per-shift breakdown hidden until the manager opens it', () => {
+    mountWithDemand();
+    const toggle = screen.getByTestId('staffing-breakdown-toggle');
+    expect(screen.queryAllByTestId('headcount-row')).toHaveLength(0);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(toggle);
+
+    expect(screen.getAllByTestId('headcount-row').length).toBeGreaterThan(0);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('opens the breakdown again next time once the manager has left it open', () => {
+    const first = mountWithDemand();
+    fireEvent.click(screen.getByTestId('staffing-breakdown-toggle'));
+    first.unmount();
+
+    mountWithDemand();
+
+    expect(screen.getByTestId('staffing-breakdown-toggle').getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+    expect(screen.getAllByTestId('headcount-row').length).toBeGreaterThan(0);
+  });
+
+  it('still works when the browser will not let the app remember the choice', () => {
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('storage blocked');
+    });
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('storage blocked');
+    });
+    try {
+      mountWithDemand();
+      const toggle = screen.getByTestId('staffing-breakdown-toggle');
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      expect(screen.queryAllByTestId('headcount-row')).toHaveLength(0);
+
+      fireEvent.click(toggle);
+
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      expect(screen.getAllByTestId('headcount-row').length).toBeGreaterThan(0);
+    } finally {
+      getItem.mockRestore();
+      setItem.mockRestore();
+    }
   });
 });

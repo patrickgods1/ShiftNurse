@@ -225,7 +225,7 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
         )}
       </div>
 
-      <div className="mt-3 flex justify-end gap-2">
+      <div className="mt-3 flex flex-wrap justify-end gap-2">
         <button type="button" className={SECONDARY} onClick={() => setUncovering(true)}>
           Mark uncovered
         </button>

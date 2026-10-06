@@ -35,7 +35,7 @@ export function NurseDetail({ nurseId, onClose, onEdit }: NurseDetailProps) {
       ref={panelRef}
       role="dialog"
       aria-label="Nurse detail"
-      className="fixed inset-y-0 right-0 z-40 flex w-[420px] flex-col overflow-y-auto border-l
+      className="fixed inset-y-0 right-0 z-40 flex w-[min(420px,calc(100vw-2rem))] flex-col overflow-y-auto border-l
         border-border bg-surface p-5 shadow-xl"
     >
       <div className="mb-4 flex items-start justify-between gap-2">

@@ -10,7 +10,7 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { addDays, today } from '@shiftnurse/core';
 import { getPeriod, listNursesForUnit } from '@shiftnurse/db';
-import type { BrowserWindow } from 'electron';
+import type { BrowserWindow, NativeImage } from 'electron';
 import { app } from 'electron';
 import { nurseRecordDocument } from './api/nurse-record.js';
 import { outputInput } from './api.js';
@@ -1275,6 +1275,28 @@ const SETTINGS_GROUPS_SCRIPT = `
     };
   })()`;
 
+/**
+ * `capturePage` straight after a reload fails with `UnknownVizError`: the new document has no
+ * compositor surface until its first frame is presented, and viz cannot copy from a surface it
+ * does not have yet. Measured at 840x440 with 300 back-to-back captures and a reload every 50:
+ * every failure fell on the capture(s) right after a reload (up to two in a row), none in the
+ * 300 captures without a reload, whatever the scrolling. It is how long the first frame takes, not
+ * the app: the grid does not re-layout (zero `fit` calls over ten frames before the capture).
+ * `invalidate()` asks for a fresh frame; any other error, or no frame within the limit, still fails.
+ */
+async function captureAfterFirstFrame(win: BrowserWindow, limitMs = 5000): Promise<NativeImage> {
+  const started = Date.now();
+  for (;;) {
+    try {
+      return await win.webContents.capturePage();
+    } catch (err) {
+      if (!String(err).includes('UnknownVizError') || Date.now() - started > limitMs) throw err;
+      win.webContents.invalidate();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+}
+
 export function runSmoke(win: BrowserWindow): void {
   const timer = setTimeout(() => fail(`did not finish within ${TIMEOUT_MS}ms`), TIMEOUT_MS);
 
@@ -2027,7 +2049,7 @@ export function runSmoke(win: BrowserWindow): void {
           fail(`expected the two smoke assignments as chips on the grid, saw ${chips}`);
         writeFileSync(
           `${shotDirAfter}schedule-after.png`,
-          (await win.webContents.capturePage()).toPNG(),
+          (await captureAfterFirstFrame(win)).toPNG(),
         );
         console.log(`[smoke] grid chips OK (${chips} rendered)`);
       }

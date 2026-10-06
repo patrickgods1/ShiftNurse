@@ -250,7 +250,7 @@ function ShiftTypeForm({
           ))}
         </select>
       </Field>
-      <div className="mt-2 flex justify-end gap-2">
+      <div className="mt-2 flex flex-wrap justify-end gap-2">
         <button type="button" onClick={onCancel} className={SECONDARY}>
           Cancel
         </button>
@@ -451,7 +451,7 @@ export default function ShiftTypesPanel() {
                     {shiftType.active ? 'Active' : 'Inactive'}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <div className="flex justify-end gap-2">
+                    <div className="flex flex-wrap justify-end gap-2">
                       <button
                         type="button"
                         onClick={() => {

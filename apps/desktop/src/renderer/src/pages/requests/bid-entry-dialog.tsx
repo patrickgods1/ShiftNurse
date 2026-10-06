@@ -149,7 +149,7 @@ export function BidEntryDialog({ round, nurses, bids, nurseId: initialNurse, onC
           </p>
         ) : null}
 
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <button type="button" className={SECONDARY} onClick={onClose}>
             Cancel
           </button>

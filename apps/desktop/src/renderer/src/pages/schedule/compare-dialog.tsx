@@ -277,7 +277,7 @@ export function CompareDialog({
             </table>
           </div>
         )}
-        <div className="mt-6 flex justify-end gap-2">
+        <div className="mt-6 flex flex-wrap justify-end gap-2">
           <button type="button" className={secondaryButton} onClick={() => onOpenChange(false)}>
             Close
           </button>

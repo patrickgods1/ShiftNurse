@@ -91,7 +91,7 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
                 Could not read that file.
               </p>
             ) : null}
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
               <button type="button" className={SECONDARY} onClick={() => handleOpenChange(false)}>
                 Cancel
               </button>
@@ -118,7 +118,7 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
                 <p className="mb-2 text-sm font-medium text-danger">
                   {preview.errors.length} row(s) have errors — fix the file and re-import.
                 </p>
-                <div className="max-h-40 overflow-y-auto rounded-md border border-border">
+                <div className="max-h-40 overflow-auto rounded-md border border-border">
                   <table className="w-full text-left text-xs">
                     <thead>
                       <tr className="border-b border-border text-text-muted">
@@ -147,7 +147,7 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
             ) : null}
 
             {preview.periods.length > 0 ? (
-              <div className="mb-4 max-h-56 overflow-y-auto rounded-md border border-border">
+              <div className="mb-4 max-h-56 overflow-auto rounded-md border border-border">
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b border-border text-text-muted">
@@ -191,7 +191,7 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
               </p>
             ) : null}
 
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
               <button type="button" onClick={() => setPreview(undefined)} className={SECONDARY}>
                 Choose a different file
               </button>

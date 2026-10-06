@@ -44,7 +44,7 @@ export function EditorShell({
       {children}
       <div
         data-sticky-footer
-        className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-border bg-bg px-4 py-3"
+        className="sticky -bottom-6 flex flex-wrap items-center justify-end gap-3 border-t border-border bg-bg px-4 pt-3 pb-9"
       >
         {message !== undefined ? (
           <p role="alert" className="mr-auto text-sm text-danger">

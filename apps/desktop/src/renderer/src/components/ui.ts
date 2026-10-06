@@ -18,7 +18,7 @@ export const SMALL_DANGER =
 export const OVERLAY = 'fixed inset-0 z-50 bg-black/40';
 /** A compact centred modal (confirmations, single-field prompts); add a width. */
 export const POPUP =
-  'fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-lg';
+  'fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-surface p-4 shadow-lg max-w-[calc(100vw-2rem)]';
 /** A full centred modal with scrolling; add a width. */
 export const DIALOG =
   'fixed z-50 left-1/2 top-1/2 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-border bg-surface p-6 shadow-lg';

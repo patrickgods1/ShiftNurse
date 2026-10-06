@@ -110,7 +110,9 @@ export function GenerateDialog({
       open={open}
       onOpenChange={onOpenChange}
       data-testid="generate-dialog"
-      size="md"
+      // The setup is a short form; progress and results are an eight-column table that a narrow
+      // dialog clipped (Cost ran off the edge), so those views get the wide frame.
+      size={showSetup ? 'md' : 'xl'}
       title="Generate schedule"
       description={periodLabel(period)}
     >
@@ -344,7 +346,7 @@ function Confirm({
           {error}
         </p>
       ) : null}
-      <div className="mt-6 flex justify-end gap-2">
+      <div className="mt-6 flex flex-wrap justify-end gap-2">
         <button type="button" className={secondaryButton} onClick={onClose}>
           Cancel
         </button>
@@ -525,7 +527,7 @@ function Running({
         You can close this window: the options keep running, and Show progress above the grid brings
         you back here.
       </p>
-      <div className="mt-4 flex justify-end gap-2">
+      <div className="mt-4 flex flex-wrap justify-end gap-2">
         <button
           type="button"
           data-testid="generate-cancel"
@@ -580,7 +582,7 @@ function Finished({
           These options are out of date: {batch.stale}. Generate again for ones that fit the
           schedule as it is now.
         </p>
-        <div className="mt-6 flex justify-end gap-2">
+        <div className="mt-6 flex flex-wrap justify-end gap-2">
           <button type="button" className={secondaryButton} onClick={onClose}>
             Close
           </button>
@@ -625,93 +627,104 @@ function Finished({
           {SOLVER_LABELS[batch.fellBackFrom.solver].name}: {batch.fellBackFrom.reason}.
         </p>
       ) : null}
-      <table className="mt-3 w-full border-collapse text-xs">
-        <thead>
-          <tr className="border-b border-border text-left text-text-muted">
-            <th className="px-2 py-1 font-medium">&nbsp;</th>
-            <th className="px-2 py-1 font-medium">Short shifts</th>
-            <th
-              className="px-2 py-1 font-medium"
-              title="Night shifts per nurse who works nights, fewest to most"
-            >
-              Nights each
-            </th>
-            <th className="px-2 py-1 font-medium" title="Weekends per nurse, fewest to most">
-              Weekends each
-            </th>
-            <th
-              className="px-2 py-1 font-medium"
-              title="Day or evening shifts too soon after nights"
-            >
-              Night→day flips
-            </th>
-            <th className="px-2 py-1 font-medium">Under contract</th>
-            <th
-              className="px-2 py-1 font-medium"
-              title="Shifts inside a time-off request still waiting for a decision"
-            >
-              On days asked off
-            </th>
-            <th className="px-2 py-1 text-right font-medium">Cost</th>
-          </tr>
-        </thead>
-        <tbody>
-          {batch.draftObjective !== undefined ? (
-            <tr
-              className={`border-b border-border ${choice?.kind === 'grid' ? 'font-semibold text-success' : 'text-text-muted'}`}
-            >
-              <th scope="row" className="px-2 py-1 text-left font-normal">
-                On the grid now
-              </th>
-              <td colSpan={7} className="px-2 py-1">
-                {choice?.kind === 'grid' ? 'Best balance — keep it' : 'Compare all for its numbers'}
-              </td>
-            </tr>
-          ) : null}
-          {batch.runs.map((run) => {
-            const s = run.summary;
-            const best = choice?.kind === 'variation' && choice.index === run.index;
-            return (
-              <tr
-                key={run.index}
-                data-testid="generate-run"
-                data-state={run.state}
-                className={`border-b border-border last:border-b-0 ${best ? 'font-semibold text-success' : 'text-text'}`}
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full border-collapse text-xs">
+          <thead>
+            <tr className="border-b border-border text-left text-text-muted">
+              <th className="px-2 py-1 align-bottom font-medium">&nbsp;</th>
+              <th className="px-2 py-1 align-bottom font-medium">Short shifts</th>
+              <th
+                className="px-2 py-1 align-bottom font-medium"
+                title="Night shifts per nurse who works nights, fewest to most"
               >
-                <th scope="row" className="px-2 py-1 text-left font-normal">
-                  Option {variationNumber(batch, run.index)}
+                Nights each
+              </th>
+              <th
+                className="px-2 py-1 align-bottom font-medium"
+                title="Weekends per nurse, fewest to most"
+              >
+                Weekends each
+              </th>
+              <th
+                className="px-2 py-1 align-bottom font-medium"
+                title="Day or evening shifts too soon after nights"
+              >
+                Night→day flips
+              </th>
+              <th className="px-2 py-1 align-bottom font-medium">Under contract</th>
+              <th
+                className="px-2 py-1 align-bottom font-medium"
+                title="Shifts inside a time-off request still waiting for a decision"
+              >
+                On days asked off
+              </th>
+              <th className="px-2 py-1 text-right align-bottom font-medium">Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {batch.draftObjective !== undefined ? (
+              <tr
+                className={`border-b border-border ${choice?.kind === 'grid' ? 'font-semibold text-success' : 'text-text-muted'}`}
+              >
+                <th scope="row" className="whitespace-nowrap px-2 py-1 text-left font-normal">
+                  On the grid now
                 </th>
-                {run.state === 'done' && s ? (
-                  <>
-                    <td className={`px-2 py-1 ${s.floorsShort > 0 ? 'text-danger' : ''}`}>
-                      {s.floorsShort}
-                    </td>
-                    <td className="px-2 py-1">{spread(s.digest.nights)}</td>
-                    <td className="px-2 py-1">{spread(s.digest.weekends)}</td>
-                    <td className={`px-2 py-1 ${s.digest.quickFlips > 0 ? 'text-warn' : ''}`}>
-                      {s.digest.quickFlips}
-                    </td>
-                    <td className="px-2 py-1">{s.digest.nursesUnderContract}</td>
-                    <td className={`px-2 py-1 ${s.digest.onDaysAskedOff > 0 ? 'text-warn' : ''}`}>
-                      {s.digest.onDaysAskedOff}
-                    </td>
-                    <td className="px-2 py-1 text-right">
-                      {s.costTotal !== undefined ? formatDollars(s.costTotal) : '—'}
-                    </td>
-                  </>
-                ) : (
-                  <td
-                    colSpan={7}
-                    className={`px-2 py-1 ${run.state === 'failed' ? 'text-danger' : 'text-text-muted'}`}
-                  >
-                    {describeRun(run)}
-                  </td>
-                )}
+                <td colSpan={7} className="px-2 py-1">
+                  {choice?.kind === 'grid'
+                    ? 'Best balance — keep it'
+                    : 'Compare all for its numbers'}
+                </td>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            ) : null}
+            {batch.runs.map((run) => {
+              const s = run.summary;
+              const best = choice?.kind === 'variation' && choice.index === run.index;
+              return (
+                <tr
+                  key={run.index}
+                  data-testid="generate-run"
+                  data-state={run.state}
+                  className={`border-b border-border last:border-b-0 ${best ? 'font-semibold text-success' : 'text-text'}`}
+                >
+                  <th scope="row" className="whitespace-nowrap px-2 py-1 text-left font-normal">
+                    Option {variationNumber(batch, run.index)}
+                  </th>
+                  {run.state === 'done' && s ? (
+                    <>
+                      <td className={`px-2 py-1 ${s.floorsShort > 0 ? 'text-danger' : ''}`}>
+                        {s.floorsShort}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-1 tabular-nums">
+                        {spread(s.digest.nights)}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-1 tabular-nums">
+                        {spread(s.digest.weekends)}
+                      </td>
+                      <td className={`px-2 py-1 ${s.digest.quickFlips > 0 ? 'text-warn' : ''}`}>
+                        {s.digest.quickFlips}
+                      </td>
+                      <td className="px-2 py-1">{s.digest.nursesUnderContract}</td>
+                      <td className={`px-2 py-1 ${s.digest.onDaysAskedOff > 0 ? 'text-warn' : ''}`}>
+                        {s.digest.onDaysAskedOff}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-1 text-right tabular-nums">
+                        {s.costTotal !== undefined ? formatDollars(s.costTotal) : '—'}
+                      </td>
+                    </>
+                  ) : (
+                    <td
+                      colSpan={7}
+                      className={`px-2 py-1 ${run.state === 'failed' ? 'text-danger' : 'text-text-muted'}`}
+                    >
+                      {describeRun(run)}
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
       <p className="mt-2 text-xs text-text-muted">
         Nights are per nurse who works nights, weekends per nurse with contracted hours, fewest to
         most. Nothing on the schedule has changed yet: preview one, then save it.

@@ -204,7 +204,7 @@ function NextSteps({
   return (
     <section
       data-testid="next-steps"
-      className="mb-4 rounded-md border border-border bg-surface p-4"
+      className="mb-4 short:mb-2 rounded-md border border-border bg-surface p-4 short:p-3"
     >
       <h2 className="text-sm font-semibold text-text">Next steps</h2>
       {steps.length === 0 ? (
@@ -264,7 +264,7 @@ export default function DashboardPage() {
         coverageRows={(coverageQuery.data ?? []).length}
       />
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-4 @4xl:grid-cols-4">
         <Link to="/roster" aria-label="Active nurses — open Roster" className={CARD_LINK}>
           <StatCard label="Active nurses" value={summary.activeNurses} />
         </Link>
@@ -303,7 +303,7 @@ export default function DashboardPage() {
         </button>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-4">
+      <div className="mt-4 grid grid-cols-1 gap-4 @3xl:grid-cols-2">
         <PeriodCard
           title="Current draft"
           period={summary.currentDraft}
@@ -338,7 +338,7 @@ export default function DashboardPage() {
         {summary.todayOnShift.length === 0 ? (
           <p className="text-sm text-text-muted">No published schedule covers today.</p>
         ) : (
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 @3xl:grid-cols-2 @5xl:grid-cols-3">
             {summary.todayOnShift.map((group) => (
               <div
                 key={group.shiftType.id}

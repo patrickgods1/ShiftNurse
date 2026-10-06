@@ -26,7 +26,7 @@ export function CredentialBadge({ standing }: { standing: CredentialStanding }) 
   return (
     <span
       data-testid={`credential-badge-${standing}`}
-      className={`inline-block rounded border px-1.5 py-0.5 text-xs font-medium ${className}`}
+      className={`inline-block whitespace-nowrap rounded border px-1.5 py-0.5 text-xs font-medium ${className}`}
     >
       {label}
     </span>

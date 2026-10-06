@@ -109,71 +109,75 @@ function YearForm({
                 : `From ${year - 1}'s list.`}
           </p>
           {plan.holidays.length > 0 ? (
-            <table className="mt-2 w-full border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-xs text-text-muted">
-                  <th className="py-1 pr-2 font-medium">Add</th>
-                  <th className="py-1 pr-2 font-medium">Date</th>
-                  <th className="py-1 pr-2 font-medium">Name</th>
-                  <th className="py-1 pr-2 font-medium">Major</th>
-                  <th className="py-1 font-medium">Paired with</th>
-                </tr>
-              </thead>
-              <tbody>
-                {plan.holidays.map((p) => {
-                  const e = edits[p.key] ?? {};
-                  const included = e.include !== false;
-                  const row = input.holidays.find((r) => r.key === p.key);
-                  const label = e.name ?? p.name;
-                  return (
-                    <tr key={p.key} className="border-b border-border last:border-0">
-                      <td className="py-1 pr-2">
-                        <input
-                          type="checkbox"
-                          aria-label={`Add ${label}`}
-                          checked={included}
-                          onChange={(event) => edit(p.key, { include: event.target.checked })}
-                        />
-                      </td>
-                      <td className="py-1 pr-2">
-                        {/* The label stays for the accessible name; the column header shows it. */}
-                        <div className="[&_label]:sr-only">
-                          <DateField
-                            label={`Date of ${label}`}
-                            disabled={!included}
-                            value={e.date ?? p.date}
-                            // A half-typed date stays '' so `badDate` still blocks the add.
-                            onChange={(date) => edit(p.key, { date: date as IsoDate })}
+            <div className="overflow-x-auto mt-2">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs text-text-muted">
+                    <th className="py-1 pr-2 font-medium">Add</th>
+                    <th className="py-1 pr-2 font-medium">Date</th>
+                    <th className="py-1 pr-2 font-medium">Name</th>
+                    <th className="py-1 pr-2 font-medium">Major</th>
+                    <th className="py-1 font-medium">Paired with</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {plan.holidays.map((p) => {
+                    const e = edits[p.key] ?? {};
+                    const included = e.include !== false;
+                    const row = input.holidays.find((r) => r.key === p.key);
+                    const label = e.name ?? p.name;
+                    return (
+                      <tr key={p.key} className="border-b border-border last:border-0">
+                        <td className="py-1 pr-2">
+                          <input
+                            type="checkbox"
+                            aria-label={`Add ${label}`}
+                            checked={included}
+                            onChange={(event) => edit(p.key, { include: event.target.checked })}
                           />
-                        </div>
-                      </td>
-                      <td className="py-1 pr-2">
-                        <input
-                          type="text"
-                          aria-label={`Name of ${label}`}
-                          disabled={!included}
-                          value={label}
-                          onChange={(event) => edit(p.key, { name: event.target.value })}
-                          className={`${INPUT} w-full py-0.5`}
-                        />
-                      </td>
-                      <td className="py-1 pr-2">
-                        <input
-                          type="checkbox"
-                          aria-label={`${label} is a major holiday`}
-                          disabled={!included}
-                          checked={e.isMajor ?? p.isMajor}
-                          onChange={(event) => edit(p.key, { isMajor: event.target.checked })}
-                        />
-                      </td>
-                      <td className="py-1 text-xs text-text-muted">
-                        {row?.pairWith ? describeTarget(row.pairWith, plan, edits, existing) : '—'}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </td>
+                        <td className="whitespace-nowrap py-1 pr-2">
+                          {/* The label stays for the accessible name; the column header shows it. */}
+                          <div className="[&_label]:sr-only">
+                            <DateField
+                              label={`Date of ${label}`}
+                              disabled={!included}
+                              value={e.date ?? p.date}
+                              // A half-typed date stays '' so `badDate` still blocks the add.
+                              onChange={(date) => edit(p.key, { date: date as IsoDate })}
+                            />
+                          </div>
+                        </td>
+                        <td className="py-1 pr-2">
+                          <input
+                            type="text"
+                            aria-label={`Name of ${label}`}
+                            disabled={!included}
+                            value={label}
+                            onChange={(event) => edit(p.key, { name: event.target.value })}
+                            className={`${INPUT} w-full py-0.5`}
+                          />
+                        </td>
+                        <td className="py-1 pr-2">
+                          <input
+                            type="checkbox"
+                            aria-label={`${label} is a major holiday`}
+                            disabled={!included}
+                            checked={e.isMajor ?? p.isMajor}
+                            onChange={(event) => edit(p.key, { isMajor: event.target.checked })}
+                          />
+                        </td>
+                        <td className="py-1 text-xs text-text-muted">
+                          {row?.pairWith
+                            ? describeTarget(row.pairWith, plan, edits, existing)
+                            : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           ) : null}
 
           <Notes
@@ -200,7 +204,7 @@ function YearForm({
               {errorMessage(add.error)}
             </p>
           ) : null}
-          <div className="mt-4 flex justify-end gap-2">
+          <div className="mt-4 flex flex-wrap justify-end gap-2">
             <button type="button" className={SECONDARY} onClick={onClose}>
               Cancel
             </button>

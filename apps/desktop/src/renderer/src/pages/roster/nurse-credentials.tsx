@@ -249,7 +249,7 @@ function GrantCredentialForm({
         <DateField label="Expires on" value={expiresOn as IsoDate | ''} onChange={setExpiresOn} />
       </div>
 
-      <div className="mt-3 flex justify-end gap-2">
+      <div className="mt-3 flex flex-wrap justify-end gap-2">
         <button
           type="button"
           onClick={onDone}

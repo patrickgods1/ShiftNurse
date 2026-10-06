@@ -203,7 +203,7 @@ function ToastItem({ toast, onDismiss }: { toast: Entry; onDismiss: (id: string)
       }}
     >
       <p className={isError ? 'text-danger' : undefined}>{toast.message}</p>
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
         {toast.action ? (
           <button
             type="button"

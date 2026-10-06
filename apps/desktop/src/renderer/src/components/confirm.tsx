@@ -65,7 +65,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             ) : (
               <Dialog.Description className="sr-only">{options?.title}</Dialog.Description>
             )}
-            <div className="mt-4 flex justify-end gap-2">
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
               <button type="button" className={SECONDARY} onClick={() => answer(false)}>
                 Cancel
               </button>

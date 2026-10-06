@@ -86,56 +86,62 @@ export default function BackupsPanel() {
       ) : backupsQuery.data.length === 0 ? (
         <AsyncState status="empty" label="No backups yet." />
       ) : (
-        <table className="w-full text-sm">
-          <thead className="text-left text-xs text-text-muted">
-            <tr>
-              <th className="py-1 pr-3 font-medium">When</th>
-              <th className="py-1 pr-3 font-medium">Kind</th>
-              <th className="py-1 pr-3 font-medium">File</th>
-              <th className="py-1 pr-3 font-medium">Size</th>
-              <th className="py-1 font-medium" />
-            </tr>
-          </thead>
-          <tbody>
-            {backupsQuery.data.map((b) => (
-              <tr key={b.fileName} className="border-t border-border">
-                <td className="py-1.5 pr-3 text-text">{formatInstant(b.createdAt)}</td>
-                <td className="py-1.5 pr-3 text-text-muted">{KIND_LABEL[b.kind] ?? b.kind}</td>
-                <td className="py-1.5 pr-3 font-mono text-xs text-text-muted" title={b.path}>
-                  {b.fileName}
-                </td>
-                <td className="py-1.5 pr-3 text-text-muted">{formatBytes(b.bytes)}</td>
-                <td className="py-1.5 text-right">
-                  <div className="flex justify-end gap-2">
-                    <button
-                      type="button"
-                      className={SMALL}
-                      disabled={restore.isPending}
-                      onClick={() => {
-                        setConfirmingDelete(undefined);
-                        setConfirming(b);
-                      }}
-                    >
-                      Restore
-                    </button>
-                    <button
-                      type="button"
-                      className={SMALL_DANGER}
-                      disabled={deleteBackup.isPending}
-                      onClick={() => {
-                        setConfirming(undefined);
-                        deleteBackup.reset();
-                        setConfirmingDelete(b);
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs text-text-muted">
+              <tr>
+                <th className="py-1 pr-3 font-medium">When</th>
+                <th className="py-1 pr-3 font-medium">Kind</th>
+                <th className="py-1 pr-3 font-medium">File</th>
+                <th className="py-1 pr-3 font-medium">Size</th>
+                <th className="py-1 font-medium" />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {backupsQuery.data.map((b) => (
+                <tr key={b.fileName} className="border-t border-border">
+                  <td className="whitespace-nowrap py-1.5 pr-3 text-text">
+                    {formatInstant(b.createdAt)}
+                  </td>
+                  <td className="py-1.5 pr-3 text-text-muted">{KIND_LABEL[b.kind] ?? b.kind}</td>
+                  <td className="py-1.5 pr-3 font-mono text-xs text-text-muted" title={b.path}>
+                    {b.fileName}
+                  </td>
+                  <td className="whitespace-nowrap py-1.5 pr-3 text-text-muted">
+                    {formatBytes(b.bytes)}
+                  </td>
+                  <td className="py-1.5 text-right">
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        className={SMALL}
+                        disabled={restore.isPending}
+                        onClick={() => {
+                          setConfirmingDelete(undefined);
+                          setConfirming(b);
+                        }}
+                      >
+                        Restore
+                      </button>
+                      <button
+                        type="button"
+                        className={SMALL_DANGER}
+                        disabled={deleteBackup.isPending}
+                        onClick={() => {
+                          setConfirming(undefined);
+                          deleteBackup.reset();
+                          setConfirmingDelete(b);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {confirming !== undefined ? (
@@ -155,7 +161,7 @@ export default function BackupsPanel() {
               {errorMessage(restore.error)}
             </p>
           ) : null}
-          <div className="mt-3 flex justify-end gap-2">
+          <div className="mt-3 flex flex-wrap justify-end gap-2">
             <button
               type="button"
               className={SMALL}
@@ -192,7 +198,7 @@ export default function BackupsPanel() {
               {errorMessage(deleteBackup.error)}
             </p>
           ) : null}
-          <div className="mt-3 flex justify-end gap-2">
+          <div className="mt-3 flex flex-wrap justify-end gap-2">
             <button
               type="button"
               className={SMALL}
@@ -268,57 +274,65 @@ function DeletedBackups() {
           {errorMessage(error)}
         </p>
       ) : null}
-      <table className="w-full text-sm">
-        <thead className="text-left text-xs text-text-muted">
-          <tr>
-            <th className="py-1 pr-3 font-medium">Taken</th>
-            <th className="py-1 pr-3 font-medium">Kind</th>
-            <th className="py-1 pr-3 font-medium">File</th>
-            <th className="py-1 pr-3 font-medium">Deleted</th>
-            <th className="py-1 pr-3 font-medium">Removed after</th>
-            <th className="py-1 font-medium" />
-          </tr>
-        </thead>
-        <tbody>
-          {deletedQuery.data.map((b) => (
-            <tr key={b.fileName} className="border-t border-border">
-              <td className="py-1.5 pr-3 text-text">{formatInstant(b.createdAt)}</td>
-              <td className="py-1.5 pr-3 text-text-muted">{KIND_LABEL[b.kind] ?? b.kind}</td>
-              <td className="py-1.5 pr-3 font-mono text-xs text-text-muted" title={b.path}>
-                {b.fileName}
-              </td>
-              <td className="py-1.5 pr-3 text-text-muted">{formatInstant(b.deletedAt)}</td>
-              <td className="py-1.5 pr-3 text-text-muted">{formatInstant(b.purgeAt)}</td>
-              <td className="py-1.5 text-right">
-                <div className="flex justify-end gap-2">
-                  <button
-                    type="button"
-                    className={SMALL}
-                    disabled={undelete.isPending}
-                    onClick={() => {
-                      purge.reset();
-                      undelete.mutate(b.fileName);
-                    }}
-                  >
-                    Undelete
-                  </button>
-                  <button
-                    type="button"
-                    className={SMALL_DANGER}
-                    disabled={purge.isPending}
-                    onClick={() => {
-                      undelete.reset();
-                      setConfirmingPurge(b);
-                    }}
-                  >
-                    Delete permanently
-                  </button>
-                </div>
-              </td>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="text-left text-xs text-text-muted">
+            <tr>
+              <th className="py-1 pr-3 font-medium">Taken</th>
+              <th className="py-1 pr-3 font-medium">Kind</th>
+              <th className="py-1 pr-3 font-medium">File</th>
+              <th className="py-1 pr-3 font-medium">Deleted</th>
+              <th className="py-1 pr-3 font-medium">Removed after</th>
+              <th className="py-1 font-medium" />
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {deletedQuery.data.map((b) => (
+              <tr key={b.fileName} className="border-t border-border">
+                <td className="whitespace-nowrap py-1.5 pr-3 text-text">
+                  {formatInstant(b.createdAt)}
+                </td>
+                <td className="py-1.5 pr-3 text-text-muted">{KIND_LABEL[b.kind] ?? b.kind}</td>
+                <td className="py-1.5 pr-3 font-mono text-xs text-text-muted" title={b.path}>
+                  {b.fileName}
+                </td>
+                <td className="whitespace-nowrap py-1.5 pr-3 text-text-muted">
+                  {formatInstant(b.deletedAt)}
+                </td>
+                <td className="whitespace-nowrap py-1.5 pr-3 text-text-muted">
+                  {formatInstant(b.purgeAt)}
+                </td>
+                <td className="py-1.5 text-right">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      className={SMALL}
+                      disabled={undelete.isPending}
+                      onClick={() => {
+                        purge.reset();
+                        undelete.mutate(b.fileName);
+                      }}
+                    >
+                      Undelete
+                    </button>
+                    <button
+                      type="button"
+                      className={SMALL_DANGER}
+                      disabled={purge.isPending}
+                      onClick={() => {
+                        undelete.reset();
+                        setConfirmingPurge(b);
+                      }}
+                    >
+                      Delete permanently
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       {confirmingPurge !== undefined ? (
         <div
@@ -330,7 +344,7 @@ function DeletedBackups() {
             Permanently delete <span className="font-mono text-xs">{confirmingPurge.fileName}</span>
             ? The file is removed now and cannot be recovered.
           </p>
-          <div className="mt-3 flex justify-end gap-2">
+          <div className="mt-3 flex flex-wrap justify-end gap-2">
             <button
               type="button"
               className={SMALL}
