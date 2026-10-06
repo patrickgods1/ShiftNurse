@@ -70,6 +70,21 @@ describe('pay settings arriving over IPC', () => {
     expect(costSchemas.createOvertimeRule.safeParse([rule]).success).toBe(false);
   });
 
+  it('accepts overtime beyond the scheduled tour and after eight consecutive hours', () => {
+    for (const basis of ['beyond_scheduled_tour', 'consecutive']) {
+      const rule = { unitId: 'u-1', basis, thresholdHours: 0, multiplier: 1.5, active: true };
+      expect(costSchemas.createOvertimeRule.safeParse([rule]).success).toBe(true);
+    }
+    const unknown = {
+      unitId: 'u-1',
+      basis: 'lunar',
+      thresholdHours: 8,
+      multiplier: 1.5,
+      active: true,
+    };
+    expect(costSchemas.createOvertimeRule.safeParse([unknown]).success).toBe(false);
+  });
+
   it('accepts a budget of zero and refuses a negative one', () => {
     expect(costSchemas.setBudget.safeParse(['p-1', 0]).success).toBe(true);
     expect(costSchemas.setBudget.safeParse(['p-1', -100]).success).toBe(false);

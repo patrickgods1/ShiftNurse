@@ -851,6 +851,10 @@ export const assignment = sqliteTable(
     isCharge: bool('is_charge').notNull().default(false),
     isOvertime: bool('is_overtime').notNull().default(false),
     notes: text('notes'),
+    /** Minutes worked past the scheduled end, recorded day-of on a published shift. */
+    holdoverMinutes: integer('holdover_minutes').notNull().default(0),
+    /** Required (true) or volunteered (false); null while there is no holdover. */
+    holdoverMandated: bool('holdover_mandated'),
   },
   (t) => [
     // The two hot paths: rendering a period's grid, and walking one nurse's timeline for

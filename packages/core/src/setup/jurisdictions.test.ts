@@ -169,7 +169,45 @@ describe('applying a state preset', () => {
       expect(plan.tightenRatioRules).toEqual([]);
       expect(plan.addOvertimeRules).toEqual([]);
       expect(plan.ratioStaffing).toBeUndefined();
-      expect(nmoOf(plan)).toMatchObject({ enabled: true, params: { maxMandatedWeeklyHours: 40 } });
+      expect(nmoOf(plan)).toMatchObject({
+        enabled: true,
+        params: {
+          maxMandatedWeeklyHours: 40,
+          maxRequiredConsecutiveHours: 8,
+          compressedTourConsecutiveHours: 12,
+        },
+      });
+    });
+
+    it('lowers a looser consecutive-hours limit to the federal 8, and 12 on a compressed tour', () => {
+      const plan = planJurisdiction(
+        'US-VA',
+        input({
+          ruleSet: withNmo(true, {
+            maxMandatedWeeklyHours: 40,
+            maxRequiredConsecutiveHours: 10,
+            compressedTourConsecutiveHours: 16,
+          }),
+        }),
+      );
+      expect(nmoOf(plan)?.params).toMatchObject({
+        maxRequiredConsecutiveHours: 8,
+        compressedTourConsecutiveHours: 12,
+      });
+    });
+
+    it('keeps a stricter consecutive-hours limit the unit already set', () => {
+      const plan = planJurisdiction(
+        'US-VA',
+        input({
+          ruleSet: withNmo(true, {
+            maxMandatedWeeklyHours: 40,
+            maxRequiredConsecutiveHours: 6,
+            compressedTourConsecutiveHours: 10,
+          }),
+        }),
+      );
+      expect(plan.ruleConfigs).toBeUndefined();
     });
 
     it('keeps a 24-hour weekend-plan cap the unit already set', () => {

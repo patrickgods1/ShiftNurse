@@ -105,6 +105,7 @@ import {
   createUnit,
   upsertCoverageRequirement,
 } from '../../repositories/config.js';
+import { recordHoldover } from '../../repositories/holdovers.js';
 import { createHoliday } from '../../repositories/holidays.js';
 import { createIncompatibilityGroup } from '../../repositories/incompatibility.js';
 import { createFmlaCertification, setLeaveBalance } from '../../repositories/leave-balances.js';
@@ -342,6 +343,16 @@ export interface DemoProfile {
   floatUnit?: DemoFloatUnit;
   /** A leave-year bid round for the year after the schedule's, bid on by about half the staff. */
   annualLeaveBid?: DemoLeaveBid;
+  /**
+   * Volunteered holdovers in the published history, one per entry, minutes past the end of a
+   * tour of `shift`. Placed by a scan, not drawn, so no later draw moves.
+   */
+  holdovers?: readonly DemoHoldover[];
+}
+
+export interface DemoHoldover {
+  shift: string;
+  minutes: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -2056,6 +2067,60 @@ export function seedFromProfile(
   }
   importFairnessLedgerEntries(db, ledgerInputs, ACTOR);
   bump('fairnessLedger', ledgerInputs.length);
+
+  // --- Holdovers ------------------------------------------------------------------------------
+  // After every period is published and priced (budgets and run rate stay as they were), and with
+  // no draws. Each is a weekday tour, off a holiday, where the extra time breaks nothing: the
+  // rest before the nurse's next shift stays within the unit's minimum and the week within the
+  // engine's 48-hour cap. Spread across the history by taking the candidate a share of the way
+  // through the list. Volunteered, as most are: the nurse stayed, nobody required it.
+  if (profile.holdovers) {
+    // One nurse each: three people held over once, not one nurse three times.
+    const taken = new Set<Id>();
+    for (const [i, spec] of profile.holdovers.entries()) {
+      const shift = shiftByCode.get(spec.shift);
+      if (!shift) throw new Error(`Holdover on unknown shift ${spec.shift}`);
+      const fits = [...rows.values()].filter((a) => {
+        if (a.shiftTypeId !== shift.id || a.isCharge || taken.has(a.nurseId)) return false;
+        // Never in the last two days of history: the draft's first shift must not lose rest to it.
+        if (compareDates(a.date, addDays(draftStart, -2)) >= 0) return false;
+        const weekday = weekdayOf(a.date);
+        if (weekday < 1 || weekday > 4) return false;
+        if (holidayDates.has(a.date) || holidayDates.has(addDays(a.date, 1))) return false;
+        const s = staff.find((x) => x.nurse.id === a.nurseId)!;
+        if (s.nurse.isNovice) return false;
+        const mine = worked.get(a.nurseId)!;
+        if (hoursInWeek(worked, s, a.date) + spec.minutes / 60 > 48) return false;
+        // Under the overtime threshold even with it, so the holdover is the only overtime on the
+        // row and its price is the minutes alone.
+        const windowStart = overtimeByPayPeriod
+          ? addDays(historyStart, Math.floor(daysBetween(historyStart, a.date) / 14) * 14)
+          : addDays(a.date, -weekdayOf(a.date));
+        const windowEnd = addDays(windowStart, overtimeByPayPeriod ? 13 : 6);
+        if (
+          hoursBetween(worked, s, windowStart, windowEnd) + spec.minutes / 60 >
+          overtimeThreshold
+        ) {
+          return false;
+        }
+        const endMinute = shiftWindow(a.date, shift).endMinute + spec.minutes;
+        return [1, 2].every((ahead) => {
+          const next = mine.get(addDays(a.date, ahead));
+          const nextStart = next && shiftWindow(addDays(a.date, ahead), next).startMinute;
+          return nextStart === undefined || nextStart - endMinute >= limits.minRestMinutes;
+        });
+      });
+      if (fits.length === 0) throw new Error(`No place for a holdover on ${spec.shift}`);
+      const chosen = fits[Math.floor((fits.length * (i + 1)) / (profile.holdovers.length + 1))]!;
+      taken.add(chosen.nurseId);
+      recordHoldover(
+        db,
+        { assignmentId: chosen.id, minutes: spec.minutes, mandated: false },
+        ACTOR,
+      );
+      bump('holdover');
+    }
+  }
 
   // --- The next schedule ----------------------------------------------------------------------
   const draft = createPeriod(

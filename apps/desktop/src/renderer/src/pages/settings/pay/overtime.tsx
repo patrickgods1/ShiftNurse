@@ -13,6 +13,7 @@ import {
 } from '../../../api-cost.js';
 import { AsyncState } from '../../../components/async-state.js';
 import { useConfirm } from '../../../components/confirm.js';
+import { describedBy, Field } from '../../../components/field-help.js';
 import { INPUT, LABEL, PRIMARY, SMALL_DANGER, TD, TH } from '../../../components/ui.js';
 
 const BASIS_SPAN: Record<OvertimeRule['basis'], string> = {
@@ -20,6 +21,14 @@ const BASIS_SPAN: Record<OvertimeRule['basis'], string> = {
   weekly: 'a work week',
   pay_period: 'a pay period',
   seventh_day: 'the seventh day in a row of a work week',
+  beyond_scheduled_tour: 'past the end of the scheduled tour',
+  consecutive: 'hours worked without a break',
+};
+
+// What the threshold means for the two bases whose zero or 8 is not obvious from "hours".
+const THRESHOLD_HINT: Partial<Record<OvertimeRule['basis'], string>> = {
+  beyond_scheduled_tour: 'Grace before a holdover becomes overtime; 0 for none.',
+  consecutive: 'Hours worked without a break before overtime starts (38 U.S.C. §7453(e): 8).',
 };
 
 function describeRule(rule: OvertimeRule): string {
@@ -85,11 +94,16 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
             <option value="pay_period">Per pay period</option>
             <option value="daily">Per workday</option>
             <option value="seventh_day">Seventh day in a row</option>
+            <option value="beyond_scheduled_tour">Past the end of the scheduled tour</option>
+            <option value="consecutive">Consecutive hours worked</option>
           </select>
         </label>
-        <label className={LABEL}>
-          Threshold (hours)
+        <Field id="overtime-threshold" label="Threshold (hours)" hint={THRESHOLD_HINT[basis]}>
           <input
+            id="overtime-threshold"
+            aria-describedby={describedBy('overtime-threshold', {
+              hint: THRESHOLD_HINT[basis] !== undefined,
+            })}
             type="number"
             min={0}
             step={0.5}
@@ -98,7 +112,7 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
             onChange={(event) => setThreshold(event.target.value)}
             className={`${INPUT} w-24`}
           />
-        </label>
+        </Field>
         <label className={LABEL}>
           Multiplier
           <input

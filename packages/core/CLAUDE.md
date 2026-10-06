@@ -179,6 +179,19 @@
   authorised; `no-mandatory-overtime` (hard, off by default) also wants an `OvertimeVolunteer`
   offer covering the date or notes beginning `Emergency:`. Neither solver writes an overtime row,
   so CP-SAT meets it by construction; day-of calls volunteers first within the overtime tier.
+- **A holdover is worked time on a published shift.** `Assignment.holdoverMinutes` (recorded on
+  Today; `holdoverMandated` says required or volunteered) moves the end of the shift's *worked*
+  window and adds to its worked hours; `schedule/holdover.ts` is the one definition
+  (`workedWindow`, `workedHours`, `workedStretches`). `ScheduleView` gives `window` and
+  `paidHours` as worked, `scheduledHours` as declared: rest, hour caps, overtime and pay count the
+  holdover; the contracted-hours rule and contract alerts count `scheduledHours` (a nurse held over
+  was not scheduled past their contract), and a holdover authorises the overtime it adds. Only a
+  draft is generated, so the solvers meet holdovers only in the lookback tail (`SolverModel`'s prior
+  hours, CP-SAT constants via `timelineEntry`/`hoursExpr`). `no-mandatory-overtime` judges a
+  *required* holdover (a volunteer record does not excuse it) against its weekly cap and §7459(a)'s
+  consecutive limit (8, or 12 when the stretch holds a longer tour), one breach per stretch;
+  `max-hours-in-24` (hard, off by default) caps worked hours in any 24, checked at each window's
+  start and end − 24h. Pay: `beyond_scheduled_tour` and `consecutive` overtime bases.
 - **Weekends are filed by `weekendKey`, everywhere.** Fairness, `weekend-pattern` and both
   solvers' prices use it; under `'overlaps'` a Friday night belongs to the weekend it runs into.
   `weekendBreaches` is the one count (`SolverModel.weekendFor`, CP-SAT `weekendBreachExprs`).

@@ -22,6 +22,12 @@
   overtime is bands, one `overtime` line each. Daily rules count the workday (shifts by start
   date), `seventh_day` the last day of a work week worked every day. With equal multipliers this
   is the old "larger premium per shift", so existing units price unchanged.
+- **A holdover is worked time, and two bases price it by the clock.** `view.paidHours` includes
+  `holdoverMinutes`, so daily, weekly and pay-period overtime count it already. `beyond_scheduled_tour`
+  starts overtime `thresholdHours` after the *scheduled* end (a grace period; no holdover, none);
+  `consecutive` starts it once `thresholdHours` have been on the clock in a `workedStretches`
+  stretch, lookback included but never priced. `overtimeStarts` switches exhaustively on `basis` —
+  add a basis there, never let it fall through to weekly.
 - **Day-of pay sits beside the schedule's cost, never in it.** `cost/events.ts`'s
   `priceDayOfEvents` prices missed meal and rest breaks (one hour a day each), reporting-time pay
   (half the shift, 2–4 hours) and call-backs (at least the contract minimum) at the base rate.

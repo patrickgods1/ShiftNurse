@@ -5,8 +5,9 @@
  */
 
 import type { Assignment, Id, ShiftType } from '../../domain/entities.js';
-import { dayNumber, type IsoDate, type ShiftWindow, shiftWindow } from '../../domain/time.js';
+import { dayNumber, type IsoDate, type ShiftWindow } from '../../domain/time.js';
 import type { RuleConfig } from '../../rules/types.js';
+import { holdoverHours, workedWindow } from '../../schedule/holdover.js';
 import type { Shift, SolverModel } from '../model.js';
 import type { ObjectiveWeights, SolveInput } from '../types.js';
 import { type CpBuilder, type Expr, expr } from './builder.js';
@@ -72,7 +73,10 @@ export function hoursExpr(entries: readonly TimelineEntry[]): Expr {
   const e = expr();
   for (const entry of entries) {
     const h = hoursOf(entry.shiftType, entry.date);
-    if (entry.literal === null) e.constant += h;
+    // A constant may be a published lookback shift held over: count what was worked. A
+    // variable is a draft shift, which never carries one.
+    if (entry.literal === null)
+      e.constant += h + Math.round(holdoverHours(entry.assignment ?? {}) * HOURS);
     else e.terms.push([entry.literal, h]);
   }
   return e;
@@ -119,7 +123,7 @@ export function timelineEntry(
     date,
     day: dayNumber(date),
     shiftType,
-    window: shiftWindow(date, shiftType),
+    window: workedWindow(date, shiftType, assignment ?? {}),
     assignment,
   };
 }

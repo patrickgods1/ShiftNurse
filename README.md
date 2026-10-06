@@ -74,7 +74,7 @@ this codebase is held to. This document is the practical "how do I build/run/shi
 
 These are yours to do by hand until the app handles them (the same list is in Settings › About):
 
-- Hour caps on overtime in Oregon (ORS 441.166) and Massachusetts (16 hours): watch the total hours in a row for nurses on overtime yourself.
+- Hour caps on overtime in Oregon (ORS 441.166) and Massachusetts (16 hours) are not in their presets yet: turn on "Most hours in any 24" under Settings › Rules and record holdovers on Today, and the app checks the hours for you.
 - Oregon's staffing-plan deviations: record and justify any departure from the unit's staffing plan yourself.
 - Leave accrual is projected from the last payroll figure under Settings › Leave: part-time accrual counts hours worked, not other paid hours, and the federal 6-hour tier's extra 10 hours in the leave year's last pay period is not added, so re-enter payroll's figures now and then.
 - Military leave (120 hours a fiscal year), court leave and paid parental leave are leave types without entitlements of their own: check the hours available with HR.
@@ -84,7 +84,7 @@ These are yours to do by hand until the app handles them (the same list is in Se
 - Tour rotation limits (Settings › Rules) are checked on the grid, but Generate does not steer away from them while the rule is soft: make it hard to have Generate keep to them.
 - Leave bids and other requests are entered by the manager: nurses do not submit them in the app yet.
 
-The state presets in Settings › Unit are a starting point, not legal advice: check them against your contract and your state's law. A federal VA preset (Title 38) sets the 40-hour cap on required hours and leaves ratios and pay to you.
+The state presets in Settings › Unit are a starting point, not legal advice: check them against your contract and your state's law. A federal VA preset (Title 38) sets the 40-hour weekly cap and the 8-hour (12 on a compressed tour) consecutive limit on required hours, and leaves ratios and pay to you.
 
 ## Installing
 

@@ -98,6 +98,7 @@ import {
   weekendPatternRule,
 } from '../rules/weekend-pattern.js';
 import { coveringShift } from '../schedule/cover.js';
+import { workedHours } from '../schedule/holdover.js';
 import { floorSegments } from '../schedule/overlap.js';
 import { type AssignmentView, ScheduleView } from '../schedule/view.js';
 import {
@@ -555,9 +556,12 @@ export class SolverModel {
         const st = this.shiftTypeById.get(a.shiftTypeId);
         if (!st || (st.isOnCall && !maxHours.onCallCountsTowardHours)) continue;
         const week = this.weekOf(a.date);
-        if (week >= 0 && week < this.weekCount) this.weekHours[i]![week]! += st.durationHours;
+        // A lookback shift held over counts what was worked; in-period rows are drafts, which
+        // never carry a holdover (only a draft is generated).
+        const hours = workedHours(a, st);
+        if (week >= 0 && week < this.weekCount) this.weekHours[i]![week]! += hours;
         const w = this.overtimeOf(a.date);
-        if (w >= 0 && w < this.overtimeCount) this.overtimeHours[i]![w]! += st.durationHours;
+        if (w >= 0 && w < this.overtimeCount) this.overtimeHours[i]![w]! += hours;
       }
     }
     // The half of a pair already behind the period: worked in the lookback tail (Christmas Eve
@@ -1337,6 +1341,7 @@ export class SolverModel {
       shiftType: shift.shiftType,
       window: shiftWindow(shift.date, shift.shiftType),
       paidHours: shift.shiftType.durationHours,
+      scheduledHours: shift.shiftType.durationHours,
       inPeriod: true,
     };
   }

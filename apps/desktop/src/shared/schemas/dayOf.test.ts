@@ -37,3 +37,22 @@ describe('sending a nurse home for low census over IPC', () => {
     );
   });
 });
+
+describe('the holdover input', () => {
+  const { recordHoldover } = API_SCHEMAS.dayOf;
+  const ok = { assignmentId: 'a-1', minutes: 90, mandated: false };
+
+  it('accepts a volunteered holdover and a required one with its reason', () => {
+    expect(recordHoldover.safeParse([ok]).success).toBe(true);
+    expect(recordHoldover.safeParse([{ ...ok, mandated: true, reason: 'No relief' }]).success).toBe(
+      true,
+    );
+  });
+
+  it('rejects part-minutes, negative minutes and more than twelve hours', () => {
+    for (const minutes of [1.5, -1, 721]) {
+      expect(recordHoldover.safeParse([{ ...ok, minutes }]).success).toBe(false);
+    }
+    expect(recordHoldover.safeParse([{ ...ok, minutes: 720 }]).success).toBe(true);
+  });
+});

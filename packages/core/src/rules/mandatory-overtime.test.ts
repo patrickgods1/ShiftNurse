@@ -5,6 +5,7 @@ import {
   assign,
   DAY_8,
   DAY_12,
+  EVENING_8,
   makeNurse,
   ON_CALL,
   resetFixtureCounters,
@@ -290,6 +291,205 @@ describe('no mandatory overtime', () => {
       const saturday = judge({ nurses: [ana()], assignments: week('2026-01-10') }, vaCap);
       expect(saturday.map((v) => v.details?.weekHours)).toEqual([44]);
       expect(judge({ nurses: [ana()], assignments: week('2026-01-11') }, vaCap)).toEqual([]);
+    });
+  });
+
+  describe('with holdovers: time kept past the end of the shift', () => {
+    const base = mandatoryOvertimeRule.defaultParams;
+    // 38 U.S.C. §7459(a): no more than 8 consecutive hours required, 12 on a compressed tour.
+    const vaConsecutive = {
+      ...base,
+      maxMandatedWeeklyHours: 40,
+      maxRequiredConsecutiveHours: 8,
+      compressedTourConsecutiveHours: 12,
+    };
+    const stayed = (minutes: number, mandated: boolean | undefined, notes?: string) => ({
+      id: 'held',
+      holdoverMinutes: minutes,
+      ...(mandated === undefined ? {} : { holdoverMandated: mandated }),
+      ...(notes === undefined ? {} : { notes }),
+    });
+
+    it('refuses an 8-hour tour a nurse was required to stay 60 minutes past: 9 hours straight', () => {
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [assign('ana', DAY_8, '2026-01-08', stayed(60, true))],
+        },
+        { ...base, maxRequiredConsecutiveHours: 8 },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toMatchObject({
+        code: 'mandatory_overtime',
+        severity: 'hard',
+        nurseIds: ['ana'],
+        assignmentIds: ['held'],
+        details: { stretchHours: 9, consecutiveLimit: 8 },
+      });
+      expect(violations[0]!.message).toContain('9h');
+      expect(violations[0]!.message).toContain('8h');
+    });
+
+    it('allows exactly 8 hours straight for the same required 8-hour tour', () => {
+      expect(
+        judge(
+          { nurses: [ana()], assignments: [assign('ana', DAY_8, '2026-01-08')] },
+          { ...base, maxRequiredConsecutiveHours: 8 },
+        ),
+      ).toEqual([]);
+    });
+
+    it('refuses a 12-hour tour held 60 minutes on a compressed schedule: 13 is over 12', () => {
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [assign('ana', DAY_12, '2026-01-08', stayed(60, true))],
+        },
+        vaConsecutive,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]!.details).toMatchObject({ stretchHours: 13, consecutiveLimit: 12 });
+    });
+
+    it('lets a 12-hour tour run its 12 hours when nobody is held over', () => {
+      expect(
+        judge(
+          { nurses: [ana()], assignments: [assign('ana', DAY_12, '2026-01-08')] },
+          vaConsecutive,
+        ),
+      ).toEqual([]);
+    });
+
+    it('does not judge a holdover the nurse volunteered for', () => {
+      expect(
+        judge(
+          {
+            nurses: [ana()],
+            assignments: [
+              assign('ana', DAY_12, '2026-01-08', stayed(60, false)),
+              assign('ana', DAY_8, '2026-01-10', { ...stayed(30, undefined), id: 'unflagged' }),
+            ],
+          },
+          vaConsecutive,
+        ),
+      ).toEqual([]);
+    });
+
+    it('excuses a required holdover recorded as an emergency, unless the contract allows none', () => {
+      const options = {
+        nurses: [ana()],
+        assignments: [
+          assign('ana', DAY_12, '2026-01-08', stayed(60, true, 'Emergency: code blue')),
+        ],
+      };
+      expect(judge(options, vaConsecutive)).toEqual([]);
+      expect(judge(options, { ...vaConsecutive, allowEmergencyNote: false })).toHaveLength(1);
+    });
+
+    it('does not let an overtime offer excuse a holdover the hospital required', () => {
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [assign('ana', DAY_12, '2026-01-08', stayed(60, true))],
+          overtimeVolunteers: [volunteer('ana', '2026-01-04', '2026-01-10')],
+        },
+        vaConsecutive,
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it('counts back-to-back tours as one stretch when a holdover runs into the next', () => {
+      // Day 8 07:00-15:00 held 60 minutes to 16:00; the Evening 8 starts at 15:00 and joins it,
+      // so the stretch is 07:00-23:00 = 16h on a limit of 8.
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [
+            assign('ana', DAY_8, '2026-01-08', stayed(60, true)),
+            assign('ana', EVENING_8, '2026-01-08', { id: 'evening' }),
+          ],
+        },
+        { ...base, maxRequiredConsecutiveHours: 8 },
+      );
+      expect(violations.map((v) => v.details?.stretchHours)).toEqual([16]);
+    });
+
+    it('reports one breach for a stretch with two required holdovers, naming both shifts', () => {
+      // Day 8 held 60 minutes runs to 16:00; Evening 8 from 15:00 held 60 to 24:00: one 17h stretch.
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [
+            assign('ana', DAY_8, '2026-01-08', { ...stayed(60, true), id: 'first' }),
+            assign('ana', EVENING_8, '2026-01-08', { ...stayed(60, true), id: 'second' }),
+          ],
+        },
+        { ...base, maxRequiredConsecutiveHours: 8 },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toMatchObject({
+        assignmentIds: ['first', 'second'],
+        details: { stretchHours: 17, consecutiveLimit: 8 },
+      });
+    });
+
+    it('bans a required holdover outright when no cap is set, and says how long', () => {
+      const violations = judge({
+        nurses: [ana()],
+        assignments: [assign('ana', DAY_12, '2026-03-02', stayed(90, true))],
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toMatchObject({
+        code: 'mandatory_overtime',
+        assignmentIds: ['held'],
+        dates: ['2026-03-02'],
+      });
+      expect(violations[0]!.message).toContain('Ana Cruz');
+      expect(violations[0]!.message).toContain('1h 30m');
+      expect(violations[0]!.message).toContain('Day 12');
+      expect(violations[0]!.message).toContain('Mon Mar 2');
+    });
+
+    it('bans a required 30-minute holdover but not a volunteered one, with no cap set', () => {
+      const judged = (mandated: boolean) =>
+        judge({
+          nurses: [ana()],
+          assignments: [assign('ana', DAY_8, '2026-01-08', stayed(30, mandated))],
+        });
+      expect(judged(true)).toHaveLength(1);
+      expect(judged(false)).toEqual([]);
+    });
+
+    it('counts a required holdover toward the 40-hour week: three 12s and 5h is 41', () => {
+      const week = (minutes: number) => [
+        assign('ana', DAY_12, '2026-01-04'),
+        assign('ana', DAY_12, '2026-01-05'),
+        assign('ana', DAY_12, '2026-01-06', stayed(minutes, true)),
+      ];
+      const weekly = { ...base, maxMandatedWeeklyHours: 40 };
+      const over = judge({ nurses: [ana()], assignments: week(300) }, weekly);
+      expect(over).toHaveLength(1);
+      expect(over[0]!.details).toMatchObject({ weekHours: 41, maxMandatedWeeklyHours: 40 });
+      expect(judge({ nurses: [ana()], assignments: week(240) }, weekly)).toEqual([]);
+    });
+
+    it('reports a required holdover once for each cap it breaks', () => {
+      // Three 12s and a 5h holdover on the last: 41h in the week and 17h straight on the day.
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [
+            assign('ana', DAY_12, '2026-01-04'),
+            assign('ana', DAY_12, '2026-01-05'),
+            assign('ana', DAY_12, '2026-01-06', stayed(300, true)),
+          ],
+        },
+        vaConsecutive,
+      );
+      expect(violations.map((v) => Object.keys(v.details ?? {}).sort())).toEqual([
+        ['maxMandatedWeeklyHours', 'weekHours'],
+        ['consecutiveLimit', 'stretchHours'],
+      ]);
     });
   });
 });

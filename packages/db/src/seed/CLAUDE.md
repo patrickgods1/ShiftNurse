@@ -73,3 +73,7 @@
   (`UnitProvider` takes the first unit by name). Two units means queries on a bare table (the
   shift types, say) need a `unit_id` filter. The VA history is staffed on a thin margin: moving a
   hire date by a week can tip a weekend shift short, so re-run the VA test after changing one.
+  `holdovers` (the VA demo: three volunteered, on a D8, a D12 and an N12) are placed on published
+  history with no random draw, through `recordHoldover`, only where the extra time keeps the
+  next rest at the unit's minimum and the pay period within 80 hours, so the held-over minutes
+  are the row's only overtime.

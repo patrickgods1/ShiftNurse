@@ -6,13 +6,14 @@
  */
 
 import type { RosterEntryView, TodayShiftView } from '@shared/api.js';
-import type { Id, RoleStaffing } from '@shiftnurse/core';
+import type { Id, PeriodStatus, RoleStaffing } from '@shiftnurse/core';
 import { SMALL } from '../../components/ui.js';
 import { formatDateWithWeekday } from '../../format.js';
 import { CensusDrop } from './census-drop.js';
 import { CensusEntry } from './census-entry.js';
 import { NursePayActions, ShiftPayEvents } from './day-of-pay.js';
 import { FloatOut } from './float-out.js';
+import { HoldoverAction, holdoverLine } from './holdover-dialog.js';
 
 const STATUS_LABEL: Record<TodayShiftView['status'], string | undefined> = {
   current: 'Now',
@@ -56,12 +57,15 @@ function rosterLabel(entry: RosterEntryView): string {
 export function ShiftCard({
   unitId,
   periodId,
+  periodStatus,
   shift,
   onReport,
 }: {
   unitId: Id;
   /** The period whose assignments these are, when one covers the day; floating needs it. */
   periodId?: Id;
+  /** A holdover is recorded on a published shift only; a draft refuses it, so no button there. */
+  periodStatus?: PeriodStatus;
   shift: TodayShiftView;
   /** The page owns the one report dialog, which the header's picker also opens. */
   onReport: (entry: RosterEntryView) => void;
@@ -138,7 +142,15 @@ export function ShiftCard({
               {entry.assignment.isOvertime ? (
                 <span className="ml-2 text-xs uppercase text-text-muted">OT</span>
               ) : null}
+              {holdoverLine(entry) !== undefined ? (
+                <span className="ml-2 text-xs text-text-muted">{holdoverLine(entry)}</span>
+              ) : null}
             </span>
+            {entry.callOff === undefined &&
+            !shift.shiftType.isOnCall &&
+            periodStatus === 'published' ? (
+              <HoldoverAction unitId={unitId} shift={shift} entry={entry} />
+            ) : null}
             {entry.callOff === undefined ? (
               <NursePayActions
                 unitId={unitId}

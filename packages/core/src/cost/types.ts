@@ -47,6 +47,15 @@
  * - **Seventh-day overtime** (`basis: 'seventh_day'`) applies to a shift on the last day of a
  *   work week when every day of that week was worked (lookback shifts count): California pays
  *   its first 8 hours at 1.5× (threshold 0) and the rest at 2× (threshold 8).
+ * - **Overtime beyond the scheduled tour** (`basis: 'beyond_scheduled_tour'`) makes a shift's
+ *   holdover overtime from `thresholdHours` past its scheduled end (VA–NNU Art. 14); a shift
+ *   with no holdover, or one within the threshold (a grace period), earns none.
+ * - **Overtime past consecutive hours** (`basis: 'consecutive'`) counts the hours on the clock
+ *   since the nurse's stretch began (shifts with no break between them, lookback included) and
+ *   makes those past `thresholdHours` overtime (38 U.S.C. § 7453(e)(1)): a 12 is 4 hours over 8,
+ *   and an evening shift straight after a day shift is all overtime.
+ * - **A holdover is worked time on every basis.** It lengthens the shift's paid hours, so daily,
+ *   weekly and pay-period overtime count it like any other hour.
  * - **On-call standby** is not worked time: it earns the `on_call` differential alone (a flat
  *   amount per standby hour, or a multiplier on the base rate), never base pay, never other
  *   differentials, and never overtime. `call_back` — being called in while on standby — is

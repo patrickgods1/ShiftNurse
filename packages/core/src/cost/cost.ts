@@ -9,7 +9,13 @@
  * candidate in isolation — the shift you add on Sunday can turn Wednesday into overtime.
  */
 
-import type { Assignment, Differential, DifferentialKind, Id } from '../domain/entities.js';
+import type {
+  Assignment,
+  Differential,
+  DifferentialKind,
+  Id,
+  OvertimeRule,
+} from '../domain/entities.js';
 import {
   addDays,
   type IsoDate,
@@ -24,6 +30,7 @@ import { gini } from '../fairness/distribution.js';
 import { payPeriodIndex, payPeriodWindow } from '../rules/hours-rules.js';
 import type { PaidLeaveCredit } from '../rules/paid-leave.js';
 import { isWorked } from '../rules/types.js';
+import { holdoverHours, workedStretches } from '../schedule/holdover.js';
 import { type AssignmentView, ScheduleView } from '../schedule/view.js';
 import { resolvePayRate } from './rates.js';
 import {
@@ -114,6 +121,75 @@ function seventhDayTest(
 }
 
 /**
+ * Where one rule makes each in-period view's overtime start, in hours into the shift. Every basis
+ * is spelled out so an unhandled one fails to compile here rather than falling through to the
+ * weekly window.
+ */
+function overtimeStarts(
+  rule: OvertimeRule,
+  timeline: readonly AssignmentView[],
+  ctx: CostContext,
+  leave: readonly PaidLeaveCredit[] | undefined,
+  isSeventhDay: (view: AssignmentView) => boolean,
+): Map<AssignmentView, number> {
+  const fromWindow = (hours: Map<AssignmentView, number>) =>
+    new Map([...hours].map(([view, over]) => [view, view.paidHours - over]));
+  switch (rule.basis) {
+    case 'daily':
+      return fromWindow(windowOvertime(timeline, rule.thresholdHours, (d) => d, undefined));
+    case 'seventh_day':
+      return fromWindow(
+        windowOvertime(timeline, rule.thresholdHours, (d) => d, undefined, isSeventhDay),
+      );
+    case 'weekly':
+      return fromWindow(
+        windowOvertime(
+          timeline,
+          rule.thresholdHours,
+          (d) => workWeekStart(d, ctx.workWeekStartsOn),
+          leave,
+        ),
+      );
+    case 'pay_period':
+      return fromWindow(
+        windowOvertime(
+          timeline,
+          rule.thresholdHours,
+          (d) => payPeriodWindow(payPeriodIndex(d, ctx.unit), ctx.unit).start,
+          leave,
+        ),
+      );
+    case 'beyond_scheduled_tour': {
+      const out = new Map<AssignmentView, number>();
+      for (const view of timeline) {
+        if (!view.inPeriod || !isWorked(view)) continue;
+        if (holdoverHours(view.assignment) > rule.thresholdHours)
+          out.set(view, view.scheduledHours + rule.thresholdHours);
+      }
+      return out;
+    }
+    case 'consecutive': {
+      const out = new Map<AssignmentView, number>();
+      for (const stretch of workedStretches(timeline)) {
+        for (const view of stretch.views) {
+          if (!view.inPeriod) continue;
+          // Hours already on the clock in the stretch, by the wall clock: a holdover that
+          // overlaps the next shift is not counted twice.
+          const before = (view.window.startMinute - stretch.window.startMinute) / MINUTES_PER_HOUR;
+          const from = Math.max(0, rule.thresholdHours - before);
+          if (from < view.paidHours) out.set(view, from);
+        }
+      }
+      return out;
+    }
+    default: {
+      const unhandled: never = rule.basis;
+      throw new Error(`Unpriced overtime basis: ${String(unhandled)}`);
+    }
+  }
+}
+
+/**
  * The overtime bands of each in-period view once every active rule has had its say. Each rule
  * makes the end of a shift overtime from some hour on; an hour is overtime once, at the highest
  * multiplier of any rule that reaches it. So a 13-hour shift under California's daily rules is
@@ -131,22 +207,10 @@ function attributeOvertime(
   const isSeventhDay = seventhDayTest(timeline, ctx.workWeekStartsOn);
   for (const rule of ctx.overtimeRules) {
     if (rule.multiplier <= 1) continue;
-    const hoursByView =
-      rule.basis === 'daily'
-        ? windowOvertime(timeline, rule.thresholdHours, (date) => date, undefined)
-        : rule.basis === 'seventh_day'
-          ? windowOvertime(timeline, rule.thresholdHours, (date) => date, undefined, isSeventhDay)
-          : windowOvertime(
-              timeline,
-              rule.thresholdHours,
-              rule.basis === 'pay_period'
-                ? (date) => payPeriodWindow(payPeriodIndex(date, ctx.unit), ctx.unit).start
-                : (date) => workWeekStart(date, ctx.workWeekStartsOn),
-              leave,
-            );
-    for (const [view, hours] of hoursByView) {
+    const fromByView = overtimeStarts(rule, timeline, ctx, leave, isSeventhDay);
+    for (const [view, from] of fromByView) {
       const starts = startsByView.get(view) ?? [];
-      starts.push({ from: view.paidHours - hours, multiplier: rule.multiplier });
+      starts.push({ from, multiplier: rule.multiplier });
       startsByView.set(view, starts);
     }
   }

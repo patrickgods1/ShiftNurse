@@ -395,6 +395,10 @@ export function toAssignment(r: typeof s.assignment.$inferSelect): Assignment {
     isCharge: r.isCharge,
     isOvertime: r.isOvertime,
     notes: opt(r.notes),
+    // Absent, not 0/false, on an ordinary shift: rows and diffs compare these objects.
+    ...(r.holdoverMinutes > 0
+      ? { holdoverMinutes: r.holdoverMinutes, holdoverMandated: r.holdoverMandated ?? false }
+      : {}),
   };
 }
 

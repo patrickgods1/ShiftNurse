@@ -43,6 +43,7 @@ import { encodeConsecutive } from './rules/consecutive.js';
 import { encodeCoverage, encodeRatio } from './rules/coverage.js';
 import { encodeHolidayRotation } from './rules/holidays.js';
 import { encodeContractCap, encodeWeeklyHours } from './rules/hours.js';
+import { encodeHoursIn24 } from './rules/hours-in-24.js';
 import { encodePendingTimeOff } from './rules/pending.js';
 import { encodePreceptor } from './rules/preceptor.js';
 import { encodeNightRecovery } from './rules/recovery.js';
@@ -65,6 +66,8 @@ export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'
   'max-consecutive-shifts': encodeConsecutive,
   'max-hours-per-week': encodeWeeklyHours,
   'fte-target-hours': encodeContractCap,
+  // Not priced while soft; one linear cap per window anchor when hard.
+  'max-hours-in-24': encodeHoursIn24,
   // Priced in the objective at whatever severity the rule set gives them (`incompatibilityTerms`):
   // the soft cap needs its price even when no hard encoder runs, and neither rule forbids
   // anything outright, so there is nothing for an encoder to add.
@@ -77,7 +80,9 @@ export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'
   // Priced per shift while soft (`perShiftTerms`); those shifts forbidden when hard.
   'avoid-pending-time-off': encodePendingTimeOff,
   // Judges only shifts flagged `isOvertime`, and every row either solver writes is straight time
-  // (decoded answers become rows through `SolverModel`, which never sets the flag).
+  // (decoded answers become rows through `SolverModel`, which never sets the flag). Holdovers are
+  // recorded only on published periods and only a draft is ever generated, so no row either
+  // solver writes carries one.
   'no-mandatory-overtime': 'by-construction',
   // Priced in the objective while soft (`weekendPatternTerms`); runs and totals capped when hard.
   'weekend-pattern': encodeWeekendPattern,

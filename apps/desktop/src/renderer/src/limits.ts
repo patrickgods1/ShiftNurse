@@ -5,7 +5,7 @@
  */
 
 export const NOT_ENFORCED: readonly string[] = [
-  'Hour caps on overtime in Oregon (ORS 441.166) and Massachusetts (16 hours): watch the total hours in a row for nurses on overtime yourself.',
+  'Hour caps on overtime in Oregon (ORS 441.166) and Massachusetts (16 hours) are not in their presets yet: turn on “Most hours in any 24” under Settings › Rules and record holdovers on Today, and the app checks the hours for you.',
   'Oregon’s staffing-plan deviations: record and justify any departure from the unit’s staffing plan yourself.',
   'Leave accrual is projected from the last payroll figure under Settings › Leave: part-time accrual counts hours worked, not other paid hours, and the federal 6-hour tier’s extra 10 hours in the leave year’s last pay period is not added, so re-enter payroll’s figures now and then.',
   'Military leave (120 hours a fiscal year), court leave and paid parental leave are leave types without entitlements of their own: check the hours available with HR.',

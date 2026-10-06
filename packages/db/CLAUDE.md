@@ -44,3 +44,9 @@
   about a nurse — time, action, actor, reason, never the before/after snapshots — and their
   published-shift changes, but `RECORD_EXCLUDED_ENTITIES` keeps kept-apart groups, FMLA
   certifications and accommodations (`availability_block`) out, and every record's footer says so whether or not the nurse has either.
+- **A holdover is recorded on a published shift, never a draft.** `recordHoldover`
+  (`repositories/holdovers.ts`, migration 0029: `assignment.holdover_minutes`, default 0, and
+  `holdover_mandated`) refuses drafts and standby, takes whole minutes 0–720 (0 clears, and a clear
+  is never "required"), and audits with `before`; a required one goes through `recordAuditStrict`.
+  `toAssignment` emits the fields only when minutes > 0, so an untouched row maps as before. Only a
+  draft is generated, so the solvers never write over one.

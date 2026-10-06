@@ -242,6 +242,44 @@ describe('the call-off workflow on a published schedule', () => {
   });
 });
 
+describe('recording a holdover day-of', () => {
+  const dayOf = () => dayOfApi(f.handle.db);
+
+  function publishedShift() {
+    const a = scheduleApi(f.handle.db).createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: f.rns[0]!.id,
+      shiftTypeId: f.day.id,
+      date: addDays(f.seeded.draftStart, 4),
+    });
+    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    return a;
+  }
+
+  it('keeps a volunteered holdover on the shift for the next read', () => {
+    const a = publishedShift();
+    dayOf().recordHoldover({ assignmentId: a.id, minutes: 45, mandated: false });
+    expect(getAssignment(f.handle.db, a.id)).toMatchObject({
+      holdoverMinutes: 45,
+      holdoverMandated: false,
+    });
+    const listed = listAssignmentsForPeriod(f.handle.db, f.seeded.draftPeriodId).find(
+      (x) => x.id === a.id,
+    );
+    expect(listed?.holdoverMinutes).toBe(45);
+  });
+
+  it('refuses a required holdover with no reason and records nothing', () => {
+    const a = publishedShift();
+    const audited = auditHistoryFor(f.handle.db, 'assignment', a.id).length;
+    expect(() =>
+      dayOf().recordHoldover({ assignmentId: a.id, minutes: 60, mandated: true }),
+    ).toThrow(/reason/);
+    expect(auditHistoryFor(f.handle.db, 'assignment', a.id)).toHaveLength(audited);
+    expect(getAssignment(f.handle.db, a.id)).not.toHaveProperty('holdoverMinutes');
+  });
+});
+
 describe('the live staffing re-check when the census changes', () => {
   it('turns a fully staffed day shift short when the actual census comes in higher', () => {
     const date = addDays(f.seeded.draftStart, 4);

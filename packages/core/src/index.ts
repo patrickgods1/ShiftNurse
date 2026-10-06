@@ -264,6 +264,9 @@ export { credentialLapsedOn } from './rules/coverage-rules.js';
 export type { HolidayRotationParams } from './rules/holiday-rotation.js';
 // Holiday rotation facts
 export { holidayRotationRule, previousOccurrence } from './rules/holiday-rotation.js';
+export type { MaxHoursIn24Params } from './rules/hours-in-24.js';
+// Hours in any 24: the fatigue cap, holdovers included
+export { maxHoursIn24Rule } from './rules/hours-in-24.js';
 export type { ContractedHoursParams, MaxHoursParams } from './rules/hours-rules.js';
 // Overtime and hours rule parameters
 export {

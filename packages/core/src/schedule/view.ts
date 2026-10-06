@@ -23,21 +23,25 @@ import type {
   SchedulePeriod,
   ShiftType,
 } from '../domain/entities.js';
-import {
-  datesInRange,
-  dayNumber,
-  type IsoDate,
-  type ShiftWindow,
-  shiftWindow,
-} from '../domain/time.js';
+import { datesInRange, dayNumber, type IsoDate, type ShiftWindow } from '../domain/time.js';
+import { workedHours, workedWindow } from './holdover.js';
 
 export interface AssignmentView {
   assignment: Assignment;
   nurse: Nurse;
   shiftType: ShiftType;
+  /** The worked window: the shift's scheduled window, its end moved out by any holdover. */
   window: ShiftWindow;
-  /** Scheduled hours. On-call hours are tracked separately from worked hours for pay. */
+  /**
+   * Hours worked: the shift type's length plus any holdover. What hour caps, overtime and pay
+   * count. On-call hours are tracked separately from worked hours for pay.
+   */
   paidHours: number;
+  /**
+   * The shift type's declared length, holdover excluded. What comparing a schedule with a
+   * contract counts: a nurse held over was not *scheduled* past their contract.
+   */
+  scheduledHours: number;
   /** False for the lookback tail carried in from previously published periods. */
   inPeriod: boolean;
 }
@@ -116,8 +120,9 @@ export class ScheduleView {
         assignment,
         nurse,
         shiftType,
-        window: shiftWindow(assignment.date, shiftType),
-        paidHours: shiftType.durationHours,
+        window: workedWindow(assignment.date, shiftType, assignment),
+        paidHours: workedHours(assignment, shiftType),
+        scheduledHours: shiftType.durationHours,
         inPeriod,
       });
     };

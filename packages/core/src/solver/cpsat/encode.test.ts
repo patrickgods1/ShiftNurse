@@ -293,6 +293,106 @@ describe('tour rotation made hard', () => {
   });
 });
 
+/** The rule on and hard at the given cap, with min-rest out of the way so the cap is what bites. */
+function hardHoursIn24(maxHours: number): RuleSet {
+  const base = withParams(
+    'max-hours-in-24',
+    { maxHours },
+    withParams('min-rest-between-shifts', { minRestHours: 0 }),
+  );
+  return {
+    ...base,
+    configs: base.configs.map((c) =>
+      c.ruleId === 'max-hours-in-24'
+        ? { ...c, enabled: true, severityOverride: 'hard' as const }
+        : c,
+    ),
+  };
+}
+
+describe('most hours in any 24 made hard', () => {
+  it('forbids a night 12 straight into the next day 12: 24 hours worked, cap 16', () => {
+    const encoding = encodeCpsat(unit([ada()], { ruleSet: hardHoursIn24(16) }));
+    const double = [assign('ada', NIGHT_12, '2026-01-12'), assign('ada', DAY_12, '2026-01-13')];
+    expect(evaluate(encoding, double).violated.join('\n')).toMatch(/hours in 24/);
+  });
+
+  it('allows a night 12 straight into the next day 12 when the cap is 24', () => {
+    const encoding = encodeCpsat(unit([ada()], { ruleSet: hardHoursIn24(24) }));
+    const double = [assign('ada', NIGHT_12, '2026-01-12'), assign('ada', DAY_12, '2026-01-13')];
+    expect(evaluate(encoding, double).violated).toEqual([]);
+  });
+
+  it('allows a day 12 on Monday and another on Tuesday: 12 hours in any 24', () => {
+    const encoding = encodeCpsat(unit([ada()], { ruleSet: hardHoursIn24(16) }));
+    const days = [assign('ada', DAY_12, '2026-01-12'), assign('ada', DAY_12, '2026-01-13')];
+    expect(evaluate(encoding, days).violated).toEqual([]);
+  });
+
+  it('counts a night 12 in the lookback tail against the first day shift of the schedule', () => {
+    const lastNight = assign('ada', NIGHT_12, '2026-01-03', { periodId: 'prev' });
+    const encoding = encodeCpsat(
+      unit([ada()], { priorAssignments: [lastNight], ruleSet: hardHoursIn24(16) }),
+    );
+    expect(evaluate(encoding, [assign('ada', DAY_12, '2026-01-04')]).violated.join('\n')).toMatch(
+      /hours in 24/,
+    );
+  });
+
+  it('counts a holdover on the lookback shift: the day 12 after it is forbidden, and allowed without it', () => {
+    // Sat 3 Jan day 12 held over 5h ends at midnight. A day 12 from 07:00 Sun makes 5h + 12h = 17h
+    // from 19:00 Sat; without the holdover the same window holds 12h.
+    const sunday = assign('ada', DAY_12, '2026-01-04');
+    const judge = (holdoverMinutes: number | undefined) => {
+      const prior = assign('ada', DAY_12, '2026-01-03', {
+        periodId: 'prev',
+        ...(holdoverMinutes === undefined ? {} : { holdoverMinutes }),
+      });
+      const input = unit([ada()], { priorAssignments: [prior], ruleSet: hardHoursIn24(16) });
+      const encoding = encodeCpsat(input);
+      const model = encoding.solverModel;
+      const view = new ScheduleView({
+        period: input.period,
+        assignments: [sunday],
+        priorAssignments: input.priorAssignments,
+        nurses: model.nurses,
+        shiftTypes: model.shiftTypes,
+      });
+      const rules = evaluateSchedule(view, input.ruleSet, model.ctx, {
+        only: ['max-hours-in-24'],
+      }).hardViolations;
+      return { encoded: evaluate(encoding, [sunday]).violated, rules };
+    };
+    const held = judge(300);
+    expect(held.encoded.join('\n')).toMatch(/hours in 24/);
+    expect(held.rules).toHaveLength(1);
+    const plain = judge(undefined);
+    expect(plain.encoded).toEqual([]);
+    expect(plain.rules).toEqual([]);
+  });
+
+  it('lets a locked double stand without making the model infeasible', () => {
+    const locked = [
+      assign('ada', NIGHT_12, '2026-01-12', { isLocked: true }),
+      assign('ada', DAY_12, '2026-01-13', { isLocked: true }),
+    ];
+    const encoding = encodeCpsat(
+      unit([ada()], { assignments: locked, ruleSet: hardHoursIn24(16) }),
+    );
+    expect(evaluate(encoding, locked).violated).toEqual([]);
+  });
+
+  it('keeps a free day 12 off the end of a locked night 12 under a 16-hour cap', () => {
+    const locked = assign('ada', NIGHT_12, '2026-01-12', { isLocked: true });
+    const encoding = encodeCpsat(
+      unit([ada()], { assignments: [locked], ruleSet: hardHoursIn24(16) }),
+    );
+    expect(
+      evaluate(encoding, [locked, assign('ada', DAY_12, '2026-01-13')]).violated.join('\n'),
+    ).toMatch(/hours in 24/);
+  });
+});
+
 describe('a rest waiver', () => {
   // Night 19:00 Mon 5 Jan to 07:00 Tue, then Day 07:00 Tue 6 Jan: no rest at all.
   const turnaround = [assign('ada', NIGHT_12, '2026-01-05'), assign('ada', DAY_12, '2026-01-06')];
@@ -689,6 +789,11 @@ describe('agreement with the rule engine', () => {
         ),
       },
     });
+  });
+
+  it('agrees with the rules when the most hours in any 24 is hard', () => {
+    const base = parityInput();
+    expectParity({ ...base, ruleSet: hardHoursIn24(14) });
   });
 
   it('agrees with the rules when weekends in a row and per schedule are hard', () => {

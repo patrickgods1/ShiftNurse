@@ -31,6 +31,7 @@ import { accommodationBlocksRule } from './availability-blocks.js';
 import { overlapRule, timeOffRule } from './availability-rules.js';
 import { coverageRule, ratioComplianceRule } from './coverage-rules.js';
 import { holidayIndexes, holidayRotationRule } from './holiday-rotation.js';
+import { maxHoursIn24Rule } from './hours-in-24.js';
 import { contractedHoursRule, maxHoursRule } from './hours-rules.js';
 import { incompatibleBufferRule, incompatibleTogetherRule } from './incompatibility-rules.js';
 import { mandatoryOvertimeRule } from './mandatory-overtime.js';
@@ -68,6 +69,7 @@ export const ALL_RULES: readonly Rule<never>[] = [
   minRestRule,
   consecutiveShiftsRule,
   maxHoursRule,
+  maxHoursIn24Rule,
   contractedHoursRule,
   incompatibleBufferRule,
   incompatibleTogetherRule,
