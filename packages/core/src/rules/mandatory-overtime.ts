@@ -1,7 +1,7 @@
 /**
  * No mandatory overtime: an overtime shift must be one the nurse offered to work.
  *
- * New York (Labor Law § 167), Washington (RCW 49.28.140), Oregon (ORS 441.166) and
+ * New York (Labor Law § 167), Washington (RCW 49.28.140), Oregon (ORS 441.770) and
  * Massachusetts (c.111 § 226) forbid requiring a nurse to work overtime outside an emergency; a
  * nurse may still volunteer. The app already makes overtime explicit — a shift past the
  * threshold must be flagged authorised (`isOvertime`), or the max-hours rule refuses it — but
@@ -33,6 +33,13 @@
  * An `OvertimeVolunteer` offer does not excuse one: the holdover's own record says it was
  * required, and a holdover the nurse offered is recorded as volunteered, which this rule never
  * judges. An emergency note still does.
+ *
+ * Some states ban mandatory overtime except in an emergency yet cap even an emergency mandate:
+ * Illinois (210 ILCS 85/10.9) says it "shall not exceed 4 hours beyond an agreed-to, predetermined
+ * work shift"; Rhode Island (R.I. Gen. Laws § 23-17.20-3(b)) says "in no case" more than twelve
+ * consecutive hours. Without `emergencyMaxHoursPastShift` / `emergencyMaxConsecutiveHours` an
+ * "Emergency:" note excused a required holdover completely, so those caps could not be written.
+ * They judge a required holdover whether or not it is an emergency, and never a volunteered one.
  *
  * Holdovers are recorded day-of on a published schedule, and only a draft is ever generated, so
  * Generate cannot breach this either.
@@ -71,6 +78,16 @@ export interface MandatoryOvertimeParams {
    * `maxRequiredConsecutiveHours` (a compressed tour). Absent: the base limit applies throughout.
    */
   compressedTourConsecutiveHours?: number;
+  /**
+   * The most hours a required holdover may run past the shift's end, emergency or not.
+   * Absent: no limit.
+   */
+  emergencyMaxHoursPastShift?: number;
+  /**
+   * The most consecutive hours a required holdover's stretch may reach, emergency or not.
+   * Absent: no limit.
+   */
+  emergencyMaxConsecutiveHours?: number;
   /** First day of the work week the cap is counted in. */
   workWeekStartsOn: Weekday;
 }
@@ -115,7 +132,9 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
     'nursing staff (40 hours; 24 on the weekend plan); volunteered hours and emergencies after ' +
     'volunteers are exhausted stay outside it. A required holdover (time kept past the end of ' +
     'the shift) is judged the same way, and a consecutive-hours limit (8, or 12 on a compressed ' +
-    'tour) refuses a required holdover that runs a stretch past it.',
+    'tour) refuses a required holdover that runs a stretch past it. Two further limits hold even ' +
+    'when the shift records an emergency: how long a required holdover may run past the shift ' +
+    '(Illinois: 4 hours) and how many hours in a row it may reach (Rhode Island: 12).',
   severity: 'hard',
   category: 'hours',
   scope: 'nurse',
@@ -154,6 +173,26 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
       why:
         '38 U.S.C. § 7459(a) allows 12 for staff covered by § 7456 or § 7456A, the 12-hour ' +
         'tours. Without this, a 12-hour tour is over the 8-hour limit before anyone is held.',
+      optional: true,
+      min: 1,
+    },
+    emergencyMaxHoursPastShift: {
+      label: 'Most hours a required holdover can run past the shift, even in an emergency',
+      hint: 'Leave blank for no limit on an emergency holdover.',
+      why:
+        'Illinois (210 ILCS 85/10.9) allows mandated overtime in an emergency but says it "shall ' +
+        'not exceed 4 hours beyond an agreed-to, predetermined work shift". A note beginning ' +
+        '"Emergency:" does not excuse a holdover past this.',
+      optional: true,
+      min: 1,
+    },
+    emergencyMaxConsecutiveHours: {
+      label: 'Most consecutive hours a required holdover can reach, even in an emergency',
+      hint: 'Leave blank for no limit on an emergency holdover.',
+      why:
+        'Rhode Island (R.I. Gen. Laws § 23-17.20-3(b)): "In no case shall a health care facility ' +
+        'require an employee to work in excess of twelve (12) consecutive hours." A note ' +
+        'beginning "Emergency:" does not excuse a holdover that makes the stretch longer.',
       optional: true,
       min: 1,
     },
@@ -310,6 +349,71 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
         );
         reportedStretches.set(stretch, found);
         violations.push(found);
+      }
+    }
+
+    // Limits that hold even in an emergency. A second pass, because the loop above skips an
+    // excused holdover entirely and a required one it already reported must not be reported twice.
+    const maxPast = params.emergencyMaxHoursPastShift;
+    const maxStretch = params.emergencyMaxConsecutiveHours;
+    if (maxPast !== undefined || maxStretch !== undefined) {
+      const flagged = new Set(violations.flatMap((v) => v.assignmentIds ?? []));
+      const reportedEmergencyStretches = new Set<WorkedStretch<AssignmentView>>();
+      for (const view of schedule.assignments()) {
+        const { assignment, nurse } = view;
+        const minutes = assignment.holdoverMinutes ?? 0;
+        if (minutes <= 0 || assignment.holdoverMandated !== true) continue;
+        if (flagged.has(assignment.id)) continue;
+        const where = `the ${view.shiftType.name} on ${describeDate(assignment.date)}`;
+        const refs = {
+          dates: [assignment.date],
+          nurseIds: [nurse.id],
+          assignmentIds: [assignment.id],
+        };
+        if (maxPast !== undefined && minutes / 60 > maxPast) {
+          violations.push(
+            violation(
+              mandatoryOvertimeRule,
+              'hard',
+              'mandatory_overtime',
+              `${nurseName(nurse)} was required to stay ${minutesText(minutes)} past the end of ` +
+                `${where}; even in an emergency, no more than ${maxPast}h past a shift may be ` +
+                `required.`,
+              {
+                ...refs,
+                details: { hoursPastShift: minutes / 60, emergencyMaxHoursPastShift: maxPast },
+              },
+            ),
+          );
+          flagged.add(assignment.id);
+          continue;
+        }
+        if (maxStretch === undefined) continue;
+        const stretch = stretchesOf(nurse.id).find((st) =>
+          st.views.some((v) => v.assignment.id === assignment.id),
+        );
+        if (!stretch) {
+          if (view.shiftType.isOnCall) continue;
+          throw new Error(`Assignment ${assignment.id} is in no worked stretch of ${nurse.id}`);
+        }
+        if (stretch.hours <= maxStretch) continue;
+        // One breach per stretch, and none for one the checks above already reported.
+        if (reportedStretches.has(stretch) || reportedEmergencyStretches.has(stretch)) continue;
+        reportedEmergencyStretches.add(stretch);
+        violations.push(
+          violation(
+            mandatoryOvertimeRule,
+            'hard',
+            'mandatory_overtime',
+            `${nurseName(nurse)} was required to stay ${minutesText(minutes)} past the end of ` +
+              `${where}, making ${stretch.hours}h straight; even in an emergency, no more than ` +
+              `${maxStretch}h in a row may be required.`,
+            {
+              ...refs,
+              details: { stretchHours: stretch.hours, emergencyMaxConsecutiveHours: maxStretch },
+            },
+          ),
+        );
       }
     }
     return violations;

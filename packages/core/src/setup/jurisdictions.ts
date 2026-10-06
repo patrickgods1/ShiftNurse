@@ -17,10 +17,24 @@
  * added if missing; a rule is switched on, never off, and a cap parameter only lowers. Applying
  * one twice changes nothing.
  *
+ * Most state overtime laws restrict only hours a nurse is *required* to work: Oregon's 48-a-week
+ * and 12-in-24 limits, Connecticut's, Rhode Island's. Those ride on `no-mandatory-overtime`, which
+ * refuses required overtime outright outside an emergency, so a cap on required hours below the
+ * ban would add nothing. The few limits on *all* hours (Massachusetts' 16 consecutive, West
+ * Virginia's 16 in 24, Alaska's 14 straight) and the rest owed after a long stretch go to
+ * `long-stretch` and `max-hours-in-24`. A state whose law is only a right to refuse (Minnesota)
+ * switches nothing on: encoding a ban it does not have would overstate it.
+ *
+ * Ratios are read by unit kind, which is wider than the acuity presets: Title 22 and ORS 441.765
+ * name emergency, pediatric, psychiatric, oncology, recovery, operating-room and neonatal units.
+ * Labor and delivery and postpartum are left out, because their ceiling turns on the patient
+ * (in active labor or not, mother and baby counted apart) rather than the unit; a unit-wide
+ * catch-all at the strictest figure would overstate the law for every other patient.
+ *
  * Not legal advice, and not complete: a unit's contract usually goes further, and some of each
- * law (Oregon's staffing-plan deviations, the hours caps in ORS 441.166 and c.111 § 226) is
- * stated in the summary rather than enforced (as are the VA's § 7456 24-hour weekend-plan cap and
- * its pay premiums).
+ * law (Oregon's staffing-plan deviations, its CNA limits, emergency-only exceptions) is stated in
+ * the summary rather than enforced (as are the VA's § 7456 24-hour weekend-plan cap and its pay
+ * premiums).
  */
 
 import {
@@ -36,7 +50,79 @@ import { resolveConfigs } from '../rules/registry.js';
 import type { RuleConfig, RuleSet } from '../rules/types.js';
 import { type AcuityPresetId, acuityPresetForUnitType } from './presets.js';
 
-export type JurisdictionId = 'CA' | 'OR' | 'NY' | 'WA' | 'MA' | 'US-VA' | 'other';
+export type JurisdictionId =
+  | 'CA'
+  | 'OR'
+  | 'NY'
+  | 'WA'
+  | 'MA'
+  | 'IL'
+  | 'CT'
+  | 'MN'
+  | 'NJ'
+  | 'ME'
+  | 'PA'
+  | 'NH'
+  | 'RI'
+  | 'WV'
+  | 'AK'
+  | 'TX'
+  | 'US-VA'
+  | 'other';
+
+/**
+ * The kinds of unit a staffing law names. The acuity presets' four, plus the units Title 22 and
+ * ORS 441.765 give their own ceilings that the acuity presets have no tiers for.
+ */
+export type JurisdictionUnitKind =
+  | AcuityPresetId
+  | 'emergency'
+  | 'pediatrics'
+  | 'psychiatric'
+  | 'oncology'
+  | 'pacu'
+  | 'operating-room'
+  | 'burn'
+  | 'nicu';
+
+/** Names a manager types for the kinds the acuity presets do not know, matched whole. */
+const UNIT_KIND_ALIASES: Partial<Record<JurisdictionUnitKind, readonly string[]>> = {
+  // Oregon's statute calls step-down an intermediate care unit.
+  'step-down': ['intermediate care', 'intermediate care unit', 'imc', 'imcu'],
+  emergency: ['emergency', 'emergency department', 'emergency room', 'ed', 'er'],
+  pediatrics: ['pediatrics', 'pediatric', 'paediatrics', 'paediatric', 'peds'],
+  psychiatric: [
+    'psychiatric',
+    'psychiatry',
+    'psych',
+    'behavioral health',
+    'behavioural health',
+    'mental health',
+  ],
+  oncology: ['oncology', 'onc', 'specialty care'],
+  pacu: [
+    'pacu',
+    'post-anesthesia care',
+    'post-anesthesia care unit',
+    'post-anesthesia recovery',
+    'post anesthesia care',
+    'recovery room',
+  ],
+  'operating-room': ['operating room', 'or', 'operating theatre'],
+  burn: ['burn', 'burn unit', 'burn center', 'burn centre'],
+  nicu: ['nicu', 'neonatal intensive care', 'neonatal icu', 'intensive care nursery'],
+};
+
+/** The kind of unit a free-text unit type names, or `undefined` when no law's table names it. */
+export function unitKindForUnitType(unitType: string): JurisdictionUnitKind | undefined {
+  const preset = acuityPresetForUnitType(unitType);
+  if (preset !== undefined) return preset;
+  const key = unitType.trim().toLowerCase();
+  for (const [kind, aliases] of Object.entries(UNIT_KIND_ALIASES)) {
+    if (aliases.includes(key)) return kind as JurisdictionUnitKind;
+  }
+  return undefined;
+}
 
 export interface JurisdictionRatio {
   role: NurseRole;
@@ -50,17 +136,34 @@ export interface JurisdictionPreset {
   /** What applying it does and what it leaves to the hospital, for the manager to read first. */
   summary: string;
   ratioStaffing?: RatioStaffing;
-  /** Ceilings by the unit types the acuity presets know; other unit types get none. */
-  ratios: Partial<Record<AcuityPresetId, JurisdictionRatio>>;
+  /** Ceilings by the unit kinds the law names; other unit types get none. */
+  ratios: Partial<Record<JurisdictionUnitKind, JurisdictionRatio>>;
   overtimeRules: readonly Pick<OvertimeRule, 'basis' | 'thresholdHours' | 'multiplier'>[];
-  /**
-   * Rule ids switched on (with these parameters, if any). A numeric parameter is a cap: it only
-   * ever lowers one the unit has, and never adds one to an enabled rule that has none, because
-   * an unset cap on no-mandatory-overtime is a total ban, stricter than any number.
-   */
-  enableRules: readonly { ruleId: string; params?: Record<string, unknown> }[];
+  /** Rule ids switched on (with these parameters, if any): see {@link PresetRule}. */
+  enableRules: readonly PresetRule[];
   /** Proposed whole to a unit with no leave policy; never merged into one a manager set. */
   leavePolicy?: LeavePolicy;
+}
+
+/**
+ * A rule a preset switches on. A numeric parameter is a cap: it only ever lowers one the unit
+ * has, and is never added to an enabled rule that has none, because an unset cap on
+ * no-mandatory-overtime is a total ban, stricter than any number. Two exceptions say otherwise
+ * where the law's number works the other way:
+ */
+export interface PresetRule {
+  ruleId: string;
+  params?: Record<string, unknown>;
+  /**
+   * Numeric parameters where more is stricter (hours of rest): they only ever rise, and on a
+   * switched-off rule take the preset's value, since a stored value there was never in force.
+   */
+  raise?: readonly string[];
+  /**
+   * The rule reads an absent cap as no limit at all (`long-stretch`), so adding one to an enabled
+   * rule that has none tightens it.
+   */
+  absentCapIsUnlimited?: boolean;
 }
 
 const TITLE_22 = 'Cal. Code Regs. tit. 22 § 70217(a)';
@@ -75,16 +178,27 @@ const TITLE_5_ANNUAL = '5 U.S.C. §§ 6303(a), 6304(a)';
 
 const NO_MANDATORY_OVERTIME = { ruleId: 'no-mandatory-overtime' } as const;
 
+/** `long-stretch` with a state's numbers; any cap the law does not give stays unset. */
+function longStretch(params: Record<string, unknown>): PresetRule {
+  return { ruleId: 'long-stretch', params, raise: ['restHours'], absentCapIsUnlimited: true };
+}
+
 export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = {
   CA: {
     label: 'California',
     summary:
       'Title 22 ratios at all times, with the charge nurse counted only while caring for ' +
-      'patients and relieving for breaks (§ 70217(a)); an hour of breaks per nurse on a 12-hour ' +
+      'patients and relieving for breaks (§ 70217(a)): critical care, burn and the newborn ICU ' +
+      '1:2, operating room one RN circulating per room, pediatrics 1:4, recovery 1:2, emergency ' +
+      '1:4 (critical patients 1:2 and trauma 1:1, set as acuity tiers), step-down 1:3, telemetry ' +
+      '1:4, medical/surgical 1:5, specialty care such as oncology 1:4, psychiatric 1:6. Labor ' +
+      'and delivery (1:2 in active labor, 1:4 antepartum) and postpartum (4 couplets, 6 mothers) ' +
+      'turn on the patient, so set those as acuity-tier ratios. An hour of breaks per nurse on a 12-hour ' +
       'shift (a 30-minute meal and three 10-minute rests). Labor Code § 510 overtime: past 8 ' +
       'hours a workday at 1.5×, past 12 at 2×, past 40 a week at 1.5×, and the seventh day in a ' +
       'row. A unit on a health-care alternative workweek (IWC Order 5 § 3(B)(8)) should remove ' +
-      'the 8-hour daily rule. Ratios here count RNs only; Title 22 lets LVNs fill up to half. ' +
+      'the 8-hour daily rule. Ratios here count RNs only; Title 22 lets LVNs (and psychiatric ' +
+      'technicians on a psychiatric unit) fill up to half. ' +
       'Sick leave accrues at 1 hour per 30 worked, up to 80 (Lab. Code § 246(b)): the statutory ' +
       'minimum, which a hospital PTO plan that meets it can replace.',
     ratioStaffing: {
@@ -97,6 +211,14 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       telemetry: rn(4, `${TITLE_22}(10): telemetry 1:4`),
       'step-down': rn(3, `${TITLE_22}(9): step-down 1:3`),
       icu: rn(2, `${TITLE_22}(1): critical care 1:2`),
+      burn: rn(2, `${TITLE_22}(1): critical care, burn center 1:2`),
+      nicu: rn(2, `${TITLE_22}(1): intensive care newborn nursery, 1 RN:2, RNs only`),
+      'operating-room': rn(1, `${TITLE_22}(2): one RN circulating per occupied room`),
+      pediatrics: rn(4, `${TITLE_22}(6): pediatric service 1:4`),
+      pacu: rn(2, `${TITLE_22}(7): post-anesthesia recovery 1:2`),
+      emergency: rn(4, `${TITLE_22}(8): emergency department 1:4 while treating`),
+      oncology: rn(4, `${TITLE_22}(12): specialty care, oncology among it, 1:4`),
+      psychiatric: rn(6, `${TITLE_22}(13): psychiatric 1:6`),
     },
     overtimeRules: [
       { basis: 'daily', thresholdHours: 8, multiplier: 1.5 },
@@ -122,21 +244,38 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
   OR: {
     label: 'Oregon',
     summary:
-      'ORS 441.765 direct-care RN ratios (medical-surgical 1:4 from 1 July 2026, telemetry 1:4, ' +
-      'ICU 1:2), with the charge nurse free of patients outside units of 10 beds or fewer; no ' +
-      'mandatory overtime past the agreed shift (ORS 441.166). A unit of 10 beds or fewer, whose ' +
-      'charge nurse may take patients, should tick that back on under Settings › Unit. The staffing ' +
-      'plan, its permitted deviations and the 12-hour and 48-hour caps of ORS 441.166 are not ' +
-      'enforced here.',
+      'ORS 441.765 direct-care RN ratios: emergency 1:4 averaged over a 12-hour shift (never ' +
+      'more than 5 at once; trauma 1:1), ICU 1:2, operating room 1:1, oncology 1:4, recovery ' +
+      '1:2, intermediate care (step-down) 1:3, medical-surgical 1:4 from 1 July 2026, cardiac ' +
+      'telemetry 1:4, pediatrics 1:4. Labor and delivery (1:2, or 1:1 in active labor), ' +
+      'postpartum, antepartum and well-baby (6, mother and baby counted apart) and mother-baby ' +
+      '(8) turn on the patient: set them as acuity-tier ratios. Psychiatric units have no ' +
+      'statutory ratio; their committee adopts the plan (ORS 441.767). The charge nurse takes ' +
+      'no patients on a unit of 11 beds or more without the staffing committee’s approval ' +
+      '(§ 441.765(8)): a unit of 10 or fewer should tick that back on under Settings › Unit. A ' +
+      'certified nursing assistant may have no more than 7 patients on a day or evening shift ' +
+      'and 11 at night (ORS 441.768); that limits one aide’s assignment rather than requiring ' +
+      'aides, so it is not set as a ratio. No mandatory overtime (ORS 441.770): a hospital may ' +
+      'not require work beyond the agreed shift, past 48 hours in its work week or 12 in 24, or ' +
+      'in the 10 hours after the 12th; all four limit required hours only, which the ban ' +
+      'already refuses. Record an emergency, or the one extra hour § 441.770(4) allows when the ' +
+      'next shift has a vacancy, on the shift as "Emergency: …". The staffing plan and its ' +
+      'permitted deviations are not enforced here.',
     ratioStaffing: {
       chargeNurseTakesPatients: false,
       breakMinutesPerNurse: 0,
       chargeCoversBreaks: false,
     },
     ratios: {
-      'med-surg': rn(4, `${ORS_441_765}: medical-surgical 1:4 from 2026-07-01`),
-      telemetry: rn(4, `${ORS_441_765}: cardiac telemetry 1:4`),
-      icu: rn(2, `${ORS_441_765}: intensive care 1:2`),
+      'med-surg': rn(4, `${ORS_441_765}(2)(j): medical-surgical 1:4 from 2026-07-01`),
+      telemetry: rn(4, `${ORS_441_765}(2)(k): cardiac telemetry 1:4`),
+      icu: rn(2, `${ORS_441_765}(2)(b): intensive care 1:2`),
+      'step-down': rn(3, `${ORS_441_765}(2)(i): intermediate care 1:3`),
+      emergency: rn(4, `${ORS_441_765}(2)(a): emergency 1:4 averaged over 12 hours, 5 at most`),
+      'operating-room': rn(1, `${ORS_441_765}(2)(f): operating room 1:1`),
+      oncology: rn(4, `${ORS_441_765}(2)(g): oncology 1:4`),
+      pacu: rn(2, `${ORS_441_765}(2)(h): post-anesthesia care 1:2`),
+      pediatrics: rn(4, `${ORS_441_765}(2)(L): pediatric 1:4`),
     },
     overtimeRules: [],
     enableRules: [NO_MANDATORY_OVERTIME],
@@ -166,10 +305,235 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
     summary:
       'ICU nurses at 1:1 or 1:2 by the hospital’s acuity tool (M.G.L. c.111 § 231): 1:2 is set ' +
       'as the ceiling, and 1:1 patients belong in an acuity tier with a 1:1 ratio. No mandatory ' +
-      'overtime outside an emergency (§ 226); its 16-hour cap is not enforced here.',
+      'overtime outside an emergency with no reasonable alternative (§ 226(b)); record those on ' +
+      'the shift as "Emergency: …". And whether required or volunteered, a nurse may not work ' +
+      'more than 16 consecutive hours, and after 16 must have 8 hours off (§ 226(f)); no ' +
+      'emergency lifts that.',
     ratios: {
       icu: rn(2, 'M.G.L. c.111 § 231: intensive care 1:2, or 1:1 by acuity'),
     },
+    overtimeRules: [],
+    enableRules: [
+      NO_MANDATORY_OVERTIME,
+      // § 226(f): "A nurse shall not be allowed to exceed 16 consecutive hours worked in a 24 hour
+      // period. In the event a nurse works 16 consecutive hours, that nurse must be given at least
+      // 8 consecutive hours of off-duty time immediately after the worked overtime."
+      longStretch({
+        requiredOnly: false,
+        maxConsecutiveHours: 16,
+        emergencyLiftsCap: false,
+        restAfterHours: 16,
+        restOnlyPastThreshold: false,
+        restHours: 8,
+      }),
+    ],
+  },
+  IL: {
+    label: 'Illinois',
+    summary:
+      'No nurse (RN, LPN or APRN paid hourly) may be required to work past an agreed, ' +
+      'predetermined shift except in an unforeseen emergent circumstance — a declared disaster ' +
+      'or the hospital’s disaster plan, or a procedure that needs the nurse’s skills to finish — ' +
+      'as a last resort; ordinary short staffing is not one (210 ILCS 85/10.9). Record those on ' +
+      'the shift as "Emergency: …". Even then a required holdover may not run more than 4 hours ' +
+      'past the shift, and a nurse required to work up to 12 consecutive hours must then have 8 ' +
+      'hours off. On-call time in specialized units does not count. The rules judge every role, ' +
+      'though the statute does not cover nursing assistants.',
+    ratios: {},
+    overtimeRules: [],
+    enableRules: [
+      { ...NO_MANDATORY_OVERTIME, params: { emergencyMaxHoursPastShift: 4 } },
+      longStretch({
+        requiredOnly: true,
+        restAfterHours: 12,
+        restOnlyPastThreshold: false,
+        restHours: 8,
+      }),
+    ],
+  },
+  CT: {
+    label: 'Connecticut',
+    summary:
+      'No hospital may require a nurse (RN, LPN or registered nurse’s aide) to work overtime ' +
+      '(Conn. Gen. Stat. § 19a-490l): past a shift posted at least 48 hours ahead, more than 12 ' +
+      'hours in 24, or more than 48 in the hospital’s work week. A nurse may volunteer for any ' +
+      'of it. A schedule that puts a nurse past 12 in 24 or 48 in a week is overtime under the ' +
+      'statute, so mark those shifts as overtime and record the nurse’s offer. Exceptions, only ' +
+      'when patient safety requires and there is no reasonable alternative: a surgery in ' +
+      'progress, a critical care nurse until relieved by the next shift, and public health or ' +
+      'institutional emergencies; record those on the shift as "Emergency: …". A collective ' +
+      'bargaining agreement in effect before 1 October 2023 that addresses mandatory overtime ' +
+      'governs until it expires.',
+    ratios: {},
+    overtimeRules: [],
+    enableRules: [NO_MANDATORY_OVERTIME],
+  },
+  MN: {
+    label: 'Minnesota',
+    summary:
+      'Minnesota does not ban mandatory overtime. Minn. Stat. § 181.275 protects a nurse (RN, ' +
+      'LPN or APRN) who declines hours past a normal work period of 12 or fewer consecutive ' +
+      'hours because, in their judgment, working them may jeopardize patient safety; outside ' +
+      'an emergency the hospital may not act against them for it. No rule is switched on, ' +
+      'because the app cannot know the nurse’s judgment: record a refusal in the shift’s notes. ' +
+      'Nursing facilities are not covered.',
+    ratios: {},
+    overtimeRules: [],
+    enableRules: [],
+  },
+  NJ: {
+    label: 'New Jersey',
+    summary:
+      'No health care facility may require an hourly direct-care employee (RNs, LPNs and ' +
+      'aides among them) to work past an agreed, predetermined and regularly scheduled daily ' +
+      'shift of up to 40 hours a week; anything more is voluntary (N.J.S.A. 34:11-56a34). The ' +
+      'exception is an unforeseeable emergent circumstance, as a last resort and not to fill ' +
+      'chronic vacancies, after asking volunteers, per diem and agency staff; record those on ' +
+      'the shift as "Emergency: …". On-call time may not stand in for mandatory overtime ' +
+      '(§ 56a36).',
+    ratios: {},
+    overtimeRules: [],
+    enableRules: [NO_MANDATORY_OVERTIME],
+  },
+  ME: {
+    label: 'Maine',
+    summary:
+      'Maine allows mandated overtime, but a nurse may not be disciplined for refusing more ' +
+      'than 12 consecutive hours except in an unforeseen emergent circumstance, as a last ' +
+      'resort for patient safety, and a nurse mandated past 12 consecutive hours must then ' +
+      'have 10 hours off (26 M.R.S. § 603(5)). So a required holdover that runs a stretch past ' +
+      '12 hours is refused unless the shift records "Emergency: …", and the 10 hours of rest ' +
+      'apply even then. The general limit of 80 hours of required overtime in two weeks ' +
+      '(§ 603(1)) is not enforced here.',
+    ratios: {},
+    overtimeRules: [],
+    enableRules: [
+      longStretch({
+        requiredOnly: true,
+        maxConsecutiveHours: 12,
+        emergencyLiftsCap: true,
+        restAfterHours: 12,
+        restOnlyPastThreshold: true,
+        restHours: 10,
+      }),
+    ],
+  },
+  PA: {
+    label: 'Pennsylvania',
+    summary:
+      'No health care facility may require a direct-care employee (RNs, LPNs and aides among ' +
+      'them) to work past an agreed, predetermined and regularly scheduled daily shift ' +
+      '(Prohibition of Excessive Overtime in Health Care Act, 43 P.S. § 932.3, Act 102 of ' +
+      '2008). Exceptions: an unforeseeable emergent circumstance as a last resort (not chronic ' +
+      'short staffing) and a procedure in progress; record those on the shift as "Emergency: ' +
+      '…". On-call time may not stand in for mandatory overtime. After more than 12 ' +
+      'consecutive hours, required or volunteered, an employee gets 10 hours off, which they ' +
+      'may waive: record a waiver under the nurse’s rest waivers.',
+    ratios: {},
+    overtimeRules: [],
+    enableRules: [
+      NO_MANDATORY_OVERTIME,
+      longStretch({
+        requiredOnly: false,
+        restAfterHours: 12,
+        restOnlyPastThreshold: true,
+        restHours: 10,
+        honorsRestWaiver: true,
+      }),
+    ],
+  },
+  NH: {
+    label: 'New Hampshire',
+    summary:
+      'A nurse (RN, LPN or licensed nursing assistant) may not be disciplined for refusing more ' +
+      'than 12 consecutive hours (RSA 275:67), so a required holdover that runs a stretch past ' +
+      '12 hours is refused unless the shift records "Emergency: …" — the exceptions are a ' +
+      'surgery in progress, a critical care unit until the next scheduled nurse arrives, home ' +
+      'health until relieved, a public health emergency, and a collective bargaining agreement ' +
+      'that addresses mandatory overtime. A nurse mandated past 12 consecutive hours must then ' +
+      'have 8 hours off. A written agreement filed with the labor commissioner (RSA 275:68) ' +
+      'exempts the employer; switch the rule off for such a nurse’s unit if one is filed.',
+    ratios: {},
+    overtimeRules: [],
+    enableRules: [
+      longStretch({
+        requiredOnly: true,
+        maxConsecutiveHours: 12,
+        emergencyLiftsCap: true,
+        restAfterHours: 12,
+        restOnlyPastThreshold: true,
+        restHours: 8,
+      }),
+    ],
+  },
+  RI: {
+    label: 'Rhode Island',
+    summary:
+      'No hospital may require an hourly nurse or nursing assistant to work past an agreed, ' +
+      'predetermined shift of 8, 10 or 12 hours except in an unforeseeable emergent ' +
+      'circumstance — a power outage, a public health emergency, an irregular rise in census ' +
+      'or in staff not reporting — as a last resort after seeking volunteers and per diem staff ' +
+      '(R.I. Gen. Laws § 23-17.20-3); record those on the shift as "Emergency: …". In no case ' +
+      'may a nurse be required to work more than 12 consecutive hours, emergency or not. ' +
+      'Voluntary overtime is not limited.',
+    ratios: {},
+    overtimeRules: [],
+    enableRules: [{ ...NO_MANDATORY_OVERTIME, params: { emergencyMaxConsecutiveHours: 12 } }],
+  },
+  WV: {
+    label: 'West Virginia',
+    summary:
+      'A hospital may not mandate overtime past a nurse’s regularly scheduled shift (W. Va. ' +
+      'Code § 21-5F-3), outside an unforeseen emergency (terrorism, an outbreak, a disaster — ' +
+      'not known staffing gaps), prescheduled on-call time or a procedure in progress; record ' +
+      'those on the shift as "Emergency: …". Required or volunteered, a nurse who works 12 or ' +
+      'more consecutive hours must then have 8 hours off, and may not work more than 16 hours ' +
+      'in 24 (§ 21-5F-3(g)). The statute lifts the 16-hour limit in those same emergencies; ' +
+      'here it holds, so switch it off for an emergency. Hospitals run by the state or federal ' +
+      'government are not covered.',
+    ratios: {},
+    overtimeRules: [],
+    enableRules: [
+      NO_MANDATORY_OVERTIME,
+      { ruleId: 'max-hours-in-24', params: { maxHours: 16 } },
+      longStretch({
+        requiredOnly: false,
+        restAfterHours: 12,
+        restOnlyPastThreshold: false,
+        restHours: 8,
+      }),
+    ],
+  },
+  AK: {
+    label: 'Alaska',
+    summary:
+      'A nurse (RN or LPN) may not be required to work beyond a predetermined and regularly ' +
+      'scheduled shift (AS 18.20.400), and after a scheduled shift is allowed 10 consecutive ' +
+      'hours off. Voluntary overtime is lawful only up to 14 consecutive hours (§ 18.20.400(c)). ' +
+      'Exceptions: a procedure in progress, an unforeseen emergency (not foreseeable volume or ' +
+      'staffing), weather that keeps the relief nurse away, a rural facility’s declared ' +
+      'staffing emergency (§ 18.20.410), and prearranged on-call; record those on the shift ' +
+      'as "Emergency: …". The 14-hour limit and the rest after a shift are enforced; the ' +
+      '80-hours-in-14-days condition on voluntary work is not.',
+    ratios: {},
+    overtimeRules: [],
+    enableRules: [
+      NO_MANDATORY_OVERTIME,
+      { ruleId: 'min-rest-between-shifts', params: { minRestHours: 10 }, raise: ['minRestHours'] },
+      longStretch({ requiredOnly: false, maxConsecutiveHours: 14, emergencyLiftsCap: true }),
+    ],
+  },
+  TX: {
+    label: 'Texas',
+    summary:
+      'A hospital may not require a nurse (RN or LVN) to work mandatory overtime — hours or days ' +
+      'beyond those scheduled, however long the shift — and a nurse may refuse (Tex. Health & ' +
+      'Safety Code § 258.003). Time just before or after a shift to document or hand over ' +
+      'patients does not count, and on-call time may not stand in for mandatory overtime. ' +
+      'Exceptions (§ 258.004): a health care disaster or declared emergency in or next to the ' +
+      'county, an unforeseen event after good-faith efforts to find volunteers, and a procedure ' +
+      'in progress; record those on the shift as "Emergency: …". There are no hour caps.',
+    ratios: {},
     overtimeRules: [],
     enableRules: [NO_MANDATORY_OVERTIME],
   },
@@ -328,8 +692,8 @@ export function planJurisdiction(
   const preset = JURISDICTION_PRESETS[id];
   const plan: JurisdictionPlan = { addRatioRules: [], tightenRatioRules: [], addOvertimeRules: [] };
 
-  const unitPreset = acuityPresetForUnitType(current.unitType);
-  const ceiling = unitPreset === undefined ? undefined : preset.ratios[unitPreset];
+  const kind = unitKindForUnitType(current.unitType);
+  const ceiling = kind === undefined ? undefined : preset.ratios[kind];
   if (ceiling) {
     const catchAll = current.ratioRules.filter(
       (r) => r.active && r.role === ceiling.role && r.acuityTierId === null,
@@ -394,13 +758,19 @@ export function planJurisdiction(
         const have = params[key];
         if (typeof value !== 'number') {
           if (!c.enabled) params[key] = value;
+        } else if (wanted.raise?.includes(key)) {
+          if (!c.enabled ? have !== value : typeof have !== 'number' || value > have) {
+            params[key] = value;
+            touched = true;
+          }
         } else if (typeof have === 'number') {
           if (value < have) {
             params[key] = value;
             touched = true;
           }
-        } else if (!c.enabled) {
+        } else if (!c.enabled || wanted.absentCapIsUnlimited) {
           params[key] = value;
+          touched = true;
         }
       }
       if (!touched) return c;

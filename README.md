@@ -74,7 +74,7 @@ this codebase is held to. This document is the practical "how do I build/run/shi
 
 These are yours to do by hand until the app handles them (the same list is in Settings › About):
 
-- Hour caps on overtime in Oregon (ORS 441.166) and Massachusetts (16 hours) are not in their presets yet: turn on "Most hours in any 24" under Settings › Rules and record holdovers on Today, and the app checks the hours for you.
+- Some state limits stay with you: Oregon's cap of 7 patients per nursing assistant on day and evening shifts and 11 at night (ORS 441.768); labor and delivery and postpartum ratios, which turn on the patient (set them as acuity-tier ratios); and the emergencies that lift West Virginia's 16 hours in 24, which here holds until you switch "Most hours in any 24" off.
 - Oregon's staffing-plan deviations: record and justify any departure from the unit's staffing plan yourself.
 - Leave accrual is projected from the last payroll figure under Settings › Leave: part-time accrual counts hours worked, not other paid hours, and the federal 6-hour tier's extra 10 hours in the leave year's last pay period is not added, so re-enter payroll's figures now and then.
 - Military leave (120 hours a fiscal year), court leave and paid parental leave are leave types without entitlements of their own: check the hours available with HR.
@@ -84,7 +84,7 @@ These are yours to do by hand until the app handles them (the same list is in Se
 - Tour rotation limits (Settings › Rules) are checked on the grid, but Generate does not steer away from them while the rule is soft: make it hard to have Generate keep to them.
 - Leave bids and other requests are entered by the manager: nurses do not submit them in the app yet.
 
-The state presets in Settings › Unit are a starting point, not legal advice: check them against your contract and your state's law. A federal VA preset (Title 38) sets the 40-hour weekly cap and the 8-hour (12 on a compressed tour) consecutive limit on required hours, and leaves ratios and pay to you.
+The state presets in Settings › Unit are a starting point, not legal advice: check them against your contract and your state's law. Presets cover California (the full Title 22 ratio table), Oregon (the ORS 441.765 ratio table), New York, Washington, Massachusetts, Illinois, Connecticut, Minnesota, New Jersey, Maine, Pennsylvania, New Hampshire, Rhode Island, West Virginia, Alaska and Texas, each citing its statute; they switch on the ban on mandatory overtime, the limits on long stretches of work and the rest owed after one, as each law has them. A federal VA preset (Title 38) sets the 40-hour weekly cap and the 8-hour (12 on a compressed tour) consecutive limit on required hours, and leaves ratios and pay to you.
 
 ## Installing
 

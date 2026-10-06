@@ -769,3 +769,59 @@ describe('tour rotation made hard', () => {
     expect(model.isLegal(0)).toBe(true);
   });
 });
+
+describe('long stretches made hard', () => {
+  function input(restHours: number): SolveInput {
+    const rules = defaultRuleSet(UNIT_ID);
+    return solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: [makeNurse({ id: 'ada', firstName: 'Ada' })],
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: [
+        ...coverageAllWeek(DAY_12, 'RN', 1),
+        ...coverageAllWeek(NIGHT_12, 'RN', 1),
+      ],
+      ruleSet: {
+        ...rules,
+        configs: rules.configs.map((c) => {
+          if (c.ruleId === 'min-rest-between-shifts') {
+            return { ...c, params: { ...c.params, minRestHours: 0 } };
+          }
+          return c.ruleId === 'long-stretch'
+            ? {
+                ...c,
+                enabled: true,
+                severityOverride: 'hard' as const,
+                params: { ...c.params, restAfterHours: 12, restHours },
+              }
+            : c;
+        }),
+      },
+    });
+  }
+
+  // Day 12 Mon 07-19, night 12 Mon 19-07, day 12 Tue 07-19: one 36-hour stretch. Without the
+  // night, the Monday day is a 12-hour stretch followed by Tuesday's day 12 hours later.
+  const roster = () => [
+    assign('ada', DAY_12, '2026-01-05'),
+    assign('ada', NIGHT_12, '2026-01-05'),
+    assign('ada', DAY_12, '2026-01-06'),
+  ];
+
+  it('refuses to take the middle out of a stretch when the rest after the first part is too short', () => {
+    const model = new SolverModel(input(14));
+    const [first, middle, last] = roster();
+    for (const a of [first!, middle!, last!]) model.add(a);
+    model.remove(middle!);
+    expect(model.isLegal(0)).toBe(false);
+  });
+
+  it('accepts the same removal when 12 hours off is all the rest owed', () => {
+    const model = new SolverModel(input(12));
+    const [first, middle, last] = roster();
+    for (const a of [first!, middle!, last!]) model.add(a);
+    model.remove(middle!);
+    expect(model.isLegal(0)).toBe(true);
+  });
+});

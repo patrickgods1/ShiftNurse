@@ -7,6 +7,7 @@ import {
   DAY_12,
   EVENING_8,
   makeNurse,
+  NIGHT_12,
   ON_CALL,
   resetFixtureCounters,
   scenario,
@@ -490,6 +491,160 @@ describe('no mandatory overtime', () => {
         ['maxMandatedWeeklyHours', 'weekHours'],
         ['consecutiveLimit', 'stretchHours'],
       ]);
+    });
+  });
+
+  describe('with limits that hold even in an emergency (Illinois, Rhode Island)', () => {
+    const base = mandatoryOvertimeRule.defaultParams;
+    const illinois = { ...base, emergencyMaxHoursPastShift: 4 };
+    const rhodeIsland = { ...base, emergencyMaxConsecutiveHours: 12 };
+    const stayed = (minutes: number, mandated: boolean | undefined, notes?: string) => ({
+      id: 'held',
+      holdoverMinutes: minutes,
+      ...(mandated === undefined ? {} : { holdoverMandated: mandated }),
+      ...(notes === undefined ? {} : { notes }),
+    });
+    const surge = 'Emergency: census surge';
+
+    it('refuses an Illinois emergency holdover of 5 hours past the shift', () => {
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [assign('ana', DAY_12, '2026-03-02', stayed(300, true, surge))],
+        },
+        illinois,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toMatchObject({
+        code: 'mandatory_overtime',
+        severity: 'hard',
+        nurseIds: ['ana'],
+        assignmentIds: ['held'],
+        dates: ['2026-03-02'],
+        details: { hoursPastShift: 5, emergencyMaxHoursPastShift: 4 },
+      });
+      expect(violations[0]!.message).toContain('5h');
+      expect(violations[0]!.message).toContain('Mon Mar 2');
+      expect(violations[0]!.message).toContain('even in an emergency');
+    });
+
+    it('allows an Illinois emergency holdover of exactly 4 hours', () => {
+      expect(
+        judge(
+          {
+            nurses: [ana()],
+            assignments: [assign('ana', DAY_12, '2026-03-02', stayed(240, true, surge))],
+          },
+          illinois,
+        ),
+      ).toEqual([]);
+    });
+
+    it('refuses a Rhode Island emergency holdover that makes 13 straight hours', () => {
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [assign('ana', DAY_12, '2026-03-02', stayed(60, true, surge))],
+        },
+        rhodeIsland,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]!.details).toMatchObject({
+        stretchHours: 13,
+        emergencyMaxConsecutiveHours: 12,
+      });
+      expect(violations[0]!.message).toContain('even in an emergency');
+    });
+
+    it('allows a Rhode Island emergency holdover that makes exactly 12 straight hours', () => {
+      expect(
+        judge(
+          {
+            nurses: [ana()],
+            assignments: [assign('ana', DAY_8, '2026-03-02', stayed(240, true, surge))],
+          },
+          rhodeIsland,
+        ),
+      ).toEqual([]);
+    });
+
+    it('never judges a volunteered holdover against the emergency limits', () => {
+      expect(
+        judge(
+          {
+            nurses: [ana()],
+            assignments: [
+              assign('ana', DAY_12, '2026-03-02', stayed(300, false, surge)),
+              assign('ana', DAY_12, '2026-03-04', { ...stayed(300, undefined), id: 'unflagged' }),
+            ],
+          },
+          { ...illinois, emergencyMaxConsecutiveHours: 12 },
+        ),
+      ).toEqual([]);
+    });
+
+    it('reports a required holdover once when both the ban and the emergency limit catch it', () => {
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [assign('ana', DAY_12, '2026-03-02', stayed(300, true))],
+        },
+        illinois,
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it('reports an emergency stretch once when two required holdovers make it too long', () => {
+      // Day 8 held 60 to 16:00 joins Evening 8 from 15:00 held 60 to 24:00: one 17h stretch.
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [
+            assign('ana', DAY_8, '2026-03-02', { ...stayed(60, true, surge), id: 'first' }),
+            assign('ana', EVENING_8, '2026-03-02', { ...stayed(60, true, surge), id: 'second' }),
+          ],
+        },
+        rhodeIsland,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]!.details).toMatchObject({ stretchHours: 17 });
+    });
+
+    it('reports a stretch once under VA limits when a required and an emergency holdover share it', () => {
+      // Day 8 held 60 (required) joins Evening 8 held 60 (emergency): one 17h stretch.
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [
+            assign('ana', DAY_8, '2026-03-02', { ...stayed(60, true), id: 'first' }),
+            assign('ana', EVENING_8, '2026-03-02', { ...stayed(60, true, surge), id: 'second' }),
+          ],
+        },
+        {
+          ...base,
+          maxRequiredConsecutiveHours: 8,
+          compressedTourConsecutiveHours: 12,
+          emergencyMaxConsecutiveHours: 12,
+        },
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it('counts last period’s night shift in the stretch but names only the in-period holdover', () => {
+      // Night 12 of Sun Mar 1 ends 07:00 Mon, when the Day 12 begins: 12 + 12 + 1 = 25h straight.
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [assign('ana', DAY_12, '2026-03-02', stayed(60, true, surge))],
+          priorAssignments: [assign('ana', NIGHT_12, '2026-03-01', { id: 'last-period' })],
+        },
+        rhodeIsland,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toMatchObject({
+        assignmentIds: ['held'],
+        details: { stretchHours: 25, emergencyMaxConsecutiveHours: 12 },
+      });
     });
   });
 });

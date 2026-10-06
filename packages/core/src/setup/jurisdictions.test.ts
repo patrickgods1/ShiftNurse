@@ -390,3 +390,232 @@ describe('what the VA and California presets say about leave', () => {
     }
   });
 });
+
+describe('the full ratio tables', () => {
+  function ceilingFor(id: 'CA' | 'OR', unitType: string) {
+    const plan = planJurisdiction(id, input({ unitType }));
+    return plan.addRatioRules[0];
+  }
+
+  it.each([
+    ['Emergency Department', 4, '(8)'],
+    ['Pediatrics', 4, '(6)'],
+    ['PACU', 2, '(7)'],
+    ['Psychiatric', 6, '(13)'],
+    ['Oncology', 4, '(12)'],
+    ['Burn unit', 2, '(1)'],
+    ['NICU', 2, '(1)'],
+    ['Operating room', 1, '(2)'],
+  ])('gives a California %s unit 1:%i under § 70217(a)%s', (unitType, max, paragraph) => {
+    const rule = ceilingFor('CA', unitType);
+    expect(rule).toMatchObject({ role: 'RN', maxPatientsPerNurse: max, acuityTierId: null });
+    expect(rule!.citation).toContain(`70217(a)${paragraph}`);
+  });
+
+  it.each([
+    ['ED', 4],
+    ['Intermediate care', 3],
+    ['Oncology', 4],
+    ['Pediatrics', 4],
+    ['PACU', 2],
+    ['Operating room', 1],
+  ])('gives an Oregon %s unit the ORS 441.765 ceiling of 1:%i', (unitType, max) => {
+    const rule = ceilingFor('OR', unitType);
+    expect(rule).toMatchObject({ role: 'RN', maxPatientsPerNurse: max });
+    expect(rule!.citation).toContain('ORS 441.765');
+  });
+
+  it('sets no Oregon ratio for a psychiatric unit, whose plan its committee adopts', () => {
+    expect(ceilingFor('OR', 'Psychiatric')).toBeUndefined();
+  });
+
+  it('sets no ratio for labor and delivery, where the ceiling turns on whether she is in labor', () => {
+    expect(ceilingFor('CA', 'Labor and delivery')).toBeUndefined();
+    expect(ceilingFor('OR', 'Labor and delivery')).toBeUndefined();
+  });
+
+  it('still reads a step-down unit by its usual names in both states', () => {
+    expect(ceilingFor('CA', 'PCU')).toMatchObject({ maxPatientsPerNurse: 3 });
+    expect(ceilingFor('OR', 'Step-down')).toMatchObject({ maxPatientsPerNurse: 3 });
+  });
+});
+
+describe('the state mandatory-overtime presets', () => {
+  const NMO = 'no-mandatory-overtime';
+  const LONG = 'long-stretch';
+
+  function configOf(id: Parameters<typeof planJurisdiction>[0], ruleId: string, ruleSet?: RuleSet) {
+    const plan = planJurisdiction(id, input(ruleSet ? { ruleSet } : {}));
+    return plan.ruleConfigs?.find((c) => c.ruleId === ruleId);
+  }
+
+  function withRule(ruleId: string, enabled: boolean, params: Record<string, unknown>): RuleSet {
+    const base = defaultRuleSet(UNIT);
+    return {
+      ...base,
+      configs: base.configs.map((c) =>
+        c.ruleId === ruleId ? { ...c, enabled, params: { ...c.params, ...params } } : c,
+      ),
+    };
+  }
+
+  it('bans required overtime in Illinois and caps even an emergency at 4 hours past the shift', () => {
+    expect(configOf('IL', NMO)).toMatchObject({
+      enabled: true,
+      params: { emergencyMaxHoursPastShift: 4 },
+    });
+    expect(configOf('IL', LONG)).toMatchObject({
+      enabled: true,
+      params: { requiredOnly: true, restAfterHours: 12, restHours: 8 },
+    });
+  });
+
+  it('bans required overtime in Connecticut, New Jersey and Texas without a numeric cap', () => {
+    for (const id of ['CT', 'NJ', 'TX'] as const) {
+      const nmo = configOf(id, NMO);
+      expect(nmo?.enabled).toBe(true);
+      expect(nmo?.params.maxMandatedWeeklyHours).toBeUndefined();
+      expect(configOf(id, LONG)?.enabled).toBe(false);
+    }
+  });
+
+  it('switches nothing on in Minnesota, whose law only protects a nurse who declines', () => {
+    const plan = planJurisdiction('MN', input());
+    expect(plan.ruleConfigs).toBeUndefined();
+    expect(JURISDICTION_PRESETS.MN.summary).toContain('181.275');
+  });
+
+  it('lets Maine and New Hampshire mandate, but not past 12 straight hours, then wants rest', () => {
+    expect(configOf('ME', NMO)?.enabled).toBe(false);
+    expect(configOf('NH', NMO)?.enabled).toBe(false);
+    expect(configOf('ME', LONG)?.params).toMatchObject({
+      requiredOnly: true,
+      maxConsecutiveHours: 12,
+      emergencyLiftsCap: true,
+      restAfterHours: 12,
+      restOnlyPastThreshold: true,
+      restHours: 10,
+    });
+    expect(configOf('NH', LONG)?.params).toMatchObject({
+      requiredOnly: true,
+      maxConsecutiveHours: 12,
+      restAfterHours: 12,
+      restOnlyPastThreshold: true,
+      restHours: 8,
+    });
+  });
+
+  it('gives Pennsylvania 10 hours off after more than 12 straight, volunteered or not, and waivable', () => {
+    expect(configOf('PA', NMO)?.enabled).toBe(true);
+    expect(configOf('PA', LONG)?.params).toMatchObject({
+      requiredOnly: false,
+      restAfterHours: 12,
+      restOnlyPastThreshold: true,
+      restHours: 10,
+      honorsRestWaiver: true,
+    });
+    expect(configOf('PA', LONG)?.params.maxConsecutiveHours).toBeUndefined();
+  });
+
+  it('caps a required Rhode Island stretch at 12 hours even in an emergency', () => {
+    expect(configOf('RI', NMO)?.params).toMatchObject({ emergencyMaxConsecutiveHours: 12 });
+  });
+
+  it('holds West Virginia nurses to 16 hours in 24 and 8 off after 12 or more', () => {
+    expect(configOf('WV', 'max-hours-in-24')).toMatchObject({
+      enabled: true,
+      params: { maxHours: 16 },
+    });
+    expect(configOf('WV', LONG)?.params).toMatchObject({
+      requiredOnly: false,
+      restAfterHours: 12,
+      restOnlyPastThreshold: false,
+      restHours: 8,
+    });
+  });
+
+  it('limits Alaska nurses to 14 straight hours, volunteered or not', () => {
+    expect(configOf('AK', NMO)?.enabled).toBe(true);
+    expect(configOf('AK', LONG)?.params).toMatchObject({
+      requiredOnly: false,
+      maxConsecutiveHours: 14,
+      emergencyLiftsCap: true,
+    });
+  });
+
+  it('raises a shorter minimum rest to the 10 hours Alaska gives after a shift', () => {
+    const plan = planJurisdiction(
+      'AK',
+      input({ ruleSet: withRule('min-rest-between-shifts', true, { minRestHours: 8 }) }),
+    );
+    const rest = plan.ruleConfigs?.find((c) => c.ruleId === 'min-rest-between-shifts');
+    expect(rest?.params.minRestHours).toBe(10);
+  });
+
+  it('never lets a Massachusetts nurse pass 16 straight hours, then gives 8 off', () => {
+    expect(configOf('MA', LONG)?.params).toMatchObject({
+      requiredOnly: false,
+      maxConsecutiveHours: 16,
+      emergencyLiftsCap: false,
+      restAfterHours: 16,
+      restHours: 8,
+    });
+  });
+
+  it('adds a cap to a long-stretch rule the unit has on without one', () => {
+    const params = configOf(
+      'MA',
+      LONG,
+      withRule(LONG, true, { restAfterHours: 16, restHours: 8 }),
+    )?.params;
+    expect(params?.maxConsecutiveHours).toBe(16);
+  });
+
+  it('raises a shorter rest after a long stretch, and keeps a longer one', () => {
+    const shorter = configOf(
+      'PA',
+      LONG,
+      withRule(LONG, true, { restAfterHours: 12, restOnlyPastThreshold: true, restHours: 8 }),
+    );
+    expect(shorter?.params.restHours).toBe(10);
+    const longer = configOf(
+      'PA',
+      LONG,
+      withRule(LONG, true, { restAfterHours: 12, restOnlyPastThreshold: true, restHours: 11 }),
+    );
+    expect(longer?.params.restHours).toBe(11);
+  });
+
+  it('changes nothing the second time, for every preset', () => {
+    for (const id of Object.keys(JURISDICTION_PRESETS) as (keyof typeof JURISDICTION_PRESETS)[]) {
+      const first = planJurisdiction(id, input());
+      const second = planJurisdiction(
+        id,
+        input({
+          ruleSet: {
+            ...defaultRuleSet(UNIT),
+            configs: first.ruleConfigs ?? defaultRuleSet(UNIT).configs,
+          },
+          ratioRules: first.addRatioRules.map((r, i) => ({ ...r, id: `r${i}`, unitId: UNIT })),
+          overtimeRules: first.addOvertimeRules.map((r) =>
+            overtime(r.basis, r.thresholdHours, r.multiplier),
+          ),
+          ...(first.ratioStaffing ? { ratioStaffing: first.ratioStaffing } : {}),
+        }),
+      );
+      expect(second.ruleConfigs, id).toBeUndefined();
+      expect(second.addRatioRules, id).toEqual([]);
+    }
+  });
+
+  it('only switches rules on, for every preset', () => {
+    for (const id of Object.keys(JURISDICTION_PRESETS) as (keyof typeof JURISDICTION_PRESETS)[]) {
+      const plan = planJurisdiction(id, input());
+      const before = defaultRuleSet(UNIT).configs;
+      for (const c of plan.ruleConfigs ?? []) {
+        const was = before.find((b) => b.ruleId === c.ruleId);
+        if (was?.enabled) expect(c.enabled, `${id} ${c.ruleId}`).toBe(true);
+      }
+    }
+  });
+});

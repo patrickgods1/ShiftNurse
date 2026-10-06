@@ -44,6 +44,7 @@ import { encodeCoverage, encodeRatio } from './rules/coverage.js';
 import { encodeHolidayRotation } from './rules/holidays.js';
 import { encodeContractCap, encodeWeeklyHours } from './rules/hours.js';
 import { encodeHoursIn24 } from './rules/hours-in-24.js';
+import { encodeLongStretch } from './rules/long-stretch.js';
 import { encodePendingTimeOff } from './rules/pending.js';
 import { encodePreceptor } from './rules/preceptor.js';
 import { encodeNightRecovery } from './rules/recovery.js';
@@ -68,6 +69,8 @@ export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'
   'fte-target-hours': encodeContractCap,
   // Not priced while soft; one linear cap per window anchor when hard.
   'max-hours-in-24': encodeHoursIn24,
+  // Not priced while soft; forbidden chains of contiguous shifts when hard.
+  'long-stretch': encodeLongStretch,
   // Priced in the objective at whatever severity the rule set gives them (`incompatibilityTerms`):
   // the soft cap needs its price even when no hard encoder runs, and neither rule forbids
   // anything outright, so there is nothing for an encoder to add.

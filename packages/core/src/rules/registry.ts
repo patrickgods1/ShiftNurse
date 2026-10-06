@@ -34,6 +34,7 @@ import { holidayIndexes, holidayRotationRule } from './holiday-rotation.js';
 import { maxHoursIn24Rule } from './hours-in-24.js';
 import { contractedHoursRule, maxHoursRule } from './hours-rules.js';
 import { incompatibleBufferRule, incompatibleTogetherRule } from './incompatibility-rules.js';
+import { longStretchRule } from './long-stretch.js';
 import { mandatoryOvertimeRule } from './mandatory-overtime.js';
 import { nightRecoveryRule } from './night-recovery.js';
 import { type PaidLeaveCredit, type PaidSickCall, paidLeaveCredits } from './paid-leave.js';
@@ -70,6 +71,7 @@ export const ALL_RULES: readonly Rule<never>[] = [
   consecutiveShiftsRule,
   maxHoursRule,
   maxHoursIn24Rule,
+  longStretchRule,
   contractedHoursRule,
   incompatibleBufferRule,
   incompatibleTogetherRule,

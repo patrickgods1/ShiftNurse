@@ -90,7 +90,9 @@ export type ViolationCode =
   | 'short_tour_change'
   | 'off_permanent_tour'
   | 'works_during_accommodation'
-  | 'hours_in_24_exceeded';
+  | 'hours_in_24_exceeded'
+  | 'long_stretch'
+  | 'rest_after_long_stretch';
 
 /**
  * One nurse worked one past holiday. Derived from published schedules, or recorded by hand for
