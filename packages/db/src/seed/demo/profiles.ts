@@ -155,7 +155,8 @@ const INTERMITTENT = { employmentType: 'per_diem', fte: 0, contractedHoursPerPer
  *   tour each pay period: 80 hours, the long week 44 and the short week 36. That is a compressed
  *   schedule — 80 hours in fewer than ten workdays, as 5 U.S.C. §6121 defines one — so overtime
  *   is counted over the pay period rather than the week: past 80 hours in the pay period, or past
- *   the 12 hours of a scheduled tour. Part-time staff work four 12s.
+ *   the 12 hours of a tour. Part-time staff work four 12s. (Overtime beyond the scheduled tour
+ *   is a holdover, which the app does not model yet, so the history has none.)
  * - **The 8 has its own floor and runs inside the day 12.** It works 07:00–15:00, adding hands
  *   for the morning's care and discharges, and is covered as a real ward covers it: by the day
  *   12's charge nurse and ACLS nurse, and a new grad on it works beside the day 12's
@@ -165,9 +166,20 @@ const INTERMITTENT = { employmentType: 'per_diem', fte: 0, contractedHoursPerPer
  * - **No legislated ratios.** California's ratio law does not bind a federal facility; VHA
  *   staffs to nursing hours per patient day set by its expert-panel staffing methodology
  *   (VHA Directive 1351), so demand here is the floors and the NHPPD target, not a ratio.
- * - **Title 38 premium pay** (38 U.S.C. §7453): a 10% night differential on any tour with at
- *   least four hours between 6 pm and 6 am — the whole night 12, not the day 12 or the 8 — and a
- *   25% premium for any tour touching Saturday or Sunday, and double time on holidays.
+ * - **Title 38 law, not California's.** The unit's preset is `US-VA`: 38 U.S.C. §7459(a) forbids
+ *   requiring more than 40 hours in an administrative workweek, so unvolunteered overtime past
+ *   that is a violation. The staff offer overtime (about a third of them, standing offers), and
+ *   the history never requires it of anyone else.
+ * - **Title 38 premium pay** (38 U.S.C. §7453), by the clock: a 10% night differential on a
+ *   tour with at least four hours between 6 pm and 6 am pays the whole tour. The night 12 earns
+ *   it; the day 12 has one hour in that window (6 pm to its 7 pm end), paid on the base rate
+ *   only; the 8 has none. A 25% premium for any tour touching Saturday or Sunday, and double
+ *   time on holidays.
+ * - **Union and contract terms.** San Francisco VA nurses are represented by the National
+ *   Federation of Federal Employees, Local 1 (not NNU or AFGE). Eleven hours between tours and
+ *   two weekends off in every four are typical VA nurse contract terms (the VA-NNU 2023 Master
+ *   Agreement, Art. 13 §2, has both), applied here as typical VA practice and not quoted from
+ *   NFFE's agreement.
  * - **All eleven federal holidays**, Veterans Day included.
  * - **The federal biweekly pay calendar** and four-week schedules.
  * - **Staff kept apart.** Three separations of the kind a VA nurse manager carries: an RN pair
@@ -178,6 +190,16 @@ const INTERMITTENT = { employmentType: 'per_diem', fte: 0, contractedHoursPerPer
  *   two full-timers each working seven day tours a pay period cannot be kept apart by splitting
  *   fourteen days — so each group spans days, nights and the intermittent pool, and a group of
  *   five is staffable only with a cap above one.
+ * - **Leave, certifications, floats and bidding**, which a federal ward carries and a community
+ *   unit's demo does not. Annual leave and sick balances follow 5 U.S.C. ch. 63 accrual (RNs
+ *   8 hours of annual leave a pay period, LVNs and nursing assistants 4, 6 or 8 by service of
+ *   under 3, 3 to 15 and over 15 years; 4 hours of sick leave; part-time staff pro rata), with
+ *   annual leave carried over at no more than 240 hours and sick leave uncapped. Three FMLA
+ *   certifications (an intermittent one, a block that has ended and a current one), two new-grad
+ *   RNs in their 12 weeks of orientation with a named preceptor (one running into the draft),
+ *   five staff with float memberships on the telemetry unit down the hall, and the leave-year
+ *   bid in September: about half the staff rank up to five one-week choices for the coming
+ *   leave year, which the manager awards.
  *
  * Pay is on the VA Nurse Locality Pay System for RNs (Nurse I–III by experience, San Francisco
  * rates among the highest in the VA) and the General Schedule with the San Francisco locality
@@ -209,6 +231,7 @@ const vaRoster: DemoRosterRow[] = [
 export const VA_SF_MED_SURG: DemoProfile = {
   id: 'va-sf-med-surg',
   unit: { name: '4A Medicine-Surgery (VA San Francisco sample)', unitType: 'Medical-Surgical' },
+  jurisdiction: 'US-VA',
   scheduleWeeks: 4,
   // Federal pay period 1 of 2025 began Sunday 12 January; every pay period since is 14 days on.
   payPeriodCycle: isoDate('2025-01-12'),
@@ -244,7 +267,7 @@ export const VA_SF_MED_SURG: DemoProfile = {
     },
   ],
   roster: vaRoster,
-  chargeNurses: { D12: 5, N12: 4 },
+  chargeNurses: { D12: 5, N12: 5 },
   floors: {
     D12: { RN: { min: 4, target: 5 }, LPN: { min: 2, target: 3 }, CNA: { min: 2, target: 3 } },
     N12: { RN: { min: 3, target: 4 }, LPN: { min: 1, target: 2 }, CNA: { min: 1, target: 2 } },
@@ -283,7 +306,13 @@ export const VA_SF_MED_SURG: DemoProfile = {
     raise: { month: 1, percent: 2 },
   },
   differentials: [
-    { kind: 'night', mode: 'multiplier', amount: 1.1 },
+    // 38 U.S.C. §7453(b): the whole tour at 4 or more hours between 6 pm and 6 am.
+    {
+      kind: 'night',
+      mode: 'multiplier',
+      amount: 1.1,
+      window: { startTime: '18:00', endTime: '06:00', wholeShiftAtHours: 4 },
+    },
     { kind: 'weekend', mode: 'multiplier', amount: 1.25 },
     { kind: 'holiday', mode: 'multiplier', amount: 2 },
   ],
@@ -301,10 +330,68 @@ export const VA_SF_MED_SURG: DemoProfile = {
       durationMinutes: 2 * MINUTES_PER_DAY,
       mode: 'overlaps',
     },
+    enable: ['weekend-pattern'],
     params: {
       // 44 hours one week and 36 the next is 80 for the pay period, not four hours of overtime.
       'max-hours-per-week': { overtimeByPayPeriod: true, payPeriodOvertimeThresholdHours: 80 },
+      'min-rest-between-shifts': { minRestHours: 11 },
+      // Two weekends off in every four: at most two worked in a four-week schedule.
+      'weekend-pattern': { maxConsecutiveWeekends: 2, maxWeekendsPerPeriod: 2 },
     },
+  },
+  leaveBalances: {
+    // 5 U.S.C. §6303: 4 hours of annual leave a pay period under 3 years of service, 6 from 3
+    // to 15 and 8 beyond; Title 38 RNs earn 8 from the start. Sick leave is 4 hours.
+    carryoverCapHours: 240,
+    accrual: ({ role, years }) => ({
+      annual: role === 'RN' ? 8 : years < 3 ? 4 : years <= 15 ? 6 : 8,
+      sick: 4,
+    }),
+  },
+  fmla: [
+    {
+      note: "Intermittent — parent's chemotherapy appointments; 12-month certification, supervisor notified a day ahead.",
+      intermittent: true,
+      startsIn: -120,
+      endsIn: -120 + 364,
+    },
+    {
+      note: 'Surgery and recovery — one block, returned to full duty.',
+      intermittent: false,
+      startsIn: -150,
+      endsIn: -80,
+    },
+    {
+      note: 'Caring for spouse after hip replacement — one block of up to 12 weeks, certification on file.',
+      intermittent: false,
+      startsIn: -28,
+      endsIn: 55,
+    },
+  ],
+  // One orientation that began in the history and runs into the draft schedule, and one that
+  // began a week before the history and ended about 15 weeks before the draft, inside the
+  // history (hired earlier, that orientee is not missing from the history's staffing). Both are
+  // new grads on days, with a day-tour preceptor each.
+  preceptorships: [
+    { position: 'D12', hiredIn: -49, weeks: 12 },
+    { position: 'D12', hiredIn: -190, weeks: 12 },
+  ],
+  floatUnit: {
+    name: '4B Telemetry (VA San Francisco sample)',
+    unitType: 'Telemetry',
+    shifts: ['D12', 'N12'],
+    competency: 'Telemetry monitoring; no titratable drips',
+    rns: 4,
+    lpns: 1,
+  },
+  // The leave-year bid runs each September; the manager awards it, results due 15 October.
+  annualLeaveBid: {
+    opens: '09-01',
+    closes: '09-30',
+    offPerDay: { RN: 2, LPN: 1, CNA: 1 },
+    maxAwardsPerNurse: 5,
+    share: 0.5,
+    maxChoices: 5,
   },
   keptApart: [
     {

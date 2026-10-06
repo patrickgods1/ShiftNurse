@@ -243,9 +243,13 @@ This builds `packages/core` and `packages/db`, starts their watchers, and starts
     compressed schedule of six 12-hour tours and one 8 per pay period (44 hours one week, 36 the
     next) on the federal pay calendar, with the 8 running inside the day 12 under its charge
     nurse; RNs with LVNs and nursing assistants, no legislated ratios (VHA staffs to nursing
-    hours per patient day), Title 38 premium pay (10% night differential on the night 12, 25%
-    weekend premium, double-time holidays), overtime past a 12-hour tour or 80 hours a pay
-    period, all 11 federal holidays.
+    hours per patient day), the federal VA preset (no required overtime past 40 hours a week
+    without a volunteer), Title 38 premium pay (10% night differential by the clock: the whole
+    tour at 4 hours between 6 pm and 6 am, 25% weekend premium, double-time holidays), overtime
+    past a 12-hour tour or 80 hours a pay period, all 11 federal holidays; NFFE Local 1's unit,
+    with 11 hours between tours and two weekends off in four. It also seeds leave balances, FMLA
+    certifications, an overtime-volunteer roster, orientees with preceptors, float memberships
+    to a sibling telemetry unit and an open annual-leave bid round.
   - *3 West Medical-Surgical ICU* — a 12-bed California ICU: Title 22 ratios 1:2 and 1:1,
     ACLS for every RN, overtime on the 12-hour alternative workweek.
 - **Manual setup** creates just the unit (name, type, pay-period calendar); everything else is

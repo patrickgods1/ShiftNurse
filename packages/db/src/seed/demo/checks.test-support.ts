@@ -25,6 +25,8 @@ import {
   listShiftTypesForUnit,
 } from '../../repositories/config.js';
 import { listIncompatibilityGroups } from '../../repositories/incompatibility.js';
+import { listOvertimeVolunteers } from '../../repositories/overtime-volunteers.js';
+import { listPreceptorships } from '../../repositories/preceptorships.js';
 import {
   listCredentials,
   listNurseCredentialsForUnit,
@@ -100,6 +102,8 @@ export function historyViolations(
       weekendDefinition: ruleSet.weekendDefinition,
       paidSickCalls: paidSickCallsForUnit(db, unit.id),
       incompatibilityGroups: listIncompatibilityGroups(db, unit.id),
+      overtimeVolunteers: listOvertimeVolunteers(db, unit.id),
+      preceptorships: listPreceptorships(db, unit.id),
     });
     const result = evaluateSchedule(view, ruleSet, ctx);
     for (const v of severity === 'hard' ? result.hardViolations : result.softViolations) {

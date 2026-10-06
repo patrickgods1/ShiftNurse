@@ -613,8 +613,12 @@ Directive 1351) against what a unit can configure. One PR per milestone.
       and a `US-VA` preset that applies no state law
       (verified 2026-10-05: `npm run check` lint and typecheck clean, 2,090 tests passed — the two
       real-runner CP-SAT tests timed out under full-suite load and pass alone; smoke PASS)
-- [ ] M28 A realistic SF VA demo: the `US-VA` preset, the clock-time night differential, NFFE
+- [x] M28 A realistic SF VA demo: the `US-VA` preset, the clock-time night differential, NFFE
       Local 1 as the union, and seeded FMLA, balances, volunteers, preceptors, floats and a VA bid round
+      (11h rest and two weekends off in four; overtime past the scheduled tour waits on M31
+      holdovers) (verified 2026-10-05: `npm run check` 2,105 tests passed, 2 skipped; the VA
+      history passes every demo check seeded on eight dates across 2026–27; the community and ICU
+      demos' data unchanged, table by table)
 - [ ] M29 Leave model: VA and state leave types, a hire date apart from seniority, FMLA by
       regime (Title I / Title 5) and leave-year method, accrual with carryover caps
 - [ ] M30 Contract rules: tour rotation limits, rest waivers, overtime rosters, float rotation,

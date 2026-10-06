@@ -136,6 +136,7 @@ export {
   today,
   WEEKDAY_NAMES,
   weekdayOf,
+  weekendKey,
   windowEndDate,
   windowsOverlap,
 } from './domain/time.js';

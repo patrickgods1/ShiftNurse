@@ -45,3 +45,31 @@
   pay period cannot be separated by splitting fourteen days, and a real ward separates people by
   tour; a group of five is staffable only with a cap above one. The RNG draws for them happen only when a profile has groups, so the other demos'
   data did not change.
+- **A profile can carry a state or federal preset and switch on off-by-default rules.** `jurisdiction`
+  (the VA demo's `US-VA`) runs `applyJurisdiction` right after the rule set is saved and before
+  any period, so every published period snapshots the version in force, and the engine re-reads
+  its limits from it; `rules.enable` turns on rules by id, with `rules.params` as their
+  settings. Where `weekend-pattern` is on, `canWork` keeps each nurse to its run and per-window
+  limits (counted by `weekendKey`, four weekends to a window, and per pay period as the rule
+  judges it), which for two in four comes to alternate weekends: each half of every role works
+  its own, the engine holds back hours on weekdays for the nurse's coming weekend, lends across
+  halves only to avoid a short shift, and tops a nurse up on a legal day when the weekends left
+  them short of hours. Where `no-mandatory-overtime` is on, about a third of the full- and
+  part-time staff get standing overtime offers (`overtime_volunteer`) covering the history and
+  the draft, and a placement that could be overtime is asked only of them; everyone else stays
+  inside the pay period's threshold, so the history has no required overtime. All of these draws
+  and branches are gated on the rule being on, so the other two demos' data did not change.
+- **A profile can seed the federal and HR features too, each behind its own optional field.**
+  The VA demo sets `leaveBalances` (VA accrual by role and years of service, the 240-hour
+  carry-over; part-time pro rata), `fmla` (three certifications: intermittent, ended, current),
+  `preceptorships` (two new-grad orientations of 12 weeks from the hire date, which the field
+  sets; `canWork` places an orientee only on a shift, or the one it runs inside, their preceptor
+  already works, and the balancing and call-off passes never take a preceptor off a shift an
+  orientee is on), `floatUnit` and `annualLeaveBid` (open or closed by the seeding date, never
+  awarded: that is the manager's step). The draws for balances, certifications, floats and bids
+  come after everything else and only where set; preceptors are chosen by seniority, not drawn,
+  so the other demos' data did not change. The sibling unit (`4B Telemetry`) has shift types and
+  float members only, and `SeedResult.unitId` stays the demo unit, which the renderer opens
+  (`UnitProvider` takes the first unit by name). Two units means queries on a bare table (the
+  shift types, say) need a `unit_id` filter. The VA history is staffed on a thin margin: moving a
+  hire date by a week can tip a weekend shift short, so re-run the VA test after changing one.
