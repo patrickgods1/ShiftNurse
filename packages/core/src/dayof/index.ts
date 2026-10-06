@@ -5,6 +5,7 @@
  */
 
 export * from './cancellation.js';
+export * from './float-order.js';
 export * from './replacements.js';
 export * from './staffing.js';
 export * from './types.js';

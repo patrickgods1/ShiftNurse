@@ -44,4 +44,5 @@ export const timeOffSchemas = {
   cancel: z.tuple([id, text.optional()]),
   withdrawApproval: z.tuple([id, text]),
   impact: z.tuple([id, id, z.enum(['approved', 'denied'])]),
+  holidayPriority: z.tuple([id]),
 } satisfies ResourceSchemas<'timeOff'>;

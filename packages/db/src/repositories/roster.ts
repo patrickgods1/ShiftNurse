@@ -16,6 +16,7 @@ import type {
   NurseCredential,
   NurseRole,
   Preference,
+  Tour,
 } from '@shiftnurse/core';
 import { addDays } from '@shiftnurse/core';
 import { and, asc, eq, gte, isNotNull, lt, lte } from 'drizzle-orm';
@@ -56,6 +57,7 @@ function buildNurseRow(id: Id, input: Omit<Nurse, 'id'>): typeof nurseTable.$inf
     contractedHoursPerPeriod: input.contractedHoursPerPeriod,
     seniorityDate: input.seniorityDate,
     hireDate: input.hireDate ?? null,
+    permanentTour: input.permanentTour ?? null,
     isChargeEligible: input.isChargeEligible,
     isNovice: input.isNovice,
     isFloatEligible: input.isFloatEligible,
@@ -155,6 +157,8 @@ export interface NursePatch {
   seniorityDate?: IsoDate;
   /** `null` clears it: the seniority date is then the start of employment. */
   hireDate?: IsoDate | null;
+  /** `null` returns the nurse to the rotation. */
+  permanentTour?: Tour | null;
   isChargeEligible?: boolean;
   isNovice?: boolean;
   isFloatEligible?: boolean;
@@ -174,6 +178,7 @@ const NURSE_PATCH_KEYS: PatchKeys<NursePatch> = {
   contractedHoursPerPeriod: true,
   seniorityDate: true,
   hireDate: true,
+  permanentTour: true,
   isChargeEligible: true,
   isNovice: true,
   isFloatEligible: true,

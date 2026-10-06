@@ -19,6 +19,16 @@ describe('a hand edit arriving over IPC', () => {
     expect(update.safeParse(['a-1', { isOvertime: 'yes' }]).success).toBe(false);
   });
 
+  it('accepts a draft edit sent without a reason or consent', () => {
+    // The renderer leaves trailing optional arguments off rather than sending `undefined`; zod 4
+    // tuples accept the shorter array, which is what keeps every ordinary grid edit working.
+    expect(scheduleSchemas.deleteAssignment.safeParse(['a-1']).success).toBe(true);
+    expect(scheduleSchemas.swapAssignments.safeParse(['a-1', 'a-2', 'moved']).success).toBe(true);
+    expect(scheduleSchemas.updateAssignment.safeParse(['a-1', { isCharge: true }]).success).toBe(
+      true,
+    );
+  });
+
   it('refuses a move to a date that does not exist', () => {
     const move = scheduleSchemas.moveAssignment;
     const ok = { assignmentId: 'a-1', nurseId: 'n-1', shiftTypeId: 's-1', date: '2026-11-02' };

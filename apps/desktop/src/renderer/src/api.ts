@@ -15,6 +15,8 @@ import type {
 } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
+  AvailabilityBlockInput,
+  AvailabilityBlockPatch,
   IncompatibilityGroupInput,
   IncompatibilityGroupPatch,
   NurseInput,
@@ -24,6 +26,7 @@ import type {
   PreceptorshipInput,
   PreceptorshipPatch,
   PreferenceInput,
+  RestWaiverInput,
 } from '../../shared/api.js';
 import { invalidateUnitDerived, invalidateUnitDerivedAnyUnit } from './period-cache.js';
 
@@ -46,6 +49,8 @@ export const queryKeys = {
   incompatibility: (unitId: Id) => ['incompatibility', unitId] as const,
   overtimeVolunteers: (unitId: Id) => ['overtimeVolunteers', unitId] as const,
   preceptorships: (unitId: Id) => ['preceptorships', unitId] as const,
+  restWaivers: (unitId: Id) => ['restWaivers', unitId] as const,
+  availabilityBlocks: (unitId: Id) => ['availabilityBlocks', unitId] as const,
 };
 
 export function useUnits() {
@@ -437,6 +442,102 @@ export function useRemovePreceptorship(unitId: Id) {
   return useMutation({
     meta: { inlineError: true },
     mutationFn: (id: Id) => api.preceptorships.remove(id),
+    onSuccess: invalidate,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Rest waivers
+// ---------------------------------------------------------------------------
+
+export function useRestWaivers(unitId: Id | undefined) {
+  return useQuery({
+    queryKey: queryKeys.restWaivers(unitId ?? ''),
+    queryFn: () => api.restWaivers.list(unitId as Id),
+    enabled: unitId !== undefined,
+  });
+}
+
+/** A waiver changes which turnarounds the grid flags, so validation and Generate refresh too. */
+function useInvalidateRestWaivers(unitId: Id) {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.restWaivers(unitId) });
+    invalidateUnitDerived(queryClient, unitId);
+  };
+}
+
+export function useCreateRestWaiver(unitId: Id) {
+  const invalidate = useInvalidateRestWaivers(unitId);
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (input: RestWaiverInput) => api.restWaivers.create(input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useRemoveRestWaiver(unitId: Id) {
+  const invalidate = useInvalidateRestWaivers(unitId);
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: ({ id, reason }: { id: Id; reason: string }) => api.restWaivers.remove(id, reason),
+    onSuccess: invalidate,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Accommodations
+// ---------------------------------------------------------------------------
+
+export function useAvailabilityBlocks(unitId: Id | undefined) {
+  return useQuery({
+    queryKey: queryKeys.availabilityBlocks(unitId ?? ''),
+    queryFn: () => api.availabilityBlocks.list(unitId as Id),
+    enabled: unitId !== undefined,
+  });
+}
+
+/** A block changes which shifts the grid flags and Generate may use, so those refresh too. */
+function useInvalidateAvailabilityBlocks(unitId: Id) {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.availabilityBlocks(unitId) });
+    invalidateUnitDerived(queryClient, unitId);
+  };
+}
+
+export function useCreateAvailabilityBlock(unitId: Id) {
+  const invalidate = useInvalidateAvailabilityBlocks(unitId);
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (input: AvailabilityBlockInput) => api.availabilityBlocks.create(input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateAvailabilityBlock(unitId: Id) {
+  const invalidate = useInvalidateAvailabilityBlocks(unitId);
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: ({
+      id,
+      patch,
+      reason,
+    }: {
+      id: Id;
+      patch: AvailabilityBlockPatch;
+      reason: string;
+    }) => api.availabilityBlocks.update(id, patch, reason),
+    onSuccess: invalidate,
+  });
+}
+
+export function useRemoveAvailabilityBlock(unitId: Id) {
+  const invalidate = useInvalidateAvailabilityBlocks(unitId);
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: ({ id, reason }: { id: Id; reason: string }) =>
+      api.availabilityBlocks.remove(id, reason),
     onSuccess: invalidate,
   });
 }

@@ -38,6 +38,7 @@ import {
 } from './context.js';
 import { encodeObjective } from './objective.js';
 import type { CpModel } from './proto.js';
+import { encodeAccommodationBlocks } from './rules/accommodation.js';
 import { encodeConsecutive } from './rules/consecutive.js';
 import { encodeCoverage, encodeRatio } from './rules/coverage.js';
 import { encodeHolidayRotation } from './rules/holidays.js';
@@ -46,6 +47,7 @@ import { encodePendingTimeOff } from './rules/pending.js';
 import { encodePreceptor } from './rules/preceptor.js';
 import { encodeNightRecovery } from './rules/recovery.js';
 import { encodeOverlap, encodeRest } from './rules/rest.js';
+import { encodeTourRotation } from './rules/tours.js';
 import { encodeWeekendPattern } from './rules/weekends.js';
 
 export type { ShiftVar } from './context.js';
@@ -54,6 +56,8 @@ export type Encoder = (ctx: EncodeContext, params: Record<string, unknown>) => v
 
 export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'>> = {
   'approved-time-off-is-absolute': 'by-construction',
+  // A hard promise like leave: every variable whose shift overlaps a block is fixed to 0.
+  'accommodation-blocks': encodeAccommodationBlocks,
   'no-overlapping-assignments': encodeOverlap,
   'patient-ratio-compliance': encodeRatio,
   'coverage-minimums': encodeCoverage,
@@ -79,6 +83,8 @@ export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'
   'weekend-pattern': encodeWeekendPattern,
   // Shift scope, so priced at hardShortfall per orientee left without a preceptor.
   'orientee-with-preceptor': encodePreceptor,
+  // Not priced while soft; forbidden shifts, pairs and a tour count when hard.
+  'tour-rotation': encodeTourRotation,
 };
 
 export interface EncodeOptions {

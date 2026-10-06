@@ -22,7 +22,9 @@ import {
   resetFixtureCounters,
   type SolveScenarioOptions,
   solveInputFrom,
+  testUnit,
   timeOff,
+  UNIT_ID,
 } from '../testing/fixtures.js';
 import { findReplacements } from './replacements.js';
 import type { ReplacementInput } from './types.js';
@@ -37,13 +39,17 @@ function replacementInput(
   extra: Partial<SolveScenarioOptions> & {
     absentAssignmentId: string;
     lastCalledAt?: Record<string, number>;
+    lastOvertimeOn?: Record<string, string>;
   },
 ): ReplacementInput {
-  const { absentAssignmentId, lastCalledAt, ...rest } = extra;
+  const { absentAssignmentId, lastCalledAt, lastOvertimeOn, ...rest } = extra;
   return {
     ...solveInputFrom({ startDate: START, endDate: END, shiftTypes: [DAY_12, NIGHT_12], ...rest }),
     absentAssignmentId,
     lastCalledAt: lastCalledAt ?? {},
+    ...(lastOvertimeOn
+      ? { lastOvertimeOn: lastOvertimeOn as ReplacementInput['lastOvertimeOn'] }
+      : {}),
   };
 }
 
@@ -170,6 +176,38 @@ describe('findReplacements', () => {
     const excludedOnLeave = report.excluded.find((e) => e.nurseId === onLeave.id);
     expect(excludedBusy!.reason).toMatch(/Already scheduled on Sat Jan 10/);
     expect(excludedOnLeave!.reason).toBe('On approved leave');
+  });
+
+  it('excludes a nurse whose accommodation covers the shift, without saying why', () => {
+    resetFixtureCounters();
+    const absent = makeNurse({ firstName: 'Priya', lastName: 'Nair' });
+    const sabbath = makeNurse({ firstName: 'Dov', lastName: 'Katz' });
+    const absentShift = assign(absent.id, DAY_12, SAT);
+
+    const report = findReplacements(
+      replacementInput({
+        nurses: [absent, sabbath],
+        assignments: [absentShift],
+        // Friday 18:00 for 24 hours runs to Saturday 18:00, across the 07:00-19:00 day shift.
+        availabilityBlocks: [
+          {
+            id: 'blk-1',
+            unitId: UNIT_ID,
+            nurseId: sabbath.id,
+            weekdays: [5],
+            startTime: '18:00',
+            endTime: '18:00',
+            reason: 'Observes the Sabbath',
+          },
+        ],
+        absentAssignmentId: absentShift.id,
+      }),
+    );
+
+    const excluded = report.excluded.find((e) => e.nurseId === sabbath.id);
+    expect(excluded).toMatchObject({ reason: expect.stringMatching(/accommodation/i) });
+    expect(excluded?.reason).not.toMatch(/Sabbath/);
+    expect(report.candidates.some((c) => c.nurseId === sabbath.id)).toBe(false);
   });
 
   it('never lists a nurse of a different role, in either list', () => {
@@ -468,5 +506,97 @@ describe('findReplacements with nurses kept apart', () => {
     );
     expect(report.candidates.some((c) => c.nurseId === ben.id)).toBe(false);
     expect(report.excluded.find((e) => e.nurseId === ben.id)?.reason).toMatch(/Outside staff/);
+  });
+});
+
+describe('findReplacements with the contract overtime rosters', () => {
+  // Four nurses each with 36h Mon-Wed, so Saturday's 12h is overtime for all of them. The ids
+  // sort opposite to every ordering under test so a fall-through to the id cannot pass by luck.
+  function rosterCall(
+    seniority: Record<'a' | 'b' | 'c' | 'd', string>,
+    volunteers: ('a' | 'b' | 'c' | 'd')[],
+    lastOvertimeOn: Record<string, string>,
+    overtimeOrder?: 'cost' | 'roster',
+  ) {
+    resetFixtureCounters();
+    const absent = makeNurse({ id: 'z-absent', firstName: 'Priya', lastName: 'Nair' });
+    const nurses = (['a', 'b', 'c', 'd'] as const).map((k) =>
+      makeNurse({
+        id: `n-${k}`,
+        firstName: k.toUpperCase(),
+        lastName: 'Nurse',
+        seniorityDate: isoDate(seniority[k]),
+      }),
+    );
+    const absentShift = assign(absent.id, DAY_12, SAT);
+    const worked = nurses.flatMap((n) =>
+      ['2026-01-05', '2026-01-06', '2026-01-07'].map((d) => assign(n.id, DAY_12, d)),
+    );
+    const input = replacementInput({
+      nurses: [absent, ...nurses],
+      assignments: [absentShift, ...worked],
+      cost: {
+        payRates: [payRate(50)],
+        differentials: [],
+        overtimeRules: [overtimeRule('weekly', 40)],
+      },
+      unit: { ...testUnit, ...(overtimeOrder ? { overtimeOrder } : {}) },
+      overtimeVolunteers: volunteers.map((k) => ({
+        id: `vol-${k}`,
+        unitId: UNIT_ID,
+        nurseId: `n-${k}`,
+        startDate: isoDate('2026-01-04'),
+        endDate: isoDate('2026-01-10'),
+      })),
+      lastOvertimeOn,
+      absentAssignmentId: absentShift.id,
+    });
+    return findReplacements(input).candidates.map((c) => c.nurseId);
+  }
+
+  const SENIORITY = {
+    a: '2010-01-01',
+    b: '2012-01-01',
+    c: '2015-01-01',
+    d: '2022-01-01',
+  };
+
+  it('offers overtime to the volunteer who has gone longest without it', () => {
+    const order = rosterCall(
+      SENIORITY,
+      ['a', 'b'],
+      { 'n-a': '2026-01-02', 'n-b': '2025-12-01' },
+      'roster',
+    );
+    expect(order.slice(0, 2)).toEqual(['n-b', 'n-a']);
+  });
+
+  it('offers overtime first to a volunteer who has never worked it', () => {
+    const order = rosterCall(SENIORITY, ['a', 'b'], { 'n-a': '2026-01-02' }, 'roster');
+    expect(order.slice(0, 2)).toEqual(['n-b', 'n-a']);
+  });
+
+  it('breaks a tie between volunteers by seniority', () => {
+    // Same last overtime; B (2012) is more senior than A would be if A were hired 2020.
+    const order = rosterCall(
+      { ...SENIORITY, a: '2020-01-01' },
+      ['a', 'b'],
+      { 'n-a': '2025-12-01', 'n-b': '2025-12-01' },
+      'roster',
+    );
+    expect(order.slice(0, 2)).toEqual(['n-b', 'n-a']);
+  });
+
+  it('mandates overtime from the most junior nurse when nobody volunteers', () => {
+    const order = rosterCall(SENIORITY, ['a'], {}, 'roster');
+    // A volunteered; C (2015) and D (2022) and B (2012) are mandated, most junior first.
+    expect(order).toEqual(['n-a', 'n-d', 'n-c', 'n-b']);
+  });
+
+  it('keeps the cost order when the unit has not chosen rosters', () => {
+    // Same costs and burden; with no roster the finder falls to recency then id, volunteer first.
+    const order = rosterCall(SENIORITY, ['d'], { 'n-d': '2026-01-02' });
+    expect(order).toEqual(['n-d', 'n-a', 'n-b', 'n-c']);
+    expect(rosterCall(SENIORITY, ['d'], { 'n-d': '2026-01-02' }, 'cost')).toEqual(order);
   });
 });

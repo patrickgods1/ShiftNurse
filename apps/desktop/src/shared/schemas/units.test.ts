@@ -33,3 +33,24 @@ describe('a nurse’s hire date arriving over IPC', () => {
     expect(s.update.safeParse(['n-1', { hireDate: '2025-02-30' }]).success).toBe(false);
   });
 });
+
+describe('a unit’s per-diem commitment arriving over IPC', () => {
+  const s = API_SCHEMAS.units;
+  const patch = (perDiemCommitment: unknown) => s.update.safeParse(['u-1', { perDiemCommitment }]);
+
+  it('accepts two weekend shifts and one holiday, zeros, and null to stop checking', () => {
+    expect(patch({ weekendShiftsPer4Weeks: 2, holidayShiftsPerYear: 1 }).success).toBe(true);
+    expect(patch({ weekendShiftsPer4Weeks: 0, holidayShiftsPerYear: 0 }).success).toBe(true);
+    expect(patch(null).success).toBe(true);
+  });
+
+  it('refuses a negative or part-shift commitment', () => {
+    expect(patch({ weekendShiftsPer4Weeks: -1, holidayShiftsPerYear: 1 }).success).toBe(false);
+    expect(patch({ weekendShiftsPer4Weeks: 2, holidayShiftsPerYear: 1.5 }).success).toBe(false);
+  });
+
+  it('refuses a commitment missing one half', () => {
+    expect(patch({ weekendShiftsPer4Weeks: 2 }).success).toBe(false);
+    expect(patch({ holidayShiftsPerYear: 1 }).success).toBe(false);
+  });
+});

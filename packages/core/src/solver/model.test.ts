@@ -32,6 +32,7 @@ import {
   solveInputFrom,
   TIER_ROUTINE,
   timeOff,
+  UNIT_ID,
 } from '../testing/fixtures.js';
 import { SolverModel } from './model.js';
 import { Rng } from './rng.js';
@@ -665,6 +666,8 @@ describe('soft rules priced the way the grid judges them', () => {
     'weekend-pattern': (m) => m.weekendBreaches(),
     'incompatible-staff-cap':
       'priced per person-hour over floor stretches; checked against the rule in the walk above',
+    'tour-rotation':
+      'not priced while soft (Generate does not avoid it); the hard encoders forbid it outright',
   };
 
   it('accounts for every soft rule in the registry', () => {
@@ -722,5 +725,47 @@ describe('soft rules priced the way the grid judges them', () => {
     for (const [ruleId, count] of Object.entries(PRICED)) {
       if (typeof count !== 'string') expect(seen.get(ruleId), ruleId).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('tour rotation made hard', () => {
+  function input(): SolveInput {
+    const rules = defaultRuleSet(UNIT_ID);
+    return solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: [makeNurse({ id: 'ada', firstName: 'Ada' })],
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: [
+        ...coverageAllWeek(DAY_12, 'RN', 1),
+        ...coverageAllWeek(NIGHT_12, 'RN', 1),
+      ],
+      ruleSet: {
+        ...rules,
+        configs: rules.configs.map((c) =>
+          c.ruleId === 'tour-rotation'
+            ? { ...c, enabled: true, severityOverride: 'hard' as const }
+            : c,
+        ),
+      },
+    });
+  }
+  const dayOn = (model: SolverModel, date: string) =>
+    model.make(0, model.shiftAt(model.dateIdx.get(isoDate(date))!, DAY_12));
+
+  it('turns away a day shift 24 hours after a night, and offers it after 48', () => {
+    const model = new SolverModel(input());
+    model.add(assign('ada', NIGHT_12, '2026-01-05'));
+    expect(model.canAdd(0, dayOn(model, '2026-01-07'))).toBe(false);
+    expect(model.canAdd(0, dayOn(model, '2026-01-08'))).toBe(true);
+  });
+
+  it('stays legal when a shift is taken away', () => {
+    const model = new SolverModel(input());
+    const night = assign('ada', NIGHT_12, '2026-01-05');
+    model.add(night);
+    model.add(dayOn(model, '2026-01-08'));
+    model.remove(night);
+    expect(model.isLegal(0)).toBe(true);
   });
 });

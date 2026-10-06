@@ -38,10 +38,15 @@ import { auditLog, nurse as nurseTable, scheduleChange, schedulePeriod } from '.
 
 /**
  * Entities whose entries never leave the app in a record: who is kept apart and why is an HR
- * matter, and an FMLA certification concerns a medical condition. A record travels to unions and
- * grievance panels, so neither belongs in it; leave taken under FMLA still appears as leave.
+ * matter, an FMLA certification concerns a medical condition, and an accommodation's reason names
+ * a disability, a pregnancy or a faith. A record travels to unions and grievance panels, so none
+ * belongs in it; leave taken under FMLA still appears as leave.
  */
-export const RECORD_EXCLUDED_ENTITIES = ['incompatibility_group', 'fmla_certification'] as const;
+export const RECORD_EXCLUDED_ENTITIES = [
+  'incompatibility_group',
+  'fmla_certification',
+  'availability_block',
+] as const;
 
 /** Snapshot keys that name a nurse as a party to the entry. */
 const NURSE_KEYS = ['nurseId', 'requestingNurseId', 'counterpartyNurseId'] as const;

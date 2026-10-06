@@ -22,6 +22,14 @@ export const unitInput = object({
   postingLeadDays: postingLeadDays.optional(),
 });
 
+const commitmentCount = z.number().int('must be a whole number').min(0, 'must be 0 or more');
+
+/** Per-diem minimums: weekend shifts per four weeks, holiday shifts per year. */
+const perDiemCommitment = z.strictObject({
+  weekendShiftsPer4Weeks: commitmentCount,
+  holidayShiftsPerYear: commitmentCount,
+});
+
 export const unitsSchemas = {
   list: z.tuple([]),
   // The pay-period calendar is fixed once hours have been counted, so a patch is name, type and how ratios are kept.
@@ -32,6 +40,9 @@ export const unitsSchemas = {
       .extend({
         postingLeadDays: postingLeadDays.nullable().optional(),
         leavePolicy: leavePolicy.nullable().optional(),
+        overtimeOrder: z.enum(['cost', 'roster']).nullable().optional(),
+        perDiemCommitment: perDiemCommitment.nullable().optional(),
+        requireConsentForPostedChanges: z.boolean().nullable().optional(),
       })
       .partial(),
   ]),

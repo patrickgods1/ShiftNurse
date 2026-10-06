@@ -72,3 +72,27 @@ describe('asking the manager why', () => {
     expect(screen.getByRole('button', { name: 'Saving…' })).toHaveProperty('disabled', true);
   });
 });
+
+describe("asking for the nurse's consent to a posted change", () => {
+  it('shows no consent field when the unit does not require it', () => {
+    renderDialog();
+    expect(screen.queryByLabelText(/nurse's consent/i)).toBeNull();
+  });
+
+  it("will not apply a posted change until the nurse's consent is recorded", () => {
+    const { onConfirm, reason } = renderDialog({
+      requireConsent: true,
+      confirmLabel: 'Apply change',
+    });
+    fireEvent.change(reason, { target: { value: 'Ann swapped with Bea' } });
+    const apply = screen.getByRole('button', { name: 'Apply change' });
+    expect(apply).toHaveProperty('disabled', true);
+
+    fireEvent.change(screen.getByLabelText(/nurse's consent/i), {
+      target: { value: ' agreed by phone 6 Oct 14:10 ' },
+    });
+    expect(apply).toHaveProperty('disabled', false);
+    fireEvent.click(apply);
+    expect(onConfirm).toHaveBeenCalledWith('Ann swapped with Bea', 'agreed by phone 6 Oct 14:10');
+  });
+});

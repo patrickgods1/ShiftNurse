@@ -33,6 +33,7 @@ import {
 } from '@shiftnurse/core';
 import type { DbLike } from '../client.js';
 import { getHppdTarget, listActiveRatioRulesForUnit, listAcuityTiersForUnit } from './acuity.js';
+import { listAvailabilityBlocks } from './availability-blocks.js';
 import { paidSickCallsForUnit } from './calloffs.js';
 import { listCensusForecastsInRange } from './census.js';
 import {
@@ -49,6 +50,7 @@ import { busyElsewhereFor, elsewhereWindow, listFloatNurses } from './nurse-unit
 import { listOvertimeVolunteersOverlapping } from './overtime-volunteers.js';
 import { listActiveDifferentials, listActiveOvertimeRules, listPayRatesForUnit } from './pay.js';
 import { listPreceptorshipsOverlapping } from './preceptorships.js';
+import { restWaiversForPeriod } from './rest-waivers.js';
 import {
   listCredentials,
   listNurseCredentials,
@@ -312,6 +314,9 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
       addDays(period.startDate, -14),
       period.endDate,
     ),
+    restWaivers: restWaiversForPeriod(db, unitId, period.startDate, period.endDate),
+    // A recurring window is judged against any date, so the whole unit's list is the input.
+    availabilityBlocks: listAvailabilityBlocks(db, unitId),
     cost: {
       payRates: listPayRatesForUnit(db, unitId),
       differentials: listActiveDifferentials(db, unitId),

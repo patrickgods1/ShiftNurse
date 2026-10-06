@@ -3,7 +3,14 @@
  * with the manager's reason, in the same transaction as the decision itself.
  */
 
-import { evaluateExchange, timeOffImpact } from '@shiftnurse/core';
+import {
+  evaluateExchange,
+  type HolidayClaim,
+  holidayRequestPriority,
+  type Id,
+  previousOccurrence,
+  timeOffImpact,
+} from '@shiftnurse/core';
 import {
   applyResolution,
   approveTimeOffAndLiftAssignments,
@@ -13,6 +20,9 @@ import {
   denySwap,
   denyTimeOff,
   getConflictPolicy,
+  holidayWorkFor,
+  listHolidaysForUnit,
+  listNursesForUnit,
   listSwapsForPeriod,
   listSwapsForUnit,
   listTimeOffForUnit,
@@ -28,12 +38,30 @@ import { analyse, approveExchange, autoResolve } from './conflicts.js';
 import { ACTOR, buildConflictInput } from './context.js';
 import { approveAndCover, coverOptions } from './leave.js';
 
+/**
+ * Pending requests that cover a holiday, ranked by the contract's order. Read-only: the ranking
+ * is advice, so nothing is written or audited. Work is loaded for last year's occurrences only,
+ * the one set of records the ranking reads.
+ */
+function holidayPriority(db: ShiftNurseDb, unitId: Id): HolidayClaim[] {
+  const holidays = listHolidaysForUnit(db, unitId);
+  const previousIds = holidays.flatMap((h) => previousOccurrence(h, holidays)?.id ?? []);
+  return holidayRequestPriority({
+    pending: listTimeOffForUnit(db, unitId, 'pending'),
+    approved: listTimeOffForUnit(db, unitId, 'approved'),
+    nurses: listNursesForUnit(db, unitId),
+    holidays,
+    holidayWork: holidayWorkFor(db, unitId, previousIds),
+  });
+}
+
 export function requestsApi(
   db: ShiftNurseDb,
 ): Pick<ShiftNurseApi, 'timeOff' | 'conflicts' | 'exchange'> {
   return {
     timeOff: {
       list: (unitId, status) => listTimeOffForUnit(db, unitId, status),
+      holidayPriority: (unitId) => holidayPriority(db, unitId),
       listInRange: (unitId, start, end) => listTimeOffOverlappingForUnit(db, unitId, start, end),
       create: (input) => transact(db, (tx) => createTimeOffRequest(tx, input, ACTOR)),
       approve: (id, reason) =>

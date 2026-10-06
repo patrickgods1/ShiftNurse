@@ -14,12 +14,12 @@ import type {
   PaidSickCall,
 } from '@shiftnurse/core';
 import { dayNumber, MS_PER_DAY } from '@shiftnurse/core';
-import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, lt, lte, sql } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import { toCallAttempt, toCallOff } from '../mappers.js';
-import { callAttempt, callOff, nurse, schedulePeriod } from '../schema.js';
+import { assignment, callAttempt, callOff, nurse, schedulePeriod } from '../schema.js';
 import { getAssignment } from './schedule.js';
 
 // ---------------------------------------------------------------------------
@@ -252,6 +252,25 @@ export function lastCalledAt(db: DbLike, unitId: Id, sinceDate: IsoDate): Map<Id
       result.set(row.nurseId, row.attemptedAt);
   }
   return result;
+}
+
+/**
+ * Each nurse's last overtime shift dated before `before`, across all of the unit's periods.
+ * Contract overtime rosters offer overtime to whoever has gone longest without it, and that
+ * history outlives any one schedule period, so it is read from every period rather than the
+ * one being repaired. Nurses with no overtime row are absent, which reads as "never".
+ */
+export function lastOvertimeDates(db: DbLike, unitId: Id, before: IsoDate): Map<Id, IsoDate> {
+  const rows = db
+    .select({ nurseId: assignment.nurseId, last: sql<IsoDate>`max(${assignment.date})` })
+    .from(assignment)
+    .innerJoin(nurse, eq(assignment.nurseId, nurse.id))
+    .where(
+      and(eq(nurse.unitId, unitId), eq(assignment.isOvertime, true), lt(assignment.date, before)),
+    )
+    .groupBy(assignment.nurseId)
+    .all();
+  return new Map(rows.map((r) => [r.nurseId, r.last]));
 }
 
 /**

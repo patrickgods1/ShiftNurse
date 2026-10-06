@@ -67,6 +67,11 @@ export function toUnit(r: typeof s.unit.$inferSelect): Unit {
     ...(r.postingLeadDays === null ? {} : { postingLeadDays: r.postingLeadDays }),
     ...(r.jurisdiction === null ? {} : { jurisdiction: r.jurisdiction as JurisdictionId }),
     ...(r.leavePolicy === null ? {} : { leavePolicy: r.leavePolicy }),
+    ...(r.overtimeOrder === null ? {} : { overtimeOrder: r.overtimeOrder }),
+    ...(r.perDiemCommitment === null ? {} : { perDiemCommitment: r.perDiemCommitment }),
+    ...(r.requireConsentForPostedChanges === null
+      ? {}
+      : { requireConsentForPostedChanges: r.requireConsentForPostedChanges }),
   };
 }
 
@@ -113,6 +118,7 @@ export function toNurse(r: typeof s.nurse.$inferSelect): Nurse {
     contractedHoursPerPeriod: r.contractedHoursPerPeriod,
     seniorityDate: r.seniorityDate as Nurse['seniorityDate'],
     hireDate: opt(r.hireDate as Nurse['hireDate'] | null),
+    permanentTour: opt(r.permanentTour),
     isChargeEligible: r.isChargeEligible,
     isNovice: r.isNovice,
     isFloatEligible: r.isFloatEligible,
@@ -293,6 +299,7 @@ export function toScheduleChange(r: typeof s.scheduleChange.$inferSelect): Sched
     before: (r.before as Assignment | null) ?? undefined,
     after: (r.after as Assignment | null) ?? undefined,
     reason: r.reason,
+    consent: opt(r.consent),
     actor: r.actor,
     at: r.at,
   };

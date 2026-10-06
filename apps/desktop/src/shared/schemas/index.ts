@@ -6,6 +6,7 @@
 
 import { acuitySchemas } from './acuity.js';
 import { appSchemas } from './app.js';
+import { availabilityBlocksSchemas } from './availability-blocks.js';
 import { backupsSchemas } from './backups.js';
 import { censusSchemas } from './census.js';
 import { conflictsSchemas } from './conflicts.js';
@@ -17,6 +18,7 @@ import { dayOfSchemas } from './dayOf.js';
 import { dayOfPaySchemas } from './dayOfPay.js';
 import { exchangeSchemas } from './exchange.js';
 import { fairnessSchemas } from './fairness.js';
+import { floatOutSchemas } from './float-out.js';
 import { holidaysSchemas } from './holidays.js';
 import { incompatibilitySchemas } from './incompatibility.js';
 import { leaveBalancesSchemas } from './leaveBalances.js';
@@ -31,6 +33,7 @@ import { preceptorshipsSchemas } from './preceptorships.js';
 import { preferencesSchemas } from './preferences.js';
 import type { ApiSchemas } from './primitives.js';
 import { publishSchemas } from './publish.js';
+import { restWaiversSchemas } from './rest-waivers.js';
 import { rosterSchemas } from './roster.js';
 import { rulesSchemas } from './rules.js';
 import { scheduleSchemas } from './schedule.js';
@@ -54,6 +57,8 @@ export const API_SCHEMAS: ApiSchemas = {
   nurseRecord: nurseRecordSchemas,
   nurseUnits: nurseUnitsSchemas,
   preceptorships: preceptorshipsSchemas,
+  restWaivers: restWaiversSchemas,
+  availabilityBlocks: availabilityBlocksSchemas,
   leaveBalances: leaveBalancesSchemas,
   leaveBidding: leaveBiddingSchemas,
   shiftTypes: shiftTypesSchemas,
@@ -77,4 +82,5 @@ export const API_SCHEMAS: ApiSchemas = {
   conflicts: conflictsSchemas,
   exchange: exchangeSchemas,
   dayOf: dayOfSchemas,
+  floatOut: floatOutSchemas,
 };

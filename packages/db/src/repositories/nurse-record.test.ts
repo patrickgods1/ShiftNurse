@@ -5,7 +5,7 @@
  * HR-sensitive and must not reach output that can be grieved.
  */
 
-import { defaultRuleSet, isoDate, type Nurse } from '@shiftnurse/core';
+import { defaultRuleSet, isoDate, type Nurse, today } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { recordAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
@@ -179,6 +179,22 @@ describe('medical leave in a nurse’s record', () => {
     const rows = nurseRecord(handle.db, ana.id, day, day).audit;
     expect(rows.some((r) => r.entityType === 'fmla_certification')).toBe(false);
     expect(JSON.stringify(rows)).not.toContain('cardiology');
+  });
+});
+
+describe('accommodations in a nurse’s record', () => {
+  it('leaves out an accommodation and its reason, which can name a disability or a faith', () => {
+    log(
+      Date.now(),
+      'availability_block',
+      'ablk-1',
+      { nurseId: ana.id, weekdays: [5] },
+      { reason: 'Observes the Sabbath' },
+    );
+    const day = today();
+    const rows = nurseRecord(handle.db, ana.id, day, day).audit;
+    expect(rows.some((r) => r.entityType === 'availability_block')).toBe(false);
+    expect(JSON.stringify(rows)).not.toContain('Sabbath');
   });
 });
 

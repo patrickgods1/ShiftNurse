@@ -211,6 +211,10 @@ export class ConflictEngine {
         ? { overtimeVolunteers: this.input.overtimeVolunteers }
         : {}),
       ...(this.input.preceptorships ? { preceptorships: this.input.preceptorships } : {}),
+      ...(this.input.restWaivers ? { restWaivers: this.input.restWaivers } : {}),
+      ...(this.input.availabilityBlocks
+        ? { availabilityBlocks: this.input.availabilityBlocks }
+        : {}),
     });
   }
 

@@ -7,6 +7,7 @@
 
 import type { DemandTable } from '../acuity/demand.js';
 import type {
+  AvailabilityBlock,
   Credential,
   Holiday,
   Id,
@@ -15,6 +16,7 @@ import type {
   NurseCredential,
   OvertimeVolunteer,
   Preceptorship,
+  RestWaiver,
   ShiftCredentialRequirement,
   ShiftType,
   TimeOffRequest,
@@ -25,6 +27,7 @@ import { DEFAULT_WEEKEND, type IsoDate, type WeekendDefinition } from '../domain
 import { DEFAULT_FAIRNESS_WEIGHTS } from '../fairness/types.js';
 import type { ScheduleView } from '../schedule/view.js';
 
+import { accommodationBlocksRule } from './availability-blocks.js';
 import { overlapRule, timeOffRule } from './availability-rules.js';
 import { coverageRule, ratioComplianceRule } from './coverage-rules.js';
 import { holidayIndexes, holidayRotationRule } from './holiday-rotation.js';
@@ -36,6 +39,7 @@ import { type PaidLeaveCredit, type PaidSickCall, paidLeaveCredits } from './pai
 import { pendingTimeOffRule } from './pending-time-off.js';
 import { preceptorRule } from './preceptor.js';
 import { consecutiveShiftsRule, minRestRule } from './rest-rules.js';
+import { tourRotationRule } from './tour-rotation.js';
 import type {
   EvaluationResult,
   HolidayWorkRecord,
@@ -57,6 +61,7 @@ import { weekendPatternRule } from './weekend-pattern.js';
  */
 export const ALL_RULES: readonly Rule<never>[] = [
   timeOffRule,
+  accommodationBlocksRule,
   overlapRule,
   ratioComplianceRule,
   coverageRule,
@@ -72,6 +77,7 @@ export const ALL_RULES: readonly Rule<never>[] = [
   mandatoryOvertimeRule,
   weekendPatternRule,
   preceptorRule,
+  tourRotationRule,
 ] as unknown as readonly Rule<never>[];
 
 const RULES_BY_ID = new Map<string, Rule<never>>(ALL_RULES.map((r) => [r.id, r]));
@@ -209,6 +215,10 @@ export interface RuleContextInput {
   overtimeVolunteers?: readonly OvertimeVolunteer[];
   /** Orientees and their preceptors. Absent: nobody is in orientation. */
   preceptorships?: readonly Preceptorship[];
+  /** Written waivers of minimum rest. Absent: nobody has waived. */
+  restWaivers?: readonly RestWaiver[];
+  /** Recorded accommodations. Absent: nobody has one. */
+  availabilityBlocks?: readonly AvailabilityBlock[];
 }
 
 /** Precompute the joins and indexes every rule needs, once per evaluation pass. */
@@ -260,7 +270,19 @@ export function buildRuleContext(input: RuleContextInput): RuleContext {
     preceptorshipsByOrientee: groupByNurse(
       (input.preceptorships ?? []).map((p) => ({ ...p, nurseId: p.orienteeId })),
     ),
+    restWaiversByNurse: restWaiverDates(input.restWaivers ?? []),
+    availabilityBlocksByNurse: groupByNurse(input.availabilityBlocks ?? []),
   };
+}
+
+function restWaiverDates(waivers: readonly RestWaiver[]): Map<Id, Set<IsoDate>> {
+  const out = new Map<Id, Set<IsoDate>>();
+  for (const w of waivers) {
+    const existing = out.get(w.nurseId);
+    if (existing) existing.add(w.date);
+    else out.set(w.nurseId, new Set([w.date]));
+  }
+  return out;
 }
 
 function groupByNurse<T extends { nurseId: Id }>(rows: readonly T[]): Map<Id, T[]> {

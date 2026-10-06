@@ -27,6 +27,13 @@ import { invalidatePeriod } from './period-cache.js';
 
 export interface WithReason {
   reason?: string;
+  /** How the nurse agreed; only a unit that requires consent for posted changes needs it. */
+  consent?: string;
+}
+
+/** A trailing argument only when there is one: a call that needs no consent crosses IPC as it always did. */
+function withConsent(consent: string | undefined): [] | [string] {
+  return consent === undefined ? [] : [consent];
 }
 
 export const scheduleKeys = {
@@ -55,8 +62,8 @@ export function useCreateAssignment(periodId: Id | undefined, unitId: Id | undef
   const invalidate = useInvalidateSchedule(periodId, unitId);
   return useMutation({
     meta: { inlineError: true },
-    mutationFn: ({ reason, ...input }: CreateAssignmentInput & WithReason) =>
-      api.schedule.createAssignment(input, reason),
+    mutationFn: ({ reason, consent, ...input }: CreateAssignmentInput & WithReason) =>
+      api.schedule.createAssignment(input, reason, ...withConsent(consent)),
     onSettled: invalidate,
   });
 }
@@ -65,8 +72,8 @@ export function useMoveAssignment(periodId: Id | undefined, unitId: Id | undefin
   const invalidate = useInvalidateSchedule(periodId, unitId);
   return useMutation({
     meta: { inlineError: true },
-    mutationFn: ({ reason, ...input }: MoveAssignmentInput & WithReason) =>
-      api.schedule.moveAssignment(input, reason),
+    mutationFn: ({ reason, consent, ...input }: MoveAssignmentInput & WithReason) =>
+      api.schedule.moveAssignment(input, reason, ...withConsent(consent)),
     onSettled: invalidate,
   });
 }
@@ -76,8 +83,13 @@ export function useSwapAssignments(periodId: Id | undefined, unitId: Id | undefi
   const invalidate = useInvalidateSchedule(periodId, unitId);
   return useMutation({
     meta: { inlineError: true },
-    mutationFn: ({ firstId, secondId, reason }: { firstId: Id; secondId: Id } & WithReason) =>
-      api.schedule.swapAssignments(firstId, secondId, reason),
+    mutationFn: ({
+      firstId,
+      secondId,
+      reason,
+      consent,
+    }: { firstId: Id; secondId: Id } & WithReason) =>
+      api.schedule.swapAssignments(firstId, secondId, reason, ...withConsent(consent)),
     onSettled: invalidate,
   });
 }
@@ -90,8 +102,9 @@ export function useUpdateAssignment(periodId: Id | undefined, unitId: Id | undef
       assignmentId,
       patch,
       reason,
+      consent,
     }: { assignmentId: Id; patch: AssignmentPatch } & WithReason) =>
-      api.schedule.updateAssignment(assignmentId, patch, reason),
+      api.schedule.updateAssignment(assignmentId, patch, reason, ...withConsent(consent)),
     onSettled: invalidate,
   });
 }
@@ -100,8 +113,8 @@ export function useDeleteAssignment(periodId: Id | undefined, unitId: Id | undef
   const invalidate = useInvalidateSchedule(periodId, unitId);
   return useMutation({
     meta: { inlineError: true },
-    mutationFn: ({ assignmentId, reason }: { assignmentId: Id } & WithReason) =>
-      api.schedule.deleteAssignment(assignmentId, reason),
+    mutationFn: ({ assignmentId, reason, consent }: { assignmentId: Id } & WithReason) =>
+      api.schedule.deleteAssignment(assignmentId, reason, ...withConsent(consent)),
     onSettled: invalidate,
   });
 }

@@ -7,7 +7,7 @@
  * confirms by naming what is kept: a `pre-reset` backup that Settings › Backups can restore.
  */
 
-import { ACUITY_PRESETS, type RatioStaffing } from '@shiftnurse/core';
+import { ACUITY_PRESETS, type PerDiemCommitment, type RatioStaffing } from '@shiftnurse/core';
 import { useEffect, useState } from 'react';
 import { useResumeSetup, useStartOver, useUpdateUnit } from '../../api-setup.js';
 import { useConfirm } from '../../components/confirm.js';
@@ -22,6 +22,12 @@ const DEFAULT_RATIO_STAFFING: RatioStaffing = {
   chargeNurseTakesPatients: true,
   breakMinutesPerNurse: 0,
   chargeCoversBreaks: false,
+};
+
+/** What switching the commitment on offers: the WSNA reading. */
+const DEFAULT_COMMITMENT: PerDiemCommitment = {
+  weekendShiftsPer4Weeks: 2,
+  holidayShiftsPerYear: 1,
 };
 
 const UNIT_TYPES = Object.values(ACUITY_PRESETS).map((p) => p.unitType);
@@ -40,6 +46,15 @@ export default function UnitPanel() {
   const [coversBreaks, setCoversBreaks] = useState(saved.chargeCoversBreaks);
   const savedLead = unit.postingLeadDays === undefined ? '' : String(unit.postingLeadDays);
   const [leadDays, setLeadDays] = useState(savedLead);
+  const savedCommitment = unit.perDiemCommitment;
+  const shownCommitment = savedCommitment ?? DEFAULT_COMMITMENT;
+  const [commitmentOn, setCommitmentOn] = useState(savedCommitment !== undefined);
+  const [weekendShifts, setWeekendShifts] = useState(
+    String(shownCommitment.weekendShiftsPer4Weeks),
+  );
+  const [holidayShifts, setHolidayShifts] = useState(String(shownCommitment.holidayShiftsPerYear));
+  const savedConsent = unit.requireConsentForPostedChanges ?? false;
+  const [requireConsent, setRequireConsent] = useState(savedConsent);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the form when the saved unit changes.
   useEffect(() => {
@@ -49,7 +64,19 @@ export default function UnitPanel() {
     setBreakMinutes(String(saved.breakMinutesPerNurse));
     setCoversBreaks(saved.chargeCoversBreaks);
     setLeadDays(savedLead);
-  }, [unit.id, unit.name, unit.unitType, unit.ratioStaffing, unit.postingLeadDays]);
+    setCommitmentOn(savedCommitment !== undefined);
+    setWeekendShifts(String(shownCommitment.weekendShiftsPer4Weeks));
+    setHolidayShifts(String(shownCommitment.holidayShiftsPerYear));
+    setRequireConsent(savedConsent);
+  }, [
+    unit.id,
+    unit.name,
+    unit.unitType,
+    unit.ratioStaffing,
+    unit.postingLeadDays,
+    unit.perDiemCommitment,
+    unit.requireConsentForPostedChanges,
+  ]);
 
   // A charge nurse who takes patients has none to spare for breaks, so the box only counts
   // while they are kept free of them.
@@ -59,6 +86,8 @@ export default function UnitPanel() {
   // Blank clears the rule, so it is the one empty value that is valid.
   const lead = Number(leadDays);
   const leadValid = leadDays.trim() === '' || (Number.isInteger(lead) && lead >= 0 && lead <= 90);
+  const wholeCount = (text: string) => text.trim() !== '' && /^\d+$/.test(text.trim());
+  const commitmentValid = !commitmentOn || (wholeCount(weekendShifts) && wholeCount(holidayShifts));
   const staffing: RatioStaffing = {
     chargeNurseTakesPatients: takesPatients,
     breakMinutesPerNurse: minutesValid ? minutes : saved.breakMinutesPerNurse,
@@ -70,7 +99,12 @@ export default function UnitPanel() {
     staffing.chargeNurseTakesPatients !== saved.chargeNurseTakesPatients ||
     breakMinutes !== String(saved.breakMinutesPerNurse) ||
     staffing.chargeCoversBreaks !== saved.chargeCoversBreaks ||
-    leadDays !== savedLead;
+    leadDays !== savedLead ||
+    commitmentOn !== (savedCommitment !== undefined) ||
+    requireConsent !== savedConsent ||
+    (commitmentOn &&
+      (weekendShifts !== String(shownCommitment.weekendShiftsPer4Weeks) ||
+        holidayShifts !== String(shownCommitment.holidayShiftsPerYear)));
 
   const submit = () => {
     update.mutate({
@@ -80,6 +114,14 @@ export default function UnitPanel() {
         unitType: unitType.trim(),
         ratioStaffing: staffing,
         postingLeadDays: leadDays.trim() === '' ? null : lead,
+        perDiemCommitment: commitmentOn
+          ? {
+              weekendShiftsPer4Weeks: Number(weekendShifts),
+              holidayShiftsPerYear: Number(holidayShifts),
+            }
+          : null,
+        // False is stored as null: the unset reading is the same as off.
+        requireConsentForPostedChanges: requireConsent ? true : null,
       },
     });
   };
@@ -90,6 +132,10 @@ export default function UnitPanel() {
     setBreakMinutes(String(saved.breakMinutesPerNurse));
     setCoversBreaks(saved.chargeCoversBreaks);
     setLeadDays(savedLead);
+    setCommitmentOn(savedCommitment !== undefined);
+    setWeekendShifts(String(shownCommitment.weekendShiftsPer4Weeks));
+    setHolidayShifts(String(shownCommitment.holidayShiftsPerYear));
+    setRequireConsent(savedConsent);
     update.reset();
   };
 
@@ -110,7 +156,7 @@ export default function UnitPanel() {
         dirty={dirty}
         saving={update.isPending}
         error={update.error}
-        canSave={name.trim() !== '' && minutesValid && leadValid}
+        canSave={name.trim() !== '' && minutesValid && leadValid && commitmentValid}
         formId="unit-form"
         onSave={submit}
         onDiscard={discard}
@@ -242,6 +288,84 @@ export default function UnitPanel() {
                   disabled={takesPatients}
                   aria-describedby={describedBy('unit-charge-covers-breaks', { hint: true })}
                   onChange={(e) => setCoversBreaks(e.target.checked)}
+                />
+              </CheckField>
+            </fieldset>
+            <fieldset className="flex max-w-xl flex-col gap-3 border-t border-border pt-3">
+              <legend className="pr-2 text-sm font-semibold text-text">Per-diem commitment</legend>
+              <CheckField
+                id="unit-commitment-on"
+                label="Check per-diem commitments"
+                hint="Checked before publishing: a per-diem nurse below either commitment is listed in the alerts."
+                tip="Many per-diem contracts trade no guaranteed hours for a minimum availability, e.g. 2 weekend shifts every 4 weeks and 1 holiday a year."
+              >
+                <input
+                  id="unit-commitment-on"
+                  type="checkbox"
+                  checked={commitmentOn}
+                  aria-describedby={describedBy('unit-commitment-on', { hint: true })}
+                  onChange={(e) => setCommitmentOn(e.target.checked)}
+                />
+              </CheckField>
+              <div className="grid grid-cols-2 gap-3">
+                <Field
+                  id="unit-commitment-weekend"
+                  label="Weekend shifts per 4 weeks"
+                  hint="0 skips the weekend check. Longer schedules scale it up, rounding up."
+                  error={
+                    !commitmentOn || wholeCount(weekendShifts)
+                      ? undefined
+                      : 'Enter a whole number, 0 or more.'
+                  }
+                >
+                  <input
+                    id="unit-commitment-weekend"
+                    type="number"
+                    min={0}
+                    step={1}
+                    className={`${INPUT} w-28`}
+                    value={weekendShifts}
+                    disabled={!commitmentOn}
+                    onChange={(e) => setWeekendShifts(e.target.value)}
+                  />
+                </Field>
+                <Field
+                  id="unit-commitment-holiday"
+                  label="Holiday shifts per year"
+                  hint="0 skips the holiday check. Judged in the schedule that holds the year's last holiday."
+                  error={
+                    !commitmentOn || wholeCount(holidayShifts)
+                      ? undefined
+                      : 'Enter a whole number, 0 or more.'
+                  }
+                >
+                  <input
+                    id="unit-commitment-holiday"
+                    type="number"
+                    min={0}
+                    step={1}
+                    className={`${INPUT} w-28`}
+                    value={holidayShifts}
+                    disabled={!commitmentOn}
+                    onChange={(e) => setHolidayShifts(e.target.value)}
+                  />
+                </Field>
+              </div>
+            </fieldset>
+            <fieldset className="flex max-w-xl flex-col gap-3 border-t border-border pt-3">
+              <legend className="pr-2 text-sm font-semibold text-text">Posted schedules</legend>
+              <CheckField
+                id="unit-require-consent"
+                label="Require the nurse's consent to change a posted shift"
+                hint="A manager's change to a published schedule then needs the nurse's recorded agreement as well as a reason."
+                tip="VA, UC and Oregon contracts let a posted schedule change only with the nurse's consent. Trades, leave, call-ins, census cancellations and floats are exempt: the nurse asked, or the contract decides."
+              >
+                <input
+                  id="unit-require-consent"
+                  type="checkbox"
+                  checked={requireConsent}
+                  aria-describedby={describedBy('unit-require-consent', { hint: true })}
+                  onChange={(e) => setRequireConsent(e.target.checked)}
                 />
               </CheckField>
             </fieldset>

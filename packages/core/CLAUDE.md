@@ -105,6 +105,15 @@
   because one shift's roster cannot judge them. The group's reason is HR-sensitive: audited
   (`recordAuditStrict`, always required) and shown on Roster › Kept apart, never in a violation
   message, which reaches the grid, exports and grievances.
+- **Accommodations are absolute, and judged by the hour.** An `AvailabilityBlock` (a recurring
+  weekday window, optional dates, `rules/availability-blocks.ts`) bars any shift whose wall-clock
+  window overlaps one of its occurrences — unlike leave, which removes shifts *dated* in it — so a
+  Friday 18:00 to Saturday 18:00 Sabbath bars a Friday day shift to 19:00 and a Saturday morning.
+  An occurrence is placed from its own date (end at or before start runs past midnight; equal
+  times are 24 hours) and checked against shifts dated the day before, the day and the day after.
+  `blockedAt` is shared by the rule (`accommodation-blocks`, hard) and `encodeAccommodationBlocks`.
+  The reason is HR/medical: never in a violation message, and the audit entries stay out of a
+  nurse's exported record.
 - **Leave belongs to the shifts dated in it.** A shift is dated by its start day, so leave on
   the 7th removes the shift that starts on the 7th — a night running into the 8th included — and
   leaves the night of the 6th (ending on the 7th's morning) free to work. The time-off rule's
@@ -197,6 +206,11 @@
   `cancellationOrder` ranks volunteers, agency, overtime, per diem, then a rotation (fewest
   cancellations, longest ago, most junior); the charge nurse is never cancelled. Main cancels only
   the next in order, and the removal is logged under the change source `'census'`.
+- **Floating a nurse out follows the contract's order.** `dayof/float-order.ts`'s `floatOrder` ranks
+  volunteers (in the order offered), then a rotation (fewest *mandated* floats in the last year,
+  longest ago, most junior); the charge nurse, a nurse not float-eligible and an orientee are never
+  floated. A volunteered float does not count against the rotation. An objection is recorded on the
+  `FloatRecord` and never bars the float. Main floats only the first, logged under source `'float'`.
 - **Another unit's shifts are busy time, not this unit's.** `schedule/elsewhere.ts`'s
   `busyElsewhere` copies the other unit's shift types as inactive `elsewhere:<id>` types and its
   shifts as locked rows in `priorAssignments`, so every nurse rule judges them and nothing staffs,
@@ -208,6 +222,33 @@
   hard, shift scope, on by default and silent without preceptorships) counts a preceptor on the
   shift or on the one it runs inside; standby is not judged. CP-SAT prices it at `hardShortfall`
   (`encodePreceptor`).
+- **A rest waiver excuses one turnaround, keyed on the later shift.** A `RestWaiver` (nurse, date,
+  reason, `recordAuditStrict`) lets `min-rest-between-shifts` pass a short rest only when the shift
+  *after* it starts on the waiver's date; `restWaivedOn` is shared by the rule and `encodeRest`,
+  which must skip the pair too or a locked turnaround makes CP-SAT infeasible (VA–NNU Art. 13 §2).
+- **Tours are named by when a shift starts.** `rules/tour-rotation.ts`'s `tourOf`: 04:00–11:59 day,
+  12:00–17:59 evening, otherwise night — never `isNight`, a pay flag a Title 38 evening tour also
+  carries. `tour-rotation` (soft, off by default) caps distinct tours per schedule, wants
+  `minHoursBetweenTours` between shifts on different tours, and keeps a nurse with a
+  `permanentTour` on it. Monotone under removal, so the gate is the generic nurse-scope one;
+  `encodeTourRotation` enforces it when hard (locked breaches stand, `atMost` stops them growing).
+  Neither solver prices it while soft — a stated limit.
+- **Overtime by the contract's rosters is a unit's choice.** `Unit.overtimeOrder: 'roster'` reorders
+  only the overtime tier of `findReplacements`: volunteers longest since their last overtime
+  (`lastOvertimeOn`, from `lastOvertimeDates`), then seniority; then the mandated roster most junior
+  first (VA–NNU Art. 14). Absent or `'cost'` keeps volunteers, cost, burden, recency.
+- **A per-diem commitment is an alert, not a rule.** `complianceAlerts`' `per_diem_commitment`:
+  weekend shifts per four weeks scaled up to the period (`ceil`), and holidays per calendar year
+  judged only by the period holding the year's last holiday, counting earlier ones from history.
+  A floor made hard would gate every shift added to an under-committed nurse.
+- **Holiday priority is advice.** `leave/holiday-priority.ts` ranks pending requests for the same
+  holiday: worked last year's occurrence (`previousOccurrence`) first, then seniority (VA–NNU
+  Art. 10; peer agreement is the manager's decision). It approves nothing.
+- **A posted shift changes with the nurse's consent when the unit says so.**
+  `Unit.requireConsentForPostedChanges` makes `requireChangeConsent` refuse a `'manual'` edit to a
+  published period without a consent note, stored on `schedule_change.consent` and in the audit
+  reason. Trades, leave, call-ins, census cancellations and floats are exempt: the nurse asked, or
+  the contract's order decided.
 - **Leave balances and FMLA warn, never block.** `leave/balances.ts`: `checkLeaveBalance`.
   `leave/accrual.ts`: `projectBalance` carries payroll's figure forward to a date — accrual on
   each closed pay period's last day by the nurse's `AccrualRule` (first match wins; tiers by

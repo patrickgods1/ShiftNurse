@@ -8,13 +8,16 @@ import { type Assignment, addDays } from '@shiftnurse/core';
 import {
   createIncompatibilityGroup,
   listChanges,
+  proposeSwap,
   publishSchedule,
   replaceNursePreferences,
   transact,
   updateIncompatibilityGroup,
   updatePeriodStatus,
+  updateUnit,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { approveExchange } from './conflicts.js';
 import { ACTOR } from './context.js';
 import { scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
@@ -237,5 +240,96 @@ describe('nurses kept apart, as the grid judges them', () => {
       ),
     );
     expect(together()).toEqual([]);
+  });
+});
+
+describe("the nurse's consent to a posted change", () => {
+  function requireConsent(on: boolean | null = true): void {
+    updateUnit(f.handle.db, f.seeded.unitId, { requireConsentForPostedChanges: on }, ACTOR);
+  }
+  function move(shift: Assignment, consent?: string): Assignment {
+    return api.moveAssignment(
+      {
+        assignmentId: shift.id,
+        nurseId: f.rns[1]!.id,
+        shiftTypeId: f.day.id,
+        date: shift.date,
+      },
+      'Ann swapped with Bea at the charge desk',
+      consent,
+    );
+  }
+
+  it("refuses to move a posted shift without the nurse's consent when the unit requires it", () => {
+    const shift = place(0, 1);
+    publishDraft();
+    requireConsent();
+    expect(() => move(shift)).toThrow(/requires the nurse's consent/);
+    expect(() => move(shift, '   ')).toThrow(/requires the nurse's consent/);
+    expect(listChanges(f.handle.db, f.seeded.draftPeriodId)).toEqual([]);
+  });
+
+  it("refuses to add, change, remove or swap a posted shift without the nurse's consent", () => {
+    const a = place(0, 1);
+    const b = place(1, 1);
+    publishDraft();
+    requireConsent();
+    const refused = /requires the nurse's consent/;
+    expect(() => place(2, 2, 'Cover the gap')).toThrow(refused);
+    expect(() => api.updateAssignment(a.id, { isCharge: true }, 'Ann takes charge')).toThrow(
+      refused,
+    );
+    expect(() => api.deleteAssignment(a.id, 'Ann is not needed')).toThrow(refused);
+    expect(() => api.swapAssignments(a.id, b.id, 'Trade them')).toThrow(refused);
+    expect(listChanges(f.handle.db, f.seeded.draftPeriodId)).toEqual([]);
+  });
+
+  it('records the consent on the change log', () => {
+    const shift = place(0, 1);
+    publishDraft();
+    requireConsent();
+    move(shift, ' agreed by phone 6 Oct 14:10 ');
+    const changes = listChanges(f.handle.db, f.seeded.draftPeriodId);
+    expect(changes).toHaveLength(2);
+    expect(changes.every((c) => c.consent === 'agreed by phone 6 Oct 14:10')).toBe(true);
+    const audits = f.handle.db.query.auditLog.findMany().sync();
+    expect(
+      audits.some((a) => a.entityType === 'schedule_change' && a.reason?.includes('6 Oct 14:10')),
+    ).toBe(true);
+  });
+
+  it('needs no consent on a draft schedule', () => {
+    requireConsent();
+    const shift = place(0, 1);
+    expect(() => move(shift)).not.toThrow();
+  });
+
+  it('needs no consent when the unit has not opted in', () => {
+    const shift = place(0, 1);
+    publishDraft();
+    expect(() => move(shift)).not.toThrow();
+  });
+
+  it('does not ask consent for a trade the nurses proposed', () => {
+    const shift = place(0, 1);
+    publishDraft();
+    requireConsent();
+    const swap = proposeSwap(
+      f.handle.db,
+      {
+        periodId: f.seeded.draftPeriodId,
+        kind: 'giveaway',
+        requestingNurseId: f.rns[0]!.id,
+        counterpartyNurseId: f.rns[1]!.id,
+        offeredAssignmentId: shift.id,
+        reason: 'Bea offered to take it',
+      },
+      ACTOR,
+    );
+    // Which nurse holds the preceptor credential varies by seed, so a coverage block may stop
+    // the trade; what matters here is that consent is never what stops it.
+    expect(() => approveExchange(f.handle.db, swap.id, 'Both nurses agreed')).not.toThrow(
+      /consent/,
+    );
   });
 });

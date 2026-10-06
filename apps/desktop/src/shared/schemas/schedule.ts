@@ -5,6 +5,8 @@ import { id, isoDate, object, type ResourceSchemas, text } from './primitives.js
 
 /** Only a published period needs one; main (`requireChangeReason`) words the refusal. */
 const reason = text.optional();
+/** How the nurse agreed; required by main only for a unit that opted in. */
+const consent = text.optional();
 
 const createAssignmentInput = object({
   periodId: id,
@@ -34,10 +36,10 @@ const assignmentPatch = object({
 
 export const scheduleSchemas = {
   validate: z.tuple([id]),
-  createAssignment: z.tuple([createAssignmentInput, reason]),
-  moveAssignment: z.tuple([moveAssignmentInput, reason]),
-  swapAssignments: z.tuple([id, id, reason]),
-  updateAssignment: z.tuple([id, assignmentPatch, reason]),
-  deleteAssignment: z.tuple([id, reason]),
+  createAssignment: z.tuple([createAssignmentInput, reason, consent]),
+  moveAssignment: z.tuple([moveAssignmentInput, reason, consent]),
+  swapAssignments: z.tuple([id, id, reason, consent]),
+  updateAssignment: z.tuple([id, assignmentPatch, reason, consent]),
+  deleteAssignment: z.tuple([id, reason, consent]),
   setLocked: z.tuple([id, z.boolean()]),
 } satisfies ResourceSchemas<'schedule'>;

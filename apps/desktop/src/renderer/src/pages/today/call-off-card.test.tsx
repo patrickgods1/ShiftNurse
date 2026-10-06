@@ -155,3 +155,25 @@ describe('overtime offers on the call list', () => {
     expect(screen.getByText(/Ben Okafor \(RN\) — Overtime they have not offered/)).toBeTruthy();
   });
 });
+
+describe('last overtime on the call list', () => {
+  it('shows when an overtime candidate last worked overtime', async () => {
+    bridge.respond('dayOf', 'replacements', {
+      shortfall: 1,
+      candidates: [
+        {
+          ...candidate('n-ana', 'Ana Martinez (RN)', 1),
+          payTier: 'overtime',
+          lastOvertimeOn: '2026-01-02',
+        },
+        candidate('n-maya', 'Maya Lindqvist (RN)', 2),
+      ],
+      excluded: [],
+    } as unknown as ReplacementReport);
+    renderWithApp(<CallOffCard unitId="unit-1" callOff={callOffView} />);
+    const ana = within((await screen.findByText('Ana Martinez (RN)')).closest('li')!);
+    expect(ana.getByText(/Last OT: /)).toBeTruthy();
+    const maya = within(screen.getByText('Maya Lindqvist (RN)').closest('li')!);
+    expect(maya.queryByText(/Last OT/)).toBeNull();
+  });
+});

@@ -20,7 +20,10 @@ interface ReasonDialogProps {
   required?: boolean;
   pending: boolean;
   error: unknown;
-  onConfirm: (reason: string) => void;
+  /** `consent` is passed only when `requireConsent` is set. */
+  onConfirm: (reason: string, consent?: string) => void;
+  /** A posted-schedule change on a unit that needs the nurse's recorded agreement. */
+  requireConsent?: boolean;
   /** Extra fields shown under the reason, for dialogs that record more than the reason. */
   children?: ReactNode;
 }
@@ -36,13 +39,21 @@ export function ReasonDialog({
   pending,
   error,
   onConfirm,
+  requireConsent = false,
   children,
 }: ReasonDialogProps) {
   const [reason, setReason] = useState('');
+  const [consent, setConsent] = useState('');
   useEffect(() => {
-    if (open) setReason('');
+    if (open) {
+      setReason('');
+      setConsent('');
+    }
   }, [open]);
-  const canConfirm = !pending && (!required || reason.trim().length > 0);
+  const canConfirm =
+    !pending &&
+    (!required || reason.trim().length > 0) &&
+    (!requireConsent || consent.trim().length > 0);
   const message = errorMessage(error);
 
   return (
@@ -61,7 +72,10 @@ export function ReasonDialog({
         className="mt-4 flex flex-col gap-3"
         onSubmit={(e) => {
           e.preventDefault();
-          if (canConfirm) onConfirm(reason.trim());
+          if (canConfirm) {
+            if (requireConsent) onConfirm(reason.trim(), consent.trim());
+            else onConfirm(reason.trim());
+          }
         }}
       >
         <label className={LABEL}>
@@ -75,6 +89,21 @@ export function ReasonDialog({
             autoFocus
           />
         </label>
+        {requireConsent ? (
+          <label className={LABEL}>
+            Nurse's consent
+            <textarea
+              className={`${INPUT} min-h-16`}
+              value={consent}
+              onChange={(e) => setConsent(e.target.value)}
+              required
+              aria-describedby="reason-consent-hint"
+            />
+            <span id="reason-consent-hint" className="text-xs font-normal text-text-muted">
+              How the nurse agreed, e.g. 'agreed by phone 6 Oct 14:10'.
+            </span>
+          </label>
+        ) : null}
         {children}
         {message !== undefined ? (
           <p role="alert" className="text-sm text-danger">

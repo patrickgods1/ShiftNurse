@@ -92,7 +92,9 @@ export function approveAndCover(
       throw new Error('That nurse cannot cover that shift under the unit’s rules; pick another');
     }
   }
-  return editSchedule(db, periodId, reason, 'manual', (tx, log) => {
+  // The nurse asked for the leave, so a unit that requires consent for manager-initiated
+  // changes does not ask for it again here.
+  return editSchedule(db, periodId, reason, 'time_off', (tx, log) => {
     const { request, lifted } = approveTimeOffAndLiftAssignments(tx, requestId, ACTOR, reason);
     const freed = new Map(lifted.map((a) => [a.id, a]));
     // A published period's shifts are not lifted by approval; they come off here, logged.

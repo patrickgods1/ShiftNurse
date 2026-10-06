@@ -40,7 +40,34 @@ export interface Unit {
    * whatever payroll last said.
    */
   leavePolicy?: LeavePolicy;
+  /**
+   * How day-of ranks staff nurses within the overtime tier. `'cost'` (absent = this): volunteers,
+   * then cheapest, then least burdened. `'roster'`: the contract's overtime rosters — volunteers
+   * in turn (longest since their last overtime, then seniority), then the mandated roster in
+   * reverse seniority (VA–NNU Art. 14).
+   */
+  overtimeOrder?: OvertimeOrder;
+  /** Absent = no commitment checked. */
+  perDiemCommitment?: PerDiemCommitment;
+  /**
+   * When true, a manager's change to a posted (published) schedule must record the affected
+   * nurse's consent (VA, UC and Oregon contracts). Absent/false: a reason is enough.
+   */
+  requireConsentForPostedChanges?: boolean;
 }
+
+export type OvertimeOrder = 'cost' | 'roster';
+
+export interface PerDiemCommitment {
+  /** Weekend shifts each per-diem nurse commits to per four weeks (WSNA contracts: 2). */
+  weekendShiftsPer4Weeks: number;
+  /** Holiday shifts each per-diem nurse commits to per calendar year (commonly 1). */
+  holidayShiftsPerYear: number;
+}
+
+/** A nurse's tour: the part of the day their shifts fall in. Classified from a shift's start time. */
+export type Tour = 'day' | 'evening' | 'night';
+export const TOURS: readonly Tour[] = ['day', 'evening', 'night'];
 
 /**
  * How a unit keeps a ratio "at all times" (Title 22 § 70217(a); ORS 441.765). Read by
@@ -129,6 +156,11 @@ export interface Nurse {
    * years of service read this. Absent: the seniority date stands in.
    */
   hireDate?: IsoDate;
+  /**
+   * A nurse hired onto (or awarded) a permanent tour, who must not be rotated off it
+   * (VA–NNU Master Agreement Art. 13). Absent: rotates.
+   */
+  permanentTour?: Tour;
   isChargeEligible: boolean;
   /** New graduates / recent hires. Used by the no-all-novice coverage guard. */
   isNovice: boolean;
@@ -605,7 +637,9 @@ export type ScheduleChangeSource =
   | 'resolution'
   | 'backfill'
   /** A nurse sent home when the census dropped, in the unit's cancellation order. */
-  | 'census';
+  | 'census'
+  /** A nurse floated to another unit for the shift, in the unit's float order. */
+  | 'float';
 
 /**
  * One edit to a published schedule, with the manager's reason. A published schedule is a
@@ -628,6 +662,62 @@ export interface ScheduleChange {
   before?: Assignment;
   after?: Assignment;
   reason: string;
+  /** How the affected nurse agreed ("agreed by phone 6 Oct 14:10"), when the unit requires consent. */
+  consent?: string;
+  actor: string;
+  at: Timestamp;
+}
+
+/**
+ * A nurse's written waiver of the minimum rest before one shift (VA–NNU Art. 13 §2 lets a
+ * nurse waive the 11 hours). It lets an insufficient-rest finding stand for the shift that
+ * STARTS on `date`, and only that one. `reason` is required and quoted if it is challenged.
+ */
+export interface RestWaiver {
+  id: Id;
+  unitId: Id;
+  nurseId: Id;
+  date: IsoDate;
+  reason: string;
+  createdAt: Timestamp;
+}
+
+/**
+ * A recurring window a nurse cannot work: a disability or religious accommodation (ADA, Title
+ * VII), a pregnancy accommodation (PWFA), a lactation schedule (PUMP Act). Hard, unlike a
+ * preference. `reason` is HR/medical-sensitive: audited and shown on the roster, never written
+ * into a violation message (those reach the grid, exports and grievances).
+ * Times are local wall clock `HH:MM`; an `endTime` at or before `startTime` runs past midnight
+ * into the next day. `startsOn`/`endsOn` are inclusive and compare with the block's own date.
+ */
+export interface AvailabilityBlock {
+  id: Id;
+  unitId: Id;
+  nurseId: Id;
+  weekdays: Weekday[];
+  startTime: string;
+  endTime: string;
+  startsOn?: IsoDate;
+  endsOn?: IsoDate;
+  reason: string;
+}
+
+/**
+ * One nurse floated off the unit for one shift: who, which shift, where to, and whether they
+ * volunteered. The float rotation reads this history (volunteers first, then the mandated
+ * turn in reverse seniority, VA–NNU Art. 12). `objection` is the nurse's own recorded
+ * objection (not competent on the receiving unit, say) — kept, never a bar to the float.
+ * No foreign key on the assignment: floating removes the home shift.
+ */
+export interface FloatRecord {
+  id: Id;
+  unitId: Id;
+  nurseId: Id;
+  date: IsoDate;
+  shiftTypeId: Id;
+  toUnit: string;
+  volunteered: boolean;
+  objection?: string;
   actor: string;
   at: Timestamp;
 }

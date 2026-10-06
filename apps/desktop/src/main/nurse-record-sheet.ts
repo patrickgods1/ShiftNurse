@@ -15,7 +15,7 @@ import type { NurseRecord } from '@shiftnurse/db';
 
 /** Said in the footer of every record, whether or not the nurse is in any such group. */
 export const KEPT_APART_NOTE =
-  'Entries about kept-apart (incompatible staff) groups and their reasons, and FMLA medical certifications, are never included in this record.';
+  'Entries about kept-apart (incompatible staff) groups, FMLA medical certifications and recorded accommodations, and the reasons for them, are never included in this record.';
 
 export interface RecordSheet {
   nurseName: string;

@@ -19,6 +19,7 @@ import {
   pendingDiff,
   publishSchedule,
   recordScheduleChange,
+  requireChangeConsent,
   requireChangeReason,
   requirePeriodEditable,
 } from './publish.js';
@@ -219,6 +220,28 @@ describe('the change log', () => {
     expect(requireChangeReason(published, '  swap for clinic  ')).toBe('swap for clinic');
   });
 
+  it("asks the nurse's consent only for the manager's own changes to a posted schedule", () => {
+    const draft = getPeriod(handle.db, periodId)!;
+    publishSchedule(handle.db, { periodId }, ACTOR);
+    const published = getPeriod(handle.db, periodId)!;
+    const opted = { requireConsentForPostedChanges: true };
+    const refusal =
+      "This unit requires the nurse's consent to change a posted shift. Record how they agreed.";
+    for (const source of ['manual', 'resolution'] as const) {
+      expect(() => requireChangeConsent(published, opted, source)).toThrow(refusal);
+      expect(() => requireChangeConsent(published, opted, source, '  ')).toThrow(refusal);
+      expect(requireChangeConsent(published, opted, source, ' agreed by phone ')).toBe(
+        'agreed by phone',
+      );
+    }
+    // The nurses proposed it, asked for it, accepted the call, or the contract's order decides.
+    for (const source of ['exchange', 'time_off', 'backfill', 'census', 'float'] as const) {
+      expect(requireChangeConsent(published, opted, source)).toBeUndefined();
+    }
+    expect(requireChangeConsent(draft, opted, 'manual')).toBeUndefined();
+    expect(requireChangeConsent(published, {}, 'manual')).toBeUndefined();
+  });
+
   it('lets a draft or published schedule be edited but freezes an archived one', () => {
     // Locking a shift needs no reason, but it is still an edit: an archived period is the
     // record of what was worked and must not change, whatever the edit.
@@ -227,6 +250,34 @@ describe('the change log', () => {
     expect(() => requirePeriodEditable(getPeriod(handle.db, periodId)!)).not.toThrow();
     const archived = { ...getPeriod(handle.db, periodId)!, status: 'archived' as const };
     expect(() => requirePeriodEditable(archived)).toThrow(/archived/);
+  });
+
+  it('keeps how the nurse agreed to a change, and nothing when none was given', () => {
+    const db = handle.db;
+    publishSchedule(db, { periodId }, ACTOR);
+    const a = listAssignmentsForPeriod(db, periodId).find((x) => x.nurseId === ann)!;
+    const base = {
+      periodId,
+      kind: 'removed' as const,
+      assignmentId: a.id,
+      nurseId: ann,
+      date: isoDate('2026-01-05'),
+      shiftTypeId,
+      before: a,
+      reason: 'Swap agreed',
+    };
+    const withConsent = recordScheduleChange(
+      db,
+      { ...base, consent: 'agreed by phone 6 Oct 14:10' },
+      ACTOR,
+    );
+    const without = recordScheduleChange(db, base, ACTOR);
+    expect(withConsent.consent).toBe('agreed by phone 6 Oct 14:10');
+    expect(without.consent).toBeUndefined();
+    const stored = changesSinceLastPublish(db, periodId);
+    expect(stored.find((c) => c.id === withConsent.id)?.consent).toBe(
+      'agreed by phone 6 Oct 14:10',
+    );
   });
 
   it('refuses to log a change on a period that was never published', () => {

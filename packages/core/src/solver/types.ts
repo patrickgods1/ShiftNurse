@@ -41,6 +41,7 @@ import type { ShiftDemand } from '../acuity/demand.js';
 import type { ScheduleCost } from '../cost/types.js';
 import type {
   Assignment,
+  AvailabilityBlock,
   Credential,
   Differential,
   FairnessLedgerEntry,
@@ -55,6 +56,7 @@ import type {
   Preceptorship,
   Preference,
   RatioRole,
+  RestWaiver,
   SchedulePeriod,
   ShiftCredentialRequirement,
   ShiftType,
@@ -114,6 +116,10 @@ export interface SolveInput {
   overtimeVolunteers?: readonly OvertimeVolunteer[];
   /** Orientees and their preceptors, for the orientee-with-preceptor rule. */
   preceptorships?: readonly Preceptorship[];
+  /** Written waivers of minimum rest, by nurse and the date of the shift they excuse. Absent: none. */
+  restWaivers?: readonly RestWaiver[];
+  /** Recurring windows a nurse cannot work (accommodations), hard. Absent: none. */
+  availabilityBlocks?: readonly AvailabilityBlock[];
   preferences: readonly Preference[];
   /** Ledger rows strictly before this period, for the burden index the seed and objective read. */
   ledgerHistory: readonly FairnessLedgerEntry[];

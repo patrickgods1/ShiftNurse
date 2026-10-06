@@ -83,6 +83,7 @@ export function ScheduleBoard({ unitId, period, focusNurseId, leading }: Schedul
     unitId,
     readOnly,
     published,
+    requireConsent: unit.requireConsentForPostedChanges === true,
     assignments: assignmentsQuery.data,
     nurses: nursesQuery.data,
     shiftTypes: shiftTypesQuery.data,
@@ -496,6 +497,7 @@ export function ScheduleBoard({ unitId, period, focusNurseId, leading }: Schedul
         title={edits.pendingEdit?.title ?? 'Reason for this change'}
         description="Staff already hold this schedule. The reason is written to the change log and the audit trail, and is what a nurse will be told."
         confirmLabel="Apply change"
+        requireConsent={edits.requireConsent && edits.pendingEdit !== undefined}
         pending={false}
         error={undefined}
         onConfirm={edits.resolvePendingEdit}

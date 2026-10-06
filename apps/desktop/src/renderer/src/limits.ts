@@ -11,7 +11,8 @@ export const NOT_ENFORCED: readonly string[] = [
   'Military leave (120 hours a fiscal year), court leave and paid parental leave are leave types without entitlements of their own: check the hours available with HR.',
   'FMLA leave already taken is counted at the nurse’s current contract: if their FTE changed during the year, check the hours used with HR.',
   'Break premiums are priced at the base rate: California pays them at the regular rate, which includes differentials, so add the difference in payroll.',
-  'Float staff: other units’ shifts count as busy time, but who floats is not rotated fairly across the team, and Generate may offer a float nurse on any day of the period, not only the dates of their membership; keep the turn and check the dates yourself.',
+  'Float staff: Generate may offer a float nurse on any day of the period, not only the dates of their membership; check the dates yourself.',
+  'Tour rotation limits (Settings › Rules) are checked on the grid, but Generate does not steer away from them while the rule is soft: make it hard to have Generate keep to them.',
   'Leave bids and other requests are entered by the manager: nurses do not submit them in the app yet.',
 ];
 

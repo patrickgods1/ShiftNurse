@@ -5,12 +5,15 @@
  * the decision is grieved.
  */
 
-import { addDays } from '@shiftnurse/core';
+import { addDays, isoDate } from '@shiftnurse/core';
 import {
   auditHistoryFor,
+  createHoliday,
   listAssignmentsForPeriod,
   listCredentials,
   listNurseCredentials,
+  recordHolidayWork,
+  transact,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { requestsApi } from './requests.js';
@@ -290,5 +293,52 @@ describe('shift exchanges', () => {
     const swap = api().exchange.propose(draft(), proposal);
     expect(api().exchange.cancel(swap.id, 'Withdrawn').status).toBe('cancelled');
     expect(() => api().exchange.cancel(swap.id)).toThrow(/cancelled, not proposed/i);
+  });
+});
+
+describe('holiday request priority', () => {
+  it('ranks the nurse who worked last year first and shows who already has the day off', () => {
+    const { db } = f.handle;
+    const unitId = f.seeded.unitId;
+    const [ann, bea, cat] = f.rns;
+    // Years far from the seeded holidays, so no seeded occurrence is mistaken for "last year".
+    const make = (date: string) =>
+      createHoliday(
+        db,
+        { unitId, date: isoDate(date), name: 'Founders Day', isMajor: true },
+        'test',
+      );
+    const lastYear = make('2031-05-10');
+    const thisYear = make('2032-05-10');
+    transact(db, (tx) => recordHolidayWork(tx, lastYear.id, [bea!.id], 'test'));
+
+    const ask = (nurseId: string, status: 'pending' | 'approved') => {
+      const request = api().timeOff.create({
+        nurseId,
+        startDate: thisYear.date,
+        endDate: thisYear.date,
+        type: 'pto',
+      });
+      if (status === 'approved') api().timeOff.approve(request.id);
+      return request;
+    };
+    const annRequest = ask(ann!.id, 'pending');
+    const beaRequest = ask(bea!.id, 'pending');
+    ask(cat!.id, 'approved');
+
+    const claims = api().timeOff.holidayPriority(unitId);
+    expect(claims).toHaveLength(1);
+    expect(claims[0]!.holidayId).toBe(thisYear.id);
+    expect(claims[0]!.claimants.map((c) => [c.requestId, c.rank, c.workedLastYear])).toEqual([
+      [beaRequest.id, 1, true],
+      [annRequest.id, 2, false],
+    ]);
+    expect(claims[0]!.alreadyOff).toEqual([cat!.id]);
+    // Advice only: asking decided nothing.
+    const stillPending = api()
+      .timeOff.list(unitId, 'pending')
+      .map((r) => r.id);
+    expect(stillPending).toContain(annRequest.id);
+    expect(stillPending).toContain(beaRequest.id);
   });
 });

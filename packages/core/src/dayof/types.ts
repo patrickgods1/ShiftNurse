@@ -54,6 +54,12 @@ export interface ReplacementInput extends ConflictInput {
    * has never been called and sorts first within a tier — the finder spreads the calls.
    */
   lastCalledAt: Readonly<Record<Id, Timestamp>>;
+  /**
+   * Each nurse's last overtime shift before the call-off date. Only read when the unit orders
+   * overtime by the contract roster ("longest since their last overtime is next"); absent means
+   * nobody has any, which sorts everyone alike rather than inventing a history.
+   */
+  lastOvertimeOn?: Readonly<Record<Id, IsoDate>>;
 }
 
 export interface ReplacementCandidate {
@@ -75,6 +81,8 @@ export interface ReplacementCandidate {
    */
   burdenIndex: number;
   lastCalledAt?: Timestamp;
+  /** Their last overtime shift before this call-off, when known; the roster order's key. */
+  lastOvertimeOn?: IsoDate;
   /** Soft rules the pickup would trip; shown on the card, never a reason to exclude. */
   softViolationsIntroduced: Violation[];
   /**

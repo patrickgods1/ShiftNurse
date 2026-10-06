@@ -80,7 +80,8 @@ These are yours to do by hand until the app handles them (the same list is in Se
 - Military leave (120 hours a fiscal year), court leave and paid parental leave are leave types without entitlements of their own: check the hours available with HR.
 - FMLA leave already taken is counted at the nurse's current contract: if their FTE changed during the year, check the hours used with HR.
 - Break premiums are priced at the base rate: California pays them at the regular rate, which includes differentials, so add the difference in payroll.
-- Float staff: other units' shifts count as busy time, but who floats is not rotated fairly across the team, and Generate may offer a float nurse on any day of the period, not only the dates of their membership; keep the turn and check the dates yourself.
+- Float staff: Generate may offer a float nurse on any day of the period, not only the dates of their membership; check the dates yourself.
+- Tour rotation limits (Settings › Rules) are checked on the grid, but Generate does not steer away from them while the rule is soft: make it hard to have Generate keep to them.
 - Leave bids and other requests are entered by the manager: nurses do not submit them in the app yet.
 
 The state presets in Settings › Unit are a starting point, not legal advice: check them against your contract and your state's law. A federal VA preset (Title 38) sets the 40-hour cap on required hours and leaves ratios and pay to you.
@@ -143,7 +144,7 @@ Then see [Launching the app](#launching-the-app).
 packages/core/     # Pure TypeScript domain: rules, acuity, solver, fairness, cost,
                     # conflicts, exchange, publish, day-of. No Electron, no database, no I/O.
 native/cpsat-runner/ # C++ CP-SAT runner linked against OR-Tools, built by CI (see below).
-packages/db/        # Drizzle schema (31 tables) + migrations + repositories over
+packages/db/        # Drizzle schema (49 tables) + migrations + repositories over
                     # better-sqlite3. Owned by the Electron main process only.
 apps/desktop/       # Electron app.
   src/shared/api.ts   #   The IPC contract (ShiftNurseApi, API_CHANNELS) — read this first.

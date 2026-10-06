@@ -31,6 +31,7 @@ beforeEach(() => {
     'rotation',
   ]);
   bridge.respond('dayOf', 'saveCancellationPolicy', []);
+  bridge.respond('units', 'update', unit);
 });
 afterEach(() => {
   cleanup();
@@ -75,5 +76,14 @@ describe('Settings › the low-census cancellation order', () => {
       true,
     );
     expect(screen.getByText(/Keep at least one tier/)).toBeTruthy();
+  });
+
+  it('saves the contract overtime rosters as the unit’s overtime order', async () => {
+    renderWithApp(<CancellationOrderPanel />, { unit });
+    fireEvent.click(await screen.findByLabelText(/^Contract overtime rosters/));
+    fireEvent.click(screen.getByRole('button', { name: 'Save overtime order' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('units', 'update')).toEqual([['unit-1', { overtimeOrder: 'roster' }]]),
+    );
   });
 });

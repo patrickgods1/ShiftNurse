@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { hours, id, isoDate, nurseRole, object, type ResourceSchemas, text } from './primitives.js';
 
+const tour = z.enum(['day', 'evening', 'night']);
 const employmentType = z.enum(['full_time', 'part_time', 'per_diem', 'agency']);
 
 const nurseInput = object({
@@ -16,6 +17,7 @@ const nurseInput = object({
   contractedHoursPerPeriod: hours,
   seniorityDate: isoDate,
   hireDate: isoDate.optional(),
+  permanentTour: tour.optional(),
   isChargeEligible: z.boolean(),
   isNovice: z.boolean(),
   isFloatEligible: z.boolean(),
@@ -25,12 +27,20 @@ const nurseInput = object({
   notes: text.optional(),
 });
 
-/** A patch clears hire date, phone, email and notes with `null`; an omitted key is left alone. */
+/** A patch clears hire date, permanent tour, phone, email and notes with `null`; an omitted key is left alone. */
 const nursePatch = nurseInput
-  .omit({ unitId: true, phone: true, email: true, notes: true, hireDate: true })
+  .omit({
+    unitId: true,
+    phone: true,
+    email: true,
+    notes: true,
+    hireDate: true,
+    permanentTour: true,
+  })
   .partial()
   .extend({
     hireDate: isoDate.nullable().optional(),
+    permanentTour: tour.nullable().optional(),
     phone: text.nullable().optional(),
     email: text.nullable().optional(),
     notes: text.nullable().optional(),

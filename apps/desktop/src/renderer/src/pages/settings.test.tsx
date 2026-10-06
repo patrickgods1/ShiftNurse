@@ -24,10 +24,10 @@ afterEach(() => {
 });
 
 describe('Settings › About', () => {
-  it('lists the eight things a manager still does by hand, and says the presets are not legal advice', async () => {
+  it('lists the nine things a manager still does by hand, and says the presets are not legal advice', async () => {
     renderWithApp(<SettingsPage />, { route: '/settings?tab=about' });
     const list = await screen.findByTestId('not-enforced');
-    expect(list.querySelectorAll('li')).toHaveLength(8);
+    expect(list.querySelectorAll('li')).toHaveLength(9);
     expect(list.textContent).toContain('ORS 441.166');
     expect(
       screen.getByRole('heading', { name: 'What ShiftNurse does not enforce yet' }),

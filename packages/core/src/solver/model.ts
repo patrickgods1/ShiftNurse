@@ -367,6 +367,8 @@ export class SolverModel {
       ...(input.holidayWork ? { holidayWork: input.holidayWork } : {}),
       ...(input.overtimeVolunteers ? { overtimeVolunteers: input.overtimeVolunteers } : {}),
       ...(input.preceptorships ? { preceptorships: input.preceptorships } : {}),
+      ...(input.restWaivers ? { restWaivers: input.restWaivers } : {}),
+      ...(input.availabilityBlocks ? { availabilityBlocks: input.availabilityBlocks } : {}),
     });
 
     const shifts = buildShifts(this.dates, this.shiftTypes, demand);

@@ -15,6 +15,7 @@ import type {
   AcuityTier,
   Assignment,
   AutoResolvePolicy,
+  AvailabilityBlock,
   BacktestResult,
   BalanceCheck,
   Budget,
@@ -36,12 +37,14 @@ import type {
   ExchangeProposal,
   FairnessLedgerEntry,
   FairnessReport,
+  FloatRecord,
   FmlaEntitlementBasis,
   FmlaRegime,
   ForecastOptions,
   HistoricalCsvError,
   HistoricalShiftRow,
   Holiday,
+  HolidayClaim,
   HolidayYearPlan,
   HppdReport,
   HppdTarget,
@@ -59,9 +62,11 @@ import type {
   Nurse,
   NurseCredential,
   NurseRole,
+  OvertimeOrder,
   OvertimeRule,
   OvertimeVolunteer,
   PayRate,
+  PerDiemCommitment,
   PlannedHoliday,
   Preceptorship,
   Preference,
@@ -70,6 +75,7 @@ import type {
   ReplacementReport,
   RequestOrigin,
   Resolution,
+  RestWaiver,
   RosterCsvError,
   RosterCsvRow,
   RuleSet,
@@ -96,6 +102,7 @@ import type {
   TimeOffRequest,
   TimeOffStatus,
   TimeOffType,
+  Tour,
   Unit,
   UnitSetupMode,
 } from '@shiftnurse/core';
@@ -127,6 +134,12 @@ export type UnitPatch = Partial<Pick<Unit, 'name' | 'unitType' | 'ratioStaffing'
   postingLeadDays?: number | null;
   /** `null` clears the policy: FMLA and balances revert to the pre-policy reading. */
   leavePolicy?: LeavePolicy | null;
+  /** `null` clears the choice: overtime is ranked by cost and burden. */
+  overtimeOrder?: OvertimeOrder | null;
+  /** `null` stops checking per-diem commitments. */
+  perDiemCommitment?: PerDiemCommitment | null;
+  /** `null`: a reason is enough for a change to a posted schedule. */
+  requireConsentForPostedChanges?: boolean | null;
 };
 
 export interface AppInfo {
@@ -353,6 +366,29 @@ export interface PreceptorshipInput {
   endDate: IsoDate;
 }
 
+/**
+ * A nurse's written waiver of minimum rest before the shift that starts on `date`. The reason is
+ * required and is what is quoted if the turnaround is grieved.
+ */
+export interface RestWaiverInput {
+  unitId: Id;
+  nurseId: Id;
+  date: IsoDate;
+  reason: string;
+}
+
+/** A recurring window a nurse cannot work; `reason` is HR-sensitive and shown on the roster only. */
+export type AvailabilityBlockInput = Omit<AvailabilityBlock, 'id'>;
+
+/** The nurse never changes; a date takes `null` to clear it. The reason is passed separately. */
+export interface AvailabilityBlockPatch {
+  weekdays?: AvailabilityBlock['weekdays'];
+  startTime?: string;
+  endTime?: string;
+  startsOn?: IsoDate | null;
+  endsOn?: IsoDate | null;
+}
+
 /** The unit and the pair are fixed once recorded; only the dates change. */
 export interface PreceptorshipPatch {
   startDate?: IsoDate;
@@ -389,9 +425,10 @@ export interface NurseUnitPatch {
 
 /** Optional-and-clearable fields take `null` to clear; an omitted key is left untouched. */
 export type NursePatch = Partial<
-  Omit<Nurse, 'id' | 'unitId' | 'phone' | 'email' | 'notes' | 'hireDate'>
+  Omit<Nurse, 'id' | 'unitId' | 'phone' | 'email' | 'notes' | 'hireDate' | 'permanentTour'>
 > & {
   hireDate?: IsoDate | null;
+  permanentTour?: Tour | null;
   phone?: string | null;
   email?: string | null;
   notes?: string | null;
@@ -961,6 +998,47 @@ export interface ShiftCancellationRecord {
   enteredBy: 'manager' | 'nurse';
 }
 
+/** Which shift's float order is wanted, and who offered to float, in the order they offered. */
+export interface FloatOrderRequest {
+  periodId: Id;
+  date: IsoDate;
+  shiftTypeId: Id;
+  role: NurseRole;
+  volunteers: Id[];
+}
+
+/** One place in the float order, with the name the console prints. */
+export interface FloatPlaceView {
+  nurseId: Id;
+  assignmentId: Id;
+  name: string;
+  rank: number;
+  basis: 'volunteer' | 'rotation';
+  /** The order's own words for why this nurse holds this place, shown verbatim. */
+  reason: string;
+}
+
+/** Who floats first off a shift, and who never does. */
+export interface FloatOrderView {
+  periodId: Id;
+  date: IsoDate;
+  shiftTypeId: Id;
+  role: NurseRole;
+  order: FloatPlaceView[];
+  /** On the shift but never floated (charge, not float-eligible, orientee), with why. */
+  excluded: { nurseId: Id; name: string; reason: string }[];
+}
+
+export interface FloatSendInput extends FloatOrderRequest {
+  nurseId: Id;
+  /** The unit floated to, as the manager names it; free text, not a unit of this database. */
+  toUnit: string;
+  /** The nurse's objection, if she raised one when told. It never stops the float. */
+  objection?: string;
+  /** The change-log reason on a published period ("Floated to 4B Telemetry"). */
+  reason: string;
+}
+
 /** A call-off with everything the console needs to act on it, joined in main. */
 export interface CallOffView {
   callOff: CallOff;
@@ -1127,6 +1205,24 @@ export interface ShiftNurseApi {
     update(id: Id, patch: PreceptorshipPatch): Preceptorship;
     remove(id: Id): void;
   };
+  /** Written waivers of minimum rest, one shift each (VA–NNU Art. 13 §2). */
+  restWaivers: {
+    list(unitId: Id): RestWaiver[];
+    create(input: RestWaiverInput): RestWaiver;
+    /** Removing one puts the shift back under the rest rule, so it needs a stated reason. */
+    remove(id: Id, reason: string): void;
+  };
+  /**
+   * Accommodations: recurring windows a nurse cannot work, which Generate never schedules into.
+   * Every write is audited with its reason; the reason is never written into a violation message.
+   */
+  availabilityBlocks: {
+    list(unitId: Id): AvailabilityBlock[];
+    create(input: AvailabilityBlockInput): AvailabilityBlock;
+    /** `reason` is the stated reason for the change and replaces the one on the block. */
+    update(id: Id, patch: AvailabilityBlockPatch, reason: string): AvailabilityBlock;
+    remove(id: Id, reason: string): void;
+  };
   shiftTypes: {
     list(unitId: Id): ShiftType[];
     create(input: ShiftTypeInput): ShiftType;
@@ -1211,17 +1307,28 @@ export interface ShiftNurseApi {
     validate(periodId: Id): ScheduleValidation;
     /**
      * On a published period every one of these needs `reason` and writes the change log;
-     * on a draft the reason is ignored. Refused on an archived period.
+     * on a draft the reason is ignored. Refused on an archived period. A unit that requires
+     * the nurse's consent also needs `consent` (how they agreed) on a published period.
      */
-    createAssignment(input: CreateAssignmentInput, reason?: string): Assignment;
-    moveAssignment(input: MoveAssignmentInput, reason?: string): Assignment;
+    createAssignment(input: CreateAssignmentInput, reason?: string, consent?: string): Assignment;
+    moveAssignment(input: MoveAssignmentInput, reason?: string, consent?: string): Assignment;
     /**
      * Two nurses trade shifts in one step. Returns the first nurse's new shift, then the second's.
      * Refused, and nothing changed, when either is locked.
      */
-    swapAssignments(firstId: Id, secondId: Id, reason?: string): [Assignment, Assignment];
-    updateAssignment(assignmentId: Id, patch: AssignmentPatch, reason?: string): Assignment;
-    deleteAssignment(assignmentId: Id, reason?: string): void;
+    swapAssignments(
+      firstId: Id,
+      secondId: Id,
+      reason?: string,
+      consent?: string,
+    ): [Assignment, Assignment];
+    updateAssignment(
+      assignmentId: Id,
+      patch: AssignmentPatch,
+      reason?: string,
+      consent?: string,
+    ): Assignment;
+    deleteAssignment(assignmentId: Id, reason?: string, consent?: string): void;
     /** A lock is the manager's pin, invisible to staff: no reason, no change-log entry. */
     setLocked(assignmentId: Id, locked: boolean): Assignment;
   };
@@ -1343,6 +1450,11 @@ export interface ShiftNurseApi {
   };
   timeOff: {
     list(unitId: Id, status?: TimeOffStatus): TimeOffRequest[];
+    /**
+     * Pending requests covering a holiday, ranked by the contract: whoever worked it last year,
+     * then seniority. Advice only; deciding is still the manager's.
+     */
+    holidayPriority(unitId: Id): HolidayClaim[];
     /** Every request touching the inclusive range, whatever its status — the heatmap's feed. */
     listInRange(unitId: Id, start: IsoDate, end: IsoDate): TimeOffRequest[];
     create(input: CreateTimeOffInput): TimeOffRequest;
@@ -1396,6 +1508,21 @@ export interface ShiftNurseApi {
     /** A denial without a reason is refused by the database, not just the form. */
     deny(id: Id, reason: string): ShiftSwap;
     cancel(id: Id, reason?: string): ShiftSwap;
+  };
+  /** Float rotation: volunteers first, then the rotation, orientees never (VA–NNU Art. 12). */
+  floatOut: {
+    /** Who floats first off a shift, for `role`; the rotation's history is read in main. */
+    order(request: FloatOrderRequest): FloatOrderView;
+    /**
+     * Floats `nurseId`: re-ranks in main and refuses anyone but the first in the order, records
+     * the float, removes the shift through the change log under `reason`, and audits — one
+     * transaction.
+     */
+    send(input: FloatSendInput): FloatRecord;
+    /** The unit's floats since `since`, oldest first. */
+    history(unitId: Id, since: IsoDate): FloatRecord[];
+    /** Records the floated nurse's objection; a blank one is refused. */
+    recordObjection(id: Id, objection: string): FloatRecord;
   };
   dayOf: {
     /** The console's one read: shifts around now, their staffing, and the open call-offs. */
@@ -1495,6 +1622,9 @@ export const API_CHANNELS = {
   incompatibility: ['list', 'create', 'update', 'remove'],
   overtimeVolunteers: ['list', 'create', 'update', 'remove'],
   preceptorships: ['list', 'create', 'update', 'remove'],
+  restWaivers: ['list', 'create', 'remove'],
+  floatOut: ['order', 'send', 'history', 'recordObjection'],
+  availabilityBlocks: ['list', 'create', 'update', 'remove'],
   leaveBalances: [
     'forNurse',
     'setBalance',
@@ -1599,6 +1729,7 @@ export const API_CHANNELS = {
   timeOff: [
     'list',
     'listInRange',
+    'holidayPriority',
     'create',
     'coverOptions',
     'approveAndCover',

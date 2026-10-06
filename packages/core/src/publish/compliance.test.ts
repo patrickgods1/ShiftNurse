@@ -350,3 +350,169 @@ describe('late posting', () => {
     expect(alertsFor(november()).filter((a) => a.kind === 'late_posting')).toEqual([]);
   });
 });
+
+describe('per-diem commitment', () => {
+  const commitment = (weekend: number, holiday = 0) => ({
+    weekendShiftsPer4Weeks: weekend,
+    holidayShiftsPerYear: holiday,
+  });
+  const perDiem = (id: string) => makeNurse({ id, employmentType: 'per_diem', fte: 0 });
+  const commitmentAlerts = (
+    s: ReturnType<typeof scenario>,
+    extra: Partial<Parameters<typeof complianceAlerts>[0]>,
+  ) => alertsFor(s, extra).filter((a) => a.kind === 'per_diem_commitment');
+
+  // 2026-01-04 is a Sunday: the 4-week period holds Sat 10, Sun 11, Sat 17, Sun 18, ...
+  const fourWeeks = (nurses: ReturnType<typeof makeNurse>[], assignments: never[] | unknown[]) =>
+    scenario({
+      nurses,
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-31'),
+      assignments: assignments as never,
+    });
+
+  it('flags a per-diem nurse with one weekend shift in a four-week schedule when the contract asks for two', () => {
+    resetFixtureCounters();
+    const s = fourWeeks(
+      [perDiem('pd')],
+      [
+        assign('pd', DAY_12, '2026-01-07', { id: 'wed' }),
+        assign('pd', DAY_12, '2026-01-10', { id: 'sat' }),
+      ],
+    );
+    const alerts = commitmentAlerts(s, { perDiemCommitment: commitment(2) });
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({
+      severity: 'warning',
+      nurseId: 'pd',
+      assignmentIds: ['sat'],
+    });
+    expect(alerts[0]!.hours).toBeUndefined();
+    expect(alerts[0]!.message).toContain('1 weekend shift');
+    expect(alerts[0]!.message).toContain('2');
+  });
+
+  it('is satisfied by two weekend shifts in four weeks', () => {
+    resetFixtureCounters();
+    const s = fourWeeks(
+      [perDiem('pd')],
+      [assign('pd', DAY_12, '2026-01-10'), assign('pd', DAY_12, '2026-01-18')],
+    );
+    expect(commitmentAlerts(s, { perDiemCommitment: commitment(2) })).toEqual([]);
+  });
+
+  it('asks three weekend shifts of a six-week schedule', () => {
+    resetFixtureCounters();
+    const six = (dates: string[]) =>
+      scenario({
+        nurses: [perDiem('pd')],
+        startDate: isoDate('2026-01-04'),
+        endDate: isoDate('2026-02-14'),
+        assignments: dates.map((d) => assign('pd', DAY_12, d)),
+      });
+    // 2 per 4 weeks over 42 days is 3.
+    expect(
+      commitmentAlerts(six(['2026-01-10', '2026-01-18']), { perDiemCommitment: commitment(2) }),
+    ).toHaveLength(1);
+    expect(
+      commitmentAlerts(six(['2026-01-10', '2026-01-18', '2026-01-24']), {
+        perDiemCommitment: commitment(2),
+      }),
+    ).toEqual([]);
+  });
+
+  it('asks one weekend shift of a two-week schedule', () => {
+    resetFixtureCounters();
+    const s = scenario({
+      nurses: [perDiem('pd')],
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      assignments: [assign('pd', DAY_12, '2026-01-10')],
+    });
+    expect(commitmentAlerts(s, { perDiemCommitment: commitment(2) })).toEqual([]);
+  });
+
+  it('does not count standby toward the weekend commitment', () => {
+    resetFixtureCounters();
+    const onCall = { ...DAY_12, id: 'st-oc', isOnCall: true };
+    const s = scenario({
+      nurses: [perDiem('pd')],
+      shiftTypes: [DAY_12, onCall],
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      assignments: [assign('pd', onCall, '2026-01-10')],
+    });
+    expect(commitmentAlerts(s, { perDiemCommitment: commitment(2) })).toHaveLength(1);
+  });
+
+  it('does not check full-time staff', () => {
+    resetFixtureCounters();
+    const s = fourWeeks([makeNurse({ id: 'ft', contractedHoursPerPeriod: 36 })], []);
+    expect(commitmentAlerts(s, { perDiemCommitment: commitment(2, 1) })).toEqual([]);
+  });
+
+  it('checks nothing when the unit has no commitment', () => {
+    resetFixtureCounters();
+    const s = fourWeeks([perDiem('pd')], []);
+    expect(commitmentAlerts(s, {})).toEqual([]);
+  });
+
+  describe('holidays', () => {
+    const holidays = [
+      { id: 'h-jul4', unitId: 'unit-1', date: isoDate('2026-07-04'), name: 'Independence Day' },
+      { id: 'h-xmas', unitId: 'unit-1', date: isoDate('2026-12-25'), name: 'Christmas Day' },
+    ].map((h) => ({ ...h, isMajor: true, pairedHolidayId: null }));
+    const worked = (...entries: [string, string[]][]) =>
+      new Map(entries.map(([id, nurses]) => [id, new Set(nurses)]));
+    // Sun 6 Dec to Sat 26 Dec holds Christmas, the last holiday of 2026.
+    const december = (nurses: ReturnType<typeof makeNurse>[], assignments: unknown[] = []) =>
+      scenario({
+        nurses,
+        holidays,
+        startDate: isoDate('2026-12-06'),
+        endDate: isoDate('2026-12-26'),
+        assignments: assignments as never,
+      });
+
+    it("judges the holiday commitment in the period holding the year's last holiday", () => {
+      resetFixtureCounters();
+      const s = december([perDiem('worked-july'), perDiem('none')]);
+      const alerts = commitmentAlerts(s, {
+        perDiemCommitment: commitment(0, 1),
+        holidays,
+        holidayWorkedBy: worked(['h-jul4', ['worked-july']]),
+      });
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]).toMatchObject({ severity: 'warning', nurseId: 'none', assignmentIds: [] });
+      expect(alerts[0]!.message).toContain('2026');
+    });
+
+    it('counts a Christmas shift in this period toward the year', () => {
+      resetFixtureCounters();
+      const s = december([perDiem('xmas')], [assign('xmas', DAY_12, '2026-12-25')]);
+      expect(commitmentAlerts(s, { perDiemCommitment: commitment(0, 1), holidays })).toEqual([]);
+    });
+
+    it('asks two holidays when the contract says two, counting history and this period', () => {
+      resetFixtureCounters();
+      const s = december([perDiem('both'), perDiem('one')], [assign('both', DAY_12, '2026-12-25')]);
+      const alerts = commitmentAlerts(s, {
+        perDiemCommitment: commitment(0, 2),
+        holidays,
+        holidayWorkedBy: worked(['h-jul4', ['both', 'one']]),
+      });
+      expect(alerts.map((a) => a.nurseId)).toEqual(['one']);
+    });
+
+    it("leaves the holiday commitment alone in a period without the year's last holiday", () => {
+      resetFixtureCounters();
+      const s = scenario({
+        nurses: [perDiem('none')],
+        holidays,
+        startDate: isoDate('2026-06-28'),
+        endDate: isoDate('2026-07-18'),
+      });
+      expect(commitmentAlerts(s, { perDiemCommitment: commitment(0, 1), holidays })).toEqual([]);
+    });
+  });
+});
