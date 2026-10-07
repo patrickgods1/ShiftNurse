@@ -1,3 +1,4 @@
+import { JURISDICTION_PRESETS } from '@shiftnurse/core';
 import { describe, expect, it } from 'vitest';
 import { API_SCHEMAS } from './index.js';
 
@@ -25,9 +26,14 @@ describe('first-run setup arriving over IPC', () => {
     expect(API_SCHEMAS.setup.applyPreset.safeParse(['u-1', preset]).success).toBe(false);
   });
 
-  it('accepts a state preset and refuses one the app has no law for', () => {
+  it('accepts every state preset the app has law for and refuses one it has not', () => {
+    for (const key of Object.keys(JURISDICTION_PRESETS)) {
+      expect(API_SCHEMAS.setup.applyJurisdiction.safeParse(['u-1', key]).success).toBe(true);
+    }
+    expect(API_SCHEMAS.setup.applyJurisdiction.safeParse(['u-1', 'TX']).success).toBe(true);
+    expect(API_SCHEMAS.setup.applyJurisdiction.safeParse(['u-1', 'US-VA']).success).toBe(true);
     expect(API_SCHEMAS.setup.applyJurisdiction.safeParse(['u-1', 'OR']).success).toBe(true);
-    expect(API_SCHEMAS.setup.applyJurisdiction.safeParse(['u-1', 'TX']).success).toBe(false);
+    expect(API_SCHEMAS.setup.applyJurisdiction.safeParse(['u-1', 'ZZ']).success).toBe(false);
     expect(API_SCHEMAS.setup.applyJurisdiction.safeParse(['u-1']).success).toBe(false);
   });
 });

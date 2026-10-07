@@ -679,6 +679,16 @@ const UNSET_STAFFING: RatioStaffing = {
 };
 
 /**
+ * Every preset id, derived from the record so a new preset cannot be missing from it: the record
+ * is typed `Record<JurisdictionId, …>`, so the compiler already refuses an id without an entry.
+ * The IPC schema enumerates this rather than a hand-kept list.
+ */
+export const JURISDICTION_IDS = Object.keys(JURISDICTION_PRESETS) as [
+  JurisdictionId,
+  ...JurisdictionId[],
+];
+
+/**
  * What applying `id` would change. Only ever tightens: a ratio ceiling lowers a looser catch-all
  * rule or adds one, never loosens; break minutes only grow; a charge nurse kept free of patients
  * stays free; the charge nurse covering breaks (which lowers the relief count) is taken from the

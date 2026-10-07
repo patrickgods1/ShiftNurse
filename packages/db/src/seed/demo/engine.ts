@@ -998,6 +998,15 @@ export function seedFromProfile(
   // The preset saves a newer version; everything below reads what is actually in force.
   let ruleSet = saved;
   let configs: readonly RuleConfig[] = baseConfigs;
+  // The preset plans against the rules already in force and adds only what is missing.
+  for (const d of profile.differentials) {
+    createDifferential(db, { unitId: unit.id, ...d, active: true }, ACTOR);
+    bump('differential');
+  }
+  for (const o of profile.overtime) {
+    createOvertimeRule(db, { unitId: unit.id, ...o, active: true }, ACTOR);
+    bump('overtimeRule');
+  }
   if (profile.jurisdiction) {
     applyJurisdiction(db, unit.id, profile.jurisdiction, ACTOR);
     ruleSet = getLatestRuleSet(db, unit.id)!;
@@ -1369,14 +1378,6 @@ export function seedFromProfile(
     );
     rate(s.nurse.id, null, amount, traveler ? s.nurse.seniorityDate : rateStart);
     if (raiseDate && !traveler) rate(s.nurse.id, null, raised(amount), raiseDate);
-  }
-  for (const d of profile.differentials) {
-    createDifferential(db, { unitId: unit.id, ...d, active: true }, ACTOR);
-    bump('differential');
-  }
-  for (const o of profile.overtime) {
-    createOvertimeRule(db, { unitId: unit.id, ...o, active: true }, ACTOR);
-    bump('overtimeRule');
   }
 
   // --- Census ---------------------------------------------------------------------------------

@@ -194,12 +194,12 @@ const INTERMITTENT = { employmentType: 'per_diem', fte: 0, contractedHoursPerPer
  *   unit's demo does not. Annual leave and sick balances follow 5 U.S.C. ch. 63 accrual (RNs
  *   8 hours of annual leave a pay period, LVNs and nursing assistants 4, 6 or 8 by service of
  *   under 3, 3 to 15 and over 15 years; 4 hours of sick leave; part-time staff pro rata), with
- *   annual leave carried over at no more than 240 hours and sick leave uncapped. Three FMLA
- *   certifications (an intermittent one, a block that has ended and a current one), two new-grad
- *   RNs in their 12 weeks of orientation with a named preceptor (one running into the draft),
- *   five staff with float memberships on the telemetry unit down the hall, and the leave-year
- *   bid in September: about half the staff rank up to five one-week choices for the coming
- *   leave year, which the manager awards.
+ *   annual leave carried over at no more than 685 hours for RNs and 240 for the others, and sick
+ *   leave uncapped. Three FMLA certifications (an intermittent one, a block that has ended and a
+ *   current one), two new-grad RNs in their 12 weeks of orientation with a named preceptor (one
+ *   running into the draft), five staff with float memberships on the telemetry unit down the
+ *   hall, and the leave-year bid in September: about half the staff rank up to five one-week
+ *   choices for the coming leave year, which the manager awards.
  *
  * Pay is on the VA Nurse Locality Pay System for RNs (Nurse I–III by experience, San Francisco
  * rates among the highest in the VA) and the General Schedule with the San Francisco locality
@@ -571,7 +571,9 @@ export const CA_ICU: DemoProfile = {
     { kind: 'charge', mode: 'flat', amount: 3 },
   ],
   overtime: [
-    { basis: 'daily', thresholdHours: 12, multiplier: 1.5 },
+    // IWC Wage Order 5 § 3(B)(8): past 12 hours in a workday, a health-care alternative
+    // workweek pays double.
+    { basis: 'daily', thresholdHours: 12, multiplier: 2 },
     { basis: 'weekly', thresholdHours: 40, multiplier: 1.5 },
   ],
   holidays: 'hospital-six',
