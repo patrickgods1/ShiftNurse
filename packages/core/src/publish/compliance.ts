@@ -17,6 +17,7 @@
 import { NURSE_ROLES, type ShiftDemand } from '../acuity/demand.js';
 import type {
   Credential,
+  FairnessLedgerEntry,
   Holiday,
   Id,
   NurseCredential,
@@ -24,6 +25,7 @@ import type {
   PerDiemCommitment,
 } from '../domain/entities.js';
 import {
+  addDays,
   compareDates,
   DEFAULT_WEEKEND,
   dateInRange,
@@ -37,7 +39,8 @@ import {
 import { credentialLapsedOn } from '../rules/coverage-rules.js';
 import { payPeriodsIn, workWeeksIn } from '../rules/hours-rules.js';
 import { leaveHoursBetween, type PaidLeaveCredit } from '../rules/paid-leave.js';
-import { nurseName } from '../rules/types.js';
+import { isWorked, nurseName } from '../rules/types.js';
+import { nurseWeekends } from '../rules/weekend-pattern.js';
 import type { ScheduleView } from '../schedule/view.js';
 
 export type ComplianceAlertKind =
@@ -46,7 +49,8 @@ export type ComplianceAlertKind =
   | 'overtime'
   | 'ratio_risk'
   | 'late_posting'
-  | 'per_diem_commitment';
+  | 'per_diem_commitment'
+  | 'weekends_off_per_year';
 export type ComplianceSeverity = 'warning' | 'critical';
 
 export interface ComplianceAlert {
@@ -106,6 +110,11 @@ export interface ComplianceInput {
   weekendDefinition?: WeekendDefinition;
   holidays?: readonly Holiday[];
   holidayWorkedBy?: ReadonlyMap<Id, ReadonlySet<Id>>;
+  /**
+   * The unit's promise of weekends off in a year, and the fairness ledger to count the year's
+   * earlier weekends from. Absent means no check. Uses `weekendDefinition` above.
+   */
+  weekendsOffPerYear?: { minimum: number; ledger: readonly FairnessLedgerEntry[] };
 }
 
 const SEVERITY_ORDER: Record<ComplianceSeverity, number> = { critical: 0, warning: 1 };
@@ -116,6 +125,7 @@ const KIND_ORDER: Record<ComplianceAlertKind, number> = {
   hours_drift: 3,
   late_posting: 4,
   per_diem_commitment: 5,
+  weekends_off_per_year: 6,
 };
 
 /** How far past the period's end a lapsing credential is still worth a warning. */
@@ -378,6 +388,46 @@ function perDiemCommitment(input: ComplianceInput): ComplianceAlert[] {
   return alerts;
 }
 
+/**
+ * A yearly promise of weekends off, judged over the 364 days before the period plus the period
+ * itself. `weekend-pattern` sees one schedule; only the ledger knows the rest of the year. History
+ * is whatever the ledger holds, so a new unit with a short one under-counts weekends worked and
+ * never raises a false alert.
+ */
+function weekendsOffPerYear(input: ComplianceInput): ComplianceAlert[] {
+  const promise = input.weekendsOffPerYear;
+  if (!promise) return [];
+  const { schedule } = input;
+  const weekendDefinition = input.weekendDefinition ?? DEFAULT_WEEKEND;
+  const { startDate, endDate } = schedule.period;
+  const from = addDays(startDate, -364);
+  const alerts: ComplianceAlert[] = [];
+  for (const [nurseId, nurse] of schedule.nursesById) {
+    let before = 0;
+    for (const e of promise.ledger) {
+      if (e.nurseId !== nurseId) continue;
+      if (compareDates(e.periodStart, from) >= 0 && compareDates(e.periodStart, startDate) < 0) {
+        before += e.weekendsWorked;
+      }
+    }
+    const { inPeriod } = nurseWeekends(schedule, nurseId, { weekendDefinition });
+    const worked = before + inPeriod.size;
+    const off = 52 - worked;
+    if (off >= promise.minimum) continue;
+    alerts.push({
+      kind: 'weekends_off_per_year',
+      severity: 'warning',
+      nurseId,
+      assignmentIds: schedule
+        .assignmentsFor(nurseId)
+        .filter((v) => isWorked(v) && weekendKey(v.window, weekendDefinition) !== null)
+        .map((v) => v.assignment.id),
+      message: `${nurseName(nurse)} would have worked ${worked} weekends in the year to ${describeDate(endDate, { year: true })}, leaving ${off} weekends off against the ${promise.minimum} the unit promises`,
+    });
+  }
+  return alerts;
+}
+
 /** Every alert for the period, critical first, then by kind, then by date and nurse. */
 export function complianceAlerts(input: ComplianceInput): ComplianceAlert[] {
   const alerts = [
@@ -387,6 +437,7 @@ export function complianceAlerts(input: ComplianceInput): ComplianceAlert[] {
     ...ratioRisk(input),
     ...latePosting(input),
     ...perDiemCommitment(input),
+    ...weekendsOffPerYear(input),
   ];
   return alerts.sort(
     (a, b) =>

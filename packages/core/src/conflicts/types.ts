@@ -31,6 +31,7 @@
 
 import type { Assignment, Budget, Id, RatioRole, TimeOffRequest } from '../domain/entities.js';
 import type { IsoDate } from '../domain/time.js';
+import type { RequestClaimant } from '../leave/request-priority.js';
 import type { Violation } from '../rules/types.js';
 import type { ObjectiveWeights, SolveInput } from '../solver/types.js';
 import type { DayCapacity } from './capacity.js';
@@ -94,6 +95,11 @@ export interface Conflict {
    */
   magnitude: number;
   details: Record<string, unknown>;
+  /**
+   * Only on `competing_time_off`: the order to grant the competing requests in, by equity
+   * (`leave/request-priority.ts`). Advice only; nothing applies it.
+   */
+  advisedOrder?: RequestClaimant[];
 }
 
 // ---------------------------------------------------------------------------

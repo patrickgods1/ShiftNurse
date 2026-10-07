@@ -56,6 +56,11 @@ const KINDS: { kind: ComplianceAlertKind; title: string; hint: string }[] = [
     hint: 'Per-diem nurses below the weekend or holiday shifts their contract asks for. Add shifts for them, or accept the shortfall.',
   },
   {
+    kind: 'weekends_off_per_year',
+    title: 'Weekends off per year',
+    hint: 'Nurses whose weekends worked this year, with this schedule, leave fewer weekends off than the unit promises. Move a weekend shift, or accept it knowingly.',
+  },
+  {
     kind: 'ratio_risk',
     title: 'No slack on the ratio',
     hint: 'Shifts staffed exactly at the patient ratio: one call-off breaks it. Routine on a tight unit.',

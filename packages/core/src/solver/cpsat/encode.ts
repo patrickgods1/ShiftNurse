@@ -41,6 +41,7 @@ import type { CpModel } from './proto.js';
 import { encodeAccommodationBlocks } from './rules/accommodation.js';
 import { encodeConsecutive } from './rules/consecutive.js';
 import { encodeCoverage, encodeRatio } from './rules/coverage.js';
+import { encodeDaysOffTogether } from './rules/days-off.js';
 import { encodeHolidayRotation } from './rules/holidays.js';
 import { encodeContractCap, encodeWeeklyHours } from './rules/hours.js';
 import { encodeHoursIn24 } from './rules/hours-in-24.js';
@@ -93,6 +94,8 @@ export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'
   'orientee-with-preceptor': encodePreceptor,
   // Not priced while soft; forbidden shifts, pairs and a tour count when hard.
   'tour-rotation': encodeTourRotation,
+  // Not priced while soft; a free pair of days forced in each pay period worked every weekend.
+  'days-off-together': encodeDaysOffTogether,
 };
 
 export interface EncodeOptions {

@@ -235,6 +235,9 @@ export type {
 // Contested holiday requests ranked by the contract's order
 export { holidayRequestPriority } from './leave/holiday-priority.js';
 export { validateLeavePolicy } from './leave/policy.js';
+export type { RequestClaimant, RequestPriorityInput } from './leave/request-priority.js';
+// Competing time-off requests ranked by equity (advice, never applied)
+export { competingRequestPriority } from './leave/request-priority.js';
 export type {
   ComplianceAlert,
   ComplianceAlertKind,
@@ -261,6 +264,8 @@ export {
   blockOccurrencesOverlapping,
 } from './rules/availability-blocks.js';
 export { credentialLapsedOn } from './rules/coverage-rules.js';
+// Two days off together for a nurse who works every weekend of a pay period
+export { daysOffTogetherRule, payPeriodWeekends } from './rules/days-off-together.js';
 export type { HolidayRotationParams } from './rules/holiday-rotation.js';
 // Holiday rotation facts
 export { holidayRotationRule, previousOccurrence } from './rules/holiday-rotation.js';

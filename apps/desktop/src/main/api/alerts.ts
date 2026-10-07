@@ -29,6 +29,7 @@ import {
   type DbLike,
   demandInputs,
   holidayWorkFor,
+  ledgerHistory,
   listCredentials,
   listHolidaysForUnit,
   listNurseCredentialsForUnit,
@@ -95,10 +96,20 @@ export function alertsForView(
     ...(unit.perDiemCommitment
       ? {
           perDiemCommitment: unit.perDiemCommitment,
-          weekendDefinition: ruleSet.weekendDefinition,
           holidays,
           holidayWorkedBy: holidayWorkedBy(db, period, holidays),
         }
+      : {}),
+    ...(unit.minWeekendsOffPerYear !== undefined
+      ? {
+          weekendsOffPerYear: {
+            minimum: unit.minWeekendsOffPerYear,
+            ledger: ledgerHistory(db, unit.id, period.startDate),
+          },
+        }
+      : {}),
+    ...(unit.perDiemCommitment || unit.minWeekendsOffPerYear !== undefined
+      ? { weekendDefinition: ruleSet.weekendDefinition }
       : {}),
     paidLeaveByNurse,
     paidLeaveCountsTowardHours: fte.paidLeaveCountsTowardHours,

@@ -93,6 +93,8 @@ export interface UnitPatch {
   perDiemCommitment?: PerDiemCommitment | null;
   /** Null: a reason is enough for a change to a posted schedule. */
   requireConsentForPostedChanges?: boolean | null;
+  /** Null stops checking. */
+  minWeekendsOffPerYear?: number | null;
 }
 
 const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
@@ -107,6 +109,7 @@ const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
   overtimeOrder: true,
   perDiemCommitment: true,
   requireConsentForPostedChanges: true,
+  minWeekendsOffPerYear: true,
 };
 
 /** Break minutes are a whole number a shift can hold; anything else is a typing slip. */
@@ -121,6 +124,12 @@ function validatePostingLead(lead: number | null | undefined): void {
   if (lead === undefined || lead === null) return;
   if (!Number.isInteger(lead) || lead < 0 || lead > 90)
     throw new Error('Posting notice must be a whole number of days from 0 to 90');
+}
+
+function validateWeekendsOff(count: number | null | undefined): void {
+  if (count === undefined || count === null) return;
+  if (!Number.isInteger(count) || count < 0 || count > 52)
+    throw new Error('Weekends off per year must be a whole number from 0 to 52');
 }
 
 export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string): Unit {
@@ -145,6 +154,7 @@ export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string):
     validate: (values) => {
       validateRatioStaffing(values.ratioStaffing);
       validatePostingLead(values.postingLeadDays);
+      validateWeekendsOff(values.minWeekendsOffPerYear);
       if (values.leavePolicy) validateLeavePolicy(values.leavePolicy);
       if (
         values.jurisdiction !== undefined &&

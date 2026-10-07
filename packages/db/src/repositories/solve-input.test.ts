@@ -409,6 +409,34 @@ describe("the unit's schedule posting notice", () => {
   });
 });
 
+describe("the unit's promise of weekends off per year", () => {
+  const setWeekends = (minWeekendsOffPerYear: number | null) =>
+    transact(handle.db, (tx) => updateUnit(tx, seeded.unitId, { minWeekendsOffPerYear }, ACTOR));
+
+  it('keeps a 26-weekend promise on the unit and clears it again', () => {
+    expect(getUnit(handle.db, seeded.unitId)!.minWeekendsOffPerYear).toBeUndefined();
+    setWeekends(26);
+    expect(getUnit(handle.db, seeded.unitId)!.minWeekendsOffPerYear).toBe(26);
+    const [latest] = auditHistoryFor(handle.db, 'unit', seeded.unitId);
+    expect(latest).toMatchObject({ action: 'update', after: { minWeekendsOffPerYear: 26 } });
+    expect(
+      (latest!.before as { minWeekendsOffPerYear?: number }).minWeekendsOffPerYear,
+    ).toBeUndefined();
+    setWeekends(null);
+    expect(getUnit(handle.db, seeded.unitId)!.minWeekendsOffPerYear).toBeUndefined();
+    const [cleared] = auditHistoryFor(handle.db, 'unit', seeded.unitId);
+    expect(cleared).toMatchObject({ action: 'update', before: { minWeekendsOffPerYear: 26 } });
+  });
+
+  it('refuses a promise of more weekends off than a year has', () => {
+    const msg = 'Weekends off per year must be a whole number from 0 to 52';
+    expect(() => setWeekends(53)).toThrow(msg);
+    expect(() => setWeekends(-1)).toThrow(msg);
+    expect(() => setWeekends(10.5)).toThrow(msg);
+    expect(getUnit(handle.db, seeded.unitId)!.minWeekendsOffPerYear).toBeUndefined();
+  });
+});
+
 describe('a licensed-nurse ratio', () => {
   function licensedRule(minRnShare?: number) {
     return createRatioRule(

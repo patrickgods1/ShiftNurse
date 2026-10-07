@@ -274,6 +274,40 @@ describe('SolverModel bookkeeping', () => {
     expect(priced.objective() - free.objective()).toBeCloseTo(150, 6);
   });
 
+  it('counts a third weekend in four, with last schedule’s weekend in the window', () => {
+    const base = scenario({ weekends: true });
+    const input: SolveInput = {
+      ...base,
+      ruleSet: {
+        ...base.ruleSet,
+        configs: base.ruleSet.configs.map((c) =>
+          c.ruleId === 'weekend-pattern'
+            ? { ...c, params: { maxConsecutiveWeekends: 3, maxWeekendsPer4Weeks: 2 } }
+            : c,
+        ),
+      },
+    };
+    // Nurse 1 worked Sat 27 Dec last period and works Sat 10 and Sat 17 Jan: the four weeks to
+    // 17 Jan (27 Dec, 3, 10, 17 Jan) hold three weekends worked, one past the two allowed.
+    const model = new SolverModel(input);
+    const n = model.nurseIdx.get(input.nurses[1]!.id)!;
+    for (const day of [6, 13]) model.add(model.make(n, model.shiftAt(day, DAY_12)));
+    expect(model.weekendBreaches()).toBe(1);
+    const view = new ScheduleView({
+      period: input.period,
+      assignments: model.assignments(),
+      priorAssignments: input.priorAssignments,
+      nurses: model.nurses,
+      shiftTypes: model.shiftTypes,
+    });
+    const judged = evaluateSchedule(view, input.ruleSet, model.ctx).violations.filter(
+      (v) => v.ruleId === 'weekend-pattern',
+    );
+    expect(judged.map((v) => v.details)).toEqual([
+      { weekend: '2026-01-17', workedIn4Weeks: 3, excess: 1 },
+    ]);
+  });
+
   it('keeps days asked off priced right as shifts land on and leave them', () => {
     walk(scenario({ pending: true }), 1);
   });
@@ -667,6 +701,8 @@ describe('soft rules priced the way the grid judges them', () => {
     'incompatible-staff-cap':
       'priced per person-hour over floor stretches; checked against the rule in the walk above',
     'tour-rotation':
+      'not priced while soft (Generate does not avoid it); the hard encoders forbid it outright',
+    'days-off-together':
       'not priced while soft (Generate does not avoid it); the hard encoders forbid it outright',
   };
 

@@ -49,6 +49,8 @@ export interface Unit {
   overtimeOrder?: OvertimeOrder;
   /** Absent = no commitment checked. */
   perDiemCommitment?: PerDiemCommitment;
+  /** Weekends off each nurse is promised in a year, e.g. UC–CNA's 26. Absent: not checked. */
+  minWeekendsOffPerYear?: number;
   /**
    * When true, a manager's change to a posted (published) schedule must record the affected
    * nurse's consent (VA, UC and Oregon contracts). Absent/false: a reason is enough.

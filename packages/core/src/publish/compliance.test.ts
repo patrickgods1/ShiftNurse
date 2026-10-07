@@ -554,3 +554,88 @@ describe('per-diem commitment', () => {
     });
   });
 });
+
+describe('weekends off per year', () => {
+  // 2026-01-04 is a Sunday: the period holds Sat 10, Sat 17 and Sat 24 (and Sat 31).
+  const month = (assignments: unknown[]) =>
+    scenario({
+      nurses: [makeNurse({ id: 'n1', firstName: 'Ana', lastName: 'Cruz' })],
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-31'),
+      assignments: assignments as never,
+    });
+  const history = (periodStart: string, weekendsWorked: number, id = periodStart) => ({
+    id,
+    nurseId: 'n1',
+    periodId: `p-${id}`,
+    periodStart: isoDate(periodStart),
+    nightShifts: 0,
+    weekendsWorked,
+    holidaysWorked: 0,
+    onCallShifts: 0,
+    undesirableShifts: 0,
+    requestsApproved: 0,
+    requestsDenied: 0,
+    callOutsCovered: 0,
+    totalHours: 0,
+    overtimeHours: 0,
+    preferenceHitRate: 1,
+  });
+  const yearAlerts = (
+    s: ReturnType<typeof scenario>,
+    ledger: ReturnType<typeof history>[],
+    minimum = 26,
+  ) =>
+    alertsFor(s, { weekendsOffPerYear: { minimum, ledger } }).filter(
+      (a) => a.kind === 'weekends_off_per_year',
+    );
+  // 24 worked over the year before, in two periods inside the 364-day window.
+  const lastYear = [history('2025-10-05', 14), history('2025-07-06', 10)];
+
+  it('leaves a nurse alone when 24 weekends before and 2 now still leave the 26 promised', () => {
+    resetFixtureCounters();
+    const s = month([assign('n1', DAY_12, '2026-01-10'), assign('n1', DAY_12, '2026-01-17')]);
+    expect(yearAlerts(s, lastYear)).toEqual([]);
+  });
+
+  it('warns when a third weekend this period makes the 27th worked, leaving 25 off', () => {
+    resetFixtureCounters();
+    const s = month([
+      assign('n1', DAY_12, '2026-01-10', { id: 'sat10' }),
+      assign('n1', DAY_12, '2026-01-17', { id: 'sat17' }),
+      assign('n1', DAY_12, '2026-01-24', { id: 'sat24' }),
+    ]);
+    const alerts = yearAlerts(s, lastYear);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ severity: 'warning', nurseId: 'n1' });
+    expect([...alerts[0]!.assignmentIds].sort()).toEqual(['sat10', 'sat17', 'sat24']);
+    expect(alerts[0]!.hours).toBeUndefined();
+    expect(alerts[0]!.message).toBe(
+      'Ana Cruz would have worked 27 weekends in the year to Sat Jan 31, 2026, leaving 25 weekends off against the 26 the unit promises',
+    );
+  });
+
+  it('ignores a period that began a year or more before this one', () => {
+    resetFixtureCounters();
+    const s = month([
+      assign('n1', DAY_12, '2026-01-10'),
+      assign('n1', DAY_12, '2026-01-17'),
+      assign('n1', DAY_12, '2026-01-24'),
+    ]);
+    // 2025-01-04 is 365 days before the period; 2025-01-05 is 364 and still counts.
+    expect(yearAlerts(s, [history('2025-10-05', 14), history('2025-01-04', 10)])).toEqual([]);
+    expect(yearAlerts(s, [history('2025-10-05', 14), history('2025-01-05', 10)])).toHaveLength(1);
+  });
+
+  it('still warns a nurse with no weekends this period when history alone breaks the promise', () => {
+    resetFixtureCounters();
+    const s = month([assign('n1', DAY_12, '2026-01-07')]);
+    expect(yearAlerts(s, [history('2025-10-05', 27)])).toHaveLength(1);
+  });
+
+  it('checks nothing when the unit makes no promise', () => {
+    resetFixtureCounters();
+    const s = month([assign('n1', DAY_12, '2026-01-10')]);
+    expect(alertsFor(s).filter((a) => a.kind === 'weekends_off_per_year')).toEqual([]);
+  });
+});

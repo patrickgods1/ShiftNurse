@@ -1,5 +1,5 @@
 /**
- * How many weekends a nurse works: in a row, and in one schedule.
+ * How many weekends a nurse works: in a row, in one schedule, and in any four weeks.
  *
  * "Every other weekend off" is among the most common contract terms in nursing, and the burden
  * fairness balances weekends across the team without ever saying no to a fourth in a row for one
@@ -7,6 +7,11 @@
  * reads the pattern itself: a weekend worked is one with any worked (not standby) shift in it, as
  * the unit's weekend definition and the fairness ledger read it (`weekendKey`); a run counts
  * weekends from the period before, so a schedule cannot open on someone's third weekend running.
+ *
+ * "Two weekends off in four" (VA–NNU Master Agreement Art. 13) is judged over each trailing window
+ * of four weekends, lookback included, not per schedule: a per-schedule cap of 2 lets a 4-week
+ * schedule starting on a Sunday touch five weekends, and a 6-week one would allow 3 of 6. The
+ * window reads the same whatever length the unit cuts its schedules.
  *
  * Soft by default and off until a unit turns it on. Both solvers price each breach
  * (`weekendPattern`, fairness bucket); hard, it forbids the run outright.
@@ -22,6 +27,8 @@ export interface WeekendPatternParams {
   maxConsecutiveWeekends: number;
   /** Weekends a nurse may work in one schedule. Absent: no limit. */
   maxWeekendsPerPeriod?: number;
+  /** Weekends a nurse may work in any four in a row, across schedules. Absent: no limit. */
+  maxWeekendsPer4Weeks?: number;
 }
 
 /** One nurse's weekends, by the Saturday-style key the weekend definition gives them. */
@@ -37,27 +44,43 @@ export interface WeekendBreaches {
   runs: { weekend: IsoDate; length: number }[];
   /** In-period weekends past the per-schedule limit. */
   excess: number;
+  /**
+   * In-period worked weekends whose four-week window (it and the three before) holds more than
+   * the limit, each with the weekends worked in it and how many past the limit. Overlapping
+   * windows each count, so a fourth weekend in four costs more than a third, as runs do.
+   */
+  windows: { weekend: IsoDate; worked: number; excess: number }[];
 }
 
 /**
  * The one count of weekend breaches, shared by the rule and both solvers. A weekend breaches the
  * run limit when it and the `max` weekends before it were all worked; the price is one per such
- * weekend plus one per weekend over the per-schedule limit.
+ * weekend, plus one per weekend over the per-schedule limit, plus each window's excess.
  */
 export function weekendBreaches(
   weekends: NurseWeekends,
   params: WeekendPatternParams,
 ): WeekendBreaches {
   const max = Math.max(0, Math.floor(params.maxConsecutiveWeekends));
+  const perFour = params.maxWeekendsPer4Weeks;
   const runs: WeekendBreaches['runs'] = [];
+  const windows: WeekendBreaches['windows'] = [];
   for (const weekend of [...weekends.inPeriod].sort(compareDates)) {
     let length = 1;
     while (weekends.worked.has(addDays(weekend, -7 * length))) length++;
     if (length > max) runs.push({ weekend, length });
+    if (perFour !== undefined) {
+      let worked = 1;
+      for (let back = 1; back < 4; back++) {
+        if (weekends.worked.has(addDays(weekend, -7 * back))) worked++;
+      }
+      const over = worked - Math.floor(perFour);
+      if (over > 0) windows.push({ weekend, worked, excess: over });
+    }
   }
   const limit = params.maxWeekendsPerPeriod;
   const excess = limit === undefined ? 0 : Math.max(0, weekends.inPeriod.size - Math.floor(limit));
-  return { runs, excess };
+  return { runs, excess, windows };
 }
 
 /** The weekends one nurse works on a view (their timeline, lookback tail included). */
@@ -80,10 +103,11 @@ export function nurseWeekends(
 
 export const weekendPatternRule: Rule<WeekendPatternParams> = {
   id: 'weekend-pattern',
-  name: 'Weekends in a row and per schedule',
+  name: 'Weekends in a row, per schedule and in four weeks',
   description:
     'Limits how many weekends in a row a nurse works ("every other weekend off") and, if set, ' +
-    'how many in one schedule. Weekends from the schedule before count toward a run.',
+    'how many in one schedule and in any four weeks in a row. Weekends from the schedule ' +
+    'before count toward a run and toward the four weeks.',
   severity: 'soft',
   category: 'equity',
   scope: 'nurse',
@@ -105,6 +129,17 @@ export const weekendPatternRule: Rule<WeekendPatternParams> = {
       optional: true,
       min: 0,
     },
+    maxWeekendsPer4Weeks: {
+      label: 'Weekends in any four weeks',
+      hint:
+        'The most weekends a nurse works in any four in a row, counted across schedules. ' +
+        'Leave blank for no limit.',
+      why:
+        'For "two weekends off in four" contracts such as the VA–NNU Master Agreement (Art. 13). ' +
+        'Unlike the per-schedule limit, it reads the same whatever length your schedules are.',
+      optional: true,
+      min: 0,
+    },
   },
 
   evaluate(schedule, params, ctx): Violation[] {
@@ -112,7 +147,7 @@ export const weekendPatternRule: Rule<WeekendPatternParams> = {
     for (const nurse of schedule.nursesById.values()) {
       const weekends = nurseWeekends(schedule, nurse.id, ctx);
       if (weekends.inPeriod.size === 0) continue;
-      const { runs, excess } = weekendBreaches(weekends, params);
+      const { runs, excess, windows } = weekendBreaches(weekends, params);
       // The shifts a weekend's breach names: the nurse's in-period shifts on that weekend.
       const shiftsOn = (weekend: IsoDate) =>
         schedule
@@ -135,6 +170,24 @@ export const weekendPatternRule: Rule<WeekendPatternParams> = {
               dates: shifts.map((v) => v.assignment.date),
               assignmentIds: shifts.map((v) => v.assignment.id),
               details: { weekend, consecutive: length },
+            },
+          ),
+        );
+      }
+      for (const { weekend, worked, excess: over } of windows) {
+        const shifts = [3, 2, 1, 0].flatMap((back) => shiftsOn(addDays(weekend, -7 * back)));
+        violations.push(
+          violation(
+            weekendPatternRule,
+            'soft',
+            'excess_weekends',
+            `${nurseName(nurse)} works ${worked} of the 4 weekends to the weekend of ` +
+              `${describeDate(weekend)}; the contract allows ${params.maxWeekendsPer4Weeks}.`,
+            {
+              nurseIds: [nurse.id],
+              dates: shifts.map((v) => v.assignment.date),
+              assignmentIds: shifts.map((v) => v.assignment.id),
+              details: { weekend, workedIn4Weeks: worked, excess: over },
             },
           ),
         );

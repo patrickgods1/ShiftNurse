@@ -30,6 +30,7 @@ import type { ScheduleView } from '../schedule/view.js';
 import { accommodationBlocksRule } from './availability-blocks.js';
 import { overlapRule, timeOffRule } from './availability-rules.js';
 import { coverageRule, ratioComplianceRule } from './coverage-rules.js';
+import { daysOffTogetherRule } from './days-off-together.js';
 import { holidayIndexes, holidayRotationRule } from './holiday-rotation.js';
 import { maxHoursIn24Rule } from './hours-in-24.js';
 import { contractedHoursRule, maxHoursRule } from './hours-rules.js';
@@ -80,6 +81,7 @@ export const ALL_RULES: readonly Rule<never>[] = [
   pendingTimeOffRule,
   mandatoryOvertimeRule,
   weekendPatternRule,
+  daysOffTogetherRule,
   preceptorRule,
   tourRotationRule,
 ] as unknown as readonly Rule<never>[];

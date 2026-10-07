@@ -35,6 +35,7 @@ import { AsyncState } from '../../components/async-state.js';
 import { Modal } from '../../components/modal.js';
 import { DANGER, errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { formatDate, formatDateWithWeekday, periodLabel } from '../../format.js';
+import { CompetingAdvice, nurseLabel } from './competing-advice.js';
 import { LeaveStanding } from './leave-standing.js';
 
 interface DecideDialogProps {
@@ -43,13 +44,16 @@ interface DecideDialogProps {
   unitId: Id;
   nursesById: ReadonlyMap<Id, Nurse>;
   shiftTypesById: ReadonlyMap<Id, ShiftType>;
+  /**
+   * The period's conflicts, for the equity advice on competing requests. `TimeOffImpact.cleared`
+   * would only hold them when this one decision clears the conflict, so the page passes them in.
+   */
+  conflicts?: readonly Conflict[];
   onClose: () => void;
 }
 
-export function nurseLabel(nursesById: ReadonlyMap<Id, Nurse>, id: Id): string {
-  const n = nursesById.get(id);
-  return n ? `${n.firstName} ${n.lastName}` : id;
-}
+// Lives in competing-advice.tsx so that file need not import this one; re-exported for callers.
+export { nurseLabel };
 
 export function DecideDialog({
   request,
@@ -57,6 +61,7 @@ export function DecideDialog({
   unitId,
   nursesById,
   shiftTypesById,
+  conflicts = [],
   onClose,
 }: DecideDialogProps) {
   const open = request !== undefined;
@@ -141,6 +146,7 @@ export function DecideDialog({
                 period={period}
                 nursesById={nursesById}
                 shiftTypesById={shiftTypesById}
+                conflicts={conflicts}
                 options={options}
                 covers={covers}
                 onCover={(assignmentId, nurseId) =>
@@ -270,6 +276,7 @@ function ImpactView({
   period,
   nursesById,
   shiftTypesById,
+  conflicts,
   options,
   covers,
   onCover,
@@ -278,6 +285,7 @@ function ImpactView({
   period: SchedulePeriod;
   nursesById: ReadonlyMap<Id, Nurse>;
   shiftTypesById: ReadonlyMap<Id, ShiftType>;
+  conflicts: readonly Conflict[];
   options: readonly LeaveCoverOption[];
   covers: Readonly<Record<Id, Id | ''>>;
   onCover: (assignmentId: Id, nurseId: Id | '') => void;
@@ -290,6 +298,11 @@ function ImpactView({
   );
   return (
     <div className="mt-2 flex flex-col gap-3 text-sm">
+      <CompetingAdvice
+        conflicts={conflicts}
+        requestId={impact.request.id}
+        nursesById={nursesById}
+      />
       <div className="rounded-md border border-border p-3">
         <p className="text-xs text-text-muted">Can the unit spare them on these days?</p>
         <CapacityView days={impact.capacity} />

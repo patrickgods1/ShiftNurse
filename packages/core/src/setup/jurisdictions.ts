@@ -736,11 +736,18 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       },
       // The contract terms below are the VA–NNU Master Agreement (2023) Art. 13's.
       { ruleId: 'min-rest-between-shifts', params: { minRestHours: 11 }, raise: ['minRestHours'] },
-      // Art. 13's "two weekends off in four" needs a per-four-weeks quota, which lands in a later
-      // phase; until then the rule's own pattern stands in for it.
-      { ruleId: 'weekend-pattern' },
+      // VA–NNU Master Agreement Art. 13: two weekends off in four, judged over any four weekends
+      // in a row. An unset cap here is no limit, so adding one to an enabled rule tightens it.
+      {
+        ruleId: 'weekend-pattern',
+        params: { maxWeekendsPer4Weeks: 2 },
+        absentCapIsUnlimited: true,
+      },
       { ruleId: 'tour-rotation', params: { maxToursPerPeriod: 2 } },
       { ruleId: 'max-consecutive-shifts', params: { maxConsecutiveShifts: 5 } },
+      // Art. 13 §2.D.3: an RN who works every weekend in a pay period gets two consecutive days
+      // off in that pay period.
+      { ruleId: 'days-off-together' },
     ],
     leavePolicy: {
       fmla: { regime: 'title5', yearMethod: 'rolling_forward' },

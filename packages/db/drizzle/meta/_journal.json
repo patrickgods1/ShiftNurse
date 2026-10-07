@@ -218,6 +218,13 @@
       "when": 1791322092368,
       "tag": "0030_pay_model_ca_uc",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1791330339784,
+      "tag": "0031_weekends_off_per_year",
+      "breakpoints": true
     }
   ]
 }

@@ -53,6 +53,9 @@ export default function UnitPanel() {
     String(shownCommitment.weekendShiftsPer4Weeks),
   );
   const [holidayShifts, setHolidayShifts] = useState(String(shownCommitment.holidayShiftsPerYear));
+  const savedWeekendsOff =
+    unit.minWeekendsOffPerYear === undefined ? '' : String(unit.minWeekendsOffPerYear);
+  const [weekendsOff, setWeekendsOff] = useState(savedWeekendsOff);
   const savedConsent = unit.requireConsentForPostedChanges ?? false;
   const [requireConsent, setRequireConsent] = useState(savedConsent);
 
@@ -64,6 +67,7 @@ export default function UnitPanel() {
     setBreakMinutes(String(saved.breakMinutesPerNurse));
     setCoversBreaks(saved.chargeCoversBreaks);
     setLeadDays(savedLead);
+    setWeekendsOff(savedWeekendsOff);
     setCommitmentOn(savedCommitment !== undefined);
     setWeekendShifts(String(shownCommitment.weekendShiftsPer4Weeks));
     setHolidayShifts(String(shownCommitment.holidayShiftsPerYear));
@@ -74,6 +78,7 @@ export default function UnitPanel() {
     unit.unitType,
     unit.ratioStaffing,
     unit.postingLeadDays,
+    unit.minWeekendsOffPerYear,
     unit.perDiemCommitment,
     unit.requireConsentForPostedChanges,
   ]);
@@ -86,6 +91,10 @@ export default function UnitPanel() {
   // Blank clears the rule, so it is the one empty value that is valid.
   const lead = Number(leadDays);
   const leadValid = leadDays.trim() === '' || (Number.isInteger(lead) && lead >= 0 && lead <= 90);
+  const weekendsOffCount = Number(weekendsOff);
+  const weekendsOffValid =
+    weekendsOff.trim() === '' ||
+    (Number.isInteger(weekendsOffCount) && weekendsOffCount >= 0 && weekendsOffCount <= 52);
   const wholeCount = (text: string) => text.trim() !== '' && /^\d+$/.test(text.trim());
   const commitmentValid = !commitmentOn || (wholeCount(weekendShifts) && wholeCount(holidayShifts));
   const staffing: RatioStaffing = {
@@ -100,6 +109,7 @@ export default function UnitPanel() {
     breakMinutes !== String(saved.breakMinutesPerNurse) ||
     staffing.chargeCoversBreaks !== saved.chargeCoversBreaks ||
     leadDays !== savedLead ||
+    weekendsOff !== savedWeekendsOff ||
     commitmentOn !== (savedCommitment !== undefined) ||
     requireConsent !== savedConsent ||
     (commitmentOn &&
@@ -114,6 +124,7 @@ export default function UnitPanel() {
         unitType: unitType.trim(),
         ratioStaffing: staffing,
         postingLeadDays: leadDays.trim() === '' ? null : lead,
+        minWeekendsOffPerYear: weekendsOff.trim() === '' ? null : weekendsOffCount,
         perDiemCommitment: commitmentOn
           ? {
               weekendShiftsPer4Weeks: Number(weekendShifts),
@@ -132,6 +143,7 @@ export default function UnitPanel() {
     setBreakMinutes(String(saved.breakMinutesPerNurse));
     setCoversBreaks(saved.chargeCoversBreaks);
     setLeadDays(savedLead);
+    setWeekendsOff(savedWeekendsOff);
     setCommitmentOn(savedCommitment !== undefined);
     setWeekendShifts(String(shownCommitment.weekendShiftsPer4Weeks));
     setHolidayShifts(String(shownCommitment.holidayShiftsPerYear));
@@ -156,7 +168,9 @@ export default function UnitPanel() {
         dirty={dirty}
         saving={update.isPending}
         error={update.error}
-        canSave={name.trim() !== '' && minutesValid && leadValid && commitmentValid}
+        canSave={
+          name.trim() !== '' && minutesValid && leadValid && weekendsOffValid && commitmentValid
+        }
         formId="unit-form"
         onSave={submit}
         onDiscard={discard}
@@ -232,6 +246,31 @@ export default function UnitPanel() {
                   error: !leadValid,
                 })}
                 onChange={(e) => setLeadDays(e.target.value)}
+              />
+            </Field>
+            <Field
+              id="unit-weekends-off"
+              className="max-w-xl"
+              label="Weekends off per year"
+              hint="Weekends off each nurse is promised in a year (UC–CNA: 26). Leave blank for no check."
+              tip="The publish preview counts each nurse's weekends worked over the year before the schedule, from the fairness history, plus this schedule's, and lists anyone left with fewer weekends off than this."
+              error={
+                weekendsOffValid ? undefined : 'Enter a whole number from 0 to 52, or leave blank.'
+              }
+            >
+              <input
+                id="unit-weekends-off"
+                type="number"
+                min={0}
+                max={52}
+                step={1}
+                className={`${INPUT} w-28`}
+                value={weekendsOff}
+                aria-describedby={describedBy('unit-weekends-off', {
+                  hint: true,
+                  error: !weekendsOffValid,
+                })}
+                onChange={(e) => setWeekendsOff(e.target.value)}
               />
             </Field>
             <fieldset className="flex max-w-xl flex-col gap-3 border-t border-border pt-3">

@@ -1047,7 +1047,8 @@ export class SolverModel {
 
   /**
    * One nurse's weekend-pattern breaches, counted by the rule's own `weekendBreaches`: each
-   * in-period weekend ending too long a run, plus each weekend over the per-schedule limit.
+   * in-period weekend ending too long a run, plus each weekend over the per-schedule limit, plus
+   * each four-week window's excess.
    */
   private weekendFor(n: number): number {
     const params = this.weekendParams;
@@ -1055,8 +1056,8 @@ export class SolverModel {
     const inPeriod = new Set(this.weekendKeys[n]!.keys() as Iterable<IsoDate>);
     if (inPeriod.size === 0) return 0;
     const worked = new Set<IsoDate>([...this.priorWeekends[n]!, ...inPeriod]);
-    const { runs, excess } = weekendBreaches({ worked, inPeriod }, params);
-    return runs.length + excess;
+    const { runs, excess, windows } = weekendBreaches({ worked, inPeriod }, params);
+    return runs.length + excess + windows.reduce((total, w) => total + w.excess, 0);
   }
 
   /** Worked shifts inside pending time-off requests, as the schedule stands. */
