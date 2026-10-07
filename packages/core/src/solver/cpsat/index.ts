@@ -12,8 +12,17 @@
  * The report comes from the same `buildReport` as the annealer's, over a `SolverModel` the
  * answer was loaded into through the rule gate — so a CP-SAT schedule is judged, priced and
  * summarised by exactly the machinery that judges the grid.
+ *
+ * ## Why INFEASIBLE is a typed error
+ *
+ * Every constraint is satisfiable by leaving every decision variable off, but a locked shift is a
+ * constant: a locked turnaround with no waiver, or an accommodation block added after the lock,
+ * makes the model contradictory. `finishCpsat` throws `CpsatInfeasibleError` naming those locked
+ * breaches, so the desktop can run SA + LNS — which measures around them — and tell the manager
+ * which pins to look at, instead of failing the Generate.
  */
 
+import type { Violation } from '../../rules/types.js';
 import { greedySeed } from '../greedy.js';
 import { SolverModel } from '../model.js';
 import { buildReport } from '../report.js';
@@ -36,6 +45,34 @@ export interface CpsatResult {
   values: readonly number[];
   objective: number;
   bound: number;
+}
+
+/**
+ * CP-SAT found the model contradictory. `lockedBreaches` are the locked shifts' hard violations —
+ * the only constants that can do that; empty means the encoding itself is wrong.
+ */
+export class CpsatInfeasibleError extends Error {
+  readonly status: CpStatus;
+  readonly lockedBreaches: Violation[];
+
+  constructor(status: CpStatus, lockedBreaches: Violation[]) {
+    super(
+      lockedBreaches.length > 0
+        ? `CP-SAT reported the model ${status}: ${lockedBreaches.length} locked-shift breach(es) of a hard rule.`
+        : `CP-SAT reported the model ${status} with no locked shift breaching a hard rule; this is a bug in the encoding.`,
+    );
+    this.name = 'CpsatInfeasibleError';
+    this.status = status;
+    this.lockedBreaches = lockedBreaches;
+  }
+}
+
+/**
+ * The hard nurse-scope violations (floors aside) that the input's locked shifts already carry,
+ * judged with the lookback tail by the same gate the annealer uses.
+ */
+export function lockedHardViolations(input: SolveInput): Violation[] {
+  return new SolverModel(input).lockedHardViolations();
 }
 
 export function prepareCpsat(
@@ -77,8 +114,9 @@ export function finishCpsat(
   },
 ): SolveReport {
   if (result.status === 'INFEASIBLE' || result.status === 'MODEL_INVALID') {
-    // Every constraint is satisfiable by leaving the variables off, so this is an encoding bug.
-    throw new Error(`CP-SAT reported the model ${result.status}; this is a bug in the encoding.`);
+    // Leaving every variable off satisfies every constraint, so only the locked shifts — the
+    // model's constants — can make it contradictory. Name them; none means an encoding bug.
+    throw new CpsatInfeasibleError(result.status, lockedHardViolations(input));
   }
   if (result.values.length === 0) {
     throw new Error('CP-SAT found no schedule within its time budget.');

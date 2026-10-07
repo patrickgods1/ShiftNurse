@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import type { CostContext } from '../cost/types.js';
 import type { CoverageRequirement } from '../domain/entities.js';
-import { addDays, isoDate } from '../domain/time.js';
+import { addDays, DEFAULT_WEEKEND, isoDate } from '../domain/time.js';
 import {
   assign,
   assignRun,
@@ -12,6 +13,8 @@ import {
   makeNurse,
   NIGHT_12,
   nurseCredential,
+  overtimeRule,
+  payRate,
   resetFixtureCounters,
   scenario,
   TIER_ROUTINE,
@@ -637,5 +640,123 @@ describe('weekends off per year', () => {
     resetFixtureCounters();
     const s = month([assign('n1', DAY_12, '2026-01-10')]);
     expect(alertsFor(s).filter((a) => a.kind === 'weekends_off_per_year')).toEqual([]);
+  });
+});
+
+describe('overtime alerts priced under the overtime rules', () => {
+  const priced = (
+    s: ReturnType<typeof scenario>,
+    rules: CostContext['overtimeRules'],
+  ): CostContext => ({
+    unit: s.unit,
+    payRates: [payRate(48)],
+    differentials: [],
+    overtimeRules: rules,
+    holidayDates: new Set(),
+    weekendDefinition: DEFAULT_WEEKEND,
+    workWeekStartsOn: 0,
+  });
+  const overtime = (s: ReturnType<typeof scenario>, extra = {}) =>
+    alertsFor(s, extra).filter((a) => a.kind === 'overtime');
+
+  it('flags the 4 hours past 8 in a 12-hour day that the weekly threshold never sees', () => {
+    resetFixtureCounters();
+    const s = scenario({
+      nurses: [makeNurse({ id: 'n1', contractedHoursPerPeriod: 12 })],
+      assignments: [assign('n1', DAY_12, '2026-01-06', { id: 'long-day' })],
+    });
+    expect(overtime(s)).toEqual([]);
+    const ot = overtime(s, { cost: priced(s, [overtimeRule('daily', 8)]) });
+    expect(ot).toHaveLength(1);
+    expect(ot[0]).toMatchObject({
+      kind: 'overtime',
+      severity: 'warning',
+      nurseId: 'n1',
+      date: '2026-01-04',
+      hours: 12,
+      overtimeHours: 4,
+      assignmentIds: ['long-day'],
+    });
+    expect(ot[0]!.expectedHours).toBeUndefined();
+    expect(ot[0]!.message).toMatch(
+      /has 4h overtime in the week of .* \(12h\), priced under the unit's overtime rules/,
+    );
+  });
+
+  it('reports the same 48-hour week as the threshold does when the unit has a weekly 40 rule', () => {
+    resetFixtureCounters();
+    const s = scenario({
+      nurses: [makeNurse({ id: 'n1', contractedHoursPerPeriod: 84 })],
+      assignments: assignRun('n1', DAY_12, '2026-01-04', 4),
+    });
+    const ot = overtime(s, { cost: priced(s, [overtimeRule('weekly', 40)]) });
+    expect(ot).toHaveLength(1);
+    expect(ot[0]).toMatchObject({ nurseId: 'n1', date: '2026-01-04', hours: 48, overtimeHours: 8 });
+  });
+
+  it('falls back to the weekly threshold when the unit has no overtime rule', () => {
+    resetFixtureCounters();
+    const s = scenario({
+      nurses: [makeNurse({ id: 'n1', contractedHoursPerPeriod: 84 })],
+      assignments: assignRun('n1', DAY_12, '2026-01-04', 4),
+    });
+    const ot = overtime(s, { cost: priced(s, []) });
+    expect(ot).toHaveLength(1);
+    expect(ot[0]).toMatchObject({ hours: 48, expectedHours: 40 });
+    expect(ot[0]!.overtimeHours).toBeUndefined();
+  });
+
+  it('puts 8 hours of overtime on the pay period when 88 hours fall in one 8/80 pay period', () => {
+    resetFixtureCounters();
+    // Week one 4 twelves = 48h, week two 5 eights = 40h: 88h in the Sun 4 Jan pay period.
+    const s = scenario({
+      nurses: [makeNurse({ id: 'n1', contractedHoursPerPeriod: 80 })],
+      assignments: [
+        ...assignRun('n1', DAY_12, '2026-01-04', 4),
+        ...assignRun('n1', DAY_8, '2026-01-11', 5),
+      ],
+    });
+    const ot = overtime(s, {
+      cost: priced(s, [overtimeRule('pay_period', 80)]),
+      payPeriodOvertime: { thresholdHours: 80, payPeriodAnchor: s.unit.payPeriodAnchor },
+    });
+    expect(ot).toHaveLength(1);
+    expect(ot[0]).toMatchObject({ date: '2026-01-04', hours: 88, overtimeHours: 8 });
+    expect(ot[0]!.message).toContain('the pay period from');
+  });
+  it('alerts on the in-period shift that pushes past 40 when the earlier shifts are lookback', () => {
+    resetFixtureCounters();
+    // Work week Mon 29 Dec – Sun 4 Jan; the period starts Sun 4 Jan. Three twelves in the tail
+    // make 36h, so the in-period 12 on the 4th is the one that takes the week to 48h.
+    const s = scenario({
+      nurses: [makeNurse({ id: 'n1', contractedHoursPerPeriod: 12 })],
+      priorAssignments: assignRun('n1', DAY_12, '2025-12-29', 3),
+      assignments: [assign('n1', DAY_12, '2026-01-04', { id: 'in-period' })],
+    });
+    const ot = overtime(s, {
+      cost: { ...priced(s, [overtimeRule('weekly', 40)]), workWeekStartsOn: 1 },
+      workWeekStartsOn: 1,
+    });
+    expect(ot).toHaveLength(1);
+    expect(ot[0]).toMatchObject({ nurseId: 'n1', overtimeHours: 8, assignmentIds: ['in-period'] });
+  });
+
+  it('stays quiet about overtime that sits wholly in the lookback tail', () => {
+    resetFixtureCounters();
+    // Four twelves before the period are 48h of overtime already paid for in the last schedule;
+    // n1 has nothing in this period, so there is no shift here to alert about.
+    const s = scenario({
+      nurses: [
+        makeNurse({ id: 'n1', contractedHoursPerPeriod: 12 }),
+        makeNurse({ id: 'n2', contractedHoursPerPeriod: 12 }),
+      ],
+      priorAssignments: assignRun('n1', DAY_12, '2025-12-29', 4),
+      assignments: [assign('n2', DAY_12, '2026-01-06')],
+    });
+    const ot = overtime(s, {
+      cost: { ...priced(s, [overtimeRule('weekly', 40)]), workWeekStartsOn: 1 },
+      workWeekStartsOn: 1,
+    });
+    expect(ot.filter((a) => a.nurseId === 'n1')).toEqual([]);
   });
 });

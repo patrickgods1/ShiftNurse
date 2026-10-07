@@ -264,6 +264,17 @@ describe('pricing one shift', () => {
     expect(report.unpricedNurseIds).toEqual([cna.id]);
     expect(report.nurses[0]?.unpricedAssignments).toBe(1);
   });
+
+  it('still counts the 4 hours past 8 as overtime for a nurse with no rate, at $0', () => {
+    const cna = makeNurse({ role: 'CNA' });
+    const s = scenario({ nurses: [cna], assignments: [assign(cna.id, DAY_12, '2026-01-05')] });
+
+    const [cost] = costSchedule(s.schedule, ctx({ overtimeRules: [DAILY_8] })).assignments;
+    expect(cost?.rateSource).toBe('none');
+    expect(cost?.overtimeHours).toBe(4);
+    expect(cost?.total).toBe(0);
+    expect(cost?.lines).toEqual([]);
+  });
 });
 
 describe('overtime', () => {

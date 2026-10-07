@@ -7,6 +7,9 @@
 - **A major holiday earns `major_holiday` in place of `holiday`, never both,** and only when the
   unit has a major premium; otherwise it earns the holiday premium as before, so existing units
   price unchanged. `CostContext.majorHolidayDates` carries which dates are major.
+- **Publish alerts read `costSchedule` for overtime.** `complianceAlerts` (given `ComplianceInput.cost`)
+  groups `AssignmentCost.overtimeHours` by work week or pay period; an unpriced nurse's overtime hours
+  are attributed (dollars stay 0) so the alert does not depend on rates having been entered.
 - **Costing is never a silent zero.** A nurse with no resolvable pay rate makes their shifts
   *unpriced* (`rateSource: 'none'`, counted in `unpricedAssignments`) and every cost surface
   shows that count next to the total. Overtime is priced per nurse-week over the full timeline

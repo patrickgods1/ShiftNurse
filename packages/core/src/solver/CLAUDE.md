@@ -46,6 +46,9 @@
   period, a deterministic-time budget — its parallel portfolio is faster but not reproducible.
   A runner that is missing, crashes or times out makes the hybrid finish as SA + LNS with
   `fellBackFrom` set; that is a *different schedule*, which is why the ready timeout is generous.
+  Whole-period CP-SAT that reports INFEASIBLE/MODEL_INVALID (`CpsatInfeasibleError`, whose
+  `lockedBreaches` come from `lockedHardViolations`) finishes as SA + LNS on the same seed with
+  `fellBackFrom: cp-sat` naming the locked shifts that already break a hard rule.
 - **The solver gates removals too.** `SolverModel.isLegal` re-checks a nurse who lost a shift:
   the consecutive-nights rule counts only all-night stretches, so removing a day from "day + four
   nights" creates a violation. Any new move that takes a shift from a nurse must re-check them.

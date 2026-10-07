@@ -91,7 +91,7 @@ import {
   requireParams,
   resolveConfigs,
 } from '../rules/registry.js';
-import type { RuleContext, RuleSet, RuleSeverity } from '../rules/types.js';
+import type { RuleContext, RuleSet, RuleSeverity, Violation } from '../rules/types.js';
 import {
   type WeekendPatternParams,
   weekendBreaches,
@@ -837,7 +837,33 @@ export class SolverModel {
     return this.countHardViolations(nurseIdx, null) <= this.baselineViolations[nurseIdx]!;
   }
 
+  /**
+   * The hard nurse-scope violations (floors aside) that involve a locked shift, as the model
+   * stands — on a fresh model, the pins alone. A CP-SAT model can only be infeasible because of
+   * these: a locked shift is a constant there, where this model measures around it instead.
+   */
+  lockedHardViolations(): Violation[] {
+    const breaches: Violation[] = [];
+    for (let i = 0; i < this.nurses.length; i++) {
+      const locked = new Set(this.byNurse[i]!.filter((a) => a.isLocked).map((a) => a.id));
+      if (locked.size === 0) continue;
+      for (const v of this.evaluateNurse(i, null).hardViolations) {
+        if (FLOOR_CODES.has(v.code)) continue;
+        if (v.assignmentIds.some((id) => locked.has(id))) breaches.push(v);
+      }
+    }
+    return breaches;
+  }
+
   private countHardViolations(nurseIdx: number, candidate: Assignment | null): number {
+    let count = 0;
+    for (const v of this.evaluateNurse(nurseIdx, candidate).hardViolations) {
+      if (!FLOOR_CODES.has(v.code)) count++;
+    }
+    return count;
+  }
+
+  private evaluateNurse(nurseIdx: number, candidate: Assignment | null) {
     const nurse = this.nurses[nurseIdx]!;
     const own = this.byNurse[nurseIdx]!;
     const view = new ScheduleView({
@@ -852,10 +878,7 @@ export class SolverModel {
       ctx = { ...this.ctx, nurses: [nurse] };
       this.nurseCtx[nurseIdx] = ctx;
     }
-    const result = evaluatePrepared(view, this.nurseRules, ctx);
-    let count = 0;
-    for (const v of result.hardViolations) if (!FLOOR_CODES.has(v.code)) count++;
-    return count;
+    return evaluatePrepared(view, this.nurseRules, ctx);
   }
 
   // ---------------------------------------------------------------------------

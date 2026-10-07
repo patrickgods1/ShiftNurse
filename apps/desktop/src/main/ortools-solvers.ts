@@ -10,11 +10,22 @@
  * A hybrid whose runner fails part-way (crashed, missing, or an answer the rule engine refuses)
  * does not fail the Generate: it finishes the remaining chunks as plain SA + LNS and reports
  * `fellBackFrom: hybrid` with the reason, which the dialog shows and the audit entry records.
+ *
+ * Whole-period CP-SAT that finds the model INFEASIBLE does not fail the Generate either. A correct
+ * encoding is satisfiable with every variable off, so only a locked shift — a constant there —
+ * can make it contradictory: a turnaround with no waiver, an accommodation added after the lock.
+ * SA + LNS measures every nurse against what their locks already break and schedules around them,
+ * so `solveCpsat` runs it on the same input and seed and reports `fellBackFrom: cp-sat`, naming
+ * the locked shifts the manager has to look at.
  */
 
 import {
+  CpsatInfeasibleError,
+  describeDate,
   finishCpsat,
   LocalSearch,
+  nurseName,
+  PURE_SOLVERS,
   prepareCpsat,
   type SolveInput,
   type SolveOptions,
@@ -87,6 +98,7 @@ export async function solveCpsat(
   const runner = new CpsatRunner(options.runnerPath);
   const watch = watchCancel(runner, hooks);
   let improvements = 0;
+  let infeasible: CpsatInfeasibleError;
   try {
     await runner.start();
     if (runner.pid !== undefined) hooks.onRunner?.(runner.pid);
@@ -111,10 +123,77 @@ export async function solveCpsat(
       cancelled: watch.cancelled(),
       timedOut: options.timeLimitMs !== undefined && elapsed() >= options.timeLimitMs,
     });
+  } catch (err) {
+    if (!(err instanceof CpsatInfeasibleError)) throw err;
+    infeasible = err;
   } finally {
     watch.stop();
     runner.dispose();
   }
+  return fallBackFromInfeasible(input, options, hooks, infeasible);
+}
+
+/** Most locked shifts a fallback reason names before it summarises the rest. */
+const REASON_SHIFTS = 5;
+
+/**
+ * SA + LNS on the same input and seed, so a period whose locks CP-SAT cannot keep still gets
+ * the same schedule every time it is generated.
+ *
+ * A second run on its own clock: it gets the full `timeLimitMs` again, on top of the time CP-SAT
+ * already spent, because that time bought nothing and the manager still needs a schedule (the
+ * dialog says a fallback ran). So `stats.elapsedMs` is the SA run's time alone, not the job's.
+ */
+function fallBackFromInfeasible(
+  input: SolveInput,
+  options: OrToolsOptions,
+  hooks: OrToolsHooks,
+  infeasible: CpsatInfeasibleError,
+): SolveReport {
+  const { runnerPath: _runnerPath, deterministicTime: _deterministicTime, ...rest } = options;
+  const report = PURE_SOLVERS['sa-lns']!.solve(input, {
+    ...rest,
+    ...(hooks.onProgress ? { onProgress: hooks.onProgress } : {}),
+    ...(hooks.shouldCancel ? { shouldCancel: hooks.shouldCancel } : {}),
+  });
+  report.stats.fellBackFrom = { solver: 'cp-sat', reason: infeasibleReason(input, infeasible) };
+  return report;
+}
+
+/** "Dana Okafor Tue Jan 6 D12 (insufficient_rest)" per breaching locked shift, at most five. */
+function infeasibleReason(input: SolveInput, infeasible: CpsatInfeasibleError): string {
+  const locked = new Map(input.assignments.filter((a) => a.isLocked).map((a) => [a.id, a]));
+  const codesByShift = new Map<string, Set<string>>();
+  for (const v of infeasible.lockedBreaches) {
+    for (const id of v.assignmentIds) {
+      if (!locked.has(id)) continue;
+      const codes = codesByShift.get(id) ?? new Set<string>();
+      codes.add(v.code);
+      codesByShift.set(id, codes);
+    }
+  }
+  if (codesByShift.size === 0) {
+    return (
+      `CP-SAT reported the model ${infeasible.status}; ran SA + LNS instead. ` +
+      'This is likely a bug in the CP-SAT encoding — please report it.'
+    );
+  }
+  const named = [...codesByShift].map(([id, codes]) => {
+    const a = locked.get(id)!;
+    const nurse = input.nurses.find((n) => n.id === a.nurseId);
+    const shiftType = input.shiftTypes.find((t) => t.id === a.shiftTypeId);
+    // The model this came from was built from the same input and throws on an unknown id first.
+    if (!nurse || !shiftType)
+      throw new Error(`Locked assignment ${id} has an unknown nurse or shift`);
+    return `${nurseName(nurse)} ${describeDate(a.date)} ${shiftType.abbreviation} (${[...codes].join(', ')})`;
+  });
+  const more = named.length - REASON_SHIFTS;
+  return (
+    'CP-SAT found no schedule that keeps every hard rule around the locked shifts; ran SA + LNS, ' +
+    'which keeps them as they are. Locked shifts already breaching a rule: ' +
+    named.slice(0, REASON_SHIFTS).join('; ') +
+    (more > 0 ? `; … and ${more} more` : '')
+  );
 }
 
 export async function solveHybrid(
