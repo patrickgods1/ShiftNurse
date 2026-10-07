@@ -180,6 +180,219 @@ describe('rest and overlap', () => {
   });
 });
 
+describe('tour rotation made hard', () => {
+  /** The rule on and hard, with its parameters at the contract defaults unless overridden. */
+  function hardTours(params: Record<string, unknown> = {}): RuleSet {
+    const base = withParams('tour-rotation', params);
+    return {
+      ...base,
+      configs: base.configs.map((c) =>
+        c.ruleId === 'tour-rotation'
+          ? { ...c, enabled: true, severityOverride: 'hard' as const }
+          : c,
+      ),
+    };
+  }
+
+  it('forbids a day shift for a nurse on permanent nights', () => {
+    const nurse = makeNurse({ id: 'ada', firstName: 'Ada', permanentTour: 'night' });
+    const encoding = encodeCpsat(unit([nurse], { ruleSet: hardTours() }));
+    expect(evaluate(encoding, [assign('ada', DAY_12, '2026-01-12')]).violated.join('\n')).toMatch(
+      /permanent tour/,
+    );
+    expect(evaluate(encoding, [assign('ada', NIGHT_12, '2026-01-12')]).violated).toEqual([]);
+  });
+
+  it('lets a nurse on permanent nights be rotated when the contract does not enforce it', () => {
+    const nurse = makeNurse({ id: 'ada', firstName: 'Ada', permanentTour: 'night' });
+    const encoding = encodeCpsat(
+      unit([nurse], { ruleSet: hardTours({ permanentTourEnforced: false }) }),
+    );
+    expect(evaluate(encoding, [assign('ada', DAY_12, '2026-01-12')]).violated).toEqual([]);
+  });
+
+  it('forbids nights to days with only 24 hours between, and allows it after 48', () => {
+    const encoding = encodeCpsat(unit([ada()], { ruleSet: hardTours() }));
+    // Night 19:00 Mon 5 Jan ends 07:00 Tue; Day 07:00 Wed is 24h on, Day 07:00 Thu is 48h.
+    const quick = [assign('ada', NIGHT_12, '2026-01-05'), assign('ada', DAY_12, '2026-01-07')];
+    expect(evaluate(encoding, quick).violated.join('\n')).toMatch(/tour change/);
+    const slow = [assign('ada', NIGHT_12, '2026-01-05'), assign('ada', DAY_12, '2026-01-08')];
+    expect(evaluate(encoding, slow).violated).toEqual([]);
+  });
+
+  it('forbids a day shift too soon after last schedule’s final night', () => {
+    const lastNight = assign('ada', NIGHT_12, '2026-01-03', { periodId: 'prev' });
+    const encoding = encodeCpsat(
+      unit([ada()], { priorAssignments: [lastNight], ruleSet: hardTours() }),
+    );
+    expect(evaluate(encoding, [assign('ada', DAY_12, '2026-01-05')]).violated.join('\n')).toMatch(
+      /tour change/,
+    );
+    expect(evaluate(encoding, [assign('ada', DAY_12, '2026-01-06')]).violated).toEqual([]);
+  });
+
+  it('forbids a third tour in one schedule, allows two', () => {
+    const encoding = encodeCpsat(
+      unit([ada()], {
+        shiftTypes: [DAY_12, EVENING_8, NIGHT_12],
+        coverageRequirements: [
+          ...coverageAllWeek(DAY_12, 'RN', 1),
+          ...coverageAllWeek(EVENING_8, 'RN', 1),
+          ...coverageAllWeek(NIGHT_12, 'RN', 1),
+        ],
+        ruleSet: hardTours(),
+      }),
+    );
+    const two = [assign('ada', DAY_12, '2026-01-05'), assign('ada', EVENING_8, '2026-01-09')];
+    expect(evaluate(encoding, two).violated).toEqual([]);
+    const three = [...two, assign('ada', NIGHT_12, '2026-01-14')];
+    expect(evaluate(encoding, three).violated.join('\n')).toMatch(/tours per schedule/);
+  });
+
+  it('lets three locked tours stand at a maximum of two without making the model infeasible', () => {
+    const locked = [
+      assign('ada', DAY_12, '2026-01-05', { isLocked: true }),
+      assign('ada', EVENING_8, '2026-01-09', { isLocked: true }),
+      assign('ada', NIGHT_12, '2026-01-14', { isLocked: true }),
+    ];
+    const encoding = encodeCpsat(
+      unit([ada()], {
+        shiftTypes: [DAY_12, EVENING_8, NIGHT_12],
+        coverageRequirements: [
+          ...coverageAllWeek(DAY_12, 'RN', 1),
+          ...coverageAllWeek(EVENING_8, 'RN', 1),
+          ...coverageAllWeek(NIGHT_12, 'RN', 1),
+        ],
+        assignments: locked,
+        ruleSet: hardTours(),
+      }),
+    );
+    expect(evaluate(encoding, locked).violated).toEqual([]);
+  });
+
+  it('counts a locked shift toward the tours already worked', () => {
+    const locked = assign('ada', DAY_12, '2026-01-05', { isLocked: true });
+    const encoding = encodeCpsat(
+      unit([ada()], {
+        shiftTypes: [DAY_12, EVENING_8, NIGHT_12],
+        coverageRequirements: [
+          ...coverageAllWeek(DAY_12, 'RN', 1),
+          ...coverageAllWeek(EVENING_8, 'RN', 1),
+          ...coverageAllWeek(NIGHT_12, 'RN', 1),
+        ],
+        assignments: [locked],
+        ruleSet: hardTours({ maxToursPerPeriod: 2 }),
+      }),
+    );
+    const evening = assign('ada', EVENING_8, '2026-01-09');
+    const night = assign('ada', NIGHT_12, '2026-01-14');
+    expect(evaluate(encoding, [locked, evening, night]).violated.join('\n')).toMatch(
+      /tours per schedule/,
+    );
+    expect(evaluate(encoding, [locked, evening]).violated).toEqual([]);
+  });
+});
+
+describe('a rest waiver', () => {
+  // Night 19:00 Mon 5 Jan to 07:00 Tue, then Day 07:00 Tue 6 Jan: no rest at all.
+  const turnaround = [assign('ada', NIGHT_12, '2026-01-05'), assign('ada', DAY_12, '2026-01-06')];
+  const waiver = (date: string) => ({
+    id: `w-${date}`,
+    unitId: UNIT_ID,
+    nurseId: 'ada',
+    date: isoDate(date),
+    reason: 'Signed waiver',
+    createdAt: 0,
+  });
+
+  it('forbids the night-to-day turnaround when no waiver is on file', () => {
+    const encoding = encodeCpsat(unit([ada()]));
+    expect(evaluate(encoding, turnaround).violated.join('\n')).toMatch(/rest/);
+  });
+
+  it('lets the turnaround stand for the shift that starts on the waived date', () => {
+    const encoding = encodeCpsat(unit([ada()], { restWaivers: [waiver('2026-01-06')] }));
+    expect(evaluate(encoding, turnaround).violated).toEqual([]);
+  });
+
+  it('does not excuse a turnaround whose later shift is on another date', () => {
+    const encoding = encodeCpsat(unit([ada()], { restWaivers: [waiver('2026-01-05')] }));
+    expect(evaluate(encoding, turnaround).violated.join('\n')).toMatch(/rest/);
+  });
+});
+
+describe('an accommodation', () => {
+  // The Sabbath: Fridays 18:00 for 24 hours. 9 Jan 2026 is a Friday.
+  const sabbath = {
+    id: 'blk-sabbath',
+    unitId: UNIT_ID,
+    nurseId: 'ada',
+    weekdays: [5 as const],
+    startTime: '18:00',
+    endTime: '18:00',
+    reason: 'Religious accommodation',
+  };
+
+  const withStandby = (ruleSet?: RuleSet) =>
+    unit([ada()], {
+      shiftTypes: [DAY_12, NIGHT_12, ON_CALL],
+      coverageRequirements: [
+        ...coverageAllWeek(DAY_12, 'RN', 1),
+        ...coverageAllWeek(NIGHT_12, 'RN', 1),
+        ...coverageAllWeek(ON_CALL, 'RN', 0, 1),
+      ],
+      availabilityBlocks: [sabbath],
+      ...(ruleSet ? { ruleSet } : {}),
+    });
+
+  it('forbids standby inside the window by default', () => {
+    const encoding = encodeCpsat(withStandby());
+    expect(evaluate(encoding, [assign('ada', ON_CALL, '2026-01-09')]).violated.join('\n')).toMatch(
+      /accommodation/,
+    );
+  });
+
+  it('allows standby inside the window when the unit turns that off', () => {
+    const encoding = encodeCpsat(
+      withStandby(withParams('accommodation-blocks', { onCallCounts: false })),
+    );
+    expect(evaluate(encoding, [assign('ada', ON_CALL, '2026-01-09')]).violated).toEqual([]);
+  });
+
+  it('forbids the Friday night, which starts inside the window', () => {
+    const encoding = encodeCpsat(unit([ada()], { availabilityBlocks: [sabbath] }));
+    expect(evaluate(encoding, [assign('ada', NIGHT_12, '2026-01-09')]).violated.join('\n')).toMatch(
+      /accommodation/,
+    );
+  });
+
+  it('forbids the Friday day shift that runs to 19:00, past 18:00', () => {
+    const encoding = encodeCpsat(unit([ada()], { availabilityBlocks: [sabbath] }));
+    expect(evaluate(encoding, [assign('ada', DAY_12, '2026-01-09')]).violated.join('\n')).toMatch(
+      /accommodation/,
+    );
+  });
+
+  it('allows the Thursday night that ends at 07:00 on Friday', () => {
+    const encoding = encodeCpsat(unit([ada()], { availabilityBlocks: [sabbath] }));
+    expect(evaluate(encoding, [assign('ada', NIGHT_12, '2026-01-08')]).violated).toEqual([]);
+  });
+
+  it('allows the Saturday night that starts when the window has closed', () => {
+    const encoding = encodeCpsat(unit([ada()], { availabilityBlocks: [sabbath] }));
+    expect(evaluate(encoding, [assign('ada', NIGHT_12, '2026-01-10')]).violated).toEqual([]);
+  });
+
+  it('leaves another nurse’s Friday night alone', () => {
+    const encoding = encodeCpsat(
+      unit([ada(), makeNurse({ id: 'bo', firstName: 'Bo', lastName: 'Ruiz' })], {
+        availabilityBlocks: [sabbath],
+      }),
+    );
+    expect(evaluate(encoding, [assign('bo', NIGHT_12, '2026-01-09')]).violated).toEqual([]);
+  });
+});
+
 describe('consecutive shifts', () => {
   const four = withParams('max-consecutive-shifts', { maxConsecutiveShifts: 4 }, NO_WEEKLY_CAP);
 
@@ -448,6 +661,31 @@ describe('agreement with the rule engine', () => {
         ...base.ruleSet,
         configs: base.ruleSet.configs.map((c) =>
           c.ruleId === 'recovery-after-nights' ? { ...c, severityOverride: 'hard' as const } : c,
+        ),
+      },
+    });
+  });
+
+  it('agrees with the rules when tour rotation limits are hard', () => {
+    const base = parityInput({
+      nurses: [
+        makeNurse({ id: 'ada', firstName: 'Ada', isChargeEligible: true }),
+        makeNurse({
+          id: 'bo',
+          firstName: 'Bo',
+          contractedHoursPerPeriod: 48,
+          permanentTour: 'day',
+        }),
+      ],
+    });
+    expectParity({
+      ...base,
+      ruleSet: {
+        ...base.ruleSet,
+        configs: base.ruleSet.configs.map((c) =>
+          c.ruleId === 'tour-rotation'
+            ? { ...c, enabled: true, severityOverride: 'hard' as const }
+            : c,
         ),
       },
     });

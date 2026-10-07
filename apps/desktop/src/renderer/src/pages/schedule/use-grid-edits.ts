@@ -33,6 +33,8 @@ interface GridEditsArgs {
   unitId: Id;
   readOnly: boolean;
   published: boolean;
+  /** The unit asks for the nurse's recorded agreement before a posted shift is changed. */
+  requireConsent?: boolean;
   /** The grid's current rows: where a shift stood before an edit is what its undo restores. */
   assignments: readonly Assignment[] | undefined;
   /** Names for the undo toast; a lookup that misses reads as a generic phrase, not an error. */
@@ -105,6 +107,7 @@ export function useGridEdits({
   unitId,
   readOnly,
   published,
+  requireConsent = false,
   assignments,
   nurses,
   shiftTypes,
@@ -144,14 +147,15 @@ export function useGridEdits({
   const [pendingCreates, setPendingCreates] = useState<readonly Assignment[]>([]);
   /** An edit waiting on its reason. Set only on a published period. */
   const [pendingEdit, setPendingEdit] = useState<
-    { title: string; run: (reason: string | undefined) => void } | undefined
+    | { title: string; run: (reason: string | undefined, consent: string | undefined) => void }
+    | undefined
   >(undefined);
 
   // On a draft the edit runs at once; on a published period it waits for the reason dialog.
   const withReason = useCallback(
-    (title: string, run: (reason: string | undefined) => void) => {
+    (title: string, run: (reason: string | undefined, consent: string | undefined) => void) => {
       if (published) setPendingEdit({ title, run });
-      else run(undefined);
+      else run(undefined, undefined);
     },
     [published],
   );
@@ -222,14 +226,16 @@ export function useGridEdits({
 
   // The inverses run through the same mutations, so a failure reaches `failedEdit` unchanged.
   const inverseDelete = useCallback(
-    (assignmentId: Id, reason: string | undefined) => {
+    (assignmentId: Id, reason: string | undefined, consent: string | undefined) => {
       markPending(assignmentId);
-      settle(deleteMutate({ assignmentId, reason }), undefined, () => clearPending(assignmentId));
+      settle(deleteMutate({ assignmentId, reason, consent }), undefined, () =>
+        clearPending(assignmentId),
+      );
     },
     [deleteMutate, markPending, clearPending],
   );
   const inverseMove = useCallback(
-    (assignmentId: Id, to: Assignment, reason: string | undefined) => {
+    (assignmentId: Id, to: Assignment, reason: string | undefined, consent: string | undefined) => {
       markPending(assignmentId);
       settle(
         moveMutate({
@@ -238,6 +244,7 @@ export function useGridEdits({
           shiftTypeId: to.shiftTypeId,
           date: to.date,
           reason,
+          consent,
         }),
         undefined,
         () => clearPending(assignmentId),
@@ -250,9 +257,10 @@ export function useGridEdits({
       assignmentId: Id,
       patch: { isCharge: boolean } | { isOvertime: boolean },
       reason: string | undefined,
+      consent: string | undefined,
     ) => {
       markPending(assignmentId);
-      settle(updateMutate({ assignmentId, patch, reason }), undefined, () =>
+      settle(updateMutate({ assignmentId, patch, reason, consent }), undefined, () =>
         clearPending(assignmentId),
       );
     },
@@ -277,16 +285,16 @@ export function useGridEdits({
   const handleCreate = useCallback(
     (input: { nurseId: Id; date: IsoDate; shiftTypeId: Id }) => {
       if (readOnly) return;
-      withReason('Add a shift to the published schedule', (reason) => {
+      withReason('Add a shift to the published schedule', (reason, consent) => {
         const ghost = makeGhost(period.id, input);
         setPendingCreates((prev) => [...prev, ghost]);
         settle(
-          createMutate({ periodId: period.id, ...input, reason }),
+          createMutate({ periodId: period.id, ...input, reason, consent }),
           (created) =>
             record(
               `Added ${nurseName(input.nurseId)} to ${shiftName(input.shiftTypeId)} on ${formatDateWithWeekday(input.date)}`,
               reason,
-              (undoReason) => inverseDelete(created.id, undoReason),
+              (undoReason) => inverseDelete(created.id, undoReason, consent),
             ),
           () => setPendingCreates((prev) => prev.filter((g) => g.id !== ghost.id)),
         );
@@ -298,13 +306,13 @@ export function useGridEdits({
   const handleMove = useCallback(
     (input: { assignmentId: Id; nurseId: Id; shiftTypeId: Id; date: IsoDate }) => {
       if (readOnly) return;
-      withReason('Move a shift on the published schedule', (reason) => {
+      withReason('Move a shift on the published schedule', (reason, consent) => {
         markPending(input.assignmentId);
         const ghost = makeGhost(period.id, input);
         setPendingCreates((prev) => [...prev, ghost]);
         const before = heldAssignment(input.assignmentId);
         settle(
-          moveMutate({ ...input, reason }),
+          moveMutate({ ...input, reason, consent }),
           (moved) => {
             // No held row to go back to (a move normally starts from a chip the board holds, so
             // this is rare): the move stands, it just cannot be undone.
@@ -313,7 +321,7 @@ export function useGridEdits({
               `Moved ${nurseName(input.nurseId)} to ${formatDateWithWeekday(input.date)}, ${shiftName(input.shiftTypeId)}`,
               reason,
               // The server re-created the shift, so it is the new id that goes back.
-              (undoReason) => inverseMove(moved.id, before, undoReason),
+              (undoReason) => inverseMove(moved.id, before, undoReason, consent),
             );
           },
           () => {
@@ -360,17 +368,18 @@ export function useGridEdits({
 
   const handleToggleCharge = useCallback(
     (assignment: Assignment) => {
-      withReason('Change the charge nurse on the published schedule', (reason) => {
+      withReason('Change the charge nurse on the published schedule', (reason, consent) => {
         markPending(assignment.id);
         settle(
           updateMutate({
             assignmentId: assignment.id,
             patch: { isCharge: !assignment.isCharge },
             reason,
+            consent,
           }),
           () =>
             record('Charge nurse changed', reason, (undoReason) =>
-              inversePatch(assignment.id, { isCharge: assignment.isCharge }, undoReason),
+              inversePatch(assignment.id, { isCharge: assignment.isCharge }, undoReason, consent),
             ),
           () => clearPending(assignment.id),
         );
@@ -381,17 +390,23 @@ export function useGridEdits({
 
   const handleToggleOvertime = useCallback(
     (assignment: Assignment) => {
-      withReason('Change overtime authorisation on the published schedule', (reason) => {
+      withReason('Change overtime authorisation on the published schedule', (reason, consent) => {
         markPending(assignment.id);
         settle(
           updateMutate({
             assignmentId: assignment.id,
             patch: { isOvertime: !assignment.isOvertime },
             reason,
+            consent,
           }),
           () =>
             record('Overtime authorisation changed', reason, (undoReason) =>
-              inversePatch(assignment.id, { isOvertime: assignment.isOvertime }, undoReason),
+              inversePatch(
+                assignment.id,
+                { isOvertime: assignment.isOvertime },
+                undoReason,
+                consent,
+              ),
             ),
           () => clearPending(assignment.id),
         );
@@ -403,10 +418,10 @@ export function useGridEdits({
   const handleRemove = useCallback(
     (assignment: Assignment) => {
       onRemoveStart?.();
-      withReason('Remove a shift from the published schedule', (reason) => {
+      withReason('Remove a shift from the published schedule', (reason, consent) => {
         markPending(assignment.id);
         settle(
-          deleteMutate({ assignmentId: assignment.id, reason }),
+          deleteMutate({ assignmentId: assignment.id, reason, consent }),
           () =>
             record(
               `Removed ${nurseName(assignment.nurseId)} from ${shiftName(assignment.shiftTypeId)} on ${formatDateWithWeekday(assignment.date)}`,
@@ -425,6 +440,7 @@ export function useGridEdits({
                     isOvertime: assignment.isOvertime,
                     ...(assignment.notes !== undefined ? { notes: assignment.notes } : {}),
                     reason: undoReason,
+                    consent,
                   }),
                   undefined,
                   undefined,
@@ -458,11 +474,11 @@ export function useGridEdits({
 
   const handleSwap = useCallback(
     (firstId: Id, secondId: Id) =>
-      withReason('Swap two shifts on the published schedule', (reason) => {
+      withReason('Swap two shifts on the published schedule', (reason, consent) => {
         const first = heldAssignment(firstId);
         const second = heldAssignment(secondId);
         settle(
-          swapMutate({ firstId, secondId, reason }),
+          swapMutate({ firstId, secondId, reason, consent }),
           ([a, b]) =>
             record(
               first && second
@@ -472,7 +488,7 @@ export function useGridEdits({
               // Both rows were re-created, so the swap back is between the new ids.
               (undoReason) =>
                 settle(
-                  swapMutate({ firstId: a.id, secondId: b.id, reason: undoReason }),
+                  swapMutate({ firstId: a.id, secondId: b.id, reason: undoReason, consent }),
                   undefined,
                   undefined,
                 ),
@@ -500,10 +516,11 @@ export function useGridEdits({
     pendingIds,
     pendingCreates,
     pendingEdit,
-    resolvePendingEdit: (reason: string | undefined) => {
+    requireConsent,
+    resolvePendingEdit: (reason: string | undefined, consent?: string) => {
       const edit = pendingEdit;
       setPendingEdit(undefined);
-      edit?.run(reason);
+      edit?.run(reason, consent);
     },
     cancelPendingEdit: () => setPendingEdit(undefined),
     undoLatest,

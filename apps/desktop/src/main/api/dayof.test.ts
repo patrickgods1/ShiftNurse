@@ -5,7 +5,7 @@
  * see of who covered whom.
  */
 
-import { addDays } from '@shiftnurse/core';
+import { addDays, isoDate } from '@shiftnurse/core';
 import {
   auditHistoryFor,
   getAssignment,
@@ -17,6 +17,7 @@ import {
   listNursesForUnit,
   publishSchedule,
   recordActualCensus,
+  updateUnit,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ACTOR } from './context.js';
@@ -297,5 +298,47 @@ describe('the live staffing re-check when the census changes', () => {
       .roster.find((r) => r.assignment.id === absent.id);
     expect(row?.callOff?.id).toBe(callOff.id);
     expect(summary.openCallOffs.map((c) => c.callOff.id)).toEqual([callOff.id]);
+  });
+});
+
+describe('the overtime call order', () => {
+  /** Every other RN carries 36h Mon-Wed of the call-off week, so Thursday's 12h is overtime. */
+  function overtimeCall() {
+    const grid = scheduleApi(f.handle.db);
+    const monday = f.seeded.draftStart;
+    const put = (nurseId: string, date: string, isOvertime = false, shiftTypeId = f.day.id) =>
+      grid.createAssignment({
+        periodId: f.seeded.draftPeriodId,
+        nurseId,
+        shiftTypeId,
+        date: isoDate(date),
+        isOvertime,
+      });
+    const date = addDays(monday, 4);
+    const absent = put(f.rns[0]!.id, date);
+    return { put, date, absent, monday };
+  }
+
+  it('mandates overtime most junior first, with their last overtime shown, once the unit chose rosters', () => {
+    const { put, absent, monday } = overtimeCall();
+    const others = f.rns.slice(1);
+    for (const n of others) for (const d of [0, 1, 2]) put(n.id, addDays(monday, d));
+    // Overtime history, well before the seeded history periods so no row doubles a seeded shift.
+    for (const [i, n] of others.entries()) put(n.id, addDays(monday, -100 - i), true);
+    const dayOf = dayOfApi(f.handle.db);
+    const callOff = dayOf.reportCallOff(absent.id, 'sick');
+
+    updateUnit(f.handle.db, f.seeded.unitId, { overtimeOrder: 'roster' }, ACTOR);
+    const overtime = dayOf
+      .replacements(callOff.id)
+      .candidates.filter((c) => c.payTier === 'overtime');
+    // Nobody volunteered, so the mandated roster runs most junior first; the dates still show.
+    expect(overtime.length).toBeGreaterThan(1);
+    const juniorFirst = others
+      .filter((n) => overtime.some((c) => c.nurseId === n.id))
+      .sort((x, y) => y.seniorityDate.localeCompare(x.seniorityDate) || x.id.localeCompare(y.id))
+      .map((n) => n.id);
+    expect(overtime.map((c) => c.nurseId)).toEqual(juniorFirst);
+    expect(overtime.every((c) => c.lastOvertimeOn !== undefined)).toBe(true);
   });
 });

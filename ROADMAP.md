@@ -626,8 +626,13 @@ Directive 1351) against what a unit can configure. One PR per milestone.
       VA's Title 38 leave fact sheet and 5 C.F.R. § 630.1203) (verified 2026-10-06: `npm run check`
       lint and typecheck clean, 2,212 tests passed, 2 skipped; smoke PASS; the community and ICU
       demos' tables byte-identical before and after)
-- [ ] M30 Contract rules: tour rotation limits, rest waivers, overtime rosters, float rotation,
+- [x] M30 Contract rules: tour rotation limits, rest waivers, overtime rosters, float rotation,
       per-diem commitments, holiday priority, consent to change a posted shift, hard accommodations
+      (one migration, 0028; a waiver excuses one turnaround keyed on the later shift; tours named by
+      start time, the rule soft and off by default and not priced by Generate while soft; overtime
+      rosters and consent are unit choices; the per-diem commitment is a pre-publish alert; holiday
+      priority is advice on the Requests screen) (verified 2026-10-06: `npm run check` lint and
+      typecheck clean, 2,421 tests passed, 2 skipped; smoke PASS; seeds untouched)
 - [ ] M31 Holdovers: worked time past a shift's end, mandated or volunteered — the model has
       none today (a shift's hours are its type's length, and back-to-back shifts break minimum
       rest), so continuous-hours caps (16 in 24), overtime after 8 consecutive hours (§7453(e)),

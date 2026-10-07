@@ -27,6 +27,7 @@ const SOURCE_LABEL: Record<ScheduleChange['source'], string> = {
   resolution: 'conflict resolution',
   backfill: 'call-off backfill',
   census: 'low-census cancellation',
+  float: 'float to another unit',
 };
 
 function describe(change: ScheduleChange, shiftTypes: ReadonlyMap<string, ShiftType>): string {
@@ -110,6 +111,11 @@ export function ChangeLog({ periodId }: { periodId: string }) {
                   <span className="text-text-muted">{describe(c, shiftTypes)}</span>
                   <br />
                   <span className="text-text">“{c.reason}”</span>{' '}
+                  {c.consent ? (
+                    <span className="text-text" data-testid="change-consent">
+                      Nurse's consent: “{c.consent}”{' '}
+                    </span>
+                  ) : null}
                   <span className="text-text-muted">
                     · {SOURCE_LABEL[c.source]} · v{c.version} · {formatInstant(c.at)}
                   </span>

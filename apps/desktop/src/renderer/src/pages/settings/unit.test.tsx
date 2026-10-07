@@ -96,6 +96,54 @@ describe('Settings › Unit ratio staffing', () => {
   });
 });
 
+describe('Settings › Unit per-diem commitment', () => {
+  it('saves two weekend shifts per four weeks and one holiday a year once switched on', async () => {
+    renderWithApp(<UnitPanel />, { unit });
+    fireEvent.click(await screen.findByLabelText('Check per-diem commitments'));
+    fireEvent.change(screen.getByLabelText('Weekend shifts per 4 weeks'), {
+      target: { value: '3' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(bridge.callsTo('units', 'update')).toHaveLength(1));
+    expect(bridge.callsTo('units', 'update')[0]![1].perDiemCommitment).toEqual({
+      weekendShiftsPer4Weeks: 3,
+      holidayShiftsPerYear: 1,
+    });
+  });
+
+  it('clears the commitment when switched off', async () => {
+    renderWithApp(<UnitPanel />, {
+      unit: { ...unit, perDiemCommitment: { weekendShiftsPer4Weeks: 2, holidayShiftsPerYear: 1 } },
+    });
+    fireEvent.click(await screen.findByLabelText('Check per-diem commitments'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(bridge.callsTo('units', 'update')).toHaveLength(1));
+    expect(bridge.callsTo('units', 'update')[0]![1].perDiemCommitment).toBeNull();
+  });
+
+  it('will not save a part of a shift', async () => {
+    renderWithApp(<UnitPanel />, { unit });
+    fireEvent.click(await screen.findByLabelText('Check per-diem commitments'));
+    fireEvent.change(screen.getByLabelText('Holiday shifts per year'), {
+      target: { value: '1.5' },
+    });
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('Settings › Unit posted-schedule consent', () => {
+  it("saves that a posted shift needs the nurse's consent once ticked", async () => {
+    renderWithApp(<UnitPanel />, { unit });
+    fireEvent.click(
+      await screen.findByLabelText("Require the nurse's consent to change a posted shift"),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(bridge.callsTo('units', 'update')).toHaveLength(1));
+    expect(bridge.callsTo('units', 'update')[0]![1].requireConsentForPostedChanges).toBe(true);
+  });
+});
+
 describe('Settings › Unit state law', () => {
   it('shows what California asks before anything is applied, and sends nothing for it', async () => {
     renderWithApp(<UnitPanel />, { unit });

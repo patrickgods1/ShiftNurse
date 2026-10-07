@@ -21,6 +21,7 @@
 
 import type { DemandTable } from '../acuity/demand.js';
 import type {
+  AvailabilityBlock,
   Credential,
   Holiday,
   Id,
@@ -84,7 +85,11 @@ export type ViolationCode =
   | 'short_recovery_after_nights'
   | 'works_during_pending_time_off'
   | 'mandatory_overtime'
-  | 'orientee_without_preceptor';
+  | 'orientee_without_preceptor'
+  | 'too_many_tours'
+  | 'short_tour_change'
+  | 'off_permanent_tour'
+  | 'works_during_accommodation';
 
 /**
  * One nurse worked one past holiday. Derived from published schedules, or recorded by hand for
@@ -152,6 +157,10 @@ export interface RuleContext {
   overtimeVolunteersByNurse: ReadonlyMap<Id, readonly OvertimeVolunteer[]>;
   /** Each orientee's preceptorships, by orientee id. */
   preceptorshipsByOrientee: ReadonlyMap<Id, readonly Preceptorship[]>;
+  /** The dates each nurse has waived minimum rest before the shift starting on them. */
+  restWaiversByNurse: ReadonlyMap<Id, ReadonlySet<IsoDate>>;
+  /** Each nurse's recorded accommodations (recurring windows they cannot work). */
+  availabilityBlocksByNurse: ReadonlyMap<Id, readonly AvailabilityBlock[]>;
 }
 
 /**

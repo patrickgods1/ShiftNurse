@@ -15,13 +15,24 @@
  */
 
 import { NURSE_ROLES, type ShiftDemand } from '../acuity/demand.js';
-import type { Credential, Id, NurseCredential, NurseRole } from '../domain/entities.js';
+import type {
+  Credential,
+  Holiday,
+  Id,
+  NurseCredential,
+  NurseRole,
+  PerDiemCommitment,
+} from '../domain/entities.js';
 import {
   compareDates,
+  DEFAULT_WEEKEND,
+  dateInRange,
   daysBetween,
   describeDate,
   type IsoDate,
   type Weekday,
+  type WeekendDefinition,
+  weekendKey,
 } from '../domain/time.js';
 import { credentialLapsedOn } from '../rules/coverage-rules.js';
 import { payPeriodsIn, workWeeksIn } from '../rules/hours-rules.js';
@@ -34,7 +45,8 @@ export type ComplianceAlertKind =
   | 'hours_drift'
   | 'overtime'
   | 'ratio_risk'
-  | 'late_posting';
+  | 'late_posting'
+  | 'per_diem_commitment';
 export type ComplianceSeverity = 'warning' | 'critical';
 
 export interface ComplianceAlert {
@@ -85,6 +97,15 @@ export interface ComplianceInput {
    * core never reads the clock. Absent means no check (no notice rule, or already published).
    */
   posting?: { leadDays: number; publishDate: IsoDate };
+  /**
+   * The unit's per-diem commitment. Absent means no check. The rest of this group feeds it: the
+   * rule set's weekend definition, the unit's holidays, and who worked each in earlier periods
+   * (`RuleContext.holidayWorkedBy`'s shape).
+   */
+  perDiemCommitment?: PerDiemCommitment;
+  weekendDefinition?: WeekendDefinition;
+  holidays?: readonly Holiday[];
+  holidayWorkedBy?: ReadonlyMap<Id, ReadonlySet<Id>>;
 }
 
 const SEVERITY_ORDER: Record<ComplianceSeverity, number> = { critical: 0, warning: 1 };
@@ -94,6 +115,7 @@ const KIND_ORDER: Record<ComplianceAlertKind, number> = {
   overtime: 2,
   hours_drift: 3,
   late_posting: 4,
+  per_diem_commitment: 5,
 };
 
 /** How far past the period's end a lapsing credential is still worth a warning. */
@@ -283,6 +305,77 @@ function latePosting(input: ComplianceInput): ComplianceAlert[] {
   ];
 }
 
+/**
+ * A per-diem nurse trades guaranteed hours for a minimum availability. It is an alert, not a
+ * rule: a hard floor would gate every shift added to an under-committed nurse, and the shortfall
+ * is the nurse's to make up, not a breach by the manager.
+ */
+function perDiemCommitment(input: ComplianceInput): ComplianceAlert[] {
+  const commitment = input.perDiemCommitment;
+  if (!commitment) return [];
+  const { schedule } = input;
+  const { startDate, endDate } = schedule.period;
+  const weekendDef = input.weekendDefinition ?? DEFAULT_WEEKEND;
+  const requiredWeekends = Math.ceil(
+    (commitment.weekendShiftsPer4Weeks * schedule.dates.length) / 28,
+  );
+  const holidays = input.holidays ?? [];
+  // A year's holiday commitment is judged once, by the period holding that year's last holiday,
+  // so every earlier period reads as complete-so-far and none is nagged for a half-finished year.
+  const lastOfYear = new Map<string, Holiday>();
+  for (const h of holidays) {
+    const year = h.date.slice(0, 4);
+    const last = lastOfYear.get(year);
+    if (!last || compareDates(h.date, last.date) > 0) lastOfYear.set(year, h);
+  }
+  const judgedYears = [...lastOfYear]
+    .filter(([, h]) => dateInRange(h.date, startDate, endDate))
+    .map(([year]) => year)
+    .sort();
+
+  const alerts: ComplianceAlert[] = [];
+  for (const [nurseId, nurse] of schedule.nursesById) {
+    if (!nurse.active || nurse.employmentType !== 'per_diem') continue;
+    const worked = schedule.assignmentsFor(nurseId).filter((v) => !v.shiftType.isOnCall);
+
+    if (requiredWeekends > 0) {
+      const weekend = worked.filter((v) => weekendKey(v.window, weekendDef) !== null);
+      if (weekend.length < requiredWeekends) {
+        alerts.push({
+          kind: 'per_diem_commitment',
+          severity: 'warning',
+          nurseId,
+          assignmentIds: weekend.map((v) => v.assignment.id),
+          message: `${nurseName(nurse)} has ${weekend.length} weekend shift${weekend.length === 1 ? '' : 's'} in this period against a per-diem commitment of ${requiredWeekends}`,
+        });
+      }
+    }
+
+    if (commitment.holidayShiftsPerYear > 0) {
+      for (const year of judgedYears) {
+        const ofYear = holidays.filter((h) => h.date.slice(0, 4) === year);
+        const done = new Set<Id>();
+        for (const h of ofYear) {
+          if (dateInRange(h.date, startDate, endDate)) continue;
+          if (input.holidayWorkedBy?.get(h.id)?.has(nurseId)) done.add(h.id);
+        }
+        for (const h of ofYear) {
+          if (worked.some((v) => v.assignment.date === h.date)) done.add(h.id);
+        }
+        if (done.size >= commitment.holidayShiftsPerYear) continue;
+        alerts.push({
+          kind: 'per_diem_commitment',
+          severity: 'warning',
+          nurseId,
+          assignmentIds: [],
+          message: `${nurseName(nurse)} has worked ${done.size} holiday${done.size === 1 ? '' : 's'} in ${year} against a per-diem commitment of ${commitment.holidayShiftsPerYear}`,
+        });
+      }
+    }
+  }
+  return alerts;
+}
+
 /** Every alert for the period, critical first, then by kind, then by date and nurse. */
 export function complianceAlerts(input: ComplianceInput): ComplianceAlert[] {
   const alerts = [
@@ -291,6 +384,7 @@ export function complianceAlerts(input: ComplianceInput): ComplianceAlert[] {
     ...overtime(input),
     ...ratioRisk(input),
     ...latePosting(input),
+    ...perDiemCommitment(input),
   ];
   return alerts.sort(
     (a, b) =>

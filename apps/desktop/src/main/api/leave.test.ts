@@ -12,6 +12,7 @@ import {
   listChanges,
   publishSchedule,
   recentAudit,
+  updateUnit,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ACTOR, buildConflictInput } from './context.js';
@@ -89,6 +90,18 @@ describe('approving leave and covering it in one step', () => {
       ]),
     ).toThrow(/cannot cover/);
     expect(getTimeOffRequest(f.handle.db, request.id)?.status).toBe('pending');
+  });
+
+  it('approves leave on a posted schedule without asking consent, even where the unit requires it', () => {
+    const { request } = annAsksOff();
+    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    updateUnit(f.handle.db, f.seeded.unitId, { requireConsentForPostedChanges: true }, ACTOR);
+    const [option] = coverOptions(f.handle.db, f.seeded.draftPeriodId, request.id);
+    const cover = option!.candidates[0]!.nurseId;
+    approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, 'Approved: family', [
+      { assignmentId: option!.assignment.id, nurseId: cover },
+    ]);
+    expect(getTimeOffRequest(f.handle.db, request.id)?.status).toBe('approved');
   });
 
   it('takes Ann off a published schedule too, under a reason in the change log', () => {

@@ -53,6 +53,9 @@ export type {
 } from './dayof/cancellation.js';
 // Low-census cancellation order: who goes home first, each with the reason
 export { cancellationOrder, DEFAULT_CANCELLATION_TIERS } from './dayof/cancellation.js';
+export type { FloatOrder, FloatOrderInput, FloatPlace } from './dayof/float-order.js';
+// Float rotation: volunteers first, then the rotation, most junior among equals
+export { floatOrder } from './dayof/float-order.js';
 export type {
   PayTier,
   ReplacementCandidate,
@@ -70,6 +73,7 @@ export type {
   AssignmentSource,
   AuditAction,
   AuditLogEntry,
+  AvailabilityBlock,
   Budget,
   CallAttempt,
   CallOff,
@@ -82,6 +86,7 @@ export type {
   DifferentialKind,
   EmploymentType,
   FairnessLedgerEntry,
+  FloatRecord,
   FmlaPolicy,
   FmlaRegime,
   FmlaYearMethod,
@@ -95,9 +100,11 @@ export type {
   Nurse,
   NurseCredential,
   NurseRole,
+  OvertimeOrder,
   OvertimeRule,
   OvertimeVolunteer,
   PayRate,
+  PerDiemCommitment,
   PeriodStatus,
   Preceptorship,
   Preference,
@@ -105,6 +112,7 @@ export type {
   RatioRole,
   RatioRule,
   RequestOrigin,
+  RestWaiver,
   ScheduleChange,
   ScheduleChangeKind,
   ScheduleChangeSource,
@@ -115,6 +123,7 @@ export type {
   TimeOffRequest,
   TimeOffStatus,
   TimeOffType,
+  Tour,
   Unit,
 } from './domain/entities.js';
 // Plain-data entities and their enums
@@ -125,6 +134,7 @@ export {
   LEAVE_BALANCE_TYPES,
   TIME_OFF_TYPE_LABELS,
   TIME_OFF_TYPES,
+  TOURS,
 } from './domain/entities.js';
 export type { IsoDate, Weekday, WeekendDefinition } from './domain/time.js';
 // The wall-clock time model: every date and minute calculation goes through here
@@ -217,6 +227,13 @@ export {
   fmlaPeriod,
   fmlaStanding,
 } from './leave/fmla.js';
+export type {
+  HolidayClaim,
+  HolidayClaimant,
+  HolidayPriorityInput,
+} from './leave/holiday-priority.js';
+// Contested holiday requests ranked by the contract's order
+export { holidayRequestPriority } from './leave/holiday-priority.js';
 export { validateLeavePolicy } from './leave/policy.js';
 export type {
   ComplianceAlert,
@@ -237,6 +254,12 @@ export {
 export type { RosterCsvError, RosterCsvRow } from './roster/csv.js';
 // The one roster CSV parser and formatter
 export { formatRosterCsv, parseRosterCsv, ROSTER_COLUMNS, serializeCsv } from './roster/csv.js';
+export {
+  accommodationBlocksRule,
+  type BlockOccurrence,
+  blockedAt,
+  blockOccurrencesOverlapping,
+} from './rules/availability-blocks.js';
 export { credentialLapsedOn } from './rules/coverage-rules.js';
 export type { HolidayRotationParams } from './rules/holiday-rotation.js';
 // Holiday rotation facts
@@ -277,6 +300,9 @@ export {
   violationsByDate,
   violationsByNurse,
 } from './rules/registry.js';
+export { restWaivedOn } from './rules/rest-rules.js';
+// Tour rotation limits and the tour a shift belongs to
+export { tourOf, tourRotationRule } from './rules/tour-rotation.js';
 // Rule engine contract types
 export type {
   EvaluationResult,

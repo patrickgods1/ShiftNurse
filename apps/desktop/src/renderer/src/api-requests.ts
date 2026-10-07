@@ -23,6 +23,7 @@ export const requestKeys = {
   impact: (periodId: Id, requestId: Id, decision: 'approved' | 'denied') =>
     ['timeOff', 'impact', periodId, requestId, decision] as const,
   conflicts: (periodId: Id) => ['conflicts', periodId] as const,
+  holidayPriority: (unitId: Id) => ['timeOff', 'holidayPriority', unitId] as const,
   policy: (unitId: Id) => ['conflictPolicy', unitId] as const,
 };
 
@@ -30,6 +31,15 @@ export function useTimeOffInRange(unitId: Id | undefined, start: IsoDate, end: I
   return useQuery({
     queryKey: requestKeys.inRange(unitId ?? '', start, end),
     queryFn: () => api.timeOff.listInRange(unitId as Id, start, end),
+    enabled: unitId !== undefined,
+  });
+}
+
+/** The pending holiday requests in contract order. Under the `timeOff` key, so deciding one refreshes it. */
+export function useHolidayPriority(unitId: Id | undefined) {
+  return useQuery({
+    queryKey: requestKeys.holidayPriority(unitId ?? ''),
+    queryFn: () => api.timeOff.holidayPriority(unitId as Id),
     enabled: unitId !== undefined,
   });
 }

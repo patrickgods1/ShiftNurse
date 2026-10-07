@@ -4,7 +4,7 @@
 
 ## What is here
 
-- `packages/db` (M2, complete): 31-table Drizzle schema, generated migrations, `client.ts`
+- `packages/db` (M2, complete): 49-table Drizzle schema, generated migrations, `client.ts`
   (WAL, foreign keys ON, `transact`), `audit.ts`, `mappers.ts`, and repositories under
   `repositories/` — `roster`, `config` (unit, shift types, coverage, holidays, credential
   requirements), `acuity` (tiers, ratios, HPPD), `rulesets`, `schedule`, `timeoff`, `calloffs`,
@@ -42,5 +42,5 @@
 - **A nurse's record leaves the app without HR or medical matters.** The grievance export
   (`repositories/nurse-record.ts`, Roster › nurse › Export record…) carries every audit entry
   about a nurse — time, action, actor, reason, never the before/after snapshots — and their
-  published-shift changes, but `RECORD_EXCLUDED_ENTITIES` keeps kept-apart groups and FMLA
-  certifications out, and every record's footer says so whether or not the nurse has either.
+  published-shift changes, but `RECORD_EXCLUDED_ENTITIES` keeps kept-apart groups, FMLA
+  certifications and accommodations (`availability_block`) out, and every record's footer says so whether or not the nurse has either.

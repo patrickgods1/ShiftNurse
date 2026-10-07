@@ -158,6 +158,17 @@ describe('nurses', () => {
     });
   });
 
+  it('keeps a nurse on a permanent night tour, and returns them to the rotation with null', () => {
+    const nurse = createNurse(handle.db, baseNurse({ permanentTour: 'night' }), ACTOR);
+    expect(getNurse(handle.db, nurse.id)?.permanentTour).toBe('night');
+
+    const moved = updateNurse(handle.db, nurse.id, { permanentTour: 'evening' }, ACTOR);
+    expect(moved.permanentTour).toBe('evening');
+    const cleared = updateNurse(handle.db, nurse.id, { permanentTour: null }, ACTOR);
+    expect(cleared.permanentTour).toBeUndefined();
+    expect(getNurse(handle.db, nurse.id)).not.toHaveProperty('permanentTour', expect.anything());
+  });
+
   it('refuses to move a nurse to another unit through an edit', () => {
     // Types stop this at compile time; nothing stops it in an IPC payload at runtime.
     const nurse = createNurse(handle.db, baseNurse({ firstName: 'Ada' }), ACTOR);
@@ -442,6 +453,40 @@ describe('unit configuration', () => {
     expect((setIt.before as Unit).leavePolicy).toBeUndefined();
     const clearIt = updates.find((u) => (u.before as Unit).leavePolicy !== undefined)!;
     expect((clearIt.before as Unit).leavePolicy).toEqual(POLICY);
+  });
+
+  it('stores overtime order, per-diem commitment and the consent requirement, and clears them', () => {
+    const unit = getUnit(handle.db, unitId)!;
+    expect(unit.overtimeOrder).toBeUndefined();
+    expect(unit.perDiemCommitment).toBeUndefined();
+    expect(unit.requireConsentForPostedChanges).toBeUndefined();
+
+    updateUnit(
+      handle.db,
+      unitId,
+      {
+        overtimeOrder: 'roster',
+        perDiemCommitment: { weekendShiftsPer4Weeks: 2, holidayShiftsPerYear: 1 },
+        requireConsentForPostedChanges: true,
+      },
+      ACTOR,
+    );
+    expect(getUnit(handle.db, unitId)).toMatchObject({
+      overtimeOrder: 'roster',
+      perDiemCommitment: { weekendShiftsPer4Weeks: 2, holidayShiftsPerYear: 1 },
+      requireConsentForPostedChanges: true,
+    });
+
+    updateUnit(
+      handle.db,
+      unitId,
+      { overtimeOrder: null, perDiemCommitment: null, requireConsentForPostedChanges: null },
+      ACTOR,
+    );
+    const cleared = getUnit(handle.db, unitId)!;
+    expect(cleared.overtimeOrder).toBeUndefined();
+    expect(cleared.perDiemCommitment).toBeUndefined();
+    expect(cleared.requireConsentForPostedChanges).toBeUndefined();
   });
 
   it('refuses a leave policy with an earning rate of zero, and stores nothing', () => {

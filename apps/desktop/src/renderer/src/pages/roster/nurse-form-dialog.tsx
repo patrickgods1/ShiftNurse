@@ -6,7 +6,7 @@
  * than omitting the key.
  */
 
-import type { EmploymentType, Id, IsoDate, Nurse, NurseRole } from '@shiftnurse/core';
+import type { EmploymentType, Id, IsoDate, Nurse, NurseRole, Tour } from '@shiftnurse/core';
 import { EMPLOYMENT_TYPE_LABELS, EMPLOYMENT_TYPES } from '@shiftnurse/core';
 import { type FormEvent, type ReactNode, useEffect, useId, useState } from 'react';
 import type { NurseInput, NursePatch } from '../../../../shared/api.js';
@@ -16,6 +16,13 @@ import { Modal } from '../../components/modal.js';
 import { PRIMARY, SECONDARY } from '../../components/ui.js';
 
 const ROLES: readonly NurseRole[] = ['RN', 'LPN', 'CNA'];
+
+const TOUR_OPTIONS: readonly { value: Tour | ''; label: string }[] = [
+  { value: '', label: 'Rotates (none)' },
+  { value: 'day', label: 'Day' },
+  { value: 'evening', label: 'Evening' },
+  { value: 'night', label: 'Night' },
+];
 
 interface FormState {
   employeeId: string;
@@ -27,6 +34,7 @@ interface FormState {
   contractedHoursPerPeriod: string;
   seniorityDate: string;
   hireDate: string;
+  permanentTour: Tour | '';
   isChargeEligible: boolean;
   isNovice: boolean;
   isFloatEligible: boolean;
@@ -47,6 +55,7 @@ function blankForm(payPeriodDays: number): FormState {
     contractedHoursPerPeriod: String(defaultContractedHours(1, payPeriodDays)),
     seniorityDate: '',
     hireDate: '',
+    permanentTour: '',
     isChargeEligible: false,
     isNovice: false,
     isFloatEligible: false,
@@ -67,6 +76,7 @@ function formFromNurse(nurse: Nurse): FormState {
     contractedHoursPerPeriod: String(nurse.contractedHoursPerPeriod),
     seniorityDate: nurse.seniorityDate,
     hireDate: nurse.hireDate ?? '',
+    permanentTour: nurse.permanentTour ?? '',
     isChargeEligible: nurse.isChargeEligible,
     isNovice: nurse.isNovice,
     isFloatEligible: nurse.isFloatEligible,
@@ -210,6 +220,9 @@ export function NurseFormDialog({
       if (form.hireDate !== initial.hireDate) {
         patch.hireDate = form.hireDate === '' ? null : (form.hireDate as IsoDate);
       }
+      if (form.permanentTour !== initial.permanentTour) {
+        patch.permanentTour = form.permanentTour === '' ? null : form.permanentTour;
+      }
       if (form.isChargeEligible !== initial.isChargeEligible) {
         patch.isChargeEligible = form.isChargeEligible;
       }
@@ -234,6 +247,7 @@ export function NurseFormDialog({
         contractedHoursPerPeriod,
         seniorityDate: form.seniorityDate as Nurse['seniorityDate'],
         ...(form.hireDate !== '' ? { hireDate: form.hireDate as IsoDate } : {}),
+        ...(form.permanentTour !== '' ? { permanentTour: form.permanentTour } : {}),
         isChargeEligible: form.isChargeEligible,
         isNovice: form.isNovice,
         isFloatEligible: form.isFloatEligible,
@@ -367,6 +381,23 @@ export function NurseFormDialog({
             value={form.hireDate as IsoDate | ''}
             onChange={(v) => setField('hireDate', v)}
           />
+          <Field label="Permanent tour" htmlFor={`${formId}-tour`}>
+            <select
+              id={`${formId}-tour`}
+              className={inputClass}
+              value={form.permanentTour}
+              onChange={(e) => setField('permanentTour', e.target.value as Tour | '')}
+            >
+              {TOUR_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-xs">
+              A nurse on a permanent tour is never rotated off it when the Tour rotation rule is on.
+            </span>
+          </Field>
         </div>
 
         <fieldset className="mt-4 flex gap-6">

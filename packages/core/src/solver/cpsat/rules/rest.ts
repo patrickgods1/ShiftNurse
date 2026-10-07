@@ -10,7 +10,7 @@
 
 import { overlapRule } from '../../../rules/availability-rules.js';
 import { asParams } from '../../../rules/registry.js';
-import { minRestRule } from '../../../rules/rest-rules.js';
+import { minRestRule, restWaivedOn } from '../../../rules/rest-rules.js';
 import { describe, type EncodeContext, forbidPair } from '../context.js';
 
 export function encodeOverlap(ctx: EncodeContext, raw: Record<string, unknown>): void {
@@ -53,6 +53,8 @@ export function encodeRest(ctx: EncodeContext, raw: Record<string, unknown>): vo
         // Gaps only grow along the sorted timeline.
         if (gap >= required) break;
         if (gap < 0) continue; // an overlap: the overlap rule's business
+        // The nurse waived this turnaround in writing, for the shift that starts on b's date.
+        if (restWaivedOn(ctx.model.ctx, ctx.model.nurses[n]!.id, b.date)) continue;
         forbidPair(
           ctx,
           a,

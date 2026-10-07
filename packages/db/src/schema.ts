@@ -33,7 +33,9 @@ import type {
   LeaveBidChoice,
   LeavePolicy,
   NurseRole,
+  OvertimeOrder,
   OvertimeRule,
+  PerDiemCommitment,
   PeriodStatus,
   PreferenceKind,
   RatioRole,
@@ -48,6 +50,8 @@ import type {
   SolverId,
   TimeOffStatus,
   TimeOffType,
+  Tour,
+  Weekday,
 } from '@shiftnurse/core';
 import { DEFAULT_FAIRNESS_WEIGHTS } from '@shiftnurse/core';
 import { relations, sql } from 'drizzle-orm';
@@ -92,6 +96,12 @@ export const unit = sqliteTable('unit', {
   // How the employer runs FMLA, the leave year and accrual (core's LeavePolicy); null means the
   // pre-policy reading, so every existing unit behaves as it did.
   leavePolicy: text('leave_policy', { mode: 'json' }).$type<LeavePolicy>(),
+  // How day-of ranks the overtime tier; null is the cost-first order every unit used before.
+  overtimeOrder: text('overtime_order').$type<OvertimeOrder>(),
+  // Weekend/holiday shifts each per-diem nurse commits to (core's PerDiemCommitment); null = none.
+  perDiemCommitment: text('per_diem_commitment', { mode: 'json' }).$type<PerDiemCommitment>(),
+  // Whether a change to a posted schedule must record the nurse's consent; null = reason enough.
+  requireConsentForPostedChanges: bool('require_change_consent'),
 });
 
 export const shiftType = sqliteTable(
@@ -141,6 +151,8 @@ export const nurse = sqliteTable(
     seniorityDate: isoDate('seniority_date').notNull(),
     // When employment began, if not the seniority date (bridged service); null means the same.
     hireDate: isoDate('hire_date'),
+    // A permanent tour the nurse is not rotated off (core's Tour); null means they rotate.
+    permanentTour: text('permanent_tour').$type<Tour>(),
     isChargeEligible: bool('is_charge_eligible').notNull().default(false),
     isNovice: bool('is_novice').notNull().default(false),
     isFloatEligible: bool('is_float_eligible').notNull().default(true),
@@ -340,6 +352,83 @@ export const preceptorship = sqliteTable(
     createdAt: timestamp('created_at').notNull(),
   },
   (t) => [index('preceptorship_orientee_start_idx').on(t.orienteeId, t.startDate)],
+);
+
+// ---------------------------------------------------------------------------
+// Contract rules (M30)
+// ---------------------------------------------------------------------------
+
+/** A nurse's written waiver of minimum rest before the one shift that starts on `date`. */
+export const restWaiver = sqliteTable(
+  'rest_waiver',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    date: isoDate('date').notNull().$type<IsoDate>(),
+    reason: text('reason').notNull(),
+    createdAt: timestamp('created_at').notNull(),
+  },
+  (t) => [uniqueIndex('rest_waiver_nurse_date_idx').on(t.nurseId, t.date)],
+);
+
+/** A recurring window a nurse cannot work (`AvailabilityBlock`); `reason` is HR-sensitive. */
+export const availabilityBlock = sqliteTable(
+  'availability_block',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    weekdays: text('weekdays', { mode: 'json' }).notNull().$type<Weekday[]>(),
+    startTime: text('start_time').notNull(),
+    endTime: text('end_time').notNull(),
+    startsOn: isoDate('starts_on').$type<IsoDate>(),
+    endsOn: isoDate('ends_on').$type<IsoDate>(),
+    reason: text('reason').notNull(),
+  },
+  (t) => [index('availability_block_nurse_idx').on(t.nurseId)],
+);
+
+/**
+ * One nurse floated off the unit for one shift (`FloatRecord`). No foreign key on the assignment:
+ * floating removes the home shift.
+ */
+export const floatRecord = sqliteTable(
+  'float_record',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    date: isoDate('date').notNull().$type<IsoDate>(),
+    shiftTypeId: text('shift_type_id')
+      .notNull()
+      .references(() => shiftType.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    toUnit: text('to_unit').notNull(),
+    volunteered: bool('volunteered').notNull(),
+    objection: text('objection'),
+    actor: text('actor').notNull(),
+    at: timestamp('at').notNull(),
+  },
+  (t) => [index('float_record_unit_date_idx').on(t.unitId, t.date)],
 );
 
 // ---------------------------------------------------------------------------
@@ -825,6 +914,8 @@ export const scheduleChange = sqliteTable(
     before: text('before', { mode: 'json' }),
     after: text('after', { mode: 'json' }),
     reason: text('reason').notNull(),
+    // How the affected nurse agreed, where the unit requires it; null otherwise.
+    consent: text('consent'),
     actor: text('actor').notNull(),
     at: timestamp('at').notNull(),
   },

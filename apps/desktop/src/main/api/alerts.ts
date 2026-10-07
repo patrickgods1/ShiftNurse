@@ -10,8 +10,10 @@ import {
   type ContractedHoursParams,
   complianceAlerts,
   contractedHoursRule,
+  dateInRange,
   datesInRange,
   deriveDemand,
+  type Holiday,
   type Id,
   type MaxHoursParams,
   maxHoursRule,
@@ -26,7 +28,9 @@ import {
 import {
   type DbLike,
   demandInputs,
+  holidayWorkFor,
   listCredentials,
+  listHolidaysForUnit,
   listNurseCredentialsForUnit,
   paidSickCallsForUnit,
   timeOffForPeriod,
@@ -35,6 +39,28 @@ import { periodOrThrow, ruleSetFor, scheduleViewFor, unitOrThrow } from './conte
 
 /** How far a nurse may drift from contracted hours before the publish preview flags it. */
 const HOURS_DRIFT_TOLERANCE = 0.1;
+
+/**
+ * Who worked each holiday of the unit, for the per-diem commitment's holiday half. Not
+ * `holidayWorkForPeriod`: that reads last year's occurrences for the rotation, while a calendar
+ * year's commitment needs this year's earlier holidays, wherever they fall.
+ */
+function holidayWorkedBy(
+  db: DbLike,
+  period: SchedulePeriod,
+  holidays: readonly Holiday[],
+): Map<Id, Set<Id>> {
+  const earlier = holidays
+    .filter((h) => !dateInRange(h.date, period.startDate, period.endDate))
+    .map((h) => h.id);
+  const workedBy = new Map<Id, Set<Id>>();
+  for (const r of holidayWorkFor(db, period.unitId, earlier)) {
+    const set = workedBy.get(r.holidayId);
+    if (set) set.add(r.nurseId);
+    else workedBy.set(r.holidayId, new Set([r.nurseId]));
+  }
+  return workedBy;
+}
 
 export function alertsForView(
   db: DbLike,
@@ -63,8 +89,17 @@ export function alertsForView(
     unit.postingLeadDays !== undefined && period.status === 'draft'
       ? { leadDays: unit.postingLeadDays, publishDate: today() }
       : undefined;
+  const holidays = unit.perDiemCommitment ? listHolidaysForUnit(db, period.unitId) : [];
   return complianceAlerts({
     ...(posting ? { posting } : {}),
+    ...(unit.perDiemCommitment
+      ? {
+          perDiemCommitment: unit.perDiemCommitment,
+          weekendDefinition: ruleSet.weekendDefinition,
+          holidays,
+          holidayWorkedBy: holidayWorkedBy(db, period, holidays),
+        }
+      : {}),
     paidLeaveByNurse,
     paidLeaveCountsTowardHours: fte.paidLeaveCountsTowardHours,
     paidLeaveCountsTowardOvertime: params.paidLeaveCountsTowardOvertime,

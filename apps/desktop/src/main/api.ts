@@ -16,6 +16,7 @@ import { is } from '@electron-toolkit/utils';
 import type { ShiftNurseDb } from '@shiftnurse/db';
 import { app } from 'electron';
 import type { ShiftNurseApi, UpdateInfo } from '../shared/api.js';
+import { availabilityBlocksApi } from './api/availability-blocks.js';
 import { configApi } from './api/config.js';
 import { costApi } from './api/cost.js';
 import { dashboardSummary } from './api/dashboard.js';
@@ -29,6 +30,7 @@ import {
   pickHistoryImportFile,
   pickRosterImportFile,
 } from './api/files.js';
+import { floatOutApi } from './api/float-out.js';
 import { leaveBalancesApi } from './api/leave-balances.js';
 import { leaveBiddingApi } from './api/leave-bidding.js';
 import { nurseUnitsApi } from './api/nurse-units.js';
@@ -36,6 +38,7 @@ import { overtimeVolunteersApi } from './api/overtime-volunteers.js';
 import { preceptorshipsApi } from './api/preceptorships.js';
 import { outputInput, publishApi } from './api/publish.js';
 import { requestsApi } from './api/requests.js';
+import { restWaiversApi } from './api/rest-waivers.js';
 import { rosterApi } from './api/roster.js';
 import { periodsApi, scheduleApi } from './api/schedule.js';
 import { setupApi } from './api/setup.js';
@@ -94,6 +97,8 @@ export function createApi(db: ShiftNurseDb, solverJobs: SolverJobs, host: AppHos
     },
     dayOfPay: dayOfPayApi(db),
     preceptorships: preceptorshipsApi(db),
+    restWaivers: restWaiversApi(db),
+    availabilityBlocks: availabilityBlocksApi(db),
     leaveBalances: leaveBalancesApi(db),
     leaveBidding: leaveBiddingApi(db),
     roster: {
@@ -126,5 +131,6 @@ export function createApi(db: ShiftNurseDb, solverJobs: SolverJobs, host: AppHos
     cost: costApi(db),
     ...requestsApi(db),
     dayOf: dayOfApi(db),
+    floatOut: floatOutApi(db),
   };
 }

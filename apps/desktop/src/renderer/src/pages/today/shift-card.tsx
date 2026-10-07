@@ -12,6 +12,7 @@ import { formatDateWithWeekday } from '../../format.js';
 import { CensusDrop } from './census-drop.js';
 import { CensusEntry } from './census-entry.js';
 import { NursePayActions, ShiftPayEvents } from './day-of-pay.js';
+import { FloatOut } from './float-out.js';
 
 const STATUS_LABEL: Record<TodayShiftView['status'], string | undefined> = {
   current: 'Now',
@@ -54,10 +55,13 @@ function rosterLabel(entry: RosterEntryView): string {
 
 export function ShiftCard({
   unitId,
+  periodId,
   shift,
   onReport,
 }: {
   unitId: Id;
+  /** The period whose assignments these are, when one covers the day; floating needs it. */
+  periodId?: Id;
   shift: TodayShiftView;
   /** The page owns the one report dialog, which the header's picker also opens. */
   onReport: (entry: RosterEntryView) => void;
@@ -118,6 +122,10 @@ export function ShiftCard({
       {shift.overstaffed.map((over) => (
         <CensusDrop key={over.role} unitId={unitId} shift={shift} over={over} />
       ))}
+
+      {periodId !== undefined ? (
+        <FloatOut unitId={unitId} periodId={periodId} shift={shift} />
+      ) : null}
 
       <ul className="mt-3 flex flex-col gap-1 border-t border-border pt-3 text-sm">
         {shift.roster.map((entry) => (

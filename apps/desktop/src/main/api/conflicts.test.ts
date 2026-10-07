@@ -5,7 +5,7 @@
  */
 
 import { addDays } from '@shiftnurse/core';
-import { getSwap, proposeSwap, saveConflictPolicy } from '@shiftnurse/db';
+import { getSwap, proposeSwap, saveConflictPolicy, updateUnit } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { approveExchange, autoResolve } from './conflicts.js';
 import { ACTOR } from './context.js';
@@ -76,5 +76,18 @@ describe('auto-resolve on a busy period', () => {
     const second = autoResolve(f.handle.db, f.seeded.draftPeriodId);
     expect(second.applied).toEqual([]);
     console.info(`[auto-resolve] ${first.applied.length} fixes in ${Math.round(ms)} ms`);
+  }, 300_000);
+});
+
+describe('applying a resolution on a unit that requires consent', () => {
+  it("applies fixes to a draft without asking for the nurse's consent", () => {
+    updateUnit(f.handle.db, f.seeded.unitId, { requireConsentForPostedChanges: true }, ACTOR);
+    saveConflictPolicy(
+      f.handle.db,
+      f.seeded.unitId,
+      { enabled: true, maxCostDelta: 1_000_000, maxFairnessDrop: 100 },
+      ACTOR,
+    );
+    expect(autoResolve(f.handle.db, f.seeded.draftPeriodId).applied.length).toBeGreaterThan(0);
   }, 300_000);
 });

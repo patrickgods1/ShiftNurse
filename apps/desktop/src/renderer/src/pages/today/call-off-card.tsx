@@ -18,7 +18,7 @@ import {
 } from '../../api-dayof.js';
 import { AsyncState } from '../../components/async-state.js';
 import { DANGER, INPUT, SECONDARY, SMALL } from '../../components/ui.js';
-import { formatDateWithWeekday, formatInstant } from '../../format.js';
+import { formatDate, formatDateWithWeekday, formatInstant } from '../../format.js';
 import { formatSignedDollars } from '../../money.js';
 import { ReasonDialog } from '../requests/reason-dialog.js';
 import { payTierLabel, payTierTone, TONE_CLASSES } from './tier-pill.js';
@@ -127,6 +127,11 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
                         {c.volunteeredForOvertime
                           ? 'Offered overtime'
                           : 'No standing offer — ask, don’t require'}
+                      </span>
+                    ) : null}
+                    {c.payTier === 'overtime' && c.lastOvertimeOn !== undefined ? (
+                      <span className="text-xs text-text-muted">
+                        Last OT: {formatDate(c.lastOvertimeOn)}
                       </span>
                     ) : null}
                     <span className="text-xs text-text-muted">

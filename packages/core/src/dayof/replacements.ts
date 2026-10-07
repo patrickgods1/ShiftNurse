@@ -33,7 +33,7 @@ import { costImpact } from '../conflicts/impact.js';
 import { nurseName } from '../conflicts/text.js';
 import { diffViolations } from '../conflicts/violation-diff.js';
 import type { Assignment, Id, Nurse } from '../domain/entities.js';
-import { describeDate, type IsoDate } from '../domain/time.js';
+import { compareDates, describeDate, type IsoDate } from '../domain/time.js';
 import { deriveCounters } from '../fairness/ledger.js';
 import { scoreFairness } from '../fairness/score.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
@@ -111,6 +111,9 @@ export function findReplacements(input: ReplacementInput): ReplacementReport {
         ...(input.lastCalledAt[nurse.id] !== undefined
           ? { lastCalledAt: input.lastCalledAt[nurse.id] }
           : {}),
+        ...(input.lastOvertimeOn?.[nurse.id] !== undefined
+          ? { lastOvertimeOn: input.lastOvertimeOn[nurse.id] }
+          : {}),
         softViolationsIntroduced: outcome.softViolationsIntroduced,
         ...(outcome.row.isOvertime
           ? { volunteeredForOvertime: volunteeredOn(world.ctx, nurse.id, date) }
@@ -122,7 +125,9 @@ export function findReplacements(input: ReplacementInput): ReplacementReport {
     }
   }
 
-  candidates.sort((a, b) => compareCandidates(a, b));
+  const roster = engine.input.unit.overtimeOrder === 'roster';
+  const seniority = new Map(engine.activeNurses.map((n) => [n.id, n.seniorityDate]));
+  candidates.sort((a, b) => compareCandidates(a, b, roster ? seniority : undefined));
   candidates.forEach((c, index) => {
     c.rank = index + 1;
   });
@@ -268,9 +273,18 @@ function tryNurse(
 // Ordering
 // ---------------------------------------------------------------------------
 
-function compareCandidates(a: ReplacementCandidate, b: ReplacementCandidate): number {
+function compareCandidates(
+  a: ReplacementCandidate,
+  b: ReplacementCandidate,
+  /** Present only under the contract overtime rosters; the key to order the overtime tier by. */
+  rosterSeniority: ReadonlyMap<Id, IsoDate> | undefined,
+): number {
   const tier = PAY_TIER_ORDER.indexOf(a.payTier) - PAY_TIER_ORDER.indexOf(b.payTier);
   if (tier !== 0) return tier;
+
+  if (rosterSeniority !== undefined && a.payTier === 'overtime') {
+    return compareOvertimeRoster(a, b, rosterSeniority);
+  }
 
   // Overtime someone offered before overtime they would have to be asked for.
   const offered =
@@ -287,6 +301,38 @@ function compareCandidates(a: ReplacementCandidate, b: ReplacementCandidate): nu
   if (recency !== 0) return recency;
 
   return a.nurseId.localeCompare(b.nurseId);
+}
+
+/**
+ * The contract's overtime rosters: volunteers in turn (whoever has gone longest without overtime,
+ * seniority breaking a tie), then the mandated roster from the most junior nurse up. Cost and
+ * burden play no part — the contract, not the budget, says who is asked.
+ */
+function compareOvertimeRoster(
+  a: ReplacementCandidate,
+  b: ReplacementCandidate,
+  seniority: ReadonlyMap<Id, IsoDate>,
+): number {
+  const aVolunteered = a.volunteeredForOvertime ?? false;
+  const bVolunteered = b.volunteeredForOvertime ?? false;
+  if (aVolunteered !== bVolunteered) return aVolunteered ? -1 : 1;
+
+  const aDate = seniority.get(a.nurseId)!;
+  const bDate = seniority.get(b.nurseId)!;
+  if (!aVolunteered) {
+    // Reverse seniority: the later start date is the more junior nurse, who goes first.
+    const junior = compareDates(bDate, aDate);
+    return junior !== 0 ? junior : a.nurseId.localeCompare(b.nurseId);
+  }
+
+  // A nurse who has never worked overtime sorts before any date.
+  if (a.lastOvertimeOn !== b.lastOvertimeOn) {
+    if (a.lastOvertimeOn === undefined) return -1;
+    if (b.lastOvertimeOn === undefined) return 1;
+    return compareDates(a.lastOvertimeOn, b.lastOvertimeOn);
+  }
+  const senior = compareDates(aDate, bDate);
+  return senior !== 0 ? senior : a.nurseId.localeCompare(b.nurseId);
 }
 
 /** Never-called (`undefined`) sorts before any timestamp — the finder spreads the calls. */

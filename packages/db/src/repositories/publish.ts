@@ -22,6 +22,7 @@ import type {
   ScheduleDiff,
   SchedulePeriod,
   ScheduleVersion,
+  Unit,
 } from '@shiftnurse/core';
 import { diffAssignments } from '@shiftnurse/core';
 import { and, asc, desc, eq, gt, sql } from 'drizzle-orm';
@@ -190,6 +191,42 @@ export function requireChangeReason(period: SchedulePeriod, reason?: string): st
   return trimmed;
 }
 
+/**
+ * Whether a manager's edit to a posted schedule must also carry the nurse's consent, and the
+ * trimmed consent to record. Applies only when the unit opted in and the period is published.
+ * Only the manager's own initiative needs it (a hand edit, an applied resolution). The other
+ * sources are exempt because the nurse already agreed by acting: an exchange is proposed by
+ * the nurses, leave is asked for by the nurse, a backfill is a call the nurse accepted. A
+ * census cancellation or float is decided by the contract's own order, so the nurse's
+ * agreement is not the test.
+ */
+/** The audit row has one text field for why, so a posted shift's consent rides in it. */
+export function reasonWithConsent(reason: string, consent?: string): string;
+export function reasonWithConsent(reason?: string, consent?: string): string | undefined;
+export function reasonWithConsent(reason?: string, consent?: string): string | undefined {
+  const agreed = consent?.trim();
+  return reason && agreed ? `${reason} (Nurse's consent: ${agreed})` : reason;
+}
+
+export function requireChangeConsent(
+  period: SchedulePeriod,
+  unit: Pick<Unit, 'requireConsentForPostedChanges'>,
+  source: ScheduleChangeSource,
+  consent?: string,
+): string | undefined {
+  if (period.status !== 'published' || !unit.requireConsentForPostedChanges) return undefined;
+  // 'resolution' is listed defensively: applyResolution only accepts drafts today, so it cannot
+  // reach a posted shift, but it would be the manager's own initiative if that ever changes.
+  if (source !== 'manual' && source !== 'resolution') return undefined;
+  const trimmed = consent?.trim();
+  if (!trimmed) {
+    throw new Error(
+      "This unit requires the nurse's consent to change a posted shift. Record how they agreed.",
+    );
+  }
+  return trimmed;
+}
+
 export interface ScheduleChangeInput {
   periodId: Id;
   kind: ScheduleChangeKind;
@@ -201,6 +238,8 @@ export interface ScheduleChangeInput {
   before?: Assignment;
   after?: Assignment;
   reason: string;
+  /** How the affected nurse agreed, for a unit that requires it. */
+  consent?: string;
 }
 
 /**
@@ -233,6 +272,7 @@ export function recordScheduleChange(
     before: input.before ?? null,
     after: input.after ?? null,
     reason,
+    consent: input.consent?.trim() || null,
     actor,
     at,
   };
@@ -247,7 +287,8 @@ export function recordScheduleChange(
       actor,
       before: input.before,
       after: input.after,
-      reason,
+      // The audit row has one text field for why; consent is part of why a posted shift moved.
+      reason: reasonWithConsent(reason, row.consent ?? undefined),
       at,
     },
     { requireReason: true },

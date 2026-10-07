@@ -16,6 +16,8 @@ import type {
   IsoDate,
   JurisdictionId,
   LeavePolicy,
+  OvertimeOrder,
+  PerDiemCommitment,
   RatioStaffing,
   ShiftCredentialRequirement,
   ShiftType,
@@ -85,6 +87,12 @@ export interface UnitPatch {
   jurisdiction?: JurisdictionId | null;
   /** Null clears the policy: FMLA and balances revert to the pre-policy reading. */
   leavePolicy?: LeavePolicy | null;
+  /** Null returns day-of to the cost-first overtime order. */
+  overtimeOrder?: OvertimeOrder | null;
+  /** Null stops checking per-diem commitments. */
+  perDiemCommitment?: PerDiemCommitment | null;
+  /** Null: a reason is enough for a change to a posted schedule. */
+  requireConsentForPostedChanges?: boolean | null;
 }
 
 const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
@@ -96,6 +104,9 @@ const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
   postingLeadDays: true,
   jurisdiction: true,
   leavePolicy: true,
+  overtimeOrder: true,
+  perDiemCommitment: true,
+  requireConsentForPostedChanges: true,
 };
 
 /** Break minutes are a whole number a shift can hold; anything else is a typing slip. */

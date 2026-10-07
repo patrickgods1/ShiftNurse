@@ -13,6 +13,7 @@ import {
   cancelCallOff,
   getCallOff,
   lastCalledAt,
+  lastOvertimeDates,
   listCallAttempts,
   listCallOffsForUnit,
   logCallAttempt,
@@ -59,6 +60,71 @@ function mkNurse(firstName: string): string {
 function mkAssignment(nurseId: string, date: IsoDate) {
   return createAssignment(handle.db, { periodId, nurseId, shiftTypeId, date }, ACTOR);
 }
+
+describe('last overtime dates', () => {
+  function overtime(nurseId: string, date: string, isOvertime = true) {
+    return createAssignment(
+      handle.db,
+      { periodId, nurseId, shiftTypeId, date: isoDate(date), isOvertime },
+      ACTOR,
+    );
+  }
+
+  it('reports each nurse’s latest overtime shift before the call-off date', () => {
+    const ada = mkNurse('Ada');
+    overtime(ada, '2026-01-02');
+    overtime(ada, '2026-01-09');
+    // Straight time on a later date is not overtime.
+    overtime(ada, '2026-01-12', false);
+    // On the call-off date itself, or after it, has not happened yet.
+    overtime(ada, '2026-01-15');
+    overtime(ada, '2026-01-16');
+    const quiet = mkNurse('Quiet');
+    mkAssignment(quiet, isoDate('2026-01-08'));
+
+    const last = lastOvertimeDates(handle.db, unitId, isoDate('2026-01-15'));
+    expect(last.get(ada)).toBe('2026-01-09');
+    expect(last.has(quiet)).toBe(false);
+  });
+
+  it('leaves out nurses who belong to another unit', () => {
+    const other = createUnit(
+      handle.db,
+      {
+        name: '5 East',
+        unitType: 'Medical-Surgical',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    const visitor = createNurse(
+      handle.db,
+      {
+        unitId: other.id,
+        employeeId: nextEmployeeId(),
+        firstName: 'Visitor',
+        lastName: 'Nurse',
+        role: 'RN',
+        employmentType: 'full_time',
+        fte: 1,
+        contractedHoursPerPeriod: 72,
+        seniorityDate: isoDate('2020-01-01'),
+        isChargeEligible: false,
+        isNovice: false,
+        isFloatEligible: true,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+    overtime(visitor, '2026-01-05');
+
+    expect(lastOvertimeDates(handle.db, unitId, isoDate('2026-01-15')).has(visitor)).toBe(false);
+    expect(lastOvertimeDates(handle.db, other.id, isoDate('2026-01-15')).get(visitor)).toBe(
+      '2026-01-05',
+    );
+  });
+});
 
 describe('paid sick leave', () => {
   it('credits a paid sick call once the missed shift is off the schedule, and not before', () => {

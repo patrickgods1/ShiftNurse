@@ -51,6 +51,11 @@ const KINDS: { kind: ComplianceAlertKind; title: string; hint: string }[] = [
     hint: "Publishing today would give staff less notice than the unit's posting rule. Publish sooner, or change the rule in Settings › Unit.",
   },
   {
+    kind: 'per_diem_commitment',
+    title: 'Per-diem commitment',
+    hint: 'Per-diem nurses below the weekend or holiday shifts their contract asks for. Add shifts for them, or accept the shortfall.',
+  },
+  {
     kind: 'ratio_risk',
     title: 'No slack on the ratio',
     hint: 'Shifts staffed exactly at the patient ratio: one call-off breaks it. Routine on a tight unit.',

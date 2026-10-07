@@ -13,11 +13,19 @@ import {
   describeDate,
   describeDateRange,
   fromDayNumber,
+  type IsoDate,
   minutesToHours,
   restMinutesBetween,
 } from '../domain/time.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
-import { isWorked, nurseName, type Rule, type Violation, violation } from './types.js';
+import {
+  isWorked,
+  nurseName,
+  type Rule,
+  type RuleContext,
+  type Violation,
+  violation,
+} from './types.js';
 
 // ---------------------------------------------------------------------------
 // Minimum rest between shifts
@@ -35,13 +43,28 @@ export interface MinRestParams {
   onCallCountsAsWork: boolean;
 }
 
+/**
+ * Whether the nurse has waived minimum rest, in writing, before the shift that starts on `date`.
+ * It is the later shift's date that counts (VA–NNU Art. 13 §2: the nurse waives the rest before
+ * a tour), so a waiver never excuses the pair that ends on another day. CP-SAT's `encodeRest`
+ * asks the same question, so both judge a turnaround alike.
+ */
+export function restWaivedOn(
+  ctx: Pick<RuleContext, 'restWaiversByNurse'>,
+  nurseId: Id,
+  date: IsoDate,
+): boolean {
+  return ctx.restWaiversByNurse.get(nurseId)?.has(date) ?? false;
+}
+
 export const minRestRule: Rule<MinRestParams> = {
   id: 'min-rest-between-shifts',
   name: 'Minimum rest between shifts',
   description:
     'Requires a minimum gap between the end of one shift and the start of the next. Catches the ' +
     'night-to-day turnaround, where a nurse finishes at 07:00 and is scheduled back at 07:00 or 15:00 ' +
-    'the same day.',
+    'the same day. A nurse’s written waiver (Roster › Rest waivers) excuses the shift that starts on its ' +
+    'date.',
   severity: 'hard',
   category: 'rest',
   scope: 'nurse',
@@ -95,6 +118,8 @@ export const minRestRule: Rule<MinRestParams> = {
             : params.minRestHours;
 
         if (minutesToHours(restMinutes) >= requiredHours) continue;
+        // Waived in writing for the shift that follows: the turnaround stands.
+        if (restWaivedOn(ctx, nurse.id, current.assignment.date)) continue;
         // History cannot be fixed; only flag when this schedule can do something about it.
         if (!previous.inPeriod && !current.inPeriod) continue;
 

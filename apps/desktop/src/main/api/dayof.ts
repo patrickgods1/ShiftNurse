@@ -30,6 +30,7 @@ import {
   getNurse,
   getShiftType,
   lastCalledAt,
+  lastOvertimeDates,
   listAssignmentsForPeriodOnDate,
   listCallAttempts,
   listCallOffsForUnit,
@@ -265,6 +266,7 @@ function replacementsFor(db: DbLike, callOffId: Id): ReplacementReport {
     ...buildConflictInput(db, callOff.periodId),
     absentAssignmentId: callOff.assignmentId,
     lastCalledAt: lastCalled,
+    lastOvertimeOn: Object.fromEntries(lastOvertimeDates(db, period.unitId, callOff.date)),
   });
 }
 
@@ -311,6 +313,11 @@ function backfill(db: ShiftNurseDb, callOffId: Id, nurseId: Id, notes?: string):
       ...buildConflictInput(tx, callOff.periodId),
       absentAssignmentId: absent.id,
       lastCalledAt: {},
+      // The re-check must rank as the screen did, or the roster's order differs from what the
+      // manager phoned down.
+      lastOvertimeOn: Object.fromEntries(
+        lastOvertimeDates(tx, periodOrThrow(tx, callOff.periodId).unitId, callOff.date),
+      ),
     });
     const candidate = report.candidates.find((c) => c.nurseId === nurseId);
     if (!candidate) {

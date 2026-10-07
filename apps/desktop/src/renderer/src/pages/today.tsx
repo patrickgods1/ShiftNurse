@@ -116,6 +116,7 @@ export default function TodayPage() {
           <ShiftCard
             key={`${shift.date}-${shift.shiftType.id}`}
             unitId={unitId}
+            periodId={summary.period?.id}
             shift={shift}
             onReport={(entry) => {
               setReporting({ entry, shift });

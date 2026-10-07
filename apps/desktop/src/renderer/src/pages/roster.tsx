@@ -14,6 +14,7 @@ import { PageHeader } from '../components/page-header.js';
 import { PRIMARY, SECONDARY } from '../components/ui.js';
 import { daysFromToday, formatDate, fteLabel } from '../format.js';
 import { useUnit } from '../unit-context.js';
+import { AccommodationsSection } from './roster/accommodations.js';
 import { CredentialBadge } from './roster/credential-badge.js';
 import { ImportDialog } from './roster/import-dialog.js';
 import { IncompatibilitySection } from './roster/incompatibility.js';
@@ -21,6 +22,7 @@ import { NurseDetail } from './roster/nurse-detail.js';
 import { NurseFormDialog } from './roster/nurse-form-dialog.js';
 import { OrientationSection } from './roster/orientation.js';
 import { OvertimeVolunteersSection } from './roster/overtime-volunteers.js';
+import { RestWaiversSection } from './roster/rest-waivers.js';
 
 function matchesSearch(nurse: Nurse, term: string): boolean {
   const haystack = `${nurse.firstName} ${nurse.lastName} ${nurse.employeeId}`.toLowerCase();
@@ -211,6 +213,12 @@ export default function RosterPage() {
       ) : null}
 
       {nursesQuery.data ? <OrientationSection unitId={unit.id} nurses={nursesQuery.data} /> : null}
+
+      {nursesQuery.data ? <RestWaiversSection unitId={unit.id} nurses={nursesQuery.data} /> : null}
+
+      {nursesQuery.data ? (
+        <AccommodationsSection unitId={unit.id} nurses={nursesQuery.data} />
+      ) : null}
 
       <NurseFormDialog
         open={formTarget !== undefined}

@@ -5,14 +5,15 @@
  * hand, but the app will not rank someone the unit's policy excludes.
  */
 
-import type { CancellationTier } from '@shiftnurse/core';
+import type { CancellationTier, OvertimeOrder } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useCancellationPolicy, useSaveCancellationPolicy } from '../../api-dayof.js';
+import { useUpdateUnit } from '../../api-setup.js';
 import { AsyncState } from '../../components/async-state.js';
 import { LabelWithTip } from '../../components/field-help.js';
 import { errorMessage, PRIMARY, SECONDARY, SMALL } from '../../components/ui.js';
 import { useUnsavedChanges } from '../../components/unsaved-changes.js';
-import { useUnitId } from '../../unit-context.js';
+import { useUnit, useUnitId } from '../../unit-context.js';
 
 const ALL_TIERS: readonly CancellationTier[] = [
   'volunteer',
@@ -55,6 +56,15 @@ function rowsFor(saved: readonly CancellationTier[]): Row[] {
 }
 
 export default function CancellationOrderPanel() {
+  return (
+    <div className="flex flex-col gap-4">
+      <CancellationOrder />
+      <OvertimeOrderForm />
+    </div>
+  );
+}
+
+function CancellationOrder() {
   const unitId = useUnitId();
   const policyQuery = useCancellationPolicy(unitId);
   if (policyQuery.isPending) return <AsyncState status="loading" label="Loading order" />;
@@ -62,6 +72,95 @@ export default function CancellationOrderPanel() {
     return <AsyncState status="error" label="Could not load order" error={policyQuery.error} />;
   }
   return <OrderForm key={policyQuery.data.join(',')} saved={policyQuery.data} />;
+}
+
+const OVERTIME_OPTIONS: { value: OvertimeOrder; label: string; hint: string }[] = [
+  {
+    value: 'cost',
+    label: 'Cheapest, then least burdened (default)',
+    hint: 'Volunteers first, then the cheapest pickup, then whoever has carried least.',
+  },
+  {
+    value: 'roster',
+    label: 'Contract overtime rosters',
+    hint: 'Volunteers in turn, longest since their last overtime first; then the mandated roster, most junior first.',
+  },
+];
+
+function OvertimeOrderForm() {
+  const unit = useUnit();
+  const update = useUpdateUnit();
+  const saved: OvertimeOrder = unit.overtimeOrder ?? 'cost';
+  const [choice, setChoice] = useState<OvertimeOrder>(saved);
+  const dirty = choice !== saved;
+  useUnsavedChanges('Overtime call order', dirty);
+
+  return (
+    <section
+      className="rounded-md border border-border bg-surface p-4"
+      data-testid="overtime-order"
+    >
+      <h2 className="text-sm font-semibold text-text">
+        <LabelWithTip
+          label="Overtime call order"
+          tip={
+            'Contracts such as the VA–NNU agreement offer overtime to volunteers in turn, so the ' +
+            'same few do not take it all, and mandate it from the most junior nurse only when ' +
+            'nobody volunteers. Straight time still comes before overtime, and agency after.'
+          }
+        />
+      </h2>
+      <p className="mt-1 max-w-prose text-sm text-text-muted">
+        How Today ranks nurses who can only take a call-off shift as overtime.
+      </p>
+      <div className="mt-3 flex max-w-xl flex-col gap-2">
+        {OVERTIME_OPTIONS.map((o) => (
+          <label
+            key={o.value}
+            className="flex items-start gap-3 rounded-md border border-border bg-bg px-3 py-2 text-sm text-text"
+          >
+            <input
+              type="radio"
+              name="overtime-order"
+              className="mt-1"
+              checked={choice === o.value}
+              onChange={() => setChoice(o.value)}
+            />
+            <span className="flex flex-col">
+              {o.label}
+              <span className="text-xs text-text-muted">{o.hint}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      {errorMessage(update.error) !== undefined ? (
+        <p role="alert" className="mt-2 text-sm text-danger">
+          {errorMessage(update.error)}
+        </p>
+      ) : null}
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          className={PRIMARY}
+          disabled={!dirty || update.isPending}
+          onClick={() => update.mutate({ id: unit.id, patch: { overtimeOrder: choice } })}
+        >
+          Save overtime order
+        </button>
+        <button
+          type="button"
+          className={SECONDARY}
+          disabled={!dirty || update.isPending}
+          onClick={() => {
+            setChoice(saved);
+            update.reset();
+          }}
+        >
+          Discard
+        </button>
+      </div>
+    </section>
+  );
 }
 
 function OrderForm({ saved }: { saved: CancellationTier[] }) {

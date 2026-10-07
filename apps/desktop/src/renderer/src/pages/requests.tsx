@@ -16,6 +16,7 @@ import {
   useCancelTimeOff,
   useConflictPolicy,
   useConflictReport,
+  useHolidayPriority,
   useTimeOffInRange,
   useWithdrawApproval,
 } from '../api-requests.js';
@@ -35,6 +36,7 @@ import { DecideDialog, nurseLabel } from './requests/decide-dialog.js';
 import { ExchangePanel } from './requests/exchange-panel.js';
 import { RequestHeatmap } from './requests/heatmap.js';
 import { bucketByDay } from './requests/heatmap-data.js';
+import { HolidayRequestsPanel, holidayNotes } from './requests/holiday-requests-panel.js';
 import { isLateRequest } from './requests/late.js';
 import { NewRequestDialog } from './requests/new-request-dialog.js';
 import { periodForRequest } from './requests/period-for-request.js';
@@ -81,6 +83,8 @@ export default function RequestsPage() {
   const rangeQuery = useTimeOffInRange(unitId, range.start, range.end);
   const conflictsQuery = useConflictReport(period?.id);
   const policyQuery = useConflictPolicy(unitId);
+  const holidayQuery = useHolidayPriority(unitId);
+  const holidayNoteFor = useMemo(() => holidayNotes(holidayQuery.data ?? []), [holidayQuery.data]);
 
   const [filter, setFilter] = useState<FilterValue>('pending');
   const [selectedDate, setSelectedDate] = useState<IsoDate | undefined>(undefined);
@@ -148,6 +152,17 @@ export default function RequestsPage() {
           {r.startDate === r.endDate
             ? formatDate(r.startDate)
             : periodRange({ startDate: r.startDate, endDate: r.endDate })}
+          {r.status === 'pending'
+            ? (holidayNoteFor.get(r.id) ?? []).map((note) => (
+                <span
+                  key={note}
+                  data-testid="request-holiday-priority"
+                  className="block text-xs font-normal text-text-muted"
+                >
+                  {note}
+                </span>
+              ))
+            : null}
         </span>
       ),
       sortValue: (r) => r.startDate,
@@ -389,6 +404,8 @@ export default function RequestsPage() {
               )}
             </section>
           </div>
+
+          <HolidayRequestsPanel unitId={unitId} nursesById={nursesById} />
 
           <div className="mt-8">
             {period === undefined ? (
