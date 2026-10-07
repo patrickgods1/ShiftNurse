@@ -601,7 +601,7 @@ export interface Preceptorship {
 
 /**
  * A nurse's standing offer to work overtime over some dates. New York (Labor Law § 167),
- * Washington (RCW 49.28.140), Oregon (ORS 441.166) and Massachusetts (c.111 § 226) forbid
+ * Washington (RCW 49.28.140), Oregon (ORS 441.770) and Massachusetts (c.111 § 226) forbid
  * *requiring* a nurse to work overtime outside an emergency; this record is what makes an
  * overtime shift voluntary rather than mandatory. Dates are inclusive and compare with the shift's
  * start date.

@@ -644,9 +644,17 @@ Directive 1351) against what a unit can configure. One PR per milestone.
       the one failure, the VA demo's "keep them apart" Generate test, timed out at 80s under
       full-suite load and passes alone in 14s, as before the change; smoke PASS; the community and
       ICU demos' tables identical before and after)
-- [ ] M32 More state presets (mandatory-overtime laws in IL, CT, MN, NJ, ME, PA, NH, RI, WV, AK,
-      TX; the full Title 22 ratio table; Oregon CNA ratios), each checked against the statute
-
+- [x] M32 More state presets: IL, CT, MN, NJ, ME, PA, NH, RI, WV, AK and TX, each read against
+      the statute (CT is § 19a-490l, NH RSA 275:67, Oregon's overtime law now ORS 441.770); the
+      full Title 22 table and Oregon's ORS 441.765 table by unit kind; a `long-stretch` rule
+      (hard, off by default, CP-SAT encoded) for caps on consecutive hours and the rest owed after
+      a long stretch (MA 16 then 8, WV, PA, AK, and required-only in IL, ME, NH), and limits even
+      an emergency does not lift on `no-mandatory-overtime` (IL 4 hours past the shift, RI 12
+      consecutive). Oregon's CNA limit (ORS 441.768) caps one aide's assignment rather than
+      requiring aides, so it is stated in the summary, not set as a ratio; labor and delivery
+      and postpartum ratios turn on the patient and are left to acuity tiers
+      (verified 2026-10-06: `npm run check` lint and typecheck clean, 2,590 tests passed, 2
+      skipped; smoke PASS; the encoder agrees with the rule engine on 400 random rosters)
 ---
 
 ## Verification

@@ -393,6 +393,91 @@ describe('most hours in any 24 made hard', () => {
   });
 });
 
+/** The rule on and hard with the given limits, min-rest out of the way so this rule is what bites. */
+function hardLongStretch(params: Record<string, unknown>): RuleSet {
+  const base = withParams(
+    'long-stretch',
+    params,
+    withParams('min-rest-between-shifts', { minRestHours: 0 }),
+  );
+  return {
+    ...base,
+    configs: base.configs.map((c) =>
+      c.ruleId === 'long-stretch' ? { ...c, enabled: true, severityOverride: 'hard' as const } : c,
+    ),
+  };
+}
+
+describe('long stretches of work made hard', () => {
+  const stretchUnit = (
+    params: Record<string, unknown>,
+    options: Partial<SolveScenarioOptions> = {},
+  ) => unit([ada()], { ruleSet: hardLongStretch(params), ...options });
+  // Night 12 19:00 Mon to 07:00, then day 12 to 19:00 Tue: 24 hours straight. (A second shift
+  // the same day is out of reach: one shift a day is structural.)
+  const double = () => [assign('ada', NIGHT_12, '2026-01-12'), assign('ada', DAY_12, '2026-01-13')];
+
+  it('forbids a night 12 straight into the next day 12 under a 14-hour cap', () => {
+    const encoding = encodeCpsat(stretchUnit({ maxConsecutiveHours: 14 }));
+    expect(evaluate(encoding, double()).violated.join('\n')).toMatch(/long stretch/);
+  });
+
+  it('allows the same double under a 24-hour cap, and a lone shift under 14', () => {
+    const encoding = encodeCpsat(stretchUnit({ maxConsecutiveHours: 24 }));
+    expect(evaluate(encoding, double()).violated).toEqual([]);
+    const lone = encodeCpsat(stretchUnit({ maxConsecutiveHours: 14 }));
+    expect(evaluate(lone, [assign('ada', DAY_12, '2026-01-13')]).violated).toEqual([]);
+  });
+
+  it('writes nothing when only required hours count: a draft holds none', () => {
+    const encoding = encodeCpsat(stretchUnit({ maxConsecutiveHours: 14, requiredOnly: true }));
+    expect(evaluate(encoding, double()).violated).toEqual([]);
+  });
+
+  it('wants 14 hours off after a 24-hour stretch: a day 12 at 07:00 the next morning is 12 hours', () => {
+    // Out at 19:00 Tuesday, back at 07:00 Wednesday.
+    const encoding = encodeCpsat(stretchUnit({ restAfterHours: 24, restHours: 14 }));
+    const tooSoon = [...double(), assign('ada', DAY_12, '2026-01-14')];
+    expect(evaluate(encoding, tooSoon).violated.join('\n')).toMatch(/rest after long stretch/);
+    expect(evaluate(encoding, double()).violated).toEqual([]);
+    const enough = encodeCpsat(stretchUnit({ restAfterHours: 24, restHours: 12 }));
+    expect(evaluate(enough, tooSoon).violated).toEqual([]);
+  });
+
+  it('owes no rest after a stretch of exactly the threshold when it must be passed, and owes it otherwise', () => {
+    // Day 12 07:00-19:00 Tuesday is 12 hours; day 12 again at 07:00 Wednesday is 12h off, short of 14.
+    const days = [assign('ada', DAY_12, '2026-01-13'), assign('ada', DAY_12, '2026-01-14')];
+    const params = { restAfterHours: 12, restHours: 14 };
+    const past = encodeCpsat(stretchUnit({ ...params, restOnlyPastThreshold: true }));
+    expect(evaluate(past, days).violated).toEqual([]);
+    const reaching = encodeCpsat(stretchUnit({ ...params, restOnlyPastThreshold: false }));
+    expect(evaluate(reaching, days).violated.join('\n')).toMatch(/rest after long stretch/);
+  });
+
+  it('lets a waiver on the later shift excuse the rest', () => {
+    const waiver = {
+      id: 'w-1',
+      unitId: UNIT_ID,
+      nurseId: 'ada',
+      date: isoDate('2026-01-14'),
+      reason: 'Signed waiver',
+      createdAt: 0,
+    };
+    const params = { restAfterHours: 24, restHours: 14, honorsRestWaiver: true };
+    const tooSoon = [...double(), assign('ada', DAY_12, '2026-01-14')];
+    const waived = encodeCpsat(stretchUnit(params, { restWaivers: [waiver] }));
+    expect(evaluate(waived, tooSoon).violated).toEqual([]);
+    const unwaived = encodeCpsat(stretchUnit(params));
+    expect(evaluate(unwaived, tooSoon).violated.join('\n')).toMatch(/rest after long stretch/);
+  });
+
+  it('lets a locked stretch over the cap stand without making the model infeasible', () => {
+    const locked = double().map((a) => ({ ...a, isLocked: true }));
+    const encoding = encodeCpsat(stretchUnit({ maxConsecutiveHours: 14 }, { assignments: locked }));
+    expect(evaluate(encoding, locked).violated).toEqual([]);
+  });
+});
+
 describe('a rest waiver', () => {
   // Night 19:00 Mon 5 Jan to 07:00 Tue, then Day 07:00 Tue 6 Jan: no rest at all.
   const turnaround = [assign('ada', NIGHT_12, '2026-01-05'), assign('ada', DAY_12, '2026-01-06')];
@@ -794,6 +879,14 @@ describe('agreement with the rule engine', () => {
   it('agrees with the rules when the most hours in any 24 is hard', () => {
     const base = parityInput();
     expectParity({ ...base, ruleSet: hardHoursIn24(14) });
+  });
+
+  it('agrees with the rules when long stretches and the rest after them are hard', () => {
+    const base = parityInput();
+    expectParity({
+      ...base,
+      ruleSet: hardLongStretch({ maxConsecutiveHours: 14, restAfterHours: 12, restHours: 14 }),
+    });
   });
 
   it('agrees with the rules when weekends in a row and per schedule are hard', () => {

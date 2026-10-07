@@ -277,6 +277,9 @@ export {
 } from './rules/hours-rules.js';
 // Kept-apart group rule helpers
 export { groupInForce, groupsForPeriod } from './rules/incompatibility-rules.js';
+export type { LongStretchParams } from './rules/long-stretch.js';
+// Long stretches: a cap on hours in a row and rest owed after one
+export { longStretchRule } from './rules/long-stretch.js';
 // No mandatory overtime: the note prefix that records an emergency, and the rule itself
 export {
   EMERGENCY_NOTE_PREFIX,

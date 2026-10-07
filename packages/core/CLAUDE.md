@@ -192,6 +192,17 @@
   consecutive limit (8, or 12 when the stretch holds a longer tour), one breach per stretch;
   `max-hours-in-24` (hard, off by default) caps worked hours in any 24, checked at each window's
   start and end − 24h. Pay: `beyond_scheduled_tour` and `consecutive` overtime bases.
+- **Long stretches have a cap and a rest, from the state laws.** `long-stretch` (hard, nurse scope,
+  off by default, no default numbers) judges each `workedStretches` stretch (holdovers in, standby
+  out) against `maxConsecutiveHours` (an `Emergency:` note excuses it when `emergencyLiftsCap`) and,
+  at `restAfterHours` (`restOnlyPastThreshold`: strictly past it), wants `restHours` before the next
+  stretch; an emergency never excuses the rest, a recorded rest waiver does when `honorsRestWaiver`
+  (keyed on the later stretch's first shift, as `min-rest` keys it). `requiredOnly` judges only
+  stretches holding a mandated holdover or unvolunteered overtime (Illinois, Maine, New Hampshire).
+  Not monotone under removal, so `SolverModel.isLegal`'s generic re-check is what covers it. Neither
+  solver writes a holdover or overtime row, so `requiredOnly` makes `encodeLongStretch` add nothing;
+  otherwise it forbids chains of contiguous shifts over the cap, and chains that earn rest followed
+  too soon (while soft it is not priced, like `max-hours-in-24`).
 - **Weekends are filed by `weekendKey`, everywhere.** Fairness, `weekend-pattern` and both
   solvers' prices use it; under `'overlaps'` a Friday night belongs to the weekend it runs into.
   `weekendBreaches` is the one count (`SolverModel.weekendFor`, CP-SAT `weekendBreachExprs`).
@@ -200,8 +211,16 @@
 - **State presets only tighten.** `JURISDICTION_PRESETS` cites the provision behind every value
   (checked against the statute text, October 2026) and says what it leaves to the hospital;
   `planJurisdiction` lowers looser ratio ceilings, grows break minutes, adds missing overtime
-  rules and switches rules on, never the reverse, and plans nothing on a second run. A change to
-  a law is a change to its preset, its citation and its summary together.
+  rules and switches rules on, never the reverse, and plans nothing on a second run. A numeric
+  rule parameter is a cap that only lowers, except a `PresetRule`'s `raise` keys (hours of rest:
+  more is stricter) and, with `absentCapIsUnlimited` (`long-stretch`), a cap added to an enabled
+  rule that has none. Ratios are read by `unitKindForUnitType` (the acuity presets' four plus
+  emergency, pediatrics, psychiatric, oncology, PACU, operating room, burn, NICU); labor and
+  delivery and postpartum get none, since their ceiling turns on the patient. State overtime laws
+  mostly limit *required* hours, which `no-mandatory-overtime`'s ban already refuses, so only
+  their limits on all hours and their rest after a long stretch become `long-stretch` or
+  `max-hours-in-24` settings; a law that is only a right to refuse (Minnesota) switches nothing
+  on. A change to a law is a change to its preset, its citation and its summary together.
 - **Leave bids are awarded in seniority order, one a nurse a pass.** `leave/bidding.ts`'s
   `awardBids` is pure and deterministic (seniority date, then employee number); leave already
   approved takes its places first; every choice not awarded carries a quotable reason naming the

@@ -28,7 +28,7 @@ describe('Settings › About', () => {
     renderWithApp(<SettingsPage />, { route: '/settings?tab=about' });
     const list = await screen.findByTestId('not-enforced');
     expect(list.querySelectorAll('li')).toHaveLength(9);
-    expect(list.textContent).toContain('ORS 441.166');
+    expect(list.textContent).toContain('ORS 441.768');
     expect(
       screen.getByRole('heading', { name: 'What ShiftNurse does not enforce yet' }),
     ).toBeTruthy();
