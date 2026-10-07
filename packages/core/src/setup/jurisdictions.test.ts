@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OvertimeRule, RatioRule } from '../domain/entities.js';
 import { defaultRuleSet } from '../rules/registry.js';
+import type { RuleSet } from '../rules/types.js';
 import { type JurisdictionPlanInput, planJurisdiction } from './jurisdictions.js';
 
 const UNIT = 'unit-1';
@@ -137,6 +138,80 @@ describe('applying a state preset', () => {
       addRatioRules: [],
       tightenRatioRules: [],
       addOvertimeRules: [],
+    });
+  });
+
+  describe('the federal VA preset', () => {
+    const NMO = 'no-mandatory-overtime';
+
+    /** The default rule set with no-mandatory-overtime switched as given. */
+    function withNmo(enabled: boolean, params?: Record<string, unknown>): RuleSet {
+      const base = defaultRuleSet(UNIT);
+      return {
+        ...base,
+        configs: base.configs.map((c) =>
+          c.ruleId === NMO ? { ...c, enabled, params: { ...c.params, ...(params ?? {}) } } : c,
+        ),
+      };
+    }
+
+    function nmoOf(plan: ReturnType<typeof planJurisdiction>) {
+      return plan.ruleConfigs?.find((c) => c.ruleId === NMO);
+    }
+
+    it('gives a VA unit the federal cap on required hours, not California’s ratios', () => {
+      const plan = planJurisdiction('US-VA', input());
+      expect(plan.addRatioRules).toEqual([]);
+      expect(plan.tightenRatioRules).toEqual([]);
+      expect(plan.addOvertimeRules).toEqual([]);
+      expect(plan.ratioStaffing).toBeUndefined();
+      expect(nmoOf(plan)).toMatchObject({ enabled: true, params: { maxMandatedWeeklyHours: 40 } });
+    });
+
+    it('keeps a 24-hour weekend-plan cap the unit already set', () => {
+      const plan = planJurisdiction(
+        'US-VA',
+        input({ ruleSet: withNmo(true, { maxMandatedWeeklyHours: 24 }) }),
+      );
+      expect(plan.ruleConfigs).toBeUndefined();
+    });
+
+    it('lowers a looser cap of 48 hours to the federal 40', () => {
+      const plan = planJurisdiction(
+        'US-VA',
+        input({ ruleSet: withNmo(true, { maxMandatedWeeklyHours: 48 }) }),
+      );
+      expect(nmoOf(plan)?.params.maxMandatedWeeklyHours).toBe(40);
+    });
+
+    it('does not add a cap to a unit that already bans mandated overtime outright', () => {
+      const plan = planJurisdiction('US-VA', input({ ruleSet: withNmo(true) }));
+      expect(plan.ruleConfigs).toBeUndefined();
+    });
+
+    it('switches on a VA unit’s switched-off rule and keeps its 24-hour weekend-plan cap', () => {
+      const plan = planJurisdiction(
+        'US-VA',
+        input({ ruleSet: withNmo(false, { maxMandatedWeeklyHours: 24 }) }),
+      );
+      expect(nmoOf(plan)).toMatchObject({ enabled: true, params: { maxMandatedWeeklyHours: 24 } });
+    });
+
+    it('switches on a VA unit’s switched-off rule and lowers a stored 48 to the federal 40', () => {
+      const plan = planJurisdiction(
+        'US-VA',
+        input({ ruleSet: withNmo(false, { maxMandatedWeeklyHours: 48 }) }),
+      );
+      expect(nmoOf(plan)).toMatchObject({ enabled: true, params: { maxMandatedWeeklyHours: 40 } });
+    });
+
+    it('changes nothing the second time', () => {
+      const first = planJurisdiction('US-VA', input());
+      const second = planJurisdiction(
+        'US-VA',
+        input({ ruleSet: { ...defaultRuleSet(UNIT), configs: first.ruleConfigs ?? [] } }),
+      );
+      expect(second.ruleConfigs).toBeUndefined();
     });
   });
 });

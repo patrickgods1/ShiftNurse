@@ -183,6 +183,13 @@
       "when": 1791219513751,
       "tag": "0025_day_of_pay_event",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1791255052609,
+      "tag": "0026_differential_window",
+      "breakpoints": true
     }
   ]
 }

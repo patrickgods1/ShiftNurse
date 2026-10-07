@@ -601,6 +601,31 @@ Each is a milestone of its own: core algorithm and rules test-first, then entity
       mutation-checked; SA + LNS output on the fixed fixtures unchanged, as the new rules and
       settings are absent there)
 
+### M27–M32 — Law, contracts and a realistic VA demo (after 1.0)
+
+A 2026-10-05 review of federal and state nurse-scheduling law, nursing union contracts and the
+VA's own rules (38 U.S.C. §§7453, 7456, 7456A, 7459; the VA–NNU 2023 Master Agreement; VHA
+Directive 1351) against what a unit can configure. One PR per milestone.
+
+- [x] M27 Title 38 rules and a federal preset: a cap on required hours in the
+      `no-mandatory-overtime` rule (38 U.S.C. §7459(a): 40 a week, 24 on the weekend plan), night and
+      evening differentials earned by clock time (§7453(b): whole tour at 4 hours in 6 pm–6 am),
+      and a `US-VA` preset that applies no state law
+      (verified 2026-10-05: `npm run check` lint and typecheck clean, 2,090 tests passed — the two
+      real-runner CP-SAT tests timed out under full-suite load and pass alone; smoke PASS)
+- [ ] M28 A realistic SF VA demo: the `US-VA` preset, the clock-time night differential, NFFE
+      Local 1 as the union, and seeded FMLA, balances, volunteers, preceptors, floats and a VA bid round
+- [ ] M29 Leave model: VA and state leave types, a hire date apart from seniority, FMLA by
+      regime (Title I / Title 5) and leave-year method, accrual with carryover caps
+- [ ] M30 Contract rules: tour rotation limits, rest waivers, overtime rosters, float rotation,
+      per-diem commitments, holiday priority, consent to change a posted shift, hard accommodations
+- [ ] M31 Holdovers: worked time past a shift's end, mandated or volunteered — the model has
+      none today (a shift's hours are its type's length, and back-to-back shifts break minimum
+      rest), so continuous-hours caps (16 in 24), overtime after 8 consecutive hours (§7453(e)),
+      §7459's consecutive limit and Oregon's and Massachusetts' hour caps cannot be enforced yet
+- [ ] M32 More state presets (mandatory-overtime laws in IL, CT, MN, NJ, ME, PA, NH, RI, WV, AK,
+      TX; the full Title 22 ratio table; Oregon CNA ratios), each checked against the statute
+
 ---
 
 ## Verification

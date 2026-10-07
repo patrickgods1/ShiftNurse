@@ -13,16 +13,18 @@ import {
   assign,
   DAY_8,
   DAY_12,
+  differential,
   EVENING_8,
   makeNurse,
   NIGHT_12,
   ON_CALL,
+  payRate,
   resetFixtureCounters,
   scenario,
   testUnit,
   UNIT_ID,
 } from '../testing/fixtures.js';
-import { compareToBudget, costSchedule, marginalCost } from './cost.js';
+import { compareToBudget, costSchedule, hoursInDailyWindow, marginalCost } from './cost.js';
 import type { CostContext } from './types.js';
 
 beforeEach(() => {
@@ -770,5 +772,141 @@ describe('budget', () => {
 
   it('has no ratio against a zero budget', () => {
     expect(compareToBudget(1_000, 0).ratio).toBeNull();
+  });
+});
+
+describe('night and evening differentials by the clock', () => {
+  // $50/h; night 10% for 18:00-06:00, the whole tour once 4 hours fall in it (38 U.S.C. 7453(b)).
+  const NIGHT_WINDOW = { startTime: '18:00', endTime: '06:00', wholeShiftAtHours: 4 };
+  const night10 = {
+    ...differential('night', 'multiplier', 1.1),
+    window: NIGHT_WINDOW,
+  };
+  const EVENING_1530 = {
+    id: 'st-e-1530',
+    unitId: UNIT_ID,
+    name: 'Evening 15:30',
+    abbreviation: 'E15',
+    startTime: '15:30',
+    durationHours: 8.5,
+    isNight: false,
+    isOnCall: false,
+    color: '#f97316',
+    sortOrder: 9,
+    active: true,
+    withinShiftTypeId: null,
+  };
+
+  // 1.1 - 1 is not exactly 0.1 in floating point; cents are what a payslip shows.
+  const cents = (amounts: Record<string, number>) =>
+    Object.fromEntries(Object.entries(amounts).map(([k, v]) => [k, Math.round(v * 100) / 100]));
+
+  function priced(
+    shiftType: typeof DAY_12,
+    differentials: Differential[],
+    overtimeRules: OvertimeRule[] = [],
+  ) {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [shiftType],
+      assignments: [assign(nurse.id, shiftType, '2026-01-05')],
+    });
+    const costs = costSchedule(
+      s.schedule,
+      ctx({ payRates: [payRate(50)], differentials, overtimeRules }),
+    );
+    return costs.assignments.find((c) => c.date === isoDate('2026-01-05'))!;
+  }
+
+  it('pays a 19:00-07:00 night on every hour because 11 of them fall in the window', () => {
+    const cost = priced(NIGHT_12, [night10]);
+    expect(cents(lineAmounts(cost))).toEqual({ base: 600, night: 60 });
+    expect(cost.straightRate).toBeCloseTo(55);
+  });
+
+  it('pays a 07:00-19:00 day shift the night differential for its one evening hour only', () => {
+    const cost = priced(DAY_12, [night10]);
+    expect(cents(lineAmounts(cost))).toEqual({ base: 600, night: 5 });
+    expect(cost.lines.find((l) => l.kind === 'night')?.hours).toBe(1);
+    expect(cost.total).toBeCloseTo(605);
+    expect(cost.straightRate).toBe(50);
+  });
+
+  it('pays a 15:30-24:00 evening tour on every hour because 6 of them fall in the window', () => {
+    const cost = priced(EVENING_1530, [night10]);
+    expect(cents(lineAmounts(cost))).toEqual({ base: 425, night: 42.5 });
+  });
+
+  it('pays a 07:00-15:00 day shift no night differential', () => {
+    const cost = priced(DAY_8, [night10]);
+    expect(cost.lines.map((l) => l.kind)).toEqual(['base']);
+  });
+
+  it('ignores the night flag on the shift type once the differential has a window', () => {
+    const flagged = { ...DAY_8, isNight: true };
+    expect(priced(flagged, [night10]).lines.map((l) => l.kind)).toEqual(['base']);
+  });
+
+  it('still goes by the night flag when the differential has no window', () => {
+    const plain = differential('night', 'multiplier', 1.1);
+    expect(cents(lineAmounts(priced(NIGHT_12, [plain])))).toEqual({ base: 600, night: 60 });
+    expect(priced(DAY_12, [plain]).lines.map((l) => l.kind)).toEqual(['base']);
+  });
+
+  it('pays an evening differential for the hours inside its window', () => {
+    const evening = {
+      ...differential('evening', 'flat', 2),
+      window: { startTime: '15:00', endTime: '23:00', wholeShiftAtHours: null },
+    };
+    expect(lineAmounts(priced(EVENING_8, [evening]))).toEqual({ base: 400, evening: 16 });
+    expect(lineAmounts(priced(DAY_12, [evening]))).toEqual({ base: 600, evening: 8 });
+  });
+
+  it('pays an evening differential with no window nothing', () => {
+    const evening = differential('evening', 'flat', 2);
+    expect(priced(EVENING_8, [evening]).lines.map((l) => l.kind)).toEqual(['base']);
+  });
+
+  it('does not let the one evening hour of a day shift raise its overtime rate', () => {
+    // 07:00-19:00 with daily overtime past 8h: 4 overtime hours at half of the $50 base.
+    const withPartial = priced(DAY_12, [night10], [DAILY_8]);
+    const without = priced(DAY_12, [], [DAILY_8]);
+    const ot = (c: typeof withPartial) => c.lines.find((l) => l.kind === 'overtime')!;
+    expect(ot(without).rate).toBe(25);
+    expect(ot(withPartial).rate).toBe(25);
+    expect(withPartial.total).toBeCloseTo(705); // 600 base + 5 night + 4 x 25 overtime
+  });
+
+  it('gives a night that starts as the evening window closes no evening hours', () => {
+    // 23:00-07:00 against 15:00-23:00: the window's end is half-open, so the first minute misses.
+    const start = 5 * 1440 + 23 * 60;
+    expect(
+      hoursInDailyWindow(
+        { startMinute: start, endMinute: start + 480 },
+        { startTime: '15:00', endTime: '23:00' },
+      ),
+    ).toBe(0);
+  });
+
+  it('treats a window whose start equals its end as the whole day', () => {
+    const start = 5 * 1440 + 7 * 60;
+    expect(
+      hoursInDailyWindow(
+        { startMinute: start, endMinute: start + 720 },
+        { startTime: '00:00', endTime: '00:00' },
+      ),
+    ).toBe(12);
+  });
+
+  it('counts the hours of a window that wraps midnight on every day a shift touches', () => {
+    const min = (d: number, hhmm: number) => d * 1440 + hhmm;
+    const daily = { startTime: '18:00', endTime: '06:00' };
+    // 19:00 Mon to 07:00 Tue: 18:00-06:00 covers 19:00-24:00 and 00:00-06:00 = 11h.
+    expect(
+      hoursInDailyWindow({ startMinute: min(5, 1140), endMinute: min(5, 1140) + 720 }, daily),
+    ).toBe(11);
+    // 07:00-15:00 misses it entirely.
+    expect(hoursInDailyWindow({ startMinute: min(5, 420), endMinute: min(5, 900) }, daily)).toBe(0);
   });
 });

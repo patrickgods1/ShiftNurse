@@ -508,7 +508,12 @@ export type PayRateInput = Omit<PayRate, 'id'>;
 /** Scope (nurse or role) is fixed once created; re-scoping is a delete and a create. */
 export type PayRatePatch = Partial<Pick<PayRate, 'hourlyRate' | 'effectiveFrom'>>;
 export type DifferentialInput = Omit<Differential, 'id'>;
-export type DifferentialPatch = Partial<Pick<Differential, 'kind' | 'mode' | 'amount' | 'active'>>;
+/** `window: null` clears the clock window. */
+export type DifferentialPatch = Partial<
+  Pick<Differential, 'kind' | 'mode' | 'amount' | 'active'>
+> & {
+  window?: Differential['window'] | null;
+};
 export type OvertimeRuleInput = Omit<OvertimeRule, 'id'>;
 export type OvertimeRulePatch = Partial<
   Pick<OvertimeRule, 'basis' | 'thresholdHours' | 'multiplier' | 'active'>

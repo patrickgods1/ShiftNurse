@@ -4,13 +4,19 @@
  * statute or regulation (October 2026); the summaries say what is left to the hospital, because a
  * preset that overstated the law would be worse than none.
  *
+ * Federal employers are the exception to "a state's law": the VA preset sets the Title 38 cap on
+ * required hours and leaves ratios and pay to the manager, because HPPD and the § 7453 premiums
+ * are not ratios or overtime rules the preset can state.
+ *
  * Presets only tighten. A ratio arrives as a catch-all RN rule at the legal ceiling, which
  * `bindingRatio` combines with any stricter tier rule the unit already has; overtime rules are
- * added if missing; a rule is switched on, never off. Applying one twice changes nothing.
+ * added if missing; a rule is switched on, never off, and a cap parameter only lowers. Applying
+ * one twice changes nothing.
  *
  * Not legal advice, and not complete: a unit's contract usually goes further, and some of each
  * law (Oregon's staffing-plan deviations, the hours caps in ORS 441.166 and c.111 § 226) is
- * stated in the summary rather than enforced.
+ * stated in the summary rather than enforced (as are the VA's § 7456 24-hour weekend-plan cap and
+ * its pay premiums).
  */
 
 import type {
@@ -24,7 +30,7 @@ import { resolveConfigs } from '../rules/registry.js';
 import type { RuleConfig, RuleSet } from '../rules/types.js';
 import { type AcuityPresetId, acuityPresetForUnitType } from './presets.js';
 
-export type JurisdictionId = 'CA' | 'OR' | 'NY' | 'WA' | 'MA' | 'other';
+export type JurisdictionId = 'CA' | 'OR' | 'NY' | 'WA' | 'MA' | 'US-VA' | 'other';
 
 export interface JurisdictionRatio {
   role: NurseRole;
@@ -41,7 +47,11 @@ export interface JurisdictionPreset {
   /** Ceilings by the unit types the acuity presets know; other unit types get none. */
   ratios: Partial<Record<AcuityPresetId, JurisdictionRatio>>;
   overtimeRules: readonly Pick<OvertimeRule, 'basis' | 'thresholdHours' | 'multiplier'>[];
-  /** Rule ids switched on (with these parameters, if any). */
+  /**
+   * Rule ids switched on (with these parameters, if any). A numeric parameter is a cap: it only
+   * ever lowers one the unit has, and never adds one to an enabled rule that has none, because
+   * an unset cap on no-mandatory-overtime is a total ban, stricter than any number.
+   */
   enableRules: readonly { ruleId: string; params?: Record<string, unknown> }[];
 }
 
@@ -137,6 +147,28 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
     },
     overtimeRules: [],
     enableRules: [NO_MANDATORY_OVERTIME],
+  },
+  'US-VA': {
+    label: 'Federal — VA (Title 38)',
+    summary:
+      'VA nursing staff are federal employees, so state staffing, overtime, meal-break and leave ' +
+      'laws (California’s Title 22 ratios, Labor Code daily overtime and CFRA, for example) do ' +
+      'not bind them: the Supremacy Clause and intergovernmental immunity put the VA beyond ' +
+      'state regulation. The VHA staffs to nursing hours per patient day set by expert panels ' +
+      '(VHA Directive 1351), not fixed ratios, so no ratio is set. 38 U.S.C. § 7459 forbids ' +
+      'requiring more than 40 hours in an administrative workweek (24 on the § 7456 weekend ' +
+      'plan: lower the cap under Settings › Rules for such nurses); volunteers and emergencies ' +
+      'recorded on the shift as "Emergency: …" are outside it. Pay premiums are set under ' +
+      'Settings › Pay, not by this preset: 38 U.S.C. § 7453 gives a 10% night differential for ' +
+      'the whole tour when at least 4 hours fall between 6 pm and 6 am, a 25% weekend premium ' +
+      'for any tour touching Saturday or Sunday, double pay on holidays, and overtime past 40 ' +
+      'hours a week or 8 consecutive hours (or past the scheduled tour on a compressed ' +
+      'schedule). Contract terms such as 11 hours between tours or weekends off belong to the ' +
+      'local agreement, not the preset. Contract nurses employed by an agency may still be ' +
+      'covered by state law.',
+    ratios: {},
+    overtimeRules: [],
+    enableRules: [{ ruleId: 'no-mandatory-overtime', params: { maxMandatedWeeklyHours: 40 } }],
   },
   other: {
     label: 'Another state',
@@ -249,9 +281,25 @@ export function planJurisdiction(
     let changed = false;
     const next = configs.map((c) => {
       const wanted = preset.enableRules.find((e) => e.ruleId === c.ruleId);
-      if (!wanted || c.enabled) return c;
+      if (!wanted) return c;
+      const params = { ...c.params };
+      let touched = !c.enabled;
+      for (const [key, value] of Object.entries(wanted.params ?? {})) {
+        const have = params[key];
+        if (typeof value !== 'number') {
+          if (!c.enabled) params[key] = value;
+        } else if (typeof have === 'number') {
+          if (value < have) {
+            params[key] = value;
+            touched = true;
+          }
+        } else if (!c.enabled) {
+          params[key] = value;
+        }
+      }
+      if (!touched) return c;
       changed = true;
-      return { ...c, enabled: true, params: { ...c.params, ...(wanted.params ?? {}) } };
+      return { ...c, enabled: true, params };
     });
     if (changed) plan.ruleConfigs = next;
   }

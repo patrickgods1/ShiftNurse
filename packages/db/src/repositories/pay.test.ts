@@ -321,6 +321,133 @@ describe('cost configuration', () => {
     expect(updates[0]?.after).toEqual(night);
   });
 
+  describe('clock windows on night and evening differentials', () => {
+    const window = { startTime: '18:00', endTime: '06:00', wholeShiftAtHours: 4 };
+    const baseNight = () => ({
+      unitId,
+      kind: 'night' as const,
+      mode: 'multiplier' as const,
+      amount: 1.1,
+      active: true,
+    });
+
+    it('reads a windowed differential back identical and an unwindowed one without a window', () => {
+      const windowed = createDifferential(handle.db, { ...baseNight(), window }, ACTOR);
+      const plain = createDifferential(handle.db, { ...baseNight(), kind: 'weekend' }, ACTOR);
+      const listed = listDifferentialsForUnit(handle.db, unitId);
+      expect(listed.find((d) => d.id === windowed.id)).toEqual({
+        ...baseNight(),
+        id: windowed.id,
+        window,
+      });
+      expect(listed.find((d) => d.id === plain.id)?.window).toBeUndefined();
+    });
+
+    it('keeps a null whole-shift threshold as null', () => {
+      const evening = createDifferential(
+        handle.db,
+        {
+          ...baseNight(),
+          kind: 'evening',
+          mode: 'flat',
+          amount: 2,
+          window: { startTime: '15:00', endTime: '23:00', wholeShiftAtHours: null },
+        },
+        ACTOR,
+      );
+      expect(listDifferentialsForUnit(handle.db, unitId)[0]?.window?.wholeShiftAtHours).toBeNull();
+      expect(evening.window?.wholeShiftAtHours).toBeNull();
+    });
+
+    it('sets and clears the window on an update and audits the change', () => {
+      const created = createDifferential(handle.db, baseNight(), ACTOR);
+      const set = updateDifferential(handle.db, created.id, { window }, ACTOR);
+      expect(set.window).toEqual(window);
+      const cleared = updateDifferential(handle.db, created.id, { window: null }, ACTOR);
+      expect(cleared.window).toBeUndefined();
+      const updates = auditHistoryFor(handle.db, 'differential', created.id).filter(
+        (e) => e.action === 'update',
+      );
+      expect(updates.map((e) => (e.before as { window?: unknown }).window)).toEqual([
+        window,
+        undefined,
+      ]);
+    });
+
+    it('refuses an evening differential with no window', () => {
+      expect(() =>
+        createDifferential(
+          handle.db,
+          { ...baseNight(), kind: 'evening', mode: 'flat', amount: 2 },
+          ACTOR,
+        ),
+      ).toThrow(/evening differential needs a clock window/);
+      const created = createDifferential(handle.db, baseNight(), ACTOR);
+      expect(() => updateDifferential(handle.db, created.id, { kind: 'evening' }, ACTOR)).toThrow(
+        /needs a clock window/,
+      );
+    });
+
+    it('refuses a window on a kind other than night or evening', () => {
+      expect(() =>
+        createDifferential(handle.db, { ...baseNight(), kind: 'weekend', window }, ACTOR),
+      ).toThrow(/only to night and evening/);
+    });
+
+    it('refuses turning a windowed night into a weekend one while it keeps its window', () => {
+      const created = createDifferential(handle.db, { ...baseNight(), window }, ACTOR);
+      expect(() => updateDifferential(handle.db, created.id, { kind: 'weekend' }, ACTOR)).toThrow(
+        /only to night and evening/,
+      );
+    });
+
+    it('turns a windowed night into a weekend one once its window is cleared in the same save', () => {
+      const created = createDifferential(handle.db, { ...baseNight(), window }, ACTOR);
+      const changed = updateDifferential(
+        handle.db,
+        created.id,
+        { kind: 'weekend', window: null },
+        ACTOR,
+      );
+      expect(changed.kind).toBe('weekend');
+      expect(changed.window).toBeUndefined();
+      expect(listDifferentialsForUnit(handle.db, unitId)[0]?.window).toBeUndefined();
+      const [update] = auditHistoryFor(handle.db, 'differential', created.id).filter(
+        (e) => e.action === 'update',
+      );
+      expect(update?.before).toMatchObject({ window });
+    });
+
+    it('refuses a window time that is not HH:MM', () => {
+      expect(() =>
+        createDifferential(
+          handle.db,
+          { ...baseNight(), window: { ...window, startTime: '6pm' } },
+          ACTOR,
+        ),
+      ).toThrow(/must be HH:MM/);
+      expect(() =>
+        createDifferential(
+          handle.db,
+          { ...baseNight(), window: { ...window, endTime: '24:00' } },
+          ACTOR,
+        ),
+      ).toThrow(/must be HH:MM/);
+    });
+
+    it('refuses a whole-shift threshold of zero or less', () => {
+      for (const wholeShiftAtHours of [0, -2]) {
+        expect(() =>
+          createDifferential(
+            handle.db,
+            { ...baseNight(), window: { ...window, wholeShiftAtHours } },
+            ACTOR,
+          ),
+        ).toThrow(/more than 0 hours/);
+      }
+    });
+  });
+
   it('lists every differential for the unit but only active ones for pricing', () => {
     const night = createDifferential(
       handle.db,

@@ -10,7 +10,16 @@
  */
 
 import type { Assignment, Differential, DifferentialKind, Id } from '../domain/entities.js';
-import { addDays, type IsoDate, isWeekendWindow, weekdayOf } from '../domain/time.js';
+import {
+  addDays,
+  type IsoDate,
+  isWeekendWindow,
+  MINUTES_PER_DAY,
+  MINUTES_PER_HOUR,
+  parseTimeOfDay,
+  type ShiftWindow,
+  weekdayOf,
+} from '../domain/time.js';
 import { gini } from '../fairness/distribution.js';
 import { payPeriodIndex, payPeriodWindow } from '../rules/hours-rules.js';
 import type { PaidLeaveCredit } from '../rules/paid-leave.js';
@@ -169,7 +178,56 @@ function differentialOf(ctx: CostContext, kind: DifferentialKind): Differential 
   return ctx.differentials.find((d) => d.kind === kind && d.active);
 }
 
-/** Which differentials a *worked* shift earns, in itemisation order. */
+/**
+ * Hours of `window` that fall inside the recurring daily window [startTime, endTime) (end <= start
+ * wraps past midnight), on every day the shift touches. Both are half-open minutes on the
+ * continuous timeline, so a shift ending at the window's start earns nothing and DST cannot
+ * move an hour in or out.
+ */
+export function hoursInDailyWindow(
+  window: ShiftWindow,
+  daily: { startTime: string; endTime: string },
+): number {
+  const from = parseTimeOfDay(daily.startTime);
+  const to = parseTimeOfDay(daily.endTime);
+  const length = to > from ? to - from : MINUTES_PER_DAY - from + to;
+  let minutes = 0;
+  // One day back: a wrapping window that began the evening before the shift starts.
+  for (
+    let day = Math.floor(window.startMinute / MINUTES_PER_DAY) - 1;
+    day * MINUTES_PER_DAY < window.endMinute;
+    day++
+  ) {
+    const start = day * MINUTES_PER_DAY + from;
+    const overlap =
+      Math.min(window.endMinute, start + length) - Math.max(window.startMinute, start);
+    if (overlap > 0) minutes += overlap;
+  }
+  return minutes / MINUTES_PER_HOUR;
+}
+
+/**
+ * The clock-windowed night/evening differentials a shift touches: those it earns on every hour
+ * (`whole`) and those it earns only on the hours inside the window (`partial`).
+ */
+function clockDifferentials(
+  view: AssignmentView,
+  ctx: CostContext,
+): { whole: Differential[]; partial: { d: Differential; hours: number }[] } {
+  const whole: Differential[] = [];
+  const partial: { d: Differential; hours: number }[] = [];
+  for (const kind of ['night', 'evening'] as const) {
+    const d = differentialOf(ctx, kind);
+    if (!d?.window) continue;
+    const inWindow = Math.min(hoursInDailyWindow(view.window, d.window), view.paidHours);
+    const threshold = d.window.wholeShiftAtHours;
+    if (threshold !== null && inWindow >= threshold) whole.push(d);
+    else if (inWindow > 0) partial.push({ d, hours: inWindow });
+  }
+  return { whole, partial };
+}
+
+/** Which differentials a *worked* shift earns on every hour, in itemisation order. */
 function applicableDifferentials(view: AssignmentView, ctx: CostContext): Differential[] {
   // Dated by start day, same as the fairness ledger: the night into a holiday morning is not a
   // holiday shift. A major holiday earns the major premium in place of the holiday one, never
@@ -178,8 +236,13 @@ function applicableDifferentials(view: AssignmentView, ctx: CostContext): Differ
   const major =
     (ctx.majorHolidayDates?.has(date) ?? false) &&
     differentialOf(ctx, 'major_holiday') !== undefined;
+  // A windowed night/evening differential is judged by the clock in `clockDifferentials`; the
+  // flag only speaks for a night differential that has no window.
+  const clock = clockDifferentials(view, ctx);
+  const nightFlag = differentialOf(ctx, 'night')?.window === undefined && view.shiftType.isNight;
   const applies: Record<DifferentialKind, boolean> = {
-    night: view.shiftType.isNight,
+    night: nightFlag || clock.whole.some((d) => d.kind === 'night'),
+    evening: clock.whole.some((d) => d.kind === 'evening'),
     weekend: isWeekendWindow(view.window, ctx.weekendDefinition),
     holiday: ctx.holidayDates.has(date) && !major,
     major_holiday: major,
@@ -264,6 +327,19 @@ function priceView(
     const increment = running * (d.amount - 1);
     lines.push({ kind: d.kind, hours, rate: increment, amount: hours * increment });
     running *= d.amount;
+  }
+  // Partial clock differentials: under 38 U.S.C. 7453 the night differential and overtime are both
+  // percentages of basic pay, so they never stack. Priced on the base rate and kept out of
+  // `running` they neither compound with other multipliers nor lift the overtime rate; a FLSA
+  // regular-rate unit that wants stacking sets the whole-shift threshold instead.
+  for (const { d, hours: inWindow } of clockDifferentials(view, ctx).partial) {
+    const rate = d.mode === 'flat' ? d.amount : base * (d.amount - 1);
+    const line: CostLine = { kind: d.kind, hours: inWindow, rate, amount: inWindow * rate };
+    const order = DIFFERENTIAL_ORDER.indexOf(d.kind);
+    const at = lines.findIndex(
+      (l) => l.kind !== 'base' && DIFFERENTIAL_ORDER.indexOf(l.kind as DifferentialKind) > order,
+    );
+    lines.splice(at === -1 ? lines.length : at, 0, line);
   }
   const straightRate = running;
 

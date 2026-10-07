@@ -164,22 +164,62 @@ export function listActiveDifferentials(db: DbLike, unitId: Id): Differential[] 
 }
 
 export type DifferentialInput = Omit<Differential, 'id'>;
-export type DifferentialPatch = Partial<Pick<Differential, 'kind' | 'mode' | 'amount' | 'active'>>;
+/** `window: null` clears the clock window, going back to the shift type's flag. */
+export type DifferentialPatch = Partial<
+  Pick<Differential, 'kind' | 'mode' | 'amount' | 'active'>
+> & {
+  window?: Differential['window'] | null;
+};
 
 const DIFFERENTIAL_PATCH_KEYS: PatchKeys<DifferentialPatch> = {
   kind: true,
   mode: true,
   amount: true,
   active: true,
+  window: true,
 };
+
+const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * Refuses a window that cannot be priced: an evening differential has no flag to fall back on,
+ * so without a window it would silently pay nothing, and a window on any other kind would be
+ * ignored by costing — both read as a configured premium that never appears on a payslip.
+ */
+function checkWindow(kind: Differential['kind'], window: Differential['window'] | undefined): void {
+  if (window === undefined) {
+    if (kind === 'evening') throw new Error('An evening differential needs a clock window');
+    return;
+  }
+  if (kind !== 'night' && kind !== 'evening') {
+    throw new Error(`A clock window applies only to night and evening differentials, not ${kind}`);
+  }
+  for (const time of [window.startTime, window.endTime]) {
+    if (!CLOCK_TIME.test(time)) throw new Error(`Window time "${time}" must be HH:MM`);
+  }
+  const whole = window.wholeShiftAtHours;
+  if (whole !== null && !(whole > 0)) {
+    throw new Error('The whole-shift threshold must be more than 0 hours');
+  }
+}
+
+function windowColumns(window: Differential['window'] | undefined) {
+  return {
+    windowStart: window?.startTime ?? null,
+    windowEnd: window?.endTime ?? null,
+    windowWholeShiftAtHours: window?.wholeShiftAtHours ?? null,
+  };
+}
 
 export function createDifferential(
   db: DbLike,
   input: DifferentialInput,
   actor: string,
 ): Differential {
+  checkWindow(input.kind, input.window);
   const id = ids.differential();
-  const row = { id, ...input };
+  const { window, ...rest } = input;
+  const row = { id, ...rest, ...windowColumns(window) };
   db.insert(differential).values(row).run();
   const created = toDifferential(row);
   recordAudit(db, {
@@ -208,13 +248,22 @@ export function updateDifferential(
       const row = db.select().from(differential).where(eq(differential.id, rowId)).get();
       return row ? toDifferential(row) : undefined;
     },
+    validate: (values, before) => {
+      const window = values.window === undefined ? before.window : (values.window ?? undefined);
+      checkWindow(values.kind ?? before.kind, window);
+    },
     // The id rides along so an empty patch still writes, as the full-row update always did.
-    write: (rowId, values) =>
-      db
-        .update(differential)
-        .set({ ...values, id: rowId })
+    write: (rowId, values) => {
+      const { window, ...columns } = values;
+      db.update(differential)
+        .set({
+          ...columns,
+          ...(window === undefined ? {} : windowColumns(window ?? undefined)),
+          id: rowId,
+        })
         .where(eq(differential.id, rowId))
-        .run(),
+        .run();
+    },
     notFound: `Differential ${id} not found`,
     actor,
   });

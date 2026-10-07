@@ -83,7 +83,7 @@ These are yours to do by hand until the app handles them (the same list is in Se
 - Float staff: other units' shifts count as busy time, but who floats is not rotated fairly across the team, and Generate may offer a float nurse on any day of the period, not only the dates of their membership; keep the turn and check the dates yourself.
 - Leave bids and other requests are entered by the manager: nurses do not submit them in the app yet.
 
-The state presets in Settings › Unit are a starting point, not legal advice: check them against your contract and your state's law.
+The state presets in Settings › Unit are a starting point, not legal advice: check them against your contract and your state's law. A federal VA preset (Title 38) sets the 40-hour cap on required hours and leaves ratios and pay to you.
 
 ## Installing
 

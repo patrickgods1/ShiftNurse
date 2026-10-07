@@ -41,9 +41,7 @@ export function StateLawSection() {
     if (chosen === '' || !preset) return;
     const ok = await confirm({
       title:
-        chosen === 'other'
-          ? 'Record that no state preset applies?'
-          : `Apply ${preset.label}'s settings?`,
+        chosen === 'other' ? 'Record that no preset applies?' : `Apply ${preset.label}'s settings?`,
       description:
         'This adds the ratio ceilings, overtime rules and rule switches in the summary, and never loosens a setting you have.',
       confirmLabel: 'Apply',
@@ -57,11 +55,11 @@ export function StateLawSection() {
       className="flex max-w-xl flex-col gap-3 border-t border-border pt-3"
       data-testid="state-law"
     >
-      <legend className="pr-2 text-sm font-semibold text-text">State law</legend>
+      <legend className="pr-2 text-sm font-semibold text-text">State or federal law</legend>
       <Field
         id="unit-jurisdiction"
-        label="State"
-        hint="Fills in what your state's law asks: ratio ceilings, overtime and the ban on mandatory overtime. It only tightens settings."
+        label="State or federal law"
+        hint="Fills in what your state's or federal law asks: ratio ceilings, overtime and the ban on mandatory overtime. It only tightens settings."
         tip="Check the summary against your contract — most contracts go further than the law."
       >
         <select
@@ -74,7 +72,7 @@ export function StateLawSection() {
             apply.reset();
           }}
         >
-          <option value="">Choose a state…</option>
+          <option value="">Choose a state or federal law…</option>
           {IDS.map((id) => (
             <option key={id} value={id}>
               {JURISDICTION_PRESETS[id].label}
@@ -112,7 +110,7 @@ export function StateLawSection() {
           </span>
         ) : null}
       </div>
-      <p className="text-xs text-warn">State presets are a starting point, not legal advice.</p>
+      <p className="text-xs text-warn">Presets are a starting point, not legal advice.</p>
     </fieldset>
   );
 }

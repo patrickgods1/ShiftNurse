@@ -99,7 +99,9 @@ describe('Settings › Unit ratio staffing', () => {
 describe('Settings › Unit state law', () => {
   it('shows what California asks before anything is applied, and sends nothing for it', async () => {
     renderWithApp(<UnitPanel />, { unit });
-    fireEvent.change(await screen.findByLabelText('State'), { target: { value: 'CA' } });
+    fireEvent.change(await screen.findByLabelText('State or federal law'), {
+      target: { value: 'CA' },
+    });
 
     expect(screen.getByTestId('state-law-summary').textContent).toMatch(/Title 22 ratios/);
     expect(bridge.callsTo('setup', 'applyJurisdiction')).toHaveLength(0);
@@ -108,7 +110,9 @@ describe('Settings › Unit state law', () => {
   it('applies California to this unit once the manager confirms, and says what it did', async () => {
     bridge.respond('setup', 'applyJurisdiction', { created: 6, updated: 2, unchanged: 0 });
     renderWithApp(<UnitPanel />, { unit });
-    fireEvent.change(await screen.findByLabelText('State'), { target: { value: 'CA' } });
+    fireEvent.change(await screen.findByLabelText('State or federal law'), {
+      target: { value: 'CA' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
     expect(await screen.findByText(/never loosens a setting you have/)).toBeTruthy();
@@ -122,7 +126,9 @@ describe('Settings › Unit state law', () => {
 
   it('applies nothing when the confirmation is cancelled', async () => {
     renderWithApp(<UnitPanel />, { unit: { ...unit, jurisdiction: 'OR' } });
-    expect(((await screen.findByLabelText('State')) as HTMLSelectElement).value).toBe('OR');
+    expect(
+      ((await screen.findByLabelText('State or federal law')) as HTMLSelectElement).value,
+    ).toBe('OR');
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
 

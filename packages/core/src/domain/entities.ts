@@ -544,6 +544,8 @@ export interface PayRate {
 
 export type DifferentialKind =
   | 'night'
+  /** Only ever earned through a clock `window`; without one it applies to nothing. */
+  | 'evening'
   | 'weekend'
   | 'holiday'
   /** A major holiday's premium. Absent, a major holiday earns the `holiday` premium. */
@@ -561,6 +563,13 @@ export interface Differential {
   mode: 'multiplier' | 'flat';
   amount: number;
   active: boolean;
+  /**
+   * Earned by clock time instead of the shift type's flag: the hours of the shift falling in the
+   * daily window [startTime, endTime) (HH:MM; end ≤ start wraps past midnight). With
+   * `wholeShiftAtHours`, a shift with at least that many hours in the window earns it on every
+   * paid hour; otherwise only the in-window hours earn it. Only night and evening use it.
+   */
+  window?: { startTime: string; endTime: string; wholeShiftAtHours: number | null };
 }
 
 export interface OvertimeRule {

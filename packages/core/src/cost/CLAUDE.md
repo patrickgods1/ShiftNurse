@@ -26,3 +26,9 @@
   `priceDayOfEvents` prices missed meal and rest breaks (one hour a day each), reporting-time pay
   (half the shift, 2–4 hours) and call-backs (at least the contract minimum) at the base rate.
   Events are `day_of_pay_event` rows (migration 0025); the call-back minimum is `pay_settings`.
+- **A night or evening differential can be earned by the clock.** With a `window` it ignores
+  `ShiftType.isNight`: `hoursInDailyWindow` counts the shift's hours inside the daily window (end
+  ≤ start wraps midnight). At `wholeShiftAtHours` it is a whole-shift differential like any other;
+  below it, only the in-window hours earn it, priced on the base rate and kept out of the running
+  rate — 38 U.S.C. §7453 makes night pay and overtime percentages of basic pay, so they never
+  stack. An `evening` differential with no window applies to nothing.
