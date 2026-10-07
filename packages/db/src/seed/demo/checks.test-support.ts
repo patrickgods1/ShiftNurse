@@ -38,8 +38,14 @@ import {
   getPeriod,
   listAssignmentsForPeriod,
   listPeriodsForUnit,
+  priorAssignmentsBefore,
 } from '../../repositories/schedule.js';
-import { costContext, demandInputs, loadPeriodInput } from '../../repositories/solve-input.js';
+import {
+  costContext,
+  demandInputs,
+  loadPeriodInput,
+  PRIOR_ASSIGNMENT_LOOKBACK_DAYS,
+} from '../../repositories/solve-input.js';
 import { listTimeOffForUnit } from '../../repositories/timeoff.js';
 import { type DemoId, seedDemoUnit } from '../demo.js';
 import type { SeedResult } from '../types.js';
@@ -89,9 +95,17 @@ export function historyViolationList(f: DemoFixture, severity: 'hard' | 'soft' =
   for (const period of listPeriodsForUnit(db, unit.id)) {
     if (period.status !== 'published') continue;
     const ruleSet = getRuleSet(db, period.ruleSetId)!;
+    // With the tail the app judges a period with: a rolling four-weekend window reaches back
+    // past a 14-day period's first weekend, so without it the weekends before go unseen.
     const view = new ScheduleView({
       period,
       assignments: listAssignmentsForPeriod(db, period.id),
+      priorAssignments: priorAssignmentsBefore(
+        db,
+        unit.id,
+        period.startDate,
+        PRIOR_ASSIGNMENT_LOOKBACK_DAYS,
+      ),
       nurses,
       shiftTypes,
     });

@@ -12,7 +12,14 @@
  * rules apply (`when`): California's daily-8 overtime does not bind a 12-hour alternative
  * workweek, and the VA's overtime turns on whether the nurse works a compressed tour. The app
  * cannot tell either from the unit's data, and guessing would overstate the law for one kind of
- * unit or the other. The answers are not stored; the plan is what they decided.
+ * unit or the other. The unit stores the answers, because one of them (the VA's `ownContract`)
+ * also decides which of the preset's rules stay protected afterwards.
+ *
+ * Where a preset's contract-only values come from an agreement rather than the statute, `source`
+ * names it: the VA's are the VA–NNU agreement's, and a unit under another local (San Francisco's
+ * NFFE Local 1) cannot be assumed to share them. Answering `ownContract` still applies them, as
+ * the best defaults there are, but stops protecting the rules marked `contractOnly`, so a manager
+ * can fit them to the unit's own text without justifying a loosening of terms never theirs.
  *
  * A preset may also carry a leave policy: the FMLA regime, the leave year and the accrual rules
  * that project balances forward (`leave/accrual.ts`). It is proposed whole, and only to a unit
@@ -177,6 +184,8 @@ export interface JurisdictionPreset {
   summary: string;
   /** Questions asked at apply time; their answers decide which `when` rules apply. */
   options?: readonly JurisdictionOption[];
+  /** The agreement the `contractOnly` rules come from, shown with the summary. */
+  source?: { contract: string; note?: string };
   ratioStaffing?: RatioStaffing;
   /** Ceilings by the unit kinds the law names; other unit types get none. */
   ratios: Partial<Record<JurisdictionUnitKind, JurisdictionRatio>>;
@@ -212,6 +221,11 @@ export interface PresetRule {
   absentCapIsUnlimited?: boolean;
   /** Switched on only when the manager's answer meets this; absent, always. */
   when?: PresetCondition;
+  /**
+   * From the preset's `source` agreement, not the statute: not protected on a unit that answered
+   * `ownContract`, whose own agreement may say otherwise.
+   */
+  contractOnly?: boolean;
 }
 
 const TITLE_22 = 'Cal. Code Regs. tit. 22 § 70217(a)';
@@ -234,6 +248,9 @@ const COMPRESSED_TOUR = 'compressedTour';
 const ON_COMPRESSED: PresetCondition = { option: COMPRESSED_TOUR, is: true };
 const OFF_COMPRESSED: PresetCondition = { option: COMPRESSED_TOUR, is: false };
 const TITLE_38_PAY = '38 U.S.C. § 7453';
+
+/** The answer that releases a preset's `contractOnly` rules from protection. */
+const OWN_CONTRACT = 'ownContract';
 
 /** `long-stretch` with a state's numbers; any cap the law does not give stays unset. */
 function longStretch(params: Record<string, unknown>): PresetRule {
@@ -332,7 +349,10 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
           balanceType: 'sick',
           tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 30 }],
           balanceCapHours: 80,
-          citation: 'Lab. Code § 246(b) (SB 616, 2023): 1 h per 30 worked, cap 80 h',
+          useCapHoursPerYear: 40,
+          citation:
+            'Lab. Code § 246(b) (SB 616, 2023): 1 h per 30 worked, cap 80 h; ' +
+            'use capped at 40 h a year (§ 246(b)(1), (d))',
         },
       ],
     },
@@ -652,8 +672,9 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'minutes, past 40 hours a week or 8 consecutive hours, or, when applying says the nurses ' +
       'work compressed tours, past the scheduled tour or 80 hours in the pay period. Nurses ' +
       'marked 72/80 or Baylor on the roster get their own overtime (72/80: past 36 hours a ' +
-      'week, 12 on a tour day, 8 on any other day; Baylor: past the tour or 40 a week), and the ' +
-      'Baylor tour earns none of the § 7453 premiums. Contract ' +
+      'week, 12 on a tour day, 8 on any other day; Baylor: past 24 hours from midnight Friday to ' +
+      'midnight Sunday or 8 on any other day), and the ' +
+      'regularly scheduled Baylor tour earns none of the § 7453 premiums. Contract ' +
       'terms come from the VA–NNU Master Agreement Art. 13–14: 11 hours between tours, the ' +
       'weekend pattern, no more than two tours a schedule, five shifts in a row, posting four ' +
       'weeks ahead and overtime called from the rosters; a unit under another local (San ' +
@@ -672,7 +693,20 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
           'Pays overtime past the scheduled tour and past 80 hours in the pay period, instead of ' +
           'past 40 a week and 8 consecutive hours.',
       },
+      {
+        id: OWN_CONTRACT,
+        label: 'Our unit is under a different agreement than VA–NNU',
+        hint:
+          'Keeps the statute’s rules protected and lets you adjust the contract’s values without ' +
+          'a stated reason.',
+      },
     ],
+    source: {
+      contract: 'VA–NNU 2023 Master Agreement, Arts. 10, 12–14',
+      note:
+        'San Francisco VA nurses are represented by NFFE Local 1, whose agreement is not ' +
+        'published; confirm the rest, weekend, tour and posting values against it.',
+    },
     ratios: {},
     // § 7453(e)(1); VA pays no overtime under 15 minutes. On a compressed tour, § 7453(e)(1) read
     // with § 7456/7456A: overtime is work beyond the scheduled tour or past 80 in the pay period.
@@ -708,11 +742,14 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       // Nurses marked 72/80 or Baylor on the roster have their own bases; no nurse has the kind
       // until the manager sets it, so these apply to no one by default and need no `when`.
       // § 7456A(c)(1)(A): a 72/80 nurse's overtime is work past 36 hours in an administrative week.
+      // § 7456A(c) lists its tests as alternatives, so no hour is overtime twice: an hour already
+      // past 12 on a tour day does not count toward the 36 as well.
       {
         basis: 'weekly',
         thresholdHours: 36,
         multiplier: 1.5,
         minimumMinutes: 15,
+        pyramiding: 'none',
         scheduleKinds: ['va_72_80'],
       },
       // § 7456A(c)(1)(B): past 12 hours in a day on which the nurse works a tour.
@@ -733,18 +770,24 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
         minimumMinutes: 15,
         scheduleKinds: ['va_72_80'],
       },
-      // § 7456(c): the Baylor plan's overtime is past 40 hours in the week...
+      // § 7456(b)(3)(A): a Baylor nurse's overtime is service past 24 hours between midnight
+      // Friday and midnight Sunday, the unit's weekend (by default Saturday 00:00 for 48 hours)...
+      // The tests are alternatives, so an hour already paid past 8 on a day does not count toward
+      // the 24 as well.
       {
-        basis: 'weekly',
-        thresholdHours: 40,
+        basis: 'weekend',
+        thresholdHours: 24,
         multiplier: 1.5,
         minimumMinutes: 15,
+        pyramiding: 'none',
         scheduleKinds: ['va_baylor'],
       },
-      // ...or beyond the scheduled tour.
+      // ...or past 8 hours on a day other than a Saturday or Sunday. A holdover on a weekend tour
+      // is past the weekend's 24, on a weekday past the 8, so no beyond-tour rule is needed.
       {
-        basis: 'beyond_scheduled_tour',
-        thresholdHours: 0,
+        basis: 'daily',
+        thresholdHours: 8,
+        tourDays: 'except',
         multiplier: 1.5,
         minimumMinutes: 15,
         scheduleKinds: ['va_baylor'],
@@ -788,19 +831,29 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
         },
       },
       // The contract terms below are the VA–NNU Master Agreement (2023) Art. 13's.
-      { ruleId: 'min-rest-between-shifts', params: { minRestHours: 11 }, raise: ['minRestHours'] },
+      {
+        ruleId: 'min-rest-between-shifts',
+        params: { minRestHours: 11 },
+        raise: ['minRestHours'],
+        contractOnly: true,
+      },
       // VA–NNU Master Agreement Art. 13: two weekends off in four, judged over any four weekends
       // in a row. An unset cap here is no limit, so adding one to an enabled rule tightens it.
       {
         ruleId: 'weekend-pattern',
         params: { maxWeekendsPer4Weeks: 2 },
         absentCapIsUnlimited: true,
+        contractOnly: true,
       },
-      { ruleId: 'tour-rotation', params: { maxToursPerPeriod: 2 } },
-      { ruleId: 'max-consecutive-shifts', params: { maxConsecutiveShifts: 5 } },
+      { ruleId: 'tour-rotation', params: { maxToursPerPeriod: 2 }, contractOnly: true },
+      {
+        ruleId: 'max-consecutive-shifts',
+        params: { maxConsecutiveShifts: 5 },
+        contractOnly: true,
+      },
       // Art. 13 §2.D.3: an RN who works every weekend in a pay period gets two consecutive days
       // off in that pay period.
-      { ruleId: 'days-off-together' },
+      { ruleId: 'days-off-together', contractOnly: true },
     ],
     leavePolicy: {
       fmla: { regime: 'title5', yearMethod: 'rolling_forward' },
@@ -1085,7 +1138,9 @@ export interface ProtectedRuleChange {
 
 /**
  * The edits in `next` that loosen a rule the law put in force: the ratio rule, and every rule the
- * unit's preset switches on (whatever the answers, since the app does not keep them). Disabling
+ * unit's preset switches on, whatever the `when` answers, except a `contractOnly` one on a unit
+ * whose stored `choices` say it is under its own agreement: there the preset's values were the
+ * best defaults available, not terms the unit agreed to. Disabling
  * one, or making a hard one advisory, is named so the caller can ask for a reason; a preset only
  * tightens, so this is the one place a unit can quietly fall below it. A rule absent from
  * `previous` was never in force here and counts as untouched; one absent from `next` counts as
@@ -1095,10 +1150,14 @@ export function protectedRuleChanges(
   previous: readonly RuleConfig[],
   next: readonly RuleConfig[],
   jurisdiction: JurisdictionId | undefined,
+  choices: JurisdictionChoices,
 ): ProtectedRuleChange[] {
   const ids = new Set([RATIO_RULE_ID]);
+  const ownContract = choices[OWN_CONTRACT] ?? false;
   if (jurisdiction !== undefined) {
-    for (const r of JURISDICTION_PRESETS[jurisdiction].enableRules) ids.add(r.ruleId);
+    for (const r of JURISDICTION_PRESETS[jurisdiction].enableRules) {
+      if (!(ownContract && r.contractOnly)) ids.add(r.ruleId);
+    }
   }
   const changes: ProtectedRuleChange[] = [];
   for (const before of previous) {

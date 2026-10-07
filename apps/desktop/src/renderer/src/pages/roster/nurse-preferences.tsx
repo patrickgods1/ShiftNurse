@@ -1,14 +1,17 @@
 /**
- * A nurse's scheduling preferences: shift types, days and weekend appetite, each weighted.
- * The solver prices them softly; the fairness score reports how often they were honoured.
+ * A nurse's scheduling preferences: shift types, days, weekend appetite and holidays they want
+ * to work, each weighted. The solver prices them softly; the fairness score reports how often
+ * they were honoured.
  */
 
-import type { Id, Preference } from '@shiftnurse/core';
+import { compareDates, type Holiday, type Id, type Preference, today } from '@shiftnurse/core';
 import { useEffect, useState } from 'react';
 import type { PreferenceInput } from '../../../../shared/api.js';
 import { useNursePreferences, useReplacePreferences, useShiftTypes } from '../../api.js';
+import { useHolidays } from '../../api-config.js';
 import { AsyncState } from '../../components/async-state.js';
 import { errorMessage, PRIMARY } from '../../components/ui.js';
+import { formatDate } from '../../format.js';
 import { strengthLabel } from '../../preferences.js';
 
 const WEEKDAY_NAMES = [
@@ -30,6 +33,7 @@ const PREFERENCE_KIND_LABELS: Record<PreferenceKind, string> = {
   avoid_weekday: 'Avoids weekday',
   weekend_appetite: 'Weekend appetite',
   preferred_block_length: 'Preferred block length',
+  holiday_appetite: 'Wants to work holiday',
 };
 
 interface PreferenceRow {
@@ -56,12 +60,15 @@ function defaultForKind(kind: PreferenceKind): PreferenceInput {
       return { kind, level: 0, weight: 3 };
     case 'preferred_block_length':
       return { kind, shifts: 3, weight: 3 };
+    case 'holiday_appetite':
+      return { kind, holidayId: '', weight: 3 };
   }
 }
 
 export function PreferencesSection({ nurseId, unitId }: { nurseId: Id; unitId: Id }) {
   const preferencesQuery = useNursePreferences(nurseId);
   const shiftTypesQuery = useShiftTypes(unitId);
+  const holidaysQuery = useHolidays(unitId);
   const replace = useReplacePreferences(nurseId);
   const [rows, setRows] = useState<PreferenceRow[]>([]);
   const [nextKey, setNextKey] = useState(0);
@@ -99,7 +106,7 @@ export function PreferencesSection({ nurseId, unitId }: { nurseId: Id; unitId: I
         </button>
       </div>
 
-      {preferencesQuery.isPending || shiftTypesQuery.isPending ? (
+      {preferencesQuery.isPending || shiftTypesQuery.isPending || holidaysQuery.isPending ? (
         <AsyncState status="loading" label="Loading preferences" />
       ) : (
         <>
@@ -109,6 +116,7 @@ export function PreferencesSection({ nurseId, unitId }: { nurseId: Id; unitId: I
                 key={row.key}
                 row={row}
                 shiftTypes={shiftTypesQuery.data ?? []}
+                holidays={holidaysQuery.data ?? []}
                 onChange={(value) => updateRow(row.key, value)}
                 onRemove={() => removeRow(row.key)}
               />
@@ -142,11 +150,13 @@ export function PreferencesSection({ nurseId, unitId }: { nurseId: Id; unitId: I
 function PreferenceRowEditor({
   row,
   shiftTypes,
+  holidays,
   onChange,
   onRemove,
 }: {
   row: PreferenceRow;
   shiftTypes: { id: Id; name: string }[];
+  holidays: readonly Holiday[];
   onChange: (value: PreferenceInput) => void;
   onRemove: () => void;
 }) {
@@ -231,6 +241,22 @@ function PreferenceRowEditor({
         </select>
       ) : null}
 
+      {value.kind === 'holiday_appetite' ? (
+        <select
+          aria-label="Holiday"
+          value={value.holidayId}
+          onChange={(e) => onChange({ ...value, holidayId: e.target.value as Id })}
+          className="rounded-md border border-border bg-bg px-1.5 py-1"
+        >
+          <option value="">Select…</option>
+          {holidayChoices(holidays, value.holidayId).map((h) => (
+            <option key={h.id} value={h.id}>
+              {h.name} · {formatDate(h.date)}
+            </option>
+          ))}
+        </select>
+      ) : null}
+
       <label
         className="ml-auto flex items-center gap-1 text-text-muted"
         title="How much this matters when Generate has to choose. Longer-serving nurses' preferences count a little more."
@@ -255,4 +281,15 @@ function PreferenceRowEditor({
       </button>
     </li>
   );
+}
+
+/**
+ * Holidays from today on, by date. A saved wish for one already past stays listed, so the row
+ * still says what it holds rather than reading as "Select…".
+ */
+function holidayChoices(holidays: readonly Holiday[], selected: Id): Holiday[] {
+  const from = today();
+  return holidays
+    .filter((h) => compareDates(h.date, from) >= 0 || h.id === selected)
+    .sort((a, b) => compareDates(a.date, b.date));
 }

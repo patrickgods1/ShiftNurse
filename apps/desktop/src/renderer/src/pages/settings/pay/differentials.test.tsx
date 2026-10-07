@@ -106,6 +106,52 @@ describe('clock-time differentials in Settings › Pay', () => {
     );
   });
 
+  describe('the UC consecutive-shift premium', () => {
+    async function choosePremium() {
+      await openForm();
+      fireEvent.change(screen.getByTestId('differential-kind'), {
+        target: { value: 'consecutive_shift' },
+      });
+      fireEvent.change(screen.getByLabelText('Mode'), { target: { value: 'multiplier' } });
+      fireEvent.change(screen.getByTestId('differential-amount'), { target: { value: '1.5' } });
+    }
+
+    it('saves time and a half after more than four full shifts within four days', async () => {
+      await choosePremium();
+      fireEvent.change(screen.getByLabelText('More than (full shifts)'), {
+        target: { value: '4' },
+      });
+      fireEvent.change(screen.getByLabelText('Within (days)'), { target: { value: '4' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Add differential' }));
+      await waitFor(() =>
+        expect(bridge.callsTo('cost', 'createDifferential')).toEqual([
+          [
+            {
+              unitId: 'u-1',
+              kind: 'consecutive_shift',
+              mode: 'multiplier',
+              amount: 1.5,
+              active: true,
+              consecutive: { afterShifts: 4, withinDays: 4 },
+            },
+          ],
+        ]),
+      );
+    });
+
+    it('will not save the premium with the shifts but not the days', async () => {
+      await choosePremium();
+      fireEvent.change(screen.getByLabelText('More than (full shifts)'), {
+        target: { value: '4' },
+      });
+      fireEvent.submit(screen.getByRole('button', { name: 'Add differential' }).closest('form')!);
+      expect(
+        await screen.findByText('Enter both the number of shifts and the number of days'),
+      ).toBeTruthy();
+      expect(bridge.callsTo('cost', 'createDifferential')).toEqual([]);
+    });
+  });
+
   describe('editing a saved differential', () => {
     const windowedNight = {
       id: 'd-night',

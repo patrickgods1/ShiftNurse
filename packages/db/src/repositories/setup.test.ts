@@ -342,8 +342,8 @@ describe('applying a state preset', () => {
       r.scheduleKinds?.includes('va_baylor'),
     );
     expect(baylor.map((r) => `${r.basis} ${r.thresholdHours}`).sort()).toEqual([
-      'beyond_scheduled_tour 0',
-      'weekly 40',
+      'daily 8',
+      'weekend 24',
     ]);
     expect(baylor.every((r) => r.scheduleKinds?.length === 1)).toBe(true);
     expect(
@@ -410,5 +410,29 @@ describe('applying a state preset', () => {
   it('refuses a state it has no preset for', () => {
     const unit = newUnit();
     expect(() => applyState(unit.id, 'ZZ' as never)).toThrow(/Unknown state preset/);
+  });
+
+  it('remembers that a VA unit is under its own agreement, and forgets it when told otherwise', () => {
+    const unit = newUnit();
+    const applyVa = (choices: Record<string, boolean>) =>
+      transact(handle.db, (tx) => applyJurisdiction(tx, unit.id, 'US-VA', ACTOR, choices));
+    applyVa({ ownContract: true, compressedTour: false });
+    expect(getUnit(handle.db, unit.id)?.jurisdictionChoices).toEqual({ ownContract: true });
+
+    const before = auditRows();
+    expect(applyVa({ ownContract: true })).toEqual({ created: 0, updated: 0, unchanged: 1 });
+    expect(auditRows()).toBe(before);
+
+    applyVa({});
+    expect(getUnit(handle.db, unit.id)?.jurisdictionChoices).toBeUndefined();
+  });
+
+  it('forgets a VA unit’s own-agreement answer when the unit moves to California', () => {
+    const unit = newUnit();
+    transact(handle.db, (tx) =>
+      applyJurisdiction(tx, unit.id, 'US-VA', ACTOR, { ownContract: true }),
+    );
+    transact(handle.db, (tx) => applyJurisdiction(tx, unit.id, 'CA', ACTOR, {}));
+    expect(getUnit(handle.db, unit.id)?.jurisdictionChoices).toBeUndefined();
   });
 });

@@ -19,6 +19,7 @@ import {
   shiftWindow,
   solve,
   weekdayOf,
+  weekendKey,
 } from '@shiftnurse/core';
 import { describe, expect, it } from 'vitest';
 import { getUnit, listHolidaysForUnit, listUnits } from '../../repositories/config.js';
@@ -159,8 +160,9 @@ describe('the VA San Francisco med-surg demo', () => {
 
   it('carries the 72/80 and Baylor plans’ overtime rules, scoped to their plans', () => {
     // 38 U.S.C. § 7456A(c)(1): a 72/80 nurse's overtime is past 36 in the week, past 12 on a
-    // tour day and past 8 on any other day; § 7456(c): a Baylor nurse's is past 40 in the week or
-    // beyond the tour. Time and a half throughout, with a 15-minute minimum.
+    // tour day and past 8 on any other day; § 7456(b)(3)(A): a Baylor nurse's is past 24 hours
+    // from midnight Friday to midnight Sunday, or past 8 on any other day. Time and a half
+    // throughout, with a 15-minute minimum.
     const scoped = f
       .rows<{
         basis: string;
@@ -179,8 +181,8 @@ describe('the VA San Francisco med-surg demo', () => {
       ['["va_72_80"]', 'daily', 8, 'except', 1.5],
       ['["va_72_80"]', 'daily', 12, 'only', 1.5],
       ['["va_72_80"]', 'weekly', 36, null, 1.5],
-      ['["va_baylor"]', 'beyond_scheduled_tour', 0, null, 1.5],
-      ['["va_baylor"]', 'weekly', 40, null, 1.5],
+      ['["va_baylor"]', 'daily', 8, 'except', 1.5],
+      ['["va_baylor"]', 'weekend', 24, null, 1.5],
     ]);
     expect(
       f.count(
@@ -402,6 +404,46 @@ describe('the VA San Francisco med-surg demo', () => {
     expect(tooClose).toBe(0);
   });
 
+  it('gives two weekends off in every rolling four', () => {
+    // VA–NNU Art. 13: of any weekend a nurse works and the three before it, at most two worked,
+    // across pay-period and schedule edges. Counted here from the rows, by the unit's weekend
+    // definition; a Baylor nurse works every weekend by contract and is not judged.
+    const db = f.handle.db;
+    const published = listPeriodsForUnit(db, f.result.unitId).filter(
+      (p) => p.status === 'published',
+    );
+    const definition = loadPeriodInput(db, published[0]!).ruleSet.weekendDefinition;
+    const rows = f.rows<{ nurse_id: string; date: string; start_time: string; hours: number }>(
+      `SELECT a.nurse_id, a.date, st.start_time, st.duration_hours hours
+         FROM assignment a JOIN shift_type st ON st.id = a.shift_type_id
+         JOIN schedule_period p ON p.id = a.period_id JOIN nurse n ON n.id = a.nurse_id
+        WHERE p.unit_id = '${f.result.unitId}' AND p.status = 'published'
+          AND st.is_on_call = 0 AND (n.schedule_kind IS NULL OR n.schedule_kind <> 'va_baylor')`,
+    );
+    const weekendsOf = new Map<string, Set<string>>();
+    for (const r of rows) {
+      const key = weekendKey(
+        shiftWindow(isoDate(r.date), { startTime: r.start_time, durationHours: r.hours }),
+        definition,
+      );
+      if (key === null) continue;
+      const mine = weekendsOf.get(r.nurse_id) ?? new Set<string>();
+      mine.add(key);
+      weekendsOf.set(r.nurse_id, mine);
+    }
+    expect(weekendsOf.size).toBeGreaterThan(10);
+    const over: string[] = [];
+    for (const [nurseId, keys] of weekendsOf) {
+      for (const key of keys) {
+        const inFour = [0, 7, 14, 21].filter((back) =>
+          keys.has(addDays(isoDate(key), -back)),
+        ).length;
+        if (inFour > 2) over.push(`${nurseId} ${key}: ${inFour}`);
+      }
+    }
+    expect(over).toEqual([]);
+  });
+
   it('pays overtime beyond the scheduled tour or past 80 hours in the pay period, not 40 in a week', () => {
     expect(
       f.rows(
@@ -452,13 +494,15 @@ describe('the VA San Francisco med-surg demo', () => {
       f.count('SELECT COUNT(DISTINCT nurse_id) n FROM assignment WHERE holdover_minutes > 0'),
     ).toBe(4);
     // The same history seeded without the holdovers has exactly these violations (counted by
-    // hand from that run): holdovers add none, hard or soft.
+    // hand from that run): holdovers add none, hard or soft. The four understaffed shifts are
+    // the four call-offs nobody could legally cover (an RN's day 12 on Sunday 31 May, an LVN's on
+    // Saturday 16 May, a nursing assistant's on Thursday 14 May and Saturday 22 August).
     expect([...historyViolations(f)].sort()).toEqual([
-      ['over_contracted_hours', 35],
-      ['understaffed', 3],
+      ['over_contracted_hours', 29],
+      ['understaffed', 4],
     ]);
     expect([...historyViolations(f, 'soft')].sort()).toEqual([
-      ['short_recovery_after_nights', 180],
+      ['short_recovery_after_nights', 164],
       ['under_contracted_hours', 19],
     ]);
   });
@@ -472,9 +516,10 @@ describe('the VA San Francisco med-surg demo', () => {
     );
     expect(held).toHaveLength(1);
     const { id, nurse_id: nurseId, period_id: periodId, date } = held[0]!;
-    // A Thursday and no holiday, so no premium besides overtime; the RN's Nurse I rate is
+    // Monday 18 May, no holiday, so no premium besides overtime; the RN's Nurse I rate is
     // 60 + 2 for each year of service under 2, and at 1 year that is 62.
-    expect(weekdayOf(isoDate(date))).toBe(4);
+    expect(date).toBe('2026-05-18');
+    expect(weekdayOf(isoDate(date))).toBe(1);
     expect(
       f.rows<{ hourly_rate: number }>(
         `SELECT hourly_rate FROM pay_rate WHERE nurse_id = '${nurseId}'`,
@@ -930,23 +975,23 @@ describe('the VA San Francisco med-surg demo', () => {
       expect(f.count("SELECT COUNT(*) n FROM schedule_period WHERE status = 'published'")).toBe(
         PERIODS,
       );
-      // One 72/80 nurse: annual leave 30-31 May (periods from 17 and 31 May), 7 July and a
-      // call-off in the period from 28 June (one period for both): 17 May, 31 May, 28 June = 3
-      // left out. The other: leave 19-21 April and 22-25 August (periods from 19 April, 9 and 23
-      // August) and call-offs in the periods from 19 April (same), 31 May, 26 July and 6
-      // September: 19 April, 9 August, 23 August, 31 May, 26 July, 6 September = 6 left out.
+      // One 72/80 nurse: annual leave 30-31 May (periods from 17 and 31 May), 7 July (period
+      // from 28 June) and a call-off on 30 August (period from 23 August): 17 May, 31 May,
+      // 28 June, 23 August = 4 left out. The other: leave 19-21 April and 22-25 August (periods
+      // from 19 April, 9 and 23 August) and a call-off on 17 July (period from 12 July):
+      // 19 April, 9 August, 23 August, 12 July = 4 left out.
       expect(
         ofKind('va_72_80')
           .map((n) => PERIODS - toursByPeriod(n.id).length)
           .sort(),
-      ).toEqual([3, 6]);
+      ).toEqual([4, 4]);
       // The Baylor nurse: leave on Tuesday 14 April and 14-16 July (periods from 5 April and 12
-      // July), a call-off in the period from 19 April, and the pick-up below in the period from
-      // 17 May: 4 left out.
-      expect(PERIODS - toursByPeriod(ofKind('va_baylor')[0]!.id).length).toBe(4);
+      // July), a call-off on 1 May (period from 19 April), and the two pick-ups below in the
+      // periods from 6 and 20 September: 5 left out.
+      expect(PERIODS - toursByPeriod(ofKind('va_baylor')[0]!.id).length).toBe(5);
     });
 
-    it('credits plan leave in whole tours, so only the Baylor pick-up reads over contract', () => {
+    it('credits plan leave in whole tours, so only the Baylor pick-ups read over contract', () => {
       // A 72/80 nurse's leave pays the tours it removes; a Baylor nurse's weekday leave removes none
       // and pays none. Every under- or over-contract reading in the history that names a plan
       // nurse was a leave credited in the wrong pay period or on a day the plan never works.
@@ -956,23 +1001,31 @@ describe('the VA San Francisco med-surg demo', () => {
           (v.code === 'under_contracted_hours' || v.code === 'over_contracted_hours') &&
           v.nurseIds?.some((id) => kinds.has(id)),
       );
-      // Exactly one: the Baylor nurse's pay period from Sunday 17 May holds 60 worked hours
-      // against 48, the fifth tour being a covered call-off's replacement on Sunday 24 May.
-      // Section 7456(c) pays that as overtime, so it is real, and marked so.
+      // Exactly two: the Baylor nurse's pay periods from Sunday 6 and Sunday 20 September each
+      // hold 60 worked hours against 48 (four 12-hour tours), the fifth tour being a covered
+      // call-off's replacement on Friday night 11 and 25 September. Each is paid as overtime, so
+      // the reading is real, and the tour is marked so.
       expect(named.map((v) => [v.code, kinds.get(v.nurseIds![0]!)])).toEqual([
         ['over_contracted_hours', 'va_baylor'],
+        ['over_contracted_hours', 'va_baylor'],
       ]);
-      const details = named[0]!.details as { scheduledHours: number; targetHours: number };
-      expect([details.scheduledHours, details.targetHours]).toEqual([60, 48]);
-      expect(named[0]!.dates).toContain('2026-05-17');
+      const periods = named.map((v) => {
+        const details = v.details as { scheduledHours: number; targetHours: number };
+        return [v.dates![0], details.scheduledHours, details.targetHours];
+      });
+      expect(periods.sort()).toEqual([
+        ['2026-09-06', 60, 48],
+        ['2026-09-20', 60, 48],
+      ]);
       const pickups = f.rows<{ date: string; source: string; is_overtime: number; status: string }>(
         `SELECT a.date, a.source, a.is_overtime, c.status FROM assignment a
            JOIN nurse n ON n.id = a.nurse_id
            JOIN call_off c ON c.replacement_assignment_id = a.id
           WHERE n.schedule_kind IS NOT NULL`,
       );
-      expect(pickups).toEqual([
-        { date: '2026-05-24', source: 'callout', is_overtime: 1, status: 'covered' },
+      expect(pickups.sort((a, b) => a.date.localeCompare(b.date))).toEqual([
+        { date: '2026-09-11', source: 'callout', is_overtime: 1, status: 'covered' },
+        { date: '2026-09-25', source: 'callout', is_overtime: 1, status: 'covered' },
       ]);
     });
 
@@ -1001,7 +1054,10 @@ describe('the VA San Francisco med-surg demo', () => {
               ).length,
           );
         for (const nurse of ofKind('va_72_80')) expect(perPayPeriod(nurse.id)).toEqual([6, 6]);
-        expect(perPayPeriod(ofKind('va_baylor')[0]!.id)).toEqual([4, 4]);
+        // The Baylor nurse's approved leave of 9-15 October takes Friday night 9 October and the
+        // Saturday and Sunday after it, paid 24 hours: two tours of the first pay period, so two
+        // worked and two paid make its 48.
+        expect(perPayPeriod(ofKind('va_baylor')[0]!.id)).toEqual([2, 4]);
       },
       slow(60_000),
     );
@@ -1055,6 +1111,49 @@ describe('the VA San Francisco med-surg demo', () => {
       expect(other.straightRate / other.baseRate).toBeCloseTo(1.1 * 1.25, 6);
     });
 
+    it('pays the Baylor nurse’s picked-up Friday night the premiums a tour goes without', () => {
+      // § 7456(b)(3)(B) withholds § 7453 pay only from a regularly scheduled tour, and
+      // § 7456(b)(3)(A) pays a Baylor nurse overtime past 8 on a weekday or 24 in the weekend.
+      // The nurse's shifts in the period: Sunday 6 September, this pickup, Saturday 12, Friday 18
+      // and Saturday 19, every one a night 12.
+      const baylorId = ofKind('va_baylor')[0]!.id;
+      const pickup = f.rows<{ id: string; period_id: string; date: string; code: string }>(
+        `SELECT a.id, a.period_id, a.date, st.abbreviation code FROM assignment a
+           JOIN shift_type st ON st.id = a.shift_type_id
+           JOIN call_off c ON c.replacement_assignment_id = a.id
+          WHERE a.nurse_id = '${baylorId}' AND a.is_overtime = 1 ORDER BY a.date LIMIT 1`,
+      )[0]!;
+      // A Friday night, 19:00 to Saturday 07:00, and no holiday.
+      expect([pickup.date, pickup.code]).toEqual(['2026-09-11', 'N12']);
+      const priced = pricedPeriod(pickup.period_id);
+      const row = priced.assignments.find((a) => a.assignmentId === pickup.id)!;
+      expect(row.baseRate).toBe(62);
+      // Compound stacking: night 10% (the whole tour, 11 of its hours in 18:00-06:00) makes
+      // 62 x 1.1 = 68.20; weekend 25% (it runs into Saturday) 68.20 x 1.25 = 85.25. 12 x 85.25
+      // = 1,023 straight: base 744, night 12 x 6.20 = 74.40, weekend 12 x 17.05 = 204.60.
+      expect(row.straightRate).toBeCloseTo(85.25, 10);
+      // A Friday night running into Saturday is the weekend's, so it is never judged past 8. The
+      // weekend from Saturday 12 September holds its 7 hours after midnight and the Saturday night
+      // tour's 12: 19 of 24 (weekend 24, not pyramiding: no daily overtime to leave out). The pay
+      // period holds 60 of 80. So no overtime: 1,023 in all.
+      expect(row.lines.map((l) => [l.kind, l.hours])).toEqual([
+        ['base', 12],
+        ['night', 12],
+        ['weekend', 12],
+      ]);
+      expect(row.overtimeHours).toBe(0);
+      expect(row.total).toBeCloseTo(1023, 6);
+      const mine = priced.assignments.filter((a) => a.nurseId === baylorId);
+      expect(mine.map((a) => a.date)).toEqual([
+        '2026-09-06',
+        '2026-09-11',
+        '2026-09-12',
+        '2026-09-18',
+        '2026-09-19',
+      ]);
+      expect(mine.reduce((h, a) => h + a.hours, 0)).toBe(60);
+    });
+
     it('prices an hour held over a 72/80 tour as one hour of overtime at time and a half', () => {
       const held = f.rows<{ id: string; nurse_id: string; period_id: string; date: string }>(
         `SELECT a.id, a.nurse_id, a.period_id, a.date FROM assignment a
@@ -1064,14 +1163,14 @@ describe('the VA San Francisco med-surg demo', () => {
       expect(held).toHaveLength(1);
       const { id, nurse_id: nurseId, period_id: periodId, date } = held[0]!;
       // The week window below is this date's: a shifted draw should fail here, plainly.
-      expect(date).toBe('2026-08-20');
+      expect(date).toBe('2026-08-26');
       const withHoldover = pricedPeriod(periodId);
       const without = pricedPeriod(periodId, (a) =>
         a.id === id ? { ...a, holdoverMinutes: 0 } : a,
       );
       const row = (c: typeof withHoldover) => c.assignments.find((a) => a.assignmentId === id)!;
-      // Aug 20 is a Thursday, no holiday: the nurse is a Nurse II RN at 6 years, 72 + 1.50 x 4 = $78.
-      expect(weekdayOf(isoDate(date))).toBe(4);
+      // Aug 26 is a Wednesday, no holiday: the nurse is a Nurse II RN at 6 years, 72 + 1.50 x 4 = $78.
+      expect(weekdayOf(isoDate(date))).toBe(3);
       expect(row(withHoldover).baseRate).toBe(78);
       // The 12 plus the 60 minutes is 13 hours, one of them overtime: the 13th hour of a tour day.
       expect(row(withHoldover).hours - row(without).hours).toBeCloseTo(1, 10);
@@ -1083,9 +1182,9 @@ describe('the VA San Francisco med-surg demo', () => {
       // 0.10 x $78 = $7.80.
       expect(withHoldover.totals.total - without.totals.total).toBeCloseTo(124.8, 6);
       // The week stays at 36 worked hours plus the hour, so the weekly 36 adds nothing: this hour
-      // is the nurse's only overtime from Sunday 16 to Saturday 22 August.
+      // is the nurse's only overtime from Sunday 23 to Saturday 29 August (D12s on 26, 28, 29).
       const week = withHoldover.assignments.filter(
-        (a) => a.nurseId === nurseId && a.date >= '2026-08-16' && a.date <= '2026-08-22',
+        (a) => a.nurseId === nurseId && a.date >= '2026-08-23' && a.date <= '2026-08-29',
       );
       expect(week.reduce((h, a) => h + a.hours, 0)).toBe(37);
       expect(week.reduce((h, a) => h + a.overtimeHours, 0)).toBe(1);

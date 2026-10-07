@@ -454,7 +454,8 @@ export function applySetupPreset(
  * and each change goes through the same audited create/update the Settings editors use. The
  * choice is remembered on the unit even when nothing else changed, so Settings › Unit can show
  * it; rules a preset switches on arrive as a new rule-set version, never an edit to the old one.
- * `choices` answers the preset's apply-time questions; they decide the plan and are not stored.
+ * `choices` answers the preset's apply-time questions; they decide the plan and are stored on the
+ * unit, since `ownContract` goes on deciding which rules `saveRuleSet` protects.
  */
 export function applyJurisdiction(
   tx: ShiftNurseTx,
@@ -532,6 +533,27 @@ export function applyJurisdiction(
     updateUnit(tx, unitId, { jurisdiction: id }, actor);
     result.updated++;
   }
+  // Only the yeses are kept: an unanswered question reads as no, so `{}`, `{ x: false }` and no
+  // stored answers are the same and re-applying with them changes nothing.
+  const answered = yesAnswers(choices);
+  if (JSON.stringify(answered) !== JSON.stringify(yesAnswers(unit.jurisdictionChoices ?? {}))) {
+    updateUnit(
+      tx,
+      unitId,
+      { jurisdictionChoices: Object.keys(answered).length > 0 ? answered : null },
+      actor,
+    );
+    result.updated++;
+  }
   if (result.created + result.updated === 0) result.unchanged = 1;
   return result;
+}
+
+/** The questions answered yes, in key order, so two equal sets of answers serialise alike. */
+function yesAnswers(choices: JurisdictionChoices): JurisdictionChoices {
+  return Object.fromEntries(
+    Object.entries(choices)
+      .filter(([, yes]) => yes)
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
 }

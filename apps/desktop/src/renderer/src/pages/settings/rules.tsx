@@ -680,7 +680,12 @@ export default function RulesPanel() {
   if (weekendError !== undefined) problems.push('Weekend definition: Length (hours)');
   // Switching off or softening a protected rule (the ratio rule, a rule a state preset turned on)
   // must be explained, and the repository refuses it otherwise, so ask here rather than surface that.
-  const loosened = protectedRuleChanges(resolveConfigs(data), configs, unit.jurisdiction);
+  const loosened = protectedRuleChanges(
+    resolveConfigs(data),
+    configs,
+    unit.jurisdiction,
+    unit.jurisdictionChoices ?? {},
+  );
   if (loosened.length > 0 && reason.trim() === '') problems.push('Reason for the change');
 
   function updateConfig(ruleId: string, next: RuleConfig) {

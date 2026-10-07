@@ -25,6 +25,7 @@ const BASIS_SPAN: Record<OvertimeRule['basis'], string> = {
   beyond_scheduled_tour: 'past the end of the scheduled tour',
   consecutive: 'hours worked without a break',
   beyond_scheduled_days: 'a workday beyond the scheduled days per week',
+  weekend: 'the weekend window',
 };
 
 // What the threshold means for the two bases whose zero or 8 is not obvious from "hours".
@@ -33,6 +34,8 @@ const THRESHOLD_HINT: Partial<Record<OvertimeRule['basis'], string>> = {
   consecutive: 'Hours worked without a break before overtime starts (38 U.S.C. §7453(e): 8).',
   beyond_scheduled_days:
     'Hours on an extra workday before the premium (Wage Order 5 § 3(B)(8): 8). Set Scheduled days per week on the roster for each nurse.',
+  weekend:
+    'Hours inside the unit’s weekend before overtime starts (38 U.S.C. § 7456(b)(3)(A), Baylor: 24).',
 };
 
 const KIND_SCOPE: Record<ScheduleKind, string> = {
@@ -117,7 +120,8 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
               multiplier: parsedMultiplier,
               active: true,
               ...(minimumMinutes.trim() !== '' ? { minimumMinutes: minutes } : {}),
-              ...(noPyramiding && (basis === 'weekly' || basis === 'pay_period')
+              ...(noPyramiding &&
+              (basis === 'weekly' || basis === 'pay_period' || basis === 'weekend')
                 ? { pyramiding: 'none' as const }
                 : {}),
               ...(kinds.size > 0
@@ -146,6 +150,7 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
             <option value="beyond_scheduled_days">
               Workday beyond the scheduled days per week
             </option>
+            <option value="weekend">Weekend window (the unit's weekend definition)</option>
           </select>
         </label>
         <Field id="overtime-threshold" label="Threshold (hours)" hint={THRESHOLD_HINT[basis]}>
@@ -192,7 +197,7 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
             className={`${INPUT} w-24`}
           />
         </Field>
-        {basis === 'weekly' || basis === 'pay_period' ? (
+        {basis === 'weekly' || basis === 'pay_period' || basis === 'weekend' ? (
           <label className="flex items-center gap-1 text-xs text-text">
             <input
               type="checkbox"

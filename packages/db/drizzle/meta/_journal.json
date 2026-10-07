@@ -232,6 +232,27 @@
       "when": 1791345727812,
       "tag": "0032_schedule_kinds",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1791358790463,
+      "tag": "0033_jurisdiction_choices",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1791358854614,
+      "tag": "0034_consecutive_shift_differential",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1791359157349,
+      "tag": "0035_holiday_appetite",
+      "breakpoints": true
     }
   ]
 }

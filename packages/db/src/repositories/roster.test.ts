@@ -34,6 +34,7 @@ import {
   updateUnit,
 } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
+import { createHoliday, deleteHoliday } from './holidays.js';
 import {
   createNurse,
   credentialsExpiringBetween,
@@ -414,6 +415,27 @@ describe('preferences', () => {
     const back = listPreferencesForNurse(handle.db, nurse.id);
     expect(back).toHaveLength(3);
     expect(back).toEqual(expect.arrayContaining(prefs));
+  });
+
+  it('keeps a nurse’s wish to work Christmas, and drops it when the holiday is deleted', () => {
+    const nurse = createNurse(handle.db, baseNurse(), ACTOR);
+    const christmas = createHoliday(
+      handle.db,
+      { unitId, date: isoDate('2026-12-25'), name: 'Christmas Day', isMajor: true },
+      ACTOR,
+    );
+    const wish: Preference = {
+      id: 'p1',
+      nurseId: nurse.id,
+      kind: 'holiday_appetite',
+      holidayId: christmas.id,
+      weight: 4,
+    };
+    replaceNursePreferences(handle.db, nurse.id, [wish], ACTOR);
+    expect(listPreferencesForNurse(handle.db, nurse.id)).toEqual([wish]);
+
+    transact(handle.db, (tx) => deleteHoliday(tx, christmas.id, ACTOR));
+    expect(listPreferencesForNurse(handle.db, nurse.id)).toEqual([]);
   });
 
   it('replacing with an empty list clears them', () => {

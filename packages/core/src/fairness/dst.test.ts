@@ -27,6 +27,7 @@ describe('nights across the fall-back weekend', () => {
     const counters = deriveCounters(s.schedule, {
       unit: testUnit,
       holidayDates: new Set(),
+      holidayDateById: new Map(),
       weekendDefinition: DEFAULT_WEEKEND,
       preferences: [],
     });

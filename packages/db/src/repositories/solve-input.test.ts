@@ -134,9 +134,10 @@ describe('loadPeriodInput', () => {
         { unitId: seeded.unitId, nurseId: a!.id, startDate: isoDate(start), endDate: isoDate(end) },
         ACTOR,
       );
-    const inTail = offer(addDays(period.startDate, -14), addDays(period.startDate, -14));
+    // The tail is 28 days: an offer on its first day counts, one ending the day before does not.
+    const inTail = offer(addDays(period.startDate, -28), addDays(period.startDate, -28));
     const inPeriod = offer(period.startDate, period.endDate);
-    offer(addDays(period.startDate, -20), addDays(period.startDate, -15));
+    offer(addDays(period.startDate, -34), addDays(period.startDate, -29));
     offer(addDays(period.endDate, 1), addDays(period.endDate, 3));
     const input = loadPeriodInput(handle.db, period);
     expect(input.overtimeVolunteers!.map((v) => v.id)).toEqual([inTail.id, inPeriod.id]);
@@ -157,9 +158,9 @@ describe('loadPeriodInput', () => {
         },
         ACTOR,
       );
-    const inTail = pair(addDays(period.startDate, -14), addDays(period.startDate, -14));
+    const inTail = pair(addDays(period.startDate, -28), addDays(period.startDate, -28));
     const inPeriod = pair(period.startDate, period.endDate);
-    pair(addDays(period.startDate, -30), addDays(period.startDate, -15));
+    pair(addDays(period.startDate, -40), addDays(period.startDate, -29));
     pair(addDays(period.endDate, 1), addDays(period.endDate, 30));
     const input = loadPeriodInput(handle.db, period);
     expect(input.preceptorships!.map((p) => p.id)).toEqual([inTail.id, inPeriod.id]);
@@ -212,22 +213,22 @@ describe('the leave a period reads', () => {
   const march = { startDate: isoDate('2026-03-01'), endDate: isoDate('2026-03-14') };
 
   it('reaches back a lookback and a pay period, and forward a pay period', () => {
-    // 14-day pay period: 03-01 less (14 + 14) days is 02-01; 03-14 plus 14 days is 03-28.
+    // 14-day pay period: 03-01 less (28 + 14) days is 01-18; 03-14 plus 14 days is 03-28.
     expect(timeOffWindow({ payPeriodDays: 14 }, march)).toEqual({
-      start: '2026-02-01',
+      start: '2026-01-18',
       end: '2026-03-28',
     });
   });
 
   it('never shrinks the slack below a work week on a short pay period', () => {
-    // 7-day pay period: 03-01 less (14 + 7) is 02-08; 03-14 plus 7 is 03-21.
+    // 7-day pay period: 03-01 less (28 + 7) is 01-25; 03-14 plus 7 is 03-21.
     expect(timeOffWindow({ payPeriodDays: 7 }, march)).toEqual({
-      start: '2026-02-08',
+      start: '2026-01-25',
       end: '2026-03-21',
     });
-    // A 5-day one still gets 7: 03-01 less 21 and 03-14 plus 7.
+    // A 5-day one still gets 7: 03-01 less 35 and 03-14 plus 7.
     expect(timeOffWindow({ payPeriodDays: 5 }, march)).toEqual({
-      start: '2026-02-08',
+      start: '2026-01-25',
       end: '2026-03-21',
     });
   });
@@ -240,8 +241,8 @@ describe('the leave a period reads', () => {
         { nurseId, startDate: isoDate(start), endDate: isoDate(end), type: 'pto' },
         ACTOR,
       ).id;
-    const endedBefore = ask('2026-01-25', '2026-01-31');
-    const endsOnStart = ask('2026-01-25', '2026-02-01');
+    const endedBefore = ask('2026-01-11', '2026-01-17');
+    const endsOnStart = ask('2026-01-11', '2026-01-18');
     const startsOnEnd = ask('2026-03-28', '2026-04-05');
     const startsAfter = ask('2026-03-29', '2026-04-05');
 

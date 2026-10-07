@@ -449,6 +449,84 @@ describe('cost configuration', () => {
     });
   });
 
+  describe('the consecutive-shift premium’s shifts and days', () => {
+    const consecutive = { afterShifts: 4, withinDays: 4 };
+    const base = () => ({
+      unitId,
+      kind: 'consecutive_shift' as const,
+      mode: 'multiplier' as const,
+      amount: 1.5,
+      active: true,
+    });
+
+    it('reads the UC premium back with its four shifts in four days', () => {
+      const created = createDifferential(handle.db, { ...base(), consecutive }, ACTOR);
+      expect(listDifferentialsForUnit(handle.db, unitId)).toEqual([
+        { ...base(), id: created.id, consecutive },
+      ]);
+    });
+
+    it('refuses the premium without its shifts and days, or with only one of them', () => {
+      expect(() => createDifferential(handle.db, base(), ACTOR)).toThrow(
+        /needs its shifts and days/,
+      );
+      expect(() =>
+        createDifferential(
+          handle.db,
+          { ...base(), consecutive: { afterShifts: 4 } as typeof consecutive },
+          ACTOR,
+        ),
+      ).toThrow(/days must be a whole number/);
+      expect(listDifferentialsForUnit(handle.db, unitId)).toEqual([]);
+    });
+
+    it('refuses zero or fractional shifts and days', () => {
+      for (const bad of [
+        { afterShifts: 0, withinDays: 4 },
+        { afterShifts: 4, withinDays: 2.5 },
+      ]) {
+        expect(() => createDifferential(handle.db, { ...base(), consecutive: bad }, ACTOR)).toThrow(
+          /whole number of at least 1/,
+        );
+      }
+    });
+
+    it('refuses shifts and days on another kind of differential', () => {
+      expect(() =>
+        createDifferential(handle.db, { ...base(), kind: 'weekend', consecutive }, ACTOR),
+      ).toThrow(/only to a consecutive-shift premium/);
+    });
+
+    it('changes the trigger on an update and audits what it was', () => {
+      const created = createDifferential(handle.db, { ...base(), consecutive }, ACTOR);
+      const changed = updateDifferential(
+        handle.db,
+        created.id,
+        { consecutive: { afterShifts: 5, withinDays: 6 } },
+        ACTOR,
+      );
+      expect(changed.consecutive).toEqual({ afterShifts: 5, withinDays: 6 });
+      expect(() => updateDifferential(handle.db, created.id, { consecutive: null }, ACTOR)).toThrow(
+        /needs its shifts and days/,
+      );
+      const turned = updateDifferential(
+        handle.db,
+        created.id,
+        { kind: 'weekend', consecutive: null },
+        ACTOR,
+      );
+      expect(turned.consecutive).toBeUndefined();
+      const updates = auditHistoryFor(handle.db, 'differential', created.id).filter(
+        (e) => e.action === 'update',
+      );
+      // Newest first: the refused clear wrote nothing.
+      expect(updates.map((e) => (e.before as { consecutive?: unknown }).consecutive)).toEqual([
+        { afterShifts: 5, withinDays: 6 },
+        consecutive,
+      ]);
+    });
+  });
+
   it('lists every differential for the unit but only active ones for pricing', () => {
     const night = createDifferential(
       handle.db,

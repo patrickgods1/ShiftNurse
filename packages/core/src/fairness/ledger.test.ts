@@ -30,6 +30,7 @@ function baseCtx(overrides: Partial<CounterContext> = {}): CounterContext {
   return {
     unit: testUnit,
     holidayDates: new Set(),
+    holidayDateById: new Map(),
     weekendDefinition: DEFAULT_WEEKEND,
     preferences: [],
     ...overrides,
@@ -283,6 +284,83 @@ describe('preference satisfaction', () => {
     });
     const counters = deriveCounters(s.schedule, baseCtx({ preferences: [] }));
     expect(counters.get(nurse.id)?.preferenceHitRate).toBe(1);
+  });
+});
+
+describe('a nurse who wants to work a holiday', () => {
+  // MLK Day 2026-01-12 falls in the default period (2026-01-04 to 2026-01-17); July 4th does not.
+  const holidayDateById = new Map([
+    ['mlk', isoDate('2026-01-12')],
+    ['july4', isoDate('2026-07-04')],
+  ]);
+  const wants = (nurseId: string, holidayId: string, weight: number) => ({
+    id: `p-${nurseId}-${holidayId}`,
+    nurseId,
+    kind: 'holiday_appetite' as const,
+    holidayId,
+    weight,
+  });
+  const preferNights = (nurseId: string) => ({
+    id: `p-${nurseId}-nights`,
+    nurseId,
+    kind: 'prefer_shift_type' as const,
+    shiftTypeId: NIGHT_12.id,
+    weight: 1,
+  });
+
+  it('counts the wish as met for the volunteer who worked the holiday, and missed for the one who did not', () => {
+    const worked = makeNurse();
+    const missed = makeNurse();
+    const s = scenario({
+      nurses: [worked, missed],
+      assignments: [
+        assign(worked.id, DAY_12, '2026-01-05'),
+        assign(worked.id, DAY_12, '2026-01-12'),
+        assign(missed.id, DAY_12, '2026-01-05'),
+        assign(missed.id, DAY_12, '2026-01-13'),
+      ],
+    });
+    const counters = deriveCounters(
+      s.schedule,
+      baseCtx({
+        holidayDateById,
+        preferences: [wants(worked.id, 'mlk', 2), wants(missed.id, 'mlk', 2)],
+      }),
+    );
+    expect(counters.get(worked.id)?.preferenceHitRate).toBe(1);
+    expect(counters.get(missed.id)?.preferenceHitRate).toBe(0);
+  });
+
+  it('weighs the met holiday wish against a missed one: 3 of 4 points', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, DAY_12, '2026-01-12')],
+    });
+    const counters = deriveCounters(
+      s.schedule,
+      baseCtx({
+        holidayDateById,
+        preferences: [wants(nurse.id, 'mlk', 3), preferNights(nurse.id)],
+      }),
+    );
+    expect(counters.get(nurse.id)?.preferenceHitRate).toBe(0.75);
+  });
+
+  it('leaves a wish to work a holiday outside the schedule out of the score', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, DAY_12, '2026-01-12')],
+    });
+    const counters = deriveCounters(
+      s.schedule,
+      baseCtx({
+        holidayDateById,
+        preferences: [wants(nurse.id, 'july4', 3), preferNights(nurse.id)],
+      }),
+    );
+    expect(counters.get(nurse.id)?.preferenceHitRate).toBe(0);
   });
 });
 

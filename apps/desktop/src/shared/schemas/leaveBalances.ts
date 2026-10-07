@@ -18,6 +18,7 @@ const requestType = z.enum([
   'lwop',
   'comp',
   'state_family',
+  'pregnancy_disability',
 ]);
 
 const certificationInput = object({

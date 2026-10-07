@@ -24,6 +24,7 @@ export function strengthLabel(weight: number): 'mild' | 'moderate' | 'strong' {
 export function describePreference(
   pref: Preference,
   shiftTypeNames: ReadonlyMap<Id, string>,
+  holidayNames: ReadonlyMap<Id, string> = new Map(),
 ): string {
   const strength = ` (${strengthLabel(pref.weight)})`;
   switch (pref.kind) {
@@ -39,5 +40,7 @@ export function describePreference(
       return `${pref.level < 0 ? 'wants no weekends' : pref.level > 0 ? 'wants weekends' : 'no weekend preference'}${strength}`;
     case 'preferred_block_length':
       return `prefers ${pref.shifts} shifts in a row${strength}`;
+    case 'holiday_appetite':
+      return `wants to work ${holidayNames.get(pref.holidayId) ?? 'a holiday'}${strength}`;
   }
 }

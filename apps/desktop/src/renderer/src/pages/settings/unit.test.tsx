@@ -183,4 +183,44 @@ describe('Settings › Unit state law', () => {
     await waitFor(() => expect(screen.queryByText(/never loosens/)).toBeNull());
     expect(bridge.callsTo('setup', 'applyJurisdiction')).toHaveLength(0);
   });
+
+  it('says where a VA unit’s contract values come from and warns about NFFE Local 1', async () => {
+    renderWithApp(<UnitPanel />, { unit: { ...unit, jurisdiction: 'US-VA' } });
+    const source = await screen.findByTestId('state-law-source');
+    expect(source.textContent).toMatch(/^Contract values: VA–NNU 2023 Master Agreement/);
+    expect(source.textContent).toMatch(/NFFE Local 1, whose agreement is not published/);
+  });
+
+  it('names no contract for a California unit, whose preset is all statute', async () => {
+    renderWithApp(<UnitPanel />, { unit: { ...unit, jurisdiction: 'CA' } });
+    expect(await screen.findByTestId('state-law-summary')).toBeTruthy();
+    expect(screen.queryByTestId('state-law-source')).toBeNull();
+  });
+
+  it('applies the VA preset for a unit under its own agreement', async () => {
+    bridge.respond('setup', 'applyJurisdiction', { created: 0, updated: 1, unchanged: 0 });
+    renderWithApp(<UnitPanel />, { unit });
+    fireEvent.change(await screen.findByLabelText('State or federal law'), {
+      target: { value: 'US-VA' },
+    });
+    fireEvent.click(screen.getByLabelText('Our unit is under a different agreement than VA–NNU'));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Apply' }));
+
+    await waitFor(() =>
+      expect(bridge.callsTo('setup', 'applyJurisdiction')).toEqual([
+        ['unit-1', 'US-VA', { ownContract: true }],
+      ]),
+    );
+  });
+
+  it('keeps the answers a VA unit gave last time, so Apply does not undo them', async () => {
+    renderWithApp(<UnitPanel />, {
+      unit: { ...unit, jurisdiction: 'US-VA', jurisdictionChoices: { ownContract: true } },
+    });
+    const box = (await screen.findByLabelText(
+      'Our unit is under a different agreement than VA–NNU',
+    )) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+  });
 });

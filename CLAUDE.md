@@ -18,8 +18,8 @@ Every milestone through M16 is complete and green. **M18 — Release hardening**
 (boxes in `ROADMAP.md`): the 2026-10-03 release audit's fixes, one PR per phase — data safety,
 renderer correctness, the manager's experience, core maintainability, tests, contract rules for
 1.0, unsigned distribution. M17 (signing) is deferred; M19–M26 are the union and HR features
-planned for after 1.0. M27–M37 (law, contracts, the VA demo and the 2026-10-06 audit's fixes) are
-complete, M38 (the VA's 72/80 and Baylor schedules) included.
+planned for after 1.0. M27–M39 (law, contracts, the VA demo, the 2026-10-06 audit's fixes and its 2026-10-07
+follow-ups) are complete.
 
 Detail lives next to the code, in CLAUDE.md files that load when you work in that folder:
 

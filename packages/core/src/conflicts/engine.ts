@@ -183,6 +183,7 @@ export class ConflictEngine {
     this.counterCtx = {
       unit: input.unit,
       holidayDates: this.baseCtx.holidayDates,
+      holidayDateById: new Map(input.holidays.map((h) => [h.id, h.date])),
       weekendDefinition: input.ruleSet.weekendDefinition,
       preferences: input.preferences,
     };

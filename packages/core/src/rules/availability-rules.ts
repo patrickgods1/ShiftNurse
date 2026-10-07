@@ -156,6 +156,8 @@ export function describeType(request: Pick<TimeOffRequest, 'type'>): string {
       return 'comp time';
     case 'state_family':
       return 'state family leave';
+    case 'pregnancy_disability':
+      return 'pregnancy disability leave';
   }
 }
 

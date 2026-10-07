@@ -310,6 +310,8 @@ export class SolverModel {
   /** Points per breach: the weight while the rule is soft; 0 when hard (the gate keeps breaches
    * out) or off. */
   readonly holidayPrice: number;
+  /** Holiday id → date, so a `holiday_appetite` is matched to a shift without a search. */
+  private readonly holidayDateById: ReadonlyMap<Id, IsoDate>;
   /** Whole days off owed after a night before a day-side shift; 0 while the rule is off. */
   readonly recoveryDays: number;
   /** Points per day-side shift too soon after nights; 0 unless the rule is soft. */
@@ -437,6 +439,7 @@ export class SolverModel {
             end: input.period.endDate,
           });
     this.holidayPrice = rotationSeverity === 'soft' ? this.weights.holidayRotation : 0;
+    this.holidayDateById = new Map(input.holidays.map((h) => [h.id, h.date]));
     // --- Days off after nights: priced while soft; a hard rule is the gate's to enforce. ---
     const recoverySeverity = severityOf(nightRecoveryRule.id);
     const recoveryParams = paramsOf(nightRecoveryRule, configs);
@@ -1389,6 +1392,11 @@ export class SolverModel {
    * half — not getting the shift you like is milder than getting the one you asked not to.
    * Block-length preferences are not priced: they are a property of the whole timeline, not
    * of one shift, and the fairness ledger already scores them after the fact.
+   *
+   * A wish to work a holiday is the one reward: it takes half its weight off, so the value can go
+   * below zero. Scaled by seniority like the rest, two volunteers for one place resolve to the
+   * senior, as the contract orders them (`holidayWorkPriority`). A reward rather than a rule, so
+   * a senior volunteer who cannot work it leaves a schedule, not an infeasible one.
    */
   preferencePenalty(n: number, shift: Shift): number {
     const key = this.tableKey(n, shift);
@@ -1417,6 +1425,15 @@ export class SolverModel {
             break;
           case 'weekend_appetite':
             if (pref.level < 0 && weekend) penalty += pref.weight * -pref.level;
+            break;
+          case 'holiday_appetite':
+            // Half the weight, like a `prefer_*`, and not the full weight: the reward must stay
+            // below what one nurse over a holiday's target costs, or Generate adds a keen
+            // volunteer to a shift that is already staffed. At most 5 / 2 × 1.5 (top seniority)
+            // × 10 = 37.5, under overTarget 8 + a 12h shift at $52 × 0.05 = 31.2 = 39.2; at the
+            // full weight it was 75. That margin rests on pay data at about $50/h or more: with
+            // no pay rates, or a cheaper nurse, an extra volunteer can still come out ahead.
+            if (this.holidayDateById.get(pref.holidayId) === shift.date) penalty -= pref.weight / 2;
             break;
           case 'preferred_block_length':
             break;

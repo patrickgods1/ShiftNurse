@@ -25,9 +25,10 @@
  * - **Kept apart.** Staff the profile keeps apart (`keptApart`) are never put on the floor
  *   together once their group applies — separated, as a real ward separates them, by tour.
  *
- * - **Capped weekends.** Where the unit's weekend-pattern rule is on, `canWork` enforces its run and
- *   per-window limits, and the history is planned so each half of the staff works alternate
- *   weekends (see `weekendHold` and the top-up pass).
+ * - **Capped weekends.** Where the unit's weekend-pattern rule is on, `canWork` enforces its run,
+ *   four-week and per-pay-period limits by the rule's own `weekendBreaches`, and the history is
+ *   planned so each half of the staff works alternate weekends (see `weekendHold` and the top-up
+ *   pass).
  * - **Overtime by agreement.** Where `no-mandatory-overtime` is on, overtime is asked of
  *   volunteers (`createOvertimeVolunteer`) only.
  *
@@ -47,6 +48,7 @@
 
 import {
   type AcuityTier,
+  ALL_RULES,
   type Assignment,
   addDays,
   type CostContext,
@@ -87,7 +89,9 @@ import {
   usFederalHolidays,
   type Weekday,
   type WeekendDefinition,
+  type WeekendPatternParams,
   weekdayOf,
+  weekendBreaches,
   weekendKey,
   windowEndDate,
   windowsOverlap,
@@ -556,14 +560,15 @@ interface Limits {
     byOrientee: ReadonlyMap<Id, readonly Preceptorship[]>;
     shiftsById: ReadonlyMap<Id, ShiftType>;
   };
-  /** The weekend-pattern rule, when enabled: weekends are counted per schedule-length window. */
+  /** The draft's first day: pay periods and the alternate weekends count from here. */
+  payPeriodAnchor: IsoDate;
+  /**
+   * The weekend-pattern rule, when enabled, with its params as the rule reads them, so the history
+   * is judged by the rule's own count (`weekendBreaches`) and cannot drift from it.
+   */
   weekends?: {
     definition: WeekendDefinition;
-    maxConsecutive: number;
-    /** Absent: no per-window limit. */
-    maxPerWindow?: number;
-    windowDays: number;
-    windowAnchor: IsoDate;
+    params: WeekendPatternParams;
   };
 }
 
@@ -692,12 +697,12 @@ function canWork(
   }
   // A Baylor nurse works every weekend by contract, so the weekend caps do not judge them.
   if (limits.weekends && kind !== 'va_baylor') {
-    if (breaksWeekends(mine, date, shift, limits.weekends)) return false;
+    if (breaksWeekends(mine, date, shift, limits.weekends, limits.payPeriodAnchor)) return false;
     // Each half works its own alternate weekends. A nurse lent to the other half's weekend has
     // used one of their two, so their own then runs short: only the intermittent pool lends.
     const key = weekendKey(shiftWindow(date, shift), limits.weekends.definition) as IsoDate | null;
     if (key !== null && staff.position !== 'flex') {
-      const parity = weekendParity(limits.weekends.windowAnchor, key);
+      const parity = weekendParity(limits.payPeriodAnchor, key);
       if (parity !== staff.weekendGroup && !lend) return false;
     }
   }
@@ -725,43 +730,49 @@ function weekendWorked(
 
 /**
  * Would this shift give the nurse more weekends than the weekend-pattern rule allows: too many in
- * a row, or too many in the schedule-length window it falls in? A weekend already worked adds no
- * new one. A weekend's shifts are dated the Friday (a night running in) to the Sunday.
+ * a row, too many in four, or too many in its pay period? A weekend already worked adds no new
+ * one. A weekend's shifts are dated the Friday (a night running in) to the Sunday.
  */
 function breaksWeekends(
   mine: ReadonlyMap<IsoDate, ShiftType>,
   date: IsoDate,
   shift: ShiftType,
   w: NonNullable<Limits['weekends']>,
+  payPeriodAnchor: IsoDate,
 ): boolean {
   const key = weekendKey(shiftWindow(date, shift), w.definition) as IsoDate | null;
   if (key === null) return false;
-  const workedBefore = (k: IsoDate) => weekendWorked(mine, k, w.definition);
-  if (workedBefore(key)) return false;
-  const worked = (k: IsoDate) => k === key || workedBefore(k);
-  let run = 1;
-  for (let k = addDays(key, -7); worked(k); k = addDays(k, -7)) run++;
-  for (let k = addDays(key, 7); worked(k); k = addDays(k, 7)) run++;
-  if (run > w.maxConsecutive) return true;
-  if (w.maxPerWindow === undefined) return false;
-  // "Two in four" counts weekends by their key, four to a window. The rule also judges each
-  // published pay period alone, and a Sunday's tour belongs to the weekend before it, so a pay
-  // period touches three weekends: at most `maxPerWindow` of those, counted by the shifts dated in it.
-  const windowOf = (k: IsoDate) => Math.floor(daysBetween(w.windowAnchor, k) / w.windowDays);
-  let inWindow = 1;
-  for (let j = -3; j <= 3; j++) {
-    const other = addDays(key, 7 * j);
-    if (j !== 0 && windowOf(other) === windowOf(key) && workedBefore(other)) inWindow++;
+  if (weekendWorked(mine, key, w.definition)) return false;
+  const worked = new Set<IsoDate>([key]);
+  for (const [d, s] of mine) {
+    const k = weekendKey(shiftWindow(d, s), w.definition) as IsoDate | null;
+    if (k !== null) worked.add(k);
   }
-  if (inWindow > w.maxPerWindow) return true;
-  const from = addDays(w.windowAnchor, Math.floor(daysBetween(w.windowAnchor, date) / 14) * 14);
+  // Judged by the rule's own count. A call-off replacement lands inside a schedule already built,
+  // so the weekends after this one are judged too: a run or four-week window it would complete.
+  // Only breaches that hold this weekend count; any other was there before it.
+  const judged = new Set<IsoDate>([key]);
+  for (let k = addDays(key, 7); worked.has(k); k = addDays(k, 7)) judged.add(k);
+  for (let ahead = 1; ahead <= 3; ahead++) {
+    const k = addDays(key, 7 * ahead);
+    if (worked.has(k)) judged.add(k);
+  }
+  const { runs, windows } = weekendBreaches({ worked, inPeriod: judged }, w.params);
+  if (runs.some((r) => daysBetween(key, r.weekend) <= 7 * (r.length - 1))) return true;
+  if (windows.some((x) => daysBetween(key, x.weekend) <= 21)) return true;
+  // The per-schedule limit: the rule also judges each published pay period alone, and a Sunday's
+  // tour belongs to the weekend before it, so a pay period touches three weekends, counted by the
+  // shifts dated in it.
+  const limit = w.params.maxWeekendsPerPeriod;
+  if (limit === undefined) return false;
+  const from = addDays(payPeriodAnchor, Math.floor(daysBetween(payPeriodAnchor, date) / 14) * 14);
   const keys = new Set<string>([key]);
   for (const d of datesInRange(from, addDays(from, 13))) {
     const s = mine.get(d);
     const k = s && weekendKey(shiftWindow(d, s), w.definition);
     if (k) keys.add(k);
   }
-  return keys.size > w.maxPerWindow;
+  return keys.size > limit;
 }
 
 /**
@@ -1060,16 +1071,20 @@ export function seedFromProfile(
     maxRun: numberParam(configs, 'max-consecutive-shifts', 'maxConsecutiveShifts', 5),
     maxNights: numberParam(configs, 'max-consecutive-shifts', 'maxConsecutiveNights', 3),
     minDaysOff: numberParam(configs, 'max-consecutive-shifts', 'minDaysOffAfterMaxStretch', 2),
+    payPeriodAnchor: draftStart,
   };
+  // Read back from the saved rule set, not the profile: the VA demo's `maxWeekendsPer4Weeks` is set
+  // by the US-VA preset (`applyJurisdiction` above), not by `profiles.ts`, so a profile that skips
+  // the preset has no four-week cap here either.
   const weekendRule = configs.find((c) => c.ruleId === 'weekend-pattern');
   if (weekendRule?.enabled) {
-    const perWindow = weekendRule.params.maxWeekendsPerPeriod;
+    const defaults = ALL_RULES.find((r) => r.id === 'weekend-pattern')!.defaultParams;
     limits.weekends = {
       definition: ruleSet.weekendDefinition,
-      maxConsecutive: numberParam(configs, 'weekend-pattern', 'maxConsecutiveWeekends', 1),
-      ...(typeof perWindow === 'number' ? { maxPerWindow: perWindow } : {}),
-      windowDays: profile.scheduleWeeks * 7,
-      windowAnchor: draftStart,
+      params: {
+        ...(defaults as WeekendPatternParams),
+        ...(weekendRule.params as Partial<WeekendPatternParams>),
+      },
     };
   }
   const noMandatoryOvertime = configs.find((c) => c.ruleId === 'no-mandatory-overtime');
@@ -1659,7 +1674,7 @@ export function seedFromProfile(
       let held = 0;
       for (const saturday of datesInRange(date, end)) {
         if (weekdayOf(saturday) !== 6) continue;
-        const parity = weekendParity(wk.windowAnchor, saturday);
+        const parity = weekendParity(limits.payPeriodAnchor, saturday);
         if (parity === s.weekendGroup && !weekendWorked(mine, saturday, wk.definition)) {
           // Friday and Saturday, and the Sunday too unless it falls in the next pay period.
           held += (saturday === end ? 2 : 3) * s.shiftHours;
@@ -1794,7 +1809,7 @@ export function seedFromProfile(
         ) as IsoDate | null;
         if (key !== null && s.position !== 'flex') {
           const mine = worked.get(s.nurse.id)!;
-          const parity = weekendParity(limits.weekends.windowAnchor, key);
+          const parity = weekendParity(limits.payPeriodAnchor, key);
           w *= parity === s.weekendGroup ? 3 : 0.05;
           if (weekendWorked(mine, key, limits.weekends.definition)) w *= 4;
         }
@@ -1808,8 +1823,32 @@ export function seedFromProfile(
     const pick = (pool: Staff[], shift: ShiftType, date: IsoDate) =>
       rng.weightedPick(pool.map((s) => ({ value: s, weight: weight(s, shift, date) })));
 
+    /** Places the shift's charge nurse, borrowing from the other half's weekend last of all. */
+    const placeCharge = (date: IsoDate, shift: ShiftType): boolean => {
+      const chargePool = [false, true]
+        .map((lend) => tiersFor(date, shift, 'RN', true, lend).find((t) => t.length > 0))
+        .find((pool) => pool !== undefined);
+      if (!chargePool) return false;
+      const s = pick(chargePool, shift, date);
+      plan.push({ staff: s, date, shift, isCharge: true });
+      worked.get(s.nurse.id)!.set(date, shift);
+      credit(s, shift, 1);
+      return true;
+    };
+
     const planDates = datesInRange(start, end);
     for (const date of planDates) {
+      // Where weekends are capped, each half has few charge nurses for its weekend, so the day's
+      // charge nurses are placed before any floor is filled: a day crew filled first can take the
+      // only night charge nurse left in the half as a bedside nurse.
+      const chargedFirst = new Set<ShiftType>();
+      if (limits.weekends) {
+        for (const shift of shifts) {
+          if (shift.withinShiftTypeId !== null || !profile.floors[shift.abbreviation]?.RN) continue;
+          chargedFirst.add(shift);
+          placeCharge(date, shift);
+        }
+      }
       for (const shift of shifts) {
         const mixes = forecast(date, shift, true);
         for (const [role, floor] of Object.entries(profile.floors[shift.abbreviation] ?? {})) {
@@ -1836,12 +1875,10 @@ export function seedFromProfile(
             credit(s, shift, 1);
             staffed++;
           };
-          if (r === 'RN' && shift.withinShiftTypeId === null) {
-            // A half with no charge nurse for its weekend borrows the other's, last of all.
-            const chargePool = [false, true]
-              .map((lend) => tiersFor(date, shift, r, true, lend).find((t) => t.length > 0))
-              .find((pool) => pool !== undefined);
-            if (chargePool) add(pick(chargePool, shift, date), true);
+          if (r === 'RN' && chargedFirst.has(shift)) {
+            staffed = plan.some((e) => e.date === date && e.shift === shift && e.isCharge) ? 1 : 0;
+          } else if (r === 'RN' && shift.withinShiftTypeId === null) {
+            if (placeCharge(date, shift)) staffed++;
           }
           while (staffed < min) {
             let tiers = tiersFor(date, shift, r, false);

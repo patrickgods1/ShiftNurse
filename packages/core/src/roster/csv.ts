@@ -136,6 +136,9 @@ export const ROSTER_COLUMNS = [
   // After the long-standing columns so a sheet exported before it existed still reads.
   'hire_date',
   'schedule_kind',
+  // Workdays in the nurse's agreed week, read by the "beyond scheduled days" overtime rule
+  // (IWC Wage Order 5 § 3(B)(8)). Blank keeps the stored value on re-import.
+  'scheduled_days_per_week',
 ] as const;
 
 export type RosterColumn = (typeof ROSTER_COLUMNS)[number];
@@ -325,6 +328,20 @@ export function parseRosterCsv(text: string, options: ParseRosterOptions): Roste
       bad('schedule_kind', `Schedule kind "${kindRaw}" is not one of ${SCHEDULE_KINDS.join(', ')}`);
     }
 
+    // Optional, and blank keeps the stored value on re-import (unlike schedule_kind): it is an
+    // agreement with one nurse, so a sheet that never carried it must not erase it.
+    const daysRaw = cell('scheduled_days_per_week');
+    const scheduledDays = Number(daysRaw);
+    if (
+      daysRaw !== '' &&
+      !(Number.isInteger(scheduledDays) && scheduledDays >= 1 && scheduledDays <= 7)
+    ) {
+      bad(
+        'scheduled_days_per_week',
+        `Scheduled days per week "${daysRaw}" is not a whole number from 1 to 7`,
+      );
+    }
+
     const flags = {} as Record<'charge_eligible' | 'novice' | 'float_eligible', boolean>;
     for (const column of ['charge_eligible', 'novice', 'float_eligible'] as const) {
       const v = parseBoolean(cell(column));
@@ -352,6 +369,7 @@ export function parseRosterCsv(text: string, options: ParseRosterOptions): Roste
         seniorityDate: seniorityRaw as IsoDate,
         ...(hireRaw === '' ? {} : { hireDate: hireRaw as IsoDate }),
         ...(kindRaw === '' ? {} : { scheduleKind: kindRaw as ScheduleKind }),
+        ...(daysRaw === '' ? {} : { scheduledDaysPerWeek: scheduledDays }),
         isChargeEligible: flags.charge_eligible,
         isNovice: flags.novice,
         isFloatEligible: flags.float_eligible,
@@ -393,6 +411,7 @@ export function formatRosterCsv(rows: readonly RosterCsvRow[]): string {
     formatCredentials(credentials),
     n.hireDate ?? '',
     n.scheduleKind ?? '',
+    n.scheduledDaysPerWeek === undefined ? '' : String(n.scheduledDaysPerWeek),
   ]);
   return serializeCsv([ROSTER_COLUMNS, ...body]);
 }

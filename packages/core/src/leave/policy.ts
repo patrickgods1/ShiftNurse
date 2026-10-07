@@ -34,8 +34,23 @@ function validateFixedYearStart(start: string | undefined): void {
 
 function validateRule(rule: AccrualRule): void {
   const label = `The ${rule.balanceType} accrual rule`;
-  if (rule.tiers.length === 0) throw new Error(`${label} has no earning rates`);
-  if (rule.tiers[0]!.fromYearsOfService !== 0) {
+  const frontLoaded = rule.frontLoadHours !== undefined;
+  if (frontLoaded && !positive(rule.frontLoadHours)) {
+    throw new Error(`${label} has a front-loaded amount that is not a number greater than zero`);
+  }
+  // A front-loaded balance is set at each leave-year start and earns nothing per pay period, so
+  // an hours-worked rate beside it would read as accrual the projection never applies.
+  if (frontLoaded && rule.tiers.some((t) => t.hoursPerAccruedHour !== undefined)) {
+    throw new Error(
+      `${label} is front-loaded and also earns by the hour worked; choose one, not both`,
+    );
+  }
+  if (rule.useCapHoursPerYear !== undefined && !positive(rule.useCapHoursPerYear)) {
+    throw new Error(`${label} has a yearly use cap that is not a number greater than zero`);
+  }
+  // A front-loaded amount is a rate of its own: such a rule needs no tiers.
+  if (rule.tiers.length === 0 && !frontLoaded) throw new Error(`${label} has no earning rates`);
+  if (rule.tiers.length > 0 && rule.tiers[0]!.fromYearsOfService !== 0) {
     throw new Error(`${label} must start at 0 years of service, or new staff earn nothing`);
   }
   for (let i = 1; i < rule.tiers.length; i++) {

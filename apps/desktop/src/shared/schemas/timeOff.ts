@@ -17,6 +17,7 @@ const timeOffType = z.enum([
   'lwop',
   'comp',
   'state_family',
+  'pregnancy_disability',
 ]);
 const timeOffStatus = z.enum(['pending', 'approved', 'denied', 'cancelled']);
 
@@ -45,4 +46,5 @@ export const timeOffSchemas = {
   withdrawApproval: z.tuple([id, text]),
   impact: z.tuple([id, id, z.enum(['approved', 'denied'])]),
   holidayPriority: z.tuple([id]),
+  holidayWorkPriority: z.tuple([id]),
 } satisfies ResourceSchemas<'timeOff'>;

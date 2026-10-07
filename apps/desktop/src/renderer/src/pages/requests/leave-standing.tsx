@@ -3,7 +3,9 @@
  * request on a balance (PTO, annual, sick, comp time) is measured against what the nurse will
  * have on its first day — payroll's figure carried forward, with the breakdown underneath so the
  * manager can see where the difference came from; an FMLA request against the entitlement under
- * the unit's regime and the eligibility tests. These are warnings in the manager's words and
+ * the unit's regime and the eligibility tests; a California pregnancy disability request against
+ * its own four months. A balance whose rule caps yearly use (California sick leave) also warns
+ * when the request passes the cap, however much is held. These are warnings in the manager's words and
  * never stop the request — payroll's figure can be stale, and the manager may know a
  * certification has come in. The sums are made in main; nothing here counts hours.
  */
@@ -58,8 +60,8 @@ export function LeaveStanding({
   );
   const check = query.data;
   if (!check) return null;
-  const { balance, noBalanceFor, fmla } = check;
-  if (!balance && !noBalanceFor && !fmla) return null;
+  const { balance, noBalanceFor, fmla, pdl } = check;
+  if (!balance && !noBalanceFor && !fmla && !pdl) return null;
 
   return (
     <div
@@ -78,6 +80,12 @@ export function LeaveStanding({
               {balance.check.message}
             </p>
           )}
+          {balance.useCap ? (
+            <p role="alert" className="font-medium text-warn">
+              {balance.usedThisYearHours} hours used this leave year; this request would take use{' '}
+              {balance.useCap.overBy} past the {balance.useCap.capHours}-hour yearly cap.
+            </p>
+          ) : null}
         </>
       ) : null}
       {noBalanceFor ? (
@@ -85,6 +93,23 @@ export function LeaveStanding({
           No {TIME_OFF_TYPE_LABELS[noBalanceFor]} balance is recorded for this nurse, so the request
           cannot be checked. Enter it on the Roster.
         </p>
+      ) : null}
+      {pdl ? (
+        <>
+          <p>
+            Pregnancy disability leave: {pdl.remainingHours} hours left of {pdl.entitlementHours}{' '}
+            (four months of a {pdl.weeklyHours}-hour week); this request uses {pdl.requestHours}.
+          </p>
+          <p className="text-[11px]">
+            {pdl.usedHours} hours taken in the 12 months {formatDate(pdl.period.from)} to{' '}
+            {formatDate(pdl.period.to)}.
+          </p>
+          {pdl.requestHours > pdl.remainingHours ? (
+            <p role="alert" className="font-medium text-warn">
+              This request uses {pdl.requestHours} hours; only {pdl.remainingHours} are left.
+            </p>
+          ) : null}
+        </>
       ) : null}
       {fmla ? (
         <>

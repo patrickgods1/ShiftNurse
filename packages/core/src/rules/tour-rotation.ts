@@ -18,15 +18,24 @@
  * between two others is at least as close to one of them on its own tour), which is what
  * `SolverModel.isLegal` relies on when it re-checks a removal. Overlapping shifts are the overlap
  * rule's business and are skipped here.
+ *
+ * Career nurses (UC–CNA Art. 14 § P.1.a: ten years) are exempt from forced rotation: one tour a
+ * schedule, and a permanent tour that holds whatever the unit's enforcement setting. Service is
+ * read from the roster so the exemption follows the nurse; setting each such nurse's permanent
+ * tour by hand went stale on every anniversary. `effectiveTourLimits` is the one place the
+ * exemption is decided — the rule, `SolverModel` (through this rule) and the CP-SAT encoder all
+ * read it, so the grid and Generate cannot disagree about who may rotate.
  */
 
-import type { ShiftType, Tour } from '../domain/entities.js';
+import type { Nurse, ShiftType, Tour } from '../domain/entities.js';
 import {
   describeDate,
+  type IsoDate,
   minutesToHours,
   parseTimeOfDay,
   restMinutesBetween,
 } from '../domain/time.js';
+import { yearsOfService } from '../leave/accrual.js';
 import { isWorked, nurseName, type Rule, type Violation, violation } from './types.js';
 
 export interface TourRotationParams {
@@ -36,6 +45,35 @@ export interface TourRotationParams {
   minHoursBetweenTours: number;
   /** Whether a nurse with a permanent tour may never be scheduled off it. */
   permanentTourEnforced: boolean;
+  /** Whole years of service after which a nurse is held to one tour a schedule. Absent: nobody is exempt. */
+  exemptAfterYearsOfService?: number;
+}
+
+export interface EffectiveTourLimits {
+  maxToursPerPeriod: number;
+  permanentTourEnforced: boolean;
+  exempt: boolean;
+}
+
+/** The limits one nurse is judged by this schedule, the career exemption applied. */
+export function effectiveTourLimits(
+  nurse: Pick<Nurse, 'seniorityDate' | 'hireDate'>,
+  params: TourRotationParams,
+  periodStart: IsoDate,
+): EffectiveTourLimits {
+  const threshold = params.exemptAfterYearsOfService;
+  // Service is counted to the first day of the schedule, so one nurse is judged the same on every
+  // day of it; an anniversary mid-schedule takes effect from the next one.
+  const exempt =
+    threshold !== undefined &&
+    yearsOfService(nurse.hireDate ?? nurse.seniorityDate, periodStart) >= threshold;
+  return exempt
+    ? { maxToursPerPeriod: 1, permanentTourEnforced: true, exempt }
+    : {
+        maxToursPerPeriod: params.maxToursPerPeriod,
+        permanentTourEnforced: params.permanentTourEnforced,
+        exempt,
+      };
 }
 
 /** Day starts 04:00–11:59, evening 12:00–17:59, night 18:00–03:59, by local start time. */
@@ -91,6 +129,19 @@ export const tourRotationRule: Rule<TourRotationParams> = {
         'A nurse awarded a permanent tour is not rotated off it (VA–NNU Art. 13). Turn it off ' +
         'only if permanent tours on your unit are a preference, not a contract right.',
     },
+    exemptAfterYearsOfService: {
+      label: 'Exempt from rotation after (years)',
+      hint:
+        'Years of service after which a nurse is exempt from forced rotation and is kept on one ' +
+        'tour per schedule (UC–CNA Art. 14 § P.1.a: ten years). Leave blank to exempt nobody.',
+      why:
+        'Some contracts spare career nurses rotation altogether. Service counts from the hire ' +
+        'date, or the seniority date when no hire date is set, to the first day of the schedule; ' +
+        'an exempt nurse with a permanent tour is kept on it even if permanent tours are not ' +
+        'otherwise enforced.',
+      optional: true,
+      min: 0,
+    },
   },
 
   evaluate(schedule, params, ctx): Violation[] {
@@ -99,21 +150,26 @@ export const tourRotationRule: Rule<TourRotationParams> = {
     for (const nurse of ctx.nurses) {
       const timeline = schedule.timelineFor(nurse.id).filter(isWorked);
       const inPeriod = timeline.filter((v) => v.inPeriod);
+      const limits = effectiveTourLimits(nurse, params, schedule.period.startDate);
+      const why = limits.exempt
+        ? ` ${nurseName(nurse)} is exempt from rotation after ` +
+          `${params.exemptAfterYearsOfService} years of service.`
+        : '';
 
       const tours = TOUR_ORDER.filter((t) => inPeriod.some((v) => tourOf(v.shiftType) === t));
-      if (tours.length > params.maxToursPerPeriod) {
+      if (tours.length > limits.maxToursPerPeriod) {
         violations.push(
           violation(
             tourRotationRule,
             'soft',
             'too_many_tours',
             `${nurseName(nurse)} is rotated across ${tours.length} tours this schedule ` +
-              `(${tours.join(', ')}). Maximum is ${params.maxToursPerPeriod}.`,
+              `(${tours.join(', ')}). Maximum is ${limits.maxToursPerPeriod}.${why}`,
             {
               nurseIds: [nurse.id],
               dates: inPeriod.map((v) => v.assignment.date),
               assignmentIds: inPeriod.map((v) => v.assignment.id),
-              details: { tours, max: params.maxToursPerPeriod },
+              details: { tours, max: limits.maxToursPerPeriod },
             },
           ),
         );
@@ -159,7 +215,7 @@ export const tourRotationRule: Rule<TourRotationParams> = {
       }
 
       const permanent = nurse.permanentTour;
-      if (permanent && params.permanentTourEnforced) {
+      if (permanent && limits.permanentTourEnforced) {
         for (const view of inPeriod) {
           const tour = tourOf(view.shiftType);
           if (tour === permanent) continue;
@@ -169,7 +225,7 @@ export const tourRotationRule: Rule<TourRotationParams> = {
               'soft',
               'off_permanent_tour',
               `${nurseName(nurse)} is on a permanent ${permanent} tour but is scheduled the ` +
-                `${view.shiftType.name} (${tour}) on ${describeDate(view.assignment.date)}.`,
+                `${view.shiftType.name} (${tour}) on ${describeDate(view.assignment.date)}.${why}`,
               {
                 nurseIds: [nurse.id],
                 dates: [view.assignment.date],

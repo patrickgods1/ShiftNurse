@@ -14,6 +14,7 @@ import type {
   Holiday,
   Id,
   IsoDate,
+  JurisdictionChoices,
   JurisdictionId,
   LeavePolicy,
   OvertimeOrder,
@@ -85,6 +86,8 @@ export interface UnitPatch {
   postingLeadDays?: number | null;
   /** Null forgets the state preset. */
   jurisdiction?: JurisdictionId | null;
+  /** Null forgets the answers: every question reads as no. */
+  jurisdictionChoices?: JurisdictionChoices | null;
   /** Null clears the policy: FMLA and balances revert to the pre-policy reading. */
   leavePolicy?: LeavePolicy | null;
   /** Null returns day-of to the cost-first overtime order. */
@@ -105,6 +108,7 @@ const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
   ratioStaffing: true,
   postingLeadDays: true,
   jurisdiction: true,
+  jurisdictionChoices: true,
   leavePolicy: true,
   overtimeOrder: true,
   perDiemCommitment: true,

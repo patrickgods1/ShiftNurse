@@ -10,7 +10,7 @@
   smoke-tests it, and creates a **draft** release (`.github/release-notes.md`); it dry-runs on PRs
   touching packaging. Builds are unsigned.
 
-`npm run test:coverage` runs tests with v8 coverage over `packages/*` and desktop `main`; CI's ubuntu leg posts a per-area table (`scripts/coverage-summary.mjs`) to the run summary. Coverage scales test timeouts 3× (config sets `COVERAGE=1`; explicit ones use `slow()`); CI's macOS leg sets `SHIFTNURSE_REQUIRE_CPSAT=1`, so a missing CP-SAT runner fails the cpsat tests instead of skipping them.
+`npm test` runs two Vitest projects: `unit` in parallel, then `solver-heavy` (full-solve files) one file at a time. `npm run test:coverage` runs tests with v8 coverage over `packages/*` and desktop `main`; CI's ubuntu leg posts a per-area table (`scripts/coverage-summary.mjs`) to the run summary. Coverage scales test timeouts 3× (config sets `COVERAGE=1`; explicit ones use `slow()`); CI's macOS leg sets `SHIFTNURSE_REQUIRE_CPSAT=1`, so a missing CP-SAT runner fails the cpsat tests instead of skipping them.
 
 ## Conventions
 

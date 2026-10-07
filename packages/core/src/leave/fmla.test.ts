@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { FmlaPolicy } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
-import { fmlaEligibility, fmlaEntitlementHours, fmlaPeriod, fmlaStanding } from './fmla.js';
+import {
+  fmlaEligibility,
+  fmlaEntitlementHours,
+  fmlaPeriod,
+  fmlaStanding,
+  pdlEntitlementHours,
+} from './fmla.js';
 
 const d = isoDate;
 const backward: FmlaPolicy = { regime: 'title1', yearMethod: 'rolling_backward' };
@@ -264,5 +270,17 @@ describe('FMLA hours left', () => {
         onDate: d('2027-03-01'),
       }).remainingHours,
     ).toBe(0);
+  });
+});
+
+describe('California pregnancy disability leave', () => {
+  it('gives a nurse on three 12s 623.88 hours, four months of her 36-hour week', () => {
+    // 36 × 17.33 = 623.88.
+    expect(pdlEntitlementHours({ contractWeeklyHours: 36 })).toBeCloseTo(623.88, 10);
+  });
+
+  it('gives a 40-hour nurse 693.2 hours', () => {
+    // 40 × 17.33 = 693.2.
+    expect(pdlEntitlementHours({ contractWeeklyHours: 40 })).toBeCloseTo(693.2, 10);
   });
 });

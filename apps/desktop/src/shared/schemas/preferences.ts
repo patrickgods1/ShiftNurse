@@ -29,6 +29,7 @@ const preferenceInput = z.discriminatedUnion('kind', [
     weight,
   }),
   object({ kind: z.literal('preferred_block_length'), shifts: count, weight }),
+  object({ kind: z.literal('holiday_appetite'), holidayId: id, weight }),
 ]);
 
 export const preferencesSchemas = {

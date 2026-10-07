@@ -65,6 +65,7 @@ import type { ScheduleValidation, ShiftNurseApi } from '../../shared/api.js';
 import {
   ACTOR,
   assignmentOrThrow,
+  LOOKBACK_DAYS,
   periodOrThrow,
   ruleSetFor,
   scheduleViewFor,
@@ -102,7 +103,7 @@ export function validateView(
     holidays: listHolidaysForUnit(db, period.unitId),
     weekendDefinition: ruleSet.weekendDefinition,
     paidSickCalls: paidSickCallsForUnit(db, period.unitId, {
-      start: addDays(period.startDate, -14),
+      start: addDays(period.startDate, -LOOKBACK_DAYS),
       end: period.endDate,
     }),
     incompatibilityGroups: listIncompatibilityGroups(db, period.unitId),
@@ -111,7 +112,7 @@ export function validateView(
     preceptorships: listPreceptorshipsOverlapping(
       db,
       period.unitId,
-      addDays(period.startDate, -14),
+      addDays(period.startDate, -LOOKBACK_DAYS),
       period.endDate,
     ),
     restWaivers: restWaiversForPeriod(db, period.unitId, period.startDate, period.endDate),

@@ -29,6 +29,7 @@ import type {
   EmploymentType,
   Id,
   IsoDate,
+  JurisdictionChoices,
   LeaveBalanceType,
   LeaveBidChoice,
   LeavePolicy,
@@ -94,6 +95,9 @@ export const unit = sqliteTable('unit', {
   postingLeadDays: integer('posting_lead_days'),
   // The state preset last applied (core's JurisdictionId); null until one is.
   jurisdiction: text('jurisdiction'),
+  // The answers to that preset's apply-time questions (core's JurisdictionChoices); null until a
+  // preset is applied, read as every question answered no.
+  jurisdictionChoices: text('jurisdiction_choices', { mode: 'json' }).$type<JurisdictionChoices>(),
   // How the employer runs FMLA, the leave year and accrual (core's LeavePolicy); null means the
   // pre-policy reading, so every existing unit behaves as it did.
   leavePolicy: text('leave_policy', { mode: 'json' }).$type<LeavePolicy>(),
@@ -252,6 +256,10 @@ export const preference = sqliteTable(
     level: real('level'),
     /** `preferred_block_length` — consecutive shifts before days off */
     blockShifts: integer('block_shifts'),
+    /** `holiday_appetite` — the holiday the nurse wants to work; gone with the holiday */
+    holidayId: text('holiday_id')
+      .references(() => holiday.id, { onDelete: 'cascade' })
+      .$type<Id>(),
   },
   (t) => [index('preference_nurse_idx').on(t.nurseId)],
 );
@@ -1030,6 +1038,9 @@ export const differential = sqliteTable('differential', {
   windowStart: text('window_start'),
   windowEnd: text('window_end'),
   windowWholeShiftAtHours: real('window_whole_shift_at_hours'),
+  /** A consecutive-shift premium's trigger (`Differential.consecutive`); both null or both set. */
+  consecutiveAfterShifts: integer('consecutive_after_shifts'),
+  consecutiveWithinDays: integer('consecutive_within_days'),
 });
 
 export const overtimeRule = sqliteTable('overtime_rule', {

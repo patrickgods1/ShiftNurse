@@ -656,7 +656,7 @@ Directive 1351) against what a unit can configure. One PR per milestone.
       (verified 2026-10-06: `npm run check` lint and typecheck clean, 2,590 tests passed, 2
       skipped; smoke PASS; the encoder agrees with the rule engine on 400 random rosters)
 
-### M33–M38 — Law and contract audit fixes (after 1.0)
+### M33–M39 — Law and contract audit fixes (after 1.0)
 
 A 2026-10-06 re-audit of what M27–M32 produced, read against the primary texts rather than the
 summaries (38 U.S.C. §§ 7453, 7456, 7456A, 7459; the VA–NNU 2023 Master Agreement Arts. 10 and
@@ -692,6 +692,17 @@ Art. 14). One PR per milestone; the documentation update that records them has n
       and exempt from weekend and holiday rotation, the 24-hour Baylor mandatory-overtime cap,
       leave charged 10 for 9 on 72/80, the VA preset's per-plan rules and three plan nurses in
       the VA demo (verified 2026-10-06: `npm run check` 2,815 passed; smoke PASS)
+- [x] M39 Audit follow-ups: the two-of-four weekend quota made real (a 28-day lookback tail
+      everywhere, `PRIOR_ASSIGNMENT_LOOKBACK_DAYS`, and the demo engine on the rule's own
+      `weekendBreaches`), Baylor pay per 38 U.S.C. § 7456(b)(3) (premiums on an extra tour, the
+      `weekend` overtime basis, tour days by calendar, no pyramiding on the 72/80 weekly rule),
+      the `holiday_appetite` preference with `holidayWorkPriority` (VA–NNU Art. 10 § 4.D.6;
+      migration 0035), the VA preset's contract provenance and `ownContract` option
+      (`Unit.jurisdictionChoices`, migration 0033), the `consecutive_shift` differential (UC–CNA
+      Art. 14 § I.3; migration 0034), California sick-leave use cap, front-loading and PDL,
+      `tour-rotation`'s `exemptAfterYearsOfService` (UC–CNA Art. 14 § P.1.a), the roster CSV's
+      `scheduled_days_per_week`, and the vitest `unit` / `solver-heavy` projects (verified
+      2026-10-07: `npm run check` 2,920 passed, 2 skipped, 264 files; smoke PASS)
 
 ---
 

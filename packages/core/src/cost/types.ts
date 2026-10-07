@@ -26,6 +26,12 @@
  *   `wholeShiftAtHours` in the window makes it a whole-shift differential like any other; short
  *   of it, only the in-window hours earn it, priced on the *base* rate and kept out of the running
  *   rate, so it neither compounds nor raises overtime.
+ * - **Consecutive shifts** (`consecutive_shift`, UC–CNA Art. 14 § I.3) are a whole-shift
+ *   differential earned by the run, not the shift: once a run of consecutive worked days (shifts
+ *   dated on each, lookback included, standby not) holds more than `afterShifts` full shifts dated
+ *   within the shift's own day and the `withinDays` before it, that shift and every later one in the
+ *   run earn it until a day off. The contract speaks of 12-hour nurses, so only a shift scheduled
+ *   for 12 hours or more counts as full.
  * - **Overtime** is itemised the way a payslip itemises it: every hour is paid at its straight
  *   rate (above), and hours past an {@link OvertimeRule} threshold earn an additional
  *   *premium* of `(multiplier − 1) × straight rate`. So an overtime hour on a holiday night
@@ -58,6 +64,11 @@
  *   work week the nurse's worked dates are counted in order, lookback included, and on each date
  *   past their `scheduledDaysPerWeek` the workday's hours past `thresholdHours` are overtime (IWC
  *   Wage Order 5 § 3(B)(8): past 8 on such a day is double time). No scheduled days, no overtime.
+ * - **Overtime past hours in the weekend** (`basis: 'weekend'`): the hours inside each window of the
+ *   unit's weekend definition are summed in order, a shift straddling its edge giving only its
+ *   in-window hours (a Friday 19:00–07:00 gives Saturday's weekend 7), and those past
+ *   `thresholdHours` are overtime (38 U.S.C. § 7456(b)(3)(A): a Baylor nurse past 24 hours between
+ *   midnight Friday and midnight Sunday). Paid leave does not count; `pyramiding` is honoured.
  * - **Daily premiums need not pyramid into weekly overtime.** A weekly or pay-period rule with
  *   `pyramiding: 'none'` counts only each shift's straight hours, lookback shifts included: those
  *   before any other basis makes it overtime (Cal. Lab. Code § 510; UC–CNA Art. 14 §M). Its
@@ -73,10 +84,12 @@
  *   nurses of those kinds (`Nurse.scheduleKind`, absent `'standard'`), so a unit's 72/80 and
  *   Baylor rules sit beside its standard ones (38 U.S.C. §§ 7456(c), 7456A(c)).
  * - **A daily rule may judge only tour days, or only the others.** `tourDays: 'only'` counts the
- *   workdays holding a shift scheduled for 12 hours, `'except'` the rest; a 72/80 nurse is over
- *   past 12 on a tour day and past 8 on any other (§ 7456A(c)(1)).
- * - **A Baylor tour earns no § 7453 premium.** A `va_baylor` nurse's scheduled 12 on Saturday,
- *   Sunday or a Friday night (`isBaylorTour`) gets no night, evening, weekend or holiday pay on its
+ *   workdays holding a tour, `'except'` the rest; a 72/80 nurse is over past 12 on a tour day and
+ *   past 8 on any other (§ 7456A(c)(1)). A 72/80 tour day holds a shift scheduled for 12 hours; a
+ *   Baylor one is a Saturday, a Sunday or a Friday whose shift runs into Saturday, pickups included,
+ *   so only a Baylor weekday is judged past 8 (§ 7456(b)(3)(A)).
+ * - **A Baylor tour earns no § 7453 premium.** A `va_baylor` nurse's regularly scheduled 12 (not
+ *   `isOvertime`) on Saturday, Sunday or a Friday night (`isBaylorTour`) gets no night, evening, weekend or holiday pay on its
  *   scheduled hours (§ 7456(d)); charge and agency still apply. Its holdover earns them, on the
  *   base rate and out of the running rate, as partial clock differentials are.
  * - **A holdover is worked time on every basis.** It lengthens the shift's paid hours, so daily,
@@ -166,6 +179,7 @@ export const DIFFERENTIAL_ORDER: readonly DifferentialKind[] = [
   'weekend',
   'holiday',
   'major_holiday',
+  'consecutive_shift',
   'charge',
   'on_call',
   'call_back',
@@ -179,6 +193,7 @@ export const COST_LINE_LABELS: Record<CostLineKind, string> = {
   weekend: 'Weekend differential',
   holiday: 'Holiday premium',
   major_holiday: 'Major holiday premium',
+  consecutive_shift: 'Consecutive-shift premium',
   charge: 'Charge differential',
   on_call: 'On-call standby',
   call_back: 'Call-back',

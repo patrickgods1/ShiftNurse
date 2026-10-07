@@ -57,6 +57,24 @@ describe('overtime bases in Settings › Pay', () => {
     expect(screen.queryByLabelText(/Don't count daily overtime/)).toBeNull();
   });
 
+  it('saves a rule past 24 hours in the weekend window', async () => {
+    renderWithApp(<OvertimeSection unitId="u-1" />);
+    const basis = (await screen.findByLabelText('Basis')) as HTMLSelectElement;
+    expect(Array.from(basis.options).map((o) => [o.value, o.text])).toContainEqual([
+      'weekend',
+      "Weekend window (the unit's weekend definition)",
+    ]);
+    fireEvent.change(basis, { target: { value: 'weekend' } });
+    expect(screen.getByText(/38 U\.S\.C\. § 7456\(b\)\(3\)\(A\), Baylor: 24/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Threshold (hours)'), { target: { value: '24' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('cost', 'createOvertimeRule')).toEqual([
+        [{ unitId: 'u-1', basis: 'weekend', thresholdHours: 24, multiplier: 1.5, active: true }],
+      ]),
+    );
+  });
+
   it('sends pyramiding none for a weekly rule when the box is ticked, and omits it otherwise', async () => {
     renderWithApp(<OvertimeSection unitId="u-1" />);
     await screen.findByLabelText('Basis');

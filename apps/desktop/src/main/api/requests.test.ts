@@ -17,6 +17,7 @@ import {
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { requestsApi } from './requests.js';
+import { rosterApi } from './roster.js';
 import { scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
 
@@ -340,5 +341,40 @@ describe('holiday request priority', () => {
       .map((r) => r.id);
     expect(stillPending).toContain(annRequest.id);
     expect(stillPending).toContain(beaRequest.id);
+  });
+});
+
+describe('nurses who want to work a holiday', () => {
+  it('lists the volunteers most senior first, and leaves out a holiday already past', () => {
+    const { db } = f.handle;
+    const unitId = f.seeded.unitId;
+    const make = (date: string) =>
+      createHoliday(
+        db,
+        { unitId, date: isoDate(date), name: 'Founders Day', isMajor: true },
+        'test',
+      );
+    const coming = make('2032-05-10');
+    const past = make('2020-05-10');
+    // The unit's most and least senior RNs, the junior one volunteering first.
+    const bySeniority = [...f.rns].sort((a, b) => a.seniorityDate.localeCompare(b.seniorityDate));
+    const second = bySeniority[0]!;
+    const first = bySeniority.at(-1)!;
+    expect(first.seniorityDate > second.seniorityDate).toBe(true);
+    const roster = rosterApi(db);
+    for (const nurse of [first, second]) {
+      roster.preferences.replace(nurse.id, [
+        { kind: 'holiday_appetite', holidayId: coming.id, weight: 3 },
+        { kind: 'holiday_appetite', holidayId: past.id, weight: 3 },
+      ]);
+    }
+
+    const claims = api().timeOff.holidayWorkPriority(unitId);
+    expect(claims.map((c) => [c.holidayId, c.nurseId, c.rank])).toEqual([
+      [coming.id, second.id, 1],
+      [coming.id, first.id, 2],
+    ]);
+    // The unit staffs more than two RNs a day, so neither volunteer is surplus.
+    expect(claims.map((c) => c.beyondNeed)).toEqual([false, false]);
   });
 });

@@ -24,6 +24,7 @@ export const requestKeys = {
     ['timeOff', 'impact', periodId, requestId, decision] as const,
   conflicts: (periodId: Id) => ['conflicts', periodId] as const,
   holidayPriority: (unitId: Id) => ['timeOff', 'holidayPriority', unitId] as const,
+  holidayWorkPriority: (unitId: Id) => ['timeOff', 'holidayWorkPriority', unitId] as const,
   policy: (unitId: Id) => ['conflictPolicy', unitId] as const,
 };
 
@@ -40,6 +41,18 @@ export function useHolidayPriority(unitId: Id | undefined) {
   return useQuery({
     queryKey: requestKeys.holidayPriority(unitId ?? ''),
     queryFn: () => api.timeOff.holidayPriority(unitId as Id),
+    enabled: unitId !== undefined,
+  });
+}
+
+/**
+ * Who wants to work each coming holiday, most senior first. Fed by preferences, not requests, so
+ * a preference save refreshes it through the unit-derived roots in `period-cache.ts`.
+ */
+export function useHolidayWorkPriority(unitId: Id | undefined) {
+  return useQuery({
+    queryKey: requestKeys.holidayWorkPriority(unitId ?? ''),
+    queryFn: () => api.timeOff.holidayWorkPriority(unitId as Id),
     enabled: unitId !== undefined,
   });
 }

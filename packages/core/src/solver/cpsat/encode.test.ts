@@ -28,6 +28,7 @@ import {
   assignRun,
   CRED_ACLS,
   census,
+  coverage,
   coverageAllWeek,
   credentialRequirement,
   DAY_8,
@@ -1119,6 +1120,105 @@ describe('agreement with the rule engine', () => {
     });
   });
 
+  it('agrees that a career nurse exempt from rotation may not work nights then days', () => {
+    // The schedule starts Sun 4 Jan 2026: Ada's seniority from 1 Jan 2015 is 11 years, Bo's from
+    // 1 Jan 2017 nine. Two tours are allowed, but ten years exempts a nurse to one.
+    const input = parityInput({
+      nurses: [
+        makeNurse({
+          id: 'ada',
+          firstName: 'Ada',
+          isChargeEligible: true,
+          seniorityDate: isoDate('2015-01-01'),
+        }),
+        makeNurse({ id: 'bo', firstName: 'Bo', seniorityDate: isoDate('2017-01-01') }),
+      ],
+      priorAssignments: [],
+    });
+    const ruleSet = {
+      ...input.ruleSet,
+      configs: input.ruleSet.configs.map((c) =>
+        c.ruleId === 'tour-rotation'
+          ? {
+              ...c,
+              enabled: true,
+              severityOverride: 'hard' as const,
+              params: { ...c.params, maxToursPerPeriod: 2, exemptAfterYearsOfService: 10 },
+            }
+          : c,
+      ),
+    };
+    const encoding = encodeCpsat({ ...input, ruleSet });
+    const model = encoding.solverModel;
+    // Night Mon 5 Jan, then a day Thu 15 Jan: ten days apart, so only the tour count can object.
+    const judge = (nurseId: string) => {
+      const n = model.nurses.findIndex((x) => x.id === nurseId);
+      model.add(model.make(n, model.shiftAt(1, NIGHT_12)));
+      const sa = model.canAdd(n, model.make(n, model.shiftAt(11, DAY_12)));
+      const cpsat = evaluate(encoding, [
+        assign(nurseId, NIGHT_12, '2026-01-05'),
+        assign(nurseId, DAY_12, '2026-01-15'),
+      ]).violated;
+      return { sa, cpsat };
+    };
+    const career = judge('ada');
+    expect(career.sa).toBe(false);
+    expect(career.cpsat.join('\n')).toMatch(/tours per schedule: Ada/);
+    const midCareer = judge('bo');
+    expect(midCareer.sa).toBe(true);
+    expect(midCareer.cpsat).toEqual([]);
+  });
+
+  it('agrees that a career nurse on permanent nights stays on nights though the unit does not enforce it', () => {
+    // As above: Ada has 11 years at Sun 4 Jan 2026, Bo nine; both are on permanent nights.
+    const input = parityInput({
+      nurses: [
+        makeNurse({
+          id: 'ada',
+          firstName: 'Ada',
+          isChargeEligible: true,
+          seniorityDate: isoDate('2015-01-01'),
+          permanentTour: 'night',
+        }),
+        makeNurse({
+          id: 'bo',
+          firstName: 'Bo',
+          seniorityDate: isoDate('2017-01-01'),
+          permanentTour: 'night',
+        }),
+      ],
+      priorAssignments: [],
+    });
+    const ruleSet = {
+      ...input.ruleSet,
+      configs: input.ruleSet.configs.map((c) =>
+        c.ruleId === 'tour-rotation'
+          ? {
+              ...c,
+              enabled: true,
+              severityOverride: 'hard' as const,
+              params: { ...c.params, permanentTourEnforced: false, exemptAfterYearsOfService: 10 },
+            }
+          : c,
+      ),
+    };
+    const encoding = encodeCpsat({ ...input, ruleSet });
+    const model = encoding.solverModel;
+    // A lone day 12 on Mon 12 Jan: nothing but the permanent tour can object to it.
+    const judge = (nurseId: string) => {
+      const n = model.nurses.findIndex((x) => x.id === nurseId);
+      const sa = model.canAdd(n, model.make(n, model.shiftAt(8, DAY_12)));
+      const cpsat = evaluate(encoding, [assign(nurseId, DAY_12, '2026-01-12')]).violated;
+      return { sa, cpsat };
+    };
+    const career = judge('ada');
+    expect(career.sa).toBe(false);
+    expect(career.cpsat.join('\n')).toMatch(/permanent tour: Ada/);
+    const midCareer = judge('bo');
+    expect(midCareer.sa).toBe(true);
+    expect(midCareer.cpsat).toEqual([]);
+  });
+
   it('agrees with the rules when the most hours in any 24 is hard', () => {
     const base = parityInput();
     expectParity({ ...base, ruleSet: hardHoursIn24(14) });
@@ -1929,6 +2029,84 @@ describe('parity with the annealer', () => {
     const { evaluation, expected } = both(input, locked);
     expect(evaluation.violated).toEqual([]);
     expect(evaluation.objective).toBeCloseTo(expected, 0);
+  });
+});
+
+describe('two nurses who want to work the holiday', () => {
+  // MLK Day needs one RN on days and nothing else is staffed. Both per diem volunteer at the same
+  // strength; Ana (2010) is senior to Bo (2020) but paid more: 12h at $55 is 33 points against
+  // Bo's 12h at $52, 31.2. The reward is half the weight, scaled by seniority: 4 / 2 × 1.5 × 10
+  // = 30 for Ana, 4 / 2 × 1 × 10 = 20 for Bo, so Ana nets 3 points to Bo's 11.2 — without the
+  // reward Bo is the cheaper pick by 1.8.
+  const volunteers = (): SolveInput => {
+    const ana = makeNurse({
+      id: 'ana',
+      employmentType: 'per_diem',
+      contractedHoursPerPeriod: 0,
+      isChargeEligible: true,
+      seniorityDate: isoDate('2010-01-01'),
+    });
+    const bo = makeNurse({
+      id: 'bo',
+      employmentType: 'per_diem',
+      contractedHoursPerPeriod: 0,
+      isChargeEligible: true,
+      seniorityDate: isoDate('2020-01-01'),
+    });
+    const wants = (nurseId: string): Preference => ({
+      id: `p-${nurseId}`,
+      nurseId,
+      kind: 'holiday_appetite',
+      holidayId: 'mlk',
+      weight: 4,
+    });
+    return solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      // Bo first, so a tie would not hand Ana the day by roster order.
+      nurses: [bo, ana],
+      shiftTypes: [DAY_12],
+      coverageRequirements: [coverage(DAY_12, 'RN', 1, 1, null, isoDate('2026-01-12'))],
+      holidays: [
+        {
+          id: 'mlk',
+          unitId: UNIT_ID,
+          date: isoDate('2026-01-12'),
+          name: 'MLK Day',
+          isMajor: true,
+          pairedHolidayId: null,
+        },
+      ],
+      preferences: [wants('bo'), wants('ana')],
+      cost: {
+        payRates: [payRate(55, { nurseId: 'ana' }), payRate(52, { nurseId: 'bo' })],
+        differentials: [],
+        overtimeRules: [],
+      },
+    });
+  };
+  const worksHoliday = (assignments: readonly Assignment[]) =>
+    assignments.filter((a) => a.date === '2026-01-12').map((a) => a.nurseId);
+
+  it('gives the holiday to the senior volunteer in the annealer', () => {
+    const report = solve(volunteers(), { seed: 1, maxIterations: 2000 });
+    expect(worksHoliday(report.assignments)).toEqual(['ana']);
+  });
+
+  it('prices the senior volunteer lower in CP-SAT, as the annealer does', () => {
+    const input = volunteers();
+    const encoding = encodeCpsat(input);
+    const priced = (nurseId: string) => {
+      const assignments = [assign(nurseId, DAY_12, '2026-01-12')];
+      const evaluation = evaluate(encoding, assignments);
+      const model = new SolverModel(input);
+      model.add({ ...assignments[0]!, isCharge: false });
+      expect(evaluation.violated).toEqual([]);
+      expect(evaluation.objective).toBeCloseTo(model.breakdown().total, 0);
+      return evaluation.objective;
+    };
+    // Ana nets 3 points to Bo's 11.2 (see above): 8.2 in Ana's favour.
+    expect(priced('bo') - priced('ana')).toBeCloseTo(8.2, 1);
   });
 });
 

@@ -66,6 +66,7 @@ export function toUnit(r: typeof s.unit.$inferSelect): Unit {
     },
     ...(r.postingLeadDays === null ? {} : { postingLeadDays: r.postingLeadDays }),
     ...(r.jurisdiction === null ? {} : { jurisdiction: r.jurisdiction as JurisdictionId }),
+    ...(r.jurisdictionChoices === null ? {} : { jurisdictionChoices: r.jurisdictionChoices }),
     ...(r.leavePolicy === null ? {} : { leavePolicy: r.leavePolicy }),
     ...(r.overtimeOrder === null ? {} : { overtimeOrder: r.overtimeOrder }),
     ...(r.perDiemCommitment === null ? {} : { perDiemCommitment: r.perDiemCommitment }),
@@ -187,6 +188,10 @@ export function toPreference(r: typeof s.preference.$inferSelect): Preference {
       if (r.blockShifts === null) throw corrupt(r.id, r.kind, 'blockShifts');
       return { ...base, kind: r.kind, shifts: r.blockShifts };
     }
+    case 'holiday_appetite': {
+      if (r.holidayId === null) throw corrupt(r.id, r.kind, 'holidayId');
+      return { ...base, kind: r.kind, holidayId: r.holidayId };
+    }
     default: {
       const exhaustive: never = r.kind;
       throw new Error(`Unknown preference kind "${String(exhaustive)}" on row ${r.id}`);
@@ -209,6 +214,7 @@ export function fromPreference(p: Preference): typeof s.preference.$inferInsert 
     weekday: null as number | null,
     level: null as number | null,
     blockShifts: null as number | null,
+    holidayId: null as Id | null,
   };
   switch (p.kind) {
     case 'prefer_shift_type':
@@ -221,6 +227,8 @@ export function fromPreference(p: Preference): typeof s.preference.$inferInsert 
       return { ...row, level: p.level };
     case 'preferred_block_length':
       return { ...row, blockShifts: p.shifts };
+    case 'holiday_appetite':
+      return { ...row, holidayId: p.holidayId };
   }
 }
 
@@ -460,6 +468,14 @@ export function toDifferential(r: typeof s.differential.$inferSelect): Different
             startTime: r.windowStart,
             endTime: r.windowEnd,
             wholeShiftAtHours: r.windowWholeShiftAtHours,
+          },
+        }
+      : {}),
+    ...(r.consecutiveAfterShifts !== null && r.consecutiveWithinDays !== null
+      ? {
+          consecutive: {
+            afterShifts: r.consecutiveAfterShifts,
+            withinDays: r.consecutiveWithinDays,
           },
         }
       : {}),

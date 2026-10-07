@@ -55,6 +55,8 @@ interface RuleDraft {
   tiers: TierDraft[];
   balanceCap: string;
   carryoverCap: string;
+  useCap: string;
+  frontLoad: string;
   citation: string;
 }
 
@@ -86,6 +88,8 @@ function draftFrom(policy: LeavePolicy): Draft {
       })),
       balanceCap: r.balanceCapHours === undefined ? '' : String(r.balanceCapHours),
       carryoverCap: r.carryoverCapHours === undefined ? '' : String(r.carryoverCapHours),
+      useCap: r.useCapHoursPerYear === undefined ? '' : String(r.useCapHoursPerYear),
+      frontLoad: r.frontLoadHours === undefined ? '' : String(r.frontLoadHours),
       citation: r.citation ?? '',
     })),
   };
@@ -107,6 +111,8 @@ function problemsIn(draft: Draft): string[] {
     for (const [name, value] of [
       ['balance cap', rule.balanceCap],
       ['carryover cap', rule.carryoverCap],
+      ['yearly use cap', rule.useCap],
+      ['front-loaded amount', rule.frontLoad],
     ] as const) {
       if (value.trim() !== '' && !isNumber(value))
         out.push(`${label}: the ${name} must be a number.`);
@@ -131,7 +137,12 @@ function policyFrom(draft: Draft): LeavePolicy {
       balanceType: r.balanceType,
       ...(r.roles.length > 0 ? { roles: r.roles } : {}),
       ...(r.employmentTypes.length > 0 ? { employmentTypes: r.employmentTypes } : {}),
-      tiers: r.tiers.map((t) => ({
+      // A front-loaded rule needs no earning rate, so a tier left without one is not sent; the
+      // validator would refuse it as a tier with no rate.
+      tiers: (r.frontLoad.trim() === ''
+        ? r.tiers
+        : r.tiers.filter((t) => t.rate.trim() !== '')
+      ).map((t) => ({
         fromYearsOfService: Number(t.from),
         ...(t.rate.trim() === ''
           ? {}
@@ -141,6 +152,8 @@ function policyFrom(draft: Draft): LeavePolicy {
       })),
       ...(r.balanceCap.trim() !== '' ? { balanceCapHours: Number(r.balanceCap) } : {}),
       ...(r.carryoverCap.trim() !== '' ? { carryoverCapHours: Number(r.carryoverCap) } : {}),
+      ...(r.useCap.trim() !== '' ? { useCapHoursPerYear: Number(r.useCap) } : {}),
+      ...(r.frontLoad.trim() !== '' ? { frontLoadHours: Number(r.frontLoad) } : {}),
       ...(r.citation.trim() !== '' ? { citation: r.citation.trim() } : {}),
     })),
   };
@@ -159,6 +172,8 @@ function blankRule(): RuleDraft {
     tiers: [{ from: '0', mode: 'period', rate: '' }],
     balanceCap: '',
     carryoverCap: '',
+    useCap: '',
+    frontLoad: '',
     citation: '',
   };
 }
@@ -610,6 +625,40 @@ function RuleEditor({
               className={INPUT}
               value={rule.carryoverCap}
               onChange={(e) => onChange({ carryoverCap: e.target.value })}
+            />
+          </Field>
+          <Field
+            id={`${id}-use-cap`}
+            label={`Rule ${n} yearly use cap (hours)`}
+            hint="The most of this balance a nurse may use in a leave year. Blank: no cap."
+            tip="California lets an employer cap paid sick leave used at 40 hours or 5 days a year (Lab. Code § 246(b)(1), (d)). A request past it is flagged, never refused."
+          >
+            <input
+              id={`${id}-use-cap`}
+              aria-describedby={describedBy(`${id}-use-cap`, { hint: true })}
+              type="number"
+              min={0}
+              step="any"
+              className={INPUT}
+              value={rule.useCap}
+              onChange={(e) => onChange({ useCap: e.target.value })}
+            />
+          </Field>
+          <Field
+            id={`${id}-front-load`}
+            label={`Rule ${n} front-loaded each year (hours)`}
+            hint="Set the balance to this at each leave-year start instead of accruing per pay period. Blank: accrue."
+            tip="Lab. Code § 246(d) lets an employer give the year's sick leave up front. The balance held before is not carried, and per-hour tiers cannot be used beside it."
+          >
+            <input
+              id={`${id}-front-load`}
+              aria-describedby={describedBy(`${id}-front-load`, { hint: true })}
+              type="number"
+              min={0}
+              step="any"
+              className={INPUT}
+              value={rule.frontLoad}
+              onChange={(e) => onChange({ frontLoad: e.target.value })}
             />
           </Field>
         </div>

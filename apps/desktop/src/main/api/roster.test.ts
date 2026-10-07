@@ -5,7 +5,7 @@
  */
 
 import { isoDate, parseRosterCsv } from '@shiftnurse/core';
-import { auditHistoryFor, recentAudit } from '@shiftnurse/db';
+import { auditHistoryFor, createHoliday, recentAudit } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { rosterApi } from './roster.js';
 import { type Fixture, openFixture } from './test-fixture.js';
@@ -130,6 +130,28 @@ describe('credentials and preferences', () => {
         .map((p) => p.kind),
     ).toEqual(['avoid_shift_type']);
     expect(auditsOf('preference', ann.id)[0]!.action).toBe('update');
+  });
+
+  it('keeps a nurse’s wish to work a holiday through save and reload', () => {
+    const ann = f.rns[0]!;
+    const christmas = createHoliday(
+      f.handle.db,
+      {
+        unitId: f.seeded.unitId,
+        date: isoDate('2032-12-25'),
+        name: 'Christmas Day',
+        isMajor: true,
+      },
+      'test',
+    );
+    api().preferences.replace(ann.id, [
+      { kind: 'holiday_appetite', holidayId: christmas.id, weight: 4 },
+    ]);
+    expect(
+      api()
+        .preferences.forNurse(ann.id)
+        .map(({ id: _id, ...p }) => p),
+    ).toEqual([{ nurseId: ann.id, kind: 'holiday_appetite', holidayId: christmas.id, weight: 4 }]);
   });
 });
 
