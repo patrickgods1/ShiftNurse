@@ -56,6 +56,32 @@ describe('the state-law preview', () => {
   });
 });
 
+describe('the state-law list', () => {
+  it('lists states A–Z, then federal, then "Another state" last', async () => {
+    renderWithApp(<StateLawSection />, { unit });
+    const select = (await screen.findByLabelText('State or federal law')) as HTMLSelectElement;
+    const labels = Array.from(select.options)
+      .map((o) => o.textContent)
+      .slice(1);
+    expect(labels.slice(0, 3)).toEqual(['Alaska', 'California', 'Connecticut']);
+    expect(labels.slice(-2)).toEqual(['Federal — VA (Title 38)', 'Another state']);
+    const states = labels.slice(0, -2);
+    expect(states).toEqual([...states].sort((a, b) => a!.localeCompare(b!)));
+  });
+
+  it('shows the summary one sentence per line', async () => {
+    renderWithApp(<StateLawSection />, { unit });
+    fireEvent.change(await screen.findByLabelText('State or federal law'), {
+      target: { value: 'WA' },
+    });
+    const items = screen.getByTestId('state-law-summary').querySelectorAll('li');
+    expect(Array.from(items).map((li) => li.textContent)).toEqual([
+      'No mandatory overtime in health care facilities (RCW 49.28.140), outside an unforeseeable emergency, prescheduled on-call time, documented efforts to staff, or a procedure in progress.',
+      'Record those on the shift as "Emergency: …".',
+    ]);
+  });
+});
+
 describe('the questions a preset asks before it applies', () => {
   it('asks California whether the unit runs a 12-hour alternative workweek', async () => {
     renderWithApp(<StateLawSection />, { unit });
