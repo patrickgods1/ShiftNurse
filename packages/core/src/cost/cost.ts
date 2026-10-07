@@ -64,13 +64,14 @@ function workWeekStart(date: IsoDate, startsOn: number): IsoDate {
 }
 
 /**
- * Overtime hours per worked in-period view under one rule; `windowOf` names the window (by a
- * date) a shift's hours accrue in — the shift's own start date for a workday, the week or pay
- * period's first date otherwise. Hours accrue in chronological order — the timeline is sorted
- * by shift start — so earlier hours consume the threshold first and only the shifts that cross
- * it carry overtime, and only the hours past it: always the *end* of the shift. Tail views
- * accrue but are never attributed overtime: a previous period's shift is not this schedule's
- * cost. `counts` leaves a view out of the accrual altogether (the seventh-day rule).
+ * Overtime hours per worked view under one rule. `windowOf` names the window a shift's hours
+ * accrue in, by a date: the shift's own start date for a workday, or the first date of its week
+ * or pay period. Hours accrue in chronological order, since the timeline is sorted by shift
+ * start. So earlier hours use up the threshold first, only the shifts that cross it carry
+ * overtime, and only the hours past it: always the *end* of the shift. Tail views accrue and are
+ * reported like any other; `overtimeStarts` decides whether its caller sees them. `counts` leaves
+ * a view out of the accrual altogether (the seventh-day rule). `hoursOf` is what a view adds to
+ * the accrual: its straight hours alone, for a weekly rule that does not pyramid.
  */
 function windowOvertime(
   timeline: readonly AssignmentView[],
@@ -78,6 +79,7 @@ function windowOvertime(
   windowOf: (date: IsoDate) => IsoDate,
   leave: readonly PaidLeaveCredit[] | undefined,
   counts: (view: AssignmentView) => boolean = () => true,
+  hoursOf: (view: AssignmentView) => number = (view) => view.paidHours,
 ): Map<AssignmentView, number> {
   // Counted leave uses up the threshold first: a window's PTO day is not attributable to one
   // shift, and putting it first is what makes the shifts that cross the threshold the overtime
@@ -93,9 +95,8 @@ function windowOvertime(
     if (!isWorked(view) || !counts(view)) continue;
     const window = windowOf(view.assignment.date);
     const before = runningByWindow.get(window) ?? leaveByWindow.get(window) ?? 0;
-    const after = before + view.paidHours;
+    const after = before + hoursOf(view);
     runningByWindow.set(window, after);
-    if (!view.inPeriod) continue;
     const over = after - Math.max(threshold, before);
     if (over > 0) out.set(view, over);
   }
@@ -121,9 +122,46 @@ function seventhDayTest(
 }
 
 /**
+ * Whether a shift falls on a date worked beyond the nurse's `scheduledDaysPerWeek` in its work
+ * week: the week's worked dates are counted in order, lookback included, and the (n+1)th and
+ * later are extra. A nurse with no scheduled days on file has none.
+ */
+function extraDayTest(
+  timeline: readonly AssignmentView[],
+  startsOn: number,
+): (view: AssignmentView) => boolean {
+  const scheduled = timeline[0]?.nurse.scheduledDaysPerWeek;
+  if (scheduled === undefined) return () => false;
+  const datesByWeek = new Map<IsoDate, Set<IsoDate>>();
+  const extra = new Set<IsoDate>();
+  for (const view of timeline) {
+    if (!isWorked(view)) continue;
+    const date = view.assignment.date;
+    const week = workWeekStart(date, startsOn);
+    const dates = datesByWeek.get(week) ?? new Set<IsoDate>();
+    datesByWeek.set(week, dates);
+    if (dates.has(date)) continue;
+    dates.add(date);
+    if (dates.size > scheduled) extra.add(date);
+  }
+  return (view) => extra.has(view.assignment.date);
+}
+
+/** Whether a rule accrues over a week or pay period, and so can be told not to pyramid. */
+function isWindowBasis(rule: OvertimeRule): boolean {
+  return rule.basis === 'weekly' || rule.basis === 'pay_period';
+}
+
+/**
  * Where one rule makes each in-period view's overtime start, in hours into the shift. Every basis
- * is spelled out so an unhandled one fails to compile here rather than falling through to the
+ * is spelled out, so an unhandled one fails to compile here rather than falling through to the
  * weekly window.
+ *
+ * `straightOf` gives a view's hours before any other basis's overtime starts. A weekly or
+ * pay-period rule with `pyramiding: 'none'` accrues only those, and puts its overtime on the last
+ * of them, just before the daily premium hours. With `withTail`, lookback views get a start too.
+ * Those only ever feed `straightOf`: a previous period's shift is not this schedule's cost, but its
+ * daily premium hours are still not weekly hours.
  */
 function overtimeStarts(
   rule: OvertimeRule,
@@ -131,62 +169,95 @@ function overtimeStarts(
   ctx: CostContext,
   leave: readonly PaidLeaveCredit[] | undefined,
   isSeventhDay: (view: AssignmentView) => boolean,
+  straightOf: (view: AssignmentView) => number = (view) => view.paidHours,
+  withTail = false,
 ): Map<AssignmentView, number> {
+  const hoursOf =
+    isWindowBasis(rule) && rule.pyramiding === 'none'
+      ? straightOf
+      : (view: AssignmentView) => view.paidHours;
   const fromWindow = (hours: Map<AssignmentView, number>) =>
-    new Map([...hours].map(([view, over]) => [view, view.paidHours - over]));
+    new Map([...hours].map(([view, over]) => [view, hoursOf(view) - over]));
+  let starts: Map<AssignmentView, number>;
   switch (rule.basis) {
     case 'daily':
-      return fromWindow(windowOvertime(timeline, rule.thresholdHours, (d) => d, undefined));
+      starts = fromWindow(windowOvertime(timeline, rule.thresholdHours, (d) => d, undefined));
+      break;
     case 'seventh_day':
-      return fromWindow(
+      starts = fromWindow(
         windowOvertime(timeline, rule.thresholdHours, (d) => d, undefined, isSeventhDay),
       );
+      break;
+    case 'beyond_scheduled_days':
+      starts = fromWindow(
+        windowOvertime(
+          timeline,
+          rule.thresholdHours,
+          (d) => d,
+          undefined,
+          extraDayTest(timeline, ctx.workWeekStartsOn),
+        ),
+      );
+      break;
     case 'weekly':
-      return fromWindow(
+      starts = fromWindow(
         windowOvertime(
           timeline,
           rule.thresholdHours,
           (d) => workWeekStart(d, ctx.workWeekStartsOn),
           leave,
+          undefined,
+          hoursOf,
         ),
       );
+      break;
     case 'pay_period':
-      return fromWindow(
+      starts = fromWindow(
         windowOvertime(
           timeline,
           rule.thresholdHours,
           (d) => payPeriodWindow(payPeriodIndex(d, ctx.unit), ctx.unit).start,
           leave,
+          undefined,
+          hoursOf,
         ),
       );
+      break;
     case 'beyond_scheduled_tour': {
-      const out = new Map<AssignmentView, number>();
+      starts = new Map<AssignmentView, number>();
       for (const view of timeline) {
-        if (!view.inPeriod || !isWorked(view)) continue;
+        if (!isWorked(view)) continue;
         if (holdoverHours(view.assignment) > rule.thresholdHours)
-          out.set(view, view.scheduledHours + rule.thresholdHours);
+          starts.set(view, view.scheduledHours + rule.thresholdHours);
       }
-      return out;
+      break;
     }
     case 'consecutive': {
-      const out = new Map<AssignmentView, number>();
+      starts = new Map<AssignmentView, number>();
       for (const stretch of workedStretches(timeline)) {
         for (const view of stretch.views) {
-          if (!view.inPeriod) continue;
           // Hours already on the clock in the stretch, by the wall clock: a holdover that
           // overlaps the next shift is not counted twice.
           const before = (view.window.startMinute - stretch.window.startMinute) / MINUTES_PER_HOUR;
           const from = Math.max(0, rule.thresholdHours - before);
-          if (from < view.paidHours) out.set(view, from);
+          if (from < view.paidHours) starts.set(view, from);
         }
       }
-      return out;
+      break;
     }
     default: {
       const unhandled: never = rule.basis;
       throw new Error(`Unpriced overtime basis: ${String(unhandled)}`);
     }
   }
+  // Overtime too short to pay leaves the shift straight time under this rule alone; another rule
+  // that reaches the same hours still pays them. A rule's own overtime ends at `hoursOf`: past a
+  // non-pyramiding weekly rule's straight hours, the hours are another rule's.
+  if (!withTail) for (const view of starts.keys()) if (!view.inPeriod) starts.delete(view);
+  const minimumHours = (rule.minimumMinutes ?? 0) / MINUTES_PER_HOUR;
+  if (minimumHours > 0)
+    for (const [view, from] of starts) if (hoursOf(view) - from < minimumHours) starts.delete(view);
+  return starts;
 }
 
 /**
@@ -205,14 +276,30 @@ function attributeOvertime(
   const nurseId = timeline[0]?.assignment.nurseId;
   const leave = nurseId === undefined ? undefined : ctx.overtimeLeave?.get(nurseId);
   const isSeventhDay = seventhDayTest(timeline, ctx.workWeekStartsOn);
-  for (const rule of ctx.overtimeRules) {
-    if (rule.multiplier <= 1) continue;
-    const fromByView = overtimeStarts(rule, timeline, ctx, leave, isSeventhDay);
+  const active = ctx.overtimeRules.filter((rule) => rule.multiplier > 1);
+  // Per view, the hour its first non-window overtime starts: what a weekly or pay-period rule
+  // that does not pyramid may count. So those bases are priced first.
+  const straight = new Map<AssignmentView, number>();
+  const record = (rule: OvertimeRule, fromByView: Map<AssignmentView, number>) => {
     for (const [view, from] of fromByView) {
+      if (!view.inPeriod) continue;
       const starts = startsByView.get(view) ?? [];
       starts.push({ from, multiplier: rule.multiplier });
       startsByView.set(view, starts);
     }
+  };
+  for (const rule of active) {
+    if (isWindowBasis(rule)) continue;
+    // Lookback views too: their straight hours open the week a non-pyramiding rule counts.
+    const fromByView = overtimeStarts(rule, timeline, ctx, leave, isSeventhDay, undefined, true);
+    for (const [view, from] of fromByView)
+      straight.set(view, Math.min(straight.get(view) ?? view.paidHours, from));
+    record(rule, fromByView);
+  }
+  const straightOf = (view: AssignmentView) => straight.get(view) ?? view.paidHours;
+  for (const rule of active) {
+    if (!isWindowBasis(rule)) continue;
+    record(rule, overtimeStarts(rule, timeline, ctx, leave, isSeventhDay, straightOf));
   }
 
   const out = new Map<AssignmentView, OvertimeBand[]>();
@@ -384,13 +471,16 @@ function priceView(
     lines.push({ kind: d.kind, hours, rate: d.amount, amount: hours * d.amount });
     running += d.amount;
   }
+  // Additive stacking (UC–CNA Art. 14 §N, Title 38) takes every multiplier and the overtime
+  // premium on the base rate alone; compound is the FLSA regular rate, each on the running rate.
+  const additive = ctx.premiumStacking === 'additive';
   for (const d of applicable) {
     if (d.mode !== 'multiplier') continue;
     // Itemised as the increment this multiplier adds to the running rate, so the lines sum
     // to the total and a 1.0× multiplier shows as a $0 line rather than disappearing.
-    const increment = running * (d.amount - 1);
+    const increment = (additive ? base : running) * (d.amount - 1);
     lines.push({ kind: d.kind, hours, rate: increment, amount: hours * increment });
-    running *= d.amount;
+    running = additive ? running + increment : running * d.amount;
   }
   // Partial clock differentials: under 38 U.S.C. 7453 the night differential and overtime are both
   // percentages of basic pay, so they never stack. Priced on the base rate and kept out of
@@ -411,7 +501,7 @@ function priceView(
   for (const band of overtime ?? []) {
     if (band.hours <= 0) continue;
     overtimeHours += band.hours;
-    const rate = straightRate * (band.multiplier - 1);
+    const rate = (additive ? base : straightRate) * (band.multiplier - 1);
     lines.push({ kind: 'overtime', hours: band.hours, rate, amount: band.hours * rate });
   }
 

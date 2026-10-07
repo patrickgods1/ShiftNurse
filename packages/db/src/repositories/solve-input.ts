@@ -48,7 +48,12 @@ import { listIncompatibilityGroups } from './incompatibility.js';
 import { ledgerSince } from './ledger.js';
 import { busyElsewhereFor, elsewhereWindow, listFloatNurses } from './nurse-units.js';
 import { listOvertimeVolunteersOverlapping } from './overtime-volunteers.js';
-import { listActiveDifferentials, listActiveOvertimeRules, listPayRatesForUnit } from './pay.js';
+import {
+  getPaySettings,
+  listActiveDifferentials,
+  listActiveOvertimeRules,
+  listPayRatesForUnit,
+} from './pay.js';
 import { listPreceptorshipsOverlapping } from './preceptorships.js';
 import { restWaiversForPeriod } from './rest-waivers.js';
 import {
@@ -153,6 +158,7 @@ export function costContext(
     majorHolidayDates: new Set<IsoDate>(holidays.filter((h) => h.isMajor).map((h) => h.date)),
     weekendDefinition: ruleSet.weekendDefinition,
     workWeekStartsOn: params.workWeekStartsOn ?? maxHoursRule.defaultParams.workWeekStartsOn,
+    premiumStacking: getPaySettings(db, unitId).premiumStacking,
     ...(params.paidLeaveCountsTowardOvertime
       ? { overtimeLeave: overtimeLeave(db, unitId, period) }
       : {}),

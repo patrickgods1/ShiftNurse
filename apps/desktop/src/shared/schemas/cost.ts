@@ -32,6 +32,7 @@ const overtimeBasis = z.enum([
   'seventh_day',
   'beyond_scheduled_tour',
   'consecutive',
+  'beyond_scheduled_days',
 ]);
 
 /** A rate belongs to one nurse or to a role's default — the repository refuses both or neither. */
@@ -66,6 +67,8 @@ const overtimeRuleInput = object({
   thresholdHours: z.number().min(0, 'must not be negative'),
   multiplier,
   active: z.boolean(),
+  pyramiding: z.enum(['stack', 'none']).optional(),
+  minimumMinutes: z.number().int().min(0).max(240).optional(),
 });
 
 export const costSchemas = {
@@ -93,11 +96,19 @@ export const costSchemas = {
     id,
     overtimeRuleInput
       .pick({ basis: true, thresholdHours: true, multiplier: true, active: true })
-      .partial(),
+      .partial()
+      // null clears either back to its default; they are not part of the required create shape.
+      .extend({
+        pyramiding: z.enum(['stack', 'none']).nullable().optional(),
+        minimumMinutes: z.number().int().min(0).max(240).nullable().optional(),
+      }),
   ]),
   deleteOvertimeRule: z.tuple([id]),
   report: z.tuple([id]),
   setBudget: z.tuple([id, money]),
   paySettings: z.tuple([id]),
-  savePaySettings: z.tuple([id, object({ callBackMinimumHours: hours })]),
+  savePaySettings: z.tuple([
+    id,
+    object({ callBackMinimumHours: hours, premiumStacking: z.enum(['compound', 'additive']) }),
+  ]),
 } satisfies ResourceSchemas<'cost'>;

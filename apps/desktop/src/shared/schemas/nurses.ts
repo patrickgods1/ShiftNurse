@@ -18,6 +18,7 @@ const nurseInput = object({
   seniorityDate: isoDate,
   hireDate: isoDate.optional(),
   permanentTour: tour.optional(),
+  scheduledDaysPerWeek: z.number().int().min(1).max(7).optional(),
   isChargeEligible: z.boolean(),
   isNovice: z.boolean(),
   isFloatEligible: z.boolean(),
@@ -27,7 +28,7 @@ const nurseInput = object({
   notes: text.optional(),
 });
 
-/** A patch clears hire date, permanent tour, phone, email and notes with `null`; an omitted key is left alone. */
+/** A patch clears hire date, permanent tour, scheduled days, phone, email and notes with `null`; an omitted key is left alone. */
 const nursePatch = nurseInput
   .omit({
     unitId: true,
@@ -36,11 +37,13 @@ const nursePatch = nurseInput
     notes: true,
     hireDate: true,
     permanentTour: true,
+    scheduledDaysPerWeek: true,
   })
   .partial()
   .extend({
     hireDate: isoDate.nullable().optional(),
     permanentTour: tour.nullable().optional(),
+    scheduledDaysPerWeek: z.number().int().min(1).max(7).nullable().optional(),
     phone: text.nullable().optional(),
     email: text.nullable().optional(),
     notes: text.nullable().optional(),

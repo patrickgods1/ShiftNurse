@@ -125,6 +125,7 @@ import {
   createOvertimeRule,
   createPayRate,
   type DifferentialInput,
+  getPaySettings,
   listActiveDifferentials,
   listActiveOvertimeRules,
   listPayRatesForUnit,
@@ -1513,6 +1514,7 @@ export function seedFromProfile(
     holidayDates,
     weekendDefinition: ruleSet.weekendDefinition,
     workWeekStartsOn: 0,
+    premiumStacking: getPaySettings(db, unit.id).premiumStacking,
   };
   const ledgerInputs: UpsertFairnessLedgerInput[] = [];
   const historyCosts: number[] = [];

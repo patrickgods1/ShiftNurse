@@ -119,6 +119,7 @@ export function toNurse(r: typeof s.nurse.$inferSelect): Nurse {
     seniorityDate: r.seniorityDate as Nurse['seniorityDate'],
     hireDate: opt(r.hireDate as Nurse['hireDate'] | null),
     permanentTour: opt(r.permanentTour),
+    scheduledDaysPerWeek: opt(r.scheduledDaysPerWeek),
     isChargeEligible: r.isChargeEligible,
     isNovice: r.isNovice,
     isFloatEligible: r.isFloatEligible,
@@ -471,6 +472,9 @@ export function toOvertimeRule(r: typeof s.overtimeRule.$inferSelect): OvertimeR
     thresholdHours: r.thresholdHours,
     multiplier: r.multiplier,
     active: r.active,
+    // Keys only when set, so a rule equals its own audit snapshot, which JSON drops undefined from.
+    ...(r.pyramiding != null ? { pyramiding: r.pyramiding } : {}),
+    ...(r.minimumMinutes != null ? { minimumMinutes: r.minimumMinutes } : {}),
   };
 }
 

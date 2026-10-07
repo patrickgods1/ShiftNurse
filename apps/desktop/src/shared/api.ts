@@ -438,10 +438,21 @@ export interface NurseUnitPatch {
 
 /** Optional-and-clearable fields take `null` to clear; an omitted key is left untouched. */
 export type NursePatch = Partial<
-  Omit<Nurse, 'id' | 'unitId' | 'phone' | 'email' | 'notes' | 'hireDate' | 'permanentTour'>
+  Omit<
+    Nurse,
+    | 'id'
+    | 'unitId'
+    | 'phone'
+    | 'email'
+    | 'notes'
+    | 'hireDate'
+    | 'permanentTour'
+    | 'scheduledDaysPerWeek'
+  >
 > & {
   hireDate?: IsoDate | null;
   permanentTour?: Tour | null;
+  scheduledDaysPerWeek?: number | null;
   phone?: string | null;
   email?: string | null;
   notes?: string | null;
@@ -600,7 +611,11 @@ export type DifferentialPatch = Partial<
 export type OvertimeRuleInput = Omit<OvertimeRule, 'id'>;
 export type OvertimeRulePatch = Partial<
   Pick<OvertimeRule, 'basis' | 'thresholdHours' | 'multiplier' | 'active'>
->;
+> & {
+  /** `null` clears the setting back to its default. */
+  pyramiding?: 'stack' | 'none' | null;
+  minimumMinutes?: number | null;
+};
 
 /** A period priced under its own rule-set snapshot, against its budget if one is set. */
 export interface PeriodCostReport {
@@ -620,6 +635,8 @@ export interface PeriodCostReport {
 export interface PaySettings {
   /** The fewest hours a call-back pays, from the contract. 0 pays the hours worked. */
   callBackMinimumHours: number;
+  /** How multiplier differentials and overtime combine: the FLSA regular rate, or added on base. */
+  premiumStacking: 'compound' | 'additive';
 }
 
 /** A day-of event as recorded: paid outside the schedule, priced beside its cost. */

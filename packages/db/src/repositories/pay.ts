@@ -292,24 +292,53 @@ export function listActiveOvertimeRules(db: DbLike, unitId: Id): OvertimeRule[] 
 }
 
 export type OvertimeRuleInput = Omit<OvertimeRule, 'id'>;
+/** `pyramiding` and `minimumMinutes` of `null` clear the setting back to core's default. */
 export type OvertimeRulePatch = Partial<
   Pick<OvertimeRule, 'basis' | 'thresholdHours' | 'multiplier' | 'active'>
->;
+> & {
+  pyramiding?: 'stack' | 'none' | null;
+  minimumMinutes?: number | null;
+};
 
 const OVERTIME_RULE_PATCH_KEYS: PatchKeys<OvertimeRulePatch> = {
   basis: true,
   thresholdHours: true,
   multiplier: true,
   active: true,
+  pyramiding: true,
+  minimumMinutes: true,
 };
+
+/** IPC input is typed, not checked, and seeds call here directly: refuse what pricing cannot read. */
+function checkOvertimeOptions(values: {
+  pyramiding?: string | null | undefined;
+  minimumMinutes?: number | null | undefined;
+}): void {
+  const { pyramiding, minimumMinutes } = values;
+  if (pyramiding != null && pyramiding !== 'stack' && pyramiding !== 'none') {
+    throw new Error('Pyramiding must be stack or none');
+  }
+  if (
+    minimumMinutes != null &&
+    !(Number.isInteger(minimumMinutes) && minimumMinutes >= 0 && minimumMinutes <= 240)
+  ) {
+    throw new Error('The overtime minimum must be a whole number of minutes from 0 to 240');
+  }
+}
 
 export function createOvertimeRule(
   db: DbLike,
   input: OvertimeRuleInput,
   actor: string,
 ): OvertimeRule {
+  checkOvertimeOptions(input);
   const id = ids.overtimeRule();
-  const row = { id, ...input };
+  const row = {
+    id,
+    ...input,
+    pyramiding: input.pyramiding ?? null,
+    minimumMinutes: input.minimumMinutes ?? null,
+  };
   db.insert(overtimeRule).values(row).run();
   const created = toOvertimeRule(row);
   recordAudit(db, {
@@ -345,6 +374,7 @@ export function updateOvertimeRule(
         .set({ ...values, id: rowId })
         .where(eq(overtimeRule.id, rowId))
         .run(),
+    validate: (values) => checkOvertimeOptions(values),
     notFound: `Overtime rule ${id} not found`,
     actor,
   });
@@ -401,14 +431,24 @@ export function setBudget(
 export interface PaySettings {
   /** The fewest hours a call-back pays, from the contract. 0 pays the hours worked. */
   callBackMinimumHours: number;
+  /** How multiplier differentials and overtime combine; see core's `CostContext.premiumStacking`. */
+  premiumStacking: 'compound' | 'additive';
 }
 
-export const DEFAULT_PAY_SETTINGS: PaySettings = { callBackMinimumHours: 0 };
+export const DEFAULT_PAY_SETTINGS: PaySettings = {
+  callBackMinimumHours: 0,
+  premiumStacking: 'compound',
+};
 
 /** A unit that has saved nothing is paid by the defaults. */
 export function getPaySettings(db: DbLike, unitId: Id): PaySettings {
   const row = db.select().from(paySettings).where(eq(paySettings.unitId, unitId)).get();
-  return row ? { callBackMinimumHours: row.callBackMinimumHours } : { ...DEFAULT_PAY_SETTINGS };
+  return row
+    ? {
+        callBackMinimumHours: row.callBackMinimumHours,
+        premiumStacking: row.premiumStacking ?? 'compound',
+      }
+    : { ...DEFAULT_PAY_SETTINGS };
 }
 
 export function savePaySettings(
@@ -422,13 +462,22 @@ export function savePaySettings(
   if (!Number.isFinite(hours) || hours < 0 || hours > 24) {
     throw new Error('The call-back minimum must be between 0 and 24 hours');
   }
+  const stacking = settings.premiumStacking;
+  if (stacking !== 'compound' && stacking !== 'additive') {
+    throw new Error('Premium stacking must be compound or additive');
+  }
   const before = getPaySettings(db, unitId);
-  const after: PaySettings = { callBackMinimumHours: hours };
+  const after: PaySettings = { callBackMinimumHours: hours, premiumStacking: stacking };
   db.insert(paySettings)
-    .values({ unitId, callBackMinimumHours: hours, updatedAt: Date.now() })
+    .values({
+      unitId,
+      callBackMinimumHours: hours,
+      premiumStacking: stacking,
+      updatedAt: Date.now(),
+    })
     .onConflictDoUpdate({
       target: paySettings.unitId,
-      set: { callBackMinimumHours: hours, updatedAt: Date.now() },
+      set: { callBackMinimumHours: hours, premiumStacking: stacking, updatedAt: Date.now() },
     })
     .run();
   recordAudit(db, {

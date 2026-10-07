@@ -211,6 +211,13 @@
       "when": 1791306720507,
       "tag": "0029_equal_luminals",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1791322092368,
+      "tag": "0030_pay_model_ca_uc",
+      "breakpoints": true
     }
   ]
 }

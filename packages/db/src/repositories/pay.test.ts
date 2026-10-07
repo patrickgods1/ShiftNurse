@@ -24,6 +24,7 @@ import {
   listDifferentialsForUnit,
   listOvertimeRulesForUnit,
   listPayRatesForUnit,
+  savePaySettings,
   updateDifferential,
   updateOvertimeRule,
   updatePayRate,
@@ -475,6 +476,88 @@ describe('cost configuration', () => {
       action: 'delete',
       before: night,
     });
+  });
+
+  it('keeps a California extra-day rule that does not pyramid and a VA 15-minute minimum', () => {
+    const plain = createOvertimeRule(
+      handle.db,
+      { unitId, basis: 'weekly', thresholdHours: 40, multiplier: 1.5, active: true },
+      ACTOR,
+    );
+    expect(plain.pyramiding).toBeUndefined();
+    expect(plain.minimumMinutes).toBeUndefined();
+
+    const extraDay = createOvertimeRule(
+      handle.db,
+      {
+        unitId,
+        basis: 'beyond_scheduled_days',
+        thresholdHours: 8,
+        multiplier: 2,
+        pyramiding: 'none',
+        minimumMinutes: 15,
+        active: true,
+      },
+      ACTOR,
+    );
+    expect(listOvertimeRulesForUnit(handle.db, unitId)).toEqual([plain, extraDay]);
+    expect(listOvertimeRulesForUnit(handle.db, unitId)[1]).toMatchObject({
+      basis: 'beyond_scheduled_days',
+      pyramiding: 'none',
+      minimumMinutes: 15,
+    });
+
+    const cleared = updateOvertimeRule(
+      handle.db,
+      extraDay.id,
+      { pyramiding: null, minimumMinutes: null },
+      ACTOR,
+    );
+    expect(cleared.pyramiding).toBeUndefined();
+    expect(cleared.minimumMinutes).toBeUndefined();
+    expect(auditHistoryFor(handle.db, 'overtime_rule', extraDay.id)[0]).toMatchObject({
+      action: 'update',
+      before: { pyramiding: 'none', minimumMinutes: 15 },
+      after: cleared,
+    });
+  });
+
+  it('refuses overtime options pricing cannot read', () => {
+    const rule = {
+      unitId,
+      basis: 'weekly' as const,
+      thresholdHours: 40,
+      multiplier: 1.5,
+      active: true,
+    };
+    expect(() =>
+      createOvertimeRule(handle.db, { ...rule, pyramiding: 'maybe' as never }, ACTOR),
+    ).toThrow('stack or none');
+    expect(() => createOvertimeRule(handle.db, { ...rule, minimumMinutes: -1 }, ACTOR)).toThrow(
+      '0 to 240',
+    );
+    expect(() => createOvertimeRule(handle.db, { ...rule, minimumMinutes: 7.5 }, ACTOR)).toThrow(
+      'whole number',
+    );
+    const saved = createOvertimeRule(handle.db, rule, ACTOR);
+    expect(() =>
+      updateOvertimeRule(handle.db, saved.id, { pyramiding: 'maybe' as never }, ACTOR),
+    ).toThrow('stack or none');
+    expect(() => updateOvertimeRule(handle.db, saved.id, { minimumMinutes: 241 }, ACTOR)).toThrow(
+      '0 to 240',
+    );
+    expect(listOvertimeRulesForUnit(handle.db, unitId)).toEqual([saved]);
+  });
+
+  it('refuses a premium stacking that is neither compound nor additive', () => {
+    expect(() =>
+      savePaySettings(
+        handle.db,
+        unitId,
+        { callBackMinimumHours: 1, premiumStacking: 'maybe' as never },
+        ACTOR,
+      ),
+    ).toThrow('compound or additive');
   });
 
   it('manages overtime rules the same way', () => {

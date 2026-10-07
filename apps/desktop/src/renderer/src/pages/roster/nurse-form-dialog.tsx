@@ -35,6 +35,7 @@ interface FormState {
   seniorityDate: string;
   hireDate: string;
   permanentTour: Tour | '';
+  scheduledDaysPerWeek: string;
   isChargeEligible: boolean;
   isNovice: boolean;
   isFloatEligible: boolean;
@@ -56,6 +57,7 @@ function blankForm(payPeriodDays: number): FormState {
     seniorityDate: '',
     hireDate: '',
     permanentTour: '',
+    scheduledDaysPerWeek: '',
     isChargeEligible: false,
     isNovice: false,
     isFloatEligible: false,
@@ -77,6 +79,8 @@ function formFromNurse(nurse: Nurse): FormState {
     seniorityDate: nurse.seniorityDate,
     hireDate: nurse.hireDate ?? '',
     permanentTour: nurse.permanentTour ?? '',
+    scheduledDaysPerWeek:
+      nurse.scheduledDaysPerWeek === undefined ? '' : String(nurse.scheduledDaysPerWeek),
     isChargeEligible: nurse.isChargeEligible,
     isNovice: nurse.isNovice,
     isFloatEligible: nurse.isFloatEligible,
@@ -98,6 +102,7 @@ interface FieldErrors {
   fte?: string;
   contractedHoursPerPeriod?: string;
   seniorityDate?: string;
+  scheduledDaysPerWeek?: string;
   email?: string;
 }
 
@@ -114,6 +119,13 @@ function validate(form: FormState): FieldErrors {
   const hours = Number(form.contractedHoursPerPeriod);
   if (form.contractedHoursPerPeriod.trim() === '' || Number.isNaN(hours) || hours < 0) {
     errors.contractedHoursPerPeriod = 'Contracted hours must be a non-negative number.';
+  }
+
+  if (form.scheduledDaysPerWeek.trim() !== '') {
+    const days = Number(form.scheduledDaysPerWeek);
+    if (!Number.isInteger(days) || days < 1 || days > 7) {
+      errors.scheduledDaysPerWeek = 'Scheduled days per week must be a whole number from 1 to 7.';
+    }
   }
 
   if (!form.seniorityDate) errors.seniorityDate = 'Seniority date is required.';
@@ -223,6 +235,10 @@ export function NurseFormDialog({
       if (form.permanentTour !== initial.permanentTour) {
         patch.permanentTour = form.permanentTour === '' ? null : form.permanentTour;
       }
+      if (form.scheduledDaysPerWeek !== initial.scheduledDaysPerWeek) {
+        patch.scheduledDaysPerWeek =
+          form.scheduledDaysPerWeek.trim() === '' ? null : Number(form.scheduledDaysPerWeek);
+      }
       if (form.isChargeEligible !== initial.isChargeEligible) {
         patch.isChargeEligible = form.isChargeEligible;
       }
@@ -248,6 +264,9 @@ export function NurseFormDialog({
         seniorityDate: form.seniorityDate as Nurse['seniorityDate'],
         ...(form.hireDate !== '' ? { hireDate: form.hireDate as IsoDate } : {}),
         ...(form.permanentTour !== '' ? { permanentTour: form.permanentTour } : {}),
+        ...(form.scheduledDaysPerWeek.trim() !== ''
+          ? { scheduledDaysPerWeek: Number(form.scheduledDaysPerWeek) }
+          : {}),
         isChargeEligible: form.isChargeEligible,
         isNovice: form.isNovice,
         isFloatEligible: form.isFloatEligible,
@@ -396,6 +415,26 @@ export function NurseFormDialog({
             </select>
             <span className="mt-1 block text-xs">
               A nurse on a permanent tour is never rotated off it when the Tour rotation rule is on.
+            </span>
+          </Field>
+          <Field
+            label="Scheduled days per week"
+            error={errors.scheduledDaysPerWeek}
+            htmlFor={`${formId}-scheduled-days`}
+          >
+            <input
+              id={`${formId}-scheduled-days`}
+              type="number"
+              step={1}
+              min={1}
+              max={7}
+              className={inputClass}
+              value={form.scheduledDaysPerWeek}
+              onChange={(e) => setField('scheduledDaysPerWeek', e.target.value)}
+            />
+            <span className="mt-1 block text-xs">
+              For a 3×12 alternative workweek enter 3: hours past 8 on an extra day price at the
+              extra-day rate.
             </span>
           </Field>
         </div>

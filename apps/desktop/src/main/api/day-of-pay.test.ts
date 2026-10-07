@@ -91,7 +91,10 @@ describe('the cost report’s day-of pay', () => {
 
   it('pays a call-back the unit’s minimum hours when the nurse worked less', () => {
     const pat = nurseAtFifty();
-    costApi(f.handle.db).savePaySettings(f.seeded.unitId, { callBackMinimumHours: 4 });
+    costApi(f.handle.db).savePaySettings(f.seeded.unitId, {
+      callBackMinimumHours: 4,
+      premiumStacking: 'compound',
+    });
     record({
       kind: 'call_back',
       unitId: f.seeded.unitId,
@@ -102,7 +105,10 @@ describe('the cost report’s day-of pay', () => {
     const [line] = report().dayOf.lines;
     // Two hours worked, four guaranteed, at the $50 base (the unit has no call-back differential).
     expect(line).toMatchObject({ kind: 'call_back', hours: 4, rate: 50, amount: 200 });
-    expect(costApi(f.handle.db).paySettings(f.seeded.unitId)).toEqual({ callBackMinimumHours: 4 });
+    expect(costApi(f.handle.db).paySettings(f.seeded.unitId)).toEqual({
+      callBackMinimumHours: 4,
+      premiumStacking: 'compound',
+    });
   });
 
   it('counts an event for a nurse with no pay rate as unpriced, never as nothing owed', () => {

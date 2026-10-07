@@ -75,6 +75,7 @@ import {
   type UpsertFairnessLedgerInput,
 } from '../repositories/ledger.js';
 import {
+  getPaySettings,
   listActiveDifferentials,
   listActiveOvertimeRules,
   listPayRatesForUnit,
@@ -757,6 +758,7 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
     holidayDates,
     weekendDefinition: ruleSet.weekendDefinition,
     workWeekStartsOn: 0,
+    premiumStacking: getPaySettings(db, unit.id).premiumStacking,
   };
   const historyCosts: number[] = [];
   const roundToThousand = (dollars: number) => Math.round(dollars / 1000) * 1000;
