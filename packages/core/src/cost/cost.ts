@@ -14,10 +14,12 @@ import type {
   Differential,
   DifferentialKind,
   Id,
+  Nurse,
   OvertimeRule,
 } from '../domain/entities.js';
 import {
   addDays,
+  crossesMidnight,
   type IsoDate,
   isWeekendWindow,
   MINUTES_PER_DAY,
@@ -147,6 +149,21 @@ function extraDayTest(
   return (view) => extra.has(view.assignment.date);
 }
 
+/**
+ * Whether a shift falls on a tour day (`'only'`) or on a day without one (`'except'`): a date on
+ * which the nurse has a worked shift scheduled for 12 hours, lookback included. The declared
+ * length decides, never the worked one: an 8 held over four hours is not a tour (§ 7456A(c)(1)).
+ */
+function tourDayTest(
+  timeline: readonly AssignmentView[],
+  mode: 'only' | 'except',
+): (view: AssignmentView) => boolean {
+  const tourDates = new Set<IsoDate>();
+  for (const view of timeline)
+    if (isWorked(view) && view.scheduledHours === 12) tourDates.add(view.assignment.date);
+  return (view) => tourDates.has(view.assignment.date) === (mode === 'only');
+}
+
 /** Whether a rule accrues over a week or pay period, and so can be told not to pyramid. */
 function isWindowBasis(rule: OvertimeRule): boolean {
   return rule.basis === 'weekly' || rule.basis === 'pay_period';
@@ -181,7 +198,15 @@ function overtimeStarts(
   let starts: Map<AssignmentView, number>;
   switch (rule.basis) {
     case 'daily':
-      starts = fromWindow(windowOvertime(timeline, rule.thresholdHours, (d) => d, undefined));
+      starts = fromWindow(
+        windowOvertime(
+          timeline,
+          rule.thresholdHours,
+          (d) => d,
+          undefined,
+          rule.tourDays === undefined ? undefined : tourDayTest(timeline, rule.tourDays),
+        ),
+      );
       break;
     case 'seventh_day':
       starts = fromWindow(
@@ -276,7 +301,14 @@ function attributeOvertime(
   const nurseId = timeline[0]?.assignment.nurseId;
   const leave = nurseId === undefined ? undefined : ctx.overtimeLeave?.get(nurseId);
   const isSeventhDay = seventhDayTest(timeline, ctx.workWeekStartsOn);
-  const active = ctx.overtimeRules.filter((rule) => rule.multiplier > 1);
+  // A unit's rules for its 72/80 and Baylor nurses sit beside its standard ones (38 U.S.C.
+  // §§ 7456, 7456A); each nurse is priced only by the rules for their kind.
+  const kind = timeline[0]?.nurse.scheduleKind ?? 'standard';
+  const active = ctx.overtimeRules.filter(
+    (rule) =>
+      rule.multiplier > 1 &&
+      (rule.scheduleKinds === undefined || rule.scheduleKinds.includes(kind)),
+  );
   // Per view, the hour its first non-window overtime starts: what a weekly or pay-period rule
   // that does not pyramid may count. So those bases are priced first.
   const straight = new Map<AssignmentView, number>();
@@ -412,6 +444,46 @@ function applicableDifferentials(view: AssignmentView, ctx: CostContext): Differ
   return out;
 }
 
+/**
+ * Whether the nurse is on the Baylor weekend plan (38 U.S.C. § 7456). The one test, shared with
+ * the rules, both solvers, the fairness ledger, holiday priority and compliance alerts: what the
+ * plan exempts (weekend caps, holiday rotation and entitlement, weekend burden) must not drift
+ * between them, or Generate prices what the ledger never records.
+ */
+export function isBaylorPlan(nurse: Pick<Nurse, 'scheduleKind'>): boolean {
+  return nurse.scheduleKind === 'va_baylor';
+}
+
+/**
+ * Whether a shift is one of a Baylor nurse's regularly scheduled 12-hour weekend tours: started on
+ * a Saturday or Sunday, or a Friday night running into Saturday (38 U.S.C. § 7456(a)). § 7456(d)
+ * denies § 7453's night, weekend and holiday pay "for any period included in" such a tour. The one
+ * definition, shared with the rule that judges tour plans.
+ */
+export function isBaylorTour(view: AssignmentView): boolean {
+  if (!isBaylorPlan(view.nurse) || view.scheduledHours !== 12) return false;
+  const weekday = weekdayOf(view.assignment.date);
+  return weekday === 6 || weekday === 0 || (weekday === 5 && crossesMidnight(view.shiftType));
+}
+
+/** The differentials 38 U.S.C. § 7453 pays, which § 7456(d) withholds from a Baylor tour. */
+const SECTION_7453_KINDS: ReadonlySet<DifferentialKind> = new Set([
+  'night',
+  'evening',
+  'weekend',
+  'holiday',
+  'major_holiday',
+]);
+
+/** Put a differential line in its itemisation place: after base, before later kinds. */
+function insertInOrder(lines: CostLine[], line: CostLine): void {
+  const order = DIFFERENTIAL_ORDER.indexOf(line.kind as DifferentialKind);
+  const at = lines.findIndex(
+    (l) => l.kind !== 'base' && DIFFERENTIAL_ORDER.indexOf(l.kind as DifferentialKind) > order,
+  );
+  lines.splice(at === -1 ? lines.length : at, 0, line);
+}
+
 function sum(lines: readonly CostLine[]): number {
   let total = 0;
   for (const line of lines) total += line.amount;
@@ -470,7 +542,10 @@ function priceView(
 
   const lines: CostLine[] = [{ kind: 'base', hours, rate: base, amount: hours * base }];
   let running = base;
-  const applicable = applicableDifferentials(view, ctx);
+  const baylorTour = isBaylorTour(view);
+  const earned = applicableDifferentials(view, ctx);
+  // A Baylor tour's scheduled hours earn only the hospital's own premiums (§ 7456(d)).
+  const applicable = baylorTour ? earned.filter((d) => !SECTION_7453_KINDS.has(d.kind)) : earned;
   for (const d of applicable) {
     if (d.mode !== 'flat') continue;
     lines.push({ kind: d.kind, hours, rate: d.amount, amount: hours * d.amount });
@@ -491,14 +566,27 @@ function priceView(
   // percentages of basic pay, so they never stack. Priced on the base rate and kept out of
   // `running` they neither compound with other multipliers nor lift the overtime rate; a FLSA
   // regular-rate unit that wants stacking sets the whole-shift threshold instead.
-  for (const { d, hours: inWindow } of clockDifferentials(view, ctx).partial) {
+  const partial = clockDifferentials(view, ctx).partial;
+  const onBase = (d: Differential, h: number) => {
     const rate = d.mode === 'flat' ? d.amount : base * (d.amount - 1);
-    const line: CostLine = { kind: d.kind, hours: inWindow, rate, amount: inWindow * rate };
-    const order = DIFFERENTIAL_ORDER.indexOf(d.kind);
-    const at = lines.findIndex(
-      (l) => l.kind !== 'base' && DIFFERENTIAL_ORDER.indexOf(l.kind as DifferentialKind) > order,
-    );
-    lines.splice(at === -1 ? lines.length : at, 0, line);
+    insertInOrder(lines, { kind: d.kind, hours: h, rate, amount: h * rate });
+  };
+  if (!baylorTour) for (const { d, hours: inWindow } of partial) onBase(d, inWindow);
+  else {
+    // A holdover is outside the tour, so § 7453 pays it again: on base, out of `running`, like a
+    // partial clock differential, since § 7453 makes it and overtime both percentages of basic pay.
+    const held = view.paidHours - view.scheduledHours;
+    if (held > 0) {
+      for (const d of earned) if (SECTION_7453_KINDS.has(d.kind)) onBase(d, held);
+      const holdover: ShiftWindow = {
+        startMinute: view.window.endMinute - held * MINUTES_PER_HOUR,
+        endMinute: view.window.endMinute,
+      };
+      for (const { d } of partial) {
+        const inWindow = hoursInDailyWindow(holdover, d.window!);
+        if (inWindow > 0) onBase(d, inWindow);
+      }
+    }
   }
   const straightRate = running;
 

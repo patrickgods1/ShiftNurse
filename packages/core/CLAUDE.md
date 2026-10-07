@@ -258,6 +258,9 @@
   answer meets it, and the answers are never stored. Differentials are added only for a kind the
   unit pays nothing for, `postingLeadDays` only rises and `overtimeOrder` is set only when unset,
   and an existing overtime rule is never retrofitted with the preset's pyramiding or minimum.
+  A preset overtime rule may carry `scheduleKinds` and `tourDays` (the VA's 72/80 and Baylor
+  bases); "already present" compares both (kinds as an order-insensitive set), so the Baylor
+  weekly 40 is still added beside the unit's unscoped weekly 40.
   `protectedRuleChanges` names the edits that switch off or soften the ratio rule or any rule the
   unit's preset enables, so the caller can ask for a reason. A change to a law is a change to its
   preset, its citation and its summary together. `JURISDICTION_IDS` is derived from the preset table
@@ -307,6 +310,24 @@
   `permanentTour` on it. Monotone under removal, so the gate is the generic nurse-scope one;
   `encodeTourRotation` enforces it when hard (locked breaches stand, `atMost` stops them growing).
   Neither solver prices it while soft — a stated limit.
+- **A plan nurse works the plan's tours.** `rules/schedule-kind-tours.ts` (`schedule-kind-tours`,
+  hard, nurse scope, on by default, `off_plan_tour`): a worked in-period shift of a `va_72_80` nurse
+  must be 12 hours (38 U.S.C. § 7456A), and of a `va_baylor` nurse a Baylor tour (§ 7456;
+  `isBaylorTour` in `cost/cost.ts`, shared with pricing), unless it is `isOvertime` — a call-in on a
+  non-tour day is overtime (§ 7456A(c)(1)(C)), and neither solver writes one, so Generate stays on
+  plan. `offPlanTour` is the one test; monotone under removal, so the gate is the generic one, and
+  `encodeScheduleKindTours` fixes each off-plan variable to 0 (locked breaches stand).
+- **A Baylor nurse's weekends and holidays are the plan, not a burden.** For `va_baylor`:
+  `weekend-pattern` does not judge them (`judgesWeekends`: the rule, `SolverModel.weekendFor`,
+  `encodeWeekendPattern`, `weekendPatternTerms`); `holiday-rotation` neither owes them a day nor
+  pairs them (`inHolidayRotation`: the rule, `holidayRotationFacts`, both solvers' pairs); holiday
+  priority ranks their request last ("no holiday entitlement", VA Handbook 5011); the ledger's
+  `weekendsWorked`/`holidaysWorked`, their occurrence dates and both solvers' current-period
+  fairness counters for those components (`SolverModel.current`, CP-SAT `current`) are 0;
+  `weekends_off_per_year` does not alert for them. Every one of these asks `isBaylorPlan`
+  (`cost/cost.ts`, beside `isBaylorTour`) — `judgesWeekends`/`inHolidayRotation` wrap it.
+  `no-mandatory-overtime`'s `baylorMaxMandatedWeeklyHours` (§ 7459(a): 24) is their weekly cap, else the weekly one.
+  `days-off-together` is unchanged: five weekdays off satisfy it.
 - **Overtime by the contract's rosters is a unit's choice.** `Unit.overtimeOrder: 'roster'` reorders
   only the overtime tier of `findReplacements`: volunteers longest since their last overtime
   (`lastOvertimeOn`, from `lastOvertimeDates`), then seniority; then the mandated roster most junior
@@ -362,3 +383,9 @@
   inclusive; rolling back is the 365 days ending on the date. `leave/policy.ts` validates a
   unit's `LeavePolicy`; absent, a unit runs `DEFAULT_LEAVE_POLICY` (Title I, rolling back, no
   accrual).
+- **Leave for a 72/80 nurse is charged 10 hours per 9 of absence.** 38 U.S.C. § 7456A(d):
+  `leave/charge.ts`'s `leaveChargeHours(scheduleKind, hours)` is applied where a leave balance is
+  debited (`main/api/leave-balances.ts`: approved annual/sick use and the request's check), and the
+  request dialog shows the charged figure. FMLA is not charged: its entitlement and use are both
+  in worked hours. A request's stored `paidHours` stays the hours worked it covers — it is what
+  counts toward the 72 — so charging at both ends would charge twice.

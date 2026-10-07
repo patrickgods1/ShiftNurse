@@ -334,9 +334,21 @@ describe('applying a state preset', () => {
       postingLeadDays: 28,
       overtimeOrder: 'roster',
     });
-    // Created: 2 overtime rules (weekly 40, consecutive 8), 3 differentials and 1 rule set;
-    // updated: the posting notice and overtime order, the leave policy and the stored choice.
-    expect(first).toEqual({ created: 6, updated: 3, unchanged: 0 });
+    // Created: 7 overtime rules (weekly 40, consecutive 8 and the five scoped to the 72/80 and
+    // Baylor plans), 3 differentials and 1 rule set; updated: the posting notice and overtime
+    // order, the leave policy and the stored choice.
+    expect(first).toEqual({ created: 11, updated: 3, unchanged: 0 });
+    const baylor = listOvertimeRulesForUnit(handle.db, unit.id).filter((r) =>
+      r.scheduleKinds?.includes('va_baylor'),
+    );
+    expect(baylor.map((r) => `${r.basis} ${r.thresholdHours}`).sort()).toEqual([
+      'beyond_scheduled_tour 0',
+      'weekly 40',
+    ]);
+    expect(baylor.every((r) => r.scheduleKinds?.length === 1)).toBe(true);
+    expect(
+      listOvertimeRulesForUnit(handle.db, unit.id).find((r) => r.tourDays === 'only'),
+    ).toMatchObject({ basis: 'daily', thresholdHours: 12, scheduleKinds: ['va_72_80'] });
 
     const before = auditRows();
     expect(applyState(unit.id, 'US-VA')).toEqual({ created: 0, updated: 0, unchanged: 1 });

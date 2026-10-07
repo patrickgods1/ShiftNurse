@@ -648,3 +648,53 @@ describe('no mandatory overtime', () => {
     });
   });
 });
+
+describe('required hours on the Baylor weekend plan', () => {
+  // Week of Sun 4 Jan: a day 12 on Sunday and one on Saturday, held two hours past it — 26 hours.
+  const week = (nurseId: string) => [
+    assign(nurseId, DAY_12, '2026-01-04'),
+    assign(nurseId, DAY_12, '2026-01-10', {
+      id: `held-${nurseId}`,
+      holdoverMinutes: 120,
+      holdoverMandated: true,
+    }),
+  ];
+  const VA = {
+    ...mandatoryOvertimeRule.defaultParams,
+    maxMandatedWeeklyHours: 40,
+    baylorMaxMandatedWeeklyHours: 24,
+  };
+
+  it('refuses requiring a Baylor nurse to 26 hours when the plan caps it at 24', () => {
+    const violations = judge(
+      {
+        nurses: [makeNurse({ id: 'bay', firstName: 'Bea', scheduleKind: 'va_baylor' })],
+        assignments: week('bay'),
+      },
+      VA,
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatchObject({
+      code: 'mandatory_overtime',
+      assignmentIds: ['held-bay'],
+      details: { weekHours: 26, maxMandatedWeeklyHours: 24 },
+    });
+  });
+
+  it('allows the same 26 hours for a standard nurse under the 40-hour cap', () => {
+    expect(judge({ nurses: [makeNurse({ id: 'std' })], assignments: week('std') }, VA)).toEqual([]);
+  });
+
+  it('uses the weekly cap for a Baylor nurse when the plan has none of its own', () => {
+    const { baylorMaxMandatedWeeklyHours: _none, ...weeklyOnly } = VA;
+    expect(
+      judge(
+        {
+          nurses: [makeNurse({ id: 'bay', scheduleKind: 'va_baylor' })],
+          assignments: week('bay'),
+        },
+        weeklyOnly,
+      ),
+    ).toEqual([]);
+  });
+});

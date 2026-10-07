@@ -108,6 +108,29 @@ describe('pay settings arriving over IPC', () => {
     ).toBe(true);
   });
 
+  it('accepts an overtime rule for one VA plan with a tour-day filter, and refuses an empty plan list', () => {
+    const rule = {
+      unitId: 'u-1',
+      basis: 'daily',
+      thresholdHours: 12,
+      multiplier: 1.5,
+      active: true,
+      scheduleKinds: ['va_72_80'],
+      tourDays: 'only',
+    };
+    expect(costSchemas.createOvertimeRule.safeParse([rule]).success).toBe(true);
+    expect(costSchemas.createOvertimeRule.safeParse([{ ...rule, scheduleKinds: [] }]).success).toBe(
+      false,
+    );
+    expect(costSchemas.createOvertimeRule.safeParse([{ ...rule, tourDays: 'some' }]).success).toBe(
+      false,
+    );
+    expect(
+      costSchemas.updateOvertimeRule.safeParse(['r-1', { scheduleKinds: null, tourDays: null }])
+        .success,
+    ).toBe(true);
+  });
+
   it('needs the premium stacking whenever pay settings are saved', () => {
     const save = costSchemas.savePaySettings;
     expect(save.safeParse(['u-1', { callBackMinimumHours: 2 }]).success).toBe(false);

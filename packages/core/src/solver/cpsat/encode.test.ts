@@ -293,6 +293,174 @@ describe('tour rotation made hard', () => {
   });
 });
 
+describe('tours on a nurse’s plan', () => {
+  /** Ada is on the 72/80 plan, Bo on the Baylor weekend plan; Day 8 is never a tour of either. */
+  const planUnit = (options: Partial<SolveScenarioOptions> = {}) =>
+    unit(
+      [
+        makeNurse({
+          id: 'ada',
+          firstName: 'Ada',
+          isChargeEligible: true,
+          scheduleKind: 'va_72_80',
+        }),
+        makeNurse({ id: 'bo', firstName: 'Bo', scheduleKind: 'va_baylor' }),
+      ],
+      {
+        shiftTypes: [DAY_12, NIGHT_12, DAY_8],
+        coverageRequirements: [
+          ...coverageAllWeek(DAY_12, 'RN', 1),
+          ...coverageAllWeek(NIGHT_12, 'RN', 1),
+          ...coverageAllWeek(DAY_8, 'RN', 1),
+        ],
+        ...options,
+      },
+    );
+  const offPlan = (encoding: CpsatEncoding, assignments: Assignment[]) =>
+    evaluate(encoding, assignments).violated.filter((v) => v.startsWith('off plan'));
+
+  it('forbids an 8-hour day for the 72/80 nurse and allows her 12s on any day', () => {
+    const encoding = encodeCpsat(planUnit());
+    expect(offPlan(encoding, [assign('ada', DAY_8, '2026-01-07')])).toEqual([
+      'off plan: Ada Test D8 2026-01-07',
+    ]);
+    expect(
+      offPlan(encoding, [
+        assign('ada', DAY_12, '2026-01-07'),
+        assign('ada', NIGHT_12, '2026-01-09'),
+      ]),
+    ).toEqual([]);
+  });
+
+  it('forbids a Wednesday 12 for the Baylor nurse, and allows Friday night and Sunday', () => {
+    const encoding = encodeCpsat(planUnit());
+    expect(offPlan(encoding, [assign('bo', DAY_12, '2026-01-07')])).toEqual([
+      'off plan: Bo Test D12 2026-01-07',
+    ]);
+    // Friday's day 12 ends at 19:00, before the weekend begins.
+    expect(offPlan(encoding, [assign('bo', DAY_12, '2026-01-09')])).toEqual([
+      'off plan: Bo Test D12 2026-01-09',
+    ]);
+    expect(
+      offPlan(encoding, [assign('bo', NIGHT_12, '2026-01-09'), assign('bo', DAY_12, '2026-01-11')]),
+    ).toEqual([]);
+    expect(offPlan(encoding, [assign('bo', DAY_12, '2026-01-10')])).toEqual([]);
+  });
+
+  it('lets a locked off-plan shift stand without making the model infeasible', () => {
+    const locked = assign('ada', DAY_8, '2026-01-07', { isLocked: true });
+    const encoding = encodeCpsat(planUnit({ assignments: [locked] }));
+    expect(evaluate(encoding, [locked]).violated).toEqual([]);
+  });
+});
+
+describe('a Baylor nurse and the weekend pattern', () => {
+  // Bo works the weekends of 27 Dec (last schedule), 3 Jan (Sun 4), 10 and 17 Jan: four in four,
+  // and four in a row. Under every-other-weekend and two-in-four that is a breach for anyone else;
+  // the Baylor plan is weekends by contract.
+  const bo = () =>
+    makeNurse({ id: 'bo', firstName: 'Bo', isChargeEligible: true, scheduleKind: 'va_baylor' });
+  const weekends = ['2026-01-04', '2026-01-10', '2026-01-17'].map((d) => assign('bo', DAY_12, d));
+  const prior = [assign('bo', DAY_12, '2025-12-27', { periodId: 'prev' })];
+  function weekendRules(severity: 'hard' | 'soft'): RuleSet {
+    const base = withParams('weekend-pattern', {
+      maxConsecutiveWeekends: 1,
+      maxWeekendsPer4Weeks: 2,
+    });
+    return {
+      ...base,
+      configs: base.configs.map((c) =>
+        c.ruleId === 'weekend-pattern' ? { ...c, enabled: true, severityOverride: severity } : c,
+      ),
+    };
+  }
+
+  it('does not forbid a Baylor nurse every weekend when the pattern is hard', () => {
+    const encoding = encodeCpsat(
+      unit([bo()], { priorAssignments: prior, ruleSet: weekendRules('hard') }),
+    );
+    expect(evaluate(encoding, weekends).violated.filter((v) => v.startsWith('weekends'))).toEqual(
+      [],
+    );
+  });
+
+  it('prices no weekend breach for a Baylor nurse in either solver', () => {
+    const input = unit([bo()], { priorAssignments: prior, ruleSet: weekendRules('soft') });
+    const model = new SolverModel(input);
+    for (const a of weekends) model.add(a);
+    expect(model.weekendBreaches()).toBe(0);
+    const plain = unit([{ ...bo(), scheduleKind: undefined }], {
+      priorAssignments: prior,
+      ruleSet: weekendRules('soft'),
+    });
+    // The same roster on a standard nurse costs weekend breaches in both; on Bo, in neither.
+    const standard = new SolverModel(plain);
+    for (const a of weekends) standard.add(a);
+    expect(standard.weekendBreaches()).toBeGreaterThan(0);
+    const baylorCost = evaluate(encodeCpsat(input), weekends).objective;
+    const standardCost = evaluate(encodeCpsat(plain), weekends).objective;
+    expect(baylorCost).toBeCloseTo(model.breakdown().total, 0);
+    expect(standardCost - baylorCost).toBeCloseTo(
+      standard.breakdown().total - model.breakdown().total,
+      0,
+    );
+    expect(standardCost).toBeGreaterThan(baylorCost);
+  });
+});
+
+describe('a Baylor nurse and the holiday rotation', () => {
+  // Bo worked last year's Mid Day, so a rotating nurse is owed this year's off; Mid Eve (Fri 9)
+  // pairs with Mid Day (Sat 10). Bo works the night 12s of both: two Baylor tours, 12h apart.
+  const h = (id: string, date: string, name: string, isMajor: boolean, paired: string | null) => ({
+    id,
+    unitId: UNIT_ID,
+    date: isoDate(date),
+    name,
+    isMajor,
+    pairedHolidayId: paired,
+  });
+  const holidays = [
+    h('mid-25', '2025-01-10', 'Mid Day', true, null),
+    h('mid-eve', '2026-01-09', 'Mid Eve', false, 'mid-26'),
+    h('mid-26', '2026-01-10', 'Mid Day', true, null),
+  ];
+  const roster = [assign('bo', NIGHT_12, '2026-01-09'), assign('bo', NIGHT_12, '2026-01-10')];
+  function input(severity: 'hard' | 'soft', scheduleKind?: 'va_baylor'): SolveInput {
+    const base = withParams('holiday-rotation', { pairMinorWithMajor: true });
+    const bo = makeNurse({ id: 'bo', firstName: 'Bo', isChargeEligible: true, scheduleKind });
+    return unit([bo], {
+      holidays,
+      holidayWork: [{ holidayId: 'mid-25', nurseId: 'bo' }],
+      ruleSet: {
+        ...base,
+        configs: base.configs.map((c) =>
+          c.ruleId === 'holiday-rotation' ? { ...c, severityOverride: severity } : c,
+        ),
+      },
+    });
+  }
+  const holidayLabels = (encoding: CpsatEncoding) =>
+    evaluate(encoding, roster).violated.filter((v) => v.startsWith('holiday'));
+
+  it('forbids neither the owed day nor the pair when the rotation is hard', () => {
+    expect(holidayLabels(encodeCpsat(input('hard')))).not.toEqual([]);
+    expect(holidayLabels(encodeCpsat(input('hard', 'va_baylor')))).toEqual([]);
+  });
+
+  it('prices no rotation breach in either solver', () => {
+    const price = (i: SolveInput) => {
+      const model = new SolverModel(i);
+      for (const a of roster) model.add(a);
+      const cpsat = evaluate(encodeCpsat(i), roster).objective;
+      expect(cpsat).toBeCloseTo(model.breakdown().total, 0);
+      return model.holidayBreaches();
+    };
+    // Standard: the owed Mid Day worked, and both halves of the pair.
+    expect(price(input('soft'))).toBe(2);
+    expect(price(input('soft', 'va_baylor'))).toBe(0);
+  });
+});
+
 /** `days-off-together` on and hard. */
 function hardDaysOff(base: RuleSet = defaultRuleSet(UNIT_ID)): RuleSet {
   return {
@@ -1028,6 +1196,41 @@ describe('agreement with the rule engine', () => {
     );
   });
 
+  it('agrees with the rules when nurses are on the 72/80 and Baylor plans', () => {
+    // Bo is on leave Monday to Thursday, so his random shifts fall mostly on days his plan can
+    // use; a Friday day or a Day 8 is still off it, as a Day 8 is for Ada. One 8-hour type, not
+    // two, and weekly caps lifted, or nearly every random roster is illegal and parity proves
+    // little.
+    const weekdays = (from: string) => timeOff('bo', from, addDays(isoDate(from), 3));
+    expectParity(
+      parityInput({
+        nurses: [
+          makeNurse({
+            id: 'ada',
+            firstName: 'Ada',
+            isChargeEligible: true,
+            scheduleKind: 'va_72_80',
+          }),
+          makeNurse({
+            id: 'bo',
+            firstName: 'Bo',
+            contractedHoursPerPeriod: 48,
+            scheduleKind: 'va_baylor',
+          }),
+        ],
+        shiftTypes: [DAY_12, NIGHT_12, DAY_8, ON_CALL],
+        coverageRequirements: [
+          ...coverageAllWeek(DAY_12, 'RN', 1),
+          ...coverageAllWeek(NIGHT_12, 'RN', 1),
+          ...coverageAllWeek(DAY_8, 'RN', 1),
+          ...coverageAllWeek(ON_CALL, 'RN', 1),
+        ],
+        timeOff: [weekdays('2026-01-05'), weekdays('2026-01-12')],
+        ruleSet: NO_WEEKLY_CAP,
+      }),
+    );
+  });
+
   it('agrees with the rules when overtime is judged over the pay period', () => {
     // 60h a pay period, so the threshold binds below both nurses' contract caps.
     const ruleSet = withParams('max-hours-per-week', {
@@ -1157,6 +1360,59 @@ describe('parity with the annealer', () => {
       // Integer scaling rounds each coefficient to 1/1000 point and each hour target to 0.01h.
       expect(evaluation.objective).toBeCloseTo(expected, 0);
     }
+  });
+
+  it('accepts and prices the same with a Baylor nurse on the team, seed after seed', () => {
+    // Nurse 3 on the Baylor plan: weekend tours only, and no weekend or holiday burden.
+    const rich = richInput();
+    const input: SolveInput = {
+      ...rich,
+      nurses: rich.nurses.map((n, i) => (i === 3 ? { ...n, scheduleKind: 'va_baylor' } : n)),
+    };
+    for (const seed of [1, 2]) {
+      const report = solve(input, { seed, maxIterations: 4000 });
+      const { evaluation, expected } = both(input, report.assignments);
+      expect(evaluation.violated).toEqual([]);
+      expect(evaluation.objective).toBeCloseTo(expected, 0);
+    }
+  });
+
+  it('charges no fairness to a Baylor nurse for the weekends and holiday the plan is made of', () => {
+    // Bo works Sat 10 (a holiday), Sun 11 and Sat 17: two weekends, one holiday. Cy, on the same
+    // contract, works none. Day shifts, no history, no preferences, 36h against a 72h contract:
+    // weekends and holidays are the only burden there is. On a standard schedule Bo is over his
+    // share of both; on the Baylor plan the team has none to share, so fairness is exactly 0.
+    const team = (scheduleKind?: 'va_baylor') =>
+      unit(
+        [
+          makeNurse({ id: 'bo', firstName: 'Bo', isChargeEligible: true, scheduleKind }),
+          makeNurse({ id: 'cy', firstName: 'Cy', isChargeEligible: true }),
+        ],
+        {
+          holidays: [
+            {
+              id: 'h',
+              unitId: UNIT_ID,
+              date: isoDate('2026-01-10'),
+              name: 'Mid Day',
+              isMajor: true,
+              pairedHolidayId: null,
+            },
+          ],
+        },
+      );
+    const roster = ['2026-01-10', '2026-01-11', '2026-01-17'].map((d) => assign('bo', DAY_12, d));
+    const fairnessOf = (input: SolveInput) => {
+      const model = new SolverModel(input);
+      for (const a of roster) model.add(a);
+      expect(evaluate(encodeCpsat(input), roster).objective).toBeCloseTo(
+        model.breakdown().total,
+        0,
+      );
+      return model.breakdown().fairness;
+    };
+    expect(fairnessOf(team())).toBeGreaterThan(0);
+    expect(fairnessOf(team('va_baylor'))).toBe(0);
   });
 
   describe('a mid 8 covered by the day 12', () => {
@@ -1599,7 +1855,12 @@ describe('parity with the annealer', () => {
 
   describe('weekends in a row and per schedule', () => {
     it('prices random rosters the same as the annealer', () => {
-      const base = richInput();
+      // Nurse 3 is on the Baylor plan, which the weekend pattern does not judge.
+      const rich = richInput();
+      const base: SolveInput = {
+        ...rich,
+        nurses: rich.nurses.map((n, i) => (i === 3 ? { ...n, scheduleKind: 'va_baylor' } : n)),
+      };
       const rules = withParams(
         'weekend-pattern',
         { maxConsecutiveWeekends: 1, maxWeekendsPerPeriod: 2 },

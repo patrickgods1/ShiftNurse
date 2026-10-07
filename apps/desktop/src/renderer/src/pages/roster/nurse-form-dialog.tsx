@@ -6,12 +6,26 @@
  * than omitting the key.
  */
 
-import type { EmploymentType, Id, IsoDate, Nurse, NurseRole, Tour } from '@shiftnurse/core';
-import { EMPLOYMENT_TYPE_LABELS, EMPLOYMENT_TYPES } from '@shiftnurse/core';
+import type {
+  EmploymentType,
+  Id,
+  IsoDate,
+  Nurse,
+  NurseRole,
+  ScheduleKind,
+  Tour,
+} from '@shiftnurse/core';
+import {
+  EMPLOYMENT_TYPE_LABELS,
+  EMPLOYMENT_TYPES,
+  SCHEDULE_KIND_LABELS,
+  SCHEDULE_KINDS,
+} from '@shiftnurse/core';
 import { type FormEvent, type ReactNode, useEffect, useId, useState } from 'react';
 import type { NurseInput, NursePatch } from '../../../../shared/api.js';
 import { useCreateNurse, useUpdateNurse } from '../../api.js';
 import { DateField } from '../../components/date-field.js';
+import { describedBy, Field as HelpField } from '../../components/field-help.js';
 import { Modal } from '../../components/modal.js';
 import { PRIMARY, SECONDARY } from '../../components/ui.js';
 
@@ -35,6 +49,7 @@ interface FormState {
   seniorityDate: string;
   hireDate: string;
   permanentTour: Tour | '';
+  scheduleKind: ScheduleKind | '';
   scheduledDaysPerWeek: string;
   isChargeEligible: boolean;
   isNovice: boolean;
@@ -57,6 +72,7 @@ function blankForm(payPeriodDays: number): FormState {
     seniorityDate: '',
     hireDate: '',
     permanentTour: '',
+    scheduleKind: '',
     scheduledDaysPerWeek: '',
     isChargeEligible: false,
     isNovice: false,
@@ -79,6 +95,7 @@ function formFromNurse(nurse: Nurse): FormState {
     seniorityDate: nurse.seniorityDate,
     hireDate: nurse.hireDate ?? '',
     permanentTour: nurse.permanentTour ?? '',
+    scheduleKind: nurse.scheduleKind ?? '',
     scheduledDaysPerWeek:
       nurse.scheduledDaysPerWeek === undefined ? '' : String(nurse.scheduledDaysPerWeek),
     isChargeEligible: nurse.isChargeEligible,
@@ -93,6 +110,19 @@ function formFromNurse(nurse: Nurse): FormState {
 /** FTE x 40h/week x (pay period length / 7), rounded — the same default the CSV importer uses. */
 function defaultContractedHours(fte: number, payPeriodDays: number): number {
   return Math.round(fte * 40 * (payPeriodDays / 7));
+}
+
+/**
+ * What the plan's nurse actually works in one pay period. The app judges contracted hours on
+ * hours worked, so these are the worked figures (72 of the paid 80; 24 a week of the paid 40).
+ */
+function plannedWorked(
+  kind: ScheduleKind | '',
+  payPeriodDays: number,
+): { fte: number; hours: number } | undefined {
+  if (kind === 'va_72_80') return { fte: 0.9, hours: Math.round((72 * payPeriodDays) / 14) };
+  if (kind === 'va_baylor') return { fte: 1, hours: Math.round((24 * payPeriodDays) / 7) };
+  return undefined;
 }
 
 interface FieldErrors {
@@ -200,6 +230,19 @@ export function NurseFormDialog({
     });
   }
 
+  // Only on the manager's change, never on load: an existing nurse's numbers are her contract.
+  function changeScheduleKind(kind: ScheduleKind | '') {
+    const planned = plannedWorked(kind, payPeriodDays);
+    setForm((prev) => ({
+      ...prev,
+      scheduleKind: kind,
+      ...(planned
+        ? { fte: String(planned.fte), contractedHoursPerPeriod: String(planned.hours) }
+        : {}),
+    }));
+    if (planned) setHoursTouched(true);
+  }
+
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     const fieldErrors = validate(form);
@@ -235,6 +278,9 @@ export function NurseFormDialog({
       if (form.permanentTour !== initial.permanentTour) {
         patch.permanentTour = form.permanentTour === '' ? null : form.permanentTour;
       }
+      if (form.scheduleKind !== initial.scheduleKind) {
+        patch.scheduleKind = form.scheduleKind === '' ? null : form.scheduleKind;
+      }
       if (form.scheduledDaysPerWeek !== initial.scheduledDaysPerWeek) {
         patch.scheduledDaysPerWeek =
           form.scheduledDaysPerWeek.trim() === '' ? null : Number(form.scheduledDaysPerWeek);
@@ -264,6 +310,7 @@ export function NurseFormDialog({
         seniorityDate: form.seniorityDate as Nurse['seniorityDate'],
         ...(form.hireDate !== '' ? { hireDate: form.hireDate as IsoDate } : {}),
         ...(form.permanentTour !== '' ? { permanentTour: form.permanentTour } : {}),
+        ...(form.scheduleKind !== '' ? { scheduleKind: form.scheduleKind } : {}),
         ...(form.scheduledDaysPerWeek.trim() !== ''
           ? { scheduledDaysPerWeek: Number(form.scheduledDaysPerWeek) }
           : {}),
@@ -417,6 +464,27 @@ export function NurseFormDialog({
               A nurse on a permanent tour is never rotated off it when the Tour rotation rule is on.
             </span>
           </Field>
+          <HelpField
+            id={`${formId}-schedule-kind`}
+            label="Schedule plan"
+            hint="Sets the hours actually worked: 72/80 is six 12-hour tours a pay period, paid as 80 (38 U.S.C. § 7456A); the Baylor plan is two 12-hour weekend tours, paid as 40 hours a week (§ 7456)."
+            tip="Contracted hours here are hours worked, which is what the schedule is judged on. Payroll pays the plan's full hours; the Cost page prices worked hours at the plan's hourly rate, which comes to the same money."
+          >
+            <select
+              id={`${formId}-schedule-kind`}
+              aria-describedby={describedBy(`${formId}-schedule-kind`, { hint: true })}
+              className={inputClass}
+              value={form.scheduleKind}
+              onChange={(e) => changeScheduleKind(e.target.value as ScheduleKind | '')}
+            >
+              <option value="">Not set</option>
+              {SCHEDULE_KINDS.map((kind) => (
+                <option key={kind} value={kind}>
+                  {SCHEDULE_KIND_LABELS[kind]}
+                </option>
+              ))}
+            </select>
+          </HelpField>
           <Field
             label="Scheduled days per week"
             error={errors.scheduledDaysPerWeek}

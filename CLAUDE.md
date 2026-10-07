@@ -19,7 +19,7 @@ Every milestone through M16 is complete and green. **M18 — Release hardening**
 renderer correctness, the manager's experience, core maintainability, tests, contract rules for
 1.0, unsigned distribution. M17 (signing) is deferred; M19–M26 are the union and HR features
 planned for after 1.0. M27–M37 (law, contracts, the VA demo and the 2026-10-06 audit's fixes) are
-complete and M38 (the VA's 72/80 and Baylor schedules) is open.
+complete, M38 (the VA's 72/80 and Baylor schedules) included.
 
 Detail lives next to the code, in CLAUDE.md files that load when you work in that folder:
 

@@ -12,6 +12,10 @@
  * the manager approving leave three pay periods after payroll's date would otherwise be checking
  * against a stale number. Leave already approved on the same balance counts as used.
  *
+ * A 72/80 nurse is charged 10 hours of leave for each 9 of absence (`leaveChargeHours`): the
+ * request keeps its worked hours, and the debit — balance projection and check — is charged. FMLA is not: its entitlement and use are
+ * both in worked hours.
+ *
  * FMLA hours used are counted from approved `fmla` time off, each day at the nurse's usual pace
  * of a week's hours over seven: a request of 14 calendar days uses two work weeks, however many
  * of those days the nurse would have worked. The entitlement, the eligibility tests and the
@@ -35,6 +39,7 @@ import {
   type IsoDate,
   LEAVE_BALANCE_TYPES,
   type LeaveBalanceType,
+  leaveChargeHours,
   payPeriodIndex,
   payPeriodWindow,
   projectBalance,
@@ -98,7 +103,10 @@ export function checkLeaveRequest(
       const rule = accrualRuleFor(policy, nurse, type);
       const used = listTimeOffForNurse(db, nurseId)
         .filter((r) => r.type === type && r.status === 'approved' && (r.paidHours ?? 0) > 0)
-        .map((r) => ({ date: r.startDate, hours: r.paidHours ?? 0 }));
+        .map((r) => ({
+          date: r.startDate,
+          hours: leaveChargeHours(nurse.scheduleKind, r.paidHours ?? 0),
+        }));
       // Only a per-hour tier reads worked hours, and only for the pay periods that close
       // between payroll's date and the request.
       const hoursByPayPeriodStart = new Map<IsoDate, number>();
@@ -133,7 +141,10 @@ export function checkLeaveRequest(
         accruedHours: round2(projection.accruedHours),
         usedHours: round2(projection.usedHours),
         forfeitedHours: round2(projection.forfeitedHours),
-        check: checkLeaveBalance({ balanceHours: projection.hours, requestHours: paidHours }),
+        check: checkLeaveBalance({
+          balanceHours: projection.hours,
+          requestHours: leaveChargeHours(nurse.scheduleKind, paidHours),
+        }),
       };
     } else {
       result.noBalanceFor = type;
@@ -142,6 +153,9 @@ export function checkLeaveRequest(
 
   if (type === 'fmla') {
     const weeklyHours = (nurse.contractedHoursPerPeriod * 7) / unit.payPeriodDays;
+    // Not charged 10/9 for a 72/80 nurse: § 7456A(d) charges leave *balances*, but the FMLA
+    // entitlement (6 × the biweekly tour, 12 × the usual week) and these used hours are both
+    // counted in worked hours, so charging one side only would run the 12 weeks out in about 10.8.
     const perDay = weeklyHours / 7;
     const usedHours = listTimeOffForNurse(db, nurseId)
       .filter((r) => r.type === 'fmla' && r.status === 'approved')

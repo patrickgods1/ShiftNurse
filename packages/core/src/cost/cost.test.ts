@@ -1476,3 +1476,261 @@ describe('overtime too short to pay', () => {
     expect(hours[4]).toBeCloseTo(50 / 60);
   });
 });
+
+describe('VA 72/80 and Baylor nurses on a unit with standard nurses', () => {
+  // 38 U.S.C. § 7456A(c)(1): a 72/80 nurse is paid overtime past 36 hours in the administrative
+  // workweek, past 12 on a tour day and past 8 on a day with no tour. § 7456(c)–(d): a Baylor nurse
+  // is paid overtime past the tour, but no night, weekend or holiday pay for the tour itself.
+  // $50 base throughout; 2026-01-05 is a Monday, 2026-01-09 a Friday, 2026-01-10 a Saturday.
+  const rn50 = { payRates: [payRate(50)], differentials: [] };
+  const WEEKLY_36_7280 = overtimeRule('weekly', 36, 1.5, { scheduleKinds: ['va_72_80'] });
+  const threeTwelvesAndAnEight = (nurseId: string) => [
+    assign(nurseId, DAY_12, '2026-01-05'),
+    assign(nurseId, DAY_12, '2026-01-06'),
+    assign(nurseId, DAY_12, '2026-01-07'),
+    assign(nurseId, DAY_8, '2026-01-08'),
+  ];
+
+  it('pays a 72/80 nurse the eight hours past thirty-six on the week’s last shift', () => {
+    const nurse = makeNurse({ scheduleKind: 'va_72_80' });
+    const s = scenario({ nurses: [nurse], assignments: threeTwelvesAndAnEight(nurse.id) });
+    const report = costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [WEEKLY_36_7280] }));
+    // 36 straight hours from the three twelves; all 8 of Thursday's eight are past 36.
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 8]);
+  });
+
+  it('keeps a standard nurse on the same unit on the forty-hour week, not the 72/80 thirty-six', () => {
+    const nurse = makeNurse();
+    const s = scenario({ nurses: [nurse], assignments: threeTwelvesAndAnEight(nurse.id) });
+    const report = costSchedule(
+      s.schedule,
+      ctx({ ...rn50, overtimeRules: [WEEKLY_40, WEEKLY_36_7280] }),
+    );
+    // 44 hours in the week: 4 past forty, never 8 past thirty-six.
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 4]);
+  });
+
+  describe('a 72/80 nurse’s days with and without a tour', () => {
+    const nurse = () => makeNurse({ scheduleKind: 'va_72_80' });
+    // Monday's 12-hour tour and Wednesday's 8, each held over an hour.
+    const heldOver = (nurseId: string) => [
+      assign(nurseId, DAY_12, '2026-01-05', { holdoverMinutes: 60 }),
+      assign(nurseId, DAY_8, '2026-01-07', { holdoverMinutes: 60 }),
+    ];
+
+    it('pays the hour past twelve on a tour day, and nothing on the 8 under the tour-day rule', () => {
+      const n = nurse();
+      const s = scenario({ nurses: [n], assignments: heldOver(n.id) });
+      const rule = overtimeRule('daily', 12, 1.5, {
+        tourDays: 'only',
+        scheduleKinds: ['va_72_80'],
+      });
+      const report = costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [rule] }));
+      // 13 hours on the tour day: 1 past 12. The 9-hour non-tour day is not judged by this rule.
+      expect(report.assignments.map((a) => a.overtimeHours)).toEqual([1, 0]);
+    });
+
+    it('pays the hour past eight on a day with no tour, and never judges the tour day by eight', () => {
+      const n = nurse();
+      const s = scenario({ nurses: [n], assignments: heldOver(n.id) });
+      const rule = overtimeRule('daily', 8, 1.5, {
+        tourDays: 'except',
+        scheduleKinds: ['va_72_80'],
+      });
+      const report = costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [rule] }));
+      // The 9-hour day has no tour: 1 past 8. The 13-hour tour day is a tour day, so 0 here.
+      expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 1]);
+    });
+  });
+
+  describe('a Baylor nurse’s weekend tours', () => {
+    const night = differential('night', 'multiplier', 1.1);
+    const weekend = differential('weekend', 'multiplier', 1.25);
+    const holiday = differential('holiday', 'multiplier', 2);
+
+    it('pays a Baylor nurse’s Saturday night tour on a holiday at the base rate alone', () => {
+      const saturdayHoliday = ctx({
+        payRates: [payRate(50)],
+        differentials: [night, weekend, holiday],
+        holidayDates: new Set([isoDate('2026-01-10')]),
+      });
+      const baylor = makeNurse({ scheduleKind: 'va_baylor' });
+      const b = scenario({
+        nurses: [baylor],
+        assignments: [assign(baylor.id, NIGHT_12, '2026-01-10')],
+      });
+      const [tour] = costSchedule(b.schedule, saturdayHoliday).assignments;
+      expect(tour?.total).toBe(600); // 12h × $50, nothing else
+      expect(tour?.lines.map((l) => l.kind)).toEqual(['base']);
+
+      const standard = makeNurse();
+      const s = scenario({
+        nurses: [standard],
+        assignments: [assign(standard.id, NIGHT_12, '2026-01-10')],
+      });
+      // $50 × 1.1 night × 1.25 weekend × 2 holiday = $137.50 an hour, × 12 = $1,650.
+      expect(costSchedule(s.schedule, saturdayHoliday).assignments[0]?.total).toBeCloseTo(1650);
+    });
+
+    it('pays the hour a Baylor nurse is held past her tour its night and weekend pay', () => {
+      const baylor = makeNurse({ scheduleKind: 'va_baylor' });
+      const s = scenario({
+        nurses: [baylor],
+        assignments: [assign(baylor.id, NIGHT_12, '2026-01-10', { holdoverMinutes: 60 })],
+      });
+      const [cost] = costSchedule(
+        s.schedule,
+        ctx({
+          payRates: [payRate(50)],
+          differentials: [night, weekend],
+          overtimeRules: [
+            overtimeRule('beyond_scheduled_tour', 0, 1.5, { scheduleKinds: ['va_baylor'] }),
+          ],
+        }),
+      ).assignments;
+      // 13h × $50 = $650 base. The held-over hour earns night ($5) and weekend ($12.50) on the
+      // base rate: they are kept out of the running rate, so the overtime premium is half of the
+      // bare $50 ($25), not half of a night-and-weekend rate. 650 + 5 + 12.5 + 25 = 692.5.
+      expect(cost?.lines.map((l) => [l.kind, l.hours])).toEqual([
+        ['base', 13],
+        ['night', 1],
+        ['weekend', 1],
+        ['overtime', 1],
+      ]);
+      const amounts = lineAmounts(cost!);
+      expect(amounts.base).toBe(650);
+      expect(amounts.night).toBeCloseTo(5);
+      expect(amounts.weekend).toBeCloseTo(12.5);
+      expect(amounts.overtime).toBe(25);
+      expect(cost?.total).toBeCloseTo(692.5);
+    });
+
+    it('counts a Friday night running into Saturday as a Baylor tour, but not a Friday day', () => {
+      // A weekend from Friday 00:00 and a night window of 18:00–06:00 (whole shift at 6 hours in
+      // it): a Friday night is a night and weekend shift for everyone else, and so is a Friday day.
+      const friday = ctx({
+        payRates: [payRate(50)],
+        differentials: [
+          { ...night, window: { startTime: '18:00', endTime: '06:00', wholeShiftAtHours: 6 } },
+          weekend,
+          holiday,
+        ],
+        weekendDefinition: { ...DEFAULT_WEEKEND, startWeekday: 5, durationMinutes: 3 * 1440 },
+        holidayDates: new Set([isoDate('2026-01-09')]),
+      });
+      const baylor = makeNurse({ scheduleKind: 'va_baylor' });
+      const nightTour = scenario({
+        nurses: [baylor],
+        assignments: [assign(baylor.id, NIGHT_12, '2026-01-09')],
+      });
+      const [tour] = costSchedule(nightTour.schedule, friday).assignments;
+      expect(tour?.lines.map((l) => l.kind)).toEqual(['base']);
+      expect(tour?.total).toBe(600); // 12h × $50
+
+      const dayShift = scenario({
+        nurses: [baylor],
+        assignments: [assign(baylor.id, DAY_12, '2026-01-09')],
+      });
+      // Friday 07:00–19:00 is no tour, so it earns what the unit pays. Weekend: $50 × 0.25 × 12 =
+      // $150. Holiday on the running $62.50: $62.50 × 12 = $750. Night: only 18:00–19:00 is in
+      // the window, 1h × $50 × 0.1 = $5 on base. 600 + 5 + 150 + 750 = 1505.
+      const [day] = costSchedule(dayShift.schedule, friday).assignments;
+      expect(day?.lines.map((l) => [l.kind, l.hours])).toEqual([
+        ['base', 12],
+        ['night', 1],
+        ['weekend', 12],
+        ['holiday', 12],
+      ]);
+      const amounts = lineAmounts(day!);
+      expect(amounts.night).toBeCloseTo(5);
+      expect(amounts.weekend).toBeCloseTo(150);
+      expect(amounts.holiday).toBeCloseTo(750);
+      expect(day?.total).toBeCloseTo(1505);
+    });
+
+    it('pays a Baylor nurse’s Wednesday night on a holiday every premium a standard nurse gets', () => {
+      const baylor = makeNurse({ scheduleKind: 'va_baylor' });
+      const s = scenario({
+        nurses: [baylor],
+        assignments: [assign(baylor.id, NIGHT_12, '2026-01-07')],
+      });
+      const [cost] = costSchedule(
+        s.schedule,
+        ctx({
+          payRates: [payRate(50)],
+          differentials: [night, weekend, holiday],
+          holidayDates: new Set([isoDate('2026-01-07')]),
+        }),
+      ).assignments;
+      // A Wednesday is no weekend tour. Night: $50 × 0.1 × 12 = $60. No weekend premium on a
+      // Wednesday. Holiday on the running $55: $55 × 12 = $660. 600 + 60 + 660 = 1320.
+      expect(cost?.lines.map((l) => l.kind)).toEqual(['base', 'night', 'holiday']);
+      expect(cost?.total).toBeCloseTo(1320);
+    });
+
+    describe('a held-over hour under a night differential earned by the clock', () => {
+      // Night 10% for 18:00–06:00, never the whole shift, so only in-window hours earn it.
+      const partialNight = {
+        ...night,
+        window: { startTime: '18:00', endTime: '06:00', wholeShiftAtHours: null },
+      };
+      function heldOverTour(shiftType: typeof DAY_12) {
+        const baylor = makeNurse({ scheduleKind: 'va_baylor' });
+        const s = scenario({
+          nurses: [baylor],
+          assignments: [assign(baylor.id, shiftType, '2026-01-10', { holdoverMinutes: 60 })],
+        });
+        return costSchedule(
+          s.schedule,
+          ctx({ payRates: [payRate(50)], differentials: [partialNight] }),
+        ).assignments[0]!;
+      }
+
+      it('pays no night premium on an hour held past a night tour into the morning', () => {
+        // Saturday 19:00–07:00 tour, held 07:00–08:00: the tour's 11 in-window hours are the
+        // tour's, and the held hour is outside the window. 13h × $50 = $650 and nothing else.
+        const cost = heldOverTour(NIGHT_12);
+        expect(cost.lines.map((l) => l.kind)).toEqual(['base']);
+        expect(cost.total).toBe(650);
+      });
+
+      it('pays the night premium on an hour held past a day tour into the evening', () => {
+        // Saturday 07:00–19:00 tour, held 19:00–20:00: 18:00–19:00 is the tour's, so only the held
+        // hour earns it, 1h × $50 × 0.1 = $5. 13h × $50 + $5 = $655.
+        const cost = heldOverTour(DAY_12);
+        expect(cost.lines.map((l) => [l.kind, l.hours])).toEqual([
+          ['base', 13],
+          ['night', 1],
+        ]);
+        expect(cost.total).toBeCloseTo(655);
+      });
+    });
+  });
+
+  describe('a 72/80 nurse’s day holding a 12 and an 8', () => {
+    // Monday: an 8 at 07:00–15:00, then a 12 at 19:00–07:00. 20 hours on one workday.
+    function priced(rule: OvertimeRule) {
+      const nurse = makeNurse({ scheduleKind: 'va_72_80' });
+      const s = scenario({
+        nurses: [nurse],
+        assignments: [
+          assign(nurse.id, DAY_8, '2026-01-05'),
+          assign(nurse.id, NIGHT_12, '2026-01-05'),
+        ],
+      });
+      return costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [rule] })).assignments.map(
+        (a) => a.overtimeHours,
+      );
+    }
+
+    it('judges both shifts as a tour day, the 8 counting toward the twelve', () => {
+      // 8 straight on the 8, then the 12 reaches 20: 8 hours past 12, all on the night.
+      expect(priced(overtimeRule('daily', 12, 1.5, { tourDays: 'only' }))).toEqual([0, 8]);
+    });
+
+    it('judges neither shift by the non-tour rule', () => {
+      // The day holds a tour, so past-8-on-a-non-tour-day prices nothing here.
+      expect(priced(overtimeRule('daily', 8, 1.5, { tourDays: 'except' }))).toEqual([0, 0]);
+    });
+  });
+});

@@ -462,3 +462,26 @@ describe("where a nurse's burden fell", () => {
     expect(deriveOccurrences(s.schedule, baseCtx()).get(ana.id)?.weekends).toEqual([]);
   });
 });
+
+describe('a nurse on the Baylor weekend plan', () => {
+  it('carries no weekend or holiday burden for the weekends the plan is made of', () => {
+    // Two weekends worked (10–11 and 17 Jan), and Sat 17 Jan a holiday. A standard nurse on the
+    // same shifts carries 2 weekends and 1 holiday; the Baylor nurse, none: they were hired for it.
+    const baylor = makeNurse({ id: 'bay', scheduleKind: 'va_baylor' });
+    const standard = makeNurse({ id: 'std' });
+    const dates = ['2026-01-10', '2026-01-11', '2026-01-17'];
+    const s = scenario({
+      nurses: [baylor, standard],
+      assignments: dates.flatMap((d) => [assign('bay', DAY_12, d), assign('std', DAY_12, d)]),
+    });
+    const ctx = baseCtx({ holidayDates: new Set([isoDate('2026-01-17')]) });
+    const counters = deriveCounters(s.schedule, ctx);
+    expect(counters.get('bay')).toMatchObject({ weekendsWorked: 0, holidaysWorked: 0 });
+    expect(counters.get('std')).toMatchObject({ weekendsWorked: 2, holidaysWorked: 1 });
+    // The dates behind the counters agree with them.
+    expect(deriveOccurrences(s.schedule, ctx).get('bay')).toMatchObject({
+      weekends: [],
+      holidays: [],
+    });
+  });
+});

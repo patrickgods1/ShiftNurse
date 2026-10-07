@@ -72,11 +72,13 @@ import {
   type OvertimeRule,
   type Preceptorship,
   type Preference,
+  paidLeaveCredits,
   type RatioRule,
   type RatioStaffing,
   Rng,
   type RuleConfig,
   restMinutesBetween,
+  type ScheduleKind,
   ScheduleView,
   type ShiftType,
   shiftWindow,
@@ -195,6 +197,8 @@ export interface DemoRosterRow {
   newGrads?: number;
   /** Days a week the position is scheduled for; without it `beyond_scheduled_days` is inert. */
   scheduledDaysPerWeek?: number;
+  /** A VA nurse-level plan for these nurses; absent is standard. */
+  scheduleKind?: ScheduleKind;
 }
 
 export interface DemoPayInput {
@@ -360,6 +364,8 @@ export interface DemoProfile {
 export interface DemoHoldover {
   shift: string;
   minutes: number;
+  /** Only a nurse on this plan is held over, so a plan's overtime maths has a row to show. */
+  scheduleKind?: ScheduleKind;
 }
 
 // ---------------------------------------------------------------------------
@@ -603,6 +609,25 @@ function canWork(
 ): boolean {
   const id = staff.nurse.id;
   if (compareDates(date, staff.nurse.seniorityDate) < 0) return false; // Not hired yet.
+  const kind = staff.nurse.scheduleKind;
+  if (kind === 'va_72_80' || kind === 'va_baylor') {
+    // The `schedule-kind-tours` rule: only the plan's 12-hour tours. A Baylor tour is dated
+    // Saturday or Sunday, or Friday if it runs into the weekend.
+    if (shift.durationHours !== 12) return false;
+    const weekday = weekdayOf(date);
+    if (
+      kind === 'va_baylor' &&
+      !(
+        weekday === 6 ||
+        weekday === 0 ||
+        (weekday === 5 && windowEndDate(shiftWindow(date, shift)) !== date)
+      )
+    ) {
+      return false;
+    }
+    // Three tours a Sunday-to-Saturday week keep a 72/80 nurse at the plan's weekly 36.
+    if (kind === 'va_72_80' && hoursInWeek(worked, staff, date) + 12 > 36) return false;
+  }
   const mine = worked.get(id)!;
   if (mine.has(date) || leave.has(`${id}|${date}`)) return false;
   const window = shiftWindow(date, shift);
@@ -627,9 +652,14 @@ function canWork(
   while (mine.has(addDays(last, 1))) last = addDays(last, 1);
   const length = daysBetween(first, last) + 1;
   if (length > limits.maxRun) return false;
-  const days = datesInRange(first, last);
-  const nightly = days.every((d) => (d === date ? shift : mine.get(d)!).isNight);
-  if (nightly && length > limits.maxNights) return false;
+  // The rule counts consecutive nights wherever they sit, so a day tour at one end of the
+  // stretch does not make the nights beside it any fewer.
+  if (shift.isNight) {
+    let nights = 1;
+    for (let d = addDays(date, -1); mine.get(d)?.isNight; d = addDays(d, -1)) nights++;
+    for (let d = addDays(date, 1); mine.get(d)?.isNight; d = addDays(d, 1)) nights++;
+    if (nights > limits.maxNights) return false;
+  }
   // Days off after a maximum-length stretch, on whichever side of this one it falls: fewer than
   // `minDaysOff` clear days between the two stretches is a violation.
   const stretchEndingAt = (d: IsoDate) => {
@@ -660,7 +690,8 @@ function canWork(
       if (!withThem) return false;
     }
   }
-  if (limits.weekends) {
+  // A Baylor nurse works every weekend by contract, so the weekend caps do not judge them.
+  if (limits.weekends && kind !== 'va_baylor') {
     if (breaksWeekends(mine, date, shift, limits.weekends)) return false;
     // Each half works its own alternate weekends. A nurse lent to the other half's weekend has
     // used one of their two, so their own then runs short: only the intermittent pool lends.
@@ -1140,6 +1171,7 @@ export function seedFromProfile(
         ...(row.scheduledDaysPerWeek !== undefined
           ? { scheduledDaysPerWeek: row.scheduledDaysPerWeek }
           : {}),
+        ...(row.scheduleKind !== undefined ? { scheduleKind: row.scheduleKind } : {}),
         seniorityDate,
         ...(bridged ? { hireDate: addDays(seniorityDate, 365 * (2 + (index % 3))) } : {}),
         isChargeEligible: p.charge,
@@ -1263,6 +1295,8 @@ export function seedFromProfile(
           s.position === position &&
           !s.nurse.isChargeEligible &&
           !s.nurse.isNovice &&
+          // A plan nurse's tours are fixed by the plan, so they cannot be moved to keep apart.
+          s.nurse.scheduleKind === undefined &&
           !inGroup.has(s.nurse.id),
       );
       if (pool.length === 0) throw new Error(`No ${role} on ${position} left to keep apart`);
@@ -1297,7 +1331,10 @@ export function seedFromProfile(
     for (const s of staff) {
       const { employmentType: type } = s.nurse;
       if (type !== 'full_time' && type !== 'part_time') continue;
-      if (!rng.chance(1 / 3)) continue;
+      // The Baylor nurse offers always: a weekend tour past their 24 hours is the overtime their
+      // plan pays (§ 7456(c)), and a call-off's cover is asked of someone who has said yes.
+      const offered = rng.chance(1 / 3);
+      if (!offered && s.nurse.scheduleKind !== 'va_baylor') continue;
       createOvertimeVolunteer(
         db,
         {
@@ -1457,14 +1494,26 @@ export function seedFromProfile(
     decision: 'decide' | 'approve' | 'pending',
   ) => {
     const days = datesInRange(startDate, endDate).length;
-    // Paid as the shifts the nurse would have worked over those days.
-    const paidHours = suggestedPaidLeaveHours({
-      type,
-      days,
-      contractedHoursPerPeriod: s.nurse.contractedHoursPerPeriod,
-      payPeriodDays: 14,
-      shiftHours: s.shiftHours,
-    });
+    const plan = s.nurse.scheduleKind;
+    // Paid as the shifts the nurse would have worked over those days. A Baylor nurse works only
+    // Friday night to Sunday, so leave on a weekday removes no tour and pays nothing, and on a
+    // weekend it pays two of every three of those days (four tours of the six possible).
+    const baylorDays =
+      plan === 'va_baylor'
+        ? datesInRange(startDate, endDate).filter((d) => [5, 6, 0].includes(weekdayOf(d))).length
+        : 0;
+    const paidHours =
+      plan === 'va_baylor'
+        ? type === 'education'
+          ? 0
+          : Math.ceil((baylorDays * 2) / 3 - 1e-9) * s.shiftHours
+        : suggestedPaidLeaveHours({
+            type,
+            days,
+            contractedHoursPerPeriod: s.nurse.contractedHoursPerPeriod,
+            payPeriodDays: 14,
+            shiftHours: s.shiftHours,
+          });
     const request = createTimeOffRequest(
       db,
       { nurseId: s.nurse.id, startDate, endDate, type, reason, paidHours },
@@ -1485,9 +1534,22 @@ export function seedFromProfile(
     }
     approveTimeOff(db, request.id, ACTOR);
     bump('timeOffApproved');
+    // The pay-period credit is what the `paid-leave` rule reads: whole 12s on the request's days.
+    // Spread by the day it can put half a tour in a pay period the rule credits nothing, so a
+    // plan nurse's target takes the rule's own split.
+    const credits =
+      plan !== undefined
+        ? paidLeaveCredits([{ ...request, status: 'approved', paidHours }], [], [s.shiftHours])
+        : [];
+    for (const c of credits) {
+      leavePaid.set(
+        `${s.nurse.id}|${c.date}`,
+        (leavePaid.get(`${s.nurse.id}|${c.date}`) ?? 0) + c.hours,
+      );
+    }
     for (const d of dates) {
       leave.add(`${s.nurse.id}|${d}`);
-      leavePaid.set(`${s.nurse.id}|${d}`, paidHours / dates.length);
+      if (plan === undefined) leavePaid.set(`${s.nurse.id}|${d}`, paidHours / dates.length);
       offByRoleDate.set(key(d), (offByRoleDate.get(key(d)) ?? 0) + 1);
     }
   };
@@ -1678,15 +1740,18 @@ export function seedFromProfile(
     const needsVolunteer = (s: Staff, date: IsoDate, shift: ShiftType) =>
       noMandatoryOvertime?.enabled === true &&
       !volunteers.has(s.nurse.id) &&
-      (overtimeByPayPeriod ? hoursBetween(worked, s, start, end) : hoursInWeek(worked, s, date)) +
+      ((overtimeByPayPeriod ? hoursBetween(worked, s, start, end) : hoursInWeek(worked, s, date)) +
         shift.durationHours >
-        overtimeThreshold;
+        overtimeThreshold ||
+        // A plan nurse's overtime starts at their own contracted hours, not the unit's 80.
+        (s.nurse.scheduleKind !== undefined && hours(s) + shift.durationHours > periodTarget(s)));
     const tiersFor = (
       date: IsoDate,
       shift: ShiftType,
       role: NurseRole,
       onlyCharge: boolean,
       lend = false,
+      pickup = false,
     ) => {
       const free = staff.filter(
         (s) =>
@@ -1706,7 +1771,15 @@ export function seedFromProfile(
         free.filter((s) => contracted(s) && short(s) && week(s) <= s.weeklyHours),
         free.filter((s) => !contracted(s) && short(s) && week(s) <= 36),
         free.filter((s) => contracted(s) && short(s) && week(s) <= 48),
-        free.filter((s) => contracted(s) && s.nurse.employmentType !== 'agency' && week(s) <= 48),
+        free.filter(
+          (s) =>
+            contracted(s) &&
+            s.nurse.employmentType !== 'agency' &&
+            week(s) <= 48 &&
+            // The plans' tours are fixed, so only a call-off's cover is asked of a plan nurse
+            // past their hours, never a floor's routine overtime.
+            (s.nurse.scheduleKind === undefined || pickup),
+        ),
       ];
     };
     const weight = (s: Staff, shift: ShiftType, date: IsoDate) => {
@@ -1947,7 +2020,12 @@ export function seedFromProfile(
           ),
       )
       .slice(0, rng.nextInt(3, 5));
+    // A plan nurse's hours are held to the plan: one who calls off (paid sick for the tour) is not
+    // phoned for another, and one who has picked a tour up is not also called off.
+    const planCalledOff = new Set<Id>();
+    const planPickedUp = new Set<Id>();
     for (const absent of callable) {
+      if (planPickedUp.has(absent.nurseId)) continue;
       const reason = rng.weightedPick([
         { value: 'Sick', weight: 6 },
         { value: 'Sick child', weight: 2 },
@@ -1963,6 +2041,7 @@ export function seedFromProfile(
           : {};
       const callOff = reportCallOff(db, absent.id, ACTOR, reason, sickPay);
       bump('callOff');
+      if (absentNurse.nurse.scheduleKind !== undefined) planCalledOff.add(absent.nurseId);
       deleteAssignment(db, absent.id, ACTOR, `Called off: ${reason}`);
       rows.delete(absent.id);
       periodRows.splice(periodRows.indexOf(absent.id), 1);
@@ -1975,6 +2054,8 @@ export function seedFromProfile(
         shift,
         absentStaff.nurse.role,
         false,
+        false,
+        true,
       );
       const phoneList = [
         ...rng.shuffle(perDiem!),
@@ -1982,7 +2063,7 @@ export function seedFromProfile(
         ...rng.shuffle(catchUp!),
         ...rng.shuffle(overtime!),
       ]
-        .filter((s) => s !== absentStaff)
+        .filter((s) => s !== absentStaff && !planCalledOff.has(s.nurse.id))
         .slice(0, rng.nextInt(2, 5));
       // An RN call-off is covered whenever anyone can legally come in — below ratio the unit
       // cannot run — while an assistant's shift sometimes just runs one short.
@@ -2003,11 +2084,17 @@ export function seedFromProfile(
               shiftTypeId: shift.id,
               date: absent.date,
               source: 'callout',
-              isOvertime: before + shift.durationHours > overtimeThreshold,
+              // A plan nurse's tour past their own contracted hours is overtime on their plan
+              // (38 U.S.C. § 7456(c), § 7456A(c)) however far they are from the unit's threshold.
+              isOvertime:
+                before + shift.durationHours > overtimeThreshold ||
+                (s.nurse.scheduleKind !== undefined &&
+                  hours(s) + shift.durationHours > periodTarget(s)),
             },
             ACTOR,
           );
           worked.get(s.nurse.id)!.set(absent.date, shift);
+          if (s.nurse.scheduleKind !== undefined) planPickedUp.add(s.nurse.id);
           credit(s, shift, 1);
           rows.set(replacement.id, replacement);
           periodRows.push(replacement.id);
@@ -2104,6 +2191,9 @@ export function seedFromProfile(
         if (holidayDates.has(a.date) || holidayDates.has(addDays(a.date, 1))) return false;
         const s = staff.find((x) => x.nurse.id === a.nurseId)!;
         if (s.nurse.isNovice) return false;
+        // A holdover without a plan goes to a standard nurse, so the plan nurses' rows stay
+        // theirs alone (a 72/80 tour's overtime is daily, a standard one's is by pay period).
+        if (s.nurse.scheduleKind !== spec.scheduleKind) return false;
         const mine = worked.get(a.nurseId)!;
         if (hoursInWeek(worked, s, a.date) + spec.minutes / 60 > 48) return false;
         // Under the overtime threshold even with it, so the holdover is the only overtime on the

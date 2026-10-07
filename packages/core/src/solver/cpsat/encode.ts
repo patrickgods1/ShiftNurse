@@ -50,6 +50,7 @@ import { encodePendingTimeOff } from './rules/pending.js';
 import { encodePreceptor } from './rules/preceptor.js';
 import { encodeNightRecovery } from './rules/recovery.js';
 import { encodeOverlap, encodeRest } from './rules/rest.js';
+import { encodeScheduleKindTours } from './rules/schedule-kind-tours.js';
 import { encodeTourRotation } from './rules/tours.js';
 import { encodeWeekendPattern } from './rules/weekends.js';
 
@@ -96,6 +97,8 @@ export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'
   'tour-rotation': encodeTourRotation,
   // Not priced while soft; a free pair of days forced in each pay period worked every weekend.
   'days-off-together': encodeDaysOffTogether,
+  // Every variable off a 72/80 or Baylor nurse's plan fixed to 0; a variable is never overtime.
+  'schedule-kind-tours': encodeScheduleKindTours,
 };
 
 export interface EncodeOptions {

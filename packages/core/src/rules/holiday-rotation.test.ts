@@ -12,7 +12,7 @@ import {
   type ScenarioOptions,
   scenario,
 } from '../testing/fixtures.js';
-import { previousOccurrence } from './holiday-rotation.js';
+import { holidayRotationFacts, previousOccurrence } from './holiday-rotation.js';
 import { evaluateSchedule } from './registry.js';
 import type { HolidayWorkRecord } from './types.js';
 
@@ -229,6 +229,53 @@ describe('minor holidays', () => {
       );
       expect(found).toEqual([]);
     });
+  });
+});
+
+describe('a nurse on the Baylor weekend plan', () => {
+  // VA Handbook 5011 gives a Baylor nurse no holiday entitlement, so there is nothing to rotate.
+  const baylor = () =>
+    makeNurse({ id: 'ana', firstName: 'Ana', lastName: 'Reyes', scheduleKind: 'va_baylor' });
+
+  it('is not owed Christmas off for having worked it last year', () => {
+    ana = baylor();
+    // Christmas 2026 is a Friday: the night 12 that starts on it is a Baylor tour.
+    const found = rotationViolations({
+      holidayWork: [{ holidayId: XMAS_2025.id, nurseId: ana.id }],
+      assignments: [assign(ana.id, NIGHT_12, '2026-12-25')],
+    });
+    expect(found).toEqual([]);
+  });
+
+  it('is not kept off a paired Christmas Eve', () => {
+    ana = baylor();
+    const found = rotationViolations(
+      {
+        assignments: [assign(ana.id, DAY_12, '2026-12-24'), assign(ana.id, NIGHT_12, '2026-12-25')],
+      },
+      { pairMinorWithMajor: true },
+    );
+    expect(found).toEqual([]);
+  });
+
+  it('is owed nothing in what the solvers price', () => {
+    ana = baylor();
+    const s = scenario({
+      startDate: isoDate('2026-12-20'),
+      endDate: isoDate('2027-01-02'),
+      nurses: [ana, ben],
+      holidays: HOLIDAYS,
+      holidayWork: [
+        { holidayId: XMAS_2025.id, nurseId: ana.id },
+        { holidayId: XMAS_2025.id, nurseId: ben.id },
+      ],
+    });
+    const facts = holidayRotationFacts(
+      s.ctx,
+      { rotateMajorHolidays: true, rotateMinorHolidays: true, pairMinorWithMajor: false },
+      { start: isoDate('2026-12-20'), end: isoDate('2027-01-02') },
+    );
+    expect([...facts.owedOff.keys()]).toEqual([ben.id]);
   });
 });
 

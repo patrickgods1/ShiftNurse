@@ -12,7 +12,13 @@
  * process reads the file and persists the rows; the eventual web server does the same.
  */
 
-import { EMPLOYMENT_TYPES, type Nurse, type NurseRole } from '../domain/entities.js';
+import {
+  EMPLOYMENT_TYPES,
+  type Nurse,
+  type NurseRole,
+  SCHEDULE_KINDS,
+  type ScheduleKind,
+} from '../domain/entities.js';
 import { type IsoDate, isIsoDate } from '../domain/time.js';
 
 // ---------------------------------------------------------------------------
@@ -129,6 +135,7 @@ export const ROSTER_COLUMNS = [
   'credentials',
   // After the long-standing columns so a sheet exported before it existed still reads.
   'hire_date',
+  'schedule_kind',
 ] as const;
 
 export type RosterColumn = (typeof ROSTER_COLUMNS)[number];
@@ -312,6 +319,12 @@ export function parseRosterCsv(text: string, options: ParseRosterOptions): Roste
       bad('hire_date', `Hire date "${hireRaw}" is not a valid YYYY-MM-DD date`);
     }
 
+    // Optional: blank is standard, so a sheet from before the VA plans still reads.
+    const kindRaw = cell('schedule_kind');
+    if (kindRaw !== '' && !SCHEDULE_KINDS.includes(kindRaw as ScheduleKind)) {
+      bad('schedule_kind', `Schedule kind "${kindRaw}" is not one of ${SCHEDULE_KINDS.join(', ')}`);
+    }
+
     const flags = {} as Record<'charge_eligible' | 'novice' | 'float_eligible', boolean>;
     for (const column of ['charge_eligible', 'novice', 'float_eligible'] as const) {
       const v = parseBoolean(cell(column));
@@ -338,6 +351,7 @@ export function parseRosterCsv(text: string, options: ParseRosterOptions): Roste
         contractedHoursPerPeriod,
         seniorityDate: seniorityRaw as IsoDate,
         ...(hireRaw === '' ? {} : { hireDate: hireRaw as IsoDate }),
+        ...(kindRaw === '' ? {} : { scheduleKind: kindRaw as ScheduleKind }),
         isChargeEligible: flags.charge_eligible,
         isNovice: flags.novice,
         isFloatEligible: flags.float_eligible,
@@ -378,6 +392,7 @@ export function formatRosterCsv(rows: readonly RosterCsvRow[]): string {
     n.notes ?? '',
     formatCredentials(credentials),
     n.hireDate ?? '',
+    n.scheduleKind ?? '',
   ]);
   return serializeCsv([ROSTER_COLUMNS, ...body]);
 }

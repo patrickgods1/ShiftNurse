@@ -618,6 +618,22 @@ describe('weekends off per year', () => {
     );
   });
 
+  it('does not warn for a nurse on the Baylor weekend plan, who works every weekend by contract', () => {
+    resetFixtureCounters();
+    const s = scenario({
+      nurses: [
+        makeNurse({ id: 'n1', firstName: 'Ana', lastName: 'Cruz', scheduleKind: 'va_baylor' }),
+      ],
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-31'),
+      assignments: ['2026-01-10', '2026-01-17', '2026-01-24', '2026-01-31'].map((d) =>
+        assign('n1', DAY_12, d),
+      ),
+    });
+    // History recorded before the plan was set, weekends counted: still not a broken promise.
+    expect(yearAlerts(s, lastYear)).toEqual([]);
+  });
+
   it('ignores a period that began a year or more before this one', () => {
     resetFixtureCounters();
     const s = month([

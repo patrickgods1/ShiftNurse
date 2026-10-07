@@ -187,3 +187,30 @@ describe('weekends in any four weeks', () => {
     ]);
   });
 });
+
+describe('a nurse on the Baylor weekend plan', () => {
+  it('does not flag four weekends in four: working weekends is the plan', () => {
+    // 27 Dec (last schedule), 3 Jan (Sun 4), 10 and 17 Jan: four in four, four in a row.
+    const nurse = makeNurse({
+      id: 'ana',
+      firstName: 'Ana',
+      lastName: 'Cruz',
+      scheduleKind: 'va_baylor',
+    });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: ['2026-01-04', '2026-01-10', '2026-01-17'].map((d) => assign('ana', DAY_12, d)),
+      priorAssignments: [assign('ana', DAY_12, '2025-12-27')],
+    });
+    const params: WeekendPatternParams = { maxConsecutiveWeekends: 1, maxWeekendsPer4Weeks: 2 };
+    expect(weekendPatternRule.evaluate(s.schedule, params, s.ctx)).toEqual([]);
+  });
+
+  it('still flags the same weekends for a nurse on a standard schedule', () => {
+    const violations = judge(['2026-01-04', '2026-01-10', '2026-01-17'], {
+      maxConsecutiveWeekends: 1,
+      maxWeekendsPer4Weeks: 2,
+    });
+    expect(violations.length).toBeGreaterThan(0);
+  });
+});

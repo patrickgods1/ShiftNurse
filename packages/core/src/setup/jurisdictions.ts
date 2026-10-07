@@ -43,7 +43,8 @@
  *
  * Not legal advice, and not complete: a unit's contract usually goes further, and some of each
  * law (Oregon's staffing-plan deviations, its CNA limits, emergency-only exceptions) is stated in
- * the summary rather than enforced (as is the VA's § 7456 24-hour weekend-plan cap).
+ * the summary rather than enforced. (The VA's 24-hour cap for the § 7456 Baylor plan is enforced:
+ * `no-mandatory-overtime`'s `baylorMaxMandatedWeeklyHours`, § 7459(a), for nurses marked Baylor.)
  */
 
 import {
@@ -55,6 +56,7 @@ import {
   type OvertimeRule,
   type RatioRule,
   type RatioStaffing,
+  type ScheduleKind,
   type Unit,
 } from '../domain/entities.js';
 import { ALL_RULES, resolveConfigs } from '../rules/registry.js';
@@ -159,7 +161,9 @@ export interface PresetCondition {
 export type JurisdictionChoices = Readonly<Record<string, boolean>>;
 
 export type PresetOvertimeRule = Pick<OvertimeRule, 'basis' | 'thresholdHours' | 'multiplier'> &
-  Partial<Pick<OvertimeRule, 'pyramiding' | 'minimumMinutes'>> & { when?: PresetCondition };
+  Partial<Pick<OvertimeRule, 'pyramiding' | 'minimumMinutes' | 'scheduleKinds' | 'tourDays'>> & {
+    when?: PresetCondition;
+  };
 
 /** A pay premium the law gives. `citation` documents the preset; a differential has no column for it. */
 export interface PresetDifferential
@@ -637,8 +641,8 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'not bind them: the Supremacy Clause and intergovernmental immunity put the VA beyond ' +
       'state regulation. The VHA staffs to nursing hours per patient day set by expert panels ' +
       '(VHA Directive 1351), not fixed ratios, so no ratio is set. 38 U.S.C. § 7459 forbids ' +
-      'requiring more than 40 hours in an administrative workweek (24 on the § 7456 weekend ' +
-      'plan: lower the cap under Settings › Rules for such nurses) or more than 8 consecutive ' +
+      'requiring more than 40 hours in an administrative workweek (24 for nurses on the Baylor ' +
+      'plan) or more than 8 consecutive ' +
       'hours (12 on a compressed tour, § 7456 or § 7456A), so a holdover recorded as required ' +
       'that runs a tour past those hours is refused; volunteers and emergencies recorded on the ' +
       'shift as "Emergency: …" are outside it. The preset adds the 38 U.S.C. § 7453 premiums ' +
@@ -646,7 +650,10 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       '4 hours fall between 6 pm and 6 am, a 25% weekend premium for any tour touching Saturday ' +
       'or Sunday and double pay on holidays; and overtime at 1.5×, never for less than 15 ' +
       'minutes, past 40 hours a week or 8 consecutive hours, or, when applying says the nurses ' +
-      'work compressed tours, past the scheduled tour or 80 hours in the pay period. Contract ' +
+      'work compressed tours, past the scheduled tour or 80 hours in the pay period. Nurses ' +
+      'marked 72/80 or Baylor on the roster get their own overtime (72/80: past 36 hours a ' +
+      'week, 12 on a tour day, 8 on any other day; Baylor: past the tour or 40 a week), and the ' +
+      'Baylor tour earns none of the § 7453 premiums. Contract ' +
       'terms come from the VA–NNU Master Agreement Art. 13–14: 11 hours between tours, the ' +
       'weekend pattern, no more than two tours a schedule, five shifts in a row, posting four ' +
       'weeks ahead and overtime called from the rosters; a unit under another local (San ' +
@@ -698,6 +705,50 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
         minimumMinutes: 15,
         when: ON_COMPRESSED,
       },
+      // Nurses marked 72/80 or Baylor on the roster have their own bases; no nurse has the kind
+      // until the manager sets it, so these apply to no one by default and need no `when`.
+      // § 7456A(c)(1)(A): a 72/80 nurse's overtime is work past 36 hours in an administrative week.
+      {
+        basis: 'weekly',
+        thresholdHours: 36,
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        scheduleKinds: ['va_72_80'],
+      },
+      // § 7456A(c)(1)(B): past 12 hours in a day on which the nurse works a tour.
+      {
+        basis: 'daily',
+        thresholdHours: 12,
+        tourDays: 'only',
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        scheduleKinds: ['va_72_80'],
+      },
+      // § 7456A(c)(1)(C): past 8 hours on any other day.
+      {
+        basis: 'daily',
+        thresholdHours: 8,
+        tourDays: 'except',
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        scheduleKinds: ['va_72_80'],
+      },
+      // § 7456(c): the Baylor plan's overtime is past 40 hours in the week...
+      {
+        basis: 'weekly',
+        thresholdHours: 40,
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        scheduleKinds: ['va_baylor'],
+      },
+      // ...or beyond the scheduled tour.
+      {
+        basis: 'beyond_scheduled_tour',
+        thresholdHours: 0,
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        scheduleKinds: ['va_baylor'],
+      },
     ],
     differentials: [
       {
@@ -732,6 +783,8 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
           maxMandatedWeeklyHours: 40,
           maxRequiredConsecutiveHours: 8,
           compressedTourConsecutiveHours: 12,
+          // § 7459(a): 24 hours a week on the § 7456 (Baylor) plan.
+          baylorMaxMandatedWeeklyHours: 24,
         },
       },
       // The contract terms below are the VA–NNU Master Agreement (2023) Art. 13's.
@@ -816,6 +869,20 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
     enableRules: [],
   },
 };
+
+/** Two kind scopes are the same set, in any order; none and none match. */
+function sameKinds(
+  a: readonly ScheduleKind[] | undefined,
+  b: readonly ScheduleKind[] | undefined,
+): boolean {
+  const left = new Set(a ?? []);
+  const right = new Set(b ?? []);
+  return (
+    (a === undefined) === (b === undefined) &&
+    left.size === right.size &&
+    [...left].every((k) => right.has(k))
+  );
+}
 
 /** What the unit has now, for planning what a preset would change. */
 export interface JurisdictionPlanInput {
@@ -916,13 +983,17 @@ export function planJurisdiction(
 
   for (const { when, ...rule } of preset.overtimeRules) {
     if (!applies(when)) continue;
-    // Matched on what the rule pays, not how: an existing rule keeps its own pyramiding and minimum.
+    // Matched on what the rule pays and to whom, not how: an existing rule keeps its own
+    // pyramiding and minimum. The kinds and tour days are part of "what", or the Baylor weekly 40
+    // would count as present because the unit's unscoped weekly 40 exists.
     const present = current.overtimeRules.some(
       (r) =>
         r.active &&
         r.basis === rule.basis &&
         r.thresholdHours === rule.thresholdHours &&
-        r.multiplier >= rule.multiplier,
+        r.multiplier >= rule.multiplier &&
+        sameKinds(r.scheduleKinds, rule.scheduleKinds) &&
+        r.tourDays === rule.tourDays,
     );
     if (!present) plan.addOvertimeRules.push({ ...rule, active: true });
   }

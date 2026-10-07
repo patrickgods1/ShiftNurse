@@ -614,9 +614,11 @@ describe('the state mandatory-overtime presets', () => {
             configs: first.ruleConfigs ?? defaultRuleSet(UNIT).configs,
           },
           ratioRules: first.addRatioRules.map((r, i) => ({ ...r, id: `r${i}`, unitId: UNIT })),
-          overtimeRules: first.addOvertimeRules.map((r) =>
-            overtime(r.basis, r.thresholdHours, r.multiplier),
-          ),
+          overtimeRules: first.addOvertimeRules.map((r, i) => ({
+            ...r,
+            id: `ot${i}`,
+            unitId: UNIT,
+          })),
           ...(first.ratioStaffing ? { ratioStaffing: first.ratioStaffing } : {}),
           differentials: first.addDifferentials.map((d, i) => ({
             ...d,
@@ -659,7 +661,7 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
 
   it('pays overtime past 40 a week and 8 straight hours, but not under 15 minutes', () => {
     const plan = planJurisdiction('US-VA', input());
-    expect(plan.addOvertimeRules).toEqual([
+    expect(plan.addOvertimeRules.filter((r) => !r.scheduleKinds)).toEqual([
       { basis: 'weekly', thresholdHours: 40, multiplier: 1.5, minimumMinutes: 15, active: true },
       {
         basis: 'consecutive',
@@ -669,6 +671,113 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
         active: true,
       },
     ]);
+  });
+
+  it('adds the 72/80 and Baylor plans’ own overtime for nurses marked with those kinds', () => {
+    const scoped = planJurisdiction('US-VA', input()).addOvertimeRules.filter(
+      (r) => r.scheduleKinds,
+    );
+    expect(scoped).toEqual([
+      {
+        basis: 'weekly',
+        thresholdHours: 36,
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        scheduleKinds: ['va_72_80'],
+        active: true,
+      },
+      {
+        basis: 'daily',
+        thresholdHours: 12,
+        tourDays: 'only',
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        scheduleKinds: ['va_72_80'],
+        active: true,
+      },
+      {
+        basis: 'daily',
+        thresholdHours: 8,
+        tourDays: 'except',
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        scheduleKinds: ['va_72_80'],
+        active: true,
+      },
+      {
+        basis: 'weekly',
+        thresholdHours: 40,
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        scheduleKinds: ['va_baylor'],
+        active: true,
+      },
+      {
+        basis: 'beyond_scheduled_tour',
+        thresholdHours: 0,
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        scheduleKinds: ['va_baylor'],
+        active: true,
+      },
+    ]);
+  });
+
+  it('still gives the Baylor plan its weekly 40 when the unit already pays an unscoped one', () => {
+    const plan = planJurisdiction('US-VA', input({ overtimeRules: [overtime('weekly', 40, 1.5)] }));
+    expect(plan.addOvertimeRules.map((r) => `${brief(r)} ${r.scheduleKinds ?? ''}`)).toContain(
+      'weekly 40 1.5 va_baylor',
+    );
+    expect(plan.addOvertimeRules.filter((r) => r.basis === 'weekly' && !r.scheduleKinds)).toEqual(
+      [],
+    );
+  });
+
+  it('counts a rule scoped to the same kinds in another order as already there', () => {
+    const preset = JURISDICTION_PRESETS['US-VA'];
+    const original = preset.overtimeRules;
+    (preset as { overtimeRules: unknown }).overtimeRules = [
+      {
+        basis: 'weekly',
+        thresholdHours: 50,
+        multiplier: 1.5,
+        scheduleKinds: ['va_72_80', 'va_baylor'],
+      },
+    ];
+    try {
+      const existing = {
+        ...overtime('weekly', 50, 1.5),
+        scheduleKinds: ['va_baylor', 'va_72_80'] as ('va_baylor' | 'va_72_80')[],
+      };
+      expect(
+        planJurisdiction('US-VA', input({ overtimeRules: [existing] })).addOvertimeRules,
+      ).toEqual([]);
+    } finally {
+      (preset as { overtimeRules: unknown }).overtimeRules = original;
+    }
+  });
+
+  it('does not count a rule scoped to standard nurses as the unscoped weekly 40', () => {
+    const existing = { ...overtime('weekly', 40, 1.5), scheduleKinds: ['standard' as const] };
+    const added = planJurisdiction('US-VA', input({ overtimeRules: [existing] })).addOvertimeRules;
+    expect(
+      added.some((r) => r.basis === 'weekly' && r.thresholdHours === 40 && !r.scheduleKinds),
+    ).toBe(true);
+  });
+
+  it('does not count a daily 12 on every day as the daily 12 on tour days only', () => {
+    const added = planJurisdiction(
+      'US-VA',
+      input({ overtimeRules: [overtime('daily', 12, 1.5)] }),
+    ).addOvertimeRules;
+    expect(added.some((r) => r.basis === 'daily' && r.tourDays === 'only')).toBe(true);
+  });
+
+  it('sets the Baylor plan’s 24-hour cap on required hours', () => {
+    const plan = planJurisdiction('US-VA', input());
+    expect(configOf(plan, 'no-mandatory-overtime')?.params).toMatchObject({
+      baylorMaxMandatedWeeklyHours: 24,
+    });
   });
 
   it('adds the night, weekend and holiday premiums of § 7453', () => {
@@ -712,7 +821,7 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
 
   it('pays a compressed tour overtime past the scheduled tour and past 80 in the pay period', () => {
     const plan = planJurisdiction('US-VA', input(), { compressedTour: true });
-    expect(plan.addOvertimeRules.map(brief)).toEqual([
+    expect(plan.addOvertimeRules.filter((r) => !r.scheduleKinds).map(brief)).toEqual([
       'beyond_scheduled_tour 0 1.5',
       'pay_period 80 1.5',
     ]);

@@ -14,6 +14,7 @@ import {
   type IsoDate,
   ScheduleView,
   solve,
+  type Violation,
 } from '@shiftnurse/core';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { type OpenedDatabase, openTestDatabase, transact } from '../../client.js';
@@ -72,11 +73,19 @@ export function historyViolations(
   f: DemoFixture,
   severity: 'hard' | 'soft' = 'hard',
 ): Map<string, number> {
+  const byCode = new Map<string, number>();
+  for (const v of historyViolationList(f, severity))
+    byCode.set(v.code, (byCode.get(v.code) ?? 0) + 1);
+  return byCode;
+}
+
+/** The violations themselves, for a check that needs to know whom or when they name. */
+export function historyViolationList(f: DemoFixture, severity: 'hard' | 'soft' = 'hard') {
   const db = f.handle.db;
   const unit = getUnit(db, f.result.unitId)!;
   const nurses = listNursesForUnit(db, unit.id);
   const shiftTypes = listShiftTypesForUnit(db, unit.id);
-  const byCode = new Map<string, number>();
+  const all: Violation[] = [];
   for (const period of listPeriodsForUnit(db, unit.id)) {
     if (period.status !== 'published') continue;
     const ruleSet = getRuleSet(db, period.ruleSetId)!;
@@ -106,11 +115,9 @@ export function historyViolations(
       preceptorships: listPreceptorships(db, unit.id),
     });
     const result = evaluateSchedule(view, ruleSet, ctx);
-    for (const v of severity === 'hard' ? result.hardViolations : result.softViolations) {
-      byCode.set(v.code, (byCode.get(v.code) ?? 0) + 1);
-    }
+    all.push(...(severity === 'hard' ? result.hardViolations : result.softViolations));
   }
-  return byCode;
+  return all;
 }
 
 /** The checks every demo shares; call inside the unit's `describe`. */

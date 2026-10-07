@@ -156,6 +156,16 @@ describe('roster import reconciliation', () => {
     expect(getNurseByEmployeeId(handle.db, unitId, 'E1')?.hireDate).toBeUndefined();
   });
 
+  it('puts a nurse on a VA plan from the sheet, and a blank cell on re-import returns them to standard', () => {
+    const planned = { ...ada, nurse: { ...ada.nurse, scheduleKind: 'va_72_80' as const } };
+    transact(handle.db, (tx) => importRoster(tx, unitId, [planned], ACTOR));
+    expect(getNurseByEmployeeId(handle.db, unitId, 'E1')?.scheduleKind).toBe('va_72_80');
+    expect(formatRosterCsv(exportRoster(handle.db, unitId))).toContain(',va_72_80');
+
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
+    expect(getNurseByEmployeeId(handle.db, unitId, 'E1')?.scheduleKind).toBeUndefined();
+  });
+
   it('leaves nurses who are not in the file untouched', () => {
     createNurse(
       handle.db,

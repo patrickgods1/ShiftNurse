@@ -16,6 +16,7 @@
  * would double-count it in that period's own ledger row.
  */
 
+import { isBaylorPlan } from '../cost/cost.js';
 import type { Id, Preference } from '../domain/entities.js';
 import {
   dateInRange,
@@ -209,6 +210,11 @@ const countsAsNight = (view: AssignmentView): boolean => view.shiftType.isNight;
 const countsAsHoliday = (view: AssignmentView, ctx: CounterContext): boolean =>
   ctx.holidayDates.has(view.assignment.date);
 
+// A nurse on the Baylor plan (38 U.S.C. § 7456) works every weekend by contract and has no holiday
+// entitlement; counting either as burden would make their score a complaint about their own plan,
+// and push the fairness pressure onto the nurses who were never hired for weekends. `isBaylorPlan`
+// is the test the rules and both solvers' counters use, so Generate prices what the ledger records.
+
 // ---------------------------------------------------------------------------
 // Counter derivation
 // ---------------------------------------------------------------------------
@@ -251,13 +257,14 @@ export function deriveCounters(
     let undesirableShifts = 0;
     let totalHours = 0;
     const weekendKeysWorked = new Set<string>();
+    const burdened = !isBaylorPlan(nurse);
     for (const view of workedViews) {
       if (countsAsNight(view)) nightShifts++;
-      if (countsAsHoliday(view, ctx)) holidaysWorked++;
+      if (burdened && countsAsHoliday(view, ctx)) holidaysWorked++;
       if (isUndesirable(view, nursePrefs, ctx.weekendDefinition)) undesirableShifts++;
       totalHours += view.paidHours;
       const key = weekendKey(view.window, ctx.weekendDefinition);
-      if (key !== null) weekendKeysWorked.add(key);
+      if (burdened && key !== null) weekendKeysWorked.add(key);
     }
 
     let onCallShifts = 0;
@@ -323,15 +330,18 @@ export function deriveOccurrences(
   ctx: CounterContext,
 ): Map<Id, NurseOccurrences> {
   const result = new Map<Id, NurseOccurrences>();
-  for (const nurseId of schedule.nursesById.keys()) {
+  for (const [nurseId, nurse] of schedule.nursesById) {
     const nights = new Set<IsoDate>();
     const weekends = new Set<IsoDate>();
     const holidays = new Set<IsoDate>();
+    const burdened = !isBaylorPlan(nurse);
     for (const view of schedule.assignmentsFor(nurseId).filter(isWorked)) {
       const date = view.assignment.date;
       if (countsAsNight(view)) nights.add(date);
-      if (weekendKey(view.window, ctx.weekendDefinition) !== null) weekends.add(date);
-      if (countsAsHoliday(view, ctx)) holidays.add(date);
+      if (burdened && weekendKey(view.window, ctx.weekendDefinition) !== null) {
+        weekends.add(date);
+      }
+      if (burdened && countsAsHoliday(view, ctx)) holidays.add(date);
     }
     // ISO dates sort in calendar order as strings.
     const sorted = (set: Set<IsoDate>): IsoDate[] => [...set].sort();

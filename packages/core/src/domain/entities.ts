@@ -138,6 +138,15 @@ export const EMPLOYMENT_TYPE_LABELS: Readonly<Record<EmploymentType, string>> = 
   agency: 'Agency',
 };
 
+/** 38 U.S.C. § 7456A (72/80) and § 7456 (Baylor weekend plan) are nurse-level plans; absent is standard. */
+export type ScheduleKind = 'standard' | 'va_72_80' | 'va_baylor';
+export const SCHEDULE_KINDS: readonly ScheduleKind[] = ['standard', 'va_72_80', 'va_baylor'];
+export const SCHEDULE_KIND_LABELS: Record<ScheduleKind, string> = {
+  standard: 'Standard',
+  va_72_80: 'VA 72/80 (38 U.S.C. § 7456A)',
+  va_baylor: 'VA Baylor weekend plan (38 U.S.C. § 7456)',
+};
+
 export interface Nurse {
   id: Id;
   unitId: Id;
@@ -170,6 +179,13 @@ export interface Nurse {
    * workdays are double time. Absent: the rule prices nothing for this nurse.
    */
   scheduledDaysPerWeek?: number;
+  /**
+   * A nurse-level VA plan. 72/80 is six 12-hour tours in a 14-day pay period paid as 80 hours,
+   * "considered a 0.90 full-time equivalent" (38 U.S.C. § 7456A(b)(1)(B)); Baylor is two regularly
+   * scheduled 12-hour weekend tours paid as a full 40-hour week (§ 7456(a)). Pricing, leave
+   * charging and the tour-plan rule read it. Absent: standard.
+   */
+  scheduleKind?: ScheduleKind;
   isChargeEligible: boolean;
   /** New graduates / recent hires. Used by the no-all-novice coverage guard. */
   isNovice: boolean;
@@ -863,6 +879,18 @@ export interface OvertimeRule {
    * credits daily overtime toward the 80. Absent: 'stack', every worked hour counts.
    */
   pyramiding?: 'stack' | 'none';
+  /**
+   * The kinds of nurse this rule applies to; absent means every nurse. The VA's overtime bases
+   * differ by plan (38 U.S.C. § 7456A(c) for 72/80, § 7456(c) for Baylor), so one unit carries
+   * a rule per plan beside the standard ones.
+   */
+  scheduleKinds?: readonly ScheduleKind[];
+  /**
+   * For the 'daily' basis only: 'only' judges the workdays on which the nurse has a 12-hour
+   * scheduled shift (a tour day), 'except' the other workdays. § 7456A(c)(1): overtime past 12
+   * hours on a tour day, past 8 on a non-tour day. Absent: every workday.
+   */
+  tourDays?: 'only' | 'except';
   /**
    * Overtime under this rule shorter than this many minutes on one shift is not paid (VA: overtime
    * under 15 minutes is not paid); the shift is straight time under this rule. Judged per rule per

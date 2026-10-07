@@ -19,9 +19,15 @@
  * manager and the solver prices it (`holidayRotationFacts` is what both solvers read). Each
  * worked shift on a holiday the nurse is owed off is one breach; working both halves of a
  * pair is one breach for the pair.
+ *
+ * A nurse on the Baylor weekend plan (38 U.S.C. § 7456) has no holiday entitlement under VA
+ * Handbook 5011, so there is nothing to rotate: `inHolidayRotation` leaves them out of the rule,
+ * of `holidayRotationFacts` and of both solvers' pairs, or Generate would keep a nurse hired for
+ * weekends off the weekend Christmas falls on.
  */
 
-import type { Holiday, Id } from '../domain/entities.js';
+import { isBaylorPlan } from '../cost/cost.js';
+import type { Holiday, Id, Nurse } from '../domain/entities.js';
 import { addDays, compareDates, describeDate, type IsoDate } from '../domain/time.js';
 import type { HolidayWorkRecord, Rule, RuleContext, Violation } from './types.js';
 import { isWorked, nurseName, violation } from './types.js';
@@ -64,6 +70,11 @@ export function previousOccurrence(
     if (best === undefined || compareDates(h.date, best.date) > 0) best = h;
   }
   return best;
+}
+
+/** Whether the rotation judges this nurse; shared by the rule and both solvers. */
+export function inHolidayRotation(nurse: Pick<Nurse, 'scheduleKind'>): boolean {
+  return !isBaylorPlan(nurse);
 }
 
 /** The holiday indexes `RuleContext` carries, built once per evaluation pass. */
@@ -164,7 +175,7 @@ export function holidayRotationFacts(
   for (const holiday of ctx.holidaysById.values()) {
     if (inPeriod(holiday.date) && rotates(holiday, params, ctx)) {
       for (const nurse of ctx.nurses) {
-        if (!owedOff(nurse.id, holiday, ctx)) continue;
+        if (!inHolidayRotation(nurse) || !owedOff(nurse.id, holiday, ctx)) continue;
         const set = owed.get(nurse.id);
         if (set) set.add(holiday.date);
         else owed.set(nurse.id, new Set([holiday.date]));
@@ -232,6 +243,7 @@ export const holidayRotationRule: Rule<HolidayRotationParams> = {
     if (ctx.holidaysById.size === 0) return violations;
 
     for (const nurse of ctx.nurses) {
+      if (!inHolidayRotation(nurse)) continue;
       const timeline = schedule.timelineFor(nurse.id).filter(isWorked);
 
       for (const view of timeline) {
