@@ -21,7 +21,7 @@ import {
 } from '@shiftnurse/core/testing';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { type GridColumn, ScheduleGrid } from './grid.js';
+import { type GridColumn, type GridSpotlight, ScheduleGrid } from './grid.js';
 import { ShiftPalette } from './palette.js';
 
 class FakeDataTransfer {
@@ -164,6 +164,96 @@ describe('showing one nurse on the schedule grid', () => {
     const rows = document.querySelectorAll('[role="row"][data-nurse-id]');
     const marked = [...rows].filter((r) => r.getAttribute('data-highlighted') === 'true');
     expect(marked.map((r) => r.getAttribute('data-nurse-id'))).toEqual([ben.id]);
+  });
+});
+
+describe('the month band over the date row', () => {
+  it('names October and November when the schedule crosses the month end', () => {
+    const columns: GridColumn[] = [
+      { date: isoDate('2026-10-31'), weekday: 6, isWeekend: true },
+      { date: isoDate('2026-11-01'), weekday: 0, isWeekend: true },
+      { date: isoDate('2026-11-02'), weekday: 1, isWeekend: false },
+    ];
+    render(
+      <ScheduleGrid
+        nurses={[alice]}
+        shiftTypes={[DAY_12]}
+        columns={columns}
+        assignments={[]}
+        pendingIds={new Set()}
+        readOnly={false}
+        violationsByAssignment={new Map()}
+        violationsByNurse={new Map()}
+        violationsByDate={new Map()}
+        onMove={vi.fn()}
+        onCreate={vi.fn()}
+        onChipOpen={vi.fn()}
+        onChipDelete={vi.fn()}
+      />,
+    );
+    const band = within(screen.getByTestId('month-band')).getAllByRole('columnheader');
+    expect(band.map((h) => h.textContent)).toEqual(['', 'October 2026', 'November 2026']);
+    expect(band.map((h) => h.getAttribute('aria-colspan'))).toEqual([null, '1', '2']);
+  });
+});
+
+describe('showing a problem on the grid', () => {
+  const scrollIntoView = vi.fn();
+  beforeEach(() => {
+    scrollIntoView.mockClear();
+    Element.prototype.scrollIntoView = scrollIntoView;
+  });
+
+  function renderSpotlit(assignments: Assignment[], spotlight: GridSpotlight) {
+    render(
+      <ScheduleGrid
+        nurses={[alice, ben]}
+        shiftTypes={[DAY_12]}
+        columns={COLUMNS}
+        assignments={assignments}
+        pendingIds={new Set()}
+        readOnly={false}
+        spotlight={spotlight}
+        violationsByAssignment={new Map()}
+        violationsByNurse={new Map()}
+        violationsByDate={new Map()}
+        onMove={vi.fn()}
+        onCreate={vi.fn()}
+        onChipOpen={vi.fn()}
+        onChipDelete={vi.fn()}
+      />,
+    );
+  }
+
+  it("rings Ben's Tuesday and the shift the alert names, and scrolls to that cell", () => {
+    const shift = assign(ben.id, DAY_12, '2026-10-06');
+    renderSpotlit([shift, assign(alice.id, DAY_12, '2026-10-06')], {
+      date: isoDate('2026-10-06'),
+      nurseId: ben.id,
+      assignmentIds: [shift.id],
+      nonce: 1,
+    });
+    const lit = [...document.querySelectorAll('[role="gridcell"][data-spotlit]')];
+    expect(lit).toHaveLength(1);
+    expect(lit[0]).toBe(cell(ben, '2026-10-06'));
+    expect(lit[0]?.getAttribute('data-spotlit')).toBe('cell');
+    const chips = [...document.querySelectorAll('[data-testid="assignment-chip"][data-spotlit]')];
+    expect(chips.map((c) => c.getAttribute('aria-label'))).toEqual(['D12 on 2026-10-06']);
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView.mock.contexts[0]).toBe(cell(ben, '2026-10-06'));
+  });
+
+  it('tints the whole day and scrolls to its header when the alert names no nurse', () => {
+    renderSpotlit([], { date: isoDate('2026-10-05'), assignmentIds: [], nonce: 1 });
+    const lit = [...document.querySelectorAll('[data-spotlit]')];
+    expect(lit.map((el) => el.getAttribute('data-spotlit'))).toEqual([
+      'column',
+      'column',
+      'column',
+    ]);
+    const header = document.querySelector('[role="columnheader"][data-date="2026-10-05"]');
+    expect(lit[0]).toBe(header);
+    expect(scrollIntoView.mock.contexts[0]).toBe(header);
   });
 });
 

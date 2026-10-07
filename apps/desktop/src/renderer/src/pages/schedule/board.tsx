@@ -23,7 +23,7 @@ import {
   rangesOverlap,
   weekdayOf,
 } from '@shiftnurse/core';
-import { type ReactNode, useCallback, useEffect, useMemo } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useAssignments, useShiftTypes, useTimeOff } from '../../api.js';
 import { useCostReport } from '../../api-cost.js';
 import { useDemand } from '../../api-demand.js';
@@ -34,7 +34,7 @@ import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { periodRange } from '../../format.js';
 import { useUnit } from '../../unit-context.js';
 import { ReasonDialog } from '../requests/reason-dialog.js';
-import { useAlertsPill } from './alerts-panel.js';
+import { type AlertTarget, useAlertsPill } from './alerts-panel.js';
 import { AssignmentDialog } from './assignment-dialog.js';
 import { variationNumber } from './candidates.js';
 import { CandidatesBar } from './candidates-bar.js';
@@ -43,7 +43,11 @@ import { CompareDialog } from './compare-dialog.js';
 import { costPill } from './cost-summary.js';
 import { ExportMenu } from './export-menu.js';
 import { GenerateDialog } from './generate-dialog.js';
-import type { GridColumn } from './grid.js';
+import type { GridColumn, GridSpotlight } from './grid.js';
+
+/** How long "Show on grid" keeps its ring: long enough to find, short enough to not be a mark. */
+const SPOTLIGHT_MS = 4000;
+
 import { ScheduleGrid } from './grid.js';
 import { GridLegend } from './grid-legend.js';
 import { sortNurses } from './grid-utils.js';
@@ -160,15 +164,21 @@ export function ScheduleBoard({ unitId, period, focusNurseId, leading }: Schedul
     [violationResult],
   );
 
-  const showDate = useCallback((date: string) => {
-    document
-      .querySelector(`[data-testid="schedule-grid"] [data-date="${date}"]`)
-      ?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  // "Show on grid": the grid scrolls to the alert's cell and rings it, then the ring clears on
+  // its own, so the manager is never left wondering whether a red cell is a violation.
+  const [spotlight, setSpotlight] = useState<GridSpotlight | undefined>(undefined);
+  const showOnGrid = useCallback((target: AlertTarget) => {
+    setSpotlight({ ...target, nonce: Date.now() });
   }, []);
+  useEffect(() => {
+    if (!spotlight) return;
+    const timer = setTimeout(() => setSpotlight(undefined), SPOTLIGHT_MS);
+    return () => clearTimeout(timer);
+  }, [spotlight]);
   const alertsPill = useAlertsPill({
     periodId: period.id,
     published: period.status !== 'draft',
-    onShowDate: showDate,
+    onShow: showOnGrid,
     preview: preview && previewLabel ? { alerts: preview.alerts, label: previewLabel } : undefined,
   });
 
@@ -444,6 +454,7 @@ export function ScheduleBoard({ unitId, period, focusNurseId, leading }: Schedul
         readOnly={readOnly || previewActive}
         highlightKeys={highlightKeys}
         focusNurseId={focusNurseId}
+        spotlight={spotlight}
         violationsByAssignment={violationsByAssignmentMap}
         violationsByNurse={violationsByNurseMap}
         violationsByDate={violationsByDateMap}

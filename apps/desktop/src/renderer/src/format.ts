@@ -27,6 +27,27 @@ const MONTH_NAMES = [
   'Dec',
 ];
 
+const MONTH_FULL_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+/** "2026-11-01" -> "November 2026": the band over the grid's date row. */
+export function formatMonthYear(date: IsoDate | string): string {
+  const [year, month] = date.split('-');
+  return `${MONTH_FULL_NAMES[Number(month) - 1] ?? '?'} ${year}`;
+}
+
 /** "2026-03-05" -> "Mar 5, 2026". */
 export function formatDate(date: IsoDate | string): string {
   const parts = date.split('-');

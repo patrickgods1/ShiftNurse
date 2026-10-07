@@ -9,7 +9,7 @@ import {
   resetFixtureCounters,
 } from '@shiftnurse/core/testing';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { headcountRows, staffingSummary } from './grid-utils.js';
+import { headcountRows, monthSpans, staffingSummary } from './grid-utils.js';
 
 beforeEach(() => resetFixtureCounters());
 
@@ -117,5 +117,28 @@ describe('the one-line staffing summary under the grid', () => {
     expect(staffingSummary(rows, [MON])).toEqual([
       { date: MON, short: 1, details: ['D12 CNA 0/1'] },
     ]);
+  });
+});
+
+describe('the month band over the date row', () => {
+  it('spans a schedule that runs from late October into November as two months', () => {
+    const dates = ['2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01', '2026-11-02'].map(
+      isoDate,
+    );
+    expect(monthSpans(dates)).toEqual([
+      { label: 'October 2026', start: 0, count: 3 },
+      { label: 'November 2026', start: 3, count: 2 },
+    ]);
+  });
+
+  it('crosses a year end as two months, each naming its year', () => {
+    expect(monthSpans([isoDate('2026-12-31'), isoDate('2027-01-01')])).toEqual([
+      { label: 'December 2026', start: 0, count: 1 },
+      { label: 'January 2027', start: 1, count: 1 },
+    ]);
+  });
+
+  it('is empty for no dates', () => {
+    expect(monthSpans([])).toEqual([]);
   });
 });

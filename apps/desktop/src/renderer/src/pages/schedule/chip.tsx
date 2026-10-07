@@ -27,6 +27,8 @@ interface AssignmentChipProps {
   tabbable?: boolean;
   /** "Goes against Tyler Clark's request: avoids Night 12 (strong)", when it does. */
   preferenceNote?: string | undefined;
+  /** One of the shifts a "Show on grid" link is about. */
+  spotlit?: boolean;
 }
 
 export const AssignmentChip = memo(function AssignmentChip({
@@ -40,6 +42,7 @@ export const AssignmentChip = memo(function AssignmentChip({
   onDelete,
   tabbable = true,
   preferenceNote,
+  spotlit = false,
 }: AssignmentChipProps) {
   const optimistic = pending || isPendingId(assignment.id);
   const interactive = !readOnly && !optimistic;
@@ -68,6 +71,7 @@ export const AssignmentChip = memo(function AssignmentChip({
     <button
       type="button"
       data-testid="assignment-chip"
+      data-spotlit={spotlit ? 'true' : undefined}
       tabIndex={tabbable ? 0 : -1}
       draggable={draggable}
       disabled={optimistic}
@@ -107,7 +111,7 @@ export const AssignmentChip = memo(function AssignmentChip({
           optimistic ? 'opacity-50' : ''
         } ${hard ? 'border-2 border-solid border-danger' : soft ? 'border-2 border-dashed border-warn' : ''} ${
           highlighted ? 'outline outline-2 outline-offset-1 outline-accent' : ''
-        } ${!readOnly ? 'focus-visible:ring-2 focus-visible:ring-accent' : ''}`}
+        } ${spotlit ? 'outline outline-2 outline-offset-2 outline-danger' : ''} ${!readOnly ? 'focus-visible:ring-2 focus-visible:ring-accent' : ''}`}
       style={{ backgroundColor: color, color: readableTextColor(color) }}
     >
       <span className="truncate">{shiftType?.abbreviation ?? '?'}</span>
