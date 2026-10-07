@@ -64,8 +64,8 @@ export function setupApi(
     },
     applyPreset: (unitId, preset) =>
       transact(db, (tx) => applySetupPreset(tx, unitId, preset, ACTOR)),
-    applyJurisdiction: (unitId, jurisdiction) =>
-      transact(db, (tx) => applyJurisdiction(tx, unitId, jurisdiction, ACTOR)),
+    applyJurisdiction: (unitId, jurisdiction, choices) =>
+      transact(db, (tx) => applyJurisdiction(tx, unitId, jurisdiction, ACTOR, choices ?? {})),
     startOver,
   };
 }

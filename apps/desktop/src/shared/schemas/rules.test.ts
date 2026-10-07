@@ -24,6 +24,19 @@ describe('a rule set arriving over IPC', () => {
     ).toBe(true);
   });
 
+  it('accepts the reason given for loosening a protected rule', () => {
+    expect(
+      rulesSchemas.save.safeParse(['u-1', 'x', configs, weekend, weights, 'Contract art. 9'])
+        .success,
+    ).toBe(true);
+  });
+
+  it('refuses a reason that is not text', () => {
+    expect(rulesSchemas.save.safeParse(['u-1', 'x', configs, weekend, weights, 123]).success).toBe(
+      false,
+    );
+  });
+
   it('refuses a severity that is neither hard nor soft', () => {
     const bad = [{ ruleId: 'min-rest', enabled: true, severityOverride: 'maybe', params: {} }];
     expect(rulesSchemas.save.safeParse(['u-1', 'x', bad, weekend, weights]).success).toBe(false);

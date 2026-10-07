@@ -9,6 +9,7 @@ import {
   createUnit,
   getUnit,
   listActiveRatioRulesForUnit,
+  listOvertimeRulesForUnit,
   listShiftTypesForUnit,
   type OpenedDatabase,
   openTestDatabase,
@@ -125,6 +126,8 @@ describe('first launch', () => {
 describe('applying a state preset', () => {
   it("sets a telemetry unit to California's 1:4 and remembers the state on the unit", () => {
     const unit = setup.createUnit(unitInput, 'manual');
+    // No alternative-workweek answer: 1 ratio rule + 5 overtime rules (daily 8, daily 12, weekly
+    // 40, both seventh-day); the 12-in-24 cap is not switched on, so no rule set.
     expect(setup.applyJurisdiction(unit.id, 'CA')).toMatchObject({ created: 6 });
     expect(listActiveRatioRulesForUnit(handle.db, unit.id)).toEqual([
       expect.objectContaining({ role: 'RN', maxPatientsPerNurse: 4 }),
@@ -135,6 +138,14 @@ describe('applying a state preset', () => {
       updated: 0,
       unchanged: 1,
     });
+  });
+
+  it('applies California’s alternative-workweek reading when the manager says the unit runs one', () => {
+    const unit = setup.createUnit(unitInput, 'manual');
+    setup.applyJurisdiction(unit.id, 'CA', { alternativeWorkweek: true });
+    const rules = listOvertimeRulesForUnit(handle.db, unit.id);
+    expect(rules.some((r) => r.basis === 'daily' && r.thresholdHours === 8)).toBe(false);
+    expect(rules.some((r) => r.basis === 'beyond_scheduled_days')).toBe(true);
   });
 
   it('refuses a unit that does not exist', () => {

@@ -4,12 +4,24 @@
  * edit must never rewrite the rules an existing schedule was judged by.
  */
 
-import type { FairnessWeights, Id, RuleConfig, RuleSet, WeekendDefinition } from '@shiftnurse/core';
+import {
+  ALL_RULES,
+  defaultRuleSet,
+  type FairnessWeights,
+  type Id,
+  JURISDICTION_PRESETS,
+  protectedRuleChanges,
+  type RuleConfig,
+  type RuleSet,
+  resolveConfigs,
+  type WeekendDefinition,
+} from '@shiftnurse/core';
 import { desc, eq } from 'drizzle-orm';
-import { recordAudit } from '../audit.js';
+import { recordAudit, recordAuditStrict } from '../audit.js';
 import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { ruleConfig as ruleConfigTable, ruleSet as ruleSetTable } from '../schema.js';
+import { getUnit } from './config.js';
 
 // ---------------------------------------------------------------------------
 // Rule sets
@@ -66,13 +78,36 @@ export function getLatestRuleSet(db: DbLike, unitId: Id): RuleSet | undefined {
  * already-published schedule was judged by — that would make the schedule's own compliance
  * report describe rules that were never actually in force when it ran. Editing rules always
  * produces version N+1; version N is retained forever.
+ *
+ * Switching off or softening the patient-ratio rule, or a rule the unit's state preset switched
+ * on, is allowed but needs `opts.reason`: a softened ratio with no stated reason is a grievance
+ * with no record. It throws before any insert, so a caller's transaction holds no header row.
  */
 export function saveRuleSet(
   db: ShiftNurseTx,
   draft: Pick<RuleSet, 'unitId' | 'name' | 'configs' | 'weekendDefinition' | 'fairnessWeights'>,
   actor: string,
+  opts?: { reason?: string },
 ): RuleSet {
   const latest = getLatestRuleSet(db, draft.unitId);
+  const unit = getUnit(db, draft.unitId);
+  if (!unit) throw new Error(`Unit ${draft.unitId} not found`);
+  // Both sides resolved against the registry: a rule absent from a stored set runs its default,
+  // so a draft that omits the ratio rule has not switched it off.
+  const loosened = protectedRuleChanges(
+    resolveConfigs(latest ?? defaultRuleSet(draft.unitId)),
+    resolveConfigs({ ...defaultRuleSet(draft.unitId), configs: draft.configs }),
+    unit.jurisdiction,
+  );
+  if (loosened.length > 0 && !opts?.reason?.trim()) {
+    const names = loosened
+      .map((c) => ALL_RULES.find((r) => r.id === c.ruleId)?.name ?? c.ruleId)
+      .join(', ');
+    const why = unit.jurisdiction
+      ? `it is a rule the ${JURISDICTION_PRESETS[unit.jurisdiction].label} preset switched on, or the patient-ratio rule.`
+      : 'it is the patient-ratio rule.';
+    throw new Error(`Switching off or softening ${names} needs a reason: ${why}`);
+  }
   const id = ids.ruleSet();
   const version = (latest?.version ?? 0) + 1;
   const createdAt = Date.now();
@@ -109,6 +144,11 @@ export function saveRuleSet(
     fairnessWeights: draft.fairnessWeights,
     createdAt,
   };
-  recordAudit(db, { entityType: 'rule_set', entityId: id, action: 'create', actor, after });
+  const entry = { entityType: 'rule_set', entityId: id, action: 'create', actor, after } as const;
+  if (loosened.length > 0) {
+    recordAuditStrict(db, { ...entry, reason: opts?.reason }, { requireReason: true });
+  } else {
+    recordAudit(db, entry);
+  }
   return after;
 }

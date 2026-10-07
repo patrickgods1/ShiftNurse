@@ -220,7 +220,14 @@
   mostly limit *required* hours, which `no-mandatory-overtime`'s ban already refuses, so only
   their limits on all hours and their rest after a long stretch become `long-stretch` or
   `max-hours-in-24` settings; a law that is only a right to refuse (Minnesota) switches nothing
-  on. A change to a law is a change to its preset, its citation and its summary together.
+  on. A preset's `options` are yes/no questions asked at apply time (California's alternative
+  workweek, the VA's compressed tour); a rule or overtime rule with `when` applies only when the
+  answer meets it, and the answers are never stored. Differentials are added only for a kind the
+  unit pays nothing for, `postingLeadDays` only rises and `overtimeOrder` is set only when unset,
+  and an existing overtime rule is never retrofitted with the preset's pyramiding or minimum.
+  `protectedRuleChanges` names the edits that switch off or soften the ratio rule or any rule the
+  unit's preset enables, so the caller can ask for a reason. A change to a law is a change to its
+  preset, its citation and its summary together.
 - **Leave bids are awarded in seniority order, one a nurse a pass.** `leave/bidding.ts`'s
   `awardBids` is pure and deterministic (seniority date, then employee number); leave already
   approved takes its places first; every choice not awarded carries a quotable reason naming the

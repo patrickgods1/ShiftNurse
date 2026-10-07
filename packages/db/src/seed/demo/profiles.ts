@@ -10,10 +10,27 @@
 import { DEFAULT_WEEKEND, isoDate, MINUTES_PER_DAY } from '@shiftnurse/core';
 import type { DemoProfile, DemoRosterRow } from './engine.js';
 
-const FULL_12 = { employmentType: 'full_time', fte: 0.9, contractedHoursPerPeriod: 72 } as const;
-const PART_12 = { employmentType: 'part_time', fte: 0.6, contractedHoursPerPeriod: 48 } as const;
+// Scheduled days a week are the 12-hour alternative workweek's (three 12s full time, two part
+// time): California's `beyond_scheduled_days` pays double past them and is inert without them.
+const FULL_12 = {
+  employmentType: 'full_time',
+  fte: 0.9,
+  contractedHoursPerPeriod: 72,
+  scheduledDaysPerWeek: 3,
+} as const;
+const PART_12 = {
+  employmentType: 'part_time',
+  fte: 0.6,
+  contractedHoursPerPeriod: 48,
+  scheduledDaysPerWeek: 2,
+} as const;
 const PER_DIEM = { employmentType: 'per_diem', fte: 0, contractedHoursPerPeriod: 0 } as const;
-const TRAVEL = { employmentType: 'agency', fte: 0.9, contractedHoursPerPeriod: 72 } as const;
+const TRAVEL = {
+  employmentType: 'agency',
+  fte: 0.9,
+  contractedHoursPerPeriod: 72,
+  scheduledDaysPerWeek: 3,
+} as const;
 
 // ---------------------------------------------------------------------------
 // Community hospital medical-surgical
@@ -47,6 +64,9 @@ const communityRoster: DemoRosterRow[] = [
 export const COMMUNITY_MED_SURG: DemoProfile = {
   id: 'community-med-surg',
   unit: { name: '5 North Medical-Surgical', unitType: 'Medical-Surgical' },
+  // A 12-hour schedule in California is an adopted alternative workweek (IWC Wage Order 5 § 3(B)).
+  jurisdiction: 'CA',
+  jurisdictionChoices: { alternativeWorkweek: true },
   scheduleWeeks: 6,
   shifts: [
     {
@@ -130,7 +150,8 @@ export const COMMUNITY_MED_SURG: DemoProfile = {
     { kind: 'holiday', mode: 'multiplier', amount: 1.5 },
     { kind: 'charge', mode: 'flat', amount: 2 },
   ],
-  overtime: [{ basis: 'weekly', thresholdHours: 40, multiplier: 1.5 }],
+  // The CA preset sets the weekly 40 (without pyramiding) and the daily and seventh-day rules.
+  overtime: [],
   holidays: 'hospital-six',
   rules: { weekend: DEFAULT_WEEKEND },
 };
@@ -232,6 +253,7 @@ export const VA_SF_MED_SURG: DemoProfile = {
   id: 'va-sf-med-surg',
   unit: { name: '4A Medicine-Surgery (VA San Francisco sample)', unitType: 'Medical-Surgical' },
   jurisdiction: 'US-VA',
+  jurisdictionChoices: { compressedTour: true },
   bridgedService: true,
   scheduleWeeks: 4,
   // Federal pay period 1 of 2025 began Sunday 12 January; every pay period since is 14 days on.
@@ -306,24 +328,10 @@ export const VA_SF_MED_SURG: DemoProfile = {
     // The federal pay adjustment takes effect with the first pay period of January.
     raise: { month: 1, percent: 2 },
   },
-  differentials: [
-    // 38 U.S.C. §7453(b): the whole tour at 4 or more hours between 6 pm and 6 am.
-    {
-      kind: 'night',
-      mode: 'multiplier',
-      amount: 1.1,
-      window: { startTime: '18:00', endTime: '06:00', wholeShiftAtHours: 4 },
-    },
-    { kind: 'weekend', mode: 'multiplier', amount: 1.25 },
-    { kind: 'holiday', mode: 'multiplier', amount: 2 },
-  ],
-  // Overtime is work beyond the scheduled tour (VA-NNU Master Agreement Art. 14; 38 U.S.C.
-  // §7453(e)) or past 80 hours a pay period. An 8-hour tour held over is overtime from its 9th
-  // hour, which a flat `daily 12` never caught: that was the demo-review issue deferred to holdovers.
-  overtime: [
-    { basis: 'beyond_scheduled_tour', thresholdHours: 0, multiplier: 1.5 },
-    { basis: 'pay_period', thresholdHours: 80, multiplier: 1.5 },
-  ],
+  // The VA preset sets the Title 38 night (whole tour at 4 h in 18:00–06:00), weekend and holiday premiums.
+  differentials: [],
+  // The VA preset sets overtime beyond the scheduled tour and past 80 hours a pay period.
+  overtime: [],
   holidays: 'federal',
   rules: {
     // Title 38 weekend premium: any tour touching midnight Friday to midnight Sunday.
@@ -333,13 +341,16 @@ export const VA_SF_MED_SURG: DemoProfile = {
       durationMinutes: 2 * MINUTES_PER_DAY,
       mode: 'overlaps',
     },
-    enable: ['weekend-pattern'],
+    // The VA preset switches on weekend-pattern and sets the 11-hour minimum rest.
     params: {
       // 44 hours one week and 36 the next is 80 for the pay period, not four hours of overtime.
       'max-hours-per-week': { overtimeByPayPeriod: true, payPeriodOvertimeThresholdHours: 80 },
-      'min-rest-between-shifts': { minRestHours: 11 },
       // Two weekends off in every four: at most two worked in a four-week schedule.
       'weekend-pattern': { maxConsecutiveWeekends: 2, maxWeekendsPerPeriod: 2 },
+      // The preset switches tour rotation on; the registry's 48 hours between tours is no VA–NNU
+      // term, Art. 13's 11 is. The history is built with no tour-change gap and would otherwise
+      // read hundreds of short tour changes.
+      'tour-rotation': { maxToursPerPeriod: 2, minHoursBetweenTours: 11 },
     },
   },
   leaveBalances: {
@@ -486,11 +497,14 @@ const icuRoster: DemoRosterRow[] = [
 
 export const CA_ICU: DemoProfile = {
   id: 'ca-icu',
+  jurisdiction: 'CA',
+  jurisdictionChoices: { alternativeWorkweek: true },
   unit: {
     name: '3 West Medical-Surgical ICU',
     unitType: 'ICU',
     // Title 22 counts a charge nurse toward the ratio only while caring for patients, and an ICU
-    // charge nurse is kept free of them. Breaks are left at zero: the roster is sized to the floors.
+    // charge nurse is kept free of them. The CA preset raises break minutes to 60 and has the
+    // charge nurse cover breaks.
     ratioStaffing: {
       chargeNurseTakesPatients: false,
       breakMinutesPerNurse: 0,
@@ -570,12 +584,9 @@ export const CA_ICU: DemoProfile = {
     { kind: 'holiday', mode: 'multiplier', amount: 1.5 },
     { kind: 'charge', mode: 'flat', amount: 3 },
   ],
-  overtime: [
-    // IWC Wage Order 5 § 3(B)(8): past 12 hours in a workday, a health-care alternative
-    // workweek pays double.
-    { basis: 'daily', thresholdHours: 12, multiplier: 2 },
-    { basis: 'weekly', thresholdHours: 40, multiplier: 1.5 },
-  ],
+  // The CA preset sets the alternative workweek's daily 12 at double (IWC Wage Order 5 § 3(B)(8))
+  // and the weekly 40 without pyramiding, with the seventh-day and extra-day rules.
+  overtime: [],
   holidays: 'hospital-six',
   rules: { weekend: DEFAULT_WEEKEND },
 };

@@ -10,6 +10,7 @@
 
 import {
   JURISDICTION_PRESETS,
+  type JurisdictionChoices,
   type JurisdictionId,
   type JurisdictionPreset,
   type SetupPresetResult,
@@ -19,7 +20,7 @@ import { useState } from 'react';
 import { useApplyJurisdiction } from '../api-setup.js';
 import { useUnit } from '../unit-context.js';
 import { useConfirm } from './confirm.js';
-import { describedBy, Field } from './field-help.js';
+import { CheckField, describedBy, Field } from './field-help.js';
 import { errorMessage, INPUT, SECONDARY } from './ui.js';
 
 const IDS = Object.keys(JURISDICTION_PRESETS) as JurisdictionId[];
@@ -53,6 +54,8 @@ export function StateLawSection() {
   const confirm = useConfirm();
   const [chosen, setChosen] = useState<JurisdictionId | ''>(unit.jurisdiction ?? '');
   const preset = chosen === '' ? undefined : JURISDICTION_PRESETS[chosen];
+  // Answers belong to the chosen state's questions, so changing state starts them over.
+  const [choices, setChoices] = useState<JurisdictionChoices>({});
 
   const onApply = async () => {
     if (chosen === '' || !preset) return;
@@ -64,7 +67,7 @@ export function StateLawSection() {
       confirmLabel: 'Apply',
       danger: false,
     });
-    if (ok) apply.mutate(chosen);
+    if (ok) apply.mutate({ jurisdiction: chosen, choices });
   };
 
   return (
@@ -86,6 +89,7 @@ export function StateLawSection() {
           aria-describedby={describedBy('unit-jurisdiction', { hint: true })}
           onChange={(e) => {
             setChosen(e.target.value as JurisdictionId | '');
+            setChoices({});
             apply.reset();
           }}
         >
@@ -112,6 +116,24 @@ export function StateLawSection() {
           {leavePolicyLine(preset, unit)}.
         </p>
       ) : null}
+      {preset?.options?.map((option) => {
+        const fieldId = `state-law-option-${option.id}`;
+        return (
+          <CheckField key={option.id} id={fieldId} label={option.label} hint={option.hint}>
+            <input
+              id={fieldId}
+              type="checkbox"
+              data-testid={fieldId}
+              checked={choices[option.id] === true}
+              aria-describedby={describedBy(fieldId, { hint: true })}
+              onChange={(e) => {
+                setChoices({ ...choices, [option.id]: e.target.checked });
+                apply.reset();
+              }}
+            />
+          </CheckField>
+        );
+      })}
       <div className="flex items-center gap-3">
         <button
           type="button"

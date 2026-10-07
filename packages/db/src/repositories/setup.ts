@@ -20,6 +20,7 @@ import {
   isoDate,
   isSetupStep,
   JURISDICTION_PRESETS,
+  type JurisdictionChoices,
   type JurisdictionId,
   type NurseRole,
   planJurisdiction,
@@ -63,8 +64,10 @@ import {
 } from './config.js';
 import { createHoliday } from './holidays.js';
 import {
+  createDifferential,
   createOvertimeRule,
   createPayRate,
+  listActiveDifferentials,
   listOvertimeRulesForUnit,
   listPayRatesForUnit,
 } from './pay.js';
@@ -451,26 +454,35 @@ export function applySetupPreset(
  * and each change goes through the same audited create/update the Settings editors use. The
  * choice is remembered on the unit even when nothing else changed, so Settings › Unit can show
  * it; rules a preset switches on arrive as a new rule-set version, never an edit to the old one.
+ * `choices` answers the preset's apply-time questions; they decide the plan and are not stored.
  */
 export function applyJurisdiction(
   tx: ShiftNurseTx,
   unitId: Id,
   id: JurisdictionId,
   actor: string,
+  choices: JurisdictionChoices = {},
 ): SetupPresetResult {
   if (!Object.hasOwn(JURISDICTION_PRESETS, id)) throw new Error(`Unknown state preset "${id}"`);
   const unit = getUnit(tx, unitId);
   if (!unit) throw new Error(`Unit ${unitId} not found`);
   // A unit that never saved rules runs the defaults, so those are what the preset switches on.
   const latest = getLatestRuleSet(tx, unitId);
-  const plan = planJurisdiction(id, {
-    unitType: unit.unitType,
-    ratioRules: listActiveRatioRulesForUnit(tx, unitId),
-    overtimeRules: listOvertimeRulesForUnit(tx, unitId),
-    ruleSet: latest ?? defaultRuleSet(unitId),
-    ratioStaffing: unit.ratioStaffing,
-    leavePolicy: unit.leavePolicy,
-  });
+  const plan = planJurisdiction(
+    id,
+    {
+      unitType: unit.unitType,
+      ratioRules: listActiveRatioRulesForUnit(tx, unitId),
+      overtimeRules: listOvertimeRulesForUnit(tx, unitId),
+      ruleSet: latest ?? defaultRuleSet(unitId),
+      ratioStaffing: unit.ratioStaffing,
+      leavePolicy: unit.leavePolicy,
+      differentials: listActiveDifferentials(tx, unitId),
+      postingLeadDays: unit.postingLeadDays,
+      overtimeOrder: unit.overtimeOrder,
+    },
+    choices,
+  );
 
   const result = { created: 0, updated: 0, unchanged: 0 };
   for (const rule of plan.addRatioRules) {
@@ -484,6 +496,14 @@ export function applyJurisdiction(
   for (const rule of plan.addOvertimeRules) {
     createOvertimeRule(tx, { ...rule, unitId }, actor);
     result.created++;
+  }
+  for (const d of plan.addDifferentials) {
+    createDifferential(tx, { ...d, unitId, active: true }, actor);
+    result.created++;
+  }
+  if (plan.unit) {
+    updateUnit(tx, unitId, plan.unit, actor);
+    result.updated++;
   }
   if (plan.ratioStaffing) {
     updateUnit(tx, unitId, { ratioStaffing: plan.ratioStaffing }, actor);

@@ -26,7 +26,7 @@ import {
   listShiftTypesForUnit,
   listUnits,
 } from './config.js';
-import { listOvertimeRulesForUnit, listPayRatesForUnit } from './pay.js';
+import { listActiveDifferentials, listOvertimeRulesForUnit, listPayRatesForUnit } from './pay.js';
 import { getLatestRuleSet, getRuleSet } from './rulesets.js';
 import {
   advanceSetup,
@@ -301,8 +301,10 @@ describe('applying a state preset', () => {
         chargeCoversBreaks: true,
       },
     });
-    // 1 ratio rule + 5 overtime rules created; ratio staffing, the leave policy (California
-    // sick leave) and the stored choice updated.
+    // Not asked about an alternative workweek: 1 ratio rule + 5 overtime rules (daily 8, daily
+    // 12, weekly 40, both seventh-day) created, and no rule set, since the 12-in-24 cap applies
+    // only on that workweek; ratio staffing, the leave policy (California sick leave) and the
+    // stored choice updated.
     expect(result).toEqual({ created: 6, updated: 3, unchanged: 0 });
   });
 
@@ -320,6 +322,26 @@ describe('applying a state preset', () => {
     expect(again).toEqual({ created: 0, updated: 0, unchanged: 1 });
     expect(auditRows()).toBe(before);
     expect(getUnit(handle.db, unit.id)?.leavePolicy).toEqual(stored);
+  });
+
+  it('gives a VA unit the Title 38 premiums, four weeks’ posting and the overtime rosters once', () => {
+    const unit = newUnit();
+    const first = applyState(unit.id, 'US-VA');
+    expect(listActiveDifferentials(handle.db, unit.id).map((d) => `${d.kind} ${d.amount}`)).toEqual(
+      ['night 1.1', 'weekend 1.25', 'holiday 2'],
+    );
+    expect(getUnit(handle.db, unit.id)).toMatchObject({
+      postingLeadDays: 28,
+      overtimeOrder: 'roster',
+    });
+    // Created: 2 overtime rules (weekly 40, consecutive 8), 3 differentials and 1 rule set;
+    // updated: the posting notice and overtime order, the leave policy and the stored choice.
+    expect(first).toEqual({ created: 6, updated: 3, unchanged: 0 });
+
+    const before = auditRows();
+    expect(applyState(unit.id, 'US-VA')).toEqual({ created: 0, updated: 0, unchanged: 1 });
+    expect(auditRows()).toBe(before);
+    expect(listActiveDifferentials(handle.db, unit.id)).toHaveLength(3);
   });
 
   it('writes nothing the second time a manager presses Apply', () => {

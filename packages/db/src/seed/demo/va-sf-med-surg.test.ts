@@ -273,6 +273,50 @@ describe('the VA San Francisco med-surg demo', () => {
       enabled: true,
       params: { maxConsecutiveWeekends: 2, maxWeekendsPerPeriod: 2 },
     });
+    // Art. 13: no more than two tours a pay period, eleven hours between them.
+    expect(config('tour-rotation')).toMatchObject({
+      enabled: true,
+      params: { maxToursPerPeriod: 2, minHoursBetweenTours: 11 },
+    });
+    expect(config('max-consecutive-shifts')).toMatchObject({
+      enabled: true,
+      params: { maxConsecutiveShifts: 5 },
+    });
+    // Art. 13 posts the schedule four weeks ahead; Art. 14 offers overtime by the rosters.
+    expect(
+      f.rows(`SELECT posting_lead_days, overtime_order FROM unit WHERE id = '${f.result.unitId}'`),
+    ).toEqual([{ posting_lead_days: 28, overtime_order: 'roster' }]);
+    expect(
+      f.rows(
+        `SELECT kind, mode, amount, window_start, window_end, window_whole_shift_at_hours FROM
+           differential WHERE unit_id = '${f.result.unitId}' ORDER BY kind`,
+      ),
+    ).toEqual([
+      {
+        kind: 'holiday',
+        mode: 'multiplier',
+        amount: 2,
+        window_start: null,
+        window_end: null,
+        window_whole_shift_at_hours: null,
+      },
+      {
+        kind: 'night',
+        mode: 'multiplier',
+        amount: 1.1,
+        window_start: '18:00',
+        window_end: '06:00',
+        window_whole_shift_at_hours: 4,
+      },
+      {
+        kind: 'weekend',
+        mode: 'multiplier',
+        amount: 1.25,
+        window_start: null,
+        window_end: null,
+        window_whole_shift_at_hours: null,
+      },
+    ]);
   });
 
   it('never requires overtime past 40 hours of anyone who did not offer it', () => {
