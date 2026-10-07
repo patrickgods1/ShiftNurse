@@ -15,12 +15,13 @@ import type {
   Id,
   IsoDate,
   JurisdictionId,
+  LeavePolicy,
   RatioStaffing,
   ShiftCredentialRequirement,
   ShiftType,
   Unit,
 } from '@shiftnurse/core';
-import { JURISDICTION_PRESETS, withinShiftProblem } from '@shiftnurse/core';
+import { JURISDICTION_PRESETS, validateLeavePolicy, withinShiftProblem } from '@shiftnurse/core';
 import { and, asc, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
@@ -60,6 +61,7 @@ export function createUnit(db: DbLike, input: Omit<Unit, 'id'>, actor: string): 
   const { ratioStaffing, ...fields } = input;
   validateRatioStaffing(ratioStaffing);
   validatePostingLead(fields.postingLeadDays);
+  if (fields.leavePolicy) validateLeavePolicy(fields.leavePolicy);
   const row: typeof unitTable.$inferInsert = {
     id,
     ...fields,
@@ -81,6 +83,8 @@ export interface UnitPatch {
   postingLeadDays?: number | null;
   /** Null forgets the state preset. */
   jurisdiction?: JurisdictionId | null;
+  /** Null clears the policy: FMLA and balances revert to the pre-policy reading. */
+  leavePolicy?: LeavePolicy | null;
 }
 
 const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
@@ -91,6 +95,7 @@ const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
   ratioStaffing: true,
   postingLeadDays: true,
   jurisdiction: true,
+  leavePolicy: true,
 };
 
 /** Break minutes are a whole number a shift can hold; anything else is a typing slip. */
@@ -129,6 +134,7 @@ export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string):
     validate: (values) => {
       validateRatioStaffing(values.ratioStaffing);
       validatePostingLead(values.postingLeadDays);
+      if (values.leavePolicy) validateLeavePolicy(values.leavePolicy);
       if (
         values.jurisdiction !== undefined &&
         values.jurisdiction !== null &&

@@ -8,6 +8,10 @@
  * required hours and leaves ratios and pay to the manager, because HPPD and the § 7453 premiums
  * are not ratios or overtime rules the preset can state.
  *
+ * A preset may also carry a leave policy: the FMLA regime, the leave year and the accrual rules
+ * that project balances forward (`leave/accrual.ts`). It is proposed whole, and only to a unit
+ * with none, because a preset never overwrites a policy a manager chose.
+ *
  * Presets only tighten. A ratio arrives as a catch-all RN rule at the legal ceiling, which
  * `bindingRatio` combines with any stricter tier rule the unit already has; overtime rules are
  * added if missing; a rule is switched on, never off, and a cap parameter only lowers. Applying
@@ -19,12 +23,14 @@
  * its pay premiums).
  */
 
-import type {
-  NurseRole,
-  OvertimeRule,
-  RatioRule,
-  RatioStaffing,
-  Unit,
+import {
+  DEFAULT_LEAVE_POLICY,
+  type LeavePolicy,
+  type NurseRole,
+  type OvertimeRule,
+  type RatioRule,
+  type RatioStaffing,
+  type Unit,
 } from '../domain/entities.js';
 import { resolveConfigs } from '../rules/registry.js';
 import type { RuleConfig, RuleSet } from '../rules/types.js';
@@ -53,6 +59,8 @@ export interface JurisdictionPreset {
    * an unset cap on no-mandatory-overtime is a total ban, stricter than any number.
    */
   enableRules: readonly { ruleId: string; params?: Record<string, unknown> }[];
+  /** Proposed whole to a unit with no leave policy; never merged into one a manager set. */
+  leavePolicy?: LeavePolicy;
 }
 
 const TITLE_22 = 'Cal. Code Regs. tit. 22 § 70217(a)';
@@ -61,6 +69,9 @@ const ORS_441_765 = 'ORS 441.765 (HB 2697, 2023)';
 function rn(maxPatientsPerNurse: number, citation: string): JurisdictionRatio {
   return { role: 'RN', maxPatientsPerNurse, citation };
 }
+
+const VA_HANDBOOK = 'VA Handbook 5011 pt. III ch. 2 (38 U.S.C. § 7421)';
+const TITLE_5_ANNUAL = '5 U.S.C. §§ 6303(a), 6304(a)';
 
 const NO_MANDATORY_OVERTIME = { ruleId: 'no-mandatory-overtime' } as const;
 
@@ -73,7 +84,9 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'shift (a 30-minute meal and three 10-minute rests). Labor Code § 510 overtime: past 8 ' +
       'hours a workday at 1.5×, past 12 at 2×, past 40 a week at 1.5×, and the seventh day in a ' +
       'row. A unit on a health-care alternative workweek (IWC Order 5 § 3(B)(8)) should remove ' +
-      'the 8-hour daily rule. Ratios here count RNs only; Title 22 lets LVNs fill up to half.',
+      'the 8-hour daily rule. Ratios here count RNs only; Title 22 lets LVNs fill up to half. ' +
+      'Sick leave accrues at 1 hour per 30 worked, up to 80 (Lab. Code § 246(b)): the statutory ' +
+      'minimum, which a hospital PTO plan that meets it can replace.',
     ratioStaffing: {
       chargeNurseTakesPatients: false,
       breakMinutesPerNurse: 60,
@@ -93,6 +106,18 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       { basis: 'seventh_day', thresholdHours: 8, multiplier: 2 },
     ],
     enableRules: [],
+    leavePolicy: {
+      fmla: DEFAULT_LEAVE_POLICY.fmla,
+      leaveYearStart: 'calendar',
+      accrual: [
+        {
+          balanceType: 'sick',
+          tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 30 }],
+          balanceCapHours: 80,
+          citation: 'Lab. Code § 246(b) (SB 616, 2023): 1 h per 30 worked, cap 80 h',
+        },
+      ],
+    },
   },
   OR: {
     label: 'Oregon',
@@ -165,10 +190,73 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'hours a week or 8 consecutive hours (or past the scheduled tour on a compressed ' +
       'schedule). Contract terms such as 11 hours between tours or weekends off belong to the ' +
       'local agreement, not the preset. Contract nurses employed by an agency may still be ' +
-      'covered by state law.',
+      'covered by state law. The preset also sets the unit’s leave policy: Title 5 FMLA, a leave ' +
+      'year from the first full pay period, RN annual leave at 8 hours a pay period (685-hour ' +
+      'carryover; 1 per 10 in pay status, 240, for part-time), sick leave at 4 hours a pay ' +
+      'period (1 per 20 for part-time). VA LVNs and nursing assistants (hybrid Title 38) earn ' +
+      'Title 5 leave, and the 6-hour tier’s extra 10 hours in the leave year’s last pay period ' +
+      'is not added.',
     ratios: {},
     overtimeRules: [],
     enableRules: [{ ruleId: 'no-mandatory-overtime', params: { maxMandatedWeeklyHours: 40 } }],
+    leavePolicy: {
+      fmla: { regime: 'title5', yearMethod: 'rolling_forward' },
+      leaveYearStart: 'first_full_pay_period',
+      accrual: [
+        {
+          balanceType: 'annual',
+          roles: ['RN'],
+          employmentTypes: ['full_time'],
+          tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 8 }],
+          carryoverCapHours: 685,
+          citation: `${VA_HANDBOOK}: 8 h a pay period, 685 h ceiling`,
+        },
+        {
+          balanceType: 'annual',
+          roles: ['RN'],
+          employmentTypes: ['part_time'],
+          tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 10 }],
+          carryoverCapHours: 240,
+          citation: `${VA_HANDBOOK}: 1 h per 10 in pay status, 240 h ceiling`,
+        },
+        {
+          balanceType: 'annual',
+          roles: ['LPN', 'CNA'],
+          employmentTypes: ['full_time'],
+          tiers: [
+            { fromYearsOfService: 0, hoursPerPayPeriod: 4 },
+            { fromYearsOfService: 3, hoursPerPayPeriod: 6 },
+            { fromYearsOfService: 15, hoursPerPayPeriod: 8 },
+          ],
+          carryoverCapHours: 240,
+          citation: TITLE_5_ANNUAL,
+        },
+        {
+          balanceType: 'annual',
+          roles: ['LPN', 'CNA'],
+          employmentTypes: ['part_time'],
+          tiers: [
+            { fromYearsOfService: 0, hoursPerAccruedHour: 20 },
+            { fromYearsOfService: 3, hoursPerAccruedHour: 13 },
+            { fromYearsOfService: 15, hoursPerAccruedHour: 10 },
+          ],
+          carryoverCapHours: 240,
+          citation: TITLE_5_ANNUAL,
+        },
+        {
+          balanceType: 'sick',
+          employmentTypes: ['full_time'],
+          tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 4 }],
+          citation: '5 U.S.C. § 6307(a)',
+        },
+        {
+          balanceType: 'sick',
+          employmentTypes: ['part_time'],
+          tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 20 }],
+          citation: '5 U.S.C. § 6307(b)',
+        },
+      ],
+    },
   },
   other: {
     label: 'Another state',
@@ -186,6 +274,8 @@ export interface JurisdictionPlanInput {
   overtimeRules: readonly OvertimeRule[];
   ruleSet: RuleSet;
   ratioStaffing?: Unit['ratioStaffing'];
+  /** The unit's own leave policy, if it has set one. */
+  leavePolicy?: LeavePolicy;
 }
 
 /** The changes a preset makes, each list empty and each field absent when there is nothing to do. */
@@ -199,6 +289,8 @@ export interface JurisdictionPlan {
   ratioStaffing?: RatioStaffing;
   /** The whole rule set's configs with the preset's rules on, when any was off: a new version. */
   ruleConfigs?: RuleConfig[];
+  /** The preset's leave policy, only for a unit that has none. */
+  leavePolicy?: LeavePolicy;
 }
 
 /** The reading before a unit set anything: the charge nurse at the bedside, no break cover. */
@@ -303,6 +395,9 @@ export function planJurisdiction(
     });
     if (changed) plan.ruleConfigs = next;
   }
+
+  if (preset.leavePolicy && current.leavePolicy === undefined)
+    plan.leavePolicy = preset.leavePolicy;
 
   return plan;
 }

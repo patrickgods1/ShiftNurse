@@ -34,6 +34,12 @@ export interface Unit {
   postingLeadDays?: number;
   /** The state preset last applied (Settings › Unit); absent until one is. Not read by any rule. */
   jurisdiction?: JurisdictionId;
+  /**
+   * How the unit's employer runs FMLA, its leave year and leave accrual. Absent: private-sector
+   * FMLA counted back a year from each use, a calendar leave year, and no accrual — balances are
+   * whatever payroll last said.
+   */
+  leavePolicy?: LeavePolicy;
 }
 
 /**
@@ -117,6 +123,12 @@ export interface Nurse {
   contractedHoursPerPeriod: number;
   /** Drives seniority ranking. Earlier = more senior. */
   seniorityDate: IsoDate;
+  /**
+   * The day employment began, where it differs from the bargained seniority date (a nurse who
+   * kept seniority across a merger, or bridged service). FMLA's 12-month test and accrual by
+   * years of service read this. Absent: the seniority date stands in.
+   */
+  hireDate?: IsoDate;
   isChargeEligible: boolean;
   /** New graduates / recent hires. Used by the no-all-novice coverage guard. */
   isNovice: boolean;
@@ -233,7 +245,142 @@ export type PreferenceKind = Preference['kind'];
 // Time off
 // ---------------------------------------------------------------------------
 
-export type TimeOffType = 'pto' | 'sick' | 'unpaid' | 'fmla' | 'education' | 'bereavement';
+/**
+ * `pto` is the private-sector catch-all; federal and union units name leave by what pays it:
+ * `annual` (5 U.S.C. § 6303; Title 38 nurses under 38 U.S.C. § 7421), `court` (jury or witness
+ * duty, § 6322), `military` (§ 6323 / USERRA), `parental` (paid parental leave, § 6382(d)),
+ * `lwop` (leave without pay, approved in advance), `comp` (compensatory time taken in place of
+ * overtime pay) and `state_family` (a state's family-leave law beside FMLA, e.g. CFRA).
+ */
+export type TimeOffType =
+  | 'pto'
+  | 'sick'
+  | 'unpaid'
+  | 'fmla'
+  | 'education'
+  | 'bereavement'
+  | 'annual'
+  | 'court'
+  | 'military'
+  | 'parental'
+  | 'lwop'
+  | 'comp'
+  | 'state_family';
+
+/** Every time-off type, in the order forms list them. */
+export const TIME_OFF_TYPES: readonly TimeOffType[] = [
+  'pto',
+  'annual',
+  'sick',
+  'fmla',
+  'state_family',
+  'parental',
+  'bereavement',
+  'education',
+  'court',
+  'military',
+  'comp',
+  'unpaid',
+  'lwop',
+];
+
+export const TIME_OFF_TYPE_LABELS: Readonly<Record<TimeOffType, string>> = {
+  pto: 'PTO',
+  annual: 'Annual leave',
+  sick: 'Sick',
+  fmla: 'FMLA',
+  state_family: 'State family leave',
+  parental: 'Paid parental leave',
+  bereavement: 'Bereavement',
+  education: 'Education',
+  court: 'Court leave',
+  military: 'Military leave',
+  comp: 'Comp time',
+  unpaid: 'Unpaid',
+  lwop: 'Leave without pay',
+};
+
+/** Leave that payroll keeps a balance for: a request of the same type draws on it. */
+export type LeaveBalanceType = 'pto' | 'sick' | 'annual' | 'comp';
+
+export const LEAVE_BALANCE_TYPES: readonly LeaveBalanceType[] = ['pto', 'annual', 'sick', 'comp'];
+
+// ---------------------------------------------------------------------------
+// Leave policy: FMLA regime, leave year, accrual
+// ---------------------------------------------------------------------------
+
+/**
+ * Which FMLA a unit's employer is under. `title1` is 29 U.S.C. § 2611 ff. (private and state
+ * employers: 12 months employed and 1,250 hours, 12 of the nurse's work weeks). `title5` is
+ * 5 U.S.C. § 6381 ff. for federal staff, VA nurses included (5 C.F.R. § 630.1201 ff.): 12 months
+ * of service and no hours test, 12 administrative workweeks (6 × the biweekly tour hours), and a
+ * 12-month period that always starts on the first day of leave.
+ */
+export type FmlaRegime = 'title1' | 'title5';
+
+/**
+ * The four ways an employer may measure FMLA's 12 months (29 C.F.R. § 825.200(b)): the calendar
+ * year, a fixed year from `FmlaPolicy.fixedYearStart`, forward from the first day of leave, or
+ * back a year from each day of leave. Title 5 is always `rolling_forward`.
+ */
+export type FmlaYearMethod = 'calendar' | 'fixed' | 'rolling_forward' | 'rolling_backward';
+
+export interface FmlaPolicy {
+  regime: FmlaRegime;
+  yearMethod: FmlaYearMethod;
+  /** `MM-DD` the fixed year starts on (a fiscal year: `10-01`). Only read for `fixed`. */
+  fixedYearStart?: string;
+}
+
+/**
+ * When a leave year turns over, which is when a carryover cap forfeits the excess. Federal leave
+ * years start on the first day of the first full pay period of the calendar year (5 U.S.C.
+ * § 6302(a)); most other employers use 1 January.
+ */
+export type LeaveYearStart = 'calendar' | 'first_full_pay_period';
+
+/** One rate of earning: from this many whole years of service until the next tier's start. */
+export interface AccrualTier {
+  fromYearsOfService: number;
+  /** Hours earned for each full pay period (full-time federal leave: 4, 6 or 8). */
+  hoursPerPayPeriod?: number;
+  /** Or one hour earned for this many hours worked or in pay status (part-time: 1 per 10). */
+  hoursPerAccruedHour?: number;
+}
+
+/**
+ * How one balance grows, for the nurses it covers. The first rule in `LeavePolicy.accrual`
+ * matching a nurse's balance type, role and employment type is theirs; a nurse no rule matches
+ * accrues nothing.
+ */
+export interface AccrualRule {
+  balanceType: LeaveBalanceType;
+  /** Absent: every role. */
+  roles?: readonly NurseRole[];
+  /** Absent: every employment type. */
+  employmentTypes?: readonly EmploymentType[];
+  /** Ordered by `fromYearsOfService`; the last tier the nurse has reached applies. */
+  tiers: readonly AccrualTier[];
+  /** The most the balance may ever hold; accrual stops there (California sick leave: 80). */
+  balanceCapHours?: number;
+  /** The most carried into a new leave year; the rest is forfeited (federal annual: 240). */
+  carryoverCapHours?: number;
+  /** The provision the rule comes from, shown beside it. */
+  citation?: string;
+}
+
+export interface LeavePolicy {
+  fmla: FmlaPolicy;
+  leaveYearStart: LeaveYearStart;
+  accrual: readonly AccrualRule[];
+}
+
+/** The policy a unit without one is read as: today's behaviour before leave policies existed. */
+export const DEFAULT_LEAVE_POLICY: LeavePolicy = {
+  fmla: { regime: 'title1', yearMethod: 'rolling_backward' },
+  leaveYearStart: 'calendar',
+  accrual: [],
+};
 
 export type TimeOffStatus = 'pending' | 'approved' | 'denied' | 'cancelled';
 

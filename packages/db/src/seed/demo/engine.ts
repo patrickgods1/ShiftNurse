@@ -64,6 +64,7 @@ import {
   type IsoDate,
   isWeekendDate,
   type JurisdictionId,
+  type LeaveBalanceType,
   type Nurse,
   type NurseRole,
   nursesRequiredForMix,
@@ -213,8 +214,13 @@ export interface DemoKeptApart {
 }
 
 export interface DemoLeaveBalances {
-  /** The most annual leave carried into a leave year by a full-time employee. */
-  carryoverCapHours: number;
+  /**
+   * The balance vacation is kept in, and the type of the vacation requests that draw on it:
+   * `pto` for a private hospital, `annual` for federal staff.
+   */
+  vacationType: LeaveBalanceType;
+  /** The most vacation leave a full-time employee of the role carries into a leave year. */
+  carryoverCapHours: (role: NurseRole) => number;
   /** Hours earned each pay period by a full-time employee; part-time staff earn it pro rata. */
   accrual: (input: { role: NurseRole; years: number }) => { annual: number; sick: number };
 }
@@ -322,6 +328,12 @@ export interface DemoProfile {
    * everything else, so the other demos' data is unchanged.
    */
   leaveBalances?: DemoLeaveBalances;
+  /**
+   * Give some long-serving staff a hire date later than their seniority date: seniority credited
+   * under the contract from an earlier facility, with employment here beginning later. Chosen by
+   * staff index, not drawn, so no later draw moves.
+   */
+  bridgedService?: boolean;
   /** FMLA certifications on distinct staff (never a charge nurse or a new grad). */
   fmla?: readonly DemoFmla[];
   /** Orientations of new grads, each with an experienced full-time preceptor on their position. */
@@ -1073,6 +1085,16 @@ export function seedFromProfile(
     const seniorityDate = orientation
       ? addDays(draftStart, orientation.spec.hiredIn)
       : drawnSeniority;
+    // About one in six of the 6+ year employees has seniority credited from an earlier facility,
+    // their employment here beginning two to four years later. Always before the history, so
+    // staffing is unaffected.
+    const bridged =
+      profile.bridgedService === true &&
+      !traveler &&
+      !orientation &&
+      row.employmentType !== 'per_diem' &&
+      p.years >= 6 &&
+      index % 6 === 0;
     const first = firstNames[index]!;
     const last = lastNames[index]!;
     const nurse = createNurse(
@@ -1087,6 +1109,7 @@ export function seedFromProfile(
         fte: row.fte,
         contractedHoursPerPeriod: row.contractedHoursPerPeriod,
         seniorityDate,
+        ...(bridged ? { hireDate: addDays(seniorityDate, 365 * (2 + (index % 3))) } : {}),
         isChargeEligible: p.charge,
         isNovice: p.newGrad,
         isFloatEligible: !p.newGrad && !traveler && rng.chance(0.4),
@@ -1399,11 +1422,13 @@ export function seedFromProfile(
   const offByRoleDate = new Map<string, number>();
   const offLimit = (role: NurseRole) =>
     Math.max(1, Math.floor(staff.filter((s) => s.nurse.role === role).length / 10));
+  // Vacation is drawn from the balance the profile keeps it in, as payroll would.
+  const vacationType = profile.leaveBalances?.vacationType ?? 'pto';
   const requestLeave = (
     s: Staff,
     startDate: IsoDate,
     endDate: IsoDate,
-    type: 'pto' | 'education',
+    type: LeaveBalanceType | 'education',
     reason: string,
     decision: 'decide' | 'approve' | 'pending',
   ) => {
@@ -1453,7 +1478,14 @@ export function seedFromProfile(
         requestLeave(s, startDate, startDate, 'education', 'Continuing education', 'decide');
       } else {
         const reason = rng.pick(['Vacation', 'Family event', 'Appointment', 'Personal']);
-        requestLeave(s, startDate, addDays(startDate, rng.nextInt(0, 4)), 'pto', reason, 'decide');
+        requestLeave(
+          s,
+          startDate,
+          addDays(startDate, rng.nextInt(0, 4)),
+          vacationType,
+          reason,
+          'decide',
+        );
       }
     }
   }
@@ -2062,7 +2094,7 @@ export function seedFromProfile(
     const endDate = addDays(startDate, i < 2 ? 6 : rng.nextInt(0, 2));
     const reason =
       i < 2 ? 'Vacation' : rng.pick(['Family event', 'Wedding', 'Appointment', 'Personal']);
-    requestLeave(s, startDate, endDate, 'pto', reason, i < 6 ? 'approve' : 'pending');
+    requestLeave(s, startDate, endDate, vacationType, reason, i < 6 ? 'approve' : 'pending');
   }
 
   // --- Leave, certifications, floats and bidding ----------------------------------------------
@@ -2076,7 +2108,7 @@ export function seedFromProfile(
   };
 
   if (profile.leaveBalances) {
-    const { carryoverCapHours, accrual } = profile.leaveBalances;
+    const { vacationType: balanceType, carryoverCapHours, accrual } = profile.leaveBalances;
     const asOfYear = Number(asOf.slice(0, 4));
     const thisYearStart = payPeriodOnOrAfter(`${asOfYear}-01-01` as IsoDate);
     // Before the year's first pay period, the leave year is still last year's.
@@ -2091,20 +2123,24 @@ export function seedFromProfile(
       // Part-time staff earn by the hours they work: pro rata to an 80-hour pay period.
       const share = Math.min(1, s.nurse.contractedHoursPerPeriod / 80);
       const annualRate = rates.annual * share;
-      const hired = s.nurse.seniorityDate;
+      // Leave is projected from when employment here began, as the app does.
+      const hired = s.nurse.hireDate ?? s.nurse.seniorityDate;
       // What came into the leave year: what has accrued since hire, never above the cap, and
       // some of it spent. This year's accrual and spending follow.
       const earnedBefore = annualRate * periodsBetween(hired, yearStart);
-      const carried = Math.min(carryoverCapHours, earnedBefore) * (0.1 + 0.9 * rng.nextFloat());
+      const cap = carryoverCapHours(s.nurse.role);
+      const carried = Math.min(cap, earnedBefore) * (0.1 + 0.9 * rng.nextFloat());
       const accruedThisYear =
         annualRate * periodsBetween(compareDates(hired, yearStart) > 0 ? hired : yearStart, asOf);
-      const annual = (carried + accruedThisYear) * (1 - 0.55 * rng.nextFloat());
+      // Kept at or under the ceiling: carry-in plus this year's accrual can pass it, and a balance
+      // above it would be forfeiting at the next turnover.
+      const annual = Math.min(cap, (carried + accruedThisYear) * (1 - 0.55 * rng.nextFloat()));
       // Sick leave accrues for the whole career and has no cap; most of it goes unused.
       const sickEarned = rates.sick * share * periodsBetween(hired, asOf);
       const sick = sickEarned * (0.55 + 0.4 * rng.nextFloat());
       setLeaveBalance(
         db,
-        { nurseId: s.nurse.id, type: 'pto', balanceHours: round2(annual), asOf },
+        { nurseId: s.nurse.id, type: balanceType, balanceHours: round2(annual), asOf },
         ACTOR,
       );
       setLeaveBalance(

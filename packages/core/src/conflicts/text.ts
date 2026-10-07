@@ -56,6 +56,20 @@ export function leaveLabel(type: TimeOffType): string {
       return 'education leave';
     case 'bereavement':
       return 'bereavement leave';
+    case 'annual':
+      return 'annual leave';
+    case 'court':
+      return 'court leave';
+    case 'military':
+      return 'military leave';
+    case 'parental':
+      return 'paid parental leave';
+    case 'lwop':
+      return 'leave without pay';
+    case 'comp':
+      return 'comp time';
+    case 'state_family':
+      return 'state family leave';
   }
 }
 

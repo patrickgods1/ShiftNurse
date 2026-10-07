@@ -66,6 +66,7 @@ export function toUnit(r: typeof s.unit.$inferSelect): Unit {
     },
     ...(r.postingLeadDays === null ? {} : { postingLeadDays: r.postingLeadDays }),
     ...(r.jurisdiction === null ? {} : { jurisdiction: r.jurisdiction as JurisdictionId }),
+    ...(r.leavePolicy === null ? {} : { leavePolicy: r.leavePolicy }),
   };
 }
 
@@ -111,6 +112,7 @@ export function toNurse(r: typeof s.nurse.$inferSelect): Nurse {
     fte: r.fte,
     contractedHoursPerPeriod: r.contractedHoursPerPeriod,
     seniorityDate: r.seniorityDate as Nurse['seniorityDate'],
+    hireDate: opt(r.hireDate as Nurse['hireDate'] | null),
     isChargeEligible: r.isChargeEligible,
     isNovice: r.isNovice,
     isFloatEligible: r.isFloatEligible,

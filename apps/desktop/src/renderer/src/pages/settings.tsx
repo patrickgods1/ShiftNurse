@@ -1,5 +1,5 @@
 /**
- * Unit configuration home: shift types, coverage floors, pay and holidays feed the solver, the
+ * Unit configuration home: shift types, coverage floors, pay, leave and holidays feed the solver, the
  * schedule grid and the cost engine, so they live together as tabs of one "Settings"
  * destination rather than as separate nav entries. About keeps the existing app-info + theme content.
  */
@@ -19,6 +19,7 @@ import CancellationOrderPanel from './settings/cancellation-order.js';
 import ConflictsPanel from './settings/conflicts.js';
 import { CoverageTab } from './settings/coverage-tab.js';
 import HolidaysPanel from './settings/holidays.js';
+import LeavePanel from './settings/leave.js';
 import PayPanel from './settings/pay.js';
 import RulesPanel from './settings/rules.js';
 import ShiftTypesPanel from './settings/shift-types.js';
@@ -45,6 +46,7 @@ const GROUPS = [
     tabs: [
       { id: 'rules', label: 'Rules' },
       { id: 'pay', label: 'Pay' },
+      { id: 'leave', label: 'Leave' },
     ],
   },
   {
@@ -230,6 +232,8 @@ export default function SettingsPage() {
                   <RulesPanel />
                 ) : tab.id === 'pay' ? (
                   <PayPanel />
+                ) : tab.id === 'leave' ? (
+                  <LeavePanel />
                 ) : tab.id === 'solver' ? (
                   <SolverPanel />
                 ) : tab.id === 'conflicts' ? (

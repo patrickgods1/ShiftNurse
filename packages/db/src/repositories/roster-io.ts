@@ -101,6 +101,7 @@ export function importRoster(
           phone: row.nurse.phone ?? null,
           email: row.nurse.email ?? null,
           notes: row.nurse.notes ?? null,
+          hireDate: row.nurse.hireDate ?? null,
           active: true,
         },
         actor,

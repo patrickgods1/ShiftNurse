@@ -8,8 +8,8 @@
  * backwards, or a nurse who does not exist, would look like cover and prove nothing.
  */
 
-import type { Id, IsoDate } from '@shiftnurse/core';
-import { compareDates } from '@shiftnurse/core';
+import type { Id, IsoDate, LeaveBalanceType } from '@shiftnurse/core';
+import { compareDates, LEAVE_BALANCE_TYPES } from '@shiftnurse/core';
 import { and, asc, eq } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
@@ -17,7 +17,8 @@ import { ids } from '../ids.js';
 import { leaveBalance as balanceTable, fmlaCertification as certTable, nurse } from '../schema.js';
 import { type PatchKeys, patchOf } from './patch.js';
 
-export type LeaveBalanceType = 'pto' | 'sick';
+/** The type lives in core; re-exported so callers keep importing it from the package. */
+export type { LeaveBalanceType };
 
 export interface LeaveBalance {
   id: Id;
@@ -115,8 +116,8 @@ export function setLeaveBalance(
   input: Omit<LeaveBalance, 'id'>,
   actor: string,
 ): LeaveBalance {
-  if (input.type !== 'pto' && input.type !== 'sick') {
-    throw new Error('Only PTO and sick balances are kept');
+  if (!LEAVE_BALANCE_TYPES.includes(input.type)) {
+    throw new Error('Only PTO, annual, sick and comp balances are kept');
   }
   if (!Number.isFinite(input.balanceHours) || input.balanceHours < 0) {
     throw new Error('A balance is zero hours or more');

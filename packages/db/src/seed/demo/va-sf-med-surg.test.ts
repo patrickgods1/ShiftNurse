@@ -12,6 +12,7 @@ import {
   costSchedule,
   daysBetween,
   isoDate,
+  type Nurse,
   restMinutesBetween,
   ScheduleView,
   type ShiftType,
@@ -20,7 +21,7 @@ import {
   weekdayOf,
 } from '@shiftnurse/core';
 import { describe, expect, it } from 'vitest';
-import { listHolidaysForUnit, listUnits } from '../../repositories/config.js';
+import { getUnit, listHolidaysForUnit, listUnits } from '../../repositories/config.js';
 import { listIncompatibilityGroups } from '../../repositories/incompatibility.js';
 import {
   listFmlaCertifications,
@@ -36,6 +37,7 @@ import {
 } from '../../repositories/roster.js';
 import { getPeriod, listPeriodsForUnit } from '../../repositories/schedule.js';
 import { costContext, loadPeriodInput } from '../../repositories/solve-input.js';
+import { listTimeOffForNurse } from '../../repositories/timeoff.js';
 import { historyViolations, realisticDemoChecks, useDemo } from './checks.test-support.js';
 import { slow } from './slow.test-support.js';
 
@@ -480,17 +482,18 @@ describe('the VA San Francisco med-surg demo', () => {
     it('gives every full- and part-time nurse an annual and a sick balance as of the last pay period', () => {
       for (const n of employees()) {
         const balances = listLeaveBalancesForNurse(db(), n.id);
-        expect(balances.map((b) => b.type).sort(), n.lastName).toEqual(['pto', 'sick']);
+        // Federal staff keep annual leave, not PTO.
+        expect(balances.map((b) => b.type).sort(), n.lastName).toEqual(['annual', 'sick']);
         for (const b of balances) {
           expect(b.balanceHours).toBeGreaterThanOrEqual(0);
           expect(b.asOf).toBe(addDays(f.result.draftStart, -1));
         }
-        // A full-timer carries at most 240 hours in and earns at most 26 pay periods of 8.
-        if (n.employmentType === 'full_time') {
-          expect(balances.find((b) => b.type === 'pto')!.balanceHours).toBeLessThanOrEqual(
-            240 + 26 * 8,
-          );
-        }
+        // The ceilings: Title 38 RNs 685 (VA Handbook 5011 pt. III ch. 2), Title 5 LVNs and
+        // nursing assistants 240 (5 U.S.C. § 6304(a)).
+        expect(
+          balances.find((b) => b.type === 'annual')!.balanceHours,
+          n.lastName,
+        ).toBeLessThanOrEqual(n.role === 'RN' ? 685 : 240);
       }
       // Per-diem staff keep no balance.
       for (const n of nurses().filter((x) => x.employmentType === 'per_diem')) {
@@ -500,7 +503,7 @@ describe('the VA San Francisco med-surg demo', () => {
 
     it('shows annual leave from tens of hours up to the carry-over cap and more, and sick leave beyond it', () => {
       const pto = employees().map(
-        (n) => listLeaveBalancesForNurse(db(), n.id).find((b) => b.type === 'pto')!.balanceHours,
+        (n) => listLeaveBalancesForNurse(db(), n.id).find((b) => b.type === 'annual')!.balanceHours,
       );
       const sick = employees().map(
         (n) => listLeaveBalancesForNurse(db(), n.id).find((b) => b.type === 'sick')!.balanceHours,
@@ -509,6 +512,53 @@ describe('the VA San Francisco med-surg demo', () => {
       expect(Math.max(...pto)).toBeGreaterThan(200);
       // Sick leave is not capped: a long-serving nurse has more than the annual cap allows.
       expect(Math.max(...sick)).toBeGreaterThan(240);
+    });
+
+    it('has no PTO balance anywhere: federal vacation is annual leave', () => {
+      const types = nurses().flatMap((n) =>
+        listLeaveBalancesForNurse(db(), n.id).map((b) => b.type),
+      );
+      expect(types).not.toContain('pto');
+      expect(types.filter((t) => t === 'annual').length).toBe(employees().length);
+    });
+
+    it('holds annual balances at the ceiling for staff who have earned past it', () => {
+      // Hand-known consequence of the ceilings, not of the engine's arithmetic: with 8 hours a
+      // pay period an RN with years of service has earned past 685, and an LVN past 240, so
+      // the long-serving ones sit exactly on their ceiling rather than over it.
+      const annual = (role: (n: Nurse) => boolean) =>
+        employees()
+          .filter(role)
+          .map(
+            (n) =>
+              listLeaveBalancesForNurse(db(), n.id).find((b) => b.type === 'annual')!.balanceHours,
+          );
+      expect(annual((n) => n.role === 'RN')).toContain(685);
+      expect(annual((n) => n.role === 'LPN')).toContain(240);
+    });
+
+    it('puts the unit under Title 5 FMLA through the VA preset', () => {
+      expect(getUnit(db(), f.result.unitId)?.leavePolicy?.fmla.regime).toBe('title5');
+    });
+
+    it('gives some long-serving staff a VA hire date after their federal service began', () => {
+      const bridged = nurses().filter((n) => n.hireDate !== undefined);
+      // About one in six of the 6+ year employees: five of 45 staff in this seeding.
+      expect(bridged).toHaveLength(5);
+      for (const n of bridged) {
+        expect(n.hireDate! > n.seniorityDate, n.lastName).toBe(true);
+        // Two to four years of earlier service, so still on staff before the history began.
+        expect(daysBetween(n.seniorityDate, n.hireDate!)).toBeGreaterThanOrEqual(2 * 365);
+        expect(daysBetween(n.seniorityDate, n.hireDate!)).toBeLessThanOrEqual(4 * 365);
+      }
+      // Everyone else's employment began on their seniority date.
+      expect(nurses().some((n) => n.hireDate === undefined)).toBe(true);
+    });
+
+    it('records vacation requests as annual leave, never PTO', () => {
+      const requests = nurses().flatMap((n) => listTimeOffForNurse(db(), n.id));
+      expect(requests.filter((r) => r.type === 'pto')).toEqual([]);
+      expect(requests.filter((r) => r.type === 'annual').length).toBeGreaterThan(10);
     });
 
     it('records three FMLA certifications on three nurses, one intermittent, none on a charge nurse', () => {

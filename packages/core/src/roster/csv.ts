@@ -127,6 +127,8 @@ export const ROSTER_COLUMNS = [
   'email',
   'notes',
   'credentials',
+  // After the long-standing columns so a sheet exported before it existed still reads.
+  'hire_date',
 ] as const;
 
 export type RosterColumn = (typeof ROSTER_COLUMNS)[number];
@@ -304,6 +306,12 @@ export function parseRosterCsv(text: string, options: ParseRosterOptions): Roste
       bad('seniority_date', `Seniority date "${seniorityRaw}" is not a valid YYYY-MM-DD date`);
     }
 
+    // Optional: absent for staff whose employer start is their seniority date.
+    const hireRaw = cell('hire_date');
+    if (hireRaw !== '' && !isIsoDate(hireRaw)) {
+      bad('hire_date', `Hire date "${hireRaw}" is not a valid YYYY-MM-DD date`);
+    }
+
     const flags = {} as Record<'charge_eligible' | 'novice' | 'float_eligible', boolean>;
     for (const column of ['charge_eligible', 'novice', 'float_eligible'] as const) {
       const v = parseBoolean(cell(column));
@@ -329,6 +337,7 @@ export function parseRosterCsv(text: string, options: ParseRosterOptions): Roste
         fte,
         contractedHoursPerPeriod,
         seniorityDate: seniorityRaw as IsoDate,
+        ...(hireRaw === '' ? {} : { hireDate: hireRaw as IsoDate }),
         isChargeEligible: flags.charge_eligible,
         isNovice: flags.novice,
         isFloatEligible: flags.float_eligible,
@@ -368,6 +377,7 @@ export function formatRosterCsv(rows: readonly RosterCsvRow[]): string {
     n.email ?? '',
     n.notes ?? '',
     formatCredentials(credentials),
+    n.hireDate ?? '',
   ]);
   return serializeCsv([ROSTER_COLUMNS, ...body]);
 }

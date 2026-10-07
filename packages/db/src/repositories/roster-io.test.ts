@@ -141,6 +141,21 @@ describe('roster import reconciliation', () => {
     expect(nurses[0]!.fte).toBe(0.6);
   });
 
+  it('carries a hire date through import, export and re-import, and an empty cell clears it', () => {
+    const bridged = { ...ada, nurse: { ...ada.nurse, hireDate: isoDate('2018-07-09') } };
+    transact(handle.db, (tx) => importRoster(tx, unitId, [bridged], ACTOR));
+    expect(getNurseByEmployeeId(handle.db, unitId, 'E1')?.hireDate).toBe('2018-07-09');
+
+    const exported = formatRosterCsv(exportRoster(handle.db, unitId));
+    expect(exported).toContain('2018-07-09');
+    const reparsed = parseRosterCsv(exported, { payPeriodDays: 14 });
+    expect(reparsed.errors).toEqual([]);
+    expect(reparsed.rows[0]!.nurse.hireDate).toBe('2018-07-09');
+
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
+    expect(getNurseByEmployeeId(handle.db, unitId, 'E1')?.hireDate).toBeUndefined();
+  });
+
   it('leaves nurses who are not in the file untouched', () => {
     createNurse(
       handle.db,

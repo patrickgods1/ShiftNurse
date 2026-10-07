@@ -469,6 +469,7 @@ export function applyJurisdiction(
     overtimeRules: listOvertimeRulesForUnit(tx, unitId),
     ruleSet: latest ?? defaultRuleSet(unitId),
     ratioStaffing: unit.ratioStaffing,
+    leavePolicy: unit.leavePolicy,
   });
 
   const result = { created: 0, updated: 0, unchanged: 0 };
@@ -486,6 +487,10 @@ export function applyJurisdiction(
   }
   if (plan.ratioStaffing) {
     updateUnit(tx, unitId, { ratioStaffing: plan.ratioStaffing }, actor);
+    result.updated++;
+  }
+  if (plan.leavePolicy) {
+    updateUnit(tx, unitId, { leavePolicy: plan.leavePolicy }, actor);
     result.updated++;
   }
   if (plan.ruleConfigs) {

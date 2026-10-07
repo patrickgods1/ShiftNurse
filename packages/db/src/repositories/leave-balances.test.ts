@@ -102,6 +102,24 @@ describe('a nurse’s leave balance from payroll', () => {
     });
   });
 
+  it('keeps annual and comp balances, as a federal unit does, and refuses anything else', () => {
+    for (const type of ['annual', 'comp'] as const) {
+      setLeaveBalance(
+        handle.db,
+        { nurseId, type, balanceHours: 96, asOf: isoDate('2026-10-01') },
+        ACTOR,
+      );
+      expect(getLeaveBalance(handle.db, nurseId, type)?.balanceHours).toBe(96);
+    }
+    expect(() =>
+      setLeaveBalance(
+        handle.db,
+        { nurseId, type: 'bereavement' as never, balanceHours: 8, asOf: isoDate('2026-10-01') },
+        ACTOR,
+      ),
+    ).toThrow('Only PTO, annual, sick and comp balances are kept');
+  });
+
   it('refuses a negative balance and a nurse who does not exist', () => {
     const base = { type: 'pto' as const, asOf: isoDate('2026-10-01') };
     expect(() => setLeaveBalance(handle.db, { nurseId, balanceHours: -4, ...base }, ACTOR)).toThrow(

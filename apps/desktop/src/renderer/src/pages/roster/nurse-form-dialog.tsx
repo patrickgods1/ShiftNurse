@@ -26,6 +26,7 @@ interface FormState {
   fte: string;
   contractedHoursPerPeriod: string;
   seniorityDate: string;
+  hireDate: string;
   isChargeEligible: boolean;
   isNovice: boolean;
   isFloatEligible: boolean;
@@ -45,6 +46,7 @@ function blankForm(payPeriodDays: number): FormState {
     // Worked out from the FTE so the field is never blank on a new nurse (see the hint).
     contractedHoursPerPeriod: String(defaultContractedHours(1, payPeriodDays)),
     seniorityDate: '',
+    hireDate: '',
     isChargeEligible: false,
     isNovice: false,
     isFloatEligible: false,
@@ -64,6 +66,7 @@ function formFromNurse(nurse: Nurse): FormState {
     fte: String(nurse.fte),
     contractedHoursPerPeriod: String(nurse.contractedHoursPerPeriod),
     seniorityDate: nurse.seniorityDate,
+    hireDate: nurse.hireDate ?? '',
     isChargeEligible: nurse.isChargeEligible,
     isNovice: nurse.isNovice,
     isFloatEligible: nurse.isFloatEligible,
@@ -203,6 +206,10 @@ export function NurseFormDialog({
       if (form.seniorityDate !== initial.seniorityDate) {
         patch.seniorityDate = form.seniorityDate as Nurse['seniorityDate'];
       }
+      // Emptying the box clears it; `null` says so, where an omitted key would leave it alone.
+      if (form.hireDate !== initial.hireDate) {
+        patch.hireDate = form.hireDate === '' ? null : (form.hireDate as IsoDate);
+      }
       if (form.isChargeEligible !== initial.isChargeEligible) {
         patch.isChargeEligible = form.isChargeEligible;
       }
@@ -226,6 +233,7 @@ export function NurseFormDialog({
         fte,
         contractedHoursPerPeriod,
         seniorityDate: form.seniorityDate as Nurse['seniorityDate'],
+        ...(form.hireDate !== '' ? { hireDate: form.hireDate as IsoDate } : {}),
         isChargeEligible: form.isChargeEligible,
         isNovice: form.isNovice,
         isFloatEligible: form.isFloatEligible,
@@ -352,6 +360,13 @@ export function NurseFormDialog({
               <span className="mt-1 block text-xs text-danger">{errors.seniorityDate}</span>
             ) : null}
           </div>
+          <DateField
+            id={`${formId}-hire`}
+            label="Hire date"
+            hint="Only if employment began on a different day than seniority (bridged or merged service). FMLA and accrual by years of service use it."
+            value={form.hireDate as IsoDate | ''}
+            onChange={(v) => setField('hireDate', v)}
+          />
         </div>
 
         <fieldset className="mt-4 flex gap-6">

@@ -3,8 +3,22 @@
 import { z } from 'zod';
 import { hours, id, isoDate, object, type ResourceSchemas, text } from './primitives.js';
 
-const balanceType = z.enum(['pto', 'sick']);
-const requestType = z.enum(['pto', 'sick', 'unpaid', 'fmla', 'education', 'bereavement']);
+const balanceType = z.enum(['pto', 'annual', 'sick', 'comp']);
+const requestType = z.enum([
+  'pto',
+  'sick',
+  'unpaid',
+  'fmla',
+  'education',
+  'bereavement',
+  'annual',
+  'court',
+  'military',
+  'parental',
+  'lwop',
+  'comp',
+  'state_family',
+]);
 
 const certificationInput = object({
   nurseId: id,

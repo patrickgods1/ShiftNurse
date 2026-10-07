@@ -44,7 +44,8 @@ describe('Settings navigation', () => {
     }
     expect(screen.getByRole('tab', { name: 'Schedule builder' }).id).toBe('settings-tab-solver');
     expect(screen.getByRole('tab', { name: 'Requests' }).id).toBe('settings-tab-conflicts');
-    expect(screen.getAllByRole('tab')).toHaveLength(11);
+    expect(screen.getByRole('tab', { name: 'Leave' }).id).toBe('settings-tab-leave');
+    expect(screen.getAllByRole('tab')).toHaveLength(12);
     // A tablist owns only tabs, so each group is its own list, named by its heading.
     expect(screen.getAllByRole('tablist')).toHaveLength(4);
     expect(screen.getByRole('tablist', { name: 'Data' })).toBeTruthy();

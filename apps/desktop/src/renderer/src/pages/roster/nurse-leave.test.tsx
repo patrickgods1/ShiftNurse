@@ -42,6 +42,23 @@ afterEach(() => {
 });
 
 describe('a nurse’s leave on the roster', () => {
+  it('enters an annual leave balance, a type only some employers use', async () => {
+    renderWithApp(<LeaveSection nurseId="n-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Annual leave balance' }));
+    fireEvent.change(await screen.findByLabelText('Annual leave balance (hours)'), {
+      target: { value: '100' },
+    });
+    fireEvent.change(screen.getByLabelText('Annual leave balance as of'), {
+      target: { value: '2026-10-01' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Annual leave balance' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('leaveBalances', 'setBalance')).toEqual([
+        ['n-1', 'annual', 100, '2026-10-01'],
+      ]),
+    );
+  });
+
   it('shows the balance payroll gave and the certification on file', async () => {
     renderWithApp(<LeaveSection nurseId="n-1" />);
     expect((await screen.findByLabelText('PTO balance (hours)')) as HTMLInputElement).toBeTruthy();
@@ -67,6 +84,8 @@ describe('a nurse’s leave on the roster', () => {
 
   it('enters a first sick balance', async () => {
     renderWithApp(<LeaveSection nurseId="n-1" />);
+    expect(screen.queryByLabelText('Sick balance (hours)')).toBeNull();
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Sick balance' }));
     fireEvent.change(await screen.findByLabelText('Sick balance (hours)'), {
       target: { value: '24' },
     });

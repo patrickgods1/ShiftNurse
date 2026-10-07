@@ -111,6 +111,30 @@ describe('roster CSV import', () => {
     ]);
   });
 
+  it('reads a hire date apart from seniority, and an empty cell as none', () => {
+    const withDate = parseRosterCsv(
+      csv('E1,A,B,RN,full_time,1,80,2012-05-01,no,no,no,,,,,2015-09-14'),
+      { payPeriodDays: 14 },
+    );
+    expect(withDate.errors).toEqual([]);
+    expect(withDate.rows[0]!.nurse.hireDate).toBe('2015-09-14');
+    const without = parseRosterCsv(csv('E1,A,B,RN,full_time,1,80,2012-05-01,no,no,no,,,,,'), {
+      payPeriodDays: 14,
+    });
+    expect(without.errors).toEqual([]);
+    expect(without.rows[0]!.nurse.hireDate).toBeUndefined();
+  });
+
+  it('rejects a hire date that is not a calendar date', () => {
+    const { errors } = parseRosterCsv(
+      csv('E1,A,B,RN,full_time,1,80,2012-05-01,no,no,no,,,,,2015-02-30'),
+      { payPeriodDays: 14 },
+    );
+    expect(errors).toEqual([
+      { line: 2, column: 'hire_date', message: expect.stringContaining('2015-02-30') },
+    ]);
+  });
+
   it('derives contracted hours from FTE when the column is blank: 0.6 FTE over 14 days = 48h', () => {
     const { rows, errors } = parseRosterCsv(
       csv('E1,A,B,RN,part_time,0.6,,2020-01-01,no,no,no,,,,'),
@@ -217,6 +241,7 @@ describe('roster CSV export', () => {
           fte: 1,
           contractedHoursPerPeriod: 80,
           seniorityDate: isoDate('2015-03-02'),
+          hireDate: isoDate('2017-06-12'),
           isChargeEligible: true,
           isNovice: false,
           isFloatEligible: true,

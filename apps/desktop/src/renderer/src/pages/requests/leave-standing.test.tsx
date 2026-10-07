@@ -28,6 +28,10 @@ const short: LeaveRequestCheck = {
     type: 'pto',
     balanceHours: 20,
     asOf: isoDate('2026-10-01'),
+    projectedHours: 20,
+    accruedHours: 0,
+    usedHours: 0,
+    forfeitedHours: 0,
     check: {
       ok: false,
       shortHours: 16,
@@ -81,7 +85,10 @@ describe('writing a request against the balance on file', () => {
     expect(
       await screen.findByText('This request pays 36 hours; the balance is 20, 16 short.'),
     ).toBeTruthy();
-    expect(screen.getByText(/PTO balance: 20 hours, as of/)).toBeTruthy();
+    expect(screen.getByText(/PTO: 20 h projected on/)).toBeTruthy();
+    expect(screen.getByText(/^Payroll: 20 h on/).textContent).not.toMatch(
+      /accrued|approved|forfeited/,
+    );
     expect(bridge.callsTo('leaveBalances', 'checkRequest').at(-1)).toEqual([
       'n-ana',
       'pto',
@@ -113,7 +120,11 @@ describe('writing a request against the balance on file', () => {
   it('shows FMLA hours left and why a nurse is not eligible', async () => {
     bridge.respond('leaveBalances', 'checkRequest', {
       fmla: {
+        regime: 'title1',
         weeklyHours: 36,
+        entitlementHours: 432,
+        basis: 'contract',
+        period: { from: isoDate('2025-10-06'), to: isoDate('2026-10-05') },
         requestHours: 36,
         remainingHours: 360,
         eligibility: { eligible: false, reason: 'Employed 4 months; FMLA needs 12.' },
@@ -133,8 +144,77 @@ describe('writing a request against the balance on file', () => {
     await fillRequest();
     fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'fmla' } });
     expect(await screen.findByText('Employed 4 months; FMLA needs 12.')).toBeTruthy();
-    expect(screen.getByText(/360 hours left of 12 work weeks \(36 hours a week\)/)).toBeTruthy();
+    expect(screen.getByText(/360 hours left of 432 \(12 × usual week\)/)).toBeTruthy();
+    expect(screen.getByText(/FMLA, Title I:/)).toBeTruthy();
     expect(screen.getByText(/No FMLA certification on file covers the first day/)).toBeTruthy();
+  });
+});
+
+describe('a VA nurse’s leave', () => {
+  it('shows an annual-leave balance projected to the first day, with where it came from', async () => {
+    bridge.respond('leaveBalances', 'checkRequest', {
+      balance: {
+        type: 'annual',
+        balanceHours: 100,
+        asOf: isoDate('2026-09-07'),
+        projectedHours: 116,
+        accruedHours: 24,
+        usedHours: 8,
+        forfeitedHours: 0,
+        check: { ok: true, remainingHours: 80 },
+      },
+    });
+    renderWithApp(
+      <NewRequestDialog
+        open
+        onOpenChange={() => {}}
+        unitId="unit-1"
+        periodId={undefined}
+        nurses={[ana]}
+      />,
+      { unit },
+    );
+    await fillRequest();
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'annual' } });
+    expect(await screen.findByText(/Annual leave: 116 h projected on/)).toBeTruthy();
+    // Zero parts (nothing forfeited) are left out of the payroll line.
+    expect(screen.getByText(/^Payroll: 100 h on/).textContent).toMatch(
+      /^Payroll: 100 h on .+ · \+24 accrued · −8 approved since$/,
+    );
+  });
+
+  it('shows Title 5, the 480-hour entitlement and the 12 months it is counted in', async () => {
+    bridge.respond('leaveBalances', 'checkRequest', {
+      fmla: {
+        regime: 'title5',
+        weeklyHours: 40,
+        entitlementHours: 480,
+        basis: 'title5_tour',
+        period: { from: isoDate('2026-10-05'), to: isoDate('2027-10-04') },
+        requestHours: 40,
+        remainingHours: 480,
+        eligibility: { eligible: true },
+        certified: true,
+      },
+    });
+    renderWithApp(
+      <NewRequestDialog
+        open
+        onOpenChange={() => {}}
+        unitId="unit-1"
+        periodId={undefined}
+        nurses={[ana]}
+      />,
+      { unit },
+    );
+    await fillRequest();
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'fmla' } });
+    expect(
+      await screen.findByText(
+        /FMLA, Title 5 \(federal\): 480 hours left of 480 \(6 × biweekly tour\)/,
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText(/Counted in the 12 months .*2026.* to .*2027/)).toBeTruthy();
   });
 });
 

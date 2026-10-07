@@ -3,7 +3,21 @@
 import { z } from 'zod';
 import { hours, id, isoDate, object, type ResourceSchemas, text } from './primitives.js';
 
-const timeOffType = z.enum(['pto', 'sick', 'unpaid', 'fmla', 'education', 'bereavement']);
+const timeOffType = z.enum([
+  'pto',
+  'sick',
+  'unpaid',
+  'fmla',
+  'education',
+  'bereavement',
+  'annual',
+  'court',
+  'military',
+  'parental',
+  'lwop',
+  'comp',
+  'state_family',
+]);
 const timeOffStatus = z.enum(['pending', 'approved', 'denied', 'cancelled']);
 
 // A reason is `text`, never `.min(1)`: the audit layer refuses a blank denial in words for

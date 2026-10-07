@@ -40,7 +40,17 @@ export interface PaidLeaveCredit {
 }
 
 /** Leave types that are normally paid, and so default to paid hours. */
-export const PAID_LEAVE_TYPES: readonly TimeOffType[] = ['pto', 'sick', 'bereavement', 'education'];
+export const PAID_LEAVE_TYPES: readonly TimeOffType[] = [
+  'pto',
+  'annual',
+  'sick',
+  'bereavement',
+  'education',
+  'court',
+  'military',
+  'parental',
+  'comp',
+];
 
 const EPSILON = 1e-9;
 

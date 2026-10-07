@@ -6,7 +6,14 @@
  * versions.
  */
 
-import { DEFAULT_FAIRNESS_WEIGHTS, isoDate, type Nurse, type Preference } from '@shiftnurse/core';
+import {
+  DEFAULT_FAIRNESS_WEIGHTS,
+  isoDate,
+  type LeavePolicy,
+  type Nurse,
+  type Preference,
+  type Unit,
+} from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor, recentAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
@@ -21,8 +28,10 @@ import {
   createShiftType,
   createUnit,
   getShiftType,
+  getUnit,
   listShiftTypesForUnit,
   updateShiftType,
+  updateUnit,
 } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
 import {
@@ -121,6 +130,32 @@ describe('nurses', () => {
     expect(getNurse(handle.db, nurse.id)?.phone).toBe('555-0100');
     const cleared = updateNurse(handle.db, nurse.id, { phone: null }, ACTOR);
     expect(cleared.phone).toBeUndefined();
+  });
+
+  it('keeps a hire date apart from seniority, and clears it with null', () => {
+    const nurse = createNurse(
+      handle.db,
+      baseNurse({ seniorityDate: isoDate('2012-05-01'), hireDate: isoDate('2015-09-14') }),
+      ACTOR,
+    );
+    expect(getNurse(handle.db, nurse.id)).toMatchObject({
+      seniorityDate: '2012-05-01',
+      hireDate: '2015-09-14',
+    });
+
+    const moved = updateNurse(handle.db, nurse.id, { hireDate: isoDate('2016-01-04') }, ACTOR);
+    expect(moved.hireDate).toBe('2016-01-04');
+    const cleared = updateNurse(handle.db, nurse.id, { hireDate: null }, ACTOR);
+    expect(cleared.hireDate).toBeUndefined();
+    expect(getNurse(handle.db, nurse.id)).not.toHaveProperty('hireDate', expect.anything());
+
+    const history = auditHistoryFor(handle.db, 'nurse', nurse.id);
+    expect(history).toHaveLength(3);
+    // Newest first: the clear is [0], the move [1].
+    expect(history[1]).toMatchObject({
+      before: { hireDate: '2015-09-14' },
+      after: { hireDate: '2016-01-04' },
+    });
   });
 
   it('refuses to move a nurse to another unit through an edit', () => {
@@ -377,6 +412,51 @@ describe('preferences', () => {
 });
 
 describe('unit configuration', () => {
+  const POLICY: LeavePolicy = {
+    fmla: { regime: 'title5', yearMethod: 'rolling_forward' },
+    leaveYearStart: 'first_full_pay_period',
+    accrual: [
+      {
+        balanceType: 'annual',
+        tiers: [
+          { fromYearsOfService: 0, hoursPerPayPeriod: 4 },
+          { fromYearsOfService: 3, hoursPerPayPeriod: 6 },
+        ],
+        carryoverCapHours: 240,
+      },
+    ],
+  };
+
+  it('stores a leave policy on the unit, audits it, and clears it with null', () => {
+    expect(getUnit(handle.db, unitId)?.leavePolicy).toBeUndefined();
+    updateUnit(handle.db, unitId, { leavePolicy: POLICY }, ACTOR);
+    expect(getUnit(handle.db, unitId)?.leavePolicy).toEqual(POLICY);
+
+    updateUnit(handle.db, unitId, { leavePolicy: null }, ACTOR);
+    expect(getUnit(handle.db, unitId)?.leavePolicy).toBeUndefined();
+
+    const history = auditHistoryFor(handle.db, 'unit', unitId);
+    const updates = history.filter((h) => h.action === 'update');
+    expect(updates).toHaveLength(2);
+    const setIt = updates.find((u) => (u.after as Unit).leavePolicy !== undefined)!;
+    expect((setIt.before as Unit).leavePolicy).toBeUndefined();
+    const clearIt = updates.find((u) => (u.before as Unit).leavePolicy !== undefined)!;
+    expect((clearIt.before as Unit).leavePolicy).toEqual(POLICY);
+  });
+
+  it('refuses a leave policy with an earning rate of zero, and stores nothing', () => {
+    const bad: LeavePolicy = {
+      ...POLICY,
+      accrual: [
+        { balanceType: 'annual', tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 0 }] },
+      ],
+    };
+    expect(() => updateUnit(handle.db, unitId, { leavePolicy: bad }, ACTOR)).toThrow(
+      /greater than zero/,
+    );
+    expect(getUnit(handle.db, unitId)?.leavePolicy).toBeUndefined();
+  });
+
   it('orders shift types by sortOrder', () => {
     const mk = (name: string, sortOrder: number) =>
       createShiftType(

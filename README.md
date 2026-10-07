@@ -76,8 +76,8 @@ These are yours to do by hand until the app handles them (the same list is in Se
 
 - Hour caps on overtime in Oregon (ORS 441.166) and Massachusetts (16 hours): watch the total hours in a row for nurses on overtime yourself.
 - Oregon's staffing-plan deviations: record and justify any departure from the unit's staffing plan yourself.
-- Leave accrual: balances are entered from payroll; the app checks requests against them but does not accrue leave from hours worked, so update them each pay period.
-- FMLA eligibility uses the seniority date as the hire date: check a nurse whose bargained seniority predates their hire against HR's records.
+- Leave accrual is projected from the last payroll figure under Settings › Leave: part-time accrual counts hours worked, not other paid hours, and the federal 6-hour tier's extra 10 hours in the leave year's last pay period is not added, so re-enter payroll's figures now and then.
+- Military leave (120 hours a fiscal year), court leave and paid parental leave are leave types without entitlements of their own: check the hours available with HR.
 - FMLA leave already taken is counted at the nurse's current contract: if their FTE changed during the year, check the hours used with HR.
 - Break premiums are priced at the base rate: California pays them at the regular rate, which includes differentials, so add the difference in payroll.
 - Float staff: other units' shifts count as busy time, but who floats is not rotated fairly across the team, and Generate may offer a float nurse on any day of the period, not only the dates of their membership; keep the turn and check the dates yourself.
