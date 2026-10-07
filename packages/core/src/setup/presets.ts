@@ -157,7 +157,34 @@ const UNIT_TYPE_ALIASES: Record<AcuityPresetId, readonly string[]> = {
   'med-surg': ['medical-surgical', 'medical surgical', 'med-surg', 'med surg', 'medsurg'],
   telemetry: ['telemetry', 'tele'],
   'step-down': ['step-down', 'step down', 'stepdown', 'pcu', 'progressive care'],
-  icu: ['icu', 'intensive care', 'critical care'],
+  // Title 22 § 70217(a)(1) names every critical care unit at 1:2. A PICU is a pediatric
+  // *intensive care* unit (1:2), not a pediatric unit (1:4), so it belongs here.
+  icu: [
+    'icu',
+    'intensive care',
+    'critical care',
+    'critical care unit',
+    'ccu',
+    'coronary care',
+    'coronary care unit',
+    'micu',
+    'medical icu',
+    'medical intensive care',
+    'sicu',
+    'surgical icu',
+    'surgical intensive care',
+    'cvicu',
+    'cardiovascular icu',
+    'cardiac icu',
+    'neuro icu',
+    'neurological icu',
+    'neuro intensive care',
+    'trauma icu',
+    'picu',
+    'pediatric icu',
+    'pediatric intensive care',
+    'acute respiratory care',
+  ],
 };
 
 /** The preset matching a free-text unit type, or `undefined` when none does. */

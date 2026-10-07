@@ -984,12 +984,35 @@ describe('the California alternative workweek', () => {
     expect(plan.addOvertimeRules.find((r) => r.basis === 'weekly')?.pyramiding).toBe('none');
   });
 
-  it('caps required hours at 12 in 24, and 13 when the relief nurse does not come', () => {
+  it('caps required hours at 12 in any 24, and a declared emergency at 16', () => {
     const plan = planJurisdiction('CA', input(), { alternativeWorkweek: true });
-    expect(plan.ruleConfigs?.find((c) => c.ruleId === 'no-mandatory-overtime')).toMatchObject({
+    const nmo = plan.ruleConfigs?.find((c) => c.ruleId === 'no-mandatory-overtime');
+    expect(nmo).toMatchObject({
       enabled: true,
-      params: { maxRequiredConsecutiveHours: 12, emergencyMaxHoursPastShift: 1 },
+      params: { maxRequiredHoursIn24: 12, emergencyMaxHoursIn24: 16 },
     });
+    expect(nmo?.params).not.toHaveProperty('maxRequiredConsecutiveHours');
+    expect(nmo?.params).not.toHaveProperty('emergencyMaxHoursPastShift');
+  });
+
+  it('gives 8 hours off after 24 hours straight, required or not', () => {
+    const plan = planJurisdiction('CA', input(), { alternativeWorkweek: true });
+    const long = plan.ruleConfigs?.find((c) => c.ruleId === 'long-stretch');
+    expect(long).toMatchObject({
+      enabled: true,
+      params: { requiredOnly: false, restAfterHours: 24, restHours: 8, honorsRestWaiver: false },
+    });
+    expect(long?.params).not.toHaveProperty('maxConsecutiveHours');
+  });
+
+  it('plans nothing more for the alternative workweek the second time', () => {
+    const first = planJurisdiction('CA', input(), { alternativeWorkweek: true });
+    const second = planJurisdiction(
+      'CA',
+      input({ ruleSet: { ...defaultRuleSet(UNIT), configs: first.ruleConfigs! } }),
+      { alternativeWorkweek: true },
+    );
+    expect(second.ruleConfigs).toBeUndefined();
   });
 
   it('keeps daily overtime past 8 and switches no rule on for an ordinary workweek', () => {

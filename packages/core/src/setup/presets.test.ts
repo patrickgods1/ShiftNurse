@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { unitKindForUnitType } from './jurisdictions.js';
 import {
   ACUITY_PRESETS,
   acuityPresetForUnitType,
@@ -56,6 +57,15 @@ describe('acuity presets', () => {
     expect(acuityPresetForUnitType('Step-down')).toBe('step-down');
     expect(acuityPresetForUnitType('Telemetry')).toBe('telemetry');
     expect(acuityPresetForUnitType('Labor & Delivery')).toBeUndefined();
+  });
+});
+
+describe('critical care unit names', () => {
+  it('treats a CCU, MICU, neuro ICU or PICU as critical care, but a pediatric unit as pediatrics', () => {
+    for (const name of ['CCU', 'MICU', 'Neuro ICU', 'PICU']) {
+      expect(unitKindForUnitType(name)).toBe('icu');
+    }
+    expect(unitKindForUnitType('Pediatrics')).toBe('pediatrics');
   });
 });
 

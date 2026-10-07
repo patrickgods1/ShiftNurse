@@ -283,10 +283,13 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'asks whether the unit has adopted a health-care alternative workweek of 12-hour shifts ' +
       '(IWC Order 5 § 3(B)(8)): if so the 8-hour daily rule is left out, work past 8 hours on a ' +
       'day beyond the agreed number of workdays is paid double, and no nurse on a 12-hour shift ' +
-      'may be required to work more than 12 hours in 24. A declared health-care emergency, or a ' +
-      'relief nurse who does not come and gave less than 2 hours’ notice, is recorded on the ' +
-      'shift as "Emergency: …" and may run to 13; past that the rule refuses, so a longer ' +
-      'declared emergency needs the rule relaxed with a reason. Ratios here count RNs only; ' +
+      'may be required to work more than 12 hours in any 24 (13 when the relief nurse does not ' +
+      'report with under two hours’ notice, recorded on the shift as "Emergency: relief did not ' +
+      'report"); a declared health-care emergency may run to 16 hours in 24, never more without ' +
+      'the nurse’s agreement; after 24 hours straight, 8 hours off (§ 3(B)(9)–(11)). In an ' +
+      'emergency department keep at least two licensed nurses on whenever a patient is present ' +
+      '(a coverage floor) and leave the triage nurse out of the ratio (a shift type of their ' +
+      'own) (§ 70217(a)(8)). Ratios here count RNs only; ' +
       'Title 22 lets LVNs (and psychiatric ' +
       'technicians on a psychiatric unit) fill up to half. ' +
       'Sick leave accrues at 1 hour per 30 worked, up to 80 (Lab. Code § 246(b)): the statutory ' +
@@ -318,7 +321,11 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
           '(IWC Order 5 § 3(B)(8))',
         hint:
           'Leaves out overtime past 8 hours a day, pays double past 8 on a day beyond the ' +
-          'agreed workdays, and caps required hours at 12 in 24.',
+          'agreed workdays, and no nurse on a 12-hour shift may be required to work more than ' +
+          '12 hours in any 24 (13 when the relief nurse does not report with under two hours’ ' +
+          'notice, recorded on the shift as "Emergency: relief did not report"); a declared ' +
+          'health-care emergency may run to 16 hours in 24, never more without the nurse’s ' +
+          'agreement; after 24 hours straight, 8 hours off.',
       },
     ],
     overtimeRules: [
@@ -335,19 +342,36 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       { basis: 'seventh_day', thresholdHours: 8, multiplier: 2 },
     ],
     enableRules: [
-      // WO5 § 3(B)(8): "No employee assigned to work a 12-hour shift established pursuant to this
-      // order shall be required to work more than 12 hours in any 24-hour period unless the chief
-      // nursing officer or authorized executive declares that" a health-care emergency exists, and
-      // "An employee may be required to work up to 13 hours in any 24-hour period if the employee
-      // scheduled to relieve the subject employee does not report for duty as scheduled and does
-      // not inform the employer more than two (2) hours in advance." So 12 required hours is the
-      // cap; a declared emergency or a relief nurse's no-show is recorded on the shift as
-      // "Emergency: …" and may run to 13; past that the rule refuses, so a longer declared
-      // emergency needs the rule relaxed with a reason.
+      // WO5 § 3(B)(9): "No employee assigned to work a 12 hour shift established pursuant to this
+      // Order shall be required to work more than 12 hours in any 24 hour period unless the Chief
+      // Nursing Officer or authorized executive declares that" a healthcare emergency exists;
+      // (B)(10): "no employee shall be required to work more than 16 hours in a 24-hour period
+      // unless by voluntary mutual agreement of the employee and employer"; (B)(11): "an employee
+      // may be required to work up to 13 hours in any 24-hour period if the employee scheduled to
+      // relieve the subject employee does not report for duty as scheduled and does not inform
+      // the employer more than two (2) hours in advance". So 12 in any 24 is the required cap and
+      // 16 the emergency one. A relief no-show is recorded as "Emergency: relief did not report"
+      // and may run to 13 under (B)(11); the rule reads that note as it reads a declared
+      // emergency, so holding it to 13 rather than 16 is the manager's.
       {
         ...NO_MANDATORY_OVERTIME,
         when: ON_AWS,
-        params: { maxRequiredConsecutiveHours: 12, emergencyMaxHoursPastShift: 1 },
+        params: { maxRequiredHoursIn24: 12, emergencyMaxHoursIn24: 16 },
+      },
+      // WO5 § 3(B)(10): "no employee shall work more than 24 consecutive hours until said employee
+      // receives not less than eight (8) consecutive hours off-duty immediately following the 24
+      // consecutive hours of work". Every hour counts, volunteered or not, and no emergency or
+      // waiver excuses the rest.
+      {
+        ...longStretch({
+          requiredOnly: false,
+          emergencyLiftsCap: true,
+          restAfterHours: 24,
+          restOnlyPastThreshold: false,
+          restHours: 8,
+          honorsRestWaiver: false,
+        }),
+        when: ON_AWS,
       },
     ],
     leavePolicy: {
