@@ -703,6 +703,12 @@ Art. 14). One PR per milestone; the documentation update that records them has n
       `tour-rotation`'s `exemptAfterYearsOfService` (UC–CNA Art. 14 § P.1.a), the roster CSV's
       `scheduled_days_per_week`, and the vitest `unit` / `solver-heavy` projects (verified
       2026-10-07: `npm run check` 2,920 passed, 2 skipped, 264 files; smoke PASS)
+- [x] M40 VA pay by statute (38 U.S.C. § 7453): `PaySettings.holidayPayCoversOvertime` (migration
+      0036) and the US-VA preset's additive stacking, two-hour call-back, holiday pay in place
+      of overtime, `overlaps` weekend and 15% on-call differential, threaded through the db, IPC,
+      Settings › Pay and the VA demo (verified 2026-10-07: `npm run check` lint and typecheck
+      clean, 2,939 tests passed, 2 skipped, 264 files; smoke PASS; the reseeded VA demo holds four
+      differentials, additive pay settings and an `overlaps` weekend)
 
 ---
 

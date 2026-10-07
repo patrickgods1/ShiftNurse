@@ -54,6 +54,7 @@
  * `no-mandatory-overtime`'s `baylorMaxMandatedWeeklyHours`, § 7459(a), for nurses marked Baylor.)
  */
 
+import { DEFAULT_PAY_SETTINGS, type PaySettings } from '../cost/types.js';
 import {
   DEFAULT_LEAVE_POLICY,
   type Differential,
@@ -66,6 +67,7 @@ import {
   type ScheduleKind,
   type Unit,
 } from '../domain/entities.js';
+import { DEFAULT_WEEKEND, MINUTES_PER_DAY, type WeekendDefinition } from '../domain/time.js';
 import { ALL_RULES, resolveConfigs } from '../rules/registry.js';
 import type { RuleConfig, RuleSet } from '../rules/types.js';
 import { type AcuityPresetId, acuityPresetForUnitType } from './presets.js';
@@ -198,6 +200,13 @@ export interface JurisdictionPreset {
   unit?: { postingLeadDays?: number; overtimeOrder?: OvertimeOrder };
   /** Proposed whole to a unit with no leave policy; never merged into one a manager set. */
   leavePolicy?: LeavePolicy;
+  /** Proposed only to a unit that has never saved pay settings. */
+  paySettings?: Partial<PaySettings>;
+  /**
+   * Applied only to a unit whose weekend is still the default, or the default with
+   * `starts_within`: `overlaps` is the wider reading and never narrows one a manager set.
+   */
+  weekendDefinition?: WeekendDefinition;
 }
 
 /**
@@ -668,7 +677,14 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'shift as "Emergency: …" are outside it. The preset adds the 38 U.S.C. § 7453 premiums ' +
       'a unit does not already pay: a 10% night differential for the whole tour when at least ' +
       '4 hours fall between 6 pm and 6 am, a 25% weekend premium for any tour touching Saturday ' +
-      'or Sunday and double pay on holidays; and overtime at 1.5×, never for less than 15 ' +
+      'or Sunday, double pay on holidays and on-call standby at 15% of basic pay (10% of the ' +
+      'overtime rate, § 7453(h)). Each premium is computed on basic pay and added, never ' +
+      'multiplied by another (§ 7453(g)). Holiday pay already covers overtime on a holiday, so ' +
+      'no overtime premium is added for those hours (§ 7453(g)). The weekend is any tour ' +
+      'touching midnight Friday to midnight Sunday, so a Friday night tour into Saturday earns ' +
+      'the weekend premium and counts as a weekend worked (§ 7453(c)). A call-back is paid ' +
+      'at least 2 hours (§ 7453(e)(4)). These pay settings and the weekend are set only where ' +
+      'the unit has not set its own. Overtime at 1.5×, never for less than 15 ' +
       'minutes, past 40 hours a week or 8 consecutive hours, or, when applying says the nurses ' +
       'work compressed tours, past the scheduled tour or 80 hours in the pay period. Nurses ' +
       'marked 72/80 or Baylor on the roster get their own overtime (72/80: past 36 hours a ' +
@@ -813,7 +829,30 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
         amount: 2,
         citation: `${TITLE_38_PAY}(d): double pay on a holiday`,
       },
+      // On-call standby prices as base × amount, so 0.15 is 15% of basic pay.
+      {
+        kind: 'on_call',
+        mode: 'multiplier',
+        amount: 0.15,
+        citation: `${TITLE_38_PAY}(h): on-call at 10% of the overtime rate, 15% of basic pay`,
+      },
     ],
+    // § 7453(g): each premium is "computed separately on the basis of such nurse's hourly rate of
+    // basic pay", and no overtime pay for holiday service on top of holiday pay; § 7453(e)(4): a
+    // call-back "shall be deemed to be a minimum of two hours in duration".
+    paySettings: {
+      premiumStacking: 'additive',
+      callBackMinimumHours: 2,
+      holidayPayCoversOvertime: true,
+    },
+    // § 7453(c): a tour "any part of which is within the period commencing at midnight Friday and
+    // ending at midnight Sunday", so a Friday night running into Saturday is a weekend tour.
+    weekendDefinition: {
+      startWeekday: 6,
+      startMinute: 0,
+      durationMinutes: 2 * MINUTES_PER_DAY,
+      mode: 'overlaps',
+    },
     // Art. 13: the schedule is posted four weeks ahead; Art. 14: overtime by the rosters.
     unit: { postingLeadDays: 28, overtimeOrder: 'roster' },
     enableRules: [
@@ -950,6 +989,13 @@ export interface JurisdictionPlanInput {
   differentials: readonly Differential[];
   postingLeadDays?: number;
   overtimeOrder?: OvertimeOrder;
+  /** The unit's saved pay settings; absent when it has never saved a row. */
+  paySettings?: PaySettings;
+  /**
+   * The latest rule set's weekend (`DEFAULT_WEEKEND` when there is none). Absent, `ruleSet`'s is
+   * read, which is the same thing for a caller that passes the latest rule set or the defaults.
+   */
+  weekendDefinition?: WeekendDefinition;
 }
 
 /** The changes a preset makes, each list empty and each field absent when there is nothing to do. */
@@ -969,6 +1015,10 @@ export interface JurisdictionPlan {
   addDifferentials: Omit<Differential, 'id' | 'unitId'>[];
   /** Only the unit fields that change. */
   unit?: { postingLeadDays?: number; overtimeOrder?: OvertimeOrder };
+  /** The whole row to save, `DEFAULT_PAY_SETTINGS` overlaid with the preset's: only for a unit with none. */
+  paySettings?: PaySettings;
+  /** The rule set's weekend after the preset, only when it changes. */
+  weekendDefinition?: WeekendDefinition;
 }
 
 /** The reading before a unit set anything: the charge nurse at the bedside, no break cover. */
@@ -1124,6 +1174,29 @@ export function planJurisdiction(
 
   if (preset.leavePolicy && current.leavePolicy === undefined)
     plan.leavePolicy = preset.leavePolicy;
+
+  // Pay settings a manager saved may follow a contract the preset cannot see, so only a unit that
+  // never saved any is offered the preset's.
+  if (
+    preset.paySettings &&
+    Object.keys(preset.paySettings).length > 0 &&
+    current.paySettings === undefined
+  )
+    plan.paySettings = { ...DEFAULT_PAY_SETTINGS, ...preset.paySettings };
+
+  // Only the stock Saturday-to-Monday window is widened: one a manager moved (a Friday 19:00
+  // start) is their reading of the contract, and comparing by field keeps a stored copy of the
+  // default from looking custom.
+  const weekend = preset.weekendDefinition;
+  const have = current.weekendDefinition ?? current.ruleSet.weekendDefinition;
+  if (
+    weekend &&
+    have.startWeekday === DEFAULT_WEEKEND.startWeekday &&
+    have.startMinute === DEFAULT_WEEKEND.startMinute &&
+    have.durationMinutes === DEFAULT_WEEKEND.durationMinutes &&
+    have.mode !== weekend.mode
+  )
+    plan.weekendDefinition = weekend;
 
   return plan;
 }

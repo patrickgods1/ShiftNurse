@@ -12,9 +12,10 @@ import type {
   NurseRole,
   OvertimeRule,
   PayRate,
+  PaySettings,
   ScheduleKind,
 } from '@shiftnurse/core';
-import { isIsoDate, resolvePayRate, SCHEDULE_KINDS } from '@shiftnurse/core';
+import { DEFAULT_PAY_SETTINGS, isIsoDate, resolvePayRate, SCHEDULE_KINDS } from '@shiftnurse/core';
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
@@ -508,18 +509,9 @@ export function setBudget(
 // Pay settings
 // ---------------------------------------------------------------------------
 
-/** Settings that are not rates, differentials or overtime rules. */
-export interface PaySettings {
-  /** The fewest hours a call-back pays, from the contract. 0 pays the hours worked. */
-  callBackMinimumHours: number;
-  /** How multiplier differentials and overtime combine; see core's `CostContext.premiumStacking`. */
-  premiumStacking: 'compound' | 'additive';
-}
-
-export const DEFAULT_PAY_SETTINGS: PaySettings = {
-  callBackMinimumHours: 0,
-  premiumStacking: 'compound',
-};
+// Core owns the shape and the defaults so a preset can propose settings without the db's help.
+export type { PaySettings } from '@shiftnurse/core';
+export { DEFAULT_PAY_SETTINGS } from '@shiftnurse/core';
 
 /** A unit that has saved nothing is paid by the defaults. */
 export function getPaySettings(db: DbLike, unitId: Id): PaySettings {
@@ -528,8 +520,24 @@ export function getPaySettings(db: DbLike, unitId: Id): PaySettings {
     ? {
         callBackMinimumHours: row.callBackMinimumHours,
         premiumStacking: row.premiumStacking ?? 'compound',
+        holidayPayCoversOvertime: row.holidayPayCoversOvertime ?? false,
       }
     : { ...DEFAULT_PAY_SETTINGS };
+}
+
+/**
+ * Whether the unit has a pay-settings row. The preset proposes settings only to a unit that never
+ * saved any: a saved row may follow a contract the preset cannot see, and `getPaySettings` cannot
+ * tell "saved the defaults" from "saved nothing".
+ */
+export function paySettingsSaved(db: DbLike, unitId: Id): boolean {
+  return (
+    db
+      .select({ unitId: paySettings.unitId })
+      .from(paySettings)
+      .where(eq(paySettings.unitId, unitId))
+      .get() !== undefined
+  );
 }
 
 export function savePaySettings(
@@ -548,17 +556,28 @@ export function savePaySettings(
     throw new Error('Premium stacking must be compound or additive');
   }
   const before = getPaySettings(db, unitId);
-  const after: PaySettings = { callBackMinimumHours: hours, premiumStacking: stacking };
+  const covers = settings.holidayPayCoversOvertime === true;
+  const after: PaySettings = {
+    callBackMinimumHours: hours,
+    premiumStacking: stacking,
+    holidayPayCoversOvertime: covers,
+  };
   db.insert(paySettings)
     .values({
       unitId,
       callBackMinimumHours: hours,
       premiumStacking: stacking,
+      holidayPayCoversOvertime: covers,
       updatedAt: Date.now(),
     })
     .onConflictDoUpdate({
       target: paySettings.unitId,
-      set: { callBackMinimumHours: hours, premiumStacking: stacking, updatedAt: Date.now() },
+      set: {
+        callBackMinimumHours: hours,
+        premiumStacking: stacking,
+        holidayPayCoversOvertime: covers,
+        updatedAt: Date.now(),
+      },
     })
     .run();
   recordAudit(db, {

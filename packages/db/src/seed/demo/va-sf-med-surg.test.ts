@@ -36,6 +36,7 @@ import {
   listNurseCredentialsForUnit,
   listNursesForUnit,
 } from '../../repositories/roster.js';
+import { getLatestRuleSet } from '../../repositories/rulesets.js';
 import { getPeriod, listPeriodsForUnit } from '../../repositories/schedule.js';
 import { costContext, loadPeriodInput } from '../../repositories/solve-input.js';
 import { listTimeOffForNurse } from '../../repositories/timeoff.js';
@@ -242,8 +243,10 @@ describe('the VA San Francisco med-surg demo', () => {
     expect(factor('2026-06-17', 'N12')).toBeCloseTo(1.1, 6);
     // Saturday 20 June 2026.
     expect(factor('2026-06-20', 'D12')).toBeCloseTo(1.25, 6);
-    // Friday 26 June 2026: the night 12 runs into Saturday, so it earns both.
-    expect(factor('2026-06-26', 'N12')).toBeCloseTo(1.1 * 1.25, 6);
+    // Friday 26 June 2026: the night 12 runs into Saturday, so it earns both. The preset stacks
+    // premiums additively (§ 7453(g)), each a percentage of basic pay: 1 + 0.10 + 0.25 = 1.35,
+    // not the compound 1.1 x 1.25 = 1.375.
+    expect(factor('2026-06-26', 'N12')).toBeCloseTo(1.35, 6);
     // Labor Day, Monday 7 September 2026.
     expect(factor('2026-09-07', 'D12')).toBeCloseTo(2, 6);
   });
@@ -349,6 +352,15 @@ describe('the VA San Francisco med-surg demo', () => {
         window_end: '06:00',
         window_whole_shift_at_hours: 4,
       },
+      // 38 U.S.C. § 7453(h): on-call at 15% of base.
+      {
+        kind: 'on_call',
+        mode: 'multiplier',
+        amount: 0.15,
+        window_start: null,
+        window_end: null,
+        window_whole_shift_at_hours: null,
+      },
       {
         kind: 'weekend',
         mode: 'multiplier',
@@ -358,6 +370,18 @@ describe('the VA San Francisco med-surg demo', () => {
         window_whole_shift_at_hours: null,
       },
     ]);
+    // The preset, not the profile, sets § 7453's terms: premiums added on basic pay, a two-hour
+    // call-back, holiday pay in place of overtime, and a weekend any tour touching Saturday or
+    // Sunday counts toward.
+    expect(
+      f.rows(
+        `SELECT call_back_minimum_hours, premium_stacking, holiday_pay_covers_overtime FROM
+           pay_settings WHERE unit_id = '${f.result.unitId}'`,
+      ),
+    ).toEqual([
+      { call_back_minimum_hours: 2, premium_stacking: 'additive', holiday_pay_covers_overtime: 1 },
+    ]);
+    expect(getLatestRuleSet(f.handle.db, f.result.unitId)?.weekendDefinition.mode).toBe('overlaps');
   });
 
   it('never requires overtime past 40 hours of anyone who did not offer it', () => {
@@ -1098,7 +1122,7 @@ describe('the VA San Francisco med-surg demo', () => {
       expect(baylorTour.hours).toBe(12);
       expect(baylorTour.lines.map((l) => l.kind)).toEqual(['base']);
       expect(baylorTour.straightRate).toBeCloseTo(baylorTour.baseRate, 10);
-      // A standard RN on the same date and tour: night 10% and weekend 25%, 1.1 x 1.25 of base.
+      // A standard RN on the same date and tour: night 10% and weekend 25% added on base, 1.35.
       const standard = f.rows<{ id: string }>(
         `SELECT a.id FROM assignment a JOIN nurse n ON n.id = a.nurse_id
            JOIN shift_type st ON st.id = a.shift_type_id
@@ -1108,7 +1132,7 @@ describe('the VA San Francisco med-surg demo', () => {
       expect(standard.length).toBeGreaterThan(0);
       const other = cost.assignments.find((a) => a.assignmentId === standard[0]!.id)!;
       expect(other.lines.map((l) => l.kind)).toContain('weekend');
-      expect(other.straightRate / other.baseRate).toBeCloseTo(1.1 * 1.25, 6);
+      expect(other.straightRate / other.baseRate).toBeCloseTo(1.35, 6);
     });
 
     it('pays the Baylor nurse’s picked-up Friday night the premiums a tour goes without', () => {
@@ -1128,21 +1152,22 @@ describe('the VA San Francisco med-surg demo', () => {
       const priced = pricedPeriod(pickup.period_id);
       const row = priced.assignments.find((a) => a.assignmentId === pickup.id)!;
       expect(row.baseRate).toBe(62);
-      // Compound stacking: night 10% (the whole tour, 11 of its hours in 18:00-06:00) makes
-      // 62 x 1.1 = 68.20; weekend 25% (it runs into Saturday) 68.20 x 1.25 = 85.25. 12 x 85.25
-      // = 1,023 straight: base 744, night 12 x 6.20 = 74.40, weekend 12 x 17.05 = 204.60.
-      expect(row.straightRate).toBeCloseTo(85.25, 10);
+      // Additive stacking: night 10% (the whole tour, 11 of its hours in 18:00-06:00) is
+      // 62 x 0.10 = 6.20 an hour and weekend 25% (it runs into Saturday) 62 x 0.25 = 15.50, on
+      // top of base: 62 + 6.20 + 15.50 = 83.70. 12 x 83.70 = 1,004.40 straight: base 744, night
+      // 12 x 6.20 = 74.40, weekend 12 x 15.50 = 186.00.
+      expect(row.straightRate).toBeCloseTo(83.7, 10);
       // A Friday night running into Saturday is the weekend's, so it is never judged past 8. The
       // weekend from Saturday 12 September holds its 7 hours after midnight and the Saturday night
       // tour's 12: 19 of 24 (weekend 24, not pyramiding: no daily overtime to leave out). The pay
-      // period holds 60 of 80. So no overtime: 1,023 in all.
+      // period holds 60 of 80. So no overtime: 1,004.40 in all.
       expect(row.lines.map((l) => [l.kind, l.hours])).toEqual([
         ['base', 12],
         ['night', 12],
         ['weekend', 12],
       ]);
       expect(row.overtimeHours).toBe(0);
-      expect(row.total).toBeCloseTo(1023, 6);
+      expect(row.total).toBeCloseTo(1004.4, 6);
       const mine = priced.assignments.filter((a) => a.nurseId === baylorId);
       expect(mine.map((a) => a.date)).toEqual([
         '2026-09-06',

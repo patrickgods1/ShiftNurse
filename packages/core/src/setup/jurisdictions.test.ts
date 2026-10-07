@@ -5,6 +5,7 @@ import {
   type OvertimeRule,
   type RatioRule,
 } from '../domain/entities.js';
+import { DEFAULT_WEEKEND, MINUTES_PER_DAY } from '../domain/time.js';
 import { defaultRuleSet } from '../rules/registry.js';
 import type { RuleSet } from '../rules/types.js';
 import {
@@ -47,6 +48,7 @@ function input(overrides: Partial<JurisdictionPlanInput> = {}): JurisdictionPlan
     overtimeRules: [],
     ruleSet: defaultRuleSet(UNIT),
     differentials: [],
+    weekendDefinition: DEFAULT_WEEKEND,
     ...overrides,
   };
 }
@@ -255,9 +257,15 @@ describe('applying a state preset', () => {
       const first = planJurisdiction('US-VA', input());
       const second = planJurisdiction(
         'US-VA',
-        input({ ruleSet: { ...defaultRuleSet(UNIT), configs: first.ruleConfigs ?? [] } }),
+        input({
+          ruleSet: { ...defaultRuleSet(UNIT), configs: first.ruleConfigs ?? [] },
+          ...(first.paySettings ? { paySettings: first.paySettings } : {}),
+          ...(first.weekendDefinition ? { weekendDefinition: first.weekendDefinition } : {}),
+        }),
       );
       expect(second.ruleConfigs).toBeUndefined();
+      expect(second.paySettings).toBeUndefined();
+      expect(second.weekendDefinition).toBeUndefined();
     });
   });
 });
@@ -630,9 +638,13 @@ describe('the state mandatory-overtime presets', () => {
             unitId: UNIT,
           })),
           ...first.unit,
+          ...(first.paySettings ? { paySettings: first.paySettings } : {}),
+          ...(first.weekendDefinition ? { weekendDefinition: first.weekendDefinition } : {}),
         }),
         choices,
       );
+      expect(second.paySettings, id).toBeUndefined();
+      expect(second.weekendDefinition, id).toBeUndefined();
       expect(second.ruleConfigs, id).toBeUndefined();
       expect(second.addRatioRules, id).toEqual([]);
       expect(second.addOvertimeRules, id).toEqual([]);
@@ -814,7 +826,7 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
     });
   });
 
-  it('adds the night, weekend and holiday premiums of § 7453', () => {
+  it('adds the night, weekend, holiday and on-call premiums of § 7453', () => {
     const plan = planJurisdiction('US-VA', input());
     expect(plan.addDifferentials).toEqual([
       {
@@ -826,7 +838,76 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
       },
       { kind: 'weekend', mode: 'multiplier', amount: 1.25, active: true },
       { kind: 'holiday', mode: 'multiplier', amount: 2, active: true },
+      { kind: 'on_call', mode: 'multiplier', amount: 0.15, active: true },
     ]);
+  });
+
+  it('pays on-call at 15% of basic pay, 10% of the overtime rate, unless the unit pays on-call', () => {
+    // § 7453(h): 10% of the § 7453(e) rate, which is 1.5× basic pay: 0.10 × 1.5 = 0.15.
+    const fresh = planJurisdiction('US-VA', input());
+    expect(fresh.addDifferentials.find((d) => d.kind === 'on_call')?.amount).toBe(0.15);
+    const paying = planJurisdiction(
+      'US-VA',
+      input({ differentials: [differential('on_call', 6)] }),
+    );
+    expect(paying.addDifferentials.some((d) => d.kind === 'on_call')).toBe(false);
+  });
+
+  it('adds premiums on basic pay, a 2-hour call-back and no overtime on holidays for a unit with no pay settings', () => {
+    expect(planJurisdiction('US-VA', input()).paySettings).toEqual({
+      callBackMinimumHours: 2,
+      premiumStacking: 'additive',
+      holidayPayCoversOvertime: true,
+    });
+  });
+
+  it('leaves alone pay settings the unit already saved', () => {
+    const plan = planJurisdiction(
+      'US-VA',
+      input({
+        paySettings: {
+          callBackMinimumHours: 3,
+          premiumStacking: 'compound',
+          holidayPayCoversOvertime: false,
+        },
+      }),
+    );
+    expect(plan.paySettings).toBeUndefined();
+  });
+
+  it('counts a Friday night tour as a weekend tour, since any part of it touches Saturday', () => {
+    // § 7453(c): a tour "any part of which is within the period commencing at midnight Friday
+    // and ending at midnight Sunday".
+    expect(planJurisdiction('US-VA', input()).weekendDefinition).toEqual({
+      startWeekday: 6,
+      startMinute: 0,
+      durationMinutes: 2 * MINUTES_PER_DAY,
+      mode: 'overlaps',
+    });
+  });
+
+  it('keeps a weekend the manager set to start Friday at 19:00', () => {
+    const friday19 = {
+      startWeekday: 5,
+      startMinute: 19 * 60,
+      durationMinutes: 2 * MINUTES_PER_DAY + 5 * 60,
+      mode: 'starts_within',
+    } as const;
+    const plan = planJurisdiction('US-VA', input({ weekendDefinition: friday19 }));
+    expect(plan.weekendDefinition).toBeUndefined();
+    // A caller that passes only the rule set is read the same way.
+    const { weekendDefinition: _unset, ...bare } = input();
+    const fromRuleSet = planJurisdiction('US-VA', {
+      ...bare,
+      ruleSet: { ...defaultRuleSet(UNIT), weekendDefinition: friday19 },
+    });
+    expect(fromRuleSet.weekendDefinition).toBeUndefined();
+  });
+
+  it('proposes no pay settings or weekend for a state preset', () => {
+    const plan = planJurisdiction('CA', input());
+    expect(plan.paySettings).toBeUndefined();
+    expect(plan.weekendDefinition).toBeUndefined();
   });
 
   it('posts four weeks ahead and calls overtime from the rosters', () => {
@@ -862,9 +943,9 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
     expect(plan.addOvertimeRules.every((r) => r.minimumMinutes === 15)).toBe(true);
   });
 
-  it('adds only the weekend and holiday premiums to a unit that already pays a night one', () => {
+  it('adds no second night premium to a unit that already pays one', () => {
     const plan = planJurisdiction('US-VA', input({ differentials: [differential('night', 3)] }));
-    expect(plan.addDifferentials.map((d) => d.kind)).toEqual(['weekend', 'holiday']);
+    expect(plan.addDifferentials.map((d) => d.kind)).toEqual(['weekend', 'holiday', 'on_call']);
   });
 
   it('keeps a longer posting notice and a cost-first overtime order the unit already chose', () => {

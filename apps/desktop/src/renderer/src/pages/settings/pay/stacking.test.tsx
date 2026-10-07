@@ -13,10 +13,15 @@ import { StackingSection } from './stacking.js';
 let bridge: FakeBridge;
 beforeEach(() => {
   bridge = installFakeBridge();
-  bridge.respond('cost', 'paySettings', { callBackMinimumHours: 2, premiumStacking: 'compound' });
+  bridge.respond('cost', 'paySettings', {
+    callBackMinimumHours: 2,
+    premiumStacking: 'compound',
+    holidayPayCoversOvertime: false,
+  });
   bridge.respond('cost', 'savePaySettings', {
     callBackMinimumHours: 2,
     premiumStacking: 'additive',
+    holidayPayCoversOvertime: false,
   });
 });
 afterEach(() => {
@@ -41,7 +46,26 @@ describe('premium stacking in Settings › Pay', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
       expect(bridge.callsTo('cost', 'savePaySettings')).toEqual([
-        ['u-1', { callBackMinimumHours: 2, premiumStacking: 'additive' }],
+        [
+          'u-1',
+          { callBackMinimumHours: 2, premiumStacking: 'additive', holidayPayCoversOvertime: false },
+        ],
+      ]),
+    );
+  });
+
+  it('saves that holiday pay covers overtime, keeping the stacking and call-back as they were', async () => {
+    renderWithApp(<StackingSection unitId="u-1" />);
+    fireEvent.click(
+      await screen.findByLabelText(/Holiday pay covers overtime worked on the holiday/),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('cost', 'savePaySettings')).toEqual([
+        [
+          'u-1',
+          { callBackMinimumHours: 2, premiumStacking: 'compound', holidayPayCoversOvertime: true },
+        ],
       ]),
     );
   });

@@ -26,7 +26,14 @@ import {
   listShiftTypesForUnit,
   listUnits,
 } from './config.js';
-import { listActiveDifferentials, listOvertimeRulesForUnit, listPayRatesForUnit } from './pay.js';
+import {
+  getPaySettings,
+  listActiveDifferentials,
+  listOvertimeRulesForUnit,
+  listPayRatesForUnit,
+  paySettingsSaved,
+  savePaySettings,
+} from './pay.js';
 import { getLatestRuleSet, getRuleSet } from './rulesets.js';
 import {
   advanceSetup,
@@ -324,20 +331,21 @@ describe('applying a state preset', () => {
     expect(getUnit(handle.db, unit.id)?.leavePolicy).toEqual(stored);
   });
 
-  it('gives a VA unit the Title 38 premiums, four weeks’ posting and the overtime rosters once', () => {
+  it('gives a VA unit the Title 38 premiums (night, weekend, holiday, on-call), four weeks’ posting and the overtime rosters once', () => {
     const unit = newUnit();
     const first = applyState(unit.id, 'US-VA');
     expect(listActiveDifferentials(handle.db, unit.id).map((d) => `${d.kind} ${d.amount}`)).toEqual(
-      ['night 1.1', 'weekend 1.25', 'holiday 2'],
+      ['night 1.1', 'weekend 1.25', 'holiday 2', 'on_call 0.15'],
     );
     expect(getUnit(handle.db, unit.id)).toMatchObject({
       postingLeadDays: 28,
       overtimeOrder: 'roster',
     });
     // Created: 7 overtime rules (weekly 40, consecutive 8 and the five scoped to the 72/80 and
-    // Baylor plans), 3 differentials and 1 rule set; updated: the posting notice and overtime
-    // order, the leave policy and the stored choice.
-    expect(first).toEqual({ created: 11, updated: 3, unchanged: 0 });
+    // Baylor plans), 4 differentials, the pay settings and 1 rule set (its configs and the wider
+    // weekend in one version); updated: the posting notice and overtime order, the leave policy
+    // and the stored choice.
+    expect(first).toEqual({ created: 13, updated: 3, unchanged: 0 });
     const baylor = listOvertimeRulesForUnit(handle.db, unit.id).filter((r) =>
       r.scheduleKinds?.includes('va_baylor'),
     );
@@ -353,7 +361,31 @@ describe('applying a state preset', () => {
     const before = auditRows();
     expect(applyState(unit.id, 'US-VA')).toEqual({ created: 0, updated: 0, unchanged: 1 });
     expect(auditRows()).toBe(before);
-    expect(listActiveDifferentials(handle.db, unit.id)).toHaveLength(3);
+    expect(listActiveDifferentials(handle.db, unit.id)).toHaveLength(4);
+  });
+
+  it('gives a fresh VA unit additive premiums, a two-hour call-back and the weekend touching Friday night', () => {
+    const unit = newUnit();
+    applyState(unit.id, 'US-VA');
+    expect(getPaySettings(handle.db, unit.id)).toEqual({
+      callBackMinimumHours: 2,
+      premiumStacking: 'additive',
+      holidayPayCoversOvertime: true,
+    });
+    expect(getLatestRuleSet(handle.db, unit.id)?.weekendDefinition.mode).toBe('overlaps');
+  });
+
+  it('leaves pay settings a manager already saved alone when a VA preset is applied', () => {
+    const unit = newUnit();
+    const own = {
+      callBackMinimumHours: 0,
+      premiumStacking: 'compound' as const,
+      holidayPayCoversOvertime: false,
+    };
+    transact(handle.db, (tx) => savePaySettings(tx, unit.id, own, ACTOR));
+    applyState(unit.id, 'US-VA');
+    expect(paySettingsSaved(handle.db, unit.id)).toBe(true);
+    expect(getPaySettings(handle.db, unit.id)).toEqual(own);
   });
 
   it('writes nothing the second time a manager presses Apply', () => {

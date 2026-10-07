@@ -665,6 +665,8 @@ export interface PaySettings {
   callBackMinimumHours: number;
   /** How multiplier differentials and overtime combine: the FLSA regular rate, or added on base. */
   premiumStacking: 'compound' | 'additive';
+  /** Overtime worked on a holiday earns the holiday premium alone (38 U.S.C. § 7453(g)). */
+  holidayPayCoversOvertime: boolean;
 }
 
 /** A day-of event as recorded: paid outside the schedule, priced beside its cost. */

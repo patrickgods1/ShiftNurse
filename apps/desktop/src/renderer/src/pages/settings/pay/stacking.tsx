@@ -10,7 +10,7 @@ import { useState } from 'react';
 import type { PaySettings } from '../../../../../shared/api.js';
 import { usePaySettings, useSavePaySettings } from '../../../api-cost.js';
 import { AsyncState } from '../../../components/async-state.js';
-import { describedBy, Field } from '../../../components/field-help.js';
+import { CheckField, describedBy, Field } from '../../../components/field-help.js';
 import { errorMessage, INPUT, PRIMARY } from '../../../components/ui.js';
 import { useUnsavedChanges } from '../../../components/unsaved-changes.js';
 
@@ -26,7 +26,9 @@ export function StackingSection({ unitId }: { unitId: Id }) {
 function StackingForm({ unitId, saved }: { unitId: Id; saved: PaySettings }) {
   const save = useSavePaySettings(unitId);
   const [value, setValue] = useState<PaySettings['premiumStacking']>(saved.premiumStacking);
-  const dirty = value !== saved.premiumStacking;
+  const [coversOvertime, setCoversOvertime] = useState(saved.holidayPayCoversOvertime);
+  const dirty =
+    value !== saved.premiumStacking || coversOvertime !== saved.holidayPayCoversOvertime;
   useUnsavedChanges('Premium stacking', dirty);
   const error = errorMessage(save.error);
 
@@ -41,6 +43,7 @@ function StackingForm({ unitId, saved }: { unitId: Id; saved: PaySettings }) {
           save.mutate({
             callBackMinimumHours: saved.callBackMinimumHours,
             premiumStacking: value,
+            holidayPayCoversOvertime: coversOvertime,
           });
         }}
       >
@@ -62,6 +65,19 @@ function StackingForm({ unitId, saved }: { unitId: Id; saved: PaySettings }) {
             </option>
           </select>
         </Field>
+        <CheckField
+          id="holiday-pay-covers-overtime"
+          label="Holiday pay covers overtime worked on the holiday (38 U.S.C. § 7453(g))"
+          hint="Leave it off under the FLSA regular rate: overtime on a holiday earns both premiums."
+        >
+          <input
+            id="holiday-pay-covers-overtime"
+            type="checkbox"
+            checked={coversOvertime}
+            aria-describedby={describedBy('holiday-pay-covers-overtime', { hint: true })}
+            onChange={(e) => setCoversOvertime(e.target.checked)}
+          />
+        </CheckField>
         <div className="flex justify-end">
           <button type="submit" className={PRIMARY} disabled={!dirty || save.isPending}>
             {save.isPending ? 'Saving…' : 'Save'}

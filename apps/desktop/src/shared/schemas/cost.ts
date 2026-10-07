@@ -135,6 +135,10 @@ export const costSchemas = {
   paySettings: z.tuple([id]),
   savePaySettings: z.tuple([
     id,
-    object({ callBackMinimumHours: hours, premiumStacking: z.enum(['compound', 'additive']) }),
+    object({
+      callBackMinimumHours: hours,
+      premiumStacking: z.enum(['compound', 'additive']),
+      holidayPayCoversOvertime: z.boolean(),
+    }),
   ]),
 } satisfies ResourceSchemas<'cost'>;

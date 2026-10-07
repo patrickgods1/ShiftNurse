@@ -80,6 +80,12 @@
  *   multiplier adds `base × (multiplier − 1)` an hour and each overtime band's premium is
  *   `base × (multiplier − 1)`. So the straight rate is `base + Σflat + base × Σ(multiplier − 1)`
  *   (UC–CNA Art. 14 §N; Title 38 percentages of basic pay). Absent, `'compound'` as above.
+ * - **Holiday pay covers holiday overtime** under `CostContext.holidayPayCoversOvertime`: an
+ *   overtime hour that is paid the holiday or major-holiday premium gets no overtime premium,
+ *   though it still counts in `overtimeHours` for alerts and the ledger (38 U.S.C. § 7453(g): no
+ *   overtime pay on a holiday in addition to holiday pay). That is every hour of an ordinary
+ *   holiday shift, but only the held hours of a Baylor tour, which is paid no holiday premium
+ *   itself (§ 7456(d)). Absent, the overtime premium is paid on holiday hours too.
  * - **Overtime rules may be for one kind of nurse.** A rule with `scheduleKinds` prices only the
  *   nurses of those kinds (`Nurse.scheduleKind`, absent `'standard'`), so a unit's 72/80 and
  *   Baylor rules sit beside its standard ones (38 U.S.C. §§ 7456(c), 7456A(c)).
@@ -160,7 +166,35 @@ export interface CostContext {
    * base either way.
    */
   premiumStacking?: 'compound' | 'additive';
+  /**
+   * Holiday pay already covers overtime worked on the holiday. 38 U.S.C. § 7453(d) pays holiday
+   * service "including overtime service" at double pay, and § 7453(g) forbids overtime pay on top
+   * of it, so a VA shift that earns the holiday premium adds no overtime premium. Absent/false:
+   * overtime is paid on holiday hours as well, which is the FLSA regular rate.
+   */
+  holidayPayCoversOvertime?: boolean;
 }
+
+/** A unit's pay settings that are not rates, differentials or overtime rules. */
+export interface PaySettings {
+  /** The fewest hours a call-back pays, from the contract. 0 pays the hours worked. */
+  callBackMinimumHours: number;
+  /** How multiplier differentials and overtime combine; see `CostContext.premiumStacking`. */
+  premiumStacking: 'compound' | 'additive';
+  /**
+   * Holiday pay already covers overtime worked on the holiday (38 U.S.C. § 7453(g)): a shift
+   * that earns the holiday or major-holiday premium adds no overtime premium. Absent/false:
+   * overtime is paid on holiday hours too, as the FLSA regular rate does.
+   */
+  holidayPayCoversOvertime: boolean;
+}
+
+/** What a unit that has never saved pay settings runs: no call-back minimum, FLSA stacking. */
+export const DEFAULT_PAY_SETTINGS: PaySettings = {
+  callBackMinimumHours: 0,
+  premiumStacking: 'compound',
+  holidayPayCoversOvertime: false,
+};
 
 // ---------------------------------------------------------------------------
 // Per-assignment costing

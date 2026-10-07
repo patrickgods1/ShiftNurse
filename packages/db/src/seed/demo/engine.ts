@@ -1594,6 +1594,7 @@ export function seedFromProfile(
   // --- History --------------------------------------------------------------------------------
   const worked: Worked = new Map(staff.map((s) => [s.nurse.id, new Map()]));
   const rows = new Map<Id, Assignment>();
+  const pay = getPaySettings(db, unit.id);
   const costContext: CostContext = {
     unit,
     payRates: listPayRatesForUnit(db, unit.id),
@@ -1602,7 +1603,8 @@ export function seedFromProfile(
     holidayDates,
     weekendDefinition: ruleSet.weekendDefinition,
     workWeekStartsOn: 0,
-    premiumStacking: getPaySettings(db, unit.id).premiumStacking,
+    premiumStacking: pay.premiumStacking,
+    holidayPayCoversOvertime: pay.holidayPayCoversOvertime,
   };
   const ledgerInputs: UpsertFairnessLedgerInput[] = [];
   const historyCosts: number[] = [];

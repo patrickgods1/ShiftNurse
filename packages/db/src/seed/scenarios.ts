@@ -750,6 +750,7 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
       .map((r) => r.d as IsoDate),
   );
   const nurses = traits.map((t) => t.nurse);
+  const pay = getPaySettings(db, unit.id);
   const costContext: CostContext = {
     unit,
     payRates: listPayRatesForUnit(db, unit.id),
@@ -758,7 +759,8 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
     holidayDates,
     weekendDefinition: ruleSet.weekendDefinition,
     workWeekStartsOn: 0,
-    premiumStacking: getPaySettings(db, unit.id).premiumStacking,
+    premiumStacking: pay.premiumStacking,
+    holidayPayCoversOvertime: pay.holidayPayCoversOvertime,
   };
   const historyCosts: number[] = [];
   const roundToThousand = (dollars: number) => Math.round(dollars / 1000) * 1000;

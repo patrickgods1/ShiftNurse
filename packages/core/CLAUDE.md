@@ -367,6 +367,13 @@
   alone, so nothing compounds (UC–CNA Art. 14 § N forbids pyramiding of premiums; Title 38 pays
   differentials in addition to overtime on basic pay). The default stays compound so no existing
   unit's payroll estimate moves.
+- **A preset may propose pay settings and a weekend, only where the unit set neither.**
+  `JurisdictionPreset.paySettings` is planned as a whole `PaySettings` row (`DEFAULT_PAY_SETTINGS`
+  overlaid) only when `JurisdictionPlanInput.paySettings` is absent; `weekendDefinition` only when
+  the unit's is the default Saturday-to-Monday window, compared field by field, in another mode.
+  The VA's: additive stacking and no overtime premium on holiday hours (38 U.S.C. § 7453(g)), a
+  2-hour call-back (§ 7453(e)(4)), the `overlaps` weekend (§ 7453(c): "any part of which", so a
+  Friday 19:00 tour earns weekend pay and is a weekend worked) and on-call at 0.15 of base (§ 7453(h)).
 - **The `overtime` alert says what payroll will say.** `ComplianceInput.cost` (a `CostContext`) with an
   active overtime rule above 1× makes `complianceAlerts` price the schedule with `costSchedule` and alert
   per nurse per work week (or pay period) holding overtime hours, daily, seventh-day, consecutive and

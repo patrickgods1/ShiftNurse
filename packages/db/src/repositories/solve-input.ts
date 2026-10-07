@@ -170,6 +170,7 @@ export function costContext(
   const maxHours = ruleSet.configs.find((c) => c.ruleId === maxHoursRule.id);
   const params = (maxHours?.params ?? maxHoursRule.defaultParams) as Partial<MaxHoursParams>;
   const holidays = listHolidaysForUnit(db, unitId);
+  const pay = getPaySettings(db, unitId);
   return {
     unit: unitOrThrow(db, unitId),
     payRates: listPayRatesForUnit(db, unitId),
@@ -179,7 +180,8 @@ export function costContext(
     majorHolidayDates: new Set<IsoDate>(holidays.filter((h) => h.isMajor).map((h) => h.date)),
     weekendDefinition: ruleSet.weekendDefinition,
     workWeekStartsOn: params.workWeekStartsOn ?? maxHoursRule.defaultParams.workWeekStartsOn,
-    premiumStacking: getPaySettings(db, unitId).premiumStacking,
+    premiumStacking: pay.premiumStacking,
+    holidayPayCoversOvertime: pay.holidayPayCoversOvertime,
     ...(params.paidLeaveCountsTowardOvertime
       ? { overtimeLeave: overtimeLeave(db, unitId, period) }
       : {}),

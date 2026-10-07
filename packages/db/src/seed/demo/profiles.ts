@@ -7,7 +7,7 @@
  * behave like the real thing, not to quote any one employer's pay table.
  */
 
-import { DEFAULT_WEEKEND, isoDate, MINUTES_PER_DAY } from '@shiftnurse/core';
+import { DEFAULT_WEEKEND, isoDate } from '@shiftnurse/core';
 import type { DemoProfile, DemoRosterRow } from './engine.js';
 
 // Scheduled days a week are the 12-hour alternative workweek's (three 12s full time, two part
@@ -352,19 +352,16 @@ export const VA_SF_MED_SURG: DemoProfile = {
     // The federal pay adjustment takes effect with the first pay period of January.
     raise: { month: 1, percent: 2 },
   },
-  // The VA preset sets the Title 38 night (whole tour at 4 h in 18:00–06:00), weekend and holiday premiums.
+  // The VA preset sets the Title 38 night (whole tour at 4 h in 18:00–06:00), weekend, holiday and
+  // on-call (15% of base) premiums.
   differentials: [],
   // The VA preset sets overtime beyond the scheduled tour and past 80 hours a pay period.
   overtime: [],
   holidays: 'federal',
   rules: {
-    // Title 38 weekend premium: any tour touching midnight Friday to midnight Sunday.
-    weekend: {
-      startWeekday: 6,
-      startMinute: 0,
-      durationMinutes: 2 * MINUTES_PER_DAY,
-      mode: 'overlaps',
-    },
+    // The stock Saturday-to-Monday window: the US-VA preset widens it to `overlaps`, so a tour
+    // touching it counts as a weekend worked (38 U.S.C. § 7453(c)), as it would on a real unit.
+    weekend: DEFAULT_WEEKEND,
     // The VA preset switches on weekend-pattern and sets the 11-hour minimum rest.
     params: {
       // 44 hours one week and 36 the next is 80 for the pay period, not four hours of overtime.
