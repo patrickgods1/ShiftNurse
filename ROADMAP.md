@@ -633,10 +633,17 @@ Directive 1351) against what a unit can configure. One PR per milestone.
       rosters and consent are unit choices; the per-diem commitment is a pre-publish alert; holiday
       priority is advice on the Requests screen) (verified 2026-10-06: `npm run check` lint and
       typecheck clean, 2,421 tests passed, 2 skipped; smoke PASS; seeds untouched)
-- [ ] M31 Holdovers: worked time past a shift's end, mandated or volunteered — the model has
-      none today (a shift's hours are its type's length, and back-to-back shifts break minimum
-      rest), so continuous-hours caps (16 in 24), overtime after 8 consecutive hours (§7453(e)),
-      §7459's consecutive limit and Oregon's and Massachusetts' hour caps cannot be enforced yet
+- [x] M31 Holdovers: worked time past a shift's end, mandated or volunteered, recorded on Today
+      for a published shift (migration 0029); rest, hour caps, overtime and pay count it, the
+      contract comparison does not. A `max-hours-in-24` rule (16 in 24, hard, off by default,
+      encoded for CP-SAT), §7459(a)'s consecutive limit on required hours (8, or 12 on a compressed
+      tour) in `no-mandatory-overtime` and the `US-VA` preset, and overtime bases past the scheduled
+      tour and after consecutive hours (§7453(e)); the VA demo prices overtime past the tour and
+      seeds volunteered holdovers. Oregon's and Massachusetts' caps go into their presets with M32
+      (verified 2026-10-06: `npm run check` lint and typecheck clean, 2,518 tests passed, 2 skipped;
+      the one failure, the VA demo's "keep them apart" Generate test, timed out at 80s under
+      full-suite load and passes alone in 14s, as before the change; smoke PASS; the community and
+      ICU demos' tables identical before and after)
 - [ ] M32 More state presets (mandatory-overtime laws in IL, CT, MN, NJ, ME, PA, NH, RI, WV, AK,
       TX; the full Title 22 ratio table; Oregon CNA ratios), each checked against the statute
 

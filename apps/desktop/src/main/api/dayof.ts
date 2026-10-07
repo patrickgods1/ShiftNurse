@@ -40,6 +40,7 @@ import {
   markCallOffCovered,
   markCallOffUncovered,
   openCallOffForAssignment,
+  recordHoldover,
   reportCallOff,
   rosterForPeriod,
   type ShiftNurseDb,
@@ -366,5 +367,6 @@ export function dayOfApi(db: ShiftNurseDb): ShiftNurseApi['dayOf'] {
       cancellationOrderFor(db, periodId, date, shiftTypeId, role, volunteers),
     cancelForCensus: (periodId, date, shiftTypeId, role, volunteers, nurseId) =>
       cancelForCensus(db, periodId, date, shiftTypeId, role, volunteers, nurseId),
+    recordHoldover: (input) => transact(db, (tx) => recordHoldover(tx, input, ACTOR)),
   };
 }

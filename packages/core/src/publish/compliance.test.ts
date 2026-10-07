@@ -309,6 +309,44 @@ describe('complianceAlerts', () => {
   });
 });
 
+describe('hours drift with a holdover', () => {
+  it('does not say a nurse is over her contract because she was held over 2 hours', () => {
+    resetFixtureCounters();
+    // Six 12s is the 72h she is contracted for; the 2h holdover is overtime, not drift (74h worked
+    // would be +2.8%, over this 2% tolerance).
+    const nurse = makeNurse({ id: 'n1', contractedHoursPerPeriod: 72 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign('n1', DAY_12, '2026-01-05'),
+        assign('n1', DAY_12, '2026-01-06'),
+        assign('n1', DAY_12, '2026-01-07'),
+        assign('n1', DAY_12, '2026-01-12'),
+        assign('n1', DAY_12, '2026-01-13'),
+        assign('n1', DAY_12, '2026-01-14', { holdoverMinutes: 120, holdoverMandated: true }),
+      ],
+    });
+    expect(
+      alertsFor(s, { hoursDriftTolerance: 0.02 }).filter((a) => a.kind === 'hours_drift'),
+    ).toEqual([]);
+  });
+
+  it('still counts the holdover as overtime in a week of 36 scheduled hours and 6 held over', () => {
+    resetFixtureCounters();
+    const nurse = makeNurse({ id: 'n1', contractedHoursPerPeriod: 72 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign('n1', DAY_12, '2026-01-04'),
+        assign('n1', DAY_12, '2026-01-07'),
+        assign('n1', DAY_12, '2026-01-09', { holdoverMinutes: 360, holdoverMandated: true }),
+      ],
+    });
+    const alert = alertsFor(s).find((a) => a.kind === 'overtime');
+    expect(alert).toMatchObject({ hours: 42, expectedHours: 40 });
+  });
+});
+
 describe('late posting', () => {
   // The period starts Sunday 2026-11-01; with 14 days' notice the schedule is due Sunday 2026-10-18.
   const november = () =>

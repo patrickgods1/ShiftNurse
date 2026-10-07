@@ -8,6 +8,7 @@
 
 import type { Assignment, ShiftType, Violation } from '@shiftnurse/core';
 import { memo } from 'react';
+import { formatHoldover } from '../../format.js';
 import { readableTextColor } from './colors.js';
 import { setDragPayload } from './dnd.js';
 import { chipHeightClass, chipWidthClass, isPendingId } from './grid-utils.js';
@@ -52,6 +53,12 @@ export const AssignmentChip = memo(function AssignmentChip({
   if (highlighted) titleParts.push('Differs from the draft');
   if (violations.length > 0) titleParts.push(...violations.map((v) => v.message));
   if (preferenceNote) titleParts.push(preferenceNote);
+  const held = assignment.holdoverMinutes ?? 0;
+  const heldNote =
+    held > 0
+      ? `Held over ${formatHoldover(held)} (${assignment.holdoverMandated ? 'required' : 'volunteered'})`
+      : undefined;
+  if (heldNote) titleParts.push(heldNote);
   const title =
     titleParts.length > 0
       ? titleParts.join('\n')
@@ -69,7 +76,9 @@ export const AssignmentChip = memo(function AssignmentChip({
         assignment.isLocked ? ', locked' : ''
       }${assignment.isCharge ? ', charge nurse' : ''}${hard ? ', hard violation' : soft ? ', soft violation' : ''}${
         highlighted ? ', differs from the draft' : ''
-      }${preferenceNote ? ', against a stated preference' : ''}`}
+      }${preferenceNote ? ', against a stated preference' : ''}${
+        heldNote ? `, ${heldNote.toLowerCase()}` : ''
+      }`}
       onDragStart={(event) => {
         if (!draggable) {
           event.preventDefault();
@@ -114,6 +123,14 @@ export const AssignmentChip = memo(function AssignmentChip({
           className="absolute -left-1 -top-1 rounded-full bg-surface px-0.5 text-xs leading-none text-warn"
         >
           ♡
+        </span>
+      ) : null}
+      {held > 0 ? (
+        <span
+          data-testid="holdover-mark"
+          className="absolute -bottom-1 -left-1 rounded-full bg-surface px-1 text-[10px] font-bold leading-tight text-text"
+        >
+          +{formatHoldover(held).replace(' ', '')}
         </span>
       ) : null}
       {hard || soft ? <SeverityMark severity={hard ? 'hard' : 'soft'} /> : null}

@@ -25,7 +25,14 @@ const differentialKind = z.enum([
   'agency',
 ]);
 const differentialMode = z.enum(['multiplier', 'flat']);
-const overtimeBasis = z.enum(['daily', 'weekly', 'pay_period', 'seventh_day']);
+const overtimeBasis = z.enum([
+  'daily',
+  'weekly',
+  'pay_period',
+  'seventh_day',
+  'beyond_scheduled_tour',
+  'consecutive',
+]);
 
 /** A rate belongs to one nurse or to a role's default — the repository refuses both or neither. */
 const payRateInput = object({

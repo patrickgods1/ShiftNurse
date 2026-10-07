@@ -9,6 +9,7 @@
  * period family for the assignment it just wrote — copied from `useInvalidateExchanges`.
  */
 
+import type { RecordHoldoverInput } from '@shared/api.js';
 import type { CallOutcome, CancellationTier, Id, IsoDate, NurseRole } from '@shiftnurse/core';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, queryKeys } from './api.js';
@@ -199,6 +200,18 @@ export function useCancelForCensus(unitId: Id | undefined) {
         args.nurseId,
       ),
     onSuccess: (result) => invalidatePeriod(queryClient, result.periodId),
+    onSettled: invalidate,
+  });
+}
+
+/** A holdover changes the assignment itself, so the grid's period family refreshes too. */
+export function useRecordHoldover(unitId: Id | undefined) {
+  const invalidate = useInvalidateDayOf(unitId);
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (input: RecordHoldoverInput) => api.dayOf.recordHoldover(input),
+    onSuccess: (assignment) => invalidatePeriod(queryClient, assignment.periodId),
     onSettled: invalidate,
   });
 }

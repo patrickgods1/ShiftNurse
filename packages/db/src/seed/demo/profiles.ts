@@ -154,9 +154,9 @@ const INTERMITTENT = { employmentType: 'per_diem', fte: 0, contractedHoursPerPer
  * - **A compressed biweekly schedule.** Full-time staff work six 12-hour tours and one 8-hour
  *   tour each pay period: 80 hours, the long week 44 and the short week 36. That is a compressed
  *   schedule — 80 hours in fewer than ten workdays, as 5 U.S.C. §6121 defines one — so overtime
- *   is counted over the pay period rather than the week: past 80 hours in the pay period, or past
- *   the 12 hours of a tour. Part-time staff work four 12s. (Overtime beyond the scheduled tour
- *   is a holdover, which the app does not model yet, so the history has none.)
+ *   is counted over the pay period rather than the week: past 80 hours in the pay period, or any
+ *   time worked beyond the scheduled tour (a holdover: an 8 held over is overtime from its 9th
+ *   hour). Part-time staff work four 12s. The history holds three volunteered holdovers.
  * - **The 8 has its own floor and runs inside the day 12.** It works 07:00–15:00, adding hands
  *   for the morning's care and discharges, and is covered as a real ward covers it: by the day
  *   12's charge nurse and ACLS nurse, and a new grad on it works beside the day 12's
@@ -317,9 +317,11 @@ export const VA_SF_MED_SURG: DemoProfile = {
     { kind: 'weekend', mode: 'multiplier', amount: 1.25 },
     { kind: 'holiday', mode: 'multiplier', amount: 2 },
   ],
-  // A compressed schedule: overtime past the scheduled 12-hour tour or 80 hours a pay period.
+  // Overtime is work beyond the scheduled tour (VA-NNU Master Agreement Art. 14; 38 U.S.C.
+  // §7453(e)) or past 80 hours a pay period. An 8-hour tour held over is overtime from its 9th
+  // hour, which a flat `daily 12` never caught: that was the demo-review issue deferred to holdovers.
   overtime: [
-    { basis: 'daily', thresholdHours: 12, multiplier: 1.5 },
+    { basis: 'beyond_scheduled_tour', thresholdHours: 0, multiplier: 1.5 },
     { basis: 'pay_period', thresholdHours: 80, multiplier: 1.5 },
   ],
   holidays: 'federal',
@@ -397,6 +399,12 @@ export const VA_SF_MED_SURG: DemoProfile = {
     share: 0.5,
     maxChoices: 5,
   },
+  // Volunteered, as most holdovers are: report ran late, a patient needed a hand. None is required.
+  holdovers: [
+    { shift: 'D8', minutes: 45 },
+    { shift: 'D12', minutes: 90 },
+    { shift: 'N12', minutes: 30 },
+  ],
   keptApart: [
     {
       name: 'RN tour separation',

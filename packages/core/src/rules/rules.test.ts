@@ -204,6 +204,26 @@ describe('contracted hours', () => {
     expect(v?.severity).toBe('hard');
   });
 
+  it('does not call a nurse over contract for being held over: they were not scheduled past it', () => {
+    // Six 12s and a 2h holdover is 74h worked against 72h contracted. With the tolerance at 0,
+    // only counting the holdover would breach; the 72 scheduled hours sit exactly on target.
+    const nurse = makeNurse({ contractedHoursPerPeriod: 72 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-05'),
+        assign(nurse.id, DAY_12, '2026-01-06'),
+        assign(nurse.id, DAY_12, '2026-01-07'),
+        assign(nurse.id, DAY_12, '2026-01-12'),
+        assign(nurse.id, DAY_12, '2026-01-13'),
+        assign(nurse.id, DAY_12, '2026-01-14', { holdoverMinutes: 120, holdoverMandated: true }),
+      ],
+      ruleParams: { 'fte-target-hours': { overToleranceHours: 0, underToleranceHours: 0 } },
+    });
+    expect(codes(s)).not.toContain('over_contracted_hours');
+    expect(codes(s)).not.toContain('under_contracted_hours');
+  });
+
   it('lets a contract that guarantees full hours mark a shortfall as a breach', () => {
     const nurse = makeNurse({ contractedHoursPerPeriod: 72 });
     const s = scenario({
@@ -424,6 +444,51 @@ describe('weekly hours and overtime', () => {
     });
     const v = evaluate(s).violations.find((x) => x.code === 'unauthorised_overtime');
     expect(v?.details).toMatchObject({ scheduledHours: 36, paidLeaveHours: 12, overtimeHours: 8 });
+  });
+
+  it('does not call a week unauthorised overtime when the extra 6 hours were a holdover', () => {
+    // 36h scheduled plus a 6h holdover is 42h worked; recording the holdover is the manager
+    // authorising those hours, so no shift needs the overtime flag.
+    const nurse = makeNurse({ contractedHoursPerPeriod: 84 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-04'),
+        assign(nurse.id, DAY_12, '2026-01-07'),
+        assign(nurse.id, DAY_12, '2026-01-09', { holdoverMinutes: 360, holdoverMandated: true }),
+      ],
+    });
+    expect(codes(s)).not.toContain('unauthorised_overtime');
+  });
+
+  it('still flags 42 hours with no holdover and no authorised shift', () => {
+    const nurse = makeNurse({ contractedHoursPerPeriod: 84 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-04'),
+        assign(nurse.id, DAY_12, '2026-01-07'),
+        assign(nurse.id, DAY_12, '2026-01-09'),
+        assign(nurse.id, DAY_12, '2026-01-10'),
+      ],
+    });
+    expect(codes(s)).toContain('unauthorised_overtime');
+  });
+
+  it('still refuses a holdover that takes the week past the absolute cap', () => {
+    // Four 12s is 48h, exactly the cap; a 1h holdover makes 49h worked.
+    const nurse = makeNurse({ contractedHoursPerPeriod: 120 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-04'),
+        assign(nurse.id, DAY_12, '2026-01-05'),
+        assign(nurse.id, DAY_12, '2026-01-07'),
+        assign(nurse.id, DAY_12, '2026-01-09', { holdoverMinutes: 60, holdoverMandated: true }),
+      ],
+    });
+    const v = evaluate(s).violations.find((x) => x.code === 'over_max_hours');
+    expect(v?.details).toMatchObject({ scheduledHours: 49, maxHours: 48 });
   });
 
   it('never counts leave toward the absolute weekly cap: it is not fatigue', () => {

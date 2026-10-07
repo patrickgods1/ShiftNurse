@@ -910,3 +910,175 @@ describe('night and evening differentials by the clock', () => {
     expect(hoursInDailyWindow({ startMinute: min(5, 420), endMinute: min(5, 900) }, daily)).toBe(0);
   });
 });
+
+describe('overtime beyond the scheduled tour and past consecutive hours', () => {
+  // Base rate $50, no differentials, so every figure is hours × $50 (premium at 0.5 × $50 = $25).
+  const rn50 = { payRates: [{ ...RN_RATE, hourlyRate: 50 }], differentials: [] };
+  const beyondTour = (thresholdHours: number): OvertimeRule => ({
+    id: 'ot-tour',
+    unitId: UNIT_ID,
+    basis: 'beyond_scheduled_tour',
+    thresholdHours,
+    multiplier: 1.5,
+    active: true,
+  });
+  const consecutive = (thresholdHours: number): OvertimeRule => ({
+    ...beyondTour(thresholdHours),
+    id: 'ot-consecutive',
+    basis: 'consecutive',
+  });
+
+  it('pays the hour a nurse is held past her 8-hour tour at time and a half', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, DAY_8, '2026-01-05', { holdoverMinutes: 60 })],
+    });
+    const report = costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [beyondTour(0)] }));
+    expect(report.assignments[0]?.overtimeHours).toBe(1);
+    expect(report.assignments[0]?.lines.filter((l) => l.kind === 'overtime')).toEqual([
+      { kind: 'overtime', hours: 1, rate: 25, amount: 25 },
+    ]);
+    expect(report.totals.total).toBe(475); // 9h × $50 + $25
+  });
+
+  it('pays no overtime for a tour worked to its scheduled end', () => {
+    const nurse = makeNurse();
+    const s = scenario({ nurses: [nurse], assignments: [assign(nurse.id, DAY_8, '2026-01-05')] });
+    const report = costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [beyondTour(0)] }));
+    expect(report.assignments[0]?.lines.some((l) => l.kind === 'overtime')).toBe(false);
+    expect(report.totals.total).toBe(400);
+  });
+
+  it('forgives a ten-minute stay under a fifteen-minute grace but pays an hour past it', () => {
+    const nurse = makeNurse();
+    const rules = ctx({ ...rn50, overtimeRules: [beyondTour(0.25)] });
+    const brief = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, DAY_8, '2026-01-05', { holdoverMinutes: 10 })],
+    });
+    expect(costSchedule(brief.schedule, rules).assignments[0]?.overtimeHours).toBe(0);
+
+    const hour = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, DAY_8, '2026-01-05', { holdoverMinutes: 60 })],
+    });
+    // 8h15 into the shift to 9h: 0.75 hours of overtime.
+    expect(costSchedule(hour.schedule, rules).assignments[0]?.overtimeHours).toBe(0.75);
+  });
+
+  it('makes the last four hours of a 12 overtime after eight consecutive hours', () => {
+    const nurse = makeNurse();
+    // A second 12 two days on is its own stretch: each is four hours over, not one 24h week.
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, DAY_12, '2026-01-05'), assign(nurse.id, DAY_12, '2026-01-07')],
+    });
+    const report = costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [consecutive(8)] }));
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([4, 4]);
+    expect(report.totals.overtimePremium).toBe(200); // 8h × $25
+  });
+
+  it('makes a whole evening shift overtime when it follows the day shift straight on', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_8, EVENING_8],
+      assignments: [
+        assign(nurse.id, DAY_8, '2026-01-05'),
+        assign(nurse.id, EVENING_8, '2026-01-05'),
+      ],
+    });
+    const report = costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [consecutive(8)] }));
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 8]);
+  });
+
+  it('pays a held-over hour once when a pay-period rule and a tour rule both reach it', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, DAY_12, '2026-01-05', { holdoverMinutes: 60 })],
+    });
+    const periodRule: OvertimeRule = {
+      ...beyondTour(80),
+      id: 'ot-pp',
+      basis: 'pay_period',
+    };
+    const report = costSchedule(
+      s.schedule,
+      ctx({ ...rn50, overtimeRules: [periodRule, beyondTour(0)] }),
+    );
+    expect(report.assignments[0]?.overtimeHours).toBe(1);
+    expect(report.totals.overtimePremium).toBe(25);
+  });
+
+  it('does not count on-call standby as hours worked toward consecutive overtime', () => {
+    const nurse = makeNurse();
+    const standby = { ...ON_CALL, startTime: '15:00' };
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_8, standby],
+      assignments: [assign(nurse.id, DAY_8, '2026-01-05'), assign(nurse.id, standby, '2026-01-05')],
+    });
+    const report = costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [consecutive(8)] }));
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0]);
+    expect(report.assignments.some((a) => a.lines.some((l) => l.kind === 'overtime'))).toBe(false);
+  });
+
+  it('counts a holdover that runs into the next shift once: 16 hours on the clock, not 16.5', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_8, EVENING_8],
+      assignments: [
+        assign(nurse.id, DAY_8, '2026-01-05', { holdoverMinutes: 30 }),
+        assign(nurse.id, EVENING_8, '2026-01-05'),
+      ],
+    });
+    const report = costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [consecutive(8)] }));
+    // The held-over half hour is past eight; the evening starts with eight already on the clock
+    // (07:00 to 15:00), so all 8 of its hours are overtime, from hour 0.
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0.5, 8]);
+  });
+
+  it('pays held-over hours at the higher of the tour and daily rules, as one band', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, DAY_8, '2026-01-05', { holdoverMinutes: 120 })],
+    });
+    const double: OvertimeRule = { ...beyondTour(0), id: 'ot-tour-2x', multiplier: 2 };
+    const report = costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [double, DAILY_8] }));
+    // 10h worked; the daily rule and the tour rule both start at hour 8, and 2× wins.
+    expect(report.assignments[0]?.lines.filter((l) => l.kind === 'overtime')).toEqual([
+      { kind: 'overtime', hours: 2, rate: 50, amount: 100 },
+    ]);
+  });
+
+  it('never prices last period’s shift as consecutive overtime', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      priorAssignments: [assign(nurse.id, DAY_12, '2026-01-03', { periodId: 'period-0' })],
+      assignments: [assign(nurse.id, DAY_12, '2026-01-05')],
+    });
+    const report = costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [consecutive(8)] }));
+    expect(report.assignments).toHaveLength(1);
+    // Only this period's own 12 is judged, from its own start: four hours past eight.
+    expect(report.assignments[0]?.overtimeHours).toBe(4);
+    expect(report.totals.overtimePremium).toBe(100);
+  });
+
+  it('counts last period’s hours already on the clock but only prices this period’s', () => {
+    const nurse = makeNurse();
+    // Night 19:00 Jan 4 – 07:00 Jan 5 (prior), then this period's day 07:00 Jan 5: 12h already
+    // worked, so all of the day shift is overtime and none of the night is priced.
+    const s = scenario({
+      nurses: [nurse],
+      priorAssignments: [assign(nurse.id, NIGHT_12, '2026-01-04', { periodId: 'period-0' })],
+      assignments: [assign(nurse.id, DAY_12, '2026-01-05')],
+    });
+    const report = costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [consecutive(8)] }));
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([12]);
+  });
+});

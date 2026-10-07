@@ -310,11 +310,11 @@ describe('the VA San Francisco med-surg demo', () => {
     expect(tooClose).toBe(0);
   });
 
-  it('pays overtime past a 12-hour tour or 80 hours in the pay period, not 40 in a week', () => {
+  it('pays overtime beyond the scheduled tour or past 80 hours in the pay period, not 40 in a week', () => {
     expect(
       f.rows('SELECT basis, threshold_hours, multiplier FROM overtime_rule ORDER BY basis'),
     ).toEqual([
-      { basis: 'daily', threshold_hours: 12, multiplier: 1.5 },
+      { basis: 'beyond_scheduled_tour', threshold_hours: 0, multiplier: 1.5 },
       { basis: 'pay_period', threshold_hours: 80, multiplier: 1.5 },
     ]);
     // And the rule set judges overtime the same way, so the 44-hour week is legal.
@@ -325,6 +325,88 @@ describe('the VA San Francisco med-surg demo', () => {
       overtimeByPayPeriod: true,
       payPeriodOvertimeThresholdHours: 80,
     });
+  });
+
+  it('has three volunteered holdovers in the published history, none required', () => {
+    const held = f.rows<{ code: string; minutes: number; mandated: number | null; status: string }>(
+      `SELECT st.abbreviation code, a.holdover_minutes minutes, a.holdover_mandated mandated, p.status
+         FROM assignment a JOIN shift_type st ON st.id = a.shift_type_id
+         JOIN schedule_period p ON p.id = a.period_id
+        WHERE a.holdover_minutes > 0 ORDER BY a.holdover_minutes`,
+    );
+    expect(held).toEqual([
+      { code: 'N12', minutes: 30, mandated: 0, status: 'published' },
+      { code: 'D8', minutes: 45, mandated: 0, status: 'published' },
+      { code: 'D12', minutes: 90, mandated: 0, status: 'published' },
+    ]);
+    // Each was recorded through the repository, so each has its audit entry.
+    const audited = f
+      .rows<{ after: string }>(
+        `SELECT after FROM audit_log WHERE entity_type = 'assignment' AND action = 'update'`,
+      )
+      .map((r) => JSON.parse(r.after) as { holdoverMinutes?: number; holdoverMandated?: boolean })
+      .filter((x) => (x.holdoverMinutes ?? 0) > 0);
+    expect(audited.map((x) => [x.holdoverMinutes, x.holdoverMandated]).sort()).toEqual([
+      [30, false],
+      [45, false],
+      [90, false],
+    ]);
+    // One nurse each, and nothing a holdover could break (rest, hours, required overtime) fires.
+    expect(
+      f.count('SELECT COUNT(DISTINCT nurse_id) n FROM assignment WHERE holdover_minutes > 0'),
+    ).toBe(3);
+    // The same history seeded without the holdovers has exactly these violations (counted by
+    // hand from that run): holdovers add none, hard or soft.
+    expect([...historyViolations(f)].sort()).toEqual([
+      ['over_contracted_hours', 42],
+      ['understaffed', 8],
+    ]);
+    expect([...historyViolations(f, 'soft')].sort()).toEqual([
+      ['short_recovery_after_nights', 163],
+      ['under_contracted_hours', 20],
+    ]);
+  });
+
+  it('prices an 8 held over 45 minutes as three quarters of an hour of overtime at time and a half', () => {
+    const db = f.handle.db;
+    const held = f.rows<{ id: string; nurse_id: string; period_id: string; date: string }>(
+      `SELECT a.id, a.nurse_id, a.period_id, a.date FROM assignment a
+         JOIN shift_type st ON st.id = a.shift_type_id
+        WHERE st.abbreviation = 'D8' AND a.holdover_minutes = 45`,
+    );
+    expect(held).toHaveLength(1);
+    const { id, nurse_id: nurseId, period_id: periodId, date } = held[0]!;
+    // A Monday and no holiday, so no premium besides overtime; the nursing assistant's General
+    // Schedule rate is 29 + 0.40 for each of 14 years of service = 34.60.
+    expect(weekdayOf(isoDate(date))).toBe(1);
+    expect(
+      f.rows<{ hourly_rate: number }>(
+        `SELECT hourly_rate FROM pay_rate WHERE nurse_id = '${nurseId}'`,
+      ),
+    ).toEqual([{ hourly_rate: 34.6 }]);
+
+    const period = getPeriod(db, periodId)!;
+    const input = loadPeriodInput(db, period);
+    const price = (assignments: readonly Assignment[]) =>
+      costSchedule(
+        new ScheduleView({
+          period,
+          assignments,
+          nurses: input.nurses,
+          shiftTypes: input.shiftTypes,
+        }),
+        costContext(db, f.result.unitId, input.ruleSet),
+      );
+    const withHoldover = price(input.assignments);
+    const without = price(
+      input.assignments.map((a) => (a.id === id ? { ...a, holdoverMinutes: 0 } : a)),
+    );
+    const row = (cost: typeof withHoldover) => cost.assignments.find((a) => a.assignmentId === id)!;
+    // 45 minutes = 0.75 hour; 0.75 x $34.60 x 1.5 = $38.925, and the 8 itself is unchanged.
+    expect(row(withHoldover).hours - row(without).hours).toBeCloseTo(0.75, 10);
+    expect(row(withHoldover).overtimeHours).toBeCloseTo(0.75, 10);
+    expect(row(without).overtimeHours).toBe(0);
+    expect(withHoldover.totals.total - without.totals.total).toBeCloseTo(38.925, 6);
   });
 
   it('prices the 44-hour week at straight time', () => {

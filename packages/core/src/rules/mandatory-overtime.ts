@@ -23,9 +23,19 @@
  * unvolunteered, non-emergency overtime shift is allowed until the nurse's worked hours in its
  * work week pass the cap. Without it the rule is the total ban above.
  *
- * The statute also limits required *consecutive* hours (8, or 12 on compressed schedules). That
- * cannot be expressed here: a shift's hours are its shift type's length, and back-to-back shifts
- * already break the minimum-rest rule, so the weekly cap is the enforceable part.
+ * The statute also limits required *consecutive* hours: "more than eight consecutive hours (or 12
+ * hours if such staff is covered under section 7456 or 7456A)". A scheduled shift never breaks
+ * that on its own (back-to-back shifts already break the minimum-rest rule), but a holdover does:
+ * a nurse kept an hour past a 12-hour tour has worked 13 straight. So `Assignment.holdoverMinutes`
+ * with `holdoverMandated` is a *required holdover*, judged by the stretch of continuous worked
+ * time it sits in (`workedStretches`), against `maxRequiredConsecutiveHours` or, when a shift in
+ * the stretch was scheduled longer than that (a compressed tour), `compressedTourConsecutiveHours`.
+ * An `OvertimeVolunteer` offer does not excuse one: the holdover's own record says it was
+ * required, and a holdover the nurse offered is recorded as volunteered, which this rule never
+ * judges. An emergency note still does.
+ *
+ * Holdovers are recorded day-of on a published schedule, and only a draft is ever generated, so
+ * Generate cannot breach this either.
  */
 
 import type { Assignment, Id } from '../domain/entities.js';
@@ -38,6 +48,8 @@ import {
   type Weekday,
   weekdayOf,
 } from '../domain/time.js';
+import { type WorkedStretch, workedStretches } from '../schedule/holdover.js';
+import type { AssignmentView } from '../schedule/view.js';
 import type { Rule, RuleContext, Violation } from './types.js';
 import { isWorked, nurseName, violation } from './types.js';
 
@@ -49,6 +61,16 @@ export interface MandatoryOvertimeParams {
    * unvolunteered overtime at all.
    */
   maxMandatedWeeklyHours?: number;
+  /**
+   * The most consecutive hours a nurse may be required to work. A required holdover whose
+   * stretch of worked time passes it is a breach. Absent: no consecutive limit.
+   */
+  maxRequiredConsecutiveHours?: number;
+  /**
+   * The consecutive limit for a stretch containing a shift scheduled longer than
+   * `maxRequiredConsecutiveHours` (a compressed tour). Absent: the base limit applies throughout.
+   */
+  compressedTourConsecutiveHours?: number;
   /** First day of the work week the cap is counted in. */
   workWeekStartsOn: Weekday;
 }
@@ -75,6 +97,13 @@ export function isEmergency(assignment: Pick<Assignment, 'notes'>): boolean {
     .startsWith(EMERGENCY_NOTE_PREFIX.toLowerCase());
 }
 
+/** "1h 30m", "45m", "2h": a holdover's length as a manager says it. */
+function minutesText(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return [h > 0 ? `${h}h` : '', m > 0 ? `${m}m` : ''].filter(Boolean).join(' ');
+}
+
 export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
   id: 'no-mandatory-overtime',
   name: 'No mandatory overtime',
@@ -84,7 +113,9 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
     'New York, Washington, Oregon and Massachusetts. With a weekly cap set, it instead allows ' +
     'required overtime up to that many hours in a work week, as 38 U.S.C. § 7459(a) does for VA ' +
     'nursing staff (40 hours; 24 on the weekend plan); volunteered hours and emergencies after ' +
-    'volunteers are exhausted stay outside it.',
+    'volunteers are exhausted stay outside it. A required holdover (time kept past the end of ' +
+    'the shift) is judged the same way, and a consecutive-hours limit (8, or 12 on a compressed ' +
+    'tour) refuses a required holdover that runs a stretch past it.',
   severity: 'hard',
   category: 'hours',
   scope: 'nurse',
@@ -107,6 +138,25 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
       optional: true,
       min: 1,
     },
+    maxRequiredConsecutiveHours: {
+      label: 'Most consecutive hours a nurse can be required to work',
+      hint: 'Leave blank for no consecutive-hours limit.',
+      why:
+        'Federal VA law (38 U.S.C. § 7459(a)) forbids requiring more than eight consecutive ' +
+        'hours. It is what stops a required holdover from stretching a tour: held an hour past ' +
+        'an 8-hour tour is nine hours straight. Hours the nurse offered do not count.',
+      optional: true,
+      min: 1,
+    },
+    compressedTourConsecutiveHours: {
+      label: 'Most consecutive hours on a compressed tour',
+      hint: 'Used instead when a shift in the stretch is scheduled longer than the limit above.',
+      why:
+        '38 U.S.C. § 7459(a) allows 12 for staff covered by § 7456 or § 7456A, the 12-hour ' +
+        'tours. Without this, a 12-hour tour is over the 8-hour limit before anyone is held.',
+      optional: true,
+      min: 1,
+    },
     workWeekStartsOn: {
       label: 'Work week starts on',
       hint: 'The first day of the work week the required-hours cap is counted in.',
@@ -117,12 +167,73 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
 
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];
+    const weekly = params.maxMandatedWeeklyHours;
+    const consecutive = params.maxRequiredConsecutiveHours;
+    const stretchesByNurse = new Map<Id, WorkedStretch<AssignmentView>[]>();
+    const reportedStretches = new Map<WorkedStretch<AssignmentView>, Violation>();
+    const stretchesOf = (nurseId: Id) => {
+      let found = stretchesByNurse.get(nurseId);
+      if (!found) {
+        found = workedStretches(schedule.timelineFor(nurseId));
+        stretchesByNurse.set(nurseId, found);
+      }
+      return found;
+    };
     for (const view of schedule.assignments()) {
       const { assignment, nurse } = view;
-      if (!assignment.isOvertime) continue;
-      if (volunteeredOn(ctx, nurse.id, assignment.date)) continue;
-      if (params.allowEmergencyNote && isEmergency(assignment)) continue;
-      if (params.maxMandatedWeeklyHours !== undefined) {
+      const excused = params.allowEmergencyNote && isEmergency(assignment);
+      const requiredOvertime =
+        assignment.isOvertime && !volunteeredOn(ctx, nurse.id, assignment.date) && !excused;
+      // The holdover's own record says it was required, so an overtime offer does not excuse it.
+      const requiredHoldover =
+        (assignment.holdoverMinutes ?? 0) > 0 && assignment.holdoverMandated === true && !excused;
+      if (!requiredOvertime && !requiredHoldover) continue;
+
+      if (weekly === undefined && consecutive === undefined) {
+        if (requiredOvertime) {
+          violations.push(
+            violation(
+              mandatoryOvertimeRule,
+              'hard',
+              'mandatory_overtime',
+              `${nurseName(nurse)} is on overtime for the ${view.shiftType.name} on ` +
+                `${describeDate(assignment.date)} without having volunteered for it. Record their offer ` +
+                `under Roster › Overtime volunteers` +
+                (params.allowEmergencyNote
+                  ? `, or the emergency on the shift's notes ("${EMERGENCY_NOTE_PREFIX} …").`
+                  : '.'),
+              {
+                dates: [assignment.date],
+                nurseIds: [nurse.id],
+                assignmentIds: [assignment.id],
+              },
+            ),
+          );
+        }
+        if (requiredHoldover) {
+          violations.push(
+            violation(
+              mandatoryOvertimeRule,
+              'hard',
+              'mandatory_overtime',
+              `${nurseName(nurse)} was required to stay ${minutesText(assignment.holdoverMinutes!)} ` +
+                `past the end of the ${view.shiftType.name} on ${describeDate(assignment.date)} ` +
+                `without having volunteered. Record it as volunteered if they offered` +
+                (params.allowEmergencyNote
+                  ? `, or the emergency on the shift's notes ("${EMERGENCY_NOTE_PREFIX} …").`
+                  : '.'),
+              {
+                dates: [assignment.date],
+                nurseIds: [nurse.id],
+                assignmentIds: [assignment.id],
+              },
+            ),
+          );
+        }
+        continue;
+      }
+
+      if (weekly !== undefined) {
         const weekStart = addDays(
           assignment.date,
           -((weekdayOf(assignment.date) - params.workWeekStartsOn + 7) % 7),
@@ -134,38 +245,59 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
           if (compareDates(d, weekStart) < 0 || compareDates(d, weekEnd) > 0) continue;
           if (isWorked(v)) weekHours += v.paidHours;
         }
-        if (weekHours <= params.maxMandatedWeeklyHours) continue;
-        violations.push(
-          violation(
-            mandatoryOvertimeRule,
-            'hard',
-            'mandatory_overtime',
-            `${nurseName(nurse)} would be required to work ${weekHours}h in the week of ` +
-              `${describeDate(weekStart)} on the ${view.shiftType.name} of ` +
-              `${describeDate(assignment.date)}; no more than ${params.maxMandatedWeeklyHours}h ` +
-              `may be required without their agreement. Record their offer under Roster › ` +
-              `Overtime volunteers` +
-              (params.allowEmergencyNote
-                ? `, or the emergency on the shift's notes ("${EMERGENCY_NOTE_PREFIX} …").`
-                : '.'),
-            {
-              dates: [assignment.date],
-              nurseIds: [nurse.id],
-              assignmentIds: [assignment.id],
-              details: { weekHours, maxMandatedWeeklyHours: params.maxMandatedWeeklyHours },
-            },
-          ),
-        );
-        continue;
+        if (weekHours > weekly) {
+          violations.push(
+            violation(
+              mandatoryOvertimeRule,
+              'hard',
+              'mandatory_overtime',
+              `${nurseName(nurse)} would be required to work ${weekHours}h in the week of ` +
+                `${describeDate(weekStart)} on the ${view.shiftType.name} of ` +
+                `${describeDate(assignment.date)}; no more than ${weekly}h ` +
+                `may be required without their agreement. Record their offer under Roster › ` +
+                `Overtime volunteers` +
+                (params.allowEmergencyNote
+                  ? `, or the emergency on the shift's notes ("${EMERGENCY_NOTE_PREFIX} …").`
+                  : '.'),
+              {
+                dates: [assignment.date],
+                nurseIds: [nurse.id],
+                assignmentIds: [assignment.id],
+                details: { weekHours, maxMandatedWeeklyHours: weekly },
+              },
+            ),
+          );
+        }
       }
-      violations.push(
-        violation(
+
+      if (consecutive !== undefined) {
+        const stretch = stretchesOf(nurse.id).find((st) =>
+          st.views.some((v) => v.assignment.id === assignment.id),
+        );
+        if (!stretch) {
+          // Standby is not worked time, so it is in no stretch; anything else must be.
+          if (view.shiftType.isOnCall) continue;
+          throw new Error(`Assignment ${assignment.id} is in no worked stretch of ${nurse.id}`);
+        }
+        const compressed =
+          params.compressedTourConsecutiveHours !== undefined &&
+          stretch.views.some((v) => v.scheduledHours > consecutive);
+        const limit = compressed ? params.compressedTourConsecutiveHours! : consecutive;
+        if (stretch.hours <= limit) continue;
+        // One breach per stretch: a second required item in it joins the first one's report.
+        const reported = reportedStretches.get(stretch);
+        if (reported) {
+          reported.assignmentIds!.push(assignment.id);
+          continue;
+        }
+        const found = violation(
           mandatoryOvertimeRule,
           'hard',
           'mandatory_overtime',
-          `${nurseName(nurse)} is on overtime for the ${view.shiftType.name} on ` +
-            `${describeDate(assignment.date)} without having volunteered for it. Record their offer ` +
-            `under Roster › Overtime volunteers` +
+          `${nurseName(nurse)} would be required to work ${stretch.hours}h straight through the ` +
+            `${view.shiftType.name} of ${describeDate(assignment.date)}; no more than ${limit}h ` +
+            `in a row may be required without their agreement. Record their offer under ` +
+            `Roster › Overtime volunteers` +
             (params.allowEmergencyNote
               ? `, or the emergency on the shift's notes ("${EMERGENCY_NOTE_PREFIX} …").`
               : '.'),
@@ -173,9 +305,12 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
             dates: [assignment.date],
             nurseIds: [nurse.id],
             assignmentIds: [assignment.id],
+            details: { stretchHours: stretch.hours, consecutiveLimit: limit },
           },
-        ),
-      );
+        );
+        reportedStretches.set(stretch, found);
+        violations.push(found);
+      }
     }
     return violations;
   },

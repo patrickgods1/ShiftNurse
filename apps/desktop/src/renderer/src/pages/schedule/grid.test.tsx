@@ -319,3 +319,20 @@ describe('the staffing summary under the grid', () => {
     }
   });
 });
+
+describe('a held-over shift on the grid', () => {
+  it('marks the chip with how long the nurse stayed and whether it was required', () => {
+    renderGrid([
+      { ...assign(alice.id, DAY_12, '2026-10-05'), holdoverMinutes: 90, holdoverMandated: true },
+    ]);
+    const chip = within(cell(alice, '2026-10-05')).getByTestId('assignment-chip');
+    expect(within(chip).getByTestId('holdover-mark').textContent).toBe('+1h30m');
+    expect(chip.getAttribute('title')).toContain('Held over 1h 30m (required)');
+  });
+
+  it('calls a volunteered holdover volunteered', () => {
+    renderGrid([{ ...assign(alice.id, DAY_12, '2026-10-05'), holdoverMinutes: 45 }]);
+    const chip = within(cell(alice, '2026-10-05')).getByTestId('assignment-chip');
+    expect(chip.getAttribute('title')).toContain('Held over 45m (volunteered)');
+  });
+});

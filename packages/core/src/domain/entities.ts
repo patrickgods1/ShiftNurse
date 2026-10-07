@@ -571,6 +571,17 @@ export interface Assignment {
   /** Authorised overtime. Unauthorised OT is a hard-rule violation, not a flag. */
   isOvertime: boolean;
   notes?: string;
+  /**
+   * Minutes worked past the shift's scheduled end — a holdover, recorded day-of on a published
+   * shift. Absent or 0: the shift ended on time. `schedule/holdover.ts` is the one definition of
+   * what it does to worked hours and the worked window.
+   */
+  holdoverMinutes?: number;
+  /**
+   * Whether the hospital required the holdover (true) or the nurse volunteered for it (false).
+   * Only meaningful with `holdoverMinutes`; mandatory-overtime laws judge only required time.
+   */
+  holdoverMandated?: boolean;
 }
 
 /**
@@ -817,8 +828,18 @@ export interface OvertimeRule {
    * against the contract's work week; 'pay_period' against the unit's pay period (a 14-day
    * overtime period, as under 8/80); 'seventh_day' against hours on the seventh consecutive day
    * worked in one work week (California Labor Code § 510: threshold 0 at 1.5×, 8 at 2×).
+   * 'beyond_scheduled_tour' makes a shift's holdover overtime from `thresholdHours` past its
+   * scheduled end (VA–NNU Art. 14: overtime is work beyond the scheduled tour); 'consecutive'
+   * makes hours overtime past `thresholdHours` worked without a break (38 U.S.C. §7453(e)(1):
+   * "in excess of eight consecutive hours").
    */
-  basis: 'daily' | 'weekly' | 'pay_period' | 'seventh_day';
+  basis:
+    | 'daily'
+    | 'weekly'
+    | 'pay_period'
+    | 'seventh_day'
+    | 'beyond_scheduled_tour'
+    | 'consecutive';
   thresholdHours: number;
   multiplier: number;
   active: boolean;

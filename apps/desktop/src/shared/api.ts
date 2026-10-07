@@ -107,6 +107,19 @@ import type {
   UnitSetupMode,
 } from '@shiftnurse/core';
 
+/**
+ * A holdover recorded day-of. Mirrors `RecordHoldoverInput` in `@shiftnurse/db`; the shared
+ * contract cannot import the db package, which the renderer must never load.
+ */
+export interface RecordHoldoverInput {
+  assignmentId: Id;
+  /** Minutes past the scheduled end; 0 clears a recorded holdover. Whole minutes, 0–720. */
+  minutes: number;
+  mandated: boolean;
+  /** Required when `mandated` (it is what gets quoted if the holdover is grieved). */
+  reason?: string;
+}
+
 /** Which screen a launch opens, and the persisted setup record behind the decision. */
 export interface SetupStatus {
   phase: SetupPhase;
@@ -1580,6 +1593,12 @@ export interface ShiftNurseApi {
       volunteers: Id[],
       nurseId: Id,
     ): ShiftCancellationRecord;
+    /**
+     * Records minutes worked past a published shift's scheduled end (0 clears it), required by
+     * the hospital or volunteered. A required one needs a reason; a draft shift or standby is
+     * refused. Audited with what it replaced, in one transaction.
+     */
+    recordHoldover(input: RecordHoldoverInput): Assignment;
   };
 }
 
@@ -1755,6 +1774,7 @@ export const API_CHANNELS = {
     'saveCancellationPolicy',
     'cancellationOrder',
     'cancelForCensus',
+    'recordHoldover',
   ],
 } as const satisfies { [R in keyof ShiftNurseApi]: readonly (keyof ShiftNurseApi[R])[] };
 

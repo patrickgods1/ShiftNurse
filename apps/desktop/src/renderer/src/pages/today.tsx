@@ -117,6 +117,7 @@ export default function TodayPage() {
             key={`${shift.date}-${shift.shiftType.id}`}
             unitId={unitId}
             periodId={summary.period?.id}
+            periodStatus={summary.period?.status}
             shift={shift}
             onReport={(entry) => {
               setReporting({ entry, shift });

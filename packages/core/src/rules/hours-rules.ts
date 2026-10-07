@@ -203,7 +203,9 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
         for (const view of timeline) {
           if (compareDates(view.assignment.date, period.start) < 0) continue;
           if (compareDates(view.assignment.date, period.end) > 0) continue;
-          hours += view.paidHours;
+          // Scheduled, not worked: the contract is what the manager rostered, and a holdover
+          // is priced as overtime rather than refused as hours past the FTE.
+          hours += view.scheduledHours;
           assignmentIds.push(view.assignment.id);
         }
 
@@ -349,7 +351,11 @@ function hoursIn(timeline: readonly AssignmentView[], window: DateWindow): Windo
     if (compareDates(view.assignment.date, window.start) < 0) continue;
     if (compareDates(view.assignment.date, window.end) > 0) continue;
     out.hours += view.paidHours;
-    if (view.assignment.isOvertime) out.authorised = true;
+    // Recording a holdover is the manager authorising the hours it adds; it need not also be
+    // flagged as overtime. The absolute cap still counts those hours (`hours` is `paidHours`).
+    if (view.assignment.isOvertime || (view.assignment.holdoverMinutes ?? 0) > 0) {
+      out.authorised = true;
+    }
     if (view.inPeriod) {
       out.touchesPeriod = true;
       out.assignmentIds.push(view.assignment.id);

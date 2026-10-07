@@ -182,8 +182,10 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'state regulation. The VHA staffs to nursing hours per patient day set by expert panels ' +
       '(VHA Directive 1351), not fixed ratios, so no ratio is set. 38 U.S.C. § 7459 forbids ' +
       'requiring more than 40 hours in an administrative workweek (24 on the § 7456 weekend ' +
-      'plan: lower the cap under Settings › Rules for such nurses); volunteers and emergencies ' +
-      'recorded on the shift as "Emergency: …" are outside it. Pay premiums are set under ' +
+      'plan: lower the cap under Settings › Rules for such nurses) or more than 8 consecutive ' +
+      'hours (12 on a compressed tour, § 7456 or § 7456A), so a holdover recorded as required ' +
+      'that runs a tour past those hours is refused; volunteers and emergencies recorded on the ' +
+      'shift as "Emergency: …" are outside it. Pay premiums are set under ' +
       'Settings › Pay, not by this preset: 38 U.S.C. § 7453 gives a 10% night differential for ' +
       'the whole tour when at least 4 hours fall between 6 pm and 6 am, a 25% weekend premium ' +
       'for any tour touching Saturday or Sunday, double pay on holidays, and overtime past 40 ' +
@@ -198,7 +200,19 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'is not added.',
     ratios: {},
     overtimeRules: [],
-    enableRules: [{ ruleId: 'no-mandatory-overtime', params: { maxMandatedWeeklyHours: 40 } }],
+    enableRules: [
+      {
+        ruleId: 'no-mandatory-overtime',
+        // 38 U.S.C. § 7459(a): the Secretary "may not require nursing staff to work ... more than
+        // 40 hours in an administrative workweek" (24 on the § 7456 plan), nor "more than eight
+        // consecutive hours (or 12 hours if such staff is covered under section 7456 or 7456A)".
+        params: {
+          maxMandatedWeeklyHours: 40,
+          maxRequiredConsecutiveHours: 8,
+          compressedTourConsecutiveHours: 12,
+        },
+      },
+    ],
     leavePolicy: {
       fmla: { regime: 'title5', yearMethod: 'rolling_forward' },
       leaveYearStart: 'first_full_pay_period',

@@ -316,6 +316,8 @@ export function createAssignment(
     isCharge: input.isCharge ?? false,
     isOvertime: input.isOvertime ?? false,
     notes: input.notes ?? null,
+    holdoverMinutes: 0,
+    holdoverMandated: null,
   };
   db.insert(assignment).values(row).run();
   const created = toAssignment(row);
@@ -490,6 +492,8 @@ export function replaceAssignments(
       isCharge: input.isCharge ?? false,
       isOvertime: input.isOvertime ?? false,
       notes: input.notes ?? null,
+      holdoverMinutes: 0,
+      holdoverMandated: null,
     });
   }
   insertRows(db, assignment, rows);

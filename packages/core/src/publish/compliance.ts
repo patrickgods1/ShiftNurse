@@ -169,7 +169,9 @@ function hoursDrift(input: ComplianceInput): ComplianceAlert[] {
     if (!nurse.active || nurse.employmentType === 'per_diem') continue;
     if (nurse.contractedHoursPerPeriod <= 0) continue;
     const views = schedule.assignmentsFor(nurseId).filter((v) => !v.shiftType.isOnCall);
-    const worked = views.reduce((sum, v) => sum + v.paidHours, 0);
+    // Drift is measured against the contract, so scheduled hours: a holdover is overtime, not a
+    // roster that ran over the nurse's FTE (as `fte-target-hours` reads it).
+    const worked = views.reduce((sum, v) => sum + v.scheduledHours, 0);
     const leave =
       input.paidLeaveCountsTowardHours === false
         ? 0

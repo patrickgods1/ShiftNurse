@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatDate,
   formatDateWithWeekday,
+  formatHoldover,
   fteLabel,
   instantFormat,
   listName,
@@ -62,5 +63,17 @@ describe('instant formatting', () => {
     // 2026-10-03T17:35:00Z; ICU may put a narrow no-break space before PM.
     const text = instantFormat('en-US', 'UTC').format(Date.UTC(2026, 9, 3, 17, 35));
     expect(text.replace(/\s/g, ' ')).toBe('Oct 3, 2026, 5:35 PM');
+  });
+});
+
+describe('holdover length', () => {
+  it('writes an hour and a half the way a charge nurse would say it', () => {
+    expect(formatHoldover(90)).toBe('1h 30m');
+  });
+
+  it('drops the hours for a quarter-hour stay and the minutes for a clean two hours', () => {
+    expect(formatHoldover(45)).toBe('45m');
+    expect(formatHoldover(120)).toBe('2h');
+    expect(formatHoldover(720)).toBe('12h');
   });
 });
