@@ -25,6 +25,12 @@
  * - **Kept apart.** Staff the profile keeps apart (`keptApart`) are never put on the floor
  *   together once their group applies — separated, as a real ward separates them, by tour.
  *
+ * - **Capped weekends.** Where the unit's weekend-pattern rule is on, `canWork` enforces its run and
+ *   per-window limits, and the history is planned so each half of the staff works alternate
+ *   weekends (see `weekendHold` and the top-up pass).
+ * - **Overtime by agreement.** Where `no-mandatory-overtime` is on, overtime is asked of
+ *   volunteers (`createOvertimeVolunteer`) only.
+ *
  * - **Removals checked too.** A shift moved away or called off must not leave its nurse in an
  *   illegal stretch (`canRemove`): taking the day off "day, night, night, night, night" leaves
  *   four nights.
@@ -57,10 +63,12 @@ import {
   type IncompatibilityGroup,
   type IsoDate,
   isWeekendDate,
+  type JurisdictionId,
   type Nurse,
   type NurseRole,
   nursesRequiredForMix,
   type OvertimeRule,
+  type Preceptorship,
   type Preference,
   type RatioRule,
   type RatioStaffing,
@@ -76,6 +84,7 @@ import {
   type Weekday,
   type WeekendDefinition,
   weekdayOf,
+  weekendKey,
   windowEndDate,
   windowsOverlap,
 } from '@shiftnurse/core';
@@ -97,10 +106,18 @@ import {
 } from '../../repositories/config.js';
 import { createHoliday } from '../../repositories/holidays.js';
 import { createIncompatibilityGroup } from '../../repositories/incompatibility.js';
+import { createFmlaCertification, setLeaveBalance } from '../../repositories/leave-balances.js';
+import {
+  closeLeaveBidRound,
+  createLeaveBidRound,
+  submitLeaveBid,
+} from '../../repositories/leave-bidding.js';
 import {
   importFairnessLedgerEntries,
   type UpsertFairnessLedgerInput,
 } from '../../repositories/ledger.js';
+import { createNurseUnit } from '../../repositories/nurse-units.js';
+import { createOvertimeVolunteer } from '../../repositories/overtime-volunteers.js';
 import {
   createDifferential,
   createOvertimeRule,
@@ -111,19 +128,21 @@ import {
   listPayRatesForUnit,
   setBudget,
 } from '../../repositories/pay.js';
+import { createPreceptorship } from '../../repositories/preceptorships.js';
 import {
   createNurse,
   grantCredential,
   replaceNursePreferences,
 } from '../../repositories/roster.js';
 import { createCredential } from '../../repositories/roster-io.js';
-import { saveRuleSet } from '../../repositories/rulesets.js';
+import { getLatestRuleSet, saveRuleSet } from '../../repositories/rulesets.js';
 import {
   createAssignment,
   createPeriod,
   deleteAssignment,
   publishPeriod,
 } from '../../repositories/schedule.js';
+import { applyJurisdiction } from '../../repositories/setup.js';
 import { approveTimeOff, createTimeOffRequest, denyTimeOff } from '../../repositories/timeoff.js';
 import type { SeedOptions, SeedResult } from '../types.js';
 
@@ -139,8 +158,8 @@ export interface DemoShift {
   startTime: string;
   durationHours: number;
   /**
-   * Drives the night differential, the all-night stretch limit and the fairness night count.
-   * A federal evening tour is flagged too: Title 38 pays night differential on it.
+   * Drives the all-night stretch limit and the fairness night count, and the night differential
+   * where it is not priced by the clock (a differential with a `window` ignores this flag).
    */
   isNight: boolean;
   color: string;
@@ -193,6 +212,52 @@ export interface DemoKeptApart {
   endsIn?: number;
 }
 
+export interface DemoLeaveBalances {
+  /** The most annual leave carried into a leave year by a full-time employee. */
+  carryoverCapHours: number;
+  /** Hours earned each pay period by a full-time employee; part-time staff earn it pro rata. */
+  accrual: (input: { role: NurseRole; years: number }) => { annual: number; sick: number };
+}
+
+/** Days are from the next schedule's first day; negative is the past. */
+export interface DemoFmla {
+  note: string;
+  intermittent: boolean;
+  startsIn: number;
+  endsIn: number;
+}
+
+export interface DemoPreceptorship {
+  /** The position the orientee and preceptor are hired to; the orientee is one of its new grads. */
+  position: string;
+  /** The orientee's hire date, in days from the next schedule's first day (negative: before). */
+  hiredIn: number;
+  weeks: number;
+}
+
+export interface DemoFloatUnit {
+  name: string;
+  unitType: string;
+  /** Codes of the profile's shifts the sibling unit works. */
+  shifts: readonly string[];
+  competency: string;
+  /** Experienced RNs and LVNs who hold a membership. */
+  rns: number;
+  lpns: number;
+}
+
+export interface DemoLeaveBid {
+  /** `MM-DD` in the year the schedule starts in. */
+  opens: string;
+  closes: string;
+  offPerDay: Partial<Record<NurseRole, number>>;
+  maxAwardsPerNurse: number;
+  /** The share of full- and part-time staff who submit a bid. */
+  share: number;
+  /** Each bid is one to this many one-week choices. */
+  maxChoices: number;
+}
+
 export interface DemoProfile {
   id: string;
   unit: { name: string; unitType: string; ratioStaffing?: RatioStaffing };
@@ -239,12 +304,32 @@ export interface DemoProfile {
   overtime: readonly Omit<OvertimeRule, 'id' | 'unitId' | 'active'>[];
   /** `hospital-six`: the six most US hospitals pay premium on; `federal`: all eleven. */
   holidays: 'hospital-six' | 'federal';
+  /**
+   * A state or federal preset (`setup.ts`), applied right after the rule set is saved and before
+   * any period, so every published period snapshots the version the preset produced.
+   */
+  jurisdiction?: JurisdictionId;
   rules: {
     weekend: WeekendDefinition;
+    /** Rule ids that are off by default and switched on for this unit (params below apply). */
+    enable?: readonly string[];
     /** Parameter overrides by rule id, merged over the registry defaults. */
     params?: Readonly<Record<string, Record<string, unknown>>>;
   };
   keptApart?: readonly DemoKeptApart[];
+  /**
+   * Leave balances for the full- and part-time staff. Seeded only where set: the draws come after
+   * everything else, so the other demos' data is unchanged.
+   */
+  leaveBalances?: DemoLeaveBalances;
+  /** FMLA certifications on distinct staff (never a charge nurse or a new grad). */
+  fmla?: readonly DemoFmla[];
+  /** Orientations of new grads, each with an experienced full-time preceptor on their position. */
+  preceptorships?: readonly DemoPreceptorship[];
+  /** A sibling unit some staff are members of, to float to. It never has a roster of its own. */
+  floatUnit?: DemoFloatUnit;
+  /** A leave-year bid round for the year after the schedule's, bid on by about half the staff. */
+  annualLeaveBid?: DemoLeaveBid;
 }
 
 // ---------------------------------------------------------------------------
@@ -427,6 +512,23 @@ interface Limits {
   maxRun: number;
   maxNights: number;
   minDaysOff: number;
+  /**
+   * Orientations, where the profile has them: an orientee works only on a shift their preceptor is
+   * on, or the one it runs inside, which is what the rule judges.
+   */
+  orientation?: {
+    byOrientee: ReadonlyMap<Id, readonly Preceptorship[]>;
+    shiftsById: ReadonlyMap<Id, ShiftType>;
+  };
+  /** The weekend-pattern rule, when enabled: weekends are counted per schedule-length window. */
+  weekends?: {
+    definition: WeekendDefinition;
+    maxConsecutive: number;
+    /** Absent: no per-window limit. */
+    maxPerWindow?: number;
+    windowDays: number;
+    windowAnchor: IsoDate;
+  };
 }
 
 /** A shift planned for a pay period, before the period is posted. */
@@ -467,6 +569,7 @@ function canWork(
   leave: ReadonlySet<string>,
   limits: Limits,
   apart: readonly IncompatibilityGroup[],
+  lend = false,
 ): boolean {
   const id = staff.nurse.id;
   if (compareDates(date, staff.nurse.seniorityDate) < 0) return false; // Not hired yet.
@@ -513,7 +616,91 @@ function canWork(
     // This one is long, and the next starts too soon.
     if (length >= limits.maxRun && mine.has(addDays(last, daysOff + 1))) return false;
   }
+  if (limits.orientation) {
+    const preceptors = (limits.orientation.byOrientee.get(id) ?? []).filter(
+      (p) => compareDates(date, p.startDate) >= 0 && compareDates(date, p.endDate) <= 0,
+    );
+    if (preceptors.length > 0) {
+      const cover = coveringShift(shift, date, limits.orientation.shiftsById);
+      const withThem = preceptors.some((p) => {
+        const theirs = worked.get(p.preceptorId)!;
+        return theirs.get(date) === shift || (cover && theirs.get(cover.date) === cover.shiftType);
+      });
+      // No preceptor yet means not yet: the preceptor is placed first.
+      if (!withThem) return false;
+    }
+  }
+  if (limits.weekends) {
+    if (breaksWeekends(mine, date, shift, limits.weekends)) return false;
+    // Each half works its own alternate weekends. A nurse lent to the other half's weekend has
+    // used one of their two, so their own then runs short: only the intermittent pool lends.
+    const key = weekendKey(shiftWindow(date, shift), limits.weekends.definition) as IsoDate | null;
+    if (key !== null && staff.position !== 'flex') {
+      const parity = weekendParity(limits.weekends.windowAnchor, key);
+      if (parity !== staff.weekendGroup && !lend) return false;
+    }
+  }
   return true;
+}
+
+/** Which half of the staff works the weekend keyed `key`: alternate weekends from the anchor. */
+function weekendParity(anchor: IsoDate, key: IsoDate): 0 | 1 {
+  // Keys before the anchor give a negative remainder (or -0), hence the abs.
+  return Math.abs(Math.floor(daysBetween(anchor, key) / 7) % 2) as 0 | 1;
+}
+
+/** Whether the nurse works any shift of the weekend keyed `k` (Friday night to Sunday). */
+function weekendWorked(
+  mine: ReadonlyMap<IsoDate, ShiftType>,
+  k: IsoDate,
+  definition: WeekendDefinition,
+): boolean {
+  return [-1, 0, 1].some((offset) => {
+    const d = addDays(k, offset);
+    const s = mine.get(d);
+    return s !== undefined && weekendKey(shiftWindow(d, s), definition) === k;
+  });
+}
+
+/**
+ * Would this shift give the nurse more weekends than the weekend-pattern rule allows: too many in
+ * a row, or too many in the schedule-length window it falls in? A weekend already worked adds no
+ * new one. A weekend's shifts are dated the Friday (a night running in) to the Sunday.
+ */
+function breaksWeekends(
+  mine: ReadonlyMap<IsoDate, ShiftType>,
+  date: IsoDate,
+  shift: ShiftType,
+  w: NonNullable<Limits['weekends']>,
+): boolean {
+  const key = weekendKey(shiftWindow(date, shift), w.definition) as IsoDate | null;
+  if (key === null) return false;
+  const workedBefore = (k: IsoDate) => weekendWorked(mine, k, w.definition);
+  if (workedBefore(key)) return false;
+  const worked = (k: IsoDate) => k === key || workedBefore(k);
+  let run = 1;
+  for (let k = addDays(key, -7); worked(k); k = addDays(k, -7)) run++;
+  for (let k = addDays(key, 7); worked(k); k = addDays(k, 7)) run++;
+  if (run > w.maxConsecutive) return true;
+  if (w.maxPerWindow === undefined) return false;
+  // "Two in four" counts weekends by their key, four to a window. The rule also judges each
+  // published pay period alone, and a Sunday's tour belongs to the weekend before it, so a pay
+  // period touches three weekends: at most `maxPerWindow` of those, counted by the shifts dated in it.
+  const windowOf = (k: IsoDate) => Math.floor(daysBetween(w.windowAnchor, k) / w.windowDays);
+  let inWindow = 1;
+  for (let j = -3; j <= 3; j++) {
+    const other = addDays(key, 7 * j);
+    if (j !== 0 && windowOf(other) === windowOf(key) && workedBefore(other)) inWindow++;
+  }
+  if (inWindow > w.maxPerWindow) return true;
+  const from = addDays(w.windowAnchor, Math.floor(daysBetween(w.windowAnchor, date) / 14) * 14);
+  const keys = new Set<string>([key]);
+  for (const d of datesInRange(from, addDays(from, 13))) {
+    const s = mine.get(d);
+    const k = s && weekendKey(shiftWindow(d, s), w.definition);
+    if (k) keys.add(k);
+  }
+  return keys.size > w.maxPerWindow;
 }
 
 /**
@@ -768,22 +955,31 @@ export function seedFromProfile(
 
   // --- Rules ----------------------------------------------------------------------------------
   const base = defaultRuleSet(unit.id);
-  const configs = base.configs.map((c) => ({
+  const baseConfigs = base.configs.map((c) => ({
     ...c,
+    ...(profile.rules.enable?.includes(c.ruleId) ? { enabled: true } : {}),
     params: { ...c.params, ...(profile.rules.params?.[c.ruleId] ?? {}) },
   }));
-  const ruleSet = saveRuleSet(
+  const saved = saveRuleSet(
     db,
     {
       unitId: unit.id,
       name: base.name,
-      configs,
+      configs: baseConfigs,
       weekendDefinition: profile.rules.weekend,
       fairnessWeights: base.fairnessWeights,
     },
     ACTOR,
   );
   bump('ruleSet');
+  // The preset saves a newer version; everything below reads what is actually in force.
+  let ruleSet = saved;
+  let configs: readonly RuleConfig[] = baseConfigs;
+  if (profile.jurisdiction) {
+    applyJurisdiction(db, unit.id, profile.jurisdiction, ACTOR);
+    ruleSet = getLatestRuleSet(db, unit.id)!;
+    configs = ruleSet.configs;
+  }
   const nightIntoLeave = configs.find((c) => c.ruleId === 'approved-time-off-is-absolute')?.params
     ?.nightShiftEndingOnLeaveCounts;
   const limits: Limits = {
@@ -793,6 +989,18 @@ export function seedFromProfile(
     maxNights: numberParam(configs, 'max-consecutive-shifts', 'maxConsecutiveNights', 3),
     minDaysOff: numberParam(configs, 'max-consecutive-shifts', 'minDaysOffAfterMaxStretch', 2),
   };
+  const weekendRule = configs.find((c) => c.ruleId === 'weekend-pattern');
+  if (weekendRule?.enabled) {
+    const perWindow = weekendRule.params.maxWeekendsPerPeriod;
+    limits.weekends = {
+      definition: ruleSet.weekendDefinition,
+      maxConsecutive: numberParam(configs, 'weekend-pattern', 'maxConsecutiveWeekends', 1),
+      ...(typeof perWindow === 'number' ? { maxPerWindow: perWindow } : {}),
+      windowDays: profile.scheduleWeeks * 7,
+      windowAnchor: draftStart,
+    };
+  }
+  const noMandatoryOvertime = configs.find((c) => c.ruleId === 'no-mandatory-overtime');
   // Where the rule set judges overtime over the pay period, a history period (one pay period)
   // is overtime past its threshold rather than a week past forty.
   const overtimeByPayPeriod =
@@ -845,14 +1053,26 @@ export function seedFromProfile(
   const firstNames = rng.shuffle(FIRST_NAMES);
   const lastNames = rng.shuffle(LAST_NAMES);
   if (planned.length > FIRST_NAMES.length) throw new Error('Demo roster is larger than its names');
+  // Each orientation takes the next new grad of its position and sets their hire date, which an
+  // orientation starts on. The hire date is not drawn, so the draws below are the same.
+  const orientations = (profile.preceptorships ?? []).map((spec) => ({
+    spec,
+    orientee: undefined as Staff | undefined,
+  }));
   const staff: Staff[] = planned.map((p, index) => {
     const { row } = p;
     const traveler = row.employmentType === 'agency';
+    const orientation = p.newGrad
+      ? orientations.find((o) => !o.orientee && o.spec.position === row.position)
+      : undefined;
     // Unit seniority is the hire date. A traveler's is the start of their current contract,
     // which began before the history did (they are on an extension).
-    const seniorityDate = traveler
+    const drawnSeniority = traveler
       ? addDays(historyStart, -rng.nextInt(10, 40))
       : addDays(now, -Math.round(p.years * 365) - rng.nextInt(0, 60));
+    const seniorityDate = orientation
+      ? addDays(draftStart, orientation.spec.hiredIn)
+      : drawnSeniority;
     const first = firstNames[index]!;
     const last = lastNames[index]!;
     const nurse = createNurse(
@@ -884,7 +1104,7 @@ export function seedFromProfile(
       : undefined;
     // The long week of a mixed pattern: three 12s and the 8 is 44 hours, the short week 36.
     const shortWeek = short ? (short.shift.durationHours * short.perPayPeriod) / 2 : 0;
-    return {
+    const member: Staff = {
       nurse,
       position: row.position,
       weekendGroup: (p.k % 2) as 0 | 1,
@@ -899,12 +1119,27 @@ export function seedFromProfile(
         row.contractedHoursPerPeriod > 0 ? row.contractedHoursPerPeriod / 2 + shortWeek : 36,
       years: p.years,
     };
+    if (orientation) orientation.orientee = member;
+    return member;
   });
   counts.chargeEligible = staff.filter((s) => s.nurse.isChargeEligible).length;
+  if (limits.weekends) {
+    // Two weekends in four, a pay period at a time, comes to alternate weekends for everyone, so
+    // each weekend is staffed by one half. The halves must each hold charge nurses, and each role
+    // on each tour, or a weekend that falls to the short half runs without them.
+    const seen = new Map<string, number>();
+    for (const s of staff) {
+      const group = `${s.nurse.role}|${s.position}|${s.nurse.isChargeEligible}`;
+      const n = seen.get(group) ?? 0;
+      seen.set(group, n + 1);
+      s.weekendGroup = (n % 2) as 0 | 1;
+    }
+  }
 
   // --- Credentials per person -----------------------------------------------------------------
   // Two-year cards renewed at random points: expiry is uniform over the next two years.
   const card = (days = 730) => addDays(now, rng.nextInt(10, days));
+  const preceptorHolders = new Set<Id>();
   for (const s of staff) {
     const grant = (credentialId: Id, expiresOn?: IsoDate) => {
       grantCredential(db, { nurseId: s.nurse.id, credentialId, expiresOn }, ACTOR);
@@ -921,6 +1156,7 @@ export function seedFromProfile(
     if (acls) grant(ACLS.id, card());
     if (rn && s.years >= 3 && s.nurse.employmentType !== 'agency' && rng.chance(0.45)) {
       grant(PRECEPTOR.id);
+      preceptorHolders.add(s.nurse.id);
     }
     if (SPECIALTY && rn && s.years >= 2 && rng.chance(profile.credentials.specialty!.share)) {
       grant(SPECIALTY.id, card(3 * 365));
@@ -995,6 +1231,81 @@ export function seedFromProfile(
       ),
     );
     bump('incompatibilityGroup');
+  }
+
+  // --- Overtime volunteers --------------------------------------------------------------------
+  // Where overtime needs the nurse's agreement, about a third of the staff have offered, with a
+  // standing offer over the whole history and the draft. Draws only here, so units without the
+  // rule keep their data.
+  const volunteers = new Set<Id>();
+  if (noMandatoryOvertime?.enabled) {
+    for (const s of staff) {
+      const { employmentType: type } = s.nurse;
+      if (type !== 'full_time' && type !== 'part_time') continue;
+      if (!rng.chance(1 / 3)) continue;
+      createOvertimeVolunteer(
+        db,
+        {
+          unitId: unit.id,
+          nurseId: s.nurse.id,
+          startDate: historyStart,
+          endDate: draftEnd,
+          note: 'Standing offer to pick up extra shifts',
+        },
+        ACTOR,
+      );
+      volunteers.add(s.nurse.id);
+      bump('overtimeVolunteer');
+    }
+  }
+
+  // --- Orientation ----------------------------------------------------------------------------
+  // Chosen by seniority, not drawn, so the draws stay as they were. The preceptor is on the
+  // orientee's half of the weekends, or the orientee could never work a weekend with them.
+  if (orientations.length > 0) {
+    const taken = new Set<Id>();
+    const byOrientee = new Map<Id, Preceptorship[]>();
+    for (const { spec, orientee } of orientations) {
+      if (!orientee) throw new Error(`No new grad on ${spec.position} to orient`);
+      const candidates = staff
+        .filter(
+          (s) =>
+            s.nurse.role === 'RN' &&
+            s.nurse.employmentType === 'full_time' &&
+            s.position === spec.position &&
+            !s.nurse.isNovice &&
+            !s.nurse.isChargeEligible &&
+            !inGroup.has(s.nurse.id) &&
+            !taken.has(s.nurse.id) &&
+            s.weekendGroup === orientee.weekendGroup,
+        )
+        .sort(
+          (a, b) =>
+            Number(preceptorHolders.has(b.nurse.id)) - Number(preceptorHolders.has(a.nurse.id)) ||
+            b.years - a.years,
+        );
+      const preceptor = candidates[0];
+      if (!preceptor) throw new Error(`No preceptor on ${spec.position} for the orientee`);
+      taken.add(preceptor.nurse.id);
+      if (!preceptorHolders.has(preceptor.nurse.id)) {
+        grantCredential(db, { nurseId: preceptor.nurse.id, credentialId: PRECEPTOR.id }, ACTOR);
+        bump('nurseCredential');
+      }
+      const record = createPreceptorship(
+        db,
+        {
+          unitId: unit.id,
+          orienteeId: orientee.nurse.id,
+          preceptorId: preceptor.nurse.id,
+          startDate: orientee.nurse.seniorityDate,
+          endDate: addDays(orientee.nurse.seniorityDate, spec.weeks * 7 - 1),
+        },
+        ACTOR,
+      );
+      byOrientee.set(orientee.nurse.id, [record]);
+      bump('preceptorship');
+    }
+    limits.orientation = { byOrientee, shiftsById: shiftById };
   }
 
   // --- Pay ------------------------------------------------------------------------------------
@@ -1163,8 +1474,8 @@ export function seedFromProfile(
   const historyCosts: number[] = [];
   const roundToThousand = (dollars: number) => Math.round(dollars / 1000) * 1000;
   const contracted = (s: Staff) => s.nurse.employmentType !== 'per_diem';
-  const legal = (s: Staff, date: IsoDate, shift: ShiftType) =>
-    canWork(worked, s, date, shift, leave, limits, apart);
+  const legal = (s: Staff, date: IsoDate, shift: ShiftType, lend = false) =>
+    canWork(worked, s, date, shift, leave, limits, apart, lend);
 
   for (let p = 0; p < historyPeriods; p++) {
     const start = addDays(historyStart, p * 14);
@@ -1215,6 +1526,29 @@ export function seedFromProfile(
       }
       return hours(s) + shift.durationHours + reserved(s) <= periodTarget(s);
     };
+    /**
+     * Hours held back on a weekday for the weekend the nurse's half works later in this pay
+     * period: a tour for each of its days in the period. Without it they spend the period's
+     * hours on weekdays, and the weekend, which only they can work under the weekends cap, runs
+     * short.
+     */
+    const weekendHold = (s: Staff, date: IsoDate, shift: ShiftType) => {
+      const wk = limits.weekends;
+      if (!wk || s.position === 'flex') return 0;
+      if (weekendKey(shiftWindow(date, shift), wk.definition) !== null) return 0;
+      const mine = worked.get(s.nurse.id)!;
+      let held = 0;
+      for (const saturday of datesInRange(date, end)) {
+        if (weekdayOf(saturday) !== 6) continue;
+        const parity = weekendParity(wk.windowAnchor, saturday);
+        if (parity === s.weekendGroup && !weekendWorked(mine, saturday, wk.definition)) {
+          // Friday and Saturday, and the Sunday too unless it falls in the next pay period.
+          held += (saturday === end ? 2 : 3) * s.shiftHours;
+        }
+      }
+      // Never more than half the pay period's hours: a part-timer's weekend is two tours.
+      return Math.min(held, periodTarget(s) / 2);
+    };
     const plan: PlannedShift[] = [];
     const periodRows: Id[] = [];
 
@@ -1257,22 +1591,60 @@ export function seedFromProfile(
       ];
       return affected.some((x) => noviceOn(x.date, x.shift, s) && !covered(x.date, x.shift, s));
     };
+    /** Whether taking the preceptor off this shift leaves their orientee on it, or inside it, alone. */
+    const leavesOrienteeAlone = (s: Staff, date: IsoDate, shift: ShiftType) => {
+      const orientation = limits.orientation;
+      if (!orientation) return false;
+      const affected = [{ date, shift }, ...innerOf(date, shift)];
+      return [...orientation.byOrientee].some(([orienteeId, records]) =>
+        records.some(
+          (r) =>
+            r.preceptorId === s.nurse.id &&
+            affected.some(
+              (x) =>
+                compareDates(x.date, r.startDate) >= 0 &&
+                compareDates(x.date, r.endDate) <= 0 &&
+                worked.get(orienteeId)!.get(x.date) === x.shift,
+            ),
+        ),
+      );
+    };
 
     /**
      * Who to ask, in the order a staffing office asks: contracted staff short of their hours,
      * then per-diem, then contracted staff catching up on the pay period (paid as overtime but
      * inside their contract), and only then someone beyond their contracted hours.
      */
-    const tiersFor = (date: IsoDate, shift: ShiftType, role: NurseRole, onlyCharge: boolean) => {
+    // Where overtime needs the nurse's agreement, a placement that could be flagged overtime
+    // (the pay period or week past its threshold) is asked of volunteers only; anyone else
+    // stays inside it, so no row they hold is overtime.
+    const needsVolunteer = (s: Staff, date: IsoDate, shift: ShiftType) =>
+      noMandatoryOvertime?.enabled === true &&
+      !volunteers.has(s.nurse.id) &&
+      (overtimeByPayPeriod ? hoursBetween(worked, s, start, end) : hoursInWeek(worked, s, date)) +
+        shift.durationHours >
+        overtimeThreshold;
+    const tiersFor = (
+      date: IsoDate,
+      shift: ShiftType,
+      role: NurseRole,
+      onlyCharge: boolean,
+      lend = false,
+    ) => {
       const free = staff.filter(
         (s) =>
           s.nurse.role === role &&
+          !needsVolunteer(s, date, shift) &&
           (!onlyCharge || s.nurse.isChargeEligible) &&
-          legal(s, date, shift) &&
+          legal(s, date, shift, lend) &&
           noviceSafe(s, date, shift),
       );
       const week = (s: Staff) => hoursInWeek(worked, s, date) + shift.durationHours;
-      const short = (s: Staff) => fits(s, shift);
+      const short = (s: Staff) =>
+        fits(s, shift) &&
+        (shift === s.shortShift?.shift ||
+          hours(s) + shift.durationHours + reserved(s) + weekendHold(s, date, shift) <=
+            periodTarget(s));
       return [
         free.filter((s) => contracted(s) && short(s) && week(s) <= s.weeklyHours),
         free.filter((s) => !contracted(s) && short(s) && week(s) <= 36),
@@ -1283,7 +1655,20 @@ export function seedFromProfile(
     const weight = (s: Staff, shift: ShiftType, date: IsoDate) => {
       const owedShort = shift === s.shortShift?.shift && reserved(s) > 0;
       let w = s.position === shift.abbreviation || owedShort ? 10 : s.position === 'flex' ? 2 : 0.3;
-      if (isWeekendDate(date) && s.position !== 'flex') {
+      if (limits.weekends) {
+        // Where weekends are capped, a weekend's Friday night to Sunday goes to as few nurses as
+        // possible, each spending their two weekends in four on it, not a tour here and there.
+        const key = weekendKey(
+          shiftWindow(date, shift),
+          limits.weekends.definition,
+        ) as IsoDate | null;
+        if (key !== null && s.position !== 'flex') {
+          const mine = worked.get(s.nurse.id)!;
+          const parity = weekendParity(limits.weekends.windowAnchor, key);
+          w *= parity === s.weekendGroup ? 3 : 0.05;
+          if (weekendWorked(mine, key, limits.weekends.definition)) w *= 4;
+        }
+      } else if (isWeekendDate(date) && s.position !== 'flex') {
         const week = Math.floor(daysBetween(historyStart, date) / 7);
         w *= week % 2 === s.weekendGroup ? 3 : 0.3;
       }
@@ -1293,7 +1678,8 @@ export function seedFromProfile(
     const pick = (pool: Staff[], shift: ShiftType, date: IsoDate) =>
       rng.weightedPick(pool.map((s) => ({ value: s, weight: weight(s, shift, date) })));
 
-    for (const date of datesInRange(start, end)) {
+    const planDates = datesInRange(start, end);
+    for (const date of planDates) {
       for (const shift of shifts) {
         const mixes = forecast(date, shift, true);
         for (const [role, floor] of Object.entries(profile.floors[shift.abbreviation] ?? {})) {
@@ -1320,12 +1706,20 @@ export function seedFromProfile(
             staffed++;
           };
           if (r === 'RN' && shift.withinShiftTypeId === null) {
-            const chargePool = tiersFor(date, shift, r, true).find((t) => t.length > 0);
+            // A half with no charge nurse for its weekend borrows the other's, last of all.
+            const chargePool = [false, true]
+              .map((lend) => tiersFor(date, shift, r, true, lend).find((t) => t.length > 0))
+              .find((pool) => pool !== undefined);
             if (chargePool) add(pick(chargePool, shift, date), true);
           }
           while (staffed < min) {
-            const tiers = tiersFor(date, shift, r, false);
-            const tier = tiers.findIndex((t) => t.length > 0);
+            let tiers = tiersFor(date, shift, r, false);
+            let tier = tiers.findIndex((t) => t.length > 0);
+            if (tier === -1) {
+              // Short: borrow from the other half's weekend before running short.
+              tiers = tiersFor(date, shift, r, false, true);
+              tier = tiers.findIndex((t) => t.length > 0);
+            }
             if (tier === -1) break; // Nobody left who could legally work it: the shift ran short.
             if (tier === tiers.length - 1) bump('overtimePicks');
             add(pick(tiers[tier]!, shift, date));
@@ -1363,11 +1757,46 @@ export function seedFromProfile(
             noviceSafe(s, d, shift),
         );
         if (days.length === 0) break;
-        const under = days.filter((d) => onShortShift(d, shift, s.nurse.role) < target);
-        const date = rng.pick(under.length > 0 ? under : days);
+        // Where weekends are capped, a short shift is not worth a weekend: it is kept for the
+        // weekends the nurse already works, so the floors on the rest keep their cover.
+        const wk = limits.weekends;
+        const spare = wk
+          ? days.filter((d) => {
+              const key = weekendKey(shiftWindow(d, shift), wk.definition) as IsoDate | null;
+              return key === null || weekendWorked(worked.get(s.nurse.id)!, key, wk.definition);
+            })
+          : days;
+        const choices = spare.length > 0 ? spare : days;
+        const under = choices.filter((d) => onShortShift(d, shift, s.nurse.role) < target);
+        const date = rng.pick(under.length > 0 ? under : choices);
         plan.push({ staff: s, date, shift, isCharge: false });
         worked.get(s.nurse.id)!.set(date, shift);
         credit(s, shift, 1);
+      }
+    }
+
+    // Where weekends are capped, a nurse's half of the weekends leaves them short of their hours on
+    // some pay periods (the days they may not work are the weekends). A scheduler tops them up on
+    // a legal day, where their own tour is still under its target.
+    if (limits.weekends) {
+      for (const s of staff) {
+        const home = shiftByCode.get(s.position);
+        if (!home || !contracted(s) || s.position === 'flex') continue;
+        const target = profile.floors[home.abbreviation]?.[s.nurse.role]?.target ?? 0;
+        while (fits(s, home)) {
+          const days = datesInRange(start, end).filter(
+            (d) =>
+              hoursInWeek(worked, s, d) + home.durationHours <= 48 &&
+              legal(s, d, home) &&
+              noviceSafe(s, d, home),
+          );
+          if (days.length === 0) break;
+          const under = days.filter((d) => onShortShift(d, home, s.nurse.role) < target);
+          const date = rng.pick(under.length > 0 ? under : days);
+          plan.push({ staff: s, date, shift: home, isCharge: false });
+          worked.get(s.nurse.id)!.set(date, home);
+          credit(s, home, 1);
+        }
       }
     }
 
@@ -1376,6 +1805,7 @@ export function seedFromProfile(
     const takerFor = (from: Staff, entry: PlannedShift) => {
       // If `from` is the last experienced RN covering a new grad, only another one may take over.
       const needsCover = leavesNoviceAlone(from, entry.date, entry.shift);
+      if (leavesOrienteeAlone(from, entry.date, entry.shift)) return undefined;
       const mine = worked.get(from.nurse.id)!;
       mine.delete(entry.date);
       if (!canRemove(worked, from, entry.date, limits)) {
@@ -1454,7 +1884,8 @@ export function seedFromProfile(
             (a) =>
               !a.isCharge &&
               canRemove(worked, staffOf(a), a.date, limits) &&
-              !leavesNoviceAlone(staffOf(a), a.date, shiftOf(a)),
+              !leavesNoviceAlone(staffOf(a), a.date, shiftOf(a)) &&
+              !leavesOrienteeAlone(staffOf(a), a.date, shiftOf(a)),
           ),
       )
       .slice(0, rng.nextInt(3, 5));
@@ -1632,6 +2063,200 @@ export function seedFromProfile(
     const reason =
       i < 2 ? 'Vacation' : rng.pick(['Family event', 'Wedding', 'Appointment', 'Personal']);
     requestLeave(s, startDate, endDate, 'pto', reason, i < 6 ? 'approve' : 'pending');
+  }
+
+  // --- Leave, certifications, floats and bidding ----------------------------------------------
+  // Last, so a profile that sets none of them draws nothing here and keeps its data.
+  const asOf = addDays(draftStart, -1);
+  const cycle = profile.payPeriodCycle ?? draftStart;
+  /** The pay period start on or after `date`: leave years begin with one. */
+  const payPeriodOnOrAfter = (date: IsoDate) => {
+    const offset = ((daysBetween(cycle, date) % 14) + 14) % 14;
+    return offset === 0 ? date : addDays(date, 14 - offset);
+  };
+
+  if (profile.leaveBalances) {
+    const { carryoverCapHours, accrual } = profile.leaveBalances;
+    const asOfYear = Number(asOf.slice(0, 4));
+    const thisYearStart = payPeriodOnOrAfter(`${asOfYear}-01-01` as IsoDate);
+    // Before the year's first pay period, the leave year is still last year's.
+    const yearStart =
+      compareDates(asOf, thisYearStart) >= 0
+        ? thisYearStart
+        : payPeriodOnOrAfter(`${asOfYear - 1}-01-01` as IsoDate);
+    const periodsBetween = (from: IsoDate, to: IsoDate) =>
+      Math.max(0, Math.floor(daysBetween(from, to) / 14));
+    for (const s of employees) {
+      const rates = accrual({ role: s.nurse.role, years: s.years });
+      // Part-time staff earn by the hours they work: pro rata to an 80-hour pay period.
+      const share = Math.min(1, s.nurse.contractedHoursPerPeriod / 80);
+      const annualRate = rates.annual * share;
+      const hired = s.nurse.seniorityDate;
+      // What came into the leave year: what has accrued since hire, never above the cap, and
+      // some of it spent. This year's accrual and spending follow.
+      const earnedBefore = annualRate * periodsBetween(hired, yearStart);
+      const carried = Math.min(carryoverCapHours, earnedBefore) * (0.1 + 0.9 * rng.nextFloat());
+      const accruedThisYear =
+        annualRate * periodsBetween(compareDates(hired, yearStart) > 0 ? hired : yearStart, asOf);
+      const annual = (carried + accruedThisYear) * (1 - 0.55 * rng.nextFloat());
+      // Sick leave accrues for the whole career and has no cap; most of it goes unused.
+      const sickEarned = rates.sick * share * periodsBetween(hired, asOf);
+      const sick = sickEarned * (0.55 + 0.4 * rng.nextFloat());
+      setLeaveBalance(
+        db,
+        { nurseId: s.nurse.id, type: 'pto', balanceHours: round2(annual), asOf },
+        ACTOR,
+      );
+      setLeaveBalance(
+        db,
+        { nurseId: s.nurse.id, type: 'sick', balanceHours: round2(sick), asOf },
+        ACTOR,
+      );
+      bump('leaveBalance', 2);
+    }
+  }
+
+  if (profile.fmla) {
+    const taken = new Set<Id>(
+      [...(limits.orientation?.byOrientee ?? [])].flatMap(([id, rs]) => [
+        id,
+        ...rs.map((r) => r.preceptorId),
+      ]),
+    );
+    // A year's service is what FMLA asks, so a new grad is never the nurse on it.
+    const pool = rng.shuffle(
+      employees.filter((s) => !s.nurse.isChargeEligible && s.years >= 1 && !taken.has(s.nurse.id)),
+    );
+    for (const [i, spec] of profile.fmla.entries()) {
+      const s = pool[i];
+      if (!s) throw new Error('Not enough staff for the FMLA certifications');
+      createFmlaCertification(
+        db,
+        {
+          nurseId: s.nurse.id,
+          startDate: addDays(draftStart, spec.startsIn),
+          endDate: addDays(draftStart, spec.endsIn),
+          intermittent: spec.intermittent,
+          note: spec.note,
+        },
+        ACTOR,
+      );
+      bump('fmlaCertification');
+    }
+  }
+
+  if (profile.floatUnit) {
+    const spec = profile.floatUnit;
+    const sibling = createUnit(
+      db,
+      {
+        name: spec.name,
+        unitType: spec.unitType,
+        payPeriodDays: 14,
+        payPeriodAnchor: historyStart,
+      },
+      ACTOR,
+    );
+    bump('floatUnit');
+    for (const [i, code] of spec.shifts.entries()) {
+      const from = profile.shifts.find((x) => x.code === code)!;
+      createShiftType(
+        db,
+        {
+          unitId: sibling.id,
+          name: from.name,
+          abbreviation: from.code,
+          startTime: from.startTime,
+          durationHours: from.durationHours,
+          isNight: from.isNight,
+          isOnCall: false,
+          color: from.color,
+          sortOrder: i + 1,
+          active: true,
+          withinShiftTypeId: null,
+        },
+        ACTOR,
+      );
+    }
+    // Experienced and never a charge nurse, whom the home unit cannot spare; those who said they
+    // would float first, and the intermittent pool among them, since the units share nurses. Orientees and preceptors stay home.
+    const inOrientation = new Set<Id>(
+      [...(limits.orientation?.byOrientee ?? [])].flatMap(([id, rs]) => [
+        id,
+        ...rs.map((r) => r.preceptorId),
+      ]),
+    );
+    const floaters = (role: NurseRole, n: number) => {
+      const pool = staff.filter(
+        (s) =>
+          s.nurse.role === role &&
+          s.nurse.employmentType !== 'agency' &&
+          !s.nurse.isChargeEligible &&
+          !s.nurse.isNovice &&
+          s.years >= 2 &&
+          !inOrientation.has(s.nurse.id),
+      );
+      const willing = rng.shuffle(pool.filter((s) => s.nurse.isFloatEligible));
+      const others = rng.shuffle(pool.filter((s) => !s.nurse.isFloatEligible));
+      if (willing.length + others.length < n) throw new Error(`Not enough ${role}s to float`);
+      return [...willing, ...others].slice(0, n);
+    };
+    for (const s of [...floaters('RN', spec.rns), ...floaters('LPN', spec.lpns)]) {
+      createNurseUnit(
+        db,
+        { nurseId: s.nurse.id, unitId: sibling.id, competency: spec.competency },
+        ACTOR,
+      );
+      bump('nurseUnit');
+    }
+  }
+
+  if (profile.annualLeaveBid) {
+    const spec = profile.annualLeaveBid;
+    const draftYear = Number(draftStart.slice(0, 4));
+    const leaveYear = draftYear + 1;
+    const coversStart = payPeriodOnOrAfter(`${leaveYear}-01-01` as IsoDate);
+    const coversEnd = addDays(payPeriodOnOrAfter(`${leaveYear + 1}-01-01` as IsoDate), -1);
+    const opensOn = `${draftYear}-${spec.opens}` as IsoDate;
+    const closesOn = `${draftYear}-${spec.closes}` as IsoDate;
+    const round = createLeaveBidRound(
+      db,
+      {
+        unitId: unit.id,
+        name: `${leaveYear} annual leave`,
+        coversStart,
+        coversEnd,
+        opensOn,
+        closesOn,
+        offPerDay: spec.offPerDay,
+        maxAwardsPerNurse: spec.maxAwardsPerNurse,
+      },
+      ACTOR,
+    );
+    bump('leaveBidRound');
+    // Pay periods start on Sundays, so each choice is a Sunday-to-Saturday week of the leave year.
+    const weeks = Math.floor((daysBetween(coversStart, coversEnd) + 1) / 7);
+    for (const s of employees) {
+      if (!rng.chance(spec.share)) continue;
+      const picked = rng
+        .shuffle(Array.from({ length: weeks }, (_, w) => w))
+        .slice(0, rng.nextInt(1, spec.maxChoices));
+      submitLeaveBid(
+        db,
+        round.id,
+        s.nurse.id,
+        picked.map((w, i) => ({
+          rank: i + 1,
+          startDate: addDays(coversStart, w * 7),
+          endDate: addDays(coversStart, w * 7 + 6),
+        })),
+        ACTOR,
+      );
+      bump('leaveBid');
+    }
+    // Bidding that has ended is closed. The round is never awarded here: awarding is the
+    // manager's step (results are due 15 October), and an evaluator should see it undone.
+    if (compareDates(now, closesOn) > 0) closeLeaveBidRound(db, round.id, ACTOR);
   }
 
   return { unitId: unit.id, draftPeriodId: draft.id, draftStart, draftEnd, counts };

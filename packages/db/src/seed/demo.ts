@@ -48,12 +48,14 @@ export const DEMO_SUMMARIES: readonly DemoSummary[] = [
     name: VA_SF_MED_SURG.unit.name,
     setting: 'VA medical center, San Francisco · medicine-surgery ward · 24 beds',
     summary:
-      'A federal ward run on VA practice: a compressed schedule of six 12-hour tours and one 8 each pay period, RNs with LVNs and nursing assistants, staffed to nursing hours per patient day.',
+      'A federal ward run on VA practice, its nurses represented by NFFE Local 1: a compressed schedule of six 12-hour tours and one 8 each pay period, RNs with LVNs and nursing assistants, staffed to nursing hours per patient day.',
     highlights: [
       'Six 12s and an 8 a pay period (44 hours one week, 36 the next) on the federal pay calendar, four-week schedules',
       'No legislated ratios: VHA staffs to nursing hours per patient day (Directive 1351)',
-      'Title 38 pay: 10% night differential, 25% weekend premium, double-time holidays',
+      'Title 38: required hours capped at 40 a week with staff overtime volunteers, 10% night differential by the clock (4+ hours between 6 pm and 6 am)',
+      '11 hours between tours and two weekends off in four, typical VA contract terms; 25% weekend premium, double-time holidays',
       'Overtime past a 12-hour tour or 80 hours a pay period; all 11 federal holidays',
+      'Annual and sick leave balances, FMLA certifications, new grads in orientation with a preceptor, float staff on a sister telemetry unit, and the September annual-leave bid',
     ],
   },
   {

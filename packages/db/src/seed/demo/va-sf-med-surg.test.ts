@@ -6,10 +6,34 @@
  * computed by hand.
  */
 
-import { addDays, costSchedule, daysBetween, isoDate, ScheduleView, solve } from '@shiftnurse/core';
+import {
+  type Assignment,
+  addDays,
+  costSchedule,
+  daysBetween,
+  isoDate,
+  restMinutesBetween,
+  ScheduleView,
+  type ShiftType,
+  shiftWindow,
+  solve,
+  weekdayOf,
+} from '@shiftnurse/core';
 import { describe, expect, it } from 'vitest';
-import { listHolidaysForUnit } from '../../repositories/config.js';
+import { listHolidaysForUnit, listUnits } from '../../repositories/config.js';
 import { listIncompatibilityGroups } from '../../repositories/incompatibility.js';
+import {
+  listFmlaCertifications,
+  listLeaveBalancesForNurse,
+} from '../../repositories/leave-balances.js';
+import { listLeaveBidRounds, listLeaveBids } from '../../repositories/leave-bidding.js';
+import { listNurseUnitsForUnit } from '../../repositories/nurse-units.js';
+import { listPreceptorships } from '../../repositories/preceptorships.js';
+import {
+  listCredentials,
+  listNurseCredentialsForUnit,
+  listNursesForUnit,
+} from '../../repositories/roster.js';
 import { getPeriod, listPeriodsForUnit } from '../../repositories/schedule.js';
 import { costContext, loadPeriodInput } from '../../repositories/solve-input.js';
 import { historyViolations, realisticDemoChecks, useDemo } from './checks.test-support.js';
@@ -19,10 +43,16 @@ import { slow } from './slow.test-support.js';
 const TODAY = isoDate('2026-09-24');
 const f = useDemo('va-sf-med-surg', TODAY);
 
-/** Straight-rate factor over base for every priced history shift, keyed by date and tour. */
+/**
+ * Straight-rate factor over base for every priced history shift, keyed by date and tour, and the
+ * hours that tour earned the night differential on (0 where it has no night line).
+ */
+const nightHours = new Map<string, { hours: number; rateOverBase: number } | null>();
+
 function payFactors(): Map<string, number> {
   const db = f.handle.db;
   const factors = new Map<string, number>();
+  nightHours.clear();
   for (const period of listPeriodsForUnit(db, f.result.unitId)) {
     if (period.status !== 'published') continue;
     const input = loadPeriodInput(db, period);
@@ -37,7 +67,13 @@ function payFactors(): Map<string, number> {
     );
     const code = new Map(input.shiftTypes.map((s) => [s.id, s.abbreviation]));
     for (const a of cost.assignments) {
-      factors.set(`${a.date}|${code.get(a.shiftTypeId)}`, a.straightRate / a.baseRate);
+      const key = `${a.date}|${code.get(a.shiftTypeId)}`;
+      factors.set(key, a.straightRate / a.baseRate);
+      const night = a.lines.find((l) => l.kind === 'night');
+      nightHours.set(
+        key,
+        night ? { hours: night.hours, rateOverBase: night.rate / a.baseRate } : null,
+      );
     }
   }
   return factors;
@@ -49,6 +85,7 @@ describe('the VA San Francisco med-surg demo', () => {
       f.rows(
         `SELECT st.abbreviation, st.start_time, st.duration_hours, outer_st.abbreviation within_code
            FROM shift_type st LEFT JOIN shift_type outer_st ON outer_st.id = st.within_shift_type_id
+          WHERE st.unit_id = '${f.result.unitId}'
           ORDER BY st.sort_order`,
       ),
     ).toEqual([
@@ -138,10 +175,18 @@ describe('the VA San Francisco med-surg demo', () => {
       expect(value, `${date} ${tour}`).toBeDefined();
       return value!;
     };
-    // Wednesday 17 June 2026, an ordinary weekday. The day 12 has one hour after 6 pm and the 8
-    // none, so neither earns the night differential; the night 12 does.
+    // Wednesday 17 June 2026, an ordinary weekday. By the clock (18:00-06:00, whole tour at 4+
+    // hours): the 07:00-19:00 day 12 has 18:00-19:00 = 1 hour in the window, short of 4, so it
+    // earns 10% on that 1 of its 12 hours, on the base rate only, and its straight rate stays
+    // base; the 8 (07:00-15:00) has none; the night 12 (19:00-07:00) has 11 hours in the window
+    // and earns 1.1 on all 12.
     expect(factor('2026-06-17', 'D12')).toBeCloseTo(1, 6);
+    expect(nightHours.get('2026-06-17|D12')).toEqual({
+      hours: 1,
+      rateOverBase: expect.closeTo(0.1, 6),
+    });
     expect(factor('2026-06-17', 'D8')).toBeCloseTo(1, 6);
+    expect(nightHours.get('2026-06-17|D8')).toBeNull();
     expect(factor('2026-06-17', 'N12')).toBeCloseTo(1.1, 6);
     // Saturday 20 June 2026.
     expect(factor('2026-06-20', 'D12')).toBeCloseTo(1.25, 6);
@@ -149,6 +194,118 @@ describe('the VA San Francisco med-surg demo', () => {
     expect(factor('2026-06-26', 'N12')).toBeCloseTo(1.1 * 1.25, 6);
     // Labor Day, Monday 7 September 2026.
     expect(factor('2026-09-07', 'D12')).toBeCloseTo(2, 6);
+  });
+
+  it('pays the night differential on all of an 8.5-hour 15:30-24:00 tour, six hours of it after 6 pm', () => {
+    // 18:00-24:00 is 6 hours in the window, at least 4, so the 10% covers all 8.5 hours.
+    const db = f.handle.db;
+    const draft = getPeriod(db, f.result.draftPeriodId)!;
+    const input = loadPeriodInput(db, draft);
+    const evening: ShiftType = {
+      ...input.shiftTypes[0]!,
+      id: 'synthetic-evening',
+      name: 'Evening 8.5',
+      abbreviation: 'E8',
+      startTime: '15:30',
+      durationHours: 8.5,
+      isNight: false,
+      withinShiftTypeId: null,
+    };
+    const nurse = input.nurses.find((n) => n.role === 'CNA' && n.employmentType === 'full_time')!;
+    const date = isoDate('2026-10-07'); // A Wednesday: no weekend or holiday premium.
+    const assignment: Assignment = {
+      id: 'synthetic-assignment',
+      periodId: draft.id,
+      nurseId: nurse.id,
+      shiftTypeId: evening.id,
+      date,
+      source: 'manual',
+      isLocked: false,
+      isCharge: false,
+      isOvertime: false,
+    };
+    const cost = costSchedule(
+      new ScheduleView({
+        period: draft,
+        assignments: [assignment],
+        nurses: input.nurses,
+        shiftTypes: [...input.shiftTypes, evening],
+      }),
+      costContext(db, f.result.unitId, input.ruleSet),
+    ).assignments[0]!;
+    expect(cost.straightRate / cost.baseRate).toBeCloseTo(1.1, 6);
+    const night = cost.lines.find((l) => l.kind === 'night')!;
+    expect(night.hours).toBe(8.5);
+  });
+
+  it('is under Title 38: the federal preset, an 11-hour rest and two weekends off in four', () => {
+    expect(f.rows<{ jurisdiction: string }>('SELECT jurisdiction FROM unit')[0]!.jurisdiction).toBe(
+      'US-VA',
+    );
+    const periods = f.rows<{ rule_set_id: string }>(
+      'SELECT DISTINCT rule_set_id FROM schedule_period',
+    );
+    expect(periods).toHaveLength(1);
+    const configs = f.rows<{ rule_id: string; enabled: number; params: string }>(
+      `SELECT rule_id, enabled, params FROM rule_config WHERE rule_set_id = '${periods[0]!.rule_set_id}'`,
+    );
+    const config = (id: string) => {
+      const c = configs.find((x) => x.rule_id === id)!;
+      return { enabled: c.enabled === 1, params: JSON.parse(c.params) };
+    };
+    expect(config('no-mandatory-overtime')).toMatchObject({
+      enabled: true,
+      params: { maxMandatedWeeklyHours: 40 },
+    });
+    expect(config('min-rest-between-shifts').params.minRestHours).toBe(11);
+    expect(config('weekend-pattern')).toMatchObject({
+      enabled: true,
+      params: { maxConsecutiveWeekends: 2, maxWeekendsPerPeriod: 2 },
+    });
+  });
+
+  it('never requires overtime past 40 hours of anyone who did not offer it', () => {
+    expect(historyViolations(f).get('mandatory_overtime') ?? 0).toBe(0);
+    expect(f.count('SELECT COUNT(*) n FROM overtime_volunteer')).toBeGreaterThan(10);
+    // Volunteers are a minority, about a third of the staff who can offer.
+    const offering = f.count('SELECT COUNT(DISTINCT nurse_id) n FROM overtime_volunteer');
+    const eligible = f.count(
+      "SELECT COUNT(*) n FROM nurse WHERE employment_type IN ('full_time', 'part_time')",
+    );
+    expect(offering / eligible).toBeGreaterThan(0.2);
+    expect(offering / eligible).toBeLessThan(0.5);
+  });
+
+  it('gives two weekends off in every four and eleven hours between tours', () => {
+    expect(historyViolations(f, 'soft').get('excess_weekends') ?? 0).toBe(0);
+    const tours = f.rows<{
+      nurse_id: string;
+      date: string;
+      start_time: string;
+      duration_hours: number;
+    }>(
+      `SELECT a.nurse_id, a.date, st.start_time, st.duration_hours FROM assignment a
+         JOIN shift_type st ON st.id = a.shift_type_id ORDER BY a.nurse_id, a.date`,
+    );
+    let previous: (typeof tours)[number] | undefined;
+    let tooClose = 0;
+    for (const t of tours) {
+      if (previous?.nurse_id === t.nurse_id) {
+        const rest = restMinutesBetween(
+          shiftWindow(isoDate(previous.date), {
+            startTime: previous.start_time,
+            durationHours: previous.duration_hours,
+          }),
+          shiftWindow(isoDate(t.date), {
+            startTime: t.start_time,
+            durationHours: t.duration_hours,
+          }),
+        );
+        if (rest < 11 * 60) tooClose++;
+      }
+      previous = t;
+    }
+    expect(tooClose).toBe(0);
   });
 
   it('pays overtime past a 12-hour tour or 80 hours in the pay period, not 40 in a week', () => {
@@ -263,13 +420,26 @@ describe('the VA San Francisco med-surg demo', () => {
             WHERE nurse_id = '${id}' AND date >= '${from}' AND date < '${to}'`,
         ) /
         (daysBetween(isoDate(from), isoDate(to)) / 7);
+      const employment = new Map(
+        f
+          .rows<{ id: string; employment_type: string }>('SELECT id, employment_type FROM nurse')
+          .map((n) => [n.id, n.employment_type]),
+      );
       for (const g of groups()) {
+        let beforeTotal = 0;
+        let afterTotal = 0;
         for (const id of g.nurseIds) {
           const before = perWeek(id, addDays(g.startsOn!, -42), g.startsOn!);
           const after = perWeek(id, g.startsOn!, f.result.draftStart);
           expect(before).toBeGreaterThan(0);
-          expect(after / before, id).toBeGreaterThan(0.75);
+          beforeTotal += before;
+          afterTotal += after;
+          // A full-timer keeps the same hours. A part-timer or intermittent nurse works as the
+          // unit needs them, two or three tours a week, so a six-week count of theirs swings by
+          // a third on its own; the group as a whole must still hold.
+          if (employment.get(id) === 'full_time') expect(after / before, id).toBeGreaterThan(0.75);
         }
+        expect(afterTotal / beforeTotal, g.name).toBeGreaterThan(0.75);
       }
     });
 
@@ -299,6 +469,154 @@ describe('the VA San Francisco med-surg demo', () => {
       },
       slow(60_000),
     );
+  });
+
+  describe('leave, certifications, orientation, floats and bidding', () => {
+    const db = () => f.handle.db;
+    const nurses = () => listNursesForUnit(db(), f.result.unitId);
+    const employees = () =>
+      nurses().filter((n) => n.employmentType === 'full_time' || n.employmentType === 'part_time');
+
+    it('gives every full- and part-time nurse an annual and a sick balance as of the last pay period', () => {
+      for (const n of employees()) {
+        const balances = listLeaveBalancesForNurse(db(), n.id);
+        expect(balances.map((b) => b.type).sort(), n.lastName).toEqual(['pto', 'sick']);
+        for (const b of balances) {
+          expect(b.balanceHours).toBeGreaterThanOrEqual(0);
+          expect(b.asOf).toBe(addDays(f.result.draftStart, -1));
+        }
+        // A full-timer carries at most 240 hours in and earns at most 26 pay periods of 8.
+        if (n.employmentType === 'full_time') {
+          expect(balances.find((b) => b.type === 'pto')!.balanceHours).toBeLessThanOrEqual(
+            240 + 26 * 8,
+          );
+        }
+      }
+      // Per-diem staff keep no balance.
+      for (const n of nurses().filter((x) => x.employmentType === 'per_diem')) {
+        expect(listLeaveBalancesForNurse(db(), n.id)).toEqual([]);
+      }
+    });
+
+    it('shows annual leave from tens of hours up to the carry-over cap and more, and sick leave beyond it', () => {
+      const pto = employees().map(
+        (n) => listLeaveBalancesForNurse(db(), n.id).find((b) => b.type === 'pto')!.balanceHours,
+      );
+      const sick = employees().map(
+        (n) => listLeaveBalancesForNurse(db(), n.id).find((b) => b.type === 'sick')!.balanceHours,
+      );
+      expect(Math.min(...pto)).toBeLessThan(100);
+      expect(Math.max(...pto)).toBeGreaterThan(200);
+      // Sick leave is not capped: a long-serving nurse has more than the annual cap allows.
+      expect(Math.max(...sick)).toBeGreaterThan(240);
+    });
+
+    it('records three FMLA certifications on three nurses, one intermittent, none on a charge nurse', () => {
+      const certs = nurses().flatMap((n) =>
+        listFmlaCertifications(db(), n.id).map((c) => ({ ...c, nurse: n })),
+      );
+      expect(certs).toHaveLength(3);
+      expect(new Set(certs.map((c) => c.nurseId)).size).toBe(3);
+      expect(certs.filter((c) => c.intermittent)).toHaveLength(1);
+      expect(certs.some((c) => c.nurse.isChargeEligible)).toBe(false);
+      const intermittent = certs.find((c) => c.intermittent)!;
+      // Twelve months (365 days inclusive), begun inside the history.
+      expect(daysBetween(intermittent.startDate, intermittent.endDate) + 1).toBe(365);
+      expect(intermittent.startDate < f.result.draftStart).toBe(true);
+      expect(certs.filter((c) => !c.intermittent && c.endDate < TODAY)).toHaveLength(1);
+      expect(
+        certs.filter((c) => !c.intermittent && c.startDate <= TODAY && c.endDate >= TODAY),
+      ).toHaveLength(1);
+      // The history's leave is already modelled: no absences were added for them.
+      expect(certs.every((c) => c.note && c.note.length > 10)).toBe(true);
+    });
+
+    it('orients two new grads for 12 weeks from their hire date, with a preceptor who never leaves them', () => {
+      const records = listPreceptorships(db(), f.result.unitId);
+      expect(records).toHaveLength(2);
+      const preceptorCredential = listCredentials(db()).find((c) => c.code === 'PRECEPTOR')!;
+      const holders = new Set(
+        listNurseCredentialsForUnit(db(), f.result.unitId)
+          .filter((c) => c.credentialId === preceptorCredential.id)
+          .map((c) => c.nurseId),
+      );
+      for (const r of records) {
+        const orientee = nurses().find((n) => n.id === r.orienteeId)!;
+        const preceptor = nurses().find((n) => n.id === r.preceptorId)!;
+        expect(orientee.isNovice).toBe(true);
+        expect(r.startDate).toBe(orientee.seniorityDate);
+        // Twelve weeks is 84 days counting the first, so the last is 83 days on.
+        expect(daysBetween(r.startDate, r.endDate)).toBe(83);
+        expect(holders.has(preceptor.id)).toBe(true);
+        expect(preceptor.role).toBe('RN');
+        expect(preceptor.employmentType).toBe('full_time');
+        expect(preceptor.isNovice).toBe(false);
+        const worked = f.count(
+          `SELECT COUNT(*) n FROM assignment WHERE nurse_id = '${orientee.id}'
+              AND date >= '${r.startDate}' AND date <= '${r.endDate}' AND date < '${f.result.draftStart}'`,
+        );
+        expect(worked, orientee.lastName).toBeGreaterThan(5);
+      }
+      // One orientation runs on into the schedule; the other ended in the history.
+      expect(records.filter((r) => r.endDate >= f.result.draftStart)).toHaveLength(1);
+      expect(records.filter((r) => r.endDate < f.result.draftStart)).toHaveLength(1);
+      expect(historyViolations(f).get('orientee_without_preceptor') ?? 0).toBe(0);
+    });
+
+    it('gives five staff float memberships on a telemetry unit, and the 4A unit is the one that opens', () => {
+      const units = listUnits(db());
+      expect(units.map((u) => u.name)).toEqual([
+        '4A Medicine-Surgery (VA San Francisco sample)',
+        '4B Telemetry (VA San Francisco sample)',
+      ]);
+      expect(f.result.unitId).toBe(units[0]!.id);
+      const tele = units[1]!;
+      expect(tele.unitType).toBe('Telemetry');
+      expect(f.count(`SELECT COUNT(*) n FROM nurse WHERE unit_id = '${tele.id}'`)).toBe(0);
+      const members = listNurseUnitsForUnit(db(), tele.id);
+      expect(members).toHaveLength(5);
+      const roles = members.map((m) => nurses().find((n) => n.id === m.nurseId)!);
+      expect(roles.filter((n) => n.role === 'RN')).toHaveLength(4);
+      expect(roles.filter((n) => n.role === 'LPN')).toHaveLength(1);
+      expect(roles.some((n) => n.isChargeEligible || n.isNovice)).toBe(false);
+      expect(members.every((m) => m.competency?.includes('no titratable drips'))).toBe(true);
+    });
+
+    it('opens the annual-leave bid for the coming leave year and leaves it unawarded', () => {
+      const [round, ...others] = listLeaveBidRounds(db(), f.result.unitId);
+      expect(others).toEqual([]);
+      expect(round!.name).toBe('2027 annual leave');
+      // Pay periods start every 14 days from Sunday 12 January 2025: 10 January 2027 is the 53rd
+      // after it (728 days), and 8 January 2028 is the day before the next leave year's first.
+      expect([round!.coversStart, round!.coversEnd]).toEqual(['2027-01-10', '2028-01-08']);
+      expect([round!.opensOn, round!.closesOn]).toEqual(['2026-09-01', '2026-09-30']);
+      expect(round!.offPerDay).toEqual({ RN: 2, LPN: 1, CNA: 1 });
+      expect(round!.maxAwardsPerNurse).toBe(5);
+      // TODAY (24 September) falls inside the window, so bidding is still open. A seeding on or
+      // after 1 October would close it; either way awarding is the manager's step.
+      expect(round!.status).toBe('open');
+      expect(round!.awardedAt).toBeUndefined();
+    });
+
+    it('has about half the staff bidding one to five one-week choices inside the leave year', () => {
+      const round = listLeaveBidRounds(db(), f.result.unitId)[0]!;
+      const bids = listLeaveBids(db(), round.id);
+      expect(bids.length / employees().length).toBeGreaterThan(0.3);
+      expect(bids.length / employees().length).toBeLessThan(0.7);
+      const bidders = new Set(employees().map((n) => n.id));
+      for (const bid of bids) {
+        expect(bidders.has(bid.nurseId)).toBe(true);
+        expect(bid.enteredBy).toBe('manager');
+        expect(bid.choices.length).toBeGreaterThanOrEqual(1);
+        expect(bid.choices.length).toBeLessThanOrEqual(5);
+        for (const c of bid.choices) {
+          // Sunday to Saturday: weekday 0 and 6 days on.
+          expect(weekdayOf(c.startDate)).toBe(0);
+          expect(daysBetween(c.startDate, c.endDate)).toBe(6);
+          expect(c.startDate >= round.coversStart && c.endDate <= round.coversEnd).toBe(true);
+        }
+      }
+    });
   });
 
   realisticDemoChecks(f, 'va-sf-med-surg', TODAY);
