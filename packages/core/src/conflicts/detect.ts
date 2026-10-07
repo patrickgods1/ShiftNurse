@@ -22,6 +22,7 @@
 import { fillsRatioRole, NURSE_ROLES } from '../acuity/demand.js';
 import type { Id, Nurse, NurseRole, RatioRole, TimeOffRequest } from '../domain/entities.js';
 import { compareDates, dateInRange, describeDateRange, type IsoDate } from '../domain/time.js';
+import { competingRequestPriority } from '../leave/request-priority.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import { hasValidCredential } from '../rules/coverage-rules.js';
 import { detailNumber, detailOptional, detailString, type Violation } from '../rules/types.js';
@@ -234,6 +235,14 @@ function competingTimeOffConflicts(engine: ConflictEngine, state: SimState): Con
             shortfallNow: before,
             shortfallIfAllApproved: after,
           },
+          advisedOrder: competingRequestPriority({
+            requests,
+            date,
+            nurses: engine.nurses,
+            ledger: engine.input.ledgerHistory,
+            holidays: engine.input.holidays,
+            holidayWork: engine.input.holidayWork ?? [],
+          }),
         });
       }
     }

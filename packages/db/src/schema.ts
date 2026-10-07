@@ -102,6 +102,8 @@ export const unit = sqliteTable('unit', {
   perDiemCommitment: text('per_diem_commitment', { mode: 'json' }).$type<PerDiemCommitment>(),
   // Whether a change to a posted schedule must record the nurse's consent; null = reason enough.
   requireConsentForPostedChanges: bool('require_change_consent'),
+  // Weekends off a year promised to each nurse (core's Unit.minWeekendsOffPerYear); null = not checked.
+  minWeekendsOffPerYear: integer('min_weekends_off_per_year'),
 });
 
 export const shiftType = sqliteTable(

@@ -293,6 +293,81 @@ describe('tour rotation made hard', () => {
   });
 });
 
+/** `days-off-together` on and hard. */
+function hardDaysOff(base: RuleSet = defaultRuleSet(UNIT_ID)): RuleSet {
+  return {
+    ...base,
+    configs: base.configs.map((c) =>
+      c.ruleId === 'days-off-together'
+        ? { ...c, enabled: true, severityOverride: 'hard' as const }
+        : c,
+    ),
+  };
+}
+
+describe('two days off together made hard', () => {
+  // Every weekend of the pay period Sun 4 – Sat 17 Jan: Sun 4 (Sat 3's weekend), Sat 10, Sun 11,
+  // Sat 17, with the weekly caps out of the way and a contract that holds ten 12s (120h) so this
+  // rule is what bites.
+  const weekends = ['2026-01-04', '2026-01-10', '2026-01-11', '2026-01-17'];
+  const daysOn = (dates: string[]) => dates.map((d) => assign('ada', DAY_12, d));
+  const fullTime = () => makeNurse({ id: 'ada', firstName: 'Ada', contractedHoursPerPeriod: 120 });
+
+  it('forbids every weekend worked with the days off scattered, allows a pair off', () => {
+    const encoding = encodeCpsat(unit([fullTime()], { ruleSet: hardDaysOff(NO_WEEKLY_CAP) }));
+    // Off 6, 8, 12, 14, 16: none adjacent.
+    const scattered = daysOn([
+      ...weekends,
+      '2026-01-05',
+      '2026-01-07',
+      '2026-01-09',
+      '2026-01-13',
+      '2026-01-15',
+    ]);
+    expect(evaluate(encoding, scattered).violated.join('\n')).toMatch(/days off together/);
+    // Off 8, 12, 15, 16: Thu 15 and Fri 16 together.
+    const paired = daysOn([
+      ...weekends,
+      '2026-01-05',
+      '2026-01-06',
+      '2026-01-07',
+      '2026-01-09',
+      '2026-01-13',
+      '2026-01-14',
+    ]);
+    expect(evaluate(encoding, paired).violated).toEqual([]);
+    // The middle weekend off: nothing owed, whatever the weekdays.
+    const skipped = daysOn([
+      '2026-01-04',
+      '2026-01-05',
+      '2026-01-07',
+      '2026-01-09',
+      '2026-01-13',
+      '2026-01-15',
+      '2026-01-17',
+    ]);
+    expect(evaluate(encoding, skipped).violated).toEqual([]);
+  });
+
+  it('still asks for the pair when every weekend shift is locked', () => {
+    const locked = weekends.map((d) => assign('ada', DAY_12, d, { isLocked: true }));
+    const encoding = encodeCpsat(
+      unit([fullTime()], { assignments: locked, ruleSet: hardDaysOff(NO_WEEKLY_CAP) }),
+    );
+    const scattered = daysOn([
+      '2026-01-05',
+      '2026-01-07',
+      '2026-01-09',
+      '2026-01-13',
+      '2026-01-15',
+    ]);
+    expect(evaluate(encoding, [...locked, ...scattered]).violated.join('\n')).toMatch(
+      /days off together/,
+    );
+    expect(evaluate(encoding, locked).violated).toEqual([]);
+  });
+});
+
 /** The rule on and hard at the given cap, with min-rest out of the way so the cap is what bites. */
 function hardHoursIn24(maxHours: number): RuleSet {
   const base = withParams(
@@ -905,6 +980,50 @@ describe('agreement with the rule engine', () => {
               : c,
           ),
         },
+      }),
+    );
+  });
+
+  it('agrees with the rules when weekends in any four weeks are hard', () => {
+    // Ada's lookback night on Sat 3 Jan is one of the four weekends to 17 Jan.
+    const ruleSet = withParams('weekend-pattern', {
+      maxConsecutiveWeekends: 3,
+      maxWeekendsPer4Weeks: 2,
+    });
+    const input = parityInput({
+      ruleSet: {
+        ...ruleSet,
+        configs: ruleSet.configs.map((c) =>
+          c.ruleId === 'weekend-pattern'
+            ? { ...c, enabled: true, severityOverride: 'hard' as const }
+            : c,
+        ),
+      },
+    });
+    const encoding = encodeCpsat(input);
+    const window = /weekends in any four weeks: Ada/;
+    // 3 Jan (last schedule), 10 and 17 Jan: three of four. 10 Jan alone: two.
+    const third = [assign('ada', DAY_12, '2026-01-10'), assign('ada', DAY_12, '2026-01-17')];
+    expect(evaluate(encoding, third).violated.join('\n')).toMatch(window);
+    expect(evaluate(encoding, third.slice(0, 1)).violated.join('\n')).not.toMatch(window);
+    expectParity(input);
+  });
+
+  it('agrees with the rules when two days off together are hard', () => {
+    // Day 12s only (standby would halve how densely a random roster works), with every other
+    // cap a dense roster would hit lifted, so this rule is what decides. Ada's lookback day on
+    // Sat 3 Jan already works the pay period's first weekend.
+    const relaxed = withParams(
+      'max-consecutive-shifts',
+      { maxConsecutiveShifts: 14, minDaysOffAfterMaxStretch: 0 },
+      withParams('fte-target-hours', { overToleranceHours: 200 }, NO_WEEKLY_CAP),
+    );
+    expectParity(
+      parityInput({
+        shiftTypes: [DAY_12],
+        coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
+        priorAssignments: [assign('ada', DAY_12, '2026-01-03', { periodId: 'prev' })],
+        ruleSet: hardDaysOff(relaxed),
       }),
     );
   });

@@ -1,0 +1,1 @@
+ALTER TABLE `unit` ADD `min_weekends_off_per_year` integer;

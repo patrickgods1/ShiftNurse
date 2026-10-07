@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import type { Nurse } from '../domain/entities.js';
+import type { FairnessLedgerEntry, Nurse } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
 import {
   assign,
@@ -47,6 +47,24 @@ function weekendUnit(nurses: Nurse[], extra: Partial<SolveScenarioOptions> = {})
 function named(first: string, last: string, overrides: Partial<Nurse> = {}): Nurse {
   return makeNurse({ firstName: first, lastName: last, isChargeEligible: true, ...overrides });
 }
+
+const ledgerRow = (nurseId: string, approved: number, denied: number): FairnessLedgerEntry => ({
+  id: `ledger-${nurseId}`,
+  nurseId,
+  periodId: 'prior',
+  periodStart: isoDate('2025-11-01'),
+  nightShifts: 0,
+  weekendsWorked: 0,
+  holidaysWorked: 0,
+  onCallShifts: 0,
+  undesirableShifts: 0,
+  requestsApproved: approved,
+  requestsDenied: denied,
+  callOutsCovered: 0,
+  totalHours: 0,
+  overtimeHours: 0,
+  preferenceHitRate: 1,
+});
 
 describe('staffing conflicts', () => {
   it('flags Saturday night RN short by two when two approvals empty it', () => {
@@ -95,6 +113,7 @@ describe('staffing conflicts', () => {
         timeOff(priya.id, SAT, '2026-01-11', { status: 'pending' }),
         timeOff(ana.id, SAT, '2026-01-11', { status: 'pending' }),
       ],
+      ledgerHistory: [ledgerRow(priya.id, 3, 1), ledgerRow(ana.id, 1, 3)],
     });
 
     const conflicts = detectConflicts(input);
@@ -112,6 +131,12 @@ describe('staffing conflicts', () => {
     // Approving both would leave nobody on a two-RN floor.
     expect(c.magnitude).toBe(2);
     expect(c.message).toContain('2 pending');
+    // Priya was approved 3 of 4 times and Ana 1 of 4, so Ana is first in line.
+    expect(c.advisedOrder?.map((a) => [a.nurseId, a.rank])).toEqual([
+      [ana.id, 1],
+      [priya.id, 2],
+    ]);
+    expect(c.advisedOrder?.map((a) => a.requestId).sort()).toEqual([...c.timeOffIds].sort());
   });
 
   it('orders hard conflicts before soft, then by how short the shift is', () => {

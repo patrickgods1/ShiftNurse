@@ -31,6 +31,7 @@ import { defaultPeriod } from '../default-period.js';
 import { formatDate, formatInstant, periodRange } from '../format.js';
 import { useUnitId } from '../unit-context.js';
 import { BidRoundsPanel } from './requests/bid-rounds-panel.js';
+import { competingNotes } from './requests/competing-advice.js';
 import { ConflictsPanel } from './requests/conflicts-panel.js';
 import { DecideDialog, nurseLabel } from './requests/decide-dialog.js';
 import { ExchangePanel } from './requests/exchange-panel.js';
@@ -137,6 +138,8 @@ export default function RequestsPage() {
       .flatMap((c) => c.timeOffIds),
   );
 
+  const competingNoteFor = competingNotes(conflictsQuery.data?.conflicts ?? []);
+
   const columns: Column<TimeOffRequest>[] = [
     {
       key: 'nurse',
@@ -157,6 +160,17 @@ export default function RequestsPage() {
                 <span
                   key={note}
                   data-testid="request-holiday-priority"
+                  className="block text-xs font-normal text-text-muted"
+                >
+                  {note}
+                </span>
+              ))
+            : null}
+          {r.status === 'pending'
+            ? (competingNoteFor.get(r.id) ?? []).map((note) => (
+                <span
+                  key={note}
+                  data-testid="request-competing-advice"
                   className="block text-xs font-normal text-text-muted"
                 >
                   {note}
@@ -447,6 +461,7 @@ export default function RequestsPage() {
         unitId={unitId}
         nursesById={nursesById}
         shiftTypesById={shiftTypesById}
+        conflicts={conflictsQuery.data?.conflicts}
         onClose={() => setReviewing(undefined)}
       />
       <ReasonDialog

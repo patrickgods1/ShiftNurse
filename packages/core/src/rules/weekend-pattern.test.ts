@@ -5,6 +5,7 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
+import { isoDate } from '../domain/time.js';
 import {
   assign,
   DAY_12,
@@ -124,5 +125,65 @@ describe('weekends per schedule', () => {
       configs: fresh.configs.filter((c) => c.ruleId !== weekendPatternRule.id),
     };
     expect(configOf(resolveConfigs(older))?.enabled).toBe(false);
+  });
+});
+
+describe('weekends in any four weeks', () => {
+  // Runs out of the way (three in a row allowed), so only the four-week window speaks.
+  const TWO_IN_FOUR: WeekendPatternParams = { maxConsecutiveWeekends: 3, maxWeekendsPer4Weeks: 2 };
+
+  it('lets a nurse work alternate weekends on a four-week schedule that starts on a Sunday', () => {
+    // Weekends 3, 17 and 31 Jan: two of every four, though the schedule touches five weekends.
+    expect(
+      judge(['2026-01-04', '2026-01-17', '2026-01-31'], TWO_IN_FOUR, {
+        startDate: isoDate('2026-01-04'),
+        endDate: isoDate('2026-01-31'),
+      }),
+    ).toEqual([]);
+  });
+
+  it('flags the third weekend in four on a six-week schedule', () => {
+    const violations = judge(['2026-01-10', '2026-01-17', '2026-01-24'], TWO_IN_FOUR, {
+      startDate: isoDate('2026-01-05'),
+      endDate: isoDate('2026-02-15'),
+    });
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatchObject({
+      code: 'excess_weekends',
+      nurseIds: ['ana'],
+      dates: ['2026-01-10', '2026-01-17', '2026-01-24'],
+      details: { weekend: '2026-01-24', workedIn4Weeks: 3, excess: 1 },
+    });
+    expect(violations[0]!.message).toContain('3 of the 4 weekends');
+    expect(violations[0]!.message).toContain('Ana Cruz');
+  });
+
+  it('counts a weekend worked in the schedule before', () => {
+    // Window to 17 Jan: 27 Dec (last schedule), 3 Jan (off), 10 and 17 Jan.
+    const violations = judge(['2026-01-10', '2026-01-17'], TWO_IN_FOUR, {
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-31'),
+      priorAssignments: [assign('ana', DAY_12, '2025-12-27')],
+    });
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatchObject({
+      dates: ['2026-01-10', '2026-01-17'],
+      details: { weekend: '2026-01-17', workedIn4Weeks: 3, excess: 1 },
+    });
+  });
+
+  it('weighs a fourth weekend in four heavier than a third', () => {
+    const violations = judge(
+      ['2026-01-10', '2026-01-17', '2026-01-24', '2026-01-31'],
+      {
+        maxConsecutiveWeekends: 4,
+        maxWeekendsPer4Weeks: 2,
+      },
+      { startDate: isoDate('2026-01-04'), endDate: isoDate('2026-01-31') },
+    );
+    expect(violations.map((v) => v.details)).toEqual([
+      { weekend: '2026-01-24', workedIn4Weeks: 3, excess: 1 },
+      { weekend: '2026-01-31', workedIn4Weeks: 4, excess: 2 },
+    ]);
   });
 });

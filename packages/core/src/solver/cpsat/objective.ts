@@ -357,8 +357,9 @@ function holidayTerms(ctx: EncodeContext): void {
 }
 
 /**
- * Weekends in a row and per schedule, as `SolverModel.weekendFor` counts them: one per in-period
- * weekend ending too long a run, one per weekend over the schedule's limit. Priced only while the
+ * Weekends in a row, per schedule and in four weeks, as `SolverModel.weekendFor` counts them: one
+ * per in-period weekend ending too long a run, one per weekend over the schedule's limit, and each
+ * four-week window's excess. Priced only while the
  * rule is soft (`weekendPrice`); a hard rule is `encodeWeekendPattern`'s.
  */
 function weekendPatternTerms(ctx: EncodeContext): void {
@@ -367,9 +368,12 @@ function weekendPatternTerms(ctx: EncodeContext): void {
   const price = model.weekendPrice;
   if (!params || price === 0) return;
   for (let n = 0; n < model.nurses.length; n++) {
-    const { runs, excess } = weekendBreachExprs(nurseWeekendExprs(ctx, n), params);
+    const { runs, excess, windows } = weekendBreachExprs(nurseWeekendExprs(ctx, n), params);
     for (const { weekend, over } of runs) {
       priced(ctx, over, price, `weekends in a row: ${ctx.name(n)} to ${weekend}`);
+    }
+    for (const { weekend, over } of windows) {
+      priced(ctx, over, price, `weekends in any four weeks: ${ctx.name(n)} to ${weekend}`);
     }
     if (excess) priced(ctx, excess, price, `weekends per schedule: ${ctx.name(n)}`);
   }

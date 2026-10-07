@@ -72,6 +72,7 @@ export function toUnit(r: typeof s.unit.$inferSelect): Unit {
     ...(r.requireConsentForPostedChanges === null
       ? {}
       : { requireConsentForPostedChanges: r.requireConsentForPostedChanges }),
+    ...(r.minWeekendsOffPerYear === null ? {} : { minWeekendsOffPerYear: r.minWeekendsOffPerYear }),
   };
 }
 

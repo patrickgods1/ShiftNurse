@@ -154,6 +154,8 @@ export type UnitPatch = Partial<Pick<Unit, 'name' | 'unitType' | 'ratioStaffing'
   perDiemCommitment?: PerDiemCommitment | null;
   /** `null`: a reason is enough for a change to a posted schedule. */
   requireConsentForPostedChanges?: boolean | null;
+  /** `null` stops checking weekends off per year. */
+  minWeekendsOffPerYear?: number | null;
 };
 
 export interface AppInfo {
