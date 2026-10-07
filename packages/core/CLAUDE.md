@@ -206,6 +206,39 @@
 - **Weekends are filed by `weekendKey`, everywhere.** Fairness, `weekend-pattern` and both
   solvers' prices use it; under `'overlaps'` a Friday night belongs to the weekend it runs into.
   `weekendBreaches` is the one count (`SolverModel.weekendFor`, CP-SAT `weekendBreachExprs`).
+- **Weekends are capped per four weeks, rolling.** `weekend-pattern`'s `maxWeekendsPer4Weeks`
+  (`rules/weekend-pattern.ts`, `weekendBreaches`) judges a window of four weekend keys anchored at
+  each worked in-period weekend, lookback included, so a cap cannot be dodged by the period's
+  edge; `maxWeekendsPerPeriod` is kept for contracts that count per schedule. SA's `weekendFor`
+  and CP-SAT's `weekendBreachExprs` (`solver/cpsat/rules/weekends.ts`) follow: a window's
+  overage is `5 × here + earlier weekends − (cap + 4)`, positive only when this weekend and the
+  three before it exceed the cap (VA–NNU Art. 13: two of four).
+- **Days off together after every weekend worked.** `rules/days-off-together.ts`
+  (`days-off-together`, soft, `no_days_off_together`): a nurse working every weekend of a complete
+  pay period needs two consecutive days off in it (VA–NNU Art. 13 § 2.D.3); weekend shifts alone
+  otherwise leave weekday days off scattered, never a real break. A day off is a day with no
+  shift *dated* on it, so Friday's night does not spoil Saturday; a pay period straddling the
+  schedule is not judged, as its far days are unseen; while soft it is not priced, so the grid and
+  alerts flag it but Generate does not steer. Hard, `solver/cpsat/rules/days-off.ts` and
+  `SolverModel` forbid it.
+- **Weekends off per year is an alert.** `complianceAlerts`' `weekends_off_per_year`
+  (`publish/compliance.ts`) comes from `Unit.minWeekendsOffPerYear`: the ledger's `weekendsWorked`
+  over the 364 days before the period plus this period's weekends, against 52. `weekend-pattern`
+  sees one schedule and only the ledger knows the year; a short history under-counts and never
+  raises a false alert. It is in no preset: UC–CNA's 26 is a contract, not a state's law.
+- **Competing time-off requests get an advised order.** `leave/request-priority.ts`'s
+  `competingRequestPriority` fills `Conflict.advisedOrder` on a `competing_time_off` conflict:
+  approval rate ascending (a nurse with no decided request ranks behind every nurse with a
+  record), then who worked last year's occurrence of a holiday, seniority, `submittedAt`,
+  `employeeId`. Advice only, like holiday priority: it approves nothing, and VA–NNU Art. 13
+  § 2.D.7 wants equity and a written denial reason, which the manager still records.
+- **CP-SAT infeasible is a fallback, not an error.** A locked shift that already breaks a hard rule
+  makes the model contradictory, which is the manager's data and not an encoding bug. `finishCpsat`
+  (`solver/cpsat/index.ts`) throws `CpsatInfeasibleError { status, lockedBreaches }`, where
+  `lockedHardViolations` names the hard nurse-scope violations involving a locked shift; the
+  desktop's `solveCpsat` (`main/ortools-solvers.ts`) catches it and runs SA + LNS on the same input
+  and seed, which schedules around the lock, reporting `fellBackFrom: 'cp-sat'` with a reason
+  naming up to five breaching locked shifts so the manager can see what to unlock.
 - **A credential is valid through its expiry date.** `credentialLapsedOn` is the one definition,
   for the rules, the publish alerts and the Dashboard's lapsed list.
 - **State presets only tighten.** `JURISDICTION_PRESETS` cites the provision behind every value
@@ -227,7 +260,9 @@
   and an existing overtime rule is never retrofitted with the preset's pyramiding or minimum.
   `protectedRuleChanges` names the edits that switch off or soften the ratio rule or any rule the
   unit's preset enables, so the caller can ask for a reason. A change to a law is a change to its
-  preset, its citation and its summary together.
+  preset, its citation and its summary together. `JURISDICTION_IDS` is derived from the preset table
+  and is what the IPC schema enumerates, so a preset added to the table reaches IPC with no
+  second, hand-kept list to forget.
 - **Leave bids are awarded in seniority order, one a nurse a pass.** `leave/bidding.ts`'s
   `awardBids` is pure and deterministic (seniority date, then employee number); leave already
   approved takes its places first; every choice not awarded carries a quotable reason naming the
@@ -276,6 +311,28 @@
   only the overtime tier of `findReplacements`: volunteers longest since their last overtime
   (`lastOvertimeOn`, from `lastOvertimeDates`), then seniority; then the mandated roster most junior
   first (VA–NNU Art. 14). Absent or `'cost'` keeps volunteers, cost, burden, recency.
+- **Overtime does not pyramid when the rule says so.** `OvertimeRule.pyramiding: 'none'`
+  (`cost/cost.ts`) makes `weekly` and `pay_period` rules count only straight-time hours toward
+  their threshold, so hours already paid at a daily premium are not paid again (Cal. Lab. Code
+  § 510; UC–CNA Art. 14 § M). Lookback shifts count their straight hours, or a week opened by the
+  last schedule would start from zero. Pinned by hand: four 12s under daily-8 plus weekly-40 is
+  `[4, 4, 4, 4]` overtime hours (`cost.test.ts`), 32 straight hours never reaching the 40.
+- **A minimum overtime increment is per rule per shift.** `OvertimeRule.minimumMinutes` drops a
+  rule's overtime on a shift when it is shorter than the minimum, measured on that rule's own
+  hours (38 U.S.C. § 7453(e)(2): 15 minutes); another rule reaching the same hours still pays
+  them, so one rule's threshold never erases a different rule's premium.
+- **Overtime on a day beyond the scheduled days.** Basis `beyond_scheduled_days` (`extraDayTest`
+  in `cost/cost.ts`) reads `Nurse.scheduledDaysPerWeek`: the work week's worked dates are counted
+  in order and the (n+1)th and later are extra (IWC Wage Order 5 § 3(B)(8): hours past 8 on such
+  a day are 2× for a 12-hour alternative-workweek nurse). A nurse with it unset has no extra days,
+  so the basis prices nothing rather than guessing. The roster CSV deliberately does not carry it:
+  it is an agreement with one nurse, not a column a spreadsheet should silently overwrite.
+- **Premiums stack additively or compound, by the unit's choice.** `CostContext.premiumStacking`:
+  `'compound'` (default) is the FLSA regular rate, `(base + flats) × Π multipliers`, with overtime
+  on that rate; `'additive'` takes each multiplier's premium and the overtime premium on base pay
+  alone, so nothing compounds (UC–CNA Art. 14 § N forbids pyramiding of premiums; Title 38 pays
+  differentials in addition to overtime on basic pay). The default stays compound so no existing
+  unit's payroll estimate moves.
 - **The `overtime` alert says what payroll will say.** `ComplianceInput.cost` (a `CostContext`) with an
   active overtime rule above 1× makes `complianceAlerts` price the schedule with `costSchedule` and alert
   per nurse per work week (or pay period) holding overtime hours, daily, seventh-day, consecutive and

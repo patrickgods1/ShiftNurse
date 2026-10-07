@@ -655,6 +655,41 @@ Directive 1351) against what a unit can configure. One PR per milestone.
       and postpartum ratios turn on the patient and are left to acuity tiers
       (verified 2026-10-06: `npm run check` lint and typecheck clean, 2,590 tests passed, 2
       skipped; smoke PASS; the encoder agrees with the rule engine on 400 random rosters)
+
+### M33–M38 — Law and contract audit fixes (after 1.0)
+
+A 2026-10-06 re-audit of what M27–M32 produced, read against the primary texts rather than the
+summaries (38 U.S.C. §§ 7453, 7456, 7456A, 7459; the VA–NNU 2023 Master Agreement Arts. 10 and
+12–14; Cal. Code Regs. tit. 22 § 70217; IWC Wage Order 5; Cal. Lab. Code §§ 246 and 510; UC–CNA
+Art. 14). One PR per milestone; the documentation update that records them has no box of its own.
+
+- [x] M33 Correctness defects: every state preset reaches IPC (the schema enumerates
+      `JURISDICTION_IDS` instead of a hand-kept list), the California ICU demo prices hours past 12
+      at 2×, the demo engine applies the jurisdiction after the profile's overtime rules, and
+      stale solver comments are corrected (verified 2026-10-06: `npm run check` 2,587 passed, 4
+      tests that timed out under full-suite load pass alone; smoke PASS)
+- [x] M34 Pay model for California and UC: no pyramiding of overtime (Lab. Code § 510; UC–CNA
+      Art. 14 § M), `beyond_scheduled_days` overtime at 2× (Wage Order 5 § 3(B)(8)), additive
+      premium stacking (UC–CNA Art. 14 § N) and a minimum overtime increment (38 U.S.C.
+      § 7453(e)(2)); migration 0030 (verified 2026-10-06: `npm run check` 2,627 passed; smoke PASS)
+- [x] M35 Presets apply what the app can do: apply-time options (the VA's compressed tour,
+      California's alternative workweek), the VA contract's rules and § 7453 premiums, and
+      `protectedRuleChanges`, which requires a stated reason to loosen a ratio or a rule the
+      unit's preset enables; both California demos now run on the CA preset (verified 2026-10-06:
+      `npm run check` 2,668 passed; smoke PASS). V4: the NFFE Local 1 agreement could not be
+      retrieved, so the VA's values cite the VA–NNU agreement instead
+- [x] M36 Weekends and competing requests: `maxWeekendsPer4Weeks` on `weekend-pattern`, the
+      `days-off-together` rule (VA–NNU Art. 13 § 2.D.3), the `weekends_off_per_year` alert
+      (migration 0031) and `competingRequestPriority` advice on competing time-off conflicts
+      (verified 2026-10-06: `npm run check` 2,700 passed, 5 tests that timed out under
+      full-suite load pass alone; smoke PASS)
+- [x] M37 Feasibility and publish safety: a CP-SAT run made infeasible by a locked shift falls
+      back to SA + LNS and names the locked breaches, and the overtime alert is priced from the
+      unit's own overtime rules (verified 2026-10-06: `npm run check` 2,724 passed; smoke PASS)
+- [ ] M38 The 72/80 and Baylor schedules (38 U.S.C. § 7456A and § 7456): six 12-hour shifts in 14
+      days paid as 80 hours, two 12-hour weekend shifts paid as 40, with their overtime and
+      leave-charging rules
+
 ---
 
 ## Verification

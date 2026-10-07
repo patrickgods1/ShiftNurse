@@ -18,7 +18,8 @@ Every milestone through M16 is complete and green. **M18 — Release hardening**
 (boxes in `ROADMAP.md`): the 2026-10-03 release audit's fixes, one PR per phase — data safety,
 renderer correctness, the manager's experience, core maintainability, tests, contract rules for
 1.0, unsigned distribution. M17 (signing) is deferred; M19–M26 are the union and HR features
-planned for after 1.0.
+planned for after 1.0. M27–M37 (law, contracts, the VA demo and the 2026-10-06 audit's fixes) are
+complete and M38 (the VA's 72/80 and Baylor schedules) is open.
 
 Detail lives next to the code, in CLAUDE.md files that load when you work in that folder:
 
@@ -208,7 +209,7 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
 
 ## Pointers
 
-- **`ROADMAP.md` is the plan of record** — milestones M1–M26, locked-in decisions, verification
+- **`ROADMAP.md` is the plan of record** — milestones M1–M38, locked-in decisions, verification
   steps. Tick a box when the work lands *and* its verification passes, not when code is written.
 - **`.claude/skills/scheduling-review`** — the domain review checklist for scheduling changes.
 - `.claude/scripts/` — SessionStart roadmap summary and a non-blocking Stop-hook test run.
