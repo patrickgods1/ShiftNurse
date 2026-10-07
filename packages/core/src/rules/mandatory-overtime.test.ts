@@ -11,6 +11,7 @@ import {
   ON_CALL,
   resetFixtureCounters,
   scenario,
+  testShiftTypes,
   UNIT_ID,
 } from '../testing/fixtures.js';
 import { mandatoryOvertimeRule } from './mandatory-overtime.js';
@@ -696,5 +697,205 @@ describe('required hours on the Baylor weekend plan', () => {
         weeklyOnly,
       ),
     ).toEqual([]);
+  });
+});
+
+describe("California's 12-hour alternative workweek (Wage Order 5 § 3(B)(9)–(11))", () => {
+  const ana = () => makeNurse({ id: 'ana', firstName: 'Ana', lastName: 'Cruz' });
+  const CA = {
+    allowEmergencyNote: true,
+    workWeekStartsOn: 0 as const,
+    maxRequiredHoursIn24: 12,
+    emergencyMaxHoursIn24: 16,
+  };
+  // Short call-in shifts that end at the next morning's 07:00 day shift.
+  const EARLY_4 = { ...DAY_8, id: 'st-x4', name: 'Early 4', startTime: '03:00', durationHours: 4 };
+  const EARLY_5 = { ...DAY_8, id: 'st-x5', name: 'Early 5', startTime: '02:00', durationHours: 5 };
+  const LATE_5 = { ...DAY_8, id: 'st-l5', name: 'Late 5', startTime: '03:00', durationHours: 5 };
+  const shiftTypes = [...testShiftTypes, EARLY_4, EARLY_5, LATE_5];
+  const held = (minutes: number, notes?: string) => ({
+    id: 'held',
+    holdoverMinutes: minutes,
+    holdoverMandated: true,
+    ...(notes === undefined ? {} : { notes }),
+  });
+  const cno = 'Emergency: CNO declared';
+
+  it('refuses holding a nurse an hour past her 12 without a declared emergency: 13 in 24', () => {
+    const violations = judge(
+      { nurses: [ana()], assignments: [assign('ana', DAY_12, '2026-01-08', held(60))] },
+      CA,
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatchObject({
+      code: 'mandatory_overtime',
+      severity: 'hard',
+      nurseIds: ['ana'],
+      assignmentIds: ['held'],
+      details: { hoursIn24: 13, maxRequiredHoursIn24: 12 },
+    });
+    expect(violations[0]!.message).toContain('13h within 24 hours');
+  });
+
+  it('allows the same hour when the chief nursing officer has declared an emergency', () => {
+    expect(
+      judge(
+        { nurses: [ana()], assignments: [assign('ana', DAY_12, '2026-01-08', held(60, cno))] },
+        CA,
+      ),
+    ).toEqual([]);
+  });
+
+  it('refuses a declared emergency that holds her 5 hours past her 12: 17 in 24 is over 16', () => {
+    const violations = judge(
+      { nurses: [ana()], assignments: [assign('ana', DAY_12, '2026-01-08', held(300, cno))] },
+      CA,
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatchObject({
+      assignmentIds: ['held'],
+      details: { hoursIn24: 17, emergencyMaxHoursIn24: 16 },
+    });
+    expect(violations[0]!.message).toContain('even in an emergency');
+  });
+
+  it('refuses calling her back at 03:00 after 8 hours off: 16 hours from 07:00 to 07:00', () => {
+    const night = (shift: typeof EARLY_4, notes?: string) =>
+      judge(
+        {
+          nurses: [ana()],
+          shiftTypes,
+          assignments: [
+            assign('ana', DAY_12, '2026-01-08', { id: 'day' }),
+            assign('ana', shift, '2026-01-09', {
+              id: 'early',
+              isOvertime: true,
+              ...(notes === undefined ? {} : { notes }),
+            }),
+          ],
+        },
+        CA,
+      );
+    const plain = night(EARLY_4);
+    expect(plain).toHaveLength(1);
+    expect(plain[0]).toMatchObject({
+      assignmentIds: ['early'],
+      details: { hoursIn24: 16, maxRequiredHoursIn24: 12 },
+    });
+    // A declared emergency may run to exactly 16 in 24.
+    expect(night(EARLY_4, cno)).toEqual([]);
+    // 03:00-08:00 is 17 hours worked, but over 25: no 24 hours hold more than 16.
+    expect(night(LATE_5, cno)).toEqual([]);
+    // 02:00-07:00 after the day 12 puts all 17 inside 07:00 to 07:00.
+    const longer = night(EARLY_5, cno);
+    expect(longer).toHaveLength(1);
+    expect(longer[0]).toMatchObject({
+      assignmentIds: ['early'],
+      details: { hoursIn24: 17, emergencyMaxHoursIn24: 16 },
+    });
+  });
+
+  it('allows the 03:00 call-back when she offered to work overtime that day', () => {
+    expect(
+      judge(
+        {
+          nurses: [ana()],
+          shiftTypes,
+          assignments: [
+            assign('ana', DAY_12, '2026-01-08'),
+            assign('ana', EARLY_4, '2026-01-09', { isOvertime: true }),
+          ],
+          overtimeVolunteers: [volunteer('ana', '2026-01-09', '2026-01-09')],
+        },
+        CA,
+      ),
+    ).toEqual([]);
+  });
+
+  it('allows an extra 12 starting twelve hours after her last ends: never more than 12 in 24', () => {
+    expect(
+      judge(
+        {
+          nurses: [ana()],
+          assignments: [
+            assign('ana', DAY_12, '2026-01-08'),
+            assign('ana', DAY_12, '2026-01-09', { isOvertime: true }),
+          ],
+        },
+        CA,
+      ),
+    ).toEqual([]);
+  });
+
+  it('never adds a colleague’s double to a nurse’s 24 hours', () => {
+    // Ana: 07:00-18:00 held 30 minutes, 11.5h in 24. Bo: Night 12 of Wed Jan 7 then the Day 12 of
+    // Thu Jan 8, 24h in 24 but nothing required of him. Mixed together, Ana's 24 would hold 35.5.
+    const DAY_11 = { ...DAY_12, id: 'st-d11', name: 'Day 11', durationHours: 11 };
+    const anas = () => [assign('ana', DAY_11, '2026-01-08', held(30))];
+    const both = judge(
+      {
+        nurses: [ana(), makeNurse({ id: 'bo' })],
+        shiftTypes: [...shiftTypes, DAY_11],
+        assignments: [
+          ...anas(),
+          assign('bo', NIGHT_12, '2026-01-07'),
+          assign('bo', DAY_12, '2026-01-08'),
+        ],
+      },
+      CA,
+    );
+    expect(both).toEqual([]);
+    const alone = judge(
+      { nurses: [ana()], shiftTypes: [...shiftTypes, DAY_11], assignments: anas() },
+      CA,
+    );
+    expect(alone).toEqual(both);
+  });
+
+  it('counts the next day’s double once, not the night beyond it', () => {
+    // Day 12 of Thu Jan 8 held 2h to 21:00 (the required time is 19:00-21:00), then Fri Jan 9 a
+    // Late 12 08:00-20:00 and a Night 12 20:00-08:00. A window must reach 19:00-21:00 Thu, so it
+    // starts after 19:01 Wed and before 21:00 Thu. From 07:00 Thu it holds all 14h of the held
+    // day and none of Friday (08:00 is past 07:00); from 08:00 to 20:00 Thu the held day's
+    // shrinking tail and the Late 12's growing head make 13; past 20:00 the night adds what the
+    // tail loses, still 13. So 14 in 24, and Friday's two shifts are never both inside.
+    const LATE_12 = { ...DAY_12, id: 'st-late12', name: 'Late 12', startTime: '08:00' };
+    const violations = judge(
+      {
+        nurses: [ana()],
+        shiftTypes: [...shiftTypes, LATE_12],
+        assignments: [
+          assign('ana', DAY_12, '2026-01-08', held(120)),
+          assign('ana', LATE_12, '2026-01-09', { id: 'late' }),
+          assign('ana', NIGHT_12, '2026-01-09', { id: 'night' }),
+        ],
+      },
+      CA,
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatchObject({
+      assignmentIds: ['held'],
+      details: { hoursIn24: 14, maxRequiredHoursIn24: 12 },
+    });
+  });
+
+  it('counts last period’s night before a required holdover but names only this period’s shift', () => {
+    // Night 12 of Wed Jan 7 19:00 to Thu 07:00, then the Day 12 held to 20:00: 25 hours on the
+    // floor, of which any 24 (19:00 to 19:00, or 20:00 to 20:00) hold 24.
+    const violations = judge(
+      {
+        nurses: [ana()],
+        assignments: [assign('ana', DAY_12, '2026-01-08', held(60))],
+        priorAssignments: [assign('ana', NIGHT_12, '2026-01-07', { id: 'last-period' })],
+        startDate: isoDate('2026-01-08'),
+      },
+      CA,
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatchObject({
+      assignmentIds: ['held'],
+      dates: ['2026-01-08'],
+      details: { hoursIn24: 24, maxRequiredHoursIn24: 12 },
+    });
   });
 });

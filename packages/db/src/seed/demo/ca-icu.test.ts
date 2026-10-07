@@ -79,7 +79,10 @@ describe('the California ICU demo', () => {
          AND rule_id = 'no-mandatory-overtime'`,
     );
     expect(config!.enabled).toBe(1);
-    expect(JSON.parse(config!.params).maxRequiredConsecutiveHours).toBe(12);
+    expect(JSON.parse(config!.params)).toMatchObject({
+      maxRequiredHoursIn24: 12,
+      emergencyMaxHoursIn24: 16,
+    });
   });
 
   realisticDemoChecks(f, 'ca-icu', TODAY);

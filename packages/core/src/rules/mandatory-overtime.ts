@@ -42,6 +42,18 @@
  * "Emergency:" note excused a required holdover completely, so those caps could not be written.
  * They judge a required holdover whether or not it is an emergency, and never a volunteered one.
  *
+ * California's Wage Order 5 § 3(B)(9)–(11) counts differently: a nurse on a 12-hour alternative
+ * workweek may not be *required* to work more than 12 hours "in any 24 hour period", a declared
+ * health-care emergency lifts that but "no employee shall be required to work more than 16 hours
+ * in a 24-hour period", and a relief nurse's late no-show allows 13. A consecutive limit misses
+ * a 12-hour day, 8 hours off and 4 required hours in the same 24, so `maxRequiredHoursIn24` and
+ * `emergencyMaxHoursIn24` judge the busiest 24 hours holding the required item, counting every
+ * worked hour in them (hours the nurse offered too: the Order limits what may be required,
+ * measured over everything worked). As in `max-hours-in-24`, the hours in `[t, t + 1440)` peak at
+ * some shift's start or some shift's end − 1440, so those anchors are checked exactly. The
+ * in-24 emergency cap also judges an unvolunteered overtime *shift*: a required extra shift is
+ * what (B)(10) is about.
+ *
  * Holdovers are recorded day-of on a published schedule, and only a draft is ever generated, so
  * Generate cannot breach this either.
  */
@@ -54,6 +66,9 @@ import {
   dateInRange,
   describeDate,
   type IsoDate,
+  MINUTES_PER_DAY,
+  MINUTES_PER_HOUR,
+  type ShiftWindow,
   type Weekday,
   weekdayOf,
 } from '../domain/time.js';
@@ -95,6 +110,18 @@ export interface MandatoryOvertimeParams {
    * Absent: no limit.
    */
   emergencyMaxConsecutiveHours?: number;
+  /**
+   * The most hours a nurse may be required to work in any 24-hour period. A required holdover or
+   * an unvolunteered overtime shift whose hours make some 24-hour window hold more is a breach;
+   * hours the nurse offered still count toward the window (the Order limits what may be
+   * required, measured over everything worked). Absent: no limit.
+   */
+  maxRequiredHoursIn24?: number;
+  /**
+   * The most hours in any 24-hour period a required holdover or unvolunteered overtime shift may
+   * reach, emergency or not (Wage Order 5 § 3(B)(10): 16). Absent: no limit.
+   */
+  emergencyMaxHoursIn24?: number;
   /** First day of the work week the cap is counted in. */
   workWeekStartsOn: Weekday;
 }
@@ -128,6 +155,66 @@ function minutesText(minutes: number): string {
   return [h > 0 ? `${h}h` : '', m > 0 ? `${m}m` : ''].filter(Boolean).join(' ');
 }
 
+/** The busiest 24 hours that hold some of `required`, and the worked shifts in them. */
+interface Peak {
+  hours: number;
+  views: AssignmentView[];
+}
+
+/**
+ * The most hours worked in a window `[t, t + 1440)` overlapping `required`. Over all t the sum
+ * peaks at a shift's start or a shift's end − 1440; the windows that just graze `required` at
+ * either edge hold no more than the ones anchored at its start or at the shift's end − 1440, so
+ * checking the anchors that overlap it (plus `required`'s own start, which a holdover's is not)
+ * finds the true peak. Both edges of that domain are evaluated too — the first window to reach
+ * `required` (starting 1439 minutes before it) and the last (starting a minute before it ends) —
+ * so the result does not rest on that slope argument holding for every timeline.
+ * `worked` must be sorted by start.
+ */
+function peakIn24(worked: readonly AssignmentView[], required: ShiftWindow): Peak {
+  const anchors = new Set<number>([
+    required.startMinute,
+    required.startMinute - MINUTES_PER_DAY + 1,
+    required.endMinute - 1,
+  ]);
+  for (const v of worked) {
+    anchors.add(v.window.startMinute);
+    anchors.add(v.window.endMinute - MINUTES_PER_DAY);
+  }
+  let best: Peak = { hours: 0, views: [] };
+  for (const from of [...anchors].sort((a, b) => a - b)) {
+    const to = from + MINUTES_PER_DAY;
+    if (from >= required.endMinute || to <= required.startMinute) continue;
+    let minutes = 0;
+    const views: AssignmentView[] = [];
+    for (const v of worked) {
+      if (v.window.startMinute >= to) break;
+      const m = Math.max(
+        0,
+        Math.min(v.window.endMinute, to) - Math.max(v.window.startMinute, from),
+      );
+      if (m === 0) continue;
+      minutes += m;
+      views.push(v);
+    }
+    if (minutes / MINUTES_PER_HOUR > best.hours)
+      best = { hours: minutes / MINUTES_PER_HOUR, views };
+  }
+  return best;
+}
+
+/**
+ * The part of a shift that was required: all of it for an overtime shift nobody volunteered for,
+ * only the time past the scheduled end for a required holdover on an ordinary shift.
+ */
+function requiredWindow(view: AssignmentView, wholeShift: boolean): ShiftWindow {
+  if (wholeShift) return view.window;
+  return {
+    startMinute: view.window.endMinute - (view.assignment.holdoverMinutes ?? 0),
+    endMinute: view.window.endMinute,
+  };
+}
+
 export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
   id: 'no-mandatory-overtime',
   name: 'No mandatory overtime',
@@ -139,9 +226,12 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
     'nursing staff (40 hours; 24 on the weekend plan); volunteered hours and emergencies after ' +
     'volunteers are exhausted stay outside it. A required holdover (time kept past the end of ' +
     'the shift) is judged the same way, and a consecutive-hours limit (8, or 12 on a compressed ' +
-    'tour) refuses a required holdover that runs a stretch past it. Two further limits hold even ' +
-    'when the shift records an emergency: how long a required holdover may run past the shift ' +
-    '(Illinois: 4 hours) and how many hours in a row it may reach (Rhode Island: 12).',
+    'tour) refuses a required holdover that runs a stretch past it. A limit on required hours in ' +
+    'any 24 (California’s 12-hour alternative workweek: 12) counts every hour worked in the ' +
+    'busiest 24 holding the required time. Further limits hold even when the shift records an ' +
+    'emergency: how long a required holdover may run past the shift (Illinois: 4 hours), how many ' +
+    'hours in a row it may reach (Rhode Island: 12) and how many in any 24 a required holdover or ' +
+    'overtime shift may reach (California: 16).',
   severity: 'hard',
   category: 'hours',
   scope: 'nurse',
@@ -213,6 +303,30 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
       optional: true,
       min: 1,
     },
+    maxRequiredHoursIn24: {
+      label: 'Most hours a nurse can be required to work in any 24',
+      hint:
+        'Counts every hour worked in the busiest 24 hours holding the required time. Leave blank ' +
+        'for no limit.',
+      why:
+        'California Wage Order 5 § 3(B)(9): no employee on a 12-hour shift "shall be required to ' +
+        'work more than 12 hours in any 24 hour period" unless a health-care emergency is ' +
+        'declared. A 12-hour day, 8 hours off and 4 required hours is 16 in 24 though never more ' +
+        'than 12 in a row. Hours the nurse offered still count toward the 24.',
+      optional: true,
+      min: 1,
+    },
+    emergencyMaxHoursIn24: {
+      label: 'Most hours in any 24 a nurse can be required to reach, even in an emergency',
+      hint: 'Leave blank for no limit on emergency hours in 24.',
+      why:
+        'California Wage Order 5 § 3(B)(10): "no employee shall be required to work more than 16 ' +
+        'hours in a 24-hour period unless by voluntary mutual agreement of the employee and ' +
+        'employer". A note beginning "Emergency:" does not excuse a required holdover or ' +
+        'overtime shift past this.',
+      optional: true,
+      min: 1,
+    },
     workWeekStartsOn: {
       label: 'Work week starts on',
       hint: 'The first day of the work week the required-hours cap is counted in.',
@@ -228,6 +342,23 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
         ? (params.baylorMaxMandatedWeeklyHours ?? params.maxMandatedWeeklyHours)
         : params.maxMandatedWeeklyHours;
     const consecutive = params.maxRequiredConsecutiveHours;
+    const in24 = params.maxRequiredHoursIn24;
+    const workedByNurse = new Map<Id, AssignmentView[]>();
+    const workedOf = (nurseId: Id) => {
+      let found = workedByNurse.get(nurseId);
+      if (!found) {
+        found = schedule.timelineFor(nurseId).filter(isWorked);
+        workedByNurse.set(nurseId, found);
+      }
+      return found;
+    };
+    // One breach per nurse per busiest window, keyed on the shifts in it, across both passes.
+    const reportedWindows = new Map<string, Violation>();
+    const windowKey = (nurseId: Id, peak: Peak) =>
+      `${nurseId}|${peak.views
+        .map((v) => v.assignment.id)
+        .sort()
+        .join('|')}`;
     const stretchesByNurse = new Map<Id, WorkedStretch<AssignmentView>[]>();
     const reportedStretches = new Map<WorkedStretch<AssignmentView>, Violation>();
     const stretchesOf = (nurseId: Id) => {
@@ -249,7 +380,7 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
       if (!requiredOvertime && !requiredHoldover) continue;
       const weekly = weeklyFor(nurse);
 
-      if (weekly === undefined && consecutive === undefined) {
+      if (weekly === undefined && consecutive === undefined && in24 === undefined) {
         if (requiredOvertime) {
           violations.push(
             violation(
@@ -371,19 +502,55 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
         reportedStretches.set(stretch, found);
         violations.push(found);
       }
+
+      if (in24 !== undefined && isWorked(view)) {
+        const peak = peakIn24(workedOf(nurse.id), requiredWindow(view, requiredOvertime));
+        if (peak.hours > in24) {
+          const key = windowKey(nurse.id, peak);
+          const reported = reportedWindows.get(key);
+          if (reported) {
+            reported.assignmentIds!.push(assignment.id);
+          } else {
+            const found = violation(
+              mandatoryOvertimeRule,
+              'hard',
+              'mandatory_overtime',
+              `${nurseName(nurse)} would be required to work ${peak.hours}h within 24 hours of ` +
+                `the ${view.shiftType.name} on ${describeDate(assignment.date)}; no more than ` +
+                `${in24}h in any 24 may be required without their agreement. Record their offer ` +
+                `under Roster › Overtime volunteers` +
+                (params.allowEmergencyNote
+                  ? `, or the emergency on the shift's notes ("${EMERGENCY_NOTE_PREFIX} …").`
+                  : '.'),
+              {
+                dates: [assignment.date],
+                nurseIds: [nurse.id],
+                assignmentIds: [assignment.id],
+                details: { hoursIn24: peak.hours, maxRequiredHoursIn24: in24 },
+              },
+            );
+            reportedWindows.set(key, found);
+            violations.push(found);
+          }
+        }
+      }
     }
 
     // Limits that hold even in an emergency. A second pass, because the loop above skips an
     // excused holdover entirely and a required one it already reported must not be reported twice.
     const maxPast = params.emergencyMaxHoursPastShift;
     const maxStretch = params.emergencyMaxConsecutiveHours;
-    if (maxPast !== undefined || maxStretch !== undefined) {
+    const maxIn24 = params.emergencyMaxHoursIn24;
+    if (maxPast !== undefined || maxStretch !== undefined || maxIn24 !== undefined) {
       const flagged = new Set(violations.flatMap((v) => v.assignmentIds ?? []));
       const reportedEmergencyStretches = new Set<WorkedStretch<AssignmentView>>();
       for (const view of schedule.assignments()) {
         const { assignment, nurse } = view;
         const minutes = assignment.holdoverMinutes ?? 0;
-        if (minutes <= 0 || assignment.holdoverMandated !== true) continue;
+        const heldOver = minutes > 0 && assignment.holdoverMandated === true;
+        const unvolunteered =
+          assignment.isOvertime && !volunteeredOn(ctx, nurse.id, assignment.date);
+        if (!heldOver && !unvolunteered) continue;
         if (flagged.has(assignment.id)) continue;
         const where = `the ${view.shiftType.name} on ${describeDate(assignment.date)}`;
         const refs = {
@@ -391,7 +558,7 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
           nurseIds: [nurse.id],
           assignmentIds: [assignment.id],
         };
-        if (maxPast !== undefined && minutes / 60 > maxPast) {
+        if (heldOver && maxPast !== undefined && minutes / 60 > maxPast) {
           violations.push(
             violation(
               mandatoryOvertimeRule,
@@ -409,32 +576,58 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
           flagged.add(assignment.id);
           continue;
         }
-        if (maxStretch === undefined) continue;
-        const stretch = stretchesOf(nurse.id).find((st) =>
-          st.views.some((v) => v.assignment.id === assignment.id),
-        );
-        if (!stretch) {
-          if (view.shiftType.isOnCall) continue;
-          throw new Error(`Assignment ${assignment.id} is in no worked stretch of ${nurse.id}`);
+        if (heldOver && maxStretch !== undefined) {
+          const stretch = stretchesOf(nurse.id).find((st) =>
+            st.views.some((v) => v.assignment.id === assignment.id),
+          );
+          if (!stretch) {
+            if (view.shiftType.isOnCall) continue;
+            throw new Error(`Assignment ${assignment.id} is in no worked stretch of ${nurse.id}`);
+          }
+          if (stretch.hours > maxStretch) {
+            // One breach per stretch, and none for one the checks above already reported.
+            if (reportedStretches.has(stretch) || reportedEmergencyStretches.has(stretch)) continue;
+            reportedEmergencyStretches.add(stretch);
+            violations.push(
+              violation(
+                mandatoryOvertimeRule,
+                'hard',
+                'mandatory_overtime',
+                `${nurseName(nurse)} was required to stay ${minutesText(minutes)} past the end of ` +
+                  `${where}, making ${stretch.hours}h straight; even in an emergency, no more ` +
+                  `than ${maxStretch}h in a row may be required.`,
+                {
+                  ...refs,
+                  details: {
+                    stretchHours: stretch.hours,
+                    emergencyMaxConsecutiveHours: maxStretch,
+                  },
+                },
+              ),
+            );
+            continue;
+          }
         }
-        if (stretch.hours <= maxStretch) continue;
-        // One breach per stretch, and none for one the checks above already reported.
-        if (reportedStretches.has(stretch) || reportedEmergencyStretches.has(stretch)) continue;
-        reportedEmergencyStretches.add(stretch);
-        violations.push(
-          violation(
-            mandatoryOvertimeRule,
-            'hard',
-            'mandatory_overtime',
-            `${nurseName(nurse)} was required to stay ${minutesText(minutes)} past the end of ` +
-              `${where}, making ${stretch.hours}h straight; even in an emergency, no more than ` +
-              `${maxStretch}h in a row may be required.`,
-            {
-              ...refs,
-              details: { stretchHours: stretch.hours, emergencyMaxConsecutiveHours: maxStretch },
-            },
-          ),
+        if (maxIn24 === undefined || !isWorked(view)) continue;
+        const peak = peakIn24(workedOf(nurse.id), requiredWindow(view, unvolunteered));
+        if (peak.hours <= maxIn24) continue;
+        const key = windowKey(nurse.id, peak);
+        const reported = reportedWindows.get(key);
+        if (reported) {
+          reported.assignmentIds!.push(assignment.id);
+          continue;
+        }
+        const found = violation(
+          mandatoryOvertimeRule,
+          'hard',
+          'mandatory_overtime',
+          `${nurseName(nurse)} would be required to work ${peak.hours}h within 24 hours of ` +
+            `${where}; even in an emergency, no more than ${maxIn24}h in any 24 may be required ` +
+            `without their agreement.`,
+          { ...refs, details: { hoursIn24: peak.hours, emergencyMaxHoursIn24: maxIn24 } },
         );
+        reportedWindows.set(key, found);
+        violations.push(found);
       }
     }
     return violations;

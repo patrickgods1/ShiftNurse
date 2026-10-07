@@ -179,6 +179,9 @@
   authorised; `no-mandatory-overtime` (hard, off by default) also wants an `OvertimeVolunteer`
   offer covering the date or notes beginning `Emergency:`. Neither solver writes an overtime row,
   so CP-SAT meets it by construction; day-of calls volunteers first within the overtime tier.
+  `maxRequiredHoursIn24` (an `Emergency:` note lifts it) and `emergencyMaxHoursIn24` (it does not)
+  judge the busiest 24 hours holding a required holdover or unvolunteered overtime shift, every
+  worked hour in them counted, offered ones too (Wage Order 5 § 3(B)(9)–(10): 12, and 16).
 - **A holdover is worked time on a published shift.** `Assignment.holdoverMinutes` (recorded on
   Today; `holdoverMandated` says required or volunteered) moves the end of the shift's *worked*
   window and adds to its worked hours; `schedule/holdover.ts` is the one definition

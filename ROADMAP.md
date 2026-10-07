@@ -656,7 +656,7 @@ Directive 1351) against what a unit can configure. One PR per milestone.
       (verified 2026-10-06: `npm run check` lint and typecheck clean, 2,590 tests passed, 2
       skipped; smoke PASS; the encoder agrees with the rule engine on 400 random rosters)
 
-### M33–M39 — Law and contract audit fixes (after 1.0)
+### M33–M41 — Law and contract audit fixes (after 1.0)
 
 A 2026-10-06 re-audit of what M27–M32 produced, read against the primary texts rather than the
 summaries (38 U.S.C. §§ 7453, 7456, 7456A, 7459; the VA–NNU 2023 Master Agreement Arts. 10 and
@@ -709,6 +709,13 @@ Art. 14). One PR per milestone; the documentation update that records them has n
       Settings › Pay and the VA demo (verified 2026-10-07: `npm run check` lint and typecheck
       clean, 2,939 tests passed, 2 skipped, 264 files; smoke PASS; the reseeded VA demo holds four
       differentials, additive pay settings and an `overlaps` weekend)
+- [x] M41 California hours in 24 and audit docs: `no-mandatory-overtime` gains
+      `maxRequiredHoursIn24` and `emergencyMaxHoursIn24` (Wage Order 5 § 3(B)(9)–(11)), the CA
+      preset's alternative workweek sets 12 and 16 and the 24-then-8-off rest, critical-care unit
+      aliases (CCU, MICU, SICU, CVICU, neuro, trauma, PICU) reach Title 22's 1:2, and the README
+      records the audit's remaining limits (verified 2026-10-07: `npm run check` lint and
+      typecheck clean, 2,949 tests passed, 2 skipped, 264 files, plus the nurse-isolation test
+      added after it, 50 of 50 in its file)
 
 ---
 
