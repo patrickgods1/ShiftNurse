@@ -642,16 +642,19 @@ export function ScheduleGrid({
     >
       <div className="inline-block min-w-full">
         {/* The month band: a six-week schedule crosses a month, and "29, 30, 31, 1, 2" alone
-            does not say which. Each month's name stays in view while its columns scroll by. */}
+            does not say which. Each month's name stays in view while its columns scroll by.
+            The header *rows* are sticky, not their cells: a sticky element never leaves its
+            parent's box, and a row is only one row tall, so cells stuck inside it scrolled away
+            with it. The footer rows pin the same way. */}
         {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header) */}
         {/* biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops */}
-        <div role="row" data-testid="month-band" className="flex">
+        <div role="row" data-testid="month-band" className="sticky top-0 z-30 flex">
           {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header) */}
           {/* biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops */}
           <div
             role="columnheader"
             aria-label="Month"
-            className="sticky left-0 top-0 z-30 h-6 w-48 shrink-0 border-r border-border bg-surface"
+            className="sticky left-0 z-10 h-6 w-48 shrink-0 border-r border-border bg-surface"
           />
           {months.map((month) => (
             // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header)
@@ -660,7 +663,7 @@ export function ScheduleGrid({
               key={month.label}
               role="columnheader"
               aria-colspan={month.count}
-              className={`sticky top-0 z-20 flex h-6 shrink-0 items-center overflow-x-clip border-r
+              className={`flex h-6 shrink-0 items-center overflow-x-clip border-r
                 border-border bg-surface text-xs font-semibold text-text ${
                   month.start > 0 ? 'border-l-2 border-l-text-muted/40' : ''
                 }`}
@@ -672,12 +675,12 @@ export function ScheduleGrid({
         </div>
         {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header) */}
         {/* biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops */}
-        <div role="row" className="flex">
+        <div role="row" data-testid="date-row" className="sticky top-6 z-30 flex">
           {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header) */}
           {/* biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops */}
           <div
             role="columnheader"
-            className="sticky left-0 top-6 z-30 flex w-48 shrink-0 items-end border-b border-r
+            className="sticky left-0 z-10 flex w-48 shrink-0 items-end border-b border-r
               border-border bg-surface px-3 py-2 text-xs font-medium text-text-muted"
           >
             Nurse
@@ -693,7 +696,7 @@ export function ScheduleGrid({
                 data-date={column.date}
                 role="columnheader"
                 data-spotlit={spotlight?.date === column.date ? 'column' : undefined}
-                className={`sticky top-6 z-20 flex h-14 w-16 shrink-0 flex-col items-center
+                className={`flex h-14 w-16 shrink-0 flex-col items-center
                   justify-center border-b border-r border-border text-xs ${
                     column.weekStart ? WEEK_DIVIDER : ''
                   } ${column.isWeekend ? 'bg-bg' : 'bg-surface'} ${

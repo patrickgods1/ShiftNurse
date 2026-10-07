@@ -195,6 +195,19 @@ describe('the month band over the date row', () => {
     expect(band.map((h) => h.textContent)).toEqual(['', 'October 2026', 'November 2026']);
     expect(band.map((h) => h.getAttribute('aria-colspan'))).toEqual([null, '1', '2']);
   });
+
+  it('pins the month band and the date row as rows, so they stay put while nurses scroll', () => {
+    renderGrid([]);
+    // A sticky cell cannot leave its one-row-tall parent; only a sticky row can hold the top.
+    for (const id of ['month-band', 'date-row']) {
+      const row = screen.getByTestId(id);
+      expect(row.className, id).toMatch(/\bsticky\b/);
+      expect(row.className, id).toMatch(/\btop-/);
+      for (const header of within(row).getAllByRole('columnheader')) {
+        expect(header.className).not.toMatch(/\btop-/);
+      }
+    }
+  });
 });
 
 describe('showing a problem on the grid', () => {
