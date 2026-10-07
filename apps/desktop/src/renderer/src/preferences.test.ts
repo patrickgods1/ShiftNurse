@@ -21,5 +21,12 @@ describe('preferences in words', () => {
     expect(describePreference({ ...base, kind: 'weekend_appetite', level: -1 }, names)).toBe(
       'wants no weekends (strong)',
     );
+    expect(
+      describePreference(
+        { ...base, kind: 'holiday_appetite', holidayId: 'h-xmas', weight: 3 },
+        names,
+        new Map([['h-xmas', 'Christmas Day']]),
+      ),
+    ).toBe('wants to work Christmas Day (moderate)');
   });
 });

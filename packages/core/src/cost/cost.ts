@@ -19,13 +19,16 @@ import type {
 } from '../domain/entities.js';
 import {
   addDays,
+  compareDates,
   crossesMidnight,
+  fromDayNumber,
   type IsoDate,
   isWeekendWindow,
   MINUTES_PER_DAY,
   MINUTES_PER_HOUR,
   parseTimeOfDay,
   type ShiftWindow,
+  type WeekendDefinition,
   weekdayOf,
 } from '../domain/time.js';
 import { gini } from '../fairness/distribution.js';
@@ -151,22 +154,82 @@ function extraDayTest(
 
 /**
  * Whether a shift falls on a tour day (`'only'`) or on a day without one (`'except'`): a date on
- * which the nurse has a worked shift scheduled for 12 hours, lookback included. The declared
- * length decides, never the worked one: an 8 held over four hours is not a tour (§ 7456A(c)(1)).
+ * which the nurse has a worked tour, lookback included. For a 72/80 nurse a tour is any shift
+ * scheduled for 12 hours; the declared length decides, never the worked one, so an 8 held over
+ * four hours is not a tour (§ 7456A(c)(1)). For a Baylor nurse it is the weekend by the calendar:
+ * a Saturday, a Sunday, or a Friday whose shift runs into Saturday. § 7456(b)(3)(A) judges past 8
+ * only "on a day other than a Saturday or Sunday" and the weekend by its 24 hours, whoever was
+ * scheduled, so this is not `isBaylorTour`, which leaves out a pickup for the premiums' sake.
  */
 function tourDayTest(
   timeline: readonly AssignmentView[],
   mode: 'only' | 'except',
 ): (view: AssignmentView) => boolean {
   const tourDates = new Set<IsoDate>();
-  for (const view of timeline)
-    if (isWorked(view) && view.scheduledHours === 12) tourDates.add(view.assignment.date);
+  for (const view of timeline) {
+    if (!isWorked(view)) continue;
+    const tour = isBaylorPlan(view.nurse) ? isBaylorWeekendDay(view) : view.scheduledHours === 12;
+    if (tour) tourDates.add(view.assignment.date);
+  }
   return (view) => tourDates.has(view.assignment.date) === (mode === 'only');
 }
 
-/** Whether a rule accrues over a week or pay period, and so can be told not to pyramid. */
+/**
+ * The hours of a shift's first `hours` worked hours inside each weekend window they touch, keyed
+ * by the minute the window opens. By the clock, so a Friday 19:00–07:00 night gives 7 hours to the
+ * weekend opening Saturday 00:00, and capped at the hours asked for, so a shift that does not
+ * pyramid offers only its straight hours.
+ */
+function weekendHours(
+  view: AssignmentView,
+  def: WeekendDefinition,
+  hours: number,
+): Map<number, number> {
+  const start = view.window.startMinute;
+  const end = Math.min(view.window.endMinute, start + hours * MINUTES_PER_HOUR);
+  const out = new Map<number, number>();
+  // A week back: a window opening up to six days before the shift may still be open.
+  for (let day = Math.floor(start / MINUTES_PER_DAY) - 7; day * MINUTES_PER_DAY < end; day++) {
+    if (weekdayOf(fromDayNumber(day)) !== def.startWeekday) continue;
+    const opens = day * MINUTES_PER_DAY + def.startMinute;
+    const overlap = Math.min(end, opens + def.durationMinutes) - Math.max(start, opens);
+    if (overlap > 0) out.set(opens, overlap / MINUTES_PER_HOUR);
+  }
+  return out;
+}
+
+/**
+ * Overtime hours per worked view past `threshold` hours inside one weekend window, accrued in
+ * chronological order like `windowOvertime`. Only a shift's in-window hours accrue, and its
+ * overtime is as many hours as its in-window hours run past the threshold. Those are reported as
+ * the end of the shift, as every basis's are: for a Sunday night running out of the weekend the
+ * count is right though the clock hours it names are Monday's.
+ */
+function weekendOvertime(
+  timeline: readonly AssignmentView[],
+  threshold: number,
+  def: WeekendDefinition,
+  hoursOf: (view: AssignmentView) => number,
+): Map<AssignmentView, number> {
+  const out = new Map<AssignmentView, number>();
+  const runningByWeekend = new Map<number, number>();
+  for (const view of timeline) {
+    if (!isWorked(view)) continue;
+    let over = 0;
+    for (const [weekend, hours] of weekendHours(view, def, hoursOf(view))) {
+      const before = runningByWeekend.get(weekend) ?? 0;
+      const after = before + hours;
+      runningByWeekend.set(weekend, after);
+      over += Math.max(0, after - Math.max(threshold, before));
+    }
+    if (over > 0) out.set(view, over);
+  }
+  return out;
+}
+
+/** Whether a rule accrues over a window of days, and so can be told not to pyramid. */
 function isWindowBasis(rule: OvertimeRule): boolean {
-  return rule.basis === 'weekly' || rule.basis === 'pay_period';
+  return rule.basis === 'weekly' || rule.basis === 'pay_period' || rule.basis === 'weekend';
 }
 
 /**
@@ -234,6 +297,12 @@ function overtimeStarts(
           undefined,
           hoursOf,
         ),
+      );
+      break;
+    case 'weekend':
+      // Paid leave is not "service performed" in the weekend (§ 7456(b)(3)(A)), so none counts.
+      starts = fromWindow(
+        weekendOvertime(timeline, rule.thresholdHours, ctx.weekendDefinition, hoursOf),
       );
       break;
     case 'pay_period':
@@ -410,8 +479,49 @@ function clockDifferentials(
   return { whole, partial };
 }
 
+/**
+ * The worked views that earn the `consecutive_shift` premium (UC–CNA Art. 14 § I.3). A run is
+ * consecutive dates each holding a worked shift, lookback included; standby is not work and leave
+ * leaves a date empty, so both are days off. A shift crosses the threshold when the run's full
+ * shifts dated on its own day and the `withinDays` before it number more than `afterShifts`; from
+ * then every shift of the run earns it until a day off, even if a short shift lets the window's
+ * count fall back. The contract's text is about nurses on 12-hour shifts, so a shift is "full"
+ * when scheduled for 12 hours or more — the declared length, never a holdover making one.
+ */
+function consecutiveShiftEarners(
+  timeline: readonly AssignmentView[],
+  ctx: CostContext,
+): ReadonlySet<AssignmentView> {
+  const earners = new Set<AssignmentView>();
+  const trigger = differentialOf(ctx, 'consecutive_shift')?.consecutive;
+  if (!trigger) return earners;
+  let lastDate: IsoDate | undefined;
+  let fullDates: IsoDate[] = [];
+  let crossed = false;
+  // The timeline is sorted by start, so dates only move forward.
+  for (const view of timeline) {
+    if (!isWorked(view)) continue;
+    const date = view.assignment.date;
+    if (lastDate !== undefined && date !== lastDate && date !== addDays(lastDate, 1)) {
+      fullDates = [];
+      crossed = false;
+    }
+    lastDate = date;
+    if (view.scheduledHours >= 12) fullDates.push(date);
+    const from = addDays(date, -trigger.withinDays);
+    const inWindow = fullDates.filter((d) => compareDates(d, from) >= 0).length;
+    if (inWindow > trigger.afterShifts) crossed = true;
+    if (crossed) earners.add(view);
+  }
+  return earners;
+}
+
 /** Which differentials a *worked* shift earns on every hour, in itemisation order. */
-function applicableDifferentials(view: AssignmentView, ctx: CostContext): Differential[] {
+function applicableDifferentials(
+  view: AssignmentView,
+  ctx: CostContext,
+  consecutive: boolean,
+): Differential[] {
   // Dated by start day, same as the fairness ledger: the night into a holiday morning is not a
   // holiday shift. A major holiday earns the major premium in place of the holiday one, never
   // both; a unit with no major premium pays every holiday the holiday premium, as before.
@@ -429,6 +539,7 @@ function applicableDifferentials(view: AssignmentView, ctx: CostContext): Differ
     weekend: isWeekendWindow(view.window, ctx.weekendDefinition),
     holiday: ctx.holidayDates.has(date) && !major,
     major_holiday: major,
+    consecutive_shift: consecutive,
     charge: view.assignment.isCharge,
     agency: view.nurse.employmentType === 'agency',
     // Standby is priced separately; call-back is a day-of event with no assignment to hang on.
@@ -457,11 +568,20 @@ export function isBaylorPlan(nurse: Pick<Nurse, 'scheduleKind'>): boolean {
 /**
  * Whether a shift is one of a Baylor nurse's regularly scheduled 12-hour weekend tours: started on
  * a Saturday or Sunday, or a Friday night running into Saturday (38 U.S.C. § 7456(a)). § 7456(d)
- * denies § 7453's night, weekend and holiday pay "for any period included in" such a tour. The one
- * definition, shared with the rule that judges tour plans.
+ * denies § 7453's night, weekend and holiday pay "for any period included in" such a tour, and
+ * § 7456(b)(3)(B) says whose: "a nurse to whom this subsection is applicable is not entitled to
+ * additional pay under section 7453 … for any period included in a regularly scheduled 12-hour
+ * tour of duty". A tour picked up as overtime is not regularly scheduled, so it keeps them. The
+ * one definition, shared with the rule that judges tour plans (which exempts overtime too).
  */
 export function isBaylorTour(view: AssignmentView): boolean {
   if (!isBaylorPlan(view.nurse) || view.scheduledHours !== 12) return false;
+  if (view.assignment.isOvertime) return false;
+  return isBaylorWeekendDay(view);
+}
+
+/** Whether a shift is dated a Saturday or Sunday, or a Friday and runs into Saturday. */
+function isBaylorWeekendDay(view: AssignmentView): boolean {
   const weekday = weekdayOf(view.assignment.date);
   return weekday === 6 || weekday === 0 || (weekday === 5 && crossesMidnight(view.shiftType));
 }
@@ -494,6 +614,7 @@ function priceView(
   view: AssignmentView,
   ctx: CostContext,
   overtime: readonly OvertimeBand[] | undefined,
+  consecutive: boolean,
 ): AssignmentCost {
   const hours = view.paidHours;
   const identity = {
@@ -543,8 +664,9 @@ function priceView(
   const lines: CostLine[] = [{ kind: 'base', hours, rate: base, amount: hours * base }];
   let running = base;
   const baylorTour = isBaylorTour(view);
-  const earned = applicableDifferentials(view, ctx);
-  // A Baylor tour's scheduled hours earn only the hospital's own premiums (§ 7456(d)).
+  const earned = applicableDifferentials(view, ctx, consecutive);
+  // A Baylor tour's scheduled hours earn only the hospital's own premiums (§ 7456(d)). The
+  // consecutive-shift premium is a contract's, not § 7453's, so it is not withheld here.
   const applicable = baylorTour ? earned.filter((d) => !SECTION_7453_KINDS.has(d.kind)) : earned;
   for (const d of applicable) {
     if (d.mode !== 'flat') continue;
@@ -612,10 +734,11 @@ function priceView(
 /** Every in-period assignment of one nurse, priced with overtime attributed across their week. */
 function costTimeline(timeline: readonly AssignmentView[], ctx: CostContext): AssignmentCost[] {
   const overtime = attributeOvertime(timeline, ctx);
+  const consecutive = consecutiveShiftEarners(timeline, ctx);
   const out: AssignmentCost[] = [];
   for (const view of timeline) {
     if (!view.inPeriod) continue;
-    out.push(priceView(view, ctx, overtime.get(view)));
+    out.push(priceView(view, ctx, overtime.get(view), consecutive.has(view)));
   }
   return out;
 }

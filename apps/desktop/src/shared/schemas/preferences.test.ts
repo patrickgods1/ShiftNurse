@@ -10,6 +10,7 @@ describe('a nurse preference list arriving over IPC', () => {
       { kind: 'prefer_weekday', weekday: 0, weight: 3 },
       { kind: 'weekend_appetite', level: 0, weight: 3 },
       { kind: 'preferred_block_length', shifts: 3, weight: 3 },
+      { kind: 'holiday_appetite', holidayId: 'h-1', weight: 3 },
     ];
     expect(replace.safeParse(['n-1', list]).success).toBe(true);
   });
@@ -17,6 +18,12 @@ describe('a nurse preference list arriving over IPC', () => {
   it('refuses a weekday that is not in the week', () => {
     expect(
       replace.safeParse(['n-1', [{ kind: 'avoid_weekday', weekday: 7, weight: 3 }]]).success,
+    ).toBe(false);
+  });
+
+  it('refuses a wish to work a holiday that names no holiday', () => {
+    expect(
+      replace.safeParse(['n-1', [{ kind: 'holiday_appetite', holidayId: '', weight: 3 }]]).success,
     ).toBe(false);
   });
 

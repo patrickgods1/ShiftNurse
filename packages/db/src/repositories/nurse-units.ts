@@ -17,7 +17,6 @@
 
 import {
   type Assignment,
-  addDays,
   type BusyElsewhere,
   busyElsewhere,
   compareDates,
@@ -317,14 +316,4 @@ export function busyElsewhereFor(
     assignments.push(...busy.assignments);
   }
   return { shiftTypes, assignments };
-}
-
-/** The lookback the loaders read other units over, matching the tail of prior shifts. */
-export const ELSEWHERE_LOOKBACK_DAYS = 14;
-
-export function elsewhereWindow(period: { startDate: IsoDate; endDate: IsoDate }): {
-  start: IsoDate;
-  end: IsoDate;
-} {
-  return { start: addDays(period.startDate, -ELSEWHERE_LOOKBACK_DAYS), end: period.endDate };
 }

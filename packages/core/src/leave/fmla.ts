@@ -111,6 +111,17 @@ export function fmlaEntitlementHours(input: {
   return { hours: 12 * input.contractWeeklyHours, basis: 'contract' };
 }
 
+/**
+ * California pregnancy disability leave: up to four months of the nurse's usual week, counted as
+ * 17⅓ weeks (Cal. Code Regs. tit. 2 § 11042(a)(1)), used here rounded to 17.33: a 36-hour week
+ * gives 623.88 hours where the exact 52/3 would give 624. PDL is its own entitlement under Gov. Code
+ * § 12945, with no length-of-service or hours test, so FMLA's sums do not fit it: a nurse on
+ * three 12s has 623.88 hours of PDL, not FMLA's 432.
+ */
+export function pdlEntitlementHours(input: { contractWeeklyHours: number }): number {
+  return input.contractWeeklyHours * 17.33;
+}
+
 /** What is left of the entitlement in the year `onDate` falls in, counting leave later in it too. */
 export function fmlaStanding(input: {
   policy: FmlaPolicy;

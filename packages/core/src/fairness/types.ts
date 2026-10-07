@@ -138,6 +138,12 @@ export const EMPTY_COUNTERS: Readonly<BurdenCounters> = Object.freeze({
 export interface CounterContext {
   unit: Unit;
   holidayDates: ReadonlySet<IsoDate>;
+  /**
+   * Holiday id → date, which a `holiday_appetite` preference needs to be scored. Required so no
+   * builder can forget it: a missing map would read every holiday-work wish as out of period and
+   * give a denied volunteer a full preference mark.
+   */
+  holidayDateById: ReadonlyMap<Id, IsoDate>;
   weekendDefinition: WeekendDefinition;
   preferences: readonly Preference[];
   /** Requests whose `startDate` falls in the period feed the approved/denied tallies. */

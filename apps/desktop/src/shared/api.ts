@@ -45,6 +45,7 @@ import type {
   HistoricalShiftRow,
   Holiday,
   HolidayClaim,
+  HolidayWorkClaim,
   HolidayYearPlan,
   HppdReport,
   HppdTarget,
@@ -345,7 +346,11 @@ export interface LeaveRequestCheck {
     usedHours: number;
     /** Lost to the carryover cap at a leave-year turnover since `asOf`. */
     forfeitedHours: number;
+    /** Approved leave of this type used since the current leave year began, before `asOf` too. */
+    usedThisYearHours: number;
     check: BalanceCheck;
+    /** Present only when the accrual rule caps yearly use and this request would pass the cap. */
+    useCap?: { capHours: number; overBy: number };
   };
   /** A balance-type request for a nurse with no balance entered: nothing to check against. */
   noBalanceFor?: LeaveBalanceType;
@@ -368,6 +373,20 @@ export interface LeaveRequestCheck {
     eligibility: { eligible: true } | { eligible: false; reason: string };
     /** A certification on file covers the request's first day. */
     certified: boolean;
+  };
+  /** California pregnancy disability leave: four months of the usual week, apart from FMLA. */
+  pdl?: {
+    /** Four months of the nurse's usual week (17⅓ weeks). */
+    entitlementHours: number;
+    /** The nurse's usual hours a week, from their contract. */
+    weeklyHours: number;
+    /** The 12 months back from the request's first day that leave already taken is counted in. */
+    period: { from: IsoDate; to: IsoDate };
+    /** Approved pregnancy disability leave in that period, at the usual week's pace. */
+    usedHours: number;
+    /** Hours this request uses: its days at the usual week's pace. */
+    requestHours: number;
+    remainingHours: number;
   };
 }
 
@@ -608,11 +627,12 @@ export type PayRateInput = Omit<PayRate, 'id'>;
 /** Scope (nurse or role) is fixed once created; re-scoping is a delete and a create. */
 export type PayRatePatch = Partial<Pick<PayRate, 'hourlyRate' | 'effectiveFrom'>>;
 export type DifferentialInput = Omit<Differential, 'id'>;
-/** `window: null` clears the clock window. */
+/** `window: null` clears the clock window; `consecutive: null` a consecutive-shift trigger. */
 export type DifferentialPatch = Partial<
   Pick<Differential, 'kind' | 'mode' | 'amount' | 'active'>
 > & {
   window?: Differential['window'] | null;
+  consecutive?: Differential['consecutive'] | null;
 };
 export type OvertimeRuleInput = Omit<OvertimeRule, 'id'>;
 export type OvertimeRulePatch = Partial<
@@ -923,7 +943,10 @@ export interface ComparisonColumn {
   fairnessGini: number;
   /** The nurse this schedule treats worst. */
   worstNurse?: { nurseId: Id; score: number };
-  /** Objective points given up to unmet preferences (lower is better). */
+  /**
+   * Objective points given up to unmet preferences (lower is better). A granted wish to work a
+   * holiday counts against it, so the line can be below zero.
+   */
   preferencePoints: number;
   /** The whole objective (lower is better); the one number the solver minimises. */
   objective: number;
@@ -1501,6 +1524,11 @@ export interface ShiftNurseApi {
      * then seniority. Advice only; deciding is still the manager's.
      */
     holidayPriority(unitId: Id): HolidayClaim[];
+    /**
+     * Nurses who want to work each holiday from today on, most senior first; `beyondNeed` marks
+     * the volunteers past the date's RN coverage targets. Advice only.
+     */
+    holidayWorkPriority(unitId: Id): HolidayWorkClaim[];
     /** Every request touching the inclusive range, whatever its status — the heatmap's feed. */
     listInRange(unitId: Id, start: IsoDate, end: IsoDate): TimeOffRequest[];
     create(input: CreateTimeOffInput): TimeOffRequest;
@@ -1782,6 +1810,7 @@ export const API_CHANNELS = {
     'list',
     'listInRange',
     'holidayPriority',
+    'holidayWorkPriority',
     'create',
     'coverOptions',
     'approveAndCover',

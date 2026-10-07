@@ -123,6 +123,38 @@ describe('Settings › Leave', () => {
     });
   });
 
+  it('saves California sick leave capped at 40 hours used a year', async () => {
+    renderWithApp(<LeavePanel />, { unit });
+    fireEvent.change(await screen.findByLabelText('Rule 2 yearly use cap (hours)'), {
+      target: { value: '40' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(bridge.callsTo('units', 'update')).toHaveLength(1));
+    const rules = bridge.callsTo('units', 'update')[0]![1].leavePolicy!.accrual;
+    expect(rules[1]).toEqual({ ...policy.accrual[1]!, useCapHoursPerYear: 40 });
+  });
+
+  it('saves a sick rule giving 40 hours up front each year, with no earning rate', async () => {
+    renderWithApp(<LeavePanel />, { unit });
+    fireEvent.click(await screen.findByRole('button', { name: 'Add accrual rule' }));
+    fireEvent.change(screen.getByLabelText('Rule 3 balance'), { target: { value: 'sick' } });
+    fireEvent.change(screen.getByLabelText('Rule 3 front-loaded each year (hours)'), {
+      target: { value: '40' },
+    });
+    fireEvent.change(screen.getByLabelText('Rule 3 yearly use cap (hours)'), {
+      target: { value: '40' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(bridge.callsTo('units', 'update')).toHaveLength(1));
+    const rules = bridge.callsTo('units', 'update')[0]![1].leavePolicy!.accrual;
+    expect(rules[2]).toEqual({
+      balanceType: 'sick',
+      tiers: [],
+      useCapHoursPerYear: 40,
+      frontLoadHours: 40,
+    });
+  });
+
   it('saves null when the manager goes back to the default', async () => {
     renderWithApp(<LeavePanel />, { unit });
     fireEvent.click(await screen.findByRole('button', { name: 'Use the default' }));

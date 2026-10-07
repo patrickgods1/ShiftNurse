@@ -420,3 +420,89 @@ describe('leave for a 72/80 nurse is charged 10 hours for each 9 of absence', ()
     expect(fmla!.requestHours).toBe(36);
   });
 });
+
+describe('California’s yearly cap on using sick leave', () => {
+  beforeEach(() =>
+    setPolicy({
+      fmla: { regime: 'title1', yearMethod: 'rolling_backward' },
+      leaveYearStart: 'calendar',
+      accrual: [
+        {
+          balanceType: 'sick',
+          tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 30 }],
+          balanceCapHours: 80,
+          useCapHoursPerYear: 40,
+        },
+      ],
+    }),
+  );
+
+  const approvedSick = (date: string, paidHours: number) =>
+    approveTimeOff(
+      f.handle.db,
+      createTimeOffRequest(
+        f.handle.db,
+        { nurseId, startDate: isoDate(date), endDate: isoDate(date), type: 'sick', paidHours },
+        ACTOR,
+      ).id,
+      ACTOR,
+    );
+
+  it('says 16 hours more is 8 past the 40 when 32 were used this year, though the balance has them', () => {
+    api().setBalance(nurseId, 'sick', 60, isoDate('2026-10-01'));
+    // 24 in March is already in payroll's 60; 8 on 10-02 comes off it. Nothing worked, so the
+    // period closing 10-03 earns nothing: 60 − 8 = 52 projected, 24 + 8 = 32 used this year.
+    approvedSick('2026-03-02', 24);
+    approvedSick('2026-10-02', 8);
+    const balance = check('sick', 16).balance!;
+    expect(balance).toMatchObject({ projectedHours: 52, usedThisYearHours: 32 });
+    expect(balance.check).toEqual({ ok: true, remainingHours: 36 });
+    expect(balance.useCap).toEqual({ capHours: 40, overBy: 8 });
+  });
+
+  it('says nothing about the cap while the request stays within it', () => {
+    api().setBalance(nurseId, 'sick', 60, isoDate('2026-10-01'));
+    approvedSick('2026-03-02', 24);
+    expect(check('sick', 16).balance!.useCap).toBeUndefined();
+  });
+});
+
+describe('a California pregnancy disability leave request', () => {
+  it('is saved, and counts a week of the 623.88 hours with two weeks already taken', () => {
+    const earlier = createTimeOffRequest(
+      f.handle.db,
+      {
+        nurseId,
+        startDate: isoDate('2026-08-03'),
+        endDate: isoDate('2026-08-16'),
+        type: 'pregnancy_disability',
+      },
+      ACTOR,
+    );
+    approveTimeOff(f.handle.db, earlier.id, ACTOR);
+    const asked = createTimeOffRequest(
+      f.handle.db,
+      {
+        nurseId,
+        startDate: isoDate('2026-10-05'),
+        endDate: isoDate('2026-10-11'),
+        type: 'pregnancy_disability',
+      },
+      ACTOR,
+    );
+    expect(asked.type).toBe('pregnancy_disability');
+
+    const result = check('pregnancy_disability', 0);
+    // 36 a week × 17.33 = 623.88; 14 days at 36 a week = 72 used; 623.88 − 72 = 551.88.
+    expect(result.pdl).toEqual({
+      entitlementHours: 623.88,
+      weeklyHours: 36,
+      period: { from: '2025-10-06', to: '2026-10-05' },
+      usedHours: 72,
+      requestHours: 36,
+      remainingHours: 551.88,
+    });
+    // Not FMLA, and no certification is asked for.
+    expect(result.fmla).toBeUndefined();
+  });
+});

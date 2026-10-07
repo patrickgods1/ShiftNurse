@@ -80,7 +80,8 @@ export function getLatestRuleSet(db: DbLike, unitId: Id): RuleSet | undefined {
  * produces version N+1; version N is retained forever.
  *
  * Switching off or softening the patient-ratio rule, or a rule the unit's state preset switched
- * on, is allowed but needs `opts.reason`: a softened ratio with no stated reason is a grievance
+ * on (bar the contract's own rules on a unit that said it is under another agreement), is
+ * allowed but needs `opts.reason`: a softened ratio with no stated reason is a grievance
  * with no record. It throws before any insert, so a caller's transaction holds no header row.
  */
 export function saveRuleSet(
@@ -98,6 +99,7 @@ export function saveRuleSet(
     resolveConfigs(latest ?? defaultRuleSet(draft.unitId)),
     resolveConfigs({ ...defaultRuleSet(draft.unitId), configs: draft.configs }),
     unit.jurisdiction,
+    unit.jurisdictionChoices ?? {},
   );
   if (loosened.length > 0 && !opts?.reason?.trim()) {
     const names = loosened

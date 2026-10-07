@@ -70,6 +70,8 @@ export function leaveLabel(type: TimeOffType): string {
       return 'comp time';
     case 'state_family':
       return 'state family leave';
+    case 'pregnancy_disability':
+      return 'pregnancy disability leave';
   }
 }
 

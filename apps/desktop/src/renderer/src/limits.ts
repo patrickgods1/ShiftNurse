@@ -16,9 +16,6 @@ export const NOT_ENFORCED: readonly string[] = [
   'Leave bids and other requests are entered by the manager: nurses do not submit them in the app yet.',
   'In-lieu-of holidays (federal, 5 U.S.C. § 6103(b)): when a nurse’s regular day off falls on a holiday, their in-lieu day is not marked and work on it is not paid at the holiday premium here; holiday pay applies only to the calendar holiday.',
   'Compensatory time earned instead of overtime pay: the app prices overtime and holds a comp-leave balance, but does not convert overtime worked into comp time earned; add earned comp time to the nurse’s balance under Leave on their Roster page.',
-  'UC–CNA’s consecutive-shift premium (Art. 14 § I.3: a 12-hour nurse working more than four full shifts in four days is paid 1.5× until a day off): the “Consecutive shift limits” rule’s “Most days in a row” can be set to 4 and the rule made soft in Settings › Rules so the grid flags it, but nothing prices it; add the premium in payroll.',
-  'California sick leave (Lab. Code § 246) use cap and front-loading, and Pregnancy Disability Leave: the app accrues sick leave and caps the balance, but does not cap use at 40 hours a year or front-load; PDL has no leave type of its own, so book it as “State family leave”.',
-  'UC–CNA’s exemption of career nurses with ten or more years from forced rotation (Art. 14 § P): set those nurses’ permanent tour by hand; the app has no seniority-based exemption.',
 ];
 
 export const PRESETS_DISCLAIMER =

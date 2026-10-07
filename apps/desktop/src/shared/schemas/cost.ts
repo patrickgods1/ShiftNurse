@@ -19,6 +19,7 @@ const differentialKind = z.enum([
   'weekend',
   'holiday',
   'major_holiday',
+  'consecutive_shift',
   'charge',
   'on_call',
   'call_back',
@@ -33,6 +34,7 @@ const overtimeBasis = z.enum([
   'beyond_scheduled_tour',
   'consecutive',
   'beyond_scheduled_days',
+  'weekend',
 ]);
 
 /** A rate belongs to one nurse or to a role's default — the repository refuses both or neither. */
@@ -50,6 +52,15 @@ const differentialWindow = object({
   wholeShiftAtHours: z.number().positive('must be more than 0').nullable(),
 });
 
+/**
+ * A consecutive-shift premium's trigger (`Differential.consecutive`): both numbers or none, whole
+ * shifts and days; the repository refuses it on other kinds.
+ */
+const differentialConsecutive = object({
+  afterShifts: z.number().int('must be a whole number').min(1, 'must be at least 1'),
+  withinDays: z.number().int('must be a whole number').min(1, 'must be at least 1'),
+});
+
 const differentialInput = object({
   unitId: id,
   kind: differentialKind,
@@ -57,6 +68,7 @@ const differentialInput = object({
   amount: money,
   active: z.boolean(),
   window: differentialWindow.optional(),
+  consecutive: differentialConsecutive.optional(),
 });
 
 const overtimeRuleInput = object({
@@ -91,8 +103,11 @@ export const costSchemas = {
     differentialInput
       .pick({ kind: true, mode: true, amount: true, active: true })
       .partial()
-      // null clears the window; it is not part of the create shape.
-      .extend({ window: differentialWindow.nullable().optional() }),
+      // null clears the window or trigger; it is not part of the create shape.
+      .extend({
+        window: differentialWindow.nullable().optional(),
+        consecutive: differentialConsecutive.nullable().optional(),
+      }),
   ]),
   deleteDifferential: z.tuple([id]),
   overtimeRules: z.tuple([id]),

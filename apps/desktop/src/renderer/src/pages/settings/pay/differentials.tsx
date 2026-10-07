@@ -1,4 +1,7 @@
-/** Shift differentials: nights, weekends, holidays, charge — flat or percentage, switchable. */
+/**
+ * Shift differentials: nights, weekends, holidays, consecutive shifts, charge — flat or
+ * percentage, switchable.
+ */
 
 import type { Differential, DifferentialKind, Id } from '@shiftnurse/core';
 import { COST_LINE_LABELS, DIFFERENTIAL_ORDER } from '@shiftnurse/core';
@@ -24,6 +27,8 @@ const DIFFERENTIAL_HELP: Record<DifferentialKind, string> = {
     'Shifts starting on a holiday from the Holidays tab. With a major-holiday premium set, minor holidays only',
   major_holiday:
     'Shifts starting on a major holiday, in place of the holiday premium. Without it, majors earn the holiday premium',
+  consecutive_shift:
+    'Every further shift once a run of days in a row holds more full 12-hour shifts than the contract allows, until a day off',
   charge: 'Shifts where the nurse is the charge nurse',
   on_call: 'Standby hours — paid instead of base pay, not on top of it',
   call_back: 'Being called in while on standby (priced by the day-of console)',
@@ -34,6 +39,85 @@ const NIGHT_WHY =
   'Under the VA rule (38 U.S.C. §7453(b)) the night differential is 10% on the whole tour when at least 4 hours fall between 6 pm and 6 am, and otherwise only on the hours inside that window. Set the window to 18:00–06:00 and the whole-shift hours to 4. Leave the whole-shift hours empty to pay only the hours inside the window.';
 const EVENING_WHY =
   'Many contracts pay an evening differential for the hours inside a clock window such as 15:00–23:00. Leave the whole-shift hours empty to pay only those hours, or enter a number to pay the whole shift once that many hours fall in the window.';
+
+const CONSECUTIVE_WHY =
+  'UC–CNA Art. 14 § I.3 pays a 12-hour nurse 1.5× once she works more than four full shifts within four days, until she has a day off: enter 4 and 4 with a 1.5 multiplier. Only shifts scheduled for 12 hours or more count toward the run; standby and leave do not.';
+
+interface ConsecutiveForm {
+  after: string;
+  within: string;
+}
+const EMPTY_CONSECUTIVE: ConsecutiveForm = { after: '', within: '' };
+
+function consecutiveFormOf(consecutive: Differential['consecutive']): ConsecutiveForm {
+  return consecutive === undefined
+    ? EMPTY_CONSECUTIVE
+    : { after: String(consecutive.afterShifts), within: String(consecutive.withinDays) };
+}
+
+/** The trigger the form describes, or the reason it cannot be saved. */
+function consecutiveOf(form: ConsecutiveForm): NonNullable<Differential['consecutive']> | string {
+  if (form.after.trim() === '' || form.within.trim() === '') {
+    return 'Enter both the number of shifts and the number of days';
+  }
+  const afterShifts = Number(form.after);
+  const withinDays = Number(form.within);
+  if (
+    !Number.isInteger(afterShifts) ||
+    afterShifts < 1 ||
+    !Number.isInteger(withinDays) ||
+    withinDays < 1
+  ) {
+    return 'Shifts and days must be whole numbers of at least 1';
+  }
+  return { afterShifts, withinDays };
+}
+
+function ConsecutiveFields({
+  idPrefix,
+  form,
+  onChange,
+}: {
+  idPrefix: string;
+  form: ConsecutiveForm;
+  onChange: (next: ConsecutiveForm) => void;
+}) {
+  const afterId = `${idPrefix}-after-shifts`;
+  return (
+    <>
+      <Field
+        id={afterId}
+        label="More than (full shifts)"
+        hint="A shift counts the 12s on its own day and the days before it, so 4 and 4 pays the fifth 12 in a row, and every shift after until a date with no shift."
+        tip={CONSECUTIVE_WHY}
+      >
+        <input
+          id={afterId}
+          type="number"
+          min={1}
+          step={1}
+          required
+          value={form.after}
+          onChange={(event) => onChange({ ...form, after: event.target.value })}
+          className={`${INPUT} w-24`}
+          aria-describedby={describedBy(afterId, { hint: true })}
+        />
+      </Field>
+      <Field id={`${idPrefix}-within-days`} label="Within (days)" compact>
+        <input
+          id={`${idPrefix}-within-days`}
+          type="number"
+          min={1}
+          step={1}
+          required
+          value={form.within}
+          onChange={(event) => onChange({ ...form, within: event.target.value })}
+          className={`${INPUT} w-24`}
+        />
+      </Field>
+    </>
+  );
+}
 
 interface WindowForm {
   start: string;
@@ -117,6 +201,10 @@ function WindowFields({
   );
 }
 
+function describeConsecutive(consecutive: NonNullable<Differential['consecutive']>): string {
+  return `after more than ${consecutive.afterShifts} full shifts within ${consecutive.withinDays} days, until a day off`;
+}
+
 function describeAmount(d: Pick<Differential, 'mode' | 'amount'>): string {
   return d.mode === 'flat' ? `${formatDollars(d.amount, { cents: true })}/h` : `× ${d.amount}`;
 }
@@ -145,6 +233,8 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
   const [byClock, setByClock] = useState(false);
   const [windowForm, setWindowForm] = useState<WindowForm>(EMPTY_WINDOW);
   const [editWindow, setEditWindow] = useState<WindowForm>(EMPTY_WINDOW);
+  const [consecutiveForm, setConsecutiveForm] = useState<ConsecutiveForm>(EMPTY_CONSECUTIVE);
+  const [editConsecutive, setEditConsecutive] = useState<ConsecutiveForm>(EMPTY_CONSECUTIVE);
   const [editError, setEditError] = useState<string | undefined>(undefined);
 
   if (query.isPending) return <AsyncState status="loading" label="Loading differentials" />;
@@ -180,13 +270,29 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
             setError(window);
             return;
           }
+          // Like evening, the consecutive-shift premium has nothing to go on without its trigger.
+          const consecutive =
+            kind === 'consecutive_shift' ? consecutiveOf(consecutiveForm) : undefined;
+          if (typeof consecutive === 'string') {
+            setError(consecutive);
+            return;
+          }
           setError(undefined);
           create.mutate(
-            { unitId, kind, mode, amount: parsed, active: true, ...(window ? { window } : {}) },
+            {
+              unitId,
+              kind,
+              mode,
+              amount: parsed,
+              active: true,
+              ...(window ? { window } : {}),
+              ...(consecutive ? { consecutive } : {}),
+            },
             {
               onSuccess: () => {
                 setAmount('');
                 setWindowForm(EMPTY_WINDOW);
+                setConsecutiveForm(EMPTY_CONSECUTIVE);
               },
               onError: (e) => setError(e.message),
             },
@@ -250,6 +356,13 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
             onChange={setWindowForm}
           />
         ) : null}
+        {kind === 'consecutive_shift' ? (
+          <ConsecutiveFields
+            idPrefix="differential"
+            form={consecutiveForm}
+            onChange={setConsecutiveForm}
+          />
+        ) : null}
         <button type="submit" className={PRIMARY} disabled={create.isPending}>
           Add differential
         </button>
@@ -300,6 +413,11 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
                         By clock time: {describeWindow(d.window)}
                       </span>
                     ) : null}
+                    {d.consecutive ? (
+                      <span className="block text-xs text-text-muted">
+                        Paid {describeConsecutive(d.consecutive)}
+                      </span>
+                    ) : null}
                   </td>
                   <td className={TD}>
                     {editingId === d.id ? (
@@ -343,6 +461,13 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
                             ) : null}
                           </>
                         ) : null}
+                        {d.kind === 'consecutive_shift' ? (
+                          <ConsecutiveFields
+                            idPrefix={`differential-${d.id}`}
+                            form={editConsecutive}
+                            onChange={setEditConsecutive}
+                          />
+                        ) : null}
                         {editError !== undefined ? (
                           <span className="text-xs text-danger">{editError}</span>
                         ) : null}
@@ -383,13 +508,23 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
                                 setEditError('An evening differential needs a window');
                                 return;
                               }
+                              const consecutive =
+                                d.kind === 'consecutive_shift'
+                                  ? consecutiveOf(editConsecutive)
+                                  : undefined;
+                              if (typeof consecutive === 'string') {
+                                setEditError(consecutive);
+                                return;
+                              }
                               setEditError(undefined);
                               update.mutate(
                                 {
                                   id: d.id,
                                   patch: takesWindow(d.kind)
                                     ? { amount: parsed, window }
-                                    : { amount: parsed },
+                                    : consecutive
+                                      ? { amount: parsed, consecutive }
+                                      : { amount: parsed },
                                 },
                                 {
                                   onSuccess: () => setEditingId(undefined),
@@ -417,6 +552,7 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
                               setEditingId(d.id);
                               setEditAmount(String(d.amount));
                               setEditWindow(windowFormOf(d.window));
+                              setEditConsecutive(consecutiveFormOf(d.consecutive));
                               setEditError(undefined);
                             }}
                           >

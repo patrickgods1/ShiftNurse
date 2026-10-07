@@ -39,6 +39,7 @@ import {
   listShiftTypesForUnit,
   listTimeOffForUnit,
   loadPeriodInput,
+  PRIOR_ASSIGNMENT_LOOKBACK_DAYS,
   priorAssignmentsBefore,
   rosterForPeriod,
   timeOffForPeriod,
@@ -51,11 +52,12 @@ import {
 export const ACTOR = 'manager';
 
 /**
- * Days of the previous published schedule a view carries. Rest and consecutive-shift rules
- * look back across the period boundary, so a Monday shift is judged against the Sunday night
- * before it even though that Sunday belongs to an earlier period.
+ * Days of the previous published schedule a view carries: the loader's own tail, so the grid
+ * judges a period exactly as Generate does. Rest and consecutive-shift rules look back across the
+ * period boundary, so a Monday shift is judged against the Sunday night before it even though
+ * that Sunday belongs to an earlier period.
  */
-export const LOOKBACK_DAYS = 14;
+export const LOOKBACK_DAYS = PRIOR_ASSIGNMENT_LOOKBACK_DAYS;
 
 export function unitOrThrow(db: DbLike, unitId: Id): Unit {
   const unit = getUnit(db, unitId);
@@ -143,9 +145,11 @@ export function counterContext(
   period?: SchedulePeriod,
 ): CounterContext {
   const unit = unitOrThrow(db, unitId);
+  const holidays = listHolidaysForUnit(db, unitId);
   return {
     unit,
-    holidayDates: new Set<IsoDate>(listHolidaysForUnit(db, unitId).map((h) => h.date)),
+    holidayDates: new Set<IsoDate>(holidays.map((h) => h.date)),
+    holidayDateById: new Map(holidays.map((h) => [h.id, h.date])),
     weekendDefinition: ruleSet.weekendDefinition,
     preferences: listPreferencesForUnit(db, unitId),
     timeOff: period ? timeOffForPeriod(db, unit, period) : listTimeOffForUnit(db, unitId),

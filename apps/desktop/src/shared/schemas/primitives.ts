@@ -98,6 +98,8 @@ const accrualRule = z.strictObject({
   tiers: z.array(accrualTier),
   balanceCapHours: z.number().optional(),
   carryoverCapHours: z.number().optional(),
+  useCapHoursPerYear: z.number().optional(),
+  frontLoadHours: z.number().optional(),
   citation: z.string().optional(),
 });
 

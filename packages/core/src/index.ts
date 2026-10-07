@@ -3,7 +3,12 @@
 
 export type { BindingConstraint, RatioStaffing, RoleDemand, ShiftDemand } from './acuity/demand.js';
 // Census and ratios to the staffing each shift needs
-export { deriveDemand, NURSE_ROLES, nursesRequiredForMix } from './acuity/demand.js';
+export {
+  coverageFloorFor,
+  deriveDemand,
+  NURSE_ROLES,
+  nursesRequiredForMix,
+} from './acuity/demand.js';
 export type {
   BacktestResult,
   CensusProposal,
@@ -213,7 +218,7 @@ export {
 } from './leave/accrual.js';
 export type { BalanceCheck } from './leave/balances.js';
 // Leave balances and FMLA: accrual, balance checks, the rolling-year entitlement
-export { checkLeaveBalance } from './leave/balances.js';
+export { checkLeaveBalance, checkUseCap } from './leave/balances.js';
 export type {
   BidResult,
   LeaveAward,
@@ -231,14 +236,17 @@ export {
   fmlaEntitlementHours,
   fmlaPeriod,
   fmlaStanding,
+  pdlEntitlementHours,
 } from './leave/fmla.js';
 export type {
   HolidayClaim,
   HolidayClaimant,
   HolidayPriorityInput,
+  HolidayWorkClaim,
+  HolidayWorkInput,
 } from './leave/holiday-priority.js';
-// Contested holiday requests ranked by the contract's order
-export { holidayRequestPriority } from './leave/holiday-priority.js';
+// Contested holiday requests ranked by the contract's order; holiday volunteers by seniority
+export { holidayRequestPriority, holidayWorkPriority } from './leave/holiday-priority.js';
 export { validateLeavePolicy } from './leave/policy.js';
 export type { RequestClaimant, RequestPriorityInput } from './leave/request-priority.js';
 // Competing time-off requests ranked by equity (advice, never applied)
@@ -332,6 +340,11 @@ export type {
 } from './rules/types.js';
 // A nurse's name as rule messages and solver reasons print it
 export { nurseName } from './rules/types.js';
+export {
+  type NurseWeekends,
+  type WeekendPatternParams,
+  weekendBreaches,
+} from './rules/weekend-pattern.js';
 // Which dated shift covers which
 export { containingDate, coveringShift, withinShiftProblem } from './schedule/cover.js';
 export type { BusyElsewhere } from './schedule/elsewhere.js';

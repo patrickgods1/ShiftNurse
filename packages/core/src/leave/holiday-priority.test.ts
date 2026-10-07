@@ -4,10 +4,10 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { Holiday } from '../domain/entities.js';
+import type { Holiday, Preference } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
 import { makeNurse, timeOff } from '../testing/fixtures.js';
-import { holidayRequestPriority } from './holiday-priority.js';
+import { holidayRequestPriority, holidayWorkPriority } from './holiday-priority.js';
 
 const ana = makeNurse({ id: 'ana', employeeId: 'E1', seniorityDate: isoDate('2008-03-01') });
 const bo = makeNurse({ id: 'bo', employeeId: 'E2', seniorityDate: isoDate('2015-06-01') });
@@ -168,5 +168,69 @@ describe('a nurse on the Baylor weekend plan', () => {
     expect(claims[0]!.claimants[2]!.reason).toBe(
       'On the Baylor weekend plan (38 U.S.C. § 7456): no holiday entitlement',
     );
+  });
+});
+
+describe('nurses who want to work a holiday', () => {
+  // Three volunteers for Christmas 2026 by seniority: Eve (2010), Fay (2015), Gus (2020). Two RNs
+  // are needed, so Gus, the least senior, is the one volunteer the day has no room for.
+  const eve = makeNurse({ id: 'eve', employeeId: 'E5', seniorityDate: isoDate('2010-01-15') });
+  const fay = makeNurse({ id: 'fay', employeeId: 'E6', seniorityDate: isoDate('2015-01-15') });
+  const gus = makeNurse({ id: 'gus', employeeId: 'E7', seniorityDate: isoDate('2020-01-15') });
+  const wantsToWork = (nurseId: string, holidayId: string): Preference => ({
+    id: `p-${nurseId}-${holidayId}`,
+    nurseId,
+    kind: 'holiday_appetite',
+    holidayId,
+    weight: 3,
+  });
+
+  it('puts the most senior volunteers first and marks the one past what the floor needs', () => {
+    const claims = holidayWorkPriority({
+      holidays: HOLIDAYS,
+      nurses: [gus, eve, fay],
+      preferences: [
+        wantsToWork('gus', 'xmas26'),
+        wantsToWork('fay', 'xmas26'),
+        wantsToWork('eve', 'xmas26'),
+      ],
+      needed: new Map([['xmas26', 2]]),
+    });
+    expect(claims.map((c) => [c.holidayId, c.nurseId, c.rank, c.beyondNeed])).toEqual([
+      ['xmas26', 'eve', 1, false],
+      ['xmas26', 'fay', 2, false],
+      ['xmas26', 'gus', 3, true],
+    ]);
+    expect(claims.map((c) => c.reason)).toEqual([
+      'most senior volunteer',
+      'volunteer, 1 more senior',
+      'volunteer, 2 more senior',
+    ]);
+  });
+
+  it('gives a Baylor-plan volunteer no claim, however senior', () => {
+    const baylorEve = { ...eve, scheduleKind: 'va_baylor' as const };
+    const claims = holidayWorkPriority({
+      holidays: HOLIDAYS,
+      nurses: [baylorEve, fay],
+      preferences: [wantsToWork('eve', 'xmas26'), wantsToWork('fay', 'xmas26')],
+    });
+    expect(claims.map((c) => [c.nurseId, c.rank, c.reason])).toEqual([
+      ['fay', 1, 'most senior volunteer'],
+    ]);
+  });
+
+  it('gives a nurse who never asked to work it no claim', () => {
+    const claims = holidayWorkPriority({
+      holidays: HOLIDAYS,
+      nurses: [eve, fay, gus],
+      preferences: [
+        wantsToWork('fay', 'xmas26'),
+        { id: 'p-gus-w', nurseId: 'gus', kind: 'weekend_appetite', level: 1, weight: 3 },
+      ],
+    });
+    expect(claims.map((c) => [c.holidayId, c.nurseId, c.beyondNeed])).toEqual([
+      ['xmas26', 'fay', false],
+    ]);
   });
 });

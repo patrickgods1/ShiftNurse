@@ -5,10 +5,12 @@
  * score after it without anyone being told.
  */
 
-import { addDays, type HistoricalShiftRow, isoDate } from '@shiftnurse/core';
-import { auditHistoryFor, ledgerSince } from '@shiftnurse/db';
+import { addDays, deriveCounters, type HistoricalShiftRow, isoDate } from '@shiftnurse/core';
+import { auditHistoryFor, createHoliday, ledgerSince } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { counterContext, periodOrThrow, ruleSetFor, scheduleViewFor } from './context.js';
 import { fairnessApi } from './fairness.js';
+import { rosterApi } from './roster.js';
 import { scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
 
@@ -28,6 +30,44 @@ const SINCE = isoDate('2020-01-01');
 const importAudits = () =>
   auditHistoryFor(f.handle.db, 'fairness_ledger', 'batch').filter((a) => a.action === 'import')
     .length;
+
+describe('a wish to work a holiday in the counters the ledger records', () => {
+  it('counts it met for the volunteer who worked the holiday and unmet for the one who did not', () => {
+    const { db } = f.handle;
+    const unitId = f.seeded.unitId;
+    const [ann, bea] = f.rns;
+    const date = addDays(f.seeded.draftStart, 5);
+    const holiday = createHoliday(
+      db,
+      { unitId, date, name: 'Founders Day', isMajor: true },
+      'test',
+    );
+    // Each nurse's only preference is the wish, so the hit rate is that wish alone.
+    for (const nurse of [ann!, bea!]) {
+      rosterApi(db).preferences.replace(nurse.id, [
+        { kind: 'holiday_appetite', holidayId: holiday.id, weight: 3 },
+      ]);
+    }
+    const grid = scheduleApi(db);
+    const place = (nurseId: string, on: typeof date) =>
+      grid.createAssignment({
+        periodId: f.seeded.draftPeriodId,
+        nurseId,
+        shiftTypeId: f.day.id,
+        date: on,
+      });
+    place(ann!.id, date);
+    place(bea!.id, addDays(date, 2));
+
+    const period = periodOrThrow(db, f.seeded.draftPeriodId);
+    const counters = deriveCounters(
+      scheduleViewFor(db, period, { lookback: false }),
+      counterContext(db, unitId, ruleSetFor(db, period), period),
+    );
+    expect(counters.get(ann!.id)?.preferenceHitRate).toBe(1);
+    expect(counters.get(bea!.id)?.preferenceHitRate).toBe(0);
+  });
+});
 
 describe('the fairness report for a period', () => {
   it('lists the nights a nurse was scheduled, on the dates they start', () => {

@@ -46,7 +46,7 @@ import {
 import { holidayWorkFor, holidayWorkIn } from './holidays.js';
 import { listIncompatibilityGroups } from './incompatibility.js';
 import { ledgerSince } from './ledger.js';
-import { busyElsewhereFor, elsewhereWindow, listFloatNurses } from './nurse-units.js';
+import { busyElsewhereFor, listFloatNurses } from './nurse-units.js';
 import { listOvertimeVolunteersOverlapping } from './overtime-volunteers.js';
 import {
   getPaySettings,
@@ -84,6 +84,27 @@ function unitOrThrow(db: DbLike, unitId: Id) {
  * a unit that has imported years of history.
  */
 export const LEDGER_LOOKBACK_DAYS = 400;
+
+/**
+ * Days of earlier published shifts a period is judged with (`priorAssignments`, flagged out of
+ * period). Rest and stretch rules need only the night before, but a rolling four-weekend quota
+ * (`weekend-pattern`'s `maxWeekendsPer4Weeks`) reads the three weekends before the period's first
+ * one, which reach up to 22 days back; a 14-day tail let a third weekend in four through unseen.
+ * 28 is a whole number of weeks, so it covers that for any start day. Every loader that reads the
+ * tail, or what the tail is judged with (leave, sick calls, offers, other units), uses this.
+ */
+export const PRIOR_ASSIGNMENT_LOOKBACK_DAYS = 28;
+
+/** The window the loaders read other units over, matching the tail of prior shifts. */
+export function elsewhereWindow(period: { startDate: IsoDate; endDate: IsoDate }): {
+  start: IsoDate;
+  end: IsoDate;
+} {
+  return {
+    start: addDays(period.startDate, -PRIOR_ASSIGNMENT_LOOKBACK_DAYS),
+    end: period.endDate,
+  };
+}
 
 /**
  * The holiday history this period's rotation reads: who worked the previous occurrence of every
@@ -177,7 +198,7 @@ function overtimeLeave(db: DbLike, unitId: Id, period?: SchedulePeriod) {
 }
 
 /**
- * The dates a period's leave is read over: the 14-day lookback tail (as the prior assignments)
+ * The dates a period's leave is read over: the lookback tail (as the prior assignments)
  * plus the pay periods and work weeks that touch the period. Contracted-hours and pay-period
  * overtime credit paid leave over a whole pay period, which starts up to payPeriodDays-1 before
  * the period and ends as far after it, and cost prices overtime over the tail's own weeks and
@@ -190,7 +211,10 @@ export function timeOffWindow(
   period: Pick<SchedulePeriod, 'startDate' | 'endDate'>,
 ): { start: IsoDate; end: IsoDate } {
   const slack = Math.max(7, unit.payPeriodDays);
-  return { start: addDays(period.startDate, -(14 + slack)), end: addDays(period.endDate, slack) };
+  return {
+    start: addDays(period.startDate, -(PRIOR_ASSIGNMENT_LOOKBACK_DAYS + slack)),
+    end: addDays(period.endDate, slack),
+  };
 }
 
 /** Requests overlapping `timeOffWindow`, whole: a straddling request keeps its full paid-hours spread. */
@@ -281,13 +305,13 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     assignments: listAssignmentsForPeriod(db, period.id),
     // Other units' shifts ride with the lookback tail: judged by every nurse rule, never moved.
     priorAssignments: [
-      ...priorAssignmentsBefore(db, unitId, period.startDate, 14),
+      ...priorAssignmentsBefore(db, unitId, period.startDate, PRIOR_ASSIGNMENT_LOOKBACK_DAYS),
       ...elsewhere.assignments,
     ],
     timeOff,
     // From the lookback tail on, as far as the weekly rules read.
     paidSickCalls: paidSickCallsForUnit(db, unitId, {
-      start: addDays(period.startDate, -14),
+      start: addDays(period.startDate, -PRIOR_ASSIGNMENT_LOOKBACK_DAYS),
       end: period.endDate,
     }),
     credentials: listCredentials(db),
@@ -309,7 +333,7 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     overtimeVolunteers: listOvertimeVolunteersOverlapping(
       db,
       unitId,
-      addDays(period.startDate, -14),
+      addDays(period.startDate, -PRIOR_ASSIGNMENT_LOOKBACK_DAYS),
       period.endDate,
     ),
     // Judged over the lookback too, like the offers above: a preceptorship that ended inside it
@@ -317,7 +341,7 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     preceptorships: listPreceptorshipsOverlapping(
       db,
       unitId,
-      addDays(period.startDate, -14),
+      addDays(period.startDate, -PRIOR_ASSIGNMENT_LOOKBACK_DAYS),
       period.endDate,
     ),
     restWaivers: restWaiversForPeriod(db, unitId, period.startDate, period.endDate),

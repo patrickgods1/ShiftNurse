@@ -30,6 +30,30 @@ describe('pay settings arriving over IPC', () => {
     expect(costSchemas.createOvertimeRule.safeParse([overtime]).success).toBe(true);
   });
 
+  it('accepts the UC consecutive-shift premium and refuses it with only its shifts', () => {
+    const premium = {
+      unitId: 'u-1',
+      kind: 'consecutive_shift',
+      mode: 'multiplier',
+      amount: 1.5,
+      active: true,
+      consecutive: { afterShifts: 4, withinDays: 4 },
+    };
+    expect(costSchemas.createDifferential.safeParse([premium]).success).toBe(true);
+    expect(
+      costSchemas.createDifferential.safeParse([{ ...premium, consecutive: { afterShifts: 4 } }])
+        .success,
+    ).toBe(false);
+    expect(
+      costSchemas.updateDifferential.safeParse(['d-1', { consecutive: { withinDays: 4 } }]).success,
+    ).toBe(false);
+    expect(
+      costSchemas.createDifferential.safeParse([
+        { ...premium, consecutive: { afterShifts: 0, withinDays: 4 } },
+      ]).success,
+    ).toBe(false);
+  });
+
   it('accepts an 8/80 overtime rule over a pay period', () => {
     const rule = {
       unitId: 'u-1',
@@ -83,6 +107,19 @@ describe('pay settings arriving over IPC', () => {
       active: true,
     };
     expect(costSchemas.createOvertimeRule.safeParse([unknown]).success).toBe(false);
+  });
+
+  it('accepts the Baylor plan’s overtime past 24 hours in the weekend', () => {
+    const rule = {
+      unitId: 'u-1',
+      basis: 'weekend',
+      thresholdHours: 24,
+      multiplier: 1.5,
+      active: true,
+      minimumMinutes: 15,
+      scheduleKinds: ['va_baylor'],
+    };
+    expect(costSchemas.createOvertimeRule.safeParse([rule]).success).toBe(true);
   });
 
   it('accepts a California extra-day rule that does not pyramid, and a VA 15-minute minimum', () => {

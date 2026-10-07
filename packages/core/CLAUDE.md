@@ -255,14 +255,18 @@
   `max-hours-in-24` settings; a law that is only a right to refuse (Minnesota) switches nothing
   on. A preset's `options` are yes/no questions asked at apply time (California's alternative
   workweek, the VA's compressed tour); a rule or overtime rule with `when` applies only when the
-  answer meets it, and the answers are never stored. Differentials are added only for a kind the
+  answer meets it; `applyJurisdiction` stores the yes answers on the unit (`Unit.jurisdictionChoices`,
+  migration 0033). Differentials are added only for a kind the
   unit pays nothing for, `postingLeadDays` only rises and `overtimeOrder` is set only when unset,
   and an existing overtime rule is never retrofitted with the preset's pyramiding or minimum.
   A preset overtime rule may carry `scheduleKinds` and `tourDays` (the VA's 72/80 and Baylor
   bases); "already present" compares both (kinds as an order-insensitive set), so the Baylor
-  weekly 40 is still added beside the unit's unscoped weekly 40.
+  daily 8 off tour days is still added beside the unit's unscoped daily 8.
   `protectedRuleChanges` names the edits that switch off or soften the ratio rule or any rule the
-  unit's preset enables, so the caller can ask for a reason. A change to a law is a change to its
+  unit's preset enables, so the caller can ask for a reason — except a `contractOnly` rule (the
+  VA's VA–NNU terms, named by the preset's `source`) on a unit whose stored choices say
+  `ownContract`, since those values were never its agreement's. Every caller passes the unit's
+  stored choices. A change to a law is a change to its
   preset, its citation and its summary together. `JURISDICTION_IDS` is derived from the preset table
   and is what the IPC schema enumerates, so a preset added to the table reaches IPC with no
   second, hand-kept list to forget.
@@ -346,8 +350,17 @@
   in `cost/cost.ts`) reads `Nurse.scheduledDaysPerWeek`: the work week's worked dates are counted
   in order and the (n+1)th and later are extra (IWC Wage Order 5 § 3(B)(8): hours past 8 on such
   a day are 2× for a 12-hour alternative-workweek nurse). A nurse with it unset has no extra days,
-  so the basis prices nothing rather than guessing. The roster CSV deliberately does not carry it:
-  it is an agreement with one nurse, not a column a spreadsheet should silently overwrite.
+  so the basis prices nothing rather than guessing. The roster CSV carries it as
+  `scheduled_days_per_week` (1–7), where a blank cell on re-import keeps the stored value.
+- **Overtime past hours in the weekend.** Basis `weekend` (`weekendOvertime` in `cost/cost.ts`)
+  sums the hours inside each window of the unit's weekend definition, a straddling shift by its
+  in-window hours, and pays those past the threshold: the VA preset's Baylor `weekend 24`
+  (38 U.S.C. § 7456(b)(3)(A), midnight Friday to midnight Sunday), beside its `daily 8` on days
+  without a Baylor tour. A Baylor pickup marked `isOvertime` is not a regularly scheduled tour
+  (§ 7456(b)(3)(B)), so it earns the § 7453 premiums; its date is still a weekend day, judged by
+  the 24 and never past 8 (`tourDayTest` reads the calendar, not `isBaylorTour`).
+  The preset's Baylor `weekend 24` and 72/80 `weekly 36` are `pyramiding: 'none'`: the statutes
+  list their tests as alternatives, so an hour paid as daily overtime is not counted again.
 - **Premiums stack additively or compound, by the unit's choice.** `CostContext.premiumStacking`:
   `'compound'` (default) is the FLSA regular rate, `(base + flats) × Π multipliers`, with overtime
   on that rate; `'additive'` takes each multiplier's premium and the overtime premium on base pay
@@ -376,7 +389,11 @@
   each closed pay period's last day by the nurse's `AccrualRule` (first match wins; tiers by
   years since `hireDate ?? seniorityDate`), a balance cap, approved use, and the carryover cap
   forfeiting the excess at each leave-year start (federal: the first full pay period of January).
-  Same-day order is forfeit, accrue, use. `leave/fmla.ts` is regime-aware: Title I (29 C.F.R.
+  Same-day order is forfeit, accrue, use. A rule's `frontLoadHours` replaces per-period accrual
+  with the year's amount set at each leave-year start (Lab. Code § 246(d)); `useCapHoursPerYear`
+  is checked by `checkUseCap` against `usedThisYearHours` (use since the leave year began, before
+  payroll's date too). `pdlEntitlementHours` (California PDL, 17⅓ of the usual weeks) sits beside
+  FMLA's sums, never inside them. `leave/fmla.ts` is regime-aware: Title I (29 C.F.R.
   § 825) has the 1,250-hour test, 12 × the usual (or 52-week average) week, and the unit's
   choice of the four 12-month methods; Title 5 (5 C.F.R. § 630.1203, VA staff) has no hours test,
   6 × the biweekly tour, and a period always measured forward from first use. Periods are

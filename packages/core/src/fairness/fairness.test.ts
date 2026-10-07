@@ -115,6 +115,7 @@ function scoreOf(roster: Roster, nurseId: string): number {
   const ctx: CounterContext = {
     unit: s.unit,
     holidayDates: new Set([HOLIDAY.date]),
+    holidayDateById: new Map([[HOLIDAY.id, HOLIDAY.date]]),
     weekendDefinition: DEFAULT_WEEKEND,
     preferences: roster.preferences,
   };

@@ -58,9 +58,26 @@
   nurse) is filtered in `attributeOvertime` by `Nurse.scheduleKind ?? 'standard'`, so a VA unit's
   72/80 and Baylor rules sit beside the standard 40-hour week rather than replacing it.
 - **A daily rule can judge tour days only, or the other days.** `tourDays` (`tourDayTest`): a tour
-  day is a date with a worked shift whose `scheduledHours` is 12, lookback included, holdover never
-  making one (38 U.S.C. § 7456A(c)(1): past 12 on a tour day, past 8 otherwise). Other bases ignore it.
+  day is a date with a worked tour, lookback included — for a 72/80 nurse a shift whose
+  `scheduledHours` is 12, holdover never making one (38 U.S.C. § 7456A(c)(1): past 12 on a tour
+  day, past 8 otherwise); for a Baylor nurse a Saturday, a Sunday or a Friday whose shift runs into
+  Saturday, pickups included — never `isBaylorTour`, which leaves pickups out — so only a weekday
+  is judged past 8 and the weekend by its 24 (§ 7456(b)(3)(A)). Other bases ignore it.
+- **The weekend is its own basis.** `weekend` (`weekendOvertime`) sums each shift's hours inside a
+  window of `ctx.weekendDefinition` by the clock (`weekendHours`: a Friday 19:00–07:00 gives 7),
+  per weekend, and makes those past the threshold overtime, reported at the shift's end like every
+  basis's (§ 7456(b)(3)(A): a Baylor nurse past 24 between midnight Friday and midnight Sunday). It
+  is a window basis, so it honours `pyramiding` and is priced after the non-window ones; leave does
+  not count.
 - **A Baylor tour earns no night, evening, weekend or holiday pay.** `isBaylorTour` (exported; the
   tour-plan rule imports it) and § 7456(d): those differentials are withheld from the tour's
-  scheduled hours in `priceView`; charge and agency still apply. A holdover earns them on its own
+  scheduled hours in `priceView`; charge and agency still apply. Only a *regularly scheduled* tour
+  (§ 7456(b)(3)(B)): an `isOvertime` pickup is no tour and earns them all. A holdover earns them on its own
   hours, on base and out of `running`; overtime bands are unchanged.
+- **A consecutive-shift premium is earned by the run.** `consecutive_shift` with
+  `Differential.consecutive` (UC–CNA Art. 14 § I.3; `consecutiveShiftEarners`): a shift counts the
+  full shifts (scheduled 12 hours or more) dated on its own day and the `withinDays` days before it,
+  so `{4, 4}` pays the fifth of five consecutive 12s. Once that count passes `afterShifts`, it and
+  every later shift of the run earn it, even if the count falls back. The run breaks on any
+  calendar date with no worked shift (dated by start day); an 8 continues it without counting;
+  lookback counts, standby and leave do not. Not § 7453, so a Baylor tour keeps it.

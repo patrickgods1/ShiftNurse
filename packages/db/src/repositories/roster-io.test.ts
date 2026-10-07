@@ -166,6 +166,16 @@ describe('roster import reconciliation', () => {
     expect(getNurseByEmployeeId(handle.db, unitId, 'E1')?.scheduleKind).toBeUndefined();
   });
 
+  it('sets scheduled days from the sheet, and a blank cell on re-import keeps them', () => {
+    const planned = { ...ada, nurse: { ...ada.nurse, scheduledDaysPerWeek: 3 } };
+    transact(handle.db, (tx) => importRoster(tx, unitId, [planned], ACTOR));
+    expect(getNurseByEmployeeId(handle.db, unitId, 'E1')?.scheduledDaysPerWeek).toBe(3);
+    expect(formatRosterCsv(exportRoster(handle.db, unitId)).split('\r\n')[1]).toMatch(/,3$/);
+
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
+    expect(getNurseByEmployeeId(handle.db, unitId, 'E1')?.scheduledDaysPerWeek).toBe(3);
+  });
+
   it('leaves nurses who are not in the file untouched', () => {
     createNurse(
       handle.db,

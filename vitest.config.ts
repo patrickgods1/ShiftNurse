@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 // v8 instrumentation slows the solver-heavy tests 2-3x, so a coverage run gets longer limits (a
 // plain `npm test` still fails a hang fast). Detected from the flag rather than set in the npm
@@ -7,15 +7,46 @@ import { defineConfig } from 'vitest/config';
 if (process.argv.includes('--coverage')) process.env.COVERAGE = '1';
 const SCALE = process.env.COVERAGE ? 3 : 1;
 
+// Files that run a full solve. Under 100 parallel workers they time out and pass alone, so they
+// get their own project that runs one file at a time after the fast tests.
+const SOLVER_HEAVY = [
+  'packages/db/src/seed/demo/*.test.ts',
+  'packages/core/src/solver/cpsat/index.test.ts',
+  'apps/desktop/src/main/api/solver.test.ts',
+  'apps/desktop/src/main/cpsat-backend.test.ts',
+];
+
+const INCLUDE = [
+  'packages/*/src/**/*.test.ts',
+  'apps/desktop/src/renderer/src/**/*.test.{ts,tsx}',
+  'apps/desktop/src/main/**/*.test.ts',
+  'apps/desktop/src/shared/**/*.test.ts',
+];
+
 export default defineConfig({
   test: {
     testTimeout: 5_000 * SCALE,
     hookTimeout: 10_000 * SCALE,
-    include: [
-      'packages/*/src/**/*.test.ts',
-      'apps/desktop/src/renderer/src/**/*.test.{ts,tsx}',
-      'apps/desktop/src/main/**/*.test.ts',
-      'apps/desktop/src/shared/**/*.test.ts',
+    // `include` lives in each project: a root-level one is inherited by `extends: true` and
+    // would put every file in solver-heavy too.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          include: INCLUDE,
+          exclude: [...configDefaults.exclude, ...SOLVER_HEAVY],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'solver-heavy',
+          include: SOLVER_HEAVY,
+          fileParallelism: false,
+          maxConcurrency: 1,
+        },
+      },
     ],
     // Component tests opt into jsdom per file (`// @vitest-environment jsdom`); the rest of
     // the suite is pure logic and runs faster under node.

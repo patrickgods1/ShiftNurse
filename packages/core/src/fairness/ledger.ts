@@ -110,6 +110,7 @@ export function preferenceSatisfaction(
   views: readonly AssignmentView[],
   dates: readonly IsoDate[],
   weekendDefinition: WeekendDefinition,
+  holidayDateById?: ReadonlyMap<Id, IsoDate>,
 ): number {
   const workedViews = views.filter(isWorked);
   if (workedViews.length === 0) return 1;
@@ -160,6 +161,13 @@ export function preferenceSatisfaction(
       if (fairShare === 0) return 1;
       return Math.min(1, weekendsWorked / fairShare);
     }
+    case 'holiday_appetite': {
+      // Met by working the holiday, as a weekend appetite is by working weekends; a holiday this
+      // period does not hold offered no chance either way.
+      const date = holidayDateById?.get(pref.holidayId);
+      if (date === undefined || !dates.includes(date)) return 1;
+      return workedViews.some((v) => v.assignment.date === date) ? 1 : 0;
+    }
     case 'preferred_block_length': {
       // Stretches are built from the full timeline, not just worked shifts: an on-call day
       // still breaks (or extends) how many days in a row a nurse is tied to the unit, which is
@@ -186,6 +194,7 @@ function weightedPreferenceHitRate(
   views: readonly AssignmentView[],
   dates: readonly IsoDate[],
   weekendDefinition: WeekendDefinition,
+  holidayDateById: ReadonlyMap<Id, IsoDate> | undefined,
 ): number {
   let weightSum = 0;
   let scoreSum = 0;
@@ -193,7 +202,14 @@ function weightedPreferenceHitRate(
     // A neutral weekend appetite is not a preference at all; counting it would drag every
     // nurse's rate toward 1 regardless of how their actual preferences fared.
     if (pref.kind === 'weekend_appetite' && pref.level === 0) continue;
-    scoreSum += preferenceSatisfaction(pref, views, dates, weekendDefinition) * pref.weight;
+    // Likewise a wish to work a holiday this period does not hold: a Christmas volunteer would
+    // otherwise score a free full mark in every schedule of the year.
+    if (pref.kind === 'holiday_appetite') {
+      const date = holidayDateById?.get(pref.holidayId);
+      if (date === undefined || !dates.includes(date)) continue;
+    }
+    scoreSum +=
+      preferenceSatisfaction(pref, views, dates, weekendDefinition, holidayDateById) * pref.weight;
     weightSum += pref.weight;
   }
   return weightSum === 0 ? 1 : scoreSum / weightSum;
@@ -299,6 +315,7 @@ export function deriveCounters(
       views,
       schedule.dates,
       ctx.weekendDefinition,
+      ctx.holidayDateById,
     );
 
     result.set(nurseId, {

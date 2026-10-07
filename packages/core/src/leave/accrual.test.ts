@@ -103,7 +103,13 @@ describe('projecting a balance forward from payroll', () => {
       onDate: d('2026-12-01'),
       rule: VA_RN_ANNUAL,
     });
-    expect(p).toEqual({ hours: 124, accruedHours: 24, usedHours: 0, forfeitedHours: 0 });
+    expect(p).toEqual({
+      hours: 124,
+      accruedHours: 24,
+      usedHours: 0,
+      forfeitedHours: 0,
+      usedThisYearHours: 0,
+    });
   });
 
   it('earns a part-time RN one hour per ten in pay status', () => {
@@ -174,7 +180,13 @@ describe('projecting a balance forward from payroll', () => {
       onDate: d('2027-01-05'),
       rule: { ...VA_RN_ANNUAL, carryoverCapHours: 240 },
     });
-    expect(p).toEqual({ hours: 240, accruedHours: 0, usedHours: 0, forfeitedHours: 10 });
+    expect(p).toEqual({
+      hours: 240,
+      accruedHours: 0,
+      usedHours: 0,
+      forfeitedHours: 10,
+      usedThisYearHours: 0,
+    });
   });
 
   it('forfeits on the federal leave-year start, not on 1 January, with Sunday-anchored periods', () => {
@@ -187,7 +199,13 @@ describe('projecting a balance forward from payroll', () => {
       onDate: d('2027-01-12'),
       rule: { ...VA_RN_ANNUAL, carryoverCapHours: 240 },
     });
-    expect(p).toEqual({ hours: 240, accruedHours: 8, usedHours: 0, forfeitedHours: 18 });
+    expect(p).toEqual({
+      hours: 240,
+      accruedHours: 8,
+      usedHours: 0,
+      forfeitedHours: 18,
+      usedThisYearHours: 0,
+    });
   });
 
   it('stops California sick leave at 80 hours', () => {
@@ -207,7 +225,13 @@ describe('projecting a balance forward from payroll', () => {
         [d('2026-11-01'), 120],
       ]),
     });
-    expect(p).toEqual({ hours: 80, accruedHours: 1, usedHours: 0, forfeitedHours: 0 });
+    expect(p).toEqual({
+      hours: 80,
+      accruedHours: 1,
+      usedHours: 0,
+      forfeitedHours: 0,
+      usedThisYearHours: 0,
+    });
   });
 
   it('takes nothing away from a balance already over the cap', () => {
@@ -228,7 +252,8 @@ describe('projecting a balance forward from payroll', () => {
 
   it('deducts approved annual leave taken since payroll gave the figure', () => {
     // 100 + 2 x 8 (10-31, 11-14) - 36 taken on 10-20 = 80. The 10-17 entry is already in the
-    // figure and the 11-20 entry is the request being checked.
+    // figure and the 11-20 entry is the request being checked. Used this year counts the 10-17
+    // entry too: 8 + 36 = 44.
     const p = projectBalance({
       ...base,
       balanceHours: 100,
@@ -241,7 +266,13 @@ describe('projecting a balance forward from payroll', () => {
         { date: d('2026-11-20'), hours: 12 },
       ],
     });
-    expect(p).toEqual({ hours: 80, accruedHours: 16, usedHours: 36, forfeitedHours: 0 });
+    expect(p).toEqual({
+      hours: 80,
+      accruedHours: 16,
+      usedHours: 36,
+      forfeitedHours: 0,
+      usedThisYearHours: 44,
+    });
   });
 
   it('lets the balance go negative so the manager sees the shortfall', () => {
@@ -263,7 +294,13 @@ describe('projecting a balance forward from payroll', () => {
       onDate: d('2026-12-01'),
       used: [{ date: d('2026-11-02'), hours: 16 }],
     });
-    expect(p).toEqual({ hours: 34, accruedHours: 0, usedHours: 16, forfeitedHours: 0 });
+    expect(p).toEqual({
+      hours: 34,
+      accruedHours: 0,
+      usedHours: 16,
+      forfeitedHours: 0,
+      usedThisYearHours: 16,
+    });
   });
 
   it('is the payroll figure when the request is on the day it was given', () => {
@@ -290,7 +327,13 @@ describe('projecting a balance forward from payroll', () => {
         balanceCapHours: 20,
       },
     });
-    expect(p).toEqual({ hours: 20, accruedHours: 10, usedHours: 0, forfeitedHours: 0 });
+    expect(p).toEqual({
+      hours: 20,
+      accruedHours: 10,
+      usedHours: 0,
+      forfeitedHours: 0,
+      usedThisYearHours: 0,
+    });
   });
 
   describe('on a date where several things happen', () => {
@@ -308,7 +351,13 @@ describe('projecting a balance forward from payroll', () => {
         onDate: d('2027-01-05'),
         rule: { ...VA_RN_ANNUAL, carryoverCapHours: 240 },
       });
-      expect(p).toEqual({ hours: 248, accruedHours: 8, usedHours: 0, forfeitedHours: 10 });
+      expect(p).toEqual({
+        hours: 248,
+        accruedHours: 8,
+        usedHours: 0,
+        forfeitedHours: 10,
+        usedThisYearHours: 0,
+      });
     });
 
     it('accrues before drawing leave taken on the day a period closes', () => {
@@ -326,7 +375,108 @@ describe('projecting a balance forward from payroll', () => {
         },
         used: [{ date: d('2026-10-31'), hours: 10 }],
       });
-      expect(p).toEqual({ hours: 0, accruedHours: 4, usedHours: 10, forfeitedHours: 0 });
+      expect(p).toEqual({
+        hours: 0,
+        accruedHours: 4,
+        usedHours: 10,
+        forfeitedHours: 0,
+        usedThisYearHours: 10,
+      });
+    });
+  });
+});
+
+describe('how much of the balance a nurse has used this leave year', () => {
+  it('counts leave taken before payroll’s date in the same year, and nothing from last year', () => {
+    // Calendar leave year from 2026-01-01. 2025-12-29 is last year's; 03-10 (16) and 10-17 (8)
+    // are already in payroll's figure but were used this year; 10-20 (8) is after it; 11-20 is
+    // the request being checked. 16 + 8 + 8 = 32. The balance only moves by 10-20's 8: 50 - 8.
+    const p = projectBalance({
+      ...base,
+      balanceHours: 50,
+      asOf: d('2026-10-17'),
+      onDate: d('2026-11-20'),
+      used: [
+        { date: d('2025-12-29'), hours: 12 },
+        { date: d('2026-03-10'), hours: 16 },
+        { date: d('2026-10-17'), hours: 8 },
+        { date: d('2026-10-20'), hours: 8 },
+        { date: d('2026-11-20'), hours: 16 },
+      ],
+    });
+    expect(p.usedThisYearHours).toBe(32);
+    expect(p.hours).toBe(42);
+  });
+
+  it('starts the count again at the federal leave year, 2027-01-10, not on 1 January', () => {
+    // Federal year starts 2027-01-10 (see above). 01-05 is still 2026's year; 01-12 is 2027's.
+    const p = projectBalance({
+      ...base,
+      leaveYearStart: 'first_full_pay_period',
+      balanceHours: 50,
+      asOf: d('2026-12-20'),
+      onDate: d('2027-01-20'),
+      used: [
+        { date: d('2027-01-05'), hours: 12 },
+        { date: d('2027-01-12'), hours: 8 },
+      ],
+    });
+    expect(p.usedThisYearHours).toBe(8);
+  });
+});
+
+describe('a front-loaded balance', () => {
+  // Calendar leave year; periods close 12-26 and 2027-01-09 between the dates below.
+  const FRONT_LOADED: AccrualRule = {
+    balanceType: 'sick',
+    tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 8 }],
+    frontLoadHours: 40,
+  };
+
+  it('gives a nurse 40 hours on 1 January whatever she carried, and accrues nothing per period', () => {
+    // 12 held on 12-20. 12-26 closes a period but a front-loaded rule earns nothing per period;
+    // 01-01 sets the balance to 40, and the 12 carried in are not kept; 01-09 earns nothing.
+    const p = projectBalance({
+      ...base,
+      balanceHours: 12,
+      asOf: d('2026-12-20'),
+      onDate: d('2027-01-20'),
+      rule: FRONT_LOADED,
+    });
+    expect(p.hours).toBe(40);
+    expect(p.accruedHours).toBe(40);
+    expect(p.forfeitedHours).toBe(12);
+  });
+
+  it('gives the full 40 even where the carryover cap is lower', () => {
+    // § 246(d): a front-loaded balance need not carry over at all, so the cap of 30 on what is
+    // carried does not trim the new year's 40.
+    const p = projectBalance({
+      ...base,
+      balanceHours: 12,
+      asOf: d('2026-12-20'),
+      onDate: d('2027-01-20'),
+      rule: { ...FRONT_LOADED, carryoverCapHours: 30 },
+      used: [{ date: d('2027-01-05'), hours: 12 }],
+    });
+    expect(p.hours).toBe(28);
+    expect(p.usedThisYearHours).toBe(12);
+  });
+
+  it('accrues nothing between payroll’s figure and the request inside one leave year', () => {
+    const p = projectBalance({
+      ...base,
+      balanceHours: 24,
+      asOf: d('2026-10-17'),
+      onDate: d('2026-12-01'),
+      rule: FRONT_LOADED,
+    });
+    expect(p).toEqual({
+      hours: 24,
+      accruedHours: 0,
+      usedHours: 0,
+      forfeitedHours: 0,
+      usedThisYearHours: 0,
     });
   });
 });

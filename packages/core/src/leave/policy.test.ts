@@ -121,3 +121,35 @@ describe('refusing a leave policy a manager could not have meant', () => {
     expect(() => validateLeavePolicy(p)).toThrow(/sick/i);
   });
 });
+
+describe('California sick leave: a use cap and a front-loaded year', () => {
+  const sick = (over: Partial<AccrualRule> = {}): AccrualRule => ({
+    balanceType: 'sick',
+    tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 30 }],
+    ...over,
+  });
+
+  it('accepts 1 hour per 30 worked with use capped at 40 hours a year', () => {
+    const p = policy({ accrual: [sick({ useCapHoursPerYear: 40 })] });
+    expect(() => validateLeavePolicy(p)).not.toThrow();
+  });
+
+  it('accepts 40 hours front-loaded each year with no earning rate at all', () => {
+    const p = policy({ accrual: [sick({ tiers: [], frontLoadHours: 40 })] });
+    expect(() => validateLeavePolicy(p)).not.toThrow();
+  });
+
+  it('refuses a front-loaded year that also earns by the hour worked', () => {
+    const p = policy({ accrual: [sick({ frontLoadHours: 40 })] });
+    expect(() => validateLeavePolicy(p)).toThrow(/front-load/i);
+  });
+
+  it('refuses a use cap or a front-loaded amount of zero', () => {
+    expect(() =>
+      validateLeavePolicy(policy({ accrual: [sick({ useCapHoursPerYear: 0 })] })),
+    ).toThrow(/use cap/i);
+    expect(() =>
+      validateLeavePolicy(policy({ accrual: [sick({ tiers: [], frontLoadHours: 0 })] })),
+    ).toThrow(/front-load/i);
+  });
+});

@@ -4,7 +4,7 @@
  * this becomes a web app.
  */
 
-import type { JurisdictionId } from '../setup/jurisdictions.js';
+import type { JurisdictionChoices, JurisdictionId } from '../setup/jurisdictions.js';
 import type { IsoDate, Weekday } from './time.js';
 
 export type Id = string;
@@ -34,6 +34,11 @@ export interface Unit {
   postingLeadDays?: number;
   /** The state preset last applied (Settings › Unit); absent until one is. Not read by any rule. */
   jurisdiction?: JurisdictionId;
+  /**
+   * The answers given when that preset was applied. Kept because `ownContract` decides, after the
+   * fact, which of the preset's rules a manager may loosen without a reason.
+   */
+  jurisdictionChoices?: JurisdictionChoices;
   /**
    * How the unit's employer runs FMLA, its leave year and leave accrual. Absent: private-sector
    * FMLA counted back a year from each use, a calendar leave year, and no accrual — balances are
@@ -294,6 +299,17 @@ export type Preference =
       /** Preferred number of consecutive shifts before days off. */
       shifts: number;
       weight: number;
+    }
+  | {
+      id: Id;
+      nurseId: Id;
+      /**
+       * Wants to work this holiday. There is no opposite: not wanting to work it is a time-off
+       * request, which the contract orders differently (holiday-priority.ts).
+       */
+      kind: 'holiday_appetite';
+      holidayId: Id;
+      weight: number;
     };
 
 export type PreferenceKind = Preference['kind'];
@@ -307,7 +323,9 @@ export type PreferenceKind = Preference['kind'];
  * `annual` (5 U.S.C. § 6303; Title 38 nurses under 38 U.S.C. § 7421), `court` (jury or witness
  * duty, § 6322), `military` (§ 6323 / USERRA), `parental` (paid parental leave, § 6382(d)),
  * `lwop` (leave without pay, approved in advance), `comp` (compensatory time taken in place of
- * overtime pay) and `state_family` (a state's family-leave law beside FMLA, e.g. CFRA).
+ * overtime pay), `state_family` (a state's family-leave law beside FMLA, e.g. CFRA) and
+ * `pregnancy_disability` (California PDL, Gov. Code § 12945: its own four months, separate from
+ * CFRA, so booking it as state family leave would draw down the wrong entitlement).
  */
 export type TimeOffType =
   | 'pto'
@@ -322,7 +340,8 @@ export type TimeOffType =
   | 'parental'
   | 'lwop'
   | 'comp'
-  | 'state_family';
+  | 'state_family'
+  | 'pregnancy_disability';
 
 /** Every time-off type, in the order forms list them. */
 export const TIME_OFF_TYPES: readonly TimeOffType[] = [
@@ -331,6 +350,7 @@ export const TIME_OFF_TYPES: readonly TimeOffType[] = [
   'sick',
   'fmla',
   'state_family',
+  'pregnancy_disability',
   'parental',
   'bereavement',
   'education',
@@ -347,6 +367,7 @@ export const TIME_OFF_TYPE_LABELS: Readonly<Record<TimeOffType, string>> = {
   sick: 'Sick',
   fmla: 'FMLA',
   state_family: 'State family leave',
+  pregnancy_disability: 'Pregnancy disability leave (CA PDL)',
   parental: 'Paid parental leave',
   bereavement: 'Bereavement',
   education: 'Education',
@@ -422,6 +443,16 @@ export interface AccrualRule {
   balanceCapHours?: number;
   /** The most carried into a new leave year; the rest is forfeited (federal annual: 240). */
   carryoverCapHours?: number;
+  /**
+   * The most of this balance a nurse may use in a leave year, whatever she holds (California
+   * sick leave: 40 hours or 5 days, Lab. Code § 246(b)(1), (d)).
+   */
+  useCapHoursPerYear?: number;
+  /**
+   * Set the balance to this at each leave-year start instead of accruing per pay period
+   * (Lab. Code § 246(d) lets an employer front-load the year's amount). Excludes per-hour tiers.
+   */
+  frontLoadHours?: number;
   /** The provision the rule comes from, shown beside it. */
   citation?: string;
 }
@@ -823,6 +854,8 @@ export type DifferentialKind =
   | 'holiday'
   /** A major holiday's premium. Absent, a major holiday earns the `holiday` premium. */
   | 'major_holiday'
+  /** Only ever earned through `consecutive`; without it applies to nothing. */
+  | 'consecutive_shift'
   | 'charge'
   | 'on_call'
   | 'call_back'
@@ -843,6 +876,12 @@ export interface Differential {
    * paid hour; otherwise only the in-window hours earn it. Only night and evening use it.
    */
   window?: { startTime: string; endTime: string; wholeShiftAtHours: number | null };
+  /**
+   * A `consecutive_shift` premium's trigger (UC–CNA Art. 14 § I.3): once a run of consecutive
+   * worked days holds more than `afterShifts` full (12-hour) shifts within `withinDays` days, every
+   * further shift of the run earns it until a day off. Only `consecutive_shift` uses it.
+   */
+  consecutive?: { afterShifts: number; withinDays: number };
 }
 
 export interface OvertimeRule {
@@ -859,6 +898,10 @@ export interface OvertimeRule {
    * "in excess of eight consecutive hours"). 'beyond_scheduled_days' makes a workday's hours past
    * `thresholdHours` overtime on each date worked in a work week beyond the nurse's
    * `scheduledDaysPerWeek` (IWC Wage Order 5 § 3(B)(8): past 8 on an extra day is double time).
+   * 'weekend' sums the hours inside each window of the unit's weekend definition, a shift that
+   * straddles its edge counting only its in-window hours, and makes those past `thresholdHours`
+   * overtime: 38 U.S.C. § 7456(b)(3)(A), a Baylor nurse's service "in excess of 24 hours within the
+   * period commencing at midnight Friday and ending at midnight the following Sunday".
    */
   basis:
     | 'daily'
@@ -867,13 +910,14 @@ export interface OvertimeRule {
     | 'seventh_day'
     | 'beyond_scheduled_tour'
     | 'consecutive'
-    | 'beyond_scheduled_days';
+    | 'beyond_scheduled_days'
+    | 'weekend';
   thresholdHours: number;
   multiplier: number;
   active: boolean;
   /**
    * Whether hours another rule already pays as overtime still count toward this one's threshold.
-   * Honoured only by 'weekly' and 'pay_period'. Under 'none' a shift adds only its straight hours
+   * Honoured only by 'weekly', 'pay_period' and 'weekend'. Under 'none' a shift adds only its straight hours
    * (those before any other basis's overtime starts): Cal. Lab. Code § 510 as the DLSE reads it
    * does not count hours paid at a daily premium toward the weekly 40, and UC–CNA Art. 14 §M
    * credits daily overtime toward the 80. Absent: 'stack', every worked hour counts.

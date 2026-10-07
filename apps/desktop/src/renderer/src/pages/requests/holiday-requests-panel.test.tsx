@@ -4,7 +4,7 @@
  * are read to nurses, so they reach the screen word for word.
  */
 
-import type { HolidayClaim, Nurse } from '@shiftnurse/core';
+import type { Holiday, HolidayClaim, HolidayWorkClaim, Nurse } from '@shiftnurse/core';
 import { act, cleanup, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
@@ -39,6 +39,41 @@ const claim: HolidayClaim = {
   ],
 };
 
+const newYear = {
+  id: 'h-2',
+  unitId: 'unit-1',
+  date: '2027-01-01',
+  name: 'New Year’s Day',
+  isMajor: true,
+  pairedHolidayId: null,
+} as Holiday;
+
+// Ana (most senior) and Cal want Christmas; one RN is needed, so Cal is past what it needs. Ben
+// alone wants New Year's Day, which nobody has asked off.
+const volunteers: HolidayWorkClaim[] = [
+  {
+    holidayId: 'h-1',
+    nurseId: 'n-ana',
+    rank: 1,
+    reason: 'most senior volunteer',
+    beyondNeed: false,
+  },
+  {
+    holidayId: 'h-1',
+    nurseId: 'n-cal',
+    rank: 2,
+    reason: 'volunteer, 1 more senior',
+    beyondNeed: true,
+  },
+  {
+    holidayId: 'h-2',
+    nurseId: 'n-ben',
+    rank: 1,
+    reason: 'most senior volunteer',
+    beyondNeed: false,
+  },
+];
+
 // Radix positions the tip with a ResizeObserver, which jsdom lacks.
 class NoopResizeObserver {
   observe() {}
@@ -50,6 +85,8 @@ let bridge: FakeBridge;
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', NoopResizeObserver);
   bridge = installFakeBridge();
+  bridge.respond('timeOff', 'holidayWorkPriority', []);
+  bridge.respond('holidays', 'list', []);
 });
 afterEach(() => {
   cleanup();
@@ -62,7 +99,9 @@ describe('holiday requests on the Requests page', () => {
     bridge.respond('timeOff', 'holidayPriority', [claim]);
     renderWithApp(<HolidayRequestsPanel unitId="unit-1" nursesById={nursesById} />);
     expect(await screen.findByText(/Christmas Day · /)).toBeTruthy();
-    const items = [...document.querySelectorAll('ol > li')].map((li) => li.textContent);
+    const items = [...document.querySelectorAll('ol[aria-label="Wants it off"] > li')].map(
+      (li) => li.textContent,
+    );
     expect(items[0]).toContain('1. Ben Okafor');
     expect(items[0]).toContain('Worked Christmas Day last year; seniority 2015-06-01');
     expect(items[1]).toContain('2. Ana Martinez');
@@ -79,6 +118,29 @@ describe('holiday requests on the Requests page', () => {
     bridge.respond('timeOff', 'holidayPriority', []);
     renderWithApp(<HolidayRequestsPanel unitId="unit-1" nursesById={nursesById} />);
     expect(await screen.findByText('No pending request covers a holiday.')).toBeTruthy();
+  });
+
+  it('lists who wants to work each holiday under who wants it off, most senior first', async () => {
+    bridge.respond('timeOff', 'holidayPriority', [claim]);
+    bridge.respond('timeOff', 'holidayWorkPriority', volunteers);
+    bridge.respond('holidays', 'list', [newYear]);
+    renderWithApp(<HolidayRequestsPanel unitId="unit-1" nursesById={nursesById} />);
+    await screen.findByText(/Christmas Day · /);
+    const holidays = screen.getAllByTestId('holiday-claim');
+    expect(holidays.map((h) => h.querySelector('h3')?.textContent)).toEqual([
+      expect.stringContaining('Christmas Day'),
+      expect.stringContaining('New Year’s Day'),
+    ]);
+    const working = (holiday: HTMLElement) =>
+      [...holiday.querySelectorAll('ol[aria-label="Wants to work it"] > li')].map(
+        (li) => li.textContent,
+      );
+    expect(working(holidays[0]!)).toEqual([
+      '1. Ana Martinez most senior volunteer',
+      '2. Cal Dunn volunteer, 1 more senior · more than the day needs',
+    ]);
+    expect(working(holidays[1]!)).toEqual(['1. Ben Okafor most senior volunteer']);
+    expect(holidays[1]!.querySelector('ol[aria-label="Wants it off"]')).toBeNull();
   });
 
   it('says a lone request is the only one for its holiday', () => {

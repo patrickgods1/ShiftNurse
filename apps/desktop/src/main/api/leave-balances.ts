@@ -22,6 +22,11 @@
  * twelve-month year follow the policy's regime — Title 5 for VA staff, Title I otherwise — and
  * the hire date, not the seniority date, starts the length-of-service test where the roster
  * keeps one.
+ *
+ * A balance whose rule caps yearly use (California sick leave, 40 hours) also reports a request
+ * that would pass the cap, however large the balance. California pregnancy disability leave is
+ * counted like FMLA, at the usual week's pace, against its own four months and over the 12 months
+ * back from the first day; it has no eligibility test and no certification is looked for.
  */
 
 import {
@@ -29,6 +34,7 @@ import {
   accrualRuleFor,
   addDays,
   checkLeaveBalance,
+  checkUseCap,
   compareDates,
   DEFAULT_LEAVE_POLICY,
   datesInRange,
@@ -42,6 +48,7 @@ import {
   leaveChargeHours,
   payPeriodIndex,
   payPeriodWindow,
+  pdlEntitlementHours,
   projectBalance,
   type TimeOffType,
 } from '@shiftnurse/core';
@@ -133,6 +140,16 @@ export function checkLeaveRequest(
         hoursByPayPeriodStart,
         used,
       });
+      const requestHours = leaveChargeHours(nurse.scheduleKind, paidHours);
+      const capHours = rule?.useCapHoursPerYear;
+      const useCap =
+        capHours === undefined
+          ? undefined
+          : checkUseCap({
+              usedThisYearHours: projection.usedThisYearHours,
+              requestHours,
+              useCapHoursPerYear: capHours,
+            });
       result.balance = {
         type,
         balanceHours: balance.balanceHours,
@@ -141,14 +158,39 @@ export function checkLeaveRequest(
         accruedHours: round2(projection.accruedHours),
         usedHours: round2(projection.usedHours),
         forfeitedHours: round2(projection.forfeitedHours),
-        check: checkLeaveBalance({
-          balanceHours: projection.hours,
-          requestHours: leaveChargeHours(nurse.scheduleKind, paidHours),
-        }),
+        usedThisYearHours: round2(projection.usedThisYearHours),
+        check: checkLeaveBalance({ balanceHours: projection.hours, requestHours }),
+        ...(capHours !== undefined && useCap && !useCap.ok
+          ? { useCap: { capHours, overBy: round2(useCap.overBy) } }
+          : {}),
       };
     } else {
       result.noBalanceFor = type;
     }
+  }
+
+  if (type === 'pregnancy_disability') {
+    const weeklyHours = (nurse.contractedHoursPerPeriod * 7) / unit.payPeriodDays;
+    const perDay = weeklyHours / 7;
+    // The 365 days ending on the first day, as FMLA's rolling-back year counts them.
+    const period = { from: addDays(startDate, -364), to: startDate };
+    const usedHours =
+      perDay *
+      listTimeOffForNurse(db, nurseId)
+        .filter((r) => r.type === 'pregnancy_disability' && r.status === 'approved')
+        .flatMap((r) => datesInRange(r.startDate, r.endDate))
+        .filter(
+          (date) => compareDates(date, period.from) >= 0 && compareDates(date, period.to) <= 0,
+        ).length;
+    const entitlementHours = pdlEntitlementHours({ contractWeeklyHours: weeklyHours });
+    result.pdl = {
+      entitlementHours: round2(entitlementHours),
+      weeklyHours: round2(weeklyHours),
+      period,
+      usedHours: round2(usedHours),
+      requestHours: round2(perDay * datesInRange(startDate, endDate).length),
+      remainingHours: round2(Math.max(0, entitlementHours - usedHours)),
+    };
   }
 
   if (type === 'fmla') {

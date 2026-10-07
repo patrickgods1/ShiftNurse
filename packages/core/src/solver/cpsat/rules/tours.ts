@@ -7,12 +7,14 @@
  * the rest rule's are: a shift between them is on one of their tours and so at least as close to
  * the other, which the rule would flag — no legal schedule is lost. And a nurse's distinct
  * in-period tours are counted with one Boolean per tour ("any shift of this tour is worked")
- * summed against the cap; a locked shift makes its tour's Boolean a constant.
+ * summed against the cap; a locked shift makes its tour's Boolean a constant. The cap and the
+ * permanent-tour switch are per nurse, from `effectiveTourLimits`, so a career nurse exempt from
+ * rotation is held to one tour here exactly as the rule holds them.
  */
 
 import { TOURS } from '../../../domain/entities.js';
 import { asParams } from '../../../rules/registry.js';
-import { tourOf, tourRotationRule } from '../../../rules/tour-rotation.js';
+import { effectiveTourLimits, tourOf, tourRotationRule } from '../../../rules/tour-rotation.js';
 import { type Expr, expr, sum } from '../builder.js';
 import { describe, type EncodeContext, forbidPair } from '../context.js';
 
@@ -22,8 +24,9 @@ export function encodeTourRotation(ctx: EncodeContext, raw: Record<string, unkno
     if (vars.length === 0) continue;
     const nurse = ctx.model.nurses[n]!;
     const timeline = ctx.timeline(n).filter((e) => !e.shiftType.isOnCall);
+    const limits = effectiveTourLimits(nurse, params, ctx.input.period.startDate);
 
-    if (nurse.permanentTour && params.permanentTourEnforced) {
+    if (nurse.permanentTour && limits.permanentTourEnforced) {
       for (const e of timeline) {
         // A constant off its tour is a standing breach the manager pinned; leave it be.
         if (!e.inPeriod || e.literal === null || tourOf(e.shiftType) === nurse.permanentTour) {
@@ -80,8 +83,8 @@ export function encodeTourRotation(ctx: EncodeContext, raw: Record<string, unkno
         );
       }
     }
-    if (used.length > params.maxToursPerPeriod) {
-      ctx.b.atMost(sum(...used), params.maxToursPerPeriod, `tours per schedule: ${ctx.name(n)}`);
+    if (used.length > limits.maxToursPerPeriod) {
+      ctx.b.atMost(sum(...used), limits.maxToursPerPeriod, `tours per schedule: ${ctx.name(n)}`);
     }
   }
 }

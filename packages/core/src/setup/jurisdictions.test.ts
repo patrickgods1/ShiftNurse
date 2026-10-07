@@ -282,7 +282,7 @@ describe('proposing a leave policy', () => {
     expect(rules[2]).toMatchObject({ roles: ['LPN', 'CNA'], carryoverCapHours: 240 });
   });
 
-  it('proposes California’s sick leave, 1 hour per 30 worked up to 80, to a unit that has none', () => {
+  it('proposes California’s sick leave, 1 hour per 30 worked up to 80, 40 used a year, to a unit that has none', () => {
     const policy = planJurisdiction('CA', input()).leavePolicy;
     expect(policy?.leaveYearStart).toBe('calendar');
     expect(policy?.fmla).toEqual(DEFAULT_LEAVE_POLICY.fmla);
@@ -291,6 +291,7 @@ describe('proposing a leave policy', () => {
         balanceType: 'sick',
         tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 30 }],
         balanceCapHours: 80,
+        useCapHoursPerYear: 40,
       }),
     ]);
   });
@@ -379,7 +380,10 @@ describe('what the VA and California presets say about leave', () => {
         balanceType: 'sick',
         tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 30 }],
         balanceCapHours: 80,
-        citation: 'Lab. Code § 246(b) (SB 616, 2023): 1 h per 30 worked, cap 80 h',
+        useCapHoursPerYear: 40,
+        citation:
+          'Lab. Code § 246(b) (SB 616, 2023): 1 h per 30 worked, cap 80 h; ' +
+          'use capped at 40 h a year (§ 246(b)(1), (d))',
       },
     ]);
   });
@@ -683,6 +687,7 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
         thresholdHours: 36,
         multiplier: 1.5,
         minimumMinutes: 15,
+        pyramiding: 'none',
         scheduleKinds: ['va_72_80'],
         active: true,
       },
@@ -705,16 +710,18 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
         active: true,
       },
       {
-        basis: 'weekly',
-        thresholdHours: 40,
+        basis: 'weekend',
+        thresholdHours: 24,
         multiplier: 1.5,
         minimumMinutes: 15,
+        pyramiding: 'none',
         scheduleKinds: ['va_baylor'],
         active: true,
       },
       {
-        basis: 'beyond_scheduled_tour',
-        thresholdHours: 0,
+        basis: 'daily',
+        thresholdHours: 8,
+        tourDays: 'except',
         multiplier: 1.5,
         minimumMinutes: 15,
         scheduleKinds: ['va_baylor'],
@@ -723,12 +730,39 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
     ]);
   });
 
-  it('still gives the Baylor plan its weekly 40 when the unit already pays an unscoped one', () => {
-    const plan = planJurisdiction('US-VA', input({ overtimeRules: [overtime('weekly', 40, 1.5)] }));
-    expect(plan.addOvertimeRules.map((r) => `${brief(r)} ${r.scheduleKinds ?? ''}`)).toContain(
-      'weekly 40 1.5 va_baylor',
+  it('pays a Baylor nurse past 24 hours in the weekend or 8 on a weekday, and nothing else', () => {
+    // 38 U.S.C. § 7456(b)(3)(A), read 2026-10-07: "in excess of eight hours on a day other than a
+    // Saturday or Sunday or in excess of 24 hours within the period commencing at midnight Friday
+    // and ending at midnight the following Sunday".
+    const baylor = JURISDICTION_PRESETS['US-VA'].overtimeRules.filter((r) =>
+      r.scheduleKinds?.includes('va_baylor'),
     );
-    expect(plan.addOvertimeRules.filter((r) => r.basis === 'weekly' && !r.scheduleKinds)).toEqual(
+    expect(baylor).toEqual([
+      {
+        basis: 'weekend',
+        thresholdHours: 24,
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        pyramiding: 'none',
+        scheduleKinds: ['va_baylor'],
+      },
+      {
+        basis: 'daily',
+        thresholdHours: 8,
+        tourDays: 'except',
+        multiplier: 1.5,
+        minimumMinutes: 15,
+        scheduleKinds: ['va_baylor'],
+      },
+    ]);
+  });
+
+  it('still gives the Baylor plan its daily 8 when the unit already pays an unscoped one', () => {
+    const plan = planJurisdiction('US-VA', input({ overtimeRules: [overtime('daily', 8, 1.5)] }));
+    expect(plan.addOvertimeRules.map((r) => `${brief(r)} ${r.scheduleKinds ?? ''}`)).toContain(
+      'daily 8 1.5 va_baylor',
+    );
+    expect(plan.addOvertimeRules.filter((r) => r.basis === 'daily' && !r.scheduleKinds)).toEqual(
       [],
     );
   });
@@ -909,7 +943,7 @@ describe('protecting what the law put in force', () => {
     const after = before.map((c) =>
       c.ruleId === 'no-mandatory-overtime' ? { ...c, enabled: false } : c,
     );
-    expect(protectedRuleChanges(before, after, 'US-VA')).toEqual([
+    expect(protectedRuleChanges(before, after, 'US-VA', {})).toEqual([
       { ruleId: 'no-mandatory-overtime', change: 'disabled' },
     ]);
   });
@@ -919,7 +953,7 @@ describe('protecting what the law put in force', () => {
     const after = before.map((c) =>
       c.ruleId === RATIO ? { ...c, severityOverride: 'soft' as const } : c,
     );
-    expect(protectedRuleChanges(before, after, undefined)).toEqual([
+    expect(protectedRuleChanges(before, after, undefined, {})).toEqual([
       { ruleId: RATIO, change: 'softened' },
     ]);
   });
@@ -927,7 +961,7 @@ describe('protecting what the law put in force', () => {
   it('lets a manager switch off a rule the preset never switched on', () => {
     const before = enable(['long-stretch']);
     const after = before.map((c) => (c.ruleId === 'long-stretch' ? { ...c, enabled: false } : c));
-    expect(protectedRuleChanges(before, after, 'US-VA')).toEqual([]);
+    expect(protectedRuleChanges(before, after, 'US-VA', {})).toEqual([]);
   });
 
   it('does not count a rule that was already advisory as softened', () => {
@@ -935,6 +969,74 @@ describe('protecting what the law put in force', () => {
     const after = before.map((c) =>
       c.ruleId === 'weekend-pattern' ? { ...c, severityOverride: 'soft' as const } : c,
     );
-    expect(protectedRuleChanges(before, after, 'US-VA')).toEqual([]);
+    expect(protectedRuleChanges(before, after, 'US-VA', {})).toEqual([]);
+  });
+
+  describe('a VA unit under its own agreement', () => {
+    const REST = 'min-rest-between-shifts';
+    const NMO = 'no-mandatory-overtime';
+    const soften = (ids: string[]) =>
+      enable([REST, NMO]).map((c) =>
+        ids.includes(c.ruleId) ? { ...c, severityOverride: 'soft' as const } : c,
+      );
+
+    it('asks for a reason to make the 11-hour rest advisory under the VA–NNU agreement', () => {
+      expect(protectedRuleChanges(enable([REST, NMO]), soften([REST]), 'US-VA', {})).toEqual([
+        { ruleId: REST, change: 'softened' },
+      ]);
+    });
+
+    it('lets a unit on another agreement fit the rest rule to its own text without a reason', () => {
+      expect(
+        protectedRuleChanges(enable([REST, NMO]), soften([REST]), 'US-VA', { ownContract: true }),
+      ).toEqual([]);
+    });
+
+    it('still protects the Title 38 overtime ban and the ratio rule under any agreement', () => {
+      for (const choices of [{}, { ownContract: true }] as JurisdictionChoices[]) {
+        expect(
+          protectedRuleChanges(enable([REST, NMO]), soften([NMO, RATIO]), 'US-VA', choices),
+        ).toEqual([
+          { ruleId: RATIO, change: 'softened' },
+          { ruleId: NMO, change: 'softened' },
+        ]);
+      }
+    });
+  });
+});
+
+describe('where the VA preset’s contract values come from', () => {
+  it('names the VA–NNU agreement and warns that San Francisco is under NFFE Local 1', () => {
+    const source = JURISDICTION_PRESETS['US-VA'].source;
+    expect(source?.contract).toBe('VA–NNU 2023 Master Agreement, Arts. 10, 12–14');
+    expect(source?.note).toContain('NFFE Local 1');
+  });
+
+  it('names no agreement for a state preset, whose values are all statute', () => {
+    expect(JURISDICTION_PRESETS.CA.source).toBeUndefined();
+  });
+
+  it('asks whether the unit is under a different agreement', () => {
+    expect(JURISDICTION_PRESETS['US-VA'].options?.map((o) => o.id)).toContain('ownContract');
+  });
+
+  it('applies the contract’s values as defaults even for a unit on its own agreement', () => {
+    const plan = planJurisdiction('US-VA', input(), { ownContract: true });
+    const rest = plan.ruleConfigs?.find((c) => c.ruleId === 'min-rest-between-shifts');
+    expect(rest).toMatchObject({ enabled: true, params: { minRestHours: 11 } });
+    expect(plan.unit?.postingLeadDays).toBe(28);
+  });
+
+  it('marks only the contract’s rules as the contract’s, not the statute’s overtime ban', () => {
+    const marked = JURISDICTION_PRESETS['US-VA'].enableRules
+      .filter((r) => r.contractOnly)
+      .map((r) => r.ruleId);
+    expect(marked).toEqual([
+      'min-rest-between-shifts',
+      'weekend-pattern',
+      'tour-rotation',
+      'max-consecutive-shifts',
+      'days-off-together',
+    ]);
   });
 });

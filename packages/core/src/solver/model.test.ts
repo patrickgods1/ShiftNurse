@@ -20,6 +20,7 @@ import {
   assign,
   CRED_ACLS,
   census,
+  coverage,
   coverageAllWeek,
   credentialRequirement,
   DAY_8,
@@ -28,6 +29,7 @@ import {
   makeNurse,
   NIGHT_12,
   nurseCredential,
+  payRate,
   resetFixtureCounters,
   solveInputFrom,
   TIER_ROUTINE,
@@ -515,6 +517,57 @@ describe('holiday rotation in Generate', () => {
         `${worked} worked Memorial Day`,
       ).toEqual([expected]);
     }
+  });
+});
+
+describe('a nurse who wants to work the holiday', () => {
+  it('is not added on top of a holiday shift already at its target, however keen and senior', () => {
+    // MLK Day needs one RN and Bo already works it. Ana, the most senior (1.5×), wants it at
+    // full strength (5). Adding her costs 8 over target and 12h × $52 × 0.05 = 31.2 in pay,
+    // 39.2 in all; her reward is 5 / 2 × 1.5 × 10 = 37.5. At the full weight it would be 75.
+    const ana = makeNurse({
+      id: 'ana',
+      employmentType: 'per_diem',
+      contractedHoursPerPeriod: 0,
+      seniorityDate: isoDate('2010-01-01'),
+    });
+    const bo = makeNurse({
+      id: 'bo',
+      employmentType: 'per_diem',
+      contractedHoursPerPeriod: 0,
+      isChargeEligible: true,
+      seniorityDate: isoDate('2020-01-01'),
+    });
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: [ana, bo],
+      shiftTypes: [DAY_12],
+      coverageRequirements: [coverage(DAY_12, 'RN', 1, 1, null, isoDate('2026-01-12'))],
+      holidays: [
+        {
+          id: 'mlk',
+          unitId: UNIT_ID,
+          date: isoDate('2026-01-12'),
+          name: 'MLK Day',
+          isMajor: true,
+          pairedHolidayId: null,
+        },
+      ],
+      preferences: [
+        { id: 'p-ana', nurseId: 'ana', kind: 'holiday_appetite', holidayId: 'mlk', weight: 5 },
+      ],
+      cost: { payRates: [payRate(52)], differentials: [], overtimeRules: [] },
+    });
+    const model = new SolverModel(input);
+    const mlk = model.shiftAt(8, DAY_12);
+    expect(mlk.date).toBe('2026-01-12');
+    model.add(model.make(model.nurseIdx.get('bo')!, mlk));
+    const before = model.objective();
+    model.add(model.make(model.nurseIdx.get('ana')!, mlk));
+    // 39.2 - 37.5: a small net cost, so Generate leaves her off.
+    expect(model.objective() - before).toBeGreaterThan(0);
+    expect(model.objective() - before).toBeCloseTo(1.7, 6);
   });
 });
 

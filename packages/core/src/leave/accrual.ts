@@ -12,6 +12,13 @@
  * order is forfeit, accrue, use: the carryover cap applies to what was carried in, not to what
  * the period closing that day earns, and leave is drawn from what is then held.
  *
+ * A front-loaded rule (Lab. Code § 246(d)) earns nothing per pay period: each leave-year start
+ * sets the balance to the year's amount, and what was held before is not kept.
+ *
+ * `usedThisYearHours` is what a yearly use cap (California sick leave: 40 hours) is measured
+ * against. It counts leave used since the leave year began, before payroll's date included: the
+ * cap is on use, and payroll's balance says nothing about when its hours were drawn.
+ *
  * The result is information, not a verdict: a balance may go negative, and the manager decides.
  */
 
@@ -76,6 +83,8 @@ export interface BalanceProjection {
   accruedHours: number;
   usedHours: number;
   forfeitedHours: number;
+  /** Leave used from the start of the leave year `onDate` falls in up to the day before it. */
+  usedThisYearHours: number;
 }
 
 function tierAt(tiers: readonly AccrualTier[], years: number): AccrualTier | undefined {
@@ -109,7 +118,7 @@ export function projectBalance(input: {
   for (const date of leaveYearStarts(input.leaveYearStart, input.calendar, asOf, onDate)) {
     if (inside(date)) events.push({ date, order: 0 });
   }
-  if (rule) {
+  if (rule && rule.frontLoadHours === undefined) {
     let index = payPeriodIndex(asOf, input.calendar);
     for (;;) {
       const window = payPeriodWindow(index++, input.calendar);
@@ -135,6 +144,14 @@ export function projectBalance(input: {
         forfeited += hours - cap;
         hours = cap;
       }
+      if (rule?.frontLoadHours !== undefined) {
+        // The carryover cap above limits what is carried, not the new year's amount: a
+        // front-loaded balance replaces what was held, and § 246(d) needs none of it carried.
+        // A negative balance is not forgiven as a forfeit, only replaced.
+        forfeited += Math.max(0, hours);
+        hours = rule.frontLoadHours;
+        accrued += rule.frontLoadHours;
+      }
     } else if (e.order === 1 && rule) {
       const tier = tierAt(rule.tiers, yearsOfService(input.serviceStart, e.date));
       let earned = 0;
@@ -152,5 +169,30 @@ export function projectBalance(input: {
       used += e.hours;
     }
   }
-  return { hours, accruedHours: accrued, usedHours: used, forfeitedHours: forfeited };
+  return {
+    hours,
+    accruedHours: accrued,
+    usedHours: used,
+    forfeitedHours: forfeited,
+    usedThisYearHours: usedThisYear(input.used, input.leaveYearStart, input.calendar, onDate),
+  };
+}
+
+/** Leave in `used` dated from the leave year's start on or before `onDate` up to the day before it. */
+function usedThisYear(
+  used: readonly { date: IsoDate; hours: number }[],
+  start: LeaveYearStart,
+  calendar: PayCalendar,
+  onDate: IsoDate,
+): number {
+  // From the last day of the year before last: a federal year that starts in mid-January leaves
+  // early-January dates in the previous year's leave year, whose start is then the latest found.
+  const from = isoDate(`${String(Number(onDate.slice(0, 4)) - 2).padStart(4, '0')}-12-31`);
+  const yearStart = leaveYearStarts(start, calendar, from, onDate).at(-1);
+  let total = 0;
+  for (const u of used) {
+    if (yearStart !== undefined && compareDates(u.date, yearStart) < 0) continue;
+    if (compareDates(u.date, onDate) < 0) total += u.hours;
+  }
+  return total;
 }

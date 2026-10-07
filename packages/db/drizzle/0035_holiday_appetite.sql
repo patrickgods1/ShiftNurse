@@ -1,0 +1,1 @@
+ALTER TABLE `preference` ADD `holiday_id` text REFERENCES holiday(id) ON DELETE cascade;

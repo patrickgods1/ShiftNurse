@@ -18,10 +18,17 @@
  * A nurse on the Baylor weekend plan (38 U.S.C. § 7456) has no holiday entitlement under VA Handbook
  * 5011, so their request ranks behind every other claimant's, whatever their record or seniority —
  * and says so, since the reason is what the manager quotes when denying it.
+ *
+ * The other side of the day is who wants to WORK it (`holiday_appetite` preferences). When more
+ * nurses volunteer than the floor needs, seniority alone decides (VA–NNU 2023 Master Agreement
+ * Art. 10 § 4.D.6); without a written order the surplus volunteer is picked from memory.
+ * `holidayWorkPriority` gives that order. A Baylor-plan nurse has no holiday entitlement, so
+ * their volunteering earns no claim. The solver reads the same preference as a reward scaled by
+ * seniority, so its pick agrees with this advice when it can.
  */
 
 import { isBaylorPlan } from '../cost/cost.js';
-import type { Holiday, Id, Nurse, TimeOffRequest } from '../domain/entities.js';
+import type { Holiday, Id, Nurse, Preference, TimeOffRequest } from '../domain/entities.js';
 import { compareDates, dateInRange, type IsoDate } from '../domain/time.js';
 import { previousOccurrence } from '../rules/holiday-rotation.js';
 import type { HolidayWorkRecord } from '../rules/types.js';
@@ -89,13 +96,7 @@ export function holidayRequestPriority(input: HolidayPriorityInput): HolidayClai
       if (byPlan !== 0) return byPlan;
       const byWorked = Number(b.worked === true) - Number(a.worked === true);
       if (byWorked !== 0) return byWorked;
-      const bySeniority = compareDates(a.nurse.seniorityDate, b.nurse.seniorityDate);
-      if (bySeniority !== 0) return bySeniority;
-      return a.nurse.employeeId < b.nurse.employeeId
-        ? -1
-        : a.nurse.employeeId > b.nurse.employeeId
-          ? 1
-          : 0;
+      return bySeniority(a.nurse, b.nurse);
     });
 
     const alreadyOff = [
@@ -130,4 +131,64 @@ function reasonFor(name: string, worked: boolean | null, seniority: IsoDate): st
   if (worked === true) return `Worked ${name} last year; seniority ${seniority}`;
   if (worked === false) return `Had ${name} off last year; seniority ${seniority}`;
   return `No record of last year's ${name}; seniority ${seniority}`;
+}
+
+export interface HolidayWorkInput {
+  holidays: readonly Holiday[];
+  nurses: readonly Nurse[];
+  /** Every kind may be passed; only `holiday_appetite` is read. */
+  preferences: readonly Preference[];
+  /** RNs the holiday's date needs, by holiday id; absent means no volunteer is marked surplus. */
+  needed?: ReadonlyMap<Id, number>;
+}
+
+export interface HolidayWorkClaim {
+  holidayId: Id;
+  nurseId: Id;
+  /** 1 = first in line to work it. */
+  rank: number;
+  reason: string;
+  /** Ranked past the number the date needs: the volunteer seniority leaves out. */
+  beyondNeed: boolean;
+}
+
+/** Volunteers per holiday in seniority order, holidays by date. */
+export function holidayWorkPriority(input: HolidayWorkInput): HolidayWorkClaim[] {
+  const nursesById = new Map(input.nurses.map((n) => [n.id, n]));
+  const volunteers = new Map<Id, Nurse[]>();
+  for (const pref of input.preferences) {
+    if (pref.kind !== 'holiday_appetite') continue;
+    const nurse = nursesById.get(pref.nurseId);
+    if (!nurse) throw new Error(`Preference ${pref.id} names unknown nurse ${pref.nurseId}`);
+    if (isBaylorPlan(nurse)) continue;
+    const list = volunteers.get(pref.holidayId) ?? [];
+    // Two rows for the same holiday are one volunteer, not two places in the queue.
+    if (!list.includes(nurse)) list.push(nurse);
+    volunteers.set(pref.holidayId, list);
+  }
+
+  const holidays = [...input.holidays].sort((a, b) => compareDates(a.date, b.date));
+  const claims: HolidayWorkClaim[] = [];
+  for (const holiday of holidays) {
+    const list = volunteers.get(holiday.id);
+    if (!list) continue;
+    const needed = input.needed?.get(holiday.id);
+    [...list].sort(bySeniority).forEach((nurse, i) => {
+      claims.push({
+        holidayId: holiday.id,
+        nurseId: nurse.id,
+        rank: i + 1,
+        reason: i === 0 ? 'most senior volunteer' : `volunteer, ${i} more senior`,
+        beyondNeed: needed !== undefined && i >= needed,
+      });
+    });
+  }
+  return claims;
+}
+
+/** Most senior first; the employee id breaks a shared start date so the order is stable. */
+function bySeniority(a: Nurse, b: Nurse): number {
+  const byDate = compareDates(a.seniorityDate, b.seniorityDate);
+  if (byDate !== 0) return byDate;
+  return a.employeeId < b.employeeId ? -1 : a.employeeId > b.employeeId ? 1 : 0;
 }

@@ -167,6 +167,40 @@ describe('roster CSV import', () => {
     ]);
   });
 
+  it('reads scheduled days per week, and a blank or missing cell leaves it unset', () => {
+    const three = parseRosterCsv(csv('E1,A,B,RN,full_time,1,72,2012-05-01,no,no,no,,,,,,,3'), {
+      payPeriodDays: 14,
+    });
+    expect(three.errors).toEqual([]);
+    expect(three.rows[0]!.nurse.scheduledDaysPerWeek).toBe(3);
+    const blank = parseRosterCsv(csv('E1,A,B,RN,full_time,1,80,2012-05-01,no,no,no,,,,,,,'), {
+      payPeriodDays: 14,
+    });
+    expect(blank.errors).toEqual([]);
+    expect('scheduledDaysPerWeek' in blank.rows[0]!.nurse).toBe(false);
+    const legacy = parseRosterCsv(csv('E1,A,B,RN,full_time,1,80,2012-05-01,no,no,no,,,,,,'), {
+      payPeriodDays: 14,
+    });
+    expect(legacy.errors).toEqual([]);
+  });
+
+  it.each(['0', '8', '3.5', 'three'])(
+    'rejects %s as scheduled days per week, naming the column',
+    (value) => {
+      const { errors } = parseRosterCsv(
+        csv(`E1,A,B,RN,full_time,1,80,2012-05-01,no,no,no,,,,,,,${value}`),
+        { payPeriodDays: 14 },
+      );
+      expect(errors).toEqual([
+        {
+          line: 2,
+          column: 'scheduled_days_per_week',
+          message: `Scheduled days per week "${value}" is not a whole number from 1 to 7`,
+        },
+      ]);
+    },
+  );
+
   it('derives contracted hours from FTE when the column is blank: 0.6 FTE over 14 days = 48h', () => {
     const { rows, errors } = parseRosterCsv(
       csv('E1,A,B,RN,part_time,0.6,,2020-01-01,no,no,no,,,,'),
@@ -275,6 +309,7 @@ describe('roster CSV export', () => {
           seniorityDate: isoDate('2015-03-02'),
           hireDate: isoDate('2017-06-12'),
           scheduleKind: 'va_72_80',
+          scheduledDaysPerWeek: 3,
           isChargeEligible: true,
           isNovice: false,
           isFloatEligible: true,
@@ -309,7 +344,7 @@ describe('roster CSV export', () => {
     ];
     const text = formatRosterCsv(original);
     expect(text.split('\r\n')[0]).toBe(HEADER);
-    expect(text.split('\r\n')[1]).toMatch(/,va_72_80$/);
+    expect(text.split('\r\n')[1]).toMatch(/,va_72_80,3$/);
     const { rows, errors } = parseRosterCsv(text, { payPeriodDays: 14 });
     expect(errors).toEqual([]);
     expect(rows).toEqual(original);

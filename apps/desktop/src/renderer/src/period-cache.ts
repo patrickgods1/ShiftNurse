@@ -70,6 +70,7 @@ function invalidateDerivedRoots(queryClient: QueryClient): void {
   for (const queryKey of [
     scheduleKeys.validation('').slice(0, 1),
     requestKeys.conflicts('').slice(0, 1),
+    requestKeys.holidayWorkPriority('').slice(0, 2),
     demandQueryKeys.demand('', '' as IsoDate, '' as IsoDate).slice(0, 1),
     demandQueryKeys.hppd('').slice(0, 1),
     costKeys.report('').slice(0, 2),

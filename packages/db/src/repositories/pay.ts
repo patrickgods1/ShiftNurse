@@ -165,11 +165,15 @@ export function listActiveDifferentials(db: DbLike, unitId: Id): Differential[] 
 }
 
 export type DifferentialInput = Omit<Differential, 'id'>;
-/** `window: null` clears the clock window, going back to the shift type's flag. */
+/**
+ * `window: null` clears the clock window, going back to the shift type's flag; `consecutive: null`
+ * clears a consecutive-shift trigger.
+ */
 export type DifferentialPatch = Partial<
   Pick<Differential, 'kind' | 'mode' | 'amount' | 'active'>
 > & {
   window?: Differential['window'] | null;
+  consecutive?: Differential['consecutive'] | null;
 };
 
 const DIFFERENTIAL_PATCH_KEYS: PatchKeys<DifferentialPatch> = {
@@ -178,6 +182,7 @@ const DIFFERENTIAL_PATCH_KEYS: PatchKeys<DifferentialPatch> = {
   amount: true,
   active: true,
   window: true,
+  consecutive: true,
 };
 
 const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -204,6 +209,41 @@ function checkWindow(kind: Differential['kind'], window: Differential['window'] 
   }
 }
 
+/**
+ * Refuses a consecutive-shift trigger that cannot be priced, for the same reason as `checkWindow`:
+ * a `consecutive_shift` differential without one pays nothing, and one on another kind is ignored.
+ * Both numbers are whole shifts and days, at least one each; half a trigger is no trigger.
+ */
+function checkConsecutive(
+  kind: Differential['kind'],
+  consecutive: Differential['consecutive'] | undefined,
+): void {
+  if (consecutive === undefined) {
+    if (kind === 'consecutive_shift') {
+      throw new Error('A consecutive-shift premium needs its shifts and days');
+    }
+    return;
+  }
+  if (kind !== 'consecutive_shift') {
+    throw new Error(`Shifts and days apply only to a consecutive-shift premium, not ${kind}`);
+  }
+  for (const [label, value] of [
+    ['shifts', consecutive.afterShifts],
+    ['days', consecutive.withinDays],
+  ] as const) {
+    if (!Number.isInteger(value) || value < 1) {
+      throw new Error(`The consecutive-shift ${label} must be a whole number of at least 1`);
+    }
+  }
+}
+
+function consecutiveColumns(consecutive: Differential['consecutive'] | undefined) {
+  return {
+    consecutiveAfterShifts: consecutive?.afterShifts ?? null,
+    consecutiveWithinDays: consecutive?.withinDays ?? null,
+  };
+}
+
 function windowColumns(window: Differential['window'] | undefined) {
   return {
     windowStart: window?.startTime ?? null,
@@ -218,9 +258,10 @@ export function createDifferential(
   actor: string,
 ): Differential {
   checkWindow(input.kind, input.window);
+  checkConsecutive(input.kind, input.consecutive);
   const id = ids.differential();
-  const { window, ...rest } = input;
-  const row = { id, ...rest, ...windowColumns(window) };
+  const { window, consecutive, ...rest } = input;
+  const row = { id, ...rest, ...windowColumns(window), ...consecutiveColumns(consecutive) };
   db.insert(differential).values(row).run();
   const created = toDifferential(row);
   recordAudit(db, {
@@ -252,14 +293,18 @@ export function updateDifferential(
     validate: (values, before) => {
       const window = values.window === undefined ? before.window : (values.window ?? undefined);
       checkWindow(values.kind ?? before.kind, window);
+      const consecutive =
+        values.consecutive === undefined ? before.consecutive : (values.consecutive ?? undefined);
+      checkConsecutive(values.kind ?? before.kind, consecutive);
     },
     // The id rides along so an empty patch still writes, as the full-row update always did.
     write: (rowId, values) => {
-      const { window, ...columns } = values;
+      const { window, consecutive, ...columns } = values;
       db.update(differential)
         .set({
           ...columns,
           ...(window === undefined ? {} : windowColumns(window ?? undefined)),
+          ...(consecutive === undefined ? {} : consecutiveColumns(consecutive ?? undefined)),
           id: rowId,
         })
         .where(eq(differential.id, rowId))

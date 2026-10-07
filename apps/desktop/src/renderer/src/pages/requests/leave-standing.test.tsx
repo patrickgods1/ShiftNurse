@@ -32,6 +32,7 @@ const short: LeaveRequestCheck = {
     accruedHours: 0,
     usedHours: 0,
     forfeitedHours: 0,
+    usedThisYearHours: 0,
     check: {
       ok: false,
       shortHours: 16,
@@ -183,6 +184,76 @@ describe('writing a request against the balance on file', () => {
   });
 });
 
+describe('a California nurse’s leave', () => {
+  it('warns that 16 sick hours would take use 8 past the 40-hour yearly cap, balance or no', async () => {
+    bridge.respond('leaveBalances', 'checkRequest', {
+      balance: {
+        type: 'sick',
+        balanceHours: 60,
+        asOf: isoDate('2026-10-01'),
+        projectedHours: 52,
+        accruedHours: 0,
+        usedHours: 8,
+        forfeitedHours: 0,
+        usedThisYearHours: 32,
+        check: { ok: true, remainingHours: 36 },
+        useCap: { capHours: 40, overBy: 8 },
+      },
+    });
+    renderWithApp(
+      <NewRequestDialog
+        open
+        onOpenChange={() => {}}
+        unitId="unit-1"
+        periodId={undefined}
+        nurses={[ana]}
+      />,
+      { unit },
+    );
+    await fillRequest();
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'sick' } });
+    expect(
+      await screen.findByText(
+        '32 hours used this leave year; this request would take use 8 past the 40-hour yearly cap.',
+      ),
+    ).toBeTruthy();
+    expect(
+      (screen.getByRole('button', { name: 'Add request' }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it('shows pregnancy disability leave left of the four months', async () => {
+    bridge.respond('leaveBalances', 'checkRequest', {
+      pdl: {
+        entitlementHours: 623.88,
+        weeklyHours: 36,
+        period: { from: isoDate('2025-10-06'), to: isoDate('2026-10-05') },
+        usedHours: 72,
+        requestHours: 36,
+        remainingHours: 551.88,
+      },
+    });
+    renderWithApp(
+      <NewRequestDialog
+        open
+        onOpenChange={() => {}}
+        unitId="unit-1"
+        periodId={undefined}
+        nurses={[ana]}
+      />,
+      { unit },
+    );
+    await fillRequest();
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'pregnancy_disability' } });
+    expect(
+      await screen.findByText(
+        /Pregnancy disability leave: 551\.88 hours left of 623\.88 \(four months of a 36-hour week\)/,
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/FMLA certification/)).toBeNull();
+  });
+});
+
 describe('a VA nurse’s leave', () => {
   it('shows an annual-leave balance projected to the first day, with where it came from', async () => {
     bridge.respond('leaveBalances', 'checkRequest', {
@@ -194,6 +265,7 @@ describe('a VA nurse’s leave', () => {
         accruedHours: 24,
         usedHours: 8,
         forfeitedHours: 0,
+        usedThisYearHours: 8,
         check: { ok: true, remainingHours: 80 },
       },
     });

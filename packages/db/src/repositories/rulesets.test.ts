@@ -9,6 +9,7 @@ import {
   DEFAULT_FAIRNESS_WEIGHTS,
   DEFAULT_WEEKEND,
   isoDate,
+  type JurisdictionChoices,
   type JurisdictionId,
   type RuleConfig,
 } from '@shiftnurse/core';
@@ -22,7 +23,7 @@ import { applyJurisdiction } from './setup.js';
 const ACTOR = 'manager';
 let handle: OpenedDatabase;
 
-function mkUnit(jurisdiction?: JurisdictionId): string {
+function mkUnit(jurisdiction?: JurisdictionId, choices?: JurisdictionChoices): string {
   const unitId = createUnit(
     handle.db,
     {
@@ -33,7 +34,8 @@ function mkUnit(jurisdiction?: JurisdictionId): string {
     },
     ACTOR,
   ).id;
-  if (jurisdiction) transact(handle.db, (tx) => applyJurisdiction(tx, unitId, jurisdiction, ACTOR));
+  if (jurisdiction)
+    transact(handle.db, (tx) => applyJurisdiction(tx, unitId, jurisdiction, ACTOR, choices));
   return unitId;
 }
 
@@ -116,6 +118,37 @@ describe('loosening a protected rule', () => {
     expect(saved.version).toBe(1);
     const [entry] = auditHistoryFor(handle.db, 'rule_set', saved.id);
     expect(entry!.reason).toBeUndefined();
+  });
+
+  it('needs a reason to make the VA–NNU 11-hour rest advisory on a unit under that agreement', () => {
+    const unitId = mkUnit('US-VA');
+    expect(() =>
+      save(unitId, {
+        ruleId: 'min-rest-between-shifts',
+        enabled: true,
+        severityOverride: 'soft',
+        params: { minRestHours: 11 },
+      }),
+    ).toThrow(/Switching off or softening Minimum rest between shifts needs a reason/);
+  });
+
+  it('lets a VA unit under its own agreement make the 11-hour rest advisory without a reason', () => {
+    const unitId = mkUnit('US-VA', { ownContract: true });
+    const saved = save(unitId, {
+      ruleId: 'min-rest-between-shifts',
+      enabled: true,
+      severityOverride: 'soft',
+      params: { minRestHours: 11 },
+    });
+    const [entry] = auditHistoryFor(handle.db, 'rule_set', saved.id);
+    expect(entry!.reason).toBeUndefined();
+  });
+
+  it('still needs a reason to drop the Title 38 overtime ban under any agreement', () => {
+    const unitId = mkUnit('US-VA', { ownContract: true });
+    expect(() =>
+      save(unitId, { ruleId: 'no-mandatory-overtime', enabled: false, params: {} }),
+    ).toThrow(/No mandatory overtime.*needs a reason/);
   });
 
   it('refuses to save rules for a unit that does not exist', () => {

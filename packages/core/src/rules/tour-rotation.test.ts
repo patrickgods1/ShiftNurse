@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { isoDate } from '../domain/time.js';
 import type { ScenarioOptions } from '../testing/fixtures.js';
 import {
   assign,
@@ -11,7 +12,7 @@ import {
   resetFixtureCounters,
   scenario,
 } from '../testing/fixtures.js';
-import { tourOf, tourRotationRule } from './tour-rotation.js';
+import { type TourRotationParams, tourOf, tourRotationRule } from './tour-rotation.js';
 
 beforeEach(() => {
   resetFixtureCounters();
@@ -22,7 +23,7 @@ const grace = (overrides = {}) =>
 
 const DEFAULTS = { maxToursPerPeriod: 2, minHoursBetweenTours: 48, permanentTourEnforced: true };
 
-function evaluate(options: ScenarioOptions, params: Partial<typeof DEFAULTS> = {}) {
+function evaluate(options: ScenarioOptions, params: Partial<TourRotationParams> = {}) {
   const s = scenario(options);
   return tourRotationRule.evaluate(s.schedule, { ...DEFAULTS, ...params }, s.ctx);
 }
@@ -186,6 +187,126 @@ describe('tour rotation limits', () => {
       assignments: [
         assign(nurse.id, DAY_12, '2026-01-05'),
         assign(nurse.id, NIGHT_12, '2026-01-15'),
+      ],
+    });
+    expect(found).toEqual([]);
+  });
+});
+
+describe('career nurses exempt from rotation (UC–CNA Art. 14 § P.1.a)', () => {
+  // The schedule starts Sun 4 Jan 2026: seniority from 1 Jan 2015 is 11 years, from 1 Jan 2017 nine.
+  const ELEVEN_YEARS = { seniorityDate: isoDate('2015-01-01') };
+  const NINE_YEARS = { seniorityDate: isoDate('2017-01-01') };
+  const EXEMPT_AT_TEN = { maxToursPerPeriod: 2, exemptAfterYearsOfService: 10 };
+
+  it('flags an eleven-year nurse rotated from nights to days, though two tours are allowed', () => {
+    const nurse = grace(ELEVEN_YEARS);
+    const found = evaluate(
+      {
+        nurses: [nurse],
+        assignments: [
+          assign(nurse.id, NIGHT_12, '2026-01-05'),
+          assign(nurse.id, DAY_12, '2026-01-15'),
+        ],
+      },
+      EXEMPT_AT_TEN,
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      code: 'too_many_tours',
+      severity: 'soft',
+      details: { tours: ['day', 'night'], max: 1 },
+    });
+    expect(found[0]!.message).toContain('exempt from rotation after 10 years of service');
+  });
+
+  it('still rotates a nine-year nurse across two tours', () => {
+    const nurse = grace(NINE_YEARS);
+    const found = evaluate(
+      {
+        nurses: [nurse],
+        assignments: [
+          assign(nurse.id, NIGHT_12, '2026-01-05'),
+          assign(nurse.id, DAY_12, '2026-01-15'),
+        ],
+      },
+      EXEMPT_AT_TEN,
+    );
+    expect(found).toEqual([]);
+  });
+
+  it('counts service from the hire date when it differs from seniority', () => {
+    // Seniority bridged back to 2010, but hired 1 Jan 2017: nine years on the job.
+    const nurse = grace({ seniorityDate: isoDate('2010-01-01'), hireDate: isoDate('2017-01-01') });
+    const found = evaluate(
+      {
+        nurses: [nurse],
+        assignments: [
+          assign(nurse.id, NIGHT_12, '2026-01-05'),
+          assign(nurse.id, DAY_12, '2026-01-15'),
+        ],
+      },
+      EXEMPT_AT_TEN,
+    );
+    expect(found).toEqual([]);
+  });
+
+  it('keeps an eleven-year nurse on permanent nights even when permanent tours are not enforced', () => {
+    const nurse = grace({ ...ELEVEN_YEARS, permanentTour: 'night' });
+    const day = assign(nurse.id, DAY_12, '2026-01-12');
+    const found = evaluate(
+      { nurses: [nurse], assignments: [day] },
+      { ...EXEMPT_AT_TEN, permanentTourEnforced: false },
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      code: 'off_permanent_tour',
+      assignmentIds: [day.id],
+      details: { tour: 'day', permanentTour: 'night' },
+    });
+    expect(found[0]!.message).toContain('exempt from rotation after 10 years of service');
+  });
+
+  it('exempts a nurse from the day of their tenth anniversary', () => {
+    // Seniority Mon 4 Jan 2016; the schedule starts Sun 4 Jan 2026: ten years to the day.
+    const nurse = grace({ seniorityDate: isoDate('2016-01-04') });
+    const found = evaluate(
+      {
+        nurses: [nurse],
+        assignments: [
+          assign(nurse.id, NIGHT_12, '2026-01-05'),
+          assign(nurse.id, DAY_12, '2026-01-15'),
+        ],
+      },
+      EXEMPT_AT_TEN,
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ code: 'too_many_tours', details: { max: 1 } });
+  });
+
+  it('still rotates a nurse whose tenth anniversary falls the day after the schedule starts', () => {
+    // Seniority Tue 5 Jan 2016: on Sun 4 Jan 2026 that is nine years and 364 days.
+    const nurse = grace({ seniorityDate: isoDate('2016-01-05') });
+    const found = evaluate(
+      {
+        nurses: [nurse],
+        assignments: [
+          assign(nurse.id, NIGHT_12, '2026-01-05'),
+          assign(nurse.id, DAY_12, '2026-01-15'),
+        ],
+      },
+      EXEMPT_AT_TEN,
+    );
+    expect(found).toEqual([]);
+  });
+
+  it('exempts nobody when the contract sets no years of service', () => {
+    const nurse = grace({ seniorityDate: isoDate('1995-01-01') });
+    const found = evaluate({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, NIGHT_12, '2026-01-05'),
+        assign(nurse.id, DAY_12, '2026-01-15'),
       ],
     });
     expect(found).toEqual([]);

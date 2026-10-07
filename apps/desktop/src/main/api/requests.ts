@@ -4,12 +4,17 @@
  */
 
 import {
+  compareDates,
+  coverageFloorFor,
   evaluateExchange,
   type HolidayClaim,
+  type HolidayWorkClaim,
   holidayRequestPriority,
+  holidayWorkPriority,
   type Id,
   previousOccurrence,
   timeOffImpact,
+  today,
 } from '@shiftnurse/core';
 import {
   applyResolution,
@@ -21,8 +26,11 @@ import {
   denyTimeOff,
   getConflictPolicy,
   holidayWorkFor,
+  listCoverageRequirementsForUnit,
   listHolidaysForUnit,
   listNursesForUnit,
+  listPreferencesForUnit,
+  listShiftTypesForUnit,
   listSwapsForPeriod,
   listSwapsForUnit,
   listTimeOffForUnit,
@@ -55,6 +63,34 @@ function holidayPriority(db: ShiftNurseDb, unitId: Id): HolidayClaim[] {
   });
 }
 
+/**
+ * Who wants to work each holiday from today on, most senior first. Past holidays are left out:
+ * a wish to work last Christmas is settled and would only crowd the panel. "Needed" is the date's
+ * RN coverage targets summed over the active worked shift types — the floors the manager set,
+ * not acuity, which a holiday months away has no census for.
+ */
+function holidayWorkPriorityFor(db: ShiftNurseDb, unitId: Id): HolidayWorkClaim[] {
+  const from = today();
+  const holidays = listHolidaysForUnit(db, unitId).filter((h) => compareDates(h.date, from) >= 0);
+  const requirements = listCoverageRequirementsForUnit(db, unitId);
+  const shiftTypes = listShiftTypesForUnit(db, unitId).filter((st) => st.active && !st.isOnCall);
+  const needed = new Map(
+    holidays.map((h) => [
+      h.id,
+      shiftTypes.reduce(
+        (sum, st) => sum + coverageFloorFor(requirements, h.date, st.id, 'RN').target,
+        0,
+      ),
+    ]),
+  );
+  return holidayWorkPriority({
+    holidays,
+    nurses: listNursesForUnit(db, unitId),
+    preferences: listPreferencesForUnit(db, unitId),
+    needed,
+  });
+}
+
 export function requestsApi(
   db: ShiftNurseDb,
 ): Pick<ShiftNurseApi, 'timeOff' | 'conflicts' | 'exchange'> {
@@ -62,6 +98,7 @@ export function requestsApi(
     timeOff: {
       list: (unitId, status) => listTimeOffForUnit(db, unitId, status),
       holidayPriority: (unitId) => holidayPriority(db, unitId),
+      holidayWorkPriority: (unitId) => holidayWorkPriorityFor(db, unitId),
       listInRange: (unitId, start, end) => listTimeOffOverlappingForUnit(db, unitId, start, end),
       create: (input) => transact(db, (tx) => createTimeOffRequest(tx, input, ACTOR)),
       approve: (id, reason) =>

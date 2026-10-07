@@ -54,8 +54,11 @@ export function StateLawSection() {
   const confirm = useConfirm();
   const [chosen, setChosen] = useState<JurisdictionId | ''>(unit.jurisdiction ?? '');
   const preset = chosen === '' ? undefined : JURISDICTION_PRESETS[chosen];
-  // Answers belong to the chosen state's questions, so changing state starts them over.
-  const [choices, setChoices] = useState<JurisdictionChoices>({});
+  // Answers belong to the chosen state's questions, so changing state starts them over; the
+  // applied state's stored answers come back, or Apply would quietly answer them no again.
+  const storedChoices = (id: JurisdictionId | '') =>
+    id !== '' && id === unit.jurisdiction ? (unit.jurisdictionChoices ?? {}) : {};
+  const [choices, setChoices] = useState<JurisdictionChoices>(() => storedChoices(chosen));
 
   const onApply = async () => {
     if (chosen === '' || !preset) return;
@@ -88,8 +91,9 @@ export function StateLawSection() {
           value={chosen}
           aria-describedby={describedBy('unit-jurisdiction', { hint: true })}
           onChange={(e) => {
-            setChosen(e.target.value as JurisdictionId | '');
-            setChoices({});
+            const next = e.target.value as JurisdictionId | '';
+            setChosen(next);
+            setChoices(storedChoices(next));
             apply.reset();
           }}
         >
@@ -110,6 +114,14 @@ export function StateLawSection() {
         <p className="text-sm text-text" data-testid="state-law-summary">
           {preset.summary}
         </p>
+      ) : null}
+      {preset?.source ? (
+        <div className="text-sm text-text" data-testid="state-law-source">
+          <p>Contract values: {preset.source.contract}</p>
+          {preset.source.note ? (
+            <p className="text-xs text-text-muted">{preset.source.note}</p>
+          ) : null}
+        </div>
       ) : null}
       {preset ? (
         <p className="text-sm text-text" data-testid="state-law-leave">
