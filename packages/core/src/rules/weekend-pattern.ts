@@ -15,8 +15,14 @@
  *
  * Soft by default and off until a unit turns it on. Both solvers price each breach
  * (`weekendPattern`, fairness bucket); hard, it forbids the run outright.
+ *
+ * A nurse on the Baylor plan (38 U.S.C. § 7456) works every weekend by contract, so this rule does
+ * not judge them (`judgesWeekends`), and neither solver prices or forbids their weekends: a cap
+ * would flag the plan itself, and make Generate steer the very nurses hired for weekends off them.
  */
 
+import { isBaylorPlan } from '../cost/cost.js';
+import type { Nurse } from '../domain/entities.js';
 import { addDays, compareDates, describeDate, type IsoDate, weekendKey } from '../domain/time.js';
 import type { ScheduleView } from '../schedule/view.js';
 import type { Rule, RuleContext, Violation } from './types.js';
@@ -83,6 +89,11 @@ export function weekendBreaches(
   return { runs, excess, windows };
 }
 
+/** Whether this rule judges the nurse's weekends; shared by the rule and both solvers. */
+export function judgesWeekends(nurse: Pick<Nurse, 'scheduleKind'>): boolean {
+  return !isBaylorPlan(nurse);
+}
+
 /** The weekends one nurse works on a view (their timeline, lookback tail included). */
 export function nurseWeekends(
   schedule: ScheduleView,
@@ -145,6 +156,7 @@ export const weekendPatternRule: Rule<WeekendPatternParams> = {
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];
     for (const nurse of schedule.nursesById.values()) {
+      if (!judgesWeekends(nurse)) continue;
       const weekends = nurseWeekends(schedule, nurse.id, ctx);
       if (weekends.inPeriod.size === 0) continue;
       const { runs, excess, windows } = weekendBreaches(weekends, params);

@@ -76,7 +76,18 @@
   (`UnitProvider` takes the first unit by name). Two units means queries on a bare table (the
   shift types, say) need a `unit_id` filter. The VA history is staffed on a thin margin: moving a
   hire date by a week can tip a weekend shift short, so re-run the VA test after changing one.
-  `holdovers` (the VA demo: three volunteered, on a D8, a D12 and an N12) are placed on published
+  `holdovers` (the VA demo: four volunteered, on a D8, a D12 and an N12 and, 60 minutes, on a
+  72/80 nurse's D12) are placed on published
   history with no random draw, through `recordHoldover`, only where the extra time keeps the
   next rest at the unit's minimum and the pay period within 80 hours, so the held-over minutes
-  are the row's only overtime.
+  are the row's only overtime. A holdover names a `scheduleKind` or goes to a standard nurse.
+- **The VA demo carries three nurses on the VA's own plans** (`scheduleKind` on a roster row,
+  appended last so the other staff's draws come first): two RNs on 72/80 (0.9 FTE, 72 hours a
+  pay period, one D12 and one N12) and one on Baylor (1.0, 48 hours, N12). San Francisco ended
+  its 72/80 plan in 2023, so they show the model; the unit's full-time 6x12 + 8 stays. `canWork`
+  keeps them on plan (12-hour tours only; Baylor on Saturday, Sunday or Friday night, outside the
+  weekend caps; a 72/80 nurse at three tours a week), and they are never drawn into a kept-apart
+  group. Their paid leave takes the `paid-leave` rule's own whole-tour split (a Baylor nurse's
+  weekday leave pays nothing), so a request over two pay periods credits what the rule does. The
+  Baylor nurse always volunteers for overtime; a plan nurse is asked past their own hours only to
+  cover a call-off, and that tour is marked overtime. Tests that assumed every full-time RN works 80 hours are scoped to standard nurses.

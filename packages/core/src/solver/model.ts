@@ -33,7 +33,7 @@
  */
 
 import { DemandTable, NURSE_ROLES, type ShiftDemand } from '../acuity/demand.js';
-import { costNurse } from '../cost/cost.js';
+import { costNurse, isBaylorPlan } from '../cost/cost.js';
 import type { CostContext } from '../cost/types.js';
 import type {
   Assignment,
@@ -63,6 +63,7 @@ import {
   type HolidayRotationFacts,
   holidayRotationFacts,
   holidayRotationRule,
+  inHolidayRotation,
   workedInHistory,
 } from '../rules/holiday-rotation.js';
 import {
@@ -93,6 +94,7 @@ import {
 } from '../rules/registry.js';
 import type { RuleContext, RuleSet, RuleSeverity, Violation } from '../rules/types.js';
 import {
+  judgesWeekends,
   type WeekendPatternParams,
   weekendBreaches,
   weekendPatternRule,
@@ -1043,7 +1045,7 @@ export class SolverModel {
   private countHolidayRotation(n: number, date: IsoDate, sign: 1 | -1): void {
     if (this.owedOffDates[n]?.has(date)) this.holidaySum += sign;
     const sides = this.pairSidesOn.get(date);
-    if (!sides) return;
+    if (!sides || !inHolidayRotation(this.nurses[n]!)) return;
     const work = this.pairWork[n]!;
     for (const { pair, side } of sides) {
       const both = () => (work[pair * 2]! > 0 && work[pair * 2 + 1]! > 0 ? 1 : 0);
@@ -1075,7 +1077,7 @@ export class SolverModel {
    */
   private weekendFor(n: number): number {
     const params = this.weekendParams;
-    if (!params) return 0;
+    if (!params || !judgesWeekends(this.nurses[n]!)) return 0;
     const inPeriod = new Set(this.weekendKeys[n]!.keys() as Iterable<IsoDate>);
     if (inPeriod.size === 0) return 0;
     const worked = new Set<IsoDate>([...this.priorWeekends[n]!, ...inPeriod]);
@@ -1325,10 +1327,11 @@ export class SolverModel {
     switch (component) {
       case 'nights':
         return this.nights[n]!;
+      // A Baylor nurse's weekends and holidays are the plan, not a burden: as the ledger counts.
       case 'weekends':
-        return this.weekendKeys[n]!.size;
+        return isBaylorPlan(this.nurses[n]!) ? 0 : this.weekendKeys[n]!.size;
       case 'holidays':
-        return this.holidays[n]!;
+        return isBaylorPlan(this.nurses[n]!) ? 0 : this.holidays[n]!;
       case 'onCall':
         return this.onCall[n]!;
       case 'undesirable':

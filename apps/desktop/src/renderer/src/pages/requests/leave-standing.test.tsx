@@ -101,6 +101,39 @@ describe('writing a request against the balance on file', () => {
     ).toBe(false);
   });
 
+  it('tells the manager a 72/80 nurse is charged 40 hours of leave for a 36-hour week off', async () => {
+    renderWithApp(
+      <NewRequestDialog
+        open
+        onOpenChange={() => {}}
+        unitId="unit-1"
+        periodId={undefined}
+        nurses={[{ ...ana, scheduleKind: 'va_72_80' }]}
+      />,
+      { unit },
+    );
+    await fillRequest();
+    expect(
+      await screen.findByText(/Charged as 40\.00 h of leave: 10 hours for each 9 of absence/),
+    ).toBeTruthy();
+  });
+
+  it('says nothing of a leave charge for a standard nurse', async () => {
+    renderWithApp(
+      <NewRequestDialog
+        open
+        onOpenChange={() => {}}
+        unitId="unit-1"
+        periodId={undefined}
+        nurses={[ana]}
+      />,
+      { unit },
+    );
+    await fillRequest();
+    await screen.findByText(/PTO: 20 h projected on/);
+    expect(screen.queryByText(/Charged as/)).toBeNull();
+  });
+
   it('says when a nurse has no balance on file to check against', async () => {
     bridge.respond('leaveBalances', 'checkRequest', { noBalanceFor: 'pto' });
     renderWithApp(

@@ -16,9 +16,10 @@ import type {
   NurseCredential,
   NurseRole,
   Preference,
+  ScheduleKind,
   Tour,
 } from '@shiftnurse/core';
-import { addDays } from '@shiftnurse/core';
+import { addDays, SCHEDULE_KINDS } from '@shiftnurse/core';
 import { and, asc, eq, gte, isNotNull, lt, lte } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
@@ -44,7 +45,15 @@ function getNurseRowOrThrow(db: DbLike, id: Id): typeof nurseTable.$inferSelect 
   return row;
 }
 
+/** IPC input is typed, not checked: refuse a plan pricing and the tour-plan rule cannot read. */
+function checkScheduleKind(kind: string | null | undefined): void {
+  if (kind != null && !(SCHEDULE_KINDS as readonly string[]).includes(kind)) {
+    throw new Error(`Schedule kind "${kind}" is not one of ${SCHEDULE_KINDS.join(', ')}`);
+  }
+}
+
 function buildNurseRow(id: Id, input: Omit<Nurse, 'id'>): typeof nurseTable.$inferInsert {
+  checkScheduleKind(input.scheduleKind);
   return {
     id,
     unitId: input.unitId,
@@ -59,6 +68,7 @@ function buildNurseRow(id: Id, input: Omit<Nurse, 'id'>): typeof nurseTable.$inf
     hireDate: input.hireDate ?? null,
     permanentTour: input.permanentTour ?? null,
     scheduledDaysPerWeek: input.scheduledDaysPerWeek ?? null,
+    scheduleKind: input.scheduleKind ?? null,
     isChargeEligible: input.isChargeEligible,
     isNovice: input.isNovice,
     isFloatEligible: input.isFloatEligible,
@@ -162,6 +172,8 @@ export interface NursePatch {
   permanentTour?: Tour | null;
   /** `null` clears it: no 'beyond_scheduled_days' overtime is priced for the nurse. */
   scheduledDaysPerWeek?: number | null;
+  /** `null` clears it: the nurse is standard. */
+  scheduleKind?: ScheduleKind | null;
   isChargeEligible?: boolean;
   isNovice?: boolean;
   isFloatEligible?: boolean;
@@ -183,6 +195,7 @@ const NURSE_PATCH_KEYS: PatchKeys<NursePatch> = {
   hireDate: true,
   permanentTour: true,
   scheduledDaysPerWeek: true,
+  scheduleKind: true,
   isChargeEligible: true,
   isNovice: true,
   isFloatEligible: true,
@@ -195,7 +208,9 @@ const NURSE_PATCH_KEYS: PatchKeys<NursePatch> = {
 export function updateNurse(db: DbLike, id: Id, patch: NursePatch, actor: string): Nurse {
   const row = getNurseRowOrThrow(db, id);
   const before = toNurse(row);
-  const merged = { ...row, ...patchOf(patch, NURSE_PATCH_KEYS, 'nurse') };
+  const values = patchOf(patch, NURSE_PATCH_KEYS, 'nurse');
+  checkScheduleKind(values.scheduleKind);
+  const merged = { ...row, ...values };
   db.update(nurseTable).set(merged).where(eq(nurseTable.id, id)).run();
   const after = toNurse(merged);
   recordAudit(db, { entityType: 'nurse', entityId: id, action: 'update', actor, before, after });

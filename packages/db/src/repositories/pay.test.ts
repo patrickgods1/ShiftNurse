@@ -522,6 +522,84 @@ describe('cost configuration', () => {
     });
   });
 
+  it('keeps an overtime rule for one VA plan and a daily rule judged on tour days only', () => {
+    const baylor = createOvertimeRule(
+      handle.db,
+      {
+        unitId,
+        basis: 'weekly',
+        thresholdHours: 40,
+        multiplier: 1.5,
+        active: true,
+        scheduleKinds: ['va_baylor'],
+      },
+      ACTOR,
+    );
+    const tourDay = createOvertimeRule(
+      handle.db,
+      {
+        unitId,
+        basis: 'daily',
+        thresholdHours: 12,
+        multiplier: 1.5,
+        active: true,
+        scheduleKinds: ['va_72_80'],
+        tourDays: 'only',
+      },
+      ACTOR,
+    );
+    expect(listOvertimeRulesForUnit(handle.db, unitId)).toEqual([baylor, tourDay]);
+    expect(baylor.scheduleKinds).toEqual(['va_baylor']);
+    expect(baylor.tourDays).toBeUndefined();
+    expect(tourDay).toMatchObject({ scheduleKinds: ['va_72_80'], tourDays: 'only' });
+
+    const cleared = updateOvertimeRule(
+      handle.db,
+      tourDay.id,
+      { scheduleKinds: null, tourDays: null },
+      ACTOR,
+    );
+    expect(cleared.scheduleKinds).toBeUndefined();
+    expect(cleared.tourDays).toBeUndefined();
+  });
+
+  it('refuses a tour-day filter on a weekly rule and a plan list pricing cannot read', () => {
+    const rule = {
+      unitId,
+      basis: 'weekly' as const,
+      thresholdHours: 40,
+      multiplier: 1.5,
+      active: true,
+    };
+    expect(() => createOvertimeRule(handle.db, { ...rule, tourDays: 'only' }, ACTOR)).toThrow(
+      'Tour days apply only to a daily overtime rule',
+    );
+    const kinds =
+      'Overtime rule schedule kinds must be one or more of standard, va_72_80, va_baylor';
+    expect(() => createOvertimeRule(handle.db, { ...rule, scheduleKinds: [] }, ACTOR)).toThrow(
+      kinds,
+    );
+    expect(() =>
+      createOvertimeRule(handle.db, { ...rule, scheduleKinds: ['va_baylor', 'va_baylor'] }, ACTOR),
+    ).toThrow(kinds);
+    expect(() =>
+      createOvertimeRule(handle.db, { ...rule, scheduleKinds: ['other' as never] }, ACTOR),
+    ).toThrow(kinds);
+
+    const daily = createOvertimeRule(
+      handle.db,
+      { ...rule, basis: 'daily', tourDays: 'except' },
+      ACTOR,
+    );
+    expect(() => updateOvertimeRule(handle.db, daily.id, { basis: 'weekly' }, ACTOR)).toThrow(
+      'Tour days apply only to a daily overtime rule',
+    );
+    expect(() =>
+      updateOvertimeRule(handle.db, daily.id, { tourDays: 'sometimes' as never }, ACTOR),
+    ).toThrow('only or except');
+    expect(listOvertimeRulesForUnit(handle.db, unitId)).toEqual([daily]);
+  });
+
   it('refuses overtime options pricing cannot read', () => {
     const rule = {
       unitId,

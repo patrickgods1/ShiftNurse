@@ -12,8 +12,9 @@ import type {
   NurseRole,
   OvertimeRule,
   PayRate,
+  ScheduleKind,
 } from '@shiftnurse/core';
-import { isIsoDate, resolvePayRate } from '@shiftnurse/core';
+import { isIsoDate, resolvePayRate, SCHEDULE_KINDS } from '@shiftnurse/core';
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
@@ -292,12 +293,14 @@ export function listActiveOvertimeRules(db: DbLike, unitId: Id): OvertimeRule[] 
 }
 
 export type OvertimeRuleInput = Omit<OvertimeRule, 'id'>;
-/** `pyramiding` and `minimumMinutes` of `null` clear the setting back to core's default. */
+/** `null` for `pyramiding`, `minimumMinutes`, `scheduleKinds` or `tourDays` clears it. */
 export type OvertimeRulePatch = Partial<
   Pick<OvertimeRule, 'basis' | 'thresholdHours' | 'multiplier' | 'active'>
 > & {
   pyramiding?: 'stack' | 'none' | null;
   minimumMinutes?: number | null;
+  scheduleKinds?: ScheduleKind[] | null;
+  tourDays?: 'only' | 'except' | null;
 };
 
 const OVERTIME_RULE_PATCH_KEYS: PatchKeys<OvertimeRulePatch> = {
@@ -307,14 +310,19 @@ const OVERTIME_RULE_PATCH_KEYS: PatchKeys<OvertimeRulePatch> = {
   active: true,
   pyramiding: true,
   minimumMinutes: true,
+  scheduleKinds: true,
+  tourDays: true,
 };
 
 /** IPC input is typed, not checked, and seeds call here directly: refuse what pricing cannot read. */
 function checkOvertimeOptions(values: {
+  basis?: string | undefined;
   pyramiding?: string | null | undefined;
   minimumMinutes?: number | null | undefined;
+  scheduleKinds?: readonly string[] | null | undefined;
+  tourDays?: string | null | undefined;
 }): void {
-  const { pyramiding, minimumMinutes } = values;
+  const { pyramiding, minimumMinutes, scheduleKinds, tourDays } = values;
   if (pyramiding != null && pyramiding !== 'stack' && pyramiding !== 'none') {
     throw new Error('Pyramiding must be stack or none');
   }
@@ -323,6 +331,25 @@ function checkOvertimeOptions(values: {
     !(Number.isInteger(minimumMinutes) && minimumMinutes >= 0 && minimumMinutes <= 240)
   ) {
     throw new Error('The overtime minimum must be a whole number of minutes from 0 to 240');
+  }
+  if (
+    scheduleKinds != null &&
+    !(
+      Array.isArray(scheduleKinds) &&
+      scheduleKinds.length > 0 &&
+      new Set(scheduleKinds).size === scheduleKinds.length &&
+      scheduleKinds.every((k) => (SCHEDULE_KINDS as readonly string[]).includes(k))
+    )
+  ) {
+    throw new Error(
+      `Overtime rule schedule kinds must be one or more of ${SCHEDULE_KINDS.join(', ')}`,
+    );
+  }
+  if (tourDays != null && tourDays !== 'only' && tourDays !== 'except') {
+    throw new Error('Tour days must be only or except');
+  }
+  if (tourDays != null && values.basis !== 'daily') {
+    throw new Error('Tour days apply only to a daily overtime rule');
   }
 }
 
@@ -338,6 +365,8 @@ export function createOvertimeRule(
     ...input,
     pyramiding: input.pyramiding ?? null,
     minimumMinutes: input.minimumMinutes ?? null,
+    scheduleKinds: input.scheduleKinds ? [...input.scheduleKinds] : null,
+    tourDays: input.tourDays ?? null,
   };
   db.insert(overtimeRule).values(row).run();
   const created = toOvertimeRule(row);
@@ -374,7 +403,14 @@ export function updateOvertimeRule(
         .set({ ...values, id: rowId })
         .where(eq(overtimeRule.id, rowId))
         .run(),
-    validate: (values) => checkOvertimeOptions(values),
+    // Tour days are judged against the basis the rule will have, so a patch that moves a rule off
+    // 'daily' cannot leave a tour-day filter behind that nothing reads.
+    validate: (values, before) =>
+      checkOvertimeOptions({
+        ...values,
+        basis: values.basis ?? before.basis,
+        tourDays: values.tourDays !== undefined ? values.tourDays : before.tourDays,
+      }),
     notFound: `Overtime rule ${id} not found`,
     actor,
   });

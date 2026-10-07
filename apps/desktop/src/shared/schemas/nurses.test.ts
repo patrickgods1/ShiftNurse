@@ -28,6 +28,13 @@ describe('a nurse arriving over IPC', () => {
     ).toBe(false);
   });
 
+  it('takes a VA schedule kind on create, lets an edit clear it, and refuses an unknown plan', () => {
+    const create = API_SCHEMAS.nurses.create;
+    expect(create.safeParse([{ ...nurse, scheduleKind: 'va_72_80' }]).success).toBe(true);
+    expect(create.safeParse([{ ...nurse, scheduleKind: 'nine_eighty' }]).success).toBe(false);
+    expect(API_SCHEMAS.nurses.update.safeParse(['n-1', { scheduleKind: null }]).success).toBe(true);
+  });
+
   it('takes scheduled days per week from one to seven, and lets an edit clear it with null', () => {
     const create = API_SCHEMAS.nurses.create;
     expect(create.safeParse([{ ...nurse, scheduledDaysPerWeek: 3 }]).success).toBe(true);

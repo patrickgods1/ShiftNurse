@@ -143,3 +143,30 @@ describe('holiday request priority', () => {
     expect(claims[0]!.claimants.map((c) => c.nurseId)).toEqual(['dee', 'bo']);
   });
 });
+
+describe('a nurse on the Baylor weekend plan', () => {
+  it('ranks behind every other claimant, however senior and whoever worked it last year', () => {
+    // Ana is the most senior and worked Christmas last year: first in line, but on the Baylor
+    // plan she has no holiday entitlement (VA Handbook 5011).
+    const baylorAna = { ...ana, scheduleKind: 'va_baylor' as const };
+    const claims = holidayRequestPriority({
+      pending: [
+        pending('r-ana', 'ana', '2026-12-25', '2026-12-25'),
+        pending('r-bo', 'bo', '2026-12-25', '2026-12-25'),
+        pending('r-cy', 'cy', '2026-12-25', '2026-12-25'),
+      ],
+      approved: [],
+      nurses: [cy, bo, baylorAna],
+      holidays: HOLIDAYS,
+      holidayWork: [{ holidayId: 'xmas25', nurseId: 'ana' }],
+    });
+    expect(claims[0]!.claimants.map((c) => [c.nurseId, c.rank])).toEqual([
+      ['bo', 1],
+      ['cy', 2],
+      ['ana', 3],
+    ]);
+    expect(claims[0]!.claimants[2]!.reason).toBe(
+      'On the Baylor weekend plan (38 U.S.C. § 7456): no holiday entitlement',
+    );
+  });
+});

@@ -21,7 +21,8 @@
  * § 7456 weekend plan). Voluntary hours (§ 7459(b)) and a non-recurring emergency once volunteers
  * are exhausted (§ 7459(c)) are outside it. `maxMandatedWeeklyHours` expresses that: an
  * unvolunteered, non-emergency overtime shift is allowed until the nurse's worked hours in its
- * work week pass the cap. Without it the rule is the total ban above.
+ * work week pass the cap. Without it the rule is the total ban above. `baylorMaxMandatedWeeklyHours`
+ * is the 24 for a nurse whose `scheduleKind` is the weekend plan; unset, they share the weekly cap.
  *
  * The statute also limits required *consecutive* hours: "more than eight consecutive hours (or 12
  * hours if such staff is covered under section 7456 or 7456A)". A scheduled shift never breaks
@@ -45,7 +46,8 @@
  * Generate cannot breach this either.
  */
 
-import type { Assignment, Id } from '../domain/entities.js';
+import { isBaylorPlan } from '../cost/cost.js';
+import type { Assignment, Id, Nurse } from '../domain/entities.js';
 import {
   addDays,
   compareDates,
@@ -68,6 +70,11 @@ export interface MandatoryOvertimeParams {
    * unvolunteered overtime at all.
    */
   maxMandatedWeeklyHours?: number;
+  /**
+   * The weekly cap for a nurse on the § 7456 Baylor weekend plan. Absent: `maxMandatedWeeklyHours`
+   * applies to them too.
+   */
+  baylorMaxMandatedWeeklyHours?: number;
   /**
    * The most consecutive hours a nurse may be required to work. A required holdover whose
    * stretch of worked time passes it is a breach. Absent: no consecutive limit.
@@ -157,6 +164,16 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
       optional: true,
       min: 1,
     },
+    baylorMaxMandatedWeeklyHours: {
+      label: 'Required hours a week on the Baylor plan',
+      hint: 'The weekly cap for nurses on the § 7456 weekend plan; 24 at the VA.',
+      why:
+        '38 U.S.C. § 7459(a) caps the hours a nurse can be required to work at 40 a week, but at ' +
+        '24 for a nurse on the § 7456 weekend plan. Leave blank to use the weekly cap above for ' +
+        'them too.',
+      optional: true,
+      min: 0,
+    },
     maxRequiredConsecutiveHours: {
       label: 'Most consecutive hours a nurse can be required to work',
       hint: 'Leave blank for no consecutive-hours limit.',
@@ -206,7 +223,10 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
 
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];
-    const weekly = params.maxMandatedWeeklyHours;
+    const weeklyFor = (nurse: Nurse) =>
+      isBaylorPlan(nurse)
+        ? (params.baylorMaxMandatedWeeklyHours ?? params.maxMandatedWeeklyHours)
+        : params.maxMandatedWeeklyHours;
     const consecutive = params.maxRequiredConsecutiveHours;
     const stretchesByNurse = new Map<Id, WorkedStretch<AssignmentView>[]>();
     const reportedStretches = new Map<WorkedStretch<AssignmentView>, Violation>();
@@ -227,6 +247,7 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
       const requiredHoldover =
         (assignment.holdoverMinutes ?? 0) > 0 && assignment.holdoverMandated === true && !excused;
       if (!requiredOvertime && !requiredHoldover) continue;
+      const weekly = weeklyFor(nurse);
 
       if (weekly === undefined && consecutive === undefined) {
         if (requiredOvertime) {

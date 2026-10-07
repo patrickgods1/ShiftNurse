@@ -13,12 +13,14 @@
  */
 
 import { NURSE_ROLES } from '../../acuity/demand.js';
+import { isBaylorPlan } from '../../cost/cost.js';
 import type { Id } from '../../domain/entities.js';
 import { type IsoDate, weekendKey } from '../../domain/time.js';
 import { BURDEN_COMPONENTS, type BurdenComponent } from '../../fairness/types.js';
-import { workedInHistory } from '../../rules/holiday-rotation.js';
+import { inHolidayRotation, workedInHistory } from '../../rules/holiday-rotation.js';
 import { groupInForce } from '../../rules/incompatibility-rules.js';
 import { isDaySide, isWorkedNight, tooSoonAfterNight } from '../../rules/night-recovery.js';
+import { judgesWeekends } from '../../rules/weekend-pattern.js';
 import { type Expr, evalExpr, expr, scale, sum } from './builder.js';
 import { countExpr, type EncodeContext, HOURS, hoursExpr, type TimelineEntry } from './context.js';
 import { isMovable, roleExpr } from './rules/coverage.js';
@@ -279,12 +281,14 @@ function current(
     case 'nights':
       return countExpr(worked.filter((e) => e.shiftType.isNight));
     case 'holidays':
+      if (isBaylorPlan(model.nurses[n]!)) return expr();
       return countExpr(worked.filter((e) => model.ctx.holidayDates.has(e.date)));
     case 'onCall':
       return countExpr(entries.filter((e) => e.shiftType.isOnCall));
     case 'undesirable':
       return countExpr(worked.filter((e) => model.isUndesirable(n, e.shift!)));
     case 'weekends': {
+      if (isBaylorPlan(model.nurses[n]!)) return expr();
       const byKey = new Map<string, TimelineEntry[]>();
       for (const e of worked) {
         const key = weekendKey(e.window, model.ctx.weekendDefinition);
@@ -329,6 +333,7 @@ function holidayTerms(ctx: EncodeContext): void {
   if (price === 0) return;
   const facts = model.holidayFacts;
   for (let n = 0; n < model.nurses.length; n++) {
+    if (!inHolidayRotation(model.nurses[n]!)) continue;
     const worked = ctx.timeline(n).filter((e) => !e.shiftType.isOnCall);
     const owed = facts.owedOff.get(model.nurses[n]!.id);
     if (owed) {
@@ -368,6 +373,7 @@ function weekendPatternTerms(ctx: EncodeContext): void {
   const price = model.weekendPrice;
   if (!params || price === 0) return;
   for (let n = 0; n < model.nurses.length; n++) {
+    if (!judgesWeekends(model.nurses[n]!)) continue;
     const { runs, excess, windows } = weekendBreachExprs(nurseWeekendExprs(ctx, n), params);
     for (const { weekend, over } of runs) {
       priced(ctx, over, price, `weekends in a row: ${ctx.name(n)} to ${weekend}`);

@@ -33,12 +33,15 @@ afterEach(() => f.handle.close());
 
 const api = () => leaveBalancesApi(f.handle.db);
 
-function hire(seniorityDate: string, extra: { hireDate?: string; hours?: number } = {}): string {
+function hire(
+  seniorityDate: string,
+  extra: { hireDate?: string; hours?: number; scheduleKind?: 'va_72_80' } = {},
+): string {
   return createNurse(
     f.handle.db,
     {
       unitId: f.seeded.unitId,
-      employeeId: `LB-${seniorityDate}-${extra.hireDate ?? ''}-${extra.hours ?? ''}`,
+      employeeId: `LB-${seniorityDate}-${extra.hireDate ?? ''}-${extra.hours ?? ''}-${extra.scheduleKind ?? ''}`,
       firstName: 'Lena',
       lastName: 'Balance',
       role: 'RN',
@@ -47,6 +50,7 @@ function hire(seniorityDate: string, extra: { hireDate?: string; hours?: number 
       contractedHoursPerPeriod: extra.hours ?? 72,
       seniorityDate: isoDate(seniorityDate),
       ...(extra.hireDate ? { hireDate: isoDate(extra.hireDate) } : {}),
+      ...(extra.scheduleKind ? { scheduleKind: extra.scheduleKind } : {}),
       isChargeEligible: false,
       isNovice: false,
       isFloatEligible: true,
@@ -360,5 +364,59 @@ describe('a unit with no leave policy', () => {
       forfeitedHours: 0,
       check: { ok: true, remainingHours: 4 },
     });
+  });
+});
+
+describe('leave for a 72/80 nurse is charged 10 hours for each 9 of absence', () => {
+  it('debits 13.33 hours of a 120-hour balance for one 12-hour tour off', () => {
+    nurseId = hire('2020-01-01', { hours: 72, scheduleKind: 'va_72_80' });
+    api().setBalance(nurseId, 'annual', 120, isoDate('2026-10-01'));
+    const earlier = createTimeOffRequest(
+      f.handle.db,
+      {
+        nurseId,
+        startDate: isoDate('2026-10-05'),
+        endDate: isoDate('2026-10-05'),
+        type: 'annual',
+        paidHours: 12,
+      },
+      ACTOR,
+    );
+    approveTimeOff(f.handle.db, earlier.id, ACTOR);
+    const result = api().checkRequest(
+      nurseId,
+      'annual',
+      isoDate('2026-10-12'),
+      isoDate('2026-10-12'),
+      12,
+    );
+    // 120 − 12 × 10/9; the second tour is charged the same, leaving 106.67 − 13.33.
+    expect(result.balance).toMatchObject({ usedHours: 13.33, projectedHours: 106.67 });
+    expect(result.balance!.check).toMatchObject({ ok: true });
+    expect((result.balance!.check as { remainingHours: number }).remainingHours).toBeCloseTo(
+      93.33,
+      2,
+    );
+    // The stored request is still the 12 worked hours.
+    expect(earlier.paidHours).toBe(12);
+  });
+
+  it('counts a 72/80 nurse’s approved FMLA week as 36 worked hours, with no 10/9', () => {
+    nurseId = hire('2020-01-01', { hours: 72, scheduleKind: 'va_72_80' });
+    const earlier = createTimeOffRequest(
+      f.handle.db,
+      {
+        nurseId,
+        startDate: isoDate('2026-08-03'),
+        endDate: isoDate('2026-08-09'),
+        type: 'fmla',
+      },
+      ACTOR,
+    );
+    approveTimeOff(f.handle.db, earlier.id, ACTOR);
+    const { fmla } = check('fmla', 0);
+    // 7 days × 36/7 = 36 hours used, whatever the entitlement's regime.
+    expect(fmla!.remainingHours).toBeCloseTo(fmla!.entitlementHours - 36, 2);
+    expect(fmla!.requestHours).toBe(36);
   });
 });

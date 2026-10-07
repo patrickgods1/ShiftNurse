@@ -686,9 +686,12 @@ Art. 14). One PR per milestone; the documentation update that records them has n
 - [x] M37 Feasibility and publish safety: a CP-SAT run made infeasible by a locked shift falls
       back to SA + LNS and names the locked breaches, and the overtime alert is priced from the
       unit's own overtime rules (verified 2026-10-06: `npm run check` 2,724 passed; smoke PASS)
-- [ ] M38 The 72/80 and Baylor schedules (38 U.S.C. § 7456A and § 7456): six 12-hour shifts in 14
-      days paid as 80 hours, two 12-hour weekend shifts paid as 40, with their overtime and
-      leave-charging rules
+- [x] M38 The 72/80 and Baylor schedules (38 U.S.C. § 7456A and § 7456): `Nurse.scheduleKind`
+      (migration 0032), overtime rules scoped by kind and to tour days, the hard
+      `schedule-kind-tours` rule with its CP-SAT encoder, Baylor tours without § 7453 premiums
+      and exempt from weekend and holiday rotation, the 24-hour Baylor mandatory-overtime cap,
+      leave charged 10 for 9 on 72/80, the VA preset's per-plan rules and three plan nurses in
+      the VA demo (verified 2026-10-06: `npm run check` 2,815 passed; smoke PASS)
 
 ---
 

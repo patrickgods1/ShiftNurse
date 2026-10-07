@@ -135,6 +135,38 @@ describe('roster CSV import', () => {
     ]);
   });
 
+  it('reads a VA plan from schedule_kind, and a sheet without the column as standard', () => {
+    const plan = parseRosterCsv(
+      csv('E1,A,B,RN,full_time,1,72,2012-05-01,no,no,no,,,,,,va_baylor'),
+      { payPeriodDays: 14 },
+    );
+    expect(plan.errors).toEqual([]);
+    expect(plan.rows[0]!.nurse.scheduleKind).toBe('va_baylor');
+    const blank = parseRosterCsv(csv('E1,A,B,RN,full_time,1,80,2012-05-01,no,no,no,,,,,,'), {
+      payPeriodDays: 14,
+    });
+    expect(blank.rows[0]!.nurse.scheduleKind).toBeUndefined();
+    const legacy = parseRosterCsv(csv('E1,A,B,RN,full_time,1,80,2012-05-01,no,no,no,,,,'), {
+      payPeriodDays: 14,
+    });
+    expect(legacy.errors).toEqual([]);
+    expect(legacy.rows[0]!.nurse.scheduleKind).toBeUndefined();
+  });
+
+  it('rejects a schedule kind that is not one of the VA plans', () => {
+    const { errors } = parseRosterCsv(
+      csv('E1,A,B,RN,full_time,1,80,2012-05-01,no,no,no,,,,,,nine_eighty'),
+      { payPeriodDays: 14 },
+    );
+    expect(errors).toEqual([
+      {
+        line: 2,
+        column: 'schedule_kind',
+        message: 'Schedule kind "nine_eighty" is not one of standard, va_72_80, va_baylor',
+      },
+    ]);
+  });
+
   it('derives contracted hours from FTE when the column is blank: 0.6 FTE over 14 days = 48h', () => {
     const { rows, errors } = parseRosterCsv(
       csv('E1,A,B,RN,part_time,0.6,,2020-01-01,no,no,no,,,,'),
@@ -242,6 +274,7 @@ describe('roster CSV export', () => {
           contractedHoursPerPeriod: 80,
           seniorityDate: isoDate('2015-03-02'),
           hireDate: isoDate('2017-06-12'),
+          scheduleKind: 'va_72_80',
           isChargeEligible: true,
           isNovice: false,
           isFloatEligible: true,
@@ -276,6 +309,7 @@ describe('roster CSV export', () => {
     ];
     const text = formatRosterCsv(original);
     expect(text.split('\r\n')[0]).toBe(HEADER);
+    expect(text.split('\r\n')[1]).toMatch(/,va_72_80$/);
     const { rows, errors } = parseRosterCsv(text, { payPeriodDays: 14 });
     expect(errors).toEqual([]);
     expect(rows).toEqual(original);

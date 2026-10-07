@@ -93,7 +93,8 @@ export type ViolationCode =
   | 'hours_in_24_exceeded'
   | 'long_stretch'
   | 'rest_after_long_stretch'
-  | 'no_days_off_together';
+  | 'no_days_off_together'
+  | 'off_plan_tour';
 
 /**
  * One nurse worked one past holiday. Derived from published schedules, or recorded by hand for

@@ -42,6 +42,7 @@ import { type PaidLeaveCredit, type PaidSickCall, paidLeaveCredits } from './pai
 import { pendingTimeOffRule } from './pending-time-off.js';
 import { preceptorRule } from './preceptor.js';
 import { consecutiveShiftsRule, minRestRule } from './rest-rules.js';
+import { scheduleKindToursRule } from './schedule-kind-tours.js';
 import { tourRotationRule } from './tour-rotation.js';
 import type {
   EvaluationResult,
@@ -84,6 +85,7 @@ export const ALL_RULES: readonly Rule<never>[] = [
   daysOffTogetherRule,
   preceptorRule,
   tourRotationRule,
+  scheduleKindToursRule,
 ] as unknown as readonly Rule<never>[];
 
 const RULES_BY_ID = new Map<string, Rule<never>>(ALL_RULES.map((r) => [r.id, r]));

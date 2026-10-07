@@ -225,6 +225,13 @@
       "when": 1791330339784,
       "tag": "0031_weekends_off_per_year",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1791345727812,
+      "tag": "0032_schedule_kinds",
+      "breakpoints": true
     }
   ]
 }

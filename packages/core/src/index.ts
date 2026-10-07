@@ -35,7 +35,7 @@ export {
   timeOffImpact,
 } from './conflicts/index.js';
 // Pricing a schedule, marginal cost and budget comparison
-export { compareToBudget, costSchedule } from './cost/cost.js';
+export { compareToBudget, costSchedule, isBaylorTour } from './cost/cost.js';
 export type { DayOfPay, DayOfPayEvent, DayOfPayLine, DayOfPayPolicy } from './cost/events.js';
 // Pay for what happened on the day: missed breaks, reporting-time pay, call-backs
 export { priceDayOfEvents } from './cost/events.js';
@@ -116,6 +116,7 @@ export type {
   ScheduleChange,
   ScheduleChangeKind,
   ScheduleChangeSource,
+  ScheduleKind,
   SchedulePeriod,
   ScheduleVersion,
   ShiftCredentialRequirement,
@@ -132,6 +133,8 @@ export {
   EMPLOYMENT_TYPE_LABELS,
   EMPLOYMENT_TYPES,
   LEAVE_BALANCE_TYPES,
+  SCHEDULE_KIND_LABELS,
+  SCHEDULE_KINDS,
   TIME_OFF_TYPE_LABELS,
   TIME_OFF_TYPES,
   TOURS,
@@ -221,6 +224,7 @@ export type {
 } from './leave/bidding.js';
 // Seniority leave bidding: awards in seniority order, every denial reasoned
 export { awardBids, seniorityOrder } from './leave/bidding.js';
+export { leaveChargeHours } from './leave/charge.js';
 export type { FmlaEntitlementBasis, FmlaPeriod } from './leave/fmla.js';
 export {
   fmlaEligibility,

@@ -1,6 +1,6 @@
 /** Pay rates: per nurse or per role, each effective from a date. */
 
-import type { Id, IsoDate, Nurse, NurseRole, PayRate } from '@shiftnurse/core';
+import type { Id, IsoDate, Nurse, NurseRole, PayRate, ScheduleKind } from '@shiftnurse/core';
 import { NURSE_ROLES, today } from '@shiftnurse/core';
 import { useState } from 'react';
 import {
@@ -19,6 +19,12 @@ import { formatDollars } from '../../../money.js';
 function nurseName(nurse: Nurse): string {
   return `${nurse.lastName}, ${nurse.firstName}`;
 }
+
+// Why a worked-hours rate on these plans is not the payroll's salary ÷ 2,080.
+const DIVISOR_NOTE: Partial<Record<ScheduleKind, string>> = {
+  va_72_80: '72/80: hourly rate is annual salary ÷ 1,872 (38 U.S.C. § 7456A(b)(2))',
+  va_baylor: 'Baylor plan: annual salary ÷ 1,248 (38 U.S.C. § 7456(b))',
+};
 
 function describeScope(rate: PayRate, nursesById: ReadonlyMap<Id, Nurse>): string {
   if (rate.nurseId !== null) {
@@ -215,6 +221,9 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
                 >
                   <td className={TD}>
                     {history ? <span className="pl-4 text-xs">earlier rate</span> : scope}
+                    {!history && rate.nurseId !== null ? (
+                      <DivisorNote kind={nursesById.get(rate.nurseId)?.scheduleKind} />
+                    ) : null}
                     {rate.effectiveFrom > now ? (
                       <span className="ml-2 rounded-full bg-accent/15 px-1.5 py-0.5 text-xs text-accent">
                         upcoming
@@ -318,5 +327,12 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
         </table>
       </div>
     </section>
+  );
+}
+
+function DivisorNote({ kind }: { kind: ScheduleKind | undefined }) {
+  const note = kind === undefined ? undefined : DIVISOR_NOTE[kind];
+  return note === undefined ? null : (
+    <span className="mt-0.5 block text-xs text-text-muted">{note}</span>
   );
 }

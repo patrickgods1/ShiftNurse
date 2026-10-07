@@ -9,6 +9,7 @@ import {
   compareDates,
   daysBetween,
   isIsoDate,
+  leaveChargeHours,
   suggestedPaidLeaveHours,
   TIME_OFF_TYPE_LABELS,
   TIME_OFF_TYPES,
@@ -187,6 +188,12 @@ export function NewRequestDialog({
               ? 'Unpaid leave does not count toward contracted hours.'
               : 'The shifts this nurse would have worked. Counts toward contracted hours once approved.'}
           </span>
+          {nurse?.scheduleKind === 'va_72_80' && type !== 'unpaid' && Number(paidValue) > 0 && (
+            <span>
+              Charged as {leaveChargeHours(nurse.scheduleKind, Number(paidValue)).toFixed(2)} h of
+              leave: 10 hours for each 9 of absence (38 U.S.C. § 7456A(d))
+            </span>
+          )}
         </label>
         <LeaveStanding
           nurseId={nurseId || undefined}

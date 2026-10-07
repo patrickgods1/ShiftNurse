@@ -69,6 +69,16 @@
  *   multiplier adds `base × (multiplier − 1)` an hour and each overtime band's premium is
  *   `base × (multiplier − 1)`. So the straight rate is `base + Σflat + base × Σ(multiplier − 1)`
  *   (UC–CNA Art. 14 §N; Title 38 percentages of basic pay). Absent, `'compound'` as above.
+ * - **Overtime rules may be for one kind of nurse.** A rule with `scheduleKinds` prices only the
+ *   nurses of those kinds (`Nurse.scheduleKind`, absent `'standard'`), so a unit's 72/80 and
+ *   Baylor rules sit beside its standard ones (38 U.S.C. §§ 7456(c), 7456A(c)).
+ * - **A daily rule may judge only tour days, or only the others.** `tourDays: 'only'` counts the
+ *   workdays holding a shift scheduled for 12 hours, `'except'` the rest; a 72/80 nurse is over
+ *   past 12 on a tour day and past 8 on any other (§ 7456A(c)(1)).
+ * - **A Baylor tour earns no § 7453 premium.** A `va_baylor` nurse's scheduled 12 on Saturday,
+ *   Sunday or a Friday night (`isBaylorTour`) gets no night, evening, weekend or holiday pay on its
+ *   scheduled hours (§ 7456(d)); charge and agency still apply. Its holdover earns them, on the
+ *   base rate and out of the running rate, as partial clock differentials are.
  * - **A holdover is worked time on every basis.** It lengthens the shift's paid hours, so daily,
  *   weekly and pay-period overtime count it like any other hour.
  * - **On-call standby** is not worked time: it earns the `on_call` differential alone (a flat

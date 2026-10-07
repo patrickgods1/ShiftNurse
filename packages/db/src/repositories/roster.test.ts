@@ -169,6 +169,23 @@ describe('nurses', () => {
     expect(getNurse(handle.db, nurse.id)).not.toHaveProperty('permanentTour', expect.anything());
   });
 
+  it('keeps a nurse on the VA 72/80 plan, clears it with null, and refuses an unknown plan', () => {
+    const nurse = createNurse(handle.db, baseNurse({ scheduleKind: 'va_72_80' }), ACTOR);
+    expect(getNurse(handle.db, nurse.id)?.scheduleKind).toBe('va_72_80');
+
+    const cleared = updateNurse(handle.db, nurse.id, { scheduleKind: null }, ACTOR);
+    expect(cleared.scheduleKind).toBeUndefined();
+    expect(getNurse(handle.db, nurse.id)?.scheduleKind).toBeUndefined();
+
+    const message = 'Schedule kind "nine_eighty" is not one of standard, va_72_80, va_baylor';
+    expect(() =>
+      updateNurse(handle.db, nurse.id, { scheduleKind: 'nine_eighty' as never }, ACTOR),
+    ).toThrow(message);
+    expect(() =>
+      createNurse(handle.db, baseNurse({ scheduleKind: 'nine_eighty' as never }), ACTOR),
+    ).toThrow(message);
+  });
+
   it('keeps a three-twelve nurse’s scheduled days, and clears them with null', () => {
     const nurse = createNurse(handle.db, baseNurse({ scheduledDaysPerWeek: 3 }), ACTOR);
     expect(getNurse(handle.db, nurse.id)?.scheduledDaysPerWeek).toBe(3);

@@ -20,7 +20,7 @@
  */
 
 import { NURSE_ROLES, type ShiftDemand } from '../acuity/demand.js';
-import { costSchedule } from '../cost/cost.js';
+import { costSchedule, isBaylorPlan } from '../cost/cost.js';
 import type { CostContext } from '../cost/types.js';
 import type {
   Credential,
@@ -464,6 +464,8 @@ function weekendsOffPerYear(input: ComplianceInput): ComplianceAlert[] {
   const from = addDays(startDate, -364);
   const alerts: ComplianceAlert[] = [];
   for (const [nurseId, nurse] of schedule.nursesById) {
+    // A Baylor nurse (38 U.S.C. § 7456) works every weekend by contract; the promise is not theirs.
+    if (isBaylorPlan(nurse)) continue;
     let before = 0;
     for (const e of promise.ledger) {
       if (e.nurseId !== nurseId) continue;

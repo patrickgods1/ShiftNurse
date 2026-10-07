@@ -19,6 +19,7 @@ const nurseInput = object({
   hireDate: isoDate.optional(),
   permanentTour: tour.optional(),
   scheduledDaysPerWeek: z.number().int().min(1).max(7).optional(),
+  scheduleKind: z.enum(['standard', 'va_72_80', 'va_baylor']).optional(),
   isChargeEligible: z.boolean(),
   isNovice: z.boolean(),
   isFloatEligible: z.boolean(),
@@ -38,12 +39,14 @@ const nursePatch = nurseInput
     hireDate: true,
     permanentTour: true,
     scheduledDaysPerWeek: true,
+    scheduleKind: true,
   })
   .partial()
   .extend({
     hireDate: isoDate.nullable().optional(),
     permanentTour: tour.nullable().optional(),
     scheduledDaysPerWeek: z.number().int().min(1).max(7).nullable().optional(),
+    scheduleKind: z.enum(['standard', 'va_72_80', 'va_baylor']).nullable().optional(),
     phone: text.nullable().optional(),
     email: text.nullable().optional(),
     notes: text.nullable().optional(),

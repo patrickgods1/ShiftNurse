@@ -69,6 +69,11 @@ const overtimeRuleInput = object({
   active: z.boolean(),
   pyramiding: z.enum(['stack', 'none']).optional(),
   minimumMinutes: z.number().int().min(0).max(240).optional(),
+  scheduleKinds: z
+    .array(z.enum(['standard', 'va_72_80', 'va_baylor']))
+    .min(1)
+    .optional(),
+  tourDays: z.enum(['only', 'except']).optional(),
 });
 
 export const costSchemas = {
@@ -101,6 +106,12 @@ export const costSchemas = {
       .extend({
         pyramiding: z.enum(['stack', 'none']).nullable().optional(),
         minimumMinutes: z.number().int().min(0).max(240).nullable().optional(),
+        scheduleKinds: z
+          .array(z.enum(['standard', 'va_72_80', 'va_baylor']))
+          .min(1)
+          .nullable()
+          .optional(),
+        tourDays: z.enum(['only', 'except']).nullable().optional(),
       }),
   ]),
   deleteOvertimeRule: z.tuple([id]),

@@ -89,4 +89,49 @@ describe('overtime bases in Settings › Pay', () => {
       ]),
     );
   });
+
+  it('scopes a daily rule to Baylor nurses on tour days, and sends nothing for an unscoped one', async () => {
+    renderWithApp(<OvertimeSection unitId="u-1" />);
+    fireEvent.change(await screen.findByLabelText('Basis'), { target: { value: 'daily' } });
+    fireEvent.change(screen.getByLabelText('Tour days'), { target: { value: 'only' } });
+    fireEvent.click(screen.getByLabelText(/VA Baylor weekend plan/));
+    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+    await waitFor(() => expect(bridge.callsTo('cost', 'createOvertimeRule')).toHaveLength(1));
+    expect(bridge.callsTo('cost', 'createOvertimeRule')[0]![0]).toMatchObject({
+      basis: 'daily',
+      tourDays: 'only',
+      scheduleKinds: ['va_baylor'],
+    });
+  });
+
+  it('drops the tour-days choice when the basis moves away from daily', async () => {
+    renderWithApp(<OvertimeSection unitId="u-1" />);
+    const basis = await screen.findByLabelText('Basis');
+    fireEvent.change(basis, { target: { value: 'daily' } });
+    fireEvent.change(screen.getByLabelText('Tour days'), { target: { value: 'except' } });
+    fireEvent.change(basis, { target: { value: 'weekly' } });
+    expect(screen.queryByLabelText('Tour days')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+    await waitFor(() => expect(bridge.callsTo('cost', 'createOvertimeRule')).toHaveLength(1));
+    const sent = bridge.callsTo('cost', 'createOvertimeRule')[0]![0];
+    expect('tourDays' in sent).toBe(false);
+    expect('scheduleKinds' in sent).toBe(false);
+  });
+
+  it('shows the scope on the rule in the list', async () => {
+    bridge.respond('cost', 'overtimeRules', [
+      {
+        id: 'o1',
+        unitId: 'u-1',
+        basis: 'daily',
+        thresholdHours: 12,
+        multiplier: 1.5,
+        active: true,
+        scheduleKinds: ['va_72_80'],
+        tourDays: 'only',
+      },
+    ]);
+    renderWithApp(<OvertimeSection unitId="u-1" />);
+    expect(await screen.findByText(/72\/80 nurses, tour days/)).toBeTruthy();
+  });
 });

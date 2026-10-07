@@ -14,8 +14,13 @@
  *
  * A shift is dated by its start day, so a request covers a holiday exactly when the holiday's
  * date falls in its inclusive range.
+ *
+ * A nurse on the Baylor weekend plan (38 U.S.C. § 7456) has no holiday entitlement under VA Handbook
+ * 5011, so their request ranks behind every other claimant's, whatever their record or seniority —
+ * and says so, since the reason is what the manager quotes when denying it.
  */
 
+import { isBaylorPlan } from '../cost/cost.js';
 import type { Holiday, Id, Nurse, TimeOffRequest } from '../domain/entities.js';
 import { compareDates, dateInRange, type IsoDate } from '../domain/time.js';
 import { previousOccurrence } from '../rules/holiday-rotation.js';
@@ -80,6 +85,8 @@ export function holidayRequestPriority(input: HolidayPriorityInput): HolidayClai
       return { request, nurse, worked };
     });
     entries.sort((a, b) => {
+      const byPlan = Number(isBaylorPlan(a.nurse)) - Number(isBaylorPlan(b.nurse));
+      if (byPlan !== 0) return byPlan;
       const byWorked = Number(b.worked === true) - Number(a.worked === true);
       if (byWorked !== 0) return byWorked;
       const bySeniority = compareDates(a.nurse.seniorityDate, b.nurse.seniorityDate);
@@ -108,12 +115,16 @@ export function holidayRequestPriority(input: HolidayPriorityInput): HolidayClai
         nurseId: e.nurse.id,
         rank: i + 1,
         workedLastYear: e.worked,
-        reason: reasonFor(holiday.name, e.worked, e.nurse.seniorityDate),
+        reason: isBaylorPlan(e.nurse)
+          ? BAYLOR_REASON
+          : reasonFor(holiday.name, e.worked, e.nurse.seniorityDate),
       })),
     });
   }
   return claims;
 }
+
+const BAYLOR_REASON = 'On the Baylor weekend plan (38 U.S.C. § 7456): no holiday entitlement';
 
 function reasonFor(name: string, worked: boolean | null, seniority: IsoDate): string {
   if (worked === true) return `Worked ${name} last year; seniority ${seniority}`;

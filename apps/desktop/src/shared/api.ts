@@ -84,6 +84,7 @@ import type {
   ScheduleCost,
   ScheduleDiff,
   ScheduleDigest,
+  ScheduleKind,
   SchedulePeriod,
   ScheduleVersion,
   SetupPhase,
@@ -451,11 +452,13 @@ export type NursePatch = Partial<
     | 'hireDate'
     | 'permanentTour'
     | 'scheduledDaysPerWeek'
+    | 'scheduleKind'
   >
 > & {
   hireDate?: IsoDate | null;
   permanentTour?: Tour | null;
   scheduledDaysPerWeek?: number | null;
+  scheduleKind?: ScheduleKind | null;
   phone?: string | null;
   email?: string | null;
   notes?: string | null;
@@ -618,6 +621,8 @@ export type OvertimeRulePatch = Partial<
   /** `null` clears the setting back to its default. */
   pyramiding?: 'stack' | 'none' | null;
   minimumMinutes?: number | null;
+  scheduleKinds?: ScheduleKind[] | null;
+  tourDays?: 'only' | 'except' | null;
 };
 
 /** A period priced under its own rule-set snapshot, against its budget if one is set. */

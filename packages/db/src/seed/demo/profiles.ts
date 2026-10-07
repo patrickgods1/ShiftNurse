@@ -165,6 +165,20 @@ const FULL_80 = { employmentType: 'full_time', fte: 1, contractedHoursPerPeriod:
 const EIGHT_A_PAY_PERIOD = { shortShift: { code: 'D8', perPayPeriod: 1 } } as const;
 /** Four 12s a pay period. */
 const PART_48 = { employmentType: 'part_time', fte: 0.6, contractedHoursPerPeriod: 48 } as const;
+/** Six 12s a pay period, three a week: 72 worked hours, paid as 80. */
+const PLAN_72_80 = {
+  employmentType: 'full_time',
+  fte: 0.9,
+  contractedHoursPerPeriod: 72,
+  scheduleKind: 'va_72_80',
+} as const;
+/** Four weekend 12s a pay period: 24 worked hours a week, paid as 40. */
+const PLAN_BAYLOR = {
+  employmentType: 'full_time',
+  fte: 1,
+  contractedHoursPerPeriod: 48,
+  scheduleKind: 'va_baylor',
+} as const;
 /** VA "intermittent" staff: no fixed tour, no hours commitment, the per-diem equivalent. */
 const INTERMITTENT = { employmentType: 'per_diem', fte: 0, contractedHoursPerPeriod: 0 } as const;
 
@@ -177,7 +191,8 @@ const INTERMITTENT = { employmentType: 'per_diem', fte: 0, contractedHoursPerPer
  *   schedule — 80 hours in fewer than ten workdays, as 5 U.S.C. §6121 defines one — so overtime
  *   is counted over the pay period rather than the week: past 80 hours in the pay period, or any
  *   time worked beyond the scheduled tour (a holdover: an 8 held over is overtime from its 9th
- *   hour). Part-time staff work four 12s. The history holds three volunteered holdovers.
+ *   hour). Part-time staff work four 12s. The history holds four volunteered holdovers, one of
+ *   them on a 72/80 nurse's tour.
  * - **The 8 has its own floor and runs inside the day 12.** It works 07:00–15:00, adding hands
  *   for the morning's care and discharges, and is covered as a real ward covers it: by the day
  *   12's charge nurse and ACLS nurse, and a new grad on it works beside the day 12's
@@ -247,6 +262,15 @@ const vaRoster: DemoRosterRow[] = [
   { role: 'CNA', ...PART_48, position: 'D12', count: 1 },
   { role: 'CNA', ...PART_48, position: 'N12', count: 1 },
   { role: 'CNA', ...INTERMITTENT, position: 'flex', count: 2 },
+  // The VA's two nurse-level plans (38 U.S.C. § 7456A and § 7456), shown by three RNs. San
+  // Francisco ended its 72/80 plan in 2023 (the NFFE Local 1 picket), so the unit's full-time
+  // 6x12 + 8 = 80 stays as it is and these rows are the model on display, not a claim about
+  // this ward; other VAs still run both plans. A 72/80 nurse works six 12s in 14 days and is paid
+  // for 80; a Baylor nurse works two 12-hour weekend tours a week (24 worked hours, paid for 40,
+  // so 48 a pay period) and earns no night, weekend or holiday premium on them.
+  { role: 'RN', ...PLAN_72_80, position: 'D12', count: 1 },
+  { role: 'RN', ...PLAN_72_80, position: 'N12', count: 1 },
+  { role: 'RN', ...PLAN_BAYLOR, position: 'N12', count: 1 },
 ];
 
 export const VA_SF_MED_SURG: DemoProfile = {
@@ -415,6 +439,8 @@ export const VA_SF_MED_SURG: DemoProfile = {
     { shift: 'D8', minutes: 45 },
     { shift: 'D12', minutes: 90 },
     { shift: 'N12', minutes: 30 },
+    // On a 72/80 tour: an hour past the 12 is daily overtime, and the week stays at 36 hours.
+    { shift: 'D12', minutes: 60, scheduleKind: 'va_72_80' },
   ],
   keptApart: [
     {

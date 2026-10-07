@@ -5,13 +5,14 @@
  * are the model's own (`SolverModel.holidayFacts`), so the two agree on who is owed what.
  */
 
-import { workedInHistory } from '../../../rules/holiday-rotation.js';
+import { inHolidayRotation, workedInHistory } from '../../../rules/holiday-rotation.js';
 import { describe, type EncodeContext, forbidPair } from '../context.js';
 
 export function encodeHolidayRotation(ctx: EncodeContext): void {
   const facts = ctx.model.holidayFacts;
   for (const [n, vars] of ctx.byNurse.entries()) {
-    if (vars.length === 0) continue;
+    // A Baylor nurse is owed nothing, so the pairs do not bind them either.
+    if (vars.length === 0 || !inHolidayRotation(ctx.model.nurses[n]!)) continue;
     const worked = ctx.timeline(n).filter((e) => !e.shiftType.isOnCall);
     const owed = facts.owedOff.get(ctx.model.nurses[n]!.id);
     for (const e of worked) {

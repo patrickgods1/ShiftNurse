@@ -42,6 +42,7 @@ import type {
   RequestOrigin,
   ScheduleChangeKind,
   ScheduleChangeSource,
+  ScheduleKind,
   SetupMode,
   SetupState,
   SetupStepId,
@@ -157,6 +158,8 @@ export const nurse = sqliteTable(
     permanentTour: text('permanent_tour').$type<Tour>(),
     // Regular workdays a week, read by 'beyond_scheduled_days' overtime; null means not set.
     scheduledDaysPerWeek: integer('scheduled_days_per_week'),
+    // Null is a standard nurse; the VA's nurse-level plans (core's ScheduleKind).
+    scheduleKind: text('schedule_kind').$type<ScheduleKind>(),
     isChargeEligible: bool('is_charge_eligible').notNull().default(false),
     isNovice: bool('is_novice').notNull().default(false),
     isFloatEligible: bool('is_float_eligible').notNull().default(true),
@@ -1042,6 +1045,9 @@ export const overtimeRule = sqliteTable('overtime_rule', {
   // Null means 'stack' / no minimum, as core reads an absent field.
   pyramiding: text('pyramiding').$type<'stack' | 'none'>(),
   minimumMinutes: integer('minimum_minutes'),
+  // Null means every nurse / every workday, as core reads an absent field.
+  scheduleKinds: text('schedule_kinds', { mode: 'json' }).$type<ScheduleKind[]>(),
+  tourDays: text('tour_days').$type<'only' | 'except'>(),
 });
 
 export const budget = sqliteTable(

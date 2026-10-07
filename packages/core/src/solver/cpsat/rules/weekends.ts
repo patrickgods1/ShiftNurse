@@ -16,7 +16,11 @@
 import type { IsoDate } from '../../../domain/time.js';
 import { addDays, compareDates, weekendKey } from '../../../domain/time.js';
 import { asParams } from '../../../rules/registry.js';
-import { type WeekendPatternParams, weekendPatternRule } from '../../../rules/weekend-pattern.js';
+import {
+  judgesWeekends,
+  type WeekendPatternParams,
+  weekendPatternRule,
+} from '../../../rules/weekend-pattern.js';
 import { type Expr, expr, scale, sum } from '../builder.js';
 import type { EncodeContext, TimelineEntry } from '../context.js';
 
@@ -125,12 +129,12 @@ export function weekendBreachExprs(
 
 /**
  * Hard: no run past the limit, no more weekends in the schedule than allowed, and none past the
- * limit in any four weeks.
+ * limit in any four weeks. A Baylor nurse is not judged (`judgesWeekends`).
  */
 export function encodeWeekendPattern(ctx: EncodeContext, raw: Record<string, unknown>): void {
   const params = asParams(weekendPatternRule, raw);
   for (let n = 0; n < ctx.model.nurses.length; n++) {
-    if ((ctx.byNurse[n] ?? []).length === 0) continue;
+    if ((ctx.byNurse[n] ?? []).length === 0 || !judgesWeekends(ctx.model.nurses[n]!)) continue;
     const { runs, excess, windows } = weekendBreachExprs(nurseWeekendExprs(ctx, n), params);
     for (const { weekend, over } of runs) {
       ctx.b.atMost(over, 0, `weekends in a row: ${ctx.name(n)} to ${weekend}`);

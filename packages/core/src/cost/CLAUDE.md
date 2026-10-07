@@ -54,3 +54,13 @@
   below it, only the in-window hours earn it, priced on the base rate and kept out of the running
   rate — 38 U.S.C. §7453 makes night pay and overtime percentages of basic pay, so they never
   stack. An `evening` differential with no window applies to nothing.
+- **Overtime rules are scoped by schedule kind.** `OvertimeRule.scheduleKinds` (absent: every
+  nurse) is filtered in `attributeOvertime` by `Nurse.scheduleKind ?? 'standard'`, so a VA unit's
+  72/80 and Baylor rules sit beside the standard 40-hour week rather than replacing it.
+- **A daily rule can judge tour days only, or the other days.** `tourDays` (`tourDayTest`): a tour
+  day is a date with a worked shift whose `scheduledHours` is 12, lookback included, holdover never
+  making one (38 U.S.C. § 7456A(c)(1): past 12 on a tour day, past 8 otherwise). Other bases ignore it.
+- **A Baylor tour earns no night, evening, weekend or holiday pay.** `isBaylorTour` (exported; the
+  tour-plan rule imports it) and § 7456(d): those differentials are withheld from the tour's
+  scheduled hours in `priceView`; charge and agency still apply. A holdover earns them on its own
+  hours, on base and out of `running`; overtime bands are unchanged.

@@ -3,7 +3,8 @@
  * costing prices against.
  */
 
-import type { Id, OvertimeRule } from '@shiftnurse/core';
+import type { Id, OvertimeRule, ScheduleKind } from '@shiftnurse/core';
+import { SCHEDULE_KIND_LABELS, SCHEDULE_KINDS } from '@shiftnurse/core';
 import { useState } from 'react';
 import {
   useCreateOvertimeRule,
@@ -34,6 +35,12 @@ const THRESHOLD_HINT: Partial<Record<OvertimeRule['basis'], string>> = {
     'Hours on an extra workday before the premium (Wage Order 5 § 3(B)(8): 8). Set Scheduled days per week on the roster for each nurse.',
 };
 
+const KIND_SCOPE: Record<ScheduleKind, string> = {
+  standard: 'standard nurses',
+  va_72_80: '72/80 nurses',
+  va_baylor: 'Baylor nurses',
+};
+
 function describeRule(rule: OvertimeRule): string {
   const base =
     rule.thresholdHours === 0
@@ -42,6 +49,10 @@ function describeRule(rule: OvertimeRule): string {
   const notes = [
     rule.pyramiding === 'none' ? ', daily overtime not counted' : '',
     rule.minimumMinutes ? `, under ${rule.minimumMinutes} min unpaid` : '',
+    rule.scheduleKinds?.length
+      ? `, ${rule.scheduleKinds.map((k) => KIND_SCOPE[k]).join(' and ')}`
+      : '',
+    rule.tourDays === 'only' ? ', tour days' : rule.tourDays === 'except' ? ', non-tour days' : '',
   ];
   return base + notes.join('');
 }
@@ -58,6 +69,8 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
   const [multiplier, setMultiplier] = useState('1.5');
   const [minimumMinutes, setMinimumMinutes] = useState('');
   const [noPyramiding, setNoPyramiding] = useState(false);
+  const [kinds, setKinds] = useState<ReadonlySet<ScheduleKind>>(new Set());
+  const [tourDays, setTourDays] = useState<'' | 'only' | 'except'>('');
   const [error, setError] = useState<string | undefined>(undefined);
 
   if (query.isPending) return <AsyncState status="loading" label="Loading overtime rules" />;
@@ -107,6 +120,11 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
               ...(noPyramiding && (basis === 'weekly' || basis === 'pay_period')
                 ? { pyramiding: 'none' as const }
                 : {}),
+              ...(kinds.size > 0
+                ? { scheduleKinds: SCHEDULE_KINDS.filter((k) => kinds.has(k)) }
+                : {}),
+              // The repository refuses tour days on a non-daily rule, so a stale pick is dropped.
+              ...(basis === 'daily' && tourDays !== '' ? { tourDays } : {}),
             },
             { onError: (e) => setError(e.message) },
           );
@@ -184,6 +202,51 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
             Don't count daily overtime toward this threshold
           </label>
         ) : null}
+        {basis === 'daily' ? (
+          <Field
+            id="overtime-tour-days"
+            label="Tour days"
+            hint="72/80 pays overtime past 12 hours on a tour day and past 8 on any other day worked (§ 7456A(c)(1))."
+          >
+            <select
+              id="overtime-tour-days"
+              aria-describedby={describedBy('overtime-tour-days', { hint: true })}
+              value={tourDays}
+              onChange={(event) => setTourDays(event.target.value as '' | 'only' | 'except')}
+              className={INPUT}
+            >
+              <option value="">Every workday</option>
+              <option value="only">Tour days only (a day with a 12-hour tour)</option>
+              <option value="except">Non-tour days only</option>
+            </select>
+          </Field>
+        ) : null}
+        <fieldset className="flex flex-col gap-1">
+          <legend className="text-sm font-medium text-text">Applies to</legend>
+          <div className="flex gap-3">
+            {SCHEDULE_KINDS.map((kind) => (
+              <label key={kind} className="flex items-center gap-1 text-xs text-text">
+                <input
+                  type="checkbox"
+                  checked={kinds.has(kind)}
+                  onChange={(event) =>
+                    setKinds((prev) => {
+                      const next = new Set(prev);
+                      if (event.target.checked) next.add(kind);
+                      else next.delete(kind);
+                      return next;
+                    })
+                  }
+                />
+                {SCHEDULE_KIND_LABELS[kind]}
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-text-muted">
+            Leave all unchecked for every nurse. A VA unit with 72/80 or Baylor nurses scopes their
+            overtime bases to them (38 U.S.C. § 7456A(c), § 7456(c)).
+          </p>
+        </fieldset>
         <button type="submit" className={PRIMARY} disabled={create.isPending}>
           Add rule
         </button>
