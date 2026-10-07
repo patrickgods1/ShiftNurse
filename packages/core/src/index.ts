@@ -146,6 +146,7 @@ export {
   datesInRange,
   dayNumber,
   daysBetween,
+  describeDate,
   formatTimeOfDay,
   hoursToMinutes,
   isIsoDate,
@@ -325,6 +326,8 @@ export type {
   RuleSeverity,
   Violation,
 } from './rules/types.js';
+// A nurse's name as rule messages and solver reasons print it
+export { nurseName } from './rules/types.js';
 // Which dated shift covers which
 export { containingDate, coveringShift, withinShiftProblem } from './schedule/cover.js';
 export type { BusyElsewhere } from './schedule/elsewhere.js';
@@ -376,9 +379,11 @@ export {
 } from './setup/index.js';
 // CP-SAT preparation and finishing (pure halves)
 export {
+  CpsatInfeasibleError,
   DEFAULT_DETERMINISTIC_TIME,
   decisionsFor,
   finishCpsat,
+  lockedHardViolations,
   prepareCpsat,
   SEARCH_WORKERS,
 } from './solver/cpsat/index.js';

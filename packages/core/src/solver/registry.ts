@@ -11,6 +11,11 @@
  * is pure TypeScript and is always available, so resolution only fails if the caller claims
  * nothing at all can run.
  *
+ * The same holds when CP-SAT runs but finds the model INFEASIBLE. That can only be the locked
+ * shifts — a correct encoding is satisfiable with every variable off, but a lock is a constant —
+ * so the desktop's `solveCpsat` catches `CpsatInfeasibleError`, runs SA + LNS (which schedules
+ * around a lock that already breaks a rule) and names the breaching locks in `fellBackFrom`.
+ *
  * Only the pure backends are registered here. The OR-Tools ones talk to a subprocess, which
  * core may not do; the desktop main process registers them next to the runner.
  */

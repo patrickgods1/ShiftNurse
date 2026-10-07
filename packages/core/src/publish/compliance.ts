@@ -10,11 +10,18 @@
  * turns a compliant night into a ratio breach. None of these should stop a publish — that is
  * the manager's call — but a publish without seeing them is how a unit finds out on the day.
  *
+ * The `overtime` alert has two paths. Given the unit's pricing (`ComplianceInput.cost`) with an
+ * active overtime rule, it reports what payroll will pay: `costSchedule` attributes overtime per
+ * shift under every basis (daily, seventh day, past the scheduled tour, consecutive hours), which
+ * a weekly or pay-period threshold alone never sees. Without one, it falls back to that threshold.
+ *
  * Pure over a `ScheduleView` and plain rows so the same pass runs in the publish dialog, the
  * PDF cover sheet and, later, a nightly server job.
  */
 
 import { NURSE_ROLES, type ShiftDemand } from '../acuity/demand.js';
+import { costSchedule } from '../cost/cost.js';
+import type { CostContext } from '../cost/types.js';
 import type {
   Credential,
   FairnessLedgerEntry,
@@ -66,8 +73,10 @@ export interface ComplianceAlert {
   assignmentIds: Id[];
   /** `hours_drift`: scheduled hours; `overtime`: hours in the week or pay period. */
   hours?: number;
-  /** `hours_drift`: contracted hours; `overtime`: the threshold. */
+  /** `hours_drift`: contracted hours; `overtime`: the threshold (unset on a priced alert). */
   expectedHours?: number;
+  /** `overtime` priced under the unit's overtime rules: the hours payroll will pay as overtime. */
+  overtimeHours?: number;
 }
 
 export interface ComplianceInput {
@@ -78,6 +87,12 @@ export interface ComplianceInput {
   /** Weekly hours past which the week is overtime, from the max-hours rule params. */
   overtimeThresholdHours: number;
   workWeekStartsOn: Weekday;
+  /**
+   * The unit's pricing. With at least one active overtime rule of multiplier above 1, `overtime`
+   * alerts come from `costSchedule` (daily, seventh-day, consecutive and other bases included)
+   * instead of the threshold above; the two never both run, or a weekly 40 rule would alert twice.
+   */
+  cost?: CostContext;
   /**
    * Present when the max-hours rule judges overtime over the pay period: its threshold, and the
    * unit's pay-period anchor. Overtime is then counted per pay period instead of per week.
@@ -209,7 +224,53 @@ function hoursDrift(input: ComplianceInput): ComplianceAlert[] {
   return alerts;
 }
 
+const oneDecimal = (n: number) => Math.round(n * 10) / 10;
+
+function pricedOvertime(input: ComplianceInput, cost: CostContext): ComplianceAlert[] {
+  const { schedule } = input;
+  const byPayPeriod = input.payPeriodOvertime;
+  const period = { start: schedule.period.startDate, end: schedule.period.endDate };
+  const windows = byPayPeriod
+    ? payPeriodsIn(
+        period,
+        // The windows must be the ones `costSchedule` priced over, and that is the cost unit's.
+        { payPeriodAnchor: byPayPeriod.payPeriodAnchor, payPeriodDays: cost.unit.payPeriodDays },
+        false,
+      )
+    : workWeeksIn(period, input.workWeekStartsOn);
+  const span = byPayPeriod ? 'the pay period from' : 'the week of';
+  const costs = costSchedule(schedule, cost).assignments;
+  const alerts: ComplianceAlert[] = [];
+  for (const [nurseId, nurse] of schedule.nursesById) {
+    if (!nurse.active) continue;
+    const mine = costs.filter((c) => c.nurseId === nurseId);
+    for (const window of windows) {
+      const inWindow = mine.filter(
+        (c) => compareDates(c.date, window.start) >= 0 && compareDates(c.date, window.end) <= 0,
+      );
+      const withOvertime = inWindow.filter((c) => c.overtimeHours > 0);
+      if (withOvertime.length === 0) continue;
+      const overtimeHours = oneDecimal(inWindow.reduce((n, c) => n + c.overtimeHours, 0));
+      const hours = oneDecimal(inWindow.reduce((n, c) => n + c.hours, 0));
+      alerts.push({
+        kind: 'overtime',
+        severity: 'warning',
+        nurseId,
+        date: window.start,
+        hours,
+        overtimeHours,
+        assignmentIds: withOvertime.map((c) => c.assignmentId),
+        message: `${nurseName(nurse)} has ${overtimeHours}h overtime in ${span} ${describeDate(window.start)} (${hours}h), priced under the unit's overtime rules`,
+      });
+    }
+  }
+  return alerts;
+}
+
 function overtime(input: ComplianceInput): ComplianceAlert[] {
+  if (input.cost?.overtimeRules.some((r) => r.active && r.multiplier > 1)) {
+    return pricedOvertime(input, input.cost);
+  }
   const { schedule } = input;
   const alerts: ComplianceAlert[] = [];
   const window = { start: schedule.period.startDate, end: schedule.period.endDate };

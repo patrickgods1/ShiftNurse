@@ -439,7 +439,12 @@ function priceView(
       baseRate: 0,
       rateSource: 'none',
       straightRate: 0,
-      overtimeHours: 0,
+      // Attribution is a fact about the hours, not the money: the publish alert needs it for a
+      // nurse whose rate has not been entered yet.
+      overtimeHours: (overtime ?? []).reduce(
+        (n, b) => (b.hours > 0 && b.multiplier > 1 ? n + b.hours : n),
+        0,
+      ),
       lines: [],
       total: 0,
     };

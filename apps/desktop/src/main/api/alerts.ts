@@ -26,6 +26,7 @@ import {
   today,
 } from '@shiftnurse/core';
 import {
+  costContext,
   type DbLike,
   demandInputs,
   holidayWorkFor,
@@ -115,6 +116,7 @@ export function alertsForView(
     paidLeaveCountsTowardHours: fte.paidLeaveCountsTowardHours,
     paidLeaveCountsTowardOvertime: params.paidLeaveCountsTowardOvertime,
     schedule,
+    cost: costContext(db, period.unitId, ruleSet, period),
     credentials: listCredentials(db),
     nurseCredentials: listNurseCredentialsForUnit(db, period.unitId),
     demand: deriveDemand(

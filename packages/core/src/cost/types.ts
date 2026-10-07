@@ -201,6 +201,7 @@ export interface AssignmentCost {
    * `base + Σflat + base × Σ(multiplier − 1)`.
    */
   straightRate: number;
+  /** Attributed even when the assignment is unpriced (`rateSource: 'none'`); only the dollars are 0. */
   overtimeHours: number;
   lines: CostLine[];
   total: number;

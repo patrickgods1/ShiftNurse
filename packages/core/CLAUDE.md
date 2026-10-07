@@ -276,6 +276,11 @@
   only the overtime tier of `findReplacements`: volunteers longest since their last overtime
   (`lastOvertimeOn`, from `lastOvertimeDates`), then seniority; then the mandated roster most junior
   first (VA–NNU Art. 14). Absent or `'cost'` keeps volunteers, cost, burden, recency.
+- **The `overtime` alert says what payroll will say.** `ComplianceInput.cost` (a `CostContext`) with an
+  active overtime rule above 1× makes `complianceAlerts` price the schedule with `costSchedule` and alert
+  per nurse per work week (or pay period) holding overtime hours, daily, seventh-day, consecutive and
+  beyond-tour bases included, with `overtimeHours` set and no `expectedHours`; without one the old
+  max-hours threshold runs. Never both. Overtime hours are attributed for an unpriced nurse too.
 - **A per-diem commitment is an alert, not a rule.** `complianceAlerts`' `per_diem_commitment`:
   weekend shifts per four weeks scaled up to the period (`ceil`), and holidays per calendar year
   judged only by the period holding the year's last holiday, counting earlier ones from history.
