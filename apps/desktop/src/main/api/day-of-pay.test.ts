@@ -94,6 +94,7 @@ describe('the cost report’s day-of pay', () => {
     costApi(f.handle.db).savePaySettings(f.seeded.unitId, {
       callBackMinimumHours: 4,
       premiumStacking: 'compound',
+      holidayPayCoversOvertime: false,
     });
     record({
       kind: 'call_back',
@@ -108,6 +109,7 @@ describe('the cost report’s day-of pay', () => {
     expect(costApi(f.handle.db).paySettings(f.seeded.unitId)).toEqual({
       callBackMinimumHours: 4,
       premiumStacking: 'compound',
+      holidayPayCoversOvertime: false,
     });
   });
 

@@ -1180,6 +1180,9 @@ export const paySettings = sqliteTable('pay_settings', {
   callBackMinimumHours: real('call_back_minimum_hours').notNull().default(0),
   // Null means compound, the FLSA regular rate.
   premiumStacking: text('premium_stacking').$type<'compound' | 'additive'>(),
+  // Null means false: overtime worked on a holiday earns both premiums, as under the FLSA regular
+  // rate. 38 U.S.C. § 7453(g) pays holiday pay in place of overtime, so a VA unit sets it true.
+  holidayPayCoversOvertime: integer('holiday_pay_covers_overtime', { mode: 'boolean' }),
   updatedAt: timestamp('updated_at').notNull(),
 });
 

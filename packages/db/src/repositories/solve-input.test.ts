@@ -202,7 +202,7 @@ describe('the pay a period is costed under', () => {
     savePaySettings(
       handle.db,
       unitId,
-      { callBackMinimumHours: 0, premiumStacking: 'additive' },
+      { callBackMinimumHours: 0, premiumStacking: 'additive', holidayPayCoversOvertime: false },
       ACTOR,
     );
     expect(costContext(handle.db, unitId, ruleSet).premiumStacking).toBe('additive');

@@ -712,12 +712,30 @@ function priceView(
   }
   const straightRate = running;
 
+  // 38 U.S.C. § 7453(g): "no overtime pay … shall be payable for overtime service performed on a
+  // holiday … in addition to pay received under subsection (d) for such service". So coverage
+  // follows the hours actually paid under (d): every hour of a shift with a holiday line, but on a
+  // Baylor tour only the held hours at its end (§ 7456(d) pays the tour itself none), whose earlier
+  // overtime keeps its premium. Covered hours still count, so the alert and the ledger see them.
+  const holidayPaid =
+    ctx.holidayPayCoversOvertime === true &&
+    earned.some((d) => d.kind === 'holiday' || d.kind === 'major_holiday');
+  const coveredFrom = !holidayPaid
+    ? Number.POSITIVE_INFINITY
+    : baylorTour
+      ? view.scheduledHours
+      : 0;
+  const bands = (overtime ?? []).filter((b) => b.hours > 0);
+  // Bands are contiguous, in worked order, and end at the shift's last paid hour.
+  let at = hours - bands.reduce((n, b) => n + b.hours, 0);
   let overtimeHours = 0;
-  for (const band of overtime ?? []) {
-    if (band.hours <= 0) continue;
+  for (const band of bands) {
     overtimeHours += band.hours;
+    const premiumHours = Math.max(0, Math.min(band.hours, coveredFrom - at));
+    at += band.hours;
+    if (premiumHours <= 0) continue;
     const rate = (additive ? base : straightRate) * (band.multiplier - 1);
-    lines.push({ kind: 'overtime', hours: band.hours, rate, amount: band.hours * rate });
+    lines.push({ kind: 'overtime', hours: premiumHours, rate, amount: premiumHours * rate });
   }
 
   return {

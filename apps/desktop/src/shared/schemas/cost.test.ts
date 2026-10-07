@@ -168,15 +168,19 @@ describe('pay settings arriving over IPC', () => {
     ).toBe(true);
   });
 
-  it('needs the premium stacking whenever pay settings are saved', () => {
+  it('needs the premium stacking and the holiday-pay choice whenever pay settings are saved', () => {
     const save = costSchemas.savePaySettings;
+    const full = {
+      callBackMinimumHours: 2,
+      premiumStacking: 'additive',
+      holidayPayCoversOvertime: true,
+    };
     expect(save.safeParse(['u-1', { callBackMinimumHours: 2 }]).success).toBe(false);
+    expect(save.safeParse(['u-1', full]).success).toBe(true);
     expect(
       save.safeParse(['u-1', { callBackMinimumHours: 2, premiumStacking: 'additive' }]).success,
-    ).toBe(true);
-    expect(
-      save.safeParse(['u-1', { callBackMinimumHours: 2, premiumStacking: 'stacked' }]).success,
     ).toBe(false);
+    expect(save.safeParse(['u-1', { ...full, premiumStacking: 'stacked' }]).success).toBe(false);
   });
 
   it('accepts a budget of zero and refuses a negative one', () => {

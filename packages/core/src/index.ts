@@ -46,9 +46,9 @@ export type { DayOfPay, DayOfPayEvent, DayOfPayLine, DayOfPayPolicy } from './co
 export { priceDayOfEvents } from './cost/events.js';
 // The pay rate in force for a nurse on a date
 export { resolvePayRate } from './cost/rates.js';
-export type { BudgetVariance, CostContext, ScheduleCost } from './cost/types.js';
+export type { BudgetVariance, CostContext, PaySettings, ScheduleCost } from './cost/types.js';
 // Pay model contract types
-export { COST_LINE_LABELS, DIFFERENTIAL_ORDER } from './cost/types.js';
+export { COST_LINE_LABELS, DEFAULT_PAY_SETTINGS, DIFFERENTIAL_ORDER } from './cost/types.js';
 export type {
   CancellationHistory,
   CancellationInput,

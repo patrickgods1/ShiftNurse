@@ -1412,6 +1412,226 @@ describe('premiums that add rather than compound', () => {
   });
 });
 
+describe('a VA nurse working a holiday, under 38 U.S.C. § 7453', () => {
+  // § 7453(d): holiday service, overtime included, is paid basic pay plus an equal amount.
+  // § 7453(g): no overtime pay "for overtime service performed on a holiday … in addition to" that.
+  // $50 basic pay; 2026-01-05 is a Monday, 2026-01-10 a Saturday.
+  const BEYOND_TOUR = overtimeRule('beyond_scheduled_tour', 0, 1.5);
+
+  function heldOverDayTour(holiday: boolean, covers: boolean | undefined) {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, DAY_12, '2026-01-05', { holdoverMinutes: 60 })],
+    });
+    return costSchedule(
+      s.schedule,
+      ctx({
+        payRates: [payRate(50)],
+        differentials: [differential('holiday', 'multiplier', 2)],
+        overtimeRules: [BEYOND_TOUR],
+        holidayDates: holiday ? new Set([isoDate('2026-01-05')]) : new Set(),
+        premiumStacking: 'additive',
+        ...(covers === undefined ? {} : { holidayPayCoversOvertime: covers }),
+      }),
+    ).assignments[0]!;
+  }
+
+  it('pays the hour held past a holiday tour at double time and no overtime on top', () => {
+    // 13 hours × ($50 + $50 holiday) = $1,300; the held hour is still overtime for the alert.
+    const cost = heldOverDayTour(true, true);
+    expect(cost.total).toBe(1300);
+    expect(cost.overtimeHours).toBe(1);
+    expect(cost.lines.some((l) => l.kind === 'overtime')).toBe(false);
+  });
+
+  it('adds half the base on the held hour when the unit pays overtime on holidays too', () => {
+    // $1,300 plus 1 hour × $50 × 0.5 = $1,325.
+    const cost = heldOverDayTour(true, undefined);
+    expect(cost.total).toBe(1325);
+    expect(cost.lines.find((l) => l.kind === 'overtime')).toEqual({
+      kind: 'overtime',
+      hours: 1,
+      rate: 25,
+      amount: 25,
+    });
+  });
+
+  it('pays no overtime on top of major-holiday pay for the hour held past the tour', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, DAY_12, '2026-01-05', { holdoverMinutes: 60 })],
+    });
+    const cost = costSchedule(
+      s.schedule,
+      ctx({
+        payRates: [payRate(50)],
+        differentials: [differential('major_holiday', 'multiplier', 2)],
+        overtimeRules: [BEYOND_TOUR],
+        holidayDates: new Set([isoDate('2026-01-05')]),
+        majorHolidayDates: new Set([isoDate('2026-01-05')]),
+        premiumStacking: 'additive',
+        holidayPayCoversOvertime: true,
+      }),
+    ).assignments[0]!;
+    // 13 hours × ($50 + $50 major-holiday premium) = $1,300, nothing more.
+    expect(cost.total).toBe(1300);
+    expect(cost.overtimeHours).toBe(1);
+    expect(cost.lines.some((l) => l.kind === 'overtime')).toBe(false);
+  });
+
+  it('pays a Baylor nurse held past a holiday Sunday tour holiday pay on the held hour and no overtime on top', () => {
+    // § 7456(d): the scheduled Baylor tour earns no § 7453 premium; the held hour is outside the
+    // tour, so it earns holiday and weekend pay, and § 7453(g) bars overtime pay on top.
+    // Saturday 12 + Sunday 12 held 1 hour = 25 weekend hours: 1 past the Baylor 24.
+    const nurse = makeNurse({ scheduleKind: 'va_baylor' });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-10'),
+        assign(nurse.id, DAY_12, '2026-01-11', { holdoverMinutes: 60 }),
+      ],
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({
+        payRates: [payRate(50)],
+        differentials: [
+          differential('weekend', 'multiplier', 1.25),
+          differential('holiday', 'multiplier', 2),
+        ],
+        overtimeRules: [
+          overtimeRule('weekend', 24, 1.5, { pyramiding: 'none', scheduleKinds: ['va_baylor'] }),
+        ],
+        holidayDates: new Set([isoDate('2026-01-11')]),
+        premiumStacking: 'additive',
+        holidayPayCoversOvertime: true,
+      }),
+    );
+    const sunday = report.assignments[1]!;
+    // 12 scheduled hours × $50 = $600, plus the held hour at $50 + $50 + $12.50 = $112.50.
+    expect(sunday.total).toBe(712.5);
+    expect(sunday.overtimeHours).toBe(1);
+    expect(sunday.lines.some((l) => l.kind === 'overtime')).toBe(false);
+  });
+
+  /**
+   * A Baylor weekend after a Friday-night pickup: Friday 19:00–07:00 (`isOvertime`, so no tour)
+   * puts 7 hours into the weekend, Saturday's 12 makes 19, and Sunday — a holiday — is the tour
+   * that passes 24. Only the Sunday is returned.
+   */
+  function baylorHolidaySunday(sundayHoldoverMinutes: number) {
+    const nurse = makeNurse({ scheduleKind: 'va_baylor' });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, NIGHT_12, '2026-01-09', { isOvertime: true }),
+        assign(nurse.id, DAY_12, '2026-01-10'),
+        assign(nurse.id, DAY_12, '2026-01-11', { holdoverMinutes: sundayHoldoverMinutes }),
+      ],
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({
+        payRates: [payRate(50)],
+        differentials: [
+          differential('weekend', 'multiplier', 1.25),
+          differential('holiday', 'multiplier', 2),
+        ],
+        overtimeRules: [
+          overtimeRule('weekend', 24, 1.5, { pyramiding: 'none', scheduleKinds: ['va_baylor'] }),
+        ],
+        holidayDates: new Set([isoDate('2026-01-11')]),
+        weekendDefinition: {
+          startWeekday: 6,
+          startMinute: 0,
+          durationMinutes: 2 * 24 * 60,
+          mode: 'overlaps',
+        },
+        premiumStacking: 'additive',
+        holidayPayCoversOvertime: true,
+      }),
+    );
+    return report.assignments.find((a) => a.date === '2026-01-11')!;
+  }
+
+  it('pays a Baylor nurse overtime on a holiday Sunday tour that earned no holiday pay', () => {
+    // § 7456(d): the tour earns no holiday or weekend pay, so § 7453(g) has nothing to withhold
+    // overtime "in addition to". 19 weekend hours before Sunday, so its last 7 are past 24:
+    // 12 × $50 = $600, plus 7 × $25 = $175, total $775.
+    const sunday = baylorHolidaySunday(0);
+    expect(sunday.overtimeHours).toBe(7);
+    expect(sunday.lines.filter((l) => l.kind === 'overtime')).toEqual([
+      { kind: 'overtime', hours: 7, rate: 25, amount: 175 },
+    ]);
+    expect(sunday.total).toBe(775);
+  });
+
+  it('withholds overtime pay only on the held hour a Baylor nurse is paid holiday pay for', () => {
+    // 8 overtime hours: the tour's last 7 keep their $25 premium ($175); the held hour is paid
+    // $50 + $50 holiday + $12.50 weekend and no overtime on top. $600 + $175 + $112.50 = $887.50.
+    const sunday = baylorHolidaySunday(60);
+    expect(sunday.overtimeHours).toBe(8);
+    expect(sunday.lines.filter((l) => l.kind === 'overtime')).toEqual([
+      { kind: 'overtime', hours: 7, rate: 25, amount: 175 },
+    ]);
+    expect(sunday.total).toBe(887.5);
+  });
+
+  it('still pays overtime on an ordinary day when holiday pay covers holiday overtime', () => {
+    // 13 hours × $50 = $650, plus 1 hour × $25 = $675.
+    const cost = heldOverDayTour(false, true);
+    expect(cost.total).toBe(675);
+    expect(cost.overtimeHours).toBe(1);
+  });
+
+  function saturdayHolidayNight(premiumStacking: CostContext['premiumStacking']) {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, NIGHT_12, '2026-01-10')],
+    });
+    return costSchedule(
+      s.schedule,
+      ctx({
+        payRates: [payRate(50)],
+        differentials: [
+          {
+            ...differential('night', 'multiplier', 1.1),
+            window: { startTime: '18:00', endTime: '06:00', wholeShiftAtHours: 4 },
+          },
+          differential('weekend', 'multiplier', 1.25),
+          differential('holiday', 'multiplier', 2),
+        ],
+        holidayDates: new Set([isoDate('2026-01-10')]),
+        weekendDefinition: {
+          startWeekday: 6,
+          startMinute: 0,
+          durationMinutes: 2 * 24 * 60,
+          mode: 'overlaps',
+        },
+        premiumStacking,
+      }),
+    ).assignments[0]!;
+  }
+
+  it('pays a Saturday holiday night each premium as its own share of basic pay', () => {
+    // § 7453(g): computed separately on basic pay. $50 + $5 night + $12.50 weekend + $50 holiday
+    // = $117.50 an hour; 12 hours = $1,410.
+    const cost = saturdayHolidayNight('additive');
+    expect(cost.straightRate).toBeCloseTo(117.5, 9);
+    expect(cost.total).toBeCloseTo(1410, 9);
+  });
+
+  it('compounds the same night to $137.50 an hour under the FLSA regular rate', () => {
+    // $50 × 1.1 × 1.25 × 2 = $137.50; 12 hours = $1,650.
+    const cost = saturdayHolidayNight('compound');
+    expect(cost.straightRate).toBeCloseTo(137.5, 9);
+    expect(cost.total).toBeCloseTo(1650, 9);
+  });
+});
+
 describe('overtime too short to pay', () => {
   // VA: overtime of less than 15 minutes in a day is not paid. $50 base, no differentials.
   const rn50 = { payRates: [payRate(50)], differentials: [] };

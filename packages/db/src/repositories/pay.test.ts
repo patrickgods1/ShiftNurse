@@ -19,11 +19,13 @@ import {
   deleteOvertimeRule,
   deletePayRate,
   effectiveRateForNurse,
+  getPaySettings,
   listActiveDifferentials,
   listActiveOvertimeRules,
   listDifferentialsForUnit,
   listOvertimeRulesForUnit,
   listPayRatesForUnit,
+  paySettingsSaved,
   savePaySettings,
   updateDifferential,
   updateOvertimeRule,
@@ -710,10 +712,31 @@ describe('cost configuration', () => {
       savePaySettings(
         handle.db,
         unitId,
-        { callBackMinimumHours: 1, premiumStacking: 'maybe' as never },
+        {
+          callBackMinimumHours: 1,
+          premiumStacking: 'maybe' as never,
+          holidayPayCoversOvertime: false,
+        },
         ACTOR,
       ),
     ).toThrow('compound or additive');
+  });
+
+  it('round-trips whether holiday pay covers overtime, and reads false for a unit with no row', () => {
+    expect(paySettingsSaved(handle.db, unitId)).toBe(false);
+    expect(getPaySettings(handle.db, unitId).holidayPayCoversOvertime).toBe(false);
+    const settings = {
+      callBackMinimumHours: 2,
+      premiumStacking: 'additive' as const,
+      holidayPayCoversOvertime: true,
+    };
+    savePaySettings(handle.db, unitId, settings, ACTOR);
+    expect(paySettingsSaved(handle.db, unitId)).toBe(true);
+    expect(getPaySettings(handle.db, unitId)).toEqual(settings);
+    expect(auditHistoryFor(handle.db, 'pay_settings', unitId)[0]).toMatchObject({
+      before: { holidayPayCoversOvertime: false },
+      after: { holidayPayCoversOvertime: true },
+    });
   });
 
   it('manages overtime rules the same way', () => {

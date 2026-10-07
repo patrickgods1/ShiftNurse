@@ -1,0 +1,1 @@
+ALTER TABLE `pay_settings` ADD `holiday_pay_covers_overtime` integer;

@@ -18,6 +18,11 @@
 
 ## Conventions
 
+- **Pay settings carry `holidayPayCoversOvertime` (migration 0036, nullable, null reads false).**
+  `paySettingsSaved` says whether a unit has a row at all: `applyJurisdiction` offers the preset's
+  pay settings (and a wider weekend) only to a unit that saved none, since a saved row may follow a
+  contract the preset cannot see.
+
 - **`better-sqlite3` is synchronous.** No `async`/`await`/`Promise` in `packages/db`.
 - **Repository patches go through `patchOf` with a `PatchKeys<Patch>` allow-list**
   (`db/src/repositories/patch.ts`). IPC payloads are typed, not checked, so spreading a patch

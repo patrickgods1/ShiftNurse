@@ -20,22 +20,18 @@ export function CallBackSection({ unitId }: { unitId: Id }) {
     return <AsyncState status="error" label="Could not load pay settings" error={query.error} />;
   }
   return (
-    <CallBackForm
-      unitId={unitId}
-      saved={query.data.callBackMinimumHours}
-      premiumStacking={query.data.premiumStacking}
-    />
+    <CallBackForm unitId={unitId} saved={query.data.callBackMinimumHours} settings={query.data} />
   );
 }
 
 function CallBackForm({
   unitId,
   saved,
-  premiumStacking,
+  settings,
 }: {
   unitId: Id;
   saved: number;
-  premiumStacking: PaySettings['premiumStacking'];
+  settings: PaySettings;
 }) {
   const save = useSavePaySettings(unitId);
   const [value, setValue] = useState(String(saved));
@@ -53,7 +49,7 @@ function CallBackForm({
         className="flex max-w-md flex-col gap-2 rounded-md border border-border bg-surface p-3"
         onSubmit={(event) => {
           event.preventDefault();
-          if (valid) save.mutate({ callBackMinimumHours: hours, premiumStacking });
+          if (valid) save.mutate({ ...settings, callBackMinimumHours: hours });
         }}
       >
         <Field

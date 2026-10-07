@@ -42,6 +42,13 @@
 - **Premiums compound or add, by unit.** `CostContext.premiumStacking: 'additive'` (absent:
   `'compound'`) puts every multiplier and overtime premium on the base rate in `priceView`
   (UC–CNA Art. 14 §N, Title 38); compound is the FLSA regular rate and stays the default.
+- **Holiday pay can cover holiday overtime.** `CostContext.holidayPayCoversOvertime` (absent:
+  false) withholds the overtime premium from exactly the hours paid holiday pay (38 U.S.C.
+  § 7453(g): no overtime "in addition to" (d) pay): every hour of a shift that earns `holiday` or
+  `major_holiday`, but on a Baylor tour only its held hours, since § 7456(d) pays the tour itself
+  none — `priceView` walks the bands back from `paidHours` and splits one at `scheduledHours`.
+  `overtimeHours` still counts every hour for alerts and the ledger.
+  `PaySettings`/`DEFAULT_PAY_SETTINGS` in `types.ts` are the shape presets propose.
 - **Overtime under a rule's `minimumMinutes` is not paid**, judged per rule per shift in
   `overtimeStarts` (VA: under 15 minutes), never per workday.
 - **Day-of pay sits beside the schedule's cost, never in it.** `cost/events.ts`'s

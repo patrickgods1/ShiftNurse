@@ -67,9 +67,12 @@ import {
   createDifferential,
   createOvertimeRule,
   createPayRate,
+  getPaySettings,
   listActiveDifferentials,
   listOvertimeRulesForUnit,
   listPayRatesForUnit,
+  paySettingsSaved,
+  savePaySettings,
 } from './pay.js';
 import { getLatestRuleSet, saveRuleSet } from './rulesets.js';
 
@@ -481,6 +484,8 @@ export function applyJurisdiction(
       differentials: listActiveDifferentials(tx, unitId),
       postingLeadDays: unit.postingLeadDays,
       overtimeOrder: unit.overtimeOrder,
+      paySettings: paySettingsSaved(tx, unitId) ? getPaySettings(tx, unitId) : undefined,
+      weekendDefinition: latest?.weekendDefinition ?? DEFAULT_WEEKEND,
     },
     choices,
   );
@@ -514,15 +519,20 @@ export function applyJurisdiction(
     updateUnit(tx, unitId, { leavePolicy: plan.leavePolicy }, actor);
     result.updated++;
   }
-  if (plan.ruleConfigs) {
+  if (plan.paySettings) {
+    savePaySettings(tx, unitId, plan.paySettings, actor);
+    result.created++;
+  }
+  // One new version carries both changes, so a preset never leaves two "latest" rule sets behind.
+  if (plan.ruleConfigs || plan.weekendDefinition) {
     const base = latest ?? defaultRuleSet(unitId);
     saveRuleSet(
       tx,
       {
         unitId,
         name: base.name,
-        configs: plan.ruleConfigs,
-        weekendDefinition: latest?.weekendDefinition ?? DEFAULT_WEEKEND,
+        configs: plan.ruleConfigs ?? base.configs,
+        weekendDefinition: plan.weekendDefinition ?? latest?.weekendDefinition ?? DEFAULT_WEEKEND,
         fairnessWeights: base.fairnessWeights,
       },
       actor,
