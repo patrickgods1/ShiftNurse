@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { nextSetupStep, previousSetupStep, type SetupState, setupPhase } from './state.js';
+import {
+  nextSetupStep,
+  previousSetupStep,
+  SETUP_STEPS,
+  type SetupState,
+  setupPhase,
+} from './state.js';
 
 const assisted: SetupState = {
   mode: 'assisted',
@@ -34,14 +40,44 @@ describe('setupPhase', () => {
 });
 
 describe('step order', () => {
-  it('walks from shift types through to the roster and then the summary', () => {
-    expect(nextSetupStep('shift-types')).toBe('coverage');
+  it('starts with state law, then shifts, and ends on the roster and the summary', () => {
+    expect(SETUP_STEPS).toEqual([
+      'state',
+      'shift-types',
+      'coverage',
+      'acuity',
+      'holidays',
+      'rules',
+      'pay',
+      'unit',
+      'leave',
+      'requests',
+      'roster',
+      'finish',
+    ]);
+  });
+
+  it("puts state law first, so its ratios and overtime land under the manager's own choices", () => {
+    expect(previousSetupStep('state')).toBeUndefined();
+    expect(nextSetupStep('state')).toBe('shift-types');
+    expect(previousSetupStep('shift-types')).toBe('state');
+  });
+
+  it('walks from pay through unit policies, leave and requests to the roster', () => {
+    expect(nextSetupStep('pay')).toBe('unit');
+    expect(nextSetupStep('unit')).toBe('leave');
+    expect(nextSetupStep('leave')).toBe('requests');
+    expect(nextSetupStep('requests')).toBe('roster');
+    expect(previousSetupStep('roster')).toBe('requests');
+  });
+
+  it('ends on the summary after the roster', () => {
     expect(nextSetupStep('roster')).toBe('finish');
     expect(nextSetupStep('finish')).toBeUndefined();
   });
 
-  it('has nothing before the first step', () => {
-    expect(previousSetupStep('shift-types')).toBeUndefined();
+  it('still steps between shift types and staffing floors', () => {
+    expect(nextSetupStep('shift-types')).toBe('coverage');
     expect(previousSetupStep('coverage')).toBe('shift-types');
   });
 });

@@ -261,8 +261,9 @@ This builds `packages/core` and `packages/db`, starts their watchers, and starts
     ACLS for every RN, overtime on the 12-hour alternative workweek.
 - **Manual setup** creates just the unit (name, type, pay-period calendar); everything else is
   entered from Settings and Roster.
-- **Guided setup** creates the unit, then walks through shift types, staffing floors, acuity and
-  ratios, holidays, contract rules, pay and roster. Each step offers one-click starting points
+- **Guided setup** creates the unit, then walks twelve steps: state and contract law, shift types,
+  staffing floors, acuity and ratios, holidays, contract rules, pay, unit policies, leave,
+  requests and generation (including the solver), roster and a summary. Each step offers one-click starting points
   (12- or 8-hour shift patterns, typical ratios for the unit type, US federal holidays, the
   recommended rules, role base rates) above the real Settings editor, and every step can be
   skipped. Progress is saved, so quitting halfway resumes at the same step.

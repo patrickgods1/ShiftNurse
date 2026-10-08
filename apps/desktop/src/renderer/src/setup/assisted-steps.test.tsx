@@ -94,8 +94,9 @@ describe('the assisted setup guide', () => {
     const nav = await screen.findByRole('navigation', { name: 'Setup steps' });
     const items = [...nav.querySelectorAll('li')].map((li) => li.textContent);
     expect(items).toHaveLength(SETUP_STEPS.length);
-    expect(items[0]).toBe('1. Shift types');
-    expect(items[1]).toBe('2. Staffing floors(skipped)');
+    expect(items[0]).toBe('1. State and contract law');
+    expect(items[1]).toBe('2. Shift types');
+    expect(items[2]).toBe('3. Staffing floors(skipped)');
   });
 
   it('shows the shift-pattern starting point above the shift-types editor', async () => {
@@ -222,6 +223,97 @@ describe('the assisted setup guide', () => {
         [{ from: 'acuity', to: 'coverage', skipped: false }],
       ]),
     );
+  });
+
+  it('lets a manager on a fresh unit move past state law without choosing, as a skip', async () => {
+    renderAt('state');
+    expect(await screen.findByLabelText('State or federal law')).toBeTruthy();
+    const continueButton = screen.getByTestId('setup-continue');
+    expect(continueButton.textContent).toBe('Continue');
+    fireEvent.click(continueButton);
+    await waitFor(() =>
+      expect(bridge.callsTo('setup', 'advance')).toEqual([
+        [{ from: 'state', to: 'shift-types', skipped: true }],
+      ]),
+    );
+    expect(bridge.callsTo('setup', 'applyJurisdiction')).toHaveLength(0);
+  });
+
+  it('applies the chosen state on Continue without asking again, then moves on', async () => {
+    bridge.respond('setup', 'applyJurisdiction', { created: 1, updated: 0, unchanged: 0 });
+    renderAt('state');
+    fireEvent.change(await screen.findByLabelText('State or federal law'), {
+      target: { value: 'CA' },
+    });
+    const continueButton = screen.getByTestId('setup-continue');
+    await waitFor(() => expect(continueButton.textContent).toBe('Apply California and continue'));
+    fireEvent.click(continueButton);
+
+    await waitFor(() => expect(bridge.callsTo('setup', 'advance')).toHaveLength(1));
+    expect(bridge.callsTo('setup', 'applyJurisdiction')).toEqual([['unit-1', 'CA', {}]]);
+    expect(screen.queryByText(/never loosens/)).toBeNull();
+    expect(bridge.callsTo('setup', 'advance')[0]).toEqual([
+      { from: 'state', to: 'shift-types', skipped: false },
+    ]);
+  });
+
+  it('moves on from state law without reapplying when the unit already has a state', async () => {
+    renderWithApp(<AssistedSetup state={stateAt('state')} />, {
+      unit: { ...unit, jurisdiction: 'CA' },
+    });
+    const continueButton = await screen.findByTestId('setup-continue');
+    await waitFor(() => expect(continueButton.textContent).toBe('Continue'));
+    fireEvent.click(continueButton);
+    await waitFor(() =>
+      expect(bridge.callsTo('setup', 'advance')).toEqual([
+        [{ from: 'state', to: 'shift-types', skipped: false }],
+      ]),
+    );
+    expect(bridge.callsTo('setup', 'applyJurisdiction')).toHaveLength(0);
+  });
+
+  it('keeps the state-law picker off the acuity step now that it has its own', async () => {
+    renderAt('acuity');
+    expect(await screen.findByText('Start from typical ratios for your kind of unit')).toBeTruthy();
+    expect(screen.queryByTestId('state-law')).toBeNull();
+  });
+
+  it('shows the unit policies, leave and requests editors on their own steps', async () => {
+    renderAt('unit');
+    expect(await screen.findByTestId('unit-policies-form')).toBeTruthy();
+    expect(screen.queryByTestId('state-law')).toBeNull();
+    expect(screen.queryByTestId('start-over')).toBeNull();
+    cleanup();
+    renderAt('leave');
+    expect(await screen.findByTestId('leave-panel')).toBeTruthy();
+    cleanup();
+    renderAt('requests');
+    expect(await screen.findByTestId('conflict-policy')).toBeTruthy();
+    expect(await screen.findByTestId('cancellation-order')).toBeTruthy();
+    expect(await screen.findByTestId('solver-settings')).toBeTruthy();
+  });
+
+  it('moves past unit policies as reviewed, not skipped, when Continue is pressed', async () => {
+    renderAt('unit');
+    fireEvent.click(await screen.findByTestId('setup-continue'));
+    await waitFor(() =>
+      expect(bridge.callsTo('setup', 'advance')).toEqual([
+        [{ from: 'unit', to: 'leave', skipped: false }],
+      ]),
+    );
+  });
+
+  it('marks reviewed defaults as reviewed and points skipped steps to their Settings tab', async () => {
+    renderAt('finish', ['leave']);
+    const summary = await screen.findByTestId('setup-summary');
+    const lines = [...summary.querySelectorAll('li')].map((li) => li.textContent);
+    expect(lines).toContain('✓Unit policiesreviewed');
+    expect(lines).toContain('✓Requests and generationreviewed');
+    expect(lines).toContain('○Leaveleft for later — later in Settings › LeaveSet it up now');
+    expect(lines).toContain(
+      '○State and contract lawnot set up yet — later in Settings › UnitSet it up now',
+    );
+    expect(lines[0]).toContain('State and contract law');
   });
 
   it('lists what is still missing on the summary and offers to open the app', async () => {

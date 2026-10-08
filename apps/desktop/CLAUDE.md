@@ -58,7 +58,11 @@
   `main/api/setup.ts` is the `setup` IPC resource, and Start over is `resetDatabase` in
   `main/backups.ts`. Renderer: `setup/setup-gate.tsx` (in `RootLayout`), `welcome.tsx`,
   `assisted.tsx` + `assisted-steps.tsx` (each step embeds the real Settings editor), `steps.ts`;
-  Settings › Unit (`pages/settings/unit.tsx`).
+  Settings › Unit (`pages/settings/unit.tsx`). The assisted guide has 12 steps, starting with
+  "State and contract law"; `setup/preset-registry.ts` (`PresetRegistry` / `useRegisterPreset`,
+  a no-op outside the guide) lets a step's starting point be applied by Continue without a
+  dialog, and `UnitPoliciesForm` is exported from `pages/settings/unit.tsx` for the "Unit
+  policies" step.
 
 ## Smoke tests
 

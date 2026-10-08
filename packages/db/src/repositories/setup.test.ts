@@ -120,12 +120,12 @@ describe('starting setup', () => {
     expect(listShiftTypesForUnit(handle.db, unit.id)).toEqual([]);
   });
 
-  it('opens the assisted guide at shift types', () => {
+  it('opens the assisted guide at state law', () => {
     newUnit('assisted');
     expect(getSetupState(handle.db)).toMatchObject({
       mode: 'assisted',
       status: 'in_progress',
-      currentStep: 'shift-types',
+      currentStep: 'state',
       completedAt: null,
     });
   });

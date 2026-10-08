@@ -34,11 +34,16 @@ import { errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from '../components/ui
 import { ImportDialog } from '../pages/roster/import-dialog.js';
 import { NurseFormDialog } from '../pages/roster/nurse-form-dialog.js';
 import AcuityPanel from '../pages/settings/acuity.js';
+import CancellationOrderPanel from '../pages/settings/cancellation-order.js';
+import ConflictsPanel from '../pages/settings/conflicts.js';
 import { CoverageTab } from '../pages/settings/coverage-tab.js';
 import HolidaysPanel from '../pages/settings/holidays.js';
+import LeavePanel from '../pages/settings/leave.js';
 import PayPanel from '../pages/settings/pay.js';
 import RulesPanel from '../pages/settings/rules.js';
 import ShiftTypesPanel from '../pages/settings/shift-types.js';
+import SolverPanel from '../pages/settings/solver.js';
+import { UnitPoliciesForm } from '../pages/settings/unit.js';
 import { useUnit } from '../unit-context.js';
 import { useRegisterPreset } from './preset-registry.js';
 import { type SetupCounts, STEP_HOME, STEP_TITLES, stepStatus } from './steps.js';
@@ -103,6 +108,14 @@ function PresetCard({
           </span>
         ) : null}
       </div>
+    </section>
+  );
+}
+
+function StateStep() {
+  return (
+    <section className="rounded-md border border-border bg-surface p-4">
+      <StateLawSection offerToContinue />
     </section>
   );
 }
@@ -265,9 +278,6 @@ function AcuityStep() {
           them against your state's law and your contract.
         </p>
       </PresetCard>
-      <section className="rounded-md border border-border bg-surface p-4">
-        <StateLawSection />
-      </section>
       <AcuityPanel />
     </>
   );
@@ -359,6 +369,25 @@ function PayStep() {
   );
 }
 
+function UnitStep() {
+  return <UnitPoliciesForm />;
+}
+
+function LeaveStep() {
+  return <LeavePanel />;
+}
+
+/** Settings › Requests, then the schedule builder: how requests are decided, then how built. */
+function RequestsStep() {
+  return (
+    <div className="flex flex-col gap-4">
+      <ConflictsPanel />
+      <CancellationOrderPanel />
+      <SolverPanel />
+    </div>
+  );
+}
+
 function RosterStep() {
   const unit = useUnit();
   const nursesQuery = useNurses(unit.id);
@@ -401,7 +430,9 @@ function RosterStep() {
 
 /** What each step has set up so far, read from the same data its editor shows. */
 export function useSetupCounts(unitId: string): SetupCounts {
+  const unit = useUnit();
   return {
+    hasJurisdiction: unit.jurisdiction !== undefined,
     shiftTypes: (useShiftTypesList(unitId).data ?? []).filter((s) => s.active).length,
     coverage: (useCoverage(unitId).data ?? []).length,
     acuityTiers: (useAcuityTiers(unitId).data ?? []).length,
@@ -418,6 +449,14 @@ const NEEDED_TO_SCHEDULE: readonly (keyof typeof STEP_HOME)[] = [
   'coverage',
   'roster',
 ];
+
+/** How the summary words a done step: the rules and reviewed defaults were never "set up". */
+const DONE_WORD: Partial<Record<keyof typeof STEP_HOME, string>> = {
+  rules: 'in force',
+  unit: 'reviewed',
+  leave: 'reviewed',
+  requests: 'reviewed',
+};
 
 function FinishStep({
   skipped,
@@ -453,9 +492,7 @@ function FinishStep({
               <span className="font-medium text-text">{STEP_TITLES[step]}</span>
               <span className="text-text-muted">
                 {status === 'done'
-                  ? step === 'rules'
-                    ? 'in force'
-                    : 'set up'
+                  ? (DONE_WORD[step] ?? 'set up')
                   : `${status === 'skipped' ? 'left for later' : 'not set up yet'} — later in ${STEP_HOME[step]}`}
               </span>
               {status !== 'done' ? (
@@ -489,6 +526,8 @@ export function StepBody({
   onGoTo: (step: SetupStepId) => void;
 }) {
   switch (step) {
+    case 'state':
+      return <StateStep />;
     case 'shift-types':
       return <ShiftTypesStep />;
     case 'coverage':
@@ -501,6 +540,12 @@ export function StepBody({
       return <RulesStep />;
     case 'pay':
       return <PayStep />;
+    case 'unit':
+      return <UnitStep />;
+    case 'leave':
+      return <LeaveStep />;
+    case 'requests':
+      return <RequestsStep />;
     case 'roster':
       return <RosterStep />;
     case 'finish':
