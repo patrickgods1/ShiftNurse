@@ -35,6 +35,7 @@ export function AssistedSetup({ state }: { state: SetupState }) {
   const [applying, setApplying] = useState(false);
   const busy = advance.isPending || complete.isPending || applying;
   const heading = useRef<HTMLHeadingElement>(null);
+  const body = useRef<HTMLElement>(null);
   // A step with nothing set up yet: Continue applies its starting point rather than moving on
   // with nothing — choosing "12-hour days and nights" and pressing Continue used to leave the
   // unit with no shifts at all. With no starting point to apply, moving on counts as a skip.
@@ -58,9 +59,14 @@ export function AssistedSetup({ state }: { state: SetupState }) {
   };
 
   // A new step replaces the whole body; move focus to its heading so a keyboard or screen
-  // reader user is not left on a button that no longer exists.
+  // reader user is not left on a button that no longer exists. The body's scroller outlives the
+  // step, so without the reset a step left scrolled to its Continue button opened the next one
+  // part-way down.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per step change.
-  useEffect(() => heading.current?.focus(), [step]);
+  useEffect(() => {
+    if (body.current) body.current.scrollTop = 0;
+    heading.current?.focus();
+  }, [step]);
 
   const go = (to: SetupStepId | undefined, skipped: boolean) => {
     if (to !== undefined) advance.mutate({ from: step, to, skipped });
@@ -99,7 +105,7 @@ export function AssistedSetup({ state }: { state: SetupState }) {
           </h1>
           <ThemeToggle />
         </header>
-        <main className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
+        <main ref={body} className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
           <PresetRegistry.Provider value={register}>
             <StepBody step={step} skipped={state.skippedSteps} onGoTo={(to) => go(to, false)} />
           </PresetRegistry.Provider>

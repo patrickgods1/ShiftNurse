@@ -16,7 +16,8 @@ import {
   type ShiftType,
   type Unit,
 } from '@shiftnurse/core';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../test/fake-bridge.js';
 import { renderWithApp } from '../test/render.js';
@@ -202,6 +203,25 @@ describe('the assisted setup guide', () => {
       ]),
     );
     expect(bridge.callsTo('setup', 'applyPreset')).toHaveLength(0);
+  });
+
+  it('opens the next step at its top even when the last one was scrolled down to Continue', async () => {
+    // The step arrives from `setup.status` after each advance; this stands in for that refetch.
+    let moveTo: (step: SetupStepId) => void = () => {};
+    function Guide() {
+      const [step, setStep] = useState<SetupStepId>('shift-types');
+      moveTo = setStep;
+      return <AssistedSetup state={stateAt(step)} />;
+    }
+    renderWithApp(<Guide />, { unit });
+    await screen.findByRole('heading', { level: 1, name: STEP_TITLES['shift-types'] });
+    const body = screen.getByRole('main');
+    body.scrollTop = 600;
+
+    act(() => moveTo('coverage'));
+
+    await screen.findByRole('heading', { level: 1, name: STEP_TITLES.coverage });
+    expect(body.scrollTop).toBe(0);
   });
 
   it('records the step as skipped when the manager chooses Skip for now', async () => {
