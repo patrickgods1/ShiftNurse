@@ -21,9 +21,16 @@ import { useApplyJurisdiction } from '../api-setup.js';
 import { useUnit } from '../unit-context.js';
 import { useConfirm } from './confirm.js';
 import { CheckField, describedBy, Field } from './field-help.js';
+import { summarySentences } from './state-law-format.js';
 import { errorMessage, INPUT, SECONDARY } from './ui.js';
 
 const IDS = Object.keys(JURISDICTION_PRESETS) as JurisdictionId[];
+const byLabel = (a: JurisdictionId, b: JurisdictionId) =>
+  JURISDICTION_PRESETS[a].label.localeCompare(JURISDICTION_PRESETS[b].label);
+// States first, A–Z, then federal employers, then the catch-all: a manager scans for their own
+// state, and the two that are not states should not land in the middle of the alphabet.
+const STATE_IDS = IDS.filter((id) => id !== 'other' && !id.startsWith('US-')).sort(byLabel);
+const FEDERAL_IDS = IDS.filter((id) => id.startsWith('US-')).sort(byLabel);
 
 function describeResult(result: SetupPresetResult): string {
   const parts = [];
@@ -54,6 +61,7 @@ export function StateLawSection() {
   const confirm = useConfirm();
   const [chosen, setChosen] = useState<JurisdictionId | ''>(unit.jurisdiction ?? '');
   const preset = chosen === '' ? undefined : JURISDICTION_PRESETS[chosen];
+  const sentences = preset ? summarySentences(preset.summary) : [];
   // Answers belong to the chosen state's questions, so changing state starts them over; the
   // applied state's stored answers come back, or Apply would quietly answer them no again.
   const storedChoices = (id: JurisdictionId | '') =>
@@ -98,11 +106,21 @@ export function StateLawSection() {
           }}
         >
           <option value="">Choose a state or federal law…</option>
-          {IDS.map((id) => (
-            <option key={id} value={id}>
-              {JURISDICTION_PRESETS[id].label}
-            </option>
-          ))}
+          <optgroup label="States">
+            {STATE_IDS.map((id) => (
+              <option key={id} value={id}>
+                {JURISDICTION_PRESETS[id].label}
+              </option>
+            ))}
+          </optgroup>
+          <optgroup label="Federal">
+            {FEDERAL_IDS.map((id) => (
+              <option key={id} value={id}>
+                {JURISDICTION_PRESETS[id].label}
+              </option>
+            ))}
+          </optgroup>
+          <option value="other">{JURISDICTION_PRESETS.other.label}</option>
         </select>
       </Field>
       {unit.jurisdiction ? (
@@ -111,15 +129,24 @@ export function StateLawSection() {
         </p>
       ) : null}
       {preset ? (
-        <p className="text-sm text-text" data-testid="state-law-summary">
-          {preset.summary}
-        </p>
+        <div className="text-sm text-text" data-testid="state-law-summary">
+          <p className="font-medium">What {preset.label} asks</p>
+          {sentences.length === 1 ? (
+            <p className="mt-1">{sentences[0]}</p>
+          ) : (
+            <ul className="mt-1 list-disc space-y-1.5 pl-5">
+              {sentences.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          )}
+        </div>
       ) : null}
       {preset?.source ? (
         <div className="text-sm text-text" data-testid="state-law-source">
           <p>Contract values: {preset.source.contract}</p>
           {preset.source.note ? (
-            <p className="text-xs text-text-muted">{preset.source.note}</p>
+            <p className="mt-1 text-xs text-text-muted">{preset.source.note}</p>
           ) : null}
         </div>
       ) : null}
