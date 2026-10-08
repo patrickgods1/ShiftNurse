@@ -113,7 +113,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-      - run: npm run build -w @shiftnurse/desktop
       # --publish never: electron-builder would otherwise publish on its own when it sees CI,
       # a tag and a token. The release job below creates the (draft) release instead.
       - name: Package
