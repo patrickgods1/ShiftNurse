@@ -400,6 +400,9 @@ and can start over (after a `pre-reset` backup).
 - [ ] Verify by hand: a guided setup on a fresh `userData` applying every preset, quit and resume
       mid-guide, Generate fills the floors of a new period; Start over returns to the welcome
       screen and its `pre-reset` backup restores
+- [ ] Hand check: fresh userData → Guided setup → step 1 pick a state → Continue applies it with no
+      dialog and 'Last applied' shows → walk to Summary → Open ShiftNurse; Settings › Unit › 'Open
+      the setup guide' reopens on 'State and contract law'
 - [x] Realistic demo (`seed/demo.ts`): a 28-bed med-surg unit sized from real staffing practice;
       the planted-problem dataset moved unchanged to `seed/scenarios.ts` (fingerprint of its
       output identical before and after) for tests, the benchmark, `npm run seed:scenarios` and a
@@ -716,6 +719,18 @@ Art. 14). One PR per milestone; the documentation update that records them has n
       records the audit's remaining limits (verified 2026-10-07: `npm run check` lint and
       typecheck clean, 2,949 tests passed, 2 skipped, 264 files, plus the nurse-isolation test
       added after it, 50 of 50 in its file)
+
+### M42 — Setup guide: state law first, unit/leave/requests steps (after 1.0)
+
+The guide grows from eight steps to twelve: state and contract law (moved out of the Acuity step
+and now first; manual setup still starts as an empty unit), shift types, coverage, acuity,
+holidays, rules, pay, unit policies, leave, requests and generation (including the solver), roster
+and the summary.
+
+- [ ] Guide: the twelve steps in that order, the state-law preset applied by Continue through the
+      preset registry, `UnitPoliciesForm` shared with Settings › Unit
+- [ ] Verify: the hand check under First-run setup above (fresh `userData` → state → Summary →
+      reopen on 'State and contract law')
 
 ---
 

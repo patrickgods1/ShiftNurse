@@ -114,7 +114,7 @@ describe('first launch', () => {
     setup.resume();
     expect(setup.status()).toMatchObject({
       phase: 'assisted',
-      state: { mode: 'assisted', currentStep: 'shift-types' },
+      state: { mode: 'assisted', currentStep: 'state' },
     });
   });
 

@@ -2,8 +2,8 @@
  * "State law": pick a state and apply its staffing and overtime settings to the unit. Shared by
  * Settings › Unit and the guide's "State and contract law" step. That step renders it with
  * `offerToContinue`, so Continue applies the chosen preset through `useRegisterPreset` without
- * the confirmation, like the other steps' starting points. Elsewhere (Settings › Unit, and the
- * acuity step today) it registers nothing, because the guide's registry holds one preset and the
+ * the confirmation, like the other steps' starting points. Elsewhere (Settings › Unit) it
+ * registers nothing, because the guide's registry holds one preset and the
  * Apply button with its confirmation is the only way.
  *
  * The summary is shown before Apply because the preset is a starting point: it says what the

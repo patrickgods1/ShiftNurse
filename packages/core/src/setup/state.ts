@@ -17,14 +17,23 @@ export type SetupMode = 'demo' | 'scenarios' | 'manual' | 'assisted';
 /** The modes that start from a unit the manager names, rather than a seeded one. */
 export type UnitSetupMode = 'manual' | 'assisted';
 
-/** The assisted guide's steps, in order. The unit itself is created before the first one. */
+/**
+ * The assisted guide's steps, in order. The unit itself is created before the first one. State
+ * law comes first because its preset adds ratio ceilings, overtime rules and a leave policy that
+ * only ever tighten: applied after the manager's own choices it would land on top of them
+ * rather than underneath. Stored step ids are plain text, so an id must never be renamed.
+ */
 export const SETUP_STEPS = [
+  'state',
   'shift-types',
   'coverage',
   'acuity',
   'holidays',
   'rules',
   'pay',
+  'unit',
+  'leave',
+  'requests',
   'roster',
   'finish',
 ] as const;

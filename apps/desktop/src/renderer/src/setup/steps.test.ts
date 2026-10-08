@@ -15,6 +15,7 @@ describe('defaultPayPeriodAnchor', () => {
 
 describe('stepStatus', () => {
   const empty: SetupCounts = {
+    hasJurisdiction: false,
     shiftTypes: 0,
     coverage: 0,
     acuityTiers: 0,
@@ -40,5 +41,23 @@ describe('stepStatus', () => {
   it('treats the rules as in force unless skipped, because the defaults always apply', () => {
     expect(stepStatus('rules', empty, [])).toBe('done');
     expect(stepStatus('rules', empty, ['rules'])).toBe('skipped');
+  });
+
+  it('counts state law as set up once a preset is applied, even "no preset applies"', () => {
+    expect(stepStatus('state', empty, [])).toBe('empty');
+    expect(stepStatus('state', empty, ['state'])).toBe('skipped');
+    expect(stepStatus('state', { ...empty, hasJurisdiction: true }, ['state'])).toBe('done');
+  });
+
+  it('treats unit policies, leave and requests as reviewed unless left for later', () => {
+    for (const step of ['unit', 'leave', 'requests'] as const) {
+      expect(stepStatus(step, empty, [])).toBe('done');
+      expect(stepStatus(step, empty, [step])).toBe('skipped');
+    }
+  });
+
+  it('does not let skipping leave mark unit policies or requests as left for later', () => {
+    expect(stepStatus('unit', empty, ['leave'])).toBe('done');
+    expect(stepStatus('requests', empty, ['leave'])).toBe('done');
   });
 });

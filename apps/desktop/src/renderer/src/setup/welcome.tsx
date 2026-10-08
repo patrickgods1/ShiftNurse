@@ -38,7 +38,7 @@ export function WelcomeScreen({ scenariosAvailable }: { scenariosAvailable: bool
                 ? 'Pick the demo unit closest to yours. Each runs on its own shifts, staffing rules and pay rules.'
                 : choice === 'manual'
                   ? 'Name your unit. Everything else starts empty and is set up from Settings and Roster.'
-                  : 'Name your unit first. The guide then walks through shifts, staffing, ratios, holidays, rules, pay and your roster.'}
+                  : 'Name your unit first. The guide then walks through state law, shifts, staffing, acuity and ratios, holidays, rules, pay, unit policies, leave, requests and your roster.'}
           </p>
         </div>
 

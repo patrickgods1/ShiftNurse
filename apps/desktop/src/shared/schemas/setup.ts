@@ -1,6 +1,6 @@
 /** Argument schemas for `setup`. */
 
-import { JURISDICTION_IDS } from '@shiftnurse/core';
+import { JURISDICTION_IDS, SETUP_STEPS } from '@shiftnurse/core';
 import { z } from 'zod';
 import {
   count,
@@ -25,16 +25,7 @@ const unitInput = object({
   postingLeadDays: postingLeadDays.optional(),
 });
 
-const setupStep = z.enum([
-  'shift-types',
-  'coverage',
-  'acuity',
-  'holidays',
-  'rules',
-  'pay',
-  'roster',
-  'finish',
-]);
+const setupStep = z.enum(SETUP_STEPS);
 
 const preset = z.discriminatedUnion('kind', [
   object({ kind: z.literal('shift-pattern'), pattern: z.enum(['12h', '8h', 'both']) }),
