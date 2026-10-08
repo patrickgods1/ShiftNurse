@@ -7,6 +7,7 @@
 import { isoDate, type LeavePolicy, type Unit } from '@shiftnurse/core';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { PresetRegistry, type RegisteredPreset } from '../setup/preset-registry.js';
 import { type FakeBridge, installFakeBridge } from '../test/fake-bridge.js';
 import { renderWithApp } from '../test/render.js';
 import { StateLawSection } from './state-law.js';
@@ -53,6 +54,62 @@ describe('the state-law preview', () => {
     expect((await screen.findByTestId('state-law-leave')).textContent).toBe(
       'Leaves your leave policy as it is.',
     );
+  });
+});
+
+describe('the state-law picker inside the setup guide', () => {
+  let registered: RegisteredPreset | undefined;
+  const register = (preset: RegisteredPreset | undefined) => {
+    registered = preset;
+  };
+  const renderInGuide = (offerToContinue = true) => {
+    registered = undefined;
+    renderWithApp(
+      <PresetRegistry.Provider value={register}>
+        <StateLawSection offerToContinue={offerToContinue} />
+      </PresetRegistry.Provider>,
+      { unit },
+    );
+  };
+
+  it('offers nothing to Continue until a state is chosen', async () => {
+    renderInGuide();
+    await screen.findByLabelText('State or federal law');
+    expect(registered?.disabled()).toBe(true);
+  });
+
+  it('lets Continue apply California with its alternative-workweek answer, asking no confirmation', async () => {
+    bridge.respond('setup', 'applyJurisdiction', { created: 1, updated: 0, unchanged: 0 });
+    renderInGuide();
+    fireEvent.change(await screen.findByLabelText('State or federal law'), {
+      target: { value: 'CA' },
+    });
+    fireEvent.click(screen.getByTestId('state-law-option-alternativeWorkweek'));
+    expect(registered?.label()).toBe('Apply California');
+    expect(registered?.disabled()).toBe(false);
+
+    await registered!.run();
+
+    expect(bridge.callsTo('setup', 'applyJurisdiction')).toEqual([
+      ['unit-1', 'CA', { alternativeWorkweek: true }],
+    ]);
+    expect(screen.queryByText(/never loosens/)).toBeNull();
+  });
+
+  it('registers nothing when the step does not offer it to Continue', async () => {
+    renderInGuide(false);
+    fireEvent.change(await screen.findByLabelText('State or federal law'), {
+      target: { value: 'CA' },
+    });
+    expect(registered).toBeUndefined();
+  });
+
+  it('reads "Record no preset" for Another state', async () => {
+    renderInGuide();
+    fireEvent.change(await screen.findByLabelText('State or federal law'), {
+      target: { value: 'other' },
+    });
+    expect(registered?.label()).toBe('Record no preset');
   });
 });
 

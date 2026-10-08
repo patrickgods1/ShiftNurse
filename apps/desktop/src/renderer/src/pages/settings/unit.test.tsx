@@ -10,7 +10,7 @@ import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
 import { renderWithApp } from '../../test/render.js';
-import UnitPanel from './unit.js';
+import UnitPanel, { UnitPoliciesForm } from './unit.js';
 
 const unit: Unit = {
   id: 'unit-1',
@@ -222,5 +222,19 @@ describe('Settings › Unit state law', () => {
       'Our unit is under a different agreement than VA–NNU',
     )) as HTMLInputElement;
     expect(box.checked).toBe(true);
+  });
+});
+
+describe('the unit policies form on its own', () => {
+  it('saves a 14-day posting notice without offering the state-law picker', async () => {
+    renderWithApp(<UnitPoliciesForm />, { unit });
+    fireEvent.change(await screen.findByLabelText('Post schedules this many days ahead'), {
+      target: { value: '14' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(bridge.callsTo('units', 'update')).toHaveLength(1));
+    expect(bridge.callsTo('units', 'update')[0]![1].postingLeadDays).toBe(14);
+    expect(screen.queryByTestId('state-law')).toBeNull();
   });
 });

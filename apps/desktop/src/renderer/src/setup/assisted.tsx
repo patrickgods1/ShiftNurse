@@ -17,12 +17,8 @@ import { useAdvanceSetup, useCompleteSetup } from '../api-setup.js';
 import { ThemeToggle } from '../components/theme-toggle.js';
 import { errorMessage, PRIMARY, SECONDARY } from '../components/ui.js';
 import { useUnit } from '../unit-context.js';
-import {
-  PresetRegistry,
-  type RegisteredPreset,
-  StepBody,
-  useSetupCounts,
-} from './assisted-steps.js';
+import { StepBody, useSetupCounts } from './assisted-steps.js';
+import { PresetRegistry, type RegisteredPreset } from './preset-registry.js';
 import { STEP_TITLES, stepStatus } from './steps.js';
 
 export function AssistedSetup({ state }: { state: SetupState }) {
