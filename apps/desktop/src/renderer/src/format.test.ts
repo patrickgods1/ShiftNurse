@@ -4,6 +4,7 @@ import {
   formatDate,
   formatDateWithWeekday,
   formatHoldover,
+  formatMonthYear,
   fteLabel,
   instantFormat,
   listName,
@@ -20,6 +21,12 @@ describe('display date formatting', () => {
 
   it('prints a long date without touching the local timezone', () => {
     expect(formatDate('2026-03-05')).toBe('Mar 5, 2026');
+  });
+});
+
+describe('a month heading', () => {
+  it('names the month and year in full', () => {
+    expect(formatMonthYear('2026-11-01')).toBe('November 2026');
   });
 });
 

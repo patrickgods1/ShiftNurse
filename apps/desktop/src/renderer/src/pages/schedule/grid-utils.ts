@@ -14,6 +14,7 @@ import type {
   ShiftType,
   Violation,
 } from '@shiftnurse/core';
+import { formatMonthYear } from '../../format.js';
 
 export function cellKey(nurseId: Id, date: IsoDate): string {
   return `${nurseId}__${date}`;
@@ -70,6 +71,29 @@ export function chipHeightClass(durationHours: number): string {
 }
 
 export const SHORT_WEEKDAY = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'] as const;
+
+export interface MonthSpan {
+  label: string;
+  /** Index of the first column in this month. */
+  start: number;
+  count: number;
+}
+
+/**
+ * The months a run of columns falls in, each with how many columns it covers, for the band over
+ * the date row. The day number alone ("29, 30, 31, 1, 2") is why a six-week schedule reads as
+ * one blur: the band says where October ends and November starts.
+ */
+export function monthSpans(dates: readonly IsoDate[]): MonthSpan[] {
+  const spans: MonthSpan[] = [];
+  dates.forEach((date, index) => {
+    const label = formatMonthYear(date);
+    const last = spans[spans.length - 1];
+    if (last && last.label === label) last.count += 1;
+    else spans.push({ label, start: index, count: 1 });
+  });
+  return spans;
+}
 
 /** Violations have no id of their own; the rule plus the entities it names is stable and
  * unique enough within one validation result to key a React list on. */

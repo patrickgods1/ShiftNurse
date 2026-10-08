@@ -46,6 +46,7 @@ import {
   buildCellIndex,
   cellKey,
   headcountRows,
+  monthSpans,
   SHORT_WEEKDAY,
   sortNurses,
   staffingSummary,
@@ -61,6 +62,22 @@ export interface GridColumn {
 
 /** The divider that separates weeks, so six weeks of columns read as weeks, not a blur. */
 const WEEK_DIVIDER = 'border-l-2 border-l-text-muted/40';
+
+/**
+ * What a "Show on grid" link points at: a day, and when the alert names one, a nurse and the
+ * shifts behind it. `nonce` changes on every click so the same link pressed twice scrolls twice.
+ */
+export interface GridSpotlight {
+  date: IsoDate;
+  nurseId?: Id | undefined;
+  assignmentIds: readonly Id[];
+  nonce: number;
+}
+
+/** The problem the manager asked to see: a ring that pulses until the spotlight clears. */
+const SPOTLIGHT_CELL = 'ring-2 ring-inset ring-danger bg-danger/10 animate-pulse';
+const SPOTLIGHT_COLUMN = 'bg-danger/10';
+const EMPTY_IDS: ReadonlySet<Id> = new Set();
 
 const EMPTY_VIOLATIONS: readonly Violation[] = [];
 
@@ -103,6 +120,15 @@ function severityCounts(violations: readonly Violation[] | undefined): {
   return { hard, soft: violations.length - hard };
 }
 
+/** The nearest ancestor that scrolls — the page's `<main>` — or none in a test's bare document. */
+function scrollParent(el: HTMLElement): HTMLElement | undefined {
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    const { overflowY } = getComputedStyle(node);
+    if (overflowY === 'auto' || overflowY === 'scroll') return node;
+  }
+  return undefined;
+}
+
 function CountBadge({ hard, soft, title }: { hard: number; soft: number; title: string }) {
   if (hard === 0 && soft === 0) return null;
   return (
@@ -136,6 +162,10 @@ interface GridCellProps {
   isWeekend: boolean;
   weekStart: boolean;
   readOnly: boolean;
+  /** 'cell' when a link points at this nurse's day, 'column' when at the day alone. */
+  spotlit: 'cell' | 'column' | undefined;
+  /** The shifts that link names, ringed inside the cell. */
+  spotlightIds: ReadonlySet<Id>;
   onDrop: (payload: DragPayload) => void;
   onDragOverChange: (over: boolean) => void;
   onChipOpen: (assignment: Assignment) => void;
@@ -161,6 +191,8 @@ function GridCell({
   isWeekend,
   weekStart,
   readOnly,
+  spotlit,
+  spotlightIds,
   onDrop,
   onDragOverChange,
   onChipOpen,
@@ -173,6 +205,7 @@ function GridCell({
       role="gridcell"
       tabIndex={tabbable ? 0 : -1}
       data-cell={`${row}:${col}`}
+      data-spotlit={spotlit}
       aria-label={`${nurseLabel}, ${formatDateWithWeekday(date)}: ${
         assignments.length === 0
           ? 'no shift'
@@ -191,7 +224,7 @@ function GridCell({
         border-border px-0.5 focus-visible:outline focus-visible:outline-2
         focus-visible:-outline-offset-2 focus-visible:outline-accent ${weekStart ? WEEK_DIVIDER : ''} ${isWeekend ? 'bg-bg' : 'bg-surface'} ${
           isDragOver ? 'outline outline-2 -outline-offset-2 outline-accent' : ''
-        }`}
+        } ${spotlit === 'cell' ? SPOTLIGHT_CELL : spotlit === 'column' ? SPOTLIGHT_COLUMN : ''}`}
       onDragEnter={
         readOnly
           ? undefined
@@ -245,6 +278,7 @@ function GridCell({
           onDelete={onChipDelete}
           tabbable={tabbable}
           preferenceNote={preferenceNotes.get(assignment.id)}
+          spotlit={spotlightIds.has(assignment.id)}
         />
       ))}
     </div>
@@ -262,6 +296,11 @@ interface GridRowProps {
   /** This row is the nurse a link asked to see; a boolean so no other row re-renders. */
   highlighted: boolean;
   nurseViolations: readonly Violation[] | undefined;
+  /** The day a link points at, when it is this nurse's or every nurse's. */
+  spotlightDate: IsoDate | undefined;
+  /** Whether that link named this nurse (a cell) or only the day (the column). */
+  spotlightKind: 'cell' | 'column';
+  spotlightIds: ReadonlySet<Id>;
   /** The highlighted drop target's date, when it is in this row. */
   dragOverDate: IsoDate | undefined;
   row: number;
@@ -289,6 +328,9 @@ const GridRow = memo(function GridRow({
   pendingIds,
   highlightKeys,
   highlighted,
+  spotlightDate,
+  spotlightKind,
+  spotlightIds,
   nurseViolations,
   dragOverDate,
   row,
@@ -354,6 +396,8 @@ const GridRow = memo(function GridRow({
             isWeekend={column.isWeekend}
             weekStart={column.weekStart ?? false}
             readOnly={readOnly}
+            spotlit={spotlightDate === column.date ? spotlightKind : undefined}
+            spotlightIds={spotlightDate === column.date ? spotlightIds : EMPTY_IDS}
             onDrop={(payload) => onDrop(nurse.id, column.date, payload)}
             onDragOverChange={(over) => onDragOverCell(nurse.id, column.date, over)}
             onChipOpen={onChipOpen}
@@ -377,6 +421,8 @@ export interface ScheduleGridProps {
   highlightKeys?: ReadonlySet<string>;
   /** Marks this nurse's row (and the board scrolls to it). */
   focusNurseId?: Id | undefined;
+  /** A problem a link asked to see: the grid scrolls to it and rings it. */
+  spotlight?: GridSpotlight | undefined;
   violationsByAssignment: ReadonlyMap<Id, Violation[]>;
   violationsByNurse: ReadonlyMap<Id, Violation[]>;
   violationsByDate: ReadonlyMap<IsoDate, Violation[]>;
@@ -399,6 +445,7 @@ export function ScheduleGrid({
   readOnly,
   highlightKeys,
   focusNurseId,
+  spotlight,
   violationsByAssignment,
   violationsByNurse,
   violationsByDate,
@@ -425,11 +472,18 @@ export function ScheduleGrid({
   // The grid's own scroll area ends at the window bottom, whatever sits above it (the status
   // row, an open detail panel, the candidates bar): a fixed `calc(100vh - N)` was right for one
   // layout and a second page scrollbar for every other. 1.5rem is the page's bottom padding.
+  //
+  // The room is measured as if the page were scrolled to the top. Measured from the viewport
+  // instead, scrolling the page down moved the grid's top up, so the grid grew by the same
+  // amount, the page gained that much more to scroll, and the manager could scroll the date row
+  // clean off the screen — the one row the sticky header exists to keep in view.
   useLayoutEffect(() => {
     const el = gridRef.current;
     if (!el) return;
     const fit = () => {
-      const room = window.innerHeight - el.getBoundingClientRect().top - 24;
+      const scroller = scrollParent(el);
+      const top = el.getBoundingClientRect().top + (scroller?.scrollTop ?? 0);
+      const room = window.innerHeight - top - 24;
       el.style.maxHeight = `${Math.max(240, Math.floor(room))}px`;
     };
     fit();
@@ -442,8 +496,6 @@ export function ScheduleGrid({
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(fit);
     };
-    // The page scrolls under a fixed window, so the grid's top moves while scrolling too.
-    window.addEventListener('scroll', refit, { passive: true, capture: true });
     const observer =
       typeof ResizeObserver === 'undefined' || !el.parentElement
         ? undefined
@@ -451,11 +503,32 @@ export function ScheduleGrid({
     if (observer && el.parentElement) observer.observe(el.parentElement);
     return () => {
       window.removeEventListener('resize', fit);
-      window.removeEventListener('scroll', refit, { capture: true });
       observer?.disconnect();
       cancelAnimationFrame(frame);
     };
   }, []);
+
+  // A link's target: the nurse's cell on that day, or the day's header when no nurse is named.
+  // Keyed on the nonce so the same link pressed twice scrolls twice.
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!spotlight || !grid) return;
+    const col = columns.findIndex((c) => c.date === spotlight.date);
+    const row = activeNurses.findIndex((n) => n.id === spotlight.nurseId);
+    const target =
+      row >= 0 && col >= 0
+        ? grid.querySelector<HTMLElement>(`[data-cell="${row}:${col}"]`)
+        : [...grid.querySelectorAll<HTMLElement>('[role="columnheader"][data-date]')].find(
+            (header) => header.dataset.date === spotlight.date,
+          );
+    target?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+    // The nonce is the trigger; a new spotlight with the same target still scrolls.
+  }, [spotlight, columns, activeNurses]);
+  const spotlightIds = useMemo(
+    () => (spotlight ? new Set(spotlight.assignmentIds) : EMPTY_IDS),
+    [spotlight],
+  );
+  const months = useMemo(() => monthSpans(columns.map((c) => c.date)), [columns]);
   const [active, setActive] = useState<{ row: number; col: number }>({ row: 0, col: 0 });
   const [picker, setPicker] = useState<
     { nurseId: Id; date: IsoDate; top: number; left: number } | undefined
@@ -561,21 +634,53 @@ export function ScheduleGrid({
       ref={gridRef}
       role="grid"
       aria-label="Schedule: nurses by day"
-      aria-rowcount={activeNurses.length + 1 + (headcount.length > 0 ? 1 + breakdown.length : 0)}
+      aria-rowcount={activeNurses.length + 2 + (headcount.length > 0 ? 1 + breakdown.length : 0)}
       aria-colcount={columns.length + 1}
       data-testid="schedule-grid"
       onKeyDown={handleGridKeyDown}
       className="isolate max-h-[calc(100vh-14rem)] overflow-auto rounded-md border border-border"
     >
       <div className="inline-block min-w-full">
+        {/* The month band: a six-week schedule crosses a month, and "29, 30, 31, 1, 2" alone
+            does not say which. Each month's name stays in view while its columns scroll by.
+            The header *rows* are sticky, not their cells: a sticky element never leaves its
+            parent's box, and a row is only one row tall, so cells stuck inside it scrolled away
+            with it. The footer rows pin the same way. */}
         {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header) */}
         {/* biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops */}
-        <div role="row" className="flex">
+        <div role="row" data-testid="month-band" className="sticky top-0 z-30 flex">
           {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header) */}
           {/* biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops */}
           <div
             role="columnheader"
-            className="sticky left-0 top-0 z-30 flex w-48 shrink-0 items-end border-b border-r
+            aria-label="Month"
+            className="sticky left-0 z-10 h-6 w-48 shrink-0 border-r border-border bg-surface"
+          />
+          {months.map((month) => (
+            // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header)
+            // biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops
+            <div
+              key={month.label}
+              role="columnheader"
+              aria-colspan={month.count}
+              className={`flex h-6 shrink-0 items-center overflow-x-clip border-r
+                border-border bg-surface text-xs font-semibold text-text ${
+                  month.start > 0 ? 'border-l-2 border-l-text-muted/40' : ''
+                }`}
+              style={{ width: `${month.count * 4}rem` }}
+            >
+              <span className="sticky left-48 whitespace-nowrap px-2">{month.label}</span>
+            </div>
+          ))}
+        </div>
+        {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header) */}
+        {/* biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops */}
+        <div role="row" data-testid="date-row" className="sticky top-6 z-30 flex">
+          {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header) */}
+          {/* biome-ignore lint/a11y/useFocusableInteractive: one roving tab stop per grid; headers and rows are not tab stops */}
+          <div
+            role="columnheader"
+            className="sticky left-0 z-10 flex w-48 shrink-0 items-end border-b border-r
               border-border bg-surface px-3 py-2 text-xs font-medium text-text-muted"
           >
             Nurse
@@ -590,10 +695,13 @@ export function ScheduleGrid({
                 key={column.date}
                 data-date={column.date}
                 role="columnheader"
-                className={`sticky top-0 z-20 flex h-14 w-16 shrink-0 flex-col items-center
+                data-spotlit={spotlight?.date === column.date ? 'column' : undefined}
+                className={`flex h-14 w-16 shrink-0 flex-col items-center
                   justify-center border-b border-r border-border text-xs ${
                     column.weekStart ? WEEK_DIVIDER : ''
-                  } ${column.isWeekend ? 'bg-bg' : 'bg-surface'}`}
+                  } ${column.isWeekend ? 'bg-bg' : 'bg-surface'} ${
+                    spotlight?.date === column.date ? SPOTLIGHT_CELL : ''
+                  }`}
               >
                 <span className="text-text-muted">{SHORT_WEEKDAY[column.weekday]}</span>
                 <span className="flex items-center font-medium text-text">
@@ -624,6 +732,13 @@ export function ScheduleGrid({
             pendingIds={nursesWithPending.has(nurse.id) ? pendingIds : NO_PENDING}
             highlightKeys={highlightKeys}
             highlighted={nurse.id === focusNurseId}
+            spotlightDate={
+              spotlight && (spotlight.nurseId === undefined || spotlight.nurseId === nurse.id)
+                ? spotlight.date
+                : undefined
+            }
+            spotlightKind={spotlight?.nurseId === undefined ? 'column' : 'cell'}
+            spotlightIds={spotlight?.nurseId === nurse.id ? spotlightIds : EMPTY_IDS}
             nurseViolations={violationsByNurse.get(nurse.id)}
             dragOverDate={dragOver?.nurseId === nurse.id ? dragOver.date : undefined}
             readOnly={readOnly}

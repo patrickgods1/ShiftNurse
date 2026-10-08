@@ -11,7 +11,7 @@
  * open by default, and the routine ones (ratio slack) folded until asked for.
  */
 
-import type { ComplianceAlert, ComplianceAlertKind } from '@shiftnurse/core';
+import type { ComplianceAlert, ComplianceAlertKind, Id, IsoDate } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useAlerts } from '../../api-publish.js';
 import { errorMessage } from '../../components/ui.js';
@@ -23,10 +23,16 @@ interface AlertsPillProps {
   periodId: string;
   /** While a Generate variation is previewed: its alerts, judged by main, and its name. */
   preview?: { alerts: readonly ComplianceAlert[]; label: string } | undefined;
-  /** Scroll the grid to a day, from an alert that names one. */
-  onShowDate?: (date: string) => void;
+  /** Scroll the grid to what an alert is about: its day, and its nurse and shifts when named. */
+  onShow?: (target: AlertTarget) => void;
   /** Already published: the critical ones are to act on now, not "before publishing". */
   published?: boolean;
+}
+
+export interface AlertTarget {
+  date: IsoDate;
+  nurseId?: Id | undefined;
+  assignmentIds: readonly Id[];
 }
 
 const KINDS: { kind: ComplianceAlertKind; title: string; hint: string }[] = [
@@ -70,7 +76,7 @@ const KINDS: { kind: ComplianceAlertKind; title: string; hint: string }[] = [
 export function useAlertsPill({
   periodId,
   preview,
-  onShowDate,
+  onShow,
   published,
 }: AlertsPillProps): StatusItem | undefined {
   // The draft's alerts are not asked for while a variation stands in for it.
@@ -100,7 +106,7 @@ export function useAlertsPill({
     label: headline || `${alerts.length} alert${alerts.length === 1 ? '' : 's'}`,
     previewTag: <PreviewTag label={preview?.label} />,
     title: summary,
-    detail: <AlertsDetail groups={groups} summary={summary} onShowDate={onShowDate} />,
+    detail: <AlertsDetail groups={groups} summary={summary} onShow={onShow} />,
   };
 }
 
@@ -120,11 +126,11 @@ function groupAlerts(alerts: readonly ComplianceAlert[]) {
 function AlertsDetail({
   groups,
   summary,
-  onShowDate,
+  onShow,
 }: {
   groups: ReturnType<typeof groupAlerts>;
   summary: string;
-  onShowDate?: ((date: string) => void) | undefined;
+  onShow?: ((target: AlertTarget) => void) | undefined;
 }) {
   const [expanded, setExpanded] = useState<ReadonlySet<ComplianceAlertKind>>(new Set());
 
@@ -171,10 +177,16 @@ function AlertsDetail({
                       }`}
                     >
                       <span>{alert.message}</span>
-                      {alert.date && onShowDate ? (
+                      {alert.date && onShow ? (
                         <button
                           type="button"
-                          onClick={() => onShowDate(alert.date!)}
+                          onClick={() =>
+                            onShow({
+                              date: alert.date!,
+                              nurseId: alert.nurseId,
+                              assignmentIds: alert.assignmentIds,
+                            })
+                          }
                           className="shrink-0 text-accent underline underline-offset-2"
                           aria-label={`Show ${formatDateWithWeekday(alert.date)} on the grid`}
                         >
