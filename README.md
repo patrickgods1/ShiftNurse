@@ -349,6 +349,10 @@ macOS with the explicit workspace form so extra flags reach electron-builder:
 npm run dist -w @shiftnurse/desktop -- --win --x64
 ```
 
+Both forms rebuild the app bundles before packaging. The workspace form used to package
+whatever `apps/desktop/out` already held, so an installer could ship a renderer older than the
+code it was built from.
+
 Notes:
 
 - Electron is pinned to an exact version — electron-builder refuses a version range.
