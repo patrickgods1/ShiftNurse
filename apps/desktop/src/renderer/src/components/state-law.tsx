@@ -1,7 +1,10 @@
 /**
  * "State law": pick a state and apply its staffing and overtime settings to the unit. Shared by
- * Settings › Unit and the assisted guide's ratios step so both read the same summary and ask
- * the same confirmation.
+ * Settings › Unit and the guide's "State and contract law" step. That step renders it with
+ * `offerToContinue`, so Continue applies the chosen preset through `useRegisterPreset` without
+ * the confirmation, like the other steps' starting points. Elsewhere (Settings › Unit, and the
+ * acuity step today) it registers nothing, because the guide's registry holds one preset and the
+ * Apply button with its confirmation is the only way.
  *
  * The summary is shown before Apply because the preset is a starting point: it says what the
  * law asks and, as plainly, what it leaves to the hospital. Applying only ever tightens, so the
@@ -18,6 +21,7 @@ import {
 } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useApplyJurisdiction } from '../api-setup.js';
+import { useRegisterPreset } from '../setup/preset-registry.js';
 import { useUnit } from '../unit-context.js';
 import { useConfirm } from './confirm.js';
 import { CheckField, describedBy, Field } from './field-help.js';
@@ -55,7 +59,7 @@ function leavePolicyLine(preset: JurisdictionPreset, unit: Unit): string {
   } leave year, ${rules} accrual ${rules === 1 ? 'rule' : 'rules'}`;
 }
 
-export function StateLawSection() {
+export function StateLawSection({ offerToContinue = false }: { offerToContinue?: boolean } = {}) {
   const unit = useUnit();
   const apply = useApplyJurisdiction(unit.id);
   const confirm = useConfirm();
@@ -80,6 +84,21 @@ export function StateLawSection() {
     });
     if (ok) apply.mutate({ jurisdiction: chosen, choices });
   };
+
+  useRegisterPreset(
+    {
+      label: () =>
+        chosen === ''
+          ? 'Apply'
+          : chosen === 'other'
+            ? 'Record no preset'
+            : `Apply ${preset?.label}`,
+      disabled: () => chosen === '',
+      run: () =>
+        chosen === '' ? Promise.resolve() : apply.mutateAsync({ jurisdiction: chosen, choices }),
+    },
+    offerToContinue,
+  );
 
   return (
     <fieldset

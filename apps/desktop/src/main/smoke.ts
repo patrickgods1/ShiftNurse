@@ -8,7 +8,7 @@
  */
 
 import { existsSync, writeFileSync } from 'node:fs';
-import { addDays, today } from '@shiftnurse/core';
+import { addDays, SETUP_STEPS, today } from '@shiftnurse/core';
 import { getPeriod, listNursesForUnit } from '@shiftnurse/db';
 import type { BrowserWindow, NativeImage } from 'electron';
 import { app } from 'electron';
@@ -110,7 +110,8 @@ const WELCOME_SCRIPT = `
  * The assisted guide, reopened from Settings on the demo unit: every step must render its
  * body (each embeds a real Settings editor) and Continue must reach the summary and back to
  * the dashboard. Continue applies no preset, so the demo data the later checks rely on is
- * untouched; only the setup record changes.
+ * untouched; only the setup record changes. The demo unit already has a state preset applied,
+ * so even the guide's state-law step has nothing for Continue to apply.
  */
 const GUIDE_SCRIPT = `
   (async () => {
@@ -124,12 +125,13 @@ const GUIDE_WALK_SCRIPT = `
     ${WAIT_FOR}
     const api = window.shiftnurse;
     const visited = [];
-    for (let i = 1; i <= 8; i++) {
+    const last = ${SETUP_STEPS.length};
+    for (let i = 1; i <= last; i++) {
       const current = await waitFor('[aria-current="step"]', (el) => el.textContent.startsWith(i + '.'));
       if (current.length === 0) return { visited, stuckAt: i, body: document.body.innerText.slice(0, 300) };
       visited.push(current[0].textContent);
-      const button = await waitFor(i < 8 ? '[data-testid="setup-continue"]' : '[data-testid="setup-finish"]');
-      await waitFor(i < 8 ? 'main > *' : '[data-testid="setup-summary"]');
+      const button = await waitFor(i < last ? '[data-testid="setup-continue"]' : '[data-testid="setup-finish"]');
+      await waitFor(i < last ? 'main > *' : '[data-testid="setup-summary"]');
       button[0]?.click();
     }
     const dashboard = (await waitFor('[data-testid="stat-card"]')).length;
@@ -1357,6 +1359,9 @@ export function runSmoke(win: BrowserWindow): void {
       };
       if (guide.stuckAt !== undefined) {
         fail(`setup guide stuck at step ${guide.stuckAt}; body: ${guide.body}`);
+      }
+      if (guide.visited.length !== SETUP_STEPS.length) {
+        fail(`setup guide showed ${guide.visited.length} steps, expected ${SETUP_STEPS.length}`);
       }
       if (guide.dashboard === 0 || guide.after !== 'ready' || guide.hash !== '#/') {
         fail(`finishing the setup guide did not open the dashboard: ${JSON.stringify(guide)}`);

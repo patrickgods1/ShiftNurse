@@ -18,7 +18,7 @@ import {
   today,
   usFederalHolidays,
 } from '@shiftnurse/core';
-import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { useNurses } from '../api.js';
 import {
   useAcuityTiers,
@@ -40,6 +40,7 @@ import PayPanel from '../pages/settings/pay.js';
 import RulesPanel from '../pages/settings/rules.js';
 import ShiftTypesPanel from '../pages/settings/shift-types.js';
 import { useUnit } from '../unit-context.js';
+import { useRegisterPreset } from './preset-registry.js';
 import { type SetupCounts, STEP_HOME, STEP_TITLES, stepStatus } from './steps.js';
 
 const ROLES: readonly NurseRole[] = ['RN', 'LPN', 'CNA'];
@@ -70,17 +71,11 @@ function PresetCard({
   const apply = useApplyPreset(unit.id);
   const onApply = () => apply.mutate(preset());
   // Offered to the guide's Continue: on a step still empty, Continue applies this preset.
-  const register = useContext(PresetRegistry);
-  const latest = useRef({ preset, disabled, applyLabel, mutateAsync: apply.mutateAsync });
-  latest.current = { preset, disabled, applyLabel, mutateAsync: apply.mutateAsync };
-  useEffect(() => {
-    register?.({
-      label: () => latest.current.applyLabel,
-      disabled: () => latest.current.disabled,
-      run: () => latest.current.mutateAsync(latest.current.preset()),
-    });
-    return () => register?.(undefined);
-  }, [register]);
+  useRegisterPreset({
+    label: () => applyLabel,
+    disabled: () => disabled,
+    run: () => apply.mutateAsync(preset()),
+  });
   return (
     <section
       className="flex flex-col gap-3 rounded-md border border-accent/40 bg-surface p-4"
@@ -416,18 +411,6 @@ export function useSetupCounts(unitId: string): SetupCounts {
     nurses: (useNurses(unitId).data ?? []).filter((n) => n.active).length,
   };
 }
-
-/** A step's starting point, offered to the guide's Continue button. */
-export interface RegisteredPreset {
-  label: () => string;
-  disabled: () => boolean;
-  run: () => Promise<unknown>;
-}
-
-/** Steps register their preset here so Continue can apply it on a step left empty. */
-export const PresetRegistry = createContext<
-  ((preset: RegisteredPreset | undefined) => void) | undefined
->(undefined);
 
 /** What a unit must have before Generate can build anything. */
 const NEEDED_TO_SCHEDULE: readonly (keyof typeof STEP_HOME)[] = [

@@ -3,6 +3,10 @@
  * over. The pay-period calendar is shown but not editable: contracted hours are counted per
  * pay period, and moving the calendar would re-judge every period already counted in it.
  *
+ * `UnitPoliciesForm` is shared with the setup guide's "Unit policies" step, which is why the form
+ * is separate from the panel's other sections: the guide must not offer the state-law picker,
+ * a way back into itself, or Start over.
+ *
  * Start over is how an evaluator leaves the demo for real data. It deletes everything, so it
  * confirms by naming what is kept: a `pre-reset` backup that Settings › Backups can restore.
  */
@@ -32,12 +36,9 @@ const DEFAULT_COMMITMENT: PerDiemCommitment = {
 
 const UNIT_TYPES = Object.values(ACUITY_PRESETS).map((p) => p.unitType);
 
-export default function UnitPanel() {
+export function UnitPoliciesForm() {
   const unit = useUnit();
   const update = useUpdateUnit();
-  const resume = useResumeSetup();
-  const startOver = useStartOver();
-  const confirm = useConfirm();
   const [name, setName] = useState(unit.name);
   const [unitType, setUnitType] = useState(unit.unitType);
   const saved = unit.ratioStaffing ?? DEFAULT_RATIO_STAFFING;
@@ -151,18 +152,8 @@ export default function UnitPanel() {
     update.reset();
   };
 
-  const onStartOver = async () => {
-    const ok = await confirm({
-      title: 'Start over with an empty database?',
-      description:
-        'Every unit, nurse, schedule and setting is deleted and ShiftNurse restarts at the welcome screen. A "Before start over" backup is saved first; restore it from Settings › Backups to undo this.',
-      confirmLabel: 'Delete everything and restart',
-    });
-    if (ok) startOver.mutate();
-  };
-
   return (
-    <div className="flex flex-col gap-4" data-testid="unit-panel">
+    <div data-testid="unit-policies-form">
       <EditorShell
         label="Unit"
         dirty={dirty}
@@ -416,6 +407,28 @@ export default function UnitPanel() {
           </form>
         </section>
       </EditorShell>
+    </div>
+  );
+}
+
+export default function UnitPanel() {
+  const resume = useResumeSetup();
+  const startOver = useStartOver();
+  const confirm = useConfirm();
+
+  const onStartOver = async () => {
+    const ok = await confirm({
+      title: 'Start over with an empty database?',
+      description:
+        'Every unit, nurse, schedule and setting is deleted and ShiftNurse restarts at the welcome screen. A "Before start over" backup is saved first; restore it from Settings › Backups to undo this.',
+      confirmLabel: 'Delete everything and restart',
+    });
+    if (ok) startOver.mutate();
+  };
+
+  return (
+    <div className="flex flex-col gap-4" data-testid="unit-panel">
+      <UnitPoliciesForm />
 
       <section className="rounded-md border border-border bg-surface p-4">
         <StateLawSection />
