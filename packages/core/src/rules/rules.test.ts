@@ -88,6 +88,89 @@ describe('minimum rest', () => {
     expect(codes(s)).toContain('insufficient_rest');
   });
 
+  it('gives the longer after-night rest only after a night tour, not an evening paid as one', () => {
+    const eveningTour = { ...EVENING_8, id: 'st-e8-va', startTime: '15:30', isNight: true };
+    const ruleParams = { 'min-rest-between-shifts': { minRestHoursAfterNight: 24 } };
+    const nurse = makeNurse();
+    // 23:30 Mon → 15:30 Tue is 16 hours: over the base 10, and the after-night 24 must not apply.
+    const evenings = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_12, NIGHT_12, eveningTour],
+      ruleParams,
+      assignments: [
+        assign(nurse.id, eveningTour, '2026-01-05'),
+        assign(nurse.id, eveningTour, '2026-01-06'),
+      ],
+    });
+    expect(codes(evenings)).not.toContain('insufficient_rest');
+    // 07:00 Tue → 19:00 Tue is 12 hours, short of the 24 owed after a real night.
+    const nights = scenario({
+      nurses: [nurse],
+      ruleParams,
+      assignments: [
+        assign(nurse.id, NIGHT_12, '2026-01-05'),
+        assign(nurse.id, NIGHT_12, '2026-01-06'),
+      ],
+    });
+    const rest = evaluate(nights).violations.filter((v) => v.code === 'insufficient_rest');
+    expect(rest).toHaveLength(1);
+    expect(rest[0]!.details).toMatchObject({ requiredHours: 24, afterNightShift: true });
+  });
+
+  it('measures rest from the end of a night, not from a short shift nested inside it', () => {
+    const SHORT_2 = {
+      ...DAY_8,
+      id: 'st-s2',
+      name: 'Short 2',
+      abbreviation: 'S2',
+      startTime: '20:00',
+      durationHours: 2,
+    };
+    const LATE_DAY_8 = { ...DAY_8, id: 'st-ld8', startTime: '09:00' };
+    const nurse = makeNurse();
+    const night = assign(nurse.id, NIGHT_12, '2026-01-05'); // 19:00 Mon → 07:00 Tue
+    const short = assign(nurse.id, SHORT_2, '2026-01-05'); // 20:00 → 22:00 Mon, inside the night
+    const lateDay = assign(nurse.id, LATE_DAY_8, '2026-01-06'); // 09:00 Tue
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [...testShiftTypes, SHORT_2, LATE_DAY_8],
+      assignments: [night, short, lateDay],
+    });
+    const found = evaluate(s).violations;
+    // The night ends 07:00 Tue and the late day starts 09:00 Tue: 2 hours, short of 10. The short
+    // shift's 22:00 end is not where the nurse's rest begins.
+    const rest = found.filter((v) => v.code === 'insufficient_rest');
+    expect(rest).toHaveLength(1);
+    expect(rest[0]).toMatchObject({
+      assignmentIds: [night.id, lateDay.id],
+      details: { restHours: 2 },
+    });
+    // The short shift inside the night is a double booking in its own right.
+    expect(found.filter((v) => v.code === 'overlapping_assignments')).toHaveLength(1);
+  });
+
+  it('asks for the after-night rest when a night and a short shift end at the same minute', () => {
+    const EARLY_3 = { ...DAY_8, id: 'st-e3', startTime: '04:00', durationHours: 3 };
+    const nurse = makeNurse();
+    const monNight = assign(nurse.id, NIGHT_12, '2026-01-05'); // 19:00 Mon → 07:00 Tue
+    const early = assign(nurse.id, EARLY_3, '2026-01-06'); // 04:00 → 07:00 Tue, a day tour
+    const tueNight = assign(nurse.id, NIGHT_12, '2026-01-06'); // 19:00 Tue
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [...testShiftTypes, EARLY_3],
+      ruleParams: { 'min-rest-between-shifts': { minRestHoursAfterNight: 24 } },
+      assignments: [monNight, early, tueNight],
+    });
+    // Both the night and the early shift end 07:00 Tue; the night is owed 24 hours, the early
+    // shift 10, so 24 applies. 07:00 → 19:00 Tue is 12 hours.
+    const rest = evaluate(s).violations.filter((v) => v.code === 'insufficient_rest');
+    expect(rest).toHaveLength(1);
+    expect(rest[0]).toMatchObject({
+      assignmentIds: [monNight.id, tueNight.id],
+      details: { requiredHours: 24, restHours: 12 },
+    });
+  });
+
   it('ignores on-call standby when computing rest', () => {
     const nurse = makeNurse();
     const s = scenario({
@@ -130,7 +213,9 @@ describe('consecutive shifts', () => {
     expect(codes(s)).toContain('too_many_consecutive_nights');
   });
 
-  it('does not apply the night cap to a mixed stretch', () => {
+  it('accepts three nights followed by a day: the run of nights is three', () => {
+    // The boundary: nights 5, 6, 7 are a run of 3, at the cap of 3; the day on the 8th is not a
+    // night and does not lengthen it.
     const nurse = makeNurse();
     const s = scenario({
       nurses: [nurse],
@@ -138,6 +223,100 @@ describe('consecutive shifts', () => {
         ...assignRun(nurse.id, NIGHT_12, '2026-01-05', 3),
         assign(nurse.id, DAY_12, '2026-01-08'),
       ],
+    });
+    expect(codes(s)).not.toContain('too_many_consecutive_nights');
+  });
+
+  it('counts four nights after a day shift against a three-night cap', () => {
+    // Night dates 6, 7, 8, 9 Jan: a run of 4 > 3. The whole stretch is 5 days (Mon–Fri) <= 5,
+    // so the days-in-a-row cap has nothing to say.
+    const nurse = makeNurse();
+    const day = assign(nurse.id, DAY_12, '2026-01-05');
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [day, ...assignRun(nurse.id, NIGHT_12, '2026-01-06', 4)],
+    });
+    const found = evaluate(s).violations.filter((v) => v.code === 'too_many_consecutive_nights');
+    expect(found).toHaveLength(1);
+    expect(found[0]!.details).toEqual({ actual: 4, maximum: 3 });
+    expect(found[0]!.dates).toEqual(['2026-01-06', '2026-01-07', '2026-01-08', '2026-01-09']);
+    expect(found[0]!.assignmentIds).not.toContain(day.id);
+    expect(codes(s)).not.toContain('too_many_consecutive_shifts');
+  });
+
+  it('counts four nights before a day shift against a three-night cap', () => {
+    // Night dates 5–8 Jan: a run of 4 > 3. (The Friday day after the Thursday night is also a
+    // 0-hour turnaround; that finding belongs to the rest rule.)
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        ...assignRun(nurse.id, NIGHT_12, '2026-01-05', 4),
+        assign(nurse.id, DAY_12, '2026-01-09'),
+      ],
+    });
+    const found = evaluate(s).violations.filter((v) => v.code === 'too_many_consecutive_nights');
+    expect(found).toHaveLength(1);
+    expect(found[0]!.details).toMatchObject({ actual: 4 });
+  });
+
+  it('judges two runs of three nights split by a day shift as two runs, each within the cap', () => {
+    // Nights 5, 6, 7; day 8; nights 9, 10, 11. Night runs [3, 3], each <= 3; the stretch is
+    // 7 days <= 7.
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      ruleParams: { 'max-consecutive-shifts': { maxConsecutiveShifts: 7 } },
+      assignments: [
+        ...assignRun(nurse.id, NIGHT_12, '2026-01-05', 3),
+        assign(nurse.id, DAY_12, '2026-01-08'),
+        ...assignRun(nurse.id, NIGHT_12, '2026-01-09', 3),
+      ],
+    });
+    expect(codes(s)).not.toContain('too_many_consecutive_nights');
+  });
+
+  it('counts nights carried in from the last schedule', () => {
+    // Prior nights Fri 2 and Sat 3, in-period nights Sun 4 and Mon 5: one run of 2–5 Jan, 4 > 3.
+    const nurse = makeNurse();
+    const inPeriod = assignRun(nurse.id, NIGHT_12, '2026-01-04', 2);
+    const s = scenario({
+      nurses: [nurse],
+      priorAssignments: [
+        assign(nurse.id, NIGHT_12, '2026-01-02', { periodId: 'prev' }),
+        assign(nurse.id, NIGHT_12, '2026-01-03', { periodId: 'prev' }),
+      ],
+      assignments: inPeriod,
+    });
+    const found = evaluate(s).violations.filter((v) => v.code === 'too_many_consecutive_nights');
+    expect(found).toHaveLength(1);
+    expect(found[0]!.details).toMatchObject({ actual: 4 });
+    expect(found[0]!.assignmentIds).toEqual(inPeriod.map((a) => a.id));
+  });
+
+  it('does not count a night on call toward the night cap, even where on-call counts as work', () => {
+    // Worked nights 5, 6, 7 and standby 19:00 on the 8th. Standby never makes a night date, so the
+    // run is 5–7, 3 <= 3. On-call counting as work only lengthens the stretch: 4 days <= 5.
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      ruleParams: { 'max-consecutive-shifts': { onCallCountsAsWork: true } },
+      assignments: [
+        ...assignRun(nurse.id, NIGHT_12, '2026-01-05', 3),
+        assign(nurse.id, ON_CALL, '2026-01-08'),
+      ],
+    });
+    expect(codes(s)).not.toContain('too_many_consecutive_nights');
+  });
+
+  it('does not count a Title 38 evening tour paid as a night toward the night cap', () => {
+    // 15:30 is minute 930, inside [720, 1080): an evening tour, whatever its pay flag.
+    const eveningTour = { ...EVENING_8, id: 'st-e8-va', startTime: '15:30', isNight: true };
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_12, NIGHT_12, eveningTour],
+      assignments: assignRun(nurse.id, eveningTour, '2026-01-05', 4),
     });
     expect(codes(s)).not.toContain('too_many_consecutive_nights');
   });
@@ -745,6 +924,42 @@ describe('overlapping assignments', () => {
       ],
     });
     expect(codes(s)).toContain('overlapping_assignments');
+  });
+
+  it('flags the two worked nights that overlap even when on-call beside them is allowed', () => {
+    const nurse = makeNurse();
+    const n12 = assign(nurse.id, NIGHT_12, '2026-01-05'); // 19:00 → 07:00
+    const onCall = assign(nurse.id, ON_CALL, '2026-01-05'); // 19:00 → 07:00, standby
+    const n8 = assign(nurse.id, NIGHT_8, '2026-01-05'); // 23:00 → 07:00
+    const s = scenario({
+      nurses: [nurse],
+      ruleParams: { 'no-overlapping-assignments': { allowOnCallDuringShift: true } },
+      assignments: [n12, onCall, n8],
+    });
+    // The two worked nights share 23:00–07:00; every pair with the on-call shift is exempt.
+    const found = evaluate(s).violations.filter((v) => v.code === 'overlapping_assignments');
+    expect(found).toHaveLength(1);
+    expect(new Set(found[0]!.assignmentIds)).toEqual(new Set([n12.id, n8.id]));
+  });
+
+  it('reports every pair of a triple booking, not just neighbours', () => {
+    const nurse = makeNurse();
+    const n12 = assign(nurse.id, NIGHT_12, '2026-01-05');
+    const onCall = assign(nurse.id, ON_CALL, '2026-01-05');
+    const n8 = assign(nurse.id, NIGHT_8, '2026-01-05');
+    const s = scenario({ nurses: [nurse], assignments: [n12, onCall, n8] });
+    // All three share 23:00–07:00, so each of the three pairs is a double booking.
+    const pairs = evaluate(s)
+      .violations.filter((v) => v.code === 'overlapping_assignments')
+      .map((v) => [...v.assignmentIds].sort().join('+'));
+    expect(pairs).toHaveLength(3);
+    expect(new Set(pairs)).toEqual(
+      new Set([
+        [n12.id, onCall.id].sort().join('+'),
+        [n12.id, n8.id].sort().join('+'),
+        [onCall.id, n8.id].sort().join('+'),
+      ]),
+    );
   });
 
   it('accepts back-to-back shifts that merely touch', () => {

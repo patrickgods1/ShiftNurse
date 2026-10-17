@@ -17,7 +17,7 @@ import {
   resetFixtureCounters,
   solveInputFrom,
 } from '../testing/fixtures.js';
-import { busyElsewhere } from './elsewhere.js';
+import { busyElsewhere, isElsewhere } from './elsewhere.js';
 
 beforeEach(() => resetFixtureCounters());
 
@@ -36,6 +36,7 @@ describe('a nurse who also works on another unit', () => {
         id: 'elsewhere:west-d12',
         name: 'Day 12 on 5 West',
         active: false,
+        elsewhere: true,
       }),
     ]);
     expect(busy.assignments).toEqual([
@@ -46,6 +47,16 @@ describe('a nurse who also works on another unit', () => {
         isLocked: true,
       }),
     ]);
+  });
+
+  it('marks the copy so this unit never counts it on its floor', () => {
+    const busy = busyElsewhere(
+      [assign('flo', WEST_DAY, '2026-01-07', { id: 'w1', periodId: 'west-jan' })],
+      [WEST_DAY],
+      '5 West',
+    );
+    expect(isElsewhere(busy.shiftTypes[0]!)).toBe(true);
+    expect(isElsewhere(DAY_12)).toBe(false);
   });
 
   /** Flo on this unit with eight colleagues, and on 5 West for the shifts given. */

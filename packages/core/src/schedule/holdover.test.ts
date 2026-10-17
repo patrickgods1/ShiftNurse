@@ -71,6 +71,8 @@ describe('worked stretches', () => {
     ['D8', { startTime: '07:00', durationHours: 8, isOnCall: false }],
     ['E8', { startTime: '15:00', durationHours: 8, isOnCall: false }],
     ['OC', { startTime: '15:00', durationHours: 8, isOnCall: true }],
+    ['L9', { startTime: '15:30', durationHours: 9, isOnCall: false }],
+    ['L8', { startTime: '16:01', durationHours: 8, isOnCall: false }],
   ]);
   const view = (a: Assignment) => {
     const st = types.get(a.shiftTypeId)!;
@@ -116,5 +118,39 @@ describe('worked stretches', () => {
       view(row('2026-03-02', 'OC', { id: 'oc' })),
     ]);
     expect(stretches.map((s) => s.hours)).toEqual([8]);
+  });
+
+  it('joins two shifts with a 30-minute meal break between them when breaks of an hour bridge', () => {
+    // 07:00–15:00, a break to 15:30, then 15:30–00:30: 17.5 hours on the clock, 8 + 9 = 17 worked.
+    const stretches = workedStretches(
+      [view(row('2026-03-02', 'D8')), view(row('2026-03-02', 'L9', { id: 'l' }))],
+      { bridgeMinutes: 60 },
+    );
+    expect(stretches).toHaveLength(1);
+    expect(stretches[0]!.hours).toBe(17);
+    expect(stretches[0]!.breakMinutes).toBe(30);
+    expect(stretches[0]!.views).toHaveLength(2);
+    expect(stretches[0]!.window).toEqual({
+      startMinute: dayNumber(isoDate('2026-03-02')) * 1440 + 7 * 60,
+      endMinute: dayNumber(isoDate('2026-03-03')) * 1440 + 30,
+    });
+  });
+
+  it('still ends a stretch at a 61-minute gap', () => {
+    // 15:00 to 16:01 is 61 minutes, one more than the hour that bridges.
+    const stretches = workedStretches(
+      [view(row('2026-03-02', 'D8')), view(row('2026-03-02', 'L8', { id: 'l' }))],
+      { bridgeMinutes: 60 },
+    );
+    expect(stretches.map((s) => s.hours)).toEqual([8, 8]);
+  });
+
+  it('leaves stretches unchanged when no bridge is given', () => {
+    const stretches = workedStretches([
+      view(row('2026-03-02', 'D8')),
+      view(row('2026-03-02', 'L9', { id: 'l' })),
+    ]);
+    expect(stretches.map((s) => s.hours)).toEqual([8, 9]);
+    expect(stretches.map((s) => s.breakMinutes)).toEqual([0, 0]);
   });
 });

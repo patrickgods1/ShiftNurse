@@ -22,6 +22,7 @@ import {
   hardRuleIdsByScope,
 } from '../../rules/registry.js';
 import type { RuleSet } from '../../rules/types.js';
+import { busyElsewhere } from '../../schedule/elsewhere.js';
 import { ScheduleView } from '../../schedule/view.js';
 import {
   assign,
@@ -171,6 +172,28 @@ describe('rest and overlap', () => {
     const encoding = encodeCpsat(input);
     const nights = [assign('ada', NIGHT_12, '2026-03-07'), assign('ada', NIGHT_12, '2026-03-08')];
     expect(evaluate(encoding, nights).violated).toEqual([]);
+  });
+
+  it('gives the after-night rest only after a night tour', () => {
+    // A Title 38 evening tour (15:30–23:30) is paid as a night but is not one: 23:30 Mon to
+    // 15:30 Tue is 16 hours, over the base 10, and the after-night 24 does not apply.
+    const eveningTour = { ...EVENING_8, id: 'st-e8-va', startTime: '15:30', isNight: true };
+    const encoding = encodeCpsat(
+      unit([ada()], {
+        shiftTypes: [DAY_12, NIGHT_12, eveningTour],
+        coverageRequirements: [
+          ...coverageAllWeek(DAY_12, 'RN', 1),
+          ...coverageAllWeek(NIGHT_12, 'RN', 1),
+          ...coverageAllWeek(eveningTour, 'RN', 1),
+        ],
+        ruleSet: withParams('min-rest-between-shifts', { minRestHoursAfterNight: 24 }),
+      }),
+    );
+    const evenings = [
+      assign('ada', eveningTour, '2026-01-05'),
+      assign('ada', eveningTour, '2026-01-06'),
+    ];
+    expect(evaluate(encoding, evenings).violated).toEqual([]);
   });
 
   it('forbids a shift the rest rule would flag against the published lookback tail', () => {
@@ -535,6 +558,34 @@ describe('two days off together made hard', () => {
     );
     expect(evaluate(encoding, locked).violated).toEqual([]);
   });
+
+  it('does not credit last pay period’s Saturday to the first weekend', () => {
+    // Sat 3 Jan lies in the previous pay period and Sun 4 is off, so no shift dated 4–17 Jan is
+    // filed under the weekend of the 3rd: not every weekend is worked, and the scattered days off
+    // (4, 6, 8, 12, 14, 16) are owed nothing.
+    const prior = [assign('ada', DAY_12, '2026-01-03', { periodId: 'prev' })];
+    const encoding = encodeCpsat(
+      unit([fullTime()], { priorAssignments: prior, ruleSet: hardDaysOff(NO_WEEKLY_CAP) }),
+    );
+    const shifts = daysOn([
+      '2026-01-05',
+      '2026-01-07',
+      '2026-01-09',
+      '2026-01-10',
+      '2026-01-11',
+      '2026-01-13',
+      '2026-01-15',
+      '2026-01-17',
+    ]);
+    expect(evaluate(encoding, shifts).violated.join('\n')).not.toMatch(/days off together/);
+    // Control: work Sun 4 as well. It is dated in the pay period and filed under Sat 3, so every
+    // weekend (3, 10, 17) is worked, and the days off 6, 8, 12, 14, 16 hold no pair: a breach of
+    // the pay period opening Sun 4, under its own label.
+    const withSunday = [...shifts, ...daysOn(['2026-01-04'])];
+    expect(evaluate(encoding, withSunday).violated).toContain(
+      'days off together: Ada Test 2026-01-04',
+    );
+  });
 });
 
 /** The rule on and hard at the given cap, with min-rest out of the way so the cap is what bites. */
@@ -637,6 +688,42 @@ describe('most hours in any 24 made hard', () => {
   });
 });
 
+/** 07:30–12:30: half an hour after a night 12 ends, so a bridge of an hour joins them. */
+const MORNING_5 = {
+  ...DAY_8,
+  id: 'st-m5',
+  name: 'Morning 5',
+  abbreviation: 'M5',
+  startTime: '07:30',
+  durationHours: 5,
+};
+/** 15:30–23:30: half an hour after a day 8 ends. */
+const LATE_8 = { ...DAY_8, id: 'st-l8', name: 'Late 8', abbreviation: 'L8', startTime: '15:30' };
+/** 07:30–15:30: half an hour after a night 12 ends, the next day (one shift a day). */
+const LATE_DAY_8 = {
+  ...DAY_8,
+  id: 'st-ld8',
+  name: 'Late day 8',
+  abbreviation: 'LD8',
+  startTime: '07:30',
+};
+
+/** 08:00 and 08:01 starts: 60 and 61 minutes after a night 12 ends, either side of a 60 bridge. */
+const AT_0800 = {
+  ...DAY_8,
+  id: 'st-a0800',
+  name: 'Day 8 at 08:00',
+  abbreviation: 'D8a',
+  startTime: '08:00',
+};
+const AT_0801 = {
+  ...DAY_8,
+  id: 'st-a0801',
+  name: 'Day 8 at 08:01',
+  abbreviation: 'D8b',
+  startTime: '08:01',
+};
+
 /** The rule on and hard with the given limits, min-rest out of the way so this rule is what bites. */
 function hardLongStretch(params: Record<string, unknown>): RuleSet {
   const base = withParams(
@@ -720,6 +807,83 @@ describe('long stretches of work made hard', () => {
     const encoding = encodeCpsat(stretchUnit({ maxConsecutiveHours: 14 }, { assignments: locked }));
     expect(evaluate(encoding, locked).violated).toEqual([]);
   });
+
+  it('forbids 17 hours around a half-hour break under a 16-hour cap that bridges an hour', () => {
+    // One shift a day is structural, so the break sits across midnight's morning: night 12
+    // 19:00 Mon to 07:00 Tue, a break to 07:30, then 07:30–12:30. 12 + 5 = 17 worked, past 16.
+    const withMorning = {
+      shiftTypes: [DAY_12, NIGHT_12, MORNING_5],
+      coverageRequirements: [
+        ...coverageAllWeek(DAY_12, 'RN', 1),
+        ...coverageAllWeek(NIGHT_12, 'RN', 1),
+        ...coverageAllWeek(MORNING_5, 'RN', 1),
+      ],
+    };
+    const pair = [assign('ada', NIGHT_12, '2026-01-12'), assign('ada', MORNING_5, '2026-01-13')];
+    const bridged = encodeCpsat(
+      stretchUnit({ maxConsecutiveHours: 16, maxBreakMinutesInStretch: 60 }, withMorning),
+    );
+    expect(evaluate(bridged, pair).violated.join('\n')).toMatch(/long stretch/);
+    // Without the bridge the half hour ends the stretch: 12 and 5, each under 16.
+    const unbridged = encodeCpsat(stretchUnit({ maxConsecutiveHours: 16 }, withMorning));
+    expect(evaluate(unbridged, pair).violated).toEqual([]);
+  });
+
+  it('joins a shift starting exactly the bridge after a night, and not one a minute later', () => {
+    // Night 12 19:00 Mon to 07:00 Tue. A day 8 at 08:00 Tue is 60 minutes on, within a 60-minute
+    // bridge: one stretch of 12 + 8 = 20 worked, past 14. At 08:01 it is 61 minutes on, so the
+    // stretches are 12 and 8, each within 14.
+    const options = {
+      shiftTypes: [DAY_12, NIGHT_12, AT_0800, AT_0801],
+      coverageRequirements: [DAY_12, NIGHT_12, AT_0800, AT_0801].flatMap((t) =>
+        coverageAllWeek(t, 'RN', 1),
+      ),
+    };
+    const encoding = encodeCpsat(
+      stretchUnit({ maxConsecutiveHours: 14, maxBreakMinutesInStretch: 60 }, options),
+    );
+    const night = assign('ada', NIGHT_12, '2026-01-12');
+    expect(
+      evaluate(encoding, [night, assign('ada', AT_0800, '2026-01-13')]).violated.join('\n'),
+    ).toMatch(/long stretch/);
+    expect(evaluate(encoding, [night, assign('ada', AT_0801, '2026-01-13')]).violated).toEqual([]);
+  });
+
+  it('lets a locked emergency shift a half-hour break earlier excuse the cap, as the rule does', () => {
+    // A locked night 12 noted "Emergency:" runs 19:00 Mon to 07:00 Tue; a late day 8 starts at
+    // 07:30 Tue. With a 60-minute bridge they are one stretch of 12 + 8 = 20 worked, which the
+    // emergency excuses. The late day alone (8 hours, past a 7-hour cap) is the chain the encoder
+    // forbids, and the emergency ends 30 minutes before it starts, so it must still be seen.
+    const emergency = assign('ada', NIGHT_12, '2026-01-12', {
+      isLocked: true,
+      notes: 'Emergency: no relief available',
+    });
+    const input = stretchUnit(
+      { maxConsecutiveHours: 7, maxBreakMinutesInStretch: 60, emergencyLiftsCap: true },
+      {
+        shiftTypes: [DAY_12, NIGHT_12, LATE_DAY_8],
+        coverageRequirements: [DAY_12, NIGHT_12, LATE_DAY_8].flatMap((t) =>
+          coverageAllWeek(t, 'RN', 1),
+        ),
+        assignments: [emergency],
+      },
+    );
+    const encoding = encodeCpsat(input);
+    const schedule = [emergency, assign('ada', LATE_DAY_8, '2026-01-13')];
+    const model = encoding.solverModel;
+    const view = new ScheduleView({
+      period: input.period,
+      assignments: schedule,
+      priorAssignments: input.priorAssignments,
+      nurses: model.nurses,
+      shiftTypes: model.shiftTypes,
+    });
+    const ruleViolations = evaluateSchedule(view, input.ruleSet, model.ctx, {
+      only: hardRuleIdsByScope(input.ruleSet, 'nurse'),
+    }).hardViolations.filter((v) => v.code !== 'under_contracted_hours');
+    expect(ruleViolations.map((v) => v.message)).toEqual([]);
+    expect(evaluate(encoding, schedule).violated).toEqual([]);
+  });
 });
 
 describe('a rest waiver', () => {
@@ -747,6 +911,47 @@ describe('a rest waiver', () => {
   it('does not excuse a turnaround whose later shift is on another date', () => {
     const encoding = encodeCpsat(unit([ada()], { restWaivers: [waiver('2026-01-05')] }));
     expect(evaluate(encoding, turnaround).violated.join('\n')).toMatch(/rest/);
+  });
+
+  const afterNight36 = withParams('min-rest-between-shifts', { minRestHoursAfterNight: 36 });
+
+  it('lets a waived turnaround stand without forbidding the rest after the night it follows', () => {
+    const input = unit([ada()], { ruleSet: afterNight36, restWaivers: [waiver('2026-01-06')] });
+    const encoding = encodeCpsat(input);
+    const schedule = [
+      assign('ada', NIGHT_12, '2026-01-05'), // 19:00 Mon → 07:00 Tue
+      assign('ada', DAY_12, '2026-01-06'), // 07:00 → 19:00 Tue, waived turnaround
+      assign('ada', DAY_12, '2026-01-07'), // 07:00 Wed: 12h after Tuesday's day, 10 required
+    ];
+    // The rules judge N→D Tue (waived) and D Tue→D Wed (12h ≥ 10). Night → Wed day is 24h < 36,
+    // but Tuesday's worked day ends at 19:00 Tue, after the night's 07:00, and starts before
+    // 07:00 Wed, so rest is measured from it, not from the night.
+    expect(evaluate(encoding, schedule).violated).toEqual([]);
+    // A fixed parity case: the random rosters never build this pattern, so the rule engine is
+    // asked directly and must agree that the schedule is legal.
+    const model = encoding.solverModel;
+    const view = new ScheduleView({
+      period: input.period,
+      assignments: schedule,
+      priorAssignments: input.priorAssignments,
+      nurses: model.nurses,
+      shiftTypes: model.shiftTypes,
+    });
+    const ruleViolations = evaluateSchedule(view, input.ruleSet, model.ctx, {
+      only: hardRuleIdsByScope(input.ruleSet, 'nurse'),
+    }).hardViolations.filter((v) => v.code !== 'under_contracted_hours');
+    expect(ruleViolations.map((v) => v.message)).toEqual([]);
+  });
+
+  it('still forbids the rest after a night when the shift between is not worked', () => {
+    const encoding = encodeCpsat(
+      unit([ada()], { ruleSet: afterNight36, restWaivers: [waiver('2026-01-06')] }),
+    );
+    const schedule = [assign('ada', NIGHT_12, '2026-01-05'), assign('ada', DAY_12, '2026-01-07')];
+    // 07:00 Tue → 07:00 Wed is 24h, short of the 36 owed after a night, and nothing is between.
+    expect(evaluate(encoding, schedule).violated.join('\n')).toMatch(
+      /rest: .*N12 2026-01-05 → D12 2026-01-07/,
+    );
   });
 });
 
@@ -842,16 +1047,43 @@ describe('consecutive shifts', () => {
     expect(evaluate(encoding, nights).violated.join('\n')).toMatch(/night/);
   });
 
-  it('allows four nights after a day shift, because the stretch is not all nights', () => {
-    // Day Mon (ends 19:00) then nights Tue–Fri: a five-day stretch, within the limit of five, and
-    // the night limit only counts stretches made entirely of nights. A window over the four
-    // night-days alone would wrongly forbid it.
+  it('forbids four nights after a day shift: the nights are counted wherever they sit', () => {
+    // Day Mon then nights Tue–Fri: a five-day stretch, within the limit of five, but the night
+    // window Tue–Fri holds 4 > 3. The day before the nights does not hide them.
     const encoding = encodeCpsat(unit([ada()], { ruleSet: NO_WEEKLY_CAP }));
     const pattern = [
       assign('ada', DAY_12, '2026-01-05'),
       ...assignRun('ada', NIGHT_12, '2026-01-06', 4),
     ];
-    expect(evaluate(encoding, pattern).violated).toEqual([]);
+    expect(evaluate(encoding, pattern).violated.join('\n')).toMatch(/consecutive nights/);
+  });
+
+  it('never adds a fifth night to four nights the manager locked, though a day before them is allowed', () => {
+    const locked = assignRun('ada', NIGHT_12, '2026-01-06', 4).map((a) => ({
+      ...a,
+      isLocked: true,
+    }));
+    const encoding = encodeCpsat(unit([ada()], { ruleSet: NO_WEEKLY_CAP, assignments: locked }));
+    // The locked run already breaks the cap and stays on the report; a Monday day does not
+    // lengthen it.
+    const withDay = evaluate(encoding, [...locked, assign('ada', DAY_12, '2026-01-05')]);
+    expect(withDay.violated.join('\n')).not.toMatch(/consecutive nights/);
+    // The window Mon–Thu holds the constant 3 plus Monday's night variable, so it must be <= 3.
+    const withNight = evaluate(encoding, [...locked, assign('ada', NIGHT_12, '2026-01-05')]);
+    expect(withNight.violated.join('\n')).toMatch(/consecutive nights/);
+  });
+
+  it('sees a locked night that shares its date with a locked day', () => {
+    // Locked Mon 5: day 07:00 then night 19:00 (the day sorts first); locked nights Tue 6, Wed 7.
+    // Night dates 5, 6, 7 are 3 constants, so the window Mon–Thu leaves room for 0 more: a night
+    // on Thu 8 makes 4 > 3. Letting the day decide Monday would count it 0 and allow Thursday.
+    const locked = [
+      assign('ada', DAY_12, '2026-01-05'),
+      ...assignRun('ada', NIGHT_12, '2026-01-05', 3),
+    ].map((a) => ({ ...a, isLocked: true }));
+    const encoding = encodeCpsat(unit([ada()], { ruleSet: NO_WEEKLY_CAP, assignments: locked }));
+    const withThursday = evaluate(encoding, [...locked, assign('ada', NIGHT_12, '2026-01-08')]);
+    expect(withThursday.violated.join('\n')).toMatch(/consecutive nights: .* from 2026-01-05/);
   });
 
   it('requires two days off after a maximum-length stretch', () => {
@@ -1006,6 +1238,27 @@ describe('agreement with the rule engine', () => {
 
   it('calls a random schedule illegal exactly when the rule engine does', () => {
     expectParity(parityInput());
+  });
+
+  it('agrees with the rules when a waived turnaround and a longer rest after nights meet', () => {
+    const waiver = (nurseId: string, date: string) => ({
+      id: `w-${nurseId}-${date}`,
+      unitId: UNIT_ID,
+      nurseId,
+      date: isoDate(date),
+      reason: 'Signed waiver',
+      createdAt: 0,
+    });
+    expectParity(
+      parityInput({
+        ruleSet: withParams('min-rest-between-shifts', { minRestHoursAfterNight: 36 }),
+        restWaivers: [
+          waiver('ada', '2026-01-06'),
+          waiver('ada', '2026-01-09'),
+          waiver('bo', '2026-01-12'),
+        ],
+      }),
+    );
   });
 
   /** A paid vacation for Ada and a paid sick call for Bo, both inside the first pay period. */
@@ -1232,6 +1485,73 @@ describe('agreement with the rule engine', () => {
     });
   });
 
+  it('agrees with the rules when breaks of an hour bridge a stretch', () => {
+    // One shift a day keeps a day 8 and a late 8 apart, so the bridged gap a random roster can
+    // build is a night 12 ending 07:00 and a late day 8 at 07:30 the next day.
+    const types = [DAY_12, NIGHT_12, DAY_8, LATE_8, LATE_DAY_8, ON_CALL];
+    const base = parityInput({
+      shiftTypes: types,
+      coverageRequirements: types.flatMap((t) => coverageAllWeek(t, 'RN', 1)),
+    });
+    expectParity({
+      ...base,
+      ruleSet: hardLongStretch({
+        maxConsecutiveHours: 14,
+        restAfterHours: 12,
+        restHours: 14,
+        maxBreakMinutesInStretch: 60,
+      }),
+    });
+  });
+
+  it('agrees with the rules when only the bridge decides the cap', () => {
+    // With no rest limit, a night 12 and a late day 8 the next morning are 12 and 8 apart but
+    // 12 + 8 = 20 together: legal under a 14-hour cap only if the half-hour break ends the stretch.
+    const types = [DAY_12, NIGHT_12, DAY_8, LATE_DAY_8, ON_CALL];
+    const base = parityInput({
+      shiftTypes: types,
+      coverageRequirements: types.flatMap((t) => coverageAllWeek(t, 'RN', 1)),
+    });
+    expectParity({
+      ...base,
+      ruleSet: hardLongStretch({ maxConsecutiveHours: 14, maxBreakMinutesInStretch: 60 }),
+    });
+  });
+
+  it.each([
+    ['60 minutes', AT_0800],
+    ['61 minutes', AT_0801],
+  ])(
+    'agrees with the rules when a day starts %s after a night ends, under a 60-minute bridge',
+    (_label, late) => {
+      // 08:00 is 60 minutes after a night 12 ends (joins, 12 + 8 = 20 > 14); 08:01 is 61 (apart).
+      const types = [DAY_12, NIGHT_12, DAY_8, late, ON_CALL];
+      const base = parityInput({
+        shiftTypes: types,
+        coverageRequirements: types.flatMap((t) => coverageAllWeek(t, 'RN', 1)),
+      });
+      expectParity({
+        ...base,
+        ruleSet: hardLongStretch({ maxConsecutiveHours: 14, maxBreakMinutesInStretch: 60 }),
+      });
+    },
+  );
+
+  it('agrees with the rules when only the bridge decides the rest', () => {
+    // Night 12 Mon and late day 8 Tue are 20 worked hours bridged, which earns 16 off: out at
+    // 15:30 Tue, so a day at 07:00 Wed (15.5 hours later) is too soon. Unbridged, 12 and 8 earn
+    // nothing.
+    const types = [DAY_12, NIGHT_12, DAY_8, LATE_DAY_8, ON_CALL];
+    const base = parityInput({
+      shiftTypes: types,
+      coverageRequirements: types.flatMap((t) => coverageAllWeek(t, 'RN', 1)),
+    });
+    expectParity({
+      ...base,
+      ruleSet: hardLongStretch({ restAfterHours: 16, restHours: 16, maxBreakMinutesInStretch: 60 }),
+    });
+  });
+
   it('agrees with the rules when weekends in a row and per schedule are hard', () => {
     // Ada's lookback night on Sat 3 Jan starts a run; three weekends in the period.
     const ruleSet = withParams('weekend-pattern', {
@@ -1280,17 +1600,28 @@ describe('agreement with the rule engine', () => {
   it('agrees with the rules when two days off together are hard', () => {
     // Day 12s only (standby would halve how densely a random roster works), with every other
     // cap a dense roster would hit lifted, so this rule is what decides. Ada's lookback day on
-    // Sat 3 Jan already works the pay period's first weekend.
+    // Sat 3 Jan sits in the previous pay period, so it no longer credits the first weekend (D5);
+    // both sides must agree it does not. Bo's 5 West day on Thu 8 Jan is a day worked, not a day
+    // off, for both.
     const relaxed = withParams(
       'max-consecutive-shifts',
       { maxConsecutiveShifts: 14, minDaysOffAfterMaxStretch: 0 },
       withParams('fte-target-hours', { overToleranceHours: 200 }, NO_WEEKLY_CAP),
     );
+    const WEST_DAY = { ...DAY_12, id: 'west-d12', unitId: 'unit-west' };
+    const west = busyElsewhere(
+      [assign('bo', WEST_DAY, '2026-01-08', { id: 'w-bo', periodId: 'west' })],
+      [WEST_DAY],
+      '5 West',
+    );
     expectParity(
       parityInput({
-        shiftTypes: [DAY_12],
+        shiftTypes: [DAY_12, ...west.shiftTypes],
         coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
-        priorAssignments: [assign('ada', DAY_12, '2026-01-03', { periodId: 'prev' })],
+        priorAssignments: [
+          assign('ada', DAY_12, '2026-01-03', { periodId: 'prev' }),
+          ...west.assignments,
+        ],
         ruleSet: hardDaysOff(relaxed),
       }),
     );
@@ -2135,5 +2466,62 @@ describe('decoding', () => {
     expect(model.assignments().map((a) => `${a.date} ${a.shiftTypeId}`)).toEqual([
       `2026-01-05 ${DAY_12.id}`,
     ]);
+  });
+});
+
+describe('kept-apart staff and other units', () => {
+  it('prices a member’s shift here the same whether or not the other member works 5 West that day', () => {
+    // Ana and Ben are kept apart (cap 1, two outside staff while they overlap). Ana works the
+    // Wednesday day 12 here with Cy and Dee; Ben works 5 West's day 12 the same Wednesday.
+    const [ana, ben] = [makeNurse({ id: 'ana' }), makeNurse({ id: 'ben' })];
+    const [cy, dee] = [makeNurse({ id: 'cy', isChargeEligible: true }), makeNurse({ id: 'dee' })];
+    const WEST_DAY = { ...DAY_12, id: 'west-d12', unitId: 'unit-west' };
+    const busy = busyElsewhere(
+      [assign(ben.id, WEST_DAY, '2026-01-07', { id: 'w-b', periodId: 'west' })],
+      [WEST_DAY],
+      '5 West',
+    );
+    const withoutWest = solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: [ana, ben, cy, dee],
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: [coverage(DAY_12, 'RN', 3, 3, null, isoDate('2026-01-07'))],
+      incompatibilityGroups: [
+        {
+          id: 'apart',
+          unitId: UNIT_ID,
+          name: 'Apart',
+          nurseIds: [ana.id, ben.id],
+          maxTogether: 1,
+          reason: 'test',
+        },
+      ],
+    });
+    const withWest: SolveInput = {
+      ...withoutWest,
+      shiftTypes: [...withoutWest.shiftTypes, ...busy.shiftTypes],
+      priorAssignments: [...withoutWest.priorAssignments, ...busy.assignments],
+    };
+    const schedule = [
+      assign(ana.id, DAY_12, '2026-01-07'),
+      assign(cy.id, DAY_12, '2026-01-07', { isCharge: true }),
+      assign(dee.id, DAY_12, '2026-01-07'),
+    ];
+    const priced = (input: SolveInput) => {
+      const model = new SolverModel(input);
+      for (const a of schedule) model.add({ ...a });
+      return { model, objective: model.objective() };
+    };
+    const here = priced(withoutWest);
+    const there = priced(withWest);
+    // Ben is not on this floor, so Ana has no member beside her: nothing over the cap, no buffer
+    // needed. The incompatibility terms are identical, and so is every other term.
+    expect(there.objective).toBeCloseTo(here.objective, 6);
+    expect(evaluate(encodeCpsat(withWest), schedule).objective).toBeCloseTo(
+      evaluate(encodeCpsat(withoutWest), schedule).objective,
+      6,
+    );
+    expect(there.model.stretches.flatMap((s) => s.tail).map((a) => a.id)).not.toContain('w-b');
   });
 });

@@ -74,6 +74,27 @@ describe('tour rotation limits', () => {
     expect(found[0]!.message).toContain('48');
   });
 
+  it('measures a change of tour from the night, not from a short day shift nested inside it', () => {
+    const EARLY_2 = { ...DAY_8, id: 'st-e2', startTime: '05:00', durationHours: 2 };
+    const nurse = grace();
+    const night = assign(nurse.id, NIGHT_12, '2026-01-05'); // 19:00 Mon → 07:00 Tue
+    const early = assign(nurse.id, EARLY_2, '2026-01-06'); // 05:00 → 07:00 Tue, inside the night
+    const day = assign(nurse.id, DAY_12, '2026-01-07'); // 07:00 Wed
+    const found = evaluate({
+      nurses: [nurse],
+      shiftTypes: [DAY_12, NIGHT_12, DAY_8, EARLY_2],
+      assignments: [night, early, day],
+    });
+    // The night ends 07:00 Tue and the day starts 07:00 Wed: 24 hours, short of 48, night → day.
+    // The early shift is a day tour, like the day it is followed by, and changes nothing.
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      code: 'short_tour_change',
+      assignmentIds: [night.id, day.id],
+      details: { restHours: 24, fromTour: 'night', toTour: 'day' },
+    });
+  });
+
   it('allows nights to days after two full days off', () => {
     const nurse = grace();
     const found = evaluate({

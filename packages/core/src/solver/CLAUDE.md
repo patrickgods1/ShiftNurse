@@ -50,8 +50,11 @@
   `lockedBreaches` come from `lockedHardViolations`) finishes as SA + LNS on the same seed with
   `fellBackFrom: cp-sat` naming the locked shifts that already break a hard rule.
 - **The solver gates removals too.** `SolverModel.isLegal` re-checks a nurse who lost a shift:
-  the consecutive-nights rule counts only all-night stretches, so removing a day from "day + four
-  nights" creates a violation. Any new move that takes a shift from a nurse must re-check them.
+  some rules are not monotone under removal. A waived turnaround (night Mon, waived day Tue, day
+  Wed, 36 h owed after a night) is legal, but without Tuesday the night sits 24 h before
+  Wednesday's day; `long-stretch` is the other. The night cap counts night runs wherever they
+  sit, so it is monotone under removal. Any new move that takes a shift from a nurse must
+  re-check them.
 - **Solver speed-ups must not change a schedule.** `SolverModel` caches fairness (cleared in
   `count`), staffing per shift and role, prepared rules (`prepareRules`/`evaluatePrepared`) and
   per-nurse rule contexts. `solver/model.test.ts` checks every cached term against a fresh

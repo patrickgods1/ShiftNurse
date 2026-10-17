@@ -326,7 +326,7 @@ export {
 } from './rules/registry.js';
 export { restWaivedOn } from './rules/rest-rules.js';
 // Tour rotation limits and the tour a shift belongs to
-export { tourOf, tourRotationRule } from './rules/tour-rotation.js';
+export { isNightTour, tourOf, tourRotationRule } from './rules/tour-rotation.js';
 // Rule engine contract types
 export type {
   EvaluationResult,
@@ -349,7 +349,9 @@ export {
 export { containingDate, coveringShift, withinShiftProblem } from './schedule/cover.js';
 export type { BusyElsewhere } from './schedule/elsewhere.js';
 // Another unit's shifts as busy time on this one (float and multi-unit staff)
-export { busyElsewhere } from './schedule/elsewhere.js';
+export { busyElsewhere, isElsewhere } from './schedule/elsewhere.js';
+// What a shift follows: rest and tour changes are measured from the shift that ends last
+export { latestEndingBefore } from './schedule/preceding.js';
 // The schedule read model
 export { ScheduleView } from './schedule/view.js';
 export type {

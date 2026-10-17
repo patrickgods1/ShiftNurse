@@ -14,6 +14,8 @@ beforeEach(() => {
   resetFixtureCounters();
 });
 
+const eveningTour = { ...EVENING_8, id: 'st-e8-va', startTime: '15:30', isNight: true };
+
 const grace = () => makeNurse({ firstName: 'Grace', lastName: 'Campbell' });
 
 function recovery(s: ReturnType<typeof scenario>) {
@@ -64,6 +66,36 @@ describe('days off after nights', () => {
       ],
     });
     expect(recovery(s)).toHaveLength(1);
+  });
+
+  it('does not treat an evening tour paid as a night as a night', () => {
+    // A Title 38 evening tour starts 15:30: an evening by its start, though paid as a night.
+    const nurse = grace();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_12, NIGHT_12, eveningTour],
+      assignments: [
+        assign(nurse.id, eveningTour, '2026-01-05'),
+        assign(nurse.id, DAY_12, '2026-01-06'),
+      ],
+    });
+    expect(recovery(s)).toEqual([]);
+  });
+
+  it('counts that evening tour as a day-side shift after a real night', () => {
+    // Night Mon 5, evening tour Wed 7: 7 − 5 − 1 = 1 day off, short of 2.
+    const nurse = grace();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_12, NIGHT_12, eveningTour],
+      assignments: [
+        assign(nurse.id, NIGHT_12, '2026-01-05'),
+        assign(nurse.id, eveningTour, '2026-01-07'),
+      ],
+    });
+    const found = recovery(s);
+    expect(found).toHaveLength(1);
+    expect(found[0]!.details).toMatchObject({ daysOff: 1 });
   });
 
   it('leaves nights followed by nights, and days followed by nights, alone', () => {

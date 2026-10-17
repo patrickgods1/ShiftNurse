@@ -35,6 +35,7 @@ import {
   type ShiftWindow,
   shiftWindow,
 } from '../domain/time.js';
+import { isElsewhere } from '../schedule/elsewhere.js';
 import { type FloorSegment, floorSegments } from '../schedule/overlap.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
 import { type Rule, type RuleContext, type Violation, violation } from './types.js';
@@ -278,10 +279,17 @@ function segmentsFor(schedule: ScheduleView, ctx: RuleContext): FloorSegment<Ass
     const within: ShiftWindow[] = [];
     for (const date of schedule.dates) {
       for (const shiftType of ctx.shiftTypes) {
-        if (!shiftType.isOnCall) within.push(shiftWindow(date, shiftType));
+        if (!shiftType.isOnCall && !isElsewhere(shiftType)) {
+          within.push(shiftWindow(date, shiftType));
+        }
       }
     }
-    const floor = schedule.assignmentsWithHistory().filter((v) => !v.shiftType.isOnCall);
+    // Another unit's shifts stay on the nurse's timeline for rest and hours, but she is not on
+    // this floor: counting her would set kept-apart nurses together across two units, or let a
+    // nurse on 5 West stand in for the outside staff here.
+    const floor = schedule
+      .assignmentsWithHistory()
+      .filter((v) => !v.shiftType.isOnCall && !isElsewhere(v.shiftType));
     segments = floorSegments(floor, within);
     byCtx.set(ctx, segments);
   }

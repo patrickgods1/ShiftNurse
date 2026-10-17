@@ -34,6 +34,11 @@ describe('a shift type arriving over IPC', () => {
     );
   });
 
+  it('refuses a shift type that claims to be another unit’s busy time', () => {
+    // Only busyElsewhere marks a type `elsewhere`; a stored one would vanish from this floor.
+    expect(shiftTypesSchemas.create.safeParse([{ ...night, elsewhere: true }]).success).toBe(false);
+  });
+
   it('refuses an edit that tries to move the shift to another unit', () => {
     expect(shiftTypesSchemas.update.safeParse(['st-1', { color: '#fff' }]).success).toBe(true);
     expect(shiftTypesSchemas.update.safeParse(['st-1', { unitId: 'u-2' }]).success).toBe(false);

@@ -3,13 +3,17 @@
  * Generate ignores it and the grid flags it).
  *
  * Three constraints, one per violation code. A shift off the nurse's permanent tour is forbidden
- * outright. Two worked shifts on different tours closer than the break are a forbidden pair, as
- * the rest rule's are: a shift between them is on one of their tours and so at least as close to
- * the other, which the rule would flag — no legal schedule is lost. And a nurse's distinct
- * in-period tours are counted with one Boolean per tour ("any shift of this tour is worked")
- * summed against the cap; a locked shift makes its tour's Boolean a constant. The cap and the
- * permanent-tour switch are per nurse, from `effectiveTourLimits`, so a career nurse exempt from
- * rotation is held to one tour here exactly as the rule holds them.
+ * outright. Two worked shifts on different tours closer than the break are a forbidden pair. The
+ * rule measures from the shift that ends last before each one, but a schedule it accepts never
+ * violates such a pair (there is one break length and no waiver, so a shift between can never
+ * excuse one): if B sits between A and C and ends after A, then either B overlaps one of them
+ * (the hard overlap rule's business) or B's tour differs from C's or from A's with a gap smaller
+ * than A → C's, so the rule flags a pair itself. The pairs are therefore exact on legality, and
+ * stricter only when the overlap rule is off. And a nurse's distinct in-period tours are counted
+ * with one Boolean per tour ("any shift of this tour is worked") summed against the cap; a locked
+ * shift makes its tour's Boolean a constant. The cap and the permanent-tour switch are per nurse,
+ * from `effectiveTourLimits`, so a career nurse exempt from rotation is held to one tour here
+ * exactly as the rule holds them.
  */
 
 import { TOURS } from '../../../domain/entities.js';

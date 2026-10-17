@@ -22,7 +22,7 @@
   fixture-only rows (synthetic-24, small-8) are exact.
 - **Demo data must be staffable by construction.** Each demo's contracted hours are sized to
   its floors, the history is staffed by the engine's `canWork`, which mirrors the unit's own rule
-  set (rest from shift windows, stretch and all-night limits, days off after a maximum stretch,
+  set (rest from shift windows, stretch and night-run limits, days off after a maximum stretch,
   leave by shift date, hire dates), and `canRemove` checks every shift it moves away or calls
   off, and to the *forecast* census the rule engine judges by. Every demo's test runs Generate
   on its draft at the app's default budget and requires every floor filled, and requires fewer

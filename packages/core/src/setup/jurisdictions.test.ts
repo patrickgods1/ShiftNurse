@@ -588,7 +588,26 @@ describe('the state mandatory-overtime presets', () => {
       emergencyLiftsCap: false,
       restAfterHours: 16,
       restHours: 8,
+      maxBreakMinutesInStretch: 60,
     });
+  });
+
+  it('raises a shorter break allowance on a unit already using the long-stretch rule', () => {
+    // A longer bridge joins more shifts into one stretch, so it is the stricter number: 30 rises
+    // to the preset's 60, and a unit already at 90 keeps 90.
+    const on = { maxConsecutiveHours: 16, restAfterHours: 16, restHours: 8 };
+    const shorter = configOf(
+      'MA',
+      LONG,
+      withRule(LONG, true, { ...on, maxBreakMinutesInStretch: 30 }),
+    );
+    expect(shorter?.params.maxBreakMinutesInStretch).toBe(60);
+    const longer = configOf(
+      'MA',
+      LONG,
+      withRule(LONG, true, { ...on, maxBreakMinutesInStretch: 90 }),
+    );
+    expect(longer?.params.maxBreakMinutesInStretch).toBe(90);
   });
 
   it('adds a cap to a long-stretch rule the unit has on without one', () => {

@@ -732,6 +732,17 @@ and the summary.
 - [ ] Verify: the hand check under First-run setup above (fresh `userData` → state → Summary →
       reopen on 'State and contract law')
 
+### M43 — 2026-10-16 in-depth review fixes (in progress)
+
+The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR each.
+
+- [x] Phase 1 — Test and boundary guardrails: TZ-pinned DST tests, core purity lint,
+      IPC table exhaustiveness, hook fixes, solver test hang guards (verify: npm run check; smoke)
+- [x] Phase 2 — Rule geometry: night runs by tour (D1), whole-timeline overlap/rest/tour change,
+      CP-SAT exact rest pairs, elsewhere off the floor, days-off-together crediting (D5), bridged
+      long stretches (D4), holdover into next shift refused (verify: npm run check; smoke; bench
+      re-run)
+
 ---
 
 ## Verification

@@ -17,7 +17,9 @@ import {
   minutesToHours,
   restMinutesBetween,
 } from '../domain/time.js';
+import { latestEndingBefore } from '../schedule/preceding.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
+import { isNightTour } from './tour-rotation.js';
 import {
   isWorked,
   nurseName,
@@ -35,8 +37,9 @@ export interface MinRestParams {
   /** Hours of rest required between the end of one shift and the start of the next. */
   minRestHours: number;
   /**
-   * A longer requirement after a night shift, if the contract has one. Absent falls back to
-   * `minRestHours`. Many contracts give extra recovery time coming off nights.
+   * A longer requirement after a night tour, if the contract has one. Absent falls back to
+   * `minRestHours`. Many contracts give extra recovery time coming off nights. A night is judged
+   * by start time (`isNightTour`), so an evening tour paid as a night is not owed it.
    */
   minRestHoursAfterNight?: number;
   /** Whether being on standby counts as working for rest purposes. Usually it does not. */
@@ -103,19 +106,28 @@ export const minRestRule: Rule<MinRestParams> = {
         .timelineFor(nurse.id)
         .filter((v) => params.onCallCountsAsWork || isWorked(v));
 
-      for (let i = 1; i < timeline.length; i++) {
-        const previous = timeline[i - 1];
-        const current = timeline[i];
-        if (!previous || !current) continue;
+      const preceding = latestEndingBefore(timeline);
+      const requiredAfter = (v: AssignmentView) =>
+        isNightTour(v.shiftType) && params.minRestHoursAfterNight !== undefined
+          ? params.minRestHoursAfterNight
+          : params.minRestHours;
+
+      for (let i = 0; i < timeline.length; i++) {
+        const current = timeline[i]!;
+        // Rest starts when the nurse last stopped working, so a short shift nested inside a night
+        // does not stand in for the night's end.
+        const before = preceding[i]!;
+        const first = before[0];
+        if (!first) continue;
 
         // Overlaps are a different violation entirely; let that rule own them.
-        const restMinutes = restMinutesBetween(previous.window, current.window);
+        const restMinutes = restMinutesBetween(first.window, current.window);
         if (restMinutes < 0) continue;
 
-        const requiredHours =
-          previous.shiftType.isNight && params.minRestHoursAfterNight !== undefined
-            ? params.minRestHoursAfterNight
-            : params.minRestHours;
+        // Several shifts can end at that minute; the longest rest any of them is owed applies.
+        let previous = first;
+        for (const p of before) if (requiredAfter(p) > requiredAfter(previous)) previous = p;
+        const requiredHours = requiredAfter(previous);
 
         if (minutesToHours(restMinutes) >= requiredHours) continue;
         // Waived in writing for the shift that follows: the turnaround stands.
@@ -141,7 +153,7 @@ export const minRestRule: Rule<MinRestParams> = {
                 restHours,
                 requiredHours,
                 shortfallHours: requiredHours - restHours,
-                afterNightShift: previous.shiftType.isNight,
+                afterNightShift: isNightTour(previous.shiftType),
               },
             },
           ),
@@ -173,7 +185,6 @@ interface Stretch {
   endDay: number;
   views: AssignmentView[];
   length: number;
-  allNights: boolean;
   touchesPeriod: boolean;
 }
 
@@ -182,6 +193,8 @@ interface Stretch {
  *
  * Grouping by *start date* is what a nurse experiences as "days in a row": four night
  * shifts starting Mon–Thu is a four-day stretch, even though the last one ends Friday.
+ * Days off are counted the same way — a day off is a calendar day with no shift starting on it,
+ * so the Saturday a Friday night ends on counts as one (D5's reading).
  */
 export function buildStretches(views: readonly AssignmentView[]): Stretch[] {
   const byDay = new Map<number, AssignmentView[]>();
@@ -209,7 +222,6 @@ export function buildStretches(views: readonly AssignmentView[]): Stretch[] {
         endDay: day,
         views: [...dayViews],
         length: 1,
-        allNights: true,
         touchesPeriod: false,
       };
     }
@@ -217,18 +229,72 @@ export function buildStretches(views: readonly AssignmentView[]): Stretch[] {
   if (current) stretches.push(current);
 
   for (const stretch of stretches) {
-    stretch.allNights = stretch.views.every((v) => v.shiftType.isNight);
     stretch.touchesPeriod = stretch.views.some((v) => v.inPeriod);
   }
   return stretches;
+}
+
+/** A run of consecutive dates each with a worked night tour starting on it. */
+export interface NightRun {
+  startDay: number;
+  endDay: number;
+  length: number;
+  /** The worked-night views dated in the run, lookback included; never a day shift beside them. */
+  views: AssignmentView[];
+  touchesPeriod: boolean;
+}
+
+/**
+ * Group a nurse's worked nights into runs of consecutive night dates (D1).
+ *
+ * The night cap is about sleep, so it counts the nights in a row wherever they sit: a day shift
+ * before or after them neither resets the count nor hides it. Judging only stretches made
+ * entirely of nights let "day Monday, nights Tuesday to Friday" pass as no night run at all.
+ * Standby never makes a night date, even where on-call counts toward days in a row: a nurse on
+ * call is not awake on the floor. A night is a night tour (`isNightTour`), not the pay flag.
+ */
+export function nightRuns(views: readonly AssignmentView[]): NightRun[] {
+  const byDay = new Map<number, AssignmentView[]>();
+  for (const view of views) {
+    if (view.shiftType.isOnCall || !isNightTour(view.shiftType)) continue;
+    const day = dayNumber(view.assignment.date);
+    const existing = byDay.get(day);
+    if (existing) existing.push(view);
+    else byDay.set(day, [view]);
+  }
+
+  const days = [...byDay.keys()].sort((a, b) => a - b);
+  const runs: NightRun[] = [];
+  let current: NightRun | null = null;
+  for (const day of days) {
+    const dayViews = byDay.get(day)!;
+    if (current && day === current.endDay + 1) {
+      current.endDay = day;
+      current.views.push(...dayViews);
+      current.length++;
+    } else {
+      if (current) runs.push(current);
+      current = {
+        startDay: day,
+        endDay: day,
+        views: [...dayViews],
+        length: 1,
+        touchesPeriod: false,
+      };
+    }
+  }
+  if (current) runs.push(current);
+
+  for (const run of runs) run.touchesPeriod = run.views.some((v) => v.inPeriod);
+  return runs;
 }
 
 export const consecutiveShiftsRule: Rule<ConsecutiveShiftsParams> = {
   id: 'max-consecutive-shifts',
   name: 'Consecutive shift limits',
   description:
-    'Caps how many days in a row a nurse may work, with a stricter cap on consecutive nights, and ' +
-    'requires days off after a maximum-length stretch.',
+    'Caps how many days in a row a nurse may work and how many nights in a row (counted wherever ' +
+    'they sit in the run), and requires days off after a maximum-length stretch.',
   severity: 'hard',
   category: 'rest',
   scope: 'nurse',
@@ -250,14 +316,19 @@ export const consecutiveShiftsRule: Rule<ConsecutiveShiftsParams> = {
     maxConsecutiveNights: {
       label: 'Most nights in a row',
       min: 1,
-      hint: 'The longest run of night shifts only. Usually stricter than the days-in-a-row limit.',
+      hint:
+        'The longest run of nights in a row, wherever it sits: a day shift before or after the ' +
+        'nights does not change the count.',
       why:
         'Three or four nights in a row is a common ceiling, because nights are harder on sleep. ' +
-        'A mixed run (a day, then nights) is judged by the days-in-a-row limit instead.',
+        'A night is a shift starting between 18:00 and 03:59, whatever its pay flag.',
     },
     minDaysOffAfterMaxStretch: {
       label: 'Days off after a longest run',
-      hint: 'Days off required after a nurse works the most days in a row allowed. 0 turns it off.',
+      hint:
+        'Days off required after a nurse works the most days in a row allowed. 0 turns it off. ' +
+        'A day off is a calendar day with no shift starting on it, so the Saturday a Friday night ' +
+        'ends on counts.',
       why:
         'Many contracts require two days off after a full stretch so staff recover before the ' +
         'next one. Set it to what your contract says.',
@@ -295,19 +366,20 @@ export const consecutiveShiftsRule: Rule<ConsecutiveShiftsParams> = {
             ),
           );
         }
+      }
 
-        if (stretch.allNights && stretch.length > params.maxConsecutiveNights) {
-          violations.push(
-            stretchViolation(
-              'too_many_consecutive_nights',
-              `${nurseName(nurse)} is scheduled ${stretch.length} consecutive nights ` +
-                `(${describeStretch(stretch)}). Maximum is ${params.maxConsecutiveNights}.`,
-              nurse.id,
-              stretch,
-              { actual: stretch.length, maximum: params.maxConsecutiveNights, allNights: true },
-            ),
-          );
-        }
+      for (const run of nightRuns(timeline)) {
+        if (!run.touchesPeriod || run.length <= params.maxConsecutiveNights) continue;
+        violations.push(
+          stretchViolation(
+            'too_many_consecutive_nights',
+            `${nurseName(nurse)} is scheduled ${run.length} nights in a row ` +
+              `(${describeStretch(run)}). Maximum is ${params.maxConsecutiveNights}.`,
+            nurse.id,
+            run,
+            { actual: run.length, maximum: params.maxConsecutiveNights },
+          ),
+        );
       }
 
       // Recovery days between back-to-back maximum stretches.
@@ -349,7 +421,7 @@ function stretchViolation(
   code: 'too_many_consecutive_shifts' | 'too_many_consecutive_nights' | 'missing_required_days_off',
   message: string,
   nurseId: Id,
-  stretch: Stretch,
+  stretch: Pick<Stretch, 'views'>,
   details: Record<string, unknown>,
 ): Violation {
   return violation(consecutiveShiftsRule, 'hard', code, message, {
@@ -360,7 +432,7 @@ function stretchViolation(
   });
 }
 
-function describeStretch(stretch: Stretch): string {
+function describeStretch(stretch: Pick<Stretch, 'startDay' | 'endDay'>): string {
   return describeDateRange(fromDayNumber(stretch.startDay), fromDayNumber(stretch.endDay));
 }
 

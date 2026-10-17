@@ -24,15 +24,22 @@ let dayId: string;
 let standbyId: string;
 let periodId: string;
 
-function mkShiftType(name: string, isOnCall: boolean, sortOrder: number): string {
+function mkShiftType(
+  name: string,
+  isOnCall: boolean,
+  sortOrder: number,
+  startTime = '07:00',
+  durationHours = 12,
+  forUnit = unitId,
+): string {
   return createShiftType(
     handle.db,
     {
-      unitId,
+      unitId: forUnit,
       name,
       abbreviation: name.slice(0, 3),
-      startTime: '07:00',
-      durationHours: 12,
+      startTime,
+      durationHours,
       isNight: false,
       isOnCall,
       color: '#f59e0b',
@@ -254,5 +261,132 @@ describe('recording a holdover', () => {
       ).toThrow(/reason/);
     }
     expect(getAssignment(handle.db, a.id)).not.toHaveProperty('holdoverMinutes');
+  });
+});
+
+describe('a holdover that runs into the nurse’s next shift', () => {
+  function d8() {
+    const id = mkShiftType('Day 8', false, 3, '07:00', 8);
+    return { id, a: shift(id) };
+  }
+  function later(typeId: string, forPeriod = periodId) {
+    return createAssignment(
+      handle.db,
+      { periodId: forPeriod, nurseId, shiftTypeId: typeId, date: isoDate('2026-01-16') },
+      ACTOR,
+    );
+  }
+
+  it('refuses a holdover that runs into the same nurse’s evening shift, and writes nothing', () => {
+    const { a } = d8();
+    later(mkShiftType('Evening 8', false, 4, '15:00', 8));
+    publish();
+    const audits = auditHistoryFor(handle.db, 'assignment', a.id).length;
+    // Scheduled end 15:00, evening starts 15:00, and 15:00 <= 15:00 < 15:30.
+    expect(() =>
+      recordHoldover(handle.db, { assignmentId: a.id, minutes: 30, mandated: false }, ACTOR),
+    ).toThrow(
+      'Ada Nurse starts the Evening 8 at 15:00 on Fri Jan 16, inside this holdover. Hold over at most 0 minutes, or record the extra time on that shift.',
+    );
+    expect(getAssignment(handle.db, a.id)).not.toHaveProperty('holdoverMinutes');
+    expect(auditHistoryFor(handle.db, 'assignment', a.id)).toHaveLength(audits);
+  });
+
+  it('allows a holdover that ends exactly when the nurse’s next shift starts', () => {
+    const { a } = d8();
+    later(mkShiftType('Late 4', false, 4, '16:00', 4));
+    publish();
+    expect(
+      recordHoldover(handle.db, { assignmentId: a.id, minutes: 60, mandated: false }, ACTOR)
+        .holdoverMinutes,
+    ).toBe(60);
+    expect(() =>
+      recordHoldover(handle.db, { assignmentId: a.id, minutes: 61, mandated: false }, ACTOR),
+    ).toThrow(/at most 60 minutes/);
+  });
+
+  it('refuses a holdover into a shift the nurse works on another unit', () => {
+    const { a } = d8();
+    const other = createUnit(
+      handle.db,
+      {
+        name: '5 East',
+        unitType: 'Medical-Surgical',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    ).id;
+    const ruleSet = transact(handle.db, (tx) =>
+      saveRuleSet(
+        tx,
+        {
+          unitId: other,
+          name: 'Default',
+          weekendDefinition: {
+            startWeekday: 6,
+            startMinute: 0,
+            durationMinutes: 2880,
+            mode: 'starts_within',
+          },
+          fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+          configs: [],
+        },
+        ACTOR,
+      ),
+    );
+    const otherPeriod = createPeriod(
+      handle.db,
+      {
+        unitId: other,
+        name: 'Other',
+        startDate: isoDate('2026-01-15'),
+        endDate: isoDate('2026-01-28'),
+        ruleSetId: ruleSet.id,
+        ruleSetVersion: ruleSet.version,
+      },
+      ACTOR,
+    ).id;
+    later(mkShiftType('Float 4', false, 1, '15:30', 4, other), otherPeriod);
+    publish();
+    // Scheduled end 15:00; the other unit's shift starts 15:30, inside 45 minutes.
+    expect(() =>
+      recordHoldover(handle.db, { assignmentId: a.id, minutes: 45, mandated: false }, ACTOR),
+    ).toThrow(/starts the Float 4 on 5 East at 15:30 .*Hold over at most 30 minutes/);
+  });
+
+  it('refuses a night holdover that runs into the next morning’s day shift', () => {
+    const night = mkShiftType('Night 12', false, 5, '19:00', 12);
+    const a = shift(night);
+    createAssignment(
+      handle.db,
+      { periodId, nurseId, shiftTypeId: dayId, date: isoDate('2026-01-17') },
+      ACTOR,
+    );
+    publish();
+    // Night dated Jan 16 ends 07:00 Jan 17; the day shift starts 07:00 Jan 17, so 0 minutes of room.
+    expect(() =>
+      recordHoldover(handle.db, { assignmentId: a.id, minutes: 30, mandated: false }, ACTOR),
+    ).toThrow(/starts the Day 12 at 07:00 on Sat Jan 17.*Hold over at most 0 minutes/);
+  });
+
+  it('still clears a holdover whatever comes next', () => {
+    const { a } = d8();
+    publish();
+    recordHoldover(handle.db, { assignmentId: a.id, minutes: 30, mandated: false }, ACTOR);
+    later(mkShiftType('Evening 8', false, 4, '15:00', 8));
+    expect(
+      recordHoldover(handle.db, { assignmentId: a.id, minutes: 0, mandated: false }, ACTOR),
+    ).not.toHaveProperty('holdoverMinutes');
+  });
+
+  it('ignores standby that starts inside the holdover', () => {
+    const { a } = d8();
+    later(mkShiftType('Standby late', true, 4, '15:00', 8));
+    publish();
+    expect(
+      recordHoldover(handle.db, { assignmentId: a.id, minutes: 30, mandated: false }, ACTOR)
+        .holdoverMinutes,
+    ).toBe(30);
   });
 });
