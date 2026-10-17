@@ -4,6 +4,9 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "composite": true,
+    // Explicit so `process`, `Buffer` and `node:*` are compile errors in core source whatever the
+    // compiler's default: core is pure domain code (root CLAUDE.md, the boundary rule).
+    "types": [],
     "tsBuildInfoFile": "./dist/.tsbuildinfo"
   },
   "include": ["src/**/*"],

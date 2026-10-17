@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -52,5 +52,75 @@
     "parser": {
       "tailwindDirectives": true
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["packages/core/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "electron": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "better-sqlite3": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "drizzle-orm": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "@shiftnurse/db": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "fs": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "path": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "os": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "child_process": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "worker_threads": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "crypto": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead."
+                },
+                "patterns": [
+                  {
+                    "group": ["node:*", "drizzle-orm/*", "@shiftnurse/db/*", "electron/*"],
+                    "message": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/core/src/domain/**", "!packages/core/src/domain/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "electron": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "better-sqlite3": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "drizzle-orm": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "@shiftnurse/db": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "fs": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "path": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "os": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "child_process": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "worker_threads": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead.",
+                  "crypto": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead."
+                },
+                "patterns": [
+                  {
+                    "group": ["node:*", "drizzle-orm/*", "@shiftnurse/db/*", "electron/*"],
+                    "message": "packages/core is pure domain code: no Electron, database or Node I/O (root CLAUDE.md, the boundary rule). Take the data as an argument instead."
+                  },
+                  {
+                    "group": ["../**"],
+                    "message": "domain/ is the bottom layer of core and imports only from domain/. Move the type into domain/ instead."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

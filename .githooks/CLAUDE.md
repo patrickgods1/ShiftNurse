@@ -14,5 +14,7 @@
 - **`prepare-commit-msg`** drafts a plain-English message from the staged diff for a bare
   `git commit`; it never touches a message given with `-m`/`-F`. To commit non-interactively
   with a drafted message: run `.githooks/prepare-commit-msg <file> ""` then `git commit -F <file>`.
+- Both hooks pass the prompt on stdin (Linux's 128 KiB per-argument cap) and build the diff
+  without a `head` pipeline (SIGPIPE under `pipefail`).
 - The review fails *open* (no verdict → not blocked) so a flaky reviewer cannot wedge the
   repo; the mechanical gate fails closed.

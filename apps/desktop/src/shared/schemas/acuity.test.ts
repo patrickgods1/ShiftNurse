@@ -24,8 +24,11 @@ describe('acuity settings arriving over IPC', () => {
     ).toBe(false);
   });
 
-  it('refuses an HPPD target that is not a number', () => {
+  it('accepts an HPPD target of 8.5 hours', () => {
     expect(acuitySchemas.setHppd.safeParse(['u-1', 8.5]).success).toBe(true);
+  });
+
+  it('refuses an HPPD target that is not a number', () => {
     expect(acuitySchemas.setHppd.safeParse(['u-1', Number.NaN]).success).toBe(false);
   });
 

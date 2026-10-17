@@ -4,7 +4,6 @@
  * this becomes a web app.
  */
 
-import type { JurisdictionChoices, JurisdictionId } from '../setup/jurisdictions.js';
 import type { IsoDate, Weekday } from './time.js';
 
 export type Id = string;
@@ -15,6 +14,29 @@ export type Timestamp = number;
 // ---------------------------------------------------------------------------
 // Unit & shift types
 // ---------------------------------------------------------------------------
+
+export type JurisdictionId =
+  | 'CA'
+  | 'OR'
+  | 'NY'
+  | 'WA'
+  | 'MA'
+  | 'IL'
+  | 'CT'
+  | 'MN'
+  | 'NJ'
+  | 'ME'
+  | 'PA'
+  | 'NH'
+  | 'RI'
+  | 'WV'
+  | 'AK'
+  | 'TX'
+  | 'US-VA'
+  | 'other';
+
+/** The manager's answers to a preset's options, by option id; an unanswered one is no. */
+export type JurisdictionChoices = Readonly<Record<string, boolean>>;
 
 export interface Unit {
   id: Id;

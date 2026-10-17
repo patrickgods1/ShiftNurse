@@ -51,6 +51,8 @@ nothing from the database. No `electron`, no `better-sqlite3`, no `drizzle-orm`,
 purity is the entire reason the eventual web/mobile move is a re-host rather than a rewrite —
 core becomes the server engine unchanged. If a core module needs data, it takes it as an
 argument. If it needs to persist something, it returns a value and lets the caller persist it.
+Lint (`noRestrictedImports` on `packages/core/**`) and `"types": []` in the core tsconfig enforce it,
+and `domain/` may import only from `domain/`.
 
 The same rule shapes the layers above: the DB is owned by the Electron main process only, the
 renderer reaches it through a typed IPC surface deliberately shaped like the future HTTP API.
@@ -82,6 +84,8 @@ Rules that follow:
   overlap one starting at 07:00.
 - Real instants — audit timestamps, when a call-off was phoned in — use `Date`/epoch millis
   (`Timestamp`). Those are events, not schedule geometry. Do not mix the two.
+- Tests run under `TZ=America/New_York` (pinned in `vitest.config.ts`; `domain/host-timezone.test.ts`
+  fails if it is not), so a regression to local-`Date` arithmetic fails the DST suites on every host.
 
 `ScheduleView` carries a lookback tail of prior published assignments flagged
 `inPeriod: false`: they participate in rest/consecutive/hours maths but never receive
@@ -212,4 +216,4 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
 - **`ROADMAP.md` is the plan of record** — milestones M1–M38, locked-in decisions, verification
   steps. Tick a box when the work lands *and* its verification passes, not when code is written.
 - **`.claude/skills/scheduling-review`** — the domain review checklist for scheduling changes.
-- `.claude/scripts/` — SessionStart roadmap summary and a non-blocking Stop-hook test run.
+- `.claude/scripts/` — SessionStart roadmap summary and a non-blocking Stop hook that runs the unit tests related to the turn's changes (100 s budget).

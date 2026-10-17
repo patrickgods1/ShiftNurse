@@ -57,7 +57,7 @@
             "type": "command",
             "command": "\"${CLAUDE_PROJECT_DIR:-.}/.claude/scripts/regression-check.sh\" 2>/dev/null || true",
             "timeout": 120,
-            "statusMessage": "Checking tests…"
+            "statusMessage": "Checking related tests…"
           }
         ]
       }

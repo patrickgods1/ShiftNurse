@@ -15,8 +15,11 @@ command -v claude >/dev/null 2>&1 || exit 0
 git diff --cached --quiet && exit 0
 
 cd "$(git rev-parse --show-toplevel)"
-diff=$(git diff --cached --no-color --stat -- . && echo && \
-       git diff --cached --no-color -- . ':(exclude)package-lock.json' ':(exclude)*.sql' | head -c 120000)
+# No `| head -c` here: under `pipefail` a diff past the cap makes `head` close the pipe, git dies
+# of SIGPIPE (141), and `set -e` would abort the commit. A substring has no pipe to break.
+stat=$(git diff --cached --no-color --stat -- .)
+body=$(git diff --cached --no-color -- . ':(exclude)package-lock.json' ':(exclude)*.sql')
+diff="${stat}"$'\n\n'"${body:0:120000}"
 
 prompt=$(cat <<PROMPT
 Write a git commit message for the staged changes below, for the ShiftNurse repository
@@ -41,7 +44,8 @@ PROMPT
 # Run from outside the repo: the diff is all it needs, and inside the checkout claude would load
 # every CLAUDE.md (~15k tokens) on each commit. (`--bare` would skip them too, but also skips the
 # keychain login.)
-draft=$(cd "${TMPDIR:-/tmp}" && claude -p "$prompt" --model sonnet --tools "" --no-session-persistence --output-format text 2>/dev/null) || exit 0
+# Prompt on stdin: Linux caps a single argument at 128 KiB.
+draft=$(cd "${TMPDIR:-/tmp}" && printf '%s' "$prompt" | claude -p --model sonnet --tools "" --no-session-persistence --output-format text 2>/dev/null) || exit 0
 [[ -z "$draft" ]] && exit 0
 
 {
