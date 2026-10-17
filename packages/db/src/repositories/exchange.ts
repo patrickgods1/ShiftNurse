@@ -25,7 +25,13 @@ import { ids } from '../ids.js';
 import { toShiftSwap } from '../mappers.js';
 import { schedulePeriod, shiftSwap } from '../schema.js';
 import { recordScheduleChange, requireChangeReason } from './publish.js';
-import { createAssignment, deleteAssignment, getAssignment, getPeriod } from './schedule.js';
+import {
+  createAssignment,
+  deleteAssignment,
+  getAssignment,
+  getPeriod,
+  holdoverRefusal,
+} from './schedule.js';
 
 export function listSwapsForPeriod(
   db: DbLike,
@@ -204,6 +210,8 @@ export function approveSwap(
     }
     removing.push(existing);
   }
+  const held = removing.find((r) => (r.holdoverMinutes ?? 0) > 0);
+  if (held) throw new Error(`One of these shifts: ${holdoverRefusal(held)}`);
   const reason = opts.reason?.trim();
   if (opts.overrode && !reason) {
     throw new Error(

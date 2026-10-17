@@ -130,7 +130,7 @@ describe('time-off requests', () => {
   it('withdraws an approval, but only one that was granted', () => {
     const request = annAsksForLeave();
     expect(() => api().timeOff.withdrawApproval(request.id, 'Mistake')).toThrow(
-      /not approved; nothing to withdraw/i,
+      /no approval to withdraw/,
     );
     api().timeOff.approve(request.id);
     expect(api().timeOff.withdrawApproval(request.id, 'Census spike').status).toBe('pending');

@@ -6,16 +6,27 @@
  * returns. Keeping every read and write here — including the lookback tail and the
  * locked-cell-preserving rewrite — is what lets the solver, the manual grid editor and the
  * publish flow all share one source of truth for "what did we actually schedule."
+ *
+ * A period's status changes only through `publishSchedule` (`publish.ts`), which always writes a
+ * version, and `archivePeriod`; a status write anywhere else would leave a published period
+ * with no version for its change log to hang from.
  */
 
 import type { Assignment, Id, IsoDate, PeriodStatus, SchedulePeriod } from '@shiftnurse/core';
-import { addDays } from '@shiftnurse/core';
+import {
+  addDays,
+  compareDates,
+  dateInRange,
+  describeDate,
+  describeDateRange,
+  isIsoDate,
+} from '@shiftnurse/core';
 import { and, asc, desc, eq, gte, inArray, lte } from 'drizzle-orm';
-import { recordAudit } from '../audit.js';
+import { recordAudit, recordAuditStrict, requireAuditReason } from '../audit.js';
 import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { toAssignment, toSchedulePeriod } from '../mappers.js';
-import { assignment, schedulePeriod } from '../schema.js';
+import { assignment, schedulePeriod, shiftType } from '../schema.js';
 import { insertRows } from './bulk.js';
 import { type PatchKeys, patchOf } from './patch.js';
 
@@ -63,7 +74,18 @@ export interface CreatePeriodInput {
   requestsCloseOn?: IsoDate;
 }
 
+/** Refuses a backwards period before writing: `datesInRange` over one is empty, so every rule
+ * would judge nothing and the schedule would read as clean. A one-day period is fine. */
 export function createPeriod(db: DbLike, input: CreatePeriodInput, actor: string): SchedulePeriod {
+  if (!isIsoDate(input.startDate)) {
+    throw new Error(`The period's start date "${input.startDate}" is not a date.`);
+  }
+  if (!isIsoDate(input.endDate)) {
+    throw new Error(`The period's end date "${input.endDate}" is not a date.`);
+  }
+  if (compareDates(input.endDate, input.startDate) < 0) {
+    throw new Error('The period ends before it starts.');
+  }
   const id = ids.period();
   const row = {
     id,
@@ -118,58 +140,49 @@ export function setRequestsCloseOn(
   return after;
 }
 
-export function updatePeriodStatus(
+/**
+ * Close a published schedule: from here it is the record of what was worked, and every edit is
+ * refused (`requirePeriodEditable`). Only a published period can be archived — archiving a draft
+ * would freeze a proposal that never went out — and the reason is strict, since a closed
+ * schedule is what gets quoted when a pay period is disputed.
+ */
+export function archivePeriod(
   db: DbLike,
   periodId: Id,
-  status: PeriodStatus,
   actor: string,
+  reason: string,
 ): SchedulePeriod {
   const before = getPeriod(db, periodId);
   if (!before) throw new Error(`Schedule period ${periodId} not found`);
-  db.update(schedulePeriod).set({ status }).where(eq(schedulePeriod.id, periodId)).run();
-  const after = getPeriod(db, periodId);
-  if (!after) throw new Error(`Schedule period ${periodId} vanished during update`);
-  recordAudit(db, {
+  if (before.status === 'draft') {
+    throw new Error(`"${before.name}" is a draft; only a published schedule can be archived.`);
+  }
+  if (before.status === 'archived') throw new Error(`"${before.name}" is already archived.`);
+  // Checked before the write so a blank reason leaves nothing behind.
+  const trimmed = requireAuditReason({
     entityType: 'schedule_period',
     entityId: periodId,
     action: 'update',
-    actor,
-    before,
-    after,
-  });
-  return after;
-}
-
-/**
- * Publish a draft. Distinct from `updatePeriodStatus` because publication is a specific
- * business event — it stamps `publishedAt` and its own audit action — not a generic edit,
- * and it is what turns assignments from "a proposal" into "what the nurse actually worked"
- * for lookback purposes (see `priorAssignmentsBefore`).
- */
-export function publishPeriod(
-  db: DbLike,
-  periodId: Id,
-  actor: string,
-  reason?: string,
-): SchedulePeriod {
-  const before = getPeriod(db, periodId);
-  if (!before) throw new Error(`Schedule period ${periodId} not found`);
-  const publishedAt = Date.now();
-  db.update(schedulePeriod)
-    .set({ status: 'published', publishedAt })
-    .where(eq(schedulePeriod.id, periodId))
-    .run();
-  const after = getPeriod(db, periodId);
-  if (!after) throw new Error(`Schedule period ${periodId} vanished during publish`);
-  recordAudit(db, {
-    entityType: 'schedule_period',
-    entityId: periodId,
-    action: 'publish',
-    actor,
-    before,
-    after,
     reason,
   });
+  db.update(schedulePeriod)
+    .set({ status: 'archived' })
+    .where(eq(schedulePeriod.id, periodId))
+    .run();
+  const after = getPeriod(db, periodId)!;
+  recordAuditStrict(
+    db,
+    {
+      entityType: 'schedule_period',
+      entityId: periodId,
+      action: 'update',
+      actor,
+      before,
+      after,
+      reason: trimmed,
+    },
+    { requireReason: true },
+  );
   return after;
 }
 
@@ -247,10 +260,11 @@ export function listAssignmentsForPeriodOnDate(
  * The lookback tail `ScheduleView` needs to evaluate rest and consecutive-shift rules across
  * a period boundary: assignments in `[startDate - lookbackDays, startDate - 1]`.
  *
- * Published periods only. An unpublished draft is a proposal, not something the nurse
- * actually worked — pulling in a sibling draft's guesses would let one draft's assumptions
- * silently constrain another, and would make a rest violation appear or disappear depending
- * on the order two drafts happen to be edited in.
+ * Published and archived periods only. An archived period is the record of what was worked, so
+ * archiving one must not make its last night vanish from the next period's rest check. An
+ * unpublished draft is a proposal, not something the nurse actually worked — pulling in a sibling
+ * draft's guesses would let one draft's assumptions silently constrain another, and would make a
+ * rest violation appear or disappear depending on the order two drafts happen to be edited in.
  */
 export function priorAssignmentsBefore(
   db: DbLike,
@@ -263,7 +277,12 @@ export function priorAssignmentsBefore(
   const publishedPeriodIds = db
     .select({ id: schedulePeriod.id })
     .from(schedulePeriod)
-    .where(and(eq(schedulePeriod.unitId, unitId), eq(schedulePeriod.status, 'published')))
+    .where(
+      and(
+        eq(schedulePeriod.unitId, unitId),
+        inArray(schedulePeriod.status, ['published', 'archived']),
+      ),
+    )
     .all()
     .map((r) => r.id);
   if (publishedPeriodIds.length === 0) return [];
@@ -298,12 +317,33 @@ export interface CreateAssignmentInput {
   notes?: string;
 }
 
+/**
+ * The one place that decides whether a shift may sit where it is being put. Out-of-period rows
+ * are invisible on the grid yet still feed FMLA hours, accrual and the next lookback, and a
+ * foreign shift type is costed with the wrong differentials, so every writer asks before it
+ * inserts. `typeUnitId` is undefined when the shift type does not exist.
+ */
+function placeableOrThrow(period: SchedulePeriod, date: string, typeUnitId: Id | undefined): void {
+  if (!isIsoDate(date)) throw new Error(`"${date}" is not a date.`);
+  if (!dateInRange(date, period.startDate, period.endDate)) {
+    throw new Error(
+      `${describeDate(date, { year: true })} is outside ${period.name} (${describeDateRange(period.startDate, period.endDate)}).`,
+    );
+  }
+  if (typeUnitId !== period.unitId)
+    throw new Error("That shift is not one of this unit's shift types.");
+}
+
 export function createAssignment(
   db: DbLike,
   input: CreateAssignmentInput,
   actor: string,
   reason?: string,
 ): Assignment {
+  const period = getPeriod(db, input.periodId);
+  if (!period) throw new Error(`Schedule period ${input.periodId} not found`);
+  const type = db.select().from(shiftType).where(eq(shiftType.id, input.shiftTypeId)).get();
+  placeableOrThrow(period, input.date, type?.unitId);
   const id = ids.assignment();
   const row = {
     id,
@@ -405,6 +445,14 @@ export interface MoveAssignmentTarget {
   date: IsoDate;
 }
 
+/** Shared with `approveSwap`, so a swap and a grid move refuse in the same words. */
+export function holdoverRefusal(row: Assignment): string {
+  return (
+    `This shift has a recorded ${row.holdoverMinutes}-minute holdover, which belongs to the ` +
+    'nurse and day that worked it. Clear the holdover on Today first if the shift really changed.'
+  );
+}
+
 /**
  * Move a shift to another nurse, date or shift type. `nurseId` is immutable on an assignment,
  * so a move is a delete and a create; callers run it inside `transact` so the grid never
@@ -424,6 +472,9 @@ export function moveAssignment(
   const existing = getAssignment(db, assignmentId);
   if (!existing) throw new Error(`Assignment ${assignmentId} not found`);
   if (existing.isLocked) throw new Error('Cannot move a locked assignment');
+  // Delete + create would drop the minutes, and carrying them to another nurse, day or shift
+  // would invent worked time; refusing is the only answer that is true.
+  if ((existing.holdoverMinutes ?? 0) > 0) throw new Error(holdoverRefusal(existing));
   deleteAssignment(db, assignmentId, actor, reason);
   return createAssignment(
     db,
@@ -459,10 +510,26 @@ export function replaceAssignments(
   /** Merged into the `generate` audit entry — which solver ran, and whether it fell back. */
   auditDetails: Record<string, unknown> = {},
 ): Assignment[] {
+  const period = getPeriod(db, periodId);
+  if (!period) throw new Error(`Schedule period ${periodId} not found`);
+  // Solver output that fails here is a bug upstream; refuse before deleting anything.
+  const typeUnits = new Map(
+    db
+      .select({ id: shiftType.id, unitId: shiftType.unitId })
+      .from(shiftType)
+      .where(eq(shiftType.unitId, period.unitId))
+      .all()
+      .map((t) => [t.id, t.unitId] as const),
+  );
+  for (const input of assignments)
+    placeableOrThrow(period, input.date, typeUnits.get(input.shiftTypeId));
   const existing = db.select().from(assignment).where(eq(assignment.periodId, periodId)).all();
   const lockedRows = existing.filter((r) => r.isLocked);
   const unlockedRows = existing.filter((r) => !r.isLocked);
   const unlockedIds = unlockedRows.map((r) => r.id);
+  // Regenerating rewrites rows, and a recorded holdover cannot ride along to a new one.
+  const held = unlockedRows.find((r) => r.holdoverMinutes > 0);
+  if (held) throw new Error(holdoverRefusal(toAssignment(held)));
 
   // Only the unlocked rows are wiped. Locked rows are never touched by this function — that
   // is the guarantee the manager's pin depends on.

@@ -159,6 +159,7 @@ describe('publishing a schedule', () => {
       version: { ...version1 },
       diff: { added: 12, removed: 0, changed: 0, changes: [], affectedNurseIds: ['n1', 'n2'] },
       ledgerEntries: 2,
+      ledgerRemoved: 0,
       backup: undefined,
     } as PublishOutcome);
     renderDialog();

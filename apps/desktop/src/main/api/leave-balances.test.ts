@@ -13,7 +13,9 @@ import {
   auditHistoryFor,
   createAssignment,
   createNurse,
+  createPeriod,
   createTimeOffRequest,
+  getPeriod,
   getUnit,
   updateUnit,
 } from '@shiftnurse/db';
@@ -312,11 +314,25 @@ describe('Title I FMLA eligibility', () => {
     const start = isoDate('2026-10-05');
     const shifts = (from: number) =>
       Array.from({ length: 26 - from }, (_, k) => addDays(start, -364 + 14 * (from + k)));
+    // A year of history belongs to a schedule of its own, not to the draft it precedes.
+    const draft = getPeriod(f.handle.db, f.seeded.draftPeriodId)!;
+    const history = createPeriod(
+      f.handle.db,
+      {
+        unitId: f.seeded.unitId,
+        name: 'A year of history',
+        startDate: addDays(start, -364),
+        endDate: addDays(start, -1),
+        ruleSetId: draft.ruleSetId,
+        ruleSetVersion: draft.ruleSetVersion,
+      },
+      ACTOR,
+    );
     const work = (dates: ReturnType<typeof shifts>) => {
       for (const date of dates) {
         createAssignment(
           f.handle.db,
-          { periodId: f.seeded.draftPeriodId, nurseId, shiftTypeId: f.day.id, date },
+          { periodId: history.id, nurseId, shiftTypeId: f.day.id, date },
           ACTOR,
         );
       }

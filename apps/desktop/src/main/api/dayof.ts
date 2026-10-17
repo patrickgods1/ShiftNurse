@@ -29,6 +29,7 @@ import {
   getCancellationPolicy,
   getNurse,
   getShiftType,
+  holdoverRefusal,
   lastCalledAt,
   lastOvertimeDates,
   listAssignmentsForPeriodOnDate,
@@ -310,6 +311,8 @@ function backfill(db: ShiftNurseDb, callOffId: Id, nurseId: Id, notes?: string):
 
   return editSchedule(db, callOff.periodId, reason, 'backfill', (tx, log) => {
     const absent = assignmentOrThrow(tx, callOff.assignmentId);
+    // The cover is a new row; the absent nurse's recorded holdover cannot move to it.
+    if ((absent.holdoverMinutes ?? 0) > 0) throw new Error(holdoverRefusal(absent));
     const report = findReplacements({
       ...buildConflictInput(tx, callOff.periodId),
       absentAssignmentId: absent.id,

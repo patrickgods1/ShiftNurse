@@ -23,6 +23,14 @@ tags. Each release's notes link here.
 - With both a consecutive-hours and a 24-hour limit on required overtime, a required call-back in
   a short stretch is now checked against the 24-hour limit too.
 - A "weekends in a row" finding now marks every weekend of the run on the grid, not only the last.
+- Editing, backfilling or approving leave against the demo's past schedules no longer fails with
+  "never been published".
+- A schedule laid over a published one now sees the shifts already posted on those days.
+- A schedule or a leave request that ends before it starts is refused.
+- When the contract counts the night before leave, approving the leave takes the nurse off that
+  night too.
+- Republishing a schedule no longer leaves a nurse's old nights or weekends in the fairness
+  history after their shifts moved to someone else.
 
 ### Changed
 
@@ -37,6 +45,9 @@ tags. Each release's notes link here.
   Settings › Rules › Coverage minimums.
 - A career nurse exempt from rotation is no longer flagged for working a tour she asked for (a
   preferred shift type).
+- An approved request can only be withdrawn (with a reason), not denied or cancelled.
+- A shift with a recorded holdover cannot be moved, exchanged or covered; clear the holdover on
+  Today first. Removing one offers no undo.
 
 ## [0.1.0] - 2026-10-05
 

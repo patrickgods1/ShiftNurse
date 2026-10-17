@@ -223,6 +223,20 @@ describe('undoing a grid edit', () => {
     ]);
   });
 
+  it('offers no undo for removing a held-over shift, and says the holdover went with it', async () => {
+    const held = assign(ana.id, DAY_12, '2026-10-05', { id: 'a-held', holdoverMinutes: 90 });
+    renderWithApp(<Host held={[held, benMonday]} />);
+    await press('remove');
+    await screen.findByText(/90-minute holdover/);
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+    expect(bridge.callsTo('schedule', 'createAssignment')).toHaveLength(0);
+    cleanup();
+    renderWithApp(<Host held={[anaMonday, benMonday]} />);
+    await press('remove');
+    await screen.findByText('Removed Ana Ruiz from Day 12 on Mon, Oct 5');
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeTruthy();
+  });
+
   it('takes a charge nurse designation back off', async () => {
     renderWithApp(<Host held={[anaMonday, benMonday]} />);
     await press('charge');

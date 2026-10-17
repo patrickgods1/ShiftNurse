@@ -30,7 +30,11 @@
   shift. An unknown key throws. An assignment's date, shift and nurse change only by a move;
   `AssignmentPatch` carries flags and notes, and IPC creates are always `source: 'manual'`.
 - **Moving a shift is delete + create in one `transact`.** `nurseId` is immutable on an
-  assignment; the move carries `isCharge`/`isOvertime`/`notes` across and refuses locked rows.
+  assignment; the move carries `isCharge`/`isOvertime`/`notes` across and refuses locked rows
+  and a shift with a recorded holdover (the minutes belong to that nurse and day; `approveSwap`
+  refuses the same way).
+  Every create (and so every move, cover, backfill, resolution and Generate save) refuses a date
+  outside the period, a non-date, or another unit's shift type.
 - **`call_off` carries the shift (period/nurse/shift type/date) and no FK on `assignmentId`.** A
   backfill deletes the absent nurse's row and writes a `source: 'callout'` one, so the call-off and
   its call log must outlive the id they point at — the same reason `shift_swap` has no assignment
@@ -39,14 +43,24 @@
   cascades into its children.
 - **The ledger's `periodId` has no foreign key on purpose:** imported history uses synthetic
   `import:<start>` ids for pay periods that predate the app.
-- **The lookback tail is published periods only** (`PRIOR_ASSIGNMENT_LOOKBACK_DAYS`).
+- **The lookback tail is published and archived periods only** (`PRIOR_ASSIGNMENT_LOOKBACK_DAYS`).
   `historyFromFor` says how far that tail is complete; the contracted-hours rule judges a pay
   period that began before the period only from there.
+- **`periodTailFor` is the one loader of a period's tail**, for `loadPeriodInput` and main's
+  `scheduleViewFor` alike: the unit's own earlier shifts (real types), its published or archived
+  shifts of another period dated inside this one, and other units' shifts (any status), the last
+  two as core's `busyElsewhere` locked rows on inactive `elsewhere:` types. Same-unit drafts stay
+  out; nothing it returns is added to the period's own `assignments`.
 - **A published period is editable, with a reason.** Only `archived` is read-only. Every
   schedule mutation takes an optional `reason`; `requireChangeReason` throws on a published
   period without one and `editSchedule` in main writes each touched shift to `schedule_change`.
   A republish needs a reason and refuses an unchanged schedule. The diff is keyed on
   nurse/date/shift, never row ids, so a regenerate that lands the same shifts is "no change".
+  Status changes only through `publishSchedule` and `archivePeriod` (published → archived, strict
+  reason). There is no other publish path; the seeds publish history through `publishSchedule`,
+  so every published period has a version.
+  A publish that books a ledger books it whole: rows for nurses no longer on the period are
+  deleted, audited with `before` (an omitted `ledger` touches nothing).
 - **A nurse's record leaves the app without HR or medical matters.** The grievance export
   (`repositories/nurse-record.ts`, Roster › nurse › Export record…) carries every audit entry
   about a nurse — time, action, actor, reason, never the before/after snapshots — and their
@@ -59,4 +73,10 @@
   (a holdover there is double-counted time), and audits with `before`; a required one goes through
   `recordAuditStrict`.
   `toAssignment` emits the fields only when minutes > 0, so an untouched row maps as before. Only a
-  draft is generated, so the solvers never write over one.
+  draft is generated, so the solvers never write over one. The grid offers no Undo for removing a
+  held-over shift.
+- **A time-off request moves only along `TIME_OFF_TRANSITIONS`** (approve from pending or denied;
+  deny and cancel from pending; withdraw from approved, strict reason); every writer checks it first.
+- **Approve-and-lift reads from the day before the leave** and lifts (draft) or reports (published)
+  the night dated then only if that period's own rule set has the time-off rule on with
+  `nightShiftEndingOnLeaveCounts`, judged by core's `overlappingLeaveDate` (window, not `isNight`).

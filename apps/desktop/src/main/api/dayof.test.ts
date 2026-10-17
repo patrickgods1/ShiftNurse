@@ -8,8 +8,10 @@
 import { addDays, isoDate } from '@shiftnurse/core';
 import {
   auditHistoryFor,
+  createPeriod,
   getAssignment,
   getCallOff,
+  getPeriod,
   listAcuityTiersForUnit,
   listAssignmentsForPeriod,
   listCensusForecastsInRange,
@@ -140,6 +142,16 @@ describe('the call-off workflow on a published schedule', () => {
     expect(changes).toHaveLength(2);
     expect(changes.every((c) => c.source === 'backfill')).toBe(true);
     expect(changes.every((c) => c.reason?.includes('sick'))).toBe(true);
+  });
+
+  it('refuses to backfill a shift that carries a recorded holdover and changes nothing', () => {
+    const { absent, callOff } = annCallsInSick();
+    dayOf().recordHoldover({ assignmentId: absent.id, minutes: 75, mandated: false });
+    const [first] = dayOf().replacements(callOff.id).candidates;
+
+    expect(() => dayOf().backfill(callOff.id, first!.nurseId)).toThrow(/75-minute holdover/);
+    expect(getAssignment(f.handle.db, absent.id)?.holdoverMinutes).toBe(75);
+    expect(getCallOff(f.handle.db, callOff.id)?.status).toBe('open');
   });
 
   it('refuses to backfill with a nurse who is not eligible and leaves the call-off open', () => {
@@ -344,9 +356,15 @@ describe('the overtime call order', () => {
   function overtimeCall() {
     const grid = scheduleApi(f.handle.db);
     const monday = f.seeded.draftStart;
-    const put = (nurseId: string, date: string, isOvertime = false, shiftTypeId = f.day.id) =>
+    const put = (
+      nurseId: string,
+      date: string,
+      isOvertime = false,
+      shiftTypeId = f.day.id,
+      periodId = f.seeded.draftPeriodId,
+    ) =>
       grid.createAssignment({
-        periodId: f.seeded.draftPeriodId,
+        periodId,
         nurseId,
         shiftTypeId,
         date: isoDate(date),
@@ -362,7 +380,23 @@ describe('the overtime call order', () => {
     const others = f.rns.slice(1);
     for (const n of others) for (const d of [0, 1, 2]) put(n.id, addDays(monday, d));
     // Overtime history, well before the seeded history periods so no row doubles a seeded shift.
-    for (const [i, n] of others.entries()) put(n.id, addDays(monday, -100 - i), true);
+    // They sit in a schedule of their own: a shift cannot be dated outside the one that holds it.
+    const draft = getPeriod(f.handle.db, f.seeded.draftPeriodId)!;
+    const history = createPeriod(
+      f.handle.db,
+      {
+        unitId: f.seeded.unitId,
+        name: 'Old overtime',
+        startDate: addDays(monday, -130),
+        endDate: addDays(monday, -95),
+        ruleSetId: draft.ruleSetId,
+        ruleSetVersion: draft.ruleSetVersion,
+      },
+      ACTOR,
+    );
+    for (const [i, n] of others.entries()) {
+      put(n.id, addDays(monday, -100 - i), true, f.day.id, history.id);
+    }
     const dayOf = dayOfApi(f.handle.db);
     const callOff = dayOf.reportCallOff(absent.id, 'sick');
 

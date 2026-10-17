@@ -4,22 +4,28 @@
  * change at all — including the lock toggle, which skips the change log on purpose.
  */
 
-import { type Assignment, addDays } from '@shiftnurse/core';
+import { type Assignment, addDays, isoDate } from '@shiftnurse/core';
 import {
+  archivePeriod,
+  createAssignment,
   createIncompatibilityGroup,
+  createPeriod,
+  getPeriod,
+  listAssignmentsForPeriod,
   listChanges,
+  listPeriodsForUnit,
   proposeSwap,
   publishSchedule,
+  recentAudit,
   replaceNursePreferences,
   transact,
   updateIncompatibilityGroup,
-  updatePeriodStatus,
   updateUnit,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { approveExchange } from './conflicts.js';
 import { ACTOR } from './context.js';
-import { scheduleApi } from './schedule.js';
+import { periodsApi, scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
 
 let f: Fixture;
@@ -49,6 +55,21 @@ function place(nurseIndex: number, dayOffset: number, reason?: string): Assignme
 function publishDraft(): void {
   publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
 }
+
+describe('a shift outside its schedule', () => {
+  it('refuses a shift 200 days before the draft, and writes nothing', () => {
+    const before = recentAudit(f.handle.db, 100000).length;
+    expect(() =>
+      api.createAssignment({
+        periodId: f.seeded.draftPeriodId,
+        nurseId: f.rns[0]!.id,
+        shiftTypeId: f.day.id,
+        date: addDays(f.seeded.draftStart, -200),
+      }),
+    ).toThrow(/is outside/);
+    expect(recentAudit(f.handle.db, 100000)).toHaveLength(before);
+  });
+});
 
 describe('shifts that go against what a nurse asked for', () => {
   it('names the preference a night breaks for a nurse who avoids nights', () => {
@@ -187,10 +208,41 @@ describe('editing a schedule through the API', () => {
 
   it('freezes an archived schedule against every edit, locking included', () => {
     const shift = place(0, 1);
-    updatePeriodStatus(f.handle.db, f.seeded.draftPeriodId, 'archived', ACTOR);
+    publishDraft();
+    archivePeriod(f.handle.db, f.seeded.draftPeriodId, ACTOR, 'Closed pay period');
     expect(() => place(1, 2, 'late add')).toThrow(/archived/);
     expect(() => api.deleteAssignment(shift.id, 'tidy up')).toThrow(/archived/);
     expect(() => api.setLocked(shift.id, true)).toThrow(/archived/);
+  });
+
+  it('corrects a shift on seeded history with a reason and logs it in the change log', () => {
+    const history = listPeriodsForUnit(f.handle.db, f.seeded.unitId).find(
+      (p) => p.status === 'published',
+    )!;
+    const a = listAssignmentsForPeriod(f.handle.db, history.id)[0]!;
+    api.deleteAssignment(a.id, 'She swapped out by phone');
+    const changes = listChanges(f.handle.db, history.id);
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({
+      kind: 'removed',
+      assignmentId: a.id,
+      reason: 'She swapped out by phone',
+    });
+  });
+
+  it('refuses a schedule that ends before it starts, and records nothing', () => {
+    const periodsBefore = listPeriodsForUnit(f.handle.db, f.seeded.unitId).length;
+    const auditBefore = recentAudit(f.handle.db, 1000).length;
+    expect(() =>
+      periodsApi(f.handle.db).create({
+        unitId: f.seeded.unitId,
+        name: 'Backwards',
+        startDate: isoDate('2027-03-10'),
+        endDate: isoDate('2027-03-01'),
+      }),
+    ).toThrow(/The period ends before it starts/);
+    expect(listPeriodsForUnit(f.handle.db, f.seeded.unitId)).toHaveLength(periodsBefore);
+    expect(recentAudit(f.handle.db, 1000)).toHaveLength(auditBefore);
   });
 
   it('records a hand-placed shift as manual whatever source the payload claims', () => {
@@ -203,6 +255,45 @@ describe('editing a schedule through the API', () => {
       ...({ source: 'solver' } as object),
     });
     expect(created.source).toBe('manual');
+  });
+});
+
+describe('a draft laid over a published schedule of the same unit', () => {
+  it('flags the turnaround against a shift on an overlapping published schedule', () => {
+    const D = f.seeded.draftStart;
+    const ana = f.rns[0]!;
+    const draft = getPeriod(f.handle.db, f.seeded.draftPeriodId)!;
+    const a = createPeriod(
+      f.handle.db,
+      {
+        unitId: f.seeded.unitId,
+        name: 'Overlapping',
+        startDate: D,
+        endDate: addDays(D, 13),
+        ruleSetId: draft.ruleSetId,
+        ruleSetVersion: draft.ruleSetVersion,
+      },
+      ACTOR,
+    );
+    createAssignment(
+      f.handle.db,
+      { periodId: a.id, nurseId: ana.id, shiftTypeId: f.day.id, date: addDays(D, 3) },
+      ACTOR,
+    );
+    publishSchedule(f.handle.db, { periodId: a.id }, ACTOR);
+    const night = api.createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: ana.id,
+      shiftTypeId: f.night.id,
+      date: addDays(D, 2),
+    });
+    // The night runs 19:00 on D+2 to 07:00 on D+3, and the posted day starts 07:00 on D+3: 0 h.
+    const rest = api
+      .validate(f.seeded.draftPeriodId)
+      .result.hardViolations.filter((v) => v.code === 'insufficient_rest');
+    expect(rest).toHaveLength(1);
+    expect(rest[0]!.nurseIds).toEqual([ana.id]);
+    expect(rest[0]!.assignmentIds).toContain(night.id);
   });
 });
 

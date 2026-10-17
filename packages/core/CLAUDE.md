@@ -146,7 +146,8 @@
   `nightShiftEndingOnLeaveCounts` (off by default) is for contracts that make a day off a whole
   calendar day; it is judged by the shift's window (`crossesMidnight`), never by `isNight`, which
   also flags a Title 38 evening tour that ends before midnight. `overlappingLeaveDate` is the one
-  definition, shared by the rule and the CP-SAT encoder.
+  definition, shared by the rule and the CP-SAT encoder. Approving leave lifts the night before with it when
+  that param is on for the period's rule set (D31).
 - **Paid leave counts toward the contract, not toward overtime.** Approved leave carries
   `paidHours` (the shifts it pays, not every calendar day; the request dialog suggests them with
   `suggestedPaidLeaveHours`), and a call-off can be paid from sick leave (`paidSickHours`,
@@ -344,7 +345,10 @@
   shifts as locked rows in `priorAssignments`, so every nurse rule judges them and nothing staffs,
   flags or prices them here. They carry `ShiftType.elsewhere` (`isElsewhere`); the incompatibility
   floor, `SolverModel`'s floor stretches and CP-SAT's terms leave them out. `loadPeriodInput` and
-  the grid's validation read them from other units' draft and published periods. Float members
+  the grid's validation read them from other units' draft, published and archived periods — and so
+  are this unit's published or archived shifts of another period dated inside this one (a draft
+  laid over a published period), as `elsewhere:` busy time named "… on another <unit> schedule";
+  `periodTailFor` is the one loader. Float members
   (`nurse_unit`, migration 0024) join the roster *after* the home nurses — order is behaviour — with
   their own leave, credentials and preferences (`rosterForPeriod`, `floatExtras`).
 - **An orientee works with their preceptor.** `rules/preceptor.ts` (`orientee-with-preceptor`,

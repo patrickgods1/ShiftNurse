@@ -87,6 +87,22 @@ describe('publishing a schedule', () => {
     });
   });
 
+  it('books only the nurses still on the schedule after a republish', async () => {
+    const [ann, bea] = [f.rns[0]!, f.rns[1]!];
+    const shift = placeNight(ann.id, 1);
+    await api().publish(draft());
+    grid().moveAssignment(
+      { assignmentId: shift.id, nurseId: bea.id, shiftTypeId: f.night.id, date: shift.date },
+      'Ann on leave',
+    );
+    const outcome = await api().publish(draft(), 'Ann on leave');
+    expect(outcome.ledgerRemoved).toBe(1);
+    const rows = ledgerSince(f.handle.db, f.seeded.unitId, f.seeded.draftStart).filter(
+      (l) => l.periodId === draft(),
+    );
+    expect(rows.map((r) => [r.nurseId, r.nightShifts])).toEqual([[bea.id, 1]]);
+  });
+
   it('takes the publish backup after the commit, named for the period and version', async () => {
     placeNight();
     const outcome = await api().publish(draft());

@@ -6,21 +6,26 @@
  * the manager's overlapping-requests heatmap.
  */
 
-import { isoDate } from '@shiftnurse/core';
+import { DEFAULT_FAIRNESS_WEIGHTS, type IsoDate, isoDate } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
-import { type OpenedDatabase, openTestDatabase } from '../client.js';
-import { createUnit } from './config.js';
+import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
+import { createShiftType, createUnit } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
 import { createNurse } from './roster.js';
+import { saveRuleSet } from './rulesets.js';
+import { createAssignment, createPeriod, listAssignmentsForPeriod } from './schedule.js';
 import {
   approvedTimeOffInRange,
   approveTimeOff,
+  approveTimeOffAndLiftAssignments,
   cancelTimeOff,
   countDecisionsByNurse,
   createTimeOffRequest,
   denyTimeOff,
   getTimeOffRequest,
+  listTimeOffForNurse,
+  listTimeOffForUnit,
   listTimeOffOverlappingForUnit,
   withdrawApproval,
 } from './timeoff.js';
@@ -350,7 +355,9 @@ describe('withdrawApproval', () => {
   it('refuses to withdraw a request that was never approved', () => {
     const nurseId = mkNurse('Ada');
     const created = request(nurseId, '2026-02-01', '2026-02-05');
-    expect(() => withdrawApproval(handle.db, created.id, ACTOR, 'reason')).toThrow();
+    expect(() => withdrawApproval(handle.db, created.id, ACTOR, 'reason')).toThrow(
+      'This request is not approved yet; there is no approval to withdraw.',
+    );
   });
 });
 
@@ -381,5 +388,222 @@ describe('countDecisionsByNurse', () => {
     const tallies = countDecisionsByNurse(handle.db, unitId, isoDate('2026-01-01'));
     expect(tallies.get(ada)).toEqual({ approved: 2, denied: 1 });
     expect(tallies.get(grace)).toEqual({ approved: 0, denied: 1 });
+  });
+});
+
+describe('the request lifecycle', () => {
+  type Status = 'pending' | 'approved' | 'denied' | 'cancelled';
+  type Move = 'approve' | 'deny' | 'cancel' | 'withdraw';
+
+  /** A request walked to `status` along legal edges only. */
+  function requestIn(status: Status): string {
+    const created = request(mkNurse('Ada'), '2026-02-01', '2026-02-05');
+    if (status === 'approved') approveTimeOff(handle.db, created.id, ACTOR);
+    if (status === 'denied') denyTimeOff(handle.db, created.id, ACTOR, 'Coverage gap');
+    if (status === 'cancelled') cancelTimeOff(handle.db, created.id, ACTOR);
+    return created.id;
+  }
+
+  function attempt(move: Move, id: string): void {
+    if (move === 'approve') approveTimeOff(handle.db, id, ACTOR);
+    else if (move === 'deny') denyTimeOff(handle.db, id, ACTOR, 'Coverage gap');
+    else if (move === 'cancel') cancelTimeOff(handle.db, id, ACTOR);
+    else withdrawApproval(handle.db, id, ACTOR, 'Census spike');
+  }
+
+  const WITHDRAW_FIRST = 'This request is approved. Withdraw the approval instead, with a reason.';
+  const refused: [string, Move, Status, string][] = [
+    [
+      'will not approve a request that is already approved',
+      'approve',
+      'approved',
+      'This request is already approved.',
+    ],
+    [
+      'will not approve a request that was cancelled',
+      'approve',
+      'cancelled',
+      'This request was cancelled. Enter a new request if the nurse still wants the time off.',
+    ],
+    ['will not deny a request that is already approved', 'deny', 'approved', WITHDRAW_FIRST],
+    [
+      'will not deny a request that is already denied',
+      'deny',
+      'denied',
+      'This request is already denied.',
+    ],
+    [
+      'will not deny a request that was cancelled',
+      'deny',
+      'cancelled',
+      'This request was cancelled; there is nothing to deny.',
+    ],
+    ['will not cancel a request that is already approved', 'cancel', 'approved', WITHDRAW_FIRST],
+    [
+      'will not cancel a request that was denied',
+      'cancel',
+      'denied',
+      'This request was denied; there is nothing to cancel.',
+    ],
+    [
+      'will not cancel a request that is already cancelled',
+      'cancel',
+      'cancelled',
+      'This request is already cancelled.',
+    ],
+    [
+      'will not withdraw an approval from a request still pending',
+      'withdraw',
+      'pending',
+      'This request is not approved yet; there is no approval to withdraw.',
+    ],
+    [
+      'will not withdraw an approval from a denied request',
+      'withdraw',
+      'denied',
+      'This request was denied; there is no approval to withdraw.',
+    ],
+    [
+      'will not withdraw an approval from a cancelled request',
+      'withdraw',
+      'cancelled',
+      'This request was cancelled; there is no approval to withdraw.',
+    ],
+  ];
+
+  it.each(refused)('%s', (_title, move, status, message) => {
+    const id = requestIn(status);
+    const audits = auditHistoryFor(handle.db, 'time_off_request', id).length;
+    expect(() => attempt(move, id)).toThrow(message);
+    expect(getTimeOffRequest(handle.db, id)?.status).toBe(status);
+    expect(auditHistoryFor(handle.db, 'time_off_request', id).length).toBe(audits);
+  });
+
+  it('reconsiders a denial and approves it, keeping the denial on record', () => {
+    const id = requestIn('denied');
+    approveTimeOff(handle.db, id, ACTOR);
+    expect(getTimeOffRequest(handle.db, id)?.status).toBe('approved');
+    const actions = auditHistoryFor(handle.db, 'time_off_request', id).map((e) => e.action);
+    expect(actions).toContain('deny');
+    expect(actions).toContain('approve');
+  });
+
+  it('will not turn an approved vacation into a denial, and keeps the lifted shift off', () => {
+    const shiftTypeId = createShiftType(
+      handle.db,
+      {
+        unitId,
+        name: 'Day 12',
+        abbreviation: 'D12',
+        startTime: '07:00',
+        durationHours: 12,
+        isNight: false,
+        isOnCall: false,
+        color: '#0ea5e9',
+        sortOrder: 1,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+    const rules = transact(handle.db, (tx) =>
+      saveRuleSet(
+        tx,
+        {
+          unitId,
+          name: 'Default',
+          weekendDefinition: {
+            startWeekday: 6,
+            startMinute: 0,
+            durationMinutes: 2880,
+            mode: 'starts_within',
+          },
+          fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+          configs: [],
+        },
+        ACTOR,
+      ),
+    );
+    const periodId = createPeriod(
+      handle.db,
+      {
+        unitId,
+        name: 'Feb',
+        startDate: isoDate('2026-02-01'),
+        endDate: isoDate('2026-02-14'),
+        ruleSetId: rules.id,
+        ruleSetVersion: rules.version,
+      },
+      ACTOR,
+    ).id;
+    const ana = mkNurse('Ana');
+    createAssignment(
+      handle.db,
+      { periodId, nurseId: ana, shiftTypeId, date: isoDate('2026-02-03'), source: 'manual' },
+      ACTOR,
+    );
+    const req = request(ana, '2026-02-02', '2026-02-04');
+    const result = transact(handle.db, (tx) => approveTimeOffAndLiftAssignments(tx, req.id, ACTOR));
+    expect(result.lifted).toHaveLength(1);
+
+    expect(() => denyTimeOff(handle.db, req.id, ACTOR, 'changed mind')).toThrow(WITHDRAW_FIRST);
+    expect(getTimeOffRequest(handle.db, req.id)?.status).toBe('approved');
+    expect(
+      listAssignmentsForPeriod(handle.db, periodId).filter((a) => a.nurseId === ana),
+    ).toHaveLength(0);
+  });
+
+  it('insists on a real reason to withdraw an approval, and stores it trimmed', () => {
+    const id = requestIn('approved');
+    expect(() => withdrawApproval(handle.db, id, ACTOR, '   ')).toThrow(/requires a reason/);
+    expect(getTimeOffRequest(handle.db, id)?.status).toBe('approved');
+    withdrawApproval(handle.db, id, ACTOR, '  Unit fell below minimum  ');
+    expect(auditHistoryFor(handle.db, 'time_off_request', id)[0]?.reason).toBe(
+      'Unit fell below minimum',
+    );
+  });
+
+  it('records what a denial changed as well as what it replaced', () => {
+    const id = requestIn('denied');
+    const entry = auditHistoryFor(handle.db, 'time_off_request', id)[0]!;
+    expect((entry.before as { status: string }).status).toBe('pending');
+    expect((entry.after as { status: string }).status).toBe('denied');
+  });
+
+  it('keeps the denial reason without the stray spaces around it', () => {
+    const created = request(mkNurse('Ada'), '2026-02-01', '2026-02-05');
+    const denied = denyTimeOff(handle.db, created.id, ACTOR, '  Coverage gap  ');
+    expect(denied.decisionReason).toBe('Coverage gap');
+    expect(getTimeOffRequest(handle.db, created.id)?.decisionReason).toBe('Coverage gap');
+  });
+
+  it('refuses a leave request that ends before it starts', () => {
+    const nurseId = mkNurse('Ada');
+    expect(() => request(nurseId, '2026-03-10', '2026-03-01')).toThrow(/ends before it starts/);
+    expect(listTimeOffForUnit(handle.db, unitId)).toEqual([]);
+  });
+
+  it('refuses a leave date that is not a date', () => {
+    const nurseId = mkNurse('Ada');
+    // Straight to the repository: the `request` helper's isoDate() would throw first.
+    const raw = (startDate: string, endDate: string) =>
+      createTimeOffRequest(
+        handle.db,
+        { nurseId, startDate: startDate as IsoDate, endDate: endDate as IsoDate, type: 'pto' },
+        ACTOR,
+      );
+    expect(() => raw('soon', '2026-03-01')).toThrow(/start date "soon" is not a date/);
+    expect(() => raw('2026-03-01', 'later')).toThrow(/end date "later" is not a date/);
+  });
+
+  it("lists one nurse's requests by start date, whatever order they were entered in", () => {
+    const nurseId = mkNurse('Ada');
+    request(nurseId, '2026-03-20', '2026-03-21');
+    request(nurseId, '2026-03-01', '2026-03-02');
+    request(nurseId, '2026-03-10', '2026-03-11');
+    expect(listTimeOffForNurse(handle.db, nurseId).map((r) => r.startDate)).toEqual([
+      '2026-03-01',
+      '2026-03-10',
+      '2026-03-20',
+    ]);
   });
 });

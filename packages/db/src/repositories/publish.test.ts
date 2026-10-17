@@ -7,10 +7,10 @@
 
 import { DEFAULT_FAIRNESS_WEIGHTS, isoDate } from '@shiftnurse/core';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { auditHistoryFor } from '../audit.js';
+import { auditHistoryFor, recentAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { createShiftType, createUnit } from './config.js';
-import { getFairnessLedgerEntry } from './ledger.js';
+import { getFairnessLedgerEntry, upsertFairnessLedgerEntry } from './ledger.js';
 import {
   changesSinceLastPublish,
   latestVersion,
@@ -31,6 +31,7 @@ import {
   deleteAssignment,
   getPeriod,
   listAssignmentsForPeriod,
+  moveAssignment,
 } from './schedule.js';
 
 const ACTOR = 'manager';
@@ -144,6 +145,50 @@ describe('publishSchedule', () => {
     expect(result.ledgerEntries).toBe(1);
     expect(getFairnessLedgerEntry(handle.db, ann, periodId)?.totalHours).toBe(12);
     expect(auditHistoryFor(handle.db, 'schedule_period', periodId)[0]?.action).toBe('publish');
+  });
+
+  it("drops Ann's night from the ledger when a republish gives it to Bea", () => {
+    const db = handle.db;
+    const periodStart = isoDate('2026-01-04');
+    publishSchedule(
+      db,
+      { periodId, ledger: [{ nurseId: ann, periodId, periodStart, nightShifts: 1 }] },
+      ACTOR,
+    );
+    const annsShift = listAssignmentsForPeriod(db, periodId).find((a) => a.nurseId === ann)!;
+    transact(db, (tx) =>
+      moveAssignment(tx, annsShift.id, { nurseId: bo, shiftTypeId, date: annsShift.date }, ACTOR),
+    );
+    const result = publishSchedule(
+      db,
+      {
+        periodId,
+        reason: 'Ann on leave',
+        ledger: [{ nurseId: bo, periodId, periodStart, nightShifts: 1 }],
+      },
+      ACTOR,
+    );
+    expect(result.ledgerRemoved).toBe(1);
+    expect(getFairnessLedgerEntry(db, ann, periodId)).toBeUndefined();
+    expect(getFairnessLedgerEntry(db, bo, periodId)?.nightShifts).toBe(1);
+    const annRow = recentAudit(db, 1000).filter(
+      (e) => e.entityType === 'fairness_ledger' && e.action === 'delete',
+    );
+    expect(annRow).toHaveLength(1);
+    expect(annRow[0]!.before).toMatchObject({ nurseId: ann, nightShifts: 1 });
+    expect(annRow[0]!.reason).toContain('version 2');
+  });
+
+  it('leaves the ledger alone when a publish books none', () => {
+    const db = handle.db;
+    upsertFairnessLedgerEntry(
+      db,
+      { nurseId: ann, periodId, periodStart: isoDate('2026-01-04'), nightShifts: 1 },
+      ACTOR,
+    );
+    const result = publishSchedule(db, { periodId }, ACTOR);
+    expect(result.ledgerRemoved).toBe(0);
+    expect(getFairnessLedgerEntry(db, ann, periodId)?.nightShifts).toBe(1);
   });
 
   it('refuses to republish without a reason, and refuses when nothing changed', () => {

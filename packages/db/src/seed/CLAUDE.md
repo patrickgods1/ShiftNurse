@@ -20,6 +20,9 @@
   to run — ids are random UUIDs, so each seeding solves differently (three seedings gave
   objectives of 76,760–79,497) — so compare its medians and rankings, not exact numbers; the
   fixture-only rows (synthetic-24, small-8) are exact.
+- **History is published with `publishSchedule`,** the app's own path, so every seeded history
+  period has version 1 and can be edited with a reason like real history. It draws nothing from
+  the RNG.
 - **Demo data must be staffable by construction.** Each demo's contracted hours are sized to
   its floors, the history is staffed by the engine's `canWork`, which mirrors the unit's own rule
   set (rest from shift windows, stretch and night-run limits, days off after a maximum stretch,

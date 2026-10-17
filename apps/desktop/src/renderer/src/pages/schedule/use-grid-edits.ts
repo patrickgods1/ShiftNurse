@@ -422,9 +422,19 @@ export function useGridEdits({
         markPending(assignment.id);
         settle(
           deleteMutate({ assignmentId: assignment.id, reason, consent }),
-          () =>
+          () => {
+            const removed = `Removed ${nurseName(assignment.nurseId)} from ${shiftName(assignment.shiftTypeId)} on ${formatDateWithWeekday(assignment.date)}`;
+            // Re-creating the shift cannot bring the minutes back (the create input has no holdover
+            // field, and they belong to the original row), so an Undo would silently drop pay.
+            const held = assignment.holdoverMinutes ?? 0;
+            if (held > 0) {
+              toast.show({
+                message: `${removed}. Its ${held}-minute holdover was removed with it; re-record it on Today if the shift is put back.`,
+              });
+              return;
+            }
             record(
-              `Removed ${nurseName(assignment.nurseId)} from ${shiftName(assignment.shiftTypeId)} on ${formatDateWithWeekday(assignment.date)}`,
+              removed,
               reason,
               // Main stamps every create `manual`, so a solver-placed shift comes back as a
               // hand-placed one; the nurse, day, shift and flags are what a manager sees.
@@ -445,7 +455,8 @@ export function useGridEdits({
                   undefined,
                   undefined,
                 ),
-            ),
+            );
+          },
           () => clearPending(assignment.id),
         );
       });
@@ -458,6 +469,7 @@ export function useGridEdits({
       withReason,
       onRemoveStart,
       record,
+      toast,
       shiftName,
       nurseName,
     ],

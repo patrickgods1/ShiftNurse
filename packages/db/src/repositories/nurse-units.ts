@@ -273,9 +273,10 @@ export function listFloatNurses(db: DbLike, unitId: Id, start: IsoDate, end: Iso
 
 /**
  * What these nurses work on other units' schedules in `[start, end]`, as `busyElsewhere` shapes
- * it. A unit's published schedule is what its nurses will work; a draft is what its manager is
- * planning, and either blocks the nurse here. (A nurse cannot hold the same shift on the same
- * date twice, in any period, so a draft laid over a published period never double-counts.)
+ * it. A unit's published schedule is what its nurses will work, an archived one is what they
+ * worked, and a draft is what its manager is planning; any of them blocks the nurse here. (A
+ * nurse cannot hold the same shift on the same date twice, in any period, so a draft laid over a
+ * published period never double-counts.)
  */
 export function busyElsewhereFor(
   db: DbLike,
@@ -293,7 +294,6 @@ export function busyElsewhereFor(
       and(
         inArray(assignment.nurseId, [...nurseIds]),
         ne(schedulePeriod.unitId, unitId),
-        ne(schedulePeriod.status, 'archived'),
         gte(assignment.date, start),
         lte(assignment.date, end),
       ),

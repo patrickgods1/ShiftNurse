@@ -9,18 +9,28 @@
 
 import {
   type Assignment,
+  addDays,
+  compareDates,
   datesInRange,
   type Id,
   type IsoDate,
+  isIsoDate,
+  overlappingLeaveDate,
+  type RuleSet,
+  resolveConfigs,
+  type ShiftType,
+  type TimeOffParams,
   type TimeOffRequest,
   type TimeOffStatus,
+  timeOffRule,
 } from '@shiftnurse/core';
 import { and, asc, eq, gte, lte } from 'drizzle-orm';
-import { recordAudit, recordAuditStrict } from '../audit.js';
+import { recordAudit, recordAuditStrict, requireAuditReason } from '../audit.js';
 import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
-import { toTimeOffRequest } from '../mappers.js';
-import { nurse, timeOffRequest } from '../schema.js';
+import { toShiftType, toTimeOffRequest } from '../mappers.js';
+import { nurse, shiftType, timeOffRequest } from '../schema.js';
+import { getRuleSet } from './rulesets.js';
 import { deleteAssignment, getPeriod, listAssignmentsForNurseInRange } from './schedule.js';
 
 /**
@@ -51,12 +61,16 @@ export function listTimeOffForUnit(
 }
 
 export function listTimeOffForNurse(db: DbLike, nurseId: Id): TimeOffRequest[] {
-  return db
-    .select()
-    .from(timeOffRequest)
-    .where(eq(timeOffRequest.nurseId, nurseId))
-    .all()
-    .map(toTimeOffRequest);
+  return (
+    db
+      .select()
+      .from(timeOffRequest)
+      .where(eq(timeOffRequest.nurseId, nurseId))
+      // Feeds floatExtras, which is solver input: identical inputs must give identical schedules.
+      .orderBy(asc(timeOffRequest.startDate), asc(timeOffRequest.id))
+      .all()
+      .map(toTimeOffRequest)
+  );
 }
 
 export function getTimeOffRequest(db: DbLike, id: Id): TimeOffRequest | undefined {
@@ -105,20 +119,24 @@ export function approvedTimeOffInRange(
   start: IsoDate,
   end: IsoDate,
 ): TimeOffRequest[] {
-  return db
-    .select({ req: timeOffRequest })
-    .from(timeOffRequest)
-    .innerJoin(nurse, eq(timeOffRequest.nurseId, nurse.id))
-    .where(
-      and(
-        eq(nurse.unitId, unitId),
-        eq(timeOffRequest.status, 'approved'),
-        lte(timeOffRequest.startDate, end),
-        gte(timeOffRequest.endDate, start),
-      ),
-    )
-    .all()
-    .map((r) => toTimeOffRequest(r.req));
+  return (
+    db
+      .select({ req: timeOffRequest })
+      .from(timeOffRequest)
+      .innerJoin(nurse, eq(timeOffRequest.nurseId, nurse.id))
+      .where(
+        and(
+          eq(nurse.unitId, unitId),
+          eq(timeOffRequest.status, 'approved'),
+          lte(timeOffRequest.startDate, end),
+          gte(timeOffRequest.endDate, start),
+        ),
+      )
+      // Same order as listTimeOffForUnit: the solver reads this list in order.
+      .orderBy(asc(timeOffRequest.startDate), asc(timeOffRequest.id))
+      .all()
+      .map((r) => toTimeOffRequest(r.req))
+  );
 }
 
 export interface CreateTimeOffInput {
@@ -160,6 +178,16 @@ export function createTimeOffRequest(
   actor: string,
   enteredBy: TimeOffRequest['enteredBy'] = 'manager',
 ): TimeOffRequest {
+  // A backwards or malformed request covers no dates, so the heatmap and solver would ignore it.
+  if (!isIsoDate(input.startDate)) {
+    throw new Error(`The leave's start date "${input.startDate}" is not a date.`);
+  }
+  if (!isIsoDate(input.endDate)) {
+    throw new Error(`The leave's end date "${input.endDate}" is not a date.`);
+  }
+  if (compareDates(input.endDate, input.startDate) < 0) {
+    throw new Error('The leave request ends before it starts.');
+  }
   const paidHours = checkPaidHours(input);
   const id = ids.timeOff();
   const row = {
@@ -189,9 +217,59 @@ export function createTimeOffRequest(
   return created;
 }
 
+export type TimeOffDecision = 'approve' | 'deny' | 'cancel' | 'withdraw';
+
+/**
+ * The one lifecycle of a request: which statuses each decision may start from. Without a single
+ * table an approved vacation could be "denied" or cancelled with no reason, the lifted shift
+ * stayed lifted, and the equity tally counted a denial that never was one.
+ */
+export const TIME_OFF_TRANSITIONS: Readonly<Record<TimeOffDecision, readonly TimeOffStatus[]>> = {
+  approve: ['pending', 'denied'], // a denial can be reconsidered; the denial stays on record
+  deny: ['pending'],
+  cancel: ['pending'],
+  withdraw: ['approved'],
+};
+
+const WITHDRAW_INSTEAD = 'This request is approved. Withdraw the approval instead, with a reason.';
+
+/** Words for each refused edge. No ids: the manager reads these verbatim. */
+const TRANSITION_REFUSALS: Record<TimeOffDecision, Partial<Record<TimeOffStatus, string>>> = {
+  approve: {
+    approved: 'This request is already approved.',
+    cancelled:
+      'This request was cancelled. Enter a new request if the nurse still wants the time off.',
+  },
+  deny: {
+    approved: WITHDRAW_INSTEAD,
+    denied: 'This request is already denied.',
+    cancelled: 'This request was cancelled; there is nothing to deny.',
+  },
+  cancel: {
+    approved: WITHDRAW_INSTEAD,
+    denied: 'This request was denied; there is nothing to cancel.',
+    cancelled: 'This request is already cancelled.',
+  },
+  withdraw: {
+    pending: 'This request is not approved yet; there is no approval to withdraw.',
+    denied: 'This request was denied; there is no approval to withdraw.',
+    cancelled: 'This request was cancelled; there is no approval to withdraw.',
+  },
+};
+
+/** Throws, in words, unless the decision is a declared edge from the request's current status. */
+export function requireTimeOffTransition(request: TimeOffRequest, decision: TimeOffDecision): void {
+  if (TIME_OFF_TRANSITIONS[decision].includes(request.status)) return;
+  throw new Error(
+    TRANSITION_REFUSALS[decision][request.status] ??
+      `This request is ${request.status}; it cannot be decided that way.`,
+  );
+}
+
 export function approveTimeOff(db: DbLike, id: Id, actor: string, reason?: string): TimeOffRequest {
   const before = getTimeOffRequest(db, id);
   if (!before) throw new Error(`Time-off request ${id} not found`);
+  requireTimeOffTransition(before, 'approve');
   const decidedAt = Date.now();
   db.update(timeOffRequest)
     .set({ status: 'approved', decidedAt, decidedBy: actor, decisionReason: reason ?? null })
@@ -219,6 +297,13 @@ export interface ApprovalResult {
   stillRostered: Assignment[];
 }
 
+function nightBeforeCounts(ruleSet: RuleSet): TimeOffParams | undefined {
+  const c = resolveConfigs(ruleSet).find((x) => x.ruleId === timeOffRule.id);
+  return c?.enabled && c.params.nightShiftEndingOnLeaveCounts === true
+    ? (c.params as unknown as TimeOffParams)
+    : undefined;
+}
+
 /**
  * Approval and the grid must agree in the same transaction. The decide dialog previews
  * approval as "these shifts are displaced"; if approval only flipped the status the nurse would
@@ -227,7 +312,9 @@ export interface ApprovalResult {
  * schedule. So approval lifts the nurse's assignments inside the range from every *draft*
  * period, locked ones included (approved leave outranks a manager's pin). Published periods
  * are never edited silently: those shifts are reported back and surface as a
- * `scheduled_on_leave` conflict for the manager to resolve deliberately.
+ * `scheduled_on_leave` conflict for the manager to resolve deliberately. When the period's own
+ * rule set counts a night ending on the first leave day (`nightShiftEndingOnLeaveCounts`), the
+ * night dated the day before is handled the same way, so approval never leaves a violation (D31).
  */
 export function approveTimeOffAndLiftAssignments(
   // A transaction, not any handle: these writes are only correct all-or-nothing.
@@ -239,16 +326,50 @@ export function approveTimeOffAndLiftAssignments(
   const request = approveTimeOff(db, id, actor, reason);
   const lifted: Assignment[] = [];
   const stillRostered: Assignment[] = [];
-  const periodStatus = new Map<Id, string | undefined>();
+  const periodInfo = new Map<Id, { status?: string; nightBefore?: TimeOffParams }>();
+  const shiftTypes = new Map<Id, ShiftType>();
+  const infoFor = (periodId: Id) => {
+    let info = periodInfo.get(periodId);
+    if (!info) {
+      const period = getPeriod(db, periodId);
+      let nightBefore: TimeOffParams | undefined;
+      if (period) {
+        // The period's own snapshot, not the latest rules: the grid judges it by the same one.
+        const ruleSet = getRuleSet(db, period.ruleSetId);
+        if (!ruleSet)
+          throw new Error(`Period ${periodId} cites unknown rule set ${period.ruleSetId}`);
+        nightBefore = nightBeforeCounts(ruleSet);
+      }
+      info = { status: period?.status, nightBefore };
+      periodInfo.set(periodId, info);
+    }
+    return info;
+  };
+  const shiftTypeFor = (shiftTypeId: Id): ShiftType => {
+    let st = shiftTypes.get(shiftTypeId);
+    if (!st) {
+      const row = db.select().from(shiftType).where(eq(shiftType.id, shiftTypeId)).get();
+      if (!row) throw new Error(`Shift type ${shiftTypeId} not found`);
+      st = toShiftType(row);
+      shiftTypes.set(shiftTypeId, st);
+    }
+    return st;
+  };
   for (const a of listAssignmentsForNurseInRange(
     db,
     request.nurseId,
-    request.startDate,
+    addDays(request.startDate, -1),
     request.endDate,
   )) {
-    if (!periodStatus.has(a.periodId))
-      periodStatus.set(a.periodId, getPeriod(db, a.periodId)?.status);
-    if (periodStatus.get(a.periodId) === 'draft') {
+    const info = infoFor(a.periodId);
+    if (compareDates(a.date, request.startDate) < 0) {
+      if (
+        !info.nightBefore ||
+        !overlappingLeaveDate(a.date, shiftTypeFor(a.shiftTypeId), request, info.nightBefore)
+      )
+        continue;
+    }
+    if (info.status === 'draft') {
       deleteAssignment(db, a.id, actor, `Lifted for approved time off ${request.id}`);
       lifted.push(a);
     } else {
@@ -259,9 +380,10 @@ export function approveTimeOffAndLiftAssignments(
 }
 
 /**
- * Denial requires a non-empty reason: `recordAuditStrict` throws before the row is touched if
- * none is given. This text is what gets quoted, verbatim, if the denial is ever grieved — so
- * it cannot be an afterthought or a blank field slipped past validation.
+ * Denial requires a non-empty reason, checked before the row is touched; the row and its audit
+ * entry (with both snapshots) then exist only together. This text is what gets quoted,
+ * verbatim, if the denial is ever grieved — so it cannot be an afterthought or a blank field
+ * slipped past validation.
  */
 export function denyTimeOff(
   db: DbLike,
@@ -271,29 +393,41 @@ export function denyTimeOff(
 ): TimeOffRequest {
   const before = getTimeOffRequest(db, id);
   if (!before) throw new Error(`Time-off request ${id} not found`);
-  // Audited before the write: a denial that fails the reason check must not touch the row.
+  requireTimeOffTransition(before, 'deny');
+  const reason = requireAuditReason({
+    action: 'deny',
+    entityType: 'time_off_request',
+    entityId: id,
+    reason: decisionReason,
+  });
+  const decidedAt = Date.now();
+  db.update(timeOffRequest)
+    .set({ status: 'denied', decidedAt, decidedBy: actor, decisionReason: reason })
+    .where(eq(timeOffRequest.id, id))
+    .run();
+  const after = getTimeOffRequest(db, id);
+  if (!after) throw new Error(`Time-off request ${id} vanished during denial`);
   recordAuditStrict(db, {
     entityType: 'time_off_request',
     entityId: id,
     action: 'deny',
     actor,
     before,
-    reason: decisionReason,
+    after,
+    reason,
   });
-  const decidedAt = Date.now();
-  db.update(timeOffRequest)
-    .set({ status: 'denied', decidedAt, decidedBy: actor, decisionReason })
-    .where(eq(timeOffRequest.id, id))
-    .run();
-  const after = getTimeOffRequest(db, id);
-  if (!after) throw new Error(`Time-off request ${id} vanished during denial`);
   return after;
 }
 
-/** The nurse (or the manager on their behalf) withdraws a request that was never decided. */
+/**
+ * The nurse (or the manager on their behalf) withdraws a request that was never decided. The
+ * reason stays optional on purpose: only a pending request can be cancelled, so there is no
+ * decision to quote. An approved one goes through `withdrawApproval`, which insists on one.
+ */
 export function cancelTimeOff(db: DbLike, id: Id, actor: string, reason?: string): TimeOffRequest {
   const before = getTimeOffRequest(db, id);
   if (!before) throw new Error(`Time-off request ${id} not found`);
+  requireTimeOffTransition(before, 'cancel');
   db.update(timeOffRequest).set({ status: 'cancelled' }).where(eq(timeOffRequest.id, id)).run();
   const after = getTimeOffRequest(db, id);
   if (!after) throw new Error(`Time-off request ${id} vanished during cancellation`);
@@ -323,26 +457,32 @@ export function withdrawApproval(
 ): TimeOffRequest {
   const before = getTimeOffRequest(db, id);
   if (!before) throw new Error(`Time-off request ${id} not found`);
-  if (before.status !== 'approved') {
-    throw new Error(
-      `Time-off request ${id} is ${before.status}, not approved; nothing to withdraw`,
-    );
-  }
+  requireTimeOffTransition(before, 'withdraw');
+  const trimmed = requireAuditReason({
+    action: 'update',
+    entityType: 'time_off_request',
+    entityId: id,
+    reason,
+  });
   db.update(timeOffRequest)
     .set({ status: 'pending', decidedAt: null, decidedBy: null, decisionReason: null })
     .where(eq(timeOffRequest.id, id))
     .run();
   const after = getTimeOffRequest(db, id);
   if (!after) throw new Error(`Time-off request ${id} vanished during withdrawal`);
-  recordAudit(db, {
-    entityType: 'time_off_request',
-    entityId: id,
-    action: 'update',
-    actor,
-    before,
-    after,
-    reason,
-  });
+  recordAuditStrict(
+    db,
+    {
+      entityType: 'time_off_request',
+      entityId: id,
+      action: 'update',
+      actor,
+      before,
+      after,
+      reason: trimmed,
+    },
+    { requireReason: true },
+  );
   return after;
 }
 
@@ -352,7 +492,9 @@ export interface DecisionTally {
 }
 
 /**
- * Approved/denied tallies per nurse since a date. Feeds time-off approval equity in fairness
+ * Approved/denied tallies per nurse since a date. Windows on the leave's start date, not on when
+ * it was decided: the equity question is whose leave in this stretch was refused.
+ * Feeds time-off approval equity in fairness
  * scoring — a nurse whose requests are disproportionately denied is being treated unfairly
  * even if every other schedule metric looks balanced.
  */
