@@ -7,6 +7,12 @@ import { configDefaults, defineConfig } from 'vitest/config';
 if (process.argv.includes('--coverage')) process.env.COVERAGE = '1';
 const SCALE = process.env.COVERAGE ? 3 : 1;
 
+// The DST suites (rules/, solver/, cost/, fairness/ dst.test.ts) only mean something on a
+// clock that has DST: on CI's UTC hosts a regression to local-Date arithmetic would pass
+// them. Set here rather than in an npm script or ci.yml for the same reason as COVERAGE
+// (Windows cmd), and before any worker starts so every pool inherits it.
+process.env.TZ = process.env.SHIFTNURSE_TEST_TZ ?? 'America/New_York';
+
 // Files that run a full solve. Under 100 parallel workers they time out and pass alone, so they
 // get their own project that runs one file at a time after the fast tests.
 const SOLVER_HEAVY = [
@@ -25,6 +31,7 @@ const INCLUDE = [
 
 export default defineConfig({
   test: {
+    env: { TZ: process.env.TZ },
     testTimeout: 5_000 * SCALE,
     hookTimeout: 10_000 * SCALE,
     // `include` lives in each project: a root-level one is inherited by `extends: true` and

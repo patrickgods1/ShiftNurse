@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { API_CHANNELS, channelName, type ShiftNurseApi } from '../shared/api.js';
+import { channelName, type ShiftNurseApi } from '../shared/api.js';
+import { API_SCHEMAS } from '../shared/schemas/index.js';
 
 // The one module mock here: ipc.ts imports `ipcMain` from electron, which does not exist under
 // plain Node. It only needs to remember the handlers it was given.
@@ -23,12 +24,15 @@ const MARKER = Symbol('result');
 type Call = { channel: string; args: unknown[] };
 let calls: Call[];
 
-/** Every method in the contract, generated from the table the preload uses. */
+/**
+ * Every method in the contract, generated from the schemas, which the type system forces to be
+ * complete. Generating it from API_CHANNELS would test the table against itself.
+ */
 function fakeApi(): ShiftNurseApi {
   const api: Record<string, Record<string, unknown>> = {};
-  for (const [resource, methods] of Object.entries(API_CHANNELS)) {
+  for (const [resource, schemas] of Object.entries(API_SCHEMAS)) {
     const group: Record<string, unknown> = {};
-    for (const method of methods) {
+    for (const method of Object.keys(schemas)) {
       group[method] = (...args: unknown[]) => {
         calls.push({ channel: channelName(resource, method), args });
         return MARKER;
@@ -57,8 +61,8 @@ beforeEach(() => {
 describe('registering the app API over IPC', () => {
   it('registers every channel in the contract once, and nothing else', () => {
     registerIpc(fakeApi(), trusted);
-    const expected = Object.entries(API_CHANNELS).flatMap(([resource, methods]) =>
-      methods.map((method) => channelName(resource, method)),
+    const expected = Object.entries(API_SCHEMAS).flatMap(([resource, schemas]) =>
+      Object.keys(schemas).map((method) => channelName(resource, method)),
     );
     const registered = handleSpy.mock.calls.map((c) => c[0] as string);
     expect(registered).toHaveLength(expected.length);

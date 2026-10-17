@@ -114,7 +114,8 @@ $diff
 PROMPT
 )
 
-review=$(claude -p "$prompt" \
+# Prompt on stdin: Linux caps a single argument at 128 KiB.
+review=$(printf '%s' "$prompt" | claude -p \
   --model sonnet \
   --tools Read,Grep,Glob \
   --permission-mode plan \

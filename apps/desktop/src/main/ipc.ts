@@ -1,9 +1,10 @@
 /**
  * Binds the API implementation to `ipcMain`, one handler per channel.
  *
- * Registration is driven by `API_CHANNELS`, the same table the preload script uses to build
- * the renderer's proxy, so a method added to the contract without a handler here fails at
- * type level rather than as a runtime "no handler registered" from inside the UI.
+ * Registration iterates `API_CHANNELS`, the same table the preload script uses to build the
+ * renderer's proxy. The table is kept complete by `ApiChannelsAreComplete` in `api.ts` (type
+ * level) and by `schemas.test.ts` (schemas against channels), so a method cannot be left
+ * without a handler and surface as "is not a function" inside the UI.
  */
 
 import { ipcMain } from 'electron';

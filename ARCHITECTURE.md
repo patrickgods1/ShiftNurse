@@ -55,6 +55,9 @@ Why this matters:
 no `better-sqlite3`, no `drizzle-orm`, no `fs`, no `node:*` I/O. If a core module needs data
 it takes it as an argument; if it needs to persist something it returns a value and lets the
 caller persist it. Entities are plain data with no methods and no persistence concerns.
+Biome's `noRestrictedImports` override on `packages/core/**` (Electron, the database packages,
+Node built-ins) and `"types": []` in the core tsconfig enforce it, and `domain/` may import only
+from `domain/`.
 
 The same layering continues upward: the SQLite database is owned exclusively by the Electron
 **main** process (`packages/db`); the **renderer** never imports `@shiftnurse/db` and never
@@ -62,8 +65,8 @@ opens a database connection. It reaches data through a typed IPC surface
 (`apps/desktop/src/shared/api.ts`) that is deliberately shaped like the HTTP API this app
 will eventually have — same request/response shapes, just carried over `ipcRenderer.invoke`
 instead of `fetch`. Adding an IPC method means adding it to that shared contract first; a
-missing implementation in `main/api.ts` is then a type error, not a runtime "no handler"
-surprise.
+method missing from `API_CHANNELS`, `API_SCHEMAS` or `main/api.ts` is then a type error, not a
+runtime "no handler" surprise, and a test cross-checks the schema and channel tables.
 
 Types do not exist at runtime, so the contract has a runtime half too: every method has an
 argument schema in `apps/desktop/src/shared/schemas/` (zod, bundled into main), and `ipc.ts`
