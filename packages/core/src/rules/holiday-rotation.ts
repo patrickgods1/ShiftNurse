@@ -261,6 +261,7 @@ export const holidayRotationRule: Rule<HolidayRotationParams> = {
               `scheduled on it again on ${describeDate(holiday.date)}. The rotation gives it to someone who ` +
               'had it off.',
             {
+              amount: 1,
               nurseIds: [nurse.id],
               dates: [holiday.date],
               assignmentIds: [view.assignment.id],
@@ -292,6 +293,7 @@ export const holidayRotationRule: Rule<HolidayRotationParams> = {
             `${nurseName(nurse)} works both ${minor.name} (${describeDate(minor.date)}) and ${major.name} ` +
               `(${describeDate(major.date)}). Paired holidays go to different people.`,
             {
+              amount: 1,
               nurseIds: [nurse.id],
               dates: [first.date, second.date],
               assignmentIds: [...onMinor, ...onMajor]

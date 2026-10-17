@@ -315,6 +315,79 @@ describe('tour rotation made hard', () => {
     );
     expect(evaluate(encoding, [locked, evening]).violated).toEqual([]);
   });
+
+  it('lets a career nurse work the night she asked for when tour rotation is hard', () => {
+    // Hired 1 Jan 2010: sixteen years at Sun 4 Jan 2026, exempt at ten, so held to one tour.
+    // Day 07:00–19:00 Mon 5 Jan, night 19:00 Thu 8 Jan: 72 hours apart, so only the tour count
+    // can object, and nights are hers by asking.
+    const career = makeNurse({ id: 'ada', firstName: 'Ada', hireDate: isoDate('2010-01-01') });
+    const wantsNights: Preference = {
+      id: 'pref-ada-nights',
+      nurseId: 'ada',
+      kind: 'prefer_shift_type',
+      shiftTypeId: NIGHT_12.id,
+      weight: 1,
+    };
+    const judge = (preferences: Preference[]) => {
+      const encoding = encodeCpsat(
+        unit([career], {
+          preferences,
+          ruleSet: hardTours({ maxToursPerPeriod: 2, exemptAfterYearsOfService: 10 }),
+        }),
+      );
+      const model = encoding.solverModel;
+      model.add(model.make(0, model.shiftAt(1, DAY_12)));
+      const sa = model.canAdd(0, model.make(0, model.shiftAt(4, NIGHT_12)));
+      const cpsat = evaluate(encoding, [
+        assign('ada', DAY_12, '2026-01-05'),
+        assign('ada', NIGHT_12, '2026-01-08'),
+      ]).violated;
+      return { sa, cpsat };
+    };
+    const asked = judge([wantsNights]);
+    expect(asked.sa).toBe(true);
+    expect(asked.cpsat).toEqual([]);
+    const forced = judge([]);
+    expect(forced.sa).toBe(false);
+    expect(forced.cpsat.join('\n')).toMatch(/tours per schedule: Ada/);
+  });
+
+  it('lets a career nurse on permanent days work the night she asked for when tour rotation is hard', () => {
+    // Hired 1 Jan 2010: sixteen years at Sun 4 Jan 2026, exempt at ten, so kept on her permanent
+    // day tour. A lone night on Thu 8 Jan: only the permanent tour can object, and nights are
+    // hers by asking.
+    const career = makeNurse({
+      id: 'ada',
+      firstName: 'Ada',
+      hireDate: isoDate('2010-01-01'),
+      permanentTour: 'day',
+    });
+    const wantsNights: Preference = {
+      id: 'pref-ada-nights',
+      nurseId: 'ada',
+      kind: 'prefer_shift_type',
+      shiftTypeId: NIGHT_12.id,
+      weight: 1,
+    };
+    const judge = (preferences: Preference[]) => {
+      const encoding = encodeCpsat(
+        unit([career], {
+          preferences,
+          ruleSet: hardTours({ exemptAfterYearsOfService: 10 }),
+        }),
+      );
+      const model = encoding.solverModel;
+      const sa = model.canAdd(0, model.make(0, model.shiftAt(4, NIGHT_12)));
+      const cpsat = evaluate(encoding, [assign('ada', NIGHT_12, '2026-01-08')]).violated;
+      return { sa, cpsat };
+    };
+    const asked = judge([wantsNights]);
+    expect(asked.sa).toBe(true);
+    expect(asked.cpsat).toEqual([]);
+    const forced = judge([]);
+    expect(forced.sa).toBe(false);
+    expect(forced.cpsat.join('\n')).toMatch(/permanent tour: Ada/);
+  });
 });
 
 describe('tours on a nurse’s plan', () => {
@@ -1138,6 +1211,76 @@ describe('hours', () => {
     expect(evaluate(encoding, seven).violated.join('\n')).toMatch(/pay period/);
   });
 
+  it('caps a schedule’s first days at the contract less the hours already published', () => {
+    // Schedule Sun 11 – Sat 24 Jan; pay period Sun 4 – Sat 17 began before it. Last schedule
+    // worked D12 Sun 4 – Thu 8: 60h. Room left: 72 + 4 tolerance − 60 = 16h, one 12 and no more.
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-11'),
+      endDate: isoDate('2026-01-24'),
+      historyFrom: isoDate('2025-12-14'),
+      nurses: [makeNurse({ id: 'ana', firstName: 'Ana', contractedHoursPerPeriod: 72 })],
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
+      priorAssignments: assignRun('ana', DAY_12, '2026-01-04', 5, { periodId: 'prev' }),
+    });
+    const encoding = encodeCpsat(input);
+    const monday = assign('ana', DAY_12, '2026-01-12');
+    expect(evaluate(encoding, [monday]).violated).toEqual([]);
+    const both = [monday, assign('ana', DAY_12, '2026-01-13')];
+    expect(evaluate(encoding, both).violated.join('\n')).toMatch(/contracted hours/);
+  });
+
+  describe('which published hours count toward the cap', () => {
+    // Schedule Sun 11 – Sat 24 Jan, history whole from 14 Dec; pay period Sun 4 – Sat 17 judged.
+    // Published: D12 Sun 4, D12 Mon 5 held over 6h, a day on 5 West Wed 7, D12 Thu 8, standby
+    // Fri 9. The contract counts 36h of it, leaving 72 + 4 − 36 = 40h: three 12s fit, four do
+    // not. Counting the holdover (42h, room 34), 5 West's day or the standby (48h, room 28) would
+    // refuse the third.
+    const WEST_DAY = { ...DAY_12, id: 'west-d12', unitId: 'unit-west' };
+    const west = busyElsewhere(
+      [assign('ana', WEST_DAY, '2026-01-07', { periodId: 'west' })],
+      [WEST_DAY],
+      '5 West',
+    );
+    const encodingFor = (ruleSet: RuleSet) =>
+      encodeCpsat(
+        solveInputFrom({
+          startDate: isoDate('2026-01-11'),
+          endDate: isoDate('2026-01-24'),
+          historyFrom: isoDate('2025-12-14'),
+          nurses: [makeNurse({ id: 'ana', firstName: 'Ana', contractedHoursPerPeriod: 72 })],
+          shiftTypes: [DAY_12, NIGHT_12, ON_CALL, ...west.shiftTypes],
+          coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
+          priorAssignments: [
+            assign('ana', DAY_12, '2026-01-04', { periodId: 'prev' }),
+            assign('ana', DAY_12, '2026-01-05', { periodId: 'prev', holdoverMinutes: 360 }),
+            ...west.assignments,
+            assign('ana', DAY_12, '2026-01-08', { periodId: 'prev' }),
+            assign('ana', ON_CALL, '2026-01-09', { periodId: 'prev' }),
+          ],
+          ruleSet,
+        }),
+      );
+    const days = (dates: string[]) => dates.map((d) => assign('ana', DAY_12, d));
+    const three = days(['2026-01-12', '2026-01-14', '2026-01-16']);
+
+    it('counts a held-over shift by its scheduled hours and leaves out other units and standby', () => {
+      const encoding = encodingFor(NO_WEEKLY_CAP);
+      expect(evaluate(encoding, three).violated).toEqual([]);
+      const four = [...three, ...days(['2026-01-17'])];
+      expect(evaluate(encoding, four).violated.join('\n')).toMatch(/contracted hours/);
+    });
+
+    it('counts the standby too when the contract credits time on call', () => {
+      // 48h published: room 28h, two 12s and not three.
+      const encoding = encodingFor(
+        withParams('fte-target-hours', { onCallCountsTowardHours: true }, NO_WEEKLY_CAP),
+      );
+      expect(evaluate(encoding, three.slice(0, 2)).violated).toEqual([]);
+      expect(evaluate(encoding, three).violated.join('\n')).toMatch(/contracted hours/);
+    });
+  });
+
   describe('overtime judged over the pay period', () => {
     // A 120h contract so only overtime can trip. Three 12s and an 8 in week one is 44h.
     const bigContract = () => makeNurse({ id: 'ada', contractedHoursPerPeriod: 120 });
@@ -1177,6 +1320,85 @@ describe('hours', () => {
       const extra = [...fortnight, assign('ada', DAY_12, '2026-01-17')];
       expect(evaluate(encoding, extra).violated.join('\n')).toMatch(/overtime: .* pay period/);
     });
+  });
+});
+
+describe('a holdover in the lookback and the weekly overtime cap', () => {
+  it("lets a day 8 in beside a shift held over two hours: the holdover's hours are authorised", () => {
+    // Wednesday work week, Wed 31 Dec – Tue 6 Jan. Scheduled 12 + 8 + 12 + 8 = 40h; worked 42h
+    // with Thursday's 2h holdover. The cap is 40 + the 2h the holdover authorises = 42.
+    const ruleSet = withParams('max-hours-per-week', { workWeekStartsOn: 3 });
+    const prior = [
+      assign('ada', DAY_12, '2025-12-31', { periodId: 'prev', isLocked: true }),
+      assign('ada', DAY_8, '2026-01-01', {
+        periodId: 'prev',
+        isLocked: true,
+        holdoverMinutes: 120,
+        holdoverMandated: true,
+      }),
+    ];
+    const input = unit(
+      [makeNurse({ id: 'ada', firstName: 'Ada', contractedHoursPerPeriod: 120 })],
+      {
+        ruleSet,
+        priorAssignments: prior,
+        shiftTypes: [DAY_12, NIGHT_12, DAY_8],
+        coverageRequirements: [
+          ...coverageAllWeek(DAY_12, 'RN', 1),
+          ...coverageAllWeek(NIGHT_12, 'RN', 1),
+          ...coverageAllWeek(DAY_8, 'RN', 1),
+        ],
+      },
+    );
+    const encoding = encodeCpsat(input);
+    const week = [assign('ada', DAY_12, '2026-01-04'), assign('ada', DAY_8, '2026-01-05')];
+    expect(evaluate(encoding, week).violated).toEqual([]);
+
+    const model = encoding.solverModel;
+    const view = new ScheduleView({
+      period: input.period,
+      assignments: week,
+      priorAssignments: input.priorAssignments,
+      nurses: model.nurses,
+      shiftTypes: model.shiftTypes,
+    });
+    const rules = evaluateSchedule(view, input.ruleSet, model.ctx).hardViolations;
+    expect(rules.filter((v) => v.code === 'unauthorised_overtime')).toEqual([]);
+  });
+});
+
+describe('who runs the shift', () => {
+  it('counts a shift run by an LPN as missing its charge nurse, as the rules do', () => {
+    // Monday's day 12: Lena, a charge-eligible LPN, and Ana, an RN who is not charge-eligible.
+    // Under the default only an RN may run the shift, so nobody on it can take charge.
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-05'),
+      endDate: isoDate('2026-01-05'),
+      nurses: [
+        makeNurse({ id: 'lena', role: 'LPN', isChargeEligible: true }),
+        makeNurse({ id: 'ana' }),
+      ],
+      shiftTypes: [DAY_12],
+      coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
+    });
+    const roster = [assign('lena', DAY_12, '2026-01-05'), assign('ana', DAY_12, '2026-01-05')];
+    const encoding = encodeCpsat(input);
+    const { values } = evaluate(encoding, roster);
+    const missing = values.findIndex(
+      (_, v) => encoding.builder.label(v) === 'missing charge: D12 2026-01-05',
+    );
+    expect(missing).toBeGreaterThanOrEqual(0);
+    expect(values[missing]).toBe(1);
+
+    const model = new SolverModel(input);
+    const view = new ScheduleView({
+      period: input.period,
+      assignments: roster,
+      nurses: model.nurses,
+      shiftTypes: model.shiftTypes,
+    });
+    const codes = evaluateSchedule(view, input.ruleSet, model.ctx).violations.map((v) => v.code);
+    expect(codes).toContain('missing_charge_nurse');
   });
 });
 
@@ -1627,6 +1849,33 @@ describe('agreement with the rule engine', () => {
     );
   });
 
+  it('agrees with the rules on two days off in a pay period the schedule opens in', () => {
+    // Schedule Wed 7 – Sat 17 Jan, history complete from 10 Dec, so the pay period Sun 4 – Sat 17
+    // is judged whole. Both worked its first weekend on the published Sun 4. Ada's Mon 5 leaves
+    // Tue 6 a day off whose pair turns on Wed 7; Bo's Tue 6 leaves Mon 5 a day off with no pair.
+    // Both sides must read those days from the lookback alike.
+    const relaxed = withParams(
+      'max-consecutive-shifts',
+      { maxConsecutiveShifts: 14, minDaysOffAfterMaxStretch: 0 },
+      withParams('fte-target-hours', { overToleranceHours: 200 }, NO_WEEKLY_CAP),
+    );
+    expectParity(
+      parityInput({
+        startDate: isoDate('2026-01-07'),
+        historyFrom: isoDate('2025-12-10'),
+        shiftTypes: [DAY_12],
+        coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
+        priorAssignments: [
+          assign('ada', DAY_12, '2026-01-04', { periodId: 'prev' }),
+          assign('ada', DAY_12, '2026-01-05', { periodId: 'prev' }),
+          assign('bo', DAY_12, '2026-01-04', { periodId: 'prev' }),
+          assign('bo', DAY_12, '2026-01-06', { periodId: 'prev' }),
+        ],
+        ruleSet: hardDaysOff(relaxed),
+      }),
+    );
+  });
+
   it('agrees with the rules when nurses are on the 72/80 and Baylor plans', () => {
     // Bo is on leave Monday to Thursday, so his random shifts fall mostly on days his plan can
     // use; a Friday day or a Day 8 is still off it, as a Day 8 is for Ada. One 8-hour type, not
@@ -1670,6 +1919,23 @@ describe('agreement with the rule engine', () => {
       paidLeaveCountsTowardOvertime: true,
     });
     expectParity(parityInput({ ...paidLeave, ruleSet }));
+  });
+
+  it('agrees with the rules on a pay period the schedule opens in, judged with its history', () => {
+    // Schedule Wed 7 – Sat 17 Jan, inside the pay period Sun 4 – Sat 17; history is complete from
+    // 10 Dec, so the whole pay period is judged. Bo worked D12 Sun 4 and Mon 5 (24h), leaving
+    // 48 + 4 − 24 = 28h of his contract for the schedule's eleven days.
+    expectParity(
+      parityInput({
+        startDate: isoDate('2026-01-07'),
+        historyFrom: isoDate('2025-12-10'),
+        priorAssignments: [
+          assign('ada', NIGHT_12, '2026-01-03', { periodId: 'prev' }),
+          assign('bo', DAY_12, '2026-01-04', { periodId: 'prev' }),
+          assign('bo', DAY_12, '2026-01-05', { periodId: 'prev' }),
+        ],
+      }),
+    );
   });
 });
 
@@ -2153,6 +2419,38 @@ describe('parity with the annealer', () => {
         expect(evaluation.objective, `trial ${trial}`).toBeCloseTo(model.breakdown().total, 0);
       }
       expect(onPending).toBeGreaterThan(40);
+    });
+  });
+
+  describe('two charge nurses on one shift', () => {
+    it('prices a locked double charge as the annealer does', () => {
+      // Ana and Bo are locked onto Monday's day 12, both marked charge; Cy is free, so the
+      // shift is CP-SAT's to move. One shift-scope finding is one `hardShortfall` (3000).
+      const charged = (boCharge: boolean) =>
+        solveInputFrom({
+          startDate: isoDate('2026-01-05'),
+          endDate: isoDate('2026-01-05'),
+          nurses: [
+            makeNurse({ id: 'ana', isChargeEligible: true, contractedHoursPerPeriod: 0 }),
+            makeNurse({ id: 'bo', isChargeEligible: true, contractedHoursPerPeriod: 0 }),
+            makeNurse({ id: 'cy', contractedHoursPerPeriod: 0 }),
+          ],
+          shiftTypes: [DAY_12],
+          coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1, 2),
+          assignments: [
+            assign('ana', DAY_12, '2026-01-05', { isLocked: true, isCharge: true }),
+            assign('bo', DAY_12, '2026-01-05', { isLocked: true, isCharge: boCharge }),
+          ],
+        });
+      const double = charged(true);
+      const single = charged(false);
+      const twice = both(double, double.assignments);
+      const once = both(single, single.assignments);
+      for (const { evaluation, expected } of [twice, once]) {
+        expect(evaluation.violated).toEqual([]);
+        expect(evaluation.objective).toBeCloseTo(expected, 0);
+      }
+      expect(twice.expected - once.expected).toBeCloseTo(3000, 6);
     });
   });
 

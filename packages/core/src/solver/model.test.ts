@@ -15,9 +15,11 @@ import { NURSE_ROLES } from '../acuity/demand.js';
 import type { Assignment, Nurse, NurseRole, Preference } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
 import { ALL_RULES, defaultRuleSet, evaluateSchedule } from '../rules/registry.js';
+import { busyElsewhere } from '../schedule/elsewhere.js';
 import { ScheduleView } from '../schedule/view.js';
 import {
   assign,
+  assignRun,
   CRED_ACLS,
   census,
   coverage,
@@ -30,12 +32,14 @@ import {
   makeNurse,
   NIGHT_12,
   nurseCredential,
+  ON_CALL,
   payRate,
   resetFixtureCounters,
   solveInputFrom,
   TIER_ROUTINE,
   timeOff,
   UNIT_ID,
+  withRuleParams,
 } from '../testing/fixtures.js';
 import { SolverModel } from './model.js';
 import { Rng } from './rng.js';
@@ -672,6 +676,104 @@ describe('overtime judged over the pay period', () => {
   });
 });
 
+describe('contracted hours across the start of a schedule', () => {
+  // Schedule Sun 11 – Sat 24 Jan 2026; the fixture unit's pay periods run Sun 4 – Sat 17 and
+  // Sun 18 – Sat 31. Last schedule worked D12 Sun 4 – Thu 8 Jan: 5 × 12 = 60h of a 72h contract.
+  const input = (historyFrom?: string) =>
+    solveInputFrom({
+      startDate: isoDate('2026-01-11'),
+      endDate: isoDate('2026-01-24'),
+      ...(historyFrom ? { historyFrom: isoDate(historyFrom) } : {}),
+      nurses: [makeNurse({ id: 'ana', contractedHoursPerPeriod: 72 })],
+      shiftTypes: [DAY_12, NIGHT_12],
+      priorAssignments: assignRun('ana', DAY_12, '2026-01-04', 5, { periodId: 'prev' }),
+    });
+
+  it('counts the shifts already published toward the pay period the schedule finishes', () => {
+    const model = new SolverModel(input('2025-12-14'));
+    const b = model.bucketOfDate[model.dateIdx.get(isoDate('2026-01-11'))!]!;
+    // Still owed 72 − 60 = 12h; room for 72 + 4 tolerance − 60 = 16h before the contract is passed.
+    expect(model.hoursTarget[0]![b]).toBe(12);
+    expect(model.hoursCap[0]![b]).toBe(16);
+    const monday = model.shiftAt(model.dateIdx.get(isoDate('2026-01-12'))!, DAY_12);
+    expect(model.eligible(0, monday, 'RN')).toBe(true);
+    expect(model.canAdd(0, model.make(0, monday))).toBe(true);
+    model.add(assign('ana', DAY_12, '2026-01-12'));
+    // A second 12 makes 60 + 24 = 84h in the pay period, past the 76h the contract allows.
+    const tuesday = model.shiftAt(model.dateIdx.get(isoDate('2026-01-13'))!, DAY_12);
+    expect(model.eligible(0, tuesday, 'RN')).toBe(false);
+    expect(model.canAdd(0, model.make(0, tuesday))).toBe(false);
+  });
+
+  it('keeps every bucket as before when no history is given', () => {
+    // Jan 11–24 holds no whole pay period (Jan 4–17 starts before it, Jan 18–31 ends after it),
+    // so all 14 days are one remainder bucket owed 72 × 14 / 14 = 72h, the published 60h unread.
+    const model = new SolverModel(input());
+    expect(model.bucketOfDate.every((b) => b === 0)).toBe(true);
+    expect(model.hoursTarget[0]).toEqual([72]);
+  });
+
+  it('owes the whole contract in each pay period the schedule touches when told to judge partial ones', () => {
+    // Without history the rule judges Jan 4–17 and Jan 18–31 each on this schedule's own shifts,
+    // against all 72h (not 7/14 of it), and the published 60h is not read: target 72, cap 76 each.
+    const model = new SolverModel({
+      ...input(),
+      ruleSet: withRuleParams(defaultRuleSet(UNIT_ID), {
+        'fte-target-hours': { onlyCompletePayPeriods: false },
+      }),
+    });
+    expect(model.bucketOfDate[model.dateIdx.get(isoDate('2026-01-17'))!]).toBe(0);
+    expect(model.bucketOfDate[model.dateIdx.get(isoDate('2026-01-18'))!]).toBe(1);
+    expect(model.hoursTarget[0]).toEqual([72, 72]);
+    expect(model.hoursCap[0]).toEqual([76, 76]);
+  });
+});
+
+describe('which published hours count toward the pay period a schedule finishes', () => {
+  // Schedule Sun 11 – Sat 24 Jan, history whole from 14 Dec; pay period Sun 4 – Sat 17 judged.
+  // Published: D12 Sun 4, D12 Mon 5 held over 6h, a day on 5 West Wed 7, D12 Thu 8, standby
+  // Fri 9. The contract counts 3 × 12 = 36h of it: the holdover was not scheduled, 5 West's day
+  // is that unit's contract, and standby is not hours worked unless the rule says so.
+  const WEST_DAY = { ...DAY_12, id: 'west-d12', unitId: 'unit-west' };
+  const west = busyElsewhere(
+    [assign('ana', WEST_DAY, '2026-01-07', { periodId: 'west' })],
+    [WEST_DAY],
+    '5 West',
+  );
+  const input = (ruleParams?: Record<string, Record<string, unknown>>) =>
+    solveInputFrom({
+      startDate: isoDate('2026-01-11'),
+      endDate: isoDate('2026-01-24'),
+      historyFrom: isoDate('2025-12-14'),
+      nurses: [makeNurse({ id: 'ana', contractedHoursPerPeriod: 72 })],
+      shiftTypes: [DAY_12, NIGHT_12, ON_CALL, ...west.shiftTypes],
+      priorAssignments: [
+        assign('ana', DAY_12, '2026-01-04', { periodId: 'prev' }),
+        assign('ana', DAY_12, '2026-01-05', { periodId: 'prev', holdoverMinutes: 360 }),
+        ...west.assignments,
+        assign('ana', DAY_12, '2026-01-08', { periodId: 'prev' }),
+        assign('ana', ON_CALL, '2026-01-09', { periodId: 'prev' }),
+      ],
+      ...(ruleParams ? { ruleParams } : {}),
+    });
+  const firstBucket = (model: SolverModel) =>
+    model.bucketOfDate[model.dateIdx.get(isoDate('2026-01-11'))!]!;
+
+  it('counts a held-over shift by its scheduled hours and leaves out other units and standby', () => {
+    // 72 − 36 = 36h still owed; 72 + 4 − 36 = 40h of room.
+    const model = new SolverModel(input());
+    expect(model.hoursTarget[0]![firstBucket(model)]).toBe(36);
+    expect(model.hoursCap[0]![firstBucket(model)]).toBe(40);
+  });
+
+  it('counts the standby too when the contract credits time on call', () => {
+    // 36 + 12h standby = 48h published: 24h owed, 28h of room.
+    const model = new SolverModel(input({ 'fte-target-hours': { onCallCountsTowardHours: true } }));
+    expect(model.hoursTarget[0]![firstBucket(model)]).toBe(24);
+    expect(model.hoursCap[0]![firstBucket(model)]).toBe(28);
+  });
+});
+
 describe('cover from the day 12', () => {
   it('re-prices the mid 8 when the day 12’s only experienced RN leaves, and back on undo', () => {
     const lead = makeNurse({ id: 'lead', isChargeEligible: true });
@@ -759,6 +861,29 @@ describe('charge nurses', () => {
     const day = model.dateIdx.get(isoDate('2026-01-05'))!;
     expect(model.roster(model.shiftAt(day, DAY_12)).map((a) => a.isCharge)).toEqual([true]);
     expect(model.roster(model.shiftAt(day, MID_8)).map((a) => a.isCharge)).toEqual([false]);
+  });
+
+  it('hands the charge role to the first RN, passing over a charge-eligible LPN', () => {
+    const lpn = makeNurse({ id: 'lena', role: 'LPN', isChargeEligible: true });
+    const rn = makeNurse({ id: 'ana', isChargeEligible: true });
+    const model = new SolverModel(
+      solveInputFrom({
+        nurses: [lpn, rn],
+        shiftTypes: [DAY_12],
+        coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
+      }),
+    );
+    // The LPN is on the roster first; under the default only an RN may run the shift.
+    model.add(assign('lena', DAY_12, '2026-01-05'));
+    model.add(assign('ana', DAY_12, '2026-01-05'));
+    const day = model.dateIdx.get(isoDate('2026-01-05'))!;
+    const charge = model
+      .roster(model.shiftAt(day, DAY_12))
+      .map((a) => [a.nurseId, a.isCharge] as const);
+    expect(charge).toEqual([
+      ['lena', false],
+      ['ana', true],
+    ]);
   });
 });
 

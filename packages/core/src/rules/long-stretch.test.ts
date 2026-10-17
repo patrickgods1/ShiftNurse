@@ -95,6 +95,7 @@ describe('long stretches of work', () => {
       nurseIds: ['grace'],
       assignmentIds: [day.id],
       details: { stretchHours: 17, maxConsecutiveHours: 16 },
+      amount: 1, // 17 − 16
     });
     expect(found[0]!.message).toContain('Grace Campbell');
     expect(found[0]!.message).toContain('17h');

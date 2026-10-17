@@ -200,9 +200,10 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
   contractual; breaching one makes a schedule infeasible.
 - **Coverage floor** — static minimum staffing per shift/weekday, independent of census.
   Demand is `max(floor, ratio-derived)`: acuity can only push staffing up, never below.
-- **Charge nurse** — the RN running the shift. Every standalone shift requires exactly one; a
-  shift that runs inside another (a mid or short shift, like the VA demo's 8) works under that
-  shift's charge nurse and has none of its own.
+- **Charge nurse** — the RN running the shift. Every standalone shift requires exactly one; two
+  marked charge is a breach, and a unit may let a charge-eligible LPN/LVN take charge
+  (`chargeMustBeRN`, off). A shift that runs inside another (a mid or short shift, like the VA
+  demo's 8) works under that shift's charge nurse and has none of its own.
 - **Novice** — new grad / recent hire. A novice must work with at least one experienced RN on
   the unit during the shift — on it, or on the shift it runs inside; any other role does not count.
 - **Per-diem** — as-needed staff with no contracted-hours floor, so exempt from under-hours checks.

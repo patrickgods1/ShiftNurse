@@ -71,6 +71,7 @@ export const scheduleKindToursRule: Rule<ScheduleKindToursParams> = {
         if (!offPlanTour(view)) continue;
         violations.push(
           violation(scheduleKindToursRule, 'hard', 'off_plan_tour', planText(nurse, view), {
+            amount: 1,
             nurseIds: [nurse.id],
             dates: [view.assignment.date],
             assignmentIds: [view.assignment.id],

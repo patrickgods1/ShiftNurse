@@ -17,7 +17,6 @@ import {
   type ShiftTiming,
   windowsOverlap,
 } from '../domain/time.js';
-import type { ScheduleView } from '../schedule/view.js';
 import { nurseName, type Rule, type RuleContext, type Violation, violation } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -85,6 +84,7 @@ export const timeOffRule: Rule<TimeOffParams> = {
               `${describeDate(view.assignment.date)} during approved ${describeType(request)} ` +
               `(${describeDateRange(request.startDate, request.endDate)}).`,
             {
+              amount: 1,
               nurseIds: [view.nurse.id],
               dates: [view.assignment.date],
               assignmentIds: [view.assignment.id],
@@ -214,6 +214,8 @@ export const overlapRule: Rule<OverlapParams> = {
             continue;
           }
 
+          // The lookback row is history: the finding names only what this schedule can change.
+          const inPeriodPair = [previous, current].filter((v) => v.inPeriod);
           violations.push(
             violation(
               overlapRule,
@@ -223,9 +225,13 @@ export const overlapRule: Rule<OverlapParams> = {
                 `${describeDate(previous.assignment.date)} overlaps the ${current.shiftType.name} on ` +
                 `${describeDate(current.assignment.date)}.`,
               {
+                amount:
+                  (Math.min(previous.window.endMinute, current.window.endMinute) -
+                    Math.max(previous.window.startMinute, current.window.startMinute)) /
+                  60,
                 nurseIds: [nurse.id],
-                dates: [previous.assignment.date, current.assignment.date],
-                assignmentIds: [previous.assignment.id, current.assignment.id],
+                dates: inPeriodPair.map((v) => v.assignment.date),
+                assignmentIds: inPeriodPair.map((v) => v.assignment.id),
               },
             ),
           );
@@ -246,13 +252,4 @@ export function approvedLeaveOn(
   const approved = ctx.approvedTimeOffByNurse.get(nurseId);
   if (!approved) return undefined;
   return approved.find((r) => dateInRange(date, r.startDate, r.endDate));
-}
-
-/** True when the nurse already has a shift overlapping this window. */
-export function hasOverlap(
-  schedule: ScheduleView,
-  nurseId: Id,
-  window: { startMinute: number; endMinute: number },
-): boolean {
-  return schedule.timelineFor(nurseId).some((v) => windowsOverlap(v.window, window));
 }

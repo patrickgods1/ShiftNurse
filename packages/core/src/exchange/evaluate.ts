@@ -25,11 +25,11 @@
 import { ConflictEngine, type SimState } from '../conflicts/engine.js';
 import { costImpact, fairnessImpact, sumCost } from '../conflicts/impact.js';
 import { dollars, nurseName, plural, signed } from '../conflicts/text.js';
-import { diffViolations } from '../conflicts/violation-diff.js';
 import type { Assignment, Id } from '../domain/entities.js';
 import type { IsoDate } from '../domain/time.js';
 import { overtimeHoursAround } from '../rules/hours-rules.js';
 import type { Violation } from '../rules/types.js';
+import { diffViolations } from '../rules/violation-diff.js';
 import type { AssignmentView } from '../schedule/view.js';
 import type {
   ExchangeApplication,
@@ -322,7 +322,14 @@ function overtimeHoursFor(
   nurseId: Id,
   date: IsoDate,
 ): number {
-  return overtimeHoursAround(state.view, nurseId, date, engine.maxHoursParams, engine.input.unit);
+  return overtimeHoursAround(
+    state.view,
+    nurseId,
+    date,
+    engine.maxHoursParams,
+    engine.input.unit,
+    state.ctx.paidLeaveByNurse.get(nurseId),
+  );
 }
 
 function sideImpact(nurseId: Id, before: SimState, after: SimState): NurseSideImpact {

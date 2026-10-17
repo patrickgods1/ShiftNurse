@@ -98,6 +98,12 @@ export interface SolveInput {
   assignments: readonly Assignment[];
   /** The published lookback tail, so rest and weekly-hours rules see across the boundary. */
   priorAssignments: readonly Assignment[];
+  /**
+   * The first date from which `priorAssignments` is known to be complete (`historyCompleteFrom`).
+   * Absent: the caller has not said, and a pay period that began before the schedule is judged as
+   * before (not at all, unless `onlyCompletePayPeriods` is off).
+   */
+  historyFrom?: IsoDate;
   timeOff: readonly TimeOffRequest[];
   /**
    * Missed shifts paid from sick leave whose assignment is off the schedule: credited toward

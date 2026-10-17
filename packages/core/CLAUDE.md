@@ -45,6 +45,14 @@
   (`PreparedRule.override`): `fte-target-hours` refuses hours past the contract (hard) but only
   advises on a shortfall (soft) — being short is a manager's decision, not a breach — and a
   contract that guarantees full hours sets the rule hard, which makes both hard.
+- **A pay period is judged by the schedule that holds its end.** `judgedPayPeriods` is the
+  one selection (rule, both solvers, `days-off-together`): the published tail supplies its earlier
+  days; with history incomplete (`historyFrom` after its start) only hours past the contract are
+  judged, never a shortfall; `historyFrom` absent keeps the old reading. `historyCompleteFrom`
+  (`schedule/history.ts`) says how far the tail is complete; `payPeriodHoursFor` is the count
+  (scheduled hours, another unit's shifts out, ids in-period only), and "over" needs an in-period
+  shift to name. SA's buckets and CP-SAT's contract cap subtract the published hours of that pay
+  period (`hoursBuckets`' `hoursCap`, `scheduledHoursExpr`).
 - **Rest and tour changes are measured from the shift that ends last.**
   `schedule/preceding.ts`'s `latestEndingBefore` is the one walk (min-rest, tour change). Overlap
   reports every overlapping pair. CP-SAT's rest pairs drop out when a worked shift between them
@@ -73,6 +81,13 @@
   secretly reads more than its scope passes in the solver and fails on the grid. Nurse-scope hard
   rules gate every addition (except `under_contracted_hours`, a floor the objective pushes toward);
   shift-scope hard rules are priced, and what remains is the report's `unfilled` list.
+- **Every finding has an amount and a stable identity.** `Violation.amount` is how far past the
+  limit, in the code's own unit (hours over, days in a row, slots short, 1 for a single shift
+  where it should not be), always positive. `rules/violation-diff.ts` is the one identity
+  (`violationKey`) and diff (`diffViolations`: introduced, worsened, cleared); it lives in
+  `rules/` so the solver can use it. Nurse-scope findings name exactly their in-period
+  contributors; `violation-ids.property.test.ts` checks that adding a shift a finding does not
+  name never makes it worse, which is what the solver's identity gate relies on.
 - **Every registered rule needs a CP-SAT encoding.** `CPSAT_ENCODERS` in `solver/cpsat/encode.ts`
   maps each rule id to an encoder or `'by-construction'`; a test fails on any missing id, and
   `encodeCpsat` refuses by name when an enabled hard rule has none. A new rule is therefore a
@@ -96,7 +111,9 @@
   re-prices the shifts inside it (`innerShifts`, and `shiftViolationsAround` for simulated
   changes), and CP-SAT treats a shift as movable when its cover is. Only experienced **RNs**
   cover a new grad: an LVN or nursing assistant cannot supervise an RN. The repository refuses
-  a containing shift whose hours do not hold the inside one, or a chain.
+  a containing shift whose hours do not hold the inside one, or a chain. `canTakeCharge`
+  (coverage-rules) is the one test of who may be marked charge, shared by the rule,
+  `SolverModel.ensureCharge` and CP-SAT.
 - **Incompatible staff are judged by the hours they share.** An `IncompatibilityGroup` (two or
   more nurses, a `maxTogether` cap, optional `startsOn`/`endsOn` applied by shift date) feeds two
   shift-scope rules in `rules/incompatibility-rules.ts`: `incompatible-staff-cap` (soft) and
@@ -190,17 +207,20 @@
   worked hour in them counted, offered ones too (Wage Order 5 § 3(B)(9)–(10): 12, and 16).
 - **A holdover is worked time on a published shift.** `Assignment.holdoverMinutes` (recorded on
   Today; `holdoverMandated` says required or volunteered) moves the end of the shift's *worked*
-  window and adds to its worked hours; `schedule/holdover.ts` is the one definition
-  (`workedWindow`, `workedHours`, `workedStretches`). `ScheduleView` gives `window` and
-  `paidHours` as worked, `scheduledHours` as declared: rest, hour caps, overtime and pay count the
-  holdover; the contracted-hours rule and contract alerts count `scheduledHours` (a nurse held over
-  was not scheduled past their contract), and a holdover authorises the overtime it adds. Only a
-  draft is generated, so the solvers meet holdovers only in the lookback tail (`SolverModel`'s prior
-  hours, CP-SAT constants via `timelineEntry`/`hoursExpr`). `no-mandatory-overtime` judges a
-  *required* holdover (a volunteer record does not excuse it) against its weekly cap and §7459(a)'s
-  consecutive limit (8, or 12 when the stretch holds a longer tour), one breach per stretch;
-  `max-hours-in-24` (hard, off by default) caps worked hours in any 24, checked at each window's
-  start and end − 24h. Pay: `beyond_scheduled_tour` and `consecutive` overtime bases.
+  window and adds to its worked hours; `schedule/holdover.ts` is the one definition (`workedWindow`,
+  `workedHours`, `workedStretches`). `ScheduleView` gives `window` and `paidHours` as worked,
+  `scheduledHours` as declared: rest, hour caps, overtime and pay count the holdover; the
+  contracted-hours rule and contract alerts count `scheduledHours` (a nurse held over was not
+  scheduled past their contract), and a holdover authorises only the overtime it adds
+  (`authorisedOvertimeHours`, shared with CP-SAT's weekly cap); an authorised-overtime shift still
+  authorises its whole week. Only a draft is generated, so the solvers meet holdovers only in the
+  lookback tail (`SolverModel`'s prior hours, CP-SAT constants via `timelineEntry`/`hoursExpr`).
+  `no-mandatory-overtime` judges a *required* holdover (a volunteer record does not excuse it)
+  against its weekly cap and §7459(a)'s consecutive limit (8, or 12 when the stretch holds a longer
+  tour), one breach per stretch; the weekly cap counts only required hours (volunteered overtime and
+  volunteered holdover time are left out), one finding per work week naming every in-period shift
+  that adds to it; `max-hours-in-24` (hard, off by default) caps worked hours in any 24, checked at
+  each window's start and end − 24h. Pay: `beyond_scheduled_tour` and `consecutive` overtime bases.
 - **Long stretches have a cap and a rest, from the state laws.** `long-stretch` (hard, nurse scope,
   off by default, no default numbers) judges each `workedStretches` stretch (holdovers in, standby
   out) against `maxConsecutiveHours` (an `Emergency:` note excuses it when `emergencyLiftsCap`) and,
@@ -231,9 +251,10 @@
   otherwise leave weekday days off scattered, never a real break. A day off is a day with no
   shift *dated* on it, so Friday's night does not spoil Saturday; a shift on another unit is a day
   worked; a weekend counts only if worked on a day of the pay period (a Saturday in the previous
-  pay period does not credit it); a pay period straddling the
-  schedule is not judged, as its far days are unseen; while soft it is not priced, so the grid and
-  alerts flag it but Generate does not steer. Hard, `solver/cpsat/rules/days-off.ts` and
+  pay period does not credit it); a pay period that began before the schedule is judged once the
+  published history covers its first day (`RuleContext.historyFrom`); one running past the
+  schedule's end is left to the next; while soft it is not priced, so the grid and alerts flag it
+  but Generate does not steer. Hard, `solver/cpsat/rules/days-off.ts` and
   `SolverModel` forbid it.
 - **Weekends off per year is an alert.** `complianceAlerts`' `weekends_off_per_year`
   (`publish/compliance.ts`) comes from `Unit.minWeekendsOffPerYear`: the ledger's `weekendsWorked`
@@ -329,9 +350,11 @@
   hides the run) and recovery after nights; fairness's night count and the pay differential still
   read `isNight`. `tour-rotation` (soft, off by default) caps distinct tours per schedule, wants
   `minHoursBetweenTours` between shifts on different tours, and keeps a nurse with a
-  `permanentTour` on it. Monotone under removal, so the gate is the generic nurse-scope one;
-  `encodeTourRotation` enforces it when hard (locked breaches stand, `atMost` stops them growing).
-  Neither solver prices it while soft — a stated limit.
+  `permanentTour` on it. A career nurse exempt from forced rotation is held to one tour and her
+  permanent tour, except tours she asked for (a preferred shift type on them, `requestedTours`,
+  read from `RuleContext.preferredShiftTypesByNurse`). Monotone under removal, so the gate is the
+  generic nurse-scope one; `encodeTourRotation` enforces it when hard (locked breaches stand,
+  `atMost` stops them growing). Neither solver prices it while soft — a stated limit.
 - **A plan nurse works the plan's tours.** `rules/schedule-kind-tours.ts` (`schedule-kind-tours`,
   hard, nurse scope, on by default, `off_plan_tour`): a worked in-period shift of a `va_72_80` nurse
   must be 12 hours (38 U.S.C. § 7456A), and of a `va_baylor` nurse a Baylor tour (§ 7456;

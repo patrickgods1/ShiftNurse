@@ -349,7 +349,8 @@ const SOLVER_SCRIPT = `
         elapsedMs: r ? r.elapsedMs : -1,
         identical: b.status.state === 'done' && JSON.stringify(keysA) === JSON.stringify(keysB),
         nurseLevel: v.result.hardViolations.filter((x) =>
-          !['understaffed', 'ratio_breach', 'missing_charge_nurse', 'all_novice_shift', 'missing_credential',
+          !['understaffed', 'ratio_breach', 'missing_charge_nurse', 'multiple_charge_nurses',
+            'all_novice_shift', 'missing_credential',
             'under_contracted_hours'].includes(x.code)).map((x) => x.message).slice(0, 3),
       });
     }
@@ -372,7 +373,8 @@ const SOLVER_SCRIPT = `
     const firstKeys = after.map(key).sort();
     const validation = await api.schedule.validate(draft.id);
     const nurseLevel = validation.result.hardViolations.filter((v) =>
-      !['understaffed', 'ratio_breach', 'missing_charge_nurse', 'all_novice_shift', 'missing_credential',
+      !['understaffed', 'ratio_breach', 'missing_charge_nurse', 'multiple_charge_nurses',
+        'all_novice_shift', 'missing_credential',
         'under_contracted_hours'].includes(v.code));
     const second = await run();
     const again = (await api.periods.assignments(draft.id)).map(key).sort();

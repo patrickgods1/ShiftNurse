@@ -44,7 +44,8 @@ describe('every other weekend', () => {
       code: 'excess_weekends',
       severity: 'soft',
       nurseIds: ['ana'],
-      dates: ['2026-01-10'],
+      // Both weekends of the run are named: the 3 Jan weekend (Sun 4 Jan) and 10 Jan.
+      dates: ['2026-01-04', '2026-01-10'],
     });
     expect(violations[0]!.message).toContain('Ana Cruz');
     expect(violations[0]!.message).toContain('2 weekends in a row');
@@ -80,7 +81,7 @@ describe('every other weekend', () => {
     const violations = judge(['2026-01-04', '2026-01-10', '2026-01-17'], {
       maxConsecutiveWeekends: 2,
     });
-    expect(violations.map((v) => v.dates)).toEqual([['2026-01-17']]);
+    expect(violations.map((v) => v.dates)).toEqual([['2026-01-04', '2026-01-10', '2026-01-17']]);
     expect(violations[0]!.message).toContain('3 weekends in a row');
   });
 
@@ -101,6 +102,60 @@ describe('every other weekend', () => {
     });
     // Sun 4 Jan night is the 3 Jan weekend; Sat 10 Jan is the next one.
     expect(weekendPatternRule.evaluate(s.schedule, EVERY_OTHER, s.ctx)).toHaveLength(1);
+  });
+});
+
+describe('which shifts a run of weekends names', () => {
+  it('names every weekend of the run, not only the one that ends it', () => {
+    // Sat 10, 17 and 24 Jan worked with two allowed: a run of three, one past the limit. Taking
+    // away any of the three clears it, so all three are named.
+    const nurse = makeNurse({ id: 'ana' });
+    const s = scenario({
+      nurses: [nurse],
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-31'),
+      assignments: [
+        assign('ana', DAY_12, '2026-01-10', { id: 'sat10' }),
+        assign('ana', DAY_12, '2026-01-17', { id: 'sat17' }),
+        assign('ana', DAY_12, '2026-01-24', { id: 'sat24' }),
+      ],
+    });
+    const violations = weekendPatternRule.evaluate(
+      s.schedule,
+      { maxConsecutiveWeekends: 2 },
+      s.ctx,
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatchObject({
+      assignmentIds: ['sat10', 'sat17', 'sat24'],
+      dates: ['2026-01-10', '2026-01-17', '2026-01-24'],
+      amount: 1,
+    });
+  });
+
+  it("leaves last schedule's weekend off the names when the run starts there", () => {
+    // Sat 27 Dec (last schedule), Sun 4 Jan (the 3 Jan weekend) and Sat 10 Jan: a run of three
+    // with two allowed. Only this schedule's two shifts can be moved, so only they are named.
+    const nurse = makeNurse({ id: 'ana' });
+    const s = scenario({
+      nurses: [nurse],
+      priorAssignments: [assign('ana', DAY_12, '2025-12-27', { id: 'prev' })],
+      assignments: [
+        assign('ana', DAY_12, '2026-01-04', { id: 'sun04' }),
+        assign('ana', DAY_12, '2026-01-10', { id: 'sat10' }),
+      ],
+    });
+    const violations = weekendPatternRule.evaluate(
+      s.schedule,
+      { maxConsecutiveWeekends: 2 },
+      s.ctx,
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatchObject({
+      assignmentIds: ['sun04', 'sat10'],
+      dates: ['2026-01-04', '2026-01-10'],
+      amount: 1,
+    });
   });
 });
 

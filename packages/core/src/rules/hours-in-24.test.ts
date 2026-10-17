@@ -48,10 +48,20 @@ describe('most hours in any 24', () => {
       nurseIds: ['grace'],
       assignmentIds: [day.id],
       details: { hours: 17, maxHours: 16 },
+      amount: 1, // 17 − 16
     });
     expect(found[0]!.message).toContain('Grace Campbell');
     expect(found[0]!.message).toContain('17h');
     expect(found[0]!.message).toContain('16h in 24 hours');
+  });
+
+  it('reports the 24 hours starting when the long shift starts, not midnight before it', () => {
+    const nurse = grace();
+    // 07:00 Mon to 00:00 Tue is 17h; the windows opening at Mon 00:00 and at Mon 07:00 both hold
+    // all of it; the one that opens at the shift's start is what has always been reported.
+    const day = assign(nurse.id, DAY_12, '2026-01-05', { holdoverMinutes: 300 });
+    const found = evaluate({ nurses: [nurse], assignments: [day] });
+    expect(found[0]!.message).toContain('between Mon Jan 5 07:00 and Tue Jan 6 07:00');
   });
 
   it('accepts a day 12 held over 4 hours: 16 is the limit, not over it', () => {

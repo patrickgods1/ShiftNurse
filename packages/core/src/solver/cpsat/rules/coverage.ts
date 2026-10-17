@@ -11,6 +11,8 @@
 import { NURSE_ROLES } from '../../../acuity/demand.js';
 import type { Assignment, NurseRole } from '../../../domain/entities.js';
 import {
+  type CoverageParams,
+  canTakeCharge,
   coverageRule,
   hasValidCredential,
   ratioComplianceRule,
@@ -94,7 +96,10 @@ export function encodeCoverage(ctx: EncodeContext, raw: Record<string, unknown>)
     const locked = ctx.lockedByShift[shift.idx]!;
 
     if (params.requireChargeNurse && shift.shiftType.withinShiftTypeId === null) {
-      missingCharge(ctx, shift, vars, locked, cost);
+      missingCharge(ctx, shift, vars, locked, params, cost);
+      // The annealer never flags a second nurse, so only locked rows can carry two flags: a
+      // constant, priced as SA prices the rule's finding (one unit, whatever the count).
+      if (locked.filter((a) => a.isCharge).length > 1) ctx.b.minimise(expr([], 1), cost);
     }
 
     if (params.minExperiencedPerShift > 0) {
@@ -140,22 +145,23 @@ export function encodeCoverage(ctx: EncodeContext, raw: Record<string, unknown>)
 }
 
 /**
- * The annealer gives the charge role to the first charge-eligible *unlocked* nurse on a shift
+ * The annealer gives the charge role to the first *unlocked* nurse on a shift who `canTakeCharge`
  * (`SolverModel.ensureCharge`), unless a locked row already carries the flag. So a shift has a
- * valid charge nurse when a locked row is flagged and eligible, or — no locked row being flagged
- * at all — when some eligible nurse is among the variables that are on.
+ * valid charge nurse when a flagged locked row can take charge, or — no locked row being flagged
+ * at all — when someone who can is among the variables that are on.
  */
 function missingCharge(
   ctx: EncodeContext,
   shift: Shift,
   vars: readonly ShiftVar[],
   locked: readonly Assignment[],
+  params: CoverageParams,
   cost: number,
 ): void {
   const flagged = locked.filter((a) => a.isCharge);
-  if (flagged.some((a) => ctx.model.nurses[ctx.model.nurseOf(a)]!.isChargeEligible)) return;
+  if (flagged.some((a) => canTakeCharge(ctx.model.nurses[ctx.model.nurseOf(a)]!, params))) return;
   const eligible =
-    flagged.length > 0 ? [] : vars.filter((sv) => ctx.model.nurses[sv.n]!.isChargeEligible);
+    flagged.length > 0 ? [] : vars.filter((sv) => canTakeCharge(ctx.model.nurses[sv.n]!, params));
   const b = ctx.b;
   const covered =
     eligible.length === 0

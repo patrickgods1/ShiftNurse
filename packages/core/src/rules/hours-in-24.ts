@@ -22,14 +22,9 @@
  * breach is reported only if some shift in it is in the period.
  */
 
-import {
-  describeDate,
-  formatTimeOfDay,
-  fromDayNumber,
-  MINUTES_PER_DAY,
-  MINUTES_PER_HOUR,
-} from '../domain/time.js';
+import { MINUTES_PER_DAY, MINUTES_PER_HOUR } from '../domain/time.js';
 import type { AssignmentView } from '../schedule/view.js';
+import { describeMinute, hoursText } from './format.js';
 import { isWorked, nurseName, type Rule, type Violation, violation } from './types.js';
 
 export interface MaxHoursIn24Params {
@@ -37,20 +32,43 @@ export interface MaxHoursIn24Params {
   maxHours: number;
 }
 
-/** "Mon Jan 5 07:00": a minute on the wall-clock timeline, for rule messages. */
-function describeMinute(minute: number): string {
-  return `${describeDate(fromDayNumber(Math.floor(minute / MINUTES_PER_DAY)))} ${formatTimeOfDay(minute)}`;
-}
-
-function hoursText(hours: number): string {
-  return `${Math.round(hours * 10) / 10}h`;
-}
-
 /** Minutes of a worked window inside `[from, from + 1440)`. */
 function overlapMinutes(view: AssignmentView, from: number): number {
   const lo = Math.max(view.window.startMinute, from);
   const hi = Math.min(view.window.endMinute, from + MINUTES_PER_DAY);
   return Math.max(0, hi - lo);
+}
+
+/**
+ * Every 24-hour window `[from, from + 1440)` that can hold a nurse's busiest 24 hours, with the
+ * worked minutes and the shifts in it: one per distinct anchor (`extraAnchors`, then each shift's
+ * start and end − 1440), in that first-seen order — which window a tie reports is part of the
+ * message, so callers that need time order sort themselves. This rule and the mandatory-overtime
+ * caps both need the same scan, and two copies of the anchor argument are two chances to get it
+ * wrong.
+ * `worked` must be sorted by start.
+ */
+export function* windowsIn24(
+  worked: readonly AssignmentView[],
+  extraAnchors: readonly number[] = [],
+): Iterable<{ from: number; minutes: number; views: AssignmentView[] }> {
+  const anchors = new Set<number>(extraAnchors);
+  for (const v of worked) {
+    anchors.add(v.window.startMinute);
+    anchors.add(v.window.endMinute - MINUTES_PER_DAY);
+  }
+  for (const from of anchors) {
+    let minutes = 0;
+    const views: AssignmentView[] = [];
+    for (const v of worked) {
+      if (v.window.startMinute >= from + MINUTES_PER_DAY) break;
+      const m = overlapMinutes(v, from);
+      if (m === 0) continue;
+      minutes += m;
+      views.push(v);
+    }
+    yield { from, minutes, views };
+  }
 }
 
 export const maxHoursIn24Rule: Rule<MaxHoursIn24Params> = {
@@ -85,24 +103,9 @@ export const maxHoursIn24Rule: Rule<MaxHoursIn24Params> = {
       const worked = schedule.timelineFor(nurse.id).filter(isWorked);
       if (worked.length === 0) continue;
 
-      const anchors = new Set<number>();
-      for (const v of worked) {
-        anchors.add(v.window.startMinute);
-        anchors.add(v.window.endMinute - MINUTES_PER_DAY);
-      }
-
       // One finding per distinct set of shifts, at that set's worst window.
       const worst = new Map<string, { minutes: number; from: number; views: AssignmentView[] }>();
-      for (const from of anchors) {
-        let minutes = 0;
-        const touching: AssignmentView[] = [];
-        for (const v of worked) {
-          if (v.window.startMinute >= from + MINUTES_PER_DAY) break;
-          const m = overlapMinutes(v, from);
-          if (m === 0) continue;
-          minutes += m;
-          touching.push(v);
-        }
+      for (const { from, minutes, views: touching } of windowsIn24(worked)) {
         if (minutes <= limit) continue;
         const inPeriod = touching.filter((v) => v.inPeriod);
         if (inPeriod.length === 0) continue;
@@ -126,6 +129,7 @@ export const maxHoursIn24Rule: Rule<MaxHoursIn24Params> = {
               `and ${describeMinute(from + MINUTES_PER_DAY)} — more than ` +
               `${hoursText(params.maxHours)} in 24 hours.`,
             {
+              amount: hours - params.maxHours,
               nurseIds: [nurse.id],
               dates: views.map((v) => v.assignment.date),
               assignmentIds: views.map((v) => v.assignment.id),

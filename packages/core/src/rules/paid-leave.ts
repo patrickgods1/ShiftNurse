@@ -118,12 +118,6 @@ export function leaveHoursBetween(
 }
 
 /**
- * A default for a request's paid hours: the shifts a nurse on this contract works, on average,
- * over that many days, rounded up to whole shifts and never more than one a day. A manager who
- * knows the nurse's actual rota corrects it; the point is not to start from zero or from
- * "every calendar day".
- */
-/**
  * The shift length a day of paid leave is worth when the manager has not said otherwise: what
  * most of the unit's worked shift types run (the longer on a tie). A 12-hour unit's PTO day is 12
  * hours, a VA tour 8. One definition for the request dialog and for leave awarded by bidding.
@@ -143,6 +137,12 @@ export function typicalShiftHours(
   return best?.[0] ?? 8;
 }
 
+/**
+ * A default for a request's paid hours: the shifts a nurse on this contract works, on average,
+ * over that many days, rounded up to whole shifts and never more than one a day. A manager who
+ * knows the nurse's actual rota corrects it; the point is not to start from zero or from
+ * "every calendar day".
+ */
 export function suggestedPaidLeaveHours(input: {
   type: TimeOffType;
   days: number;

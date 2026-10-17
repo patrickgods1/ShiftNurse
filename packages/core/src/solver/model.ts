@@ -59,6 +59,7 @@ import { isUndesirable } from '../fairness/ledger.js';
 import { seniorityMultipliers } from '../fairness/seniority.js';
 import { BURDEN_COMPONENTS, type BurdenComponent } from '../fairness/types.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
+import { type CoverageParams, canTakeCharge, coverageRule } from '../rules/coverage-rules.js';
 import {
   type HolidayRotationFacts,
   holidayRotationFacts,
@@ -288,8 +289,11 @@ export class SolverModel {
   /** shift index → the stretches it covers. A change to the shift re-prices exactly these. */
   private readonly stretchesOf: FloorStretch[][];
   readonly fteParams: ContractedHoursParams;
+  /** Who may be handed the charge flag (`chargeMustBeRN`), read once rather than per add. */
+  private readonly coverageParams: CoverageParams;
   readonly bucketOfDate: number[];
   readonly hoursTarget: number[][];
+  readonly hoursCap: number[][];
   readonly hoursCapped: boolean[];
   readonly contractedProRata: number[];
   readonly maxHoursParams: MaxHoursParams;
@@ -376,6 +380,8 @@ export class SolverModel {
       ...(input.preceptorships ? { preceptorships: input.preceptorships } : {}),
       ...(input.restWaivers ? { restWaivers: input.restWaivers } : {}),
       ...(input.availabilityBlocks ? { availabilityBlocks: input.availabilityBlocks } : {}),
+      ...(input.historyFrom ? { historyFrom: input.historyFrom } : {}),
+      preferences: input.preferences,
     });
 
     const shifts = buildShifts(this.dates, this.shiftTypes, demand);
@@ -481,6 +487,7 @@ export class SolverModel {
       for (const shift of stretch.shifts) this.stretchesOf[shift.idx]!.push(stretch);
     }
     this.incompat = this.stretches.map(() => 0);
+    this.coverageParams = paramsOf(coverageRule, configs) ?? coverageRule.defaultParams;
     this.fteParams = paramsOf(contractedHoursRule, configs) ?? contractedHoursRule.defaultParams;
     const maxHours = paramsOf(maxHoursRule, configs) ?? maxHoursRule.defaultParams;
     this.maxHoursParams = maxHours;
@@ -495,7 +502,7 @@ export class SolverModel {
 
     this.costCtx = costContextFor(input, this.ctx, maxHours);
 
-    // --- Hours buckets: the complete pay periods the FTE rule judges, plus any remainder. ---
+    // --- Hours buckets: the pay periods the FTE rule judges, plus any remainder. ---
     const buckets = hoursBuckets(
       input,
       this.dates,
@@ -507,6 +514,7 @@ export class SolverModel {
     this.bucketOfDate = buckets.bucketOfDate;
     const bucketCount = buckets.bucketCount;
     this.hoursTarget = buckets.hoursTarget;
+    this.hoursCap = buckets.hoursCap;
     this.hoursCapped = buckets.hoursCapped;
     this.contractedProRata = buckets.contractedProRata;
     const n = this.nurses.length;
@@ -784,11 +792,13 @@ export class SolverModel {
     if (this.onLeave[nurseIdx]![shift.dateIdx]) return false;
     if (this.hoursCapped[nurseIdx]) {
       const b = this.bucketOfDate[shift.dateIdx]!;
-      const cap = this.hoursTarget[nurseIdx]![b]! + this.fteParams.overToleranceHours;
+      const cap = this.hoursCap[nurseIdx]![b]!;
       if (this.bucketHours[nurseIdx]![b]! + shift.shiftType.durationHours > cap) return false;
     }
     // The weekly cap binds on every nurse, and the overtime threshold does too unless the
-    // solver could authorise overtime — which it never does.
+    // solver could authorise overtime — which it never does. It also ignores a holdover's own
+    // authorised hours (`authorisedOvertimeHours`); drafts are generated without overtime, so
+    // this only ever leaves a shift to CP-SAT or the manager.
     if (!shift.shiftType.isOnCall || this.maxHoursParams.onCallCountsTowardHours) {
       const hours = shift.shiftType.durationHours;
       const week = this.weekOfDate[shift.dateIdx]!;
@@ -1126,7 +1136,7 @@ export class SolverModel {
 
   /**
    * Exactly one charge nurse per worked shift when one is available — none on a shift run by
-   * another's charge nurse. The first eligible, unlocked nurse on the roster gets it —
+   * another's charge nurse. The first unlocked nurse on the roster who `canTakeCharge` gets it —
    * deterministic, and re-run after every change so a removed charge nurse hands the role to
    * whoever is left.
    */
@@ -1134,7 +1144,9 @@ export class SolverModel {
     if (shift.shiftType.isOnCall || shift.shiftType.withinShiftTypeId !== null) return;
     const roster = this.byShift[shift.idx]!;
     if (roster.some((a) => a.isCharge)) return;
-    const pick = roster.find((a) => !a.isLocked && this.nurses[this.nurseOf(a)]!.isChargeEligible);
+    const pick = roster.find(
+      (a) => !a.isLocked && canTakeCharge(this.nurses[this.nurseOf(a)]!, this.coverageParams),
+    );
     if (pick) pick.isCharge = true;
   }
 
@@ -1181,7 +1193,6 @@ export class SolverModel {
     };
   }
 
-  /** Nurse-slots short of a hard minimum across the whole schedule, for progress reporting. */
   /** One shift's cached coverage penalty in points, as it stands. */
   coveragePenaltyOf(shift: Shift): number {
     return this.coverage[shift.idx]!;
@@ -1197,6 +1208,7 @@ export class SolverModel {
     return this.hoursPenalty[n]!;
   }
 
+  /** Nurse-slots short of a hard minimum across the whole schedule, for progress reporting. */
   hardShortfall(): number {
     let total = 0;
     for (const shift of this.shifts) {
@@ -1447,17 +1459,17 @@ export class SolverModel {
     return value;
   }
 
+  /** Straight-time dollars for this nurse on this shift; 0 without pay data. */
+  shiftCostFor(n: number, shift: Shift): number {
+    return this.shiftCost(n, shift, this.viewFor(n, shift).assignment);
+  }
+
   /**
    * Straight-time dollars for this nurse on this shift, priced by the cost module on a
    * one-shift timeline. Weekly overtime cannot be attributed per shift and is kept out of the
    * schedule by the hard weekly-hours rule instead; the charge differential is ignored because
    * every worked shift carries exactly one charge nurse regardless of who it is.
    */
-  /** Straight-time dollars for this nurse on this shift; 0 without pay data. */
-  shiftCostFor(n: number, shift: Shift): number {
-    return this.shiftCost(n, shift, this.viewFor(n, shift).assignment);
-  }
-
   private shiftCost(n: number, shift: Shift, a: Assignment): number {
     if (!this.costCtx) return 0;
     const key = this.tableKey(n, shift);

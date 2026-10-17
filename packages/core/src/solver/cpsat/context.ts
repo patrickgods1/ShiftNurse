@@ -82,6 +82,20 @@ export function hoursExpr(entries: readonly TimelineEntry[]): Expr {
   return e;
 }
 
+/**
+ * Σ scheduled hours (×HOURS), as `hoursExpr` but with no holdover on a constant: what the contract
+ * counts, since a nurse held over was not scheduled past it.
+ */
+export function scheduledHoursExpr(entries: readonly TimelineEntry[]): Expr {
+  const e = expr();
+  for (const entry of entries) {
+    const h = hoursOf(entry.shiftType, entry.date);
+    if (entry.literal === null) e.constant += h;
+    else e.terms.push([entry.literal, h]);
+  }
+  return e;
+}
+
 /** A count of entries (1 each): variables as terms, constants folded in. */
 export function countExpr(entries: readonly TimelineEntry[]): Expr {
   const e = expr();

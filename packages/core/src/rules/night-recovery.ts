@@ -105,9 +105,12 @@ export const nightRecoveryRule: Rule<NightRecoveryParams> = {
               `off after nights (${last.view.shiftType.name} on ` +
               `${describeDate(last.view.assignment.date)}); ${required} are recommended.`,
             {
+              amount: required - daysOff,
               nurseIds: [nurse.id],
               dates: [view.assignment.date],
-              assignmentIds: [view.assignment.id, last.view.assignment.id],
+              assignmentIds: [view, last.view]
+                .filter((v) => v.inPeriod)
+                .map((v) => v.assignment.id),
               details: { daysOff, required, nightDate: last.view.assignment.date },
             },
           ),

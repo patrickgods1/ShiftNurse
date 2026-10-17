@@ -476,10 +476,19 @@ describe('contracted hours', () => {
     expect(v).toHaveLength(0);
   });
 
-  it('exempts per-diem nurses from the under-hours check', () => {
-    const nurse = makeNurse({ employmentType: 'per_diem', contractedHoursPerPeriod: 0 });
+  it('exempts a per-diem nurse with a contract from the under-hours check', () => {
+    // A non-zero contract, or the check returns early before the exemption list is read.
+    const nurse = makeNurse({ employmentType: 'per_diem', contractedHoursPerPeriod: 24 });
     const s = scenario({ nurses: [nurse], assignments: [] });
     expect(codes(s)).not.toContain('under_contracted_hours');
+  });
+
+  it('flags the same contract short for a full-time nurse', () => {
+    const nurse = makeNurse({ employmentType: 'full_time', contractedHoursPerPeriod: 24 });
+    const s = scenario({ nurses: [nurse], assignments: [] });
+    const v = evaluate(s).violations.find((x) => x.code === 'under_contracted_hours');
+    expect(v).toBeDefined();
+    expect(v!.details?.deltaHours).toBeCloseTo(-24, 4);
   });
 
   it('does not call a per-diem nurse with no contracted hours "over hours" for picking up a shift', () => {
@@ -668,6 +677,7 @@ describe('weekly hours and overtime', () => {
     });
     const v = evaluate(s).violations.find((x) => x.code === 'over_max_hours');
     expect(v?.details).toMatchObject({ scheduledHours: 49, maxHours: 48 });
+    expect(v?.amount).toBe(1); // 49 − 48
   });
 
   it('never counts leave toward the absolute weekly cap: it is not fatigue', () => {
@@ -1358,24 +1368,22 @@ describe('patient ratio compliance', () => {
 });
 
 describe('evaluation result', () => {
-  it('reports a clean schedule as feasible', () => {
+  it('calls a fully staffed day with its charge nurse legal', () => {
     const charge = makeNurse({ isChargeEligible: true, contractedHoursPerPeriod: 24 });
     const other = makeNurse({ contractedHoursPerPeriod: 24 });
     const s = scenario({
+      startDate: isoDate('2026-01-05'),
+      endDate: isoDate('2026-01-05'),
       nurses: [charge, other],
       coverageRequirements: coverageAllWeek(DAY_12, 'RN', 2),
       assignments: [
         assign(charge.id, DAY_12, '2026-01-05', { isCharge: true }),
-        assign(charge.id, DAY_12, '2026-01-07'),
         assign(other.id, DAY_12, '2026-01-05'),
-        assign(other.id, DAY_12, '2026-01-07'),
       ],
     });
     const result = evaluate(s);
-    // Only the days that are actually staffed are under test here; the coverage floor
-    // applies every day, so unstaffed days legitimately report understaffing.
-    const onStaffedDay = result.violations.filter((v) => v.dates.includes(isoDate('2026-01-05')));
-    expect(onStaffedDay).toHaveLength(0);
+    expect(result.feasible).toBe(true);
+    expect(result.violations).toEqual([]);
   });
 
   it('separates hard from soft violations', () => {
@@ -1426,6 +1434,8 @@ describe('evaluation result', () => {
     const result = evaluateSchedule(s.schedule, s.ruleSet, s.ctx, {
       only: ['min-rest-between-shifts'],
     });
+    // N12 ends 07:00 Jan 6, D12 starts 07:00: 0 h rest against 10.
+    expect(result.violations).toHaveLength(1);
     expect(result.violations.every((v) => v.ruleId === 'min-rest-between-shifts')).toBe(true);
   });
 

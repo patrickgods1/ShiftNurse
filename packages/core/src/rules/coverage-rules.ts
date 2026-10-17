@@ -14,11 +14,11 @@
  */
 
 import { NURSE_ROLES, type RoleDemand, type ShiftDemand } from '../acuity/demand.js';
-import type { Id, NurseCredential, NurseRole } from '../domain/entities.js';
+import type { Id, Nurse, NurseCredential, NurseRole } from '../domain/entities.js';
 import { compareDates, describeDate, type IsoDate } from '../domain/time.js';
 import { coveringShift } from '../schedule/cover.js';
-import type { AssignmentView, ScheduleView } from '../schedule/view.js';
-import { type Rule, type RuleContext, type Violation, violation } from './types.js';
+import type { AssignmentView } from '../schedule/view.js';
+import { nurseName, type Rule, type RuleContext, type Violation, violation } from './types.js';
 
 /** A credential is valid on a date when it exists and has not expired by then. */
 export function hasValidCredential(
@@ -54,6 +54,8 @@ function isCredentialValidOn(record: NurseCredential, credentialId: Id, onDate: 
 export interface CoverageParams {
   /** Every bedside shift needs a designated charge nurse. */
   requireChargeNurse: boolean;
+  /** Only an RN may be marked charge; off lets any charge-eligible nurse (an LPN/LVN) run it. */
+  chargeMustBeRN: boolean;
   /**
    * At least this many experienced RNs on the unit during any shift a new grad works: on that
    * shift or, for a shift inside another, on the containing one. Only an RN can supervise an
@@ -62,6 +64,17 @@ export interface CoverageParams {
   minExperiencedPerShift: number;
   /** Enforce the credential requirements configured for the unit. */
   enforceCredentialRequirements: boolean;
+}
+
+/**
+ * Whether a nurse may be marked charge. The one definition: the rule judges a flag by it and both
+ * solvers hand the flag out by it, so neither can emit a charge nurse the rule then rejects.
+ */
+export function canTakeCharge(
+  nurse: Pick<Nurse, 'isChargeEligible' | 'role'>,
+  params: Pick<CoverageParams, 'chargeMustBeRN'>,
+): boolean {
+  return nurse.isChargeEligible && (!params.chargeMustBeRN || nurse.role === 'RN');
 }
 
 export const coverageRule: Rule<CoverageParams> = {
@@ -77,6 +90,7 @@ export const coverageRule: Rule<CoverageParams> = {
   scope: 'shift',
   defaultParams: {
     requireChargeNurse: true,
+    chargeMustBeRN: true,
     minExperiencedPerShift: 1,
     enforceCredentialRequirements: true,
   },
@@ -87,6 +101,14 @@ export const coverageRule: Rule<CoverageParams> = {
       why:
         'Leave this on unless your unit does not assign a charge nurse per shift. Shifts that ' +
         "run inside another use that shift's charge nurse.",
+    },
+    chargeMustBeRN: {
+      label: 'Charge nurse must be an RN',
+      hint: 'Only a charge-eligible RN may be marked charge.',
+      why:
+        'Most contracts and state rules have an RN run the shift. Turn it off if your unit lets ' +
+        'a charge-eligible LPN or LVN take charge.',
+      activeWhen: { param: 'requireChargeNurse', equals: true },
     },
     minExperiencedPerShift: {
       label: 'Experienced RNs with a new grad',
@@ -136,6 +158,7 @@ export const coverageRule: Rule<CoverageParams> = {
               `${shiftType.name} on ${describeDate(date)} has ${staffed} ${role}${staffed === 1 ? '' : 's'}, ` +
                 `below the baseline of ${roleDemand.coverageFloorMin}.`,
               {
+                amount: roleDemand.coverageFloorMin - staffed,
                 dates: [date],
                 nurseIds: assigned.map((v) => v.nurse.id),
                 assignmentIds: assigned.map((v) => v.assignment.id),
@@ -160,19 +183,46 @@ export const coverageRule: Rule<CoverageParams> = {
           shiftType.withinShiftTypeId === null &&
           assigned.length > 0
         ) {
-          const charge = assigned.filter((v) => v.assignment.isCharge && v.nurse.isChargeEligible);
-          if (charge.length === 0) {
+          const flagged = assigned.filter((v) => v.assignment.isCharge);
+          const where = `${shiftType.name} on ${describeDate(date)}`;
+          if (!flagged.some((v) => canTakeCharge(v.nurse, params))) {
             violations.push(
               violation(
                 coverageRule,
                 'hard',
                 'missing_charge_nurse',
-                `${shiftType.name} on ${describeDate(date)} has no designated charge nurse.`,
+                flagged.length === 0
+                  ? `${where} has no designated charge nurse.`
+                  : `${where} has no charge nurse who can take charge: ${whyNotCharge(flagged, params)}.`,
                 {
+                  amount: 1,
                   dates: [date],
                   nurseIds: assigned.map((v) => v.nurse.id),
                   assignmentIds: assigned.map((v) => v.assignment.id),
-                  details: { shiftTypeId: shiftType.id },
+                  details: {
+                    shiftTypeId: shiftType.id,
+                    flaggedNurseIds: flagged.map((v) => v.nurse.id),
+                  },
+                },
+              ),
+            );
+          }
+          // No `shortfall` detail: SA prices a hard shift finding without one at 1, whatever
+          // the count, and CP-SAT's locked double-charge constant is set to match.
+          if (flagged.length > 1) {
+            violations.push(
+              violation(
+                coverageRule,
+                'hard',
+                'multiple_charge_nurses',
+                `${where} has ${flagged.length} nurses marked charge ` +
+                  `(${listNames(flagged)}); one runs the shift.`,
+                {
+                  amount: flagged.length - 1,
+                  dates: [date],
+                  nurseIds: assigned.map((v) => v.nurse.id),
+                  assignmentIds: assigned.map((v) => v.assignment.id),
+                  details: { shiftTypeId: shiftType.id, chargeCount: flagged.length },
                 },
               ),
             );
@@ -194,6 +244,7 @@ export const coverageRule: Rule<CoverageParams> = {
                 `${shiftType.name} on ${describeDate(date)} has a new grad with ${experienced} experienced ` +
                   `RN${experienced === 1 ? '' : 's'} on the unit; ${params.minExperiencedPerShift} required.`,
                 {
+                  amount: params.minExperiencedPerShift - experienced,
                   dates: [date],
                   nurseIds: assigned.map((v) => v.nurse.id),
                   assignmentIds: assigned.map((v) => v.assignment.id),
@@ -234,6 +285,7 @@ export const coverageRule: Rule<CoverageParams> = {
                 `${shiftType.name} on ${describeDate(date)} has ${holders.length} ${label}-certified ${scope}; ` +
                   `${requirement.minCount} required.`,
                 {
+                  amount: requirement.minCount - holders.length,
                   dates: [date],
                   nurseIds: assigned.map((v) => v.nurse.id),
                   assignmentIds: assigned.map((v) => v.assignment.id),
@@ -325,6 +377,7 @@ export const ratioComplianceRule: Rule<RatioParams> = {
                 `${across} is ${perNurse} patients per nurse. ` +
                 `The acuity mix requires ${roleDemand.ratioDerived}${ratioMakeup(roleDemand)}.`,
               {
+                amount: roleDemand.ratioDerived - staffed,
                 dates: [date],
                 nurseIds: assigned.map((v) => v.nurse.id),
                 assignmentIds: assigned.map((v) => v.assignment.id),
@@ -400,6 +453,7 @@ function licensedBreaches(
           (rnShort > 0 ? `: ${poolExtra} more of either after the RNs below.` : '.'),
         {
           ...parts,
+          amount: poolExtra,
           details: {
             role: 'licensed',
             staffed,
@@ -424,6 +478,7 @@ function licensedBreaches(
           `at least ${licensed.minRn} must be (${share}%).`,
         {
           ...parts,
+          amount: rnShort,
           details: {
             role: 'RN',
             staffed: rns,
@@ -448,28 +503,36 @@ function ratioMakeup(demand: RoleDemand): string {
   return ` (${demand.ratioBedside} at the bedside and ${extras.join(' and ')})`;
 }
 
+function listNames(views: readonly AssignmentView[]): string {
+  const names = views.map((v) => nurseName(v.nurse));
+  return names.length <= 2
+    ? names.join(' and ')
+    : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]!}`;
+}
+
+/**
+ * "Lena Ortiz is marked charge but is not an RN" — for nurses marked charge of whom none may take
+ * it. A manager fixing the shift needs to know whether to change the flag or the nurse's record.
+ */
+function whyNotCharge(
+  flagged: readonly AssignmentView[],
+  params: Pick<CoverageParams, 'chargeMustBeRN'>,
+): string {
+  const notEligible = flagged.every((v) => !v.nurse.isChargeEligible);
+  const notRn = params.chargeMustBeRN && flagged.every((v) => v.nurse.isChargeEligible);
+  if (flagged.length === 1) {
+    return `${listNames(flagged)} is marked charge but ${notRn ? 'is not an RN' : 'is not charge-eligible'}`;
+  }
+  const reason = notEligible
+    ? 'are not charge-eligible'
+    : notRn
+      ? 'are not RNs'
+      : 'none is a charge-eligible RN';
+  return `${listNames(flagged)} are marked charge but ${reason}`;
+}
+
 function countRole(assigned: readonly AssignmentView[], role: NurseRole): number {
   let count = 0;
   for (const view of assigned) if (view.nurse.role === role) count++;
   return count;
-}
-
-/** Staffing shortfall per role for one shift, used by conflict detection and the solver. */
-export function shortfallsForShift(
-  schedule: ScheduleView,
-  ctx: RuleContext,
-  date: IsoDate,
-  shiftTypeId: Id,
-): { role: NurseRole; staffed: number; required: number; shortfall: number }[] {
-  const demand = ctx.demand.get(date, shiftTypeId);
-  if (!demand) return [];
-  const assigned = schedule.onShift(date, shiftTypeId);
-  const out: { role: NurseRole; staffed: number; required: number; shortfall: number }[] = [];
-  for (const role of NURSE_ROLES) {
-    const required = demand.byRole[role]?.minCount ?? 0;
-    if (required <= 0) continue;
-    const staffed = countRole(assigned, role);
-    if (staffed < required) out.push({ role, staffed, required, shortfall: required - staffed });
-  }
-  return out;
 }

@@ -82,9 +82,9 @@ describe('rest across the spring-forward weekend', () => {
     const rest = restViolations(s);
     expect(rest).toHaveLength(1);
     expect(rest[0]?.details?.restHours).toBe(0);
-    expect(rest[0]?.assignmentIds).toContain('in-period-day');
+    expect(rest[0]?.assignmentIds).toEqual(['in-period-day']);
     // One finding for the pair, not a second one against the lookback night itself.
-    expect(rest[0]?.dates).toEqual([isoDate('2026-03-07'), isoDate('2026-03-08')]);
+    expect(rest[0]?.dates).toEqual([isoDate('2026-03-08')]);
   });
 });
 

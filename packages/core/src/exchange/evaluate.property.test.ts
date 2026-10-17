@@ -9,10 +9,10 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { violationKey } from '../conflicts/violation-diff.js';
 import type { Assignment, Nurse } from '../domain/entities.js';
 import { addDays, isoDate } from '../domain/time.js';
 import { evaluateSchedule } from '../rules/registry.js';
+import { violationKey } from '../rules/violation-diff.js';
 import { Rng } from '../solver/rng.js';
 import {
   assign,

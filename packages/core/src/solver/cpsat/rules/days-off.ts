@@ -2,15 +2,16 @@
  * `days-off-together` for CP-SAT, when a rule set makes it hard (while soft it is not priced, so
  * Generate ignores it and the grid flags it).
  *
- * Per nurse and complete pay period: a Boolean `all` that every weekend of it is worked
- * (`Σ worked − all ≤ |K| − 1` forces it to 1 when they all are; a constant 1 when locked shifts
- * and the lookback tail already work them all), a Boolean per adjacent pair of its dates that may
- * be 1 only when neither date has a worked shift dated on it, and `Σ pair ≥ all`. As in the rule,
- * a weekend is worked for a pay period only by shifts dated inside it, and any shift on the
- * timeline (lookback and another unit's included) makes its date busy. A weekend the nurse has no
- * shift filed under within the pay period is a constant 0, so the pay period asks nothing. A pinned
- * breach — every weekend fixed worked and no pair left that could be free — is left to stand
- * rather than make the model infeasible, as `atMost` treats a standing violation.
+ * Per nurse and pay period the rule judges (`payPeriodWeekends`, published history included): a
+ * Boolean `all` that every weekend of it is worked (`Σ worked − all ≤ |K| − 1` forces it to 1 when
+ * they all are; a constant 1 when locked shifts and the lookback tail already work them all), a
+ * Boolean per adjacent pair of its dates that may be 1 only when neither date has a worked shift
+ * dated on it, and `Σ pair ≥ all`. As in the rule, a weekend is worked for a pay period only by
+ * shifts dated inside it, and any shift on the timeline (lookback and another unit's included)
+ * makes its date busy. A weekend the nurse has no shift filed under within the pay period is a
+ * constant 0, so the pay period asks nothing. A pinned breach — every weekend fixed worked and no
+ * pair left that could be free — is left to stand rather than make the model infeasible, as
+ * `atMost` treats a standing violation.
  */
 
 import {
@@ -31,7 +32,12 @@ const isConstant = (e: Expr) => e.terms.length === 0;
 export function encodeDaysOffTogether(ctx: EncodeContext, _raw: Record<string, unknown>): void {
   const { period, unit, ruleSet } = ctx.input;
   const def = ruleSet.weekendDefinition;
-  const payPeriods = payPeriodWeekends({ start: period.startDate, end: period.endDate }, unit, def);
+  const payPeriods = payPeriodWeekends(
+    { start: period.startDate, end: period.endDate },
+    unit,
+    def,
+    ctx.input.historyFrom,
+  );
   if (payPeriods.length === 0) return;
 
   for (const [n, vars] of ctx.byNurse.entries()) {

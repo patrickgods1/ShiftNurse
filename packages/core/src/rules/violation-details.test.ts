@@ -1,7 +1,8 @@
 /** Reading a violation's numbers: a missing one stops the pass instead of reading as zero. */
 
 import { describe, expect, it } from 'vitest';
-import { detailNumber, detailOptional, detailString, type Violation } from './types.js';
+import { maxHoursRule } from './hours-rules.js';
+import { detailNumber, detailOptional, detailString, type Violation, violation } from './types.js';
 
 const short = (details: Record<string, unknown>): Violation => ({
   ruleId: 'coverage-minimums',
@@ -12,6 +13,7 @@ const short = (details: Record<string, unknown>): Violation => ({
   nurseIds: [],
   dates: [],
   assignmentIds: [],
+  amount: 2,
   details,
 });
 
@@ -29,5 +31,14 @@ describe('reading what a rule reported', () => {
 
   it('lets a requirement for any role leave its role out', () => {
     expect(detailOptional(short({}), 'role')).toBeUndefined();
+  });
+
+  it('refuses to build a breach of zero hours', () => {
+    expect(() => violation(maxHoursRule, 'hard', 'over_max_hours', 'x', { amount: 0 })).toThrow(
+      /positive, finite/,
+    );
+    expect(() =>
+      violation(maxHoursRule, 'hard', 'over_max_hours', 'x', { amount: Number.NaN }),
+    ).toThrow(/positive, finite/);
   });
 });

@@ -18,7 +18,8 @@ import {
   restMinutesBetween,
 } from '../domain/time.js';
 import { latestEndingBefore } from '../schedule/preceding.js';
-import type { AssignmentView, ScheduleView } from '../schedule/view.js';
+import type { AssignmentView } from '../schedule/view.js';
+import { hoursWords } from './format.js';
 import { isNightTour } from './tour-rotation.js';
 import {
   isWorked,
@@ -136,19 +137,22 @@ export const minRestRule: Rule<MinRestParams> = {
         if (!previous.inPeriod && !current.inPeriod) continue;
 
         const restHours = minutesToHours(restMinutes);
+        // The lookback row is history: the finding names only what this schedule can change.
+        const inPeriodPair = [previous, current].filter((v) => v.inPeriod);
         violations.push(
           violation(
             minRestRule,
             'hard',
             'insufficient_rest',
-            `${nurseName(nurse)} has only ${formatHours(restHours)} off between the ` +
+            `${nurseName(nurse)} has only ${hoursWords(restHours)} off between the ` +
               `${previous.shiftType.name} on ${describeDate(previous.assignment.date)} and the ` +
               `${current.shiftType.name} on ${describeDate(current.assignment.date)}. ` +
-              `${formatHours(requiredHours)} required.`,
+              `${hoursWords(requiredHours)} required.`,
             {
+              amount: requiredHours - restHours,
               nurseIds: [nurse.id],
-              dates: [previous.assignment.date, current.assignment.date],
-              assignmentIds: [previous.assignment.id, current.assignment.id],
+              dates: inPeriodPair.map((v) => v.assignment.date),
+              assignmentIds: inPeriodPair.map((v) => v.assignment.id),
               details: {
                 restHours,
                 requiredHours,
@@ -362,6 +366,7 @@ export const consecutiveShiftsRule: Rule<ConsecutiveShiftsParams> = {
                 `(${describeStretch(stretch)}). Maximum is ${params.maxConsecutiveShifts}.`,
               nurse.id,
               stretch,
+              stretch.length - params.maxConsecutiveShifts,
               { actual: stretch.length, maximum: params.maxConsecutiveShifts },
             ),
           );
@@ -377,6 +382,7 @@ export const consecutiveShiftsRule: Rule<ConsecutiveShiftsParams> = {
               `(${describeStretch(run)}). Maximum is ${params.maxConsecutiveNights}.`,
             nurse.id,
             run,
+            run.length - params.maxConsecutiveNights,
             { actual: run.length, maximum: params.maxConsecutiveNights },
           ),
         );
@@ -401,7 +407,9 @@ export const consecutiveShiftsRule: Rule<ConsecutiveShiftsParams> = {
                 `${previous.length}-day stretch ending ${describeDate(fromDayNumber(previous.endDay))}. ` +
                 `${params.minDaysOffAfterMaxStretch} required.`,
               nurse.id,
-              next,
+              // Taking away a shift of either stretch gives the days off back.
+              { views: [...previous.views, ...next.views] },
+              params.minDaysOffAfterMaxStretch - daysOff,
               {
                 daysOff,
                 required: params.minDaysOffAfterMaxStretch,
@@ -422,9 +430,11 @@ function stretchViolation(
   message: string,
   nurseId: Id,
   stretch: Pick<Stretch, 'views'>,
+  amount: number,
   details: Record<string, unknown>,
 ): Violation {
   return violation(consecutiveShiftsRule, 'hard', code, message, {
+    amount,
     nurseIds: [nurseId],
     dates: stretch.views.filter((v) => v.inPeriod).map((v) => v.assignment.date),
     assignmentIds: stretch.views.filter((v) => v.inPeriod).map((v) => v.assignment.id),
@@ -434,31 +444,4 @@ function stretchViolation(
 
 function describeStretch(stretch: Pick<Stretch, 'startDay' | 'endDay'>): string {
   return describeDateRange(fromDayNumber(stretch.startDay), fromDayNumber(stretch.endDay));
-}
-
-function formatHours(hours: number): string {
-  const rounded = Math.round(hours * 10) / 10;
-  return `${rounded} hour${rounded === 1 ? '' : 's'}`;
-}
-
-/** Convenience for the day-of replacement finder: would adding this shift break rest rules? */
-export function restHoursAround(
-  schedule: ScheduleView,
-  nurseId: Id,
-  candidate: { window: { startMinute: number; endMinute: number } },
-): { beforeHours: number | null; afterHours: number | null } {
-  const timeline = schedule.timelineFor(nurseId).filter(isWorked);
-  let beforeHours: number | null = null;
-  let afterHours: number | null = null;
-
-  for (const view of timeline) {
-    if (view.window.endMinute <= candidate.window.startMinute) {
-      const gap = minutesToHours(candidate.window.startMinute - view.window.endMinute);
-      beforeHours = beforeHours === null ? gap : Math.min(beforeHours, gap);
-    } else if (view.window.startMinute >= candidate.window.endMinute) {
-      const gap = minutesToHours(view.window.startMinute - candidate.window.endMinute);
-      afterHours = afterHours === null ? gap : Math.min(afterHours, gap);
-    }
-  }
-  return { beforeHours, afterHours };
 }

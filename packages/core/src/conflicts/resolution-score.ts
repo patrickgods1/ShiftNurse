@@ -11,6 +11,7 @@
 import type { Assignment, Id, TimeOffRequest } from '../domain/entities.js';
 import type { IsoDate } from '../domain/time.js';
 import type { Violation } from '../rules/types.js';
+import { diffViolations, violationKey } from '../rules/violation-diff.js';
 import type { ObjectiveWeights } from '../solver/types.js';
 import type { ConflictEngine, SimState } from './engine.js';
 import { costImpact, fairnessImpact } from './impact.js';
@@ -21,7 +22,6 @@ import type {
   ResolutionImpact,
   ResolutionKind,
 } from './types.js';
-import { diffViolations, violationKey } from './violation-diff.js';
 
 /** Hard codes the gate does not count: floors and coverage, which are measured, not caused. */
 const MEASURED_HARD_CODES = new Set(['under_contracted_hours', 'understaffed', 'ratio_breach']);

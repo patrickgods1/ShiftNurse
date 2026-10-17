@@ -742,6 +742,8 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
       CP-SAT exact rest pairs, elsewhere off the floor, days-off-together crediting (D5), bridged
       long stretches (D4), holdover into next shift refused (verify: npm run check; smoke; bench
       re-run)
+- [x] Phase 3 — Rule hours, OT authorisation, charge; violation amount and complete ids (verify:
+      npm run check; smoke; SA + LNS hash unchanged on synthetic-24)
 
 ---
 

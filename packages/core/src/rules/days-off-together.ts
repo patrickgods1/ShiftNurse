@@ -17,8 +17,10 @@
  * (`busyElsewhere`): a day on 5 West is not a day off, though only this schedule's shifts are named
  * in a finding.
  *
- * Known limits: only pay periods lying wholly inside the schedule are judged — one that straddles
- * its end has days this schedule cannot see, so whether they hold the pair is unknown. While soft,
+ * A pay period that began before the schedule is judged once the published history covers its
+ * first day (`RuleContext.historyFrom`, `judgedPayPeriods`): the rule needs every day of it, both
+ * for the weekends worked and for the pair off. One running past the schedule's end is left to the
+ * next schedule, which holds its end. Known limits: while soft,
  * Generate does not price it, so it will not steer around a breach; the grid and compliance
  * report flag it. Made hard, `encodeDaysOffTogether` and `SolverModel` forbid it. It is monotone
  * under removal (taking away a weekend shift can only lift the condition, any other shift only
@@ -38,12 +40,12 @@ import {
   weekendKey,
 } from '../domain/time.js';
 import type { ScheduleView } from '../schedule/view.js';
-import { type DateWindow, type PayCalendar, payPeriodsIn } from './hours-rules.js';
+import { type DateWindow, judgedPayPeriods, type PayCalendar } from './hours-rules.js';
 import { isWorked, nurseName, type Rule, type Violation, violation } from './types.js';
 
 export type DaysOffTogetherParams = Record<string, never>;
 
-/** A complete pay period of the schedule and the weekend keys its days fall under. */
+/** A pay period the rule judges and the weekend keys its days fall under. */
 export interface PayPeriodWeekends extends DateWindow {
   weekends: IsoDate[];
 }
@@ -56,10 +58,14 @@ export function payPeriodWeekends(
   period: DateWindow,
   unit: PayCalendar,
   def: WeekendDefinition,
+  historyFrom: IsoDate | undefined,
 ): PayPeriodWeekends[] {
   const wholeDays: WeekendDefinition = { ...def, mode: 'overlaps' };
   const out: PayPeriodWeekends[] = [];
-  for (const window of payPeriodsIn(period, unit, true)) {
+  for (const judged of judgedPayPeriods(period, unit, true, historyFrom)) {
+    // Every day must be on record: a gap could hide the pair off or an unworked weekend.
+    if (!judged.underJudged) continue;
+    const window: DateWindow = { start: judged.start, end: judged.end };
     const weekends = new Set<IsoDate>();
     for (const date of datesInRange(window.start, window.end)) {
       const startMinute = dayNumber(date) * MINUTES_PER_DAY;
@@ -90,6 +96,7 @@ export const daysOffTogetherRule: Rule<DaysOffTogetherParams> = {
       { start: schedule.period.startDate, end: schedule.period.endDate },
       ctx.unit,
       ctx.weekendDefinition,
+      ctx.historyFrom,
     );
     if (payPeriods.length === 0) return [];
     const violations: Violation[] = [];
@@ -125,6 +132,7 @@ export const daysOffTogetherRule: Rule<DaysOffTogetherParams> = {
               `${describeDate(pp.start)} – ${describeDate(pp.end, { year: true })} and has no ` +
               'two days off together in it.',
             {
+              amount: 1,
               nurseIds: [nurse.id],
               dates: inPayPeriod.map((v) => v.assignment.date),
               assignmentIds: inPayPeriod.map((v) => v.assignment.id),

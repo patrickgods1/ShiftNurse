@@ -24,12 +24,15 @@ import {
 } from '../fairness/types.js';
 import {
   type ContractedHoursParams,
+  type DateWindow,
+  judgedPayPeriods,
   type MaxHoursParams,
   overtimeThreshold,
   payPeriodIndex,
-  payPeriodsIn,
 } from '../rules/hours-rules.js';
+import { leaveHoursBetween } from '../rules/paid-leave.js';
 import type { RuleContext } from '../rules/types.js';
+import { isElsewhere } from '../schedule/elsewhere.js';
 import type { Shift } from './model.js';
 import type { SolveInput } from './types.js';
 
@@ -121,11 +124,19 @@ export function costContextFor(
     : undefined;
 }
 
-/** The complete pay periods the FTE rule judges, plus any remainder, and what each nurse owes. */
+/**
+ * The pay periods the FTE rule judges (`judgedPayPeriods`), plus any remainder, and what each
+ * nurse owes. A pay period the schedule opens in is judged with the published hours before it, so
+ * its bucket owes, and may take, only what those hours left: optimising toward the whole contract
+ * there would chase hours the grid then flags as past it.
+ */
 export interface HoursBuckets {
   bucketOfDate: number[];
   bucketCount: number;
+  /** What the objective chases per bucket: the contract still unscheduled, leave taken off. */
   hoursTarget: number[][];
+  /** The most a bucket may hold before the rule calls it over the contract (the prefilter's cap). */
+  hoursCap: number[][];
   hoursCapped: boolean[];
   contractedProRata: number[];
 }
@@ -138,10 +149,11 @@ export function hoursBuckets(
   fteParams: ContractedHoursParams,
   ctx: RuleContext,
 ): HoursBuckets {
-  const periods = payPeriodsIn(
+  const periods = judgedPayPeriods(
     { start: input.period.startDate, end: input.period.endDate },
     input.unit,
-    true,
+    fteParams.onlyCompletePayPeriods,
+    input.historyFrom,
   );
   const bucketOfDate = dates.map((date) => {
     const i = periods.findIndex((p) => dateInRange(date, p.start, p.end));
@@ -153,7 +165,7 @@ export function hoursBuckets(
 
   // Paid leave counts toward the contract, so it comes off the hours still to schedule:
   // "worked + leave within tolerance of target" is "worked within tolerance of target − leave".
-  const leaveInBucket = (nurseId: Id, b: number) => {
+  const leaveOnDatesOf = (nurseId: Id, b: number) => {
     if (!fteParams.paidLeaveCountsTowardHours) return 0;
     let hours = 0;
     for (const c of ctx.paidLeaveByNurse.get(nurseId) ?? []) {
@@ -162,14 +174,44 @@ export function hoursBuckets(
     }
     return hours;
   };
-  const hoursTarget = nurses.map((nurse) =>
-    Array.from({ length: bucketCount }, (_, b) =>
-      nurse.contractedHoursPerPeriod > 0
-        ? (nurse.contractedHoursPerPeriod * (bucketDays[b] ?? 0)) / input.unit.payPeriodDays -
-          leaveInBucket(nurse.id, b)
-        : 0,
-    ),
-  );
+  // The rule judges a pay period on all of it, the days before the schedule included.
+  const leaveInPayPeriod = (nurseId: Id, b: number) =>
+    fteParams.paidLeaveCountsTowardHours
+      ? leaveHoursBetween(ctx.paidLeaveByNurse.get(nurseId), periods[b]!.start, periods[b]!.end)
+      : 0;
+  const prior = priorHoursByPayPeriod(input, nurses, periods, fteParams);
+
+  const hoursTarget: number[][] = [];
+  const hoursCap: number[][] = [];
+  for (const [n, nurse] of nurses.entries()) {
+    const contract = nurse.contractedHoursPerPeriod;
+    const share = (days: number) => (contract * days) / input.unit.payPeriodDays;
+    const targets: number[] = [];
+    const caps: number[] = [];
+    for (let b = 0; b < bucketCount; b++) {
+      const period = periods[b];
+      if (contract <= 0) {
+        targets.push(0);
+        caps.push(fteParams.overToleranceHours);
+      } else if (period === undefined) {
+        // The remainder: days in no judged pay period, owed their share of the contract.
+        const target = share(bucketDays[b] ?? 0) - leaveOnDatesOf(nurse.id, b);
+        targets.push(target);
+        caps.push(target + fteParams.overToleranceHours);
+      } else {
+        const whole =
+          share(input.unit.payPeriodDays) - leaveInPayPeriod(nurse.id, b) - prior[n]![b]!;
+        // Not judged short (its start is not on record): chase the schedule's share as the
+        // remainder does, but never let it pass the contract the rule still holds it to.
+        targets.push(
+          period.underJudged ? whole : share(bucketDays[b] ?? 0) - leaveOnDatesOf(nurse.id, b),
+        );
+        caps.push(whole + fteParams.overToleranceHours);
+      }
+    }
+    hoursTarget.push(targets);
+    hoursCap.push(caps);
+  }
   const hoursCapped = nurses.map(
     (nurse) =>
       nurse.contractedHoursPerPeriod > 0 &&
@@ -180,7 +222,37 @@ export function hoursBuckets(
       ? (nurse.contractedHoursPerPeriod * dates.length) / input.unit.payPeriodDays
       : 0,
   );
-  return { bucketOfDate, bucketCount, hoursTarget, hoursCapped, contractedProRata };
+  return { bucketOfDate, bucketCount, hoursTarget, hoursCap, hoursCapped, contractedProRata };
+}
+
+/**
+ * Each nurse's published hours in each judged pay period, counted as the rule counts them:
+ * scheduled (a holdover was not scheduled past the contract), standby only when the rule says,
+ * another unit's shifts never. Zero throughout without `historyFrom`, as the rule then reads only
+ * this schedule's shifts.
+ */
+function priorHoursByPayPeriod(
+  input: SolveInput,
+  nurses: readonly Nurse[],
+  periods: readonly DateWindow[],
+  fteParams: ContractedHoursParams,
+): number[][] {
+  const out = nurses.map(() => new Array<number>(periods.length).fill(0));
+  if (input.historyFrom === undefined || periods.length === 0) return out;
+  const nurseIdx = new Map(nurses.map((nurse, i) => [nurse.id, i]));
+  const typeById = new Map(input.shiftTypes.map((t) => [t.id, t]));
+  for (const a of input.priorAssignments) {
+    const n = nurseIdx.get(a.nurseId);
+    if (n === undefined)
+      throw new Error(`Prior assignment ${a.id} references unknown nurse ${a.nurseId}`);
+    const type = typeById.get(a.shiftTypeId);
+    if (!type) throw new Error(`Prior assignment ${a.id} has unknown shift type ${a.shiftTypeId}`);
+    if (isElsewhere(type)) continue;
+    if (type.isOnCall && !fteParams.onCallCountsTowardHours) continue;
+    const b = periods.findIndex((p) => dateInRange(a.date, p.start, p.end));
+    if (b !== -1) out[n]![b]! += type.durationHours;
+  }
+  return out;
 }
 
 /** Historical burden, weighted exactly as computeBurden weights it under a current row. */

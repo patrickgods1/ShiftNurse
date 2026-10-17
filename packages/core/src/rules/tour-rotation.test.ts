@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import type { Preference } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
 import type { ScenarioOptions } from '../testing/fixtures.js';
 import {
@@ -331,5 +332,137 @@ describe('career nurses exempt from rotation (UC–CNA Art. 14 § P.1.a)', () =>
       ],
     });
     expect(found).toEqual([]);
+  });
+});
+
+describe('a career nurse’s exemption is from forced rotation, not from her own asks', () => {
+  // The schedule starts Sun 4 Jan 2026: hired 1 Jan 2010 is sixteen years, hired 2024 two.
+  const CAREER = { hireDate: isoDate('2010-01-01') };
+  const RECENT = { hireDate: isoDate('2024-01-01') };
+  const EXEMPT_AT_TEN = { exemptAfterYearsOfService: 10 };
+  const wantsNights = (nurseId: string): Preference => ({
+    id: `pref-${nurseId}-nights`,
+    nurseId,
+    kind: 'prefer_shift_type',
+    shiftTypeId: NIGHT_12.id,
+    weight: 1,
+  });
+
+  it('does not flag a career nurse for a second tour she asked for', () => {
+    const nurse = grace(CAREER);
+    // Day 07:00–19:00 Mon 5 Jan, night 19:00 Thu 8 Jan: 72 hours apart, past the 48-hour break.
+    // Unrequested tours: {day}, one, within her hold of one.
+    const found = evaluate(
+      {
+        nurses: [nurse],
+        preferences: [wantsNights(nurse.id)],
+        assignments: [
+          assign(nurse.id, DAY_12, '2026-01-05'),
+          assign(nurse.id, NIGHT_12, '2026-01-08'),
+        ],
+      },
+      EXEMPT_AT_TEN,
+    );
+    expect(found).toEqual([]);
+  });
+
+  it('still holds a career nurse to one tour the schedule chose for her', () => {
+    const nurse = grace(CAREER);
+    // Day Mon 5 Jan ends 19:00; evening 15:00 Fri 9 Jan is 92 hours on. Tours {day, evening}:
+    // two unrequested against a hold of one, one over.
+    const day = assign(nurse.id, DAY_12, '2026-01-05');
+    const evening = assign(nurse.id, EVENING_8, '2026-01-09');
+    const found = evaluate({ nurses: [nurse], assignments: [day, evening] }, EXEMPT_AT_TEN);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      code: 'too_many_tours',
+      amount: 1,
+      assignmentIds: [day.id, evening.id],
+      details: { tours: ['day', 'evening'], requested: [], max: 1 },
+    });
+  });
+
+  it('names only the shifts on tours she did not ask for when she is rotated past her hold', () => {
+    const nurse = grace(CAREER);
+    // Day Mon 5, evening Fri 9, night Wed 14 (evening ends 23:00 Fri: 4 days on). Nights asked
+    // for; {day, evening} unrequested, one over. The night she asked for is not part of it.
+    const day = assign(nurse.id, DAY_12, '2026-01-05');
+    const evening = assign(nurse.id, EVENING_8, '2026-01-09');
+    const night = assign(nurse.id, NIGHT_12, '2026-01-14');
+    const found = evaluate(
+      { nurses: [nurse], preferences: [wantsNights(nurse.id)], assignments: [day, evening, night] },
+      EXEMPT_AT_TEN,
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      code: 'too_many_tours',
+      amount: 1,
+      assignmentIds: [day.id, evening.id],
+      details: { tours: ['day', 'evening', 'night'], requested: ['night'], max: 1 },
+    });
+  });
+
+  it('keeps a career nurse on her permanent day tour unless she asked for the night', () => {
+    const nurse = grace({ ...CAREER, permanentTour: 'day' });
+    const night = assign(nurse.id, NIGHT_12, '2026-01-08');
+    const evening = assign(nurse.id, EVENING_8, '2026-01-10');
+    const found = evaluate(
+      { nurses: [nurse], preferences: [wantsNights(nurse.id)], assignments: [night, evening] },
+      EXEMPT_AT_TEN,
+    );
+    const offTour = found.filter((v) => v.code === 'off_permanent_tour');
+    expect(offTour).toHaveLength(1);
+    expect(offTour[0]!.assignmentIds).toEqual([evening.id]);
+  });
+
+  it('still flags a career nurse rotated onto nights she asked to avoid', () => {
+    const nurse = grace(CAREER);
+    const avoidsNights: Preference = {
+      id: `pref-${nurse.id}-no-nights`,
+      nurseId: nurse.id,
+      kind: 'avoid_shift_type',
+      shiftTypeId: NIGHT_12.id,
+      weight: 1,
+    };
+    // Day Mon 5 Jan, night Thu 8 Jan (72 hours on). Avoiding nights is no ask for them:
+    // tours {day, night}, two unrequested against a hold of one, one over.
+    const found = evaluate(
+      {
+        nurses: [nurse],
+        preferences: [avoidsNights],
+        assignments: [
+          assign(nurse.id, DAY_12, '2026-01-05'),
+          assign(nurse.id, NIGHT_12, '2026-01-08'),
+        ],
+      },
+      EXEMPT_AT_TEN,
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      code: 'too_many_tours',
+      amount: 1,
+      details: { tours: ['day', 'night'], requested: [], max: 1 },
+    });
+  });
+
+  it('does not let a preference lift the rotation cap for a nurse who is not exempt', () => {
+    const nurse = grace(RECENT);
+    const found = evaluate(
+      {
+        nurses: [nurse],
+        preferences: [wantsNights(nurse.id)],
+        assignments: [
+          assign(nurse.id, DAY_12, '2026-01-05'),
+          assign(nurse.id, NIGHT_12, '2026-01-08'),
+        ],
+      },
+      { ...EXEMPT_AT_TEN, maxToursPerPeriod: 1 },
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      code: 'too_many_tours',
+      amount: 1,
+      details: { tours: ['day', 'night'], max: 1 },
+    });
   });
 });
