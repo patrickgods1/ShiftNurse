@@ -58,9 +58,10 @@
   Wed, 36 h owed after a night) is legal, but without Tuesday the night sits 24 h before
   Wednesday's day; `long-stretch` is the other. The night cap counts night runs wherever they
   sit, so it is monotone under removal. Any new move that takes a shift from a nurse must
-  re-check them. The gate tolerates a hard breach only if every shift it names is locked or in
-  the lookback tail and the locked shifts alone already had the same breach at least as big
-  (`solver/gate.ts`); a pinned problem never freezes a nurse out, and Generate never deepens,
+  re-check them. `retype` trades a nurse's shift for another type of the same length on the same
+  day, gated like `relocate`. The gate tolerates a hard breach only if every shift it names is
+  locked or in the lookback tail and the locked shifts alone already had the same breach at least
+  as big (`solver/gate.ts`); a pinned problem never freezes a nurse out, and Generate never deepens,
   merges or trades it.
 - **Solver speed-ups must not change a schedule.** `SolverModel` caches fairness (cleared in
   `count`), staffing per shift and role, prepared rules (`prepareRules`/`evaluatePrepared`) and

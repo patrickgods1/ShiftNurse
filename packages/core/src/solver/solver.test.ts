@@ -313,8 +313,6 @@ describe('a short-staffed unit', () => {
     // Two nurses, two day 12s with floors of two (Mon 5 and Wed 7 Jan), and a 12-hour week, so
     // each nurse works one of them. Both on Monday leaves Wednesday two short (3,000 + 6,000);
     // one each leaves both one short (3,000 twice), so Generate puts one nurse on each.
-    // Not a day 12 and a night on one day: no annealer move trades a nurse's shift for another
-    // on the same day, so that roster is out of the search's reach whatever the price.
     const input = solveInputFrom({
       startDate: isoDate('2026-01-04'),
       endDate: isoDate('2026-01-17'),
@@ -341,6 +339,80 @@ describe('a short-staffed unit', () => {
     expect(on('2026-01-05')).toHaveLength(1);
     expect(on('2026-01-07')).toHaveLength(1);
     expect([...on('2026-01-05'), ...on('2026-01-07')].sort()).toEqual(['ada', 'bo']);
+  });
+
+  it('moves a day nurse onto the night when the night is further short', () => {
+    // Monday 5 Jan wants two RNs on the day 12 and two on the night, and a 12-hour week lets each
+    // nurse work one shift. Both on the day leaves the night two short (3,000 + 6,000); one on
+    // each leaves both one short (3,000 twice), so Generate sends one of them to the night.
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: ['ada', 'bo'].map((id) =>
+        makeNurse({
+          id,
+          isChargeEligible: true,
+          employmentType: 'per_diem',
+          contractedHoursPerPeriod: 0,
+        }),
+      ),
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: [
+        coverage(DAY_12, 'RN', 2, 2, null, isoDate('2026-01-05')),
+        coverage(NIGHT_12, 'RN', 2, 2, null, isoDate('2026-01-05')),
+      ],
+      ruleSet: withRuleParams(defaultRuleSet(UNIT_ID), {
+        'max-hours-per-week': { maxHoursPerWeek: 12, overtimeThresholdHours: 12 },
+      }),
+    });
+    const report = solve(input, { seed: 1, maxIterations: 1500 });
+    const on = (type: ShiftType) =>
+      report.assignments
+        .filter((a) => a.date === '2026-01-05' && a.shiftTypeId === type.id)
+        .map((a) => a.nurseId);
+    expect(on(DAY_12)).toHaveLength(1);
+    expect(on(NIGHT_12)).toHaveLength(1);
+    expect([...on(DAY_12), ...on(NIGHT_12)].sort()).toEqual(['ada', 'bo']);
+  });
+
+  it('never moves a nurse onto a night that leaves her no rest before a locked day', () => {
+    // As above, but with a 24-hour week and Ada locked on Tuesday's day 12 (07:00). Monday's night
+    // ends at 07:00 Tuesday — no rest at all against the 10 hours owed — so of the two only Bo
+    // can take the night: Ada on Monday's day and Bo on the night, each shift one short.
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: ['ada', 'bo'].map((id) =>
+        makeNurse({
+          id,
+          isChargeEligible: true,
+          employmentType: 'per_diem',
+          contractedHoursPerPeriod: 0,
+        }),
+      ),
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: [
+        coverage(DAY_12, 'RN', 2, 2, null, isoDate('2026-01-05')),
+        coverage(NIGHT_12, 'RN', 2, 2, null, isoDate('2026-01-05')),
+      ],
+      ruleSet: withRuleParams(defaultRuleSet(UNIT_ID), {
+        'max-hours-per-week': { maxHoursPerWeek: 24, overtimeThresholdHours: 24 },
+      }),
+      assignments: [
+        assign('ada', DAY_12, '2026-01-06', { id: 'tue', isLocked: true, isCharge: true }),
+      ],
+    });
+    for (const seed of [1, 2, 3]) {
+      const report = solve(input, { seed, maxIterations: 1500 });
+      const monday = (type: ShiftType) =>
+        report.assignments
+          .filter((a) => a.date === '2026-01-05' && a.shiftTypeId === type.id)
+          .map((a) => a.nurseId);
+      expect(monday(NIGHT_12)).not.toContain('ada');
+      expect(monday(DAY_12)).toEqual(['ada']);
+      expect(monday(NIGHT_12)).toEqual(['bo']);
+      expect(nurseScopeHard(report)).toEqual([]);
+    }
   });
 });
 
