@@ -1676,8 +1676,9 @@ export type RendererApi = { [R in keyof ShiftNurseApi]: Promisify<ShiftNurseApi[
 
 /**
  * The flat list of channels, derived once so that main, preload and renderer cannot drift:
- * main registers a handler per entry, preload exposes a caller per entry, and the type
- * system refuses an entry that is not a method on {@link ShiftNurseApi}.
+ * main registers a handler per entry, preload exposes a caller per entry. The `satisfies`
+ * below refuses an entry that is not a method on {@link ShiftNurseApi}; the other direction,
+ * a method that is not listed, is refused by {@link ApiChannelsAreComplete}.
  */
 export const API_CHANNELS = {
   app: ['info', 'update', 'openLogs'],
@@ -1841,6 +1842,17 @@ export const API_CHANNELS = {
     'recordHoldover',
   ],
 } as const satisfies { [R in keyof ShiftNurseApi]: readonly (keyof ShiftNurseApi[R])[] };
+
+/**
+ * The other half of the table's check: every method on the contract is listed. Without it a
+ * method added to ShiftNurseApi, its schema and main/api.ts but not here compiles, gets no
+ * handler and no preload proxy, and fails in the renderer as "is not a function".
+ */
+type MissingChannels = {
+  [R in keyof ShiftNurseApi]: Exclude<keyof ShiftNurseApi[R], (typeof API_CHANNELS)[R][number]>;
+}[keyof ShiftNurseApi];
+type MustBeNever<T extends never> = T;
+export type ApiChannelsAreComplete = MustBeNever<MissingChannels>;
 
 export type ApiResource = keyof ShiftNurseApi;
 

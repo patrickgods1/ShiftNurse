@@ -58,6 +58,8 @@ import { DEFAULT_PAY_SETTINGS, type PaySettings } from '../cost/types.js';
 import {
   DEFAULT_LEAVE_POLICY,
   type Differential,
+  type JurisdictionChoices,
+  type JurisdictionId,
   type LeavePolicy,
   type NurseRole,
   type OvertimeOrder,
@@ -72,25 +74,7 @@ import { ALL_RULES, resolveConfigs } from '../rules/registry.js';
 import type { RuleConfig, RuleSet } from '../rules/types.js';
 import { type AcuityPresetId, acuityPresetForUnitType } from './presets.js';
 
-export type JurisdictionId =
-  | 'CA'
-  | 'OR'
-  | 'NY'
-  | 'WA'
-  | 'MA'
-  | 'IL'
-  | 'CT'
-  | 'MN'
-  | 'NJ'
-  | 'ME'
-  | 'PA'
-  | 'NH'
-  | 'RI'
-  | 'WV'
-  | 'AK'
-  | 'TX'
-  | 'US-VA'
-  | 'other';
+export type { JurisdictionChoices, JurisdictionId } from '../domain/entities.js';
 
 /**
  * The kinds of unit a staffing law names. The acuity presets' four, plus the units Title 22 and
@@ -165,9 +149,6 @@ export interface PresetCondition {
   option: string;
   is: boolean;
 }
-
-/** The manager's answers to a preset's options, by option id; an unanswered one is no. */
-export type JurisdictionChoices = Readonly<Record<string, boolean>>;
 
 export type PresetOvertimeRule = Pick<OvertimeRule, 'basis' | 'thresholdHours' | 'multiplier'> &
   Partial<Pick<OvertimeRule, 'pyramiding' | 'minimumMinutes' | 'scheduleKinds' | 'tourDays'>> & {

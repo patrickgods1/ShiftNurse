@@ -51,3 +51,12 @@ describe('a nurse arriving over IPC', () => {
     expect(update.safeParse(['n-1', { unitId: 'u-2' }]).success).toBe(false);
   });
 });
+
+describe('a nurse’s hire date arriving over IPC', () => {
+  it('is cleared with null and refused when it is not a date', () => {
+    const s = API_SCHEMAS.nurses;
+    expect(s.update.safeParse(['n-1', { hireDate: null }]).success).toBe(true);
+    expect(s.update.safeParse(['n-1', { hireDate: '2025-11-01' }]).success).toBe(true);
+    expect(s.update.safeParse(['n-1', { hireDate: '2025-02-30' }]).success).toBe(false);
+  });
+});
