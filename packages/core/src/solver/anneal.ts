@@ -144,7 +144,10 @@ export function anneal(
     }
   }
 
-  // Drift guard: the incremental delta bookkeeping and the model's own sums must agree.
+  // Undo guard: the running sum of accepted deltas must equal the model's objective, which proves
+  // every rejected move was undone exactly. It does not prove the caches equal a fresh rebuild —
+  // model.test.ts's walk test and 'the annealer's caches still match a fresh model after a long
+  // run' check that.
   if (Math.abs(model.objective() - current) > 1e-3) {
     throw new Error(
       `Solver objective drifted: tracked ${current}, model ${model.objective()}. ` +

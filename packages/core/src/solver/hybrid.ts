@@ -13,10 +13,11 @@
  *
  * ## Why this is safe
  *
- * The window's answer goes into the live `SolverModel` through `canAdd`, like every annealer
- * move, and is kept only if the whole-period objective does not get worse; otherwise it is
- * rolled back exactly. The window model prices the whole period too — fairness and hours read
- * every fixed shift as a constant — so CP-SAT is choosing for the schedule, not just the window.
+ * The window's answer goes into the live `SolverModel` through the same gate as every annealer
+ * move, judged on the window's final roster, and is kept only if the whole-period objective does
+ * not get worse; otherwise it is rolled back exactly. The window model prices the whole period
+ * too — fairness and hours read every fixed shift as a constant — so CP-SAT is choosing for the
+ * schedule, not just the window.
  *
  * Core cannot talk to the runner, so this class only builds the window's model and applies an
  * answer; the desktop's `ortools-solvers.ts` sends one to the other.
@@ -25,6 +26,7 @@
 import type { Assignment } from '../domain/entities.js';
 import type { IsoDate } from '../domain/time.js';
 import { type AnnealHooks, type AnnealResult, anneal } from './anneal.js';
+import { firstDisagreement } from './cpsat/decode.js';
 import { type CpsatEncoding, encodeCpsat } from './cpsat/encode.js';
 import { cpsatParameters } from './cpsat/params.js';
 import type { CpModel, CpParameters } from './cpsat/proto.js';
@@ -129,7 +131,8 @@ export class LocalSearch {
 
   /**
    * Replace the window's unlocked shifts with CP-SAT's answer — through the rule gate, and only
-   * if the whole-period objective does not get worse. Anything else is rolled back exactly.
+   * if the whole-period objective does not get worse. Anything else is rolled back exactly; a
+   * roster the gate refuses is rolled back before `EncodingDisagreementError` is thrown.
    */
   applyWindow(job: WindowJob, values: readonly number[]): WindowOutcome {
     const { model } = this;
@@ -150,30 +153,17 @@ export class LocalSearch {
       .sort((a, b) => a.shift.idx - b.shift.idx || a.n - b.n);
     for (const sv of chosen) {
       const candidate = model.make(sv.n, model.shifts[sv.shift.idx]!);
-      if (!model.canAdd(sv.n, candidate)) {
-        rollback();
-        const nurse = model.nurses[sv.n]!;
-        throw new Error(
-          `CP-SAT put ${nurse.firstName} ${nurse.lastName} on the ${sv.shift.shiftType.name} on ` +
-            `${sv.shift.date}, which breaks a hard rule: the CP-SAT encoding and the rule engine disagree.`,
-        );
-      }
       model.add(candidate);
       added.push(candidate);
     }
-    // Nurses who lost a window shift and got nothing back were never gated; a removal can
-    // break a rule as well as an addition. (The CP-SAT encoding forbids it; the rule engine is
-    // still the judge.)
-    const regated = new Set(added.map((a) => model.nurseOf(a)));
-    for (const n of new Set(removed.map((a) => model.nurseOf(a)))) {
-      if (!regated.has(n) && !model.isLegal(n)) {
-        rollback();
-        const nurse = model.nurses[n]!;
-        throw new Error(
-          `CP-SAT's window left ${nurse.firstName} ${nurse.lastName} breaking a hard rule: the ` +
-            'CP-SAT encoding and the rule engine disagree.',
-        );
-      }
+    // Every nurse who lost or gained a window shift, judged once on the roster she ends with:
+    // a rule not monotone under removal can break by losing a shift, and one not monotone under
+    // addition can break part-way through the adds and hold again at the end.
+    const touched = new Set([...removed, ...added].map((a) => model.nurseOf(a)));
+    const disagreement = firstDisagreement(model, touched);
+    if (disagreement) {
+      rollback();
+      throw disagreement;
     }
     const delta = model.objective() - before;
     if (delta > 1e-6) {

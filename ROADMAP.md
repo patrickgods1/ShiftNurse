@@ -744,6 +744,8 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
       re-run)
 - [x] Phase 3 — Rule hours, OT authorisation, charge; violation amount and complete ids (verify:
       npm run check; smoke; SA + LNS hash unchanged on synthetic-24)
+- [x] Phase 4 — Solver soundness: identity gate, final-state decode, typed CP-SAT errors, convex
+      shortfall (D10), bench re-run (verify: npm run check; smoke; bench:solvers)
 
 ---
 

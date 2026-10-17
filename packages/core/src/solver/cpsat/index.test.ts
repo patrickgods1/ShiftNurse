@@ -86,7 +86,7 @@ describe('finishing an infeasible CP-SAT run', () => {
   const run = { seed: 1, elapsedMs: 0, improvements: 0, cancelled: false, timedOut: false };
 
   for (const status of ['INFEASIBLE', 'MODEL_INVALID'] as const) {
-    it(`names the locked turnaround when CP-SAT reports ${status}`, () => {
+    it(`treats ${status} as an encoding bug and lists the locked turnaround only as context`, () => {
       const night = assign('dana', NIGHT_12, '2026-01-05', { id: 'mon-night', isLocked: true });
       const day = assign('dana', DAY_12, '2026-01-06', { id: 'tue-day', isLocked: true });
       const input = unit([dana()], [night, day]);
@@ -102,6 +102,8 @@ describe('finishing an infeasible CP-SAT run', () => {
       expect(error.status).toBe(status);
       expect(error.lockedBreaches.map((v) => v.code)).toEqual(['insufficient_rest']);
       expect(error.lockedBreaches[0]!.assignmentIds).toContain('tue-day');
+      expect(error.message).toMatch(/bug in the CP-SAT encoding/);
+      expect(error.message).toMatch(/context, not as the cause/);
     });
   }
 
@@ -116,5 +118,45 @@ describe('finishing an infeasible CP-SAT run', () => {
     }
     expect(thrown).toBeInstanceOf(CpsatInfeasibleError);
     expect((thrown as CpsatInfeasibleError).lockedBreaches).toEqual([]);
+    expect((thrown as CpsatInfeasibleError).message).toMatch(/bug in the CP-SAT encoding/);
+  });
+});
+
+describe('finishing a CP-SAT run that answered', () => {
+  const run = { seed: 1, elapsedMs: 0, improvements: 0, cancelled: false, timedOut: false };
+
+  it('hands back the locked shifts when CP-SAT had nothing left to choose', () => {
+    // Ada is inactive, so there is no one to put on any shift: a model of zero variables, which
+    // CP-SAT answers OPTIMAL with no values. Every shift of the week is then simply unstaffed.
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-10'),
+      nurses: [makeNurse({ id: 'ada', firstName: 'Ada', isChargeEligible: true, active: false })],
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: [
+        ...coverageAllWeek(DAY_12, 'RN', 1),
+        ...coverageAllWeek(NIGHT_12, 'RN', 1),
+      ],
+    });
+    const job = prepareCpsat(input, { seed: 1 });
+    expect(job.model.variables.length).toBe(0);
+    const report = finishCpsat(
+      input,
+      job,
+      { status: 'OPTIMAL', values: [], objective: 0, bound: 0 },
+      run,
+    );
+    expect(report.assignments).toEqual([]);
+    expect(report.stats.solver).toBe('cp-sat');
+    expect(report.unfilled.length).toBeGreaterThan(0);
+    expect(report.unfilled.every((u) => u.staffed === 0)).toBe(true);
+  });
+
+  it('says CP-SAT ran out of time only when it found nothing', () => {
+    const input = unit([dana()], []);
+    const job = prepareCpsat(input, { seed: 1 });
+    expect(() =>
+      finishCpsat(input, job, { status: 'UNKNOWN', values: [], objective: 0, bound: 0 }, run),
+    ).toThrow('CP-SAT found no schedule within its time budget.');
   });
 });

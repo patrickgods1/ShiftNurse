@@ -29,7 +29,7 @@ import { Modal } from '../../components/modal.js';
 import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { periodLabel } from '../../format.js';
 import { formatDollars } from '../../money.js';
-import { SOLVER_LABELS, SOLVER_ORDER } from '../../solver-labels.js';
+import { fallbackNote, SOLVER_LABELS, SOLVER_ORDER } from '../../solver-labels.js';
 import { bestChoice, digestLine, finishedRuns, spread, variationNumber } from './candidates.js';
 import { UnfilledList } from './unfilled-list.js';
 
@@ -494,8 +494,7 @@ function Running({
       />
       {batch.fellBackFrom ? (
         <p className="mt-2 text-sm text-warn" data-testid="generate-fallback">
-          Running {SOLVER_LABELS[batch.solver].name} instead of{' '}
-          {SOLVER_LABELS[batch.fellBackFrom.solver].name}: {batch.fellBackFrom.reason}.
+          {fallbackNote(batch.solver, batch.fellBackFrom, 'running')}
         </p>
       ) : null}
       <ol className="mt-3 max-h-56 overflow-y-auto rounded-md border border-border text-xs">
@@ -623,8 +622,7 @@ function Finished({
       ) : null}
       {batch.fellBackFrom ? (
         <p className="mt-1 text-sm text-warn" data-testid="generate-fallback">
-          Ran {SOLVER_LABELS[batch.solver].name} instead of{' '}
-          {SOLVER_LABELS[batch.fellBackFrom.solver].name}: {batch.fellBackFrom.reason}.
+          {fallbackNote(batch.solver, batch.fellBackFrom, 'ran')}
         </p>
       ) : null}
       <div className="mt-3 overflow-x-auto">

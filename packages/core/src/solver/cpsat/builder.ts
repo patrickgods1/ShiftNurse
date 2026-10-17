@@ -200,6 +200,33 @@ export class CpBuilder {
     return b;
   }
 
+  /**
+   * `weight · (1 + 2 + … + max(0, e))`: a staircase of Booleans `z_k = [e ≥ k]` with
+   * `Σ z_k ≥ e`. The k-th unit short costs k × weight, so the cheapest way to cover e units is
+   * z_1 … z_e — the definition — and the total is weight × e(e+1)/2. Pure cost, lower-bounded,
+   * like `positivePart`. One linear constraint per call rather than a `positivePart(e − k)` per k.
+   */
+  minimiseTriangular(e: Expr, weight: number, label: string): void {
+    // A free unit needs no staircase; building one would only add variables CP-SAT must search.
+    if (weight === 0) return;
+    if (e.terms.length === 0) {
+      const units = Math.max(0, e.constant);
+      this.minimise(expr([], (units * (units + 1)) / 2), weight);
+      return;
+    }
+    const hi = Math.max(0, Math.ceil(this.bounds(e)[1]));
+    if (hi === 0) return;
+    const steps: [number, number][] = [];
+    for (let k = 1; k <= hi; k++) {
+      const z = this.auxiliary(`${label} ≥ ${k}`, 0, 1, (value) =>
+        evalExpr(e, value) >= k ? 1 : 0,
+      );
+      steps.push([z, 1]);
+      this.minimise(expr([[z, 1]]), weight * k);
+    }
+    this.linear(sum(expr(steps), scale(e, -1)), 0, Number.POSITIVE_INFINITY, label);
+  }
+
   /** Add `weight · e` to the objective (weight may be fractional; rounded at build). */
   minimise(e: Expr, weight: number): void {
     this.objectiveOffset += e.constant * weight;

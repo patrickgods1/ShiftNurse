@@ -413,6 +413,7 @@ export {
   CpsatInfeasibleError,
   DEFAULT_DETERMINISTIC_TIME,
   decisionsFor,
+  EncodingDisagreementError,
   finishCpsat,
   lockedHardViolations,
   prepareCpsat,

@@ -21,6 +21,7 @@ import { inHolidayRotation, workedInHistory } from '../../rules/holiday-rotation
 import { groupInForce } from '../../rules/incompatibility-rules.js';
 import { isDaySide, isWorkedNight, tooSoonAfterNight } from '../../rules/night-recovery.js';
 import { judgesWeekends } from '../../rules/weekend-pattern.js';
+import { compareCodeUnits } from '../model.js';
 import { type Expr, evalExpr, expr, scale, sum } from './builder.js';
 import { countExpr, type EncodeContext, HOURS, hoursExpr, type TimelineEntry } from './context.js';
 import { isMovable, roleExpr } from './rules/coverage.js';
@@ -57,8 +58,14 @@ function coverageTerms(ctx: EncodeContext): void {
       ctx.b.minimise(expr([], model.coveragePenaltyOf(shift)), 1);
       continue;
     }
-    if (!shift.demand) continue;
     const at = `${shift.shiftType.abbreviation} ${shift.date}`;
+    const units = ctx.hardUnits[shift.idx]!;
+    // Every unit on one shift together, priced 1, 2, 3 … times the weight (D10), as
+    // `SolverModel.coveragePenalty` prices them.
+    if (units.length > 0) {
+      ctx.b.minimiseTriangular(sum(...units), weights.hardShortfall, `hard units: ${at}`);
+    }
+    if (!shift.demand) continue;
     for (const role of NURSE_ROLES) {
       const target = shift.demand.byRole[role].targetCount;
       const staffed = roleExpr(ctx, shift, role);
@@ -71,7 +78,8 @@ function coverageTerms(ctx: EncodeContext): void {
       priced(
         ctx,
         sum(staffed, expr([], -target)),
-        weights.overTarget,
+        // More on a holiday a nurse of this role wants to work, so a volunteer never overstaffs.
+        model.overTargetPrice(shift, role),
         `over target: ${at} ${role}`,
       );
     }
@@ -295,7 +303,7 @@ function current(
         if (key !== null) byKey.set(key, [...(byKey.get(key) ?? []), e]);
       }
       const e = expr();
-      for (const [key, list] of [...byKey].sort(([a], [b]) => a.localeCompare(b))) {
+      for (const [key, list] of [...byKey].sort(([a], [b]) => compareCodeUnits(a, b))) {
         if (list.some((x) => x.literal === null)) e.constant += 1;
         else if (list.length === 1) e.terms.push([list[0]!.literal!, 1]);
         else

@@ -13,7 +13,8 @@
   incremental state + objective, `greedy.ts` the seed, `anneal.ts` the moves, `solver.ts` the
   entry point, `rng.ts` the seeded mulberry32 shared with the seeder; M15 added
   `registry.ts` (`SolverId`, `FALLBACK_ORDER`, `resolveSolverId`), `report.ts` (the one
-  `buildReport` every backend shares), `block-moves.ts` (two-nurse multi-day swaps),
+  `buildReport` every backend shares), `block-moves.ts` (two-nurse multi-day swaps), `gate.ts`
+  (which breaches a locked shift may keep: identity and size, never a count),
   `hybrid.ts` (`LocalSearch`: chunked annealing + CP-SAT windows) and `cpsat/` — `encode.ts`
   (`SolveInput` → CP-SAT model, `CPSAT_ENCODERS` per rule), `rules/*` the rule encoders,
   `objective.ts`, `builder.ts` (`CpBuilder`, whose `evaluate` prices a schedule without the
@@ -93,8 +94,10 @@
   `encodeCpsat` refuses by name when an enabled hard rule has none. A new rule is therefore a
   `Rule`, a registry entry *and* an encoder, checked against the rule engine by
   `encode.test.ts` (hand-worked cases, parity with `SolverModel`, and 400 random rosters that
-  must be judged identically). CP-SAT's answers still go back through `SolverModel.canAdd`
-  before anything is written — the rule engine stays the judge.
+  must be judged identically). The parity suite also draws locked rows (one-directional: the
+  encoding may be stricter than the gate, never looser), decodes every legal roster, and asserts
+  the all-off assignment is always feasible. CP-SAT's answers still go back through the gate, on
+  the final roster, before anything is written — the rule engine stays the judge.
 - **`dayNumber`/`fromDayNumber` are memoised.** The rule engine on partial views converts the same
   few dozen dates millions of times per solve; without the cache that was 60% of a run.
   `compareDates`, `minDate`, `maxDate` and `dateInRange` compare the ISO strings directly
@@ -267,13 +270,13 @@
   record), then who worked last year's occurrence of a holiday, seniority, `submittedAt`,
   `employeeId`. Advice only, like holiday priority: it approves nothing, and VA–NNU Art. 13
   § 2.D.7 wants equity and a written denial reason, which the manager still records.
-- **CP-SAT infeasible is a fallback, not an error.** A locked shift that already breaks a hard rule
-  makes the model contradictory, which is the manager's data and not an encoding bug. `finishCpsat`
-  (`solver/cpsat/index.ts`) throws `CpsatInfeasibleError { status, lockedBreaches }`, where
-  `lockedHardViolations` names the hard nurse-scope violations involving a locked shift; the
-  desktop's `solveCpsat` (`main/ortools-solvers.ts`) catches it and runs SA + LNS on the same input
-  and seed, which schedules around the lock, reporting `fellBackFrom: 'cp-sat'` with a reason
-  naming up to five breaching locked shifts so the manager can see what to unlock.
+- **CP-SAT infeasible is an encoding bug that still gets a schedule.** Every hard constraint is
+  satisfiable with every variable off, so INFEASIBLE or MODEL_INVALID is a defect; `finishCpsat`
+  (`solver/cpsat/index.ts`) throws `CpsatInfeasibleError { status, lockedBreaches }` (the breaches
+  from `lockedHardViolations` are context), and the desktop's `solveCpsat`
+  (`main/ortools-solvers.ts`) runs SA + LNS on the same input and seed, reporting
+  `fellBackFrom: 'cp-sat'` with a reason that says it is a bug and lists up to five breaching
+  locked shifts as context.
 - **A credential is valid through its expiry date.** `credentialLapsedOn` is the one definition,
   for the rules, the publish alerts and the Dashboard's lapsed list.
 - **State presets only tighten.** `JURISDICTION_PRESETS` cites the provision behind every value
@@ -311,6 +314,15 @@
   full days and who holds them, labelled by how (an award, or leave approved before the round).
   `awardRound` (ShiftNurseTx) turns awards into approved PTO through the ordinary approval, with
   `suggestedPaidLeaveHours`, and records each denial with `recordAuditStrict`.
+- **A shift's hard shortfall is priced convexly.** `SolverModel.coveragePenalty` charges
+  `hardShortfall × s(s+1)/2` for s hard units on one shift; CP-SAT collects each shift's units
+  (`EncodeContext.addHardUnits`) and prices them with `CpBuilder.minimiseTriangular`. Slot counts
+  (`hardShortfall()`, the bench's 'floors short', the conflicts engine) stay linear.
+- **A holiday volunteer never overstaffs.** Over target on a holiday a nurse of that role wants to
+  work costs `overTarget` plus the largest volunteer reward on that date
+  (`SolverModel.overTargetPrice`, read by CP-SAT's `coverageTerms`), so the reward orders
+  volunteers without paying for a surplus. A missed `prefer_*` is charged once per kind. A lock
+  keeps its charge flag (`ensureCharge`).
 - **A licensed ratio pools RNs and LVNs, and counts the RN share once.** `RatioRule.role` may be
   `'licensed'` with `minRnShare` (migration 0020); `ShiftDemand.licensed` holds the pool. Every RN
   the share needs counts toward the pool too, so the pool is short only beyond them —
@@ -337,12 +349,12 @@
   their own leave, credentials and preferences (`rosterForPeriod`, `floatExtras`).
 - **An orientee works with their preceptor.** `rules/preceptor.ts` (`orientee-with-preceptor`,
   hard, shift scope, on by default and silent without preceptorships) counts a preceptor on the
-  shift or on the one it runs inside; standby is not judged. CP-SAT prices it at `hardShortfall`
-  (`encodePreceptor`).
+  shift or on the one it runs inside; standby is not judged. CP-SAT prices it as a unit on the
+  orientee's shift, priced convexly with the shift's other hard units (D10) (`encodePreceptor`).
 - **A rest waiver excuses one turnaround, keyed on the later shift.** A `RestWaiver` (nurse, date,
   reason, `recordAuditStrict`) lets `min-rest-between-shifts` pass a short rest only when the shift
   *after* it starts on the waiver's date; `restWaivedOn` is shared by the rule and `encodeRest`,
-  which must skip the pair too or a locked turnaround makes CP-SAT infeasible (VA–NNU Art. 13 §2).
+  which must skip the pair too or CP-SAT would forbid a waived turnaround the rule allows (VA–NNU Art. 13 §2).
 - **Tours are named by when a shift starts.** `rules/tour-rotation.ts`'s `tourOf`: 04:00–11:59 day,
   12:00–17:59 evening, otherwise night — never `isNight`, a pay flag a Title 38 evening tour also
   carries. `isNightTour` is the night test for min-rest's after-night rest, the night cap (which

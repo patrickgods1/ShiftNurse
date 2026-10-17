@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { SolveBatchStatus, SolveRunStatus } from '@shared/api.js';
-import { isoDate, type ShiftType, type Unit } from '@shiftnurse/core';
+import { isoDate, type ShiftType, type SolverId, type Unit } from '@shiftnurse/core';
 import { cleanup, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
@@ -59,6 +59,15 @@ function batchWith(summary: Partial<NonNullable<SolveRunStatus['summary']>>): So
         },
       },
     ],
+  };
+}
+
+function withFallback(batch: SolveBatchStatus, solver: SolverId, from: SolverId): SolveBatchStatus {
+  const run = batch.runs[0]!;
+  return {
+    ...batch,
+    solver,
+    runs: [{ ...run, solver, fellBackFrom: { solver: from, reason: 'x' } }],
   };
 }
 
@@ -125,5 +134,14 @@ describe('an option that leaves shifts short', () => {
     renderBar(batchWith({}));
     await screen.findByTestId('candidates-bar');
     expect(screen.queryByTestId('unfilled-list')).toBeNull();
+  });
+});
+
+describe('a hybrid run that lost its CP-SAT windows part-way', () => {
+  it('says the CP-SAT windows stopped early instead of "ran Hybrid instead of Hybrid"', async () => {
+    renderBar(withFallback(batchWith({}), 'hybrid', 'hybrid'));
+    const bar = await screen.findByTestId('candidates-bar');
+    expect(bar.textContent).toContain('CP-SAT windows stopped early');
+    expect(bar.textContent).not.toContain('instead of');
   });
 });

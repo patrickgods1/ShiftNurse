@@ -12,8 +12,17 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { NURSE_ROLES } from '../acuity/demand.js';
-import type { Assignment, Nurse, NurseRole, Preference } from '../domain/entities.js';
+import type {
+  Assignment,
+  FairnessLedgerEntry,
+  Nurse,
+  NurseRole,
+  Preference,
+} from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
+import { computeBurden } from '../fairness/burden.js';
+import { deriveCounters } from '../fairness/ledger.js';
+import { BURDEN_COMPONENTS, BURDEN_COUNTER } from '../fairness/types.js';
 import { ALL_RULES, defaultRuleSet, evaluateSchedule } from '../rules/registry.js';
 import { busyElsewhere } from '../schedule/elsewhere.js';
 import { ScheduleView } from '../schedule/view.js';
@@ -41,10 +50,12 @@ import {
   UNIT_ID,
   withRuleParams,
 } from '../testing/fixtures.js';
+import { anneal } from './anneal.js';
+import { greedySeed } from './greedy.js';
 import { SolverModel } from './model.js';
 import { Rng } from './rng.js';
 import { solve } from './solver.js';
-import type { SolveInput } from './types.js';
+import { DEFAULT_OBJECTIVE_WEIGHTS, type SolveInput } from './types.js';
 
 beforeEach(() => {
   resetFixtureCounters();
@@ -466,6 +477,251 @@ function walk(input: SolveInput, checkEvery = 25): Record<string, number> {
   return peak;
 }
 
+describe('annealer cache drift', () => {
+  it("the annealer's caches still match a fresh model after a long run", () => {
+    const input = scenario({
+      mid: true,
+      groups: true,
+      holidays: true,
+      pending: true,
+      weekends: true,
+    });
+    const model = new SolverModel(input);
+    greedySeed(model);
+    anneal(model, new Rng(11), { seed: 11, maxIterations: 2000 }, { shouldStop: () => null });
+    const fresh = rebuild(input, model);
+    const got = model.breakdown();
+    const want = fresh.breakdown();
+    for (const term of Object.keys(got) as (keyof typeof got)[]) {
+      expect(got[term], term).toBeCloseTo(want[term], 6);
+    }
+  });
+});
+
+/**
+ * What the Fairness page would say the model's fairness term is, computed with that page's own
+ * machinery: the same view, `deriveCounters` and `computeBurden` that `report.ts` hands to
+ * `scoreFairness`. The over-share sum is the definition both sides share; what this checks is the
+ * counters, the decay and the fair shares the model keeps incrementally.
+ */
+function fairnessAsThePageComputesIt(model: SolverModel): number {
+  const { input } = model;
+  const view = new ScheduleView({
+    period: input.period,
+    assignments: model.assignments(),
+    priorAssignments: input.priorAssignments,
+    nurses: model.nurses,
+    shiftTypes: model.shiftTypes,
+  });
+  const counters = deriveCounters(view, {
+    unit: input.unit,
+    holidayDates: model.ctx.holidayDates,
+    holidayDateById: new Map(input.holidays.map((h) => [h.id, h.date])),
+    weekendDefinition: input.ruleSet.weekendDefinition,
+    preferences: input.preferences,
+    timeOff: input.timeOff,
+  });
+  const active = model.candidates.map((i) => model.nurses[i]!);
+  const weights = input.ruleSet.fairnessWeights;
+  const burden = computeBurden(active, input.ledgerHistory, { weights }, counters);
+  const sharers = [...burden.byNurse.values()].filter((b) => b.shareWeight > 0);
+  const teamShare = sharers.reduce((sum, b) => sum + b.shareWeight, 0);
+  let total = 0;
+  for (const c of BURDEN_COMPONENTS) {
+    if (weights[c] <= 0) continue;
+    const key = BURDEN_COUNTER[c];
+    const teamTotal = sharers.reduce((sum, b) => sum + b.carried[key], 0);
+    for (const b of sharers) {
+      total += weights[c] * Math.max(0, b.carried[key] - (teamTotal * b.shareWeight) / teamShare);
+    }
+  }
+  return total * DEFAULT_OBJECTIVE_WEIGHTS.fairness;
+}
+
+function ledgerRow(
+  nurseId: string,
+  periodId: string,
+  periodStart: string,
+  counts: Partial<FairnessLedgerEntry>,
+): FairnessLedgerEntry {
+  return {
+    id: `ledger-${nurseId}-${periodId}`,
+    nurseId,
+    periodId,
+    periodStart: isoDate(periodStart),
+    nightShifts: 0,
+    weekendsWorked: 0,
+    holidaysWorked: 0,
+    onCallShifts: 0,
+    undesirableShifts: 0,
+    requestsApproved: 0,
+    requestsDenied: 0,
+    callOutsCovered: 0,
+    totalHours: 0,
+    overtimeHours: 0,
+    preferenceHitRate: 1,
+    ...counts,
+  };
+}
+
+/** Rule set with the two rules that add their own fairness price switched off. */
+function burdenOnly(weights?: Partial<Record<string, number>>) {
+  const base = defaultRuleSet('unit-1');
+  return {
+    ...base,
+    configs: base.configs.map((c) =>
+      c.ruleId === 'holiday-rotation' || c.ruleId === 'weekend-pattern'
+        ? { ...c, enabled: false }
+        : c,
+    ),
+    ...(weights
+      ? { fairnessWeights: { ...base.fairnessWeights, ...weights } as typeof base.fairnessWeights }
+      : {}),
+  };
+}
+
+describe('fairness priced as the Fairness page prices it', () => {
+  it('prices fairness exactly as the Fairness page would compute it, move after move', () => {
+    const hours = [72, 72, 72, 48, 48, 72];
+    const nurses = hours.map((h, i) =>
+      makeNurse({ isChargeEligible: i % 2 === 0, contractedHoursPerPeriod: h }),
+    );
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses,
+      shiftTypes: [DAY_12, NIGHT_12, ON_CALL],
+      coverageRequirements: [
+        ...coverageAllWeek(DAY_12, 'RN', 2, 3),
+        ...coverageAllWeek(NIGHT_12, 'RN', 1, 2),
+        ...coverageAllWeek(ON_CALL, 'RN', 0, 1),
+      ],
+      holidays: [
+        {
+          id: 'h1',
+          unitId: 'unit-1',
+          date: isoDate('2026-01-08'),
+          name: 'Test day',
+          isMajor: false,
+          pairedHolidayId: null,
+        },
+      ],
+      preferences: [
+        {
+          id: 'p1',
+          nurseId: nurses[0]!.id,
+          kind: 'avoid_shift_type',
+          shiftTypeId: NIGHT_12.id,
+          weight: 4,
+        },
+      ],
+      // Four nurses with history that differs on every counter; nurses 4 and 5 have none.
+      ledgerHistory: [
+        ledgerRow(nurses[0]!.id, 'prev', '2025-12-21', {
+          nightShifts: 6,
+          weekendsWorked: 2,
+          holidaysWorked: 1,
+          onCallShifts: 3,
+          undesirableShifts: 4,
+          overtimeHours: 8,
+          totalHours: 84,
+        }),
+        ledgerRow(nurses[1]!.id, 'prev', '2025-12-21', {
+          nightShifts: 1,
+          weekendsWorked: 4,
+          holidaysWorked: 0,
+          onCallShifts: 0,
+          undesirableShifts: 1,
+          overtimeHours: 0,
+          totalHours: 72,
+        }),
+        ledgerRow(nurses[1]!.id, 'prev2', '2025-12-07', {
+          nightShifts: 3,
+          holidaysWorked: 2,
+          totalHours: 72,
+        }),
+        ledgerRow(nurses[2]!.id, 'prev', '2025-12-21', {
+          nightShifts: 0,
+          weekendsWorked: 1,
+          holidaysWorked: 1,
+          onCallShifts: 5,
+          overtimeHours: 12,
+          totalHours: 90,
+        }),
+        ledgerRow(nurses[3]!.id, 'prev', '2025-12-21', {
+          nightShifts: 2,
+          weekendsWorked: 0,
+          undesirableShifts: 2,
+          totalHours: 48,
+        }),
+      ],
+      ruleSet: burdenOnly(),
+    });
+
+    const model = new SolverModel(input);
+    const rng = new Rng(5);
+    let checked = 0;
+    let peak = 0;
+    for (let step = 1; step <= 300; step++) {
+      if (model.unlocked.length === 0 || rng.chance(0.6)) {
+        const shift = rng.pick(model.solvableShifts);
+        const n = rng.pick(model.candidates);
+        if (model.eligible(n, shift, null)) {
+          const a = model.make(n, shift);
+          if (model.canAdd(n, a)) model.add(a);
+        }
+      } else {
+        model.remove(rng.pick(model.unlocked));
+      }
+      if (step % 25 !== 0) continue;
+      const got = model.breakdown().fairness;
+      peak = Math.max(peak, got);
+      expect(got, `fairness after step ${step}`).toBeCloseTo(fairnessAsThePageComputesIt(model), 6);
+      checked++;
+    }
+    expect(checked).toBe(12);
+    expect(model.unlocked.length).toBeGreaterThan(10);
+    // A walk that never moved the term would agree with anything.
+    expect(peak).toBeGreaterThan(0);
+  });
+
+  // Phase 20 flips this to `it`: the model counts a per-diem nurse's worked hours as overtime
+  // burden, while the ledger (and so the Fairness page) counts none, because she has no contract.
+  it.fails("prices a per-diem nurse's hours as overtime burden, which the ledger does not (M-19, phase 20)", () => {
+    const ft = makeNurse({ isChargeEligible: true, contractedHoursPerPeriod: 72 });
+    const pd = makeNurse({ employmentType: 'per_diem', contractedHoursPerPeriod: 0 });
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: [ft, pd],
+      shiftTypes: [DAY_12],
+      coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1, 1),
+      ledgerHistory: [
+        ledgerRow(ft.id, 'prev', '2025-12-21', { totalHours: 72 }),
+        ledgerRow(pd.id, 'prev', '2025-12-21', { totalHours: 36 }),
+      ],
+      ruleSet: burdenOnly({
+        nights: 0,
+        weekends: 0,
+        holidays: 0,
+        onCall: 0,
+        undesirable: 0,
+        overtime: 1,
+        preferences: 0,
+        timeOff: 0,
+      }),
+    });
+    const model = new SolverModel(input);
+    const pdIdx = model.nurses.findIndex((n) => n.id === pd.id);
+    for (const date of ['2026-01-05', '2026-01-07', '2026-01-09']) {
+      const shift = model.shifts.find((s) => s.date === date && s.shiftType.id === DAY_12.id)!;
+      model.add(model.make(pdIdx, shift));
+    }
+    expect(fairnessAsThePageComputesIt(model)).toBe(0);
+    expect(model.breakdown().fairness).toBeCloseTo(fairnessAsThePageComputesIt(model), 6);
+  });
+});
+
 describe('holiday rotation in Generate', () => {
   function christmas(workedLastYear: string) {
     const ana = makeNurse({ id: 'ana', isChargeEligible: true, contractedHoursPerPeriod: 0 });
@@ -549,10 +805,10 @@ describe('holiday rotation in Generate', () => {
 });
 
 describe('a nurse who wants to work the holiday', () => {
-  it('is not added on top of a holiday shift already at its target, however keen and senior', () => {
-    // MLK Day needs one RN and Bo already works it. Ana, the most senior (1.5×), wants it at
-    // full strength (5). Adding her costs 8 over target and 12h × $52 × 0.05 = 31.2 in pay,
-    // 39.2 in all; her reward is 5 / 2 × 1.5 × 10 = 37.5. At the full weight it would be 75.
+  // MLK Day needs one RN and Bo already works it. Ana, the most senior (1.5×), wants it at full
+  // strength (5): a reward of 5 / 2 × 1.5 × 10 = 37.5. Because she wants that date, one RN over
+  // target there costs overTarget 8 plus the date's largest reward, 37.5: 45.5.
+  const staffedHoliday = (withPay: boolean): SolveInput => {
     const ana = makeNurse({
       id: 'ana',
       employmentType: 'per_diem',
@@ -566,7 +822,7 @@ describe('a nurse who wants to work the holiday', () => {
       isChargeEligible: true,
       seniorityDate: isoDate('2020-01-01'),
     });
-    const input = solveInputFrom({
+    return solveInputFrom({
       startDate: isoDate('2026-01-04'),
       endDate: isoDate('2026-01-17'),
       nurses: [ana, bo],
@@ -585,17 +841,91 @@ describe('a nurse who wants to work the holiday', () => {
       preferences: [
         { id: 'p-ana', nurseId: 'ana', kind: 'holiday_appetite', holidayId: 'mlk', weight: 5 },
       ],
-      cost: { payRates: [payRate(52)], differentials: [], overtimeRules: [] },
+      ...(withPay
+        ? { cost: { payRates: [payRate(52)], differentials: [], overtimeRules: [] } }
+        : {}),
     });
+  };
+  /** What adding Ana to MLK Day costs once Bo already covers it. */
+  const addingAna = (input: SolveInput): number => {
     const model = new SolverModel(input);
     const mlk = model.shiftAt(8, DAY_12);
     expect(mlk.date).toBe('2026-01-12');
     model.add(model.make(model.nurseIdx.get('bo')!, mlk));
     const before = model.objective();
     model.add(model.make(model.nurseIdx.get('ana')!, mlk));
-    // 39.2 - 37.5: a small net cost, so Generate leaves her off.
-    expect(model.objective() - before).toBeGreaterThan(0);
-    expect(model.objective() - before).toBeCloseTo(1.7, 6);
+    return model.objective() - before;
+  };
+
+  it('is not added on top of a holiday shift already at its target, however keen and senior', () => {
+    // 45.5 over target + 12h × $52 × 0.05 = 31.2 in pay − her reward 37.5 = 39.2.
+    expect(addingAna(staffedHoliday(true))).toBeCloseTo(39.2, 6);
+  });
+
+  it('an inactive volunteer does not raise the holiday surplus price', () => {
+    // Ana has left the unit, so no Generate can give her MLK Day: her wish pays no reward, and one
+    // RN over target there costs the plain overTarget, 8.
+    const input = staffedHoliday(false);
+    const left = {
+      ...input,
+      nurses: input.nurses.map((n) => (n.id === 'ana' ? { ...n, active: false } : n)),
+    };
+    const model = new SolverModel(left);
+    expect(model.overTargetPrice(model.shiftAt(8, DAY_12), 'RN')).toBe(8);
+  });
+
+  it('leaves a keen volunteer off a staffed holiday even with no pay rates', () => {
+    // 45.5 over target − her reward 37.5 = 8: the surplus still costs what any surplus does.
+    expect(addingAna(staffedHoliday(false))).toBeCloseTo(8, 6);
+  });
+});
+
+describe('stated preferences', () => {
+  // One nurse, so her seniority multiplier is 1. Sun 4 Jan 2026 starts the period: Mon 5 is day
+  // 1, Tue 6 day 2, Wed 7 day 3.
+  const withPrefs = (preferences: Preference[]) =>
+    new SolverModel(
+      solveInputFrom({
+        startDate: isoDate('2026-01-04'),
+        endDate: isoDate('2026-01-17'),
+        nurses: [makeNurse({ id: 'ada' })],
+        shiftTypes: [DAY_12, NIGHT_12],
+        preferences,
+      }),
+    );
+  const mondaysAndTuesdays: Preference[] = [
+    { id: 'p-mon', nurseId: 'ada', kind: 'prefer_weekday', weekday: 1, weight: 4 },
+    { id: 'p-tue', nurseId: 'ada', kind: 'prefer_weekday', weekday: 2, weight: 2 },
+  ];
+
+  it('does not charge a nurse on either of the two days she prefers', () => {
+    const model = withPrefs(mondaysAndTuesdays);
+    expect(model.preferencePenalty(0, model.shiftAt(1, DAY_12))).toBe(0);
+    expect(model.preferencePenalty(0, model.shiftAt(2, DAY_12))).toBe(0);
+    // Neither day: the stronger wish, 4, at half.
+    expect(model.preferencePenalty(0, model.shiftAt(3, DAY_12))).toBe(2);
+  });
+
+  it('charges each kind of wish once', () => {
+    const model = withPrefs([
+      ...mondaysAndTuesdays,
+      { id: 'p-n', nurseId: 'ada', kind: 'prefer_shift_type', shiftTypeId: NIGHT_12.id, weight: 3 },
+    ]);
+    // A Monday day: the night wish missed (3 / 2), the weekday wish met.
+    expect(model.preferencePenalty(0, model.shiftAt(1, DAY_12))).toBe(1.5);
+    // A Wednesday day: both kinds missed, 1.5 + 2.
+    expect(model.preferencePenalty(0, model.shiftAt(3, DAY_12))).toBe(3.5);
+    // A Wednesday night: the shift type met, the weekday missed.
+    expect(model.preferencePenalty(0, model.shiftAt(3, NIGHT_12))).toBe(2);
+  });
+
+  it('still charges the full weight for a shift she asked to avoid', () => {
+    const model = withPrefs([
+      ...mondaysAndTuesdays,
+      { id: 'p-wed', nurseId: 'ada', kind: 'avoid_weekday', weekday: 3, weight: 2 },
+    ]);
+    // Avoided Wednesday 2 + the missed weekday wish 2.
+    expect(model.preferencePenalty(0, model.shiftAt(3, DAY_12))).toBe(4);
   });
 });
 
@@ -1061,5 +1391,114 @@ describe('long stretches made hard', () => {
     for (const a of [first!, middle!, last!]) model.add(a);
     model.remove(middle!);
     expect(model.isLegal(0)).toBe(true);
+  });
+});
+
+describe('locked shifts that already break a hard rule', () => {
+  // Only the consecutive-days rule can bind: a per-diem nurse has no contract to run past, and
+  // the weekly cap sits above anything seven day 8s reach.
+  function input(locked: Assignment[]): SolveInput {
+    return solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: [
+        makeNurse({
+          id: 'ada',
+          firstName: 'Ada',
+          employmentType: 'per_diem',
+          fte: 0,
+          contractedHoursPerPeriod: 0,
+          isChargeEligible: true,
+        }),
+      ],
+      shiftTypes: [DAY_8],
+      coverageRequirements: coverageAllWeek(DAY_8, 'RN', 1),
+      ruleSet: withRuleParams(defaultRuleSet(UNIT_ID), {
+        'max-hours-per-week': { maxHoursPerWeek: 84, overtimeThresholdHours: 84 },
+      }),
+      assignments: locked,
+    });
+  }
+
+  const lockedRun = (start: string, prefix: string, first = 0) =>
+    assignRun('ada', DAY_8, start, 6, { isLocked: true }).map((a, i) => ({
+      ...a,
+      id: `${prefix}${first + i}`,
+    }));
+  const dayOn = (model: SolverModel, date: string) =>
+    model.make(0, model.solvableShifts.find((s) => s.date === date)!);
+
+  it('will not stretch a locked six-day run into a seventh day', () => {
+    // Mon 5 – Sat 10 is six days against a cap of five.
+    const model = new SolverModel(input(lockedRun('2026-01-05', 'L')));
+    expect(model.isLegal(0)).toBe(true);
+    expect(model.canAdd(0, dayOn(model, '2026-01-04'))).toBe(false);
+    expect(model.canAdd(0, dayOn(model, '2026-01-11'))).toBe(false);
+    // Sun 11 and Mon 12 off are the two days owed after the run; Tue 13 stands alone.
+    expect(model.canAdd(0, dayOn(model, '2026-01-13'))).toBe(true);
+  });
+
+  it('will not join two locked runs into one longer run', () => {
+    const model = new SolverModel(
+      input([...lockedRun('2026-01-05', 'L'), ...lockedRun('2026-01-12', 'L', 6)]),
+    );
+    expect(model.isLegal(0)).toBe(true);
+    // Sun 11 makes Mon 5 – Sat 17 one 13-day run.
+    expect(model.canAdd(0, dayOn(model, '2026-01-11'))).toBe(false);
+  });
+});
+
+describe('a shift short of its floor', () => {
+  // Two per-diem charge nurses (no contract, so no hours pressure) and floors only on Mon 5 Jan,
+  // so the coverage term is the only thing a roster moves. No census, so no ratio demand.
+  function mondayOnly(day: number, night: number): SolveInput {
+    return solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: ['ada', 'bo'].map((id) =>
+        makeNurse({
+          id,
+          isChargeEligible: true,
+          employmentType: 'per_diem',
+          contractedHoursPerPeriod: 0,
+        }),
+      ),
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: [
+        ...(day > 0 ? [coverage(DAY_12, 'RN', day, day, null, isoDate('2026-01-05'))] : []),
+        ...(night > 0 ? [coverage(NIGHT_12, 'RN', night, night, null, isoDate('2026-01-05'))] : []),
+      ],
+    });
+  }
+
+  it('prices a shift three short at six times one short', () => {
+    const model = new SolverModel(mondayOnly(3, 0));
+    const day = model.shiftAt(model.dateIdx.get(isoDate('2026-01-05'))!, DAY_12);
+    // Nobody on: 3 short is 1 + 2 + 3 = 6 units of 3,000, plus 3 below target at 60. Nobody is
+    // on the shift, so there is no charge nurse to miss.
+    expect(model.coveragePenaltyOf(day)).toBe(18_180);
+    model.add(assign('ada', DAY_12, '2026-01-05'));
+    // Two short: 1 + 2 = 3 units, plus 2 below target. Ada can take charge.
+    expect(model.coveragePenaltyOf(day)).toBe(9_120);
+  });
+
+  it('would rather run two shifts one short than strip one of them', () => {
+    const coverageOf = (roster: Assignment[]) => {
+      const model = new SolverModel(mondayOnly(2, 2));
+      for (const a of roster) model.add(a);
+      return model.breakdown().coverage;
+    };
+    // Both on the day: the night is two short (3,000 + 6,000) and two below target (120).
+    const stripped = coverageOf([
+      assign('ada', DAY_12, '2026-01-05'),
+      assign('bo', DAY_12, '2026-01-05'),
+    ]);
+    // One on each: each shift one short (3,000) and one below target (60).
+    const spread = coverageOf([
+      assign('ada', DAY_12, '2026-01-05'),
+      assign('bo', NIGHT_12, '2026-01-05'),
+    ]);
+    expect(stripped).toBe(9_120);
+    expect(spread).toBe(6_120);
   });
 });

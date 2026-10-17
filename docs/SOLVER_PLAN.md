@@ -28,8 +28,9 @@ Decisions:
 ## Invariants (every phase)
 - `packages/core` stays pure. It only builds models and reads answers (`encode`/`decode`,
   plain data). Starting the runner, sending it data and cancelling it all happen in Electron main.
-- Every nurse's timeline is legal. Decoded CP-SAT assignments are loaded into `SolverModel`,
-  and each must pass `canAdd`. A failure throws, naming the nurse and date.
+- Every nurse's timeline is legal. Decoded CP-SAT assignments are loaded whole into a fresh
+  `SolverModel`, then every nurse it touched must pass the gate (`gateBreaches`); a failure
+  throws `EncodingDisagreementError` naming the nurse and dates.
 - One report path: `buildReport` → `evaluateSchedule` / `scoreFairness` / `costSchedule`.
   `ObjectiveBreakdown` comes from `SolverModel.breakdown()` for every backend.
 - Deterministic: CP-SAT uses 8 workers in `interleave_search` mode (deterministic, unlike its
@@ -270,9 +271,9 @@ Decisions:
       encoding makes it fail.)*
 
 **Decode and backend**
-- [x] 4.16 `cpsat/decode.ts`: response values → `Assignment[]`, with locked ids echoed back. Each
-      assignment is loaded into `SolverModel` via `canAdd`/`add`, and a failure throws naming the
-      nurse, date and shift.
+- [x] 4.16 `cpsat/decode.ts`: response values → `Assignment[]`, with locked ids echoed back. The
+      answer is loaded whole into a fresh `SolverModel`, then every nurse it touched must pass the
+      gate (`gateBreaches`); a failure throws `EncodingDisagreementError` naming the nurse and dates.
 - [x] 4.17 Test: a hand-written response that breaks the rest rule makes decode throw.
 - [x] 4.18 `cpsat/params.ts`: `num_workers: 1`, `random_seed: seed`,
       `max_deterministic_time` from options. *(8 workers with `interleave_search`: still

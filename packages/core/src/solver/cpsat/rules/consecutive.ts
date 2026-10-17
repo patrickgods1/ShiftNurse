@@ -35,7 +35,7 @@ export function encodeConsecutive(ctx: EncodeContext, raw: Record<string, unknow
     for (const e of worked) byDay.set(e.day, [...(byDay.get(e.day) ?? []), e]);
     const first = Math.min(...byDay.keys());
     const last = Math.max(...byDay.keys());
-    const day = (d: number): Expr => dayExpr(byDay.get(d), () => true);
+    const day = (d: number): Expr => dayExpr(byDay.get(d));
     const night = (d: number): Expr => nightExpr(byDay.get(d));
     const name = ctx.name(n);
 
@@ -73,13 +73,16 @@ export function encodeConsecutive(ctx: EncodeContext, raw: Record<string, unknow
   }
 }
 
-function dayExpr(entries: TimelineEntry[] | undefined, keep: (e: TimelineEntry) => boolean): Expr {
+function dayExpr(entries: TimelineEntry[] | undefined): Expr {
   const e = expr();
   if (!entries) return e;
-  // A constant worked shift that day fixes the day; the model creates no variables beside it.
+  // A constant worked shift that day makes it worked, whatever the variables beside it say. A
+  // locked row leaves the nurse no variables that day, but another unit's shift (a constant in
+  // the lookback list, dated in the period) does: she keeps her home variables, which is why
+  // the night count reads `nightExpr`, not the first constant.
   const constant = entries.find((x) => x.literal === null);
-  if (constant) return expr([], keep(constant) ? 1 : 0);
-  for (const x of entries) if (keep(x)) e.terms.push([x.literal!, 1]);
+  if (constant) return expr([], 1);
+  for (const x of entries) e.terms.push([x.literal!, 1]);
   return e;
 }
 

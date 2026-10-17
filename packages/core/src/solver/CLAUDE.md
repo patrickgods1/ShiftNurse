@@ -46,18 +46,26 @@
   period, a deterministic-time budget — its parallel portfolio is faster but not reproducible.
   A runner that is missing, crashes or times out makes the hybrid finish as SA + LNS with
   `fellBackFrom` set; that is a *different schedule*, which is why the ready timeout is generous.
-  Whole-period CP-SAT that reports INFEASIBLE/MODEL_INVALID (`CpsatInfeasibleError`, whose
-  `lockedBreaches` come from `lockedHardViolations`) finishes as SA + LNS on the same seed with
-  `fellBackFrom: cp-sat` naming the locked shifts that already break a hard rule.
+  A runner that fails part-way after windows were applied reports `solver: 'hybrid'` with
+  `fellBackFrom` naming when it stopped. An encoding disagreement (`EncodingDisagreementError`) is
+  never a runner failure: it fails the run.
+  Whole-period CP-SAT that reports INFEASIBLE/MODEL_INVALID (`CpsatInfeasibleError`) is an
+  encoding bug, not the pins' fault: it finishes as SA + LNS on the same seed with
+  `fellBackFrom: cp-sat` and a reason saying so, listing locked shifts that already break a hard
+  rule (`lockedHardViolations`) as context only.
 - **The solver gates removals too.** `SolverModel.isLegal` re-checks a nurse who lost a shift:
   some rules are not monotone under removal. A waived turnaround (night Mon, waived day Tue, day
   Wed, 36 h owed after a night) is legal, but without Tuesday the night sits 24 h before
   Wednesday's day; `long-stretch` is the other. The night cap counts night runs wherever they
   sit, so it is monotone under removal. Any new move that takes a shift from a nurse must
-  re-check them.
+  re-check them. The gate tolerates a hard breach only if every shift it names is locked or in
+  the lookback tail and the locked shifts alone already had the same breach at least as big
+  (`solver/gate.ts`); a pinned problem never freezes a nurse out, and Generate never deepens,
+  merges or trades it.
 - **Solver speed-ups must not change a schedule.** `SolverModel` caches fairness (cleared in
   `count`), staffing per shift and role, prepared rules (`prepareRules`/`evaluatePrepared`) and
   per-nurse rule contexts. `solver/model.test.ts` checks every cached term against a fresh
   rebuild after a random walk of moves and undos. Array order is behaviour (`pickUnlocked` samples
   by index, `ensureCharge` takes the first eligible nurse on the roster), so no swap-removes.
   Check a performance change by hashing SA + LNS output on fixed inputs before and after.
+  Ids are compared by code unit, never `localeCompare` (host locale).

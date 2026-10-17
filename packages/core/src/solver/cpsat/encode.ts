@@ -28,7 +28,7 @@ import { ALL_RULES, resolveConfigs } from '../../rules/registry.js';
 import type { RuleConfig } from '../../rules/types.js';
 import { SolverModel } from '../model.js';
 import { DEFAULT_OBJECTIVE_WEIGHTS, type ObjectiveWeights, type SolveInput } from '../types.js';
-import { CpBuilder } from './builder.js';
+import { CpBuilder, type Expr } from './builder.js';
 import {
   type EncodeContext,
   OBJECTIVE_SCALE,
@@ -91,7 +91,8 @@ export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'
   'no-mandatory-overtime': 'by-construction',
   // Priced in the objective while soft (`weekendPatternTerms`); runs and totals capped when hard.
   'weekend-pattern': encodeWeekendPattern,
-  // Shift scope, so priced at hardShortfall per orientee left without a preceptor.
+  // Shift scope: a unit on the orientee's shift, priced with the shift's other units convexly
+  // (`coverageTerms`).
   'orientee-with-preceptor': encodePreceptor,
   // Not priced while soft; forbidden shifts, pairs and a tour count when hard.
   'tour-rotation': encodeTourRotation,
@@ -189,6 +190,7 @@ export function encodeCpsat(input: SolveInput, options: EncodeOptions = {}): Cps
     }
   }
 
+  const hardUnits: Expr[][] = model.shifts.map(() => []);
   const timelines = new Map<number, TimelineEntry[]>();
   const typeById = new Map(model.shiftTypes.map((t) => [t.id, t]));
   const ctx: EncodeContext = {
@@ -203,6 +205,10 @@ export function encodeCpsat(input: SolveInput, options: EncodeOptions = {}): Cps
     lockedByNurse,
     lockedByShift,
     name: (n) => `${model.nurses[n]!.firstName} ${model.nurses[n]!.lastName}`,
+    hardUnits,
+    addHardUnits(shift, e) {
+      hardUnits[shift.idx]!.push(e);
+    },
     timeline(n) {
       const cached = timelines.get(n);
       if (cached) return cached;

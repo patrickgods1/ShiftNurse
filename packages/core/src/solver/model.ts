@@ -106,6 +106,7 @@ import { isElsewhere } from '../schedule/elsewhere.js';
 import { workedHours } from '../schedule/holdover.js';
 import { floorSegments } from '../schedule/overlap.js';
 import { type AssignmentView, ScheduleView } from '../schedule/view.js';
+import { breachAllowance, isTolerated } from './gate.js';
 import {
   buildShifts,
   costContextFor,
@@ -166,6 +167,14 @@ export type Snapshot = Assignment[];
 
 /** Nurse-scope violation codes the gate ignores: floors reached by construction, not caused by an addition. */
 const FLOOR_CODES = new Set(['under_contracted_hours']);
+
+/**
+ * Ids are opaque; a locale-aware compare makes the search depend on the host's ICU locale (in
+ * Danish `aa` sorts after `ab`), and array order is behaviour.
+ */
+export function compareCodeUnits(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
 
 export class SolverModel {
   readonly input: SolveInput;
@@ -257,7 +266,11 @@ export class SolverModel {
   // re-deriving pay-period buckets, fair shares or preference weights a second way.
   readonly nurseHardIds: readonly string[];
   readonly shiftHardIds: readonly string[];
-  private readonly baselineViolations: number[];
+  // Per nurse: the hard breaches (floors aside) of the locked rows and lookback tail alone, the
+  // largest amount under each of their keys, and the ids that count as pinned (`solver/gate.ts`).
+  private readonly baseline: Violation[][];
+  private readonly allowance: ReadonlyMap<string, number>[];
+  private readonly pinnedIds: ReadonlySet<Id>[];
   // The gate's fixed inputs, built once: the hard rules of each scope, one rule context per
   // nurse and per shift type, one single-day period per shift. Rebuilding them on every check
   // (a spread of the context, a resolve of the rule set) was a fifth of a solve.
@@ -318,6 +331,8 @@ export class SolverModel {
   readonly holidayPrice: number;
   /** Holiday id → date, so a `holiday_appetite` is matched to a shift without a search. */
   private readonly holidayDateById: ReadonlyMap<Id, IsoDate>;
+  /** Per date × role: the largest holiday-volunteer reward on that date (`overTargetPrice`). */
+  private readonly volunteerReward: number[];
   /** Whole days off owed after a night before a day-side shift; 0 while the rule is off. */
   readonly recoveryDays: number;
   /** Points per day-side shift too soon after nights; 0 unless the rule is soft. */
@@ -352,7 +367,7 @@ export class SolverModel {
     this.ruleSet = input.ruleSet;
     this.weights = { ...DEFAULT_OBJECTIVE_WEIGHTS, ...weights };
 
-    this.nurses = [...input.nurses].sort((a, b) => a.id.localeCompare(b.id));
+    this.nurses = [...input.nurses].sort((a, b) => compareCodeUnits(a.id, b.id));
     this.nurseIdx = new Map(this.nurses.map((n, i) => [n.id, i]));
     this.candidates = this.nurses.flatMap((n, i) => (n.active ? [i] : []));
     this.dates = datesInRange(input.period.startDate, input.period.endDate);
@@ -530,6 +545,19 @@ export class SolverModel {
 
     const multipliers = seniorityMultipliers(activeNurses);
     this.seniority = this.nurses.map((nurse) => multipliers.get(nurse.id) ?? 1);
+    // The largest reward `preferencePenalty` could pay a nurse of each role on each date.
+    this.volunteerReward = new Array<number>(this.dates.length * NURSE_ROLES.length).fill(0);
+    for (const pref of input.preferences) {
+      if (pref.kind !== 'holiday_appetite') continue;
+      const nurse = this.nurseIdx.get(pref.nurseId);
+      const holiday = this.holidayDateById.get(pref.holidayId);
+      const d = holiday === undefined ? undefined : this.dateIdx.get(holiday);
+      // A nurse who has left can never be the surplus volunteer, so her wish prices nothing.
+      if (nurse === undefined || d === undefined || !this.nurses[nurse]!.active) continue;
+      const slot = d * NURSE_ROLES.length + ROLE_INDEX[this.nurses[nurse]!.role];
+      const reward = (pref.weight / 2) * this.seniority[nurse]! * this.weights.preference;
+      this.volunteerReward[slot] = Math.max(this.volunteerReward[slot]!, reward);
+    }
 
     // --- State ---
     this.byNurse = Array.from({ length: n }, () => []);
@@ -635,7 +663,13 @@ export class SolverModel {
       if (!a.isLocked) continue;
       this.add(a);
     }
-    this.baselineViolations = this.nurses.map((_, i) => this.countHardViolations(i, null));
+    this.baseline = this.nurses.map((_, i) =>
+      this.evaluateNurse(i, null).hardViolations.filter((v) => !FLOOR_CODES.has(v.code)),
+    );
+    this.allowance = this.baseline.map(breachAllowance);
+    this.pinnedIds = this.nurses.map(
+      (_, i) => new Set([...this.byNurse[i]!, ...this.prior[i]!].map((a) => a.id)),
+    );
 
     // Every cached term from scratch: the adds above refreshed only the shifts and nurses
     // they touched, and an empty shift already owes its whole floor.
@@ -839,27 +873,50 @@ export class SolverModel {
 
   /**
    * Would this nurse's timeline still pass every hard nurse-scope rule with `candidate` on it?
-   * Measured against the violations their locked shifts already carry, so a pinned problem
-   * does not freeze the nurse out of every other shift.
+   * The one exception is a breach the locked shifts already carry: it is tolerated while every
+   * shift it names is locked or in the lookback tail and it is no bigger than the pins alone made
+   * it (`solver/gate.ts`). A pinned problem therefore does not freeze the nurse out of every other
+   * shift, and Generate can never deepen, merge or trade it.
    */
   canAdd(nurseIdx: number, candidate: Assignment): boolean {
-    return this.countHardViolations(nurseIdx, candidate) <= this.baselineViolations[nurseIdx]!;
+    return this.gateBreaches(nurseIdx, candidate).length === 0;
   }
 
   /**
-   * Does this nurse's timeline, as it stands, pass every hard nurse-scope rule (against the same
-   * locked-shift baseline as `canAdd`)? Needed after taking a shift *away*: most rules can only
-   * be broken by adding, but not all — the consecutive-nights limit counts only stretches made
-   * entirely of nights, so removing the day shift from "day + four nights" creates a violation.
+   * Does this nurse's timeline, as it stands, pass every hard nurse-scope rule (tolerating the
+   * same pinned breaches as `canAdd`)? Needed after taking a shift *away*: most rules can only
+   * be broken by adding, but not all — a rule that is not monotone under removal (`long-stretch`,
+   * see packages/core/CLAUDE.md) can be.
    */
   isLegal(nurseIdx: number): boolean {
-    return this.countHardViolations(nurseIdx, null) <= this.baselineViolations[nurseIdx]!;
+    return this.gateBreaches(nurseIdx).length === 0;
+  }
+
+  /**
+   * The hard nurse-scope violations (floors aside) the gate refuses, in the order the rules
+   * emitted them: empty exactly when `canAdd`/`isLegal` would say yes.
+   */
+  gateBreaches(nurseIdx: number, candidate: Assignment | null = null): Violation[] {
+    const hard = this.evaluateNurse(nurseIdx, candidate).hardViolations.filter(
+      (v) => !FLOOR_CODES.has(v.code),
+    );
+    // A nurse whose pins break nothing takes no breach at all — the cheap, common path.
+    if (hard.length === 0 || this.baseline[nurseIdx]!.length === 0) return hard;
+    const allowance = this.allowance[nurseIdx]!;
+    const pinned = this.pinnedIds[nurseIdx]!;
+    return hard.filter((v) => !isTolerated(v, allowance, pinned));
+  }
+
+  /** Is this assignment one of the nurse's pins (a locked row or the lookback tail)? */
+  isPinned(nurseIdx: number, id: Id): boolean {
+    return this.pinnedIds[nurseIdx]!.has(id);
   }
 
   /**
    * The hard nurse-scope violations (floors aside) that involve a locked shift, as the model
-   * stands — on a fresh model, the pins alone. A CP-SAT model can only be infeasible because of
-   * these: a locked shift is a constant there, where this model measures around it instead.
+   * stands — on a fresh model, the pins alone. `CpsatInfeasibleError` carries them as context
+   * when CP-SAT reports INFEASIBLE (an encoding bug, never caused by these), so the desktop's
+   * fallback can still name the locked shifts a manager may want to look at.
    */
   lockedHardViolations(): Violation[] {
     const breaches: Violation[] = [];
@@ -872,14 +929,6 @@ export class SolverModel {
       }
     }
     return breaches;
-  }
-
-  private countHardViolations(nurseIdx: number, candidate: Assignment | null): number {
-    let count = 0;
-    for (const v of this.evaluateNurse(nurseIdx, candidate).hardViolations) {
-      if (!FLOOR_CODES.has(v.code)) count++;
-    }
-    return count;
   }
 
   private evaluateNurse(nurseIdx: number, candidate: Assignment | null) {
@@ -1139,6 +1188,11 @@ export class SolverModel {
    * another's charge nurse. The first unlocked nurse on the roster who `canTakeCharge` gets it —
    * deterministic, and re-run after every change so a removed charge nurse hands the role to
    * whoever is left.
+   *
+   * A lock keeps the charge flag the manager left on it: saving a Generate never rewrites a
+   * locked row (`replaceAssignments`), so flagging a locked nurse here would preview a charge
+   * nurse the saved grid does not have. The cost is an extra nurse to carry the flag when the
+   * only nurse on a pinned shift is unflagged.
    */
   private ensureCharge(shift: Shift): void {
     if (shift.shiftType.isOnCall || shift.shiftType.withinShiftTypeId !== null) return;
@@ -1271,10 +1325,10 @@ export class SolverModel {
         const target = shift.demand.byRole[role].targetCount;
         const staffed = this.staffed(shift, role);
         if (staffed < target) soft += (target - staffed) * this.weights.targetShortfall;
-        else if (staffed > target) soft += (staffed - target) * this.weights.overTarget;
+        else if (staffed > target) soft += (staffed - target) * this.overTargetPrice(shift, role);
       }
     }
-    return hard * this.weights.hardShortfall + soft;
+    return triangular(hard) * this.weights.hardShortfall + soft;
   }
 
   /**
@@ -1402,8 +1456,10 @@ export class SolverModel {
 
   /**
    * Preference weight this shift runs against, seniority-scaled. An imposition (`avoid_*`,
-   * a weekend for someone who wants none) costs the full weight; a missed `prefer_*` costs
-   * half — not getting the shift you like is milder than getting the one you asked not to.
+   * a weekend for someone who wants none) costs the full weight. A missed `prefer_*` is charged
+   * once per kind: if none of her preferred shift types (or weekdays) is this one, half the
+   * strongest of them — not getting the shift you like is milder than getting the one you asked
+   * not to, and stating two preferred days must not make her dearer on either of them.
    * Block-length preferences are not priced: they are a property of the whole timeline, not
    * of one shift, and the fairness ledger already scores them after the fact.
    *
@@ -1421,6 +1477,9 @@ export class SolverModel {
     let penalty = 0;
     if (!st.isOnCall) {
       const weekday = weekdayOf(shift.date);
+      // Per kind: the strongest stated wish, and whether any of them is this shift.
+      let preferShift: { max: number; matched: boolean } | null = null;
+      let preferDay: { max: number; matched: boolean } | null = null;
       const weekend = isWeekendWindow(shiftWindow(shift.date, st), this.ctx.weekendDefinition);
       for (const pref of this.input.preferences) {
         if (pref.nurseId !== nurse.id) continue;
@@ -1429,34 +1488,48 @@ export class SolverModel {
             if (pref.shiftTypeId === st.id) penalty += pref.weight;
             break;
           case 'prefer_shift_type':
-            if (pref.shiftTypeId !== st.id) penalty += pref.weight / 2;
+            preferShift ??= { max: 0, matched: false };
+            preferShift.max = Math.max(preferShift.max, pref.weight);
+            if (pref.shiftTypeId === st.id) preferShift.matched = true;
             break;
           case 'avoid_weekday':
             if (pref.weekday === weekday) penalty += pref.weight;
             break;
           case 'prefer_weekday':
-            if (pref.weekday !== weekday) penalty += pref.weight / 2;
+            preferDay ??= { max: 0, matched: false };
+            preferDay.max = Math.max(preferDay.max, pref.weight);
+            if (pref.weekday === weekday) preferDay.matched = true;
             break;
           case 'weekend_appetite':
             if (pref.level < 0 && weekend) penalty += pref.weight * -pref.level;
             break;
           case 'holiday_appetite':
-            // Half the weight, like a `prefer_*`, and not the full weight: the reward must stay
-            // below what one nurse over a holiday's target costs, or Generate adds a keen
-            // volunteer to a shift that is already staffed. At most 5 / 2 × 1.5 (top seniority)
-            // × 10 = 37.5, under overTarget 8 + a 12h shift at $52 × 0.05 = 31.2 = 39.2; at the
-            // full weight it was 75. That margin rests on pay data at about $50/h or more: with
-            // no pay rates, or a cheaper nurse, an extra volunteer can still come out ahead.
+            // Half the weight, like a `prefer_*`. Its size orders volunteers; a surplus volunteer
+            // is kept off by `overTargetPrice`, which adds the date's largest reward.
             if (this.holidayDateById.get(pref.holidayId) === shift.date) penalty -= pref.weight / 2;
             break;
           case 'preferred_block_length':
             break;
         }
       }
+      if (preferShift && !preferShift.matched) penalty += preferShift.max / 2;
+      if (preferDay && !preferDay.matched) penalty += preferDay.max / 2;
     }
     const value = penalty * this.seniority[n]!;
     this.prefCache.set(key, value);
     return value;
+  }
+
+  /**
+   * Points per nurse of `role` over this shift's target. On a date with a holiday some nurse of
+   * that role wants to work it is `overTarget` plus the largest such reward, so a volunteer added
+   * over target nets at least `overTarget`, with or without pay data, and the reward still orders
+   * volunteers for the places the shift does need. On-call shifts pay no reward, so carry none.
+   */
+  overTargetPrice(shift: Shift, role: NurseRole): number {
+    if (shift.shiftType.isOnCall) return this.weights.overTarget;
+    const extra = this.volunteerReward[shift.dateIdx * NURSE_ROLES.length + ROLE_INDEX[role]]!;
+    return this.weights.overTarget + extra;
   }
 
   /** Straight-time dollars for this nurse on this shift; 0 without pay data. */
@@ -1508,9 +1581,9 @@ export class SolverModel {
     const order = new Map(this.shiftTypes.map((s, i) => [s.id, i]));
     all.sort(
       (a, b) =>
-        a.date.localeCompare(b.date) ||
+        compareCodeUnits(a.date, b.date) ||
         (order.get(a.shiftTypeId) ?? 0) - (order.get(b.shiftTypeId) ?? 0) ||
-        a.nurseId.localeCompare(b.nurseId),
+        compareCodeUnits(a.nurseId, b.nurseId),
     );
     let seq = 0;
     return all.map((a) => (a.isLocked ? a : { ...a, id: `solver-${++seq}` }));
@@ -1521,6 +1594,14 @@ const ROLE_INDEX = Object.fromEntries(NURSE_ROLES.map((role, i) => [role, i])) a
   NurseRole,
   number
 >;
+
+/**
+ * 1 + 2 + … + s: the k-th hard unit short on one shift costs k units (D10), because a manager
+ * and a ratio law treat one shift at half staff as far worse than three running one lean.
+ */
+function triangular(s: number): number {
+  return (s * (s + 1)) / 2;
+}
 
 function spliceOut<T>(list: T[], item: T): void {
   const i = list.indexOf(item);

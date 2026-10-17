@@ -56,6 +56,14 @@ export interface EncodeContext {
   lockedByShift: readonly Assignment[][];
   timeline(n: number): readonly TimelineEntry[];
   name(n: number): string;
+  /**
+   * Shift-scope hard units by `shift.idx`, collected so `coverageTerms` can price each shift's
+   * total convexly, as `SolverModel.coveragePenalty` does (D10) — priced unit by unit, one shift
+   * three short would cost the same as three shifts one short.
+   */
+  hardUnits: readonly Expr[][];
+  /** Register `e` hard units on the shift whose roster the model judges them on. */
+  addHardUnits(shift: Shift, e: Expr): void;
 }
 
 export function hoursOf(shiftType: ShiftType, label: string): number {
