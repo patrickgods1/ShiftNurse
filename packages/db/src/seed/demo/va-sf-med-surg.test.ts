@@ -16,6 +16,7 @@ import {
   restMinutesBetween,
   ScheduleView,
   type ShiftType,
+  type SolveReport,
   shiftWindow,
   solve,
   weekdayOf,
@@ -51,6 +52,22 @@ import { slow } from './slow.test-support.js';
 // A Thursday whose next Sunday (27 September) is not a federal pay-period start.
 const TODAY = isoDate('2026-09-24');
 const f = useDemo('va-sf-med-surg', TODAY);
+
+/**
+ * The next schedule's solve, run once and shared by the tests that read it. Sharing is sound: the
+ * fixture is read-only, the seed and iteration budget are fixed and the solver is deterministic,
+ * so a second solve would return the same report after another ~16 s. Lazy rather than in
+ * `beforeAll` so the many tests that never need it do not pay for it (or its hook timeout).
+ */
+let draftReport: SolveReport | undefined;
+const draftSolve = (): SolveReport =>
+  (draftReport ??= solve(
+    loadPeriodInput(f.handle.db, getPeriod(f.handle.db, f.result.draftPeriodId)!),
+    {
+      seed: 1,
+      maxIterations: 200_000,
+    },
+  ));
 
 /**
  * Straight-rate factor over base for every priced history shift, keyed by date and tour, and the
@@ -710,7 +727,7 @@ describe('the VA San Francisco med-surg demo', () => {
       () => {
         const input = loadPeriodInput(f.handle.db, getPeriod(f.handle.db, f.result.draftPeriodId)!);
         expect(input.incompatibilityGroups).toHaveLength(3);
-        const report = solve(input, { seed: 1, maxIterations: 200_000 });
+        const report = draftSolve();
         expect(
           report.softViolations.filter((v) => v.code === 'incompatible_staff_together'),
         ).toEqual([]);
@@ -1057,7 +1074,7 @@ describe('the VA San Francisco med-surg demo', () => {
       'lets Generate keep both plans on their tours in the next schedule',
       () => {
         const input = loadPeriodInput(f.handle.db, getPeriod(f.handle.db, f.result.draftPeriodId)!);
-        const report = solve(input, { seed: 1, maxIterations: 200_000 });
+        const report = draftSolve();
         expect(report.hardViolations.filter((v) => v.code === 'off_plan_tour')).toEqual([]);
         const shiftCode = new Map(input.shiftTypes.map((s) => [s.id, s.abbreviation]));
         const mine = (id: string) => report.assignments.filter((a) => a.nurseId === id);

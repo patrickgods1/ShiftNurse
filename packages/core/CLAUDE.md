@@ -29,6 +29,8 @@
 
 ## Domain conventions
 
+- `domain/` is the bottom layer (lint-enforced): a type that `entities.ts` needs lives in `domain/`,
+  and other folders import it from there.
 - Rules are data plus a small evaluator in `rules/registry.ts`. A new contract clause is a new
   `Rule` plus a registry entry — the solver, grid and compliance report pick it up for free.
 - **A shift's broken preferences reach the grid.** `fairness/ledger.ts`'s `preferencesBroken`

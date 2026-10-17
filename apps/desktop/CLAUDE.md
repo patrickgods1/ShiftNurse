@@ -113,8 +113,10 @@
   Do not read that as a cache bug in the app.
 - **Adding an IPC method:** add it to `ShiftNurseApi` and `API_CHANNELS` in `shared/api.ts`,
   its argument schema to `shared/schemas/<resource>.ts`, and implement it in `main/api.ts`
-  (logic in the matching `main/api/` module). Preload and renderer types follow; a missing
-  implementation or schema is a type error, not a runtime "no handler". `ipc.ts` parses every
+  (logic in the matching `main/api/` module). Preload and renderer types follow; a method
+  missing from `API_CHANNELS`, `API_SCHEMAS` or `main/api.ts` is a type error
+  (`ApiChannelsAreComplete`, `ApiSchemas`, `ShiftNurseApi`), and `schemas.test.ts` cross-checks
+  the two tables at runtime. `ipc.ts` parses every
   call's arguments against `API_SCHEMAS` before the handler runs: object schemas are strict
   (`object` in `schemas/primitives.ts`), so an unknown key is refused rather than dropped, and a
   schema must never be stricter than what the renderer actually sends.
@@ -125,7 +127,8 @@
   way. Anything the packaged main process imports at runtime must be bundled (so the
   `better-sqlite3` alias applies — `drizzle-orm` is, for exactly that reason) or be a real
   `dependency`. `SHIFTNURSE_SMOKE_SOLVE_TIMEOUT_MS` / `SHIFTNURSE_SMOKE_TIMEOUT_MS` loosen its
-  limits for slow CI runners.
+  limits for slow CI runners. `SHIFTNURSE_TEST_SLOW_SCALE` likewise scales the solver-heavy tests'
+  hang guards (`slow()`) on a slow machine; never raise a literal instead.
 - **Main never seeds the demo on its own.** `openAppDatabase` only migrates; the demo is loaded
   by the welcome screen through `setup.loadDemo` (the test scenarios through
   `setup.loadScenarios`, which main allows only under the electron-vite dev server), and all of

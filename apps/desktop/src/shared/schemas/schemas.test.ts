@@ -4,6 +4,21 @@ import { describe, expect, it } from 'vitest';
 import { API_CHANNELS } from '../api.js';
 import { API_SCHEMAS } from './index.js';
 
+// API_SCHEMAS is the independent source: its type forces it to cover every method on the
+// contract, so a method missing from API_CHANNELS shows up here as a schema with no channel.
+describe('the IPC contract tables', () => {
+  it('offers every method the contract declares, and nothing it does not', () => {
+    expect(Object.keys(API_SCHEMAS).sort(), 'resources in API_SCHEMAS vs API_CHANNELS').toEqual(
+      Object.keys(API_CHANNELS).sort(),
+    );
+    for (const resource of Object.keys(API_SCHEMAS) as (keyof typeof API_SCHEMAS)[]) {
+      expect(Object.keys(API_SCHEMAS[resource]).sort(), resource).toEqual(
+        [...API_CHANNELS[resource]].sort(),
+      );
+    }
+  });
+});
+
 describe.each(Object.keys(API_CHANNELS))('%s', (resource) => {
   const methods = API_CHANNELS[resource as keyof typeof API_CHANNELS] as readonly string[];
   const schemas = API_SCHEMAS[resource as keyof typeof API_SCHEMAS] as Record<string, unknown>;
@@ -14,7 +29,7 @@ describe.each(Object.keys(API_CHANNELS))('%s', (resource) => {
 
   // zod builds an object's shape on first use, so a malformed schema (a field that is not a
   // schema) compiles and passes every test that never parses through it. Parse each once.
-  it('builds every schema without throwing', () => {
+  it('builds every schema, so a malformed one fails here rather than on a manager’s click', () => {
     for (const method of methods) {
       const schema = schemas[method] as { safeParse(value: unknown): unknown };
       expect(() => schema.safeParse([{}, {}, {}]), `${resource}.${method}`).not.toThrow();

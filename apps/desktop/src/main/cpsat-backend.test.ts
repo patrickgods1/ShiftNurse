@@ -17,7 +17,7 @@ import {
   isoDate,
   prepareCpsat,
   type SolveInput,
-  solve,
+  type SolveReport,
 } from '@shiftnurse/core';
 import {
   coverageAllWeek,
@@ -97,64 +97,82 @@ describe.runIf(REQUIRE_RUNNER)('the CP-SAT runner CI requires', () => {
 });
 
 describe.skipIf(RUNNER === undefined)('CP-SAT against the real runner', () => {
-  it('produces a schedule no nurse-level rule objects to', async () => {
-    const { report } = await solveOnce(unitInput(), 11);
-    const nurseLevel = report.hardViolations.filter(
-      (v) => NURSE_SCOPE.has(v.ruleId) && v.code !== 'under_contracted_hours',
-    );
-    expect(nurseLevel.map((v) => v.message)).toEqual([]);
-    expect(report.stats.solver).toBe('cp-sat');
-  }, 60_000);
+  it(
+    'produces a schedule no nurse-level rule objects to',
+    async () => {
+      const { report } = await solveOnce(unitInput(), 11);
+      const nurseLevel = report.hardViolations.filter(
+        (v) => NURSE_SCOPE.has(v.ruleId) && v.code !== 'under_contracted_hours',
+      );
+      expect(nurseLevel.map((v) => v.message)).toEqual([]);
+      expect(report.stats.solver).toBe('cp-sat');
+    },
+    slow(60_000),
+  );
 
-  it('cannot price its own answer better than the schedule deserves', async () => {
-    const input = unitInput();
-    const { job, result, report } = await solveOnce(input, 11);
-    const evaluation = job.encoding.builder.evaluate(
-      decisionsFor(job.encoding, report.assignments),
-      job.encoding.objectiveScale,
-    );
-    expect(evaluation.violated).toEqual([]);
-    // CP-SAT may leave slack in a lower-bounded cost it has not finished minimising, which only
-    // makes its own figure higher. Lower would mean it satisfied the encoding with a cost below
-    // what the schedule actually incurs — an encoding it could game.
-    expect(result.objective).toBeGreaterThanOrEqual(evaluation.objective - 1e-6);
-    // How much slack is left when the deterministic-time budget ends is a matter of search, and
-    // differs between the runner's builds (the Windows one stopped 56 points short on a model
-    // the macOS and Linux ones closed), so it is not asserted. What must hold is that the
-    // annealer's model prices the schedule exactly as the encoding does, to fair-share rounding.
-    expect(report.objective.total).toBeCloseTo(evaluation.objective, 0);
-  }, 60_000);
+  it(
+    'cannot price its own answer better than the schedule deserves',
+    async () => {
+      const input = unitInput();
+      const { job, result, report } = await solveOnce(input, 11);
+      const evaluation = job.encoding.builder.evaluate(
+        decisionsFor(job.encoding, report.assignments),
+        job.encoding.objectiveScale,
+      );
+      expect(evaluation.violated).toEqual([]);
+      // CP-SAT may leave slack in a lower-bounded cost it has not finished minimising, which only
+      // makes its own figure higher. Lower would mean it satisfied the encoding with a cost below
+      // what the schedule actually incurs — an encoding it could game.
+      expect(result.objective).toBeGreaterThanOrEqual(evaluation.objective - 1e-6);
+      // How much slack is left when the deterministic-time budget ends is a matter of search, and
+      // differs between the runner's builds (the Windows one stopped 56 points short on a model
+      // the macOS and Linux ones closed), so it is not asserted. What must hold is that the
+      // annealer's model prices the schedule exactly as the encoding does, to fair-share rounding.
+      expect(report.objective.total).toBeCloseTo(evaluation.objective, 0);
+    },
+    slow(60_000),
+  );
 
-  it('does no worse than the greedy schedule it started from', async () => {
-    const { job, report } = await solveOnce(unitInput(), 11);
-    expect(report.objective.total).toBeLessThanOrEqual(job.seedObjective + 1e-6);
-  }, 60_000);
+  it(
+    'does no worse than the greedy schedule it started from',
+    async () => {
+      const { job, report } = await solveOnce(unitInput(), 11);
+      expect(report.objective.total).toBeLessThanOrEqual(job.seedObjective + 1e-6);
+    },
+    slow(60_000),
+  );
 
-  it('regenerates the identical schedule from the same inputs', async () => {
-    const key = (r: { assignments: { nurseId: string; date: string; shiftTypeId: string }[] }) =>
-      r.assignments.map((a) => `${a.nurseId}|${a.date}|${a.shiftTypeId}`).sort();
-    const first = await solveOnce(unitInput(), 11);
-    resetFixtureCounters();
-    const second = await solveOnce(unitInput(), 11);
-    expect(key(second.report)).toEqual(key(first.report));
-  }, 60_000);
+  it(
+    'regenerates the identical schedule from the same inputs',
+    async () => {
+      const key = (r: { assignments: { nurseId: string; date: string; shiftTypeId: string }[] }) =>
+        r.assignments.map((a) => `${a.nurseId}|${a.date}|${a.shiftTypeId}`).sort();
+      const first = await solveOnce(unitInput(), 11);
+      resetFixtureCounters();
+      const second = await solveOnce(unitInput(), 11);
+      expect(key(second.report)).toEqual(key(first.report));
+    },
+    slow(60_000),
+  );
 });
 
 describe.skipIf(RUNNER === undefined)('the hybrid against the real runner', () => {
   const OPTIONS = { seed: 5, maxIterations: 40_000, runnerPath: RUNNER ?? '' };
+  // Seeded and iteration-bounded, so every run returns the same report; sharing the first spares
+  // each test a ~27 s hybrid run.
+  let first: Promise<SolveReport> | undefined;
+  const hybridOnce = () => (first ??= solveHybrid(unitInput(), OPTIONS));
 
   it(
     'hands windows to CP-SAT and keeps every nurse legal',
     async () => {
-      const report = await solveHybrid(unitInput(), OPTIONS);
+      const report = await hybridOnce();
       expect(report.stats.solver).toBe('hybrid');
       expect(report.stats.windows?.tried).toBeGreaterThan(0);
       const nurseLevel = report.hardViolations.filter(
         (v) => NURSE_SCOPE.has(v.ruleId) && v.code !== 'under_contracted_hours',
       );
       expect(nurseLevel.map((v) => v.message)).toEqual([]);
-      const sa = solve(unitInput(), OPTIONS);
-      console.log('HYBRID', report.objective.total, report.stats.windows, 'SA', sa.objective.total);
     },
     slow(120_000),
   );
@@ -164,10 +182,10 @@ describe.skipIf(RUNNER === undefined)('the hybrid against the real runner', () =
     async () => {
       const key = (r: { assignments: { nurseId: string; date: string; shiftTypeId: string }[] }) =>
         r.assignments.map((a) => `${a.nurseId}|${a.date}|${a.shiftTypeId}`).sort();
-      const first = await solveHybrid(unitInput(), OPTIONS);
+      const shared = await hybridOnce();
       resetFixtureCounters();
       const second = await solveHybrid(unitInput(), OPTIONS);
-      expect(key(second)).toEqual(key(first));
+      expect(key(second)).toEqual(key(shared));
     },
     slow(120_000),
   );

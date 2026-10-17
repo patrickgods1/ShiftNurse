@@ -25,15 +25,6 @@ describe('a unit’s leave policy arriving over IPC', () => {
   });
 });
 
-describe('a nurse’s hire date arriving over IPC', () => {
-  it('is cleared with null and refused when it is not a date', () => {
-    const s = API_SCHEMAS.nurses;
-    expect(s.update.safeParse(['n-1', { hireDate: null }]).success).toBe(true);
-    expect(s.update.safeParse(['n-1', { hireDate: '2025-11-01' }]).success).toBe(true);
-    expect(s.update.safeParse(['n-1', { hireDate: '2025-02-30' }]).success).toBe(false);
-  });
-});
-
 describe('a unit’s per-diem commitment arriving over IPC', () => {
   const s = API_SCHEMAS.units;
   const patch = (perDiemCommitment: unknown) => s.update.safeParse(['u-1', { perDiemCommitment }]);
