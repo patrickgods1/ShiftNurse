@@ -63,6 +63,29 @@ describe('buildGridSheet', () => {
   });
 });
 
+describe('a nurse floated off on the printed grid', () => {
+  it('prints where a floated nurse went and leaves her out of the daily count', () => {
+    resetFixtureCounters();
+    const ann = makeNurse({ id: 'ann', firstName: 'Ann', lastName: 'Lee', employeeId: 'E1' });
+    const bo = makeNurse({ id: 'bo', firstName: 'Bo', lastName: 'Kim', employeeId: 'E2' });
+    const { schedule } = scenario({
+      startDate: '2026-01-04' as never,
+      endDate: '2026-01-04' as never,
+      nurses: [ann, bo],
+      assignments: [
+        assign('ann', DAY_12, '2026-01-04', { floatedTo: '5 East' }),
+        assign('bo', DAY_12, '2026-01-04'),
+      ],
+    });
+    const sheet = buildGridSheet(schedule);
+    const annRow = sheet.rows.find((r) => r.nurse.id === 'ann')!;
+    expect(annRow.cells[0]!.map((s) => s.label)).toEqual(['D12 → 5 East']);
+    // Two rows on the day 12, one of them on 5 East: one head on this floor.
+    const day12 = sheet.dailyCounts.find((c) => c.shiftType.id === DAY_12.id)!;
+    expect(day12.counts).toEqual([1]);
+  });
+});
+
 describe('buildNurseSheets', () => {
   it('gives each rostered nurse their own dated list with times and totals', () => {
     const sheets = buildNurseSheets(twoNurseWeek().schedule);

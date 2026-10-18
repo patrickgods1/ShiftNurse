@@ -6,13 +6,21 @@
  * ones the cost screen would resolve.
  */
 
-import { addDays, defaultRuleSet, isoDate, type SchedulePeriod } from '@shiftnurse/core';
+import {
+  addDays,
+  defaultRuleSet,
+  isoDate,
+  type SchedulePeriod,
+  type SolveInput,
+} from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { seedScenarioUnit } from '../seed/scenarios.js';
 import type { SeedResult } from '../seed/types.js';
 import { createRatioRule, listActiveRatioRulesForUnit, updateRatioRule } from './acuity.js';
+import { createAvailabilityBlock, listAvailabilityBlocks } from './availability-blocks.js';
+import { paidSickCallsForUnit, reportCallOff } from './calloffs.js';
 import {
   createShiftType,
   createUnit,
@@ -26,9 +34,27 @@ import { createOvertimeVolunteer } from './overtime-volunteers.js';
 import { createPayRate, listPayRatesForUnit, savePaySettings } from './pay.js';
 import { createPreceptorship } from './preceptorships.js';
 import { publishSchedule } from './publish.js';
-import { createNurse, listNursesForUnit } from './roster.js';
+import { createRestWaiver, restWaiversForPeriod } from './rest-waivers.js';
+import {
+  createNurse,
+  grantCredential,
+  listCredentials,
+  listNurseCredentialsForUnit,
+  listNursesForUnit,
+  listPreferencesForUnit,
+  replaceNursePreferences,
+} from './roster.js';
 import { saveRuleSet } from './rulesets.js';
-import { archivePeriod, createAssignment, createPeriod, getPeriod } from './schedule.js';
+import {
+  archivePeriod,
+  createAssignment,
+  createPeriod,
+  deleteAssignment,
+  getPeriod,
+  listAssignmentsForPeriodOnDate,
+  listPeriodsForUnit,
+  markFloatedOff,
+} from './schedule.js';
 import {
   costContext,
   historyFromFor,
@@ -36,7 +62,7 @@ import {
   timeOffForPeriod,
   timeOffWindow,
 } from './solve-input.js';
-import { createTimeOffRequest, listTimeOffForUnit } from './timeoff.js';
+import { approveTimeOff, createTimeOffRequest, listTimeOffForUnit } from './timeoff.js';
 
 const ACTOR = 'manager';
 let handle: OpenedDatabase;
@@ -607,7 +633,7 @@ describe('nurses who work on two units', () => {
     expect(busy.map((a) => a.id)).toEqual([planned.id, archivedRow.id]);
   });
 
-  it('puts nurses floated in from 5 West after the home roster, with their own credentials', () => {
+  it('puts nurses floated in from 5 West after the home roster', () => {
     const { west, period } = westWing();
     const fran = floater(west.id, 'W-100');
     createNurseUnit(handle.db, { nurseId: fran.id, unitId: seeded.unitId }, ACTOR);
@@ -619,12 +645,201 @@ describe('nurses who work on two units', () => {
   it('reads a unit nobody floats to exactly as before: its own nurses, no busy time', () => {
     westWing();
     const period = getPeriod(handle.db, seeded.draftPeriodId)!;
+    const unitId = seeded.unitId;
     const input = loadPeriodInput(handle.db, period);
-    expect(input.nurses).toEqual(listNursesForUnit(handle.db, seeded.unitId));
+    expect(input.nurses).toEqual(listNursesForUnit(handle.db, unitId));
     expect(input.shiftTypes.every((t) => !t.id.startsWith('elsewhere:'))).toBe(true);
     expect(input.priorAssignments!.every((a) => !a.shiftTypeId.startsWith('elsewhere:'))).toBe(
       true,
     );
+    expect(input.shiftTypes.every((t) => !t.id.startsWith('floated:'))).toBe(true);
+    expect(input.priorAssignments!.every((a) => !a.shiftTypeId.startsWith('floated:'))).toBe(true);
+    // Today's unit-scoped loaders, in today's order: the solver samples by index.
+    expect(input.availabilityBlocks).toEqual(listAvailabilityBlocks(handle.db, unitId));
+    expect(input.restWaivers).toEqual(
+      restWaiversForPeriod(handle.db, unitId, period.startDate, period.endDate),
+    );
+    expect(input.paidSickCalls).toEqual(
+      paidSickCallsForUnit(handle.db, unitId, {
+        start: addDays(period.startDate, -28),
+        end: period.endDate,
+      }),
+    );
+    expect(input.cost!.payRates).toEqual(listPayRatesForUnit(handle.db, unitId));
+    expect(input.nurseCredentials).toEqual(listNurseCredentialsForUnit(handle.db, unitId));
+    expect(input.preferences).toEqual(listPreferencesForUnit(handle.db, unitId));
+  });
+
+  /**
+   * Fran is homed on 5 West and floats to the seeded unit for the draft. One of each record she
+   * carries is kept on 5 West (or on her), and the two the seeded unit itself records for her.
+   */
+  function franCarriesEverything() {
+    const { west, night, period, mkPeriod } = westWing();
+    const fran = floater(west.id, 'W-100');
+    createNurseUnit(
+      handle.db,
+      {
+        nurseId: fran.id,
+        unitId: seeded.unitId,
+        startDate: addDays(period.startDate, -28),
+        endDate: period.endDate,
+      },
+      ACTOR,
+    );
+    grantCredential(
+      handle.db,
+      { nurseId: fran.id, credentialId: listCredentials(handle.db)[0]!.id },
+      ACTOR,
+    );
+    replaceNursePreferences(
+      handle.db,
+      fran.id,
+      [{ id: 'pref-fran', nurseId: fran.id, kind: 'avoid_weekday', weekday: 0, weight: 1 }],
+      ACTOR,
+    );
+    const leaveDay = addDays(period.startDate, 4);
+    const leave = createTimeOffRequest(
+      handle.db,
+      { nurseId: fran.id, startDate: leaveDay, endDate: leaveDay, type: 'pto', paidHours: 12 },
+      ACTOR,
+    );
+    approveTimeOff(handle.db, leave.id, ACTOR);
+    // A sick call is credited only once her shift is off the schedule.
+    const westPeriod = mkPeriod();
+    const missed = createAssignment(
+      handle.db,
+      { periodId: westPeriod.id, nurseId: fran.id, shiftTypeId: night.id, date: period.startDate },
+      ACTOR,
+    );
+    reportCallOff(handle.db, missed.id, ACTOR, 'Sick', { paidSickHours: 12 });
+    deleteAssignment(handle.db, missed.id, ACTOR);
+    createRestWaiver(
+      handle.db,
+      {
+        unitId: west.id,
+        nurseId: fran.id,
+        date: addDays(period.startDate, 2),
+        reason: 'Asked to work the short turnaround',
+      },
+      ACTOR,
+    );
+    createAvailabilityBlock(
+      handle.db,
+      {
+        unitId: west.id,
+        nurseId: fran.id,
+        weekdays: [5],
+        startTime: '18:00',
+        endTime: '18:00',
+        reason: 'Observes the Sabbath',
+      },
+      ACTOR,
+    );
+    createPayRate(
+      handle.db,
+      { nurseId: fran.id, role: null, hourlyRate: 77, effectiveFrom: isoDate('2020-01-01') },
+      ACTOR,
+    );
+    createOvertimeVolunteer(
+      handle.db,
+      {
+        unitId: seeded.unitId,
+        nurseId: fran.id,
+        startDate: period.startDate,
+        endDate: period.endDate,
+      },
+      ACTOR,
+    );
+    const preceptor = listNursesForUnit(handle.db, seeded.unitId).find(
+      (n) => n.role === 'RN' && !n.isNovice,
+    )!;
+    createPreceptorship(
+      handle.db,
+      {
+        unitId: seeded.unitId,
+        orienteeId: fran.id,
+        preceptorId: preceptor.id,
+        startDate: period.startDate,
+        endDate: period.endDate,
+      },
+      ACTOR,
+    );
+    return { fran, period };
+  }
+
+  it('brings everything a floated-in nurse carries: credentials, preferences, leave, sick pay, waivers, accommodations and her own pay rate', () => {
+    const { fran, period } = franCarriesEverything();
+    const input = loadPeriodInput(handle.db, period);
+    const hers = (rows: readonly { nurseId: string | null }[] | undefined) =>
+      (rows ?? []).filter((r) => r.nurseId === fran.id);
+    expect(hers(input.timeOff)).toHaveLength(1);
+    expect(hers(input.paidSickCalls)).toHaveLength(1);
+    expect(hers(input.nurseCredentials)).toHaveLength(1);
+    expect(hers(input.preferences)).toHaveLength(1);
+    expect(hers(input.restWaivers)).toHaveLength(1);
+    expect(hers(input.availabilityBlocks)).toHaveLength(1);
+    expect(hers(input.overtimeVolunteers)).toHaveLength(1);
+    expect(hers(input.cost!.payRates)).toHaveLength(1);
+    expect(hers(input.cost!.payRates)[0]).toMatchObject({ hourlyRate: 77 });
+    expect(input.preceptorships!.filter((p) => p.orienteeId === fran.id)).toHaveLength(1);
+  });
+
+  it('classifies every field of the solve input as the person’s, the unit’s or the roster’s', () => {
+    type Scope = 'person' | 'recordedHere' | 'unit' | 'roster';
+    // 'unit' lists are unit-scoped by design:
+    // - unit, period, ruleSet, shiftTypes, demand, credentials, shiftCredentialRequirements and
+    //   holidays describe the unit itself (credentials is the catalogue, not who holds what);
+    // - assignments and priorAssignments are this unit's shifts (others' arrive as busy time);
+    // - historyFrom is how far this unit's published history reaches;
+    // - incompatibilityGroups keep apart nurses on this unit's floor;
+    // - holidayWork is this unit's holiday rotation;
+    // - ledgerHistory is this unit's fairness ledger.
+    // 'recordedHere' lists are this unit's own records, which a float may now hold: an offer to
+    // work extra here, an orientation to this unit.
+    const SCOPE = {
+      unit: 'unit',
+      period: 'unit',
+      ruleSet: 'unit',
+      nurses: 'roster',
+      shiftTypes: 'unit',
+      demand: 'unit',
+      assignments: 'unit',
+      priorAssignments: 'unit',
+      historyFrom: 'unit',
+      timeOff: 'person',
+      paidSickCalls: 'person',
+      incompatibilityGroups: 'unit',
+      credentials: 'unit',
+      nurseCredentials: 'person',
+      shiftCredentialRequirements: 'unit',
+      holidays: 'unit',
+      holidayWork: 'unit',
+      overtimeVolunteers: 'recordedHere',
+      preceptorships: 'recordedHere',
+      restWaivers: 'person',
+      availabilityBlocks: 'person',
+      preferences: 'person',
+      ledgerHistory: 'unit',
+      cost: 'person',
+    } as const satisfies Record<keyof SolveInput, Scope>;
+
+    const { fran, period } = franCarriesEverything();
+    const input = loadPeriodInput(handle.db, period);
+    const carried = (Object.keys(SCOPE) as (keyof SolveInput)[]).filter(
+      (k) => SCOPE[k] === 'person' || SCOPE[k] === 'recordedHere',
+    );
+    for (const key of carried) {
+      const rows = (key === 'cost' ? input.cost!.payRates : (input[key] ?? [])) as readonly Record<
+        string,
+        unknown
+      >[];
+      const owner = key === 'preceptorships' ? 'orienteeId' : 'nurseId';
+      expect(
+        rows.some((r) => r[owner] === fran.id),
+        `${key} carries Fran's row`,
+      ).toBe(true);
+    }
   });
 
   describe('how far published history reaches', () => {
@@ -741,5 +956,69 @@ describe('a draft laid over another schedule of the same unit', () => {
     expect(input.priorAssignments!.some((r) => r.shiftTypeId === `elsewhere:${day.id}`)).toBe(
       false,
     );
+  });
+});
+
+describe('a shift the nurse was floated off (D20)', () => {
+  const typeOf = (abbreviation: string) =>
+    listShiftTypesForUnit(handle.db, seeded.unitId).find((t) => t.abbreviation === abbreviation)!;
+
+  /** Ana's row on `shiftTypeId`/`date` in `periodId`, placed if the seed did not. */
+  function anaOn(periodId: string, shiftTypeId: string, date: string) {
+    const [ana] = listNursesForUnit(handle.db, seeded.unitId);
+    const existing = listAssignmentsForPeriodOnDate(handle.db, periodId, isoDate(date)).find(
+      (a) => a.nurseId === ana!.id && a.shiftTypeId === shiftTypeId,
+    );
+    return (
+      existing ??
+      createAssignment(
+        handle.db,
+        { periodId, nurseId: ana!.id, shiftTypeId, date: isoDate(date) },
+        ACTOR,
+      )
+    );
+  }
+
+  it('judges a floated shift as her hours, never this unit’s floor', () => {
+    const draft = getPeriod(handle.db, seeded.draftPeriodId)!;
+    const day = typeOf('D12');
+    const row = anaOn(draft.id, day.id, addDays(draft.startDate, 3));
+    transact(handle.db, (tx) => markFloatedOff(tx, row.id, '5 East', ACTOR));
+    const input = loadPeriodInput(handle.db, draft);
+    expect(input.assignments.some((a) => a.id === row.id)).toBe(false);
+    const busy = input.priorAssignments!.filter((a) => a.id === row.id);
+    expect(busy).toHaveLength(1);
+    expect(busy[0]).toMatchObject({ shiftTypeId: `floated:${day.id}`, isLocked: true });
+    expect(input.shiftTypes.find((t) => t.id === `floated:${day.id}`)).toMatchObject({
+      active: false,
+      elsewhere: true,
+      startTime: '07:00',
+      durationHours: 12,
+    });
+    // The unit's own Day 12 is still there, once, ahead of the copy.
+    expect(input.shiftTypes.filter((t) => t.id === day.id)).toHaveLength(1);
+  });
+
+  it('carries a shift floated off last period as busy time, not cover', () => {
+    const draft = getPeriod(handle.db, seeded.draftPeriodId)!;
+    const lastNight = addDays(draft.startDate, -1);
+    const before = listPeriodsForUnit(handle.db, seeded.unitId).find(
+      (p) => p.status === 'published' && p.endDate === lastNight,
+    )!;
+    const night = typeOf('N12');
+    const row = anaOn(before.id, night.id, lastNight);
+    transact(handle.db, (tx) => markFloatedOff(tx, row.id, '5 East', ACTOR));
+    const input = loadPeriodInput(handle.db, draft);
+    const carried = input.priorAssignments!.filter((a) => a.id === row.id);
+    expect(carried).toHaveLength(1);
+    expect(carried[0]).toMatchObject({
+      shiftTypeId: `floated:${night.id}`,
+      date: lastNight,
+      isLocked: true,
+    });
+    expect(input.shiftTypes.find((t) => t.id === `floated:${night.id}`)).toMatchObject({
+      active: false,
+      elsewhere: true,
+    });
   });
 });

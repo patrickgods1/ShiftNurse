@@ -410,6 +410,7 @@ export function toAssignment(r: typeof s.assignment.$inferSelect): Assignment {
     ...(r.holdoverMinutes > 0
       ? { holdoverMinutes: r.holdoverMinutes, holdoverMandated: r.holdoverMandated ?? false }
       : {}),
+    ...(r.floatedTo !== null ? { floatedTo: r.floatedTo } : {}),
   };
 }
 

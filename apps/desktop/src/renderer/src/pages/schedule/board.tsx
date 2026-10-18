@@ -210,6 +210,8 @@ export function ScheduleBoard({ unitId, period, focusNurseId, leading }: Schedul
   }
 
   const assignments = assignmentsQuery.data;
+  // A floated-off shift is locked and kept for her hours, but Generate neither moves nor fills it.
+  const onFloor = assignments.filter((a) => a.floatedTo === undefined);
   const allAssignments =
     pendingCreates.length > 0 ? [...assignments, ...pendingCreates] : assignments;
   const gridAssignments = preview ? preview.assignments : allAssignments;
@@ -472,9 +474,9 @@ export function ScheduleBoard({ unitId, period, focusNurseId, leading }: Schedul
         onOpenChange={dialogs.setGenerateOpen}
         unitId={unitId}
         period={period}
-        lockedCount={assignments.filter((a) => a.isLocked).length}
+        lockedCount={onFloor.filter((a) => a.isLocked).length}
         undecidedRequests={undecided}
-        unlockedCount={assignments.filter((a) => !a.isLocked).length}
+        unlockedCount={onFloor.filter((a) => !a.isLocked).length}
         batch={batch}
         view={dialogs.generateView}
         onViewChange={dialogs.setGenerateView}

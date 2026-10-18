@@ -17,7 +17,7 @@ import {
   resetFixtureCounters,
   solveInputFrom,
 } from '../testing/fixtures.js';
-import { busyElsewhere, isElsewhere } from './elsewhere.js';
+import { busyElsewhere, floatedOff, isElsewhere, isFloatedOff } from './elsewhere.js';
 
 beforeEach(() => resetFixtureCounters());
 
@@ -156,5 +156,53 @@ describe('a nurse who also works on another unit', () => {
         [],
       );
     }
+  });
+});
+
+describe('a shift the nurse was floated off to another unit', () => {
+  it('turns a shift the nurse was floated off into her busy time on an inactive copy', () => {
+    const busy = floatedOff(
+      [assign('flo', DAY_12, '2026-01-07', { id: 'f1', floatedTo: '5 East', isCharge: true })],
+      [DAY_12, NIGHT_12],
+    );
+    expect(busy.shiftTypes).toEqual([
+      expect.objectContaining({
+        id: 'floated:st-d12',
+        name: 'Day 12 (floated out)',
+        active: false,
+        elsewhere: true,
+        withinShiftTypeId: null,
+      }),
+    ]);
+    expect(busy.assignments).toEqual([
+      expect.objectContaining({
+        id: 'f1',
+        nurseId: 'flo',
+        shiftTypeId: 'floated:st-d12',
+        isLocked: true,
+        isCharge: false,
+        floatedTo: '5 East',
+      }),
+    ]);
+    expect(isFloatedOff(busy.assignments[0]!)).toBe(true);
+  });
+
+  it('refuses a shift that was never floated off', () => {
+    expect(() => floatedOff([assign('flo', DAY_12, '2026-01-07')], [DAY_12])).toThrow(
+      /was not floated off/,
+    );
+    expect(isFloatedOff(assign('flo', DAY_12, '2026-01-07'))).toBe(false);
+  });
+
+  it('copies a shift type once however many floated shifts use it', () => {
+    const busy = floatedOff(
+      [
+        assign('flo', DAY_12, '2026-01-07', { floatedTo: '5 East' }),
+        assign('ann', DAY_12, '2026-01-08', { floatedTo: 'ICU' }),
+      ],
+      [DAY_12],
+    );
+    expect(busy.shiftTypes).toHaveLength(1);
+    expect(busy.assignments).toHaveLength(2);
   });
 });

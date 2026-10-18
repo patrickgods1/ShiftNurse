@@ -101,6 +101,10 @@
   strips it; for `npm run dev` in a VS Code terminal, `unset ELECTRON_RUN_AS_NODE` first.
 - **The preload is CommonJS** (`out/preload/index.cjs`) because a sandboxed preload has no ESM
   loader. Everything else in the app is ESM.
+- **`scheduleViewFor` takes a required `floated: 'busy' | 'worked'`** (D20): a shift the nurse was
+  floated off is busy time when rules judge it and her real shift when anything counts or prices
+  it. The rule is rules → `'busy'`, everything else → `'worked'`; the publish preview and the
+  Generate preview build both views.
 - **`schedule.validate` judges a period by its own `ruleSetId` snapshot, never "latest",**
   and from `loadPeriodInput`, the same input Generate and conflicts read (`ruleContextForInput`),
   so an input added there reaches the grid too. A full pass is cheap enough in main that the grid

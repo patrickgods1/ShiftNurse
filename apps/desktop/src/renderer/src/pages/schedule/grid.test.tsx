@@ -140,6 +140,18 @@ describe('dragging shifts on the schedule grid', () => {
     expect(onMove).not.toHaveBeenCalled();
   });
 
+  it('says where a floated nurse went', () => {
+    const floated = assign(alice.id, DAY_12, '2026-10-05', {
+      isLocked: true,
+      floatedTo: '5 East',
+    });
+    renderGrid([floated]);
+    const chip = within(cell(alice, '2026-10-05')).getByTestId('assignment-chip');
+
+    expect(chip.getAttribute('title')).toContain('Floated to 5 East');
+    expect(chip.getAttribute('aria-label')).toContain(', floated to 5 East');
+  });
+
   it('ignores drops on an archived, read-only schedule', () => {
     const shift = assign(alice.id, DAY_12, '2026-10-05');
     const { onMove } = renderGrid([shift], true);

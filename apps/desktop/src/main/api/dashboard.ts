@@ -4,6 +4,7 @@ import {
   addDays,
   type Id,
   type IsoDate,
+  isFloatedOff,
   type SchedulePeriod,
   type ShiftType,
   today,
@@ -44,6 +45,7 @@ export function onShiftOn(db: DbLike, unitId: Id, date: IsoDate): OnShiftView[] 
     shiftTypes.map((st: ShiftType) => [st.id, { shiftType: st, nurses: [] }]),
   );
   for (const a of listAssignmentsForPeriodOnDate(db, period.id, date)) {
+    if (isFloatedOff(a)) continue; // her hours count, but she is not on this unit's floor
     const view = byShift.get(a.shiftTypeId);
     const nurse = nurses.get(a.nurseId);
     if (view && nurse) view.nurses.push(nurse);
@@ -55,10 +57,8 @@ export function dashboardSummary(db: DbLike, unitId: Id): DashboardSummary {
   const unit = unitOrThrow(db, unitId);
   const now = today();
   const periods = listPeriodsForUnit(db, unitId);
-  // Only nurses still on the unit: someone who has left has no credential to chase, and the
-  // lapsed list beside it already reads active nurses only.
+  // Home nurses only, for the count; the credential lists also cover floats working the unit.
   const activeNurses = listActiveNursesForUnit(db, unitId);
-  const unitNurseIds = new Set(activeNurses.map((n) => n.id));
   const currentDraft = getCurrentDraft(db, unitId);
 
   return {
@@ -75,9 +75,10 @@ export function dashboardSummary(db: DbLike, unitId: Id): DashboardSummary {
     openCallOffs: listCallOffsForUnit(db, unitId, { status: 'open' }).length,
     expiringCredentials: credentialsExpiringBetween(
       db,
+      unitId,
       now,
       addDays(now, CREDENTIAL_LOOKAHEAD_DAYS),
-    ).filter((e) => unitNurseIds.has(e.nurse.id)),
+    ),
     lapsedCredentials: lapsedCredentialsForUnit(db, unitId, now),
     todayOnShift: onShiftOn(db, unitId, now),
   };

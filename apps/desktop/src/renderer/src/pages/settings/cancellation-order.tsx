@@ -18,6 +18,7 @@ import { useUnit, useUnitId } from '../../unit-context.js';
 const ALL_TIERS: readonly CancellationTier[] = [
   'volunteer',
   'agency',
+  'float',
   'overtime',
   'per_diem',
   'rotation',
@@ -28,6 +29,10 @@ const TIER_TEXT: Record<CancellationTier, { label: string; hint: string }> = {
   agency: {
     label: 'Agency and travel nurses',
     hint: 'The unit pays a premium for them; the most junior goes first.',
+  },
+  float: {
+    label: 'Nurses floated in from other units',
+    hint: 'They go back to their home unit before the unit’s own staff.',
   },
   overtime: {
     label: 'Staff on overtime for the shift',

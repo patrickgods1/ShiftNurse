@@ -53,6 +53,11 @@ tags. Each release's notes link here.
 - A shift swap is checked when it is entered, and error messages name nurses and dates instead
   of internal ids.
 - Over-long text, ranges and numbers sent to the app's back end are refused with a clear message.
+- A floated-in nurse's accommodations, own pay rate, rest waivers, sick pay and expiring
+  credentials now count on the unit she floats to.
+- Overtime offers, orientations, rest waivers, missed-break pay, float records and low-census
+  cancellations can be recorded for a nurse floated in, on the days her float membership covers.
+  The missed-break premium is paid once a day, even across two units.
 
 ### Changed
 
@@ -70,6 +75,11 @@ tags. Each release's notes link here.
 - An approved request can only be withdrawn (with a reason), not denied or cancelled.
 - A shift with a recorded holdover cannot be moved, exchanged or covered; clear the holdover on
   Today first. Removing one offers no undo.
+- Floating a nurse out keeps her shift on the schedule, locked and marked with where she went.
+  Her hours still count for rest, overtime and pay, but no longer for this unit's staffing, Today,
+  census or the grid headcount. Floats made before this release were deleted and are not restored.
+- Low-census cancellation sends nurses floated in home before the unit's own staff (new tier
+  "Nurses floated in from other units", after agency; saved orders are updated).
 
 ## [0.1.0] - 2026-10-05
 

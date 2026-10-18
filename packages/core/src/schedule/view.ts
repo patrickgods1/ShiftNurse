@@ -13,6 +13,13 @@
  * flagged `inPeriod: false`. They participate fully in rest, consecutive-shift and hours
  * calculations, but never receive violations of their own and are never named on one — they
  * are history, not something this schedule can fix.
+ *
+ * ## A nurse floated off a shift
+ *
+ * In a counting view (cost, alerts, fairness) a floated-off row (`Assignment.floatedTo`) is the
+ * nurse's work and off this unit's floor: her timeline, her hours and her day keep it, but
+ * `onShift`, `countOnShift` and `rosterAt` leave her out, since she was on another unit's floor.
+ * A judging view never holds one in-period: the loader turns it into `floatedOff` busy time.
  */
 
 import type {
@@ -24,6 +31,7 @@ import type {
   ShiftType,
 } from '../domain/entities.js';
 import { datesInRange, type IsoDate, type ShiftWindow } from '../domain/time.js';
+import { isFloatedOff } from './elsewhere.js';
 import { workedHours, workedWindow } from './holdover.js';
 
 export interface AssignmentView {
@@ -159,6 +167,7 @@ export class ScheduleView {
     if (!this.byDateShiftCache) {
       const dateShift = new Map<string, AssignmentView[]>();
       for (const view of this.periodViews) {
+        if (isFloatedOff(view.assignment)) continue;
         push(dateShift, shiftKey(view.assignment.date, view.assignment.shiftTypeId), view);
       }
       this.byDateShiftCache = dateShift;
@@ -218,6 +227,7 @@ export class ScheduleView {
     if (!this.byDateShiftAllCache) {
       const all = new Map<string, AssignmentView[]>();
       for (const view of this.allViews) {
+        if (isFloatedOff(view.assignment)) continue;
         push(all, shiftKey(view.assignment.date, view.assignment.shiftTypeId), view);
       }
       this.byDateShiftAllCache = all;

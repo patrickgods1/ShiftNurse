@@ -4,24 +4,32 @@
  *
  * Nearly every nursing contract fixes this order, and a manager deciding it at 05:30 by feel is
  * how one nurse ends up sent home every quiet Sunday. The usual order: those who volunteer to go,
- * then agency and travellers (the unit pays a premium for them), then staff on overtime, then per
- * diem, then the unit's own staff in rotation — the nurse cancelled fewest times so far goes
- * first, then whoever was cancelled longest ago, then the most junior. The tiers are the unit's
- * policy and may be reordered; the charge nurse is never cancelled, since someone must run the
- * shift. Within the agency, overtime and per diem tiers the most junior goes first (reverse
- * `seniorityOrder`); volunteers go in the order they offered. Each place carries its reason, as
- * the call-off list's do.
+ * then agency and travellers (the unit pays a premium for them), then nurses floated in from
+ * another unit, then staff on overtime, then per diem, then the unit's own staff in rotation — the
+ * nurse cancelled fewest times so far goes first, then whoever was cancelled longest ago, then the
+ * most junior. A float is borrowed help, so contracts send her back before the unit's own staff
+ * (D21). The tiers are the unit's policy and may be reordered; the charge nurse is never
+ * cancelled, since someone must run the shift. Within the agency, float, overtime and per diem
+ * tiers the most junior goes first (reverse `seniorityOrder`); volunteers go in the order they
+ * offered. Each place carries its reason, as the call-off list's do.
  */
 
 import type { Assignment, Id, Nurse } from '../domain/entities.js';
 import { compareDates, describeDate, type IsoDate } from '../domain/time.js';
 import { seniorityOrder } from '../leave/bidding.js';
 
-export type CancellationTier = 'volunteer' | 'agency' | 'overtime' | 'per_diem' | 'rotation';
+export type CancellationTier =
+  | 'volunteer'
+  | 'agency'
+  | 'float'
+  | 'overtime'
+  | 'per_diem'
+  | 'rotation';
 
 export const DEFAULT_CANCELLATION_TIERS: readonly CancellationTier[] = [
   'volunteer',
   'agency',
+  'float',
   'overtime',
   'per_diem',
   'rotation',
@@ -31,6 +39,8 @@ export const DEFAULT_CANCELLATION_TIERS: readonly CancellationTier[] = [
 export type CancellationHistory = ReadonlyMap<Id, { count: number; lastOn?: IsoDate }>;
 
 export interface CancellationInput {
+  /** The unit whose shift this is; anyone on it homed elsewhere is floated in. */
+  unitId: Id;
   /** The shift's roster for the role being reduced. */
   onShift: readonly { nurse: Nurse; assignment: Assignment }[];
   tiers: readonly CancellationTier[];
@@ -101,6 +111,15 @@ export function cancellationOrder(input: CancellationInput): CancellationOrder {
       case 'agency':
         for (const e of juniorFirst(open().filter((e) => e.nurse.employmentType === 'agency'))) {
           place(e, tier, 'Agency staff are cancelled before the unit’s own.');
+        }
+        break;
+      case 'float':
+        for (const e of juniorFirst(open().filter((e) => e.nurse.unitId !== input.unitId))) {
+          place(
+            e,
+            tier,
+            'Floated in from another unit; floated-in nurses go back before the unit’s own staff.',
+          );
         }
         break;
       case 'overtime':

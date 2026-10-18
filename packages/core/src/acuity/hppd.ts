@@ -16,6 +16,7 @@
 
 import type { Assignment, HppdTarget, ShiftType } from '../domain/entities.js';
 import type { IsoDate } from '../domain/time.js';
+import { isFloatedOff } from '../schedule/elsewhere.js';
 import type { DemandTable } from './demand.js';
 
 export interface HppdDay {
@@ -41,7 +42,7 @@ export interface HppdInput {
   dates: readonly IsoDate[];
   shiftTypes: readonly ShiftType[];
   demand: DemandTable;
-  assignments: readonly Pick<Assignment, 'date' | 'shiftTypeId'>[];
+  assignments: readonly Pick<Assignment, 'date' | 'shiftTypeId' | 'floatedTo'>[];
   target?: HppdTarget;
 }
 
@@ -53,6 +54,8 @@ export function scheduledHppd(input: HppdInput): HppdReport {
 
   const hoursByDate = new Map<IsoDate, number>();
   for (const a of input.assignments) {
+    // Floated to another unit: those hours are that unit's nursing care.
+    if (isFloatedOff(a)) continue;
     const shiftType = byId.get(a.shiftTypeId);
     if (shiftType === undefined) throw new Error(`Unknown shift type ${a.shiftTypeId}`);
     if (shiftType.isOnCall) continue;

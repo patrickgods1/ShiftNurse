@@ -53,6 +53,7 @@ export const AssignmentChip = memo(function AssignmentChip({
   const color = shiftType?.color ?? '#9aa2b1';
   const titleParts: string[] = [];
   if (assignment.isLocked) titleParts.push('Locked');
+  if (assignment.floatedTo !== undefined) titleParts.push(`Floated to ${assignment.floatedTo}`);
   if (highlighted) titleParts.push('Differs from the draft');
   if (violations.length > 0) titleParts.push(...violations.map((v) => v.message));
   if (preferenceNote) titleParts.push(preferenceNote);
@@ -78,7 +79,7 @@ export const AssignmentChip = memo(function AssignmentChip({
       title={title}
       aria-label={`${shiftType?.abbreviation ?? 'Shift'} on ${assignment.date}${
         assignment.isLocked ? ', locked' : ''
-      }${assignment.isCharge ? ', charge nurse' : ''}${hard ? ', hard violation' : soft ? ', soft violation' : ''}${
+      }${assignment.floatedTo !== undefined ? `, floated to ${assignment.floatedTo}` : ''}${assignment.isCharge ? ', charge nurse' : ''}${hard ? ', hard violation' : soft ? ', soft violation' : ''}${
         highlighted ? ', differs from the draft' : ''
       }${preferenceNote ? ', against a stated preference' : ''}${
         heldNote ? `, ${heldNote.toLowerCase()}` : ''
@@ -115,6 +116,7 @@ export const AssignmentChip = memo(function AssignmentChip({
       style={{ backgroundColor: color, color: readableTextColor(color) }}
     >
       <span className="truncate">{shiftType?.abbreviation ?? '?'}</span>
+      {assignment.floatedTo !== undefined ? <span className="ml-0.5">→</span> : null}
       {assignment.isLocked ? <span className="ml-0.5">🔒</span> : null}
       {assignment.isCharge ? (
         <span className="absolute -bottom-1 -right-1 rounded-full bg-surface px-1 text-xs font-bold text-text">

@@ -14,7 +14,12 @@ import { createShiftType, createUnit } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
-import { createAssignment, createPeriod, listAssignmentsForPeriod } from './schedule.js';
+import {
+  createAssignment,
+  createPeriod,
+  listAssignmentsForPeriod,
+  markFloatedOff,
+} from './schedule.js';
 import {
   approvedTimeOffInRange,
   approveTimeOff,
@@ -604,6 +609,75 @@ describe('the request lifecycle', () => {
       '2026-03-01',
       '2026-03-10',
       '2026-03-20',
+    ]);
+  });
+});
+
+describe('approving leave over a day she was floated off', () => {
+  it('keeps a shift she was floated off when leave is approved over that day', () => {
+    const shiftTypeId = createShiftType(
+      handle.db,
+      {
+        unitId,
+        name: 'Day 12',
+        abbreviation: 'D12',
+        startTime: '07:00',
+        durationHours: 12,
+        isNight: false,
+        isOnCall: false,
+        color: '#0ea5e9',
+        sortOrder: 1,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+    const rules = transact(handle.db, (tx) =>
+      saveRuleSet(
+        tx,
+        {
+          unitId,
+          name: 'Default',
+          weekendDefinition: {
+            startWeekday: 6,
+            startMinute: 0,
+            durationMinutes: 2880,
+            mode: 'starts_within',
+          },
+          fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+          configs: [],
+        },
+        ACTOR,
+      ),
+    );
+    const periodId = createPeriod(
+      handle.db,
+      {
+        unitId,
+        name: 'Feb',
+        startDate: isoDate('2026-02-01'),
+        endDate: isoDate('2026-02-14'),
+        ruleSetId: rules.id,
+        ruleSetVersion: rules.version,
+      },
+      ACTOR,
+    ).id;
+    const ana = mkNurse('Ana');
+    const place = (date: string) =>
+      createAssignment(
+        handle.db,
+        { periodId, nurseId: ana, shiftTypeId, date: isoDate(date), source: 'manual' },
+        ACTOR,
+      );
+    const floated = place('2026-02-03');
+    const ordinary = place('2026-02-04');
+    transact(handle.db, (tx) => markFloatedOff(tx, floated.id, '5 East', ACTOR));
+    const req = request(ana, '2026-02-03', '2026-02-04');
+    const result = transact(handle.db, (tx) => approveTimeOffAndLiftAssignments(tx, req.id, ACTOR));
+    // She worked the 3rd on 5 East: that is a record of hours, not a shift the leave frees.
+    expect(result.lifted.map((a) => a.id)).toEqual([ordinary.id]);
+    expect(result.stillRostered).toEqual([]);
+    expect(listAssignmentsForPeriod(handle.db, periodId)).toEqual([
+      expect.objectContaining({ id: floated.id, floatedTo: '5 East', isLocked: true }),
     ]);
   });
 });

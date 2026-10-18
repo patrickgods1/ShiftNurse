@@ -13,7 +13,8 @@ import { and, asc, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
-import { nurse as nurseTable, preceptorship as table } from '../schema.js';
+import { preceptorship as table } from '../schema.js';
+import { requireWorksOnUnit } from './nurse-units.js';
 import { type PatchKeys, patchOf } from './patch.js';
 
 const ENTITY = 'preceptorship';
@@ -133,11 +134,9 @@ function validate(db: DbLike, record: Preceptorship): void {
     throw new Error('The orientation ends before it starts');
   }
   for (const nurseId of [record.orienteeId, record.preceptorId]) {
-    const row = db
-      .select({ unitId: nurseTable.unitId })
-      .from(nurseTable)
-      .where(eq(nurseTable.id, nurseId))
-      .get();
-    if (!row || row.unitId !== record.unitId) throw new Error('That nurse is not on this unit');
+    requireWorksOnUnit(db, nurseId, record.unitId, {
+      start: record.startDate,
+      end: record.endDate,
+    });
   }
 }

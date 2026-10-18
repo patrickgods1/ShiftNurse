@@ -4,12 +4,16 @@
  * change at all — including the lock toggle, which skips the change log on purpose.
  */
 
-import { type Assignment, addDays, isoDate } from '@shiftnurse/core';
+import { type Assignment, addDays, isoDate, weekdayOf } from '@shiftnurse/core';
 import {
   archivePeriod,
   createAssignment,
+  createAvailabilityBlock,
   createIncompatibilityGroup,
+  createNurse,
+  createNurseUnit,
   createPeriod,
+  createUnit,
   getPeriod,
   listAssignmentsForPeriod,
   listChanges,
@@ -335,6 +339,80 @@ describe('nurses kept apart, as the grid judges them', () => {
       ),
     );
     expect(together()).toEqual([]);
+  });
+});
+
+describe('a nurse floated in from another unit, as the grid judges her', () => {
+  it('keeps a floated nurse’s Sabbath off on the unit she floats to', () => {
+    const { db } = f.handle;
+    const draft = getPeriod(db, f.seeded.draftPeriodId)!;
+    const west = createUnit(
+      db,
+      {
+        name: '5 West',
+        unitType: 'ICU',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    const fran = createNurse(
+      db,
+      {
+        unitId: west.id,
+        employeeId: 'W-100',
+        firstName: 'Fran',
+        lastName: 'Float',
+        role: 'RN',
+        employmentType: 'full_time',
+        fte: 1,
+        contractedHoursPerPeriod: 72,
+        seniorityDate: isoDate('2020-01-01'),
+        isChargeEligible: false,
+        isNovice: false,
+        isFloatEligible: true,
+        active: true,
+      },
+      ACTOR,
+    );
+    createNurseUnit(
+      db,
+      {
+        nurseId: fran.id,
+        unitId: f.seeded.unitId,
+        startDate: draft.startDate,
+        endDate: draft.endDate,
+      },
+      ACTOR,
+    );
+    // Recorded on her home unit, where accommodations live; it applies wherever she works.
+    createAvailabilityBlock(
+      db,
+      {
+        unitId: west.id,
+        nurseId: fran.id,
+        weekdays: [5],
+        startTime: '18:00',
+        endTime: '18:00',
+        reason: 'Observes the Sabbath',
+      },
+      ACTOR,
+    );
+    let saturday = draft.startDate;
+    while (weekdayOf(saturday) !== 6) saturday = addDays(saturday, 1);
+    expect(f.day).toMatchObject({ startTime: '07:00', durationHours: 12 });
+    api.createAssignment({
+      periodId: draft.id,
+      nurseId: fran.id,
+      shiftTypeId: f.day.id,
+      date: saturday,
+    });
+    // The block runs Fri 18:00 to Sat 18:00; the day shift runs Sat 07:00-19:00, 11 h inside it.
+    const hits = api
+      .validate(draft.id)
+      .result.hardViolations.filter((v) => v.code === 'works_during_accommodation');
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.nurseIds).toEqual([fran.id]);
   });
 });
 

@@ -204,6 +204,27 @@ describe('checkStaffing', () => {
   });
 });
 
+describe('checkStaffing with a nurse floated off', () => {
+  it('leaves a nurse floated to another unit out of the shift’s staffing', () => {
+    resetFixtureCounters();
+    const nurses = [makeNurse(), makeNurse(), makeNurse()];
+    const assignments: Assignment[] = [
+      assign(nurses[0]!.id, DAY_12, DATE),
+      assign(nurses[1]!.id, DAY_12, DATE),
+      assign(nurses[2]!.id, DAY_12, DATE, { floatedTo: '5 East' }),
+    ];
+    const [check] = checkStaffing({
+      date: DATE,
+      shiftTypes: [DAY_12],
+      nurses,
+      assignments,
+      demand: baseDemand({ coverageRequirements: coverageAllWeek(DAY_12, 'RN', 2, 2) }),
+    });
+    // Three on the shift, one sent to 5 East: two on this floor.
+    expect(check!.byRole.RN.staffed).toBe(2);
+  });
+});
+
 describe('checkStaffing with a licensed-nurse ratio', () => {
   it('reads two RNs and one LVN as one licensed nurse short of four', () => {
     resetFixtureCounters();

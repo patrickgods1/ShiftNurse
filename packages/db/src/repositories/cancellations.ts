@@ -22,12 +22,8 @@ import { and, asc, eq, gte } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
-import {
-  cancellationPolicy,
-  nurse as nurseTable,
-  schedulePeriod,
-  shiftCancellation as table,
-} from '../schema.js';
+import { cancellationPolicy, schedulePeriod, shiftCancellation as table } from '../schema.js';
+import { requireWorksOnUnit } from './nurse-units.js';
 
 const POLICY = 'cancellation_policy';
 const ENTITY = 'shift_cancellation';
@@ -159,12 +155,8 @@ export function recordShiftCancellation(
     .where(eq(schedulePeriod.id, input.periodId))
     .get();
   if (!period) throw new Error(`Period ${input.periodId} not found`);
-  const nurse = db
-    .select({ unitId: nurseTable.unitId })
-    .from(nurseTable)
-    .where(eq(nurseTable.id, input.nurseId))
-    .get();
-  if (!nurse || nurse.unitId !== period.unitId) throw new Error('That nurse is not on this unit');
+  // A float on the unit that day is sent home here too; she is on the census roster (D21).
+  requireWorksOnUnit(db, input.nurseId, period.unitId, { start: input.date, end: input.date });
 
   const record: ShiftCancellation = {
     id: ids.shiftCancellation(),

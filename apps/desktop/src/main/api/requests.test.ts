@@ -282,12 +282,14 @@ describe('shift exchanges', () => {
       date: addDays(date, 1),
     });
     const before = api().exchange.list(f.seeded.unitId);
+    // Ids are random, so a fixed index could be Ann herself and trip the self-exchange check.
+    const third = f.rns.find((n) => n.id !== ann.id && n.id !== bea.id)!;
 
     expect(() =>
       api().exchange.propose(draft(), {
         kind: 'giveaway',
         requestingNurseId: ann.id,
-        counterpartyNurseId: f.rns[2]!.id,
+        counterpartyNurseId: third.id,
         offeredAssignmentId: beasShift.id,
       }),
     ).toThrow(

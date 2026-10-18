@@ -95,6 +95,95 @@ describe('float records', () => {
     expect(listFloatRecords(handle.db, unitId, isoDate('2025-01-01'))).toEqual([early, mid, late]);
   });
 
+  it('refuses to record a float for a nurse who is not on the unit that day', () => {
+    const west = createUnit(
+      handle.db,
+      {
+        name: '5 West',
+        unitType: 'Medical-Surgical',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    const zed = createNurse(
+      handle.db,
+      {
+        unitId: west.id,
+        employeeId: nextEmployeeId(),
+        firstName: 'Zed',
+        lastName: 'Test',
+        role: 'RN',
+        employmentType: 'full_time',
+        fte: 1,
+        contractedHoursPerPeriod: 72,
+        seniorityDate: isoDate('2020-01-01'),
+        isChargeEligible: false,
+        isNovice: false,
+        isFloatEligible: true,
+        active: true,
+      },
+      ACTOR,
+    );
+    expect(() =>
+      createFloatRecord(
+        handle.db,
+        {
+          unitId,
+          nurseId: zed.id,
+          date: isoDate('2026-10-06'),
+          shiftTypeId,
+          toUnit: '4B Telemetry',
+          volunteered: false,
+        },
+        ACTOR,
+      ),
+    ).toThrow(/Zed Test is not on 4 West's roster on Tue Oct 6/);
+  });
+
+  it('refuses a shift that is not the unit’s own', () => {
+    const west = createUnit(
+      handle.db,
+      {
+        name: '5 West',
+        unitType: 'Medical-Surgical',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    const foreign = createShiftType(
+      handle.db,
+      {
+        unitId: west.id,
+        name: 'Day 8',
+        abbreviation: 'D8',
+        startTime: '07:00',
+        durationHours: 8,
+        isNight: false,
+        isOnCall: false,
+        color: '#f59e0b',
+        sortOrder: 1,
+        active: true,
+      },
+      ACTOR,
+    );
+    expect(() =>
+      createFloatRecord(
+        handle.db,
+        {
+          unitId,
+          nurseId,
+          date: isoDate('2026-10-06'),
+          shiftTypeId: foreign.id,
+          toUnit: '4B Telemetry',
+          volunteered: false,
+        },
+        ACTOR,
+      ),
+    ).toThrow(/not one of 4 West's shifts/);
+  });
+
   it('records the nurse’s objection and audits it with the record as it stood', () => {
     const record = float('2026-10-06');
     const updated = recordFloatObjection(

@@ -5,11 +5,15 @@
  * unit's `SolveInput` in plain Node; a second copy there would have been a second, drifting
  * definition of what the solver is given. It is only reads: mostly the repositories' own,
  * composed, plus the one query no repository owns, `periodTailFor`'s same-unit overlap.
+ * `perNurseRecordsFor` is the only source of person-scoped records (credentials, leave, pay
+ * rates and the rest), so a nurse floated in brings hers wherever every caller reads them.
  */
 
 import {
   type Assignment,
+  type AvailabilityBlock,
   addDays,
+  type BusyElsewhere,
   busyElsewhere,
   type CostContext,
   compareDates,
@@ -17,18 +21,23 @@ import {
   datesInRange,
   deriveDemand,
   type FairnessLedgerEntry,
+  floatedOff,
   groupsForPeriod,
   type HolidayWorkRecord,
   historyCompleteFrom,
   type Id,
   type IsoDate,
+  isFloatedOff,
   type MaxHoursParams,
   maxHoursRule,
   type Nurse,
   type NurseCredential,
   type PaidLeaveCredit,
+  type PaidSickCall,
+  type PayRate,
   type Preference,
   paidLeaveCredits,
+  type RestWaiver,
   type RuleSet,
   type SchedulePeriod,
   type ShiftType,
@@ -41,8 +50,8 @@ import type { DbLike } from '../client.js';
 import { toAssignment } from '../mappers.js';
 import { assignment, schedulePeriod } from '../schema.js';
 import { getHppdTarget, listActiveRatioRulesForUnit, listAcuityTiersForUnit } from './acuity.js';
-import { listAvailabilityBlocks } from './availability-blocks.js';
-import { paidSickCallsForUnit } from './calloffs.js';
+import { availabilityBlocksElsewhere, listAvailabilityBlocks } from './availability-blocks.js';
+import { paidSickCallsElsewhere, paidSickCallsForUnit } from './calloffs.js';
 import { listCensusForecastsInRange } from './census.js';
 import {
   getUnit,
@@ -60,10 +69,11 @@ import {
   getPaySettings,
   listActiveDifferentials,
   listActiveOvertimeRules,
+  listPayRatesForNurses,
   listPayRatesForUnit,
 } from './pay.js';
 import { listPreceptorshipsOverlapping } from './preceptorships.js';
-import { restWaiversForPeriod } from './rest-waivers.js';
+import { restWaiversElsewhere, restWaiversForPeriod } from './rest-waivers.js';
 import {
   listCredentials,
   listNurseCredentials,
@@ -201,9 +211,14 @@ export function costContext(
   const params = (maxHours?.params ?? maxHoursRule.defaultParams) as Partial<MaxHoursParams>;
   const holidays = listHolidaysForUnit(db, unitId);
   const pay = getPaySettings(db, unitId);
+  const unit = unitOrThrow(db, unitId);
+  // A priced period prices its whole roster, floats included, at their own rates and leave.
+  const records = period
+    ? perNurseRecordsFor(db, unit, period, rosterForPeriod(db, period))
+    : undefined;
   return {
-    unit: unitOrThrow(db, unitId),
-    payRates: listPayRatesForUnit(db, unitId),
+    unit,
+    payRates: records ? records.payRates : listPayRatesForUnit(db, unitId),
     differentials: listActiveDifferentials(db, unitId),
     overtimeRules: listActiveOvertimeRules(db, unitId),
     holidayDates: new Set<IsoDate>(holidays.map((h) => h.date)),
@@ -213,18 +228,19 @@ export function costContext(
     premiumStacking: pay.premiumStacking,
     holidayPayCoversOvertime: pay.holidayPayCoversOvertime,
     ...(params.paidLeaveCountsTowardOvertime
-      ? { overtimeLeave: overtimeLeave(db, unitId, period) }
+      ? {
+          overtimeLeave: records
+            ? overtimeLeave(records.timeOff, records.paidSickCalls)
+            : overtimeLeave(listTimeOffForUnit(db, unitId), paidSickCallsForUnit(db, unitId)),
+        }
       : {}),
   };
 }
 
 /** Paid leave by nurse, for a contract that counts it toward overtime. */
-function overtimeLeave(db: DbLike, unitId: Id, period?: SchedulePeriod) {
+function overtimeLeave(timeOff: readonly TimeOffRequest[], paidSickCalls: readonly PaidSickCall[]) {
   const byNurse = new Map<Id, PaidLeaveCredit[]>();
-  const credits = paidLeaveCredits(
-    period ? timeOffForPeriod(db, unitOrThrow(db, unitId), period) : listTimeOffForUnit(db, unitId),
-    paidSickCallsForUnit(db, unitId),
-  );
+  const credits = paidLeaveCredits(timeOff, paidSickCalls);
   for (const c of credits) byNurse.set(c.nurseId, [...(byNurse.get(c.nurseId) ?? []), c]);
   return byNurse;
 }
@@ -275,29 +291,76 @@ export function rosterForPeriod(
   ];
 }
 
+/** What each nurse brings wherever they work, read for this period's roster. */
+export interface PerNurseRecords {
+  nurseCredentials: NurseCredential[];
+  preferences: Preference[];
+  timeOff: TimeOffRequest[];
+  paidSickCalls: PaidSickCall[];
+  restWaivers: RestWaiver[];
+  availabilityBlocks: AvailabilityBlock[];
+  payRates: PayRate[];
+}
+
 /**
- * What a floated-in nurse brings that the unit-scoped lists miss, because those join through the
- * nurse's home unit: their credentials (a float nurse would otherwise read as holding none),
- * preferences, and the leave requests their home unit approved. Empty with no floats.
+ * The single source of person-scoped records for a period: the rows this unit's loaders read
+ * today, in today's order, then what the roster brings from elsewhere. A unit nobody floats to,
+ * whose nurses have nothing recorded on another unit, reads exactly as before.
+ *
+ * Every unit-scoped read joins through the nurse's home unit (or the unit a row was recorded
+ * on), so without the brought part a floated-in nurse's accommodation, rate, waiver and sick
+ * pay would never reach Generate, the grid, cost or alerts here. Home parts come first and
+ * unchanged because the solver samples by index; the brought parts only append.
  */
-export function floatExtras(
+export function perNurseRecordsFor(
   db: DbLike,
   unit: Pick<Unit, 'id' | 'payPeriodDays'>,
   period: SchedulePeriod,
   nurses: readonly Nurse[],
-): {
-  nurseCredentials: NurseCredential[];
-  preferences: Preference[];
-  timeOff: TimeOffRequest[];
-} {
-  const { start, end } = timeOffWindow(unit, period);
+): PerNurseRecords {
   const floats = nurses.filter((n) => n.unitId !== unit.id);
+  const ids = nurses.map((n) => n.id);
+  // From the lookback tail on, as far as the weekly rules read.
+  const tail = elsewhereWindow(period);
+  const leave = timeOffWindow(unit, period);
   return {
-    nurseCredentials: floats.flatMap((n) => listNurseCredentials(db, n.id)),
-    preferences: floats.flatMap((n) => listPreferencesForNurse(db, n.id)),
-    timeOff: floats
-      .flatMap((n) => listTimeOffForNurse(db, n.id))
-      .filter((r) => compareDates(r.startDate, end) <= 0 && compareDates(r.endDate, start) >= 0),
+    nurseCredentials: [
+      ...listNurseCredentialsForUnit(db, unit.id),
+      ...floats.flatMap((n) => listNurseCredentials(db, n.id)),
+    ],
+    preferences: [
+      ...listPreferencesForUnit(db, unit.id),
+      ...floats.flatMap((n) => listPreferencesForNurse(db, n.id)),
+    ],
+    timeOff: [
+      ...timeOffForPeriod(db, unit, period),
+      ...floats
+        .flatMap((n) => listTimeOffForNurse(db, n.id))
+        .filter(
+          (r) =>
+            compareDates(r.startDate, leave.end) <= 0 && compareDates(r.endDate, leave.start) >= 0,
+        ),
+    ],
+    paidSickCalls: [
+      ...paidSickCallsForUnit(db, unit.id, tail),
+      ...paidSickCallsElsewhere(db, unit.id, ids, tail),
+    ],
+    restWaivers: [
+      ...restWaiversForPeriod(db, unit.id, period.startDate, period.endDate),
+      ...restWaiversElsewhere(db, unit.id, ids, period.startDate, period.endDate),
+    ],
+    // A recurring window is judged against any date, so every block is the input, not a range.
+    availabilityBlocks: [
+      ...listAvailabilityBlocks(db, unit.id),
+      ...availabilityBlocksElsewhere(db, unit.id, ids),
+    ],
+    payRates: [
+      ...listPayRatesForUnit(db, unit.id),
+      ...listPayRatesForNurses(
+        db,
+        floats.map((n) => n.id),
+      ),
+    ],
   };
 }
 
@@ -316,19 +379,56 @@ export function periodTailFor(
   const overlap = sameUnitOverlap(db, period, nurseIds);
   const { start, end } = elsewhereWindow(period);
   const elsewhere = busyElsewhereFor(db, period.unitId, nurseIds, start, end);
+  const before = priorAssignmentsBefore(
+    db,
+    period.unitId,
+    period.startDate,
+    PRIOR_ASSIGNMENT_LOOKBACK_DAYS,
+  );
+  // A night floated off the day before would otherwise read, on its real type, as this unit's
+  // cover carried into the first morning. Each is swapped for its copy in place, so the tail
+  // keeps its order and a tail with no floats is exactly as before.
+  const floated = before.some(isFloatedOff)
+    ? floatedOff(before.filter(isFloatedOff), listShiftTypesForUnit(db, period.unitId))
+    : undefined;
+  const copyById = new Map(floated?.assignments.map((a) => [a.id, a]));
   return {
     priorAssignments: [
-      ...priorAssignmentsBefore(
-        db,
-        period.unitId,
-        period.startDate,
-        PRIOR_ASSIGNMENT_LOOKBACK_DAYS,
-      ),
+      ...before.map((a) => copyById.get(a.id) ?? a),
       ...overlap.assignments,
       ...elsewhere.assignments,
     ],
-    shiftTypes: [...overlap.shiftTypes, ...elsewhere.shiftTypes],
+    shiftTypes: uniqueById([
+      ...overlap.shiftTypes,
+      ...elsewhere.shiftTypes,
+      ...(floated?.shiftTypes ?? []),
+    ]),
   };
+}
+
+/**
+ * A period's rows as rules judge them (D20): this unit's own, and floated-off shifts as busy time.
+ */
+export function splitFloatedOff(
+  rows: readonly Assignment[],
+  shiftTypes: readonly ShiftType[],
+): { onUnit: Assignment[]; busy: BusyElsewhere } {
+  return {
+    onUnit: rows.filter((a) => !isFloatedOff(a)),
+    busy: floatedOff(rows.filter(isFloatedOff), shiftTypes),
+  };
+}
+
+/** First of each id kept: a copy type met twice (tail and period) is one type. */
+export function uniqueById<T extends { id: Id }>(items: readonly T[]): T[] {
+  const seen = new Set<Id>();
+  const out: T[] = [];
+  for (const t of items) {
+    if (seen.has(t.id)) continue;
+    seen.add(t.id);
+    out.push(t);
+  }
+  return out;
 }
 
 /**
@@ -376,33 +476,31 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
   const demand = demandInputs(db, unitId, period.startDate, period.endDate);
   const unit = unitOrThrow(db, unitId);
   const nurses = rosterForPeriod(db, period);
-  const floats = floatExtras(db, unit, period, nurses);
+  const records = perNurseRecordsFor(db, unit, period, nurses);
   const tail = periodTailFor(db, period, nurses);
-  const timeOff = [...timeOffForPeriod(db, unit, period), ...floats.timeOff];
+  // A floated-off shift is never this unit's own row (SA and CP-SAT count locked in-period rows
+  // on the floor); it rides with the tail as her busy time.
+  const split = splitFloatedOff(listAssignmentsForPeriod(db, period.id), demand.shiftTypes);
   return {
     unit,
     period,
     ruleSet,
     nurses,
     // Busy-time shift types are inactive: demand, coverage and the solvers leave them alone.
-    shiftTypes: [...demand.shiftTypes, ...tail.shiftTypes],
+    shiftTypes: uniqueById([...demand.shiftTypes, ...tail.shiftTypes, ...split.busy.shiftTypes]),
     demand: deriveDemand(datesInRange(period.startDate, period.endDate), demand).all(),
-    assignments: listAssignmentsForPeriod(db, period.id),
+    assignments: split.onUnit,
     // Busy time rides with the lookback tail: judged by every nurse rule, never moved.
-    priorAssignments: tail.priorAssignments,
+    priorAssignments: [...tail.priorAssignments, ...split.busy.assignments],
     historyFrom: historyFromFor(db, period),
-    timeOff,
-    // From the lookback tail on, as far as the weekly rules read.
-    paidSickCalls: paidSickCallsForUnit(db, unitId, {
-      start: addDays(period.startDate, -PRIOR_ASSIGNMENT_LOOKBACK_DAYS),
-      end: period.endDate,
-    }),
+    timeOff: records.timeOff,
+    paidSickCalls: records.paidSickCalls,
     credentials: listCredentials(db),
-    nurseCredentials: [...listNurseCredentialsForUnit(db, unitId), ...floats.nurseCredentials],
+    nurseCredentials: records.nurseCredentials,
     shiftCredentialRequirements: listShiftCredentialRequirementsForUnit(db, unitId),
     holidays: listHolidaysForUnit(db, unitId),
     holidayWork: holidayWorkForPeriod(db, period),
-    preferences: [...listPreferencesForUnit(db, unitId), ...floats.preferences],
+    preferences: records.preferences,
     ledgerHistory: ledgerHistory(db, unitId, period.startDate),
     // Only groups that can apply to this period (its first morning shares the night before),
     // so ending an unrelated group does not make Generate's candidates stale.
@@ -427,11 +525,10 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
       addDays(period.startDate, -PRIOR_ASSIGNMENT_LOOKBACK_DAYS),
       period.endDate,
     ),
-    restWaivers: restWaiversForPeriod(db, unitId, period.startDate, period.endDate),
-    // A recurring window is judged against any date, so the whole unit's list is the input.
-    availabilityBlocks: listAvailabilityBlocks(db, unitId),
+    restWaivers: records.restWaivers,
+    availabilityBlocks: records.availabilityBlocks,
     cost: {
-      payRates: listPayRatesForUnit(db, unitId),
+      payRates: records.payRates,
       differentials: listActiveDifferentials(db, unitId),
       overtimeRules: listActiveOvertimeRules(db, unitId),
     },

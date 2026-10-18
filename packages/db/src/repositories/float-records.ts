@@ -2,8 +2,9 @@
  * Float records: each nurse sent off the unit to work another, and any objection she raised.
  *
  * The float rotation in core's `floatOrder` is only fair if it can see who was floated before,
- * so every float is a row of its own — one that outlives the home shift it removed, which is why
- * it carries the shift's identity rather than a foreign key. An objection (not competent on the
+ * so every float is a row of its own — kept beside the shift, which stays on the schedule marked
+ * `floatedTo`, and carrying the shift's identity rather than a foreign key, since the shift can
+ * still be removed if the float was entered by mistake. An objection (not competent on the
  * receiving unit, say) is kept on the record and never stops the float; it is what the nurse's
  * representative asks for afterwards, so recording one is audited with the record as it stood.
  */
@@ -13,7 +14,8 @@ import { and, asc, eq, gte } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
-import { floatRecord as table } from '../schema.js';
+import { shiftType, floatRecord as table, unit as unitTable } from '../schema.js';
+import { requireWorksOnUnit } from './nurse-units.js';
 
 const ENTITY = 'float_record';
 
@@ -55,6 +57,20 @@ export function createFloatRecord(
 ): FloatRecord {
   const toUnit = input.toUnit.trim();
   if (!toUnit) throw new Error('Name the unit the nurse is floated to');
+  requireWorksOnUnit(db, input.nurseId, input.unitId, { start: input.date, end: input.date });
+  const ownShift = db
+    .select({ id: shiftType.id })
+    .from(shiftType)
+    .where(and(eq(shiftType.id, input.shiftTypeId), eq(shiftType.unitId, input.unitId)))
+    .get();
+  if (!ownShift) {
+    const unit = db
+      .select({ name: unitTable.name })
+      .from(unitTable)
+      .where(eq(unitTable.id, input.unitId))
+      .get();
+    throw new Error(`That shift is not one of ${unit?.name ?? 'that unit'}'s shifts.`);
+  }
   const objection = input.objection?.trim();
   const record: FloatRecord = {
     id: ids.floatRecord(),

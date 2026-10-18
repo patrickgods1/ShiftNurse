@@ -18,6 +18,8 @@ import {
   listFloatNurses,
   listNurseUnitsForNurse,
   listNurseUnitsForUnit,
+  nurseWorksOnUnit,
+  requireWorksOnUnit,
   updateNurseUnit,
 } from './nurse-units.js';
 import { createNurse } from './roster.js';
@@ -217,5 +219,74 @@ describe('who floats into a unit for a period', () => {
     expect(
       busyElsewhereFor(handle.db, home, [nurse.id], isoDate('2026-10-04'), isoDate('2026-11-14')),
     ).toEqual({ shiftTypes: [], assignments: [] });
+  });
+});
+
+describe('who works on a unit', () => {
+  let fran: Nurse;
+  const day = (d: string) => ({ start: isoDate(d), end: isoDate(d) });
+  beforeEach(() => {
+    fran = mkNurse(west, 'Fran');
+    createNurseUnit(
+      handle.db,
+      {
+        nurseId: fran.id,
+        unitId: home,
+        startDate: isoDate('2026-03-01'),
+        endDate: isoDate('2026-03-31'),
+      },
+      ACTOR,
+    );
+  });
+
+  it('counts the home unit on any day', () => {
+    expect(
+      nurseWorksOnUnit(handle.db, nurse.id, home, {
+        start: isoDate('1999-01-01'),
+        end: isoDate('2099-12-31'),
+      }),
+    ).toBe(true);
+  });
+
+  it('counts a float only on the days her membership covers', () => {
+    expect(nurseWorksOnUnit(handle.db, fran.id, home, day('2026-03-10'))).toBe(true);
+    expect(nurseWorksOnUnit(handle.db, fran.id, home, day('2026-02-28'))).toBe(false);
+    expect(
+      nurseWorksOnUnit(handle.db, fran.id, home, {
+        start: isoDate('2026-03-25'),
+        end: isoDate('2026-04-02'),
+      }),
+    ).toBe(false);
+  });
+
+  it('counts an open-ended membership from its first day on', () => {
+    const [m] = listNurseUnitsForNurse(handle.db, fran.id);
+    updateNurseUnit(handle.db, m!.id, { endDate: null }, ACTOR);
+    expect(nurseWorksOnUnit(handle.db, fran.id, home, day('2027-01-01'))).toBe(true);
+    expect(nurseWorksOnUnit(handle.db, fran.id, home, day('2026-02-28'))).toBe(false);
+  });
+
+  it('refuses in words naming the nurse, the unit and the day', () => {
+    expect(() => requireWorksOnUnit(handle.db, fran.id, home, day('2026-04-02'))).toThrow(
+      "Fran Test is not on 4 West's roster on Thu Apr 2; add a float membership covering that day under Roster.",
+    );
+  });
+
+  it('refuses a stretch in words naming the whole range', () => {
+    expect(() =>
+      requireWorksOnUnit(handle.db, fran.id, home, {
+        start: isoDate('2026-03-25'),
+        end: isoDate('2026-04-02'),
+      }),
+    ).toThrow("is not on 4 West's roster for every day of");
+  });
+
+  it('says so when the nurse or the unit is unknown', () => {
+    expect(() => requireWorksOnUnit(handle.db, 'nope', home, day('2026-03-10'))).toThrow(
+      'That nurse is not on the roster.',
+    );
+    expect(() => requireWorksOnUnit(handle.db, fran.id, 'nope', day('2026-03-10'))).toThrow(
+      'That unit does not exist.',
+    );
   });
 });

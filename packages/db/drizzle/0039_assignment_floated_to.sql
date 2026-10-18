@@ -1,0 +1,1 @@
+ALTER TABLE `assignment` ADD `floated_to` text;

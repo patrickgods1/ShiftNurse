@@ -337,7 +337,8 @@
   pool through `SolverModel.shortRoles` (LPN first). A census cancellation shares the pool's
   slack between RNs and LVNs (`overstaffedRoles`), LVNs first.
 - **Sending staff home follows the unit's cancellation order.** `dayof/cancellation.ts`'s
-  `cancellationOrder` ranks volunteers, agency, overtime, per diem, then a rotation (fewest
+  `cancellationOrder` ranks volunteers, agency, nurses floated in (D21: borrowed help goes back
+  first; a float is anyone homed off `input.unitId`), overtime, per diem, then a rotation (fewest
   cancellations, longest ago, most junior); the charge nurse is never cancelled. Main cancels only
   the next in order, and the removal is logged under the change source `'census'`.
 - **Floating a nurse out follows the contract's order.** `dayof/float-order.ts`'s `floatOrder` ranks
@@ -345,6 +346,9 @@
   longest ago, most junior); the charge nurse, a nurse not float-eligible and an orientee are never
   floated. A volunteered float does not count against the rotation. An objection is recorded on the
   `FloatRecord` and never bars the float. Main floats only the first, logged under source `'float'`.
+  The floated shift stays on the schedule marked `floatedTo` (D20): `floatedOff` turns it into busy
+  time for judging, and the floor counts (`ScheduleView.onShift`/`rosterAt`, `checkStaffing`,
+  HPPD) skip it, while hours and pay keep it.
 - **Another unit's shifts are busy time, not this unit's.** `schedule/elsewhere.ts`'s
   `busyElsewhere` copies the other unit's shift types as inactive `elsewhere:<id>` types and its
   shifts as locked rows in `priorAssignments`, so every nurse rule judges them and nothing staffs,
@@ -355,7 +359,8 @@
   laid over a published period), as `elsewhere:` busy time named "… on another <unit> schedule";
   `periodTailFor` is the one loader. Float members
   (`nurse_unit`, migration 0024) join the roster *after* the home nurses — order is behaviour — with
-  their own leave, credentials and preferences (`rosterForPeriod`, `floatExtras`).
+  everything that is theirs wherever they work: credentials, preferences, leave, sick pay, rest
+  waivers, accommodations and their own pay rate (`rosterForPeriod`, `perNurseRecordsFor`).
 - **An orientee works with their preceptor.** `rules/preceptor.ts` (`orientee-with-preceptor`,
   hard, shift scope, on by default and silent without preceptorships) counts a preceptor on the
   shift or on the one it runs inside; standby is not judged. CP-SAT prices it as a unit on the

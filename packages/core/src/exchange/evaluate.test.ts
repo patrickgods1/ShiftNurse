@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Assignment, Id } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
+import { floatedOff } from '../schedule/elsewhere.js';
 import {
   assign,
   census,
@@ -333,6 +334,26 @@ describe('evaluateExchange', () => {
 
     expect(() => evaluateExchange(input)).toThrow(
       'That shift is outside this schedule period; only this period’s shifts can be exchanged.',
+    );
+  });
+
+  it('says a shift she was floated off cannot be traded, rather than calling it history', () => {
+    resetFixtureCounters();
+    const ann = makeNurse({ firstName: 'Ann', lastName: 'Lee' });
+    const bea = makeNurse({ firstName: 'Bea', lastName: 'Ng' });
+    const tuesday = { ...assign(ann.id, DAY_12, '2026-01-06'), floatedTo: '5 East' };
+    // As the loader hands it over: busy time in the tail, on an inactive copy type.
+    const busy = floatedOff([tuesday], [DAY_12]);
+    const base = solveInputFrom({ startDate: START, endDate: END, nurses: [ann, bea] });
+    const input: ExchangeInput = {
+      ...base,
+      shiftTypes: [...base.shiftTypes, ...busy.shiftTypes],
+      priorAssignments: busy.assignments,
+      proposal: giveaway(tuesday, bea.id),
+    };
+
+    expect(() => evaluateExchange(input)).toThrow(
+      'Ann Lee was floated to 5 East for that shift; it cannot be traded.',
     );
   });
 

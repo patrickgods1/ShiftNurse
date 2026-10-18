@@ -16,6 +16,7 @@ import {
   defaultRuleSet,
   type Id,
   type IsoDate,
+  isFloatedOff,
   type Nurse,
   type RuleSet,
   type SchedulePeriod,
@@ -41,7 +42,9 @@ import {
   PRIOR_ASSIGNMENT_LOOKBACK_DAYS,
   periodTailFor,
   rosterForPeriod,
+  splitFloatedOff,
   timeOffForPeriod,
+  uniqueById,
 } from '@shiftnurse/db';
 
 /**
@@ -105,6 +108,20 @@ export interface ScheduleViewOptions {
    * scheduled (fairness counters, the ledger written at publish).
    */
   lookback: boolean;
+  /**
+   * How a shift the nurse was floated off (D20) reads. Rules judge it as busy time; everything
+   * else counts it as the real shift. The wrong choice either puts her on this unit's floor for
+   * validation or drops her pay from cost, so every caller decides: rules → `'busy'`, everything
+   * else → `'worked'`.
+   *
+   * - `'busy'`: for judging rules (grid validation). The period's floated-off rows, always read
+   *   from the database, ride in the tail as `floatedOff` busy time; any floated row in
+   *   `assignments` is dropped.
+   * - `'worked'`: for counting and pricing (cost, alerts, fairness, ledger, print). The period's
+   *   floated-off rows are in-period with their real types, which the view's floor queries skip;
+   *   with `assignments` (a candidate) they are appended after its own rows, minus any duplicate id.
+   */
+  floated: 'busy' | 'worked';
   /** Already loaded by the caller; loaded here otherwise. */
   nurses?: Nurse[];
   shiftTypes?: ShiftType[];
@@ -123,15 +140,36 @@ export function scheduleViewFor(
   // never flagged or drawn as this period's chips (the grid lists `periods.assignments`, not the
   // view). A counting view (no lookback) leaves it out: none of it is this period's work.
   const tail = options.lookback ? periodTailFor(db, period, nurses) : undefined;
+  const shiftTypes = options.shiftTypes ?? listShiftTypesForUnit(db, period.unitId);
+  const stored = listAssignmentsForPeriod(db, period.id);
+  if (options.floated === 'busy') {
+    // Busy time in every judging view, lookback or not: her hours that day are in-period dates.
+    const { busy } = splitFloatedOff(stored, shiftTypes);
+    const prior = [...(tail?.priorAssignments ?? []), ...busy.assignments];
+    return new ScheduleView({
+      period,
+      assignments: (options.assignments ?? stored).filter((a) => !isFloatedOff(a)),
+      ...(prior.length > 0 || tail ? { priorAssignments: prior } : {}),
+      nurses,
+      shiftTypes: uniqueById([...shiftTypes, ...(tail?.shiftTypes ?? []), ...busy.shiftTypes]),
+    });
+  }
+  // A candidate never holds a floated row (the solver never sees one as its own), but they are
+  // the period's real work, so they ride along.
+  let assignments = stored;
+  if (options.assignments) {
+    const own = new Set(options.assignments.map((a) => a.id));
+    assignments = [
+      ...options.assignments,
+      ...stored.filter((a) => isFloatedOff(a) && !own.has(a.id)),
+    ];
+  }
   return new ScheduleView({
     period,
-    assignments: options.assignments ?? listAssignmentsForPeriod(db, period.id),
+    assignments,
     ...(tail ? { priorAssignments: tail.priorAssignments } : {}),
     nurses,
-    shiftTypes: [
-      ...(options.shiftTypes ?? listShiftTypesForUnit(db, period.unitId)),
-      ...(tail?.shiftTypes ?? []),
-    ],
+    shiftTypes: uniqueById([...shiftTypes, ...(tail?.shiftTypes ?? [])]),
   });
 }
 

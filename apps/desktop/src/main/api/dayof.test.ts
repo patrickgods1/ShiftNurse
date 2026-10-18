@@ -23,11 +23,13 @@ import {
   listShiftTypesForUnit,
   publishSchedule,
   recordActualCensus,
+  updateNurse,
   updateUnit,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ACTOR } from './context.js';
 import { dayOfApi } from './dayof.js';
+import { floatOutApi } from './float-out.js';
 import { scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
 
@@ -40,6 +42,121 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   f.handle.close();
+});
+
+describe('a nurse floated to another unit', () => {
+  it('leaves a nurse floated to another unit off the shift’s roster on Today', () => {
+    const date = addDays(f.seeded.draftStart, 4);
+    const slot = () =>
+      dayOfApi(f.handle.db)
+        .today(f.seeded.unitId, date)
+        .shifts.find((s) => s.date === date && s.shiftType.id === f.day.id)!;
+    // Nobody is on yet: build the shift, read it, then float the first nurse off.
+    for (const nurse of f.rns) updateNurse(f.handle.db, nurse.id, { isFloatEligible: true }, ACTOR);
+    for (const nurse of f.rns) {
+      scheduleApi(f.handle.db).createAssignment({
+        periodId: f.seeded.draftPeriodId,
+        nurseId: nurse.id,
+        shiftTypeId: f.day.id,
+        date,
+      });
+    }
+    const before = slot();
+    expect(before.roster).toHaveLength(f.rns.length);
+    const request = {
+      periodId: f.seeded.draftPeriodId,
+      date,
+      shiftTypeId: f.day.id,
+      role: 'RN' as const,
+      volunteers: [],
+    };
+    const first = floatOutApi(f.handle.db).order(request).order[0]!;
+    floatOutApi(f.handle.db).send({
+      ...request,
+      nurseId: first.nurseId,
+      toUnit: '5 East',
+      reason: 'Floated to 5 East',
+    });
+
+    const after = slot();
+    expect(after.roster.map((r) => r.nurse.id)).not.toContain(first.nurseId);
+    expect(after.roster).toHaveLength(f.rns.length - 1);
+    expect(after.staffing.byRole.RN.staffed).toBe(before.staffing.byRole.RN.staffed - 1);
+  });
+});
+
+describe('a call-off against a floated shift', () => {
+  it('refuses a call-off for a nurse already floated off, and leaves her shift alone', () => {
+    const date = addDays(f.seeded.draftStart, 4);
+    for (const nurse of f.rns) updateNurse(f.handle.db, nurse.id, { isFloatEligible: true }, ACTOR);
+    for (const nurse of f.rns) {
+      scheduleApi(f.handle.db).createAssignment({
+        periodId: f.seeded.draftPeriodId,
+        nurseId: nurse.id,
+        shiftTypeId: f.day.id,
+        date,
+      });
+    }
+    const request = {
+      periodId: f.seeded.draftPeriodId,
+      date,
+      shiftTypeId: f.day.id,
+      role: 'RN' as const,
+      volunteers: [],
+    };
+    const first = floatOutApi(f.handle.db).order(request).order[0]!;
+    floatOutApi(f.handle.db).send({
+      ...request,
+      nurseId: first.nurseId,
+      toUnit: '5 East',
+      reason: 'Floated to 5 East',
+    });
+    const row = listAssignmentsForPeriod(f.handle.db, f.seeded.draftPeriodId).find(
+      (a) => a.nurseId === first.nurseId && a.date === date,
+    )!;
+
+    expect(() => dayOfApi(f.handle.db).reportCallOff(row.id, 'sick')).toThrow(
+      /was floated to 5 East for this shift; she is not on this unit's shift/,
+    );
+    expect(getAssignment(f.handle.db, row.id)).toMatchObject({ floatedTo: '5 East' });
+  });
+});
+
+describe('a backfill for a nurse floated after her call-off', () => {
+  it('refuses to backfill a call-off whose nurse was floated off', () => {
+    const date = addDays(f.seeded.draftStart, 4);
+    for (const nurse of f.rns) updateNurse(f.handle.db, nurse.id, { isFloatEligible: true }, ACTOR);
+    for (const nurse of f.rns) {
+      scheduleApi(f.handle.db).createAssignment({
+        periodId: f.seeded.draftPeriodId,
+        nurseId: nurse.id,
+        shiftTypeId: f.day.id,
+        date,
+      });
+    }
+    const request = {
+      periodId: f.seeded.draftPeriodId,
+      date,
+      shiftTypeId: f.day.id,
+      role: 'RN' as const,
+      volunteers: [],
+    };
+    const first = floatOutApi(f.handle.db).order(request).order[0]!;
+    const row = listAssignmentsForPeriod(f.handle.db, f.seeded.draftPeriodId).find(
+      (a) => a.nurseId === first.nurseId && a.date === date,
+    )!;
+    const callOff = dayOfApi(f.handle.db).reportCallOff(row.id, 'sick');
+    floatOutApi(f.handle.db).send({
+      ...request,
+      nurseId: first.nurseId,
+      toUnit: '5 East',
+      reason: 'Floated to 5 East',
+    });
+    const other = f.rns.find((n) => n.id !== first.nurseId)!;
+
+    expect(() => dayOfApi(f.handle.db).backfill(callOff.id, other.id)).toThrow(/floated to/);
+    expect(getAssignment(f.handle.db, row.id)).toMatchObject({ floatedTo: '5 East' });
+  });
 });
 
 describe('backfilling a call-off', () => {

@@ -36,10 +36,15 @@ export { alertsFor };
 export function publishPreview(db: DbLike, periodId: Id): PublishPreview {
   const period = periodOrThrow(db, periodId);
   const ruleSet = ruleSetFor(db, period);
-  const schedule = scheduleViewFor(db, period, { lookback: true });
+  // Two views of one schedule (D20): rules judge a floated-off shift as busy time, alerts count it.
+  const schedule = scheduleViewFor(db, period, { lookback: true, floated: 'worked' });
   const latest = latestVersion(db, periodId);
   const diff = pendingDiff(db, periodId);
-  const { result } = validateView(db, period, schedule);
+  const { result } = validateView(
+    db,
+    period,
+    scheduleViewFor(db, period, { lookback: true, floated: 'busy' }),
+  );
   return {
     period,
     latestVersion: latest,
@@ -68,7 +73,11 @@ export async function publish(
     const period = periodOrThrow(tx, periodId);
     // Counted again here, by the verdict the preview used: the count she reviewed may be stale,
     // and a schedule that goes out broken must carry her reason on the record.
-    const judged = validateView(tx, period, scheduleViewFor(tx, period, { lookback: true }));
+    const judged = validateView(
+      tx,
+      period,
+      scheduleViewFor(tx, period, { lookback: true, floated: 'busy' }),
+    );
     const count = judged.result.hardViolations.length;
     const s = count === 1 ? '' : 's';
     if (count > 0 && acknowledged !== count) {
@@ -81,7 +90,7 @@ export async function publish(
     const codes = [...new Set(judged.result.hardViolations.map((v) => v.code))].sort();
     const ruleSet = ruleSetFor(tx, period);
     // No lookback: the ledger records what this period scheduled.
-    const schedule = scheduleViewFor(tx, period, { lookback: false });
+    const schedule = scheduleViewFor(tx, period, { lookback: false, floated: 'worked' });
     // The ledger takes what was actually scheduled, derived by the same `deriveCounters`
     // that scores fairness and imports history, so all three agree on what a weekend is.
     const present = new Set(schedule.assignments().map((v) => v.nurse.id));
@@ -115,7 +124,7 @@ export async function publish(
 /** Exported for the smoke test, which renders a real PDF in main without a save dialog. */
 export function outputInput(db: DbLike, periodId: Id): OutputInput {
   const period = periodOrThrow(db, periodId);
-  const schedule = scheduleViewFor(db, period, { lookback: true });
+  const schedule = scheduleViewFor(db, period, { lookback: true, floated: 'worked' });
   return {
     schedule,
     ctx: {

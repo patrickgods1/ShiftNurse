@@ -14,7 +14,7 @@ import type {
   PaidSickCall,
 } from '@shiftnurse/core';
 import { dayNumber, MS_PER_DAY } from '@shiftnurse/core';
-import { and, desc, eq, gte, lt, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lt, lte, ne, sql } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
@@ -294,7 +294,37 @@ export function paidSickCallsForUnit(
   unitId: Id,
   range: { start?: IsoDate; end?: IsoDate } = {},
 ): PaidSickCall[] {
-  return listCallOffsForUnit(db, unitId, range)
+  return creditedSickCalls(db, listCallOffsForUnit(db, unitId, range));
+}
+
+/**
+ * These nurses' paid sick calls on other units' periods, dated in `range`, for
+ * `perNurseRecordsFor`: a float's sick day on her home unit counts toward her hours here too.
+ */
+export function paidSickCallsElsewhere(
+  db: DbLike,
+  unitId: Id,
+  nurseIds: readonly Id[],
+  range: { start?: IsoDate; end?: IsoDate } = {},
+): PaidSickCall[] {
+  if (nurseIds.length === 0) return [];
+  const conditions = [ne(schedulePeriod.unitId, unitId), inArray(callOff.nurseId, [...nurseIds])];
+  if (range.start !== undefined) conditions.push(gte(callOff.date, range.start));
+  if (range.end !== undefined) conditions.push(lte(callOff.date, range.end));
+  const rows = db
+    .select({ callOff })
+    .from(callOff)
+    .innerJoin(schedulePeriod, eq(callOff.periodId, schedulePeriod.id))
+    .where(and(...conditions))
+    .orderBy(callOff.date, callOff.reportedAt, sql`call_off.rowid`)
+    .all()
+    .map((r) => toCallOff(r.callOff));
+  return creditedSickCalls(db, rows);
+}
+
+/** The one definition of which call-offs credit sick pay, so both readers change together. */
+function creditedSickCalls(db: DbLike, callOffs: readonly CallOff[]): PaidSickCall[] {
+  return callOffs
     .filter((c) => (c.paidSickHours ?? 0) > 0 && getAssignment(db, c.assignmentId) === undefined)
     .map((c) => ({ nurseId: c.nurseId, date: c.date, hours: c.paidSickHours! }));
 }

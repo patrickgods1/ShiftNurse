@@ -91,7 +91,7 @@ export function validateView(
 
 export function buildScheduleValidation(db: DbLike, periodId: Id): ScheduleValidation {
   const period = periodOrThrow(db, periodId);
-  return validateView(db, period, scheduleViewFor(db, period, { lookback: true }));
+  return validateView(db, period, scheduleViewFor(db, period, { lookback: true, floated: 'busy' }));
 }
 
 export interface ChangeLogEntry {

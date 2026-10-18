@@ -6,10 +6,11 @@
  */
 
 import { addDays } from '@shiftnurse/core';
-import { publishSchedule } from '@shiftnurse/db';
+import { publishSchedule, updateNurse } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ACTOR } from './context.js';
 import { dashboardSummary, onShiftOn } from './dashboard.js';
+import { floatOutApi } from './float-out.js';
 import { periodsApi, scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
 
@@ -47,6 +48,40 @@ describe("the dashboard's on-shift-today list", () => {
     const onShift = onShiftOn(f.handle.db, f.seeded.unitId, date);
     const names = onShift.flatMap((v) => v.nurses.map((n) => n.id));
     expect(names).toEqual([ann.id]);
+  });
+
+  it('does not list a floated nurse as on shift today', () => {
+    const date = addDays(f.seeded.draftStart, 2);
+    for (const nurse of f.rns) updateNurse(f.handle.db, nurse.id, { isFloatEligible: true }, ACTOR);
+    for (const nurse of f.rns) {
+      scheduleApi(f.handle.db).createAssignment({
+        periodId: f.seeded.draftPeriodId,
+        nurseId: nurse.id,
+        shiftTypeId: f.day.id,
+        date,
+      });
+    }
+    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    const request = {
+      periodId: f.seeded.draftPeriodId,
+      date,
+      shiftTypeId: f.day.id,
+      role: 'RN' as const,
+      volunteers: [],
+    };
+    const first = floatOutApi(f.handle.db).order(request).order[0]!;
+    floatOutApi(f.handle.db).send({
+      ...request,
+      nurseId: first.nurseId,
+      toUnit: '5 East',
+      reason: 'Floated to 5 East',
+    });
+
+    const ids = onShiftOn(f.handle.db, f.seeded.unitId, date).flatMap((v) =>
+      v.nurses.map((n) => n.id),
+    );
+    expect(ids).not.toContain(first.nurseId);
+    expect(ids).toHaveLength(f.rns.length - 1);
   });
 
   it('is empty on a date no period covers', () => {

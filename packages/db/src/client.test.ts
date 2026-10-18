@@ -34,11 +34,19 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** The migrations folder as an older release shipped it: every migration but the last `drop`. */
-function olderRelease(drop: number): string {
+/**
+ * The migrations folder as an older release shipped it: every migration but the last `drop`, or
+ * every one before the migration tagged `drop`.
+ */
+function olderRelease(drop: number | string): string {
   const folder = join(dir, 'older');
   mkdirSync(join(folder, 'meta'), { recursive: true });
-  const entries = journal.entries.slice(0, journal.entries.length - drop);
+  const cut =
+    typeof drop === 'number'
+      ? journal.entries.length - drop
+      : journal.entries.findIndex((e) => e.tag === drop);
+  if (cut < 0) throw new Error(`No migration tagged ${drop}`);
+  const entries = journal.entries.slice(0, cut);
   for (const e of entries) copyFileSync(join(FULL, `${e.tag}.sql`), join(folder, `${e.tag}.sql`));
   writeFileSync(join(folder, 'meta', '_journal.json'), JSON.stringify({ ...journal, entries }));
   return folder;
@@ -93,5 +101,51 @@ describe('opening a database across app versions', () => {
     expect(() => openDatabase({ url, migrationsFolder: older })).toThrow(
       /newer version of ShiftNurse/,
     );
+  });
+});
+
+describe('upgrading saved data', () => {
+  it('adds the float tier after agency to a saved cancellation order', () => {
+    const url = join(dir, 'live.sqlite');
+    const before = openDatabase({
+      url,
+      migrationsFolder: olderRelease('0038_float_cancellation_tier'),
+    });
+    const saved = [
+      '["volunteer","agency","overtime","per_diem","rotation"]',
+      '["volunteer","rotation"]',
+      '["rotation"]',
+    ];
+    for (const [i, tiers] of saved.entries()) {
+      before.sqlite
+        .prepare(
+          "insert into unit (id, name, unit_type, pay_period_days, pay_period_anchor) values (?, ?, 'Medical-Surgical', 14, '2026-01-04')",
+        )
+        .run(`u${i}`, `Unit ${i}`);
+      before.sqlite
+        .prepare('insert into cancellation_policy (id, unit_id, tiers) values (?, ?, ?)')
+        .run(`p${i}`, `u${i}`, tiers);
+    }
+    before.close();
+
+    const opened = openDatabase({ url, migrationsFolder: FULL });
+    const read = () =>
+      (
+        opened.sqlite.prepare('select tiers from cancellation_policy order by id').all() as {
+          tiers: string;
+        }[]
+      ).map((r) => r.tiers);
+    const upgraded = [
+      '["volunteer","agency","float","overtime","per_diem","rotation"]',
+      '["volunteer","float","rotation"]',
+      '["float","rotation"]',
+    ];
+    expect(read()).toEqual(upgraded);
+
+    // Running the upgrade again leaves an order that already has the float tier alone.
+    const sql = readFileSync(join(FULL, '0038_float_cancellation_tier.sql'), 'utf8');
+    for (const statement of sql.split('--> statement-breakpoint')) opened.sqlite.exec(statement);
+    expect(read()).toEqual(upgraded);
+    opened.close();
   });
 });

@@ -25,6 +25,7 @@ import { ids } from '../ids.js';
 import { toShiftSwap } from '../mappers.js';
 import { schedulePeriod, shiftSwap } from '../schema.js';
 import { recordScheduleChange, requireChangeReason } from './publish.js';
+import { getNurse } from './roster.js';
 import {
   createAssignment,
   deleteAssignment,
@@ -179,6 +180,7 @@ export interface ApproveSwapOptions {
  * - an archived period,
  * - any `application.remove` id that no longer exists — the evaluation that produced
  *   `application` is stale and the caller must re-evaluate,
+ * - a removed shift that is locked, floated off (D20) or carries a recorded holdover,
  * - an override with no reason.
  *
  * Every refusal above is checked before the first write, so a refused approval — for a missing
@@ -213,6 +215,18 @@ export function approveSwap(
   }
   const held = removing.find((r) => (r.holdoverMinutes ?? 0) > 0);
   if (held) throw new Error(`One of these shifts: ${holdoverRefusal(held)}`);
+  // The evaluator refuses these too, but this is the function that deletes: a floated shift is
+  // the record of hours she worked elsewhere (D20), and a lock is the manager's pin.
+  const floated = removing.find((r) => r.floatedTo !== undefined);
+  if (floated) {
+    const who = getNurse(db, floated.nurseId);
+    throw new Error(
+      `${who ? `${who.firstName} ${who.lastName}` : 'This nurse'} was floated to ${floated.floatedTo} for that shift; it cannot be traded.`,
+    );
+  }
+  if (removing.some((r) => r.isLocked)) {
+    throw new Error('That shift is locked; unlock it before approving an exchange that moves it.');
+  }
   const reason = opts.reason?.trim();
   if (opts.overrode && !reason) {
     throw new Error(

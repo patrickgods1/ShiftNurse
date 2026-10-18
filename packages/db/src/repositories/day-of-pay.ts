@@ -14,7 +14,8 @@ import { and, asc, eq, gte, lte, sql } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
-import { nurse as nurseTable, nurseUnit, dayOfPayEvent as table } from '../schema.js';
+import { nurse as nurseTable, dayOfPayEvent as table, unit as unitTable } from '../schema.js';
+import { requireWorksOnUnit } from './nurse-units.js';
 import { type PatchKeys, patchOf } from './patch.js';
 
 const ENTITY = 'day_of_pay_event';
@@ -83,6 +84,26 @@ export function listDayOfPayEvents(
     .orderBy(asc(table.date), sql`${table}.rowid`)
     .all()
     .map(toRecord);
+}
+
+/**
+ * The nurse's day-of pay events on `date`, on any unit, with the unit's name. A missed-break
+ * premium is one hour per workday, so the duplicate check cannot stop at the unit being recorded
+ * on: a nurse who worked two units that day would otherwise be paid it twice.
+ */
+export function dayOfPayEventsForNurseOn(
+  db: DbLike,
+  nurseId: Id,
+  date: IsoDate,
+): { event: DayOfPayRecord; unitName: string }[] {
+  return db
+    .select({ row: table, unitName: unitTable.name })
+    .from(table)
+    .innerJoin(unitTable, eq(table.unitId, unitTable.id))
+    .where(and(eq(table.nurseId, nurseId), eq(table.date, date)))
+    .orderBy(asc(unitTable.name), asc(table.id))
+    .all()
+    .map((r) => ({ event: toRecord(r.row), unitName: r.unitName }));
 }
 
 export function getDayOfPayEvent(db: DbLike, id: Id): DayOfPayRecord | undefined {
@@ -207,26 +228,18 @@ function checkHours(hours: number, label: string): void {
 function validate(db: DbLike, input: DayOfPayInput): void {
   const nurse = db.select().from(nurseTable).where(eq(nurseTable.id, input.nurseId)).get();
   if (!nurse) throw new Error('That nurse is not on the roster');
-  const floatsHere =
-    nurse.unitId !== input.unitId &&
-    db
-      .select({ id: nurseUnit.id })
-      .from(nurseUnit)
-      .where(and(eq(nurseUnit.nurseId, input.nurseId), eq(nurseUnit.unitId, input.unitId)))
-      .get() !== undefined;
-  if (nurse.unitId !== input.unitId && !floatsHere)
-    throw new Error('That nurse is not on this unit');
+  requireWorksOnUnit(db, input.nurseId, input.unitId, { start: input.date, end: input.date });
 
   if (input.kind === 'missed_break') {
     if (input.break !== 'meal' && input.break !== 'rest') {
       throw new Error('Say whether the meal or the rest break was missed');
     }
-    const same = listDayOfPayEvents(db, input.unitId, input.date, input.date).find(
-      (e) => e.kind === 'missed_break' && e.nurseId === input.nurseId && e.break === input.break,
+    const same = dayOfPayEventsForNurseOn(db, input.nurseId, input.date).find(
+      (e) => e.event.kind === 'missed_break' && e.event.break === input.break,
     );
     if (same) {
       throw new Error(
-        `A missed ${input.break} break is already recorded for ${nurse.firstName} ${nurse.lastName} that day; the premium is one hour a day however many are missed`,
+        `A missed ${input.break} break is already recorded for ${nurse.firstName} ${nurse.lastName} that day on ${same.unitName}; the premium is one hour a day however many are missed`,
       );
     }
     return;

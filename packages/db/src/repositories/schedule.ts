@@ -26,7 +26,7 @@ import { recordAudit, recordAuditStrict, requireAuditReason } from '../audit.js'
 import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { toAssignment, toSchedulePeriod } from '../mappers.js';
-import { assignment, schedulePeriod, shiftType } from '../schema.js';
+import { assignment, nurse, schedulePeriod, shiftType } from '../schema.js';
 import { insertRows } from './bulk.js';
 import { type PatchKeys, patchOf } from './patch.js';
 
@@ -358,6 +358,7 @@ export function createAssignment(
     notes: input.notes ?? null,
     holdoverMinutes: 0,
     holdoverMandated: null,
+    floatedTo: null,
   };
   db.insert(assignment).values(row).run();
   const created = toAssignment(row);
@@ -399,6 +400,12 @@ export function updateAssignment(
   if (!beforeRow) throw new Error(`Assignment ${assignmentId} not found`);
   const before = toAssignment(beforeRow);
   const values = patchOf(patch, ASSIGNMENT_PATCH_KEYS, 'assignment');
+  // Unlocked, the next Generate would delete the shift she worked on another unit.
+  if (before.floatedTo !== undefined && patch.isLocked === false) {
+    throw new Error(
+      `This shift was floated to ${before.floatedTo} and stays fixed as a record of the day. Remove it if the float was entered by mistake.`,
+    );
+  }
   db.update(assignment).set(values).where(eq(assignment.id, assignmentId)).run();
   const afterRow = db.select().from(assignment).where(eq(assignment.id, assignmentId)).get();
   if (!afterRow) throw new Error(`Assignment ${assignmentId} vanished during update`);
@@ -437,6 +444,46 @@ export function deleteAssignment(
     before,
     reason,
   });
+}
+
+/**
+ * Marks the nurse's shift as worked on another unit (D20). The row stays — she worked the hours —
+ * locked, because a day-of fact is not the solver's to move, and is never counted on this
+ * unit's floor again.
+ */
+export function markFloatedOff(
+  tx: ShiftNurseTx,
+  assignmentId: Id,
+  toUnit: string,
+  actor: string,
+  reason?: string,
+): Assignment {
+  const beforeRow = tx.select().from(assignment).where(eq(assignment.id, assignmentId)).get();
+  if (!beforeRow) throw new Error('That shift is no longer on the schedule.');
+  const unitName = toUnit.trim();
+  if (unitName === '') throw new Error('Name the unit the nurse is floated to');
+  const before = toAssignment(beforeRow);
+  if (before.floatedTo !== undefined) {
+    const who = tx.select().from(nurse).where(eq(nurse.id, before.nurseId)).get();
+    throw new Error(
+      `${who ? `${who.firstName} ${who.lastName}` : 'This nurse'} was already floated to ${before.floatedTo} for this shift.`,
+    );
+  }
+  tx.update(assignment)
+    .set({ floatedTo: unitName, isLocked: true })
+    .where(eq(assignment.id, assignmentId))
+    .run();
+  const after = toAssignment({ ...beforeRow, floatedTo: unitName, isLocked: true });
+  recordAudit(tx, {
+    entityType: 'assignment',
+    entityId: assignmentId,
+    action: 'update',
+    actor,
+    before,
+    after,
+    reason,
+  });
+  return after;
 }
 
 export interface MoveAssignmentTarget {
@@ -501,6 +548,7 @@ export function moveAssignment(
  * never to silently overwrite one because a regeneration happened to run. Any locked
  * assignment present in `assignments` is expected to be the same locked row coming back
  * through the solver's own output; either way, the existing locked row on disk wins.
+ * Floated-off rows are locked, so Generate keeps them too.
  */
 export function replaceAssignments(
   db: DbLike,
@@ -561,6 +609,7 @@ export function replaceAssignments(
       notes: input.notes ?? null,
       holdoverMinutes: 0,
       holdoverMandated: null,
+      floatedTo: null,
     });
   }
   insertRows(db, assignment, rows);

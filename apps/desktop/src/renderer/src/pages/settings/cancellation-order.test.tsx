@@ -78,6 +78,37 @@ describe('Settings › the low-census cancellation order', () => {
     expect(screen.getByText(/Keep at least one tier/)).toBeTruthy();
   });
 
+  it('lists nurses floated in from other units between agency and overtime by default', async () => {
+    bridge.respond('dayOf', 'cancellationPolicy', [
+      'volunteer',
+      'agency',
+      'float',
+      'overtime',
+      'per_diem',
+      'rotation',
+    ]);
+    renderWithApp(<CancellationOrderPanel />, { unit });
+    const float = (await screen.findByLabelText(
+      /^Nurses floated in from other units/,
+    )) as HTMLInputElement;
+    expect(float.checked).toBe(true);
+    expect(screen.getAllByRole('checkbox').map((box) => box.id)).toEqual([
+      'tier-volunteer',
+      'tier-agency',
+      'tier-float',
+      'tier-overtime',
+      'tier-per_diem',
+      'tier-rotation',
+    ]);
+    fireEvent.click(screen.getByLabelText('Move Nurses floated in from other units up'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save order' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('dayOf', 'saveCancellationPolicy')).toEqual([
+        ['unit-1', ['volunteer', 'float', 'agency', 'overtime', 'per_diem', 'rotation']],
+      ]),
+    );
+  });
+
   it('saves the contract overtime rosters as the unit’s overtime order', async () => {
     renderWithApp(<CancellationOrderPanel />, { unit });
     fireEvent.click(await screen.findByLabelText(/^Contract overtime rosters/));

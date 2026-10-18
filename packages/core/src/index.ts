@@ -366,7 +366,12 @@ export {
 export { containingDate, coveringShift, withinShiftProblem } from './schedule/cover.js';
 export type { BusyElsewhere } from './schedule/elsewhere.js';
 // Another unit's shifts as busy time on this one (float and multi-unit staff)
-export { busyElsewhere, isElsewhere } from './schedule/elsewhere.js';
+export {
+  busyElsewhere,
+  floatedOff,
+  isElsewhere,
+  isFloatedOff,
+} from './schedule/elsewhere.js';
 // How far back the published schedules are complete
 export { historyCompleteFrom } from './schedule/history.js';
 // What a shift follows: rest and tour changes are measured from the shift that ends last

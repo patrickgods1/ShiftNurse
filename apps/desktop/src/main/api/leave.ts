@@ -19,6 +19,7 @@ import {
   describeDate,
   findReplacements,
   type Id,
+  isFloatedOff,
   type ReplacementCandidate,
   type TimeOffRequest,
 } from '@shiftnurse/core';
@@ -46,11 +47,17 @@ function requestOrThrow(db: DbLike, requestId: Id): TimeOffRequest {
   return request;
 }
 
-/** The nurse's shifts in this period that the leave covers: what approving would free. */
+/**
+ * The nurse's shifts in this period that the leave covers: what approving would free. A shift she
+ * was floated off is not one: she worked it elsewhere, and the row records those hours (D20).
+ */
 function freedShifts(db: DbLike, periodId: Id, request: TimeOffRequest): Assignment[] {
   return listAssignmentsForPeriod(db, periodId).filter(
     (a) =>
-      a.nurseId === request.nurseId && a.date >= request.startDate && a.date <= request.endDate,
+      a.nurseId === request.nurseId &&
+      a.date >= request.startDate &&
+      a.date <= request.endDate &&
+      !isFloatedOff(a),
   );
 }
 

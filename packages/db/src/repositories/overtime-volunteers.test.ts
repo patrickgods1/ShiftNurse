@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase } from '../client.js';
 import { createUnit } from './config.js';
+import { createNurseUnit } from './nurse-units.js';
 import {
   createOvertimeVolunteer,
   deleteOvertimeVolunteer,
@@ -107,7 +108,44 @@ describe('overtime volunteers', () => {
         },
         ACTOR,
       ),
-    ).toThrow('That nurse is not on this unit');
+    ).toThrow("not on 4 West's roster");
+  });
+
+  it('records an overtime offer from a nurse floated in for those dates', () => {
+    const fran = nurse(unit('5 West').id, 3);
+    createNurseUnit(
+      handle.db,
+      {
+        nurseId: fran.id,
+        unitId,
+        startDate: isoDate('2026-03-01'),
+        endDate: isoDate('2026-03-31'),
+      },
+      ACTOR,
+    );
+    const v = createOvertimeVolunteer(
+      handle.db,
+      {
+        unitId,
+        nurseId: fran.id,
+        startDate: isoDate('2026-03-05'),
+        endDate: isoDate('2026-03-12'),
+      },
+      ACTOR,
+    );
+    expect(listOvertimeVolunteers(handle.db, unitId)).toEqual([v]);
+    expect(() =>
+      createOvertimeVolunteer(
+        handle.db,
+        {
+          unitId,
+          nurseId: fran.id,
+          startDate: isoDate('2026-03-25'),
+          endDate: isoDate('2026-04-05'),
+        },
+        ACTOR,
+      ),
+    ).toThrow(/not on 4 West's roster for every day of/);
   });
 
   it('lists only the offers that touch the window, whole', () => {

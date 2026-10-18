@@ -8,6 +8,7 @@ import {
   compareToBudget,
   diffAssignments,
   type Id,
+  isFloatedOff,
   type ScheduleScore,
   type SolveInput,
   type SolveReport,
@@ -106,17 +107,26 @@ export function previewCandidate(
 ): CandidatePreview {
   const { batch, report } = jobs.candidate(batchId, index);
   const period = periodOrThrow(db, batch.periodId);
-  const view = scheduleViewFor(db, period, { lookback: true, assignments: report.assignments });
+  const candidate = { lookback: true, assignments: report.assignments };
+  // Rules judge a floated-off shift as busy time; cost and alerts count it as worked (D20).
+  const judged = scheduleViewFor(db, period, { ...candidate, floated: 'busy' });
+  const counted = scheduleViewFor(db, period, { ...candidate, floated: 'worked' });
   const draft = listAssignmentsForPeriod(db, period.id);
-  const diff = diffAssignments(draft, report.assignments);
+  const floated = draft.filter(isFloatedOff);
+  // The solver never sees a floated shift as its own, so it is not "removed" by a candidate.
+  const diff = diffAssignments(
+    draft.filter((a) => !isFloatedOff(a)),
+    report.assignments,
+  );
   const ruleSet = ruleSetFor(db, period);
   return {
     batchId,
     index,
-    assignments: report.assignments,
-    validation: validateView(db, period, view),
-    cost: costReportForView(db, period, view),
-    alerts: alertsForView(db, period, ruleSet, view),
+    // The grid keeps drawing the floated shifts beside the candidate's own.
+    assignments: [...report.assignments, ...floated],
+    validation: validateView(db, period, judged),
+    cost: costReportForView(db, period, counted),
+    alerts: alertsForView(db, period, ruleSet, counted),
     changedKeys: diff.changes.filter((c) => c.kind !== 'removed').map((c) => candidateKey(c)),
     diff: { added: diff.added, removed: diff.removed, changed: diff.changed },
   };

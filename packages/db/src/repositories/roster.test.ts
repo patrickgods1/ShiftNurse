@@ -35,6 +35,7 @@ import {
 } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
 import { createHoliday, deleteHoliday } from './holidays.js';
+import { createNurseUnit } from './nurse-units.js';
 import {
   createNurse,
   credentialsExpiringBetween,
@@ -284,6 +285,7 @@ describe('credentials', () => {
 
     const found = credentialsExpiringBetween(
       handle.db,
+      unitId,
       isoDate('2026-02-01'),
       isoDate('2026-02-28'),
     );
@@ -301,7 +303,7 @@ describe('credentials', () => {
       ACTOR,
     );
     expect(
-      credentialsExpiringBetween(handle.db, isoDate('2026-02-01'), isoDate('2026-02-28')),
+      credentialsExpiringBetween(handle.db, unitId, isoDate('2026-02-01'), isoDate('2026-02-28')),
     ).toHaveLength(0);
   });
 
@@ -310,8 +312,192 @@ describe('credentials', () => {
     const nurse = createNurse(handle.db, baseNurse(), ACTOR);
     grantCredential(handle.db, { nurseId: nurse.id, credentialId: preceptor }, ACTOR);
     expect(
-      credentialsExpiringBetween(handle.db, isoDate('2000-01-01'), isoDate('2099-01-01')),
+      credentialsExpiringBetween(handle.db, unitId, isoDate('2000-01-01'), isoDate('2099-01-01')),
     ).toHaveLength(0);
+  });
+
+  describe('nurses who float onto the unit', () => {
+    function otherUnit(name: string): string {
+      return createUnit(
+        handle.db,
+        {
+          name,
+          unitType: 'Medical-Surgical',
+          payPeriodDays: 14,
+          payPeriodAnchor: isoDate('2026-01-04'),
+        },
+        ACTOR,
+      ).id;
+    }
+
+    it('warns about a floated-in nurse’s ACLS expiring on the unit she works', () => {
+      const acls = seedCredential('ACLS');
+      const fran = createNurse(
+        handle.db,
+        baseNurse({ unitId: otherUnit('5 West'), firstName: 'Fran' }),
+        ACTOR,
+      );
+      createNurseUnit(
+        handle.db,
+        { nurseId: fran.id, unitId, startDate: isoDate('2026-02-01') },
+        ACTOR,
+      );
+      grantCredential(
+        handle.db,
+        { nurseId: fran.id, credentialId: acls, expiresOn: isoDate('2026-02-20') },
+        ACTOR,
+      );
+      const found = credentialsExpiringBetween(
+        handle.db,
+        unitId,
+        isoDate('2026-02-01'),
+        isoDate('2026-02-28'),
+      );
+      expect(found.map((e) => e.nurse.firstName)).toEqual(['Fran']);
+    });
+
+    it('leaves out a nurse who has left, and another unit’s nurse', () => {
+      const acls = seedCredential('ACLS');
+      const gone = createNurse(handle.db, baseNurse({ firstName: 'Gone' }), ACTOR);
+      grantCredential(
+        handle.db,
+        { nurseId: gone.id, credentialId: acls, expiresOn: isoDate('2026-02-10') },
+        ACTOR,
+      );
+      deactivateNurse(handle.db, gone.id, ACTOR);
+      const stranger = createNurse(
+        handle.db,
+        baseNurse({ unitId: otherUnit('5 West'), firstName: 'Stranger' }),
+        ACTOR,
+      );
+      grantCredential(
+        handle.db,
+        { nurseId: stranger.id, credentialId: acls, expiresOn: isoDate('2026-02-12') },
+        ACTOR,
+      );
+      expect(
+        credentialsExpiringBetween(handle.db, unitId, isoDate('2026-02-01'), isoDate('2026-02-28')),
+      ).toEqual([]);
+    });
+
+    function floatWith(
+      firstName: string,
+      membership: { startDate?: string; endDate?: string },
+      expiresOn: string,
+      active = true,
+    ): void {
+      const n = createNurse(
+        handle.db,
+        baseNurse({ unitId: otherUnit(`${firstName}'s home`), firstName }),
+        ACTOR,
+      );
+      createNurseUnit(
+        handle.db,
+        {
+          nurseId: n.id,
+          unitId,
+          ...(membership.startDate ? { startDate: isoDate(membership.startDate) } : {}),
+          ...(membership.endDate ? { endDate: isoDate(membership.endDate) } : {}),
+        },
+        ACTOR,
+      );
+      grantCredential(
+        handle.db,
+        {
+          nurseId: n.id,
+          credentialId: seedCredential(`ACLS-${firstName}`),
+          expiresOn: isoDate(expiresOn),
+        },
+        ACTOR,
+      );
+      if (!active) deactivateNurse(handle.db, n.id, ACTOR);
+    }
+
+    function expiring(): string[] {
+      return credentialsExpiringBetween(
+        handle.db,
+        unitId,
+        isoDate('2026-02-01'),
+        isoDate('2026-02-28'),
+      ).map((e) => e.nurse.firstName);
+    }
+
+    it('leaves out a float who stopped working the unit before the window', () => {
+      floatWith('Before', { endDate: '2026-01-31' }, '2026-02-10');
+      expect(expiring()).toEqual([]);
+    });
+
+    it('leaves out a float who only starts on the unit after the window', () => {
+      floatWith('After', { startDate: '2026-03-01' }, '2026-02-10');
+      expect(expiring()).toEqual([]);
+    });
+
+    it('keeps a float whose last day on the unit is the first day of the window', () => {
+      floatWith('Edge', { endDate: '2026-02-01' }, '2026-02-10');
+      expect(expiring()).toEqual(['Edge']);
+    });
+
+    it('keeps a float whose first day on the unit is the last day of the window', () => {
+      floatWith('Late', { startDate: '2026-02-28' }, '2026-02-10');
+      expect(expiring()).toEqual(['Late']);
+    });
+
+    it('leaves a float out of the lapsed list once her time on the unit ended before the lookback', () => {
+      // Lookback from 2026-10-04 reaches back to 2025-10-04.
+      floatWith('Gone', { endDate: '2025-10-01' }, '2026-09-10');
+      floatWith('Left', {}, '2026-09-10', false);
+      expect(lapsedCredentialsForUnit(handle.db, unitId, isoDate('2026-10-04'))).toEqual([]);
+    });
+
+    it('lists expiring credentials by date, then name', () => {
+      const acls = seedCredential('ACLS');
+      for (const [first, date] of [
+        ['Zed', '2026-02-10'],
+        ['Amy', '2026-02-10'],
+        ['Early', '2026-02-05'],
+      ] as const) {
+        const n = createNurse(handle.db, baseNurse({ firstName: first }), ACTOR);
+        grantCredential(
+          handle.db,
+          { nurseId: n.id, credentialId: acls, expiresOn: isoDate(date) },
+          ACTOR,
+        );
+      }
+      expect(
+        credentialsExpiringBetween(
+          handle.db,
+          unitId,
+          isoDate('2026-02-01'),
+          isoDate('2026-02-28'),
+        ).map((e) => e.nurse.firstName),
+      ).toEqual(['Early', 'Amy', 'Zed']);
+    });
+
+    it('lists a floated-in nurse’s lapsed credential beside the unit’s own', () => {
+      const acls = seedCredential('ACLS');
+      const own = createNurse(handle.db, baseNurse({ firstName: 'Own' }), ACTOR);
+      grantCredential(
+        handle.db,
+        { nurseId: own.id, credentialId: acls, expiresOn: isoDate('2026-09-20') },
+        ACTOR,
+      );
+      const fran = createNurse(
+        handle.db,
+        baseNurse({ unitId: otherUnit('5 West'), firstName: 'Fran' }),
+        ACTOR,
+      );
+      createNurseUnit(handle.db, { nurseId: fran.id, unitId }, ACTOR);
+      grantCredential(
+        handle.db,
+        { nurseId: fran.id, credentialId: acls, expiresOn: isoDate('2026-09-10') },
+        ACTOR,
+      );
+      expect(
+        lapsedCredentialsForUnit(handle.db, unitId, isoDate('2026-10-04')).map(
+          (e) => e.nurse.firstName,
+        ),
+      ).toEqual(['Fran', 'Own']);
+    });
   });
 
   describe('credentials that have already lapsed', () => {

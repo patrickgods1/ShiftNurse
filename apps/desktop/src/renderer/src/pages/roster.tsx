@@ -8,6 +8,7 @@ import type { Id, Nurse } from '@shiftnurse/core';
 import { EMPLOYMENT_TYPE_LABELS } from '@shiftnurse/core';
 import { useMemo, useState } from 'react';
 import { useDashboard, useExportRosterToFile, useNurses } from '../api.js';
+import { useGridNurses } from '../api-nurse-units.js';
 import { AsyncState } from '../components/async-state.js';
 import { type Column, DataTable } from '../components/data-table.js';
 import { PageHeader } from '../components/page-header.js';
@@ -32,6 +33,9 @@ function matchesSearch(nurse: Nurse, term: string): boolean {
 export default function RosterPage() {
   const unit = useUnit();
   const nursesQuery = useNurses(unit.id);
+  // Offers, orientation and waivers can name a nurse floated in, so those sections choose from
+  // the home roster and then the floats; the rest of the page is the unit's own people.
+  const gridNursesQuery = useGridNurses(unit.id);
   const exportRoster = useExportRosterToFile();
   // The dashboard's credential lists are already the unit's authority on who has lapsed (a
   // renewal cleared) and who is inside the 90-day window; the badge only narrows to 30 days.
@@ -208,13 +212,17 @@ export default function RosterPage() {
         <IncompatibilitySection unitId={unit.id} nurses={nursesQuery.data} />
       ) : null}
 
-      {nursesQuery.data ? (
-        <OvertimeVolunteersSection unitId={unit.id} nurses={nursesQuery.data} />
+      {gridNursesQuery.data ? (
+        <OvertimeVolunteersSection unitId={unit.id} nurses={gridNursesQuery.data} />
       ) : null}
 
-      {nursesQuery.data ? <OrientationSection unitId={unit.id} nurses={nursesQuery.data} /> : null}
+      {gridNursesQuery.data ? (
+        <OrientationSection unitId={unit.id} nurses={gridNursesQuery.data} />
+      ) : null}
 
-      {nursesQuery.data ? <RestWaiversSection unitId={unit.id} nurses={nursesQuery.data} /> : null}
+      {gridNursesQuery.data ? (
+        <RestWaiversSection unitId={unit.id} nurses={gridNursesQuery.data} />
+      ) : null}
 
       {nursesQuery.data ? (
         <AccommodationsSection unitId={unit.id} nurses={nursesQuery.data} />

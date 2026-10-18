@@ -40,7 +40,11 @@ import { ACTOR, periodOrThrow, ruleSetFor, scheduleViewFor } from './context.js'
 export function costReport(db: DbLike, periodId: Id): PeriodCostReport {
   const period = periodOrThrow(db, periodId);
   // Weekly overtime can straddle the period boundary just as the rest rules do.
-  return costReportForView(db, period, scheduleViewFor(db, period, { lookback: true }));
+  return costReportForView(
+    db,
+    period,
+    scheduleViewFor(db, period, { lookback: true, floated: 'worked' }),
+  );
 }
 
 /** A period's cost over a view the caller built — the draft, or a candidate being previewed. */

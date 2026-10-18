@@ -129,13 +129,15 @@ const ROLES: readonly NurseRole[] = ['RN', 'LPN', 'CNA'];
 export function headcountRows(input: {
   shiftTypes: readonly ShiftType[];
   nurses: readonly Nurse[];
-  assignments: readonly Pick<Assignment, 'nurseId' | 'date' | 'shiftTypeId'>[];
+  assignments: readonly Pick<Assignment, 'nurseId' | 'date' | 'shiftTypeId' | 'floatedTo'>[];
   demand: readonly ShiftDemand[];
   dates: readonly IsoDate[];
 }): HeadcountRow[] {
   const roleOf = new Map(input.nurses.map((n) => [n.id, n.role]));
   const staffed = new Map<string, number>();
   for (const a of input.assignments) {
+    // Floated off: her hours still count elsewhere, but she is not on this unit's floor.
+    if (a.floatedTo !== undefined) continue;
     const role = roleOf.get(a.nurseId);
     if (!role) continue;
     const key = `${a.date}|${a.shiftTypeId}|${role}`;

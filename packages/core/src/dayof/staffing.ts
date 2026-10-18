@@ -24,6 +24,7 @@ import type {
   ShiftType,
 } from '../domain/entities.js';
 import { addDays, dayNumber, type IsoDate, MINUTES_PER_DAY, shiftWindow } from '../domain/time.js';
+import { isFloatedOff } from '../schedule/elsewhere.js';
 import type {
   CensusBasis,
   RoleStaffing,
@@ -94,6 +95,8 @@ export function checkStaffing(input: StaffingCheckInput): ShiftStaffingCheck[] {
     const staffedByRole: Record<NurseRole, number> = { RN: 0, LPN: 0, CNA: 0 };
     for (const a of assignments) {
       if (a.date !== date || a.shiftTypeId !== shiftType.id) continue;
+      // Floated to another unit: still her shift, but not on this floor.
+      if (isFloatedOff(a)) continue;
       const nurse = nurseById.get(a.nurseId);
       // Bad data is loud: a phantom assignment must not silently pass or fail the count.
       if (!nurse) throw new Error(`Unknown nurse ${a.nurseId}`);

@@ -3,11 +3,16 @@
  * compliance pass, and a unit with none gets no such alert.
  */
 
-import { isoDate } from '@shiftnurse/core';
+import { addDays, isoDate } from '@shiftnurse/core';
 import {
   createHoliday,
+  createNurse,
+  createNurseUnit,
   createOvertimeRule,
+  createUnit,
   deleteHoliday,
+  grantCredential,
+  listCredentials,
   listHolidaysForUnit,
   listNursesForUnit,
   recordHolidayWork,
@@ -117,5 +122,62 @@ describe('overtime alerts', () => {
     const alerts = overtimeAlerts();
     expect(alerts).toHaveLength(1);
     expect(alerts[0]).toMatchObject({ nurseId: nurse.id, hours: 12, overtimeHours: 4 });
+  });
+});
+
+describe('credential alerts for a nurse floated in', () => {
+  it('warns about a floated-in nurse’s ACLS lapsing during the period', () => {
+    const { db } = f.handle;
+    const start = f.seeded.draftStart;
+    const west = createUnit(
+      db,
+      {
+        name: '5 West',
+        unitType: 'ICU',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    const fran = createNurse(
+      db,
+      {
+        unitId: west.id,
+        employeeId: 'W-100',
+        firstName: 'Fran',
+        lastName: 'Float',
+        role: 'RN',
+        employmentType: 'full_time',
+        fte: 1,
+        contractedHoursPerPeriod: 72,
+        seniorityDate: isoDate('2020-01-01'),
+        isChargeEligible: false,
+        isNovice: false,
+        isFloatEligible: true,
+        active: true,
+      },
+      ACTOR,
+    );
+    createNurseUnit(
+      db,
+      { nurseId: fran.id, unitId: f.seeded.unitId, startDate: start, endDate: addDays(start, 13) },
+      ACTOR,
+    );
+    const acls = listCredentials(db).find((c) => c.code === 'ACLS')!;
+    grantCredential(
+      db,
+      { nurseId: fran.id, credentialId: acls.id, expiresOn: addDays(start, 5) },
+      ACTOR,
+    );
+    scheduleApi(db).createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: fran.id,
+      shiftTypeId: f.day.id,
+      date: addDays(start, 7),
+    });
+    const lapsing = alertsFor(db, f.seeded.draftPeriodId).filter(
+      (a) => a.kind === 'credential_expiry' && a.nurseId === fran.id,
+    );
+    expect(lapsing).toHaveLength(1);
   });
 });
