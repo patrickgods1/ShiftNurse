@@ -52,6 +52,19 @@ export function useSetBudget(periodId: Id | undefined) {
   });
 }
 
+export function useClearBudget(periodId: Id | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.cost.clearBudget(periodId as Id),
+    onSuccess: () => {
+      if (periodId !== undefined) {
+        void queryClient.invalidateQueries({ queryKey: costKeys.report(periodId) });
+      }
+      void queryClient.invalidateQueries({ queryKey: queryRoots.dashboard });
+    },
+  });
+}
+
 /** Pay configuration changes re-price every period, and feed publish alerts and Generate's cost. */
 function useInvalidateConfig(unitId: Id, key: (typeof costKeys)[keyof typeof costKeys]) {
   const queryClient = useQueryClient();

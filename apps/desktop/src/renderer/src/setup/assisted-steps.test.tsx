@@ -19,6 +19,8 @@ import {
 import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { SetupStatus } from '../../../shared/api.js';
+import { useSetupStatus } from '../api-setup.js';
 import { type FakeBridge, installFakeBridge } from '../test/fake-bridge.js';
 import { renderWithApp } from '../test/render.js';
 import { AssistedSetup } from './assisted.js';
@@ -342,5 +344,165 @@ describe('the assisted setup guide', () => {
     expect(screen.getByText(/4 West needs 3 more things before you can schedule/)).toBeTruthy();
     expect(screen.getByTestId('setup-finish')).toBeTruthy();
     expect(STEP_TITLES.finish).toBe('Summary');
+  });
+});
+
+describe('leaving a step with unsaved edits', () => {
+  async function editUnitName() {
+    renderAt('unit');
+    const name = await screen.findByLabelText('Name');
+    fireEvent.change(name, { target: { value: '5 East' } });
+    await screen.findByText('Unsaved changes');
+    return name as HTMLInputElement;
+  }
+
+  it('asks before Continue throws away an edited unit name, and stays put on Cancel', async () => {
+    const name = await editUnitName();
+    fireEvent.click(screen.getByTestId('setup-continue'));
+    expect(await screen.findByText('Discard unsaved changes to Unit?')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByText('Discard unsaved changes to Unit?')).toBeNull());
+    expect(bridge.callsTo('setup', 'advance')).toEqual([]);
+    expect(name.value).toBe('5 East');
+  });
+
+  it('moves on from Unit policies only after the manager agrees to discard', async () => {
+    await editUnitName();
+    fireEvent.click(screen.getByTestId('setup-continue'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard changes' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('setup', 'advance')).toEqual([
+        [{ from: 'unit', to: 'leave', skipped: false }],
+      ]),
+    );
+  });
+
+  it('asks before Skip for now drops the edit', async () => {
+    await editUnitName();
+    fireEvent.click(screen.getByTestId('setup-skip'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard changes' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('setup', 'advance')).toEqual([
+        [{ from: 'unit', to: 'leave', skipped: true }],
+      ]),
+    );
+  });
+
+  it('asks before Back drops the edit', async () => {
+    await editUnitName();
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard changes' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('setup', 'advance')).toEqual([
+        [{ from: 'unit', to: 'pay', skipped: false }],
+      ]),
+    );
+  });
+
+  it('moves straight on when nothing was edited', async () => {
+    renderAt('unit');
+    await screen.findByLabelText('Name');
+    fireEvent.click(screen.getByTestId('setup-continue'));
+    await waitFor(() => expect(bridge.callsTo('setup', 'advance')).toHaveLength(1));
+    expect(screen.queryByText(/Discard unsaved changes/)).toBeNull();
+  });
+
+  it('asks before Skip drops base rates typed on the Pay step', async () => {
+    renderAt('pay');
+    fireEvent.change(await screen.findByLabelText('RN $/hour'), { target: { value: '52' } });
+    fireEvent.click(screen.getByTestId('setup-skip'));
+    expect(
+      await screen.findByText('Discard unsaved changes to Base hourly rates by role?'),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByText(/Discard unsaved changes/)).toBeNull());
+    expect(bridge.callsTo('setup', 'advance')).toEqual([]);
+  });
+
+  it('applies typed base rates on Continue without asking to discard them', async () => {
+    renderAt('pay');
+    fireEvent.change(await screen.findByLabelText('RN $/hour'), { target: { value: '52' } });
+    const continueButton = screen.getByTestId('setup-continue');
+    await waitFor(() => expect(continueButton.textContent).toBe('Save base rates and continue'));
+    fireEvent.click(continueButton);
+    await waitFor(() => expect(bridge.callsTo('setup', 'advance')).toHaveLength(1));
+    expect(screen.queryByText(/Discard unsaved changes/)).toBeNull();
+    expect(bridge.callsTo('setup', 'applyPreset')).toEqual([
+      ['unit-1', { kind: 'base-rates', rates: { RN: 52 } }],
+    ]);
+    expect(bridge.callsTo('setup', 'advance')).toEqual([
+      [{ from: 'pay', to: 'unit', skipped: false }],
+    ]);
+  });
+
+  it('will not set a staffing floor from a cleared count', async () => {
+    bridge.respond('shiftTypes', 'list', [day12]);
+    renderAt('coverage');
+    const rns = await screen.findByLabelText('RNs per shift');
+    fireEvent.change(rns, { target: { value: '' } });
+    const apply = screen.getByRole('button', { name: 'Set these floors' });
+    expect((apply as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      screen.getByText('Enter a number for every role (0 if the unit has none).'),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByTestId('setup-continue'));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(bridge.callsTo('setup', 'applyPreset')).toHaveLength(0);
+  });
+
+  it('sends one move for a double click on Continue', async () => {
+    bridge.respond('shiftTypes', 'list', [day12]);
+    let statusCalls = 0;
+    const status = (state: SetupState): SetupStatus => ({
+      phase: 'assisted',
+      state,
+      scenariosAvailable: false,
+    });
+    let release: (s: SetupStatus) => void = () => {};
+    bridge.respond('setup', 'status', () => {
+      statusCalls += 1;
+      if (statusCalls === 1) return status(stateAt('shift-types'));
+      // The bridge resolves whatever a script returns, so a pending promise holds the refetch open.
+      return new Promise<SetupStatus>((resolve) => {
+        release = resolve;
+      }) as unknown as SetupStatus;
+    });
+    function Harness() {
+      const query = useSetupStatus();
+      return query.data?.state ? <AssistedSetup state={query.data.state} /> : null;
+    }
+    renderWithApp(<Harness />, { unit });
+    const continueButton = await screen.findByTestId('setup-continue');
+    await waitFor(() => expect(continueButton.textContent).toBe('Continue'));
+    fireEvent.click(continueButton);
+    fireEvent.click(continueButton);
+    await waitFor(() => expect(bridge.callsTo('setup', 'advance')).toHaveLength(1));
+    act(() => release(status(stateAt('coverage'))));
+    await screen.findByRole('heading', { level: 1, name: STEP_TITLES.coverage });
+    expect(bridge.callsTo('setup', 'advance')).toHaveLength(1);
+  });
+});
+
+describe('the setup summary', () => {
+  it('promises only the Dashboard reminders it really shows', async () => {
+    renderAt('finish', ['holidays']);
+    const summary = await screen.findByTestId('setup-summary');
+    expect(summary.textContent).toContain('the Dashboard lists these until they are done');
+    expect(summary.textContent).not.toContain('the Dashboard lists it');
+  });
+
+  it('moves to the step the manager picks from the summary, without asking when nothing is edited', async () => {
+    renderAt('finish', ['leave']);
+    const summary = await screen.findByTestId('setup-summary');
+    const leaveRow = [...summary.querySelectorAll('li')].find((li) =>
+      li.textContent?.includes('Leave'),
+    )!;
+    fireEvent.click(leaveRow.querySelector('button')!);
+    await waitFor(() =>
+      expect(bridge.callsTo('setup', 'advance')).toEqual([
+        [{ from: 'finish', to: 'leave', skipped: false }],
+      ]),
+    );
+    expect(screen.queryByText(/Discard unsaved changes/)).toBeNull();
   });
 });

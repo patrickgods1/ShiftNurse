@@ -41,7 +41,10 @@ export function CensusEntry({ unitId, shift }: { unitId: Id; shift: TodayShiftVi
   const upsertCensus = useUpsertCensus(unitId, date, date);
 
   const mixTotal = sumMix(mix);
-  const balanced = mixTotal === censusValue;
+  // A unit with no tiers has nothing to split the census across; wait for the load so a tiered
+  // unit is never briefly treated as tierless.
+  const balanced = tiers.length === 0 || mixTotal === censusValue;
+  const mixToSend = tiers.length === 0 ? {} : mix;
   const pending = recordActual.isPending || upsertCensus.isPending;
   const saveError = errorMessage(upsertCensus.error ?? recordActual.error);
 
@@ -53,12 +56,12 @@ export function CensusEntry({ unitId, shift }: { unitId: Id; shift: TodayShiftVi
         date,
         shiftTypeId: shift.shiftType.id,
         projectedCensus: censusValue,
-        acuityMix: mix,
+        acuityMix: mixToSend,
         source: 'manual',
       });
       id = created.id;
     }
-    await recordActual.mutateAsync({ id, actualCensus: censusValue, actualAcuityMix: mix });
+    await recordActual.mutateAsync({ id, actualCensus: censusValue, actualAcuityMix: mixToSend });
     void queryClient.invalidateQueries({ queryKey: queryRoots.dayOf });
   }
 
@@ -68,7 +71,7 @@ export function CensusEntry({ unitId, shift }: { unitId: Id; shift: TodayShiftVi
       onSubmit={(e) => {
         e.preventDefault();
         // The mutations carry their own error; catching here only stops an unhandled rejection.
-        if (balanced) save().catch(() => undefined);
+        if (tiersQuery.isSuccess && balanced) save().catch(() => undefined);
       }}
     >
       <label className={LABEL}>
@@ -93,13 +96,19 @@ export function CensusEntry({ unitId, shift }: { unitId: Id; shift: TodayShiftVi
           />
         </label>
       ))}
-      {!balanced ? <p className="text-xs text-danger">Tiers must add up to {censusValue}</p> : null}
+      {tiersQuery.isSuccess && !balanced ? (
+        <p className="text-xs text-danger">Tiers must add up to {censusValue}</p>
+      ) : null}
       {saveError !== undefined ? (
         <p role="alert" className="text-xs text-danger">
           Census not saved: {saveError}
         </p>
       ) : null}
-      <button type="submit" className={PRIMARY} disabled={!balanced || pending}>
+      <button
+        type="submit"
+        className={PRIMARY}
+        disabled={!tiersQuery.isSuccess || !balanced || pending}
+      >
         {pending ? 'Saving…' : 'Save census'}
       </button>
     </form>

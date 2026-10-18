@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DateField, dateProblem } from './date-field.js';
 import { TipProvider } from './field-help.js';
+import { Modal } from './modal.js';
 
 afterEach(cleanup);
 
@@ -147,6 +148,45 @@ describe('commit on blur', () => {
     render(field(onChange, isoDate('2026-10-15')));
     fireEvent.blur(input());
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('puts back the saved date on Escape', () => {
+    const onChange = vi.fn();
+    render(field(onChange, isoDate('2026-10-15')));
+    fireEvent.focus(input());
+    fireEvent.change(input(), { target: { value: '2026-10-20' } });
+    fireEvent.keyDown(input(), { key: 'Escape' });
+    expect((input() as HTMLInputElement).value).toBe('2026-10-15');
+    fireEvent.blur(input());
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('does not clear the saved date when the manager leaves a half-typed one', () => {
+    const onChange = vi.fn();
+    render(field(onChange, isoDate('2026-10-15')));
+    fireEvent.change(input(), { target: { value: '' } });
+    // jsdom never sets badInput; Chromium does for a partly typed date.
+    Object.defineProperty(input(), 'validity', { value: { badInput: true }, configurable: true });
+    fireEvent.blur(input());
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert').textContent).toBe('Enter a valid date.');
+  });
+
+  it('Escape on an edited date reverts it and leaves the dialog open', () => {
+    const onOpenChange = vi.fn();
+    render(
+      <Modal open onOpenChange={onOpenChange} title="Window" description="Dates">
+        {field(vi.fn(), isoDate('2026-10-15'))}
+      </Modal>,
+    );
+    fireEvent.focus(input());
+    fireEvent.change(input(), { target: { value: '2026-10-20' } });
+    fireEvent.keyDown(input(), { key: 'Escape' });
+    expect((input() as HTMLInputElement).value).toBe('2026-10-15');
+    expect(onOpenChange).not.toHaveBeenCalled();
+    // Nothing left to revert, so the next Escape closes the dialog.
+    fireEvent.keyDown(input(), { key: 'Escape' });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   it('without commit on blur, every change is passed on as before', () => {

@@ -378,6 +378,7 @@ describe('deciding a request against the balance on file', () => {
       <DecideDialog
         request={request}
         period={undefined}
+        periods={[]}
         unitId="unit-1"
         nursesById={new Map([[ana.id, ana]])}
         shiftTypesById={new Map()}
@@ -457,5 +458,23 @@ describe('the leave line while the request form is half filled in', () => {
     act(() => setProps({ nurseId: undefined }));
 
     expect(screen.queryByTestId('leave-standing')).toBeNull();
+  });
+});
+
+describe('when the leave check itself fails', () => {
+  it('says the leave balance could not be checked instead of showing nothing', async () => {
+    bridge.fail('leaveBalances', 'checkRequest', new Error('No pay periods set'));
+    renderWithApp(
+      <LeaveStanding
+        nurseId="A"
+        type="pto"
+        start={isoDate('2026-11-10')}
+        end={isoDate('2026-11-12')}
+        paidHours={24}
+      />,
+    );
+    expect(
+      await screen.findByText('Could not check the leave balance: No pay periods set'),
+    ).toBeTruthy();
   });
 });

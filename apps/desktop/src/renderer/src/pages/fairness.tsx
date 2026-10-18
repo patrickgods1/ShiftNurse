@@ -5,14 +5,13 @@
  * of spreadsheets here and immediately see the draft re-scored against it.
  */
 
-import type { Id } from '@shiftnurse/core';
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useNurses, usePeriods } from '../api.js';
 import { useFairnessReport, useFairnessTrend } from '../api-fairness.js';
 import { AsyncState } from '../components/async-state.js';
 import { PageHeader } from '../components/page-header.js';
 import { PeriodOptions } from '../components/period-options.js';
-import { defaultPeriod } from '../default-period.js';
+import { useSelectedPeriod } from '../selected-period.js';
 import { useUnitId } from '../unit-context.js';
 import { ImportHistoryDialog } from './fairness/import-dialog.js';
 import { NurseFairnessTable } from './fairness/nurse-table.js';
@@ -25,14 +24,9 @@ export default function FairnessPage() {
   const nursesQuery = useNurses(unitId);
   const trendQuery = useFairnessTrend(unitId);
   const periods = periodsQuery.data ?? [];
-  const [selectedId, setSelectedId] = useState<Id | undefined>(undefined);
   const [importOpen, setImportOpen] = useState(false);
 
-  const fallback = useMemo(() => defaultPeriod(periods), [periods]);
-  useEffect(() => {
-    if (selectedId === undefined && fallback !== undefined) setSelectedId(fallback.id);
-  }, [selectedId, fallback]);
-  const selected = periods.find((p) => p.id === selectedId) ?? fallback;
+  const { period: selected, select } = useSelectedPeriod(periods);
 
   const reportQuery = useFairnessReport(selected?.id);
   const trend = trendQuery.data ?? [];
@@ -72,7 +66,7 @@ export default function FairnessPage() {
             <select
               id="fairness-period-select"
               value={selected?.id ?? ''}
-              onChange={(e) => setSelectedId(e.target.value)}
+              onChange={(e) => select(e.target.value)}
               className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-text"
             >
               <PeriodOptions periods={periods} />
@@ -87,22 +81,28 @@ export default function FairnessPage() {
               label="Could not score the period"
               error={reportQuery.error}
             />
+          ) : nursesQuery.isPending ? (
+            <AsyncState status="loading" label="Loading the roster…" />
+          ) : nursesQuery.isError ? (
+            <AsyncState
+              status="error"
+              label="Could not load the roster"
+              error={nursesQuery.error}
+            />
           ) : (
             <div className="flex flex-col gap-6">
               <FairnessSummary
                 report={reportQuery.data}
                 contracted={
                   new Set(
-                    (nursesQuery.data ?? [])
-                      .filter((n) => n.contractedHoursPerPeriod > 0)
-                      .map((n) => n.id),
+                    nursesQuery.data.filter((n) => n.contractedHoursPerPeriod > 0).map((n) => n.id),
                   )
                 }
               />
               <ComponentDistributionStrip report={reportQuery.data} />
               <NurseFairnessTable
                 scores={reportQuery.data.scores}
-                nurses={nursesQuery.data ?? []}
+                nurses={nursesQuery.data}
                 trend={trend}
               />
             </div>

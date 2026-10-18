@@ -25,6 +25,8 @@ const request: TimeOffRequest = {
 let bridge: FakeBridge;
 beforeEach(() => {
   bridge = installFakeBridge();
+  // An unanswered leave check now shows its own alert; these tests are about the denial.
+  bridge.respond('leaveBalances', 'checkRequest', {});
 });
 afterEach(() => {
   cleanup();
@@ -36,6 +38,7 @@ function renderDialog() {
     <DecideDialog
       request={request}
       period={undefined}
+      periods={[]}
       unitId="unit-1"
       nursesById={new Map()}
       shiftTypesById={new Map()}

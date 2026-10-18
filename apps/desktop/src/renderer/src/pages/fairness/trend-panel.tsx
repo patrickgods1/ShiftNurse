@@ -13,6 +13,22 @@ const HEIGHT = 160;
 const PADDING_X = 32;
 const PADDING_Y = 16;
 
+/**
+ * Which points get a date label. Thinning to every `ceil(n/4)`th plus the last left the last two
+ * labels a few pixels apart (8 points: 6 and 7), so a thinned label too close to the last is dropped.
+ */
+export function labelledIndices(count: number): number[] {
+  if (count <= 6) return Array.from({ length: count }, (_, i) => i);
+  const every = Math.ceil(count / 4);
+  const last = count - 1;
+  const out: number[] = [];
+  for (let i = 0; i < last; i += every) {
+    if (last - i >= every) out.push(i);
+  }
+  out.push(last);
+  return out;
+}
+
 interface TrendPanelProps {
   points: FairnessTrendPoint[];
 }
@@ -50,9 +66,9 @@ export function TrendPanel({ points }: TrendPanelProps) {
     .map((c, i) => `${i === 0 ? 'M' : 'L'}${c.x.toFixed(1)},${c.y.toFixed(1)}`)
     .join(' ');
 
-  // Label every point when there are few, else thin to first/middle/last so labels don't
-  // collide — the same "selective direct labels" rule as any other mark.
-  const labelEvery = points.length <= 6 ? 1 : Math.ceil(points.length / 4);
+  // Label every point when there are few, else thin so labels don't collide — the same
+  // "selective direct labels" rule as any other mark.
+  const labelled = new Set(labelledIndices(points.length));
 
   return (
     <div>
@@ -89,7 +105,7 @@ export function TrendPanel({ points }: TrendPanelProps) {
                 {formatDate(point.periodStart)}: Gini {point.gini.toFixed(2)}
               </title>
             </circle>
-            {index % labelEvery === 0 || index === coords.length - 1 ? (
+            {labelled.has(index) ? (
               <text
                 x={x}
                 y={HEIGHT + 14}

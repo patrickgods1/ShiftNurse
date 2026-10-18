@@ -6,13 +6,13 @@
  */
 
 import type { Id, SchedulePeriod } from '@shiftnurse/core';
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { usePeriods } from '../api.js';
 import { AsyncState } from '../components/async-state.js';
 import { PageHeader } from '../components/page-header.js';
 import { PeriodOptions } from '../components/period-options.js';
 import { PRIMARY } from '../components/ui.js';
-import { defaultPeriod } from '../default-period.js';
+import { useSelectedPeriod } from '../selected-period.js';
 import { useUnitId } from '../unit-context.js';
 import { ScheduleBoard } from './schedule/board.js';
 import { NewPeriodDialog } from './schedule/new-period-dialog.js';
@@ -27,16 +27,8 @@ export default function SchedulePage({ focusNurseId }: { focusNurseId?: Id | und
   const unitId = useUnitId();
   const periodsQuery = usePeriods(unitId);
   const periods = periodsQuery.data ?? [];
-  const [selectedId, setSelectedId] = useState<Id | undefined>(undefined);
   const [newPeriodOpen, setNewPeriodOpen] = useState(false);
-
-  const fallback = useMemo(() => defaultPeriod(periods), [periods]);
-
-  useEffect(() => {
-    if (selectedId === undefined && fallback !== undefined) setSelectedId(fallback.id);
-  }, [selectedId, fallback]);
-
-  const selected = periods.find((p) => p.id === selectedId) ?? fallback;
+  const { period: selected, select } = useSelectedPeriod(periods);
 
   // Handed to the board so the picker, palette and actions share one row.
   const periodPicker = (
@@ -48,7 +40,7 @@ export default function SchedulePage({ focusNurseId }: { focusNurseId?: Id | und
         id="period-select"
         data-testid="period-select"
         value={selected?.id ?? ''}
-        onChange={(e) => setSelectedId(e.target.value)}
+        onChange={(e) => select(e.target.value)}
         className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-text"
       >
         <PeriodOptions periods={periods} />
@@ -102,7 +94,7 @@ export default function SchedulePage({ focusNurseId }: { focusNurseId?: Id | und
         open={newPeriodOpen}
         onOpenChange={setNewPeriodOpen}
         unitId={unitId}
-        onCreated={(period) => setSelectedId(period.id)}
+        onCreated={(period) => select(period.id)}
       />
     </div>
   );

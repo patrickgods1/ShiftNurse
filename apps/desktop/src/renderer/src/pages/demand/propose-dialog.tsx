@@ -6,7 +6,7 @@
  */
 
 import type { CensusForecast, CensusProposal, Id, ShiftType } from '@shiftnurse/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal } from '../../components/modal.js';
 import { PRIMARY } from '../../components/ui.js';
 import { formatDateWithWeekday } from '../../format.js';
@@ -48,8 +48,13 @@ export function ProposeDialog({
   );
   const [checked, setChecked] = useState<Set<string>>(new Set());
 
+  // Reset only when the dialog opens: a background refetch of the census changes `existing`'s
+  // identity, and re-ticking rows the manager unticked would write forecasts they declined.
+  const wasOpen = useRef(false);
   useEffect(() => {
-    if (!open) return;
+    const opening = open && !wasOpen.current;
+    wasOpen.current = open;
+    if (!opening) return;
     const defaults = new Set(
       existing.filter((e) => e.source === 'manual').map((e) => `${e.date}::${e.shiftTypeId}`),
     );

@@ -132,3 +132,25 @@ describe('the posting notice on the dashboard', () => {
     expect(screen.queryByTestId('post-by')).toBeNull();
   });
 });
+
+describe('next steps while the unit’s setup is still loading', () => {
+  it('does not tell a configured unit to add shifts while its shifts are still loading', async () => {
+    bridge.respond('shiftTypes', 'list', new Promise(() => {}) as never);
+    bridge.respond('dashboard', 'summary', summary());
+    renderWithApp(<DashboardPage />, { unit });
+    await screen.findByText('Active nurses');
+    expect(screen.getByTestId('next-steps').textContent).not.toContain(
+      'Add the shifts your unit works',
+    );
+  });
+
+  it('says the check failed rather than calling the unit unset-up when shifts cannot be read', async () => {
+    bridge.fail('shiftTypes', 'list', new Error('boom'));
+    bridge.respond('dashboard', 'summary', summary());
+    renderWithApp(<DashboardPage />, { unit });
+    expect(
+      await screen.findByText('Could not check the unit’s shifts and staffing floors.'),
+    ).toBeTruthy();
+    expect(screen.getByTestId('next-steps').textContent).not.toContain('Add the shifts');
+  });
+});

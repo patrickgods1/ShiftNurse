@@ -48,6 +48,9 @@ export function useToday(unitId: Id | undefined, date?: IsoDate) {
     queryKey: dayOfKeys.today(unitId ?? '', date),
     queryFn: () => api.dayOf.today(unitId as Id, date),
     enabled: unitId !== undefined,
+    // An Electron window fires no visibilitychange on alt-tab, so the clock, Now/Next and the
+    // call-off picker would freeze at load; foreground-only polling keeps a left-open page honest.
+    refetchInterval: 60_000,
   });
 }
 

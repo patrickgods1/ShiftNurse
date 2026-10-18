@@ -765,6 +765,9 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
       (D20), floats go home first on low census (D21) (verify: npm run check; smoke)
 - [x] Phase 9 — Renderer foundations: dialog focus return, cache roots and refresh helpers,
       field helpers, AA contrast tokens, home unit by id (verify: npm run check; smoke)
+- [x] Phase 10 — Renderer: setup guide guards unsaved edits, one shared period choice, Requests
+      close date / coverage / decide dialog, leave across two periods, Today refresh and cards,
+      tierless census, budget removal, honest loading states (verify: npm run check; smoke)
 
 ---
 

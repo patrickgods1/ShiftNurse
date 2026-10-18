@@ -27,6 +27,7 @@ import { TipProvider } from '../components/field-help.js';
 import { ToastProvider } from '../components/toast.js';
 import { UnsavedChangesProvider } from '../components/unsaved-changes.js';
 import { createQueryClient } from '../query-client.js';
+import { SelectedPeriodProvider } from '../selected-period.js';
 import { UnitProvider } from '../unit-context.js';
 import { getActiveBridge } from './fake-bridge.js';
 
@@ -72,7 +73,9 @@ export function renderWithApp(
         <ConfirmProvider>
           <TipProvider>
             <UnsavedChangesProvider>
-              <RouterProvider router={router} />
+              <SelectedPeriodProvider>
+                <RouterProvider router={router} />
+              </SelectedPeriodProvider>
             </UnsavedChangesProvider>
           </TipProvider>
         </ConfirmProvider>

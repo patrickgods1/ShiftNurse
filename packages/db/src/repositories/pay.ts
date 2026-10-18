@@ -616,3 +616,12 @@ export function savePaySettings(
   });
   return after;
 }
+
+/** Removes a period's budget. Nothing to remove writes nothing, so the audit trail has no no-ops. */
+export function clearBudget(db: DbLike, periodId: Id, actor: string): void {
+  const row = db.select().from(budget).where(eq(budget.periodId, periodId)).get();
+  if (!row) return;
+  const before = toBudget(row);
+  db.delete(budget).where(eq(budget.id, row.id)).run();
+  recordAudit(db, { entityType: 'budget', entityId: row.id, action: 'delete', actor, before });
+}

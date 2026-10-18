@@ -69,6 +69,7 @@ import type {
   OvertimeVolunteer,
   PayRate,
   PerDiemCommitment,
+  PeriodStatus,
   PlannedHoliday,
   Preceptorship,
   Preference,
@@ -1032,6 +1033,12 @@ export interface TodayShiftView {
   overstaffed: OverstaffedRole[];
   roster: RosterEntryView[];
   /**
+   * The period whose assignments make up this slot's roster (published preferred over draft), if one
+   * covers the slot's date. Yesterday's night shift still running after midnight belongs to yesterday's
+   * period, which on a period's first day is the previous one.
+   */
+  period: { id: Id; status: PeriodStatus } | undefined;
+  /**
    * `current` when the wall clock is inside its window, `next` for the one starting soonest;
    * only ever set when the summary's `date` is today, otherwise every slot is `other`.
    */
@@ -1548,6 +1555,8 @@ export interface ShiftNurseApi {
     /** Prices every assignment in the period and compares the total to its budget. */
     report(periodId: Id): PeriodCostReport;
     setBudget(periodId: Id, targetDollars: number): Budget;
+    /** Removes the period's budget; the cost card then shows no budget comparison. */
+    clearBudget(periodId: Id): void;
     paySettings(unitId: Id): PaySettings;
     savePaySettings(unitId: Id, settings: PaySettings): PaySettings;
   };
@@ -1586,11 +1595,17 @@ export interface ShiftNurseApi {
     withdrawApproval(id: Id, reason: string): TimeOffRequest;
     /** What approving or denying this request would do to the given period, before deciding. */
     impact(periodId: Id, requestId: Id, decision: 'approved' | 'denied'): TimeOffImpact;
-    /** For each shift approving would free in this period: the nurses who could take it. */
+    /**
+     * For each shift approving would free, in this period and every other non-archived period
+     * the request touches (this period's first; `assignment.periodId` says which): the nurses
+     * who could take it.
+     */
     coverOptions(periodId: Id, requestId: Id): LeaveCoverOption[];
     /**
-     * Approve and, in one transaction, take the nurse's shifts in this period off the schedule
-     * (published ones too, under `reason`) and give each chosen one to its cover.
+     * Approve and, in one transaction, take the nurse's shifts off the schedule in every period
+     * it touches (published ones under `reason`, each in its own change log) and give each chosen
+     * one to its cover in that shift's own period. A published period without a reason refuses
+     * the whole approval.
      */
     approveAndCover(
       periodId: Id,
@@ -1851,6 +1866,7 @@ export const API_CHANNELS = {
     'deleteOvertimeRule',
     'report',
     'setBudget',
+    'clearBudget',
     'paySettings',
     'savePaySettings',
   ],

@@ -173,6 +173,18 @@ describe('periods', () => {
     expect(audit.filter((a) => a.action === 'update')).toHaveLength(2);
   });
 
+  it('records no change when the close date is set to the date it already has', () => {
+    const period = createPeriod(handle.db, basePeriod({}), ACTOR);
+    const updates = () =>
+      auditHistoryFor(handle.db, 'schedule_period', period.id).filter((a) => a.action === 'update');
+    setRequestsCloseOn(handle.db, period.id, isoDate('2026-01-01'), ACTOR);
+    setRequestsCloseOn(handle.db, period.id, isoDate('2026-01-01'), ACTOR);
+    expect(updates()).toHaveLength(1);
+    setRequestsCloseOn(handle.db, period.id, undefined, ACTOR);
+    setRequestsCloseOn(handle.db, period.id, undefined, ACTOR);
+    expect(updates()).toHaveLength(2);
+  });
+
   it('lists periods for a unit newest-first', () => {
     const older = createPeriod(
       handle.db,

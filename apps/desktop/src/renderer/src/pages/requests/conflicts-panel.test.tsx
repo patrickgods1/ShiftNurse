@@ -127,4 +127,26 @@ describe('resolving a conflict from the Requests page', () => {
     );
     expect(alert.textContent).not.toContain('Applied');
   });
+
+  it('explains why a published period’s resolutions cannot be applied here', async () => {
+    renderWithApp(
+      <ConflictsPanel
+        unitId="unit-1"
+        period={{ ...period, status: 'published' }}
+        report={report}
+        policy={undefined}
+        nursesById={new Map()}
+      />,
+    );
+    const apply = await screen.findByRole('button', { name: 'Apply' });
+    expect((apply as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/Resolutions change a draft only\./)).toBeTruthy();
+  });
+
+  it('shows a resolution that closes a gap as fewer slots short, not as a negative', async () => {
+    renderPanel();
+    await screen.findByRole('button', { name: 'Apply' });
+    expect(screen.getByText('1 fewer slot short')).toBeTruthy();
+    expect(screen.queryByText(/-1/)).toBeNull();
+  });
 });

@@ -33,10 +33,11 @@ function SummaryCard({ title, summary }: { title: string; summary: ErrorSummary 
 }
 
 export function BacktestPanel({ result, shiftTypesById }: BacktestPanelProps) {
-  const modelBeatsRecorded =
-    result.model.samples > 0 &&
-    result.recorded.samples > 0 &&
-    result.model.meanAbsoluteError < result.recorded.meanAbsoluteError;
+  // Compared as displayed: two cards both reading 1.0 must not be called a win for either side.
+  const recordedMae = result.recorded.meanAbsoluteError.toFixed(1);
+  const modelMae = result.model.meanAbsoluteError.toFixed(1);
+  const tied = recordedMae === modelMae;
+  const modelBeatsRecorded = result.model.meanAbsoluteError < result.recorded.meanAbsoluteError;
 
   const byShiftType = Object.entries(result.byShiftType);
 
@@ -49,9 +50,11 @@ export function BacktestPanel({ result, shiftTypesById }: BacktestPanelProps) {
 
       {result.recorded.samples > 0 && result.model.samples > 0 ? (
         <p className="mt-3 text-sm text-text-muted">
-          {modelBeatsRecorded
-            ? 'The model beats the recorded forecasts here — manual edits are hurting more than helping.'
-            : 'The recorded forecasts beat the model — manual edits are earning their keep; the model needs work.'}{' '}
+          {tied
+            ? 'The recorded forecasts and the model are about as accurate here.'
+            : modelBeatsRecorded
+              ? 'The model beats the recorded forecasts here — manual edits are hurting more than helping.'
+              : 'The recorded forecasts beat the model — manual edits are earning their keep; the model needs work.'}{' '}
           Bias: "+" means a forecast ran high.
         </p>
       ) : (

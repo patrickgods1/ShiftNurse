@@ -8,9 +8,9 @@
  * cause-and-effect the milestone exists to surface.
  */
 
-import type { Id, IsoDate, SchedulePeriod, TimeOffRequest, TimeOffStatus } from '@shiftnurse/core';
+import type { IsoDate, SchedulePeriod, TimeOffRequest, TimeOffStatus } from '@shiftnurse/core';
 import { addDays, TIME_OFF_TYPE_LABELS, today } from '@shiftnurse/core';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useAssignments, useNurses, usePeriods, useShiftTypes } from '../api.js';
 import {
   useCancelTimeOff,
@@ -27,8 +27,8 @@ import { DateField } from '../components/date-field.js';
 import { PageHeader } from '../components/page-header.js';
 import { PeriodOptions } from '../components/period-options.js';
 import { PRIMARY, SELECTED, SMALL, UNSELECTED } from '../components/ui.js';
-import { defaultPeriod } from '../default-period.js';
 import { formatDate, formatInstant, periodRange } from '../format.js';
+import { useSelectedPeriod } from '../selected-period.js';
 import { useUnitId } from '../unit-context.js';
 import { BidRoundsPanel } from './requests/bid-rounds-panel.js';
 import { competingNotes } from './requests/competing-advice.js';
@@ -66,13 +66,8 @@ export default function RequestsPage() {
   const shiftTypesQuery = useShiftTypes(unitId);
   const periods = periodsQuery.data ?? [];
 
-  const [selectedPeriodId, setSelectedPeriodId] = useState<Id | undefined>(undefined);
-  const fallback = useMemo(() => defaultPeriod(periods), [periods]);
-  useEffect(() => {
-    if (selectedPeriodId === undefined && fallback !== undefined) setSelectedPeriodId(fallback.id);
-  }, [selectedPeriodId, fallback]);
-  const period: SchedulePeriod | undefined =
-    periods.find((p) => p.id === selectedPeriodId) ?? fallback;
+  const { period, select: selectPeriod } = useSelectedPeriod(periods);
+  // Feeds the Coverage column (an empty draft cannot show a shift left short) and the Exchanges tab.
   const assignmentsQuery = useAssignments(period?.id);
 
   const [tab, setTab] = useState<'timeOff' | 'exchanges' | 'bidRounds'>('timeOff');
@@ -232,9 +227,17 @@ export default function RequestsPage() {
           >
             Leaves a shift short
           </span>
-        ) : conflictsQuery.data ? (
+        ) : !conflictsQuery.data || !assignmentsQuery.data ? null : assignmentsQuery.data.length ===
+          0 ? (
+          <span
+            className="text-xs text-text-muted"
+            title="Nobody is rostered yet, so the draft cannot show a shift left short. Review shows whether the unit can spare them."
+          >
+            Not built yet
+          </span>
+        ) : (
           <span className="text-xs text-text-muted">Covered</span>
-        ) : null,
+        ),
     },
     {
       key: 'reason',
@@ -278,7 +281,12 @@ export default function RequestsPage() {
               <select
                 aria-label="Period"
                 value={period?.id ?? ''}
-                onChange={(e) => setSelectedPeriodId(e.target.value)}
+                onChange={(e) => {
+                  selectPeriod(e.target.value);
+                  // The picked day belongs to the old period's range; keeping it would filter
+                  // the queue to a day that is not on screen.
+                  setSelectedDate(undefined);
+                }}
                 className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-text"
               >
                 <PeriodOptions periods={periods} />
@@ -456,6 +464,7 @@ export default function RequestsPage() {
       <DecideDialog
         request={reviewing}
         period={decidingPeriod}
+        periods={periods}
         unitId={unitId}
         nursesById={nursesById}
         shiftTypesById={shiftTypesById}
@@ -523,6 +532,7 @@ function RequestWindow({
       <DateField
         label="Requests for this schedule close on"
         value={period.requestsCloseOn ?? ''}
+        commitOnBlur
         onChange={(date) => onChange(date === '' ? null : date)}
       />
       <span className="text-xs text-text-muted">

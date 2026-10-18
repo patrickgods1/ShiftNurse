@@ -159,7 +159,8 @@
   A cleared number is `undefined`, never 0; a field that writes to the database commits on blur,
   and only when the value changed, so typing never writes one audit row per keystroke.
 - **Forms that hold edits until Save register with `useUnsavedChanges`.** Settings tab switches
-  await `useConfirmDiscard`, `NavigationGuard` guards routes and window unload, and main answers
+  await `useConfirmDiscard` (so do the setup guide's Back, Skip, Continue and summary links),
+  `NavigationGuard` guards routes and window unload, and main answers
   Electron's `will-prevent-unload` with a native dialog (skipped in a smoke run).
 - **Dialogs return focus.** `Modal` captures the opener and restores it on close
   (`components/focus.ts`); a dialog whose opener can disappear passes `returnFocus`. Every dialog

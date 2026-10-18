@@ -8,7 +8,7 @@
 import type { CallOffView } from '@shared/api.js';
 import type { Nurse, ReplacementReport, ShiftType } from '@shiftnurse/core';
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
 import { renderWithApp } from '../../test/render.js';
 import { CallOffCard } from './call-off-card.js';
@@ -83,15 +83,77 @@ describe('working the call list for a call-off', () => {
     expect(bridge.callsTo('dayOf', 'backfill')).toEqual([]);
   });
 
-  it('logs a decline when the manager just presses Log', async () => {
+  it('will not log a call until the manager says how it went', async () => {
     renderWithApp(<CallOffCard unitId="unit-1" callOff={callOffView} />);
     const maya = within((await screen.findByText('Maya Lindqvist (RN)')).closest('li')!);
-    fireEvent.click(maya.getByRole('button', { name: 'Log' }));
+    const log = maya.getByRole('button', { name: 'Log' }) as HTMLButtonElement;
+    const select = maya.getByLabelText('Call outcome for Maya Lindqvist (RN)') as HTMLSelectElement;
+    expect(log.disabled).toBe(true);
+    expect(select.selectedOptions[0]!.textContent).toBe('Outcome…');
+
+    fireEvent.change(select, { target: { value: 'declined' } });
+    expect(log.disabled).toBe(false);
+    fireEvent.click(log);
     await waitFor(() =>
       expect(bridge.callsTo('dayOf', 'logCall')).toEqual([
         ['co-1', 'n-maya', 'declined', undefined],
       ]),
     );
+  });
+
+  it('writes the call log in words', async () => {
+    const view = {
+      ...callOffView,
+      attempts: [
+        {
+          id: 'a-1',
+          nurseId: 'n-ana',
+          outcome: 'left_message',
+          attemptedAt: 0,
+        },
+      ],
+    } as unknown as CallOffView;
+    renderWithApp(<CallOffCard unitId="unit-1" callOff={view} />);
+    const line = await screen.findByText(/Martinez, Ana — Left message/, undefined, {
+      timeout: 5000,
+    });
+    expect(line.textContent).not.toContain('left_message');
+  });
+
+  it('says the shift is still staffed when the call-off leaves nobody short', async () => {
+    bridge.respond('dayOf', 'replacements', { ...report, shortfall: 0 } as ReplacementReport);
+    renderWithApp(<CallOffCard unitId="unit-1" callOff={callOffView} />);
+    expect(
+      await screen.findByText('Still fully staffed without them', undefined, { timeout: 5000 }),
+    ).toBeTruthy();
+    expect(screen.queryByText(/0 nurse-slot/)).toBeNull();
+  });
+
+  it('lists the same rule twice when it fires on two different days', async () => {
+    const soft = (date: string) => ({
+      ruleId: 'min-rest',
+      message: `Short rest on ${date}`,
+      nurseIds: ['n-ana'],
+      dates: [date],
+    });
+    bridge.respond('dayOf', 'replacements', {
+      ...report,
+      candidates: [
+        {
+          ...candidate('n-ana', 'Ana Martinez (RN)', 1),
+          softViolationsIntroduced: [soft('2026-10-04'), soft('2026-10-05')],
+        },
+      ],
+    } as unknown as ReplacementReport);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    renderWithApp(<CallOffCard unitId="unit-1" callOff={callOffView} />);
+    expect(
+      await screen.findByText('Short rest on 2026-10-05', undefined, { timeout: 5000 }),
+    ).toBeTruthy();
+    expect(screen.getByText('Short rest on 2026-10-04')).toBeTruthy();
+    const logged = errors.mock.calls.map((c) => c.map(String).join(' ')).join('\n');
+    errors.mockRestore();
+    expect(logged).not.toMatch(/same key/);
   });
 });
 

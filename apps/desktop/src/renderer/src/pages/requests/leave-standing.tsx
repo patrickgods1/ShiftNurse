@@ -20,6 +20,7 @@ import {
   type TimeOffType,
 } from '@shiftnurse/core';
 import { useLeaveRequestCheck } from '../../api-leave-balances.js';
+import { errorMessage } from '../../components/ui.js';
 import { formatDate } from '../../format.js';
 
 const REGIME_LABEL: Record<FmlaRegime, string> = {
@@ -59,6 +60,16 @@ export function LeaveStanding({
   const query = useLeaveRequestCheck(ready ? { nurseId, type, start, end, paidHours } : undefined);
   // A half-filled form shows nothing, whatever the query last held.
   if (!ready) return null;
+  // A failed check must not read as "nothing to warn about": the manager would approve unwarned.
+  if (query.isError) {
+    return (
+      <div className="flex flex-col gap-1 rounded-md border border-border bg-bg p-2 text-xs text-text-muted">
+        <p role="alert" className="text-xs text-warn">
+          Could not check the leave balance: {errorMessage(query.error)}
+        </p>
+      </div>
+    );
+  }
   const check = query.data;
   if (!check) return null;
   const { balance, noBalanceFor, fmla, pdl } = check;

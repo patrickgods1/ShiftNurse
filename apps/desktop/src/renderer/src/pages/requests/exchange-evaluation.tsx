@@ -3,6 +3,7 @@
 import type { ExchangeEvaluation, Id, Nurse } from '@shiftnurse/core';
 import { formatDollars, formatHours, formatSignedDollars } from '../../money.js';
 import { nurseLabel } from './decide-dialog.js';
+import { VERDICT_LABELS } from './labels.js';
 
 const VERDICT_STYLE: Record<ExchangeEvaluation['verdict'], string> = {
   ok: 'bg-success/15 text-success',
@@ -12,12 +13,20 @@ const VERDICT_STYLE: Record<ExchangeEvaluation['verdict'], string> = {
 
 export function VerdictPill({ verdict }: { verdict: ExchangeEvaluation['verdict'] }) {
   return (
-    <span
-      className={`rounded px-2 py-0.5 text-xs font-semibold uppercase ${VERDICT_STYLE[verdict]}`}
-    >
-      {verdict}
+    <span className={`rounded px-2 py-0.5 text-xs font-semibold ${VERDICT_STYLE[verdict]}`}>
+      {VERDICT_LABELS[verdict]}
     </span>
   );
+}
+
+/** Keys a message by its text plus how many identical ones came before it. */
+function keyed(messages: readonly string[]): { key: string; message: string }[] {
+  const seen = new Map<string, number>();
+  return messages.map((message) => {
+    const n = seen.get(message) ?? 0;
+    seen.set(message, n + 1);
+    return { key: `${message}#${n}`, message };
+  });
 }
 
 export function EvaluationPanel({
@@ -37,15 +46,15 @@ export function EvaluationPanel({
       </div>
       {evaluation.blockers.length > 0 ? (
         <ul className="flex flex-col gap-0.5 text-sm text-danger">
-          {evaluation.blockers.map((b) => (
-            <li key={b}>{b}</li>
+          {keyed(evaluation.blockers).map((b) => (
+            <li key={b.key}>{b.message}</li>
           ))}
         </ul>
       ) : null}
       {evaluation.warnings.length > 0 ? (
         <ul className="flex flex-col gap-0.5 text-sm text-warn">
-          {evaluation.warnings.map((w) => (
-            <li key={w}>{w}</li>
+          {keyed(evaluation.warnings).map((w) => (
+            <li key={w.key}>{w.message}</li>
           ))}
         </ul>
       ) : null}

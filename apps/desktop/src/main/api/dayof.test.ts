@@ -20,6 +20,7 @@ import {
   listCensusForecastsInRange,
   listChanges,
   listNursesForUnit,
+  listPeriodsForUnit,
   listShiftTypesForUnit,
   publishSchedule,
   recordActualCensus,
@@ -622,5 +623,25 @@ describe('the Today clock', () => {
         .today(f.seeded.unitId, d)
         .shifts.some((s) => s.shiftType.id === f.day.id && s.status === 'current'),
     ).toBe(true);
+  });
+
+  it('files last night’s shift under the period it was worked in, on a new period’s first morning', () => {
+    const start = f.seeded.draftStart;
+    const eve = addDays(start, -1);
+    const previous = listPeriodsForUnit(f.handle.db, f.seeded.unitId).find(
+      (p) => p.endDate === eve,
+    );
+    expect(previous).toBeDefined();
+    // 03:00 on the new period's first day: the 19:00 night that began yesterday is still running.
+    expect(f.night.startTime).toBe('19:00');
+    expect(f.night.durationHours).toBe(12);
+    setClock(start, 3, 0);
+
+    const shifts = dayOfApi(f.handle.db).today(f.seeded.unitId, start).shifts;
+    const lastNight = shifts.find((s) => s.shiftType.id === f.night.id && s.date === eve);
+    expect(lastNight?.period?.id).toBe(previous!.id);
+    const todays = shifts.filter((s) => s.date === start);
+    expect(todays.length).toBeGreaterThan(0);
+    for (const s of todays) expect(s.period?.id).toBe(f.seeded.draftPeriodId);
   });
 });

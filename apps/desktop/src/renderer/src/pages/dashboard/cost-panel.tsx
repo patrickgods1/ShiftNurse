@@ -5,20 +5,35 @@
  * conversations, so both sit side by side.
  *
  * The budget is editable in place because it is a single number per period and sending a
- * manager to a settings tab to change it would guarantee it is never set.
+ * manager to a settings tab to change it would guarantee it is never set. Leaving the budget
+ * blank removes it: a blank field is not a $0 budget, which would read as every dollar over.
  */
 
 import type { Nurse, SchedulePeriod } from '@shiftnurse/core';
 import { useState } from 'react';
-import { useCostReport, useSetBudget } from '../../api-cost.js';
+import { useClearBudget, useCostReport, useSetBudget } from '../../api-cost.js';
 import { AsyncState } from '../../components/async-state.js';
 import { PRIMARY_SMALL } from '../../components/ui.js';
-import { periodLabel } from '../../format.js';
+import { numberFieldProblem, parseNumberField } from '../../field-values.js';
+import { listName, periodLabel } from '../../format.js';
 import { formatDollars, formatHours, formatSignedDollars } from '../../money.js';
 
 interface CostPanelProps {
   period: SchedulePeriod;
-  nurses: readonly Nurse[];
+  /** Undefined while the roster loads or failed: names show a placeholder, never ids. */
+  nurses: readonly Nurse[] | undefined;
+}
+
+/** A name cell: never an id, and a placeholder only while the roster is still arriving. */
+function NurseName({ nurse, loading }: { nurse: Nurse | undefined; loading: boolean }) {
+  if (nurse) return <>{listName(nurse)}</>;
+  if (loading)
+    return (
+      <span role="img" aria-label="Loading name">
+        …
+      </span>
+    );
+  return <>Name unavailable</>;
 }
 
 function BudgetEditor({
@@ -29,8 +44,10 @@ function BudgetEditor({
   current: number | undefined;
 }) {
   const setBudget = useSetBudget(period.id);
+  const clearBudget = useClearBudget(period.id);
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState('');
+  const [problem, setProblem] = useState<string>();
 
   if (!editing) {
     return (
@@ -39,6 +56,7 @@ function BudgetEditor({
         data-testid="edit-budget"
         onClick={() => {
           setValue(current === undefined ? '' : String(current));
+          setProblem(undefined);
           setEditing(true);
         }}
         className="text-xs text-accent underline underline-offset-2 hover:no-underline"
@@ -50,12 +68,25 @@ function BudgetEditor({
 
   return (
     <form
-      className="flex items-center gap-2"
+      // The browser would block a negative value silently; the alert below says why.
+      noValidate
+      className="flex flex-wrap items-center justify-end gap-2"
       onSubmit={(event) => {
         event.preventDefault();
-        const parsed = Number(value);
-        if (!(parsed >= 0)) return;
-        setBudget.mutate(parsed, { onSuccess: () => setEditing(false) });
+        const found = numberFieldProblem(value, { min: 0, allowBlank: true });
+        if (found) {
+          setProblem(found);
+          return;
+        }
+        setProblem(undefined);
+        const parsed = parseNumberField(value);
+        if (parsed !== undefined) {
+          setBudget.mutate(parsed, { onSuccess: () => setEditing(false) });
+        } else if (current !== undefined) {
+          clearBudget.mutate(undefined, { onSuccess: () => setEditing(false) });
+        } else {
+          setEditing(false);
+        }
       }}
     >
       <label className="sr-only" htmlFor="budget-input">
@@ -68,9 +99,14 @@ function BudgetEditor({
         step={100}
         value={value}
         onChange={(event) => setValue(event.target.value)}
+        aria-invalid={problem !== undefined}
         className="w-32 rounded-md border border-border bg-bg px-2 py-1 text-sm text-text"
       />
-      <button type="submit" disabled={setBudget.isPending} className={PRIMARY_SMALL}>
+      <button
+        type="submit"
+        disabled={setBudget.isPending || clearBudget.isPending}
+        className={PRIMARY_SMALL}
+      >
         Save
       </button>
       <button
@@ -80,6 +116,11 @@ function BudgetEditor({
       >
         Cancel
       </button>
+      {problem ? (
+        <p role="alert" className="w-full text-right text-xs text-danger">
+          {problem} Leave it blank to remove the budget.
+        </p>
+      ) : null}
     </form>
   );
 }
@@ -95,7 +136,7 @@ export function CostPanel({ period, nurses }: CostPanelProps) {
   }
 
   const { cost, budget, variance, dayOf } = reportQuery.data;
-  const nursesById = new Map(nurses.map((n) => [n.id, n]));
+  const nursesById = new Map((nurses ?? []).map((n) => [n.id, n]));
   const overBudget = variance !== undefined && variance.variance > 0;
   const ranked = cost.overtime.ranked.slice(0, 8);
   const seen = new Map<string, number>();
@@ -110,7 +151,7 @@ export function CostPanel({ period, nurses }: CostPanelProps) {
               {formatDollars(cost.totals.total)}
             </p>
           </div>
-          <BudgetEditor period={period} current={budget?.targetDollars} />
+          <BudgetEditor key={period.id} period={period} current={budget?.targetDollars} />
         </div>
 
         {cost.assignments.length === 0 ? (
@@ -197,7 +238,7 @@ export function CostPanel({ period, nurses }: CostPanelProps) {
                     return (
                       <tr key={row.nurseId} className="border-b border-border last:border-0">
                         <td className="py-1 pr-2 text-text">
-                          {nurse ? `${nurse.firstName} ${nurse.lastName}` : row.nurseId}
+                          <NurseName nurse={nurse} loading={nurses === undefined} />
                         </td>
                         <td className="py-1 pr-2 whitespace-nowrap text-right text-text">
                           {formatHours(row.hours)}
@@ -275,7 +316,7 @@ export function CostPanel({ period, nurses }: CostPanelProps) {
                       className="border-b border-border last:border-0"
                     >
                       <td className="py-1 pr-2 text-text">
-                        {nurse ? `${nurse.firstName} ${nurse.lastName}` : line.nurseId}
+                        <NurseName nurse={nurse} loading={nurses === undefined} />
                       </td>
                       <td className="py-1 pr-2 text-text">{line.note}</td>
                       <td className="py-1 pr-2 whitespace-nowrap text-right text-text">

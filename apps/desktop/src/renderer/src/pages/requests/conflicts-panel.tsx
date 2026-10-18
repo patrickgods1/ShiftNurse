@@ -25,6 +25,7 @@ import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { formatDateWithWeekday, periodLabel } from '../../format.js';
 import { formatSignedDollars } from '../../money.js';
 import { nurseLabel } from './decide-dialog.js';
+import { coverageDeltaLabel } from './labels.js';
 import { ReasonDialog } from './reason-dialog.js';
 
 interface ConflictsPanelProps {
@@ -44,6 +45,9 @@ const KIND_LABEL: Record<Conflict['kind'], string> = {
   budget: 'Budget',
   scheduled_on_leave: 'Rostered on approved leave',
 };
+
+const PUBLISHED_REASON =
+  'Resolutions change a draft only. On a published schedule, make the change on the Schedule page, with a reason.';
 
 export function ConflictsPanel({
   unitId,
@@ -198,6 +202,7 @@ export function ConflictsPanel({
                   resolution={r}
                   nursesById={nursesById}
                   canApply={isDraft && !resolve.isPending}
+                  disabledReason={isDraft ? undefined : PUBLISHED_REASON}
                   onApply={() => {
                     resolve.reset();
                     setApplying(r);
@@ -234,12 +239,14 @@ function ResolutionCard({
   resolution: r,
   nursesById,
   canApply,
+  disabledReason,
   onApply,
 }: {
   rank: number;
   resolution: Resolution;
   nursesById: ReadonlyMap<Id, Nurse>;
   canApply: boolean;
+  disabledReason?: string;
   onApply: () => void;
 }) {
   const muted = r.kind === 'accept_shortfall';
@@ -258,11 +265,15 @@ function ResolutionCard({
             {r.title}
           </p>
           <p className="mt-1 text-xs text-text-muted">{r.description}</p>
+          {disabledReason !== undefined ? (
+            <p className="mt-1 text-xs text-text-muted">{disabledReason}</p>
+          ) : null}
         </div>
         <button
           type="button"
           className={muted ? SECONDARY : PRIMARY}
           disabled={!canApply}
+          title={disabledReason}
           onClick={onApply}
         >
           {muted ? 'Accept' : 'Apply'}
@@ -276,9 +287,7 @@ function ResolutionCard({
               coverage.delta < 0 ? 'text-success' : coverage.delta > 0 ? 'text-danger' : ''
             }
           >
-            {coverage.delta === 0
-              ? 'no change'
-              : `${coverage.delta > 0 ? '+' : ''}${coverage.delta} slot${Math.abs(coverage.delta) === 1 ? '' : 's'} short`}
+            {coverageDeltaLabel(coverage.delta)}
           </dd>
         </div>
         <div>

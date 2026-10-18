@@ -16,7 +16,7 @@
  * Pure data-in, data-out; no clock reads. The caller decides what "today" is.
  */
 
-import type { CensusForecast, Id } from '../domain/entities.js';
+import type { AcuityTier, CensusForecast, Id } from '../domain/entities.js';
 import { addDays, dayNumber, type IsoDate, weekdayOf } from '../domain/time.js';
 
 export interface ForecastOptions {
@@ -172,23 +172,65 @@ export function proposeCensus(
 // Validation
 // ---------------------------------------------------------------------------
 
-/** Problems with a census entry, in words a manager can act on. Empty means valid. */
+/**
+ * Problems with a census entry, in words a manager can act on. Empty means valid.
+ *
+ * Pass the unit's `tiers` and every message names a tier by its name — these reach the
+ * manager verbatim, and a tier id is meaningless to them. With tiers, a unit that has none
+ * records a census with no mix at all: there is nothing to apportion, and that is safe
+ * because ratio demand is computed per tier (`nursesRequiredForMix`), so a tierless unit's
+ * demand comes from its coverage floor whatever the mix says. Without that, a tierless unit
+ * could never save a non-zero census (the empty mix "adds up to 0"). A unit with tiers still
+ * needs the mix to add up. Called without `tiers`, the check is the older tier-blind one.
+ */
 export function validateAcuityMix(
   projectedCensus: number,
   acuityMix: Record<Id, number>,
+  tiers?: readonly Pick<AcuityTier, 'id' | 'name'>[],
 ): string[] {
   const problems: string[] = [];
   if (!Number.isInteger(projectedCensus) || projectedCensus < 0) {
     problems.push(`Census ${projectedCensus} must be a whole number of patients`);
   }
+  if (tiers === undefined) {
+    let sum = 0;
+    for (const [tierId, n] of Object.entries(acuityMix)) {
+      if (!Number.isInteger(n) || n < 0) {
+        problems.push(`Tier ${tierId} count ${n} must be a whole, non-negative number`);
+        continue;
+      }
+      sum += n;
+    }
+    if (problems.length === 0 && sum !== projectedCensus) {
+      problems.push(`Acuity mix adds up to ${sum} patients but the census is ${projectedCensus}`);
+    }
+    return problems;
+  }
+
+  if (tiers.length === 0) {
+    if (Object.values(acuityMix).some((n) => n !== 0)) {
+      problems.push('This unit has no acuity tiers; record the census without a mix.');
+    }
+    return problems;
+  }
+
+  const byId = new Map(tiers.map((t) => [t.id, t]));
   let sum = 0;
+  let unknownTier = false;
   for (const [tierId, n] of Object.entries(acuityMix)) {
+    const tier = byId.get(tierId);
+    if (!tier) {
+      unknownTier = true;
+      continue;
+    }
     if (!Number.isInteger(n) || n < 0) {
-      problems.push(`Tier ${tierId} count ${n} must be a whole, non-negative number`);
+      problems.push(`${tier.name}: ${n} must be a whole number of patients, 0 or more`);
       continue;
     }
     sum += n;
   }
+  // One message however many stale entries: the manager's fix is the same either way.
+  if (unknownTier) problems.push('An acuity tier in this mix is no longer on the unit.');
   if (problems.length === 0 && sum !== projectedCensus) {
     problems.push(`Acuity mix adds up to ${sum} patients but the census is ${projectedCensus}`);
   }

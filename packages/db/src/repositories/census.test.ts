@@ -111,4 +111,105 @@ describe('census forecasts', () => {
     expect(updated.actualCensus).toBe(23);
     expect(updated.source).toBe('forecast');
   });
+
+  it('saves a census on a unit with no acuity tiers', () => {
+    const tierless = createUnit(
+      handle.db,
+      {
+        name: 'Short Stay',
+        unitType: 'Medical-Surgical',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    ).id;
+    const day = createShiftType(
+      handle.db,
+      {
+        unitId: tierless,
+        name: 'Day 12',
+        abbreviation: 'D12',
+        startTime: '07:00',
+        durationHours: 12,
+        isNight: false,
+        isOnCall: false,
+        color: '#000',
+        sortOrder: 1,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+    const row = upsertCensusForecast(
+      handle.db,
+      {
+        unitId: tierless,
+        date: isoDate('2026-09-08'),
+        shiftTypeId: day,
+        projectedCensus: 20,
+        acuityMix: {},
+        source: 'manual',
+      },
+      ACTOR,
+    );
+    expect(row.projectedCensus).toBe(20);
+    expect(recordActualCensus(handle.db, row.id, 18, {}, ACTOR).actualCensus).toBe(18);
+  });
+
+  it('still refuses an empty mix for a full census on a unit that has tiers', () => {
+    expect(() =>
+      upsertCensusForecast(
+        handle.db,
+        {
+          unitId,
+          date: isoDate('2026-09-08'),
+          shiftTypeId,
+          projectedCensus: 20,
+          acuityMix: {},
+          source: 'manual',
+        },
+        ACTOR,
+      ),
+    ).toThrow(/0 patients but the census is 20/);
+  });
+
+  it('names the tier when a saved count is fractional', () => {
+    const high = createAcuityTier(
+      handle.db,
+      { unitId, name: 'High', level: 3, careHoursPerPatientDay: 9 },
+      ACTOR,
+    ).id;
+    const save = () =>
+      upsertCensusForecast(
+        handle.db,
+        {
+          unitId,
+          date: isoDate('2026-09-08'),
+          shiftTypeId,
+          projectedCensus: 3,
+          acuityMix: { [tierId]: 1.5, [high]: 1.5 },
+          source: 'manual',
+        },
+        ACTOR,
+      );
+    expect(save).toThrow('Routine: 1.5 must be a whole number of patients, 0 or more');
+    expect(save).not.toThrow(tierId);
+  });
+
+  it('names the tier when a recorded actual count is fractional', () => {
+    const row = upsertCensusForecast(
+      handle.db,
+      {
+        unitId,
+        date: isoDate('2026-09-08'),
+        shiftTypeId,
+        projectedCensus: 20,
+        acuityMix: { [tierId]: 20 },
+        source: 'manual',
+      },
+      ACTOR,
+    );
+    expect(() => recordActualCensus(handle.db, row.id, 2, { [tierId]: 2.5 }, ACTOR)).toThrow(
+      'Routine: 2.5 must be a whole number of patients, 0 or more',
+    );
+  });
 });

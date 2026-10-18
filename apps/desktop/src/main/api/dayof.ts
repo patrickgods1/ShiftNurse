@@ -226,6 +226,7 @@ function dayOfSummary(db: DbLike, unitId: Id, date?: IsoDate): DayOfSummary {
       staffing,
       overstaffed: plan.period ? overstaffedRoles(plan.period.id, staffing) : [],
       roster,
+      period: plan.period ? { id: plan.period.id, status: plan.period.status } : undefined,
       status: slot.status,
     };
   });

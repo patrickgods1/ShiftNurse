@@ -3,13 +3,17 @@
  * manager never regenerates a whole schedule — hundreds of shifts reshuffled — to fill two.
  */
 
-import { addDays, paidLeaveCredits } from '@shiftnurse/core';
+import { addDays, describeDate, paidLeaveCredits } from '@shiftnurse/core';
 import {
+  archivePeriod,
+  createPeriod,
   createTimeOffRequest,
   denyTimeOff,
+  getPeriod,
   getTimeOffRequest,
   listAssignmentsForPeriod,
   listChanges,
+  listPeriodsForUnit,
   markFloatedOff,
   publishSchedule,
   recentAudit,
@@ -386,5 +390,244 @@ describe('leave over a day she was floated off', () => {
       expect.objectContaining({ id: shift.id, floatedTo: '5 East', isLocked: true }),
     ]);
     expect(listChanges(f.handle.db, f.seeded.draftPeriodId)).toEqual([]);
+  });
+});
+
+describe('a request that spans a posted period and the draft after it', () => {
+  const auditCount = () => recentAudit(f.handle.db, 100_000).length;
+
+  /**
+   * P is the seeded period, published; Q the draft for the 14 days after it. Ann works the day
+   * shift on P's last two days and Q's first, then asks for those three days off.
+   */
+  function straddle() {
+    const db = f.handle.db;
+    const P = f.seeded.draftPeriodId;
+    const seededPeriod = getPeriod(db, P)!;
+    const Q = createPeriod(
+      db,
+      {
+        unitId: f.seeded.unitId,
+        name: 'Next period',
+        startDate: addDays(f.seeded.draftEnd, 1),
+        endDate: addDays(f.seeded.draftEnd, 14),
+        ruleSetId: seededPeriod.ruleSetId,
+        ruleSetVersion: seededPeriod.ruleSetVersion,
+      },
+      ACTOR,
+    ).id;
+    const ann = f.rns[0]!;
+    const dates = [-1, 0, 1].map((k) => addDays(f.seeded.draftEnd, k));
+    const shifts = dates.map((date, k) =>
+      scheduleApi(db).createAssignment({
+        periodId: k < 2 ? P : Q,
+        nurseId: ann.id,
+        shiftTypeId: f.day.id,
+        date,
+      }),
+    );
+    publishSchedule(db, { periodId: P, ledger: [] }, ACTOR);
+    const request = createTimeOffRequest(
+      db,
+      {
+        nurseId: ann.id,
+        startDate: dates[0]!,
+        endDate: dates[2]!,
+        type: 'pto',
+        paidHours: 36,
+      },
+      ACTOR,
+    );
+    const annOn = (date: string) =>
+      [...listAssignmentsForPeriod(db, P), ...listAssignmentsForPeriod(db, Q)].filter(
+        (a) => a.nurseId === ann.id && a.date === date,
+      );
+    return { P, Q, ann, dates, shifts, request, annOn };
+  }
+
+  it('offers cover for the posted days as well as the draft day of a request that spans both', () => {
+    const { P, Q, request } = straddle();
+    // Three shifts dated inside the request: one on Q (the anchor, so first), two on P.
+    expect(
+      coverOptions(f.handle.db, Q, request.id).map((o) => [
+        o.assignment.periodId,
+        o.assignment.date,
+      ]),
+    ).toEqual([
+      [Q, addDays(f.seeded.draftEnd, 1)],
+      [P, addDays(f.seeded.draftEnd, -1)],
+      [P, f.seeded.draftEnd],
+    ]);
+  });
+
+  it('refuses to take posted shifts off without a reason, and changes nothing', () => {
+    const { Q, dates, request, annOn } = straddle();
+    const auditBefore = auditCount();
+    expect(() => approveAndCover(f.handle.db, Q, request.id, undefined, [])).toThrow(
+      /requires a reason/,
+    );
+    expect(getTimeOffRequest(f.handle.db, request.id)?.status).toBe('pending');
+    for (const date of dates) expect(annOn(date)).toHaveLength(1);
+    expect(auditCount()).toBe(auditBefore);
+  });
+
+  it('takes every posted shift off under the reason and logs each in its own period', () => {
+    const { P, Q, dates, request, annOn } = straddle();
+    approveAndCover(f.handle.db, Q, request.id, 'Family emergency', []);
+    expect(getTimeOffRequest(f.handle.db, request.id)?.status).toBe('approved');
+    for (const date of dates) expect(annOn(date)).toEqual([]);
+    const changes = listChanges(f.handle.db, P);
+    expect(changes.map((c) => [c.kind, c.date, c.reason]).sort()).toEqual([
+      ['removed', addDays(f.seeded.draftEnd, -1), 'Family emergency'],
+      ['removed', f.seeded.draftEnd, 'Family emergency'],
+    ]);
+    // Q is a draft: its change log is a no-op.
+    expect(listChanges(f.handle.db, Q)).toEqual([]);
+  });
+
+  it('covers a posted day and the draft day in one decision', () => {
+    const { P, Q, request } = straddle();
+    const options = coverOptions(f.handle.db, Q, request.id);
+    const onP = options.find(
+      (o) => o.assignment.periodId === P && o.assignment.date === f.seeded.draftEnd,
+    )!;
+    const onQ = options.find((o) => o.assignment.periodId === Q)!;
+    const n1 = onP.candidates[0]!.nurseId;
+    const n2 = onQ.candidates.find((c) => c.nurseId !== n1)!.nurseId;
+    approveAndCover(f.handle.db, Q, request.id, 'Family emergency', [
+      { assignmentId: onP.assignment.id, nurseId: n1 },
+      { assignmentId: onQ.assignment.id, nurseId: n2 },
+    ]);
+    expect(
+      listAssignmentsForPeriod(f.handle.db, P).filter(
+        (a) => a.nurseId === n1 && a.date === f.seeded.draftEnd,
+      ),
+    ).toEqual([expect.objectContaining({ periodId: P, shiftTypeId: f.day.id })]);
+    expect(
+      listAssignmentsForPeriod(f.handle.db, Q).filter(
+        (a) => a.nurseId === n2 && a.date === addDays(f.seeded.draftEnd, 1),
+      ),
+    ).toEqual([expect.objectContaining({ periodId: Q, shiftTypeId: f.day.id })]);
+    const changes = listChanges(f.handle.db, P);
+    expect(changes.filter((c) => c.kind === 'added').map((c) => c.nurseId)).toEqual([n1]);
+    // Ann's two posted days, each taken off under the reason.
+    expect(
+      changes
+        .filter((c) => c.kind === 'removed')
+        .map((c) => c.date)
+        .sort(),
+    ).toEqual([addDays(f.seeded.draftEnd, -1), f.seeded.draftEnd]);
+    expect(listChanges(f.handle.db, Q)).toEqual([]);
+  });
+
+  it('undoes the posted cover too when the draft day’s cover is refused', () => {
+    const { P, Q, ann, dates, request, annOn } = straddle();
+    const options = coverOptions(f.handle.db, Q, request.id);
+    const onP = options.find((o) => o.assignment.periodId === P)!;
+    const onQ = options.find((o) => o.assignment.periodId === Q)!;
+    const auditBefore = auditCount();
+    // P's cover is judged first and is legal; Ann covering her own draft day is not.
+    expect(() =>
+      approveAndCover(f.handle.db, Q, request.id, 'Family emergency', [
+        { assignmentId: onP.assignment.id, nurseId: onP.candidates[0]!.nurseId },
+        { assignmentId: onQ.assignment.id, nurseId: ann.id },
+      ]),
+    ).toThrow(/cannot cover/);
+    expect(getTimeOffRequest(f.handle.db, request.id)?.status).toBe('pending');
+    for (const date of dates) expect(annOn(date)).toHaveLength(1);
+    expect(listChanges(f.handle.db, P)).toEqual([]);
+    expect(auditCount()).toBe(auditBefore);
+  });
+
+  it('refuses a draft-day cover that would follow the same nurse’s posted night with no rest', () => {
+    const db = f.handle.db;
+    const P = f.seeded.draftPeriodId;
+    const seededPeriod = getPeriod(db, P)!;
+    const Q = createPeriod(
+      db,
+      {
+        unitId: f.seeded.unitId,
+        name: 'Next period',
+        startDate: addDays(f.seeded.draftEnd, 1),
+        endDate: addDays(f.seeded.draftEnd, 14),
+        ruleSetId: seededPeriod.ruleSetId,
+        ruleSetVersion: seededPeriod.ruleSetVersion,
+      },
+      ACTOR,
+    ).id;
+    const ann = f.rns[0]!;
+    // Ann's night on P's last day ends at 07:00 on Q's first day, when her day shift starts.
+    scheduleApi(db).createAssignment({
+      periodId: P,
+      nurseId: ann.id,
+      shiftTypeId: f.night.id,
+      date: f.seeded.draftEnd,
+    });
+    publishSchedule(db, { periodId: P, ledger: [] }, ACTOR);
+    scheduleApi(db).createAssignment({
+      periodId: Q,
+      nurseId: ann.id,
+      shiftTypeId: f.day.id,
+      date: addDays(f.seeded.draftEnd, 1),
+    });
+    const request = createTimeOffRequest(
+      db,
+      {
+        nurseId: ann.id,
+        startDate: f.seeded.draftEnd,
+        endDate: addDays(f.seeded.draftEnd, 1),
+        type: 'pto',
+        paidHours: 24,
+      },
+      ACTOR,
+    );
+    const options = coverOptions(db, Q, request.id);
+    const onQ = options.find((o) => o.assignment.periodId === Q)!;
+    const onP = options.find((o) => o.assignment.periodId === P)!;
+    // Legal for either shift alone; both together is a night then a day with 0 hours between.
+    const both = onP.candidates.find((c) => onQ.candidates.some((d) => d.nurseId === c.nurseId));
+    expect(both).toBeDefined();
+    // Main judges P before Q although Q is the anchor, so Q's cover is the one refused.
+    expect(() =>
+      approveAndCover(db, Q, request.id, 'Family emergency', [
+        { assignmentId: onQ.assignment.id, nurseId: both!.nurseId },
+        { assignmentId: onP.assignment.id, nurseId: both!.nurseId },
+      ]),
+    ).toThrow(`cannot cover ${describeDate(addDays(f.seeded.draftEnd, 1))}`);
+    expect(getTimeOffRequest(db, request.id)?.status).toBe('pending');
+  });
+});
+
+describe('a request that reaches back into an archived period', () => {
+  it('takes the draft shift off and leaves the archived record alone', () => {
+    const db = f.handle.db;
+    const P = f.seeded.draftPeriodId;
+    const dayBefore = addDays(f.seeded.draftStart, -1);
+    // The scenario's history ends the day before the draft starts; close that period.
+    const archived = listPeriodsForUnit(db, f.seeded.unitId).find((p) => p.endDate === dayBefore)!;
+    archivePeriod(db, archived.id, ACTOR, 'Pay period closed');
+    const recordBefore = listAssignmentsForPeriod(db, archived.id);
+    const worked = recordBefore.find((a) => a.date === dayBefore && a.shiftTypeId === f.day.id)!;
+    const nurseId = worked.nurseId;
+    scheduleApi(db).createAssignment({
+      periodId: P,
+      nurseId,
+      shiftTypeId: f.day.id,
+      date: f.seeded.draftStart,
+    });
+    const request = createTimeOffRequest(
+      db,
+      { nurseId, startDate: dayBefore, endDate: f.seeded.draftStart, type: 'pto', paidHours: 24 },
+      ACTOR,
+    );
+    // Only the draft day is offered: the archived day is history.
+    expect(coverOptions(db, P, request.id).map((o) => o.assignment.date)).toEqual([
+      f.seeded.draftStart,
+    ]);
+    approveAndCover(db, P, request.id, undefined, []);
+    expect(getTimeOffRequest(db, request.id)?.status).toBe('approved');
+    expect(listAssignmentsForPeriod(db, archived.id)).toEqual(recordBefore);
+    expect(listAssignmentsForPeriod(db, P).filter((a) => a.nurseId === nurseId)).toEqual([]);
+    expect(listChanges(db, archived.id)).toEqual([]);
   });
 });

@@ -132,6 +132,7 @@ export const costSchemas = {
   deleteOvertimeRule: z.tuple([id]),
   report: z.tuple([id]),
   setBudget: z.tuple([id, money]),
+  clearBudget: z.tuple([id]),
   paySettings: z.tuple([id]),
   savePaySettings: z.tuple([
     id,
