@@ -1162,7 +1162,10 @@ export interface ShiftNurseApi {
     openLogs(): void;
   };
   units: {
+    /** Every unit, by name, for pickers. Not "the unit": a float sibling may sort first. */
     list(): Unit[];
+    /** The unit the app opens; undefined until one is set up. */
+    home(): Unit | undefined;
     update(id: Id, patch: UnitPatch): Unit;
   };
   setup: {
@@ -1725,7 +1728,7 @@ export type RendererApi = { [R in keyof ShiftNurseApi]: Promisify<ShiftNurseApi[
  */
 export const API_CHANNELS = {
   app: ['info', 'update', 'openLogs'],
-  units: ['list', 'update'],
+  units: ['list', 'home', 'update'],
   setup: [
     'status',
     'demos',

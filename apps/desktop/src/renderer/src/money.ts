@@ -22,9 +22,11 @@ export function formatDollars(amount: number, options: { cents?: boolean } = {})
 
 /** "+$1,200" / "−$300": a signed variance, with a real minus sign. */
 export function formatSignedDollars(amount: number): string {
-  if (amount === 0) return formatDollars(0);
-  const sign = amount > 0 ? '+' : '−';
-  return `${sign}${formatDollars(Math.abs(amount))}`;
+  // Round before taking the sign: 40 cents of variance displays as "$0", and "+$0" would claim
+  // a direction the whole-dollar figure does not have.
+  const whole = Math.round(Math.abs(amount));
+  if (whole === 0) return formatDollars(0);
+  return `${amount > 0 ? '+' : '−'}${formatDollars(whole)}`;
 }
 
 /** Hours to one decimal, dropping a trailing ".0". */

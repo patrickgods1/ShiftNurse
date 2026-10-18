@@ -19,7 +19,14 @@ import {
 import { AsyncState } from '../../components/async-state.js';
 import { useConfirm } from '../../components/confirm.js';
 import { LabelWithTip } from '../../components/field-help.js';
-import { errorMessage, PRIMARY, SECONDARY, SMALL } from '../../components/ui.js';
+import {
+  errorMessage,
+  PRIMARY,
+  SECONDARY,
+  SELECTED,
+  SMALL,
+  UNSELECTED,
+} from '../../components/ui.js';
 import { formatDate, periodRange } from '../../format.js';
 import { BidEntryDialog } from './bid-entry-dialog.js';
 import { BidResult } from './bid-result.js';
@@ -87,7 +94,7 @@ export function BidRoundsPanel({ unitId, nurses }: Props) {
                   type="button"
                   aria-pressed={selected?.id === r.id}
                   className={`rounded-md border border-border px-3 py-1.5 text-sm ${
-                    selected?.id === r.id ? 'bg-accent text-white' : 'bg-surface text-text'
+                    selected?.id === r.id ? SELECTED : UNSELECTED
                   }`}
                   onClick={() => setSelectedId(r.id)}
                 >

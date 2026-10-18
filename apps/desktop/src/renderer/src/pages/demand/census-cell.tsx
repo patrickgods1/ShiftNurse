@@ -8,6 +8,7 @@
 import type { AcuityTier, CensusForecast, Id } from '@shiftnurse/core';
 import { validateAcuityMix } from '@shiftnurse/core';
 import { useEffect, useRef, useState } from 'react';
+import { PRIMARY } from '../../components/ui.js';
 import { usePanelFocus } from '../../components/use-panel-focus.js';
 
 interface CensusCellProps {
@@ -135,8 +136,7 @@ export function CensusCell({
           <button
             type="button"
             disabled={problems.length > 0 || saving}
-            className="w-full rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white
-              disabled:opacity-50"
+            className={`${PRIMARY} w-full`}
             onClick={() => {
               onSaveForecast(census, mix);
               setOpen(false);

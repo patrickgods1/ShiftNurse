@@ -8,6 +8,7 @@
 
 import { compareDates, type IsoDate, isIsoDate } from '@shiftnurse/core';
 import { useId } from 'react';
+import { useFieldDraft } from '../field-values.js';
 import { formatDate } from '../format.js';
 import { describedBy, Field } from './field-help.js';
 import { INPUT } from './ui.js';
@@ -24,6 +25,8 @@ export interface DateFieldProps {
   tip?: string;
   id?: string;
   disabled?: boolean;
+  /** Hold the typed date locally and call onChange only on blur or Enter, with a valid ISO date or '' that differs from `value`. Default false (today's per-change behaviour). */
+  commitOnBlur?: boolean;
 }
 
 /** The problem with `value`, or undefined. Empty is the form's business (`required`). */
@@ -54,10 +57,18 @@ export function DateField({
   tip,
   id,
   disabled,
+  commitOnBlur = false,
 }: DateFieldProps) {
   const generated = useId();
   const fieldId = id ?? generated;
-  const problem = dateProblem(value, min, max);
+  const draft = useFieldDraft(value);
+  const shownValue = commitOnBlur ? draft.text : value;
+  const problem = dateProblem(shownValue, min, max);
+  const finish = () => {
+    if (problem !== undefined) return;
+    if (draft.text !== value) onChange(draft.text as IsoDate | '');
+    draft.reset(draft.text);
+  };
   return (
     <Field
       id={fieldId}
@@ -71,7 +82,7 @@ export function DateField({
         id={fieldId}
         type="date"
         className={INPUT}
-        value={value}
+        value={shownValue}
         min={min}
         max={max}
         required={required}
@@ -82,7 +93,28 @@ export function DateField({
           error: problem !== undefined,
         })}
         // An unparseable half-typed date arrives as '' from the browser; pass it on as such.
-        onChange={(e) => onChange(isIsoDate(e.target.value) ? e.target.value : '')}
+        onChange={(e) => {
+          if (commitOnBlur) draft.setText(e.target.value);
+          else onChange(isIsoDate(e.target.value) ? e.target.value : '');
+        }}
+        onFocus={commitOnBlur ? draft.bind.onFocus : undefined}
+        onBlur={
+          commitOnBlur
+            ? () => {
+                draft.bind.onBlur();
+                finish();
+              }
+            : undefined
+        }
+        onKeyDown={
+          commitOnBlur
+            ? (e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                finish();
+              }
+            : undefined
+        }
       />
     </Field>
   );

@@ -13,7 +13,7 @@ import {
   type TimeOffImpact,
   type TimeOffRequest,
 } from '@shiftnurse/core';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
 import { renderWithApp } from '../../test/render.js';
@@ -197,6 +197,30 @@ describe('approving a time-off request from the review dialog', () => {
         ],
       ]),
     );
+  });
+
+  it('a background refresh of the cover list keeps the nurse the manager picked', async () => {
+    const freed = (shortfall: number): LeaveCoverOption[] => [
+      {
+        assignment: assignment('a-1', '2026-10-09'),
+        shortfall,
+        candidates: [candidate('nurse-ben', 'Ben Ortiz'), candidate('nurse-cara', 'Cara Diaz')],
+      },
+    ];
+    bridge.respond('timeOff', 'coverOptions', freed(1));
+    const { queryClient } = renderDialog();
+    await waitFor(() => expect(screen.getAllByTestId('cover-pick')).toHaveLength(1));
+    const pick = () => screen.getByTestId('cover-pick') as HTMLSelectElement;
+    fireEvent.change(pick(), { target: { value: 'nurse-cara' } });
+    expect(pick().value).toBe('nurse-cara');
+    // Same shift, same two candidates; another call-off since moved the shortfall, so the
+    // refetched answer is a new object rather than the cached one.
+    bridge.respond('timeOff', 'coverOptions', freed(2));
+    await act(async () => {
+      await queryClient.invalidateQueries();
+    });
+    await waitFor(() => expect(bridge.callsTo('timeOff', 'coverOptions')).toHaveLength(2));
+    expect(pick().value).toBe('nurse-cara');
   });
 
   it('shows the message when main refuses the approval', async () => {

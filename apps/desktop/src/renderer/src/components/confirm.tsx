@@ -6,13 +6,14 @@
  *
  * `window.confirm` draws a native box titled with the app's URL, cannot be styled or themed,
  * blocks the renderer while open, and names its buttons "OK"/"Cancel" — which reads badly for
- * "Delete this pay rate?". This one uses the same Radix dialog as the rest of the app, so focus
- * is trapped and returned, Escape cancels, and the destructive button says what it does.
+ * "Delete this pay rate?". This one is rendered through `Modal`, so focus is trapped and
+ * returned and failures raised while it is open appear inside it; Escape cancels, and the
+ * destructive button says what it does.
  */
 
-import * as Dialog from '@radix-ui/react-dialog';
 import { createContext, type ReactNode, useCallback, useContext, useRef, useState } from 'react';
-import { DANGER, OVERLAY, POPUP, PRIMARY, SECONDARY } from './ui.js';
+import { Modal } from './modal.js';
+import { DANGER, PRIMARY, SECONDARY } from './ui.js';
 
 export interface ConfirmOptions {
   title: string;
@@ -22,6 +23,8 @@ export interface ConfirmOptions {
   confirmLabel?: string;
   /** Styles the confirming button as destructive. Defaults to true: most confirms are deletes. */
   danger?: boolean;
+  /** Where focus goes on close when the control that asked may be gone (a chip being deleted). */
+  returnFocus?: () => HTMLElement | null | undefined;
 }
 
 type Confirm = (options: ConfirmOptions) => Promise<boolean>;
@@ -31,10 +34,14 @@ const ConfirmContext = createContext<Confirm | undefined>(undefined);
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [options, setOptions] = useState<ConfirmOptions | undefined>(undefined);
   const resolver = useRef<((answer: boolean) => void) | undefined>(undefined);
+  // `options` is already cleared by the time the dialog's close focus runs, so the latest
+  // question's target is kept here until then.
+  const returnFocus = useRef<ConfirmOptions['returnFocus']>(undefined);
 
   const confirm = useCallback<Confirm>((next) => {
     // A second confirm while one is open answers the first "no" rather than leaving it hanging.
     resolver.current?.(false);
+    returnFocus.current = next.returnFocus;
     setOptions(next);
     return new Promise<boolean>((resolve) => {
       resolver.current = resolve;
@@ -51,36 +58,38 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   return (
     <ConfirmContext.Provider value={confirm}>
       {children}
-      <Dialog.Root open={options !== undefined} onOpenChange={(open) => !open && answer(false)}>
-        <Dialog.Portal>
-          <Dialog.Overlay className={OVERLAY} />
-          <Dialog.Content role="alertdialog" className={`${POPUP} w-[380px]`}>
-            <Dialog.Title className="text-sm font-semibold text-text">
-              {options?.title}
-            </Dialog.Title>
-            {options?.description ? (
-              <Dialog.Description className="mt-2 text-sm text-text-muted">
-                {options.description}
-              </Dialog.Description>
-            ) : (
-              <Dialog.Description className="sr-only">{options?.title}</Dialog.Description>
-            )}
-            <div className="mt-4 flex flex-wrap justify-end gap-2">
-              <button type="button" className={SECONDARY} onClick={() => answer(false)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                data-testid="confirm-accept"
-                className={danger ? DANGER : PRIMARY}
-                onClick={() => answer(true)}
-              >
-                {options?.confirmLabel ?? 'Confirm'}
-              </button>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+      <Modal
+        open={options !== undefined}
+        onOpenChange={(open) => !open && answer(false)}
+        variant="popup"
+        size="sm"
+        role="alertdialog"
+        title={options?.title ?? ''}
+        // Without a description the title is read again, as before, so the question is announced.
+        description={
+          options?.description ? (
+            options.description
+          ) : (
+            <span className="sr-only">{options?.title}</span>
+          )
+        }
+        returnFocus={() => returnFocus.current?.()}
+        footer={
+          <>
+            <button type="button" className={SECONDARY} onClick={() => answer(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              data-testid="confirm-accept"
+              className={danger ? DANGER : PRIMARY}
+              onClick={() => answer(true)}
+            >
+              {options?.confirmLabel ?? 'Confirm'}
+            </button>
+          </>
+        }
+      />
     </ConfirmContext.Provider>
   );
 }

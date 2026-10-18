@@ -13,7 +13,7 @@ import {
 } from '../../../api-config.js';
 import { describedBy, Field } from '../../../components/field-help.js';
 import { Modal } from '../../../components/modal.js';
-import { INPUT, PRIMARY, SECONDARY } from '../../../components/ui.js';
+import { DANGER_SOLID, INPUT, PRIMARY, SECONDARY } from '../../../components/ui.js';
 
 interface TierFormState {
   name: string;
@@ -319,7 +319,7 @@ export function AcuityTiersSection({ unitId, tiers }: { unitId: string; tiers: A
                   { onSuccess: () => setConfirmingDelete(undefined) },
                 );
               }}
-              className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+              className={DANGER_SOLID}
             >
               Delete
             </button>

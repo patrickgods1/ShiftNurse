@@ -5,6 +5,8 @@
  * swallowed.
  */
 
+import { errorMessage } from './ui.js';
+
 interface AsyncStateProps {
   status: 'loading' | 'error' | 'empty';
   label: string;
@@ -12,12 +14,7 @@ interface AsyncStateProps {
 }
 
 export function AsyncState({ status, label, error }: AsyncStateProps) {
-  const detail =
-    status === 'error' && error instanceof Error
-      ? error.message
-      : status === 'error'
-        ? String(error)
-        : undefined;
+  const detail = status === 'error' ? (errorMessage(error) ?? 'Unknown error') : undefined;
 
   return (
     <div

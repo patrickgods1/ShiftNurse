@@ -30,3 +30,22 @@ describe('preferences in words', () => {
     ).toBe('wants to work Christmas Day (moderate)');
   });
 });
+
+describe('preference wording', () => {
+  const base = { id: 'p', nurseId: 'n' };
+
+  it('says "1 shift in a row", not "1 shifts"', () => {
+    expect(
+      describePreference({ ...base, kind: 'preferred_block_length', shifts: 1, weight: 5 }, names),
+    ).toBe('prefers 1 shift in a row (strong)');
+    expect(
+      describePreference({ ...base, kind: 'preferred_block_length', shifts: 3, weight: 1 }, names),
+    ).toBe('prefers 3 shifts in a row (mild)');
+  });
+
+  it('a neutral weekend appetite has no strength', () => {
+    expect(
+      describePreference({ ...base, kind: 'weekend_appetite', level: 0, weight: 5 }, names),
+    ).toBe('no weekend preference');
+  });
+});

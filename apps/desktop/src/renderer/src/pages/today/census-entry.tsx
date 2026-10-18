@@ -13,13 +13,10 @@ import type { TodayShiftView } from '@shared/api.js';
 import type { Id } from '@shiftnurse/core';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import {
-  sumMix,
-  useAcuityTiers,
-  useRecordActualCensus,
-  useUpsertCensus,
-} from '../../api-demand.js';
+import { useAcuityTiers } from '../../api-config.js';
+import { sumMix, useRecordActualCensus, useUpsertCensus } from '../../api-demand.js';
 import { errorMessage, INPUT, LABEL, PRIMARY } from '../../components/ui.js';
+import { queryRoots } from '../../query-roots.js';
 
 export function CensusEntry({ unitId, shift }: { unitId: Id; shift: TodayShiftView }) {
   const date = shift.date;
@@ -62,7 +59,7 @@ export function CensusEntry({ unitId, shift }: { unitId: Id; shift: TodayShiftVi
       id = created.id;
     }
     await recordActual.mutateAsync({ id, actualCensus: censusValue, actualAcuityMix: mix });
-    void queryClient.invalidateQueries({ queryKey: ['dayOf'] });
+    void queryClient.invalidateQueries({ queryKey: queryRoots.dayOf });
   }
 
   return (

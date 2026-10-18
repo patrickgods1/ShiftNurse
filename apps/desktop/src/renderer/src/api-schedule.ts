@@ -2,11 +2,13 @@
  * Schedule-grid data hooks: live rule validation for a period, and the mutations that create,
  * move, edit, lock and delete assignments.
  *
- * Every mutation refreshes the period's derived views (`invalidatePeriod`: assignments,
- * validation, cost, fairness, conflicts, publish preview/alerts) and the unit's dashboard, because
- * a schedule edit without a validation refresh is exactly the failure mode the milestone brief
- * calls out: the grid would keep showing a stale "no violations" state for a shift that just
- * became illegal, and a stale price for a shift that just became overtime.
+ * Every mutation refreshes every period's derived views through `afterAssignmentsChange`
+ * (assignments, validation, cost, fairness, conflicts, publish preview/alerts, the dashboard),
+ * because a schedule edit without a validation refresh is exactly the failure mode the milestone
+ * brief calls out: the grid would keep showing a stale "no violations" state for a shift that
+ * just became illegal, and a stale price for a shift that just became overtime. Every period, not
+ * only the edited one: an edit on a published period is the lookback tail the next draft's rest
+ * and consecutive-shift checks read.
  * Invalidation runs in `onSettled`, not `onSuccess`, so a failed mutation still forces the grid
  * back to the server's truth instead of leaving an optimistic chip stranded.
  *
@@ -23,7 +25,8 @@ import type {
   MoveAssignmentInput,
 } from '../../shared/api.js';
 import { api, queryKeys } from './api.js';
-import { invalidatePeriod } from './period-cache.js';
+import { afterAssignmentsChange } from './period-cache.js';
+import { queryRoots } from './query-roots.js';
 
 export interface WithReason {
   reason?: string;
@@ -37,7 +40,7 @@ function withConsent(consent: string | undefined): [] | [string] {
 }
 
 export const scheduleKeys = {
-  validation: (periodId: Id) => ['validation', periodId] as const,
+  validation: (periodId: Id) => [...queryRoots.validation, periodId] as const,
 };
 
 export function useValidation(periodId: Id | undefined) {
@@ -48,18 +51,13 @@ export function useValidation(periodId: Id | undefined) {
   });
 }
 
-function useInvalidateSchedule(periodId: Id | undefined, unitId: Id | undefined) {
+function useInvalidateSchedule() {
   const queryClient = useQueryClient();
-  return () => {
-    if (periodId !== undefined) invalidatePeriod(queryClient, periodId);
-    if (unitId !== undefined) {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });
-    }
-  };
+  return () => afterAssignmentsChange(queryClient);
 }
 
-export function useCreateAssignment(periodId: Id | undefined, unitId: Id | undefined) {
-  const invalidate = useInvalidateSchedule(periodId, unitId);
+export function useCreateAssignment(_periodId: Id | undefined, _unitId: Id | undefined) {
+  const invalidate = useInvalidateSchedule();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ reason, consent, ...input }: CreateAssignmentInput & WithReason) =>
@@ -68,8 +66,8 @@ export function useCreateAssignment(periodId: Id | undefined, unitId: Id | undef
   });
 }
 
-export function useMoveAssignment(periodId: Id | undefined, unitId: Id | undefined) {
-  const invalidate = useInvalidateSchedule(periodId, unitId);
+export function useMoveAssignment(_periodId: Id | undefined, _unitId: Id | undefined) {
+  const invalidate = useInvalidateSchedule();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ reason, consent, ...input }: MoveAssignmentInput & WithReason) =>
@@ -79,8 +77,8 @@ export function useMoveAssignment(periodId: Id | undefined, unitId: Id | undefin
 }
 
 /** Two nurses trade shifts in one step (main runs both moves in one transaction). */
-export function useSwapAssignments(periodId: Id | undefined, unitId: Id | undefined) {
-  const invalidate = useInvalidateSchedule(periodId, unitId);
+export function useSwapAssignments(_periodId: Id | undefined, _unitId: Id | undefined) {
+  const invalidate = useInvalidateSchedule();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({
@@ -94,8 +92,8 @@ export function useSwapAssignments(periodId: Id | undefined, unitId: Id | undefi
   });
 }
 
-export function useUpdateAssignment(periodId: Id | undefined, unitId: Id | undefined) {
-  const invalidate = useInvalidateSchedule(periodId, unitId);
+export function useUpdateAssignment(_periodId: Id | undefined, _unitId: Id | undefined) {
+  const invalidate = useInvalidateSchedule();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({
@@ -109,8 +107,8 @@ export function useUpdateAssignment(periodId: Id | undefined, unitId: Id | undef
   });
 }
 
-export function useDeleteAssignment(periodId: Id | undefined, unitId: Id | undefined) {
-  const invalidate = useInvalidateSchedule(periodId, unitId);
+export function useDeleteAssignment(_periodId: Id | undefined, _unitId: Id | undefined) {
+  const invalidate = useInvalidateSchedule();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ assignmentId, reason, consent }: { assignmentId: Id } & WithReason) =>
@@ -119,8 +117,8 @@ export function useDeleteAssignment(periodId: Id | undefined, unitId: Id | undef
   });
 }
 
-export function useSetLocked(periodId: Id | undefined, unitId: Id | undefined) {
-  const invalidate = useInvalidateSchedule(periodId, unitId);
+export function useSetLocked(_periodId: Id | undefined, _unitId: Id | undefined) {
+  const invalidate = useInvalidateSchedule();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ assignmentId, locked }: { assignmentId: Id; locked: boolean }) =>

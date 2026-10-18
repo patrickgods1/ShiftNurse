@@ -55,9 +55,10 @@ export function LeaveStanding({
   end: IsoDate | undefined;
   paidHours: number;
 }) {
-  const query = useLeaveRequestCheck(
-    nurseId && start && end ? { nurseId, type, start, end, paidHours } : undefined,
-  );
+  const ready = nurseId !== undefined && start !== undefined && end !== undefined;
+  const query = useLeaveRequestCheck(ready ? { nurseId, type, start, end, paidHours } : undefined);
+  // A half-filled form shows nothing, whatever the query last held.
+  if (!ready) return null;
   const check = query.data;
   if (!check) return null;
   const { balance, noBalanceFor, fmla, pdl } = check;
@@ -72,7 +73,7 @@ export function LeaveStanding({
         <>
           <p>
             {TIME_OFF_TYPE_LABELS[balance.type]}: {balance.projectedHours} h projected on{' '}
-            {formatDate(start as IsoDate)}.
+            {formatDate(start)}.
           </p>
           <p className="text-[11px]">{payrollLine(balance)}</p>
           {balance.check.ok ? null : (

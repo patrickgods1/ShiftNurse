@@ -19,14 +19,8 @@ import {
   usFederalHolidays,
 } from '@shiftnurse/core';
 import { type ReactNode, useState } from 'react';
-import { useNurses } from '../api.js';
-import {
-  useAcuityTiers,
-  useCoverage,
-  useHolidays,
-  useRatioRules,
-  useShiftTypesList,
-} from '../api-config.js';
+import { useNurses, useShiftTypes } from '../api.js';
+import { useAcuityTiers, useCoverage, useHolidays, useRatioRules } from '../api-config.js';
 import { usePayRates } from '../api-cost.js';
 import { useApplyPreset } from '../api-setup.js';
 import { StateLawSection } from '../components/state-law.js';
@@ -161,7 +155,7 @@ function ShiftTypesStep() {
 
 function CoverageStep() {
   const unit = useUnit();
-  const shiftTypesQuery = useShiftTypesList(unit.id);
+  const shiftTypesQuery = useShiftTypes(unit.id);
   const staffed = (shiftTypesQuery.data ?? []).filter((s) => s.active && !s.isOnCall);
   const [excluded, setExcluded] = useState<ReadonlySet<string>>(new Set());
   const [counts, setCounts] = useState<Record<NurseRole, string>>({ RN: '4', LPN: '0', CNA: '1' });
@@ -433,7 +427,7 @@ export function useSetupCounts(unitId: string): SetupCounts {
   const unit = useUnit();
   return {
     hasJurisdiction: unit.jurisdiction !== undefined,
-    shiftTypes: (useShiftTypesList(unitId).data ?? []).filter((s) => s.active).length,
+    shiftTypes: (useShiftTypes(unitId).data ?? []).filter((s) => s.active).length,
     coverage: (useCoverage(unitId).data ?? []).length,
     acuityTiers: (useAcuityTiers(unitId).data ?? []).length,
     ratioRules: (useRatioRules(unitId).data ?? []).filter((r) => r.active).length,

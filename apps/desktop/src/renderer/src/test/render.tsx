@@ -1,11 +1,14 @@
 /**
- * Renders a component the way the app does: the providers `main.tsx` and `RootLayout` put above
- * every page, in the same order, so a test fails for what the component does and not because a
- * context was missing. The router is a memory-history one whose only route renders `ui`
- * wherever the URL points, enough for `Link` and `useNavigate` to work without the page shell.
+ * Renders a component inside the app's providers, so a test fails for what the component does
+ * and not because a context was missing. They are not stacked exactly as the app stacks them:
+ * `TipProvider` and `UnsavedChangesProvider` wrap the router here rather than sitting inside
+ * `RootLayout`, and there is no `NavigationGuard` or `SetupGate`. So route blocking on unsaved
+ * changes is not exercised; a test of it needs the real layout. The router is a memory-history
+ * one whose only route renders `ui` wherever the URL points, enough for `Link` and
+ * `useNavigate` to work without the page shell.
  *
- * Pages read the unit through `UnitProvider`, which asks `units.list`; pass `unit` and this
- * scripts that answer on the installed fake bridge.
+ * Pages read the unit through `UnitProvider`, which asks `units.home`; pass `unit` and this
+ * scripts that answer (and `units.list` as `[unit]`, for pickers) on the installed fake bridge.
  */
 
 import type { Unit } from '@shiftnurse/core';
@@ -30,7 +33,7 @@ import { getActiveBridge } from './fake-bridge.js';
 export interface RenderWithAppOptions {
   /** Initial URL of the memory history. */
   route?: string;
-  /** Wrap in `UnitProvider` with this unit as the only one `units.list` returns. */
+  /** Wrap in `UnitProvider` with this unit as the home unit and the only one `units.list` returns. */
   unit?: Unit;
 }
 
@@ -50,8 +53,11 @@ export function renderWithApp(
   const queryClient = createQueryClient();
 
   const { unit } = options;
-  // Overwrites any earlier units.list script: asking for a unit is asking for this one.
-  if (unit !== undefined) getActiveBridge()?.respond('units', 'list', [unit]);
+  // Overwrites any earlier units scripts: asking for a unit is asking for this one.
+  if (unit !== undefined) {
+    getActiveBridge()?.respond('units', 'home', unit);
+    getActiveBridge()?.respond('units', 'list', [unit]);
+  }
   const body = unit === undefined ? ui : <UnitProvider>{ui}</UnitProvider>;
 
   const rootRoute = createRootRoute({ component: () => body });

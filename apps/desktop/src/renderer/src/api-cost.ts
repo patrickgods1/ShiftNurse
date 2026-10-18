@@ -1,11 +1,10 @@
 /**
- * Cost query keys and hooks: pay configuration (rates, differentials, overtime rules), the
- * per-period cost report, and the budget.
+ * Cost query keys and hooks: pay configuration (rates, differentials, overtime rules, settings),
+ * the per-period cost report, and the budget.
  *
- * Any change to pay configuration re-prices every period, so those mutations invalidate the
- * whole `['cost', 'report']` family rather than tracking which period ids happen to be cached —
- * the same reasoning `api-fairness.ts` gives for a history import. A schedule edit re-prices
- * one period; `api-schedule.ts` invalidates that period's report alongside its validation.
+ * Any change to pay configuration re-prices every period — the cost strip, the publish alerts,
+ * Generate's cost — so those mutations go through `afterConfigChange` rather than tracking which
+ * period ids happen to be cached. A budget only moves its own period's report and the dashboard.
  */
 
 import type { Id } from '@shiftnurse/core';
@@ -19,14 +18,16 @@ import type {
   PayRatePatch,
   PaySettings,
 } from '../../shared/api.js';
-import { api, queryKeys } from './api.js';
-import { invalidateUnitDerived } from './period-cache.js';
+import { api } from './api.js';
+import { afterConfigChange } from './period-cache.js';
+import { queryRoots } from './query-roots.js';
 
 export const costKeys = {
-  payRates: (unitId: Id) => ['cost', 'payRates', unitId] as const,
-  differentials: (unitId: Id) => ['cost', 'differentials', unitId] as const,
-  overtimeRules: (unitId: Id) => ['cost', 'overtimeRules', unitId] as const,
-  report: (periodId: Id) => ['cost', 'report', periodId] as const,
+  payRates: (unitId: Id) => [...queryRoots.cost, 'payRates', unitId] as const,
+  differentials: (unitId: Id) => [...queryRoots.cost, 'differentials', unitId] as const,
+  overtimeRules: (unitId: Id) => [...queryRoots.cost, 'overtimeRules', unitId] as const,
+  report: (periodId: Id) => [...queryRoots.costReport, periodId] as const,
+  paySettings: (unitId: Id) => [...queryRoots.cost, 'paySettings', unitId] as const,
 };
 
 export function useCostReport(periodId: Id | undefined) {
@@ -46,19 +47,17 @@ export function useSetBudget(periodId: Id | undefined) {
         void queryClient.invalidateQueries({ queryKey: costKeys.report(periodId) });
       }
       // Budget versus actual is on the dashboard; the hook is not told the unit.
-      void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard('').slice(0, 1) });
+      void queryClient.invalidateQueries({ queryKey: queryRoots.dashboard });
     },
   });
 }
 
-/** Pay configuration changes re-price every period; drop every cached report. */
+/** Pay configuration changes re-price every period, and feed publish alerts and Generate's cost. */
 function useInvalidateConfig(unitId: Id, key: (typeof costKeys)[keyof typeof costKeys]) {
   const queryClient = useQueryClient();
   return () => {
     void queryClient.invalidateQueries({ queryKey: key(unitId) });
-    void queryClient.invalidateQueries({ queryKey: ['cost', 'report'] });
-    // Pay also feeds publish alerts and Generate's cost.
-    invalidateUnitDerived(queryClient, unitId);
+    afterConfigChange(queryClient);
   };
 }
 
@@ -179,7 +178,7 @@ export function useDeleteOvertimeRule(unitId: Id) {
 
 export function usePaySettings(unitId: Id | undefined) {
   return useQuery({
-    queryKey: ['cost', 'paySettings', unitId ?? ''] as const,
+    queryKey: costKeys.paySettings(unitId ?? ''),
     queryFn: () => api.cost.paySettings(unitId as Id),
     enabled: unitId !== undefined,
   });
@@ -191,9 +190,10 @@ export function useSavePaySettings(unitId: Id) {
     meta: { inlineError: true },
     mutationFn: (settings: PaySettings) => api.cost.savePaySettings(unitId, settings),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['cost', 'paySettings', unitId] });
-      // The minimum re-prices every call-back already recorded.
-      void queryClient.invalidateQueries({ queryKey: ['cost', 'report'] });
+      void queryClient.invalidateQueries({ queryKey: costKeys.paySettings(unitId) });
+      // The minimum re-prices every call-back already recorded, in every period's report, its
+      // publish alerts and Generate's cost.
+      afterConfigChange(queryClient);
     },
   });
 }

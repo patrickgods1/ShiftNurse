@@ -70,7 +70,7 @@ export default function RosterPage() {
         key: 'name',
         header: 'Name',
         render: (nurse) => `${nurse.lastName}, ${nurse.firstName}`,
-        sortValue: (nurse) => `${nurse.lastName}, ${nurse.firstName}`.toLowerCase(),
+        sortValue: (nurse) => `${nurse.lastName}, ${nurse.firstName}`,
       },
       {
         key: 'employeeId',
@@ -204,6 +204,7 @@ export default function RosterPage() {
             rowKey={(nurse) => nurse.id}
             emptyLabel="No nurses match."
             onRowClick={(nurse) => setSelectedNurseId(nurse.id)}
+            rowLabel={(nurse) => `Open ${nurse.lastName}, ${nurse.firstName}`}
           />
         </div>
       )}

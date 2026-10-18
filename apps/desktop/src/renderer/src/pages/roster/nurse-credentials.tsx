@@ -12,6 +12,7 @@ import {
 } from '../../api.js';
 import { AsyncState } from '../../components/async-state.js';
 import { DateField } from '../../components/date-field.js';
+import { PRIMARY_SMALL } from '../../components/ui.js';
 import { daysFromToday } from '../../format.js';
 import { CredentialBadge, standingOf } from './credential-badge.js';
 
@@ -261,7 +262,7 @@ function GrantCredentialForm({
           type="button"
           onClick={handleGrant}
           disabled={grant.isPending || createCredential.isPending}
-          className="rounded-md bg-accent px-3 py-1 text-xs font-medium text-white disabled:opacity-60"
+          className={PRIMARY_SMALL}
         >
           Grant
         </button>

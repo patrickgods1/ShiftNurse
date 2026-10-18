@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ConfirmProvider, useConfirm } from './confirm.js';
+import { Modal } from './modal.js';
 import { type ToastApi, ToastOutlet, ToastProvider, toastBus, useToast } from './toast.js';
 
 let toast: ToastApi;
@@ -123,5 +125,33 @@ describe('toasts', () => {
     rerender(<Host withOutlet={false} />);
     expect(screen.getAllByText('Inside')).toHaveLength(1);
     expect(screen.queryByTestId('dialog')).toBeNull();
+  });
+
+  it('draws toasts in the dialog opened last when one dialog opens another', () => {
+    function EditNurse() {
+      const confirm = useConfirm();
+      return (
+        <Modal open onOpenChange={() => {}} title="Edit nurse">
+          <button type="button" onClick={() => void confirm({ title: 'Remove this nurse?' })}>
+            Remove
+          </button>
+        </Modal>
+      );
+    }
+    render(
+      <ToastProvider>
+        <ConfirmProvider>
+          <Grab />
+          <EditNurse />
+        </ConfirmProvider>
+      </ToastProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    act(() => void toast.show({ message: 'Could not remove the nurse.', tone: 'error' }));
+    const note = screen.getByText('Could not remove the nurse.');
+    expect(screen.getByRole('alertdialog').contains(note)).toBe(true);
+    // The outer dialog is aria-hidden while the question is open, so query it by its title.
+    const outer = screen.getByText('Edit nurse').closest('[role="dialog"]');
+    expect(outer?.contains(note)).toBe(false);
   });
 });

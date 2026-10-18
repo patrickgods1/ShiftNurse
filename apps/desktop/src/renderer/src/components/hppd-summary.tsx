@@ -14,11 +14,25 @@ const TIP =
   'days (the forecast census averaged over each day). Days without a census forecast are left ' +
   'out. The target is set on Settings › Acuity.';
 
-/** "0.6 over target" / "0.4 under target" / "on target", within 0.05 hours. */
+/**
+ * Where HPPD sits against the target, to the tenth the screen prints. One rounding decides both
+ * the words and the colour; separate thresholds disagreed on 8.05 against 8 (floating point
+ * makes that gap 0.0500000000000007).
+ */
+export function againstTarget(
+  hppd: number,
+  target: number,
+): { kind: 'on' | 'over' | 'under'; amount: number } {
+  const rounded = Math.round((hppd - target) * 10) / 10;
+  const amount = Math.abs(rounded);
+  if (amount === 0) return { kind: 'on', amount };
+  return { kind: rounded > 0 ? 'over' : 'under', amount };
+}
+
+/** "0.6 over target" / "0.4 under target" / "on target", to the nearest tenth. */
 export function describeAgainstTarget(hppd: number, target: number): string {
-  const gap = hppd - target;
-  if (Math.abs(gap) < 0.05) return 'on target';
-  return `${Math.abs(gap).toFixed(1)} ${gap > 0 ? 'over' : 'under'} target`;
+  const { kind, amount } = againstTarget(hppd, target);
+  return kind === 'on' ? 'on target' : `${amount.toFixed(1)} ${kind} target`;
 }
 
 function Body({ report }: { report: HppdReport }) {
@@ -38,7 +52,9 @@ function Body({ report }: { report: HppdReport }) {
   }
   const target = report.targetHours;
   const tone =
-    target === undefined ? 'text-text' : report.hppd > target + 0.05 ? 'text-warn' : 'text-text';
+    target !== undefined && againstTarget(report.hppd, target).kind === 'over'
+      ? 'text-warn'
+      : 'text-text';
   return (
     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
       <p className={`text-2xl font-semibold tabular-nums ${tone}`}>{report.hppd.toFixed(1)}</p>

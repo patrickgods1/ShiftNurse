@@ -1,23 +1,13 @@
 /**
- * Light/dark override. Absent a click, the app follows `prefers-color-scheme` (see styles.css);
- * this writes an explicit `data-theme` that wins over the OS setting and survives a restart.
+ * Light/dark override. Absent a click the app follows `prefers-color-scheme`, live; a click
+ * writes an explicit `data-theme` that wins and survives a restart. Both toggles read one store
+ * (`theme.ts`).
  */
 
-import { useEffect, useState } from 'react';
-import { applyTheme, loadStoredTheme, storeTheme, type Theme } from '../theme.js';
-
-function systemPrefersDark(): boolean {
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
-}
+import { chooseTheme, type Theme, useEffectiveTheme } from '../theme.js';
 
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>(
-    () => loadStoredTheme() ?? (systemPrefersDark() ? 'dark' : 'light'),
-  );
-
-  useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
+  const theme = useEffectiveTheme();
 
   return (
     <button
@@ -27,8 +17,7 @@ export function ThemeToggle() {
         hover:bg-bg"
       onClick={() => {
         const next: Theme = theme === 'dark' ? 'light' : 'dark';
-        setTheme(next);
-        storeTheme(next);
+        chooseTheme(next);
       }}
     >
       {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}

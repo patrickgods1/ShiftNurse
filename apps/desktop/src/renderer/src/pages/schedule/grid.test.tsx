@@ -19,8 +19,10 @@ import {
   NIGHT_12,
   resetFixtureCounters,
 } from '@shiftnurse/core/testing';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ConfirmProvider, useConfirm } from '../../components/confirm.js';
+import { ToastProvider } from '../../components/toast.js';
 import { type GridColumn, type GridSpotlight, ScheduleGrid } from './grid.js';
 import { ShiftPalette } from './palette.js';
 
@@ -449,5 +451,46 @@ describe('a held-over shift on the grid', () => {
     renderGrid([{ ...assign(alice.id, DAY_12, '2026-10-05'), holdoverMinutes: 45 }]);
     const chip = within(cell(alice, '2026-10-05')).getByTestId('assignment-chip');
     expect(chip.getAttribute('title')).toContain('Held over 45m (volunteered)');
+  });
+});
+
+describe('keyboard focus around the grid', () => {
+  it('focus goes back to the shift chip after the delete confirmation is cancelled', async () => {
+    // Stands in for the grid edits' delete: ask first, the way the Schedule page does.
+    function GridWithDeleteConfirm({ assignments }: { assignments: Assignment[] }) {
+      const confirm = useConfirm();
+      return (
+        <ScheduleGrid
+          nurses={[alice, ben]}
+          shiftTypes={[DAY_12, NIGHT_12]}
+          columns={COLUMNS}
+          assignments={assignments}
+          pendingIds={new Set()}
+          readOnly={false}
+          violationsByAssignment={new Map()}
+          violationsByNurse={new Map()}
+          violationsByDate={new Map()}
+          onMove={vi.fn()}
+          onCreate={vi.fn()}
+          onChipOpen={vi.fn()}
+          onChipDelete={() =>
+            void confirm({ title: 'Remove this assignment?', confirmLabel: 'Remove' })
+          }
+        />
+      );
+    }
+    render(
+      <ToastProvider>
+        <ConfirmProvider>
+          <GridWithDeleteConfirm assignments={[assign(alice.id, DAY_12, '2026-10-05')]} />
+        </ConfirmProvider>
+      </ToastProvider>,
+    );
+    const chip = screen.getAllByTestId('assignment-chip')[0]!;
+    chip.focus();
+    fireEvent.keyDown(chip, { key: 'Delete' });
+    const question = await screen.findByRole('alertdialog');
+    fireEvent.click(within(question).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(document.activeElement).toBe(chip));
   });
 });

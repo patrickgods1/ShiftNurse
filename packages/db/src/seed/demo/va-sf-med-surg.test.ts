@@ -23,7 +23,7 @@ import {
   weekendKey,
 } from '@shiftnurse/core';
 import { describe, expect, it } from 'vitest';
-import { getUnit, listHolidaysForUnit, listUnits } from '../../repositories/config.js';
+import { getHomeUnit, getUnit, listHolidaysForUnit, listUnits } from '../../repositories/config.js';
 import { listIncompatibilityGroups } from '../../repositories/incompatibility.js';
 import {
   listFmlaCertifications,
@@ -885,7 +885,7 @@ describe('the VA San Francisco med-surg demo', () => {
         '4A Medicine-Surgery (VA San Francisco sample)',
         '4B Telemetry (VA San Francisco sample)',
       ]);
-      expect(f.result.unitId).toBe(units[0]!.id);
+      expect(getHomeUnit(db())!.id).toBe(f.result.unitId);
       const tele = units[1]!;
       expect(tele.unitType).toBe('Telemetry');
       expect(f.count(`SELECT COUNT(*) n FROM nurse WHERE unit_id = '${tele.id}'`)).toBe(0);

@@ -1,12 +1,22 @@
 /**
  * The app's shared class strings. One definition each: copies of these had drifted across pages
  * (`w-[420px]` here, `w-[28rem]` there) before they lived in one place.
+ *
+ * `accent`/`danger`/`warn`/`success` are text and ring colours; a solid fill uses its `*-fill`
+ * token and `on-*` text (see styles.css).
  */
 
 export const INPUT = 'rounded-md border border-border bg-bg px-2 py-1 text-sm text-text';
 export const LABEL = 'flex flex-col gap-1 text-xs text-text-muted';
-export const PRIMARY =
-  'rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50';
+const PRIMARY_LOOK =
+  'rounded-md bg-accent-fill font-medium text-on-accent hover:bg-accent-fill-hover disabled:opacity-50';
+export const PRIMARY = `${PRIMARY_LOOK} px-3 py-1.5 text-sm`;
+export const PRIMARY_SMALL = `${PRIMARY_LOOK} px-2 py-1 text-xs`;
+export const DANGER_SOLID =
+  'rounded-md bg-danger-fill px-3 py-1.5 text-sm font-medium text-on-danger hover:bg-danger-fill-hover disabled:opacity-50';
+/** A chosen tab, pill or step; pair with UNSELECTED. */
+export const SELECTED = 'bg-accent-fill text-on-accent';
+export const UNSELECTED = 'bg-surface text-text hover:bg-bg';
 export const SECONDARY =
   'rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text hover:bg-bg disabled:opacity-50';
 export const DANGER =

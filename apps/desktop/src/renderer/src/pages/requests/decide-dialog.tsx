@@ -74,22 +74,35 @@ export function DecideDialog({
   /** assignment id → the nurse picked to cover it; '' leaves the shift open. */
   const [covers, setCovers] = useState<Record<Id, Id | ''>>({});
   const options = coverQuery.data ?? [];
-  // Best candidate pre-selected for each freed shift, as soon as the options arrive.
-  useEffect(() => {
-    setCovers(
-      Object.fromEntries(
-        (coverQuery.data ?? []).map((o) => [o.assignment.id, o.candidates[0]?.nurseId ?? '']),
-      ),
-    );
-  }, [coverQuery.data]);
-
+  // Declared before the seeding effect below: when a cached cover list arrives on the same
+  // render as a new request, the form clears first and is then seeded, not the other way round.
   // biome-ignore lint/correctness/useExhaustiveDependencies: fresh request, fresh form.
   useEffect(() => {
+    setCovers({});
     setReason('');
     approve.reset();
     deny.reset();
     approveAndCover.reset();
   }, [request?.id]);
+
+  // Best candidate pre-selected for each freed shift, as soon as the options arrive. A refetch
+  // (any schedule write refreshes the list) keeps the manager's pick while it is still offered.
+  useEffect(() => {
+    const data = coverQuery.data;
+    if (data === undefined) return;
+    setCovers((prev) =>
+      Object.fromEntries(
+        data.map((o) => {
+          const kept = prev[o.assignment.id];
+          const stillOffered = kept === '' || o.candidates.some((c) => c.nurseId === kept);
+          return [
+            o.assignment.id,
+            kept !== undefined && stillOffered ? kept : (o.candidates[0]?.nurseId ?? ''),
+          ];
+        }),
+      ),
+    );
+  }, [coverQuery.data]);
 
   const busy = approve.isPending || deny.isPending || approveAndCover.isPending;
   const error =

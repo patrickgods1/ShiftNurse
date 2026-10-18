@@ -9,8 +9,7 @@
  */
 
 import { type RefObject, useEffect, useRef } from 'react';
-
-const FOCUSABLE = 'input, select, textarea, button, [tabindex]:not([tabindex="-1"])';
+import { firstFocusable, restoreFocus } from './focus.js';
 
 export function usePanelFocus(
   containerRef: RefObject<HTMLElement | null>,
@@ -23,7 +22,7 @@ export function usePanelFocus(
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    containerRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+    firstFocusable(containerRef.current)?.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
@@ -40,7 +39,7 @@ export function usePanelFocus(
       // somewhere the user has since moved to.
       const active = document.activeElement;
       if (active === null || active === document.body || containerRef.current?.contains(active)) {
-        previous?.focus();
+        restoreFocus(previous);
       }
     };
   }, [open, containerRef]);

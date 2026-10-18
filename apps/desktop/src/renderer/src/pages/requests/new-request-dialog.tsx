@@ -15,7 +15,7 @@ import {
   TIME_OFF_TYPES,
 } from '@shiftnurse/core';
 import { useEffect, useState } from 'react';
-import { useShiftTypesList } from '../../api-config.js';
+import { useShiftTypes } from '../../api.js';
 import { useCreateTimeOff } from '../../api-requests.js';
 import { DateField } from '../../components/date-field.js';
 import { Modal } from '../../components/modal.js';
@@ -54,7 +54,7 @@ export function NewRequestDialog({
   const [paidHours, setPaidHours] = useState<string | undefined>(undefined);
   const [problem, setProblem] = useState<string | undefined>(undefined);
   const unit = useUnit();
-  const shiftTypes = useShiftTypesList(unitId).data ?? [];
+  const shiftTypes = useShiftTypes(unitId).data ?? [];
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the form on each open.
   useEffect(() => {

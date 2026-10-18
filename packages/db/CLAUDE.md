@@ -96,6 +96,9 @@
   marks it, `updateAssignment` refuses to unlock it, and loaders turn it into busy time for
   judging (`splitFloatedOff`, `periodTailFor`): it never reaches `SolveInput.assignments`, and
   Generate keeps it as a locked row. Floats deleted before this change are not reconstructed.
+- **The home unit is `unit.is_home`** (migration 0040; backfilled from the first-inserted unit; a
+  partial unique index allows one). `getHomeUnit` is what the app opens; `listUnits` stays
+  alphabetical for pickers.
 - **A holdover is recorded on a published shift, never a draft.** `recordHoldover`
   (`repositories/holdovers.ts`, migration 0029: `assignment.holdover_minutes`, default 0, and
   `holdover_mandated`) refuses drafts and standby, takes whole minutes 0–720 (0 clears, and a clear

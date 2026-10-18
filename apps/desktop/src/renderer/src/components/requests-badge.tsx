@@ -24,7 +24,7 @@ export function RequestsBadge({ count }: { count: number }) {
       data-testid="requests-badge"
       aria-hidden="true"
       className="ml-2 inline-flex min-w-5 items-center justify-center rounded-full bg-warn/20
-        px-1.5 text-xs font-semibold text-text [.active_&]:bg-white/25 [.active_&]:text-white"
+        px-1.5 text-xs font-semibold text-text [.active_&]:bg-on-accent [.active_&]:text-accent-fill"
     >
       {count}
     </span>

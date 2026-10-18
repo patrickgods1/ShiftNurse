@@ -11,9 +11,9 @@ import type { Id, IsoDate, SchedulePeriod, ShiftType } from '@shiftnurse/core';
 import { addDays, datesInRange, today } from '@shiftnurse/core';
 import { useMemo, useState } from 'react';
 import { usePeriods, useShiftTypes } from '../api.js';
+import { useAcuityTiers } from '../api-config.js';
 import {
   tierNameLookup,
-  useAcuityTiers,
   useBacktest,
   useCensus,
   useDemand,

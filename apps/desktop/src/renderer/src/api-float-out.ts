@@ -1,20 +1,30 @@
 /**
  * Float-out hooks, split out like `api-dayof.ts`. Floating takes a shift off the home schedule
- * the way a census cancellation does, so besides the float queries it invalidates the period
- * family and the day-of reads.
+ * the way a census cancellation does, so it refreshes through `afterAssignmentsChange`, which
+ * covers the float queries and the day-of reads too.
  */
 
 import type { Id, IsoDate } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { FloatOrderRequest, FloatSendInput } from '../../shared/api.js';
-import { api, queryKeys } from './api.js';
-import { invalidatePeriod } from './period-cache.js';
+import { api } from './api.js';
+import { afterAssignmentsChange } from './period-cache.js';
+import { queryRoots } from './query-roots.js';
 
 export const floatOutKeys = {
-  all: ['floatOut'] as const,
+  all: queryRoots.floatOut,
   order: (r: FloatOrderRequest) =>
-    ['floatOut', 'order', r.periodId, r.date, r.shiftTypeId, r.role, [...r.volunteers]] as const,
-  history: (unitId: Id, since: IsoDate) => ['floatOut', 'history', unitId, since] as const,
+    [
+      ...queryRoots.floatOut,
+      'order',
+      r.periodId,
+      r.date,
+      r.shiftTypeId,
+      r.role,
+      [...r.volunteers],
+    ] as const,
+  history: (unitId: Id, since: IsoDate) =>
+    [...queryRoots.floatOut, 'history', unitId, since] as const,
 };
 
 export function useFloatOrder(request: FloatOrderRequest | undefined) {
@@ -35,19 +45,12 @@ export function useFloatHistory(unitId: Id | undefined, since: IsoDate) {
   });
 }
 
-export function useFloatNurse(unitId: Id | undefined) {
+export function useFloatNurse(_unitId: Id | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: (input: FloatSendInput) => api.floatOut.send(input),
-    onSuccess: (_record, input) => invalidatePeriod(queryClient, input.periodId),
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ['dayOf'] });
-      void queryClient.invalidateQueries({ queryKey: floatOutKeys.all });
-      if (unitId !== undefined) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });
-      }
-    },
+    onSettled: () => afterAssignmentsChange(queryClient),
   });
 }
 

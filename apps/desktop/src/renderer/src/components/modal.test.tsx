@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { StrictMode, useRef, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ConfirmProvider, useConfirm } from './confirm.js';
 import { Modal, type ModalProps } from './modal.js';
 import { type ToastApi, ToastProvider, useToast } from './toast.js';
 
@@ -119,5 +121,146 @@ describe('Modal', () => {
     act(() => void toast?.show({ message: 'Backup created.' }));
     const note = screen.getByText('Backup created.');
     expect(screen.getByRole('dialog').contains(note)).toBe(true);
+  });
+});
+
+/**
+ * A shift editor opened from a button, the way every dialog here opens: from state, with no
+ * Radix trigger. "Delete" removes the opener as well as closing, like deleting the chip it edits.
+ */
+function Opener({
+  withReturnFocus = false,
+  mountWhenOpen = false,
+}: {
+  withReturnFocus?: boolean;
+  /** Mounts the Modal only while open, as many dialogs do, so StrictMode re-runs its effects. */
+  mountWhenOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [openerShown, setOpenerShown] = useState(true);
+  const back = useRef<HTMLButtonElement>(null);
+  return (
+    <ToastProvider>
+      <button type="button" ref={back}>
+        Back to the grid
+      </button>
+      {openerShown ? (
+        <button type="button" onClick={() => setOpen(true)}>
+          Edit shift
+        </button>
+      ) : null}
+      {!mountWhenOpen || open ? (
+        <Modal
+          open={open}
+          onOpenChange={setOpen}
+          title="Edit shift"
+          {...(withReturnFocus ? { returnFocus: () => back.current } : {})}
+          footer={
+            <>
+              <button type="button" onClick={() => setOpen(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpenerShown(false);
+                  setOpen(false);
+                }}
+              >
+                Delete
+              </button>
+            </>
+          }
+        />
+      ) : null}
+    </ToastProvider>
+  );
+}
+
+async function openShiftEditor(): Promise<HTMLElement> {
+  const opener = screen.getByRole('button', { name: 'Edit shift' });
+  opener.focus();
+  fireEvent.click(opener);
+  return screen.findByRole('dialog');
+}
+
+describe('Modal focus return', () => {
+  it('puts focus back on the button that opened it when the manager cancels', async () => {
+    render(<Opener />);
+    await openShiftEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Edit shift' })),
+    );
+  });
+
+  it('puts focus back on the opener after Escape', async () => {
+    render(<Opener />);
+    const dialog = await openShiftEditor();
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Edit shift' })),
+    );
+  });
+
+  it('sends focus where the dialog says when the opener is gone', async () => {
+    render(<Opener withReturnFocus />);
+    await openShiftEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Back to the grid' })),
+    );
+  });
+
+  it('leaves focus alone without crashing when the opener is gone and nothing is named', async () => {
+    render(<Opener />);
+    await openShiftEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // FocusScope's close runs a tick after unmount; let it, then check nothing moved focus.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('puts focus back on the opener under StrictMode, which runs the capture twice', async () => {
+    // StrictMode re-runs a mounting component's effects after focus has already moved inside the
+    // dialog; that second run must not take the dialog's own first field for the opener.
+    render(
+      <StrictMode>
+        <Opener mountWhenOpen />
+      </StrictMode>,
+    );
+    await openShiftEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Edit shift' })),
+    );
+  });
+
+  it('puts focus back on the button inside the dialog when a question it asked is cancelled', async () => {
+    function EditNurse() {
+      const confirm = useConfirm();
+      return (
+        <Modal open onOpenChange={() => {}} title="Edit nurse">
+          <button type="button" onClick={() => void confirm({ title: 'Remove this nurse?' })}>
+            Remove
+          </button>
+        </Modal>
+      );
+    }
+    render(
+      <ToastProvider>
+        <ConfirmProvider>
+          <EditNurse />
+        </ConfirmProvider>
+      </ToastProvider>,
+    );
+    const remove = await screen.findByRole('button', { name: 'Remove' });
+    remove.focus();
+    fireEvent.click(remove);
+    const question = await screen.findByRole('alertdialog');
+    fireEvent.click(within(question).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(remove));
   });
 });

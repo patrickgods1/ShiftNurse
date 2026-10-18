@@ -10,7 +10,7 @@ import { useRef, useState } from 'react';
 import { useDeactivateNurse, useIncompatibilityGroups, useNurse } from '../../api.js';
 import { AsyncState } from '../../components/async-state.js';
 import { Modal } from '../../components/modal.js';
-import { SECONDARY } from '../../components/ui.js';
+import { DANGER_SOLID, SECONDARY } from '../../components/ui.js';
 import { usePanelFocus } from '../../components/use-panel-focus.js';
 import { formatDate } from '../../format.js';
 import { CredentialsSection } from './nurse-credentials.js';
@@ -122,8 +122,7 @@ function NurseDetailBody({
                   onSuccess: () => setConfirmingDeactivate(false),
                 })
               }
-              className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white
-                disabled:opacity-60"
+              className={DANGER_SOLID}
             >
               {deactivateNurse.isPending ? 'Deactivating…' : 'Deactivate'}
             </button>

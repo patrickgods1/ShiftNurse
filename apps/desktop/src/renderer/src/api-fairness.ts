@@ -1,6 +1,6 @@
 /**
- * Fairness query keys and hooks, split out like `api-demand.ts` and `api-schedule.ts` so this
- * milestone's data layer doesn't collide with files other agents are editing concurrently.
+ * Fairness query keys and hooks, split out like `api-demand.ts` and `api-schedule.ts` so each
+ * screen's data layer reads in one file.
  *
  * A history import can rewrite ledger rows for any past period (see `replacesExisting` on
  * `HistoryImportPeriodPreview`), and the burden window that scores a *current* draft looks back
@@ -12,11 +12,12 @@
 import type { HistoricalShiftRow, Id } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api.js';
+import { queryRoots } from './query-roots.js';
 
 export const fairnessQueryKeys = {
-  report: (periodId: Id) => ['fairness', 'report', periodId] as const,
-  history: (unitId: Id) => ['fairness', 'history', unitId] as const,
-  trend: (unitId: Id) => ['fairness', 'trend', unitId] as const,
+  report: (periodId: Id) => [...queryRoots.fairnessReport, periodId] as const,
+  history: (unitId: Id) => [...queryRoots.fairness, 'history', unitId] as const,
+  trend: (unitId: Id) => [...queryRoots.fairness, 'trend', unitId] as const,
 };
 
 export function useFairnessReport(periodId: Id | undefined) {
@@ -62,7 +63,7 @@ export function useImportHistory(unitId: Id | undefined) {
       // Every period's report can shift once new ledger history lands (it feeds each nurse's
       // burden window), so invalidate the whole 'report' family instead of tracking which
       // period ids happen to be cached.
-      void queryClient.invalidateQueries({ queryKey: ['fairness', 'report'] });
+      void queryClient.invalidateQueries({ queryKey: queryRoots.fairnessReport });
     },
   });
 }
