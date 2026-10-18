@@ -185,11 +185,6 @@ export function publishSchedule(db: DbLike, input: PublishInput, actor: string):
 // Change log
 // ---------------------------------------------------------------------------
 
-/**
- * Whether an edit to this period must carry a reason. Drafts are free; a published period is
- * a promise, so the reason is mandatory; an archived period is history and refuses edits.
- * Returns the trimmed reason to record, or `undefined` for a draft.
- */
 /** Only an archived period is read-only. Every edit checks this — including the ones, like
  * locking a shift, that need no reason and so never reach `requireChangeReason`. */
 export function requirePeriodEditable(period: SchedulePeriod): void {
@@ -198,6 +193,11 @@ export function requirePeriodEditable(period: SchedulePeriod): void {
   }
 }
 
+/**
+ * Whether an edit to this period must carry a reason. Drafts are free; a published period is
+ * a promise, so the reason is mandatory; an archived period is history and refuses edits.
+ * Returns the trimmed reason to record, or `undefined` for a draft.
+ */
 export function requireChangeReason(period: SchedulePeriod, reason?: string): string | undefined {
   requirePeriodEditable(period);
   if (period.status !== 'published') return undefined;
@@ -210,6 +210,14 @@ export function requireChangeReason(period: SchedulePeriod, reason?: string): st
   return trimmed;
 }
 
+/** The audit row has one text field for why, so a posted shift's consent rides in it. */
+export function reasonWithConsent(reason: string, consent?: string): string;
+export function reasonWithConsent(reason?: string, consent?: string): string | undefined;
+export function reasonWithConsent(reason?: string, consent?: string): string | undefined {
+  const agreed = consent?.trim();
+  return reason && agreed ? `${reason} (Nurse's consent: ${agreed})` : reason;
+}
+
 /**
  * Whether a manager's edit to a posted schedule must also carry the nurse's consent, and the
  * trimmed consent to record. Applies only when the unit opted in and the period is published.
@@ -219,14 +227,6 @@ export function requireChangeReason(period: SchedulePeriod, reason?: string): st
  * census cancellation or float is decided by the contract's own order, so the nurse's
  * agreement is not the test.
  */
-/** The audit row has one text field for why, so a posted shift's consent rides in it. */
-export function reasonWithConsent(reason: string, consent?: string): string;
-export function reasonWithConsent(reason?: string, consent?: string): string | undefined;
-export function reasonWithConsent(reason?: string, consent?: string): string | undefined {
-  const agreed = consent?.trim();
-  return reason && agreed ? `${reason} (Nurse's consent: ${agreed})` : reason;
-}
-
 export function requireChangeConsent(
   period: SchedulePeriod,
   unit: Pick<Unit, 'requireConsentForPostedChanges'>,

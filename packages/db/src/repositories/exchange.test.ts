@@ -348,6 +348,42 @@ describe('approveSwap', () => {
     expect(approved.decisionReason).toBe('Drops Ada below her fair share but she asked for it');
   });
 
+  it("records the decided swap in the approval's audit entry: status, when, by whom, and why", () => {
+    const { offered, swap } = proposeGiveaway();
+    const application = {
+      remove: [offered.id],
+      create: [
+        {
+          periodId,
+          nurseId: nurseBId,
+          shiftTypeId,
+          date: isoDate('2026-01-16'),
+          source: 'manual' as const,
+          isLocked: false,
+          isCharge: false,
+          isOvertime: false,
+        },
+      ],
+    };
+    const approved = transact(handle.db, (tx) =>
+      approveSwap(tx, swap.id, application, ACTOR, {
+        overrode: true,
+        reason: 'Both nurses agreed at huddle',
+      }),
+    );
+    const entry = auditHistoryFor(handle.db, 'shift_swap', swap.id).find(
+      (e) => e.action === 'approve',
+    );
+    expect(entry?.after).toMatchObject({
+      status: 'approved',
+      decidedBy: 'manager',
+      decisionReason: 'Both nurses agreed at huddle',
+      overrode: true,
+      decidedAt: approved.decidedAt,
+      application,
+    });
+  });
+
   it('refuses an exchange that would drop a recorded holdover', () => {
     const { offered, swap } = proposeGiveaway();
     publishSchedule(handle.db, { periodId }, ACTOR);

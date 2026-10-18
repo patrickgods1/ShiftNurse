@@ -60,6 +60,11 @@ const ENTITY_WORDS: Record<string, string> = {
   overtime_volunteer: 'Overtime offer',
   day_of_pay_event: 'Day-of pay event',
   schedule_change: 'Change to a published shift',
+  holiday_work: 'Holiday worked',
+  rest_waiver: 'Rest waiver',
+  float_record: 'Float record',
+  preference: 'Preferences',
+  fairness_ledger: 'Fairness history',
 };
 
 function entityWords(type: string): string {

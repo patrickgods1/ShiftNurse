@@ -88,6 +88,20 @@ describe('recording a rest waiver', () => {
     });
   });
 
+  it('leaves no audit entry for a waiver that could not be stored', () => {
+    handle.sqlite.exec(
+      "CREATE TEMP TRIGGER fail_waiver BEFORE INSERT ON rest_waiver BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+    );
+    expect(() => waive(vera, '2026-10-06')).toThrow(/disk full/);
+    expect(
+      (
+        handle.sqlite
+          .prepare("SELECT COUNT(*) AS n FROM audit_log WHERE entity_type = 'rest_waiver'")
+          .get() as { n: number }
+      ).n,
+    ).toBe(0);
+  });
+
   it('refuses a blank reason and writes nothing', () => {
     expect(() => waive(vera, '2026-10-06', '   ')).toThrow(/Give a reason/);
     expect(listRestWaivers(handle.db, unitId)).toEqual([]);
@@ -144,5 +158,24 @@ describe('removing a rest waiver', () => {
     const record = waive(vera, '2026-10-06');
     expect(() => deleteRestWaiver(handle.db, record.id, '', ACTOR)).toThrow(/Give a reason/);
     expect(listRestWaivers(handle.db, unitId)).toEqual([record]);
+  });
+});
+
+describe('a removal that fails', () => {
+  it('leaves no removal on the record when the waiver could not be removed', () => {
+    const record = waive(vera, '2026-10-06');
+    handle.sqlite.exec(
+      "CREATE TEMP TRIGGER fail_removal BEFORE DELETE ON rest_waiver BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+    );
+    expect(() =>
+      deleteRestWaiver(handle.db, record.id, 'Nurse withdrew the waiver', ACTOR),
+    ).toThrow(/disk full/);
+    expect(
+      (
+        handle.sqlite
+          .prepare("SELECT COUNT(*) AS n FROM audit_log WHERE entity_type = 'rest_waiver'")
+          .get() as { n: number }
+      ).n,
+    ).toBe(1);
   });
 });

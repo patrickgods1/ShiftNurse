@@ -328,7 +328,7 @@ export function AcuityTiersSection({ unitId, tiers }: { unitId: string; tiers: A
       >
         <p className="mt-2 text-sm text-text-muted">
           {confirmingDelete !== undefined
-            ? `"${confirmingDelete.name}" will be removed. Any ratio rule or census mix that references it should be updated first.`
+            ? `"${confirmingDelete.name}" will be removed. A tier that a ratio rule or a census day cites cannot be deleted; rename it instead.`
             : ''}
         </p>
       </Modal>

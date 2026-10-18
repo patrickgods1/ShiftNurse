@@ -260,10 +260,12 @@ describe('the unit’s call-back minimum', () => {
       premiumStacking: 'additive',
       holidayPayCoversOvertime: false,
     });
-    expect(auditHistoryFor(handle.db, 'pay_settings', unitId)[0]).toMatchObject({
-      before: { premiumStacking: 'compound', holidayPayCoversOvertime: false },
+    const entry = auditHistoryFor(handle.db, 'pay_settings', unitId)[0];
+    expect(entry).toMatchObject({
+      action: 'create',
       after: { premiumStacking: 'additive', holidayPayCoversOvertime: false },
     });
+    expect(entry?.before).toBeUndefined();
   });
 
   it('refuses a minimum a day cannot hold', () => {

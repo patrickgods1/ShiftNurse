@@ -12,6 +12,7 @@ import {
   isoDate,
   type Nurse,
   planHolidayYear,
+  today,
 } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
@@ -27,8 +28,10 @@ import {
   recordHolidayWork,
   updateHoliday,
 } from './holidays.js';
+import { nurseRecord } from './nurse-record.js';
+import { createNurseUnit } from './nurse-units.js';
 import { publishSchedule } from './publish.js';
-import { createNurse } from './roster.js';
+import { createNurse, listPreferencesForNurse, replaceNursePreferences } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
 import { createAssignment, createPeriod } from './schedule.js';
 import { holidayWorkForPeriod } from './solve-input.js';
@@ -338,5 +341,148 @@ describe('adding a year of holidays', () => {
         .map((h) => h.name)
         .sort(),
     ).toEqual(['Christmas Day', 'Independence Day']);
+  });
+});
+
+describe('who can be recorded as working a holiday, and deleting one', () => {
+  let zed: Nurse;
+
+  beforeEach(() => {
+    const east = createUnit(
+      handle.db,
+      {
+        name: '5 East',
+        unitType: 'Medical-Surgical',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    ).id;
+    zed = createNurse(
+      handle.db,
+      {
+        unitId: east,
+        employeeId: 'E9',
+        firstName: 'Zed',
+        lastName: 'Other',
+        role: 'RN',
+        employmentType: 'full_time',
+        fte: 1,
+        contractedHoursPerPeriod: 72,
+        seniorityDate: isoDate('2020-01-01'),
+        isChargeEligible: false,
+        isNovice: false,
+        isFloatEligible: true,
+        active: true,
+      },
+      ACTOR,
+    );
+  });
+
+  const floatZed = (start: string, end: string) =>
+    createNurseUnit(
+      handle.db,
+      { nurseId: zed.id, unitId, startDate: isoDate(start), endDate: isoDate(end) },
+      ACTOR,
+    );
+  const REFUSAL =
+    "Zed Other was not on 4 West's roster on 2025-12-25, so cannot be recorded as working Christmas Day.";
+
+  it('refuses to record a nurse from another unit as working the holiday, and changes nothing', () => {
+    const xmas = holiday('2025-12-25', 'Christmas Day', true);
+    transact(handle.db, (tx) => recordHolidayWork(tx, xmas.id, [ana.id], ACTOR));
+    expect(() =>
+      transact(handle.db, (tx) => recordHolidayWork(tx, xmas.id, [ben.id, zed.id], ACTOR)),
+    ).toThrow(REFUSAL);
+    expect(holidayWorkSummary(handle.db, xmas.id).nurseIds).toEqual([ana.id]);
+    expect(auditHistoryFor(handle.db, 'holiday_work', xmas.id)).toHaveLength(1);
+  });
+
+  it('records a nurse who floated to the unit over the holiday', () => {
+    const xmas = holiday('2025-12-25', 'Christmas Day', true);
+    floatZed('2025-12-01', '2026-01-31');
+    const summary = transact(handle.db, (tx) => recordHolidayWork(tx, xmas.id, [zed.id], ACTOR));
+    expect(summary.nurseIds).toEqual([zed.id]);
+  });
+
+  it('refuses a float whose time on the unit had ended before the holiday', () => {
+    const xmas = holiday('2025-12-25', 'Christmas Day', true);
+    floatZed('2025-11-01', '2025-12-24');
+    expect(() =>
+      transact(handle.db, (tx) => recordHolidayWork(tx, xmas.id, [zed.id], ACTOR)),
+    ).toThrow(REFUSAL);
+  });
+
+  it('refuses a nurse id that is not on the roster at all, in words', () => {
+    const xmas = holiday('2025-12-25', 'Christmas Day', true);
+    expect(() =>
+      transact(handle.db, (tx) => recordHolidayWork(tx, xmas.id, ['nobody'], ACTOR)),
+    ).toThrow(
+      'One of the nurses chosen is no longer on the roster. Reopen the list and choose again.',
+    );
+  });
+
+  it("puts the holiday's date on who-worked entries, so a nurse's record says which day", () => {
+    const xmas = holiday('2025-12-25', 'Christmas Day', true);
+    transact(handle.db, (tx) => recordHolidayWork(tx, xmas.id, [ben.id], ACTOR));
+    const newest = auditHistoryFor(handle.db, 'holiday_work', xmas.id)[0]!;
+    expect(newest.after).toMatchObject({ date: '2025-12-25', nurseIds: [ben.id], recorded: true });
+    const entry = nurseRecord(handle.db, ben.id, today(), today()).audit.find(
+      (a) => a.entityType === 'holiday_work',
+    );
+    expect(entry?.concerns).toBe('2025-12-25');
+  });
+
+  it('refuses to delete a holiday whose who-worked list was recorded by hand, even an empty one', () => {
+    const xmas = holiday('2025-12-25', 'Christmas Day', true);
+    transact(handle.db, (tx) => recordHolidayWork(tx, xmas.id, [], ACTOR));
+    expect(() => transact(handle.db, (tx) => deleteHoliday(tx, xmas.id, ACTOR))).toThrow(
+      "Who worked Christmas Day on 2025-12-25 is recorded by hand, and next year's rotation reads that list. Clear the recorded list first (it stays in the audit log), then delete the holiday.",
+    );
+    expect(listHolidaysForUnit(handle.db, unitId).map((h) => h.id)).toContain(xmas.id);
+    expect(holidayWorkSummary(handle.db, xmas.id).recorded).toBe(true);
+  });
+
+  it('deletes the holiday once the recorded list is cleared, with the list still in the audit log', () => {
+    const xmas = holiday('2025-12-25', 'Christmas Day', true);
+    transact(handle.db, (tx) => recordHolidayWork(tx, xmas.id, [ben.id], ACTOR));
+    transact(handle.db, (tx) => clearHolidayWork(tx, xmas.id, ACTOR));
+    transact(handle.db, (tx) => deleteHoliday(tx, xmas.id, ACTOR));
+    expect(listHolidaysForUnit(handle.db, unitId).map((h) => h.id)).not.toContain(xmas.id);
+    const [clear, record] = auditHistoryFor(handle.db, 'holiday_work', xmas.id);
+    expect(clear!.before).toMatchObject({ nurseIds: [ben.id] });
+    expect(record!.after).toMatchObject({ nurseIds: [ben.id] });
+  });
+
+  it("removes the nurses' wishes to work a deleted holiday, each on the record", () => {
+    const xmas = holiday('2025-12-25', 'Christmas Day', true);
+    const weekend = (nurseId: string) =>
+      ({ id: `w-${nurseId}`, nurseId, kind: 'weekend_appetite', level: 1, weight: 1 }) as const;
+    const wish = (nurseId: string) =>
+      ({
+        id: `h-${nurseId}`,
+        nurseId,
+        kind: 'holiday_appetite',
+        holidayId: xmas.id,
+        weight: 1,
+      }) as const;
+    replaceNursePreferences(handle.db, ana.id, [weekend(ana.id), wish(ana.id)], ACTOR);
+    replaceNursePreferences(handle.db, ben.id, [wish(ben.id)], ACTOR);
+    const prefAudits = (id: string) => auditHistoryFor(handle.db, 'preference', id);
+    const anaBefore = prefAudits(ana.id).length;
+    const benBefore = prefAudits(ben.id).length;
+
+    transact(handle.db, (tx) => deleteHoliday(tx, xmas.id, ACTOR));
+
+    expect(listPreferencesForNurse(handle.db, ana.id).map((p) => p.kind)).toEqual([
+      'weekend_appetite',
+    ]);
+    expect(listPreferencesForNurse(handle.db, ben.id)).toEqual([]);
+    expect(prefAudits(ana.id)).toHaveLength(anaBefore + 1);
+    expect(prefAudits(ben.id)).toHaveLength(benBefore + 1);
+    const a = prefAudits(ana.id)[0]!;
+    expect([(a.before as unknown[]).length, (a.after as unknown[]).length]).toEqual([2, 1]);
+    const b = prefAudits(ben.id)[0]!;
+    expect([(b.before as unknown[]).length, (b.after as unknown[]).length]).toEqual([1, 0]);
   });
 });

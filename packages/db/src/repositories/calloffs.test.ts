@@ -355,6 +355,32 @@ describe('call-offs', () => {
     ).toBe('uncovered');
   });
 
+  it('leaves no audit entry when marking a call-off uncovered could not be saved', () => {
+    const nurseId = mkNurse('Ada');
+    const a = mkAssignment(nurseId, isoDate('2026-01-16'));
+    const co = reportCallOff(handle.db, a.id, ACTOR);
+    handle.sqlite.exec(
+      "CREATE TEMP TRIGGER fail_calloff BEFORE UPDATE ON call_off BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+    );
+    expect(() => markCallOffUncovered(handle.db, co.id, ACTOR, 'No one answered')).toThrow(
+      /disk full/,
+    );
+    expect(auditHistoryFor(handle.db, 'call_off', co.id)).toHaveLength(1);
+  });
+
+  it('leaves no audit entry when cancelling a call-off could not be saved', () => {
+    const nurseId = mkNurse('Ada');
+    const a = mkAssignment(nurseId, isoDate('2026-01-16'));
+    const co = reportCallOff(handle.db, a.id, ACTOR);
+    handle.sqlite.exec(
+      "CREATE TEMP TRIGGER fail_cancel BEFORE UPDATE ON call_off BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+    );
+    expect(() => cancelCallOff(handle.db, co.id, ACTOR, 'Turned up after all')).toThrow(
+      /disk full/,
+    );
+    expect(auditHistoryFor(handle.db, 'call_off', co.id)).toHaveLength(1);
+  });
+
   it('refuses to mark an already-cancelled call-off uncovered', () => {
     const nurseId = mkNurse('Ada');
     const a = mkAssignment(nurseId, isoDate('2026-01-16'));

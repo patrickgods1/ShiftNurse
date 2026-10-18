@@ -14,6 +14,8 @@
  *
  * Deleting a backup is soft (see `backup-files.ts`): it waits in the trash for 30 days, and
  * the launch sweep purges it after that unless the manager deletes it permanently first.
+ * Daily copies beyond the newest 14 are removed for good, each with an audit row (`pruned: true`);
+ * publish and manual copies are never pruned.
  */
 
 import { mkdirSync, renameSync, rmSync } from 'node:fs';
@@ -40,6 +42,7 @@ import {
 } from './backup-files.js';
 import {
   deleteBackupIn,
+  pruneDailyBackupsIn,
   purgeDeletedBackupIn,
   purgeExpiredBackupsIn,
   settleInterruptedRemovals,
@@ -154,9 +157,8 @@ export async function backupBeforeMigrate(
 }
 
 /** Keep the newest `DAILY_KEEP` daily backups; publish and manual backups are never pruned. */
-function pruneDaily(): void {
-  const daily = listBackups().filter((b) => b.kind === 'daily');
-  for (const stale of daily.slice(DAILY_KEEP)) rmSync(stale.path, { force: true });
+function pruneDaily(db: ShiftNurseDb): void {
+  pruneDailyBackupsIn(db, backupsDir(), DAILY_KEEP);
 }
 
 /** Once per local calendar day; a no-op when today's copy already exists. */
@@ -164,7 +166,7 @@ export async function ensureDailyBackup(db: ShiftNurseDb): Promise<BackupInfo | 
   const now = new Date();
   if (!dailyBackupDue(listBackups(), now)) return undefined;
   const created = await createBackup(db, 'daily', today(now));
-  pruneDaily();
+  pruneDaily(db);
   return created;
 }
 

@@ -234,6 +234,9 @@ export interface LedgerImportResult {
  * one unit's history can never erase another's — and the new rows are inserted in its place,
  * all inside the caller's transaction (partial replacement is worse than none).
  *
+ * The audit row holds the replaced and written rows in full, because "what were her numbers
+ * before the re-import?" must stay answerable; counts alone lose the old figures for good.
+ *
  * Throws before making any change if an entry names a nurse who isn't on this unit: a ledger
  * row for the wrong unit is a data-integrity bug, not a case to paper over.
  */
@@ -263,9 +266,10 @@ export function importHistoricalLedger(
   const periodIds = [...new Set(entries.map((e) => e.periodId))];
   const nurseIdList = [...unitNurseIds];
   let replaced = 0;
+  const replacedRows: FairnessLedgerEntry[] = [];
   for (const periodId of periodIds) {
     const existing = db
-      .select({ id: fairnessLedger.id })
+      .select()
       .from(fairnessLedger)
       .where(
         and(eq(fairnessLedger.periodId, periodId), inArray(fairnessLedger.nurseId, nurseIdList)),
@@ -281,14 +285,17 @@ export function importHistoricalLedger(
         )
         .run();
       replaced += existing.length;
+      replacedRows.push(...existing.map(toFairnessLedgerEntry));
     }
   }
-
-  insertRows(
-    db,
-    fairnessLedger,
-    entries.map((input) => ledgerRow(input)),
+  // A stable snapshot: the same import audits the same way whatever order the rows came back in.
+  replacedRows.sort(
+    (a, b) => a.periodStart.localeCompare(b.periodStart) || a.nurseId.localeCompare(b.nurseId),
   );
+
+  const newRows = entries.map((input) => ledgerRow(input));
+  insertRows(db, fairnessLedger, newRows);
+  const writtenRows = newRows.map(toFairnessLedgerEntry);
   const written = entries.length;
 
   recordAudit(db, {
@@ -296,8 +303,8 @@ export function importHistoricalLedger(
     entityId: 'batch' as Id,
     action: 'import',
     actor,
-    before: { replaced, periodIds },
-    after: { written, periodIds },
+    before: { replaced, periodIds, replacedRows },
+    after: { written, periodIds, writtenRows },
   });
 
   return { written, replaced };

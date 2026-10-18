@@ -4,10 +4,10 @@
  *
  * Generate treats a block as absolute, so creating or loosening one is a decision that may be
  * questioned, and its reason names a faith, a disability or a pregnancy. Every write is audited
- * with that reason (`recordAuditStrict`, always required) and a blank one refuses the change before
- * anything is written. Like an incompatibility group's, the reason is shown on the roster only: it
- * is never copied into a violation message, and `RECORD_EXCLUDED_ENTITIES` keeps the audit entries
- * out of a nurse's exported record.
+ * with that reason (`recordAuditStrict`, always required). The reason is checked first, then the
+ * row is written, then the audit, so a failed write leaves no entry. Like an incompatibility
+ * group's, the reason is shown on the roster only: it is never copied into a violation message,
+ * and `RECORD_EXCLUDED_ENTITIES` keeps the audit entries out of a nurse's exported record.
  */
 
 import { type AvailabilityBlock, type Id, type IsoDate, parseTimeOfDay } from '@shiftnurse/core';
@@ -102,7 +102,7 @@ export function createAvailabilityBlock(
     reason: requireReason(input.reason, 'record an accommodation'),
   };
   validate(db, block);
-  // Audited first: a missing reason must refuse the change before anything is written.
+  db.insert(table).values(toRow(block)).run();
   recordAuditStrict(
     db,
     {
@@ -115,7 +115,6 @@ export function createAvailabilityBlock(
     },
     { requireReason: true },
   );
-  db.insert(table).values(toRow(block)).run();
   return block;
 }
 
@@ -140,12 +139,12 @@ export function updateAvailabilityBlock(
     else if (value !== undefined) after[key] = value;
   }
   validate(db, after);
+  db.update(table).set(toRow(after)).where(eq(table.id, id)).run();
   recordAuditStrict(
     db,
     { entityType: ENTITY, entityId: id, action: 'update', actor, before, after, reason },
     { requireReason: true },
   );
-  db.update(table).set(toRow(after)).where(eq(table.id, id)).run();
   return after;
 }
 
@@ -154,12 +153,12 @@ export function deleteAvailabilityBlock(db: DbLike, id: Id, reason: string, acto
   const stated = requireReason(reason, 'remove an accommodation');
   const before = getAvailabilityBlock(db, id);
   if (!before) throw new Error(`Accommodation ${id} not found`);
+  db.delete(table).where(eq(table.id, id)).run();
   recordAuditStrict(
     db,
     { entityType: ENTITY, entityId: id, action: 'delete', actor, before, reason: stated },
     { requireReason: true },
   );
-  db.delete(table).where(eq(table.id, id)).run();
 }
 
 /** A window that bars nothing, or reaches into another unit, is refused by name. */

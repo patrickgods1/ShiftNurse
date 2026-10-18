@@ -23,6 +23,8 @@
   pay settings (and a wider weekend) only to a unit that saved none, since a saved row may follow a
   contract the preset cannot see.
 
+- **Write the change, then its audit row; check a required reason first.** Audit-first only under
+  `ShiftNurseTx`, where the whole call rolls back together (`audit.ts` header).
 - **`better-sqlite3` is synchronous.** No `async`/`await`/`Promise` in `packages/db`.
 - **Repository patches go through `patchOf` with a `PatchKeys<Patch>` allow-list**
   (`db/src/repositories/patch.ts`). IPC payloads are typed, not checked, so spreading a patch
@@ -42,7 +44,8 @@
   file inside one transaction, where `PRAGMA foreign_keys=OFF` is a no-op and a parent drop
   cascades into its children.
 - **The ledger's `periodId` has no foreign key on purpose:** imported history uses synthetic
-  `import:<start>` ids for pay periods that predate the app.
+  `import:<start>` ids for pay periods that predate the app. A historical re-import's audit row
+  holds the replaced and written rows in full.
 - **The lookback tail is published and archived periods only** (`PRIOR_ASSIGNMENT_LOOKBACK_DAYS`).
   `historyFromFor` says how far that tail is complete; the contracted-hours rule judges a pay
   period that began before the period only from there.
@@ -64,14 +67,18 @@
 - **A nurse's record leaves the app without HR or medical matters.** The grievance export
   (`repositories/nurse-record.ts`, Roster › nurse › Export record…) carries every audit entry
   about a nurse — time, action, actor, reason, never the before/after snapshots — and their
-  published-shift changes, but `RECORD_EXCLUDED_ENTITIES` keeps kept-apart groups, FMLA
+  published-shift changes (entries are found by `nurseId`, `requestingNurseId`,
+  `counterpartyNurseId`, `orienteeId`, `preceptorId` or a `nurseIds` array, so a snapshot about a
+  nurse must carry one of them), but `RECORD_EXCLUDED_ENTITIES` keeps kept-apart groups, FMLA
   certifications and accommodations (`availability_block`) out, and every record's footer says so whether or not the nurse has either.
+  Two tripwires guard this: `nurse-record.completeness.test.ts` fails when a new audited entity type is unclassified or when a new column points at a nurse under a key the record does not look for, and `nurse-record.entries.test.ts` fails when a nurse-scoped type's entry, written by its real repository function, does not reach the record.
 - **A holdover is recorded on a published shift, never a draft.** `recordHoldover`
   (`repositories/holdovers.ts`, migration 0029: `assignment.holdover_minutes`, default 0, and
   `holdover_mandated`) refuses drafts and standby, takes whole minutes 0–720 (0 clears, and a clear
   is never "required"), refuses minutes that run into the nurse's own next worked shift on any unit
   (a holdover there is double-counted time), and audits with `before`; a required one goes through
-  `recordAuditStrict`.
+  `recordAuditStrict`. Audited with the shift's `nurseId`, `date` and `shiftTypeId` so the nurse's
+  record finds it.
   `toAssignment` emits the fields only when minutes > 0, so an untouched row maps as before. Only a
   draft is generated, so the solvers never write over one. The grid offers no Undo for removing a
   held-over shift.

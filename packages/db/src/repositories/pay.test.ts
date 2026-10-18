@@ -733,9 +733,26 @@ describe('cost configuration', () => {
     savePaySettings(handle.db, unitId, settings, ACTOR);
     expect(paySettingsSaved(handle.db, unitId)).toBe(true);
     expect(getPaySettings(handle.db, unitId)).toEqual(settings);
+    // A unit with no row has no stored settings to have been "before".
+    const entry = auditHistoryFor(handle.db, 'pay_settings', unitId)[0];
+    expect(entry).toMatchObject({ action: 'create', after: { holidayPayCoversOvertime: true } });
+    expect(entry?.before).toBeUndefined();
+  });
+
+  it('records a second save as an update with what was stored before', () => {
+    const save = (callBackMinimumHours: number) =>
+      savePaySettings(
+        handle.db,
+        unitId,
+        { callBackMinimumHours, premiumStacking: 'compound', holidayPayCoversOvertime: false },
+        ACTOR,
+      );
+    save(2);
+    save(3);
     expect(auditHistoryFor(handle.db, 'pay_settings', unitId)[0]).toMatchObject({
-      before: { holidayPayCoversOvertime: false },
-      after: { holidayPayCoversOvertime: true },
+      action: 'update',
+      before: { callBackMinimumHours: 2 },
+      after: { callBackMinimumHours: 3 },
     });
   });
 

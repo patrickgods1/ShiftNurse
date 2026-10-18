@@ -4,8 +4,9 @@
  *
  * Without a record, the only way to let a short turnaround stand is to relax the rest rule for
  * everyone. The waiver is per nurse and per shift, and its reason is what gets read out if the
- * turnaround is grieved, so both writes go through `recordAuditStrict` and a blank reason refuses
- * the change before anything is written.
+ * turnaround is grieved, so both writes go through `recordAuditStrict`. The reason is checked first,
+ * then the row is written, then the audit: a write that fails must not leave an append-only entry
+ * for a change that never happened.
  */
 
 import type { Id, IsoDate, RestWaiver } from '@shiftnurse/core';
@@ -92,13 +93,12 @@ export function createRestWaiver(db: DbLike, input: RestWaiverInput, actor: stri
     reason,
     createdAt: Date.now(),
   };
-  // Audited first: a missing reason must refuse the change before anything is written.
+  db.insert(table).values(record).run();
   recordAuditStrict(
     db,
     { entityType: ENTITY, entityId: record.id, action: 'create', actor, after: record, reason },
     { requireReason: true },
   );
-  db.insert(table).values(record).run();
   return record;
 }
 
@@ -107,12 +107,12 @@ export function deleteRestWaiver(db: DbLike, id: Id, reason: string, actor: stri
   const stated = requireReason(reason, 'remove a rest waiver');
   const before = getRestWaiver(db, id);
   if (!before) throw new Error(`Rest waiver ${id} not found`);
+  db.delete(table).where(eq(table.id, id)).run();
   recordAuditStrict(
     db,
     { entityType: ENTITY, entityId: id, action: 'delete', actor, before, reason: stated },
     { requireReason: true },
   );
-  db.delete(table).where(eq(table.id, id)).run();
 }
 
 function requireReason(reason: string, doing: string): string {

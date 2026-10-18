@@ -439,10 +439,17 @@ function HolidayRow({
               if (
                 await confirm({
                   title: `Delete "${holiday.name}"?`,
-                  description:
+                  description: [
                     pairedMinors.length > 0
                       ? `${pairedMinors.map((h) => h.name).join(', ')} will be unpaired.`
                       : undefined,
+                    "Any nurse's wish to work it is removed too, on the record.",
+                    past
+                      ? `Next year's ${holiday.name} finds this one by name to continue the rotation; without it, the rotation starts fresh.`
+                      : undefined,
+                  ]
+                    .filter(Boolean)
+                    .join(' '),
                   confirmLabel: 'Delete',
                 })
               ) {

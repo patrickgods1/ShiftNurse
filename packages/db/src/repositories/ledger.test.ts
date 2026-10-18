@@ -3,7 +3,8 @@
  * replaces, never duplicates, a period already on record.
  */
 
-import { DEFAULT_FAIRNESS_WEIGHTS, isoDate } from '@shiftnurse/core';
+import { DEFAULT_FAIRNESS_WEIGHTS, isoDate, today } from '@shiftnurse/core';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { recentAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
@@ -18,6 +19,7 @@ import {
   ledgerSince,
   upsertFairnessLedgerEntry,
 } from './ledger.js';
+import { nurseRecord } from './nurse-record.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
 import { createPeriod } from './schedule.js';
@@ -243,24 +245,22 @@ describe('historical schedule import', () => {
     ]);
   });
 
-  it('refuses a nurse from another unit before writing anything', () => {
-    const other = createUnit(
+  function mkUnit(name: string): string {
+    return createUnit(
       handle.db,
-      {
-        name: '5 East',
-        unitType: 'ICU',
-        payPeriodDays: 14,
-        payPeriodAnchor: isoDate('2026-01-04'),
-      },
+      { name, unitType: 'ICU', payPeriodDays: 14, payPeriodAnchor: isoDate('2026-01-04') },
       ACTOR,
-    );
-    const stranger = createNurse(
+    ).id;
+  }
+
+  function mkNurseOn(unit: string, firstName: string, employeeId: string): string {
+    return createNurse(
       handle.db,
       {
-        unitId: other.id,
-        employeeId: 'X1',
-        firstName: 'Else',
-        lastName: 'Where',
+        unitId: unit,
+        employeeId,
+        firstName,
+        lastName: 'Nurse',
         role: 'RN',
         employmentType: 'full_time',
         fte: 1,
@@ -273,50 +273,110 @@ describe('historical schedule import', () => {
       },
       ACTOR,
     ).id;
+  }
+
+  const JUNE = { periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') };
+
+  it('refuses a nurse from another unit before writing anything', () => {
+    const stranger = mkNurseOn(mkUnit('5 East'), 'Else', 'X1');
     const local = mkNurse('Local');
-    expect(() =>
-      transact(handle.db, (tx) =>
+    transact(handle.db, (tx) =>
+      importHistoricalLedger(tx, unitId, [{ nurseId: local, ...JUNE, nightShifts: 6 }], ACTOR),
+    );
+    transact(handle.db, (tx) => {
+      expect(() =>
         importHistoricalLedger(
           tx,
           unitId,
           [
-            { nurseId: local, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') },
-            {
-              nurseId: stranger,
-              periodId: 'import:2025-06-01',
-              periodStart: isoDate('2025-06-01'),
-            },
+            { nurseId: local, ...JUNE },
+            { nurseId: stranger, ...JUNE },
           ],
           ACTOR,
         ),
-      ),
-    ).toThrow(/not a nurse on unit/);
-    expect(handle.db.select().from(s.fairnessLedger).all()).toHaveLength(0);
+      ).toThrow(/not a nurse on unit/);
+      // Still inside the transaction, before any rollback: nothing was deleted or written.
+      expect(getFairnessLedgerEntry(tx, local, JUNE.periodId)?.nightShifts).toBe(6);
+      expect(
+        tx.select().from(s.auditLog).where(eq(s.auditLog.action, 'import')).all(),
+      ).toHaveLength(1);
+    });
   });
 
   it('records the import once in the audit log with what it replaced', () => {
     const nurseId = mkNurse('Audited');
     transact(handle.db, (tx) =>
-      importHistoricalLedger(
-        tx,
-        unitId,
-        [{ nurseId, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') }],
-        ACTOR,
-      ),
+      importHistoricalLedger(tx, unitId, [{ nurseId, ...JUNE, nightShifts: 6 }], ACTOR),
     );
     transact(handle.db, (tx) =>
-      importHistoricalLedger(
-        tx,
-        unitId,
-        [{ nurseId, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') }],
-        ACTOR,
-      ),
+      importHistoricalLedger(tx, unitId, [{ nurseId, ...JUNE, nightShifts: 4 }], ACTOR),
     );
     const imports = recentAudit(handle.db).filter(
       (e) => e.entityType === 'fairness_ledger' && e.action === 'import',
     );
     expect(imports).toHaveLength(2);
-    expect(imports[0]?.before).toMatchObject({ replaced: 1 });
-    expect(imports[0]?.after).toMatchObject({ written: 1 });
+    const before = imports[0]?.before as { replaced: number; replacedRows: unknown[] };
+    const after = imports[0]?.after as { written: number; writtenRows: { nightShifts: number }[] };
+    expect(before.replaced).toBe(1);
+    expect(after.written).toBe(1);
+    expect(before.replacedRows).toHaveLength(1);
+    expect(before.replacedRows[0]).toMatchObject({
+      nurseId,
+      periodId: 'import:2025-06-01',
+      nightShifts: 6,
+    });
+    expect(after.writtenRows[0]?.nightShifts).toBe(4);
+  });
+
+  it("leaves another unit's history for the same pay period untouched", () => {
+    const eastId = mkUnit('5 East');
+    const bo = mkNurseOn(eastId, 'Bo', 'B1');
+    transact(handle.db, (tx) =>
+      importHistoricalLedger(tx, eastId, [{ nurseId: bo, ...JUNE, nightShifts: 5 }], ACTOR),
+    );
+    const ana = mkNurse('Ana');
+    const result = transact(handle.db, (tx) =>
+      importHistoricalLedger(tx, unitId, [{ nurseId: ana, ...JUNE, nightShifts: 2 }], ACTOR),
+    );
+    expect(result.replaced).toBe(0);
+    expect(getFairnessLedgerEntry(handle.db, bo, JUNE.periodId)?.nightShifts).toBe(5);
+  });
+
+  it('puts a re-import in the record of every nurse whose numbers it replaced', () => {
+    const ana = mkNurse('Ana');
+    const cy = mkNurse('Cy');
+    const bo = mkNurseOn(mkUnit('5 East'), 'Bo', 'B1');
+    const JUNE15 = { periodId: 'import:2025-06-15', periodStart: isoDate('2025-06-15') };
+    const batch = (nightShifts: number) =>
+      [JUNE15, JUNE, JUNE15, JUNE].map((p, i) => ({
+        nurseId: i < 2 ? ana : cy,
+        ...p,
+        nightShifts,
+      }));
+    for (const nightShifts of [6, 4]) {
+      transact(handle.db, (tx) => importHistoricalLedger(tx, unitId, batch(nightShifts), ACTOR));
+    }
+    const day = today();
+    const imports = (id: string) =>
+      nurseRecord(handle.db, id, day, day).audit.filter(
+        (e) => e.entityType === 'fairness_ledger' && e.action === 'import',
+      );
+    expect(imports(ana)).toHaveLength(2);
+    expect(imports(cy)).toHaveLength(2);
+    expect(imports(bo)).toHaveLength(0);
+
+    // Oldest period first; within a period, the two nurses in id order.
+    const [first, second] = [ana, cy].sort();
+    const latest = recentAudit(handle.db).filter(
+      (e) => e.entityType === 'fairness_ledger' && e.action === 'import',
+    )[0];
+    const rows = (latest!.before as { replacedRows: { periodId: string; nurseId: string }[] })
+      .replacedRows;
+    expect(rows.map((r) => [r.periodId, r.nurseId])).toEqual([
+      ['import:2025-06-01', first],
+      ['import:2025-06-01', second],
+      ['import:2025-06-15', first],
+      ['import:2025-06-15', second],
+    ]);
   });
 });

@@ -6,7 +6,10 @@
  * Who worked a holiday comes from published schedules unless the manager has recorded it by
  * hand, which is how a unit starts the rotation with a year that predates the app, or corrects
  * a schedule that did not match who came in. A recorded list is authoritative even when empty:
- * "nobody on today's roster worked it" is an answer, not a gap.
+ * "nobody on today's roster worked it" is an answer, not a gap. Only nurses of the unit (home, or
+ * floated there that day) can be recorded, and a holiday with a recorded list cannot be deleted
+ * until the list is cleared: the list is the rotation's only source for a year before the app,
+ * and the foreign keys would cascade it away without a trace.
  */
 
 import type {
@@ -26,10 +29,15 @@ import {
   assignment,
   holiday as holidayTable,
   holidayWork,
+  nurse as nurseTable,
+  preference as preferenceTable,
   schedulePeriod,
   shiftType,
+  unit as unitTable,
 } from '../schema.js';
+import { listFloatNurses } from './nurse-units.js';
 import { type PatchKeys, patchOf } from './patch.js';
+import { listPreferencesForNurse } from './roster.js';
 
 export interface HolidayPatch {
   name?: string;
@@ -143,10 +151,48 @@ function unpairMinorsOf(tx: ShiftNurseTx, majorId: Id, actor: string): void {
   }
 }
 
-/** Delete a holiday, unpairing (and auditing) the minor holidays paired with it first. */
+/**
+ * Delete a holiday, unpairing (and auditing) the minor holidays paired with it first. Refused
+ * while a hand-recorded who-worked list exists, even an empty one; the nurses' wishes to work it
+ * are removed explicitly, one audit row each, instead of by the foreign key's silent cascade.
+ */
 export function deleteHoliday(tx: ShiftNurseTx, id: Id, actor: string): void {
-  const before = holidayOrThrow(tx, id);
+  const row = tx.select().from(holidayTable).where(eq(holidayTable.id, id)).get();
+  if (!row) throw new Error(`Holiday ${id} not found`);
+  const before = toHoliday(row);
+  if (row.workRecorded) {
+    throw new Error(
+      `Who worked ${before.name} on ${before.date} is recorded by hand, and next year's rotation reads that list. Clear the recorded list first (it stays in the audit log), then delete the holiday.`,
+    );
+  }
   unpairMinorsOf(tx, id, actor);
+  const wishers = tx
+    .selectDistinct({ nurseId: preferenceTable.nurseId })
+    .from(preferenceTable)
+    .where(and(eq(preferenceTable.kind, 'holiday_appetite'), eq(preferenceTable.holidayId, id)))
+    .all()
+    .map((r) => r.nurseId)
+    .sort();
+  for (const nurseId of wishers) {
+    const prefsBefore = listPreferencesForNurse(tx, nurseId);
+    tx.delete(preferenceTable)
+      .where(
+        and(
+          eq(preferenceTable.nurseId, nurseId),
+          eq(preferenceTable.kind, 'holiday_appetite'),
+          eq(preferenceTable.holidayId, id),
+        ),
+      )
+      .run();
+    recordAudit(tx, {
+      entityType: 'preference',
+      entityId: nurseId,
+      action: 'update',
+      actor,
+      before: prefsBefore,
+      after: listPreferencesForNurse(tx, nurseId),
+    });
+  }
   tx.delete(holidayTable).where(eq(holidayTable.id, id)).run();
   recordAudit(tx, { entityType: 'holiday', entityId: id, action: 'delete', actor, before });
 }
@@ -256,6 +302,42 @@ export function holidayWorkSummary(db: DbLike, holidayId: Id): HolidayWorkSummar
   };
 }
 
+/**
+ * Refuse anyone who was not on the holiday's unit that day. A nurse who has since left still
+ * counts (they may have worked a past holiday); a float counts only inside their membership.
+ * Phase 8's `nurseWorksOnUnit` should replace this local check.
+ */
+function requireHolidayWorkers(tx: ShiftNurseTx, holiday: Holiday, ids: readonly Id[]): void {
+  if (ids.length === 0) return;
+  const rows = tx
+    .select()
+    .from(nurseTable)
+    .where(inArray(nurseTable.id, [...ids]))
+    .all();
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  if (ids.some((id) => !byId.has(id))) {
+    throw new Error(
+      'One of the nurses chosen is no longer on the roster. Reopen the list and choose again.',
+    );
+  }
+  const floats = new Set(
+    listFloatNurses(tx, holiday.unitId, holiday.date, holiday.date).map((n) => n.id),
+  );
+  for (const id of ids) {
+    const n = byId.get(id)!;
+    if (n.unitId === holiday.unitId || floats.has(id)) continue;
+    const unitName = tx
+      .select({ name: unitTable.name })
+      .from(unitTable)
+      .where(eq(unitTable.id, holiday.unitId))
+      .get()?.name;
+    if (unitName === undefined) throw new Error(`Unit ${holiday.unitId} not found`);
+    throw new Error(
+      `${n.firstName} ${n.lastName} was not on ${unitName}'s roster on ${holiday.date}, so cannot be recorded as working ${holiday.name}.`,
+    );
+  }
+}
+
 /** Record who worked a holiday by hand, replacing any earlier list. */
 export function recordHolidayWork(
   tx: ShiftNurseTx,
@@ -263,8 +345,10 @@ export function recordHolidayWork(
   nurseIds: readonly Id[],
   actor: string,
 ): HolidayWorkSummary {
+  const holiday = holidayOrThrow(tx, holidayId);
   const before = holidayWorkSummary(tx, holidayId);
   const unique = [...new Set(nurseIds)].sort();
+  requireHolidayWorkers(tx, holiday, unique);
   tx.delete(holidayWork).where(eq(holidayWork.holidayId, holidayId)).run();
   if (unique.length > 0) {
     tx.insert(holidayWork)
@@ -278,8 +362,8 @@ export function recordHolidayWork(
     entityId: holidayId,
     action: 'update',
     actor,
-    before,
-    after,
+    before: { date: holiday.date, ...before },
+    after: { date: holiday.date, ...after },
   });
   return after;
 }
@@ -290,6 +374,7 @@ export function clearHolidayWork(
   holidayId: Id,
   actor: string,
 ): HolidayWorkSummary {
+  const holiday = holidayOrThrow(tx, holidayId);
   const before = holidayWorkSummary(tx, holidayId);
   tx.delete(holidayWork).where(eq(holidayWork.holidayId, holidayId)).run();
   tx.update(holidayTable).set({ workRecorded: false }).where(eq(holidayTable.id, holidayId)).run();
@@ -299,8 +384,8 @@ export function clearHolidayWork(
     entityId: holidayId,
     action: 'update',
     actor,
-    before,
-    after,
+    before: { date: holiday.date, ...before },
+    after: { date: holiday.date, ...after },
   });
   return after;
 }

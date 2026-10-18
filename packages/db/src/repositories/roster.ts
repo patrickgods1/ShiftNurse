@@ -222,15 +222,11 @@ export function updateNurse(db: DbLike, id: Id, patch: NursePatch, actor: string
  * entries pointing at them must not vanish — deleting the row would either cascade-delete
  * every schedule they were ever on, or leave assignments and audit entries referring to a
  * nurse that no longer exists, and a published schedule would lose its meaning either way.
+ * Audited as an update: it is one, and the record must read the same whichever path the manager
+ * took.
  */
 export function deactivateNurse(db: DbLike, id: Id, actor: string): Nurse {
-  const row = getNurseRowOrThrow(db, id);
-  const before = toNurse(row);
-  const merged = { ...row, active: false };
-  db.update(nurseTable).set(merged).where(eq(nurseTable.id, id)).run();
-  const after = toNurse(merged);
-  recordAudit(db, { entityType: 'nurse', entityId: id, action: 'delete', actor, before, after });
-  return after;
+  return updateNurse(db, id, { active: false }, actor);
 }
 
 // ---------------------------------------------------------------------------

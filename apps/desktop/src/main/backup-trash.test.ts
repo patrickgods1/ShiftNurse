@@ -17,9 +17,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { auditHistoryFor, type OpenedDatabase, openTestDatabase } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { listBackupFiles, listTrash } from './backup-files.js';
+import { backupFileName, listBackupFiles, listTrash } from './backup-files.js';
 import {
   deleteBackupIn,
+  pruneDailyBackupsIn,
   purgeDeletedBackupIn,
   purgeExpiredBackupsIn,
   settleInterruptedRemovals,
@@ -36,6 +37,13 @@ let dir: string;
 let handle: OpenedDatabase;
 
 const history = (fileName: string) => auditHistoryFor(handle.db, 'backup', fileName);
+
+// A trigger that refuses every insert is how a full disk or a locked audit table looks to the
+// caller: the statement throws after the file has already moved.
+const breakAudit = () =>
+  handle.sqlite.exec(
+    "CREATE TRIGGER refuse_audit BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'audit down'); END",
+  );
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'shiftnurse-backup-trash-'));
@@ -115,12 +123,6 @@ describe('the launch sweep', () => {
 });
 
 describe('when a deletion cannot be recorded', () => {
-  // A trigger that refuses every insert is how a full disk or a locked audit table looks to the
-  // caller: the statement throws after the file has already moved.
-  const breakAudit = () =>
-    handle.sqlite.exec(
-      "CREATE TRIGGER refuse_audit BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'audit down'); END",
-    );
   const auditRows = () =>
     handle.sqlite.prepare('SELECT COUNT(*) AS n FROM audit_log').get() as {
       n: number;
@@ -199,6 +201,19 @@ describe('a removal a crash interrupted', () => {
     expect(readdirSync(join(dir, 'trash'))).toEqual([]);
   });
 
+  it('finishes a daily prune the crash interrupted once it was on the record', () => {
+    const name = backupFileName('daily', '2026-09-01', Date.UTC(2026, 8, 1, 12));
+    writeFileSync(join(dir, `${name}.purging`), 'SQLite format 3\0daily');
+    handle.sqlite
+      .prepare(
+        `INSERT INTO audit_log (id, entity_type, entity_id, action, actor, after)
+         VALUES ('prune-1', 'backup', ?, 'delete', 'manager', '{"permanent":true,"pruned":true}')`,
+      )
+      .run(name);
+    settleInterruptedRemovals(handle.db, dir);
+    expect(readdirSync(dir).filter((n) => n.includes('daily'))).toEqual([]);
+  });
+
   it('puts the backup back when the removal was never recorded', () => {
     const trashed = deleteBackupIn(handle.db, dir, MANUAL, {}, NOW);
     renameSync(trashed.path, `${trashed.path}.purging`);
@@ -206,5 +221,55 @@ describe('a removal a crash interrupted', () => {
     settleInterruptedRemovals(handle.db, dir);
     expect(listTrash(dir).map((b) => b.fileName)).toEqual([MANUAL]);
     expect(listBackupFiles(dir).map((b) => b.fileName)).toEqual([PUBLISH]);
+  });
+});
+
+describe('the daily backups the app keeps', () => {
+  const dailyName = (dd: number) =>
+    backupFileName('daily', `2026-09-${String(dd).padStart(2, '0')}`, Date.UTC(2026, 8, dd, 12));
+  const writeDailies = (days: number[]) => {
+    for (const dd of days) writeFileSync(join(dir, dailyName(dd)), `SQLite format 3\0daily${dd}`);
+  };
+  const range = (from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, i) => from + i);
+
+  it('removes the daily copies beyond the newest fourteen, each on the record as pruned', () => {
+    writeDailies(range(1, 16));
+    const removed = pruneDailyBackupsIn(handle.db, dir, 14);
+    // 16 dailies, keep 14: the two oldest go, newest first.
+    expect(removed.map((b) => b.fileName)).toEqual([dailyName(2), dailyName(1)]);
+    expect(
+      listBackupFiles(dir)
+        .map((b) => b.fileName)
+        .sort(),
+    ).toEqual([MANUAL, PUBLISH, ...range(3, 16).map(dailyName)].sort());
+    for (const dd of [1, 2]) {
+      const entries = history(dailyName(dd));
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        action: 'delete',
+        after: { permanent: true, pruned: true },
+      });
+      expect(entries[0]?.before).toMatchObject({ kind: 'daily' });
+    }
+  });
+
+  it('never prunes publish or manual backups, however many there are', () => {
+    writeDailies(range(1, 14));
+    expect(pruneDailyBackupsIn(handle.db, dir, 14)).toEqual([]);
+    expect(existsSync(join(dir, MANUAL))).toBe(true);
+    expect(existsSync(join(dir, PUBLISH))).toBe(true);
+    const rows = handle.sqlite.prepare('SELECT COUNT(*) AS n FROM audit_log').get() as {
+      n: number;
+    };
+    expect(rows.n).toBe(0);
+  });
+
+  it('keeps a daily copy whose removal cannot be recorded', () => {
+    writeDailies(range(1, 15));
+    breakAudit();
+    expect(() => pruneDailyBackupsIn(handle.db, dir, 14)).toThrow(/audit down/);
+    expect(listBackupFiles(dir).map((b) => b.fileName)).toContain(dailyName(1));
+    expect(readdirSync(dir).filter((n) => n.endsWith('.purging'))).toEqual([]);
   });
 });

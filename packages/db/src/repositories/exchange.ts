@@ -181,8 +181,9 @@ export interface ApproveSwapOptions {
  *   `application` is stale and the caller must re-evaluate,
  * - an override with no reason.
  *
- * The audit entry is written *before* any row changes, exactly like `applyResolution`: a
- * refused approval — for a missing reason or a stale id — must not have partially applied.
+ * Every refusal above is checked before the first write, so a refused approval — for a missing
+ * reason or a stale id — has not partially applied. The audit entry is written last, once the
+ * swap row is decided, so its `after` carries the outcome (status, who, when, why, overrode).
  */
 export function approveSwap(
   // A transaction, not any handle: these writes are only correct all-or-nothing.
@@ -219,21 +220,6 @@ export function approveSwap(
         'This text is what gets quoted if the decision is challenged.',
     );
   }
-  // Audited before the writes: a refused approval must not touch a row.
-  recordAuditStrict(
-    db,
-    {
-      entityType: 'shift_swap',
-      entityId: id,
-      action: 'approve',
-      actor,
-      before,
-      reason,
-      after: { application },
-    },
-    { requireReason: opts.overrode },
-  );
-
   for (const removed of removing) {
     deleteAssignment(db, removed.id, actor, reason ?? `Shift exchange ${id}`);
     if (changeReason !== undefined) {
@@ -301,5 +287,18 @@ export function approveSwap(
     .run();
   const after = getSwap(db, id);
   if (!after) throw new Error(`Shift swap ${id} vanished during approval`);
+  recordAuditStrict(
+    db,
+    {
+      entityType: 'shift_swap',
+      entityId: id,
+      action: 'approve',
+      actor,
+      before,
+      reason,
+      after: { ...after, application },
+    },
+    { requireReason: opts.overrode },
+  );
   return after;
 }

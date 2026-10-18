@@ -72,13 +72,24 @@ export function recordHoldover(db: DbLike, input: RecordHoldoverInput, actor: st
   if (!afterRow) throw new Error(`Assignment ${row.id} vanished during update`);
   const after = toAssignment(afterRow);
 
+  // The nurse, day and shift travel in both snapshots: the audit table has no nurse column, and
+  // the nurse's grievance record finds an entry only by a nurse key in its snapshot.
+  const identity = { nurseId: row.nurseId, date: row.date, shiftTypeId: row.shiftTypeId };
   const entry = {
     entityType: 'assignment',
     entityId: row.id,
     action: 'update' as const,
     actor,
-    before: { holdoverMinutes: row.holdoverMinutes, holdoverMandated: row.holdoverMandated },
-    after: { holdoverMinutes: minutes, holdoverMandated: afterRow.holdoverMandated },
+    before: {
+      ...identity,
+      holdoverMinutes: row.holdoverMinutes,
+      holdoverMandated: row.holdoverMandated,
+    },
+    after: {
+      ...identity,
+      holdoverMinutes: minutes,
+      holdoverMandated: afterRow.holdoverMandated,
+    },
     ...(reason ? { reason } : {}),
   };
   if (mandated) recordAuditStrict(db, entry, { requireReason: true });

@@ -183,10 +183,15 @@
   added by rolling the last forward — `setup/holiday-year.ts`'s `planHolidayYear` (federal names
   take their new date, others keep month and day; pairings carried, a cross-year pair re-linked
   as `repairs` once its partner's year is added), saved by `addHolidayYear` in one transaction —
-  so names and pairings stay the same year to year instead of being re-typed.
+  so names and pairings stay the same year to year instead of being re-typed. A
+  hand-recorded list accepts only nurses on the unit (home, or floated there on the date); a
+  holiday with a recorded list cannot be deleted until the list is cleared, and deleting one
+  removes nurses' wishes to work it on the record.
 - **CSV exports defuse formulas.** `serializeCsv` prefixes `'` to a field starting `=`, `+`, `-`,
   `@`, tab or CR (numbers exempt) and `parseCsv` removes it, so an exported roster opened in
   Excel cannot run a formula hidden in a name, and still re-imports as itself.
+- **A tier cited by a ratio rule (active or deactivated) or by a census day's mix cannot be deleted; rename it.**
+  `deleteAcuityTier` refuses before writing, since the rule FK cascades and demand would drop to zero.
 - **HPPD and acuity care hours are advisory.** `ShiftDemand.careHoursRecommendedNurses` (care hours
   ÷ shift length) and `hppdRecommendedNurses` show on the Demand page; `acuity/hppd.ts`'s
   `scheduledHppd` compares a period's scheduled hours per patient day with the target on the Demand

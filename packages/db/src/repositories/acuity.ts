@@ -1,16 +1,21 @@
 /**
  * Acuity configuration: the unit's acuity tiers, the patient-ratio rules keyed on them, and the
  * HPPD target. Together with census these are what `deriveDemand` turns into required staff.
+ *
+ * A tier that a ratio rule (active or deactivated) or a census day's mix cites cannot be deleted:
+ * the rule FK cascades and the census mix is a JSON map with no FK, so a delete would silently
+ * drop the rules and leave those patients counted against no ratio, i.e. demand of zero.
  */
 
 import type { AcuityTier, HppdTarget, Id, RatioRole, RatioRule } from '@shiftnurse/core';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import { toAcuityTier, toRatioRule } from '../mappers.js';
 import {
   acuityTier as acuityTierTable,
+  censusForecast as censusForecastTable,
   hppdTarget as hppdTargetTable,
   ratioRule as ratioRuleTable,
 } from '../schema.js';
@@ -83,9 +88,43 @@ export function updateAcuityTier(
   });
 }
 
+/** The refusal text: one clause per kind of citation, singular for one. */
+function citedMessage(name: string, rules: number, days: number): string {
+  const cited: string[] = [];
+  if (rules > 0) {
+    cited.push(`${rules} ratio rule${rules === 1 ? '' : 's'} (deactivated ones included)`);
+  }
+  if (days > 0) cited.push(`${days} census day${days === 1 ? '' : 's'}`);
+  const consequences: string[] = [];
+  if (rules > 0) consequences.push(`drop ${rules === 1 ? 'that rule' : 'those rules'}`);
+  if (days > 0) consequences.push('leave those patients counted against no ratio');
+  return `"${name}" is cited by ${cited.join(' and ')}. Rename it instead; deleting it would ${consequences.join(' and ')}.`;
+}
+
 export function deleteAcuityTier(db: DbLike, id: Id, actor: string): void {
   const row = db.select().from(acuityTierTable).where(eq(acuityTierTable.id, id)).get();
   if (!row) throw new Error(`Acuity tier ${id} not found`);
+  // Deactivated rules count: past periods were judged by them.
+  const rules =
+    db
+      .select({ n: sql<number>`count(*)` })
+      .from(ratioRuleTable)
+      .where(eq(ratioRuleTable.acuityTierId, id))
+      .get()?.n ?? 0;
+  // A zero entry cites nothing a demand calculation would use, so only counts above 0 block.
+  const days =
+    db
+      .select({ n: sql<number>`count(*)` })
+      .from(censusForecastTable)
+      .where(
+        and(
+          eq(censusForecastTable.unitId, row.unitId),
+          sql`(exists (select 1 from json_each(${censusForecastTable.acuityMix}) where key = ${id} and value > 0)
+            or (${censusForecastTable.actualAcuityMix} is not null and exists (select 1 from json_each(${censusForecastTable.actualAcuityMix}) where key = ${id} and value > 0)))`,
+        ),
+      )
+      .get()?.n ?? 0;
+  if (rules > 0 || days > 0) throw new Error(citedMessage(row.name, rules, days));
   const before = toAcuityTier(row);
   db.delete(acuityTierTable).where(eq(acuityTierTable.id, id)).run();
   recordAudit(db, { entityType: 'acuity_tier', entityId: id, action: 'delete', actor, before });
