@@ -27,12 +27,12 @@
  *
  * Presets only tighten. A ratio arrives as a catch-all RN rule at the legal ceiling, which
  * `bindingRatio` combines with any stricter tier rule the unit already has; overtime rules are
- * added if missing; a rule is switched on, never off, and a cap parameter only lowers. A
- * differential is added only for a kind the unit pays nothing for, posting notice only lengthens
- * and the overtime order is set only when the unit has none. A preset adds pay, it does not edit
- * it: an overtime rule the unit already has is never retrofitted with the preset's pyramiding or
- * minimum, because a manager's pay rule may follow a contract that says otherwise. Applying one
- * twice changes nothing.
+ * added if missing; a rule is switched on, never off, and a parameter moves only in its stricter
+ * direction. A differential is added only for a kind the unit pays nothing for, posting notice
+ * only lengthens and the overtime order is set only when the unit has none. A preset adds pay, it
+ * does not edit it: an overtime rule the unit already has is never retrofitted with the preset's
+ * pyramiding or minimum, because a manager's pay rule may follow a contract that says otherwise.
+ * Applying one twice changes nothing.
  *
  * Most state overtime laws restrict only hours a nurse is *required* to work: Oregon's 48-a-week
  * and 12-in-24 limits, Connecticut's, Rhode Island's. Those ride on `no-mandatory-overtime`, which
@@ -70,9 +70,10 @@ import {
   type Unit,
 } from '../domain/entities.js';
 import { DEFAULT_WEEKEND, MINUTES_PER_DAY, type WeekendDefinition } from '../domain/time.js';
-import { ALL_RULES, resolveConfigs } from '../rules/registry.js';
-import type { RuleConfig, RuleSet } from '../rules/types.js';
+import { ALL_RULES, getRule, resolveConfigs } from '../rules/registry.js';
+import type { ParamDoc, RuleConfig, RuleSet } from '../rules/types.js';
 import { type AcuityPresetId, acuityPresetForUnitType } from './presets.js';
+import { matchAlias } from './unit-type-aliases.js';
 
 export type { JurisdictionChoices, JurisdictionId } from '../domain/entities.js';
 
@@ -121,13 +122,7 @@ const UNIT_KIND_ALIASES: Partial<Record<JurisdictionUnitKind, readonly string[]>
 
 /** The kind of unit a free-text unit type names, or `undefined` when no law's table names it. */
 export function unitKindForUnitType(unitType: string): JurisdictionUnitKind | undefined {
-  const preset = acuityPresetForUnitType(unitType);
-  if (preset !== undefined) return preset;
-  const key = unitType.trim().toLowerCase();
-  for (const [kind, aliases] of Object.entries(UNIT_KIND_ALIASES)) {
-    if (aliases.includes(key)) return kind as JurisdictionUnitKind;
-  }
-  return undefined;
+  return acuityPresetForUnitType(unitType) ?? matchAlias(UNIT_KIND_ALIASES, unitType);
 }
 
 export interface JurisdictionRatio {
@@ -191,19 +186,17 @@ export interface JurisdictionPreset {
 }
 
 /**
- * A rule a preset switches on. A numeric parameter is a cap: it only ever lowers one the unit
- * has, and is never added to an enabled rule that has none, because an unset cap on
- * no-mandatory-overtime is a total ban, stricter than any number. Two exceptions say otherwise
- * where the law's number works the other way:
+ * A rule a preset switches on. Which way each parameter is stricter comes from the rule's
+ * `paramDocs` (`stricter`, `strictValue`), not from the preset, because the law's figure can be
+ * the loose value: Illinois limits only required hours (`requiredOnly: true`), Massachusetts all
+ * of them. A numeric parameter moves only in its `stricter` direction. A cap (`'lower'`) is never
+ * added to an enabled rule that has none, because an unset cap on no-mandatory-overtime is a total
+ * ban, stricter than any number; the exception is below. On a switched-off rule every parameter
+ * takes the preset's value, since a stored value there was never in force.
  */
 export interface PresetRule {
   ruleId: string;
   params?: Record<string, unknown>;
-  /**
-   * Numeric parameters where more is stricter (hours of rest): they only ever rise, and on a
-   * switched-off rule take the preset's value, since a stored value there was never in force.
-   */
-  raise?: readonly string[];
   /**
    * The rule reads an absent cap as no limit at all (`long-stretch`), so adding one to an enabled
    * rule that has none tightens it.
@@ -239,20 +232,17 @@ const ON_COMPRESSED: PresetCondition = { option: COMPRESSED_TOUR, is: true };
 const OFF_COMPRESSED: PresetCondition = { option: COMPRESSED_TOUR, is: false };
 const TITLE_38_PAY = '38 U.S.C. § 7453';
 
+/** Whether a `when` holds under the manager's answers; an unanswered option reads as no. */
+function conditionMet(when: PresetCondition | undefined, choices: JurisdictionChoices): boolean {
+  return when === undefined || (choices[when.option] ?? false) === when.is;
+}
+
 /** The answer that releases a preset's `contractOnly` rules from protection. */
 const OWN_CONTRACT = 'ownContract';
 
-/**
- * `long-stretch` with a state's numbers; any cap the law does not give stays unset. A longer bridge
- * joins more shifts into one stretch, so like the rest it is stricter the higher it is.
- */
+/** `long-stretch` with a state's numbers; any cap the law does not give stays unset. */
 function longStretch(params: Record<string, unknown>): PresetRule {
-  return {
-    ruleId: 'long-stretch',
-    params,
-    raise: ['restHours', 'maxBreakMinutesInStretch'],
-    absentCapIsUnlimited: true,
-  };
+  return { ruleId: 'long-stretch', params, absentCapIsUnlimited: true };
 }
 
 export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = {
@@ -281,8 +271,10 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'own) (§ 70217(a)(8)). Ratios here count RNs only; ' +
       'Title 22 lets LVNs (and psychiatric ' +
       'technicians on a psychiatric unit) fill up to half. ' +
-      'Sick leave accrues at 1 hour per 30 worked, up to 80 (Lab. Code § 246(b)): the statutory ' +
-      'minimum, which a hospital PTO plan that meets it can replace.',
+      'Sick leave accrues at 1 hour per 30 worked; the balance may be capped at 80 hours or 10 ' +
+      'days and use at 40 hours or 5 days a year, whichever is greater — 120 and 60 hours for a ' +
+      'nurse on 12-hour shifts (Lab. Code § 246(b), (d), as the Labor Commissioner reads it): the ' +
+      'statutory minimum, which a hospital PTO plan that meets it can replace.',
     ratioStaffing: {
       chargeNurseTakesPatients: false,
       breakMinutesPerNurse: 60,
@@ -371,10 +363,12 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
           balanceType: 'sick',
           tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 30 }],
           balanceCapHours: 80,
+          balanceCapDays: 10,
           useCapHoursPerYear: 40,
+          useCapDaysPerYear: 5,
           citation:
-            'Lab. Code § 246(b) (SB 616, 2023): 1 h per 30 worked, cap 80 h; ' +
-            'use capped at 40 h a year (§ 246(b)(1), (d))',
+            'Lab. Code § 246(b), (d) (SB 616, 2023): 1 h per 30 worked; balance cap 80 h or ' +
+            '10 days, use cap 40 h or 5 days a year, whichever is greater (Labor Commissioner FAQ)',
         },
       ],
     },
@@ -382,8 +376,10 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
   OR: {
     label: 'Oregon',
     summary:
-      'ORS 441.765 direct-care RN ratios: emergency 1:4 averaged over a 12-hour shift (never ' +
-      'more than 5 at once; trauma 1:1), ICU 1:2, operating room 1:1, oncology 1:4, recovery ' +
+      'ORS 441.765 direct-care RN ratios: emergency no more than 5 patients per nurse at any ' +
+      'time, set as the ceiling, and 1:4 averaged over a 12-hour shift, which the app does not ' +
+      'check — staff to 1:4 by setting the coverage floor or an acuity tier (trauma 1:1), ICU ' +
+      '1:2, operating room 1:1, oncology 1:4, recovery ' +
       '1:2, intermediate care (step-down) 1:3, medical-surgical 1:4 from 1 July 2026, cardiac ' +
       'telemetry 1:4, pediatrics 1:4. Labor and delivery (1:2, or 1:1 in active labor), ' +
       'postpartum, antepartum and well-baby (6, mother and baby counted apart) and mother-baby ' +
@@ -409,7 +405,13 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       telemetry: rn(4, `${ORS_441_765}(2)(k): cardiac telemetry 1:4`),
       icu: rn(2, `${ORS_441_765}(2)(b): intensive care 1:2`),
       'step-down': rn(3, `${ORS_441_765}(2)(i): intermediate care 1:3`),
-      emergency: rn(4, `${ORS_441_765}(2)(a): emergency 1:4 averaged over 12 hours, 5 at most`),
+      // D9: the statute's instantaneous limit is 5; a 1:4 ceiling at all times would overstate it,
+      // and ratios here are hard, so the average is left to the manager.
+      emergency: rn(
+        5,
+        `${ORS_441_765}(2)(a): emergency, 5 patients at most at any time ` +
+          '(1:4 averaged over 12 hours is not enforced)',
+      ),
       'operating-room': rn(1, `${ORS_441_765}(2)(f): operating room 1:1`),
       oncology: rn(4, `${ORS_441_765}(2)(g): oncology 1:4`),
       pacu: rn(2, `${ORS_441_765}(2)(h): post-anesthesia care 1:2`),
@@ -650,7 +652,10 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
     summary:
       'A nurse (RN or LPN) may not be required to work beyond a predetermined and regularly ' +
       'scheduled shift (AS 18.20.400), and after a scheduled shift is allowed 10 consecutive ' +
-      'hours off. Voluntary overtime is lawful only up to 14 consecutive hours (§ 18.20.400(c)). ' +
+      'hours off (this app’s reading, not verified against the enacted text: the statute may ' +
+      'owe the 10 hours only after the 14-hour exception, in which case lower the minimum rest ' +
+      'under Settings › Rules). Voluntary overtime is lawful only up to 14 consecutive hours ' +
+      '(§ 18.20.400(c)). ' +
       'Exceptions: a procedure in progress, an unforeseen emergency (not foreseeable volume or ' +
       'staffing), weather that keeps the relief nurse away, a rural facility’s declared ' +
       'staffing emergency (§ 18.20.410), and prearranged on-call; record those on the shift ' +
@@ -660,7 +665,9 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
     overtimeRules: [],
     enableRules: [
       NO_MANDATORY_OVERTIME,
-      { ruleId: 'min-rest-between-shifts', params: { minRestHours: 10 }, raise: ['minRestHours'] },
+      // D8: kept as the stricter reading; AS 18.20.400's enacted text could not be retrieved
+      // (review L-06).
+      { ruleId: 'min-rest-between-shifts', params: { minRestHours: 10 } },
       longStretch({ requiredOnly: false, maxConsecutiveHours: 14, emergencyLiftsCap: true }),
     ],
   },
@@ -889,7 +896,6 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       {
         ruleId: 'min-rest-between-shifts',
         params: { minRestHours: 11 },
-        raise: ['minRestHours'],
         contractOnly: true,
       },
       // VA–NNU Master Agreement Art. 13: two weekends off in four, judged over any four weekends
@@ -1067,15 +1073,25 @@ export function planJurisdiction(
   current: JurisdictionPlanInput,
   choices: JurisdictionChoices = {},
 ): JurisdictionPlan {
-  const preset = JURISDICTION_PRESETS[id];
+  return planPreset(JURISDICTION_PRESETS[id], current, choices);
+}
+
+/**
+ * `planJurisdiction` for a preset not in the table (tests); the app applies presets by id. It
+ * exists so a test can vary one field of a preset without assigning into the shared table.
+ */
+export function planPreset(
+  preset: JurisdictionPreset,
+  current: JurisdictionPlanInput,
+  choices: JurisdictionChoices = {},
+): JurisdictionPlan {
   const plan: JurisdictionPlan = {
     addRatioRules: [],
     tightenRatioRules: [],
     addOvertimeRules: [],
     addDifferentials: [],
   };
-  const applies = (when: PresetCondition | undefined) =>
-    when === undefined || (choices[when.option] ?? false) === when.is;
+  const applies = (when: PresetCondition | undefined) => conditionMet(when, choices);
   const enableRules = preset.enableRules.filter((r) => applies(r.when));
 
   const kind = unitKindForUnitType(current.unitType);
@@ -1164,9 +1180,18 @@ export function planJurisdiction(
       let touched = !c.enabled;
       for (const [key, value] of Object.entries(wanted.params ?? {})) {
         const have = params[key];
-        if (typeof value !== 'number') {
+        const doc = presetParamDoc(preset, wanted, key);
+        if (typeof value === 'boolean' && doc.strictValue !== undefined) {
+          // A preset whose value is the loose one (Illinois's `requiredOnly`) leaves a stricter
+          // unit alone; one whose value is the strict one tightens even an enabled rule.
           if (!c.enabled) params[key] = value;
-        } else if (wanted.raise?.includes(key)) {
+          else if (value === doc.strictValue && have !== value) {
+            params[key] = value;
+            touched = true;
+          }
+        } else if (typeof value !== 'number' || doc.stricter === undefined) {
+          throw unsaidDirection(preset, wanted, key);
+        } else if (doc.stricter === 'higher') {
           if (!c.enabled ? have !== value : typeof have !== 'number' || value > have) {
             params[key] = value;
             touched = true;
@@ -1207,6 +1232,7 @@ export function planJurisdiction(
   const have = current.weekendDefinition ?? current.ruleSet.weekendDefinition;
   if (
     weekend &&
+    weekend.mode === 'overlaps' &&
     have.startWeekday === DEFAULT_WEEKEND.startWeekday &&
     have.startMinute === DEFAULT_WEEKEND.startMinute &&
     have.durationMinutes === DEFAULT_WEEKEND.durationMinutes &&
@@ -1217,12 +1243,47 @@ export function planJurisdiction(
   return plan;
 }
 
+/** The paramDoc that says which way a preset-set parameter is stricter. */
+function presetParamDoc(preset: JurisdictionPreset, wanted: PresetRule, key: string): ParamDoc {
+  const doc = (getRule(wanted.ruleId)?.paramDocs as Record<string, ParamDoc> | undefined)?.[key];
+  if (doc?.stricter === undefined && doc?.strictValue === undefined)
+    throw unsaidDirection(preset, wanted, key);
+  return doc;
+}
+
+function unsaidDirection(preset: JurisdictionPreset, wanted: PresetRule, key: string): Error {
+  const rule = getRule(wanted.ruleId);
+  const doc = (rule?.paramDocs as Record<string, ParamDoc> | undefined)?.[key];
+  return new Error(
+    `The ${preset.label} preset sets ${rule?.name ?? wanted.ruleId} › ${doc?.label ?? key} without saying which way is stricter`,
+  );
+}
+
 /** The rule that holds a unit to its ratios, protected whatever the state. */
 const RATIO_RULE_ID = 'patient-ratio-compliance';
 
-export interface ProtectedRuleChange {
-  ruleId: string;
-  change: 'disabled' | 'softened';
+export type ProtectedRuleChange =
+  | { ruleId: string; change: 'disabled' | 'softened' }
+  | { ruleId: string; change: 'loosened'; param: string };
+
+/**
+ * How loose a preset-set value is, larger looser, so a change in either direction compares as one
+ * number. Absent reads as the rule reads it: no limit on a cap the rule treats as unlimited, a
+ * total ban (the strictest) on one it does not, the smallest allowed value for a rest or bridge.
+ * `undefined` for a value of the wrong type: the unchecked previous side may hold one, and it
+ * says nothing about which way the manager moved.
+ */
+function looseness(value: unknown, doc: ParamDoc, wanted: PresetRule): number | undefined {
+  if (doc.strictValue !== undefined) {
+    return typeof value === 'boolean' ? (value === doc.strictValue ? 0 : 1) : undefined;
+  }
+  if (value === undefined) {
+    if (doc.stricter === 'lower')
+      return wanted.absentCapIsUnlimited ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+    return -(doc.min ?? 0);
+  }
+  if (typeof value !== 'number') return undefined;
+  return doc.stricter === 'lower' ? value : -value;
 }
 
 /**
@@ -1234,6 +1295,11 @@ export interface ProtectedRuleChange {
  * tightens, so this is the one place a unit can quietly fall below it. A rule absent from
  * `previous` was never in force here and counts as untouched; one absent from `next` counts as
  * switched off.
+ *
+ * A parameter the preset sets is `'loosened'` when it moves the loose way and ends looser than the
+ * preset's own figure, judged only for the preset entries that apply under `choices`: a unit
+ * stricter than the law may relax toward it, and one already loosened with a reason is asked again
+ * only if it goes further. Other parameters have no legal baseline to fall below.
  */
 export function protectedRuleChanges(
   previous: readonly RuleConfig[],
@@ -1243,11 +1309,14 @@ export function protectedRuleChanges(
 ): ProtectedRuleChange[] {
   const ids = new Set([RATIO_RULE_ID]);
   const ownContract = choices[OWN_CONTRACT] ?? false;
-  if (jurisdiction !== undefined) {
-    for (const r of JURISDICTION_PRESETS[jurisdiction].enableRules) {
-      if (!(ownContract && r.contractOnly)) ids.add(r.ruleId);
-    }
-  }
+  const preset = jurisdiction === undefined ? undefined : JURISDICTION_PRESETS[jurisdiction];
+  const protectedEntries = (preset?.enableRules ?? []).filter(
+    (r) => !(ownContract && r.contractOnly),
+  );
+  for (const r of protectedEntries) ids.add(r.ruleId);
+  // A rule stays protected whatever the answers, but its settings are judged only against the
+  // entries that apply: California's long-stretch figures bind only an alternative workweek.
+  const judgedEntries = protectedEntries.filter((r) => conditionMet(r.when, choices));
   const changes: ProtectedRuleChange[] = [];
   for (const before of previous) {
     if (!ids.has(before.ruleId) || !before.enabled) continue;
@@ -1259,8 +1328,26 @@ export function protectedRuleChanges(
     const natural = ALL_RULES.find((r) => r.id === before.ruleId)?.severity;
     const was = before.severityOverride ?? natural;
     const now = after.severityOverride ?? natural;
-    if (was === 'hard' && now === 'soft')
+    if (was === 'hard' && now === 'soft') {
       changes.push({ ruleId: before.ruleId, change: 'softened' });
+      continue;
+    }
+    // A key two applying entries both set is judged once, against the first of them.
+    const judged = new Set<string>();
+    for (const wanted of judgedEntries) {
+      if (wanted.ruleId !== before.ruleId) continue;
+      for (const [key, presetValue] of Object.entries(wanted.params ?? {})) {
+        if (judged.has(key)) continue;
+        judged.add(key);
+        const doc = presetParamDoc(preset!, wanted, key);
+        const then = looseness(before.params[key], doc, wanted);
+        const nowLoose = looseness(after.params[key], doc, wanted);
+        const law = looseness(presetValue, doc, wanted);
+        if (then === undefined || nowLoose === undefined || law === undefined) continue;
+        if (nowLoose > then && nowLoose > law)
+          changes.push({ ruleId: before.ruleId, change: 'loosened', param: key });
+      }
+    }
   }
   return changes;
 }

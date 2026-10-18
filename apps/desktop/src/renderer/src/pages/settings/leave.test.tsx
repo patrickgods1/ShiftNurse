@@ -123,6 +123,32 @@ describe('Settings › Leave', () => {
     });
   });
 
+  it('keeps a cap in days when the policy is saved again', async () => {
+    const sick = {
+      ...policy.accrual[1]!,
+      balanceCapHours: 80,
+      balanceCapDays: 10,
+      useCapHoursPerYear: 40,
+      useCapDaysPerYear: 5,
+    };
+    const withDays: LeavePolicy = { ...policy, accrual: [policy.accrual[0]!, sick] };
+    renderWithApp(<LeavePanel />, { unit: { ...unit, leavePolicy: withDays } });
+    expect(
+      ((await screen.findByLabelText('Rule 2 balance cap (days)')) as HTMLInputElement).value,
+    ).toBe('10');
+    expect((screen.getByLabelText('Rule 2 yearly use cap (days)') as HTMLInputElement).value).toBe(
+      '5',
+    );
+    // An edit to the other rule, so Save has something to send; rule 2 must cross untouched.
+    fireEvent.change(screen.getByLabelText('Rule 1 carryover cap (hours)'), {
+      target: { value: '700' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(bridge.callsTo('units', 'update')).toHaveLength(1));
+    const rules = bridge.callsTo('units', 'update')[0]![1].leavePolicy!.accrual;
+    expect(rules[1]).toEqual(sick);
+  });
+
   it('saves California sick leave capped at 40 hours used a year', async () => {
     renderWithApp(<LeavePanel />, { unit });
     fireEvent.change(await screen.findByLabelText('Rule 2 yearly use cap (hours)'), {

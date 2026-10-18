@@ -8,14 +8,16 @@
 import {
   DEFAULT_FAIRNESS_WEIGHTS,
   DEFAULT_WEEKEND,
+  defaultRuleSet,
   isoDate,
   type JurisdictionChoices,
   type JurisdictionId,
   type RuleConfig,
 } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { auditHistoryFor } from '../audit.js';
+import { auditHistoryFor, recentAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
+import { ruleConfig as ruleConfigTable, ruleSet as ruleSetTable } from '../schema.js';
 import { createUnit } from './config.js';
 import { getLatestRuleSet, saveRuleSet } from './rulesets.js';
 import { applyJurisdiction } from './setup.js';
@@ -151,9 +153,118 @@ describe('loosening a protected rule', () => {
     ).toThrow(/No mandatory overtime.*needs a reason/);
   });
 
+  it('asks for a reason when a Massachusetts unit raises the 16-hour cap', () => {
+    // mkUnit applies MA inside a transaction with no reason: a preset only tightens.
+    const unitId = mkUnit('MA');
+    const applied = getLatestRuleSet(handle.db, unitId)!;
+    const long = applied.configs.find((c) => c.ruleId === 'long-stretch')!;
+    const raised = { ...long, params: { ...long.params, maxConsecutiveHours: 24 } };
+    expect(() => save(unitId, raised)).toThrow(
+      /Long stretches of work › Most consecutive hours is looser than the Massachusetts preset sets: a change like this needs a reason/,
+    );
+    expect(getLatestRuleSet(handle.db, unitId)!.version).toBe(applied.version);
+    const saved = save(unitId, raised, 'Signed side letter 2026-10');
+    const [entry] = auditHistoryFor(handle.db, 'rule_set', saved.id);
+    expect(entry!.reason).toBe('Signed side letter 2026-10');
+  });
+
   it('refuses to save rules for a unit that does not exist', () => {
     expect(() =>
       save('unit_missing', { ruleId: 'recovery-after-nights', enabled: false, params: {} }),
     ).toThrow('Unit unit_missing not found');
+  });
+});
+
+describe('saving rule settings the scheduler cannot use', () => {
+  const draftWith = (unitId: string, ruleId: string, params: Record<string, unknown>) => ({
+    unitId,
+    name: 'Contract rules',
+    configs: defaultRuleSet(unitId).configs.map((c) =>
+      c.ruleId === ruleId ? { ...c, params } : c,
+    ),
+    weekendDefinition: DEFAULT_WEEKEND,
+    fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+  });
+  const ruleSetAudits = () =>
+    recentAudit(handle.db, 10_000).filter((a) => a.entityType === 'rule_set').length;
+
+  it('refuses a blank rest-after-nights saved as null, and saves nothing', () => {
+    const unitId = mkUnit();
+    const audits = ruleSetAudits();
+    expect(() =>
+      transact(handle.db, (tx) =>
+        saveRuleSet(
+          tx,
+          draftWith(unitId, 'min-rest-between-shifts', {
+            minRestHours: 10,
+            minRestHoursAfterNight: null,
+          }),
+          ACTOR,
+        ),
+      ),
+    ).toThrow(
+      /These rule settings cannot be saved: Minimum rest between shifts › Minimum rest after a night \(hours\): Enter a number\./,
+    );
+    expect(getLatestRuleSet(handle.db, unitId)).toBeUndefined();
+    expect(ruleSetAudits()).toBe(audits);
+  });
+
+  it('refuses a setting the rule does not have', () => {
+    const unitId = mkUnit();
+    expect(() =>
+      transact(handle.db, (tx) =>
+        saveRuleSet(tx, draftWith(unitId, 'min-rest-between-shifts', { minRestHour: 8 }), ACTOR),
+      ),
+    ).toThrow(/“minRestHour”/);
+    expect(getLatestRuleSet(handle.db, unitId)).toBeUndefined();
+  });
+
+  it('refuses a rule this version of ShiftNurse does not know', () => {
+    const unitId = mkUnit();
+    const draft = draftWith(unitId, 'min-rest-between-shifts', { minRestHours: 10 });
+    expect(() =>
+      transact(handle.db, (tx) =>
+        saveRuleSet(
+          tx,
+          {
+            ...draft,
+            configs: [...draft.configs, { ruleId: 'no-such-rule', enabled: true, params: {} }],
+          },
+          ACTOR,
+        ),
+      ),
+    ).toThrow(/“no-such-rule”/);
+    expect(getLatestRuleSet(handle.db, unitId)).toBeUndefined();
+  });
+
+  it('lets the manager replace an unusable version with a corrected one', () => {
+    const unitId = mkUnit();
+    // Written around saveRuleSet, the way a file from before the check could hold it.
+    handle.db
+      .insert(ruleSetTable)
+      .values({
+        id: 'rs_bad',
+        unitId,
+        name: 'Old',
+        version: 1,
+        weekendDefinition: DEFAULT_WEEKEND,
+        fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+        createdAt: 1,
+      })
+      .run();
+    handle.db
+      .insert(ruleConfigTable)
+      .values({
+        ruleSetId: 'rs_bad',
+        ruleId: 'min-rest-between-shifts',
+        enabled: true,
+        severityOverride: null,
+        params: { minRestHours: 10, minRestHoursAfterNight: null },
+      })
+      .run();
+    const saved = transact(handle.db, (tx) =>
+      saveRuleSet(tx, draftWith(unitId, 'min-rest-between-shifts', { minRestHours: 10 }), ACTOR),
+    );
+    expect(saved.version).toBe(2);
   });
 });

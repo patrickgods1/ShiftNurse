@@ -468,13 +468,23 @@ export interface AccrualRule {
   tiers: readonly AccrualTier[];
   /** The most the balance may ever hold; accrual stops there (California sick leave: 80). */
   balanceCapHours?: number;
+  /**
+   * A cap in days of the nurse's usual shift; the larger of this and `balanceCapHours` applies
+   * (California: 80 hours or 10 days, whichever is greater).
+   */
+  balanceCapDays?: number;
   /** The most carried into a new leave year; the rest is forfeited (federal annual: 240). */
   carryoverCapHours?: number;
   /**
-   * The most of this balance a nurse may use in a leave year, whatever she holds (California
-   * sick leave: 40 hours or 5 days, Lab. Code § 246(b)(1), (d)).
+   * The most of this balance a nurse may use in a leave year, whatever she holds, in hours
+   * (California sick leave: 40, Lab. Code § 246(b)(1), (d)). See `useCapDaysPerYear`.
    */
   useCapHoursPerYear?: number;
+  /**
+   * A yearly use cap in days of the nurse's usual shift; the larger of this and
+   * `useCapHoursPerYear` applies (California: 40 hours or 5 days, whichever is greater).
+   */
+  useCapDaysPerYear?: number;
   /**
    * Set the balance to this at each leave-year start instead of accruing per pay period
    * (Lab. Code § 246(d) lets an employer front-load the year's amount). Excludes per-hour tiers.

@@ -311,6 +311,25 @@ describe('the rule set', () => {
     expect(save('Union side letter, 2026-09')).toMatchObject({ name: 'Without the ban' });
   });
 
+  it('refuses rule settings the scheduler cannot use, in words', () => {
+    const latest = api().rules.getLatest(unitId());
+    const bad = latest.configs.map((c) =>
+      c.ruleId === 'no-mandatory-overtime'
+        ? { ...c, params: { ...c.params, maxMandatedWeeklyHours: null } }
+        : c,
+    );
+    expect(() =>
+      api().rules.save(
+        unitId(),
+        'Blank cap',
+        bad,
+        latest.weekendDefinition,
+        latest.fairnessWeights,
+      ),
+    ).toThrow(/No mandatory overtime › .*: Enter a number\./);
+    expect(api().rules.getLatest(unitId()).id).toBe(latest.id);
+  });
+
   it('saves nothing when a config fails after the header is written', () => {
     const latest = api().rules.getLatest(unitId());
     const first = latest.configs[0]!;

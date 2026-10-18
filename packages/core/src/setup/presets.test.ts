@@ -8,6 +8,12 @@ import {
 } from './presets.js';
 
 describe('shift patterns', () => {
+  it('runs the 8-hour day inside the day 12 and the 8-hour night inside the night 12 when both are chosen', () => {
+    expect(
+      Object.fromEntries(SHIFT_PATTERNS.both.shiftTypes.map((s) => [s.abbreviation, s.within])),
+    ).toEqual({ D12: undefined, N12: undefined, D8: 'D12', E8: undefined, N8: 'N12' });
+  });
+
   it('offers the classic 12-hour day and night pair', () => {
     expect(
       SHIFT_PATTERNS['12h'].shiftTypes.map((s) => [s.abbreviation, s.startTime, s.durationHours]),
@@ -70,9 +76,18 @@ describe('critical care unit names', () => {
 });
 
 describe('coverageQuickFill', () => {
-  const day = { id: 'd12', isOnCall: false };
-  const night = { id: 'n12', isOnCall: false };
-  const onCall = { id: 'oc', isOnCall: true };
+  const day = { id: 'd12', isOnCall: false, withinShiftTypeId: null };
+  const night = { id: 'n12', isOnCall: false, withinShiftTypeId: null };
+  const onCall = { id: 'oc', isOnCall: true, withinShiftTypeId: null };
+
+  it('fills no floor on a shift that runs inside another', () => {
+    const rows = coverageQuickFill([day, { id: 'd8', isOnCall: false, withinShiftTypeId: 'd12' }], {
+      RN: 4,
+    });
+    // one standalone type x 7 weekdays x 1 role
+    expect(rows).toHaveLength(7);
+    expect(rows.every((r) => r.shiftTypeId === 'd12')).toBe(true);
+  });
 
   it('asks for 4 RNs and 1 CNA on every day and night of the week', () => {
     const rows = coverageQuickFill([day, night], { RN: 4, CNA: 1 });
@@ -95,5 +110,12 @@ describe('coverageQuickFill', () => {
     const rows = coverageQuickFill([day, onCall], { RN: 3, LPN: 0 });
     expect(rows.every((r) => r.shiftTypeId === 'd12' && r.role === 'RN')).toBe(true);
     expect(rows).toHaveLength(7);
+  });
+});
+
+describe('reading a unit type typed with stray spaces', () => {
+  it('reads “ IMCU ” as step-down for Oregon and as no acuity preset', () => {
+    expect(unitKindForUnitType(' IMCU ')).toBe('step-down');
+    expect(acuityPresetForUnitType(' IMCU ')).toBeUndefined();
   });
 });

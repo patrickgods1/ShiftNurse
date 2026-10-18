@@ -74,8 +74,25 @@ tags. Each release's notes link here.
   as ids; failed checks and file imports say what failed.
 - Staffing needs ranges are capped at 120 days and commit when you finish typing; the census
   editor can be cleared and keeps what you typed when the data refreshes.
+- California sick leave is capped at the greater of 40 hours or 5 of the unit's usual shifts used a
+  year, and 80 hours or 10 shifts held: 60 and 120 hours on 12-hour shifts, where it was 40 and
+  80. A leave policy can now give a cap in days. A unit that applied the California preset
+  before keeps its stored 40- and 80-hour caps; add the day caps under Settings › Leave.
+- Rule settings the scheduler cannot use (a blank saved as nothing, a word in a number field) are
+  refused when saved and reported in words when a schedule is checked, instead of silently
+  switching a rule off.
 
 ### Changed
+
+- Applying a state preset now also tightens on/off settings of a rule that was already on (for
+  example Massachusetts' 16-hour limit now counts volunteered hours and ignores emergency notes,
+  as the law says).
+- Loosening a setting a state preset set, such as raising Massachusetts' 16-hour limit, now asks
+  for a reason, as switching the rule off already did.
+- The Oregon preset sets the emergency department ceiling at the statute's 5 patients at any time.
+  Units that already applied it keep their 1:4.
+- The "both 12- and 8-hour" shift pattern now runs the 8-hour day and night inside the 12-hour
+  shifts, so they need no charge nurse of their own.
 
 - Contracted hours are now checked for a pay period that a schedule starts in the middle of,
   counting the shifts already published for it. If the earlier part of the pay period was never

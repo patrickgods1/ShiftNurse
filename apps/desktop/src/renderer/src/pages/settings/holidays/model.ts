@@ -16,7 +16,7 @@ import {
   daysBetween,
   holidayRotationRule,
   previousOccurrence,
-  resolveConfigs,
+  resolveConfigsUnchecked,
 } from '@shiftnurse/core';
 import type { HolidayYearInput } from '../../../../../shared/api.js';
 import { formatDollars } from '../../../money.js';
@@ -59,7 +59,9 @@ export function describeHolidayPay(differentials: readonly Differential[]): {
 
 /** The rule set's holiday rotation, or undefined when the rule is off. */
 export function rotationSettings(ruleSet: RuleSet): HolidayRotationParams | undefined {
-  const config = resolveConfigs(ruleSet).find((c) => c.ruleId === holidayRotationRule.id);
+  // Unchecked: this reads one flag to word a hint, and the Rules page is where an unusable rule
+  // set is reported.
+  const config = resolveConfigsUnchecked(ruleSet).find((c) => c.ruleId === holidayRotationRule.id);
   if (!config?.enabled) return undefined;
   return config.params as unknown as HolidayRotationParams;
 }

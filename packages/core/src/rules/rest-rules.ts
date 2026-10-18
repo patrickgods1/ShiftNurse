@@ -75,6 +75,7 @@ export const minRestRule: Rule<MinRestParams> = {
   defaultParams: { minRestHours: 10, onCallCountsAsWork: false },
   paramDocs: {
     minRestHours: {
+      stricter: 'higher',
       label: 'Minimum rest (hours)',
       hint: 'Hours off a nurse must have between the end of one shift and the start of the next.',
       why:
@@ -310,12 +311,14 @@ export const consecutiveShiftsRule: Rule<ConsecutiveShiftsParams> = {
   },
   paramDocs: {
     maxConsecutiveShifts: {
+      stricter: 'lower',
       label: 'Most days in a row',
       min: 1,
       hint: 'The longest run of consecutive days a nurse may work, days and nights mixed.',
       why:
         'Contracts commonly allow 4 to 6. Lower it to limit fatigue; raise it only if your ' +
         'contract allows longer stretches and you are short of ways to cover.',
+      integer: true,
     },
     maxConsecutiveNights: {
       label: 'Most nights in a row',
@@ -326,6 +329,7 @@ export const consecutiveShiftsRule: Rule<ConsecutiveShiftsParams> = {
       why:
         'Three or four nights in a row is a common ceiling, because nights are harder on sleep. ' +
         'A night is a shift starting between 18:00 and 03:59, whatever its pay flag.',
+      integer: true,
     },
     minDaysOffAfterMaxStretch: {
       label: 'Days off after a longest run',
@@ -336,6 +340,7 @@ export const consecutiveShiftsRule: Rule<ConsecutiveShiftsParams> = {
       why:
         'Many contracts require two days off after a full stretch so staff recover before the ' +
         'next one. Set it to what your contract says.',
+      integer: true,
     },
     onCallCountsAsWork: {
       label: 'On-call counts as work',

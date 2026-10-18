@@ -6,8 +6,9 @@
  * records the database keeps. FMLA lives in `fmla.ts`.
  *
  * A balance can be large enough and the request still be past the law: California lets an
- * employer cap sick leave *used* in a year at 40 hours (Lab. Code § 246(b)(1), (d)) however much
- * has accrued, so the cap is checked on its own, against what was used since the leave year began.
+ * employer cap sick leave *used* in a year at 40 hours or five days, whichever is greater (Lab.
+ * Code § 246(b)(1), (d)) however much has accrued, so the cap is checked on its own, against what
+ * was used since the leave year began.
  */
 
 export type BalanceCheck =

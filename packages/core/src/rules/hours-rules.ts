@@ -531,6 +531,7 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
       why:
         'A fatigue limit, often 48 to 60. It binds every week even when overtime is judged by ' +
         'pay period. Lower it to protect staff; raising it gives more room to cover gaps.',
+      max: 168,
     },
     overtimeThresholdHours: {
       label: 'Weekly overtime after (hours)',
@@ -538,6 +539,7 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
       hint: 'Hours in a work week past which the week counts as overtime.',
       why: "Usually 40, the US federal threshold. Use your contract's number if it differs.",
       activeWhen: { param: 'overtimeByPayPeriod', equals: false },
+      max: 168,
     },
     workWeekStartsOn: {
       label: 'Work week starts on',

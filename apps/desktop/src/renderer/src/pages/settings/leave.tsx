@@ -54,8 +54,10 @@ interface RuleDraft {
   employmentTypes: EmploymentType[];
   tiers: TierDraft[];
   balanceCap: string;
+  balanceCapDays: string;
   carryoverCap: string;
   useCap: string;
+  useCapDays: string;
   frontLoad: string;
   citation: string;
 }
@@ -87,8 +89,10 @@ function draftFrom(policy: LeavePolicy): Draft {
         rate: String(t.hoursPerAccruedHour ?? t.hoursPerPayPeriod ?? ''),
       })),
       balanceCap: r.balanceCapHours === undefined ? '' : String(r.balanceCapHours),
+      balanceCapDays: r.balanceCapDays === undefined ? '' : String(r.balanceCapDays),
       carryoverCap: r.carryoverCapHours === undefined ? '' : String(r.carryoverCapHours),
       useCap: r.useCapHoursPerYear === undefined ? '' : String(r.useCapHoursPerYear),
+      useCapDays: r.useCapDaysPerYear === undefined ? '' : String(r.useCapDaysPerYear),
       frontLoad: r.frontLoadHours === undefined ? '' : String(r.frontLoadHours),
       citation: r.citation ?? '',
     })),
@@ -110,8 +114,10 @@ function problemsIn(draft: Draft): string[] {
     }
     for (const [name, value] of [
       ['balance cap', rule.balanceCap],
+      ['balance cap in days', rule.balanceCapDays],
       ['carryover cap', rule.carryoverCap],
       ['yearly use cap', rule.useCap],
+      ['yearly use cap in days', rule.useCapDays],
       ['front-loaded amount', rule.frontLoad],
     ] as const) {
       if (value.trim() !== '' && !isNumber(value))
@@ -151,8 +157,10 @@ function policyFrom(draft: Draft): LeavePolicy {
             : { hoursPerPayPeriod: Number(t.rate) }),
       })),
       ...(r.balanceCap.trim() !== '' ? { balanceCapHours: Number(r.balanceCap) } : {}),
+      ...(r.balanceCapDays.trim() !== '' ? { balanceCapDays: Number(r.balanceCapDays) } : {}),
       ...(r.carryoverCap.trim() !== '' ? { carryoverCapHours: Number(r.carryoverCap) } : {}),
       ...(r.useCap.trim() !== '' ? { useCapHoursPerYear: Number(r.useCap) } : {}),
+      ...(r.useCapDays.trim() !== '' ? { useCapDaysPerYear: Number(r.useCapDays) } : {}),
       ...(r.frontLoad.trim() !== '' ? { frontLoadHours: Number(r.frontLoad) } : {}),
       ...(r.citation.trim() !== '' ? { citation: r.citation.trim() } : {}),
     })),
@@ -171,8 +179,10 @@ function blankRule(): RuleDraft {
     employmentTypes: [],
     tiers: [{ from: '0', mode: 'period', rate: '' }],
     balanceCap: '',
+    balanceCapDays: '',
     carryoverCap: '',
     useCap: '',
+    useCapDays: '',
     frontLoad: '',
     citation: '',
   };
@@ -612,19 +622,19 @@ function RuleEditor({
             />
           </Field>
           <Field
-            id={`${id}-carry`}
-            label={`Rule ${n} carryover cap (hours)`}
-            hint="The most carried into a new leave year; the rest is forfeited. Blank: no cap."
+            id={`${id}-cap-days`}
+            label={`Rule ${n} balance cap (days)`}
+            hint="Whichever is greater applies: the hours, or this many of the unit's usual shifts."
           >
             <input
-              id={`${id}-carry`}
-              aria-describedby={describedBy(`${id}-carry`, { hint: true })}
+              id={`${id}-cap-days`}
+              aria-describedby={describedBy(`${id}-cap-days`, { hint: true })}
               type="number"
-              min={0}
-              step="any"
+              min={1}
+              step={1}
               className={INPUT}
-              value={rule.carryoverCap}
-              onChange={(e) => onChange({ carryoverCap: e.target.value })}
+              value={rule.balanceCapDays}
+              onChange={(e) => onChange({ balanceCapDays: e.target.value })}
             />
           </Field>
           <Field
@@ -642,6 +652,38 @@ function RuleEditor({
               className={INPUT}
               value={rule.useCap}
               onChange={(e) => onChange({ useCap: e.target.value })}
+            />
+          </Field>
+          <Field
+            id={`${id}-use-cap-days`}
+            label={`Rule ${n} yearly use cap (days)`}
+            hint="Whichever is greater applies: the hours, or this many of the unit's usual shifts."
+          >
+            <input
+              id={`${id}-use-cap-days`}
+              aria-describedby={describedBy(`${id}-use-cap-days`, { hint: true })}
+              type="number"
+              min={1}
+              step={1}
+              className={INPUT}
+              value={rule.useCapDays}
+              onChange={(e) => onChange({ useCapDays: e.target.value })}
+            />
+          </Field>
+          <Field
+            id={`${id}-carry`}
+            label={`Rule ${n} carryover cap (hours)`}
+            hint="The most carried into a new leave year; the rest is forfeited. Blank: no cap."
+          >
+            <input
+              id={`${id}-carry`}
+              aria-describedby={describedBy(`${id}-carry`, { hint: true })}
+              type="number"
+              min={0}
+              step="any"
+              className={INPUT}
+              value={rule.carryoverCap}
+              onChange={(e) => onChange({ carryoverCap: e.target.value })}
             />
           </Field>
           <Field

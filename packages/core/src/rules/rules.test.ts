@@ -26,7 +26,8 @@ import {
   testShiftTypes,
   timeOff,
 } from '../testing/fixtures.js';
-import { evaluateSchedule } from './registry.js';
+import { RuleParamsError } from './param-validation.js';
+import { evaluateSchedule, resolveConfigsUnchecked } from './registry.js';
 import type { ViolationCode } from './types.js';
 
 beforeEach(() => {
@@ -1456,5 +1457,42 @@ describe('evaluation result', () => {
     };
     const result = evaluateSchedule(s.schedule, disabled, s.ctx);
     expect(result.violations.some((v) => v.code === 'insufficient_rest')).toBe(false);
+  });
+});
+
+describe('a rule set with an unusable setting', () => {
+  // A blank "rest after a night" saved as null: the rule read `0 >= null` as enough rest.
+  function blankRestAfterNights() {
+    const nurse = makeNurse();
+    return scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, NIGHT_12, '2026-01-05'), // 19:00 Mon → 07:00 Tue
+        assign(nurse.id, DAY_12, '2026-01-06'), // 07:00 Tue: 0 h rest
+      ],
+      ruleParams: {
+        'min-rest-between-shifts': { minRestHours: 10, minRestHoursAfterNight: null },
+      },
+    });
+  }
+
+  it('refuses to judge a night-to-day turnaround under a blank rest-after-nights', () => {
+    const s = blankRestAfterNights();
+    expect(() => evaluateSchedule(s.schedule, s.ruleSet, s.ctx)).toThrow(RuleParamsError);
+    expect(() => evaluateSchedule(s.schedule, s.ruleSet, s.ctx)).toThrow(
+      /Minimum rest after a night \(hours\): Enter a number\..*Open Settings › Rules/,
+    );
+  });
+
+  it('still lets the Rules editor open that rule set to fix it', () => {
+    const s = blankRestAfterNights();
+    const rest = resolveConfigsUnchecked(s.ruleSet).find(
+      (c) => c.ruleId === 'min-rest-between-shifts',
+    );
+    expect(rest?.params).toEqual({
+      minRestHours: 10,
+      minRestHoursAfterNight: null,
+      onCallCountsAsWork: false,
+    });
   });
 });

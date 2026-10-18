@@ -15,9 +15,12 @@ import type {
   EmploymentType,
   FairnessComponent,
   FairnessWeights,
+  JurisdictionId,
   ParamDoc,
+  ProtectedRuleChange,
   Rule,
   RuleConfig,
+  RuleSet,
   RuleSeverity,
   Weekday,
   WeekendDefinition,
@@ -32,11 +35,13 @@ import {
   FAIRNESS_COMPONENTS,
   formatTimeOfDay,
   hoursToMinutes,
+  JURISDICTION_PRESETS,
   minutesToHours,
   parseTimeOfDay,
   protectedRuleChanges,
-  resolveConfigs,
+  resolveConfigsUnchecked,
   WEEKDAY_NAMES,
+  withoutUnknownParams,
 } from '@shiftnurse/core';
 import { useSearch } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
@@ -105,6 +110,16 @@ const FAIRNESS_TIPS: Record<FairnessComponent, string> = {
     'landing on the same people.',
 };
 
+/**
+ * The configs the editor loads and compares against. Unchecked, because a stored version with an
+ * unusable setting must still open here to be fixed (the form names the field); unknown keys
+ * dropped, because the manager cannot see them and a save would be refused over them. One helper
+ * so the loaded state and the dirty check agree.
+ */
+function editableConfigs(ruleSet: RuleSet): RuleConfig[] {
+  return withoutUnknownParams(resolveConfigsUnchecked(ruleSet));
+}
+
 function clearSeverityOverride(config: RuleConfig): RuleConfig {
   const { ruleId, enabled, params } = config;
   return { ruleId, enabled, params };
@@ -113,6 +128,18 @@ function clearSeverityOverride(config: RuleConfig): RuleConfig {
 // ---------------------------------------------------------------------------
 // Parameters form
 // ---------------------------------------------------------------------------
+
+/** One protected change in words, the same words `saveRuleSet` refuses with. */
+function loosenedPhrase(change: ProtectedRuleChange, jurisdiction: JurisdictionId | undefined) {
+  const rule = ALL_RULES.find((r) => r.id === change.ruleId);
+  const name = rule?.name ?? change.ruleId;
+  if (change.change !== 'loosened')
+    return `${name} ${change.change === 'disabled' ? 'is switched off' : 'is made advisory'}`;
+  const doc = (rule?.paramDocs as Record<string, ParamDoc> | undefined)?.[change.param];
+  // A loosened setting is only ever reported against a preset, so the unit has a jurisdiction.
+  const preset = JURISDICTION_PRESETS[jurisdiction!].label;
+  return `${name} › ${doc?.label ?? change.param} is looser than the ${preset} preset sets`;
+}
 
 function defaultLabel(doc: ParamDoc, defaultValue: unknown): string {
   if (defaultValue === undefined) return 'not set';
@@ -287,7 +314,9 @@ function ParamsForm({
         if (typeof defaultValue === 'number' || (doc.optional && defaultValue === undefined)) {
           const error = paramError(doc, defaultValue, value);
           const step =
-            typeof defaultValue === 'number' && !Number.isInteger(defaultValue) ? 0.5 : 1;
+            !doc.integer && typeof defaultValue === 'number' && !Number.isInteger(defaultValue)
+              ? 0.5
+              : 1;
           return (
             <Field
               key={key}
@@ -303,6 +332,7 @@ function ParamsForm({
                 id={fieldId}
                 type="number"
                 min={doc.min ?? 0}
+                max={doc.max}
                 step={step}
                 value={numberFieldValue(value)}
                 placeholder={doc.optional ? 'Not set' : undefined}
@@ -652,7 +682,7 @@ export default function RulesPanel() {
   if (data !== undefined && data.version !== loadedVersion) {
     setLoadedVersion(data.version);
     setName(data.name);
-    setConfigs(resolveConfigs(data));
+    setConfigs(editableConfigs(data));
     setWeekendDefinition(data.weekendDefinition);
     setFairnessWeights(data.fairnessWeights);
     // The refetch after our own save lands here too; it is the version the message names, so
@@ -663,7 +693,7 @@ export default function RulesPanel() {
   const dirty =
     data !== undefined &&
     (name !== data.name ||
-      JSON.stringify(configs) !== JSON.stringify(resolveConfigs(data)) ||
+      JSON.stringify(configs) !== JSON.stringify(editableConfigs(data)) ||
       JSON.stringify(weekendDefinition) !== JSON.stringify(data.weekendDefinition) ||
       JSON.stringify(fairnessWeights) !== JSON.stringify(data.fairnessWeights));
 
@@ -681,7 +711,7 @@ export default function RulesPanel() {
   // Switching off or softening a protected rule (the ratio rule, a rule a state preset turned on)
   // must be explained, and the repository refuses it otherwise, so ask here rather than surface that.
   const loosened = protectedRuleChanges(
-    resolveConfigs(data),
+    editableConfigs(data),
     configs,
     unit.jurisdiction,
     unit.jurisdictionChoices ?? {},
@@ -694,7 +724,7 @@ export default function RulesPanel() {
 
   function discard() {
     setName(data!.name);
-    setConfigs(resolveConfigs(data!));
+    setConfigs(editableConfigs(data!));
     setWeekendDefinition(data!.weekendDefinition);
     setFairnessWeights(data!.fairnessWeights);
     setReason('');
@@ -809,15 +839,8 @@ export default function RulesPanel() {
             className="rounded-md border border-warn bg-surface p-4"
           >
             <p className="text-sm text-text">
-              {loosened
-                .map(
-                  (change) =>
-                    `${ALL_RULES.find((r) => r.id === change.ruleId)?.name ?? change.ruleId} ${
-                      change.change === 'disabled' ? 'is switched off' : 'is made advisory'
-                    }`,
-                )
-                .join('; ')}
-              . A change like this needs a reason.
+              {loosened.map((change) => loosenedPhrase(change, unit.jurisdiction)).join('; ')}. A
+              change like this needs a reason.
             </p>
             <Field
               id="rules-reason"

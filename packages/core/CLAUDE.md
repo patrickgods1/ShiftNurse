@@ -100,6 +100,7 @@
   the final roster, before anything is written — the rule engine stays the judge.
 - **`dayNumber`/`fromDayNumber` are memoised.** The rule engine on partial views converts the same
   few dozen dates millions of times per solve; without the cache that was 60% of a run.
+  `fromDayNumber` refuses a non-integer (on a cache miss), so NaN never becomes a date.
   `compareDates`, `minDate`, `maxDate` and `dateInRange` compare the ISO strings directly
   (validated `YYYY-MM-DD` sorts in calendar order): `compareDates` returns only a sign — use
   `daysBetween` for a distance. `ScheduleView.dates` is a shared, frozen array; its other indexes
@@ -114,7 +115,8 @@
   re-prices the shifts inside it (`innerShifts`, and `shiftViolationsAround` for simulated
   changes), and CP-SAT treats a shift as movable when its cover is. Only experienced **RNs**
   cover a new grad: an LVN or nursing assistant cannot supervise an RN. The repository refuses
-  a containing shift whose hours do not hold the inside one, or a chain. `canTakeCharge`
+  a containing shift whose hours do not hold the inside one, or a chain. The 'both' shift
+  pattern creates D8 inside D12 and N8 inside N12. `canTakeCharge`
   (coverage-rules) is the one test of who may be marked charge, shared by the rule,
   `SolverModel.ensureCharge` and CP-SAT.
 - **Incompatible staff are judged by the hours they share.** An `IncompatibilityGroup` (two or
@@ -163,9 +165,14 @@
   `weekLeaveHours`, the CP-SAT caps subtract it (rounded down to integer hundredths), the cost
   engine starts a week's overtime count with it via `CostContext.overtimeLeaveHours`, and
   compliance alerts count it. `SolveInput.paidSickCalls` comes from `loadPeriodInput`.
-- **Every rule parameter is documented on the rule.** `Rule.paramDocs` (label, hint, why, and
-  `input`/`optional`/`min`/`activeWhen` for the editor) is typed to cover every key of `P`, and
-  Settings › Rules builds its form from it; `param-docs.test.ts` fails on a gap. A new rule's
+- **Every rule parameter is documented on the rule, and checked by it.** `Rule.paramDocs` (label,
+  hint, why, and `input`/`optional`/`min`/`max`/`integer`/`activeWhen` for the editor) is typed to
+  cover every key of `P`, and Settings › Rules builds its form from it; `param-docs.test.ts` fails
+  on a gap. `rules/param-validation.ts`'s `paramProblem` (type from the default, `optional`, `min`,
+  `max`, `integer`, weekday, employment types) is the one definition of a usable value. The Rules
+  form shows it, `saveRuleSet` refuses a version that fails it, and `resolveConfigs` refuses to
+  judge under one (`RuleParamsError`, in words); `resolveConfigsUnchecked` is only for opening such
+  a set to fix it. A new rule's
   parameters are not done until a manager can read what they do. Help in the renderer follows
   `components/field-help.tsx`: a visible hint for what a setting does, an ⓘ tip for why to change
   it, the tip never inside the `<label>`.
@@ -288,12 +295,14 @@
 - **State presets only tighten.** `JURISDICTION_PRESETS` cites the provision behind every value
   (checked against the statute text, October 2026) and says what it leaves to the hospital;
   `planJurisdiction` lowers looser ratio ceilings, grows break minutes, adds missing overtime
-  rules and switches rules on, never the reverse, and plans nothing on a second run. A numeric
-  rule parameter is a cap that only lowers, except a `PresetRule`'s `raise` keys (hours of rest:
-  more is stricter) and, with `absentCapIsUnlimited` (`long-stretch`), a cap added to an enabled
-  rule that has none. Ratios are read by `unitKindForUnitType` (the acuity presets' four plus
-  emergency, pediatrics, psychiatric, oncology, PACU, operating room, burn, NICU); labor and
-  delivery and postpartum get none, since their ceiling turns on the patient. State overtime laws
+  rules and switches rules on, never the reverse, and plans nothing on a second run. Each
+  parameter a preset sets says on its paramDoc which way is stricter (`stricter: 'lower' |
+  'higher'`, `strictValue` for on/off), and the plan moves it only that way — booleans included,
+  so MA over a looser `requiredOnly` tightens it; with `absentCapIsUnlimited` (`long-stretch`), a
+  cap is added to an enabled rule that has none. Ratios are read by `unitKindForUnitType` (the
+  acuity presets' four plus emergency, pediatrics, psychiatric, oncology, PACU, operating room,
+  burn, NICU); labor and delivery and postpartum get none, since their ceiling turns on the
+  patient. State overtime laws
   mostly limit *required* hours, which `no-mandatory-overtime`'s ban already refuses, so only
   their limits on all hours and their rest after a long stretch become `long-stretch` or
   `max-hours-in-24` settings; a law that is only a right to refuse (Minnesota) switches nothing
@@ -307,13 +316,17 @@
   bases); "already present" compares both (kinds as an order-insensitive set), so the Baylor
   daily 8 off tour days is still added beside the unit's unscoped daily 8.
   `protectedRuleChanges` names the edits that switch off or soften the ratio rule or any rule the
-  unit's preset enables, so the caller can ask for a reason — except a `contractOnly` rule (the
-  VA's VA–NNU terms, named by the preset's `source`) on a unit whose stored choices say
+  unit's preset enables, and the edits that move a preset-set parameter looser than both its
+  previous value and the preset's value (`'loosened'`, per parameter, judged only for entries
+  whose `when` the choices meet), so the caller can ask for a reason — except a `contractOnly`
+  rule (the VA's VA–NNU terms, named by the preset's `source`) on a unit whose stored choices say
   `ownContract`, since those values were never its agreement's. Every caller passes the unit's
   stored choices. A change to a law is a change to its
   preset, its citation and its summary together. `JURISDICTION_IDS` is derived from the preset table
   and is what the IPC schema enumerates, so a preset added to the table reaches IPC with no
   second, hand-kept list to forget.
+  Oregon's ED ceiling is the statute's instantaneous 5; the 12-hour 1:4 average is in the summary,
+  unenforced (ratios are hard).
 - **Leave bids are awarded in seniority order, one a nurse a pass.** `leave/bidding.ts`'s
   `awardBids` is pure and deterministic (seniority date, then employee number); leave already
   approved takes its places first; every choice not awarded carries a quotable reason naming the
@@ -466,7 +479,9 @@
   Same-day order is forfeit, accrue, use. A rule's `frontLoadHours` replaces per-period accrual
   with the year's amount set at each leave-year start (Lab. Code § 246(d)); `useCapHoursPerYear`
   is checked by `checkUseCap` against `usedThisYearHours` (use since the leave year began, before
-  payroll's date too). `pdlEntitlementHours` (California PDL, 17⅓ of the usual weeks) sits beside
+  payroll's date too); a cap may also be given in days (`balanceCapDays`, `useCapDaysPerYear`),
+  and `leaveCapsFor` applies the greater of the hours and days × the unit's `typicalShiftHours`
+  (California's 80 h or 10 days, 40 h or 5 days). `pdlEntitlementHours` (California PDL, 17⅓ of the usual weeks) sits beside
   FMLA's sums, never inside them; its use is counted per pregnancy, by the certification
   covering the first day (D14); without one, by the 12 months back. `leave/fmla.ts` is regime-aware: Title I (29 C.F.R.
   § 825) has the 1,250-hour test, 12 × the usual (or 52-week average) week, and the unit's

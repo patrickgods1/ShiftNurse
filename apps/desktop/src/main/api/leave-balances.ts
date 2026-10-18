@@ -28,8 +28,9 @@
  * (`workedShiftsForNurseInRange`). A draft is a proposal, and a night floated to another unit is
  * still work.
  *
- * A balance whose rule caps yearly use (California sick leave, 40 hours) also reports a request
- * that would pass the cap, however large the balance. California pregnancy disability leave is
+ * A balance whose rule caps yearly use (California sick leave, 40 hours or five of the unit's
+ * usual shifts, whichever is greater) also reports a request that would pass the cap, however
+ * large the balance. California pregnancy disability leave is
  * counted like FMLA, at the usual week's pace, against its own four months, which the law grants
  * per pregnancy (Gov. Code § 12945(a)(1)). The app has no pregnancy record, so the certification
  * covering the first day stands for this pregnancy's episode (D14) and the leave is counted over
@@ -55,12 +56,14 @@ import {
   type IsoDate,
   LEAVE_BALANCE_TYPES,
   type LeaveBalanceType,
+  leaveCapsFor,
   leaveChargeHours,
   payPeriodIndex,
   payPeriodWindow,
   pdlEntitlementHours,
   projectBalance,
   type TimeOffType,
+  typicalShiftHours,
 } from '@shiftnurse/core';
 import {
   createFmlaCertification,
@@ -71,6 +74,7 @@ import {
   getUnit,
   listFmlaCertifications,
   listLeaveBalancesForNurse,
+  listShiftTypesForUnit,
   listTimeOffForNurse,
   type ShiftNurseDb,
   setLeaveBalance,
@@ -127,6 +131,9 @@ export function checkLeaveRequest(
           hoursByPayPeriodStart.set(key, (hoursByPayPeriodStart.get(key) ?? 0) + shift.hours);
         }
       }
+      // A cap in days (California: 80 hours or 10 days) is counted in the unit's usual shift,
+      // the same length a request's paid hours default to.
+      const shiftHours = typicalShiftHours(listShiftTypesForUnit(db, unit.id));
       const projection = projectBalance({
         balanceHours: balance.balanceHours,
         asOf: balance.asOf,
@@ -137,9 +144,11 @@ export function checkLeaveRequest(
         leaveYearStart: policy.leaveYearStart,
         hoursByPayPeriodStart,
         used,
+        shiftHours,
       });
       const requestHours = leaveChargeHours(nurse.scheduleKind, paidHours);
-      const capHours = rule?.useCapHoursPerYear;
+      const caps = rule ? leaveCapsFor(rule, shiftHours) : {};
+      const capHours = caps.useCapHoursPerYear;
       const useCap =
         capHours === undefined
           ? undefined

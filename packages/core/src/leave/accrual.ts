@@ -15,6 +15,10 @@
  * A front-loaded rule (Lab. Code § 246(d)) earns nothing per pay period: each leave-year start
  * sets the balance to the year's amount, and what was held before is not kept.
  *
+ * A cap may be given in days of the unit's usual shift as well as in hours (California: 80 hours
+ * or 10 days, whichever is greater). A 12-hour nurse held to the hours alone would be capped two
+ * shifts short of what § 246 lets her keep, so the greater of the two applies.
+ *
  * `usedThisYearHours` is what a yearly use cap (California sick leave: 40 hours) is measured
  * against. It counts leave used since the leave year began, before payroll's date included: the
  * cap is on use, and payroll's balance says nothing about when its hours were drawn.
@@ -78,6 +82,36 @@ export function leaveYearStarts(
   return out;
 }
 
+/** The caps that apply to a nurse whose usual shift is `shiftHours` long: each the larger of
+ *  its hours and its days × shiftHours (Lab. Code § 246 as the Labor Commissioner reads it).
+ *  `balanceType`, when given, names the rule in the error. */
+export function leaveCapsFor(
+  rule: Pick<
+    AccrualRule,
+    'balanceCapHours' | 'balanceCapDays' | 'useCapHoursPerYear' | 'useCapDaysPerYear'
+  > & { balanceType?: LeaveBalanceType },
+  shiftHours: number | undefined,
+): { balanceCapHours?: number; useCapHoursPerYear?: number } {
+  const greater = (hours: number | undefined, days: number | undefined): number | undefined => {
+    if (days === undefined) return hours;
+    // Reading a day cap as hours-only would cap a 12-hour nurse below what the law allows, and
+    // that wrong figure is what a manager would deny protected leave against.
+    if (shiftHours === undefined) {
+      const which = rule.balanceType === undefined ? 'This' : `The ${rule.balanceType}`;
+      throw new Error(
+        `${which} accrual rule caps leave in days, so the unit’s usual shift length is needed`,
+      );
+    }
+    return Math.max(hours ?? 0, days * shiftHours);
+  };
+  const out: { balanceCapHours?: number; useCapHoursPerYear?: number } = {};
+  const balance = greater(rule.balanceCapHours, rule.balanceCapDays);
+  const use = greater(rule.useCapHoursPerYear, rule.useCapDaysPerYear);
+  if (balance !== undefined) out.balanceCapHours = balance;
+  if (use !== undefined) out.useCapHoursPerYear = use;
+  return out;
+}
+
 export interface BalanceProjection {
   hours: number;
   accruedHours: number;
@@ -110,8 +144,11 @@ export function projectBalance(input: {
   hoursByPayPeriodStart?: ReadonlyMap<IsoDate, number>;
   /** Approved paid leave drawn on this balance. */
   used: readonly { date: IsoDate; hours: number }[];
+  /** The unit's usual shift length, which a cap in days is counted in. Needed only then. */
+  shiftHours?: number;
 }): BalanceProjection {
   const { asOf, onDate, rule } = input;
+  const balanceCap = rule ? leaveCapsFor(rule, input.shiftHours).balanceCapHours : undefined;
   const inside = (date: IsoDate) => compareDates(date, asOf) > 0 && compareDates(date, onDate) < 0;
 
   const events: Event[] = [];
@@ -159,8 +196,8 @@ export function projectBalance(input: {
       else if (tier?.hoursPerAccruedHour !== undefined && tier.hoursPerAccruedHour > 0) {
         earned = (input.hoursByPayPeriodStart?.get(e.periodStart) ?? 0) / tier.hoursPerAccruedHour;
       }
-      if (rule.balanceCapHours !== undefined) {
-        earned = Math.max(0, Math.min(earned, rule.balanceCapHours - hours));
+      if (balanceCap !== undefined) {
+        earned = Math.max(0, Math.min(earned, balanceCap - hours));
       }
       hours += earned;
       accrued += earned;

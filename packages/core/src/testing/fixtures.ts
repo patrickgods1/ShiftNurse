@@ -1,8 +1,8 @@
 /**
  * Test fixtures: a small, realistic unit that rule and solver tests can build scenarios on.
  *
- * Kept in `src` rather than a test folder because the demo-data seeder reuses these shapes,
- * and because a fixture that drifts from the real entity definitions is worse than none.
+ * Kept in `src` rather than a test folder because the desktop tests and the solver benchmark
+ * build on them, and because a fixture that drifts from the real entity definitions is worse than none.
  */
 
 import { type DemandInputs, deriveDemand, type RatioStaffing } from '../acuity/demand.js';
@@ -36,7 +36,7 @@ import type {
   TimeOffRequest,
   Unit,
 } from '../domain/entities.js';
-import { datesInRange, type IsoDate, isoDate, type Weekday } from '../domain/time.js';
+import { addDays, datesInRange, type IsoDate, isoDate, type Weekday } from '../domain/time.js';
 import type { PaidSickCall } from '../rules/paid-leave.js';
 import { buildRuleContext, defaultRuleSet } from '../rules/registry.js';
 import type { HolidayWorkRecord, RuleContext, RuleSet } from '../rules/types.js';
@@ -194,7 +194,7 @@ export const testRatioRules: RatioRule[] = [
     role: 'RN',
     acuityTierId: TIER_HIGH.id,
     maxPatientsPerNurse: 2,
-    citation: 'Example: step-down 1:2',
+    citation: 'Example: high acuity 1:2',
     active: true,
   },
 ];
@@ -229,9 +229,10 @@ export function makeNurse(overrides: Partial<Nurse> = {}): Nurse {
   };
 }
 
-/** Reset the auto-incrementing nurse counter so ids are stable within a test file. */
+/** Reset the auto-incrementing nurse and assignment counters so ids are stable within a test file. */
 export function resetFixtureCounters(): void {
   nurseCounter = 0;
+  assignmentCounter = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -464,13 +465,8 @@ export function assignRun(
   overrides: Partial<Assignment> = {},
 ): Assignment[] {
   const start = isoDate(startDate);
-  const dates = datesInRange(start, addDaysLocal(start, days - 1));
+  const dates = datesInRange(start, addDays(start, days - 1));
   return dates.map((date) => assign(nurseId, shiftType, date, overrides));
-}
-
-function addDaysLocal(date: IsoDate, days: number): IsoDate {
-  const ms = Date.parse(`${date}T00:00:00Z`) + days * 86_400_000;
-  return new Date(ms).toISOString().slice(0, 10) as IsoDate;
 }
 
 export function timeOff(

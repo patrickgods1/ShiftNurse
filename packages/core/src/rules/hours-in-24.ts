@@ -85,6 +85,7 @@ export const maxHoursIn24Rule: Rule<MaxHoursIn24Params> = {
   defaultParams: { maxHours: 16 },
   paramDocs: {
     maxHours: {
+      stricter: 'lower',
       label: 'Most hours in any 24',
       min: 1,
       hint: 'The most hours one nurse may work in any 24 hours in a row, holdovers included.',
@@ -92,6 +93,7 @@ export const maxHoursIn24Rule: Rule<MaxHoursIn24Params> = {
         'A fatigue limit, commonly 16, written into some state laws and union contracts. It ' +
         'counts every worked minute, including time held over past the scheduled end, and not ' +
         'on-call standby. Use the number your law or contract gives; turn the rule off if none applies.',
+      max: 24,
     },
   },
 

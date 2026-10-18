@@ -18,8 +18,10 @@ import {
   createShiftType,
   createTimeOffRequest,
   createUnit,
+  deactivateShiftType,
   getPeriod,
   getUnit,
+  listShiftTypesForUnit,
   publishSchedule,
   saveRuleSet,
   transact,
@@ -568,6 +570,56 @@ describe('California’s yearly cap on using sick leave', () => {
     api().setBalance(nurseId, 'sick', 60, isoDate('2026-10-01'));
     approvedSick('2026-03-02', 24);
     expect(check('sick', 16).balance!.useCap).toBeUndefined();
+  });
+});
+
+describe('California’s sick-leave use cap for a nurse on 12-hour shifts', () => {
+  beforeEach(() => {
+    // The cap in days is counted in the unit's usual shift. The scenario unit also has three 8s,
+    // which would make its usual shift 8, so they are retired to leave a unit of 12s.
+    for (const s of listShiftTypesForUnit(f.handle.db, f.seeded.unitId)) {
+      if (s.durationHours !== 12) deactivateShiftType(f.handle.db, s.id, ACTOR);
+    }
+    setPolicy({
+      fmla: { regime: 'title1', yearMethod: 'rolling_backward' },
+      leaveYearStart: 'calendar',
+      accrual: [
+        {
+          balanceType: 'sick',
+          tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 30 }],
+          useCapHoursPerYear: 40,
+          useCapDaysPerYear: 5,
+        },
+      ],
+    });
+    api().setBalance(nurseId, 'sick', 100, isoDate('2026-10-01'));
+    approveTimeOff(
+      f.handle.db,
+      createTimeOffRequest(
+        f.handle.db,
+        {
+          nurseId,
+          startDate: isoDate('2026-03-02'),
+          endDate: isoDate('2026-03-04'),
+          type: 'sick',
+          paidHours: 36,
+        },
+        ACTOR,
+      ).id,
+      ACTOR,
+    );
+  });
+
+  it('does not warn a 12-hour nurse at 48 hours of sick leave against California’s cap', () => {
+    // Cap max(40, 5 × 12) = 60; 36 used + 12 asked = 48, within it.
+    const balance = check('sick', 12).balance!;
+    expect(balance.usedThisYearHours).toBe(36);
+    expect(balance.useCap).toBeUndefined();
+  });
+
+  it('says three more 12s is 12 hours past her 60-hour cap', () => {
+    // 36 used + 36 asked = 72, 12 over 60.
+    expect(check('sick', 36).balance!.useCap).toEqual({ capHours: 60, overBy: 12 });
   });
 });
 

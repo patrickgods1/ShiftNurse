@@ -3,8 +3,9 @@
 import { z } from 'zod';
 import { count, id, object, type ResourceSchemas, text } from './primitives.js';
 
-/** Parameters differ per rule and are documented on the rule itself (`Rule.paramDocs`), so only
- * the envelope is checked here; the rule engine reads what it knows from `params`. */
+/** Parameters differ per rule, so only the envelope is checked here; `saveRuleSet` checks each
+ * value against the rule's own `paramDocs` (core `ruleConfigProblems`) and refuses the save in
+ * words. */
 const ruleConfig = object({
   ruleId: id,
   enabled: z.boolean(),

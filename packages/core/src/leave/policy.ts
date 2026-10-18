@@ -16,6 +16,10 @@ function positive(n: number | undefined): boolean {
   return n !== undefined && Number.isFinite(n) && n > 0;
 }
 
+function wholePositive(n: number): boolean {
+  return Number.isInteger(n) && n > 0;
+}
+
 function validateFixedYearStart(start: string | undefined): void {
   if (start === undefined || start === '') {
     throw new Error('A fixed FMLA year needs a start date, as month and day (for example 10-01)');
@@ -82,6 +86,17 @@ function validateRule(rule: AccrualRule): void {
   }
   if (rule.carryoverCapHours !== undefined && !positive(rule.carryoverCapHours)) {
     throw new Error(`${label} has a carryover cap that is not a number greater than zero`);
+  }
+  // A day cap is counted in whole shifts; 2.5 days would be a cap no contract writes.
+  if (rule.balanceCapDays !== undefined && !wholePositive(rule.balanceCapDays)) {
+    throw new Error(
+      `${label} has a balance cap in days that is not a whole number greater than zero`,
+    );
+  }
+  if (rule.useCapDaysPerYear !== undefined && !wholePositive(rule.useCapDaysPerYear)) {
+    throw new Error(
+      `${label} has a yearly use cap in days that is not a whole number greater than zero`,
+    );
   }
 }
 

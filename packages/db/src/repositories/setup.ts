@@ -35,6 +35,7 @@ import {
   type Unit,
   type UnitSetupMode,
   usFederalHolidays,
+  withinShiftProblem,
 } from '@shiftnurse/core';
 import { eq } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
@@ -249,13 +250,27 @@ function applyShiftPattern(
   const codes = new Set(existing.map((s) => s.abbreviation.toUpperCase()));
   let sortOrder = Math.max(0, ...existing.map((s) => s.sortOrder));
   const result = { created: 0, updated: 0, unchanged: 0 };
-  for (const shift of preset.shiftTypes) {
+  const byCode = new Map(existing.map((s) => [s.abbreviation.toUpperCase(), s]));
+  for (const { within, ...shift } of preset.shiftTypes) {
     if (codes.has(shift.abbreviation.toUpperCase())) {
       result.unchanged++;
       continue;
     }
     sortOrder += 1;
-    createShiftType(db, { ...shift, unitId, sortOrder, active: true }, actor);
+    const input = { ...shift, unitId, sortOrder, active: true };
+    const container = within ? byCode.get(within.toUpperCase()) : undefined;
+    // A manager may have reshaped the container; then the 8 goes in standalone rather than
+    // the repository refusing the whole step.
+    const fits =
+      container?.active &&
+      withinShiftProblem({ ...input, id: '', withinShiftTypeId: container.id }, container) ===
+        undefined;
+    const created = createShiftType(
+      db,
+      fits ? { ...input, withinShiftTypeId: container.id } : input,
+      actor,
+    );
+    byCode.set(created.abbreviation.toUpperCase(), created);
     result.created++;
   }
   return result;

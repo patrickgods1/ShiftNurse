@@ -69,6 +69,7 @@ export const nightRecoveryRule: Rule<NightRecoveryParams> = {
         'Two days (48 hours) is the common standard: off nights Tuesday morning, back on days ' +
         'Thursday. Set 1 if your unit rotates faster, or 3 for longer night stretches.',
       min: 1,
+      integer: true,
     },
   },
 

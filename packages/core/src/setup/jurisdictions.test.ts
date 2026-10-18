@@ -6,14 +6,16 @@ import {
   type RatioRule,
 } from '../domain/entities.js';
 import { DEFAULT_WEEKEND, MINUTES_PER_DAY } from '../domain/time.js';
-import { defaultRuleSet } from '../rules/registry.js';
-import type { RuleSet } from '../rules/types.js';
+import { leaveCapsFor } from '../leave/accrual.js';
+import { defaultRuleSet, getRule, resolveConfigs } from '../rules/registry.js';
+import type { ParamDoc, RuleConfig, RuleSet } from '../rules/types.js';
 import {
   JURISDICTION_PRESETS,
   type JurisdictionChoices,
   type JurisdictionId,
   type JurisdictionPlanInput,
   planJurisdiction,
+  planPreset,
   protectedRuleChanges,
 } from './jurisdictions.js';
 
@@ -322,78 +324,81 @@ describe('proposing a leave policy', () => {
 });
 
 describe('what the VA and California presets say about leave', () => {
-  const sick = (hoursPerPayPeriod: number) => [{ fromYearsOfService: 0, hoursPerPayPeriod }];
-  const VA_HANDBOOK = 'VA Handbook 5011 pt. III ch. 2 (38 U.S.C. § 7421)';
+  const vaAccrual = () => JURISDICTION_PRESETS['US-VA'].leavePolicy!.accrual;
+  const vaRule = (
+    balanceType: 'annual' | 'sick',
+    employmentType: 'full_time' | 'part_time',
+    role?: 'RN' | 'LPN',
+  ) =>
+    vaAccrual().find(
+      (r) =>
+        r.balanceType === balanceType &&
+        r.employmentTypes?.includes(employmentType) &&
+        (role === undefined ? true : r.roles?.includes(role)),
+    )!;
 
-  it('lists all six VA accrual rules in order', () => {
-    expect(JURISDICTION_PRESETS['US-VA'].leavePolicy?.accrual).toEqual([
-      {
-        balanceType: 'annual',
-        roles: ['RN'],
-        employmentTypes: ['full_time'],
-        tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 8 }],
-        carryoverCapHours: 685,
-        citation: `${VA_HANDBOOK}: 8 h a pay period, 685 h ceiling`,
-      },
-      {
-        balanceType: 'annual',
-        roles: ['RN'],
-        employmentTypes: ['part_time'],
-        tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 10 }],
-        carryoverCapHours: 240,
-        citation: `${VA_HANDBOOK}: 1 h per 10 in pay status, 240 h ceiling`,
-      },
-      {
-        balanceType: 'annual',
-        roles: ['LPN', 'CNA'],
-        employmentTypes: ['full_time'],
-        tiers: [
-          { fromYearsOfService: 0, hoursPerPayPeriod: 4 },
-          { fromYearsOfService: 3, hoursPerPayPeriod: 6 },
-          { fromYearsOfService: 15, hoursPerPayPeriod: 8 },
-        ],
-        carryoverCapHours: 240,
-        citation: '5 U.S.C. §§ 6303(a), 6304(a)',
-      },
-      {
-        balanceType: 'annual',
-        roles: ['LPN', 'CNA'],
-        employmentTypes: ['part_time'],
-        tiers: [
-          { fromYearsOfService: 0, hoursPerAccruedHour: 20 },
-          { fromYearsOfService: 3, hoursPerAccruedHour: 13 },
-          { fromYearsOfService: 15, hoursPerAccruedHour: 10 },
-        ],
-        carryoverCapHours: 240,
-        citation: '5 U.S.C. §§ 6303(a), 6304(a)',
-      },
-      {
-        balanceType: 'sick',
-        employmentTypes: ['full_time'],
-        tiers: sick(4),
-        citation: '5 U.S.C. § 6307(a)',
-      },
-      {
-        balanceType: 'sick',
-        employmentTypes: ['part_time'],
-        tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 20 }],
-        citation: '5 U.S.C. § 6307(b)',
-      },
+  // 5 U.S.C. § 6303(a): "one-half day" (under 3 years), "three-fourths day" (3 to under 15),
+  // "1 day" (15 and over) each full biweekly pay period; for an 8-hour day that is 4, 6, 8.
+  // § 6303(a)(2)'s 1 1/4 days in the last full pay period of the year (10 h) is not modelled;
+  // see phase 14.
+  it('earns full-time federal LPNs and aides 4, 6 and 8 hours of annual leave a pay period by service', () => {
+    expect(vaRule('annual', 'full_time', 'LPN').tiers).toEqual([
+      { fromYearsOfService: 0, hoursPerPayPeriod: 4 },
+      { fromYearsOfService: 3, hoursPerPayPeriod: 6 },
+      { fromYearsOfService: 15, hoursPerPayPeriod: 8 },
+    ]);
+    expect(vaRule('annual', 'full_time', 'LPN').roles).toContain('CNA');
+  });
+
+  // § 6303(a), last sentence: part-time employees earn 1 hour for each 20, 13 or 10 hours in a
+  // pay status, by the same service bands.
+  it('earns part-time federal LPNs and aides 1 hour of annual leave per 20, 13 and 10 in pay status', () => {
+    expect(vaRule('annual', 'part_time', 'LPN').tiers).toEqual([
+      { fromYearsOfService: 0, hoursPerAccruedHour: 20 },
+      { fromYearsOfService: 3, hoursPerAccruedHour: 13 },
+      { fromYearsOfService: 15, hoursPerAccruedHour: 10 },
     ]);
   });
 
-  it('lists California’s one sick-leave rule', () => {
-    expect(JURISDICTION_PRESETS.CA.leavePolicy?.accrual).toEqual([
-      {
-        balanceType: 'sick',
-        tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 30 }],
-        balanceCapHours: 80,
-        useCapHoursPerYear: 40,
-        citation:
-          'Lab. Code § 246(b) (SB 616, 2023): 1 h per 30 worked, cap 80 h; ' +
-          'use capped at 40 h a year (§ 246(b)(1), (d))',
-      },
+  // § 6304(a): annual leave carried into the next leave year is capped at 240 hours.
+  it('carries at most 240 hours of federal annual leave into a new year', () => {
+    expect(vaRule('annual', 'full_time', 'LPN').carryoverCapHours).toBe(240);
+    expect(vaRule('annual', 'part_time', 'LPN').carryoverCapHours).toBe(240);
+  });
+
+  // § 6307(a): "one-half day for each full biweekly pay period" = 4 h; § 6307(b): part-time
+  // employees earn 1 hour for each 20 hours in a pay status.
+  it('earns 4 hours of sick leave a pay period full time and 1 per 20 part time', () => {
+    expect(vaRule('sick', 'full_time').tiers).toEqual([
+      { fromYearsOfService: 0, hoursPerPayPeriod: 4 },
     ]);
+    expect(vaRule('sick', 'part_time').tiers).toEqual([
+      { fromYearsOfService: 0, hoursPerAccruedHour: 20 },
+    ]);
+  });
+
+  // The handbook's figures, not independently re-sourced here.
+  it('takes the Title 38 nurse leave from the VA handbook', () => {
+    const full = vaRule('annual', 'full_time', 'RN');
+    const part = vaRule('annual', 'part_time', 'RN');
+    expect(full.citation).toContain('VA Handbook 5011');
+    expect(part.citation).toContain('VA Handbook 5011');
+    expect(full.tiers).toEqual([{ fromYearsOfService: 0, hoursPerPayPeriod: 8 }]);
+    expect(part.tiers).toEqual([{ fromYearsOfService: 0, hoursPerAccruedHour: 10 }]);
+    expect(full.carryoverCapHours).toBe(685);
+    expect(part.carryoverCapHours).toBe(240);
+  });
+
+  // Lab. Code § 246(b)(1): "at least one hour per every 30 hours worked"; an employer may limit
+  // use to "40 hours or five days" a year and accrual to "80 hours or 10 days" (§ 246(b)(1), (d),
+  // SB 616), which the Labor Commissioner's FAQ reads as whichever is greater.
+  it('gives a California 12-hour nurse the sick leave the Labor Code allows: 1 hour per 30, use up to 60 a year, a balance up to 120', () => {
+    const rule = JURISDICTION_PRESETS.CA.leavePolicy!.accrual[0]!;
+    expect(rule.tiers[0]!.hoursPerAccruedHour).toBe(30);
+    // 10 x 12 = 120 and 5 x 12 = 60; for an 8-hour nurse 10 x 8 = 80 and 5 x 8 = 40.
+    expect(leaveCapsFor(rule, 12)).toEqual({ balanceCapHours: 120, useCapHoursPerYear: 60 });
+    expect(leaveCapsFor(rule, 8)).toEqual({ balanceCapHours: 80, useCapHoursPerYear: 40 });
+    expect(JURISDICTION_PRESETS.CA.summary).toContain('whichever is greater');
   });
 
   it('cites a provision for every rule and says in its summary that it sets leave', () => {
@@ -404,6 +409,30 @@ describe('what the VA and California presets say about leave', () => {
         expect(rule.citation?.trim().length ?? 0).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+describe('the Oregon and Alaska presets say what the statute does and does not give', () => {
+  it('caps an Oregon emergency nurse at 5 patients at any moment, the statute’s hard limit', () => {
+    const rule = planJurisdiction('OR', input({ unitType: 'ED' })).addRatioRules[0];
+    expect(rule!.maxPatientsPerNurse).toBe(5);
+    expect(JURISDICTION_PRESETS.OR.summary).toContain('1:4 averaged');
+    expect(JURISDICTION_PRESETS.OR.summary).toContain('does not check');
+  });
+
+  it('says the Alaska rest after every shift is an unverified reading', () => {
+    expect(JURISDICTION_PRESETS.AK.summary).toContain('not verified');
+    const plan = planJurisdiction('AK', input());
+    const rest = plan.ruleConfigs?.find((c) => c.ruleId === 'min-rest-between-shifts');
+    expect(rest?.params.minRestHours).toBe(10);
+  });
+
+  it('never narrows a weekend the manager widened to “overlaps”', () => {
+    const plan = planPreset(
+      { ...JURISDICTION_PRESETS.other, weekendDefinition: DEFAULT_WEEKEND },
+      input({ weekendDefinition: { ...DEFAULT_WEEKEND, mode: 'overlaps' } }),
+    );
+    expect(plan.weekendDefinition).toBeUndefined();
   });
 });
 
@@ -429,7 +458,7 @@ describe('the full ratio tables', () => {
   });
 
   it.each([
-    ['ED', 4],
+    ['ED', 5],
     ['Intermediate care', 3],
     ['Oncology', 4],
     ['Pediatrics', 4],
@@ -682,6 +711,181 @@ describe('the state mandatory-overtime presets', () => {
       }
     }
   });
+
+  const LOOSER_MA = {
+    requiredOnly: true,
+    emergencyLiftsCap: true,
+    maxConsecutiveHours: 16,
+    restAfterHours: 16,
+    restHours: 8,
+    maxBreakMinutesInStretch: 60,
+  };
+
+  it('makes the Massachusetts cap judge every hour and ignore emergency notes on a unit that had them looser', () => {
+    const params = configOf('MA', LONG, withRule(LONG, true, LOOSER_MA))?.params;
+    expect(params).toMatchObject({
+      requiredOnly: false,
+      emergencyLiftsCap: false,
+      maxConsecutiveHours: 16,
+      restAfterHours: 16,
+      restHours: 8,
+      maxBreakMinutesInStretch: 60,
+    });
+  });
+
+  it('keeps a unit’s stricter yes/no settings when Illinois’s are looser', () => {
+    const long = withRule(LONG, true, {
+      requiredOnly: false,
+      restAfterHours: 12,
+      restOnlyPastThreshold: false,
+      restHours: 8,
+    });
+    // The ban already in force too, so a plan has nothing else to switch on.
+    const ruleSet = {
+      ...long,
+      configs: long.configs.map((c) =>
+        c.ruleId === NMO
+          ? { ...c, enabled: true, params: { ...c.params, emergencyMaxHoursPastShift: 4 } }
+          : c,
+      ),
+    };
+    const plan = planJurisdiction('IL', input({ ruleSet }));
+    expect(plan.ruleConfigs).toBeUndefined();
+    expect(resolveConfigs(ruleSet).find((c) => c.ruleId === LONG)?.params.requiredOnly).toBe(false);
+  });
+
+  it('plans nothing the second time a preset is applied over looser yes/no settings', () => {
+    const first = planJurisdiction('MA', input({ ruleSet: withRule(LONG, true, LOOSER_MA) }));
+    const second = planJurisdiction(
+      'MA',
+      input({ ruleSet: { ...defaultRuleSet(UNIT), configs: first.ruleConfigs! } }),
+    );
+    expect(second.ruleConfigs).toBeUndefined();
+  });
+
+  it('says which way is stricter for every setting any preset sets', () => {
+    for (const [id, preset] of Object.entries(JURISDICTION_PRESETS)) {
+      for (const entry of preset.enableRules) {
+        const rule = getRule(entry.ruleId);
+        expect(rule, `${id} ${entry.ruleId}`).toBeDefined();
+        const docs = rule!.paramDocs as Record<string, ParamDoc>;
+        for (const [key, value] of Object.entries(entry.params ?? {})) {
+          const doc = docs[key];
+          const where = `${id} ${entry.ruleId}.${key}`;
+          if (typeof value === 'boolean') expect(typeof doc?.strictValue, where).toBe('boolean');
+          else {
+            expect(typeof value, where).toBe('number');
+            expect(['lower', 'higher'], where).toContain(doc?.stricter);
+          }
+        }
+      }
+    }
+  });
+
+  describe('loosening a setting the state law set', () => {
+    const REST = 'min-rest-between-shifts';
+    const MA_LAW = {
+      requiredOnly: false,
+      maxConsecutiveHours: 16,
+      emergencyLiftsCap: false,
+      restAfterHours: 16,
+      restOnlyPastThreshold: false,
+      restHours: 8,
+      maxBreakMinutesInStretch: 60,
+    };
+    const ma = (params: Record<string, unknown>) =>
+      resolveConfigs(withRule(LONG, true, { ...MA_LAW, ...params }));
+    const without = (configs: RuleConfig[], ruleId: string, key: string) =>
+      configs.map((c) => {
+        if (c.ruleId !== ruleId) return c;
+        const { [key]: _gone, ...params } = c.params;
+        return { ...c, params };
+      });
+    const loosened = (param: string, ruleId = LONG) => [{ ruleId, change: 'loosened', param }];
+
+    it('asks why a Massachusetts unit lets a stretch run to 24 hours', () => {
+      expect(protectedRuleChanges(ma({}), ma({ maxConsecutiveHours: 24 }), 'MA', {})).toEqual(
+        loosened('maxConsecutiveHours'),
+      );
+    });
+
+    it('does not ask when the cap is tightened', () => {
+      expect(protectedRuleChanges(ma({}), ma({ maxConsecutiveHours: 14 }), 'MA', {})).toEqual([]);
+    });
+
+    it('does not ask when a unit stricter than the law relaxes toward it', () => {
+      expect(
+        protectedRuleChanges(
+          ma({ maxConsecutiveHours: 14 }),
+          ma({ maxConsecutiveHours: 15 }),
+          'MA',
+          {},
+        ),
+      ).toEqual([]);
+    });
+
+    it('asks again only when an already-explained loosening goes further', () => {
+      const at18 = ma({ maxConsecutiveHours: 18 });
+      expect(protectedRuleChanges(at18, ma({ maxConsecutiveHours: 20 }), 'MA', {})).toEqual(
+        loosened('maxConsecutiveHours'),
+      );
+      expect(protectedRuleChanges(at18, ma({ maxConsecutiveHours: 17 }), 'MA', {})).toEqual([]);
+    });
+
+    it('asks why the cap is removed altogether', () => {
+      expect(
+        protectedRuleChanges(ma({}), without(ma({}), LONG, 'maxConsecutiveHours'), 'MA', {}),
+      ).toEqual(loosened('maxConsecutiveHours'));
+    });
+
+    it('asks why only required hours would be judged', () => {
+      expect(protectedRuleChanges(ma({}), ma({ requiredOnly: true }), 'MA', {})).toEqual(
+        loosened('requiredOnly'),
+      );
+    });
+
+    it('asks why a meal break would now end a Massachusetts stretch', () => {
+      expect(protectedRuleChanges(ma({}), ma({ maxBreakMinutesInStretch: 30 }), 'MA', {})).toEqual(
+        loosened('maxBreakMinutesInStretch'),
+      );
+      expect(
+        protectedRuleChanges(ma({}), without(ma({}), LONG, 'maxBreakMinutesInStretch'), 'MA', {}),
+      ).toEqual(loosened('maxBreakMinutesInStretch'));
+    });
+
+    it('asks why a VA unit under the national contract cuts rest from 11 hours to 8', () => {
+      const before = resolveConfigs(withRule(REST, true, { minRestHours: 11 }));
+      const after = resolveConfigs(withRule(REST, true, { minRestHours: 8 }));
+      expect(protectedRuleChanges(before, after, 'US-VA', {})).toEqual(
+        loosened('minRestHours', REST),
+      );
+      expect(protectedRuleChanges(before, after, 'US-VA', { ownContract: true })).toEqual([]);
+    });
+
+    it('does not ask when a VA weekly cap on required hours is removed, which bans required hours outright', () => {
+      const before = resolveConfigs(withRule(NMO, true, { maxMandatedWeeklyHours: 40 }));
+      expect(
+        protectedRuleChanges(before, without(before, NMO, 'maxMandatedWeeklyHours'), 'US-VA', {}),
+      ).toEqual([]);
+    });
+
+    it('asks why a West Virginia unit allows 24 hours in 24', () => {
+      const before = resolveConfigs(withRule('max-hours-in-24', true, { maxHours: 16 }));
+      const after = resolveConfigs(withRule('max-hours-in-24', true, { maxHours: 24 }));
+      expect(protectedRuleChanges(before, after, 'WV', {})).toEqual(
+        loosened('maxHours', 'max-hours-in-24'),
+      );
+    });
+
+    it('does not judge settings of a California rule the unit’s answers left out', () => {
+      const before = resolveConfigs(withRule(LONG, true, { restAfterHours: 24, restHours: 8 }));
+      const after = resolveConfigs(withRule(LONG, true, { restAfterHours: 24, restHours: 6 }));
+      expect(protectedRuleChanges(before, after, 'CA', {})).toEqual([]);
+      expect(protectedRuleChanges(before, after, 'CA', { alternativeWorkweek: true })).toEqual(
+        loosened('restHours'),
+      );
+    });
+  });
 });
 
 describe('what the VA preset brings from Title 38 and the national contract', () => {
@@ -799,27 +1003,22 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
   });
 
   it('counts a rule scoped to the same kinds in another order as already there', () => {
-    const preset = JURISDICTION_PRESETS['US-VA'];
-    const original = preset.overtimeRules;
-    (preset as { overtimeRules: unknown }).overtimeRules = [
-      {
-        basis: 'weekly',
-        thresholdHours: 50,
-        multiplier: 1.5,
-        scheduleKinds: ['va_72_80', 'va_baylor'],
-      },
-    ];
-    try {
-      const existing = {
-        ...overtime('weekly', 50, 1.5),
-        scheduleKinds: ['va_baylor', 'va_72_80'] as ('va_baylor' | 'va_72_80')[],
-      };
-      expect(
-        planJurisdiction('US-VA', input({ overtimeRules: [existing] })).addOvertimeRules,
-      ).toEqual([]);
-    } finally {
-      (preset as { overtimeRules: unknown }).overtimeRules = original;
-    }
+    const preset = {
+      ...JURISDICTION_PRESETS['US-VA'],
+      overtimeRules: [
+        {
+          basis: 'weekly' as const,
+          thresholdHours: 50,
+          multiplier: 1.5,
+          scheduleKinds: ['va_72_80' as const, 'va_baylor' as const],
+        },
+      ],
+    };
+    const existing = {
+      ...overtime('weekly', 50, 1.5),
+      scheduleKinds: ['va_baylor', 'va_72_80'] as ('va_baylor' | 'va_72_80')[],
+    };
+    expect(planPreset(preset, input({ overtimeRules: [existing] })).addOvertimeRules).toEqual([]);
   });
 
   it('does not count a rule scoped to standard nurses as the unscoped weekly 40', () => {

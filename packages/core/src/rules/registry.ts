@@ -3,6 +3,10 @@
  *
  * Adding a union clause means writing one `Rule` and registering it here. Nothing in the
  * solver, the schedule grid or the compliance report needs to know it exists.
+ *
+ * Every judge reads a rule set through `resolveConfigs`, which refuses one holding a setting the
+ * rules cannot use (`param-validation.ts`) rather than let it read as "no limit";
+ * `resolveConfigsUnchecked` is only for opening such a set to fix it.
  */
 
 import type { DemandTable } from '../acuity/demand.js';
@@ -40,6 +44,7 @@ import { longStretchRule } from './long-stretch.js';
 import { mandatoryOvertimeRule } from './mandatory-overtime.js';
 import { nightRecoveryRule } from './night-recovery.js';
 import { type PaidLeaveCredit, type PaidSickCall, paidLeaveCredits } from './paid-leave.js';
+import { describeParamProblems, RuleParamsError, ruleConfigProblems } from './param-validation.js';
 import { pendingTimeOffRule } from './pending-time-off.js';
 import { preceptorRule } from './preceptor.js';
 import { consecutiveShiftsRule, minRestRule } from './rest-rules.js';
@@ -175,13 +180,33 @@ export function asParams<P>(_rule: Rule<P>, raw: Record<string, unknown>): P {
 }
 
 /**
- * Merge a stored rule set with the registry defaults.
+ * Merge a stored rule set with the registry defaults, and refuse to judge under a setting the
+ * rules cannot use.
  *
  * A rule set persisted before a new rule shipped — or before a new parameter was added to an
  * existing rule — must not silently disable that rule or crash on a missing parameter. Any
- * gap falls back to the registry default.
+ * gap falls back to the registry default. A value that is there but unusable (a `null` rest, a
+ * count of 4.5) is not a gap: read as typed, it switched a check off without a word, so it throws
+ * `RuleParamsError` naming each setting. Every judge — `prepareRules`, the solvers, the conflicts
+ * engine, alerts — comes through here, once per pass, never per move.
  */
 export function resolveConfigs(ruleSet: RuleSet): RuleConfig[] {
+  const merged = resolveConfigsUnchecked(ruleSet);
+  const problems = ruleConfigProblems(merged, { unknown: 'ignore' });
+  if (problems.length > 0) {
+    throw new RuleParamsError(
+      `The rules “${ruleSet.name}” (version ${ruleSet.version}) have settings ShiftNurse cannot use: ${describeParamProblems(problems).join('; ')}. Open Settings › Rules, correct them and save a new version.`,
+      problems,
+    );
+  }
+  return merged;
+}
+
+/**
+ * The merge alone, with no check. Only for code that must open an unusable rule set in order to
+ * fix it: the Rules editor, and `saveRuleSet`'s comparison with the version being replaced.
+ */
+export function resolveConfigsUnchecked(ruleSet: RuleSet): RuleConfig[] {
   const stored = new Map(ruleSet.configs.map((c) => [c.ruleId, c]));
   return ALL_RULES.map((rule) => {
     const config = stored.get(rule.id);
@@ -196,6 +221,20 @@ export function resolveConfigs(ruleSet: RuleSet): RuleConfig[] {
       ...config,
       params: { ...(rule.defaultParams as Record<string, unknown>), ...(config.params ?? {}) },
     };
+  });
+}
+
+/**
+ * A key no rule reads cannot change a verdict; the editor drops it so a save is not refused over
+ * a setting the manager cannot see.
+ */
+export function withoutUnknownParams(configs: readonly RuleConfig[]): RuleConfig[] {
+  return configs.map((config) => {
+    const rule = RULES_BY_ID.get(config.ruleId);
+    if (rule === undefined) return config;
+    const docs = rule.paramDocs as Record<string, unknown>;
+    const params = Object.fromEntries(Object.entries(config.params).filter(([key]) => key in docs));
+    return { ...config, params };
   });
 }
 
