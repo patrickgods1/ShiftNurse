@@ -86,11 +86,20 @@ export function ConflictsPanel({
             Auto-resolve settings
           </Link>
           {auto.data !== undefined ? (
-            <span className="text-xs text-text-muted" data-testid="auto-resolve-result">
-              {auto.data.applied.length === 0
-                ? 'Nothing qualified under the policy.'
-                : `Applied ${auto.data.applied.length}: ${auto.data.applied.map((r) => r.title).join('; ')}`}
-            </span>
+            auto.data.stoppedAt !== undefined ? (
+              <span role="alert" className="text-xs text-danger" data-testid="auto-resolve-result">
+                {auto.data.applied.length === 0
+                  ? 'Stopped at'
+                  : `Applied ${auto.data.applied.length}, then stopped at`}{' '}
+                “{auto.data.stoppedAt.resolution.title}”: {auto.data.stoppedAt.message}
+              </span>
+            ) : (
+              <span className="text-xs text-text-muted" data-testid="auto-resolve-result">
+                {auto.data.applied.length === 0
+                  ? 'Nothing qualified under the policy.'
+                  : `Applied ${auto.data.applied.length}: ${auto.data.applied.map((r) => r.title).join('; ')}`}
+              </span>
+            )
           ) : null}
           <button
             type="button"
@@ -211,7 +220,7 @@ export function ConflictsPanel({
         onConfirm={(reason) => {
           if (!applying) return;
           resolve.mutate(
-            { resolution: applying, reason },
+            { resolutionId: applying.id, reason },
             { onSuccess: () => setApplying(undefined) },
           );
         }}

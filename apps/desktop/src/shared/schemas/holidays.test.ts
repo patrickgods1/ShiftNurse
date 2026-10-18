@@ -40,3 +40,10 @@ describe('a holiday arriving over IPC', () => {
     expect(holidaysSchemas.addYear.safeParse(['u-1', year]).success).toBe(true);
   });
 });
+
+describe('planning a holiday year over IPC', () => {
+  it('refuses year 99999 and accepts 2027', () => {
+    expect(holidaysSchemas.planYear.safeParse(['u', 99999]).success).toBe(false);
+    expect(holidaysSchemas.planYear.safeParse(['u', 2027]).success).toBe(true);
+  });
+});

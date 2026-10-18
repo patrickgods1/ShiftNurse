@@ -199,6 +199,76 @@ describe('publishSchedule', () => {
     );
   });
 
+  it('still wants a reason to republish a schedule that breaks nothing', () => {
+    publishSchedule(handle.db, { periodId, hardViolations: { count: 0, codes: [] } }, ACTOR);
+    createAssignment(
+      handle.db,
+      { periodId, nurseId: ann, shiftTypeId, date: isoDate('2026-01-08') },
+      ACTOR,
+    );
+    expect(() =>
+      publishSchedule(handle.db, { periodId, hardViolations: { count: 0, codes: [] } }, ACTOR),
+    ).toThrow(/Republishing a schedule requires a reason/);
+    expect(listVersions(handle.db, periodId)).toHaveLength(1);
+  });
+
+  it('records a clean schedule as zero rule breaks', () => {
+    const result = publishSchedule(
+      handle.db,
+      { periodId, hardViolations: { count: 0, codes: [] } },
+      ACTOR,
+    );
+    const entry = auditHistoryFor(handle.db, 'schedule_version', result.version.id)[0]!;
+    expect((entry.after as { hardViolations: unknown }).hardViolations).toEqual({
+      count: 0,
+      codes: [],
+    });
+  });
+
+  it('refuses a first publish over rule breaks without a reason, and writes nothing', () => {
+    const auditsBefore = recentAudit(handle.db, 1000).length;
+    expect(() =>
+      publishSchedule(
+        handle.db,
+        {
+          periodId,
+          ledger: [],
+          hardViolations: { count: 2, codes: ['insufficient_rest', 'understaffed'] },
+        },
+        ACTOR,
+      ),
+    ).toThrow(/2 rule breaks needs a reason/);
+    expect(latestVersion(handle.db, periodId)).toBeUndefined();
+    expect(recentAudit(handle.db, 1000)).toHaveLength(auditsBefore);
+  });
+
+  it('records the rule breaks a schedule went out over, with the reason', () => {
+    const result = publishSchedule(
+      handle.db,
+      {
+        periodId,
+        reason: 'Agency confirmed for the short nights',
+        hardViolations: { count: 2, codes: ['insufficient_rest', 'understaffed'] },
+      },
+      ACTOR,
+    );
+    const entry = auditHistoryFor(handle.db, 'schedule_version', result.version.id)[0]!;
+    expect(entry.reason).toBe('Agency confirmed for the short nights');
+    expect((entry.after as { hardViolations: unknown }).hardViolations).toEqual({
+      count: 2,
+      codes: ['insufficient_rest', 'understaffed'],
+    });
+  });
+
+  it('needs no reason for a first publish that breaks nothing', () => {
+    const result = publishSchedule(
+      handle.db,
+      { periodId, hardViolations: { count: 0, codes: [] } },
+      ACTOR,
+    );
+    expect(result.version.version).toBe(1);
+  });
+
   it('carries a post-publish move into version 2 as one removal and one addition', () => {
     const db = handle.db;
     publishSchedule(db, { periodId }, ACTOR);

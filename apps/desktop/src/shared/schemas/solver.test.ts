@@ -22,3 +22,10 @@ describe('a Generate request arriving over IPC', () => {
     expect(start.safeParse(['p-1', { threads: 64 }]).success).toBe(false);
   });
 });
+
+describe('a Generate request’s search length', () => {
+  it('refuses a billion iterations and accepts the 200,000 the bench uses', () => {
+    expect(solverSchemas.start.safeParse(['p-1', { maxIterations: 1e9 }]).success).toBe(false);
+    expect(solverSchemas.start.safeParse(['p-1', { maxIterations: 200000 }]).success).toBe(true);
+  });
+});

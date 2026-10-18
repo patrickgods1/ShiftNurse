@@ -5,10 +5,13 @@
  * see of who covered whom.
  */
 
-import { addDays, isoDate } from '@shiftnurse/core';
+import { addDays, isoDate, shiftsAround } from '@shiftnurse/core';
 import {
   auditHistoryFor,
+  createNurse,
+  createNurseUnit,
   createPeriod,
+  createUnit,
   getAssignment,
   getCallOff,
   getPeriod,
@@ -17,11 +20,12 @@ import {
   listCensusForecastsInRange,
   listChanges,
   listNursesForUnit,
+  listShiftTypesForUnit,
   publishSchedule,
   recordActualCensus,
   updateUnit,
 } from '@shiftnurse/db';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ACTOR } from './context.js';
 import { dayOfApi } from './dayof.js';
 import { scheduleApi } from './schedule.js';
@@ -34,6 +38,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   f.handle.close();
 });
 
@@ -167,7 +172,7 @@ describe('the call-off workflow on a published schedule', () => {
 
     expect(() => dayOf().backfill(callOff.id, f.rns[0]!.id)).toThrow(/not eligible/);
     expect(() => dayOf().backfill(callOff.id, 'nurse-that-does-not-exist')).toThrow(
-      /Unknown nurse/,
+      'That nurse was not found. Reload the page.',
     );
 
     expect(getCallOff(f.handle.db, callOff.id)?.status).toBe('open');
@@ -412,5 +417,93 @@ describe('the overtime call order', () => {
       .map((n) => n.id);
     expect(overtime.map((c) => c.nurseId)).toEqual(juniorFirst);
     expect(overtime.every((c) => c.lastOvertimeOn !== undefined)).toBe(true);
+  });
+});
+
+describe('the Today clock', () => {
+  /** Pins the host clock to `date` at hh:mm local; tests run under TZ=America/New_York. */
+  function setClock(date: string, hh: number, mm: number) {
+    const [y, m, d] = date.split('-').map(Number) as [number, number, number];
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(y, m - 1, d, hh, mm));
+  }
+
+  it('shows tomorrow’s first shift with a nurse floating in for that day only, late in the evening', () => {
+    const d = addDays(f.seeded.draftStart, 10);
+    setClock(d, 23, 59);
+    const around = shiftsAround(
+      listShiftTypesForUnit(f.handle.db, f.seeded.unitId),
+      d,
+      23 * 60 + 59,
+    );
+    // 23:59 is after every start on d, so the next start is tomorrow's first shift.
+    expect(around.next?.date).toBe(addDays(d, 1));
+    const west = createUnit(
+      f.handle.db,
+      {
+        name: '5 West',
+        unitType: 'ICU',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    const fran = createNurse(
+      f.handle.db,
+      {
+        unitId: west.id,
+        employeeId: 'W-9',
+        firstName: 'Fran',
+        lastName: 'Float',
+        role: 'RN',
+        employmentType: 'full_time',
+        fte: 1,
+        contractedHoursPerPeriod: 72,
+        seniorityDate: isoDate('2020-01-01'),
+        isChargeEligible: false,
+        isNovice: false,
+        isFloatEligible: true,
+        active: true,
+      },
+      ACTOR,
+    );
+    createNurseUnit(
+      f.handle.db,
+      {
+        nurseId: fran.id,
+        unitId: f.seeded.unitId,
+        startDate: addDays(d, 1),
+        endDate: addDays(d, 1),
+      },
+      ACTOR,
+    );
+    scheduleApi(f.handle.db).createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: fran.id,
+      shiftTypeId: around.next!.shiftTypeId,
+      date: addDays(d, 1),
+    });
+
+    const summary = dayOfApi(f.handle.db).today(f.seeded.unitId, d);
+    const next = summary.shifts.find((s) => s.status === 'next')!;
+    expect(next.date).toBe(addDays(d, 1));
+    expect(next.roster.map((r) => r.nurse.id)).toContain(fran.id);
+  });
+
+  it('tags no shift as running when looking at another day', () => {
+    const d = addDays(f.seeded.draftStart, 10);
+    setClock(d, 8, 0);
+    // 08:00 is inside the fixture's 07:00-19:00 day shift.
+    expect(f.day.startTime).toBe('07:00');
+    expect(f.day.durationHours).toBe(12);
+    const api = dayOfApi(f.handle.db);
+    expect(
+      api.today(f.seeded.unitId, addDays(d, 1)).shifts.every((s) => s.status === 'other'),
+    ).toBe(true);
+    expect(
+      api
+        .today(f.seeded.unitId, d)
+        .shifts.some((s) => s.shiftType.id === f.day.id && s.status === 'current'),
+    ).toBe(true);
   });
 });

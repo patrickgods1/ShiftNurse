@@ -114,7 +114,7 @@ export function previewCandidate(
     batchId,
     index,
     assignments: report.assignments,
-    validation: validateView(db, period, ruleSet, view),
+    validation: validateView(db, period, view),
     cost: costReportForView(db, period, view),
     alerts: alertsForView(db, period, ruleSet, view),
     changedKeys: diff.changes.filter((c) => c.kind !== 'removed').map((c) => candidateKey(c)),

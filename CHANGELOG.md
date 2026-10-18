@@ -38,6 +38,21 @@ tags. Each release's notes link here.
 - A holiday whose "who worked" list was recorded by hand can no longer be deleted until that list
   is cleared, and only nurses on the unit can be recorded as having worked it.
 - Daily backups removed after 14 days are now listed in the activity log.
+- Applying a conflict fix re-checks it against the schedule as it is now; a fix that no longer
+  applies is refused instead of written. Auto-resolve keeps the fixes it made when a later one is
+  refused, and says where it stopped.
+- Publishing a schedule that still breaks hard rules asks for a reason, recorded with the number
+  of breaks reviewed.
+- Covering several freed shifts at once can no longer give one nurse two of them on the same day.
+- Today no longer fails when a floated nurse starts the next day, and marks no shift as running
+  when you look at another day.
+- Leave eligibility counts published shifts on any unit, never drafts. California pregnancy
+  disability leave is counted per pregnancy, by its certification.
+- Reporting-time pay for a nurse sent home on low census is booked only when the cancellation came
+  too late (default: under 2 hours before the shift, configurable under Pay › Call-back).
+- A shift swap is checked when it is entered, and error messages name nurses and dates instead
+  of internal ids.
+- Over-long text, ranges and numbers sent to the app's back end are refused with a clear message.
 
 ### Changed
 

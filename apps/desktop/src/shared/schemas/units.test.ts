@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { API_SCHEMAS } from './index.js';
+import { unitInput } from './units.js';
 
 describe('a unit’s leave policy arriving over IPC', () => {
   const s = API_SCHEMAS.units;
@@ -43,5 +44,20 @@ describe('a unit’s per-diem commitment arriving over IPC', () => {
   it('refuses a commitment missing one half', () => {
     expect(patch({ weekendShiftsPer4Weeks: 2 }).success).toBe(false);
     expect(patch({ holidayShiftsPerYear: 1 }).success).toBe(false);
+  });
+});
+
+describe('a unit’s pay calendar arriving over IPC', () => {
+  const unit = (payPeriodDays: number) => ({
+    name: '4 West',
+    unitType: 'Medical-Surgical',
+    payPeriodDays,
+    payPeriodAnchor: '2026-01-04',
+  });
+
+  it('refuses a billion-day pay period and accepts a fortnight', () => {
+    expect(unitInput.safeParse(unit(1e9)).success).toBe(false);
+    expect(unitInput.safeParse(unit(32)).success).toBe(false);
+    expect(unitInput.safeParse(unit(14)).success).toBe(true);
   });
 });

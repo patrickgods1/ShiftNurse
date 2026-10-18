@@ -5,7 +5,9 @@
  * regenerating: two variations of the same unit differ by hundreds of shifts, so regenerating to
  * fill one nurse's two days reshuffles everyone else's schedule. Instead the manager approves and
  * picks who takes each freed shift from the same ranked, rule-checked list the Today page uses
- * for call-offs — simulated with the leave already approved, so every name offered is legal.
+ * for call-offs — simulated with the leave already approved. Every name offered is legal for its shift alone;
+ * approving re-judges the chosen covers together, each with the earlier ones in place, inside the
+ * approval's transaction.
  *
  * On a published schedule approving used to leave the nurse rostered on approved leave (only a
  * draft lifts shifts); here those shifts come off too, under the manager's reason and in the
@@ -14,6 +16,7 @@
 
 import {
   type Assignment,
+  describeDate,
   findReplacements,
   type Id,
   type ReplacementCandidate,
@@ -24,6 +27,7 @@ import {
   createAssignment,
   type DbLike,
   deleteAssignment,
+  getShiftType,
   getTimeOffRequest,
   listAssignmentsForPeriod,
   type ShiftNurseDb,
@@ -33,6 +37,7 @@ import { ACTOR, buildConflictInput } from './context.js';
 import { editSchedule } from './schedule.js';
 
 const MAX_CANDIDATES = 6;
+const CANNOT_COVER = 'That nurse cannot cover that shift under the unit’s rules; pick another';
 
 function requestOrThrow(db: DbLike, requestId: Id): TimeOffRequest {
   const request = getTimeOffRequest(db, requestId);
@@ -83,33 +88,69 @@ export function approveAndCover(
   reason: string | undefined,
   covers: readonly LeaveCover[],
 ): { request: TimeOffRequest; covered: Assignment[] } {
-  // Checked before anything is written: main is the judge, not the dialog that offered them.
-  const options = coverOptions(db, periodId, requestId);
-  for (const cover of covers) {
-    const option = options.find((o) => o.assignment.id === cover.assignmentId);
-    const candidate = option?.candidates.find((c) => c.nurseId === cover.nurseId);
-    if (!option || !candidate) {
-      throw new Error('That nurse cannot cover that shift under the unit’s rules; pick another');
-    }
+  if (new Set(covers.map((c) => c.assignmentId)).size !== covers.length) {
+    throw new Error('Each freed shift can go to one nurse only.');
   }
   // The nurse asked for the leave, so a unit that requires consent for manager-initiated
   // changes does not ask for it again here.
   return editSchedule(db, periodId, reason, 'time_off', (tx, log) => {
+    // Main is the judge, not the dialog that offered the names, and it judges inside the
+    // transaction that writes: against the schedule as it is now, not as the dialog saw it.
+    const pending = requestOrThrow(tx, requestId);
+    const input = buildConflictInput(tx, periodId);
+    const timeOff = input.timeOff.map((r) =>
+      r.id === requestId ? { ...r, status: 'approved' as const } : r,
+    );
+    const freedNow = freedShifts(tx, periodId, pending);
+    // Each cover is judged with the earlier ones in place: two names that are each legal alone
+    // can still give one nurse a day and a night back to back.
+    let working = input.assignments;
+    const rowFor = new Map<Id, Omit<Assignment, 'id'>>();
+    for (const [k, cover] of covers.entries()) {
+      const freedShift = freedNow.find((a) => a.id === cover.assignmentId);
+      if (!freedShift) throw new Error(CANNOT_COVER);
+      const report = findReplacements({
+        ...input,
+        assignments: working,
+        timeOff,
+        absentAssignmentId: cover.assignmentId,
+        lastCalledAt: {},
+      });
+      const candidate = report.candidates.find((c) => c.nurseId === cover.nurseId);
+      if (!candidate) {
+        const excluded = report.excluded.find((e) => e.nurseId === cover.nurseId);
+        if (excluded) {
+          const abbreviation = getShiftType(tx, freedShift.shiftTypeId)?.abbreviation ?? '';
+          throw new Error(
+            `${excluded.label} cannot cover ${describeDate(freedShift.date)} ${abbreviation}: ${excluded.reason}.`,
+          );
+        }
+        throw new Error(CANNOT_COVER);
+      }
+      rowFor.set(cover.assignmentId, candidate.assignment);
+      working = [
+        ...working.filter((a) => a.id !== cover.assignmentId),
+        { id: `cover:${k}`, ...candidate.assignment },
+      ];
+    }
+
     const { request, lifted } = approveTimeOffAndLiftAssignments(tx, requestId, ACTOR, reason);
     const freed = new Map(lifted.map((a) => [a.id, a]));
     // A published period's shifts are not lifted by approval; they come off here, logged.
-    for (const a of options.map((o) => o.assignment)) {
+    for (const a of freedNow) {
       if (freed.has(a.id)) continue;
       deleteAssignment(tx, a.id, ACTOR, reason);
       freed.set(a.id, a);
     }
-    for (const a of freed.values()) log({ kind: 'removed', assignment: a, before: a });
+    // Approval also lifts shifts from other draft periods that overlap the leave. They are gone,
+    // but they were never on this period's schedule, so they are not its change.
+    for (const a of freed.values()) {
+      if (a.periodId === periodId) log({ kind: 'removed', assignment: a, before: a });
+    }
     const covered: Assignment[] = [];
     for (const cover of covers) {
       const gone = freed.get(cover.assignmentId);
       if (!gone) continue;
-      const option = options.find((o) => o.assignment.id === cover.assignmentId)!;
-      const overtime = option.candidates.find((c) => c.nurseId === cover.nurseId)!.overtime;
       const created = createAssignment(
         tx,
         {
@@ -118,7 +159,7 @@ export function approveAndCover(
           shiftTypeId: gone.shiftTypeId,
           date: gone.date,
           source: 'manual',
-          isOvertime: overtime,
+          isOvertime: rowFor.get(cover.assignmentId)!.isOvertime,
         },
         ACTOR,
         reason,

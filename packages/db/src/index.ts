@@ -69,6 +69,7 @@ export * from './repositories/setup.js';
 export * from './repositories/solve-input.js';
 export * from './repositories/solver.js';
 export * from './repositories/timeoff.js';
+export * from './repositories/worked-hours.js';
 export * as schema from './schema.js';
 export type { DemoId, DemoSummary } from './seed/demo.js';
 export { DEFAULT_DEMO_ID, DEMO_SUMMARIES, isDemoId, seedDemoUnit } from './seed/demo.js';

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 /**
- * Settings › Pay › Call-back: the contract's minimum hours a call-back pays. The click leads to
- * exactly the payload that would cross IPC, and a figure a day cannot hold is not sent.
+ * Settings › Pay › Call-back: the contract's minimum hours a call-back pays, and the notice below
+ * which a low-census cancellation still pays reporting time. The click leads to exactly the
+ * payload that would cross IPC, and a figure a day cannot hold is not sent.
  */
 
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
@@ -17,11 +18,13 @@ beforeEach(() => {
     callBackMinimumHours: 2,
     premiumStacking: 'additive',
     holidayPayCoversOvertime: true,
+    reportingPayNoticeHours: 2,
   });
   bridge.respond('cost', 'savePaySettings', {
     callBackMinimumHours: 4,
     premiumStacking: 'additive',
     holidayPayCoversOvertime: true,
+    reportingPayNoticeHours: 2,
   });
 });
 afterEach(() => {
@@ -51,7 +54,12 @@ describe('the call-back minimum in Settings › Pay', () => {
       expect(bridge.callsTo('cost', 'savePaySettings')).toEqual([
         [
           'u-1',
-          { callBackMinimumHours: 4, premiumStacking: 'additive', holidayPayCoversOvertime: true },
+          {
+            callBackMinimumHours: 4,
+            premiumStacking: 'additive',
+            holidayPayCoversOvertime: true,
+            reportingPayNoticeHours: 2,
+          },
         ],
       ]),
     );
@@ -60,6 +68,43 @@ describe('the call-back minimum in Settings › Pay', () => {
   it('will not save a minimum longer than a day', async () => {
     renderWithApp(<CallBackSection unitId="u-1" />);
     fireEvent.change(await screen.findByLabelText('Call-back minimum hours'), {
+      target: { value: '30' },
+    });
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Enter a number of hours from 0 to 24.')).toBeTruthy();
+  });
+
+  it('saves a four-hour reporting-pay notice with the rest of the settings', async () => {
+    renderWithApp(<CallBackSection unitId="u-1" />);
+    const notice = (await screen.findByLabelText(
+      'Reporting-pay notice (hours)',
+    )) as HTMLInputElement;
+    expect(notice.value).toBe('2');
+    expect(
+      screen.getByText(
+        'Sending someone home with less notice than this before the shift starts still pays reporting time. 0 pays it only once the shift has started.',
+      ),
+    ).toBeTruthy();
+    fireEvent.change(notice, { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('cost', 'savePaySettings')).toEqual([
+        [
+          'u-1',
+          {
+            callBackMinimumHours: 2,
+            premiumStacking: 'additive',
+            holidayPayCoversOvertime: true,
+            reportingPayNoticeHours: 4,
+          },
+        ],
+      ]),
+    );
+  });
+
+  it('will not save a reporting-pay notice longer than a day', async () => {
+    renderWithApp(<CallBackSection unitId="u-1" />);
+    fireEvent.change(await screen.findByLabelText('Reporting-pay notice (hours)'), {
       target: { value: '30' },
     });
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);

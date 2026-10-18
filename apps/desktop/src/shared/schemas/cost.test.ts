@@ -174,6 +174,7 @@ describe('pay settings arriving over IPC', () => {
       callBackMinimumHours: 2,
       premiumStacking: 'additive',
       holidayPayCoversOvertime: true,
+      reportingPayNoticeHours: 2,
     };
     expect(save.safeParse(['u-1', { callBackMinimumHours: 2 }]).success).toBe(false);
     expect(save.safeParse(['u-1', full]).success).toBe(true);
@@ -181,6 +182,22 @@ describe('pay settings arriving over IPC', () => {
       save.safeParse(['u-1', { callBackMinimumHours: 2, premiumStacking: 'additive' }]).success,
     ).toBe(false);
     expect(save.safeParse(['u-1', { ...full, premiumStacking: 'stacked' }]).success).toBe(false);
+  });
+
+  it('needs a reporting-pay notice of 0 to 24 hours whenever pay settings are saved', () => {
+    const save = costSchemas.savePaySettings;
+    const full = {
+      callBackMinimumHours: 2,
+      premiumStacking: 'compound',
+      holidayPayCoversOvertime: false,
+      reportingPayNoticeHours: 0,
+    };
+    expect(save.safeParse(['u-1', full]).success).toBe(true);
+    expect(save.safeParse(['u-1', { ...full, reportingPayNoticeHours: 24 }]).success).toBe(true);
+    expect(save.safeParse(['u-1', { ...full, reportingPayNoticeHours: 25 }]).success).toBe(false);
+    expect(save.safeParse(['u-1', { ...full, reportingPayNoticeHours: -1 }]).success).toBe(false);
+    const { reportingPayNoticeHours: _, ...withoutNotice } = full;
+    expect(save.safeParse(['u-1', withoutNotice]).success).toBe(false);
   });
 
   it('accepts a budget of zero and refuses a negative one', () => {

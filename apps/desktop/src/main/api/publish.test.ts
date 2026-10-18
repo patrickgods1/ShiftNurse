@@ -31,6 +31,10 @@ afterEach(() => {
 const api = () => publishApi(f.handle.db);
 const grid = () => scheduleApi(f.handle.db);
 const draft = () => f.seeded.draftPeriodId;
+// The sparse drafts here sit far below their coverage floors, so every publish is over rule
+// breaks; these tests are about versions, ledgers and audit, not coverage.
+const publishAnyway = (reason = 'Test schedule: coverage is not what this checks') =>
+  api().publish(draft(), reason, api().preview(draft()).hardViolations);
 
 function placeNight(nurseId = f.rns[0]!.id, offset = 1, reason?: string) {
   return grid().createAssignment(
@@ -56,12 +60,15 @@ describe('previewing a publish', () => {
 
   it('says there is nothing to publish once the last version matches the grid', async () => {
     placeNight();
-    await api().publish(draft());
+    await publishAnyway();
     expect(api().preview(draft()).nothingToPublish).toBe(true);
   });
 
   it('says so when the period does not exist', () => {
-    expect(() => api().preview('no-period')).toThrow(/unknown period/i);
+    expect(() => api().preview('no-period')).toThrow(
+      'That schedule period no longer exists. Reload the page.',
+    );
+    expect(() => api().preview('no-period')).not.toThrow(/no-period/);
   });
 });
 
@@ -69,7 +76,7 @@ describe('publishing a schedule', () => {
   it('freezes version 1, flips the period to published and books the ledger', async () => {
     placeNight(f.rns[0]!.id, 1);
     placeNight(f.rns[0]!.id, 2);
-    const outcome = await api().publish(draft());
+    const outcome = await publishAnyway();
 
     expect(outcome.version.version).toBe(1);
     expect(outcome.period.status).toBe('published');
@@ -90,12 +97,12 @@ describe('publishing a schedule', () => {
   it('books only the nurses still on the schedule after a republish', async () => {
     const [ann, bea] = [f.rns[0]!, f.rns[1]!];
     const shift = placeNight(ann.id, 1);
-    await api().publish(draft());
+    await publishAnyway();
     grid().moveAssignment(
       { assignmentId: shift.id, nurseId: bea.id, shiftTypeId: f.night.id, date: shift.date },
       'Ann on leave',
     );
-    const outcome = await api().publish(draft(), 'Ann on leave');
+    const outcome = await publishAnyway('Ann on leave');
     expect(outcome.ledgerRemoved).toBe(1);
     const rows = ledgerSince(f.handle.db, f.seeded.unitId, f.seeded.draftStart).filter(
       (l) => l.periodId === draft(),
@@ -105,7 +112,7 @@ describe('publishing a schedule', () => {
 
   it('takes the publish backup after the commit, named for the period and version', async () => {
     placeNight();
-    const outcome = await api().publish(draft());
+    const outcome = await publishAnyway();
     expect(createBackup).toHaveBeenCalledTimes(1);
     expect(createBackup.mock.calls[0]![1]).toBe('publish');
     expect(createBackup.mock.calls[0]![2]).toBe(`${outcome.period.name}-v1`);
@@ -116,7 +123,7 @@ describe('publishing a schedule', () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     createBackup.mockRejectedValue(new Error('disk full'));
     placeNight();
-    const outcome = await api().publish(draft());
+    const outcome = await publishAnyway();
     expect(outcome.backup).toBeUndefined();
     expect(getPeriod(f.handle.db, draft())?.status).toBe('published');
     expect(log).toHaveBeenCalledWith(expect.stringContaining('disk full'));
@@ -125,18 +132,20 @@ describe('publishing a schedule', () => {
 
   it('refuses to republish without a reason, and writes nothing', async () => {
     placeNight();
-    await api().publish(draft());
+    await publishAnyway();
     placeNight(f.rns[1]!.id, 3, 'Added a night');
     const audits = recentAudit(f.handle.db, 1000).length;
-    await expect(api().publish(draft())).rejects.toThrow(/requires a reason/i);
+    await expect(
+      api().publish(draft(), undefined, api().preview(draft()).hardViolations),
+    ).rejects.toThrow(/reason/i);
     expect(api().versions(draft())).toHaveLength(1);
     expect(recentAudit(f.handle.db, 1000).length).toBe(audits);
   });
 
   it('refuses to republish an unchanged schedule', async () => {
     placeNight();
-    await api().publish(draft());
-    await expect(api().publish(draft(), 'Just in case')).rejects.toThrow(
+    await publishAnyway();
+    await expect(publishAnyway('Just in case')).rejects.toThrow(
       /nothing has changed since version 1/i,
     );
     expect(createBackup).toHaveBeenCalledTimes(1);
@@ -144,9 +153,9 @@ describe('publishing a schedule', () => {
 
   it('republishes a changed schedule as version 2 under the stated reason', async () => {
     placeNight();
-    await api().publish(draft());
+    await publishAnyway();
     placeNight(f.rns[1]!.id, 4, 'Census spike');
-    const outcome = await api().publish(draft(), 'Added a night for the census spike');
+    const outcome = await publishAnyway('Added a night for the census spike');
     expect(outcome.version.version).toBe(2);
     expect(outcome.diff.added).toBe(1);
     expect(
@@ -160,15 +169,64 @@ describe('publishing a schedule', () => {
   });
 
   it('says so when publishing a period that does not exist, and takes no backup', async () => {
-    await expect(api().publish('no-period')).rejects.toThrow(/unknown period/i);
+    await expect(api().publish('no-period')).rejects.toThrow(
+      'That schedule period no longer exists. Reload the page.',
+    );
+    await expect(api().publish('no-period')).rejects.not.toThrow(/no-period/);
     expect(createBackup).not.toHaveBeenCalled();
+  });
+});
+
+describe('publishing over rule breaks', () => {
+  function sparse() {
+    placeNight(f.rns[0]!.id, 1);
+    placeNight(f.rns[1]!.id, 2);
+    const n = api().preview(draft()).hardViolations;
+    expect(n).toBeGreaterThan(0);
+    return n;
+  }
+
+  it('refuses until the manager confirms how many rule breaks she reviewed', async () => {
+    const n = sparse();
+    const audits = recentAudit(f.handle.db, 1000).length;
+    await expect(api().publish(draft(), 'x')).rejects.toThrow(/breaks \d+ hard rule/);
+    await expect(api().publish(draft(), 'x', n + 1)).rejects.toThrow(
+      new RegExp(`now has ${n} rule break`),
+    );
+    expect(getPeriod(f.handle.db, draft())?.status).toBe('draft');
+    expect(recentAudit(f.handle.db, 1000)).toHaveLength(audits);
+  });
+
+  it('refuses to publish over rule breaks without a reason', async () => {
+    const n = sparse();
+    await expect(api().publish(draft(), undefined, n)).rejects.toThrow(/needs a reason/);
+    expect(api().versions(draft())).toHaveLength(0);
+  });
+
+  it('publishes over the rule breaks she reviewed, and records them with her reason', async () => {
+    const n = sparse();
+    const outcome = await api().publish(draft(), 'Agency covers the short nights', n);
+    expect(outcome.version.version).toBe(1);
+    const entry = auditHistoryFor(f.handle.db, 'schedule_version', outcome.version.id)[0]!;
+    const after = entry.after as { hardViolations: { count: number; codes: string[] } };
+    expect(after.hardViolations.count).toBe(n);
+    // The grid's own verdict is the independent source for the codes.
+    const codes = [
+      ...new Set(
+        grid()
+          .validate(draft())
+          .result.hardViolations.map((v) => v.code),
+      ),
+    ].sort();
+    expect(after.hardViolations.codes).toEqual(codes);
+    expect(entry.reason).toBe('Agency covers the short nights');
   });
 });
 
 describe('the change log and what exports render', () => {
   it('lists a reasoned edit to a published schedule in the change log', async () => {
     const shift = placeNight();
-    await api().publish(draft());
+    await publishAnyway();
     expect(api().changes(draft())).toEqual([]);
     grid().deleteAssignment(shift.id, 'Ann is out sick');
     const [change] = api().changes(draft());
@@ -178,7 +236,7 @@ describe('the change log and what exports render', () => {
 
   it('hands exports the grid, the unit and the version they are printing', async () => {
     placeNight();
-    await api().publish(draft());
+    await publishAnyway();
     const input = outputInput(f.handle.db, draft());
     expect(input.ctx.status).toBe('published');
     expect(input.ctx.version?.version).toBe(1);

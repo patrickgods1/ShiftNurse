@@ -231,6 +231,7 @@ describe('a California nurse’s leave', () => {
         usedHours: 72,
         requestHours: 36,
         remainingHours: 551.88,
+        basis: 'rolling_year',
       },
     });
     renderWithApp(
@@ -251,6 +252,41 @@ describe('a California nurse’s leave', () => {
       ),
     ).toBeTruthy();
     expect(screen.queryByText(/FMLA certification/)).toBeNull();
+    expect(
+      screen.getByText(
+        '72 hours taken in the 12 months Oct 6, 2025 to Oct 5, 2026. No certification on file covers the first day, so this counts by year rather than per pregnancy.',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('counts pregnancy disability leave under the certification for this pregnancy', async () => {
+    bridge.respond('leaveBalances', 'checkRequest', {
+      pdl: {
+        entitlementHours: 623.88,
+        weeklyHours: 36,
+        period: { from: isoDate('2026-09-01'), to: isoDate('2027-03-31') },
+        usedHours: 0,
+        requestHours: 36,
+        remainingHours: 623.88,
+        basis: 'certification',
+      },
+    });
+    renderWithApp(
+      <NewRequestDialog
+        open
+        onOpenChange={() => {}}
+        unitId="unit-1"
+        periodId={undefined}
+        nurses={[ana]}
+      />,
+      { unit },
+    );
+    await fillRequest();
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'pregnancy_disability' } });
+    expect(
+      await screen.findByText('0 hours taken under the certification Sep 1, 2026 to Mar 31, 2027.'),
+    ).toBeTruthy();
+    expect(screen.queryByText(/counts by year rather than per pregnancy/)).toBeNull();
   });
 });
 

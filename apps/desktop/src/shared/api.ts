@@ -380,13 +380,17 @@ export interface LeaveRequestCheck {
     entitlementHours: number;
     /** The nurse's usual hours a week, from their contract. */
     weeklyHours: number;
-    /** The 12 months back from the request's first day that leave already taken is counted in. */
+    /** The certification's dates (one pregnancy), or without one the 12 months back from the
+     *  first day. */
     period: { from: IsoDate; to: IsoDate };
     /** Approved pregnancy disability leave in that period, at the usual week's pace. */
     usedHours: number;
     /** Hours this request uses: its days at the usual week's pace. */
     requestHours: number;
     remainingHours: number;
+    /** Whether a certification covering the first day set the period (per pregnancy, D14) or,
+     *  with none on file, the rolling year did. */
+    basis: 'certification' | 'rolling_year';
   };
 }
 
@@ -671,6 +675,11 @@ export interface PaySettings {
   premiumStacking: 'compound' | 'additive';
   /** Overtime worked on a holiday earns the holiday premium alone (38 U.S.C. § 7453(g)). */
   holidayPayCoversOvertime: boolean;
+  /**
+   * Notice before a shift's start below which a low-census cancellation still owes
+   * reporting-time pay (D13). Default 2; 0 owes it only once the shift has started.
+   */
+  reportingPayNoticeHours: number;
 }
 
 /** A day-of event as recorded: paid outside the schedule, priced beside its cost. */
@@ -746,6 +755,11 @@ export interface TimeOffApproval {
 export interface AutoResolveResult {
   applied: Resolution[];
   report: ConflictReport;
+  /**
+   * Present when a fix was refused part-way: the fixes in `applied` were committed, this one and
+   * everything after it were not.
+   */
+  stoppedAt?: { resolution: Resolution; message: string };
 }
 
 /**
@@ -1000,7 +1014,10 @@ export interface OverstaffedRole {
   role: NurseRole;
   required: number;
   staffed: number;
-  /** `staffed − required`, always above zero. */
+  /**
+   * How many could go home: `staffed − required`, capped by the licensed pool's spare when the
+   * unit staffs RN + LPN against one ratio; always above zero (roles with none are left out).
+   */
   excess: number;
 }
 
@@ -1014,13 +1031,19 @@ export interface TodayShiftView {
   /** Roles over their requirement; empty when the shift is staffed to need or short. */
   overstaffed: OverstaffedRole[];
   roster: RosterEntryView[];
-  /** `current` when the wall clock is inside its window, `next` for the one starting soonest. */
+  /**
+   * `current` when the wall clock is inside its window, `next` for the one starting soonest;
+   * only ever set when the summary's `date` is today, otherwise every slot is `other`.
+   */
   status: 'current' | 'next' | 'other';
 }
 
 export interface DayOfSummary {
   date: IsoDate;
-  /** Host wall-clock minute of `date`, read in main; the renderer never touches the clock. */
+  /**
+   * Host wall-clock minute now, read in main. Slots are tagged current/next only when `date`
+   * is today.
+   */
   minuteOfDay: number;
   /** The period whose assignments these are (published preferred over draft), if any covers `date`. */
   period: SchedulePeriod | undefined;
@@ -1382,8 +1405,9 @@ export interface ShiftNurseApi {
     validate(periodId: Id): ScheduleValidation;
     /**
      * On a published period every one of these needs `reason` and writes the change log;
-     * on a draft the reason is ignored. Refused on an archived period. A unit that requires
-     * the nurse's consent also needs `consent` (how they agreed) on a published period.
+     * on a draft no reason is required; one given is kept on the shift's audit row. Refused on
+     * an archived period. A unit that requires the nurse's consent also needs `consent` (how
+     * they agreed) on a published period.
      */
     createAssignment(input: CreateAssignmentInput, reason?: string, consent?: string): Assignment;
     moveAssignment(input: MoveAssignmentInput, reason?: string, consent?: string): Assignment;
@@ -1412,8 +1436,15 @@ export interface ShiftNurseApi {
     /**
      * Freezes a version, flips the period to published, books the fairness ledger and writes
      * a backup — the first three in one transaction. A republish requires `reason`.
+     * When the schedule still breaks hard rules, main counts them again inside the publish;
+     * `acknowledgedHardViolations` must equal that count and `reason` is required, recorded as
+     * the override.
      */
-    publish(periodId: Id, reason?: string): Promise<PublishOutcome>;
+    publish(
+      periodId: Id,
+      reason?: string,
+      acknowledgedHardViolations?: number,
+    ): Promise<PublishOutcome>;
     versions(periodId: Id): ScheduleVersion[];
     /** The post-publish change log, newest first. */
     changes(periodId: Id): ScheduleChange[];
@@ -1570,8 +1601,12 @@ export interface ShiftNurseApi {
     analyse(periodId: Id): ConflictReport;
     policy(unitId: Id): AutoResolvePolicy;
     savePolicy(unitId: Id, policy: AutoResolvePolicy): AutoResolvePolicy;
-    /** Applies one resolution's actions atomically; the reason is required and audited. */
-    resolve(periodId: Id, resolution: Resolution, reason: string): Resolution;
+    /**
+     * Re-runs the analysis in main and applies the option with this id as it stands now. An option
+     * that no longer exists, because the period changed since it was shown, is refused and nothing
+     * is written. The reason is required and audited.
+     */
+    resolve(periodId: Id, resolutionId: string, reason: string): Resolution;
     /** Applies every resolution the unit's policy admits, each audited as `auto_resolve`. */
     autoResolve(periodId: Id): AutoResolveResult;
   };
@@ -1581,6 +1616,8 @@ export interface ShiftNurseApi {
     /** Judges the proposal against the period's own rule-set snapshot, live — never trust a
      * renderer-computed verdict; this is what `approve` re-runs before writing anything. */
     evaluate(periodId: Id, proposal: ExchangeProposal): ExchangeEvaluation;
+    /** Checked when entered (period not archived, both nurses rostered, the shifts theirs); the
+     * verdict is judged at approval. */
     propose(periodId: Id, proposal: ExchangeProposal, reason?: string): ShiftSwap;
     /**
      * Re-evaluates from the stored swap: `blocked` throws (the blockers, joined); `warn`

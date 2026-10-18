@@ -7,8 +7,10 @@ import {
   id,
   isoDate,
   money,
+  name,
   none,
   object,
+  payPeriodDays,
   postingLeadDays,
   type ResourceSchemas,
   ratioStaffing,
@@ -17,9 +19,9 @@ import {
 
 // Local copy: this file may not import another resource's schemas.
 const unitInput = object({
-  name: text,
+  name,
   unitType: text,
-  payPeriodDays: z.number().int('must be a whole number').min(1, 'must be 1 or more'),
+  payPeriodDays,
   payPeriodAnchor: isoDate,
   ratioStaffing: ratioStaffing.optional(),
   postingLeadDays: postingLeadDays.optional(),

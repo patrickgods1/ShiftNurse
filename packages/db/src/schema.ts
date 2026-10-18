@@ -1183,6 +1183,9 @@ export const paySettings = sqliteTable('pay_settings', {
   // Null means false: overtime worked on a holiday earns both premiums, as under the FLSA regular
   // rate. 38 U.S.C. § 7453(g) pays holiday pay in place of overtime, so a VA unit sets it true.
   holidayPayCoversOvertime: integer('holiday_pay_covers_overtime', { mode: 'boolean' }),
+  // Null means 2 hours (D13): a low-census cancellation recorded less than this before the
+  // shift's start, or after it, still owes reporting-time pay.
+  reportingPayNoticeHours: real('reporting_pay_notice_hours'),
   updatedAt: timestamp('updated_at').notNull(),
 });
 

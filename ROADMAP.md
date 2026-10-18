@@ -755,6 +755,11 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
       entries reach the nurse record, tier and recorded-holiday deletes refused, ledger re-import
       keeps replaced rows, audit-after-write, audited backup pruning, record completeness test
       (verify: npm run check; smoke)
+- [x] Phase 7 — Main re-judges every decision: one shared rule context for grid/Generate/conflicts,
+      conflicts resolved by id, publish over rule breaks needs a counted reason, leave covers judged
+      together, Today clock and roster, worked hours from published shifts and PDL per pregnancy
+      (D14), reporting-time pay only when late (D13), exchange checked on entry, IPC input bounds,
+      refusals in words (verify: npm run check; smoke)
 
 ---
 

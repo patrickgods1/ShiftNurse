@@ -17,7 +17,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ACTOR, buildConflictInput } from './context.js';
 import { approveAndCover, coverOptions } from './leave.js';
-import { scheduleApi } from './schedule.js';
+import { periodsApi, scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
 
 let f: Fixture;
@@ -253,5 +253,120 @@ describe('which shifts a week off takes away', () => {
       [addDays(f.seeded.draftStart, 13), 12],
       [addDays(f.seeded.draftStart, 15), 12],
     ]);
+  });
+});
+
+describe('covering several freed shifts at once', () => {
+  const grid = () => scheduleApi(f.handle.db);
+  const auditCount = () => recentAudit(f.handle.db, 100_000).length;
+
+  /** Ann works the Day and the Night on one date and asks for that date off. */
+  function annDayAndNight() {
+    const ann = f.rns[0]!;
+    const date = addDays(f.seeded.draftStart, 6);
+    for (const shiftTypeId of [f.day.id, f.night.id]) {
+      grid().createAssignment({
+        periodId: f.seeded.draftPeriodId,
+        nurseId: ann.id,
+        shiftTypeId,
+        date,
+      });
+    }
+    const request = createTimeOffRequest(
+      f.handle.db,
+      { nurseId: ann.id, startDate: date, endDate: date, type: 'pto', paidHours: 12 },
+      ACTOR,
+    );
+    const [a, b] = coverOptions(f.handle.db, f.seeded.draftPeriodId, request.id);
+    return { ann, date, request, a: a!, b: b! };
+  }
+
+  it('refuses to give one nurse both the day and the night she could each cover alone, and approves nothing', () => {
+    const { ann, request, a, b } = annDayAndNight();
+    const shared = a.candidates
+      .map((c) => c.nurseId)
+      .filter((id) => b.candidates.some((c) => c.nurseId === id));
+    expect(shared.length).toBeGreaterThan(0);
+    const nurse = shared[0]!;
+    const auditBefore = auditCount();
+
+    expect(() =>
+      approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, undefined, [
+        { assignmentId: a.assignment.id, nurseId: nurse },
+        { assignmentId: b.assignment.id, nurseId: nurse },
+      ]),
+    ).toThrow(/cannot cover .*Already scheduled/);
+
+    expect(getTimeOffRequest(f.handle.db, request.id)?.status).toBe('pending');
+    expect(
+      listAssignmentsForPeriod(f.handle.db, f.seeded.draftPeriodId).filter(
+        (x) => x.nurseId === ann.id,
+      ),
+    ).toHaveLength(2);
+    expect(auditCount()).toBe(auditBefore);
+  });
+
+  it('refuses two nurses for one freed shift', () => {
+    const { request, a } = annDayAndNight();
+    const [n1, n2] = a.candidates;
+    const auditBefore = auditCount();
+    expect(() =>
+      approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, undefined, [
+        { assignmentId: a.assignment.id, nurseId: n1!.nurseId },
+        { assignmentId: a.assignment.id, nurseId: n2!.nurseId },
+      ]),
+    ).toThrow('Each freed shift can go to one nurse only.');
+    expect(getTimeOffRequest(f.handle.db, request.id)?.status).toBe('pending');
+    expect(auditCount()).toBe(auditBefore);
+  });
+
+  it('covers the day and the night with two different nurses', () => {
+    const { date, request, a, b } = annDayAndNight();
+    const n1 = a.candidates[0]!.nurseId;
+    const n2 = b.candidates.find((c) => c.nurseId !== n1)!.nurseId;
+    approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, undefined, [
+      { assignmentId: a.assignment.id, nurseId: n1 },
+      { assignmentId: b.assignment.id, nurseId: n2 },
+    ]);
+    expect(getTimeOffRequest(f.handle.db, request.id)?.status).toBe('approved');
+    const rows = listAssignmentsForPeriod(f.handle.db, f.seeded.draftPeriodId);
+    const shiftOf = (id: string) => rows.filter((x) => x.nurseId === id && x.date === date);
+    expect(shiftOf(n1).map((x) => x.shiftTypeId)).toEqual([a.assignment.shiftTypeId]);
+    expect(shiftOf(n2).map((x) => x.shiftTypeId)).toEqual([b.assignment.shiftTypeId]);
+  });
+
+  it('keeps a shift lifted from an overlapping draft out of the published period’s change log', () => {
+    const ann = f.rns[0]!;
+    const date = addDays(f.seeded.draftStart, 8);
+    const own = grid().createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: ann.id,
+      shiftTypeId: f.day.id,
+      date,
+    });
+    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    const other = periodsApi(f.handle.db).create({
+      unitId: f.seeded.unitId,
+      name: 'Overlapping draft',
+      startDate: date,
+      endDate: addDays(date, 13),
+    });
+    const elsewhere = grid().createAssignment({
+      periodId: other.id,
+      nurseId: ann.id,
+      shiftTypeId: f.night.id,
+      date,
+    });
+    const request = createTimeOffRequest(
+      f.handle.db,
+      { nurseId: ann.id, startDate: date, endDate: date, type: 'pto', paidHours: 12 },
+      ACTOR,
+    );
+    approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, 'Approved late', []);
+
+    const changes = listChanges(f.handle.db, f.seeded.draftPeriodId);
+    expect(changes.some((c) => c.assignmentId === elsewhere.id)).toBe(false);
+    expect(changes.some((c) => c.assignmentId === own.id && c.kind === 'removed')).toBe(true);
+    expect(listAssignmentsForPeriod(f.handle.db, other.id)).toEqual([]);
   });
 });

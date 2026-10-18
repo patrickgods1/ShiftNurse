@@ -1,7 +1,7 @@
 /** Argument schemas for `floatOut`. */
 
 import { z } from 'zod';
-import { id, isoDate, nurseRole, object, type ResourceSchemas, text } from './primitives.js';
+import { id, isoDate, name, nurseRole, object, type ResourceSchemas, text } from './primitives.js';
 
 const orderRequest = object({
   periodId: id,
@@ -19,7 +19,7 @@ const sendInput = object({
   role: nurseRole,
   volunteers: z.array(id),
   nurseId: id,
-  toUnit: text,
+  toUnit: name,
   objection: text.optional(),
   reason: text,
 });

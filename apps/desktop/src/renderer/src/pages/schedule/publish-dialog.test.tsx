@@ -78,7 +78,7 @@ describe('publishing a schedule', () => {
     expect(button.textContent).toBe('Publish');
     fireEvent.click(button);
     await waitFor(() =>
-      expect(bridge.callsTo('publish', 'publish')).toEqual([['period-1', undefined]]),
+      expect(bridge.callsTo('publish', 'publish')).toEqual([['period-1', undefined, 0]]),
     );
   });
 
@@ -89,7 +89,7 @@ describe('publishing a schedule', () => {
     fireEvent.change(screen.getByTestId('publish-reason'), { target: { value: ' Final ' } });
     fireEvent.click(await confirm());
     await waitFor(() =>
-      expect(bridge.callsTo('publish', 'publish')).toEqual([['period-1', 'Final']]),
+      expect(bridge.callsTo('publish', 'publish')).toEqual([['period-1', 'Final', 0]]),
     );
   });
 
@@ -108,7 +108,7 @@ describe('publishing a schedule', () => {
     fireEvent.click(button);
     await waitFor(() =>
       expect(bridge.callsTo('publish', 'publish')).toEqual([
-        ['period-1', 'Covered the sick call on the 12th'],
+        ['period-1', 'Covered the sick call on the 12th', 0],
       ]),
     );
   });
@@ -134,11 +134,26 @@ describe('publishing a schedule', () => {
     const button = await confirm();
     expect(button.disabled).toBe(true);
     fireEvent.click(screen.getByTestId('publish-acknowledge'));
+    fireEvent.change(screen.getByTestId('publish-reason'), {
+      target: { value: 'Agency covers it' },
+    });
     expect(button.disabled).toBe(false);
     fireEvent.click(button);
     await waitFor(() =>
-      expect(bridge.callsTo('publish', 'publish')).toEqual([['period-1', undefined]]),
+      expect(bridge.callsTo('publish', 'publish')).toEqual([['period-1', 'Agency covers it', 2]]),
     );
+  });
+
+  it('asks for a reason before publishing over rule breaks, even the first time', async () => {
+    bridge.respond('publish', 'preview', preview({ hardViolations: 2 }));
+    renderDialog();
+    const button = await confirm();
+    fireEvent.click(screen.getByTestId('publish-acknowledge'));
+    expect(button.disabled).toBe(true);
+    fireEvent.change(screen.getByTestId('publish-reason'), {
+      target: { value: 'Agency covers it' },
+    });
+    expect(button.disabled).toBe(false);
   });
 
   it('shows the refusal when main will not publish', async () => {

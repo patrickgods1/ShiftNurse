@@ -13,6 +13,8 @@ import {
   getPeriod,
   listAssignmentsForPeriod,
   listChanges,
+  listCredentials,
+  listNurseCredentials,
   listPeriodsForUnit,
   proposeSwap,
   publishSchedule,
@@ -152,7 +154,9 @@ describe('swapping two nurses’ shifts', () => {
     const annDay = placeAs(0, 5, f.day.id);
     placeAs(0, 5, f.night.id);
     const beaNight = placeAs(1, 5, f.night.id);
-    expect(() => api.swapAssignments(annDay.id, beaNight.id)).toThrow();
+    expect(() => api.swapAssignments(annDay.id, beaNight.id)).toThrow(
+      /UNIQUE constraint failed: assignment/,
+    );
     const rows = f.handle.db.query.assignment.findMany().sync();
     expect(rows.find((a) => a.id === annDay.id)?.nurseId).toBe(f.rns[0]!.id);
     expect(rows.find((a) => a.id === beaNight.id)?.nurseId).toBe(f.rns[1]!.id);
@@ -401,8 +405,21 @@ describe("the nurse's consent to a posted change", () => {
     expect(() => move(shift)).not.toThrow();
   });
 
-  it('does not ask consent for a trade the nurses proposed', () => {
-    const shift = place(0, 1);
+  it('approves a trade the nurses proposed without asking their consent again', () => {
+    // Two preceptors, so handing the day shift across cannot leave it short and coverage can
+    // never be what stops the trade.
+    const code = listCredentials(f.handle.db).find((c) => c.code === 'PRECEPTOR')!;
+    const held = f.rns.filter((n) =>
+      listNurseCredentials(f.handle.db, n.id).some((c) => c.credentialId === code.id),
+    );
+    expect(held.length, 'the scenario unit needs two preceptor RNs').toBeGreaterThanOrEqual(2);
+    const [ann, bea] = [held[0]!, held[1]!];
+    const shift = api.createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: ann.id,
+      shiftTypeId: f.day.id,
+      date: addDays(f.seeded.draftStart, 1),
+    });
     publishDraft();
     requireConsent();
     const swap = proposeSwap(
@@ -410,17 +427,17 @@ describe("the nurse's consent to a posted change", () => {
       {
         periodId: f.seeded.draftPeriodId,
         kind: 'giveaway',
-        requestingNurseId: f.rns[0]!.id,
-        counterpartyNurseId: f.rns[1]!.id,
+        requestingNurseId: ann.id,
+        counterpartyNurseId: bea.id,
         offeredAssignmentId: shift.id,
         reason: 'Bea offered to take it',
       },
       ACTOR,
     );
-    // Which nurse holds the preceptor credential varies by seed, so a coverage block may stop
-    // the trade; what matters here is that consent is never what stops it.
-    expect(() => approveExchange(f.handle.db, swap.id, 'Both nurses agreed')).not.toThrow(
-      /consent/,
-    );
+    const approved = approveExchange(f.handle.db, swap.id, 'Both nurses agreed');
+    expect(approved.status).toBe('approved');
+    const changes = listChanges(f.handle.db, f.seeded.draftPeriodId);
+    expect(changes.length).toBeGreaterThan(0);
+    expect(changes.every((c) => c.consent === undefined)).toBe(true);
   });
 });

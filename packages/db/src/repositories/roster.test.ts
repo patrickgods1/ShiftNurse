@@ -447,6 +447,31 @@ describe('preferences', () => {
     expect(listPreferencesForNurse(handle.db, nurse.id)).toEqual([]);
   });
 
+  it('refuses a preference for another nurse in this nurse’s set, and keeps both sets as they were', () => {
+    const ana = createNurse(handle.db, baseNurse({ firstName: 'Ana' }), ACTOR);
+    const bea = createNurse(handle.db, baseNurse({ firstName: 'Bea' }), ACTOR);
+    replaceNursePreferences(
+      handle.db,
+      ana.id,
+      [{ id: 'p1', nurseId: ana.id, kind: 'weekend_appetite', level: 1, weight: 3 }],
+      ACTOR,
+    );
+    const auditsBefore = recentAudit(handle.db, 1000).length;
+
+    expect(() =>
+      replaceNursePreferences(
+        handle.db,
+        ana.id,
+        [{ id: 'p2', nurseId: bea.id, kind: 'weekend_appetite', level: 1, weight: 3 }],
+        ACTOR,
+      ),
+    ).toThrow("A preference for another nurse cannot be saved in this nurse's set.");
+
+    expect(listPreferencesForNurse(handle.db, ana.id)).toHaveLength(1);
+    expect(listPreferencesForNurse(handle.db, bea.id)).toHaveLength(0);
+    expect(recentAudit(handle.db, 1000)).toHaveLength(auditsBefore);
+  });
+
   it('replacing with an empty list clears them', () => {
     const nurse = createNurse(handle.db, baseNurse(), ACTOR);
     replaceNursePreferences(

@@ -1,7 +1,16 @@
 /** Argument schemas for `dayOf`. */
 
 import { z } from 'zod';
-import { hours, id, isoDate, nurseRole, type ResourceSchemas, text } from './primitives.js';
+import {
+  hours,
+  id,
+  isoDate,
+  nurseRole,
+  object,
+  type ResourceSchemas,
+  readRange,
+  text,
+} from './primitives.js';
 
 // `accepted` is deliberately absent: an accepted call goes through `backfill`.
 const cancellationTiers = z.array(
@@ -11,7 +20,7 @@ const cancellationTiers = z.array(
 const unansweredOutcome = z.enum(['declined', 'no_answer', 'left_message', 'ineligible']);
 
 // The repository re-checks the range and the reason; this keeps junk off the bridge.
-const holdoverInput = z.object({
+const holdoverInput = object({
   assignmentId: id,
   minutes: z.number().int().min(0).max(720),
   mandated: z.boolean(),
@@ -20,7 +29,7 @@ const holdoverInput = z.object({
 
 export const dayOfSchemas = {
   today: z.tuple([id, isoDate.optional()]),
-  callOffs: z.tuple([id, isoDate, isoDate]),
+  callOffs: z.tuple([id, isoDate, isoDate]).superRefine(readRange(400)),
   reportCallOff: z.tuple([id, text.optional(), hours.optional()]),
   replacements: z.tuple([id]),
   logCall: z.tuple([id, id, unansweredOutcome, text.optional()]),

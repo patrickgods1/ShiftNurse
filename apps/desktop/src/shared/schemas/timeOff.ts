@@ -1,7 +1,7 @@
 /** Argument schemas for `timeOff`. */
 
 import { z } from 'zod';
-import { hours, id, isoDate, object, type ResourceSchemas, text } from './primitives.js';
+import { hours, id, isoDate, object, type ResourceSchemas, readRange, text } from './primitives.js';
 
 const timeOffType = z.enum([
   'pto',
@@ -36,7 +36,7 @@ const cover = object({ assignmentId: id, nurseId: id });
 
 export const timeOffSchemas = {
   list: z.tuple([id, timeOffStatus.optional()]),
-  listInRange: z.tuple([id, isoDate, isoDate]),
+  listInRange: z.tuple([id, isoDate, isoDate]).superRefine(readRange(400)),
   create: z.tuple([createInput]),
   coverOptions: z.tuple([id, id]),
   approveAndCover: z.tuple([id, id, text.optional(), z.array(cover)]),

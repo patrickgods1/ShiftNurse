@@ -4,7 +4,7 @@
  * core's parser, so what is asserted is what a spreadsheet would show.
  */
 
-import { isoDate, type Nurse } from '@shiftnurse/core';
+import { isoDate, type Nurse, today } from '@shiftnurse/core';
 import {
   createIncompatibilityGroup,
   createTimeOffRequest,
@@ -51,12 +51,10 @@ function parseCsv(text: string): string[][] {
   return rows;
 }
 
-const now = new Date();
-const TODAY = isoDate(
-  `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
-);
+// Read per call, not at module load: a run straddling midnight would compare against yesterday.
+const todayIso = () => today();
 const document = (nurse: Nurse) =>
-  nurseRecordDocument(f.handle.db, nurse.id, TODAY, TODAY, isoDate('2026-10-05'));
+  nurseRecordDocument(f.handle.db, nurse.id, todayIso(), todayIso(), isoDate('2026-10-05'));
 const rowsOf = (nurse: Nurse) => parseCsv(document(nurse).csv).slice(1);
 
 function placeShift(nurse: Nurse) {
@@ -169,7 +167,7 @@ describe('the printed record', () => {
     const ana = f.rns[0]!;
     const { html } = document(ana);
     expect(html).toContain(`Record of ${ana.firstName} ${ana.lastName}`);
-    expect(html).toContain(`${TODAY} to ${TODAY}`);
+    expect(html).toContain(`${todayIso()} to ${todayIso()}`);
     expect(html).toContain('Test scenarios: 4 West Med-Surg');
     expect(html).toContain('Generated 2026-10-05 by ShiftNurse');
     expect(html).toContain('never included in this record');

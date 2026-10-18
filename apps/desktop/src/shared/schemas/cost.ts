@@ -139,6 +139,8 @@ export const costSchemas = {
       callBackMinimumHours: hours,
       premiumStacking: z.enum(['compound', 'additive']),
       holidayPayCoversOvertime: z.boolean(),
+      // Required: the renderer always sends the whole PaySettings, so a missing one is a bug.
+      reportingPayNoticeHours: z.number().min(0).max(24),
     }),
   ]),
 } satisfies ResourceSchemas<'cost'>;

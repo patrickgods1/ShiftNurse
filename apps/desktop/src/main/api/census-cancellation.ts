@@ -18,7 +18,9 @@ import {
   type Nurse,
   type NurseRole,
   type RoleStaffing,
+  reportingPayOwed,
   type ShiftStaffingCheck,
+  shiftWindow,
 } from '@shiftnurse/core';
 import {
   cancellationHistory,
@@ -27,12 +29,14 @@ import {
   deleteAssignment,
   demandInputs,
   getCancellationPolicy,
+  getPaySettings,
   getShiftType,
   listAssignmentsForPeriodOnDate,
   listShiftTypesForUnit,
   recordShiftCancellation,
   rosterForPeriod,
   type ShiftNurseDb,
+  transact,
 } from '@shiftnurse/db';
 import type {
   CancellationOrderView,
@@ -40,10 +44,10 @@ import type {
   OverstaffedRole,
   ShiftCancellationRecord,
 } from '../../shared/api.js';
+import { hostWallMinute } from './clock.js';
 import { ACTOR, periodOrThrow } from './context.js';
-import { editSchedule } from './schedule.js';
-
-const nameOf = (nurse: Nurse) => `${nurse.firstName} ${nurse.lastName}`;
+import { firstInOrder, nurseName } from './order.js';
+import { openChangeLog } from './schedule.js';
 
 /**
  * Roles with more nurses than the shift needs. A role the shift does not require at all (an LPN
@@ -112,7 +116,7 @@ export function cancellationOrderFor(
     volunteers,
     history: cancellationHistory(db, period.unitId, date),
   });
-  const name = (id: Id) => nameOf(nurseById.get(id) as Nurse);
+  const name = (id: Id) => nurseName(nurseById.get(id) as Nurse);
   return {
     periodId,
     date,
@@ -144,17 +148,11 @@ function nextInOrder(view: CancellationOrderView, nurseId: Id): CancellationPlac
       'This shift is no longer over its requirement, so nobody needs to be sent home.',
     );
   }
-  const excluded = view.excluded.find((e) => e.nurseId === nurseId);
-  if (excluded) throw new Error(excluded.reason);
-  const first = view.order[0];
-  const mine = view.order.find((p) => p.nurseId === nurseId);
-  if (!mine) throw new Error('That nurse is not on this shift.');
-  if (first && first.nurseId !== nurseId) {
-    throw new Error(
+  return firstInOrder(view, nurseId, {
+    excluded: (e) => e.reason,
+    notFirst: (first, mine) =>
       `${first.name} goes home before ${mine.name}. ${first.reason} Cancel ${first.name} first.`,
-    );
-  }
-  return mine;
+  });
 }
 
 export function cancelForCensus(
@@ -166,21 +164,16 @@ export function cancelForCensus(
   volunteers: readonly Id[],
   nurseId: Id,
 ): ShiftCancellationRecord {
-  const shiftType = getShiftType(db, shiftTypeId);
-  if (!shiftType) throw new Error(`Unknown shift type ${shiftTypeId}`);
-  // The change-log reason is needed before the transaction opens (a published period refuses an
-  // edit without one), so rank once to word it; the ranking is repeated inside to act on.
-  const place = nextInOrder(
-    cancellationOrderFor(db, periodId, date, shiftTypeId, role, volunteers),
-    nurseId,
-  );
-  const reason = `Low census: ${place.name}, ${date} ${shiftType.abbreviation} — ${place.reason}`;
-
-  return editSchedule(db, periodId, reason, 'census', (tx, log) => {
+  return transact(db, (tx) => {
+    const shiftType = getShiftType(tx, shiftTypeId);
+    if (!shiftType) throw new Error('That shift type was not found. Reload the page.');
+    // Ranked once, here, and the reason worded from that place: what is logged is what is acted on.
     const current = nextInOrder(
       cancellationOrderFor(tx, periodId, date, shiftTypeId, role, volunteers),
       nurseId,
     );
+    const reason = `Low census: ${current.name}, ${date} ${shiftType.abbreviation} — ${current.reason}`;
+    const log = openChangeLog(tx, periodId, reason, 'census');
     const assignment = listAssignmentsForPeriodOnDate(tx, periodId, date).find(
       (a) => a.id === current.assignmentId,
     );
@@ -190,23 +183,33 @@ export function cancelForCensus(
       { periodId, nurseId, shiftTypeId, date, reason: current.reason },
       ACTOR,
     );
-    // Sent home on arrival is paid reporting time (half the shift, 2-4 hours) whether or not the
-    // schedule shows the shift any more, so the pay event is written with the cancellation, never
+    // D13: reporting-time pay (half the shift, 2-4 hours) is owed only to a nurse who reported,
+    // or was told less than the unit's notice before the start; one phoned the evening before is
+    // owed nothing (IWC Wage Order 5 § 5 pays for reporting). When owed it is owed whether or not
+    // the schedule still shows the shift, so the event is written with the cancellation, never
     // later. Hours worked start at 0; the manager edits them if the nurse stayed a while.
-    createDayOfPayEvent(
-      tx,
-      {
-        kind: 'sent_home',
-        unitId: periodOrThrow(tx, periodId).unitId,
-        nurseId,
-        date,
-        shiftTypeId,
-        scheduledHours: shiftType.durationHours,
-        hoursWorked: 0,
-        note: 'Low-census cancellation',
-      },
-      ACTOR,
-    );
+    const unitId = periodOrThrow(tx, periodId).unitId;
+    const owed = reportingPayOwed({
+      shiftStartMinute: shiftWindow(date, shiftType).startMinute,
+      recordedAtMinute: hostWallMinute(),
+      noticeHours: getPaySettings(tx, unitId).reportingPayNoticeHours,
+    });
+    if (owed) {
+      createDayOfPayEvent(
+        tx,
+        {
+          kind: 'sent_home',
+          unitId,
+          nurseId,
+          date,
+          shiftTypeId,
+          scheduledHours: shiftType.durationHours,
+          hoursWorked: 0,
+          note: 'Low-census cancellation',
+        },
+        ACTOR,
+      );
+    }
     deleteAssignment(tx, assignment.id, ACTOR, reason);
     log({ kind: 'removed', assignment, before: assignment });
     return record;

@@ -92,6 +92,9 @@ describe('a call arriving over IPC', () => {
     );
     await expect(invoke('units', 'list', {})).rejects.toThrow('untrusted page (unknown)');
     expect(calls).toEqual([]);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('refused shiftnurse:units.list from an untrusted page'),
+    );
   });
 
   it('hands the implementation exactly what was sent and returns its answer', async () => {

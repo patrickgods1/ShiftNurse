@@ -100,3 +100,16 @@ describe('a unit edit arriving over IPC', () => {
       expect(update.safeParse(['unit-1', { postingLeadDays: days }]).success).toBe(false);
   });
 });
+
+describe('free text over IPC', () => {
+  it('refuses a reason longer than 5,000 characters', () => {
+    expect(API_SCHEMAS.timeOff.deny.safeParse(['r-1', 'x'.repeat(5001)]).success).toBe(false);
+    expect(API_SCHEMAS.timeOff.deny.safeParse(['r-1', 'x'.repeat(5000)]).success).toBe(true);
+  });
+
+  it('refuses a credential code longer than 200 characters', () => {
+    const input = (code: string) => ({ code, name: 'ACLS', tracksExpiry: true });
+    expect(API_SCHEMAS.credentials.create.safeParse([input('x'.repeat(201))]).success).toBe(false);
+    expect(API_SCHEMAS.credentials.create.safeParse([input('x'.repeat(200))]).success).toBe(true);
+  });
+});

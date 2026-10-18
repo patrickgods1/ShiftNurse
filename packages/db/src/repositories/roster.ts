@@ -427,6 +427,11 @@ export function replaceNursePreferences(
   preferences: readonly Preference[],
   actor: string,
 ): Preference[] {
+  // Checked before any write: a mismatched row would delete this nurse's set and insert another
+  // nurse's, while the audit entry still named this one.
+  if (preferences.some((p) => p.nurseId !== nurseId)) {
+    throw new Error("A preference for another nurse cannot be saved in this nurse's set.");
+  }
   const before = listPreferencesForNurse(db, nurseId);
   db.delete(preferenceTable).where(eq(preferenceTable.nurseId, nurseId)).run();
   if (preferences.length > 0) {

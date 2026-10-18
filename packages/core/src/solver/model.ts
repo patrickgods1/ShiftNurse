@@ -83,7 +83,6 @@ import {
 import { nightRecoveryRule } from '../rules/night-recovery.js';
 import { pendingRequestOn, pendingTimeOffRule } from '../rules/pending-time-off.js';
 import {
-  buildRuleContext,
   evaluatePrepared,
   getRule,
   hardRuleIdsByScope,
@@ -114,6 +113,7 @@ import {
   hoursBuckets,
   workCalendar,
 } from './model-setup.js';
+import { ruleContextForInput } from './rule-context.js';
 import {
   DEFAULT_OBJECTIVE_WEIGHTS,
   type ObjectiveBreakdown,
@@ -375,28 +375,10 @@ export class SolverModel {
     this.shiftTypes = [...input.shiftTypes].sort((a, b) => a.sortOrder - b.sortOrder);
 
     const demand = new DemandTable(input.demand);
-    this.ctx = buildRuleContext({
-      unit: input.unit,
-      demand,
+    this.ctx = ruleContextForInput(input, {
       nurses: this.nurses,
       shiftTypes: this.shiftTypes,
-      timeOff: input.timeOff,
-      credentials: input.credentials,
-      nurseCredentials: input.nurseCredentials,
-      shiftCredentialRequirements: input.shiftCredentialRequirements,
-      holidays: input.holidays,
-      weekendDefinition: input.ruleSet.weekendDefinition,
-      ...(input.paidSickCalls ? { paidSickCalls: input.paidSickCalls } : {}),
-      ...(input.incompatibilityGroups
-        ? { incompatibilityGroups: input.incompatibilityGroups }
-        : {}),
-      ...(input.holidayWork ? { holidayWork: input.holidayWork } : {}),
-      ...(input.overtimeVolunteers ? { overtimeVolunteers: input.overtimeVolunteers } : {}),
-      ...(input.preceptorships ? { preceptorships: input.preceptorships } : {}),
-      ...(input.restWaivers ? { restWaivers: input.restWaivers } : {}),
-      ...(input.availabilityBlocks ? { availabilityBlocks: input.availabilityBlocks } : {}),
-      ...(input.historyFrom ? { historyFrom: input.historyFrom } : {}),
-      preferences: input.preferences,
+      demand,
     });
 
     const shifts = buildShifts(this.dates, this.shiftTypes, demand);

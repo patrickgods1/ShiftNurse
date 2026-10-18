@@ -37,3 +37,19 @@ describe('acuity settings arriving over IPC', () => {
     expect(acuitySchemas.updateTier.safeParse(['t-1', { unitId: 'u-2' }]).success).toBe(false);
   });
 });
+
+describe('a ratio ceiling arriving over IPC', () => {
+  const rule = (maxPatientsPerNurse: number) => ({
+    unitId: 'u-1',
+    role: 'RN',
+    acuityTierId: null,
+    maxPatientsPerNurse,
+    active: true,
+  });
+
+  it('refuses a ceiling of 0.0001 patients per nurse and accepts 4', () => {
+    expect(acuitySchemas.createRatioRule.safeParse([rule(0.0001)]).success).toBe(false);
+    expect(acuitySchemas.createRatioRule.safeParse([rule(4)]).success).toBe(true);
+    expect(acuitySchemas.createRatioRule.safeParse([rule(0.5)]).success).toBe(true);
+  });
+});

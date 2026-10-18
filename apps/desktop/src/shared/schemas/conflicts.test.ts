@@ -31,23 +31,22 @@ const resolution = {
 describe('a conflict resolution arriving over IPC', () => {
   const resolve = API_SCHEMAS.conflicts.resolve;
 
-  it('accepts a resolution the analysis produced, with its reason', () => {
-    expect(resolve.safeParse(['p-1', resolution, 'Covers the short night']).success).toBe(true);
+  it('accepts an option id and the reason', () => {
+    expect(
+      resolve.safeParse([
+        'p-1',
+        'understaffing:2026-03-02:s-1:RN/assign_available:n-1',
+        'Covers the short night',
+      ]).success,
+    ).toBe(true);
+  });
+
+  it('refuses a whole resolution in place of its id', () => {
+    expect(resolve.safeParse(['p-1', resolution, 'x']).success).toBe(false);
   });
 
   it('lets a blank reason reach the audit layer, which refuses it in words', () => {
-    expect(resolve.safeParse(['p-1', resolution, '']).success).toBe(true);
-  });
-
-  it('refuses an action on a date that does not exist and a stray key', () => {
-    const badDate = {
-      ...resolution,
-      actions: [
-        { type: 'move_assignment', assignmentId: 'a-1', toDate: '2026-02-30', toShiftTypeId: 's' },
-      ],
-    };
-    expect(resolve.safeParse(['p-1', badDate, 'x']).success).toBe(false);
-    expect(resolve.safeParse(['p-1', { ...resolution, approved: true }, 'x']).success).toBe(false);
+    expect(resolve.safeParse(['p-1', 'res-1', '']).success).toBe(true);
   });
 
   it('refuses a policy with a negative cost limit', () => {

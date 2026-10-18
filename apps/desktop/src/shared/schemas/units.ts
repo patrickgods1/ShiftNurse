@@ -5,7 +5,9 @@ import {
   id,
   isoDate,
   leavePolicy,
+  name,
   object,
+  payPeriodDays,
   postingLeadDays,
   type ResourceSchemas,
   ratioStaffing,
@@ -14,9 +16,9 @@ import {
 
 /** A unit's name, type and pay calendar. */
 export const unitInput = object({
-  name: text,
+  name,
   unitType: text,
-  payPeriodDays: z.number().int('must be a whole number').min(1, 'must be 1 or more'),
+  payPeriodDays,
   payPeriodAnchor: isoDate,
   ratioStaffing: ratioStaffing.optional(),
   postingLeadDays: postingLeadDays.optional(),

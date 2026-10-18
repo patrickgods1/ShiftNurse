@@ -371,6 +371,7 @@ describe('applying a state preset', () => {
       callBackMinimumHours: 2,
       premiumStacking: 'additive',
       holidayPayCoversOvertime: true,
+      reportingPayNoticeHours: 2,
     });
     expect(getLatestRuleSet(handle.db, unit.id)?.weekendDefinition.mode).toBe('overlaps');
   });
@@ -381,6 +382,7 @@ describe('applying a state preset', () => {
       callBackMinimumHours: 0,
       premiumStacking: 'compound' as const,
       holidayPayCoversOvertime: false,
+      reportingPayNoticeHours: 2,
     };
     transact(handle.db, (tx) => savePaySettings(tx, unit.id, own, ACTOR));
     applyState(unit.id, 'US-VA');

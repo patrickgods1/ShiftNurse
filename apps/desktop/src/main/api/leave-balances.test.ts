@@ -7,16 +7,22 @@
  * 10-03, 10-17 and 10-31: the dates in the leave-policy cases below are counted from that.
  */
 
-import { addDays, isoDate, type LeavePolicy } from '@shiftnurse/core';
+import { addDays, defaultRuleSet, type IsoDate, isoDate, type LeavePolicy } from '@shiftnurse/core';
 import {
   approveTimeOff,
   auditHistoryFor,
   createAssignment,
   createNurse,
+  createNurseUnit,
   createPeriod,
+  createShiftType,
   createTimeOffRequest,
+  createUnit,
   getPeriod,
   getUnit,
+  publishSchedule,
+  saveRuleSet,
+  transact,
   updateUnit,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -64,6 +70,29 @@ function hire(
 
 const check = (type: Parameters<ReturnType<typeof api>['checkRequest']>[1], hours: number) =>
   api().checkRequest(nurseId, type, isoDate('2026-10-05'), isoDate('2026-10-11'), hours);
+
+/** Shifts the nurse worked: a schedule of their own spanning the dates, published, since a
+ *  draft's rows are only proposed. */
+function workedHistory(dates: readonly IsoDate[], shiftTypeId = f.day.id): void {
+  const { db } = f.handle;
+  const draft = getPeriod(db, f.seeded.draftPeriodId)!;
+  const history = createPeriod(
+    db,
+    {
+      unitId: f.seeded.unitId,
+      name: `Worked from ${dates[0]!}`,
+      startDate: dates[0]!,
+      endDate: dates.at(-1)!,
+      ruleSetId: draft.ruleSetId,
+      ruleSetVersion: draft.ruleSetVersion,
+    },
+    ACTOR,
+  );
+  for (const date of dates) {
+    createAssignment(db, { periodId: history.id, nurseId, shiftTypeId, date }, ACTOR);
+  }
+  transact(db, (tx) => publishSchedule(tx, { periodId: history.id, ledger: [] }, ACTOR));
+}
 
 describe('a PTO request against the balance on file', () => {
   it('says the request pays 36 hours, the balance is 20, 16 short', () => {
@@ -314,35 +343,94 @@ describe('Title I FMLA eligibility', () => {
     const start = isoDate('2026-10-05');
     const shifts = (from: number) =>
       Array.from({ length: 26 - from }, (_, k) => addDays(start, -364 + 14 * (from + k)));
-    // A year of history belongs to a schedule of its own, not to the draft it precedes.
-    const draft = getPeriod(f.handle.db, f.seeded.draftPeriodId)!;
-    const history = createPeriod(
-      f.handle.db,
+    workedHistory(shifts(1));
+    // The record starts 350 days back: too short to call 312 hours the year's average.
+    expect(check('fmla', 0).fmla).toMatchObject({ entitlementHours: 432, basis: 'contract' });
+    workedHistory(shifts(0).slice(0, 1));
+    // 26 × 12 = 312 hours over 52 weeks is 6 a week; 12 weeks of it is 72.
+    expect(check('fmla', 0).fmla).toMatchObject({ entitlementHours: 72, basis: 'average' });
+  });
+
+  it('counts a night the nurse floated to 5 West toward the 1,250 hours', () => {
+    const { db } = f.handle;
+    const west = createUnit(
+      db,
       {
-        unitId: f.seeded.unitId,
-        name: 'A year of history',
-        startDate: addDays(start, -364),
-        endDate: addDays(start, -1),
-        ruleSetId: draft.ruleSetId,
-        ruleSetVersion: draft.ruleSetVersion,
+        name: '5 West',
+        unitType: 'ICU',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
       },
       ACTOR,
     );
-    const work = (dates: ReturnType<typeof shifts>) => {
-      for (const date of dates) {
-        createAssignment(
-          f.handle.db,
-          { periodId: history.id, nurseId, shiftTypeId: f.day.id, date },
-          ACTOR,
-        );
-      }
-    };
-    work(shifts(1));
-    // The record starts 350 days back: too short to call 312 hours the year's average.
-    expect(check('fmla', 0).fmla).toMatchObject({ entitlementHours: 432, basis: 'contract' });
-    work(shifts(0).slice(0, 1));
-    // 26 × 12 = 312 hours over 52 weeks is 6 a week; 12 weeks of it is 72.
-    expect(check('fmla', 0).fmla).toMatchObject({ entitlementHours: 72, basis: 'average' });
+    const n12 = createShiftType(
+      db,
+      {
+        unitId: west.id,
+        name: 'Night 12',
+        abbreviation: 'N12',
+        startTime: '19:00',
+        durationHours: 12,
+        isNight: true,
+        isOnCall: false,
+        color: '#000',
+        sortOrder: 1,
+        active: true,
+      },
+      ACTOR,
+    );
+    // 100 days before the request's first day, 2026-10-05.
+    const floated = isoDate('2026-06-27');
+    createNurseUnit(
+      db,
+      {
+        nurseId,
+        unitId: west.id,
+        startDate: isoDate('2026-06-01'),
+        endDate: isoDate('2026-07-31'),
+      },
+      ACTOR,
+    );
+    const rules = transact(db, (tx) => saveRuleSet(tx, defaultRuleSet(west.id), ACTOR));
+    const period = createPeriod(
+      db,
+      {
+        unitId: west.id,
+        name: '5 West late June',
+        startDate: isoDate('2026-06-21'),
+        endDate: isoDate('2026-07-04'),
+        ruleSetId: rules.id,
+        ruleSetVersion: rules.version,
+      },
+      ACTOR,
+    );
+    createAssignment(
+      db,
+      { periodId: period.id, nurseId, shiftTypeId: n12.id, date: floated },
+      ACTOR,
+    );
+    transact(db, (tx) => publishSchedule(tx, { periodId: period.id, ledger: [] }, ACTOR));
+    // One 12-hour shift; it used to count 0 because only 4 West's shift types were priced.
+    expect(check('fmla', 0).fmla!.eligibility).toEqual({
+      eligible: false,
+      reason: 'Worked 12 hours in the last 12 months; FMLA needs 1,250.',
+    });
+  });
+
+  it('does not count shifts proposed on a draft as hours worked', () => {
+    const draft = getPeriod(f.handle.db, f.seeded.draftPeriodId)!;
+    expect(draft.status).toBe('draft');
+    const proposed = draft.startDate;
+    expect(proposed < '2026-10-05').toBe(true);
+    createAssignment(
+      f.handle.db,
+      { periodId: draft.id, nurseId, shiftTypeId: f.day.id, date: proposed },
+      ACTOR,
+    );
+    expect(check('fmla', 0).fmla!.eligibility).toEqual({
+      eligible: false,
+      reason: 'Worked 0 hours in the last 12 months; FMLA needs 1,250.',
+    });
   });
 });
 
@@ -517,8 +605,62 @@ describe('a California pregnancy disability leave request', () => {
       usedHours: 72,
       requestHours: 36,
       remainingHours: 551.88,
+      basis: 'rolling_year',
     });
     // Not FMLA, and no certification is asked for.
     expect(result.fmla).toBeUndefined();
+  });
+
+  const approvedPdl = (from: string, to: string) =>
+    approveTimeOff(
+      f.handle.db,
+      createTimeOffRequest(
+        f.handle.db,
+        {
+          nurseId,
+          startDate: isoDate(from),
+          endDate: isoDate(to),
+          type: 'pregnancy_disability',
+        },
+        ACTOR,
+      ).id,
+      ACTOR,
+    );
+  const certify = (from: string, to: string) =>
+    api().addCertification({
+      nurseId,
+      startDate: isoDate(from),
+      endDate: isoDate(to),
+      intermittent: false,
+    });
+
+  it('counts a second pregnancy fresh, under its own certification', () => {
+    certify('2025-12-01', '2026-04-30');
+    approvedPdl('2026-02-02', '2026-02-15');
+    certify('2026-09-01', '2027-03-31');
+    // 36 h a week × 17⅓ = 623.88. February's 14 days belong to the first pregnancy, so none of
+    // them is used here (the rolling year would have counted 72); 7 days × 36/7 = 36 asked.
+    expect(check('pregnancy_disability', 0).pdl).toEqual({
+      entitlementHours: 623.88,
+      weeklyHours: 36,
+      period: { from: '2026-09-01', to: '2027-03-31' },
+      usedHours: 0,
+      requestHours: 36,
+      remainingHours: 623.88,
+      basis: 'certification',
+    });
+  });
+
+  it('counts one pregnancy’s leave across more than a year under its certification', () => {
+    certify('2025-08-01', '2026-12-31');
+    approvedPdl('2025-08-04', '2025-08-17');
+    approvedPdl('2026-08-03', '2026-08-16');
+    // 2 × 14 days × 36/7 = 144; 623.88 − 144 = 479.88. The rolling year sees only August 2026.
+    expect(check('pregnancy_disability', 0).pdl).toMatchObject({
+      period: { from: '2025-08-01', to: '2026-12-31' },
+      usedHours: 144,
+      remainingHours: 479.88,
+      basis: 'certification',
+    });
   });
 });

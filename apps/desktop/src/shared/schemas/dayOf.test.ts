@@ -56,3 +56,22 @@ describe('the holdover input', () => {
     expect(recordHoldover.safeParse([{ ...ok, minutes: 720 }]).success).toBe(true);
   });
 });
+
+describe('the holdover input, strictly', () => {
+  const { recordHoldover } = API_SCHEMAS.dayOf;
+  const valid = { assignmentId: 'a-1', minutes: 90, mandated: true, reason: 'No relief' };
+
+  it('refuses a holdover carrying a field it does not have', () => {
+    expect(recordHoldover.safeParse([valid]).success).toBe(true);
+    expect(recordHoldover.safeParse([{ ...valid, bogus: 1 }]).success).toBe(false);
+  });
+});
+
+describe('a call-off read over IPC', () => {
+  it('refuses a call-off read longer than 400 days and one that ends before it starts', () => {
+    const s = API_SCHEMAS.dayOf.callOffs;
+    expect(s.safeParse(['u', '2026-01-01', '2027-02-05']).success).toBe(true); // 400 days on
+    expect(s.safeParse(['u', '2026-01-01', '2027-02-06']).success).toBe(false);
+    expect(s.safeParse(['u', '2026-02-01', '2026-01-01']).success).toBe(false);
+  });
+});

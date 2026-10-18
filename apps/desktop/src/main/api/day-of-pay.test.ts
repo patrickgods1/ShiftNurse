@@ -14,7 +14,7 @@ import {
   listPayRatesForUnit,
   transact,
 } from '@shiftnurse/db';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { costApi } from './cost.js';
 import { dayOfPayApi } from './day-of-pay.js';
 import { dayOfApi } from './dayof.js';
@@ -95,6 +95,7 @@ describe('the cost report’s day-of pay', () => {
       callBackMinimumHours: 4,
       premiumStacking: 'compound',
       holidayPayCoversOvertime: false,
+      reportingPayNoticeHours: 2,
     });
     record({
       kind: 'call_back',
@@ -110,6 +111,7 @@ describe('the cost report’s day-of pay', () => {
       callBackMinimumHours: 4,
       premiumStacking: 'compound',
       holidayPayCoversOvertime: false,
+      reportingPayNoticeHours: 2,
     });
   });
 
@@ -142,6 +144,17 @@ describe('the cost report’s day-of pay', () => {
 });
 
 describe('sending a nurse home for low census', () => {
+  // Reporting pay is owed only for a late cancellation (D13); pin the clock to an hour into the
+  // 07:00 shift so the expectation does not depend on the day the suite runs.
+  beforeEach(() => {
+    const [y, m, d] = date().split('-').map(Number) as [number, number, number];
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(y, m - 1, d, 8, 0));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('records them as sent home from a 12-hour shift with no hours worked, in the same transaction', () => {
     for (const nurse of f.rns) {
       scheduleApi(f.handle.db).createAssignment({
@@ -206,7 +219,7 @@ describe('sending a nurse home for low census', () => {
         [],
         second.nurseId,
       ),
-    ).toThrow();
+    ).toThrow(/goes home before/);
     expect(listDayOfPayEvents(f.handle.db, f.seeded.unitId, date(), date())).toEqual([]);
   });
 });

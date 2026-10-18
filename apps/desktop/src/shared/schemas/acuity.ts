@@ -1,11 +1,11 @@
 /** Argument schemas for `acuity`. */
 
 import { z } from 'zod';
-import { id, nurseRole, object, type ResourceSchemas, text } from './primitives.js';
+import { id, name, nurseRole, object, type ResourceSchemas, text } from './primitives.js';
 
 const tierInput = object({
   unitId: id,
-  name: text,
+  name,
   level: z.number().int(),
   careHoursPerPatientDay: z.number().gt(0, 'must be more than zero'),
 });
@@ -18,7 +18,7 @@ const ratioRuleInput = object({
   unitId: id,
   role: ratioRole,
   acuityTierId: id.nullable(),
-  maxPatientsPerNurse: z.number().gt(0, 'must be more than zero'),
+  maxPatientsPerNurse: z.number().min(0.5, 'must be 0.5 or more').max(50, 'must be 50 or fewer'),
   citation: text.optional(),
   minRnShare: rnShare.optional(),
   active: z.boolean(),

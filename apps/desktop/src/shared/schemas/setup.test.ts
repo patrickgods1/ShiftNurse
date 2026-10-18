@@ -48,3 +48,16 @@ describe('first-run setup arriving over IPC', () => {
     ).toBe(false);
   });
 });
+
+describe('first-run setup pay calendar', () => {
+  it('refuses a billion-day pay period and accepts a fortnight', () => {
+    const unit = (payPeriodDays: number) => ({
+      name: '4 West',
+      unitType: 'Medical-Surgical',
+      payPeriodDays,
+      payPeriodAnchor: '2026-01-04',
+    });
+    expect(API_SCHEMAS.setup.createUnit.safeParse([unit(1e9), 'assisted']).success).toBe(false);
+    expect(API_SCHEMAS.setup.createUnit.safeParse([unit(14), 'assisted']).success).toBe(true);
+  });
+});

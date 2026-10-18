@@ -462,7 +462,8 @@
   with the year's amount set at each leave-year start (Lab. Code § 246(d)); `useCapHoursPerYear`
   is checked by `checkUseCap` against `usedThisYearHours` (use since the leave year began, before
   payroll's date too). `pdlEntitlementHours` (California PDL, 17⅓ of the usual weeks) sits beside
-  FMLA's sums, never inside them. `leave/fmla.ts` is regime-aware: Title I (29 C.F.R.
+  FMLA's sums, never inside them; its use is counted per pregnancy, by the certification
+  covering the first day (D14); without one, by the 12 months back. `leave/fmla.ts` is regime-aware: Title I (29 C.F.R.
   § 825) has the 1,250-hour test, 12 × the usual (or 52-week average) week, and the unit's
   choice of the four 12-month methods; Title 5 (5 C.F.R. § 630.1203, VA staff) has no hours test,
   6 × the biweekly tour, and a period always measured forward from first use. Periods are

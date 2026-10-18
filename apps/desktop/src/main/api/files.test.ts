@@ -58,7 +58,9 @@ describe('exporting the roster', () => {
   });
 
   it('says so when the unit does not exist, before any dialog opens', async () => {
-    await expect(exportRosterToFile(f.handle.db, 'no-unit')).rejects.toThrow(/unknown unit/i);
+    await expect(exportRosterToFile(f.handle.db, 'no-unit')).rejects.toThrow(
+      'That unit no longer exists. Reload the app.',
+    );
     expect(dialogs.saveFile).not.toHaveBeenCalled();
   });
 });
