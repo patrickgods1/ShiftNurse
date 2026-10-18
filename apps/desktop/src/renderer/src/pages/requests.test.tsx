@@ -9,7 +9,8 @@ import {
   type TimeOffRequest,
   type Unit,
 } from '@shiftnurse/core';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { makeNurse, resetFixtureCounters } from '@shiftnurse/core/testing';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../test/fake-bridge.js';
 import { renderWithApp } from '../test/render.js';
@@ -130,5 +131,58 @@ describe('the Requests page', { timeout: 15000 }, () => {
     renderWithApp(<RequestsPage />, { unit });
     expect(await screen.findByText('Covered', {}, slow)).toBeTruthy();
     expect(screen.queryByText('Not built yet')).toBeNull();
+  });
+
+  it('lists the requests waiting for a decision first', async () => {
+    resetFixtureCounters();
+    const [ana, ben, cy] = ['Ana', 'Ben', 'Cy'].map((firstName) =>
+      makeNurse({ firstName, lastName: 'Test' }),
+    );
+    const request = (
+      id: string,
+      nurseId: string,
+      day: string,
+      status: TimeOffRequest['status'],
+    ): TimeOffRequest => ({
+      ...pending,
+      id,
+      nurseId,
+      startDate: isoDate(day),
+      endDate: isoDate(day),
+      status,
+    });
+    // Fed latest-first so the page's own ordering is what puts Cy ahead of Ben.
+    bridge.respond('nurses', 'list', [ana!, ben!, cy!]);
+    bridge.respond('timeOff', 'listInRange', [
+      request('r-ben', ben!.id, '2026-09-28', 'pending'),
+      request('r-ana', ana!.id, '2026-09-22', 'approved'),
+      request('r-cy', cy!.id, '2026-09-24', 'pending'),
+    ]);
+    renderWithApp(<RequestsPage />, { unit });
+
+    const queue = (await screen.findByRole('heading', { name: 'Queue' }, slow)).closest('section')!;
+    await waitFor(() => expect(within(queue).getAllByTestId('review-request')).toHaveLength(2));
+    // The queue opens on Pending: the approved request waits behind its filter, and the two
+    // undecided ones run in the order their days fall.
+    const names = () =>
+      within(queue)
+        .getAllByRole('row')
+        .slice(1)
+        .map((row) => within(row).getAllByRole('cell')[0]!.textContent);
+    expect(names()).toEqual(['Cy Test', 'Ben Test']);
+
+    fireEvent.click(within(queue).getByRole('button', { name: 'All' }));
+
+    expect(names()).toEqual(['Ana Test', 'Cy Test', 'Ben Test']);
+  });
+
+  it('switches to Exchanges', async () => {
+    renderWithApp(<RequestsPage />, { unit });
+    fireEvent.click(await screen.findByRole('button', { name: 'Exchanges' }, slow));
+
+    expect(await screen.findByRole('heading', { name: /^Exchanges · / }, slow)).toBeTruthy();
+    expect(screen.getByText(/^No exchanges yet\./)).toBeTruthy();
+    // The time-off queue is gone with its tab.
+    expect(screen.queryByRole('heading', { name: 'Queue' })).toBeNull();
   });
 });

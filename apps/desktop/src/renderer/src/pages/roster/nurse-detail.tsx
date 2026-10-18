@@ -5,14 +5,22 @@
  * `roster.tsx`, not a page.
  */
 
+import type { DeactivationImpact, FutureShiftView } from '@shared/api.js';
 import type { Id, Nurse } from '@shiftnurse/core';
+import { Link } from '@tanstack/react-router';
 import { useRef, useState } from 'react';
-import { useDeactivateNurse, useIncompatibilityGroups, useNurse } from '../../api.js';
+import {
+  useDeactivateNurse,
+  useDeactivationImpact,
+  useIncompatibilityGroups,
+  useNurse,
+  useUpdateNurse,
+} from '../../api.js';
 import { AsyncState } from '../../components/async-state.js';
 import { Modal } from '../../components/modal.js';
-import { DANGER_SOLID, SECONDARY } from '../../components/ui.js';
+import { DANGER_SOLID, errorMessage, SECONDARY } from '../../components/ui.js';
 import { usePanelFocus } from '../../components/use-panel-focus.js';
-import { formatDate } from '../../format.js';
+import { formatDate, formatDateWithWeekday } from '../../format.js';
 import { CredentialsSection } from './nurse-credentials.js';
 import { LeaveSection } from './nurse-leave.js';
 import { PreferencesSection } from './nurse-preferences.js';
@@ -74,6 +82,27 @@ function NurseDetailBody({
 }) {
   const [confirmingDeactivate, setConfirmingDeactivate] = useState(false);
   const deactivateNurse = useDeactivateNurse(nurse.unitId);
+  const reactivateNurse = useUpdateNurse(nurse.unitId);
+  const impact = useDeactivationImpact(nurseId, confirmingDeactivate);
+  const name = `${nurse.firstName} ${nurse.lastName}`;
+  // The control that opened a dialog is gone once the nurse flips state, so focus goes to the one
+  // that replaced it as soon as it mounts (the nurse refetch lands after the dialog has closed).
+  const focusNext = useRef<'deactivate' | 'reactivate' | null>(null);
+  const deactivateButton = (el: HTMLButtonElement | null) => {
+    if (el !== null && focusNext.current === 'deactivate') {
+      focusNext.current = null;
+      el.focus();
+    }
+  };
+  const reactivateEl = useRef<HTMLButtonElement | null>(null);
+  const reactivateButton = (el: HTMLButtonElement | null) => {
+    reactivateEl.current = el;
+    if (el !== null && focusNext.current === 'reactivate') {
+      focusNext.current = null;
+      el.focus();
+    }
+  };
+  const blocked = impact.data !== undefined && impact.data.published.length > 0;
 
   return (
     <>
@@ -88,23 +117,49 @@ function NurseDetailBody({
         {nurse.active ? (
           <button
             type="button"
-            onClick={() => setConfirmingDeactivate(true)}
+            ref={deactivateButton}
+            onClick={() => {
+              deactivateNurse.reset();
+              setConfirmingDeactivate(true);
+            }}
             className="rounded-md border border-danger px-3 py-1.5 text-sm text-danger hover:bg-bg"
           >
             Deactivate
           </button>
         ) : (
-          <span className="self-center text-sm text-text-muted">Inactive</span>
+          <>
+            <span className="self-center text-sm text-text-muted">Inactive</span>
+            <button
+              type="button"
+              ref={reactivateButton}
+              disabled={reactivateNurse.isPending}
+              onClick={() => {
+                focusNext.current = 'deactivate';
+                reactivateNurse.mutate({ id: nurseId, patch: { active: true } });
+              }}
+              className={SECONDARY}
+            >
+              {reactivateNurse.isPending ? 'Reactivating…' : 'Reactivate'}
+            </button>
+          </>
         )}
       </div>
+      {reactivateNurse.isError ? (
+        <p role="alert" className="mt-2 text-sm text-danger">
+          {errorMessage(reactivateNurse.error)}
+        </p>
+      ) : null}
 
       <Modal
         open={confirmingDeactivate}
         onOpenChange={setConfirmingDeactivate}
         variant="popup"
         size="sm"
-        title={`Deactivate ${nurse.firstName} ${nurse.lastName}?`}
-        description="This removes them from future scheduling. Their history is kept."
+        // The Deactivate button this opened from is gone by then; the Close button the drawer
+        // focused on mount would otherwise win.
+        returnFocus={() => reactivateEl.current}
+        title={`Deactivate ${name}?`}
+        description={impactSummary(name, impact)}
         footer={
           <>
             <button
@@ -116,10 +171,13 @@ function NurseDetailBody({
             </button>
             <button
               type="button"
-              disabled={deactivateNurse.isPending}
+              disabled={deactivateNurse.isPending || impact.data === undefined || blocked}
               onClick={() =>
                 deactivateNurse.mutate(nurseId, {
-                  onSuccess: () => setConfirmingDeactivate(false),
+                  onSuccess: () => {
+                    focusNext.current = 'reactivate';
+                    setConfirmingDeactivate(false);
+                  },
                 })
               }
               className={DANGER_SOLID}
@@ -128,13 +186,86 @@ function NurseDetailBody({
             </button>
           </>
         }
-      />
+      >
+        {impact.data !== undefined && blocked ? (
+          <PublishedShifts
+            impact={impact.data}
+            nurseId={nurseId}
+            firstName={nurse.firstName}
+            onFollow={() => setConfirmingDeactivate(false)}
+          />
+        ) : null}
+        {deactivateNurse.isError ? (
+          <p role="alert" className="mt-3 text-sm text-danger">
+            {errorMessage(deactivateNurse.error)}
+          </p>
+        ) : null}
+      </Modal>
 
       <CredentialsSection nurseId={nurseId} />
       <AlsoWorksOnSection nurse={nurse} />
       <LeaveSection nurseId={nurseId} />
       <PreferencesSection nurseId={nurseId} unitId={nurse.unitId} />
     </>
+  );
+}
+
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+/** One sentence for what the dialog is about to do; the published list is rendered beneath it. */
+function impactSummary(
+  name: string,
+  impact: { isPending: boolean; isError: boolean; error: unknown; data?: DeactivationImpact },
+): string {
+  if (impact.isError) return `Could not check ${name}'s shifts: ${errorMessage(impact.error)}`;
+  const data = impact.data;
+  if (data === undefined) return `Checking ${name}'s shifts from today on…`;
+  if (data.published.length > 0) {
+    return `${name} has ${plural(data.published.length, 'shift')} on published schedules from today on:`;
+  }
+  if (data.draft.length > 0) {
+    return `Deactivating takes ${name}'s ${plural(data.draft.length, 'draft shift')} from ${formatDateWithWeekday(data.draft[0]!.date)} on off the schedule. Their history is kept.`;
+  }
+  return `${name} has no shifts from today on. Their history is kept, and they will not appear on new schedules.`;
+}
+
+const LISTED = 5;
+
+function PublishedShifts({
+  impact,
+  nurseId,
+  firstName,
+  onFollow,
+}: {
+  impact: DeactivationImpact;
+  nurseId: Id;
+  firstName: string;
+  onFollow: () => void;
+}) {
+  const line = (s: FutureShiftView) =>
+    `${formatDateWithWeekday(s.date)} · ${s.shiftTypeName} · ${s.periodName}`;
+  const more = impact.published.length - LISTED;
+  return (
+    <div className="mt-2 text-sm text-text">
+      <ul className="list-disc pl-5">
+        {impact.published.slice(0, LISTED).map((s) => (
+          <li key={s.assignmentId}>{line(s)}</li>
+        ))}
+      </ul>
+      {more > 0 ? <p className="mt-1">and {more} more</p> : null}
+      <p className="mt-2 text-text-muted">
+        Staff already hold these. Give them away or remove them on the schedule grid, with a reason,
+        then deactivate.
+      </p>
+      <Link
+        to="/schedule"
+        search={{ nurse: nurseId }}
+        onClick={onFollow}
+        className="mt-2 inline-block text-accent hover:underline"
+      >
+        Open {firstName}'s schedule
+      </Link>
+    </div>
   );
 }
 

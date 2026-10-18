@@ -1,15 +1,29 @@
 /**
  * Creates a new scheduling period (name + date range). Everything else on a period —
  * assignments, the rule-set snapshot — comes from the schedule engine once shifts start landing
- * on the grid, so this form stays deliberately small.
+ * on the grid, so this form stays deliberately small. It does advise on two things main allows
+ * by design — a range that cuts a pay period in two, and one that overlaps another period — since
+ * both change which hours the contract rules judge; only a close date after the start is refused.
  */
 
-import { addDays, type Id, type IsoDate, type SchedulePeriod } from '@shiftnurse/core';
+import {
+  addDays,
+  type Id,
+  type IsoDate,
+  payPeriodIndex,
+  payPeriodWindow,
+  rangesOverlap,
+  type SchedulePeriod,
+  type Unit,
+} from '@shiftnurse/core';
 import { type FormEvent, useEffect, useId, useState } from 'react';
+import { usePeriods } from '../../api.js';
 import { useCreatePeriod } from '../../api-schedule.js';
 import { DateField } from '../../components/date-field.js';
 import { Modal } from '../../components/modal.js';
 import { PRIMARY, SECONDARY } from '../../components/ui.js';
+import { periodRange } from '../../format.js';
+import { useUnit } from '../../unit-context.js';
 
 interface NewPeriodDialogProps {
   open: boolean;
@@ -28,6 +42,20 @@ export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPe
   const [error, setError] = useState<string | undefined>(undefined);
   const formId = useId();
   const createPeriod = useCreatePeriod(unitId);
+  const unit = useUnit();
+  const periods = usePeriods(unitId);
+  const alignment = startDate && endDate ? alignmentOf(startDate, endDate, unit) : undefined;
+  const overlaps =
+    startDate && endDate && startDate <= endDate
+      ? (periods.data ?? []).filter((p) =>
+          rangesOverlap(startDate, endDate, p.startDate, p.endDate),
+        )
+      : [];
+
+  function changeStart(value: IsoDate | '') {
+    setStartDate(value);
+    if (!closeOnTouched && value !== '') setCloseOn(addDays(value, -28));
+  }
 
   // Reset on every open, same rationale as NurseFormDialog: `createPeriod` is a fresh object
   // each render, so depending on it would re-run this every render instead of only on open.
@@ -55,6 +83,10 @@ export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPe
     }
     if (startDate > endDate) {
       setError('End date must be on or after the start date.');
+      return;
+    }
+    if (closeOn && closeOn > startDate) {
+      setError('Requests must close on or before the day the period starts.');
       return;
     }
     setError(undefined);
@@ -91,10 +123,7 @@ export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPe
             id={`${formId}-start`}
             label="Start date"
             value={startDate}
-            onChange={(value) => {
-              setStartDate(value);
-              if (!closeOnTouched && value !== '') setCloseOn(addDays(value, -28));
-            }}
+            onChange={changeStart}
           />
           <DateField id={`${formId}-end`} label="End date" value={endDate} onChange={setEndDate} />
         </div>
@@ -110,6 +139,40 @@ export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPe
             }}
           />
         </div>
+        {alignment !== undefined ? (
+          <div
+            data-testid="period-alignment"
+            className="mt-3 rounded-md border border-border bg-bg p-2 text-sm text-warn"
+          >
+            <p>
+              {alignment.messages.join(' and ')}. Hours for a pay period this schedule only partly
+              covers are judged with the published schedule before it; the part after its end waits
+              for the next schedule.
+            </p>
+            <button
+              type="button"
+              className={`${SECONDARY} mt-2`}
+              onClick={() => {
+                changeStart(alignment.start);
+                setEndDate(alignment.end);
+              }}
+            >
+              Align to pay periods
+            </button>
+          </div>
+        ) : null}
+        {overlaps.length > 0 ? (
+          <div className="mt-3 rounded-md border border-border bg-bg p-2 text-sm text-text-muted">
+            {overlaps.map((p) => (
+              <p key={p.id} data-testid="period-overlap">
+                Overlaps {p.name} ({periodRange(p)}, {p.status})
+              </p>
+            ))}
+            <p className="mt-1">
+              Overlap is allowed: a shift on both schedules is judged against each.
+            </p>
+          </div>
+        ) : null}
         {error !== undefined ? (
           <p role="alert" className="mt-3 text-sm text-danger">
             {error}
@@ -138,6 +201,28 @@ export function NewPeriodDialog({ open, onOpenChange, unitId, onCreated }: NewPe
       </form>
     </Modal>
   );
+}
+
+/** Set when either end cuts a pay period in two; carries the whole-pay-period range to snap to. */
+function alignmentOf(
+  startDate: IsoDate,
+  endDate: IsoDate,
+  unit: Pick<Unit, 'payPeriodAnchor' | 'payPeriodDays'>,
+) {
+  if (startDate > endDate) return undefined;
+  const startPP = payPeriodWindow(payPeriodIndex(startDate, unit), unit);
+  const endPP = payPeriodWindow(payPeriodIndex(endDate, unit), unit);
+  const messages: string[] = [];
+  if (startDate !== startPP.start) {
+    messages.push(
+      `This period starts partway through the pay period ${periodRange({ startDate: startPP.start, endDate: startPP.end })}`,
+    );
+  }
+  if (endDate !== endPP.end) {
+    const text = `ends partway through the pay period ${periodRange({ startDate: endPP.start, endDate: endPP.end })}`;
+    messages.push(messages.length === 0 ? `This period ${text}` : text);
+  }
+  return messages.length === 0 ? undefined : { messages, start: startPP.start, end: endPP.end };
 }
 
 const inputClass =

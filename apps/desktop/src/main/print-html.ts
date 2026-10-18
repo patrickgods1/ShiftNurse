@@ -92,7 +92,7 @@ export function gridHtml(sheet: GridSheet, ctx: PrintContext): string {
           return `<td${cls}>${body}</td>`;
         })
         .join('');
-      const name = `${row.nurse.lastName}, ${row.nurse.firstName}`;
+      const name = `${row.nurse.lastName}, ${row.nurse.firstName}${row.nurse.active ? '' : ' (inactive)'}`;
       return `<tr><td class="name">${esc(name)}</td><td>${esc(row.nurse.role)}</td>${cells}<td>${row.hours}</td></tr>`;
     })
     .join('');

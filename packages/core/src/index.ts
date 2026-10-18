@@ -333,6 +333,7 @@ export {
   buildRuleContext,
   defaultRuleSet,
   evaluateSchedule,
+  requireParams,
   resolveConfigs,
   violationsByAssignment,
   violationsByDate,

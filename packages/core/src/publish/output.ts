@@ -11,6 +11,8 @@
  * Conventions that follow how units read paper schedules:
  * - Rows sort by surname, then first name. The grid is looked up by name, not employee id.
  * - A charge nurse's cell is marked with `*` after the abbreviation.
+ * - A nurse who has left but still holds a shift in the period keeps her row, marked inactive
+ *   (`row.nurse.active`), so the footer counts and the rows always agree.
  * - On-call hours are shown separately from worked hours: standby is not a shift worked.
  * - The long CSV (`employee_id,date,shift`) is exactly the history-import format, so a
  *   published period exported today can be re-imported as history on another machine.
@@ -119,7 +121,11 @@ function onCallHours(views: readonly AssignmentView[]): number {
 
 export function buildGridSheet(schedule: ScheduleView): GridSheet {
   const dates = [...schedule.dates];
-  const nurses = [...schedule.nursesById.values()].filter((n) => n.active).sort(byName);
+  // A nurse who left still holds shifts the footer counts; dropping her row would make the wall
+  // copy disagree with itself.
+  const nurses = [...schedule.nursesById.values()]
+    .filter((n) => n.active || schedule.assignmentsFor(n.id).length > 0)
+    .sort(byName);
   const rows: GridRow[] = nurses.map((nurse) => {
     const views = schedule.assignmentsFor(nurse.id);
     const cells: GridCell[][] = dates.map((date) =>

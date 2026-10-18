@@ -66,5 +66,6 @@ export const nursesSchemas = {
   get: z.tuple([id]),
   create: z.tuple([nurseFields]),
   update: z.tuple([id, nursePatch]),
+  deactivationImpact: z.tuple([id]),
   deactivate: z.tuple([id]),
 } satisfies ResourceSchemas<'nurses'>;

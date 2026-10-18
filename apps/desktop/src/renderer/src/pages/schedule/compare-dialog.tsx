@@ -14,10 +14,10 @@ import type { Id, Nurse } from '@shiftnurse/core';
 import { useComparison } from '../../api-solver.js';
 import { AsyncState } from '../../components/async-state.js';
 import { Modal } from '../../components/modal.js';
-import { PRIMARY } from '../../components/ui.js';
+import { PRIMARY, SECONDARY } from '../../components/ui.js';
 import { formatDollars, formatHours, formatSignedDollars } from '../../money.js';
-import { SOLVER_LABELS } from '../../solver-labels.js';
-import { spread } from './candidates.js';
+import { fallbackNote, SOLVER_LABELS } from '../../solver-labels.js';
+import { groupFallbacks, spread, variationNumber } from './candidates.js';
 
 interface CompareDialogProps {
   open: boolean;
@@ -41,9 +41,6 @@ interface Row {
   /** Decimals shown: values that read the same are ranked the same. */
   decimals?: number;
 }
-
-/** Fewest–most spreads read as fairer the narrower they are. */
-const width = (r: { min: number; max: number }) => r.max - r.min;
 
 const ROWS: Row[] = [
   {
@@ -69,15 +66,15 @@ const ROWS: Row[] = [
   },
   {
     label: 'Nights each',
-    hint: 'Per nurse who works nights, fewest to most',
-    value: (c) => width(c.digest.nights),
+    hint: 'Per nurse who works nights, fewest to most; marked best where the most anyone works is lowest',
+    value: (c) => c.digest.nights.max,
     show: (c) => spread(c.digest.nights),
     better: 'lower',
   },
   {
     label: 'Weekends each',
-    hint: 'Per nurse with contracted hours, fewest to most',
-    value: (c) => width(c.digest.weekends),
+    hint: 'Per nurse with contracted hours, fewest to most; marked best where the most anyone works is lowest',
+    value: (c) => c.digest.weekends.max,
     show: (c) => spread(c.digest.weekends),
     better: 'lower',
   },
@@ -191,6 +188,10 @@ export function CompareDialog({
   const names = new Map(nurses.map((n) => [n.id, `${n.firstName} ${n.lastName}`]));
   const data = comparison.data;
   const hasBudget = data?.candidates.some((c) => c.budgetVariance !== undefined) ?? false;
+  const fallbacks = groupFallbacks(
+    data?.candidates.map((c) => ({ ...c, index: c.index! })) ?? [],
+    offset,
+  );
   const rows = ROWS.filter((r) => r.label !== 'Against budget' || hasBudget);
 
   return (
@@ -229,11 +230,12 @@ export function CompareDialog({
                         aria-pressed={c.index === selected}
                         className="text-left text-text underline-offset-2 hover:underline"
                       >
-                        Option {offset + c.index! + 1}
+                        Option {variationNumber({ offset }, c.index!)}
                       </button>
                       {c.fellBackFrom ? (
                         <span className="block text-[10px] text-warn" title={c.fellBackFrom.reason}>
                           ran {c.solver ? SOLVER_LABELS[c.solver].name : 'fallback'}
+                          <span className="sr-only">: {c.fellBackFrom.reason}</span>
                         </span>
                       ) : null}
                     </th>
@@ -278,8 +280,17 @@ export function CompareDialog({
             </table>
           </div>
         )}
+        {fallbacks.map((g) => (
+          <p
+            key={`${g.fellBackFrom.solver}-${g.solver}-${g.fellBackFrom.reason}`}
+            data-testid="compare-fallback"
+            className="mt-2 text-xs text-warn"
+          >
+            {`Option${g.options.length === 1 ? '' : 's'} ${g.options.join(', ')}: ${fallbackNote(g.solver, g.fellBackFrom, 'ran')}`}
+          </p>
+        ))}
         <div className="mt-6 flex flex-wrap justify-end gap-2">
-          <button type="button" className={secondaryButton} onClick={() => onOpenChange(false)}>
+          <button type="button" className={SECONDARY} onClick={() => onOpenChange(false)}>
             Close
           </button>
           <button
@@ -299,6 +310,3 @@ export function CompareDialog({
     </Modal>
   );
 }
-
-const secondaryButton =
-  'rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg disabled:opacity-60';

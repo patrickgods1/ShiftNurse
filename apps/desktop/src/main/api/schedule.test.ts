@@ -26,11 +26,13 @@ import {
   replaceNursePreferences,
   transact,
   updateIncompatibilityGroup,
+  updateNurse,
   updateUnit,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { approveExchange } from './conflicts.js';
 import { ACTOR } from './context.js';
+import { rosterApi } from './roster.js';
 import { periodsApi, scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
 
@@ -517,5 +519,125 @@ describe("the nurse's consent to a posted change", () => {
     const changes = listChanges(f.handle.db, f.seeded.draftPeriodId);
     expect(changes.length).toBeGreaterThan(0);
     expect(changes.every((c) => c.consent === undefined)).toBe(true);
+  });
+});
+
+describe('a nurse who has left', () => {
+  const leave = (nurseIndex: number) =>
+    transact(f.handle.db, (tx) => updateNurse(tx, f.rns[nurseIndex]!.id, { active: false }, ACTOR));
+  const nurseOf = (id: string) =>
+    f.handle.db.query.assignment
+      .findMany()
+      .sync()
+      .find((a) => a.id === id)?.nurseId;
+
+  it('will not put a new shift on a nurse who has left', () => {
+    rosterApi(f.handle.db).nurses.deactivate(f.rns[0]!.id);
+    const before = recentAudit(f.handle.db, 100000).length;
+    expect(() => place(0, 1)).toThrow(/is inactive, so they cannot take new shifts/);
+    expect(recentAudit(f.handle.db, 100000)).toHaveLength(before);
+  });
+
+  it('lets her shift be moved to a colleague, but not to another of her days', () => {
+    const covered = place(0, 2);
+    const other = place(0, 3);
+    leave(0);
+    const moved = api.moveAssignment({
+      assignmentId: covered.id,
+      nurseId: f.rns[1]!.id,
+      shiftTypeId: covered.shiftTypeId,
+      date: covered.date,
+    });
+    expect(moved.nurseId).toBe(f.rns[1]!.id);
+    expect(() =>
+      api.moveAssignment({
+        assignmentId: other.id,
+        nurseId: f.rns[0]!.id,
+        shiftTypeId: other.shiftTypeId,
+        date: addDays(other.date, 2),
+      }),
+    ).toThrow(/is inactive, so they cannot take new shifts/);
+    expect(nurseOf(other.id)).toBe(f.rns[0]!.id);
+  });
+
+  it('will not swap a shift onto a nurse who has left', () => {
+    const hers = place(0, 4);
+    const theirs = api.createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: f.rns[1]!.id,
+      shiftTypeId: f.night.id,
+      date: hers.date,
+    });
+    leave(0);
+    expect(() => api.swapAssignments(hers.id, theirs.id)).toThrow(
+      /is inactive, so they cannot take new shifts/,
+    );
+    expect(nurseOf(hers.id)).toBe(f.rns[0]!.id);
+    expect(nurseOf(theirs.id)).toBe(f.rns[1]!.id);
+  });
+});
+
+describe('a nurse’s hours in the pay period', () => {
+  // The pay calendar is moved a week so a pay period (09-13…09-26) straddles the published week
+  // before the draft, which starts Sunday 09-20.
+  function hana() {
+    updateUnit(f.handle.db, f.seeded.unitId, { payPeriodAnchor: isoDate('2026-08-30') }, ACTOR);
+    const { id: _id, ...base } = f.rns[0]!;
+    return rosterApi(f.handle.db).nurses.create({
+      ...base,
+      employeeId: 'E-HANA-1',
+      firstName: 'Hana',
+      lastName: 'Okafor',
+      role: 'RN',
+      fte: 0.9,
+      contractedHoursPerPeriod: 72,
+      phone: undefined,
+      email: undefined,
+      notes: undefined,
+    });
+  }
+  const draftId = () => f.seeded.draftPeriodId;
+  function workOn(nurseId: string, periodId: string, date: string, reason?: string) {
+    return api.createAssignment(
+      { periodId, nurseId, shiftTypeId: f.day.id, date: isoDate(date) },
+      reason,
+    );
+  }
+
+  it('counts the published week before this schedule in the pay period that straddles it', () => {
+    const h = hana();
+    const history = listPeriodsForUnit(f.handle.db, f.seeded.unitId).find(
+      (p) => p.status === 'published' && p.startDate === '2026-09-06',
+    )!;
+    for (const d of ['2026-09-13', '2026-09-14', '2026-09-15', '2026-09-16']) {
+      workOn(h.id, history.id, d, 'Hours from paper records');
+    }
+    workOn(h.id, draftId(), '2026-09-21');
+    workOn(h.id, draftId(), '2026-09-22');
+    // 4 x 12 = 48 before the draft, 2 x 12 = 24 in it; history reaches back to 08-23 and the pay
+    // period ends 09-26, inside the draft.
+    expect(api.nurseHours(draftId(), h.id, isoDate('2026-09-21'))).toEqual({
+      payPeriod: { start: '2026-09-13', end: '2026-09-26' },
+      scheduledHours: 72,
+      priorHours: 48,
+      paidLeaveHours: 0,
+      contractedHours: 72,
+      complete: true,
+    });
+  });
+
+  it('says the count is partial when the pay period runs past the end of this schedule', () => {
+    const h = hana();
+    workOn(h.id, draftId(), '2026-10-26');
+    const readout = api.nurseHours(draftId(), h.id, isoDate('2026-10-26'));
+    expect(readout.payPeriod).toEqual({ start: '2026-10-25', end: '2026-11-07' });
+    expect(readout.scheduledHours).toBe(12);
+    expect(readout.complete).toBe(false);
+  });
+
+  it('refuses a nurse who is not on the roster', () => {
+    expect(() => api.nurseHours(draftId(), 'nobody-here', isoDate('2026-09-21'))).toThrow(
+      /not on .* roster/,
+    );
   });
 });

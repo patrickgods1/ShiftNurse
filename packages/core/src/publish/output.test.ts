@@ -54,6 +54,39 @@ describe('buildGridSheet', () => {
     expect(sheet.rows[0]!.onCallHours).toBe(12);
   });
 
+  it('keeps the row of a nurse who left with a shift still on the schedule, so the footer adds up', () => {
+    resetFixtureCounters();
+    const gone = makeNurse({
+      id: 'gone',
+      firstName: 'Gone',
+      lastName: 'Adams',
+      employeeId: 'E1',
+      active: false,
+    });
+    const stay = makeNurse({ id: 'stay', firstName: 'Stay', lastName: 'Baker', employeeId: 'E2' });
+    const hal = makeNurse({
+      id: 'hal',
+      firstName: 'Hal',
+      lastName: 'Clark',
+      employeeId: 'E3',
+      active: false,
+    });
+    const { schedule } = scenario({
+      startDate: '2026-01-04' as never,
+      endDate: '2026-01-06' as never,
+      nurses: [stay, hal, gone],
+      assignments: [assign('stay', DAY_12, '2026-01-05'), assign('gone', DAY_12, '2026-01-05')],
+    });
+    const sheet = buildGridSheet(schedule);
+    expect(sheet.rows.map((r) => r.nurse.id)).toEqual(['gone', 'stay']);
+    const day12 = sheet.dailyCounts.find((c) => c.shiftType.id === DAY_12.id)!;
+    expect(day12.counts).toEqual([0, 2, 0]);
+    // The CSV columns are data, not a label: the left nurse keeps her plain name.
+    const csv = formatGridCsv(sheet);
+    expect(csv).toContain('E1,"Adams, Gone",');
+    expect(csv).not.toContain('inactive');
+  });
+
   it('counts heads per shift per day for the footer so a thin day is visible on paper', () => {
     const sheet = buildGridSheet(twoNurseWeek().schedule);
     const day12 = sheet.dailyCounts.find((c) => c.shiftType.id === DAY_12.id)!;

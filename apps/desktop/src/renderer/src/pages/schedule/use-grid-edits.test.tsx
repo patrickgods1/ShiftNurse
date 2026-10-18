@@ -465,3 +465,75 @@ describe('undoing from the keyboard', () => {
     expect(bridge.callsTo('schedule', 'deleteAssignment')).toHaveLength(1);
   });
 });
+
+describe('what the grid says about a failed edit', () => {
+  it('shows the move that just failed, not the add that failed before it', async () => {
+    bridge.fail('schedule', 'createAssignment', new Error('Ben Okafor already works that day.'));
+    bridge.fail('schedule', 'moveAssignment', new Error('That shift is locked.'));
+    renderWithApp(<Host held={[anaMonday, benMonday]} />);
+    await press('add');
+    await screen.findByText('failed: Ben Okafor already works that day.');
+    await press('move');
+    await screen.findByText('failed: That shift is locked.');
+    expect(screen.queryByText(/Ben Okafor already works/)).toBeNull();
+  });
+
+  it('clears an old failure once the next edit goes through', async () => {
+    bridge.fail('schedule', 'createAssignment', new Error('Ben Okafor already works that day.'));
+    bridge.respond('schedule', 'moveAssignment', { ...anaMonday, id: 'a-new' });
+    renderWithApp(<Host held={[anaMonday, benMonday]} />);
+    await press('add');
+    await screen.findByRole('alert');
+    await press('move');
+    await screen.findByText(/Moved Ana Ruiz/);
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it('takes its Undo offers away when the manager leaves the schedule', async () => {
+    bridge.respond('schedule', 'createAssignment', { ...anaMonday, id: 'a-added' });
+    function Shell() {
+      const [here, setHere] = useState(true);
+      return (
+        <div>
+          <button type="button" onClick={() => setHere(false)}>
+            leave schedule
+          </button>
+          {here ? <Host held={[anaMonday, benMonday]} /> : null}
+        </div>
+      );
+    }
+    renderWithApp(<Shell />);
+    await press('add');
+    await screen.findByRole('button', { name: 'Undo' });
+    await press('leave schedule');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull());
+  });
+
+  it('offers no Undo for an edit that lands after the manager has left the schedule', async () => {
+    let land: (row: Assignment) => void = () => {};
+    bridge.respond('schedule', 'createAssignment', () => {
+      return new Promise<Assignment>((resolve) => {
+        land = resolve;
+      }) as unknown as Assignment;
+    });
+    function Shell() {
+      const [here, setHere] = useState(true);
+      return (
+        <div>
+          <button type="button" onClick={() => setHere(false)}>
+            leave schedule
+          </button>
+          {here ? <Host held={[anaMonday, benMonday]} /> : null}
+        </div>
+      );
+    }
+    renderWithApp(<Shell />);
+    await press('add');
+    await waitFor(() => expect(bridge.callsTo('schedule', 'createAssignment')).toHaveLength(1));
+    await press('leave schedule');
+    land({ ...anaMonday, id: 'a-added' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+    expect(screen.queryByText(/Added Ben Okafor/)).toBeNull();
+  });
+});

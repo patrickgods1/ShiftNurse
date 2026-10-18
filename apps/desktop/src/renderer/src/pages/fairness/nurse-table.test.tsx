@@ -4,7 +4,7 @@
 import type { NurseFairnessScore } from '@shiftnurse/core';
 import { isoDate } from '@shiftnurse/core';
 import { makeNurse, resetFixtureCounters } from '@shiftnurse/core/testing';
-import { cleanup, fireEvent, screen } from '@testing-library/react';
+import { cleanup, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { installFakeBridge } from '../../test/fake-bridge.js';
 import { renderWithApp } from '../../test/render.js';
@@ -15,10 +15,11 @@ function scoreFor(
   weekends: string[],
   nights: string[] = [],
   holidays: string[] = [],
+  score = 70,
 ): NurseFairnessScore {
   return {
     nurseId,
-    score: 70,
+    score,
     components: [],
     seniorityMultiplier: 1,
     burdenIndex: 1.8,
@@ -109,5 +110,41 @@ describe('fairness breakdown', () => {
     expect(screen.getByText(/Ana/)).toBeTruthy();
     expect(screen.getByText(/Ben/)).toBeTruthy();
     expect(screen.queryByText('No nurses scored for this period.')).toBeNull();
+  });
+
+  it('puts the lowest-scoring nurse with a contract first', async () => {
+    const [ana, ben, cy] = ['Ana', 'Ben', 'Cy'].map((firstName) =>
+      makeNurse({ firstName, lastName: 'Test', contractedHoursPerPeriod: 72 }),
+    );
+    const scores = [
+      scoreFor(ana!.id, [], [], [], 80),
+      scoreFor(ben!.id, [], [], [], 55),
+      scoreFor(cy!.id, [], [], [], 70),
+    ];
+    renderWithApp(<NurseFairnessTable scores={scores} nurses={[ana!, ben!, cy!]} trend={[]} />);
+
+    const rows = await screen.findAllByTestId('fairness-row');
+    expect(rows.map((r) => within(r).getByRole('button').textContent)).toEqual([
+      expect.stringContaining('Ben'),
+      expect.stringContaining('Cy'),
+      expect.stringContaining('Ana'),
+    ]);
+  });
+
+  it('folds per-diem staff into their own list instead of heading the table', async () => {
+    const ana = makeNurse({ firstName: 'Ana', lastName: 'Reyes', contractedHoursPerPeriod: 72 });
+    const dee = makeNurse({ firstName: 'Dee', lastName: 'Park', contractedHoursPerPeriod: 0 });
+    const scores = [scoreFor(ana.id, [], [], [], 90), scoreFor(dee.id, [], [], [], 20)];
+    renderWithApp(<NurseFairnessTable scores={scores} nurses={[ana, dee]} trend={[]} />);
+
+    const main = await screen.findByTestId('fairness-table');
+    const mainRows = within(main).getAllByTestId('fairness-row');
+    expect(mainRows).toHaveLength(1);
+    expect(mainRows[0]!.textContent).toContain('Ana');
+    expect(within(main).queryByText(/Dee/)).toBeNull();
+
+    const summary = screen.getByText(/^Per-diem and agency staff \(1\)/);
+    const folded = summary.closest('details')!;
+    expect(within(folded).getByText(/Dee/)).toBeTruthy();
   });
 });

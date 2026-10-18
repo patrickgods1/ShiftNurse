@@ -63,6 +63,26 @@ describe('gridHtml', () => {
   });
 });
 
+describe('gridHtml inactive nurses', () => {
+  it('marks a nurse who left but still holds shifts, and leaves the others plain', () => {
+    const row = (n: typeof nurse) => ({ nurse: n, cells: [[], []], hours: 0, onCallHours: 0 });
+    const sheet: GridSheet = {
+      periodName: 'PP1',
+      startDate: '2026-01-03' as never,
+      endDate: '2026-01-04' as never,
+      dates: ['2026-01-03', '2026-01-04'] as never,
+      rows: [
+        row({ ...nurse, firstName: 'Gone', lastName: 'Adams', active: false }),
+        row({ ...nurse, firstName: 'Stay', lastName: 'Baker' }),
+      ],
+      dailyCounts: [],
+    };
+    const html = gridHtml(sheet, { unit, version: undefined, status: 'draft' });
+    expect(html).toContain('<td class="name">Adams, Gone (inactive)</td>');
+    expect(html).toContain('<td class="name">Baker, Stay</td>');
+  });
+});
+
 describe('nurseSheetsHtml', () => {
   it('gives each nurse a page that breaks before the next', () => {
     const sheet: NurseSheet = {

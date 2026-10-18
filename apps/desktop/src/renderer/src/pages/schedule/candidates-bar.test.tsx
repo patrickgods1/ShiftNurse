@@ -71,6 +71,11 @@ function withFallback(batch: SolveBatchStatus, solver: SolverId, from: SolverId)
   };
 }
 
+function withReason(batch: SolveBatchStatus, reason: string): SolveBatchStatus {
+  const run = batch.runs[0]!;
+  return { ...batch, runs: [{ ...run, fellBackFrom: { solver: 'cp-sat', reason } }] };
+}
+
 function renderBar(batch: SolveBatchStatus) {
   return renderWithApp(
     <CandidatesBar
@@ -141,7 +146,14 @@ describe('a hybrid run that lost its CP-SAT windows part-way', () => {
   it('says the CP-SAT windows stopped early instead of "ran Hybrid instead of Hybrid"', async () => {
     renderBar(withFallback(batchWith({}), 'hybrid', 'hybrid'));
     const bar = await screen.findByTestId('candidates-bar');
-    expect(bar.textContent).toContain('CP-SAT windows stopped early');
+    expect(bar.textContent).toContain('stopped its CP-SAT windows early: x');
     expect(bar.textContent).not.toContain('instead of');
+  });
+});
+
+describe('an option that fell back to another search', () => {
+  it('gives the reason the option ran a different search', async () => {
+    renderBar(withReason(batchWith({}), 'runner missing'));
+    expect((await screen.findByTestId('candidates-bar')).textContent).toContain('runner missing');
   });
 });

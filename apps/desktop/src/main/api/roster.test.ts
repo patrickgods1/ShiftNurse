@@ -4,10 +4,11 @@
  * leaves nothing behind. The file-dialog halves live in `api.ts`, so they are not here.
  */
 
-import { isoDate, parseRosterCsv } from '@shiftnurse/core';
+import { addDays, isoDate, parseRosterCsv, today } from '@shiftnurse/core';
 import { auditHistoryFor, createHoliday, recentAudit } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { rosterApi } from './roster.js';
+import { periodsApi, scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
 
 let f: Fixture;
@@ -77,6 +78,44 @@ describe('adding and changing nurses', () => {
 
   it('says so when asked to deactivate a nurse who is not on the roster', () => {
     expect(() => api().nurses.deactivate('nobody')).toThrow(/not found/i);
+  });
+
+  it('takes a leaver off the draft from today on and tells the grid what went', () => {
+    const ann = f.rns[0]!;
+    const from = today();
+    const period = periodsApi(f.handle.db).create({
+      unitId: f.seeded.unitId,
+      name: 'Next draft',
+      startDate: from,
+      endDate: addDays(from, 13),
+    });
+    for (const date of [from, addDays(from, 1)]) {
+      scheduleApi(f.handle.db).createAssignment({
+        periodId: period.id,
+        nurseId: ann.id,
+        shiftTypeId: f.day.id,
+        date,
+      });
+    }
+
+    const impact = api().nurses.deactivationImpact(ann.id);
+    expect(impact.fromDate).toBe(from);
+    expect(impact.draft.map((s) => [s.periodId, s.date])).toEqual([
+      [period.id, from],
+      [period.id, addDays(from, 1)],
+    ]);
+    expect(impact.published).toEqual([]);
+
+    expect(api().nurses.deactivate(ann.id).active).toBe(false);
+    expect(
+      periodsApi(f.handle.db)
+        .assignments(period.id)
+        .filter((a) => a.nurseId === ann.id),
+    ).toEqual([]);
+  });
+
+  it('says so when asked what deactivating a nurse not on the roster would do', () => {
+    expect(() => api().nurses.deactivationImpact('nobody')).toThrow(/not found/i);
   });
 });
 

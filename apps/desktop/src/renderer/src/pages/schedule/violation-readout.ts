@@ -1,8 +1,8 @@
 /**
  * The headline text and colour for the violation summary. A separate module so it can be
  * tested without a DOM: the first version defaulted missing counts to 0 and so painted a green
- * "0 hard · 0 soft" while validation was still loading or had failed — the one wrong answer a
- * staffing screen must never give.
+ * "0 hard violations · 0 soft" while validation was still loading or had failed — the one wrong
+ * answer a staffing screen must never give.
  */
 
 import type { EvaluationResult } from '@shiftnurse/core';
@@ -23,7 +23,7 @@ export function violationReadout(
   const hard = result.hardViolations.length;
   const soft = result.softViolations.length;
   return {
-    label: `${hard} hard · ${soft} soft violation${hard + soft === 1 ? '' : 's'}`,
+    label: `${hard} hard violation${hard === 1 ? '' : 's'} · ${soft} soft`,
     tone: hard > 0 ? 'text-danger' : soft > 0 ? 'text-warn' : 'text-success',
   };
 }

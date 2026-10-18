@@ -6,11 +6,19 @@
 
 import {
   type Assignment,
+  compareDates,
+  contractedHoursRule,
   defaultRuleSet,
   evaluateSchedule,
   type Id,
+  type IsoDate,
   type Preference,
+  payPeriodHoursFor,
+  payPeriodIndex,
+  payPeriodWindow,
   preferencesBroken,
+  requireParams,
+  resolveConfigs,
   ruleContextForInput,
   type ScheduleChangeKind,
   type ScheduleChangeSource,
@@ -25,6 +33,7 @@ import {
   deleteAssignment,
   getLatestRuleSet,
   getNurse,
+  historyFromFor,
   listAssignmentsForPeriod,
   listPeriodsForUnit,
   loadPeriodInput,
@@ -43,7 +52,7 @@ import {
   transact,
   updateAssignment as updateAssignmentDb,
 } from '@shiftnurse/db';
-import type { ScheduleValidation, ShiftNurseApi } from '../../shared/api.js';
+import type { NurseHoursReadout, ScheduleValidation, ShiftNurseApi } from '../../shared/api.js';
 
 import {
   ACTOR,
@@ -92,6 +101,43 @@ export function validateView(
 export function buildScheduleValidation(db: DbLike, periodId: Id): ScheduleValidation {
   const period = periodOrThrow(db, periodId);
   return validateView(db, period, scheduleViewFor(db, period, { lookback: true, floated: 'busy' }));
+}
+
+/**
+ * A nurse's hours in the pay period holding `date`, from core's `payPeriodHoursFor` over the very
+ * view and rule context the grid is judged by (`buildScheduleValidation`'s view, `loadPeriodInput`
+ * through `ruleContextForInput`). The popover used to add up the visible period in the renderer,
+ * which missed the published week before and paid leave and so disagreed with the rule.
+ */
+export function nurseHoursReadout(
+  db: DbLike,
+  periodId: Id,
+  nurseId: Id,
+  date: IsoDate,
+): NurseHoursReadout {
+  const period = periodOrThrow(db, periodId);
+  const input = loadPeriodInput(db, period);
+  const schedule = scheduleViewFor(db, period, { lookback: true, floated: 'busy' });
+  const nurse = schedule.nursesById.get(nurseId);
+  if (!nurse) throw new Error(`That nurse is not on ${period.name}'s roster.`);
+  const params = requireParams(contractedHoursRule, resolveConfigs(input.ruleSet));
+  const payPeriod = payPeriodWindow(payPeriodIndex(date, input.unit), input.unit);
+  const hours = payPeriodHoursFor(schedule, nurseId, payPeriod, params, ruleContextForInput(input));
+  // The view holds this period plus the published tail: days after the period end are on no
+  // loaded schedule, and days before `historyFrom` are on no published one.
+  const historyFrom = historyFromFor(db, period);
+  const complete =
+    (compareDates(payPeriod.start, period.startDate) >= 0 ||
+      compareDates(historyFrom, payPeriod.start) <= 0) &&
+    compareDates(payPeriod.end, period.endDate) <= 0;
+  return {
+    payPeriod,
+    scheduledHours: hours.scheduledHours,
+    priorHours: hours.priorHours,
+    paidLeaveHours: hours.paidLeaveHours,
+    contractedHours: nurse.contractedHoursPerPeriod,
+    complete,
+  };
 }
 
 export interface ChangeLogEntry {
@@ -199,9 +245,24 @@ export function requireOnRoster(db: DbLike, periodId: Id, nurseId: Id): void {
   );
 }
 
+/**
+ * Refuse a new shift for a nurse who has left. The solver already skips inactive nurses, but a
+ * hand edit could still give one a shift the grid hides her row for. Giving her shifts away stays
+ * allowed: covering them is the point. Unknown ids are left to the roster check.
+ */
+export function requireActiveRecipient(db: DbLike, nurseId: Id): void {
+  const nurse = getNurse(db, nurseId);
+  if (nurse?.active !== false) return;
+  throw new Error(
+    `${nurse.firstName} ${nurse.lastName} is inactive, so they cannot take new shifts. ` +
+      'Reactivate them on the Roster first.',
+  );
+}
+
 export function scheduleApi(db: ShiftNurseDb): ShiftNurseApi['schedule'] {
   return {
     validate: (periodId) => buildScheduleValidation(db, periodId),
+    nurseHours: (periodId, nurseId, date) => nurseHoursReadout(db, periodId, nurseId, date),
     createAssignment: (input, reason, consent) =>
       editSchedule(
         db,
@@ -214,6 +275,7 @@ export function scheduleApi(db: ShiftNurseDb): ShiftNurseApi['schedule'] {
           const { periodId, nurseId, shiftTypeId, date, isLocked, isCharge, isOvertime, notes } =
             input;
           requireOnRoster(tx, periodId, nurseId);
+          requireActiveRecipient(tx, nurseId);
           const created = createAssignment(
             tx,
             {
@@ -244,6 +306,7 @@ export function scheduleApi(db: ShiftNurseDb): ShiftNurseApi['schedule'] {
         'manual',
         (tx, log) => {
           requireOnRoster(tx, existing.periodId, nurseId);
+          requireActiveRecipient(tx, nurseId);
           const moved = moveAssignment(
             tx,
             assignmentId,
@@ -277,6 +340,9 @@ export function scheduleApi(db: ShiftNurseDb): ShiftNurseApi['schedule'] {
         reason,
         'manual',
         (tx, log) => {
+          // Each nurse receives the other's shift.
+          requireActiveRecipient(tx, first.nurseId);
+          requireActiveRecipient(tx, second.nurseId);
           for (const a of [first, second]) {
             if (a.isLocked) throw new Error('One of those shifts is locked; unlock it to swap it');
           }

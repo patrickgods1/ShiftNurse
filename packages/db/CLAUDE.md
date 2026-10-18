@@ -109,6 +109,8 @@
   `toAssignment` emits the fields only when minutes > 0, so an untouched row maps as before. Only a
   draft is generated, so the solvers never write over one. The grid offers no Undo for removing a
   held-over shift.
+- **Deactivating a nurse lifts her draft shifts from today on and is refused while she holds a
+  published one** (`deactivation.ts`); archived periods are history.
 - **A time-off request moves only along `TIME_OFF_TRANSITIONS`** (approve from pending or denied;
   deny and cancel from pending; withdraw from approved, strict reason); every writer checks it first.
 - **Approve-and-lift reads from the day before the leave** and lifts (draft) or reports (published)

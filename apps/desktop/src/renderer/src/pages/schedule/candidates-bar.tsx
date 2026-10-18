@@ -7,8 +7,8 @@
 
 import type { SolveBatchStatus } from '@shared/api.js';
 import type { ReactNode } from 'react';
-import { PRIMARY } from '../../components/ui.js';
-import { SOLVER_LABELS } from '../../solver-labels.js';
+import { PRIMARY, SECONDARY } from '../../components/ui.js';
+import { fallbackNote, SOLVER_LABELS } from '../../solver-labels.js';
 import { bestChoice, digestLine, finishedRuns, variationNumber } from './candidates.js';
 import { UnfilledList } from './unfilled-list.js';
 
@@ -54,7 +54,7 @@ export function CandidatesBar({
           These options are out of date: {batch.stale}. Generate again for ones that fit the
           schedule as it is now.
         </p>
-        <button type="button" onClick={onDiscard} className={secondaryButton}>
+        <button type="button" onClick={onDiscard} className={SECONDARY}>
           Dismiss
         </button>
       </Panel>
@@ -69,10 +69,10 @@ export function CandidatesBar({
           {SOLVER_LABELS[batch.solver].name} · {done.length} of {batch.count} done
         </p>
         <div className="flex shrink-0 gap-2">
-          <button type="button" onClick={onShowProgress} className={secondaryButton}>
+          <button type="button" onClick={onShowProgress} className={SECONDARY}>
             Show progress
           </button>
-          <button type="button" onClick={onCancel} className={secondaryButton}>
+          <button type="button" onClick={onCancel} className={SECONDARY}>
             Stop
           </button>
         </div>
@@ -89,7 +89,7 @@ export function CandidatesBar({
             ? 'Generate was stopped before any option finished.'
             : `No option finished${failure ? `: ${failure}` : '.'}`}
         </p>
-        <button type="button" onClick={onDiscard} className={secondaryButton}>
+        <button type="button" onClick={onDiscard} className={SECONDARY}>
           Dismiss
         </button>
       </Panel>
@@ -145,22 +145,22 @@ export function CandidatesBar({
             data-testid="candidate-preview"
             aria-pressed={previewing}
             onClick={onTogglePreview}
-            className={secondaryButton}
+            className={SECONDARY}
           >
             {previewing ? 'Exit preview' : 'Preview on grid'}
           </button>
-          <button type="button" onClick={onShowProgress} className={secondaryButton}>
+          <button type="button" onClick={onShowProgress} className={SECONDARY}>
             Summary
           </button>
           <button
             type="button"
             data-testid="candidate-compare"
             onClick={onCompare}
-            className={secondaryButton}
+            className={SECONDARY}
           >
             Compare
           </button>
-          <button type="button" onClick={onDiscard} className={secondaryButton}>
+          <button type="button" onClick={onDiscard} className={SECONDARY}>
             Discard
           </button>
           {current && batch.saved === current.index ? (
@@ -203,9 +203,7 @@ export function CandidatesBar({
             </span>
           ))}
           {current?.fellBackFrom
-            ? current.fellBackFrom.solver === current.solver
-              ? ' · CP-SAT windows stopped early'
-              : ` · ran ${SOLVER_LABELS[current.solver].name} instead of ${SOLVER_LABELS[current.fellBackFrom.solver].name}`
+            ? ` · ${fallbackNote(current.solver, current.fellBackFrom, 'ran')}`
             : ''}
         </p>
       ) : null}
@@ -239,7 +237,5 @@ function Panel({ children, tone }: { children: ReactNode; tone?: 'warn' | 'dange
   );
 }
 
-const secondaryButton =
-  'rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg disabled:opacity-60';
 const pagerButton =
   'rounded-md border border-border px-2 py-0.5 text-sm text-text hover:bg-bg disabled:opacity-40';
