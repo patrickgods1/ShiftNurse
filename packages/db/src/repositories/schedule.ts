@@ -492,6 +492,12 @@ export interface MoveAssignmentTarget {
   nurseId: Id;
   shiftTypeId: Id;
   date: IsoDate;
+  /**
+   * Overrides the carried charge flag. A resolution sets it to what it was simulated with: a
+   * move judged as "charge on the empty night" written without the flag leaves that shift with
+   * no charge nurse on the grid.
+   */
+  isCharge?: boolean;
 }
 
 /** Shared with `approveSwap`, so a swap and a grid move refuse in the same words. */
@@ -533,7 +539,7 @@ export function moveAssignment(
       shiftTypeId: target.shiftTypeId,
       date: target.date,
       source,
-      isCharge: existing.isCharge,
+      isCharge: target.isCharge ?? existing.isCharge,
       isOvertime: existing.isOvertime,
       ...(existing.notes !== undefined ? { notes: existing.notes } : {}),
     },

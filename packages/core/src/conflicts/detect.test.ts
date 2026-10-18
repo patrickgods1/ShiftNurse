@@ -5,6 +5,7 @@ import { isoDate } from '../domain/time.js';
 import {
   assign,
   CRED_BLS,
+  census,
   coverage,
   DAY_12,
   makeNurse,
@@ -14,6 +15,7 @@ import {
   resetFixtureCounters,
   type SolveScenarioOptions,
   solveInputFrom,
+  TIER_ROUTINE,
   timeOff,
 } from '../testing/fixtures.js';
 import { detectConflicts } from './detect.js';
@@ -137,6 +139,57 @@ describe('staffing conflicts', () => {
       [priya.id, 2],
     ]);
     expect(c.advisedOrder?.map((a) => a.requestId).sort()).toEqual([...c.timeOffIds].sort());
+  });
+
+  it('warns when pending requests would empty a pooled RN and LVN ratio', () => {
+    const rn1 = makeNurse({ id: 'rn1', isChargeEligible: true });
+    const rn2 = makeNurse({ id: 'rn2' });
+    const lvnA = makeNurse({ id: 'lvn-a', role: 'LPN' });
+    const lvnB = makeNurse({ id: 'lvn-b', role: 'LPN' });
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-05'),
+      endDate: isoDate('2026-01-17'),
+      nurses: [rn1, rn2, lvnA, lvnB],
+      shiftTypes: [DAY_12],
+      // 20 patients at a licensed 1:5 means four licensed nurses, two of them RNs.
+      ratioRules: [
+        {
+          id: 'lic',
+          unitId: 'unit-1',
+          role: 'licensed',
+          acuityTierId: null,
+          maxPatientsPerNurse: 5,
+          minRnShare: 0.5,
+          active: true,
+        },
+      ],
+      censusForecasts: [census(isoDate(SAT), DAY_12, { [TIER_ROUTINE.id]: 20 })],
+      assignments: [
+        assign('rn1', DAY_12, SAT, { isCharge: true }),
+        assign('rn2', DAY_12, SAT),
+        assign('lvn-a', DAY_12, SAT),
+        assign('lvn-b', DAY_12, SAT),
+      ],
+      timeOff: [
+        timeOff('lvn-a', SAT, SAT, { status: 'pending' }),
+        timeOff('lvn-b', SAT, SAT, { status: 'pending' }),
+      ],
+    });
+
+    const pooled = detectConflicts(input).filter((c) => c.kind === 'competing_time_off');
+
+    expect(pooled).toHaveLength(1);
+    const c = pooled[0]!;
+    expect(c.id).toBe(`competing_time_off:${SAT}:${DAY_12.id}:licensed`);
+    expect(c.role).toBe('licensed');
+    expect(c.magnitude).toBe(2);
+    expect(c.details).toEqual({
+      staffed: 4,
+      required: 4,
+      staffedIfAllApproved: 2,
+      shortfallNow: 0,
+      shortfallIfAllApproved: 2,
+    });
   });
 
   it('orders hard conflicts before soft, then by how short the shift is', () => {

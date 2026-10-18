@@ -23,6 +23,7 @@
  * the desktop lifts in-range assignments from *draft* periods on approval, and it is those
  * orphaned shifts that surface as the new understaffing. Anything approval cannot lift (a
  * published period, a locked assignment) is what the `scheduled_on_leave` conflict catches.
+ * A conflict that is there either way but gets deeper is reported as `worsened`.
  * The original input is never touched.
  */
 
@@ -68,6 +69,7 @@ export function analyseConflicts(
     conflicts,
     resolutions,
     summary: summarise(conflicts, baseline.hardShortfall()),
+    hasPayData: engine.costCtx !== undefined && (input.cost?.payRates.length ?? 0) > 0,
   };
 }
 
@@ -95,7 +97,11 @@ export function summarise(conflicts: readonly Conflict[], hardShortfall: number)
  * no advisory warning, leaves coverage no worse, and touches no nurse already committed on the
  * same date by an earlier pick. `accept_shortfall` is never taken — leaving a shift short is a decision a person owns —
  * and neither is `deny_time_off`: a denial must carry a stated reason (`recordAuditStrict`
- * refuses one without), and a policy threshold is not a reason a nurse can be given.
+ * refuses one without), and a policy threshold is not a reason a nurse can be given. Nor is
+ * taking a nurse off a shift to bring their hours down: which shift they lose is theirs to hear
+ * from a person. A leave lift that opens no hole stays eligible. On a unit
+ * with any pay rate, an option touching a nurse with none is never taken either: its `delta` is
+ * a lower bound, so the ceiling would pass it unread.
  */
 export function selectAutoResolutions(
   report: ConflictReport,
@@ -109,6 +115,10 @@ export function selectAutoResolutions(
     const top = report.resolutions.find((r) => r.conflictId === conflict.id);
     if (!top) continue;
     if (top.kind === 'accept_shortfall' || top.kind === 'deny_time_off') continue;
+    // Taking a shift away from a nurse to bring their hours down is a decision a person owns.
+    if (conflict.kind === 'fte' && top.kind === 'remove_assignment') continue;
+    // A dollar ceiling cannot be honoured for a cost nobody can price.
+    if (report.hasPayData && top.impact.cost.unpriced) continue;
     if (!top.closesConflict) continue;
     // Lifting a shift to clear a leave clash closes that conflict but opens a hole; a policy
     // may fill holes on its own, never dig them.
@@ -246,7 +256,8 @@ export function timeOffImpact(
 
   const wasThere = detectWith(engine, before);
   const isThere = detectWith(engine, after);
-  const beforeIds = new Set(wasThere.map((c) => c.id));
+  const beforeById = new Map(wasThere.map((c) => [c.id, c]));
+  const beforeIds = new Set(beforeById.keys());
   const afterIds = new Set(isThere.map((c) => c.id));
 
   const shortfallBefore = before.hardShortfall();
@@ -268,6 +279,10 @@ export function timeOffImpact(
     decision,
     introduced: isThere.filter((c) => !beforeIds.has(c.id)),
     cleared: wasThere.filter((c) => !afterIds.has(c.id)),
+    worsened: isThere.flatMap((c) => {
+      const was = beforeById.get(c.id);
+      return was && c.magnitude > was.magnitude + 1e-9 ? [{ before: was, after: c }] : [];
+    }),
     displacedAssignments,
     coverage: {
       hardShortfallBefore: shortfallBefore,

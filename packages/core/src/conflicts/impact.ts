@@ -9,6 +9,7 @@
  * about the same dollar figure.
  */
 
+import type { AssignmentCost } from '../cost/types.js';
 import type { Id } from '../domain/entities.js';
 import type { ConflictEngine, SimState } from './engine.js';
 import type { CostImpact, FairnessImpact } from './types.js';
@@ -29,6 +30,11 @@ export function fairnessImpact(before: SimState, after: SimState): FairnessImpac
 /**
  * Cost is priced per nurse, and a nurse's timeline is priced independently of everyone else's,
  * so only the touched nurses need re-costing: the period total moves by exactly their difference.
+ *
+ * An unpriced shift adds $0 to `delta`, which would rank a nurse with no rate on file as the
+ * cheapest pick. `pessimisticDelta` prices those shifts at the unit's dearest rate instead (their
+ * attributed overtime hours at its dearest multiplier), so the ranking never mistakes "unknown"
+ * for "free".
  */
 export function costImpact(
   engine: ConflictEngine,
@@ -36,18 +42,50 @@ export function costImpact(
   after: SimState,
   touched: readonly Id[],
 ): CostImpact {
-  if (!engine.costCtx) return { dollarsBefore: 0, dollarsAfter: 0, delta: 0, unpriced: true };
+  if (!engine.costCtx) {
+    return {
+      dollarsBefore: 0,
+      dollarsAfter: 0,
+      delta: 0,
+      unpriced: true,
+      overtimeHoursDelta: 0,
+      pessimisticDelta: 0,
+    };
+  }
   const dollarsBefore = before.costTotal();
   let delta = 0;
+  let overtimeHoursDelta = 0;
   let unpriced = false;
+  let estimated = 0;
+  const rate = engine.unpricedRateCeiling;
+  const premium = rate * (engine.overtimeMultiplierCeiling - 1);
+  const estimate = (costs: readonly AssignmentCost[]) =>
+    costs.reduce(
+      (acc, c) =>
+        c.rateSource === 'none' ? acc + c.hours * rate + c.overtimeHours * premium : acc,
+      0,
+    );
   for (const nurseId of touched) {
     const was = before.nurseCost(nurseId);
     const is = after.nurseCost(nurseId);
     delta += sumCost(is) - sumCost(was);
+    overtimeHoursDelta += overtimeHours(is) - overtimeHours(was);
     if ([...was, ...is].some((c) => c.rateSource === 'none')) unpriced = true;
+    estimated += estimate(is) - estimate(was);
   }
   delta = cents(delta);
-  return { dollarsBefore, dollarsAfter: cents(dollarsBefore + delta), delta, unpriced };
+  return {
+    dollarsBefore,
+    dollarsAfter: cents(dollarsBefore + delta),
+    delta,
+    unpriced,
+    overtimeHoursDelta,
+    pessimisticDelta: cents(delta + estimated),
+  };
+}
+
+function overtimeHours(costs: readonly { overtimeHours: number }[]): number {
+  return costs.reduce((acc, c) => acc + c.overtimeHours, 0);
 }
 
 export function sumCost(costs: readonly { total: number }[]): number {

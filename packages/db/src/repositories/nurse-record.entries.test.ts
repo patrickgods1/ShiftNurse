@@ -188,9 +188,18 @@ afterEach(() => handle.close());
 const NO_IMPACT: ResolutionImpact = {
   coverage: { hardShortfallBefore: 1, hardShortfallAfter: 0, delta: -1 },
   fairness: { unitScoreBefore: 80, unitScoreAfter: 80, delta: 0, affected: [] },
-  cost: { dollarsBefore: 1000, dollarsAfter: 1450, delta: 450, unpriced: false },
+  cost: {
+    dollarsBefore: 1000,
+    dollarsAfter: 1450,
+    delta: 450,
+    unpriced: false,
+    overtimeHoursDelta: 0,
+    pessimisticDelta: 450,
+  },
   softViolationsIntroduced: [],
   softViolationsCleared: [],
+  shortfallPriceDelta: -1,
+  targetShortfallDelta: -1,
 };
 
 interface Case {

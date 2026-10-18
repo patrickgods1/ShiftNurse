@@ -8,6 +8,7 @@
 import type { LeaveCoverOption } from '@shared/api.js';
 import {
   type Assignment,
+  type Conflict,
   isoDate,
   type SchedulePeriod,
   type TimeOffImpact,
@@ -45,6 +46,7 @@ const impact = {
   request,
   decision: 'approved',
   introduced: [],
+  worsened: [],
   cleared: [],
   displacedAssignments: [],
   competing: [],
@@ -329,6 +331,35 @@ describe('a decision waits for what approval frees', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(screen.getAllByTestId('cover-pick')).toHaveLength(2));
     expect(screen.getByTestId('approve-request').textContent).toBe('Approve and cover');
+  });
+
+  it('lists a shortfall the approval makes worse among the new problems', async () => {
+    const conflict = (magnitude: number, message: string): Conflict => ({
+      id: 'understaffing:2026-01-10:st-n12:RN',
+      kind: 'understaffing',
+      severity: 'hard',
+      dates: [isoDate('2026-01-10')],
+      nurseIds: [],
+      timeOffIds: [],
+      message,
+      magnitude,
+      details: {},
+    });
+    bridge.respond('timeOff', 'impact', {
+      ...impact,
+      worsened: [
+        {
+          before: conflict(1, 'Sat Jan 10 N12 RN: 1 staffed of 2 required (floor).'),
+          after: conflict(2, 'Sat Jan 10 N12 RN: 0 staffed of 2 required (floor).'),
+        },
+      ],
+    });
+    bridge.respond('timeOff', 'coverOptions', []);
+    renderDialog();
+    await screen.findByText('Worse than now: Sat Jan 10 N12 RN: 0 staffed of 2 required (floor).');
+    expect(screen.getByTestId('decide-dialog').textContent).toContain(
+      'New problems if approved (1)',
+    );
   });
 
   it('names the leave type in words', async () => {

@@ -537,9 +537,11 @@ describe('the VA San Francisco med-surg demo', () => {
     // The same history seeded without the holdovers has exactly these violations (counted by
     // hand from that run): holdovers add none, hard or soft. The four understaffed shifts are
     // the four call-offs nobody could legally cover (an RN's day 12 on Sunday 31 May, an LVN's on
-    // Saturday 16 May, a nursing assistant's on Thursday 14 May and Saturday 22 August).
+    // Saturday 16 May, a nursing assistant's on Thursday 14 May and Saturday 22 August). The 23
+    // over-contract readings are all in pay periods with no tour marked authorised overtime; the
+    // six that cleared (29 before the contract ceiling left such tours out) were in ones that had.
     expect([...historyViolations(f)].sort()).toEqual([
-      ['over_contracted_hours', 29],
+      ['over_contracted_hours', 23],
       ['understaffed', 4],
     ]);
     expect([...historyViolations(f, 'soft')].sort()).toEqual([
@@ -1032,7 +1034,7 @@ describe('the VA San Francisco med-surg demo', () => {
       expect(PERIODS - toursByPeriod(ofKind('va_baylor')[0]!.id).length).toBe(5);
     });
 
-    it('credits plan leave in whole tours, so only the Baylor pick-ups read over contract', () => {
+    it('credits plan leave in whole tours, so no plan nurse reads under or over contract', () => {
       // A 72/80 nurse's leave pays the tours it removes; a Baylor nurse's weekday leave removes none
       // and pays none. Every under- or over-contract reading in the history that names a plan
       // nurse was a leave credited in the wrong pay period or on a day the plan never works.
@@ -1042,22 +1044,11 @@ describe('the VA San Francisco med-surg demo', () => {
           (v.code === 'under_contracted_hours' || v.code === 'over_contracted_hours') &&
           v.nurseIds?.some((id) => kinds.has(id)),
       );
-      // Exactly two: the Baylor nurse's pay periods from Sunday 6 and Sunday 20 September each
-      // hold 60 worked hours against 48 (four 12-hour tours), the fifth tour being a covered
-      // call-off's replacement on Friday night 11 and 25 September. Each is paid as overtime, so
-      // the reading is real, and the tour is marked so.
-      expect(named.map((v) => [v.code, kinds.get(v.nurseIds![0]!)])).toEqual([
-        ['over_contracted_hours', 'va_baylor'],
-        ['over_contracted_hours', 'va_baylor'],
-      ]);
-      const periods = named.map((v) => {
-        const details = v.details as { scheduledHours: number; targetHours: number };
-        return [v.dates![0], details.scheduledHours, details.targetHours];
-      });
-      expect(periods.sort()).toEqual([
-        ['2026-09-06', 60, 48],
-        ['2026-09-20', 60, 48],
-      ]);
+      // The Baylor nurse's pay periods from Sunday 6 and Sunday 20 September each hold 60 hours
+      // against 48 (four 12-hour tours), the fifth tour being a covered call-off's replacement on
+      // Friday night 11 and 25 September. Each is marked authorised overtime, which the contract
+      // ceiling leaves out: 48 straight-time hours, on contract.
+      expect(named.map((v) => [v.code, kinds.get(v.nurseIds![0]!)])).toEqual([]);
       const pickups = f.rows<{ date: string; source: string; is_overtime: number; status: string }>(
         `SELECT a.date, a.source, a.is_overtime, c.status FROM assignment a
            JOIN nurse n ON n.id = a.nurse_id

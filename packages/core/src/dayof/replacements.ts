@@ -291,7 +291,8 @@ function compareCandidates(
     Number(b.volunteeredForOvertime ?? false) - Number(a.volunteeredForOvertime ?? false);
   if (offered !== 0) return offered;
 
-  const cost = a.cost.delta - b.cost.delta;
+  // The pessimistic figure, so a nurse with no rate on file is not called first as "free".
+  const cost = a.cost.pessimisticDelta - b.cost.pessimisticDelta;
   if (cost !== 0) return cost;
 
   const burden = a.burdenIndex - b.burdenIndex;

@@ -31,6 +31,11 @@ export function signed(value: number, decimals = 1): string {
   return value > 0 ? `+${fixed}` : fixed;
 }
 
+/** "8h" / "6.5h" — one decimal, no trailing ".0". */
+export function hoursLabel(hours: number): string {
+  return `${Number(hours.toFixed(1))}h`;
+}
+
 export function plural(count: number, noun: string, pluralNoun = `${noun}s`): string {
   return `${count} ${count === 1 ? noun : pluralNoun}`;
 }

@@ -185,8 +185,9 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
   name: 'Contracted hours (FTE)',
   description:
     "Each nurse's scheduled hours must land within tolerance of the hours their FTE entitles them " +
-    'to, per pay period. Hours past the contract are refused; a shortfall is reported as advice ' +
-    '(soft) unless the rule is set to hard, for contracts that guarantee full hours.',
+    'to, per pay period. Hours past the contract are refused unless the shift is marked as ' +
+    'authorised overtime; a shortfall is reported as advice (soft) unless the rule is set to hard, ' +
+    'for contracts that guarantee full hours.',
   severity: 'hard',
   category: 'hours',
   scope: 'nurse',
@@ -211,7 +212,8 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
       hint: 'How far over their contracted hours a nurse may be scheduled in a pay period.',
       why:
         'Keep it small to spread shifts fairly and keep overtime down. Raise it if staff often ' +
-        'pick up extra and you accept that.',
+        'pick up extra and you accept that. Shifts marked as authorised overtime do not count ' +
+        'against this.',
     },
     onlyCompletePayPeriods: {
       label: 'Only judge whole pay periods',
@@ -268,6 +270,11 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
         const found = hoursInPayPeriod(schedule, nurse.id, period, params, ctx, withHistory);
         const { scheduledHours: hours, priorHours, paidLeaveHours, assignmentIds } = found;
         const delta = hours + paidLeaveHours - target;
+        // Authorised overtime is a recorded, deliberate excess — as `max-hours-per-week` treats
+        // it — so it is left out of "over". "Under" still counts it: a nurse who worked an
+        // overtime shift is not short of those hours.
+        const overtime = found.authorisedOvertimeHours;
+        const overDelta = delta - overtime;
         const figure =
           `${hoursText(hours)}` +
           (priorHours > 0 ? ` (${hoursText(priorHours)} of it before this schedule)` : '') +
@@ -302,23 +309,26 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
               },
             ),
           );
-        } else if (delta > params.overToleranceHours && assignmentIds.length > 0) {
-          // Only with a shift of this schedule in it: history (or leave) alone over the contract
-          // is nothing this schedule can fix, and a hard finding must name what to move.
+        } else if (overDelta > params.overToleranceHours && found.straightTimeIds.length > 0) {
+          // Only with a straight-time shift of this schedule in it: history (or leave) alone over
+          // the contract is nothing this schedule can fix, a hard finding must name what to move,
+          // and taking off an overtime shift would not shrink it.
           violations.push(
             violation(
               contractedHoursRule,
               'hard',
               'over_contracted_hours',
               `${nurseName(nurse)} is scheduled ${figure} ` +
-                `in the pay period ${describeDateRange(period.start, period.end)}, ` +
-                `${hoursText(delta)} over their contracted ${hoursText(target)} (${nurse.fte} FTE).`,
+                `in the pay period ${describeDateRange(period.start, period.end)}` +
+                (overtime > 0 ? ` (${hoursText(overtime)} of it authorised overtime)` : '') +
+                `, ${hoursText(overDelta)} over their contracted ${hoursText(target)} ` +
+                `(${nurse.fte} FTE).`,
               {
-                amount: delta,
+                amount: overDelta,
                 nurseIds: [nurse.id],
                 dates: [period.start, period.end],
-                assignmentIds,
-                details,
+                assignmentIds: found.straightTimeIds,
+                details: { ...details, authorisedOvertimeHours: overtime, deltaHours: overDelta },
               },
             ),
           );
@@ -338,8 +348,18 @@ export interface PayPeriodHours {
   priorHours: number;
   /** 0 when `paidLeaveCountsTowardHours` is off. */
   paidLeaveHours: number;
+  /**
+   * The part of `scheduledHours` on shifts marked authorised overtime, history included: the
+   * over-contract check leaves it out, the under-contract check does not.
+   */
+  authorisedOvertimeHours: number;
   /** In-period contributors only: the lookback is published and not this schedule's to move. */
   assignmentIds: Id[];
+}
+
+interface CountedHours extends PayPeriodHours {
+  /** `assignmentIds` less those marked authorised overtime: what "over" names. */
+  straightTimeIds: Id[];
 }
 
 /**
@@ -358,7 +378,15 @@ export function payPeriodHoursFor(
   params: ContractedHoursParams,
   ctx: Pick<RuleContext, 'paidLeaveByNurse'>,
 ): PayPeriodHours {
-  return hoursInPayPeriod(schedule, nurseId, payPeriod, params, ctx, true);
+  const { straightTimeIds: _, ...hours } = hoursInPayPeriod(
+    schedule,
+    nurseId,
+    payPeriod,
+    params,
+    ctx,
+    true,
+  );
+  return hours;
 }
 
 function hoursInPayPeriod(
@@ -368,14 +396,16 @@ function hoursInPayPeriod(
   params: ContractedHoursParams,
   ctx: Pick<RuleContext, 'paidLeaveByNurse'>,
   withHistory: boolean,
-): PayPeriodHours {
-  const out: PayPeriodHours = {
+): CountedHours {
+  const out: CountedHours = {
     scheduledHours: 0,
     priorHours: 0,
     paidLeaveHours: params.paidLeaveCountsTowardHours
       ? leaveHoursBetween(ctx.paidLeaveByNurse.get(nurseId), payPeriod.start, payPeriod.end)
       : 0,
+    authorisedOvertimeHours: 0,
     assignmentIds: [],
+    straightTimeIds: [],
   };
   for (const view of schedule.timelineFor(nurseId)) {
     if (!view.inPeriod && !withHistory) continue;
@@ -386,8 +416,13 @@ function hoursInPayPeriod(
     // Scheduled, not worked: the contract is what the manager rostered, and a holdover
     // is priced as overtime rather than refused as hours past the FTE.
     out.scheduledHours += view.scheduledHours;
-    if (view.inPeriod) out.assignmentIds.push(view.assignment.id);
-    else out.priorHours += view.scheduledHours;
+    if (view.assignment.isOvertime) out.authorisedOvertimeHours += view.scheduledHours;
+    if (view.inPeriod) {
+      out.assignmentIds.push(view.assignment.id);
+      if (!view.assignment.isOvertime) out.straightTimeIds.push(view.assignment.id);
+    } else {
+      out.priorHours += view.scheduledHours;
+    }
   }
   return out;
 }

@@ -60,6 +60,7 @@ const emptyReport: ConflictReport = {
     hardShortfall: 0,
     byKind: {} as ConflictReport['summary']['byKind'],
   },
+  hasPayData: false,
 };
 
 // The page is heavy to import and mount; under a loaded full run the 1s default is too short.

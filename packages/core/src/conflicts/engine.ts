@@ -98,6 +98,13 @@ export class ConflictEngine {
   readonly shiftRules: readonly PreparedRule[];
   readonly maxHoursParams: MaxHoursParams;
   readonly costCtx: CostContext | undefined;
+  /**
+   * The highest hourly rate on file, 0 without one, and the highest active overtime multiplier,
+   * 1 without one: what an unpriced shift is ranked at, so a nurse with no rate never reads as
+   * the cheapest pick (`CostImpact.pessimisticDelta`).
+   */
+  readonly unpricedRateCeiling: number;
+  readonly overtimeMultiplierCeiling: number;
   readonly counterCtx: Omit<CounterContext, 'timeOff'>;
   /** Every candidate fix is priced for fairness; history and weights are fixed per analysis. */
   readonly fairnessEvaluator: FairnessEvaluator;
@@ -180,6 +187,14 @@ export class ConflictEngine {
             : {}),
         }
       : undefined;
+    this.unpricedRateCeiling = Math.max(
+      0,
+      ...(input.cost?.payRates ?? []).map((r) => r.hourlyRate),
+    );
+    this.overtimeMultiplierCeiling = Math.max(
+      1,
+      ...(this.costCtx?.overtimeRules ?? []).map((r) => r.multiplier),
+    );
     this.counterCtx = {
       unit: input.unit,
       holidayDates: this.baseCtx.holidayDates,
@@ -256,6 +271,8 @@ export class SimState {
   private readonly nurseCosts = new Map<Id, AssignmentCost[]>();
   private fullEvaluation: EvaluationResult | undefined;
   private shortfall: number | undefined;
+  private shortfallPriced: number | undefined;
+  private belowTarget: number | undefined;
   private fairnessSnapshot: FairnessSnapshot | undefined;
   private scheduleCost: number | undefined;
   private counterCache: Map<Id, BurdenCounters> | undefined;
@@ -352,7 +369,18 @@ export class SimState {
    * well: a nurse added to the day 12 can break the verdict of the mid shift beside it.
    */
   shiftViolationsAround(date: IsoDate, shiftTypeId: Id): Violation[] {
-    const out = [...this.shiftViolations(date, shiftTypeId)];
+    return this.shiftCellsAround(date, shiftTypeId).flatMap((c) =>
+      this.shiftViolations(c.date, c.shiftTypeId),
+    );
+  }
+
+  /**
+   * The cells `shiftViolationsAround` judges, each once and in that order. Exposed so a caller
+   * judging several touched shifts can take the union of their cells: two neighbouring shifts
+   * reach the same mid shift, and judging it twice would hand the diff two copies of one breach.
+   */
+  shiftCellsAround(date: IsoDate, shiftTypeId: Id): { date: IsoDate; shiftTypeId: Id }[] {
+    const out = [{ date, shiftTypeId }];
     const outer = this.engine.shiftType(shiftTypeId);
     const seen = new Set<string>();
     for (const inner of this.engine.shiftTypes) {
@@ -361,7 +389,7 @@ export class SimState {
       for (const innerDate of [date, addDays(date, 1)]) {
         if (containingDate(inner, outer, innerDate) === date) {
           seen.add(`${innerDate}::${inner.id}`);
-          out.push(...this.shiftViolations(innerDate, inner.id));
+          out.push({ date: innerDate, shiftTypeId: inner.id });
         }
       }
     }
@@ -370,7 +398,7 @@ export class SimState {
         const key = `${other.date}::${other.shiftType.id}`;
         if (seen.has(key) || !this.engine.inPeriod(other.date)) continue;
         seen.add(key);
-        out.push(...this.shiftViolations(other.date, other.shiftType.id));
+        out.push({ date: other.date, shiftTypeId: other.shiftType.id });
       }
     }
     return out;
@@ -435,6 +463,62 @@ export class SimState {
       this.shortfall = total;
     }
     return this.shortfall;
+  }
+
+  /**
+   * The staffing shortfall as Generate prices it: per date × shift type, the slots short of a
+   * hard minimum summed and charged `triangular`, so one shift three short outweighs three shifts
+   * one short. Slot shortfalls only; the solver's charge, novice and credential units are not
+   * counted here. Re-priced only on changed cells, as `hardShortfall` is.
+   */
+  shortfallPrice(): number {
+    if (this.shortfallPriced === undefined) {
+      this.shortfallPriced = this.base
+        ? this.base.shortfallPrice() + this.sumChangedCells((s, key) => s.cellShortfallPrice(key))
+        : this.sumAllCells((key) => this.cellShortfallPrice(key));
+    }
+    return this.shortfallPriced;
+  }
+
+  /** Nurse-slots below a soft target across the whole period. */
+  targetShortfall(): number {
+    if (this.belowTarget === undefined) {
+      this.belowTarget = this.base
+        ? this.base.targetShortfall() + this.sumChangedCells((s, key) => s.cellBelowTarget(key))
+        : this.sumAllCells((key) => this.cellBelowTarget(key));
+    }
+    return this.belowTarget;
+  }
+
+  /** A per-cell measure's change from the base, summed over the cells whose roster differs. */
+  private sumChangedCells(measure: (state: SimState, key: string) => number): number {
+    let total = 0;
+    for (const key of this.changes().cells) total += measure(this, key) - measure(this.base!, key);
+    return total;
+  }
+
+  private sumAllCells(measure: (key: string) => number): number {
+    let total = 0;
+    for (const key of this.engine.slotsByCell.keys()) total += measure(key);
+    return total;
+  }
+
+  private cellShortfallPrice(key: string): number {
+    let short = 0;
+    for (const slot of this.engine.slotsByCell.get(key) ?? []) {
+      if (slot.min <= 0) continue;
+      short += this.shortOf({ ...slot, shiftTypeId: slot.shiftType.id });
+    }
+    return triangular(short);
+  }
+
+  private cellBelowTarget(key: string): number {
+    let below = 0;
+    for (const slot of this.engine.slotsByCell.get(key) ?? []) {
+      if (slot.target <= 0) continue;
+      below += Math.max(0, slot.target - this.staffed(slot.date, slot.shiftType.id, slot.role));
+    }
+    return below;
   }
 
   /**
@@ -530,6 +614,12 @@ export class SimState {
         dateInRange(date, r.startDate, r.endDate),
     );
   }
+}
+
+// D10: one shift three short is worse than three shifts one short; the solver charges the k-th
+// hard unit on a shift k × hardShortfall.
+function triangular(s: number): number {
+  return (s * (s + 1)) / 2;
 }
 
 function cellKey(date: IsoDate, shiftTypeId: Id): string {

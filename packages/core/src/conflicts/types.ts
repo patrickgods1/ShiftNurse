@@ -109,10 +109,11 @@ export interface Conflict {
 /**
  * - `assign_available`: give the shift to a nurse who is legal for it at straight time.
  * - `authorize_overtime`: give it to a nurse for whom it is overtime, flagged as authorised.
- * - `move_assignment`: move a nurse off a shift that is above target onto the short one.
+ * - `move_assignment`: move a nurse off a shift that keeps its minimum without them, from the
+ *   same day or another day of the same work week, onto the short one.
  * - `deny_time_off`: deny a *pending* request whose nurse could then cover the shift.
- * - `remove_assignment`: take a nurse off a shift they should not hold (rostered on approved
- *   leave) without a replacement, leaving it short on the record.
+ * - `remove_assignment`: take a nurse off a shift: one they should not hold (rostered on approved
+ *   leave), or one that brings their hours back within a limit; no replacement.
  * - `accept_shortfall`: leave it short, on the record, so it appears as a deliberate decision.
  */
 export type ResolutionKind =
@@ -133,7 +134,14 @@ export type ResolutionAction =
       isCharge: boolean;
       isOvertime: boolean;
     }
-  | { type: 'move_assignment'; assignmentId: Id; toDate: IsoDate; toShiftTypeId: Id }
+  | {
+      type: 'move_assignment';
+      assignmentId: Id;
+      toDate: IsoDate;
+      toShiftTypeId: Id;
+      /** As simulated: a move judged as taking charge of the shift must be written as charge. */
+      isCharge: boolean;
+    }
   | { type: 'delete_assignment'; assignmentId: Id }
   | { type: 'deny_time_off'; timeOffId: Id }
   | { type: 'accept_shortfall'; conflictId: string };
@@ -161,18 +169,44 @@ export interface CostImpact {
   dollarsAfter: number;
   /** Positive costs money. */
   delta: number;
-  /** True when a nurse involved has no resolvable rate, so the delta is a lower bound. */
+  /**
+   * True when a nurse involved has no resolvable rate, so `delta` is a lower bound;
+   * `pessimisticDelta` is what the ranking uses.
+   */
   unpriced: boolean;
+  /**
+   * Hours the change adds past the pay overtime line, across the touched nurses. Counted for
+   * unpriced shifts too, since the hours are known even when the rate is not; 0 without pay data.
+   * It is what decides whether a card may say "straight time".
+   */
+  overtimeHoursDelta: number;
+  /**
+   * What the ranking charges: `delta` when everything is priced. When `unpriced`, each unpriced
+   * shift of the touched nurses is priced at the unit's highest rate, with its attributed overtime
+   * hours at the highest overtime multiplier. That is a plausible ceiling, so an unpriced nurse
+   * never reads as free. 0 without pay data.
+   */
+  pessimisticDelta: number;
 }
 
 export interface ResolutionImpact {
   coverage: CoverageImpact;
   fairness: FairnessImpact;
   cost: CostImpact;
-  /** Soft violations the change introduces. A resolution that introduces a hard one is never emitted. */
+  /**
+   * Soft violations the change introduces or makes worse. A resolution that introduces or
+   * worsens a hard one is never emitted.
+   */
   softViolationsIntroduced: Violation[];
   /** Soft violations the change clears. */
   softViolationsCleared: Violation[];
+  /**
+   * Change in the shortfall as Generate prices it (`SimState.shortfallPrice`): per shift, the
+   * slots short summed and charged s(s+1)/2. Negative is better. Slots, not dollars.
+   */
+  shortfallPriceDelta: number;
+  /** Change in nurse-slots below a soft target, period-wide. Negative is better. */
+  targetShortfallDelta: number;
 }
 
 export interface Resolution {
@@ -187,9 +221,10 @@ export interface Resolution {
   actions: ResolutionAction[];
   impact: ResolutionImpact;
   /**
-   * Higher is better. Coverage closed dominates, then fairness, then dollars, using the same
-   * `ObjectiveWeights` the solver ranks candidates by so the two never disagree about which
-   * of two nurses is the better pick.
+   * Higher is better (`scoreResolution`). Coverage closed dominates, priced convexly per shift as
+   * Generate prices it, then fairness, then dollars (an unpriced nurse at the unit's highest
+   * rate), using the same `ObjectiveWeights` the solver ranks candidates by so the two never
+   * disagree about which of two nurses is the better pick.
    */
   score: number;
   /** The nurses this change touches, for the card and for the audit entry. */
@@ -221,6 +256,8 @@ export interface ConflictReport {
   /** Every conflict's options, best first within a conflict. */
   resolutions: Resolution[];
   summary: ConflictSummary;
+  /** Whether the unit has any pay rate to price with; auto-resolve's dollar ceiling needs one. */
+  hasPayData: boolean;
 }
 
 /**
@@ -228,6 +265,8 @@ export interface ConflictReport {
  * costs no more than `maxCostDelta`, drops the unit fairness score by no more than
  * `maxFairnessDrop` points and introduces no soft violation qualifies — and the caller still
  * writes an `auto_resolve` audit entry quoting the resolution's description as its reason.
+ * On a unit with any pay rate, an unpriced option never qualifies: its cost cannot be held to
+ * the ceiling.
  */
 export interface AutoResolvePolicy {
   enabled: boolean;
@@ -260,6 +299,11 @@ export interface TimeOffImpact {
   introduced: Conflict[];
   /** Conflicts present before that the decision clears. */
   cleared: Conflict[];
+  /**
+   * Conflicts present before and after, with the same id, that the decision makes worse (a
+   * larger `magnitude`).
+   */
+  worsened: { before: Conflict; after: Conflict }[];
   /** The nurse's own assignments inside the requested range that the decision would orphan. */
   displacedAssignments: Assignment[];
   coverage: CoverageImpact;

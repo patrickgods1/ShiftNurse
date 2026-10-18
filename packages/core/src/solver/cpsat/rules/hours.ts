@@ -1,5 +1,6 @@
 /**
  * `max-hours-per-week` and the over-contract half of `fte-target-hours`, as linear caps.
+ * A constant marked authorised overtime is left out of the contract cap, as the rule leaves it.
  *
  * The solver never marks a shift as authorised overtime or records a holdover, so a week may pass
  * the overtime threshold by the hours a constant's holdover adds, or without limit when a
@@ -124,9 +125,14 @@ export function encodeContractCap(ctx: EncodeContext, raw: Record<string, unknow
       );
     const leave = ctx.model.ctx.paidLeaveByNurse.get(nurse.id);
     for (const pay of periods) {
-      const inPay = counted.filter((e) => within(e, pay.start, pay.end));
-      // The rule calls a pay period over only when a shift of this schedule is in it: history
-      // alone past the contract is not this schedule's to fix, and capping it would be infeasible.
+      // A shift marked authorised overtime sits outside the ceiling, as in the rule. Only a
+      // constant can carry the flag: the solvers never write an overtime row.
+      const inPay = counted.filter(
+        (e) => within(e, pay.start, pay.end) && !(e.literal === null && e.assignment?.isOvertime),
+      );
+      // The rule calls a pay period over only when a straight-time shift of this schedule is in
+      // it: history alone past the contract is not this schedule's to fix, and capping it would
+      // be infeasible.
       if (!inPay.some((e) => e.inPeriod)) continue;
       // Paid leave counts toward the contract, so it uses up part of the allowance.
       const leaveHours = params.paidLeaveCountsTowardHours

@@ -1222,6 +1222,29 @@ describe('hours', () => {
     expect(evaluate(fresh, monday).violated).toEqual([]);
   });
 
+  it('keeps a locked overtime shift out of the contract cap, as the rules do', () => {
+    // Locked D12 on Sun 11 marked authorised overtime, plus six D12s: 84h scheduled, 72h of it
+    // straight time, within 72 + 4. Week of Jan 4 is 36h; week of Jan 11 is 48h, authorised by
+    // the overtime row. Unflagged, the same 84h is past the 76h cap.
+    const others = [
+      '2026-01-05',
+      '2026-01-07',
+      '2026-01-09',
+      '2026-01-13',
+      '2026-01-15',
+      '2026-01-17',
+    ];
+    const encodingWith = (isOvertime: boolean) => {
+      const ot = assign('ada', DAY_12, '2026-01-11', { isLocked: true, isOvertime });
+      const encoding = encodeCpsat(unit([ada()], { shiftTypes: [DAY_12], assignments: [ot] }));
+      return { encoding, roster: [ot, ...others.map((d) => assign('ada', DAY_12, d))] };
+    };
+    const flagged = encodingWith(true);
+    expect(evaluate(flagged.encoding, flagged.roster).violated).toEqual([]);
+    const plain = encodingWith(false);
+    expect(evaluate(plain.encoding, plain.roster).violated.join('\n')).toMatch(/contracted hours/);
+  });
+
   it('caps a pay period at the contract plus its tolerance', () => {
     // 72h contract + 4h tolerance = 76h per pay period: six 12s (72h) fine, seven (84h) not.
     // Spread Mon/Wed/Fri so no weekly cap or stretch rule is what trips.

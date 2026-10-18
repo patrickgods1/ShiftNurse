@@ -316,7 +316,9 @@ function ResolutionCard({
             {formatSignedDollars(cost.delta)}
             {cost.unpriced ? (
               <span className="ml-1 rounded bg-warn/15 px-1 text-[10px] uppercase text-warn">
-                unpriced
+                {cost.pessimisticDelta !== cost.delta
+                  ? `unpriced · up to ${formatSignedDollars(cost.pessimisticDelta)}`
+                  : 'unpriced'}
               </span>
             ) : null}
           </dd>
