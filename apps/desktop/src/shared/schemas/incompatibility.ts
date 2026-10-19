@@ -15,6 +15,7 @@ const groupInput = object({
 /** The unit never changes, and a date takes `null` to clear it. */
 const groupPatch = object({
   name: text,
+  reason: text,
   nurseIds: z.array(id),
   maxTogether: groupInput.shape.maxTogether,
   startsOn: isoDate.nullable(),

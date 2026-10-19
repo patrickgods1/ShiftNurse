@@ -8,6 +8,8 @@ import { isoDate, type Nurse } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase } from '../client.js';
+import { ids as newId } from '../ids.js';
+import { preceptorship as preceptorshipTable } from '../schema.js';
 import { createUnit } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
 import { createNurseUnit } from './nurse-units.js';
@@ -40,7 +42,11 @@ function mkUnit(name: string) {
   );
 }
 
-function mkNurse(forUnit: string, firstName: string): Nurse {
+function mkNurse(
+  forUnit: string,
+  firstName: string,
+  more: Partial<Pick<Nurse, 'lastName' | 'role' | 'isNovice'>> = {},
+): Nurse {
   return createNurse(
     handle.db,
     {
@@ -57,6 +63,7 @@ function mkNurse(forUnit: string, firstName: string): Nurse {
       isNovice: false,
       isFloatEligible: true,
       active: true,
+      ...more,
     },
     ACTOR,
   );
@@ -130,6 +137,43 @@ describe('recording an orientation', () => {
     expect(listPreceptorships(handle.db, unitId)).toEqual([record]);
   });
 
+  it('refuses a nursing assistant as preceptor for a new RN, by name', () => {
+    const cora = mkNurse(unitId, 'Cora', { lastName: 'Diaz', role: 'CNA' });
+    const nina = mkNurse(unitId, 'Nina', { lastName: 'Park', isNovice: true });
+    const before = listPreceptorships(handle.db, unitId);
+    expect(() =>
+      createPreceptorship(
+        handle.db,
+        {
+          unitId,
+          orienteeId: nina.id,
+          preceptorId: cora.id,
+          startDate: isoDate('2026-10-05'),
+          endDate: isoDate('2026-11-15'),
+        },
+        ACTOR,
+      ),
+    ).toThrow('Cora Diaz cannot precept Nina Park: an RN in orientation needs an experienced RN.');
+    expect(listPreceptorships(handle.db, unitId)).toEqual(before);
+  });
+
+  it('lets an experienced LPN orient a new LPN', () => {
+    const lena = mkNurse(unitId, 'Lena', { role: 'LPN' });
+    const lou = mkNurse(unitId, 'Lou', { role: 'LPN', isNovice: true });
+    const record = createPreceptorship(
+      handle.db,
+      {
+        unitId,
+        orienteeId: lou.id,
+        preceptorId: lena.id,
+        startDate: isoDate('2026-10-05'),
+        endDate: isoDate('2026-11-15'),
+      },
+      ACTOR,
+    );
+    expect(listPreceptorships(handle.db, unitId)).toEqual([record]);
+  });
+
   it('lists only the records that touch the window, whole', () => {
     const before = pair('2026-08-01', '2026-08-31');
     const straddling = pair('2026-09-25', '2026-10-06');
@@ -161,6 +205,25 @@ describe('changing an orientation', () => {
       before: { endDate: '2026-11-15' },
       after: { endDate: '2026-12-01' },
     });
+  });
+
+  it('still lets the manager move the dates of an orientation recorded before the rule', () => {
+    const cora = mkNurse(unitId, 'Cora', { lastName: 'Diaz', role: 'CNA' });
+    const id = newId.preceptorship();
+    handle.db
+      .insert(preceptorshipTable)
+      .values({
+        id,
+        unitId,
+        orienteeId: newHire.id,
+        preceptorId: cora.id,
+        startDate: isoDate('2026-10-05'),
+        endDate: isoDate('2026-11-15'),
+        createdAt: Date.now(),
+      })
+      .run();
+    const updated = updatePreceptorship(handle.db, id, { endDate: isoDate('2026-12-01') }, ACTOR);
+    expect(updated.endDate).toBe('2026-12-01');
   });
 
   it('refuses to move the record to another nurse', () => {

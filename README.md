@@ -67,7 +67,8 @@ this codebase is held to. This document is the practical "how do I build/run/shi
   alerts, PDF/CSV/xlsx export, and scheduled backups via SQLite's online backup API.
 - **Day-of console** — call-off handling with a ranked replacement finder and live
   re-staffing check against the current census.
-- **CSV import/export** for roster and history data, and a realistic demo unit to explore
+- **CSV import/export** for roster and history data (a roster re-import leaves a column the
+  file lacks alone and reactivates no one unasked), and a realistic demo unit to explore
   from the first-launch welcome screen.
 
 ## What ShiftNurse does not enforce yet

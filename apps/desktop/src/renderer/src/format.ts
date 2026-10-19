@@ -49,6 +49,22 @@ export function formatMonthYear(date: IsoDate | string): string {
   return `${MONTH_FULL_NAMES[Number(month) - 1] ?? '?'} ${year}`;
 }
 
+/** "Oct 5, 2026 to Nov 15, 2026"; one date when both are the same day; "From …"/"Until …"
+ *  for an open end; `open` when neither end is set. One formatter so the roster's tables
+ *  cannot word the same span five ways. */
+export function formatSpan(
+  start: IsoDate | undefined,
+  end: IsoDate | undefined,
+  open: string,
+): string {
+  if (start && end) {
+    return start === end ? formatDate(start) : `${formatDate(start)} to ${formatDate(end)}`;
+  }
+  if (start) return `From ${formatDate(start)}`;
+  if (end) return `Until ${formatDate(end)}`;
+  return open;
+}
+
 /** "2026-03-05" -> "Mar 5, 2026". */
 export function formatDate(date: IsoDate | string): string {
   const parts = date.split('-');

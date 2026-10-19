@@ -4,7 +4,7 @@
  * button leads to exactly the payload that would cross IPC.
  */
 
-import type { AvailabilityBlock, Nurse } from '@shiftnurse/core';
+import type { AvailabilityBlock, IsoDate, Nurse } from '@shiftnurse/core';
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
@@ -41,6 +41,29 @@ const renderSection = () =>
   renderWithApp(<AccommodationsSection unitId="unit-1" nurses={[nina, vera]} />);
 
 describe('recording an accommodation on the roster', () => {
+  it('gives two accommodations for one nurse distinct button names', async () => {
+    bridge.respond('availabilityBlocks', 'list', [
+      { ...record, startsOn: '2026-10-01' as IsoDate, endsOn: '2026-12-31' as IsoDate },
+      {
+        ...record,
+        id: 'ablk-2',
+        startsOn: '2027-01-01' as IsoDate,
+        endsOn: '2027-03-31' as IsoDate,
+      },
+    ]);
+    renderSection();
+    expect(
+      await screen.findByRole('button', {
+        name: 'Edit Nina Park’s accommodation, Oct 1, 2026 to Dec 31, 2026',
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('button', {
+        name: 'Edit Nina Park’s accommodation, Jan 1, 2027 to Mar 31, 2027',
+      }),
+    ).toBeTruthy();
+  });
+
   it('lists the nurse, the window and the reason, with what an accommodation does', async () => {
     renderSection();
     expect(await screen.findByText('Nina Park')).toBeTruthy();
@@ -63,9 +86,7 @@ describe('recording an accommodation on the roster', () => {
     fireEvent.click(dialog.getByLabelText('Fri'));
     fireEvent.change(dialog.getByLabelText('Starts at'), { target: { value: '18:00' } });
     fireEvent.change(dialog.getByLabelText('Ends at'), { target: { value: '18:00' } });
-    expect(
-      dialog.getByText('A reason is required; it is kept for HR and the audit trail.'),
-    ).toBeTruthy();
+    expect(dialog.getByText('Say why this accommodation exists; it is kept for HR.')).toBeTruthy();
     expect((dialog.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -78,7 +99,9 @@ describe('recording an accommodation on the roster', () => {
     fireEvent.click(dialog.getByLabelText('Fri'));
     fireEvent.change(dialog.getByLabelText('Starts at'), { target: { value: '18:00' } });
     fireEvent.change(dialog.getByLabelText('Ends at'), { target: { value: '18:00' } });
-    fireEvent.change(dialog.getByLabelText('Reason'), { target: { value: ' Sabbath ' } });
+    fireEvent.change(dialog.getByLabelText('Why this accommodation exists'), {
+      target: { value: ' Sabbath ' },
+    });
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
       expect(bridge.callsTo('availabilityBlocks', 'create')).toEqual([
@@ -96,13 +119,15 @@ describe('recording an accommodation on the roster', () => {
     );
   });
 
-  it('edits a window, sending the patch and the reason apart', async () => {
+  it('edits a window and keeps why the accommodation exists', async () => {
     renderSection();
     await screen.findByText('Nina Park');
     fireEvent.click(screen.getByRole('button', { name: /Edit Nina Park/ }));
     const dialog = within(await screen.findByRole('dialog'));
     fireEvent.change(dialog.getByLabelText('Ends at'), { target: { value: '19:00' } });
-    fireEvent.change(dialog.getByLabelText('Reason'), { target: { value: 'Sunset moved' } });
+    fireEvent.change(dialog.getByLabelText('Why are you changing it?'), {
+      target: { value: 'Sunset moved' },
+    });
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
       expect(bridge.callsTo('availabilityBlocks', 'update')).toEqual([
@@ -119,6 +144,40 @@ describe('recording an accommodation on the roster', () => {
         ],
       ]),
     );
+    // toEqual lets an undefined key through; the basis must not be in the patch at all.
+    const patch = bridge.callsTo('availabilityBlocks', 'update')[0]![1] as object;
+    expect(Object.keys(patch).includes('reason')).toBe(false);
+  });
+
+  it('rewrites why the accommodation exists when the manager edits it', async () => {
+    renderSection();
+    await screen.findByText('Nina Park');
+    fireEvent.click(screen.getByRole('button', { name: /Edit Nina Park/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    fireEvent.change(dialog.getByLabelText('Why this accommodation exists'), {
+      target: { value: 'Sabbath, sunset to sunset' },
+    });
+    fireEvent.change(dialog.getByLabelText('Why are you changing it?'), {
+      target: { value: 'Wording' },
+    });
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(bridge.callsTo('availabilityBlocks', 'update')).toHaveLength(1));
+    const call = bridge.callsTo('availabilityBlocks', 'update')[0]!;
+    expect(call[1]).toMatchObject({ reason: 'Sabbath, sunset to sunset' });
+    expect(call[2]).toBe('Wording');
+  });
+
+  it('will not save an edit without saying why it changed', async () => {
+    renderSection();
+    await screen.findByText('Nina Park');
+    fireEvent.click(screen.getByRole('button', { name: /Edit Nina Park/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    const save = dialog.getByRole('button', { name: 'Save' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(dialog.getByLabelText('Why are you changing it?'), {
+      target: { value: 'Sunset moved' },
+    });
+    expect(save.disabled).toBe(false);
   });
 
   it('removes an accommodation only once a reason is given', async () => {

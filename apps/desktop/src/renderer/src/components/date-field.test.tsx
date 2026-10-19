@@ -25,6 +25,21 @@ describe('DateField', () => {
     expect(onChange).toHaveBeenCalledWith('');
   });
 
+  it('shows an error the form passes, tied to the input', () => {
+    render(
+      <DateField
+        label="Seniority date"
+        value=""
+        onChange={() => {}}
+        error="Seniority date is required."
+      />,
+    );
+    const input = screen.getByLabelText('Seniority date');
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    const described = document.getElementById(input.getAttribute('aria-describedby') ?? '');
+    expect(described?.textContent).toBe('Seniority date is required.');
+  });
+
   it('says so when the date is before the earliest allowed', () => {
     render(<DateField label="Day" value={isoDate('2026-10-01')} min={OCT_3} onChange={() => {}} />);
     expect(screen.getByRole('alert').textContent).toBe('Pick a date on or after Oct 3, 2026');
@@ -111,6 +126,22 @@ describe('commit on blur', () => {
     expect(onChange).not.toHaveBeenCalled();
     fireEvent.blur(input());
     expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith('2026-10-15');
+  });
+
+  it('still saves a valid typed date while the form shows its own error', () => {
+    const onChange = vi.fn();
+    render(
+      <DateField
+        label="Requests close on"
+        value=""
+        commitOnBlur
+        error="Date is required."
+        onChange={onChange}
+      />,
+    );
+    fireEvent.change(input(), { target: { value: '2026-10-15' } });
+    fireEvent.blur(input());
     expect(onChange).toHaveBeenCalledWith('2026-10-15');
   });
 

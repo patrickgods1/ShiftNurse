@@ -273,9 +273,20 @@ export {
   formatAssignmentsCsv,
   formatGridCsv,
 } from './publish/index.js';
-export type { RosterCsvError, RosterCsvRow } from './roster/csv.js';
+export type { RosterColumn, RosterCsvError, RosterCsvResult, RosterCsvRow } from './roster/csv.js';
 // The one roster CSV parser and formatter
 export { formatRosterCsv, parseRosterCsv, ROSTER_COLUMNS, serializeCsv } from './roster/csv.js';
+export type {
+  RosterFieldChange,
+  RosterImportPlanRow,
+  RosterNurseUpdate,
+} from './roster/import-plan.js';
+// What a roster import changes, shared by the preview and the import
+export {
+  OPTIONAL_ROSTER_COLUMNS,
+  planRosterImport,
+  rosterChangesFor,
+} from './roster/import-plan.js';
 // The one seniority order every seniority-ranked list uses or reverses
 export { compareEmployeeIds, compareSeniority } from './roster/seniority.js';
 export {
@@ -341,7 +352,7 @@ export {
   ruleConfigProblems,
 } from './rules/param-validation.js';
 // Orientees work with their preceptor
-export { preceptorRule, preceptorsOn } from './rules/preceptor.js';
+export { mayPrecept, preceptorRule, preceptorsOn } from './rules/preceptor.js';
 // The rule registry the solver, grid and compliance report share
 export {
   ALL_RULES,

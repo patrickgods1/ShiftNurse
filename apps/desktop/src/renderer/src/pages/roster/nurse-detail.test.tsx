@@ -8,6 +8,7 @@
 import type { DeactivationImpact, FutureShiftView } from '@shared/api.js';
 import type { Nurse } from '@shiftnurse/core';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
 import { renderWithApp } from '../../test/render.js';
@@ -172,5 +173,97 @@ describe('deactivating a nurse from the roster', () => {
     await openDeactivate();
     fireEvent.click(await screen.findByRole('link', { name: "Open Ana's schedule" }));
     await waitFor(() => expect(screen.queryByText('Deactivate Ana Cruz?')).toBeNull());
+  });
+});
+
+describe('switching nurses in the open drawer', () => {
+  const ben = {
+    ...ana,
+    id: 'n-b',
+    firstName: 'Ben',
+    lastName: 'Okafor',
+    employeeId: 'E2',
+    employmentType: 'per_diem',
+  } as unknown as Nurse;
+  const ana2 = { ...ana, id: 'n-a' } as unknown as Nurse;
+
+  function Harness() {
+    const [id, setId] = useState('n-b');
+    return (
+      <>
+        <button type="button" onClick={() => setId('n-a')}>
+          Open Ana
+        </button>
+        <button type="button" onClick={() => setId('n-b')}>
+          Open Ben
+        </button>
+        <NurseDetail nurseId={id} onClose={() => {}} onEdit={() => {}} />
+      </>
+    );
+  }
+
+  beforeEach(() => {
+    bridge.respond('nurses', 'get', ((id: string) => (id === 'n-a' ? ana2 : ben)) as never);
+    bridge.respond('leaveBalances', 'forNurse', ((id: string) =>
+      id === 'n-a'
+        ? {
+            balances: [
+              { id: 'lb-a', nurseId: 'n-a', type: 'pto', balanceHours: 40, asOf: '2026-10-01' },
+            ],
+            certifications: [
+              {
+                id: 'c-a',
+                nurseId: 'n-a',
+                startDate: '2026-10-01',
+                endDate: '2027-03-31',
+                intermittent: false,
+              },
+            ],
+          }
+        : {
+            balances: [
+              { id: 'lb-b', nurseId: 'n-b', type: 'pto', balanceHours: 8, asOf: '2026-10-01' },
+            ],
+            certifications: [],
+          }) as never);
+  });
+
+  it('shows Ben his own PTO after the manager looked at Ana, and saves nothing for him', async () => {
+    renderWithApp(<Harness />);
+    const box = () => screen.getByLabelText('PTO balance (hours)') as HTMLInputElement;
+    expect(
+      (
+        (await screen.findByLabelText(
+          'PTO balance (hours)',
+          {},
+          { timeout: 5000 },
+        )) as HTMLInputElement
+      ).value,
+    ).toBe('8');
+    fireEvent.click(screen.getByRole('button', { name: 'Open Ana' }));
+    await waitFor(() => expect(box().value).toBe('40'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Ben' }));
+    await waitFor(() => expect(box().value).toBe('8'));
+    const save = screen.getByRole('button', { name: 'Save PTO balance' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    expect(bridge.callsTo('leaveBalances', 'setBalance')).toEqual([]);
+  });
+
+  it("closes Ana's open certification edit when the manager switches to Ben", async () => {
+    renderWithApp(<Harness />);
+    await screen.findByLabelText('PTO balance (hours)', {}, { timeout: 5000 });
+    fireEvent.click(screen.getByRole('button', { name: 'Open Ana' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Edit certification Oct 1, 2026 to Mar 31, 2027' }),
+    );
+    await screen.findByRole('button', { name: 'Save certification' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open Ben' }));
+    await screen.findByText('None on file.');
+    expect(screen.queryByRole('button', { name: 'Save certification' })).toBeNull();
+  });
+
+  it('says a per-diem nurse is Per diem', async () => {
+    renderWithApp(<Harness />);
+    expect(await screen.findByText(/E2 · RN · Per diem/, {}, { timeout: 5000 })).toBeTruthy();
   });
 });

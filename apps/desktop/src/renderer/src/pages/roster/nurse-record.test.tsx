@@ -17,7 +17,7 @@ const ana = { id: 'n-ana', firstName: 'Ana', lastName: 'Cruz' } as Nurse;
 let bridge: FakeBridge;
 beforeEach(() => {
   bridge = installFakeBridge();
-  bridge.respond('nurseRecord', 'exportToFile', '/tmp/Cruz-Ana-record.pdf');
+  bridge.respond('nurseRecord', 'exportToFile', '/tmp/Cruz-Ana-record.csv');
 });
 afterEach(() => {
   cleanup();
@@ -31,10 +31,12 @@ async function openDialog() {
 }
 
 describe('exporting a nurse’s record', () => {
-  it('says up front that kept-apart groups are left out', async () => {
+  it('says up front that kept-apart groups, FMLA certifications and accommodations are left out', async () => {
     await openDialog();
     expect(
-      screen.getByText('Kept-apart groups and the reasons recorded for them are never included.'),
+      screen.getByText(
+        'Kept-apart groups, FMLA certifications and accommodations, and the reasons recorded for them, are never included.',
+      ),
     ).toBeTruthy();
   });
 
@@ -50,7 +52,7 @@ describe('exporting a nurse’s record', () => {
       ]),
     );
     expect((await screen.findByRole('status')).textContent).toBe(
-      'Saved to /tmp/Cruz-Ana-record.pdf',
+      'Saved to /tmp/Cruz-Ana-record.csv',
     );
   });
 

@@ -694,7 +694,9 @@ export interface Assignment {
  * An orientee working under a named preceptor over some dates: a new hire, or a nurse floated in
  * to learn the unit, who may only work when that preceptor is on the floor with them. Dates are
  * inclusive and compare with the shift's start date. An orientee may have more than one
- * preceptor in force; any one of them on the shift is enough.
+ * preceptor in force; any one of them on the shift is enough. A preceptor is an experienced RN,
+ * or an experienced nurse of the orientee's own role (`mayPrecept`); the repository refuses others
+ * when an orientation is created.
  */
 export interface Preceptorship {
   id: Id;

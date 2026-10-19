@@ -142,22 +142,50 @@ describe('recording an accommodation', () => {
 });
 
 describe('changing an accommodation', () => {
-  it('changes the window, records before and after, and takes the new reason', () => {
+  it('changes the window and keeps why the accommodation exists', () => {
     const block = sabbath(vera);
     const after = updateAvailabilityBlock(
       handle.db,
       block.id,
-      { startTime: '17:30', endTime: '18:30', reason: 'Sunset moved' },
+      { startTime: '17:30', endTime: '18:30' },
+      'Sunset moved',
       ACTOR,
     );
-    expect(after).toMatchObject({ startTime: '17:30', endTime: '18:30', reason: 'Sunset moved' });
+    expect(after).toMatchObject({
+      startTime: '17:30',
+      endTime: '18:30',
+      reason: block.reason,
+    });
     expect(listAvailabilityBlocks(handle.db, unitId)).toEqual([after]);
     expect(auditHistoryFor(handle.db, 'availability_block', block.id)[0]).toMatchObject({
       action: 'update',
       reason: 'Sunset moved',
-      before: { startTime: '18:00' },
-      after: { startTime: '17:30' },
+      before: { startTime: '18:00', reason: block.reason },
+      after: { startTime: '17:30', reason: block.reason },
     });
+  });
+
+  it('changes why the accommodation exists only when asked, and audits why', () => {
+    const block = sabbath(vera);
+    const after = updateAvailabilityBlock(
+      handle.db,
+      block.id,
+      { reason: 'Sabbath and holy days' },
+      'Added holy days',
+      ACTOR,
+    );
+    expect(after.reason).toBe('Sabbath and holy days');
+    expect(auditHistoryFor(handle.db, 'availability_block', block.id)[0]).toMatchObject({
+      reason: 'Added holy days',
+    });
+  });
+
+  it('refuses to blank out why an accommodation exists', () => {
+    const block = sabbath(vera);
+    expect(() =>
+      updateAvailabilityBlock(handle.db, block.id, { reason: '  ' }, 'Wording', ACTOR),
+    ).toThrow('Give the reason for the accommodation; it is kept for HR and the audit trail');
+    expect(listAvailabilityBlocks(handle.db, unitId)).toEqual([block]);
   });
 
   it('clears a date with null', () => {
@@ -165,7 +193,8 @@ describe('changing an accommodation', () => {
     const after = updateAvailabilityBlock(
       handle.db,
       block.id,
-      { endsOn: null, reason: 'Now ongoing' },
+      { endsOn: null },
+      'Now ongoing',
       ACTOR,
     );
     expect(after.endsOn).toBeUndefined();
@@ -174,15 +203,10 @@ describe('changing an accommodation', () => {
   it('refuses a missing reason and a column it may not change', () => {
     const block = sabbath(vera);
     expect(() =>
-      updateAvailabilityBlock(handle.db, block.id, { startTime: '17:00' }, ACTOR),
+      updateAvailabilityBlock(handle.db, block.id, { startTime: '17:00' }, '  ', ACTOR),
     ).toThrow(/Give a reason/);
     expect(() =>
-      updateAvailabilityBlock(
-        handle.db,
-        block.id,
-        { nurseId: nina.id, reason: 'x' } as never,
-        ACTOR,
-      ),
+      updateAvailabilityBlock(handle.db, block.id, { nurseId: nina.id } as never, 'x', ACTOR),
     ).toThrow(/cannot change 'nurseId'/);
     expect(listAvailabilityBlocks(handle.db, unitId)).toEqual([block]);
   });
@@ -195,7 +219,7 @@ describe('a change that fails', () => {
       "CREATE TEMP TRIGGER fail_update BEFORE UPDATE ON availability_block BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
     );
     expect(() =>
-      updateAvailabilityBlock(handle.db, block.id, { endTime: '19:00', reason: 'Sunset' }, ACTOR),
+      updateAvailabilityBlock(handle.db, block.id, { endTime: '19:00' }, 'Sunset', ACTOR),
     ).toThrow(/disk full/);
     expect(auditHistoryFor(handle.db, 'availability_block', block.id)).toHaveLength(1);
   });

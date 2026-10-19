@@ -138,7 +138,8 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
   writes (`updateHoliday`, `deleteHoliday`, `recordHolidayWork`, `clearHolidayWork`,
   `addHolidayYear`), `applyJurisdiction`, `deactivateNurseLiftingDrafts` (a leaver's draft
   shifts and her status), `awardRound` (a bid round's awards, approvals, denials and status),
-  `markFloatedOff` (a row marked and locked plus its audit) and `fillCoverageWeek` (seven weekday
+  `markFloatedOff` (a row marked and locked plus its audit), `grantNewCredential` (a credential
+  type and its first grant) and `fillCoverageWeek` (seven weekday
   floors set together) — takes `ShiftNurseTx`, so calling it outside a transaction is a type
   error rather than a docstring nobody read.
 - **Every IPC write runs in one `transact`**, in the `main/api/` module that builds its resource

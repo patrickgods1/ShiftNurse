@@ -79,8 +79,10 @@ import type {
   RequestOrigin,
   Resolution,
   RestWaiver,
+  RosterColumn,
   RosterCsvError,
   RosterCsvRow,
+  RosterImportPlanRow,
   RuleSet,
   ScheduleChange,
   ScheduleCost,
@@ -238,6 +240,8 @@ export type IncompatibilityGroupInput = Omit<IncompatibilityGroup, 'id' | 'reaso
 /** Optional dates take `null` to clear them. The unit never changes. */
 export interface IncompatibilityGroupPatch {
   name?: string;
+  /** The group's own reason (why it exists); absent keeps it. */
+  reason?: string;
   nurseIds?: Id[];
   maxTogether?: number;
   startsOn?: IsoDate | null;
@@ -430,13 +434,17 @@ export interface RestWaiverInput {
 /** A recurring window a nurse cannot work; `reason` is HR-sensitive and shown on the roster only. */
 export type AvailabilityBlockInput = Omit<AvailabilityBlock, 'id'>;
 
-/** The nurse never changes; a date takes `null` to clear it. The reason is passed separately. */
+/**
+ * The nurse never changes; a date takes `null` to clear it. `reason` is the accommodation's own
+ * basis and changes only when given; why the change is made is passed separately.
+ */
 export interface AvailabilityBlockPatch {
   weekdays?: AvailabilityBlock['weekdays'];
   startTime?: string;
   endTime?: string;
   startsOn?: IsoDate | null;
   endsOn?: IsoDate | null;
+  reason?: string;
 }
 
 /** The unit and the pair are fixed once recorded; only the dates change. */
@@ -639,13 +647,21 @@ export interface RosterImportPreview {
   path: string;
   rows: RosterCsvRow[];
   errors: RosterCsvError[];
-  /** Employee ids in the file that already exist on the unit — these will be updated. */
-  existingEmployeeIds: string[];
+  /** The columns the file carried, so a column it lacks can be left alone on import. */
+  columns: RosterColumn[];
+  /** What importing would do for each row, from the same rule the import itself applies. */
+  plan: RosterImportPlanRow[];
 }
 
+/** Mirrors the db's `ImportSummary`. */
 export interface RosterImportSummary {
   created: number;
   updated: number;
+  unchanged: number;
+  /** "Cruz, Ana" for each nurse brought back. */
+  reactivated: string[];
+  /** Matched inactive nurses left inactive. */
+  keptInactive: string[];
   credentialsCreated: string[];
   credentialsGranted: number;
   credentialsUpdated: number;
@@ -1307,7 +1323,15 @@ export interface ShiftNurseApi {
     forNurse(nurseId: Id): NurseCredential[];
     grant(input: Omit<NurseCredential, 'id'>): NurseCredential;
     updateExpiry(id: Id, expiresOn: IsoDate | undefined): NurseCredential;
-    revoke(id: Id): void;
+    /** Creates the type and grants it to the nurse in one transaction: both, or neither. */
+    grantNew(input: {
+      nurseId: Id;
+      code: string;
+      name: string;
+      tracksExpiry: boolean;
+      expiresOn?: IsoDate;
+    }): { credential: Credential; nurseCredential: NurseCredential };
+    revoke(id: Id, reason?: string): void;
   };
   preferences: {
     forNurse(nurseId: Id): Preference[];
@@ -1317,7 +1341,9 @@ export interface ShiftNurseApi {
   incompatibility: {
     list(unitId: Id): IncompatibilityGroup[];
     create(input: IncompatibilityGroupInput, reason: string): IncompatibilityGroup;
-    update(id: Id, patch: IncompatibilityGroupPatch, reason: string): IncompatibilityGroup;
+    /** Why this change is being made, for the audit trail. The record's own reason travels in
+     * `patch.reason` and changes only when given. */
+    update(id: Id, patch: IncompatibilityGroupPatch, changeReason: string): IncompatibilityGroup;
     remove(id: Id, reason: string): void;
   };
   /** Nurses' recorded offers to work overtime, which make an overtime shift voluntary. */
@@ -1388,8 +1414,9 @@ export interface ShiftNurseApi {
   availabilityBlocks: {
     list(unitId: Id): AvailabilityBlock[];
     create(input: AvailabilityBlockInput): AvailabilityBlock;
-    /** `reason` is the stated reason for the change and replaces the one on the block. */
-    update(id: Id, patch: AvailabilityBlockPatch, reason: string): AvailabilityBlock;
+    /** Why this change is being made, for the audit trail. The record's own reason travels in
+     * `patch.reason` and changes only when given. */
+    update(id: Id, patch: AvailabilityBlockPatch, changeReason: string): AvailabilityBlock;
     remove(id: Id, reason: string): void;
   };
   shiftTypes: {
@@ -1456,8 +1483,15 @@ export interface ShiftNurseApi {
   roster: {
     /** Opens a native file picker, parses the file, returns what an import would do. */
     pickImportFile(unitId: Id): Promise<RosterImportPreview | undefined>;
-    /** Applies previously previewed rows atomically. */
-    importRows(unitId: Id, rows: RosterCsvRow[]): RosterImportSummary;
+    /**
+     * Applies previously previewed rows atomically. `options.columns` is the preview's, so a
+     * column the file lacks changes nothing; matched inactive nurses return only if `reactivate`.
+     */
+    importRows(
+      unitId: Id,
+      rows: RosterCsvRow[],
+      options: { columns: RosterColumn[]; reactivate: boolean },
+    ): RosterImportSummary;
     /** Opens a native save dialog and writes the roster CSV. Returns the path written. */
     exportToFile(unitId: Id): Promise<string | undefined>;
     /** The CSV text itself, for the clipboard or tests. */
@@ -1830,7 +1864,7 @@ export const API_CHANNELS = {
   nurses: ['list', 'get', 'create', 'update', 'deactivationImpact', 'deactivate'],
   nurseRecord: ['exportToFile'],
   nurseUnits: ['forNurse', 'floatingIn', 'roster', 'create', 'update', 'remove'],
-  credentials: ['list', 'create', 'forNurse', 'grant', 'updateExpiry', 'revoke'],
+  credentials: ['list', 'create', 'forNurse', 'grant', 'grantNew', 'updateExpiry', 'revoke'],
   preferences: ['forNurse', 'replace'],
   incompatibility: ['list', 'create', 'update', 'remove'],
   overtimeVolunteers: ['list', 'create', 'update', 'remove'],

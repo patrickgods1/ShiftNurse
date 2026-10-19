@@ -12,12 +12,12 @@ import {
   type IsoDate,
   parseHistoricalScheduleCsv,
   parseRosterCsv,
+  planRosterImport,
   today,
 } from '@shiftnurse/core';
 import {
   type DbLike,
   exportRoster,
-  getNurseByEmployeeId,
   ledgerPeriodsForUnit,
   listNursesForUnit,
   listShiftTypesForUnit,
@@ -45,11 +45,10 @@ export async function pickRosterImportFile(
   });
   if (!path) return undefined;
   const text = readFileSync(path, 'utf8');
-  const { rows, errors } = parseRosterCsv(text, { payPeriodDays: unit.payPeriodDays });
-  const existingEmployeeIds = rows
-    .map((r) => r.nurse.employeeId)
-    .filter((employeeId) => getNurseByEmployeeId(db, unitId, employeeId) !== undefined);
-  return { path, rows, errors, existingEmployeeIds };
+  const { rows, errors, columns } = parseRosterCsv(text, { payPeriodDays: unit.payPeriodDays });
+  // Inactive nurses are included: the plan has to say who a re-import would bring back.
+  const plan = planRosterImport(listNursesForUnit(db, unitId), rows, columns);
+  return { path, rows, errors, columns, plan };
 }
 
 export async function exportRosterToFile(db: DbLike, unitId: Id): Promise<string | undefined> {

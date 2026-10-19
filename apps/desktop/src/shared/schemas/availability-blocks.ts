@@ -33,6 +33,7 @@ const blockPatch = object({
   endTime: timeOfDay,
   startsOn: isoDate.nullable(),
   endsOn: isoDate.nullable(),
+  reason: text,
 }).partial();
 
 export const availabilityBlocksSchemas = {

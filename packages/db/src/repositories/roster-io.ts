@@ -6,10 +6,20 @@
  * manager re-importing last month's spreadsheet with three new hires must get three new
  * nurses and updated details for the rest, not 60 duplicates. Import never deactivates or
  * revokes anything: a nurse missing from the file may simply be on a different sheet, and
- * silently removing people from a schedule is the one thing an import must not do.
+ * silently removing people from a schedule is the one thing an import must not do. The same goes
+ * the other way: it reactivates a departed nurse only when the manager asks, and a column the
+ * file does not carry is left as it is (core's `rosterChangesFor` decides, as the preview does).
  */
 
-import type { Credential, Id, IsoDate, NurseCredential, RosterCsvRow } from '@shiftnurse/core';
+import {
+  type Credential,
+  type Id,
+  type IsoDate,
+  type NurseCredential,
+  type RosterColumn,
+  type RosterCsvRow,
+  rosterChangesFor,
+} from '@shiftnurse/core';
 import { eq } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike, ShiftNurseTx } from '../client.js';
@@ -18,11 +28,13 @@ import { toCredential } from '../mappers.js';
 import { credential as credentialTable } from '../schema.js';
 import {
   createNurse,
+  getNurse,
   getNurseByEmployeeId,
   grantCredential,
   listCredentials,
   listNurseCredentials,
   listNursesForUnit,
+  type NursePatch,
   updateCredentialExpiry,
   updateNurse,
 } from './roster.js';
@@ -45,6 +57,47 @@ export function createCredential(
   return after;
 }
 
+export interface GrantNewCredentialInput {
+  nurseId: Id;
+  code: string;
+  name: string;
+  tracksExpiry: boolean;
+  expiresOn?: IsoDate;
+}
+
+/**
+ * Creates a credential type and grants it to one nurse: both rows, or neither. Two calls left an
+ * ungranted type behind when the grant failed, and that type then blocked the retry on the
+ * UNIQUE code.
+ */
+export function grantNewCredential(
+  tx: ShiftNurseTx,
+  input: GrantNewCredentialInput,
+  actor: string,
+): { credential: Credential; nurseCredential: NurseCredential } {
+  const code = input.code.trim().toUpperCase();
+  const name = input.name.trim();
+  if (!code) throw new Error('Enter a code for the credential, such as ACLS.');
+  if (!name) throw new Error("Enter the credential's name.");
+  if (!getNurse(tx, input.nurseId)) throw new Error('That nurse was not found. Reload the page.');
+  const existing = getCredentialByCode(tx, code);
+  if (existing) {
+    throw new Error(
+      `There is already a credential with code ${code} (${existing.name}); choose it from the list instead.`,
+    );
+  }
+  if (!input.tracksExpiry && input.expiresOn !== undefined) {
+    throw new Error(`${code} does not track expiry; leave the expiry date empty.`);
+  }
+  const credential = createCredential(tx, { code, name, tracksExpiry: input.tracksExpiry }, actor);
+  const nurseCredential = grantCredential(
+    tx,
+    { nurseId: input.nurseId, credentialId: credential.id, expiresOn: input.expiresOn },
+    actor,
+  );
+  return { credential, nurseCredential };
+}
+
 /** Every active nurse on the unit as CSV rows, credentials by code. */
 export function exportRoster(db: DbLike, unitId: Id): RosterCsvRow[] {
   const codeById = new Map(listCredentials(db).map((c) => [c.id, c.code]));
@@ -60,9 +113,21 @@ export function exportRoster(db: DbLike, unitId: Id): RosterCsvRow[] {
     });
 }
 
+export interface RosterImportOptions {
+  /** The columns the file carried (`RosterCsvResult.columns`). */
+  columns: readonly RosterColumn[];
+  /** Reactivate matched nurses who are inactive. Off: they are updated and stay inactive. */
+  reactivate: boolean;
+}
+
 export interface ImportSummary {
   created: number;
   updated: number;
+  unchanged: number;
+  /** "Cruz, Ana" for each nurse brought back. */
+  reactivated: string[];
+  /** Matched inactive nurses left inactive. */
+  keptInactive: string[];
   credentialsCreated: string[];
   credentialsGranted: number;
   credentialsUpdated: number;
@@ -77,11 +142,15 @@ export function importRoster(
   db: ShiftNurseTx,
   unitId: Id,
   rows: readonly RosterCsvRow[],
+  options: RosterImportOptions,
   actor: string,
 ): ImportSummary {
   const summary: ImportSummary = {
     created: 0,
     updated: 0,
+    unchanged: 0,
+    reactivated: [],
+    keptInactive: [],
     credentialsCreated: [],
     credentialsGranted: 0,
     credentialsUpdated: 0,
@@ -92,28 +161,27 @@ export function importRoster(
     const existing = getNurseByEmployeeId(db, unitId, row.nurse.employeeId);
     let nurseId: Id;
     if (existing) {
-      updateNurse(
-        db,
-        existing.id,
-        {
-          ...row.nurse,
-          // Blank in the sheet means "clear it" — the sheet is the source of truth on import.
-          phone: row.nurse.phone ?? null,
-          email: row.nurse.email ?? null,
-          notes: row.nurse.notes ?? null,
-          hireDate: row.nurse.hireDate ?? null,
-          scheduleKind: row.nurse.scheduleKind ?? null,
-          active: true,
-        },
-        actor,
-      );
+      const reactivating = options.reactivate && !existing.active;
+      const patch: NursePatch = {
+        ...rosterChangesFor(existing, row, options.columns),
+        ...(reactivating ? { active: true } : {}),
+      };
+      const listName = `${row.nurse.lastName}, ${row.nurse.firstName}`;
+      if (Object.keys(patch).length > 0) {
+        updateNurse(db, existing.id, patch, actor);
+        summary.updated++;
+      } else {
+        summary.unchanged++;
+      }
+      if (reactivating) summary.reactivated.push(listName);
+      else if (!existing.active) summary.keptInactive.push(listName);
       nurseId = existing.id;
-      summary.updated++;
     } else {
       nurseId = createNurse(db, { ...row.nurse, unitId, active: true }, actor).id;
       summary.created++;
     }
 
+    if (!options.columns.includes('credentials')) continue;
     const held = new Map<Id, NurseCredential>(
       listNurseCredentials(db, nurseId).map((nc) => [nc.credentialId, nc]),
     );

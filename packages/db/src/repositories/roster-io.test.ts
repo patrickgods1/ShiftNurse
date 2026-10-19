@@ -13,7 +13,7 @@ import {
   serializeCsv,
 } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { auditHistoryFor } from '../audit.js';
+import { auditHistoryFor, recentAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { createUnit } from './config.js';
 import {
@@ -23,9 +23,10 @@ import {
   listCredentials,
   listNurseCredentials,
 } from './roster.js';
-import { createCredential, exportRoster, importRoster } from './roster-io.js';
+import { createCredential, exportRoster, grantNewCredential, importRoster } from './roster-io.js';
 
 const ACTOR = 'manager';
+const ALL = { columns: ROSTER_COLUMNS, reactivate: true };
 let handle: OpenedDatabase;
 let unitId: string;
 
@@ -78,7 +79,7 @@ describe('roster round trip', () => {
     expect(parsed.errors).toEqual([]);
     expect(parsed.rows).toHaveLength(60);
 
-    const first = transact(handle.db, (tx) => importRoster(tx, unitId, parsed.rows, ACTOR));
+    const first = transact(handle.db, (tx) => importRoster(tx, unitId, parsed.rows, ALL, ACTOR));
     expect(first).toMatchObject({ created: 60, updated: 0, credentialsCreated: ['BLS', 'ACLS'] });
     expect(first.credentialsGranted).toBe(60 + 20);
     expect(listActiveNursesForUnit(handle.db, unitId)).toHaveLength(60);
@@ -90,10 +91,13 @@ describe('roster round trip', () => {
     expect(reparsed.errors).toEqual([]);
     expect(reparsed.rows).toEqual(exported);
 
-    const second = transact(handle.db, (tx) => importRoster(tx, unitId, reparsed.rows, ACTOR));
+    const second = transact(handle.db, (tx) => importRoster(tx, unitId, reparsed.rows, ALL, ACTOR));
     expect(second).toEqual({
       created: 0,
-      updated: 60,
+      updated: 0,
+      unchanged: 60,
+      reactivated: [],
+      keptInactive: [],
       credentialsCreated: [],
       credentialsGranted: 0,
       credentialsUpdated: 0,
@@ -103,7 +107,7 @@ describe('roster round trip', () => {
 
   it('exports the awkward values faithfully — a comma in a surname and a quote in a note', () => {
     const parsed = parseRosterCsv(sixtyNurses(), { payPeriodDays: 14 });
-    transact(handle.db, (tx) => importRoster(tx, unitId, parsed.rows, ACTOR));
+    transact(handle.db, (tx) => importRoster(tx, unitId, parsed.rows, ALL, ACTOR));
     const nurse = exportRoster(handle.db, unitId).find((r) => r.nurse.employeeId === 'E1000')!;
     expect(nurse.nurse.lastName).toBe('Last, 0');
     expect(nurse.nurse.notes).toBe('Note "quoted"');
@@ -132,9 +136,9 @@ describe('roster import reconciliation', () => {
   };
 
   it('updates an existing nurse by employee id instead of creating a twin', () => {
-    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ALL, ACTOR));
     const changed = { ...ada, nurse: { ...ada.nurse, fte: 0.6, contractedHoursPerPeriod: 48 } };
-    const summary = transact(handle.db, (tx) => importRoster(tx, unitId, [changed], ACTOR));
+    const summary = transact(handle.db, (tx) => importRoster(tx, unitId, [changed], ALL, ACTOR));
     expect(summary).toMatchObject({ created: 0, updated: 1 });
     const nurses = listActiveNursesForUnit(handle.db, unitId);
     expect(nurses).toHaveLength(1);
@@ -143,7 +147,7 @@ describe('roster import reconciliation', () => {
 
   it('carries a hire date through import, export and re-import, and an empty cell clears it', () => {
     const bridged = { ...ada, nurse: { ...ada.nurse, hireDate: isoDate('2018-07-09') } };
-    transact(handle.db, (tx) => importRoster(tx, unitId, [bridged], ACTOR));
+    transact(handle.db, (tx) => importRoster(tx, unitId, [bridged], ALL, ACTOR));
     expect(getNurseByEmployeeId(handle.db, unitId, 'E1')?.hireDate).toBe('2018-07-09');
 
     const exported = formatRosterCsv(exportRoster(handle.db, unitId));
@@ -152,27 +156,27 @@ describe('roster import reconciliation', () => {
     expect(reparsed.errors).toEqual([]);
     expect(reparsed.rows[0]!.nurse.hireDate).toBe('2018-07-09');
 
-    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ALL, ACTOR));
     expect(getNurseByEmployeeId(handle.db, unitId, 'E1')?.hireDate).toBeUndefined();
   });
 
   it('puts a nurse on a VA plan from the sheet, and a blank cell on re-import returns them to standard', () => {
     const planned = { ...ada, nurse: { ...ada.nurse, scheduleKind: 'va_72_80' as const } };
-    transact(handle.db, (tx) => importRoster(tx, unitId, [planned], ACTOR));
+    transact(handle.db, (tx) => importRoster(tx, unitId, [planned], ALL, ACTOR));
     expect(getNurseByEmployeeId(handle.db, unitId, 'E1')?.scheduleKind).toBe('va_72_80');
     expect(formatRosterCsv(exportRoster(handle.db, unitId))).toContain(',va_72_80');
 
-    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ALL, ACTOR));
     expect(getNurseByEmployeeId(handle.db, unitId, 'E1')?.scheduleKind).toBeUndefined();
   });
 
   it('sets scheduled days from the sheet, and a blank cell on re-import keeps them', () => {
     const planned = { ...ada, nurse: { ...ada.nurse, scheduledDaysPerWeek: 3 } };
-    transact(handle.db, (tx) => importRoster(tx, unitId, [planned], ACTOR));
+    transact(handle.db, (tx) => importRoster(tx, unitId, [planned], ALL, ACTOR));
     expect(getNurseByEmployeeId(handle.db, unitId, 'E1')?.scheduledDaysPerWeek).toBe(3);
     expect(formatRosterCsv(exportRoster(handle.db, unitId)).split('\r\n')[1]).toMatch(/,3$/);
 
-    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ALL, ACTOR));
     expect(getNurseByEmployeeId(handle.db, unitId, 'E1')?.scheduledDaysPerWeek).toBe(3);
   });
 
@@ -182,7 +186,7 @@ describe('roster import reconciliation', () => {
       { ...ada.nurse, employeeId: 'E9', firstName: 'Bo', unitId, active: true },
       ACTOR,
     );
-    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ALL, ACTOR));
     expect(
       listActiveNursesForUnit(handle.db, unitId)
         .map((n) => n.employeeId)
@@ -190,10 +194,45 @@ describe('roster import reconciliation', () => {
     ).toEqual(['E1', 'E9']);
   });
 
-  it('reactivates a deactivated nurse who reappears in the file', () => {
+  it('reactivates a deactivated nurse who reappears in the file when the manager asks', () => {
     const created = createNurse(handle.db, { ...ada.nurse, unitId, active: false }, ACTOR);
-    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
+    const summary = transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ALL, ACTOR));
     expect(listActiveNursesForUnit(handle.db, unitId).map((n) => n.id)).toEqual([created.id]);
+    expect(summary.reactivated).toEqual(['Okafor, Ada']);
+  });
+
+  it('leaves a nurse who left inactive unless the manager asks to bring her back', () => {
+    createNurse(handle.db, { ...ada.nurse, unitId, active: false }, ACTOR);
+    const summary = transact(handle.db, (tx) =>
+      importRoster(tx, unitId, [ada], { columns: ROSTER_COLUMNS, reactivate: false }, ACTOR),
+    );
+    expect(listActiveNursesForUnit(handle.db, unitId)).toEqual([]);
+    expect(summary.keptInactive).toEqual(['Okafor, Ada']);
+    expect(summary.reactivated).toEqual([]);
+  });
+
+  it('keeps a 72/80 plan and notes when the sheet has neither column', () => {
+    createNurse(
+      handle.db,
+      { ...ada.nurse, unitId, active: true, scheduleKind: 'va_72_80', notes: 'Prefers nights' },
+      ACTOR,
+    );
+    const required = ROSTER_COLUMNS.slice(0, 7);
+    const summary = transact(handle.db, (tx) =>
+      importRoster(tx, unitId, [ada], { columns: required, reactivate: false }, ACTOR),
+    );
+    const kept = getNurseByEmployeeId(handle.db, unitId, 'E1')!;
+    expect(kept.scheduleKind).toBe('va_72_80');
+    expect(kept.notes).toBe('Prefers nights');
+    expect(summary.unchanged).toBe(1);
+  });
+
+  it('writes no audit row for a nurse the sheet does not change', () => {
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ALL, ACTOR));
+    const nurse = getNurseByEmployeeId(handle.db, unitId, 'E1')!;
+    const before = auditHistoryFor(handle.db, 'nurse', nurse.id).length;
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ALL, ACTOR));
+    expect(auditHistoryFor(handle.db, 'nurse', nurse.id)).toHaveLength(before);
   });
 
   it('reuses an existing credential by code and only creates unknown ones', () => {
@@ -207,6 +246,7 @@ describe('roster import reconciliation', () => {
         tx,
         unitId,
         [{ ...ada, credentials: [...ada.credentials, { code: 'PALS', expiresOn: undefined }] }],
+        ALL,
         ACTOR,
       ),
     );
@@ -221,19 +261,20 @@ describe('roster import reconciliation', () => {
   });
 
   it('updates an expiry that moved and never revokes a credential missing from the file', () => {
-    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ALL, ACTOR));
     const nurse = getNurseByEmployeeId(handle.db, unitId, 'E1')!;
     const renewed = transact(handle.db, (tx) =>
       importRoster(
         tx,
         unitId,
         [{ ...ada, credentials: [{ code: 'ACLS', expiresOn: isoDate('2029-03-01') }] }],
+        ALL,
         ACTOR,
       ),
     );
     expect(renewed).toMatchObject({ credentialsUpdated: 1, credentialsGranted: 0 });
     const stripped = transact(handle.db, (tx) =>
-      importRoster(tx, unitId, [{ ...ada, credentials: [] }], ACTOR),
+      importRoster(tx, unitId, [{ ...ada, credentials: [] }], ALL, ACTOR),
     );
     expect(stripped).toMatchObject({ credentialsUpdated: 0, credentialsGranted: 0 });
     const held = listNurseCredentials(handle.db, nurse.id);
@@ -242,14 +283,146 @@ describe('roster import reconciliation', () => {
   });
 
   it('writes an audit trail: a create on first import, an update with before/after on the second', () => {
-    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ACTOR));
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ALL, ACTOR));
     const nurse = getNurseByEmployeeId(handle.db, unitId, 'E1')!;
     transact(handle.db, (tx) =>
-      importRoster(tx, unitId, [{ ...ada, nurse: { ...ada.nurse, phone: '555-0199' } }], ACTOR),
+      importRoster(
+        tx,
+        unitId,
+        [{ ...ada, nurse: { ...ada.nurse, phone: '555-0199' } }],
+        ALL,
+        ACTOR,
+      ),
     );
     const history = auditHistoryFor(handle.db, 'nurse', nurse.id);
     expect(history.map((h) => h.action)).toEqual(['update', 'create']);
     expect(history[0]!.before).toMatchObject({ phone: '555-0100' });
     expect(history[0]!.after).toMatchObject({ phone: '555-0199' });
+  });
+});
+
+describe('adding a credential type while granting it', () => {
+  function nurse() {
+    return createNurse(
+      handle.db,
+      {
+        unitId,
+        employeeId: 'E1',
+        firstName: 'Ada',
+        lastName: 'Okafor',
+        role: 'RN',
+        employmentType: 'full_time',
+        fte: 1,
+        contractedHoursPerPeriod: 80,
+        seniorityDate: isoDate('2015-03-02'),
+        isChargeEligible: true,
+        isNovice: false,
+        isFloatEligible: true,
+        active: true,
+      },
+      ACTOR,
+    );
+  }
+
+  it('adds the new type and grants it to the nurse in one step, audited twice', () => {
+    const ada = nurse();
+    const { credential, nurseCredential } = transact(handle.db, (tx) =>
+      grantNewCredential(
+        tx,
+        {
+          nurseId: ada.id,
+          code: ' tncc ',
+          name: 'Trauma Nursing Core Course',
+          tracksExpiry: true,
+          expiresOn: isoDate('2027-05-01'),
+        },
+        ACTOR,
+      ),
+    );
+    expect(listCredentials(handle.db)).toEqual([
+      { id: credential.id, code: 'TNCC', name: 'Trauma Nursing Core Course', tracksExpiry: true },
+    ]);
+    const held = listNurseCredentials(handle.db, ada.id);
+    expect(held).toHaveLength(1);
+    expect(held[0]).toMatchObject({ credentialId: credential.id, expiresOn: '2027-05-01' });
+    expect(auditHistoryFor(handle.db, 'credential', credential.id).map((a) => a.action)).toEqual([
+      'create',
+    ]);
+    expect(
+      auditHistoryFor(handle.db, 'nurse_credential', nurseCredential.id).map((a) => a.action),
+    ).toEqual(['create']);
+  });
+
+  it('refuses a code already in the catalogue and writes nothing', () => {
+    const ada = nurse();
+    createCredential(
+      handle.db,
+      { code: 'ACLS', name: 'Advanced Cardiac Life Support', tracksExpiry: true },
+      ACTOR,
+    );
+    expect(() =>
+      transact(handle.db, (tx) =>
+        grantNewCredential(
+          tx,
+          { nurseId: ada.id, code: 'acls', name: 'Other', tracksExpiry: true },
+          ACTOR,
+        ),
+      ),
+    ).toThrow(
+      'There is already a credential with code ACLS (Advanced Cardiac Life Support); choose it from the list instead.',
+    );
+    expect(listCredentials(handle.db)).toHaveLength(1);
+    expect(listNurseCredentials(handle.db, ada.id)).toHaveLength(0);
+  });
+
+  it('refuses an expiry for a type that does not track one', () => {
+    const ada = nurse();
+    expect(() =>
+      transact(handle.db, (tx) =>
+        grantNewCredential(
+          tx,
+          {
+            nurseId: ada.id,
+            code: 'TNCC',
+            name: 'Trauma',
+            tracksExpiry: false,
+            expiresOn: isoDate('2027-01-01'),
+          },
+          ACTOR,
+        ),
+      ),
+    ).toThrow('TNCC does not track expiry; leave the expiry date empty.');
+    expect(listCredentials(handle.db)).toHaveLength(0);
+    expect(listNurseCredentials(handle.db, ada.id)).toHaveLength(0);
+  });
+
+  it.each([
+    ['a blank code', { code: '  ' }, 'Enter a code for the credential, such as ACLS.'],
+    ['a blank name', { name: ' ' }, "Enter the credential's name."],
+    [
+      'a nurse who is not there',
+      { nurseId: 'nobody' },
+      'That nurse was not found. Reload the page.',
+    ],
+    [
+      'a blank code and a missing nurse together (the code is reported first)',
+      { code: '', nurseId: 'nobody' },
+      'Enter a code for the credential, such as ACLS.',
+    ],
+  ])('refuses %s and writes nothing', (_label, override, message) => {
+    const ada = nurse();
+    const before = recentAudit(handle.db, 1000).length;
+    expect(() =>
+      transact(handle.db, (tx) =>
+        grantNewCredential(
+          tx,
+          { nurseId: ada.id, code: 'TNCC', name: 'Trauma', tracksExpiry: true, ...override },
+          ACTOR,
+        ),
+      ),
+    ).toThrow(message);
+    expect(listCredentials(handle.db)).toHaveLength(0);
+    expect(listNurseCredentials(handle.db, ada.id)).toHaveLength(0);
+    expect(recentAudit(handle.db, 1000)).toHaveLength(before);
   });
 });

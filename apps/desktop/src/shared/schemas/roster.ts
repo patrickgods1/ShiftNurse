@@ -1,6 +1,6 @@
 /** Argument schemas for `roster`. */
 
-import type { IsoDate } from '@shiftnurse/core';
+import { type IsoDate, ROSTER_COLUMNS } from '@shiftnurse/core';
 import { z } from 'zod';
 import { nurseFields } from './nurses.js';
 import { id, isoDate, name, object, type ResourceSchemas } from './primitives.js';
@@ -38,7 +38,11 @@ const rosterRow = object({
 
 export const rosterSchemas = {
   pickImportFile: z.tuple([id]),
-  importRows: z.tuple([id, z.array(rosterRow)]),
+  importRows: z.tuple([
+    id,
+    z.array(rosterRow),
+    object({ columns: z.array(z.enum(ROSTER_COLUMNS)), reactivate: z.boolean() }),
+  ]),
   exportToFile: z.tuple([id]),
   exportCsv: z.tuple([id]),
 } satisfies ResourceSchemas<'roster'>;

@@ -13,8 +13,8 @@ export function availabilityBlocksApi(db: ShiftNurseDb): ShiftNurseApi['availabi
   return {
     list: (unitId) => listAvailabilityBlocks(db, unitId),
     create: (input) => transact(db, (tx) => createAvailabilityBlock(tx, input, ACTOR)),
-    update: (id, patch, reason) =>
-      transact(db, (tx) => updateAvailabilityBlock(tx, id, { ...patch, reason }, ACTOR)),
+    update: (id, patch, changeReason) =>
+      transact(db, (tx) => updateAvailabilityBlock(tx, id, patch, changeReason, ACTOR)),
     remove: (id, reason) => transact(db, (tx) => deleteAvailabilityBlock(tx, id, reason, ACTOR)),
   };
 }

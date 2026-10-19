@@ -16,6 +16,7 @@ import {
   futureShiftsFor,
   getNurse,
   grantCredential,
+  grantNewCredential,
   ids,
   importRoster,
   listCredentials,
@@ -81,9 +82,10 @@ export function rosterApi(db: ShiftNurseDb): Pick<
       create: (input) => transact(db, (tx) => createCredential(tx, input, ACTOR)),
       forNurse: (nurseId) => listNurseCredentials(db, nurseId),
       grant: (input) => transact(db, (tx) => grantCredential(tx, input, ACTOR)),
+      grantNew: (input) => transact(db, (tx) => grantNewCredential(tx, input, ACTOR)),
       updateExpiry: (id, expiresOn) =>
         transact(db, (tx) => updateCredentialExpiry(tx, id, expiresOn, ACTOR)),
-      revoke: (id) => transact(db, (tx) => revokeCredential(tx, id, ACTOR)),
+      revoke: (id, reason) => transact(db, (tx) => revokeCredential(tx, id, ACTOR, reason)),
     },
     preferences: {
       forNurse: (nurseId) => listPreferencesForNurse(db, nurseId),
@@ -101,14 +103,15 @@ export function rosterApi(db: ShiftNurseDb): Pick<
       list: (unitId) => listIncompatibilityGroups(db, unitId),
       create: (input, reason) =>
         transact(db, (tx) => createIncompatibilityGroup(tx, input, reason, ACTOR)),
-      update: (id, patch, reason) =>
-        transact(db, (tx) => updateIncompatibilityGroup(tx, id, patch, reason, ACTOR)),
+      update: (id, patch, changeReason) =>
+        transact(db, (tx) => updateIncompatibilityGroup(tx, id, patch, changeReason, ACTOR)),
       remove: (id, reason) =>
         transact(db, (tx) => deleteIncompatibilityGroup(tx, id, reason, ACTOR)),
     },
     // The file-dialog halves (`pickImportFile`, `exportToFile`) are Electron's; `api.ts` adds them.
     roster: {
-      importRows: (unitId, rows) => transact(db, (tx) => importRoster(tx, unitId, rows, ACTOR)),
+      importRows: (unitId, rows, options) =>
+        transact(db, (tx) => importRoster(tx, unitId, rows, options, ACTOR)),
       exportCsv: (unitId) => formatRosterCsv(exportRoster(db, unitId)),
     },
   };

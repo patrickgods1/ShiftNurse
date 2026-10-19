@@ -5,11 +5,13 @@
  * a backfill card says so — and whenever members do overlap, the rule set's minimum of outside
  * staff must be on with them.
  *
- * Every change asks for a reason, which goes to the audit log. The reason is shown here and
- * nowhere else: violation text on the grid and in exports names the people and the hours only.
+ * A group's own reason (why they are kept apart) is separate from the reason for a change, which
+ * goes to the audit log. The group's reason is shown here and nowhere else: violation text on the
+ * grid and in exports names the people and the hours only.
  */
 
 import type { Id, IncompatibilityGroup, IsoDate, Nurse } from '@shiftnurse/core';
+import { compareDates } from '@shiftnurse/core';
 import { type FormEvent, useId, useState } from 'react';
 import {
   useCreateIncompatibilityGroup,
@@ -29,7 +31,7 @@ import {
   SECONDARY,
   SMALL,
 } from '../../components/ui.js';
-import { formatDate } from '../../format.js';
+import { formatSpan } from '../../format.js';
 
 interface SectionProps {
   unitId: Id;
@@ -86,11 +88,17 @@ export function IncompatibilitySection({ unitId, nurses }: SectionProps) {
                   ))}
                 </div>
                 <div className="mt-1 text-xs text-text-muted">
-                  {capLabel(group.maxTogether)} · {rangeLabel(group)}
+                  {capLabel(group.maxTogether)} ·{' '}
+                  {formatSpan(group.startsOn, group.endsOn, 'Until removed')}
                 </div>
                 <div className="mt-1 text-xs text-text-muted">Reason: {group.reason}</div>
               </div>
-              <button type="button" className={SMALL} onClick={() => setEditing(group)}>
+              <button
+                type="button"
+                className={SMALL}
+                aria-label={`Edit ${group.name}, ${formatSpan(group.startsOn, group.endsOn, 'Until removed')}`}
+                onClick={() => setEditing(group)}
+              >
                 Edit
               </button>
             </li>
@@ -116,15 +124,6 @@ function capLabel(maxTogether: number): string {
     : `At most ${maxTogether} on the floor at once`;
 }
 
-function rangeLabel(group: IncompatibilityGroup): string {
-  if (group.startsOn && group.endsOn) {
-    return `${formatDate(group.startsOn)} to ${formatDate(group.endsOn)}`;
-  }
-  if (group.startsOn) return `From ${formatDate(group.startsOn)}`;
-  if (group.endsOn) return `Until ${formatDate(group.endsOn)}`;
-  return 'Until removed';
-}
-
 // ---------------------------------------------------------------------------
 // Create / edit / remove
 // ---------------------------------------------------------------------------
@@ -145,9 +144,11 @@ function GroupDialog({ unitId, nurses, group, onClose }: DialogProps) {
   const [name, setName] = useState(group?.name ?? '');
   const [members, setMembers] = useState<ReadonlySet<Id>>(new Set(group?.nurseIds ?? []));
   const [maxTogether, setMaxTogether] = useState(String(group?.maxTogether ?? 1));
-  const [startsOn, setStartsOn] = useState<string>(group?.startsOn ?? '');
-  const [endsOn, setEndsOn] = useState<string>(group?.endsOn ?? '');
-  const [reason, setReason] = useState('');
+  const [startsOn, setStartsOn] = useState<IsoDate | ''>(group?.startsOn ?? '');
+  const [endsOn, setEndsOn] = useState<IsoDate | ''>(group?.endsOn ?? '');
+  const [reason, setReason] = useState(group?.reason ?? '');
+  // The basis above is why the group exists; this is why it is being changed, for the audit log.
+  const [changeReason, setChangeReason] = useState('');
   const [filter, setFilter] = useState('');
 
   // Inactive nurses stay listed only if they are already members, so removing them is possible.
@@ -167,11 +168,13 @@ function GroupDialog({ unitId, nurses, group, onClose }: DialogProps) {
         ? 'Allow at least 1 on the floor at a time.'
         : cap >= members.size
           ? `A group of ${members.size} can allow at most ${members.size - 1} at once.`
-          : startsOn && endsOn && endsOn < startsOn
+          : startsOn && endsOn && compareDates(endsOn, startsOn) < 0
             ? 'The end date is before the start.'
             : !reason.trim()
-              ? 'A reason is required; it goes to the audit log.'
-              : undefined;
+              ? 'Say why they are kept apart; it is kept for HR.'
+              : group && !changeReason.trim()
+                ? 'Say why you are changing it; it is kept in the audit trail.'
+                : undefined;
   const pending = create.isPending || update.isPending || remove.isPending;
   const error = errorMessage(create.error ?? update.error ?? remove.error);
 
@@ -197,10 +200,11 @@ function GroupDialog({ unitId, nurses, group, onClose }: DialogProps) {
           id: group.id,
           patch: {
             ...fields,
-            startsOn: (startsOn || null) as IsoDate | null,
-            endsOn: (endsOn || null) as IsoDate | null,
+            startsOn: startsOn || null,
+            endsOn: endsOn || null,
+            ...(reason.trim() !== group.reason ? { reason: reason.trim() } : {}),
           },
-          reason: reason.trim(),
+          changeReason: changeReason.trim(),
         },
         done,
       );
@@ -210,8 +214,8 @@ function GroupDialog({ unitId, nurses, group, onClose }: DialogProps) {
           input: {
             unitId,
             ...fields,
-            ...(startsOn ? { startsOn: startsOn as IsoDate } : {}),
-            ...(endsOn ? { endsOn: endsOn as IsoDate } : {}),
+            ...(startsOn ? { startsOn } : {}),
+            ...(endsOn ? { endsOn } : {}),
           },
           reason: reason.trim(),
         },
@@ -221,8 +225,8 @@ function GroupDialog({ unitId, nurses, group, onClose }: DialogProps) {
   };
 
   const onRemove = () => {
-    if (!group || !reason.trim()) return;
-    remove.mutate({ id: group.id, reason: reason.trim() }, { onSuccess: onClose });
+    if (!group || !changeReason.trim()) return;
+    remove.mutate({ id: group.id, reason: changeReason.trim() }, { onSuccess: onClose });
   };
 
   return (
@@ -285,27 +289,46 @@ function GroupDialog({ unitId, nurses, group, onClose }: DialogProps) {
           <DateField
             id={`${ids}-starts`}
             label="Starts (optional)"
-            value={startsOn as IsoDate | ''}
+            value={startsOn}
             onChange={setStartsOn}
           />
           <DateField
             id={`${ids}-ends`}
             label="Ends (optional)"
-            value={endsOn as IsoDate | ''}
+            value={endsOn}
             onChange={setEndsOn}
           />
         </div>
 
-        <label className={LABEL}>
-          Reason for this change
+        <div className="flex flex-col gap-1">
+          <label htmlFor={`${ids}-reason`} className={LABEL}>
+            Why they are kept apart
+          </label>
           <textarea
+            id={`${ids}-reason`}
             className={INPUT}
             rows={2}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="Recorded in the audit log. Not shown on the schedule."
+            placeholder="Kept for HR. Not shown on the schedule."
           />
-        </label>
+        </div>
+
+        {group ? (
+          <div className="flex flex-col gap-1">
+            <label htmlFor={`${ids}-change`} className={LABEL}>
+              Why are you changing it?
+            </label>
+            <textarea
+              id={`${ids}-change`}
+              className={INPUT}
+              rows={2}
+              value={changeReason}
+              onChange={(e) => setChangeReason(e.target.value)}
+              placeholder="Recorded in the audit log. Also needed to remove the group."
+            />
+          </div>
+        ) : null}
 
         {problem && (name || members.size > 0 || reason) ? (
           <p className="text-xs text-text-muted">{problem}</p>
@@ -321,9 +344,9 @@ function GroupDialog({ unitId, nurses, group, onClose }: DialogProps) {
             <button
               type="button"
               className={DANGER}
-              disabled={pending || !reason.trim()}
+              disabled={pending || !changeReason.trim()}
               onClick={onRemove}
-              title={reason.trim() ? undefined : 'Enter a reason first'}
+              title={changeReason.trim() ? undefined : 'Enter a reason first'}
             >
               Remove group
             </button>

@@ -6,7 +6,9 @@
  * every write takes `ShiftNurseTx`. Every write is also audited with a stated reason
  * (`recordAuditStrict`): keeping two people apart is a management decision that may be
  * challenged, and the reason is what gets quoted. The reason is HR-sensitive and is never copied
- * into a violation message; see `IncompatibilityGroup`.
+ * into a violation message; see `IncompatibilityGroup`. An update's reason is why it changed and
+ * goes to the audit row; the record's own reason (its basis) changes only when the patch carries
+ * `reason`.
  */
 
 import type { Id, IncompatibilityGroup, IsoDate } from '@shiftnurse/core';
@@ -27,9 +29,13 @@ const ENTITY = 'incompatibility_group';
 /** What a manager enters; the reason is passed separately, as it is for every audited decision. */
 export type IncompatibilityGroupInput = Omit<IncompatibilityGroup, 'id' | 'reason'>;
 
-/** Optional dates take `null` to clear them; an omitted key is left alone. */
+/**
+ * Optional dates take `null` to clear them; an omitted key is left alone. `reason` is the group's
+ * own basis: absent keeps it; the reason for the change is passed separately.
+ */
 export interface IncompatibilityGroupPatch {
   name?: string;
+  reason?: string;
   nurseIds?: Id[];
   maxTogether?: number;
   startsOn?: IsoDate | null;
@@ -38,6 +44,7 @@ export interface IncompatibilityGroupPatch {
 
 const PATCH_KEYS: PatchKeys<IncompatibilityGroupPatch> = {
   name: true,
+  reason: true,
   nurseIds: true,
   maxTogether: true,
   startsOn: true,
@@ -105,13 +112,20 @@ export function updateIncompatibilityGroup(
   tx: ShiftNurseTx,
   id: Id,
   patch: IncompatibilityGroupPatch,
-  reason: string,
+  changeReason: string,
   actor: string,
 ): IncompatibilityGroup {
   const before = getIncompatibilityGroup(tx, id);
   if (!before) throw new Error(`Incompatibility group ${id} not found`);
   const changes = patchOf(patch, PATCH_KEYS, 'incompatibility group');
-  const after: IncompatibilityGroup = { ...before, reason: reason.trim() };
+  const after: IncompatibilityGroup = { ...before };
+  if (changes.reason !== undefined) {
+    const basis = changes.reason.trim();
+    if (!basis) {
+      throw new Error('A kept-apart group needs its reason; it is kept for HR and the audit trail');
+    }
+    after.reason = basis;
+  }
   if (changes.name !== undefined) after.name = changes.name.trim();
   if (changes.nurseIds !== undefined) after.nurseIds = [...changes.nurseIds].sort();
   if (changes.maxTogether !== undefined) after.maxTogether = changes.maxTogether;
@@ -123,7 +137,15 @@ export function updateIncompatibilityGroup(
   validate(tx, after);
   recordAuditStrict(
     tx,
-    { entityType: ENTITY, entityId: id, action: 'update', actor, before, after, reason },
+    {
+      entityType: ENTITY,
+      entityId: id,
+      action: 'update',
+      actor,
+      before,
+      after,
+      reason: changeReason,
+    },
     { requireReason: true },
   );
   tx.update(groupTable).set(toRow(after)).where(eq(groupTable.id, id)).run();

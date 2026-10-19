@@ -4,6 +4,9 @@
  * minimal `NursePatch` of just the changed fields for edit; per the IPC contract, `phone`/
  * `email`/`notes` need an explicit `null` to be cleared, so the diff has to say so rather
  * than omitting the key.
+ *
+ * Labels name the field; hints and errors are its description (`field-help`'s `Field`), and
+ * warnings never block Save.
  */
 
 import type {
@@ -16,16 +19,19 @@ import type {
   Tour,
 } from '@shiftnurse/core';
 import {
+  compareDates,
   EMPLOYMENT_TYPE_LABELS,
   EMPLOYMENT_TYPES,
+  isIsoDate,
   SCHEDULE_KIND_LABELS,
   SCHEDULE_KINDS,
+  today,
 } from '@shiftnurse/core';
-import { type FormEvent, type ReactNode, useEffect, useId, useState } from 'react';
+import { type FormEvent, useEffect, useId, useState } from 'react';
 import type { NurseInput, NursePatch } from '../../../../shared/api.js';
 import { useCreateNurse, useUpdateNurse } from '../../api.js';
 import { DateField } from '../../components/date-field.js';
-import { describedBy, Field as HelpField } from '../../components/field-help.js';
+import { describedBy, Field } from '../../components/field-help.js';
 import { Modal } from '../../components/modal.js';
 import { PRIMARY, SECONDARY } from '../../components/ui.js';
 
@@ -38,7 +44,7 @@ const TOUR_OPTIONS: readonly { value: Tour | ''; label: string }[] = [
   { value: 'night', label: 'Night' },
 ];
 
-interface FormState {
+export interface FormState {
   employeeId: string;
   firstName: string;
   lastName: string;
@@ -136,7 +142,18 @@ interface FieldErrors {
   email?: string;
 }
 
-function validate(form: FormState): FieldErrors {
+const FOCUS_ORDER: readonly (keyof FieldErrors)[] = [
+  'employeeId',
+  'firstName',
+  'lastName',
+  'fte',
+  'contractedHoursPerPeriod',
+  'seniorityDate',
+  'scheduledDaysPerWeek',
+  'email',
+];
+
+function validate(form: FormState, payPeriodDays: number): FieldErrors {
   const errors: FieldErrors = {};
   if (!form.employeeId.trim()) errors.employeeId = 'Employee ID is required.';
   if (!form.firstName.trim()) errors.firstName = 'First name is required.';
@@ -149,6 +166,8 @@ function validate(form: FormState): FieldErrors {
   const hours = Number(form.contractedHoursPerPeriod);
   if (form.contractedHoursPerPeriod.trim() === '' || Number.isNaN(hours) || hours < 0) {
     errors.contractedHoursPerPeriod = 'Contracted hours must be a non-negative number.';
+  } else if (hours > payPeriodDays * 24) {
+    errors.contractedHoursPerPeriod = `Contracted hours must be ${payPeriodDays * 24} or fewer (24 hours a day for a ${payPeriodDays}-day pay period).`;
   }
 
   if (form.scheduledDaysPerWeek.trim() !== '') {
@@ -165,6 +184,30 @@ function validate(form: FormState): FieldErrors {
   }
 
   return errors;
+}
+
+/** Things that look wrong but are the manager's call; they never stop Save. */
+export function warnings(form: FormState, _payPeriodDays: number, todayIso: IsoDate): string[] {
+  const out: string[] = [];
+  const type = form.employmentType;
+  const hours = Number(form.contractedHoursPerPeriod);
+  if ((type === 'full_time' || type === 'part_time') && Number(form.fte) === 0) {
+    out.push(
+      `A ${EMPLOYMENT_TYPE_LABELS[type].toLowerCase()} nurse at FTE 0 has no contracted hours.`,
+    );
+  }
+  if (isIsoDate(form.seniorityDate) && compareDates(form.seniorityDate, todayIso) > 0) {
+    out.push('The seniority date is in the future.');
+  }
+  if (isIsoDate(form.hireDate) && compareDates(form.hireDate, todayIso) > 0) {
+    out.push('The hire date is in the future; fine for a nurse who has not started yet.');
+  }
+  if ((type === 'per_diem' || type === 'agency') && hours > 0) {
+    out.push(
+      `${EMPLOYMENT_TYPE_LABELS[type]} staff have no contracted minimum; the under-hours check skips them.`,
+    );
+  }
+  return out;
 }
 
 interface NurseFormDialogProps {
@@ -190,6 +233,7 @@ export function NurseFormDialog({
   const [hoursTouched, setHoursTouched] = useState(isEdit);
   const [errors, setErrors] = useState<FieldErrors>({});
   const formId = useId();
+  const fid = (name: string) => `${formId}-${name}`;
   const createNurse = useCreateNurse(unitId);
   const updateNurse = useUpdateNurse(unitId);
   const saving = createNurse.isPending || updateNurse.isPending;
@@ -209,21 +253,22 @@ export function NurseFormDialog({
     updateNurse.reset();
   }, [open, nurse]);
 
+  const warningList = warnings(form, payPeriodDays, today());
+
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => {
       const next = { ...prev, [key]: value };
-      // Per-diem and agency staff have no contracted minimum.
-      if (
-        key === 'employmentType' &&
-        (value === 'per_diem' || value === 'agency') &&
-        !hoursTouched
-      ) {
-        next.contractedHoursPerPeriod = '0';
-      }
-      if (key === 'fte' && !hoursTouched) {
-        const fte = Number(value);
-        if (!Number.isNaN(fte)) {
-          next.contractedHoursPerPeriod = String(defaultContractedHours(fte, payPeriodDays));
+      if (!hoursTouched) {
+        const type = next.employmentType;
+        const paid = type === 'full_time' || type === 'part_time';
+        // Per-diem and agency staff have no contracted minimum, so an FTE edit must not give
+        // them one; switching back to a contracted type works it out from the current FTE.
+        if (key === 'employmentType' && !paid) next.contractedHoursPerPeriod = '0';
+        else if ((key === 'fte' || key === 'employmentType') && paid) {
+          const fte = Number(next.fte);
+          if (!Number.isNaN(fte)) {
+            next.contractedHoursPerPeriod = String(defaultContractedHours(fte, payPeriodDays));
+          }
         }
       }
       return next;
@@ -245,9 +290,13 @@ export function NurseFormDialog({
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    const fieldErrors = validate(form);
+    const fieldErrors = validate(form, payPeriodDays);
     setErrors(fieldErrors);
-    if (Object.keys(fieldErrors).length > 0) return;
+    const firstInvalid = FOCUS_ORDER.find((key) => fieldErrors[key] !== undefined);
+    if (firstInvalid !== undefined) {
+      document.getElementById(`${formId}-${firstInvalid}`)?.focus();
+      return;
+    }
 
     const fte = Number(form.fte);
     const contractedHoursPerPeriod = Number(form.contractedHoursPerPeriod);
@@ -341,17 +390,21 @@ export function NurseFormDialog({
         noValidate
       >
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Employee ID" error={errors.employeeId} htmlFor={`${formId}-empid`}>
+          <Field id={fid('employeeId')} label="Employee ID" error={errors.employeeId}>
             <input
-              id={`${formId}-empid`}
+              id={fid('employeeId')}
               className={inputClass}
+              aria-invalid={errors.employeeId !== undefined || undefined}
+              aria-describedby={describedBy(fid('employeeId'), {
+                error: errors.employeeId !== undefined,
+              })}
               value={form.employeeId}
               onChange={(e) => setField('employeeId', e.target.value)}
             />
           </Field>
-          <Field label="Role" htmlFor={`${formId}-role`}>
+          <Field id={fid('role')} label="Role">
             <select
-              id={`${formId}-role`}
+              id={fid('role')}
               className={inputClass}
               value={form.role}
               onChange={(e) => setField('role', e.target.value as NurseRole)}
@@ -364,26 +417,34 @@ export function NurseFormDialog({
             </select>
           </Field>
 
-          <Field label="First name" error={errors.firstName} htmlFor={`${formId}-first`}>
+          <Field id={fid('firstName')} label="First name" error={errors.firstName}>
             <input
-              id={`${formId}-first`}
+              id={fid('firstName')}
               className={inputClass}
+              aria-invalid={errors.firstName !== undefined || undefined}
+              aria-describedby={describedBy(fid('firstName'), {
+                error: errors.firstName !== undefined,
+              })}
               value={form.firstName}
               onChange={(e) => setField('firstName', e.target.value)}
             />
           </Field>
-          <Field label="Last name" error={errors.lastName} htmlFor={`${formId}-last`}>
+          <Field id={fid('lastName')} label="Last name" error={errors.lastName}>
             <input
-              id={`${formId}-last`}
+              id={fid('lastName')}
               className={inputClass}
+              aria-invalid={errors.lastName !== undefined || undefined}
+              aria-describedby={describedBy(fid('lastName'), {
+                error: errors.lastName !== undefined,
+              })}
               value={form.lastName}
               onChange={(e) => setField('lastName', e.target.value)}
             />
           </Field>
 
-          <Field label="Employment type" htmlFor={`${formId}-employment`}>
+          <Field id={fid('employment')} label="Employment type">
             <select
-              id={`${formId}-employment`}
+              id={fid('employment')}
               className={inputClass}
               value={form.employmentType}
               onChange={(e) => setField('employmentType', e.target.value as EmploymentType)}
@@ -395,61 +456,66 @@ export function NurseFormDialog({
               ))}
             </select>
           </Field>
-          <Field label="FTE" error={errors.fte} htmlFor={`${formId}-fte`}>
+          <Field id={fid('fte')} label="FTE" error={errors.fte}>
             <input
-              id={`${formId}-fte`}
+              id={fid('fte')}
               type="number"
               step="0.05"
               min={0}
               max={1.5}
               className={inputClass}
+              aria-invalid={errors.fte !== undefined || undefined}
+              aria-describedby={describedBy(fid('fte'), { error: errors.fte !== undefined })}
               value={form.fte}
               onChange={(e) => setField('fte', e.target.value)}
             />
           </Field>
 
           <Field
+            id={fid('contractedHoursPerPeriod')}
             label="Contracted hours / period"
+            hint={`Worked out from FTE (${defaultContractedHours(1, payPeriodDays)}h a pay period at 1.0). Change it to match the contract, e.g. 72h for three 12s a week.`}
             error={errors.contractedHoursPerPeriod}
-            htmlFor={`${formId}-hours`}
           >
             <input
-              id={`${formId}-hours`}
+              id={fid('contractedHoursPerPeriod')}
               type="number"
               min={0}
               className={inputClass}
+              aria-invalid={errors.contractedHoursPerPeriod !== undefined || undefined}
+              aria-describedby={describedBy(fid('contractedHoursPerPeriod'), {
+                hint: true,
+                error: errors.contractedHoursPerPeriod !== undefined,
+              })}
               value={form.contractedHoursPerPeriod}
               onChange={(e) => {
                 setHoursTouched(true);
                 setField('contractedHoursPerPeriod', e.target.value);
               }}
             />
-            <span className="mt-1 block text-xs">
-              Worked out from FTE ({defaultContractedHours(1, payPeriodDays)}h a pay period at 1.0).
-              Change it to match the contract, e.g. 72h for three 12s a week.
-            </span>
           </Field>
-          <div>
-            <DateField
-              id={`${formId}-seniority`}
-              label="Seniority date"
-              value={form.seniorityDate as IsoDate | ''}
-              onChange={(v) => setField('seniorityDate', v)}
-            />
-            {errors.seniorityDate !== undefined ? (
-              <span className="mt-1 block text-xs text-danger">{errors.seniorityDate}</span>
-            ) : null}
-          </div>
           <DateField
-            id={`${formId}-hire`}
+            id={fid('seniorityDate')}
+            label="Seniority date"
+            value={form.seniorityDate as IsoDate | ''}
+            onChange={(v) => setField('seniorityDate', v)}
+            error={errors.seniorityDate}
+          />
+          <DateField
+            id={fid('hire')}
             label="Hire date"
             hint="Only if employment began on a different day than seniority (bridged or merged service). FMLA and accrual by years of service use it."
             value={form.hireDate as IsoDate | ''}
             onChange={(v) => setField('hireDate', v)}
           />
-          <Field label="Permanent tour" htmlFor={`${formId}-tour`}>
+          <Field
+            id={fid('tour')}
+            label="Permanent tour"
+            hint="A nurse on a permanent tour is never rotated off it when the Tour rotation rule is on."
+          >
             <select
-              id={`${formId}-tour`}
+              id={fid('tour')}
+              aria-describedby={describedBy(fid('tour'), { hint: true })}
               className={inputClass}
               value={form.permanentTour}
               onChange={(e) => setField('permanentTour', e.target.value as Tour | '')}
@@ -460,19 +526,16 @@ export function NurseFormDialog({
                 </option>
               ))}
             </select>
-            <span className="mt-1 block text-xs">
-              A nurse on a permanent tour is never rotated off it when the Tour rotation rule is on.
-            </span>
           </Field>
-          <HelpField
-            id={`${formId}-schedule-kind`}
+          <Field
+            id={fid('schedule-kind')}
             label="Schedule plan"
             hint="Sets the hours actually worked: 72/80 is six 12-hour tours a pay period, paid as 80 (38 U.S.C. § 7456A); the Baylor plan is two 12-hour weekend tours, paid as 40 hours a week (§ 7456)."
             tip="Contracted hours here are hours worked, which is what the schedule is judged on. Payroll pays the plan's full hours; the Cost page prices worked hours at the plan's hourly rate, which comes to the same money."
           >
             <select
-              id={`${formId}-schedule-kind`}
-              aria-describedby={describedBy(`${formId}-schedule-kind`, { hint: true })}
+              id={fid('schedule-kind')}
+              aria-describedby={describedBy(fid('schedule-kind'), { hint: true })}
               className={inputClass}
               value={form.scheduleKind}
               onChange={(e) => changeScheduleKind(e.target.value as ScheduleKind | '')}
@@ -484,45 +547,47 @@ export function NurseFormDialog({
                 </option>
               ))}
             </select>
-          </HelpField>
+          </Field>
           <Field
+            id={fid('scheduledDaysPerWeek')}
             label="Scheduled days per week"
+            hint="For a 3×12 alternative workweek enter 3: hours past 8 on an extra day price at the extra-day rate."
             error={errors.scheduledDaysPerWeek}
-            htmlFor={`${formId}-scheduled-days`}
           >
             <input
-              id={`${formId}-scheduled-days`}
+              id={fid('scheduledDaysPerWeek')}
               type="number"
               step={1}
               min={1}
               max={7}
               className={inputClass}
+              aria-invalid={errors.scheduledDaysPerWeek !== undefined || undefined}
+              aria-describedby={describedBy(fid('scheduledDaysPerWeek'), {
+                hint: true,
+                error: errors.scheduledDaysPerWeek !== undefined,
+              })}
               value={form.scheduledDaysPerWeek}
               onChange={(e) => setField('scheduledDaysPerWeek', e.target.value)}
             />
-            <span className="mt-1 block text-xs">
-              For a 3×12 alternative workweek enter 3: hours past 8 on an extra day price at the
-              extra-day rate.
-            </span>
           </Field>
         </div>
 
         <fieldset className="mt-4 flex gap-6">
           <legend className="mb-1 text-sm font-medium text-text">On shift, this nurse can</legend>
           <Checkbox
-            id={`${formId}-charge`}
+            id={fid('charge')}
             label="Be charge nurse"
             checked={form.isChargeEligible}
             onChange={(v) => setField('isChargeEligible', v)}
           />
           <Checkbox
-            id={`${formId}-novice`}
+            id={fid('novice')}
             label="New grad (needs an experienced RN on shift)"
             checked={form.isNovice}
             onChange={(v) => setField('isNovice', v)}
           />
           <Checkbox
-            id={`${formId}-float`}
+            id={fid('float')}
             label="Float to other units"
             checked={form.isFloatEligible}
             onChange={(v) => setField('isFloatEligible', v)}
@@ -532,19 +597,21 @@ export function NurseFormDialog({
         <fieldset className="mt-4">
           <legend className="mb-1 text-sm font-medium text-text">Contact (optional)</legend>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Phone" htmlFor={`${formId}-phone`}>
+            <Field id={fid('phone')} label="Phone">
               <input
-                id={`${formId}-phone`}
+                id={fid('phone')}
                 className={inputClass}
                 value={form.phone}
                 onChange={(e) => setField('phone', e.target.value)}
               />
             </Field>
-            <Field label="Email" error={errors.email} htmlFor={`${formId}-email`}>
+            <Field id={fid('email')} label="Email" error={errors.email}>
               <input
-                id={`${formId}-email`}
+                id={fid('email')}
                 type="email"
                 className={inputClass}
+                aria-invalid={errors.email !== undefined || undefined}
+                aria-describedby={describedBy(fid('email'), { error: errors.email !== undefined })}
                 value={form.email}
                 onChange={(e) => setField('email', e.target.value)}
               />
@@ -552,15 +619,23 @@ export function NurseFormDialog({
           </div>
         </fieldset>
 
-        <Field label="Notes" htmlFor={`${formId}-notes`} className="mt-4">
+        <Field id={fid('notes')} label="Notes" className="mt-4">
           <textarea
-            id={`${formId}-notes`}
+            id={fid('notes')}
             className={inputClass}
             rows={2}
             value={form.notes}
             onChange={(e) => setField('notes', e.target.value)}
           />
         </Field>
+
+        {warningList.length > 0 ? (
+          <ul aria-label="Check before saving" className="mt-3 list-disc pl-5 text-sm text-warn">
+            {warningList.map((text) => (
+              <li key={text}>{text}</li>
+            ))}
+          </ul>
+        ) : null}
 
         {mutationError !== null && mutationError !== undefined ? (
           <p role="alert" className="mt-3 text-sm text-danger">
@@ -584,28 +659,6 @@ export function NurseFormDialog({
 const inputClass =
   'mt-1 w-full rounded-md border border-border bg-bg px-2 py-1.5 text-sm text-text ' +
   'focus-visible:border-accent';
-
-function Field({
-  label,
-  htmlFor,
-  error,
-  children,
-  className,
-}: {
-  label: string;
-  htmlFor: string;
-  error?: string;
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <label htmlFor={htmlFor} className={`block text-sm text-text-muted ${className ?? ''}`}>
-      {label}
-      {children}
-      {error !== undefined ? <span className="mt-1 block text-xs text-danger">{error}</span> : null}
-    </label>
-  );
-}
 
 function Checkbox({
   id,

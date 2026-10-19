@@ -71,14 +71,15 @@ describe('importing a roster file', () => {
     expect(await pickRosterImportFile(f.handle.db, f.seeded.unitId)).toBeUndefined();
   });
 
-  it('flags the employees already on the roster so the preview can say "update"', async () => {
+  it("plans each exported nurse as unchanged when the file is the unit's own export", async () => {
     const source = join(dir, 'in.csv');
     writeFileSync(source, rosterApi(f.handle.db).roster.exportCsv(f.seeded.unitId));
     dialogs.openFile.mockResolvedValue(source);
     const preview = await pickRosterImportFile(f.handle.db, f.seeded.unitId);
     expect(preview!.path).toBe(source);
     expect(preview!.errors).toEqual([]);
-    expect(preview!.existingEmployeeIds).toHaveLength(preview!.rows.length);
+    expect(preview!.plan).toHaveLength(preview!.rows.length);
+    expect(preview!.plan.every((r) => r.action === 'unchanged')).toBe(true);
   });
 
   it('reports a file with the wrong columns instead of importing a guess', async () => {

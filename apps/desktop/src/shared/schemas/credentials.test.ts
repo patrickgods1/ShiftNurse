@@ -22,4 +22,23 @@ describe('a credential arriving over IPC', () => {
       create.safeParse([{ code: 'ACLS', name: 'ACLS', tracksExpiry: true, id: 'x' }]).success,
     ).toBe(false);
   });
+
+  it('accepts a new type with its first grant, and refuses a stray field', () => {
+    const grantNew = API_SCHEMAS.credentials.grantNew;
+    const input = {
+      nurseId: 'n-1',
+      code: 'TNCC',
+      name: 'Trauma Nursing Core Course',
+      tracksExpiry: true,
+      expiresOn: '2027-05-01',
+    };
+    expect(grantNew.safeParse([input]).success).toBe(true);
+    expect(grantNew.safeParse([{ ...input, issuedOn: '2026-01-01' }]).success).toBe(false);
+  });
+
+  it('accepts a revoke with or without a reason', () => {
+    const revoke = API_SCHEMAS.credentials.revoke;
+    expect(revoke.safeParse(['nc-1']).success).toBe(true);
+    expect(revoke.safeParse(['nc-1', 'why']).success).toBe(true);
+  });
 });

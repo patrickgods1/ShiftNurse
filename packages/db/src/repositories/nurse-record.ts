@@ -45,6 +45,7 @@ import { auditLog, nurse as nurseTable, scheduleChange, schedulePeriod } from '.
  * matter, an FMLA certification concerns a medical condition, and an accommodation's reason names
  * a disability, a pregnancy or a faith. A record travels to unions and grievance panels, so none
  * belongs in it; leave taken under FMLA still appears as leave.
+ * The export dialog (`pages/roster/nurse-record.tsx`) names these three; change both together.
  */
 export const RECORD_EXCLUDED_ENTITIES = [
   'incompatibility_group',

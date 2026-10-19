@@ -4,7 +4,7 @@
  * Managers keep the roster in a spreadsheet long before they trust a scheduling tool with
  * it, and they keep exporting to one afterwards for HR. One parser serves both import and
  * export so a file the app wrote is always a file the app can read back — the round-trip
- * test below is the contract. Errors are collected per field with the spreadsheet line
+ * test below is the contract. Errors are collected per field with the spreadsheet row
  * number rather than thrown on the first problem: a 60-row import that fails on row 41
  * should tell the manager about rows 41, 52 and 58 in one pass, not three.
  *
@@ -143,7 +143,7 @@ export const ROSTER_COLUMNS = [
 
 export type RosterColumn = (typeof ROSTER_COLUMNS)[number];
 
-const REQUIRED_COLUMNS: readonly RosterColumn[] = [
+export const REQUIRED_COLUMNS: readonly RosterColumn[] = [
   'employee_id',
   'first_name',
   'last_name',
@@ -170,7 +170,10 @@ export interface RosterCsvRow {
 }
 
 export interface RosterCsvError {
-  /** 1-based line in the file, as a spreadsheet shows it (header is line 1). */
+  /**
+   * 1-based spreadsheet row of the record (the header is row 1). A quoted cell that spans
+   * several lines in a text editor is still one row, so this is the number Excel and Sheets show.
+   */
   line: number;
   column: RosterColumn;
   message: string;
@@ -179,6 +182,11 @@ export interface RosterCsvError {
 export interface RosterCsvResult {
   rows: RosterCsvRow[];
   errors: RosterCsvError[];
+  /**
+   * The recognised columns the header carries, in `ROSTER_COLUMNS` order. An import needs it to
+   * tell a column the file lacks (leave the field alone) from a blank cell (clear it).
+   */
+  columns: RosterColumn[];
 }
 
 export interface ParseRosterOptions {
@@ -235,17 +243,24 @@ export function parseRosterCsv(text: string, options: ParseRosterOptions): Roste
   const rows: RosterCsvRow[] = [];
   const table = parseCsv(text);
   const header = table[0];
-  if (!header)
-    return { rows, errors: [{ line: 1, column: 'employee_id', message: 'File is empty' }] };
+  if (!header) {
+    return {
+      rows,
+      errors: [{ line: 1, column: 'employee_id', message: 'File is empty' }],
+      columns: [],
+    };
+  }
 
   const index = new Map<string, number>();
   header.forEach((name, i) => {
     index.set(name.trim().toLowerCase(), i);
   });
+  const columns = ROSTER_COLUMNS.filter((c) => index.has(c));
   const missing = REQUIRED_COLUMNS.filter((c) => !index.has(c));
   if (missing.length > 0) {
     return {
       rows,
+      columns,
       errors: [
         {
           line: 1,
@@ -256,7 +271,11 @@ export function parseRosterCsv(text: string, options: ParseRosterOptions): Roste
     };
   }
 
-  const seen = new Set<string>();
+  // Upper-cased id → the first row that used it, with the id as written there. Recorded before
+  // the row is validated, so a copy whose first row had another error is still reported, and
+  // `e1` and `E1` are one employee as far as HR is concerned.
+  const firstRowOf = new Map<string, { line: number; raw: string }>();
+  const hoursCap = options.payPeriodDays * 24;
 
   for (let r = 1; r < table.length; r++) {
     const fields = table[r]!;
@@ -272,7 +291,15 @@ export function parseRosterCsv(text: string, options: ParseRosterOptions): Roste
 
     const employeeId = cell('employee_id');
     if (!employeeId) bad('employee_id', 'Employee id is required');
-    else if (seen.has(employeeId)) bad('employee_id', `Duplicate employee id "${employeeId}"`);
+    else {
+      const first = firstRowOf.get(employeeId.toUpperCase());
+      if (first) {
+        bad(
+          'employee_id',
+          `Duplicate employee id "${employeeId}" (row ${first.line} has "${first.raw}")`,
+        );
+      } else firstRowOf.set(employeeId.toUpperCase(), { line, raw: employeeId });
+    }
 
     const firstName = cell('first_name');
     const lastName = cell('last_name');
@@ -295,7 +322,8 @@ export function parseRosterCsv(text: string, options: ParseRosterOptions): Roste
     }
 
     const fte = Number(cell('fte'));
-    if (cell('fte') === '' || Number.isNaN(fte)) bad('fte', `FTE "${cell('fte')}" is not a number`);
+    if (cell('fte') === '' || !Number.isFinite(fte))
+      bad('fte', `FTE "${cell('fte')}" is not a number`);
     else if (fte < 0 || fte > 1.5) bad('fte', `FTE ${fte} is outside 0–1.5`);
 
     let contractedHoursPerPeriod: number;
@@ -306,8 +334,13 @@ export function parseRosterCsv(text: string, options: ParseRosterOptions): Roste
       );
     } else {
       contractedHoursPerPeriod = Number(hoursRaw);
-      if (Number.isNaN(contractedHoursPerPeriod) || contractedHoursPerPeriod < 0) {
+      if (!Number.isFinite(contractedHoursPerPeriod) || contractedHoursPerPeriod < 0) {
         bad('contracted_hours_per_period', `Contracted hours "${hoursRaw}" is not a number`);
+      } else if (contractedHoursPerPeriod > hoursCap) {
+        bad(
+          'contracted_hours_per_period',
+          `Contracted hours ${contractedHoursPerPeriod} is more than a ${options.payPeriodDays}-day pay period holds (${hoursCap})`,
+        );
       }
     }
 
@@ -356,7 +389,6 @@ export function parseRosterCsv(text: string, options: ParseRosterOptions): Roste
       errors.push(...rowErrors);
       continue;
     }
-    seen.add(employeeId);
     rows.push({
       nurse: {
         employeeId,
@@ -381,7 +413,7 @@ export function parseRosterCsv(text: string, options: ParseRosterOptions): Roste
     });
   }
 
-  return { rows, errors };
+  return { rows, errors, columns };
 }
 
 // ---------------------------------------------------------------------------

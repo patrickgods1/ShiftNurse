@@ -300,7 +300,7 @@ export function updateCredentialExpiry(
   return after;
 }
 
-export function revokeCredential(db: DbLike, id: Id, actor: string): void {
+export function revokeCredential(db: DbLike, id: Id, actor: string, reason?: string): void {
   const row = db.select().from(nurseCredentialTable).where(eq(nurseCredentialTable.id, id)).get();
   if (!row) throw new Error(`Nurse credential ${id} not found`);
   const before = toNurseCredential(row);
@@ -311,6 +311,7 @@ export function revokeCredential(db: DbLike, id: Id, actor: string): void {
     action: 'delete',
     actor,
     before,
+    reason: reason?.trim() || undefined,
   });
 }
 

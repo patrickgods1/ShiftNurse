@@ -11,9 +11,14 @@ import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
 import { renderWithApp } from '../../test/render.js';
 import { OrientationSection } from './orientation.js';
 
-const nina = { id: 'n-nina', firstName: 'Nina', lastName: 'Park', active: true } as Nurse;
-const vera = { id: 'n-vera', firstName: 'Vera', lastName: 'Lund', active: true } as Nurse;
-const omar = { id: 'n-omar', firstName: 'Omar', lastName: 'Diaz', active: true } as Nurse;
+const person = (id: string, firstName: string, lastName: string, more: Partial<Nurse>) =>
+  ({ id, firstName, lastName, active: true, ...more }) as Nurse;
+const nina = person('n-nina', 'Nina', 'Park', { role: 'RN', isNovice: true });
+const vera = person('n-vera', 'Vera', 'Lund', { role: 'RN', isNovice: false });
+const omar = person('n-omar', 'Omar', 'Diaz', { role: 'RN', isNovice: false });
+const cora = person('n-cora', 'Cora', 'Reyes', { role: 'CNA', isNovice: false });
+const ned = person('n-ned', 'Ned', 'Moss', { role: 'RN', isNovice: true });
+const cleo = person('n-cleo', 'Cleo', 'Hart', { role: 'CNA', isNovice: true });
 
 const record: Preceptorship = {
   id: 'prec-1',
@@ -38,7 +43,9 @@ afterEach(() => {
 });
 
 const renderSection = () =>
-  renderWithApp(<OrientationSection unitId="unit-1" nurses={[nina, vera, omar]} />);
+  renderWithApp(
+    <OrientationSection unitId="unit-1" nurses={[nina, vera, omar, cora, ned, cleo]} />,
+  );
 
 describe('recording an orientation on the roster', () => {
   it('lists who is oriented by whom and says what an orientation does', async () => {
@@ -77,6 +84,68 @@ describe('recording an orientation on the roster', () => {
     );
   });
 
+  it('offers only experienced RNs to precept a new RN', async () => {
+    renderSection();
+    await screen.findByText('Nina Park with Vera Lund');
+    fireEvent.click(screen.getByTestId('orientation-add'));
+    const dialog = within(await screen.findByRole('dialog'));
+    fireEvent.change(dialog.getByLabelText('Orientee'), { target: { value: 'n-nina' } });
+    expect(dialog.getByLabelText('Vera Lund')).toBeTruthy();
+    expect(dialog.getByLabelText('Omar Diaz')).toBeTruthy();
+    expect(dialog.queryByLabelText(/^Cora /)).toBeNull();
+    expect(dialog.queryByLabelText(/^Ned /)).toBeNull();
+  });
+
+  it('asks for the orientee before offering any preceptor', async () => {
+    renderSection();
+    await screen.findByText('Nina Park with Vera Lund');
+    fireEvent.click(screen.getByTestId('orientation-add'));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText('Choose the orientee first.')).toBeTruthy();
+    expect(dialog.queryAllByRole('checkbox')).toEqual([]);
+  });
+
+  it('drops an aide the manager ticked once the orientee becomes a new RN', async () => {
+    renderSection();
+    await screen.findByText('Nina Park with Vera Lund');
+    fireEvent.click(screen.getByTestId('orientation-add'));
+    const dialog = within(await screen.findByRole('dialog'));
+    fireEvent.change(dialog.getByLabelText('Orientee'), { target: { value: 'n-cleo' } });
+    fireEvent.click(dialog.getByLabelText('Cora Reyes'));
+    fireEvent.click(dialog.getByLabelText('Vera Lund'));
+    fireEvent.change(dialog.getByLabelText('Orientee'), { target: { value: 'n-nina' } });
+    expect(dialog.queryByLabelText('Cora Reyes')).toBeNull();
+    fireEvent.change(dialog.getByLabelText('First day'), { target: { value: '2026-10-05' } });
+    fireEvent.change(dialog.getByLabelText('Last day'), { target: { value: '2026-11-15' } });
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('preceptorships', 'create')).toEqual([
+        [
+          {
+            unitId: 'unit-1',
+            orienteeId: 'n-nina',
+            preceptorIds: ['n-vera'],
+            startDate: '2026-10-05',
+            endDate: '2026-11-15',
+          },
+        ],
+      ]),
+    );
+  });
+
+  it('still shows the preceptor of an orientation recorded before the rule when editing it', async () => {
+    bridge.respond('preceptorships', 'list', [{ ...record, id: 'prec-2', preceptorId: 'n-cora' }]);
+    renderSection();
+    await screen.findByText('Nina Park with Cora Reyes');
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Edit Nina Park’s orientation with Cora Reyes, Oct 5, 2026 to Nov 15, 2026',
+      }),
+    );
+    const dialog = within(await screen.findByRole('dialog'));
+    expect((dialog.getByLabelText('Cora Reyes') as HTMLInputElement).checked).toBe(true);
+  });
+
   it('will not save without a preceptor', async () => {
     renderSection();
     await screen.findByText('Nina Park with Vera Lund');
@@ -90,7 +159,11 @@ describe('recording an orientation on the roster', () => {
   it('extends the orientation’s last day', async () => {
     renderSection();
     await screen.findByText('Nina Park with Vera Lund');
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Edit Nina Park’s orientation with Vera Lund, Oct 5, 2026 to Nov 15, 2026',
+      }),
+    );
     const dialog = within(await screen.findByRole('dialog'));
     fireEvent.change(dialog.getByLabelText('Last day'), { target: { value: '2026-12-01' } });
     fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
@@ -104,7 +177,11 @@ describe('recording an orientation on the roster', () => {
   it('removes an orientation only after the manager confirms', async () => {
     renderSection();
     await screen.findByText('Nina Park with Vera Lund');
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Remove Nina Park’s orientation with Vera Lund, Oct 5, 2026 to Nov 15, 2026',
+      }),
+    );
     expect(bridge.callsTo('preceptorships', 'remove')).toEqual([]);
     fireEvent.click(await screen.findByTestId('confirm-accept'));
     await waitFor(() => expect(bridge.callsTo('preceptorships', 'remove')).toEqual([['prec-1']]));

@@ -9,7 +9,8 @@
 
 import type { NurseUnit } from '@shared/api.js';
 import type { Id, IsoDate, Nurse } from '@shiftnurse/core';
-import { useState } from 'react';
+import { compareDates } from '@shiftnurse/core';
+import { useId, useState } from 'react';
 import { useUnits } from '../../api.js';
 import {
   useAddNurseUnit,
@@ -22,7 +23,7 @@ import { useConfirm } from '../../components/confirm.js';
 import { DateField } from '../../components/date-field.js';
 import { Field } from '../../components/field-help.js';
 import { errorMessage, INPUT, PRIMARY, SECONDARY, SMALL } from '../../components/ui.js';
-import { formatDate } from '../../format.js';
+import { formatSpan } from '../../format.js';
 
 export function AlsoWorksOnSection({ nurse }: { nurse: Nurse }) {
   const memberships = useNurseUnits(nurse.id);
@@ -77,7 +78,9 @@ export function AlsoWorksOnSection({ nurse }: { nurse: Nurse }) {
                 <div>
                   <div className="text-text">{unitName(m.unitId)}</div>
                   {m.competency ? <div className="text-text-muted">{m.competency}</div> : null}
-                  <div className="text-text-muted">{describeSpan(m)}</div>
+                  <div className="text-text-muted">
+                    {formatSpan(m.startDate, m.endDate, 'No end date')}
+                  </div>
                 </div>
                 <div className="flex gap-1">
                   <button type="button" className={SMALL} onClick={() => setEditing(m)}>
@@ -111,13 +114,6 @@ export function AlsoWorksOnSection({ nurse }: { nurse: Nurse }) {
   );
 }
 
-function describeSpan(m: NurseUnit): string {
-  if (m.startDate && m.endDate) return `${formatDate(m.startDate)} to ${formatDate(m.endDate)}`;
-  if (m.startDate) return `From ${formatDate(m.startDate)}`;
-  if (m.endDate) return `Until ${formatDate(m.endDate)}`;
-  return 'No end date';
-}
-
 function MembershipForm({
   nurse,
   record,
@@ -131,13 +127,17 @@ function MembershipForm({
 }) {
   const add = useAddNurseUnit();
   const update = useUpdateNurseUnit();
+  const unitFieldId = useId();
+  const competencyFieldId = useId();
   const [unitId, setUnitId] = useState<Id | ''>(record?.unitId ?? choices[0]?.id ?? '');
   const [competency, setCompetency] = useState(record?.competency ?? '');
   const [startDate, setStartDate] = useState<IsoDate | ''>(record?.startDate ?? '');
   const [endDate, setEndDate] = useState<IsoDate | ''>(record?.endDate ?? '');
 
   const problem =
-    startDate && endDate && endDate < startDate ? 'The last day is before the first.' : undefined;
+    startDate && endDate && compareDates(endDate, startDate) < 0
+      ? 'The last day is before the first.'
+      : undefined;
   const pending = add.isPending || update.isPending;
   const error = errorMessage(add.error ?? update.error);
 
@@ -179,7 +179,7 @@ function MembershipForm({
       }}
     >
       <Field
-        id="float-unit"
+        id={unitFieldId}
         label="Unit"
         hint={
           record
@@ -188,7 +188,7 @@ function MembershipForm({
         }
       >
         <select
-          id="float-unit"
+          id={unitFieldId}
           className={INPUT}
           value={unitId}
           disabled={record !== undefined}
@@ -205,13 +205,13 @@ function MembershipForm({
         </select>
       </Field>
       <Field
-        id="float-competency"
+        id={competencyFieldId}
         label="Competency note (optional)"
         hint="What this nurse may be asked to do there."
         tip="Only a note for you and the other unit’s manager: it does not change what Generate does. Write what a charge nurse would need to know, such as telemetry, central lines or no chemo."
       >
         <input
-          id="float-competency"
+          id={competencyFieldId}
           className={INPUT}
           value={competency}
           onChange={(e) => setCompetency(e.target.value)}

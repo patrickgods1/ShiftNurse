@@ -140,6 +140,15 @@ export default function RosterPage() {
     [lapsedNurseIds, soonNurseIds],
   );
 
+  const allNurses = nursesQuery.data ?? [];
+  const emptyLabel =
+    allNurses.length === 0
+      ? 'No nurses yet. Add a nurse or import a CSV.'
+      : !showInactive && allNurses.every((nurse) => !nurse.active)
+        ? 'Every nurse on this unit is inactive. Tick Show inactive to see them.'
+        : search.trim() !== ''
+          ? `No nurses match “${search.trim()}”.`
+          : 'No nurses match.';
   const filtered = (nursesQuery.data ?? []).filter((nurse) => {
     if (!showInactive && !nurse.active) return false;
     if (search.trim() === '') return true;
@@ -209,7 +218,7 @@ export default function RosterPage() {
             columns={columns}
             rows={filtered}
             rowKey={(nurse) => nurse.id}
-            emptyLabel="No nurses match."
+            emptyLabel={emptyLabel}
             onRowClick={(nurse) => void selectNurse(nurse.id)}
             rowLabel={(nurse) => `Open ${nurse.lastName}, ${nurse.firstName}`}
           />

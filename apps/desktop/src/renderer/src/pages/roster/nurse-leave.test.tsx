@@ -101,6 +101,26 @@ describe('a nurse’s leave on the roster', () => {
     );
   });
 
+  it('names each certification’s buttons by its dates', async () => {
+    const second = {
+      ...cert,
+      id: 'fc-2',
+      startDate: '2027-04-01' as FmlaCertificationRecord['startDate'],
+      endDate: '2027-06-30' as FmlaCertificationRecord['endDate'],
+    };
+    bridge.respond('leaveBalances', 'forNurse', {
+      balances: [pto],
+      certifications: [cert, second],
+    });
+    renderWithApp(<LeaveSection nurseId="n-1" />);
+    expect(
+      await screen.findByRole('button', { name: 'Edit certification Oct 1, 2026 to Mar 31, 2027' }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Edit certification Apr 1, 2027 to Jun 30, 2027' }),
+    ).toBeTruthy();
+  });
+
   it('adds a certification that allows intermittent leave', async () => {
     renderWithApp(<LeaveSection nurseId="n-1" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add certification' }));
@@ -126,7 +146,9 @@ describe('a nurse’s leave on the roster', () => {
 
   it('clears a certification’s note with null when it is edited away', async () => {
     renderWithApp(<LeaveSection nurseId="n-1" />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit certification' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Edit certification Oct 1, 2026 to Mar 31, 2027' }),
+    );
     fireEvent.change(screen.getByLabelText('Note (optional)'), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save certification' }));
     await waitFor(() =>
@@ -141,7 +163,11 @@ describe('a nurse’s leave on the roster', () => {
 
   it('removes a certification only after the manager confirms', async () => {
     renderWithApp(<LeaveSection nurseId="n-1" />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove certification' }));
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Remove certification Oct 1, 2026 to Mar 31, 2027',
+      }),
+    );
     expect(bridge.callsTo('leaveBalances', 'removeCertification')).toEqual([]);
     fireEvent.click(await screen.findByTestId('confirm-accept'));
     await waitFor(() =>
@@ -162,7 +188,9 @@ describe('a nurse’s leave on the roster', () => {
       </>,
     );
     // Nothing typed yet: leaving asks nothing.
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit certification' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Edit certification Oct 1, 2026 to Mar 31, 2027' }),
+    );
     expect(await ask?.()).toBe(true);
 
     fireEvent.change(screen.getByLabelText('Certified through'), {
