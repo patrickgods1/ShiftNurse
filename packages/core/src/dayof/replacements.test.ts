@@ -10,6 +10,7 @@ import { defaultRuleSet } from '../rules/registry.js';
 import {
   assign,
   CRED_ACLS,
+  census,
   coverage,
   credentialRequirement,
   DAY_12,
@@ -17,11 +18,13 @@ import {
   makeNurse,
   NIGHT_12,
   nurseCredential,
+  ON_CALL,
   overtimeRule,
   payRate,
   resetFixtureCounters,
   type SolveScenarioOptions,
   solveInputFrom,
+  TIER_ROUTINE,
   testUnit,
   timeOff,
   UNIT_ID,
@@ -543,6 +546,7 @@ describe('findReplacements with the contract overtime rosters', () => {
     volunteers: ('a' | 'b' | 'c' | 'd')[],
     lastOvertimeOn: Record<string, string>,
     overtimeOrder?: 'cost' | 'roster',
+    employeeIds: Partial<Record<'a' | 'b' | 'c' | 'd', string>> = {},
   ) {
     resetFixtureCounters();
     const absent = makeNurse({ id: 'z-absent', firstName: 'Priya', lastName: 'Nair' });
@@ -552,6 +556,7 @@ describe('findReplacements with the contract overtime rosters', () => {
         firstName: k.toUpperCase(),
         lastName: 'Nurse',
         seniorityDate: isoDate(seniority[k]),
+        ...(employeeIds[k] ? { employeeId: employeeIds[k] } : {}),
       }),
     );
     const absentShift = assign(absent.id, DAY_12, SAT);
@@ -619,10 +624,254 @@ describe('findReplacements with the contract overtime rosters', () => {
     expect(order).toEqual(['n-a', 'n-d', 'n-c', 'n-b']);
   });
 
+  it('mandates E10 before E9 when they started the same day', () => {
+    // A (E9) and B (E10) both started 2023, junior to C and D, and nobody volunteers. Same date,
+    // and 10 > 9 as numbers, so B is the more junior and is mandated first. The ids alone would
+    // put A first.
+    const order = rosterCall({ ...SENIORITY, a: '2023-01-01', b: '2023-01-01' }, [], {}, 'roster', {
+      a: 'E9',
+      b: 'E10',
+    });
+    expect(order).toEqual(['n-b', 'n-a', 'n-d', 'n-c']);
+  });
+
   it('keeps the cost order when the unit has not chosen rosters', () => {
     // Same costs and burden; with no roster the finder falls to recency then id, volunteer first.
     const order = rosterCall(SENIORITY, ['d'], { 'n-d': '2026-01-02' });
     expect(order).toEqual(['n-d', 'n-a', 'n-b', 'n-c']);
     expect(rosterCall(SENIORITY, ['d'], { 'n-d': '2026-01-02' }, 'cost')).toEqual(order);
+  });
+});
+
+describe('the call-off list a manager works down', () => {
+  const TUE = isoDate('2026-01-06');
+
+  it('calls the nurse who has carried less and has not been called, though she costs a cent more an hour', () => {
+    resetFixtureCounters();
+    const absent = makeNurse({ id: 'z-absent', firstName: 'Priya', lastName: 'Nair' });
+    // The ids sort cheap first, so only fairness can put dear ahead.
+    const cheap = makeNurse({ id: 'cheap', firstName: 'Cal', lastName: 'Penny' });
+    const dear = makeNurse({ id: 'dear', firstName: 'Dana', lastName: 'Pound' });
+    const absentShift = assign(absent.id, DAY_12, SAT);
+    const report = findReplacements(
+      replacementInput({
+        nurses: [absent, cheap, dear],
+        assignments: [absentShift],
+        cost: {
+          payRates: [payRate(50, { nurseId: 'cheap' }), payRate(50.01, { nurseId: 'dear' })],
+          differentials: [],
+          overtimeRules: [],
+        },
+        ledgerHistory: [
+          ledgerRow('cheap', '2026-01-01', { nightShifts: 12, weekendsWorked: 6 }),
+          ledgerRow('dear', '2026-01-01'),
+        ],
+        // Cal was phoned yesterday; Dana never has been.
+        lastCalledAt: { cheap: Date.parse('2026-01-09T06:00:00Z') },
+        absentAssignmentId: absentShift.id,
+      }),
+    );
+    // Hand: both straight time, neither volunteered; 12 nights and 6 weekends put Cal's burden
+    // well above Dana's (a gap visible at one decimal), so a cent an hour must not decide.
+    const [first, second] = report.candidates;
+    expect(Math.round(first!.burdenIndex * 10)).toBeLessThan(Math.round(second!.burdenIndex * 10));
+    expect(report.candidates.map((c) => c.nurseId)).toEqual(['dear', 'cheap']);
+  });
+
+  it('lists a nurse who cannot take charge when an eligible nurse stays on the shift, and says who takes charge', () => {
+    resetFixtureCounters();
+    const carla = makeNurse({
+      id: 'carla',
+      firstName: 'Carla',
+      lastName: 'Diaz',
+      isChargeEligible: true,
+    });
+    const eli = makeNurse({
+      id: 'eli',
+      firstName: 'Eli',
+      lastName: 'Moss',
+      isChargeEligible: true,
+    });
+    const wes = makeNurse({ id: 'wes', firstName: 'Wes', lastName: 'Tran' });
+    const carlaShift = assign(carla.id, DAY_12, TUE, { isCharge: true });
+    const eliShift = assign(eli.id, DAY_12, TUE);
+    const report = findReplacements(
+      replacementInput({
+        nurses: [carla, eli, wes],
+        assignments: [carlaShift, eliShift],
+        coverageRequirements: [coverage(DAY_12, 'RN', 1, 1, null, TUE)],
+        absentAssignmentId: carlaShift.id,
+      }),
+    );
+    const wesCard = report.candidates.find((c) => c.nurseId === 'wes');
+    expect(wesCard).toBeDefined();
+    expect(wesCard!.assignment.isCharge).toBe(false);
+    expect(wesCard!.chargeMovedTo).toEqual({
+      assignmentId: eliShift.id,
+      nurseId: 'eli',
+      label: 'Eli Moss (RN)',
+    });
+  });
+
+  it('puts the nurse on call for that night first, replacing her standby', () => {
+    resetFixtureCounters();
+    const absent = makeNurse({ id: 'z-absent', firstName: 'Priya', lastName: 'Nair' });
+    // The idle nurse sorts first by id and by seniority, so only being on call puts oc ahead.
+    const idle = makeNurse({ id: 'a-idle', firstName: 'Ana', lastName: 'Cruz' });
+    const oc = makeNurse({ id: 'oc', firstName: 'Olu', lastName: 'Cole' });
+    const absentShift = assign(absent.id, NIGHT_12, SAT);
+    const standby = assign(oc.id, ON_CALL, SAT);
+    const report = findReplacements(
+      replacementInput({
+        nurses: [absent, idle, oc],
+        shiftTypes: [DAY_12, NIGHT_12, ON_CALL],
+        assignments: [absentShift, standby],
+        absentAssignmentId: absentShift.id,
+      }),
+    );
+    // Hand: the standby runs 19:00 Sat to 07:00 Sun, the very window of the night shift.
+    expect(report.candidates[0]!.nurseId).toBe('oc');
+    expect(report.candidates[0]!.replacesOnCall).toEqual({ assignmentId: standby.id });
+    expect(report.excluded.some((e) => e.nurseId === 'oc')).toBe(false);
+    expect(report.candidates.find((c) => c.nurseId === 'a-idle')?.replacesOnCall).toBeUndefined();
+  });
+
+  it("does not treat a standby that ends before the shift starts as this shift's on call", () => {
+    resetFixtureCounters();
+    const absent = makeNurse({ id: 'z-absent', firstName: 'Priya', lastName: 'Nair' });
+    const oc = makeNurse({ id: 'oc', firstName: 'Olu', lastName: 'Cole' });
+    const absentShift = assign(absent.id, DAY_12, SAT);
+    // Friday's standby runs [19:00 Fri, 07:00 Sat); the day shift is [07:00, 19:00 Sat). Half-open
+    // windows that only touch do not overlap.
+    const standby = assign(oc.id, ON_CALL, FRI);
+    const report = findReplacements(
+      replacementInput({
+        nurses: [absent, oc],
+        shiftTypes: [DAY_12, NIGHT_12, ON_CALL],
+        assignments: [absentShift, standby],
+        absentAssignmentId: absentShift.id,
+      }),
+    );
+    const card = report.candidates.find((c) => c.nurseId === 'oc');
+    expect(card).toBeDefined();
+    expect(card!.replacesOnCall).toBeUndefined();
+  });
+
+  it('lets recency decide between two nurses whose burden looks the same on the Fairness page', () => {
+    resetFixtureCounters();
+    const absent = makeNurse({ id: 'z-absent', firstName: 'Priya', lastName: 'Nair' });
+    const ana = makeNurse({ id: 'ana', firstName: 'Ana', lastName: 'Cruz' });
+    const bea = makeNurse({ id: 'bea', firstName: 'Bea', lastName: 'Lowe' });
+    const absentShift = assign(absent.id, DAY_12, SAT);
+    const report = findReplacements(
+      replacementInput({
+        nurses: [absent, ana, bea],
+        assignments: [absentShift],
+        ledgerHistory: [
+          ledgerRow('ana', '2026-01-01', { preferenceHitRate: 0.6 }),
+          ledgerRow('bea', '2026-01-01', { preferenceHitRate: 0.61 }),
+        ],
+        // Bea was phoned yesterday; Ana never has been.
+        lastCalledAt: { bea: Date.parse('2026-01-09T06:00:00Z') },
+        absentAssignmentId: absentShift.id,
+      }),
+    );
+    // Hand: only preferences differ (weight 2). This period is a full-weight row for everyone,
+    // at a hit rate of 1 (no shifts, nothing against a preference); last period's row decays to
+    // 0.85. Ana (1 + 0.85 × 0.60) / 1.85 = 0.816216, Bea (1 + 0.85 × 0.61) / 1.85 = 0.820811,
+    // Priya 1. Team mean 2.637027 / 3 = 0.879009. Index: Ana 2 × (0.879009 − 0.816216) = 0.1256,
+    // Bea 2 × (0.879009 − 0.820811) = 0.1164. Both read 0.1 at one decimal, so recency decides:
+    // Ana first, though Bea's raw index is lower.
+    const burden = (id: string) => report.candidates.find((c) => c.nurseId === id)!.burdenIndex;
+    expect(burden('ana')).toBeCloseTo(0.1256, 4);
+    expect(burden('bea')).toBeCloseTo(0.1164, 4);
+    expect(report.candidates.map((c) => c.nurseId)).toEqual(['ana', 'bea']);
+  });
+
+  it('calls the more senior of two otherwise identical nurses, E9 before E10', () => {
+    resetFixtureCounters();
+    const absent = makeNurse({ id: 'z-absent', firstName: 'Priya', lastName: 'Nair' });
+    // Same start date, no history, no calls, same (unpriced) cost. The ids and the employee
+    // numbers read as text both put E10 first; as numbers 9 < 10, so E9 is the senior.
+    const e10 = makeNurse({ id: 'a-e10', firstName: 'Ten', lastName: 'Nurse', employeeId: 'E10' });
+    const e9 = makeNurse({ id: 'b-e9', firstName: 'Nine', lastName: 'Nurse', employeeId: 'E9' });
+    const absentShift = assign(absent.id, DAY_12, SAT);
+    const report = findReplacements(
+      replacementInput({
+        nurses: [absent, e10, e9],
+        assignments: [absentShift],
+        absentAssignmentId: absentShift.id,
+      }),
+    );
+    const [first, second] = report.candidates;
+    expect(first!.cost.pessimisticDelta).toBe(second!.cost.pessimisticDelta);
+    expect(report.candidates.map((c) => c.nurseId)).toEqual(['b-e9', 'a-e10']);
+  });
+
+  /** LPN Lena calls off a day 12 under a licensed 1:5 pooling RNs and LVNs; RN Ria is free. */
+  function lvnCallOff(extra: Partial<SolveScenarioOptions> = {}) {
+    resetFixtureCounters();
+    const rn1 = makeNurse({ id: 'rn1', firstName: 'Rae', lastName: 'Ng', isChargeEligible: true });
+    const lena = makeNurse({ id: 'lena', firstName: 'Lena', lastName: 'Ford', role: 'LPN' });
+    const ria = makeNurse({ id: 'ria', firstName: 'Ria', lastName: 'Shah' });
+    const lenaShift = assign(lena.id, DAY_12, SAT);
+    // Hand: 10 patients at a licensed 1:5 is two licensed nurses, at least one an RN (half). Rae
+    // and Ria together are two licensed nurses, both RNs.
+    const report = findReplacements(
+      replacementInput({
+        nurses: [rn1, lena, ria],
+        assignments: [assign(rn1.id, DAY_12, SAT, { isCharge: true }), lenaShift],
+        ratioRules: [
+          {
+            id: 'lic',
+            unitId: UNIT_ID,
+            role: 'licensed',
+            acuityTierId: null,
+            maxPatientsPerNurse: 5,
+            minRnShare: 0.5,
+            active: true,
+          },
+        ],
+        censusForecasts: [census(SAT, DAY_12, { [TIER_ROUTINE.id]: 10 })],
+        absentAssignmentId: lenaShift.id,
+        ...extra,
+      }),
+    );
+    return report;
+  }
+
+  it('offers an RN for an LVN call-off where a licensed ratio pools them', () => {
+    const report = lvnCallOff();
+    expect(report.candidates.map((c) => c.nurseId)).toContain('ria');
+  });
+
+  it('rules out an RN for an LVN call-off when the unit also needs an LVN on that shift', () => {
+    const report = lvnCallOff({ coverageRequirements: [coverage(DAY_12, 'LPN', 1, 1, null, SAT)] });
+    expect(report.candidates.some((c) => c.nurseId === 'ria')).toBe(false);
+    expect(report.excluded.find((e) => e.nurseId === 'ria')?.reason).toMatch(
+      /^Coverage minimums and skill mix/,
+    );
+  });
+
+  it('rules out a pickup who would deepen a breach she already has', () => {
+    resetFixtureCounters();
+    const absent = makeNurse({ id: 'z-absent', firstName: 'Priya', lastName: 'Nair' });
+    const ana = makeNurse({ id: 'ana', firstName: 'Ana', lastName: 'Cruz' });
+    const absentShift = assign(absent.id, DAY_12, SAT);
+    // Spaced so no run of consecutive days is what rules her out.
+    const anaWeek = ['2026-01-05', '2026-01-06', '2026-01-08', '2026-01-09'].map((d) =>
+      assign(ana.id, DAY_12, d),
+    );
+    const report = findReplacements(
+      replacementInput({
+        nurses: [absent, ana],
+        assignments: [absentShift, ...anaWeek],
+        ruleParams: { 'max-hours-per-week': { maxHoursPerWeek: 36 } },
+        absentAssignmentId: absentShift.id,
+      }),
+    );
+    // Hand: Ana already works 48 h against a 36 h cap (12 over); Saturday makes 60 h, 24 over.
+    expect(report.candidates.some((c) => c.nurseId === 'ana')).toBe(false);
+    expect(report.excluded.find((e) => e.nurseId === 'ana')?.reason).toMatch(/cap/i);
   });
 });

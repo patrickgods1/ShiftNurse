@@ -16,9 +16,10 @@
  * every other rule violation on the grid is currently judged against. Diffing a candidate's
  * trial assignment against `before` means a violation that already existed on that nurse or
  * that shift (unrelated to this call-off) is never blamed on the pickup; only what the pickup
- * itself introduces counts against them. `world` — the schedule with the absent nurse actually
- * removed — is used only for what depends on the call-off having happened: who is free, who is
- * on leave, the shortfall, and the fairness burden a pickup would move.
+ * itself introduces, or makes worse (more hours past a cap already exceeded), counts against
+ * them. `world` — the schedule with the absent nurse actually removed — is used only for what
+ * depends on the call-off having happened: who is free, who is on leave, the shortfall, and the
+ * fairness burden a pickup would move.
  *
  * ## Why a locked assignment is not refused here
  *
@@ -30,15 +31,24 @@
 
 import { ConflictEngine, type SimState } from '../conflicts/engine.js';
 import { costImpact } from '../conflicts/impact.js';
+import { planPickup } from '../conflicts/pickup.js';
 import { nurseName } from '../conflicts/text.js';
-import type { Assignment, Id, Nurse } from '../domain/entities.js';
-import { compareDates, describeDate, type IsoDate } from '../domain/time.js';
+import type { Assignment, Id, Nurse, ShiftType } from '../domain/entities.js';
+import {
+  addDays,
+  compareDates,
+  describeDate,
+  type IsoDate,
+  shiftWindow,
+  windowsOverlap,
+} from '../domain/time.js';
 import { deriveCounters } from '../fairness/ledger.js';
 import { scoreFairness } from '../fairness/score.js';
+import { compareSeniority } from '../roster/seniority.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
+import { canTakeCharge } from '../rules/coverage-rules.js';
 import { volunteeredOn } from '../rules/mandatory-overtime.js';
 import type { Violation } from '../rules/types.js';
-import { diffViolations } from '../rules/violation-diff.js';
 import {
   type ExcludedNurse,
   PAY_TIER_ORDER,
@@ -67,18 +77,29 @@ export function findReplacements(input: ReplacementInput): ReplacementReport {
     shiftType.withinShiftTypeId !== null ||
     world.view
       .onShift(date, shiftType.id)
-      .some((v) => v.assignment.isCharge && v.nurse.isChargeEligible);
+      .some((v) => v.assignment.isCharge && canTakeCharge(v.nurse, engine.coverageParams));
+  // Under a licensed ratio an RN stands in an LVN's place in the pool; the rules then say
+  // whether the shift also needs the LVN herself (a coverage floor).
+  const rnMayFillLpn =
+    absentNurse.role === 'LPN' && engine.demand.get(date, shiftType.id)?.licensed !== undefined;
 
   const candidates: ReplacementCandidate[] = [];
   const excluded: ExcludedNurse[] = [];
 
   for (const nurse of engine.activeNurses) {
     if (nurse.id === absentNurse.id) continue;
-    if (nurse.role !== absentNurse.role) continue;
+    if (nurse.role !== absentNurse.role && !(rnMayFillLpn && nurse.role === 'RN')) continue;
 
     const label = `${nurseName(nurse)} (${nurse.role})`;
 
-    if (world.view.isAssignedOn(nurse.id, date)) {
+    // Standby is not "already working": the unit pays her to be phoned for exactly this.
+    if (
+      world.view
+        .timelineFor(nurse.id)
+        .some(
+          (v) => v.assignment.date === date && !engine.shiftType(v.assignment.shiftTypeId).isOnCall,
+        )
+    ) {
       excluded.push({
         nurseId: nurse.id,
         label,
@@ -92,20 +113,34 @@ export function findReplacements(input: ReplacementInput): ReplacementReport {
       continue;
     }
 
-    const outcome = tryNurse(engine, before, remaining, input, {
-      nurse,
-      date,
-      shiftType,
-      hasCharge,
-    });
+    const onCall = standbyForWindow(engine, remaining, nurse.id, date, shiftType);
+    const outcome = tryNurse(
+      engine,
+      before,
+      onCall.length === 0 ? remaining : remaining.filter((a) => !onCall.includes(a)),
+      input,
+      { nurse, date, shiftType, hasCharge },
+    );
 
     if (outcome.ok) {
+      const moved = outcome.chargeMovedTo;
+      const mover = moved ? engine.nurse(moved.nurseId) : undefined;
       candidates.push({
         nurseId: nurse.id,
         label,
         ...(nurse.phone !== undefined ? { phone: nurse.phone } : {}),
         payTier: outcome.payTier,
         assignment: outcome.row,
+        ...(moved && mover
+          ? {
+              chargeMovedTo: {
+                assignmentId: moved.id,
+                nurseId: mover.id,
+                label: `${nurseName(mover)} (${mover.role})`,
+              },
+            }
+          : {}),
+        ...(onCall[0] ? { replacesOnCall: { assignmentId: onCall[0].id } } : {}),
         cost: costImpact(engine, world, outcome.after, [nurse.id]),
         burdenIndex: burdenByNurse.get(nurse.id) ?? 0,
         ...(input.lastCalledAt[nurse.id] !== undefined
@@ -126,8 +161,8 @@ export function findReplacements(input: ReplacementInput): ReplacementReport {
   }
 
   const roster = engine.input.unit.overtimeOrder === 'roster';
-  const seniority = new Map(engine.activeNurses.map((n) => [n.id, n.seniorityDate]));
-  candidates.sort((a, b) => compareCandidates(a, b, roster ? seniority : undefined));
+  const seniority = new Map(engine.activeNurses.map((n) => [n.id, n]));
+  candidates.sort((a, b) => compareCandidates(a, b, seniority, roster));
   candidates.forEach((c, index) => {
     c.rank = index + 1;
   });
@@ -195,11 +230,16 @@ type TryOutcome =
       ok: true;
       payTier: PayTier;
       row: Omit<Assignment, 'id'>;
+      chargeMovedTo?: Assignment;
       after: SimState;
       softViolationsIntroduced: Violation[];
     }
   | { ok: false; reason: string };
 
+/**
+ * The pickup is planned by `planPickup`, the one place an exchange and a call-off decide charge
+ * and overtime, so a nurse who cannot take charge is still offered when someone on the shift can.
+ */
 function tryNurse(
   engine: ConflictEngine,
   before: SimState,
@@ -208,65 +248,57 @@ function tryNurse(
   ctx: TryContext,
 ): TryOutcome {
   const { nurse, date, shiftType, hasCharge } = ctx;
+  const plan = planPickup(engine, before, remaining, input.timeOff, {
+    recipient: nurse,
+    date,
+    shiftTypeId: shiftType.id,
+    periodId: engine.input.period.id,
+    source: 'callout',
+    needsCharge: !hasCharge,
+    trialId: `callout-trial:${nurse.id}:${input.absentAssignmentId}`,
+  });
 
-  const attempt = (isOvertime: boolean) => {
-    const row: Omit<Assignment, 'id'> = {
-      periodId: engine.input.period.id,
-      nurseId: nurse.id,
-      shiftTypeId: shiftType.id,
-      date,
-      source: 'callout',
-      isLocked: false,
-      isCharge: !hasCharge && nurse.isChargeEligible,
-      isOvertime,
-    };
-    const trial: Assignment = {
-      id: `callout-trial:${nurse.id}:${input.absentAssignmentId}`,
-      ...row,
-    };
-    const after = engine.state([...remaining, trial], input.timeOff);
-    const nurseDiff = diffViolations(
-      before.nurseViolations(nurse.id),
-      after.nurseViolations(nurse.id),
-    );
-    const shiftDiff = diffViolations(
-      before.shiftViolationsAround(date, shiftType.id),
-      after.shiftViolationsAround(date, shiftType.id),
-    );
-    const introduced = [...nurseDiff.introduced, ...shiftDiff.introduced];
-    const hard = introduced.filter((v) => v.severity === 'hard');
-    const soft = introduced.filter((v) => v.severity === 'soft');
-    return { row, after, hard, soft };
+  const v = plan.hard[0];
+  if (v !== undefined) return { ok: false, reason: `${v.ruleName} — ${v.message}` };
+  return {
+    ok: true,
+    payTier:
+      nurse.employmentType === 'agency' ? 'agency' : plan.forcedOvertime ? 'overtime' : 'straight',
+    row: plan.row,
+    ...(plan.chargeMovedTo ? { chargeMovedTo: plan.chargeMovedTo } : {}),
+    after: plan.after,
+    softViolationsIntroduced: plan.soft,
   };
+}
 
-  const straight = attempt(false);
-  if (straight.hard.length === 0) {
-    return {
-      ok: true,
-      payTier: nurse.employmentType === 'agency' ? 'agency' : 'straight',
-      row: straight.row,
-      after: straight.after,
-      softViolationsIntroduced: straight.soft,
-    };
-  }
-
-  if (straight.hard.every((v) => v.code === 'unauthorised_overtime')) {
-    const overtime = attempt(true);
-    if (overtime.hard.length === 0) {
-      return {
-        ok: true,
-        payTier: nurse.employmentType === 'agency' ? 'agency' : 'overtime',
-        row: overtime.row,
-        after: overtime.after,
-        softViolationsIntroduced: overtime.soft,
-      };
-    }
-    const v = overtime.hard[0]!;
-    return { ok: false, reason: `${v.ruleName} — ${v.message}` };
-  }
-
-  const v = straight.hard[0]!;
-  return { ok: false, reason: `${v.ruleName} — ${v.message}` };
+/**
+ * The nurse's standby rows whose window overlaps the absent shift's — she is already paid to be
+ * phoned for this window, so taking the shift replaces the standby rather than stacking on it.
+ * The day either side is searched because a standby dated yesterday can run into today's shift.
+ * The overlap is judged on the wall-clock windows (half-open), not on a night flag: a standby that
+ * ends at 07:00 is not on call for a shift that starts at 07:00, and stays to be judged by the
+ * rules.
+ *
+ * Only in-period rows are searched, because a backfill can replace only those. A lookback-tail
+ * standby that overlapped a shift on the period's first day is left in the trial for the rules
+ * to judge: at worst a nurse who was on call is missed, never a wrong name offered.
+ */
+function standbyForWindow(
+  engine: ConflictEngine,
+  remaining: readonly Assignment[],
+  nurseId: Id,
+  date: IsoDate,
+  shiftType: ShiftType,
+): Assignment[] {
+  const window = shiftWindow(date, shiftType);
+  const near = new Set([addDays(date, -1), date, addDays(date, 1)]);
+  return remaining
+    .filter((a) => {
+      if (a.nurseId !== nurseId || !near.has(a.date)) return false;
+      const type = engine.shiftType(a.shiftTypeId);
+      return type.isOnCall && windowsOverlap(shiftWindow(a.date, type), window);
+    })
+    .sort((a, b) => compareDates(a.date, b.date) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 // ---------------------------------------------------------------------------
@@ -276,32 +308,39 @@ function tryNurse(
 function compareCandidates(
   a: ReplacementCandidate,
   b: ReplacementCandidate,
-  /** Present only under the contract overtime rosters; the key to order the overtime tier by. */
-  rosterSeniority: ReadonlyMap<Id, IsoDate> | undefined,
+  nurses: ReadonlyMap<Id, Nurse>,
+  /** The unit orders the overtime tier by the contract rosters rather than by fairness. */
+  roster: boolean,
 ): number {
+  // The nurse already paid standby for this window is the one the contract phones first.
+  const onCall = Number(b.replacesOnCall !== undefined) - Number(a.replacesOnCall !== undefined);
+  if (onCall !== 0) return onCall;
+
   const tier = PAY_TIER_ORDER.indexOf(a.payTier) - PAY_TIER_ORDER.indexOf(b.payTier);
   if (tier !== 0) return tier;
 
-  if (rosterSeniority !== undefined && a.payTier === 'overtime') {
-    return compareOvertimeRoster(a, b, rosterSeniority);
-  }
+  if (roster && a.payTier === 'overtime') return compareOvertimeRoster(a, b, nurses);
 
   // Overtime someone offered before overtime they would have to be asked for.
   const offered =
     Number(b.volunteeredForOvertime ?? false) - Number(a.volunteeredForOvertime ?? false);
   if (offered !== 0) return offered;
 
-  // The pessimistic figure, so a nurse with no rate on file is not called first as "free".
-  const cost = a.cost.pessimisticDelta - b.cost.pessimisticDelta;
-  if (cost !== 0) return cost;
-
-  const burden = a.burdenIndex - b.burdenIndex;
+  // At the precision the Fairness page shows: a gap the manager cannot see must not outrank
+  // "called yesterday".
+  const burden = Math.round(a.burdenIndex * 10) - Math.round(b.burdenIndex * 10);
   if (burden !== 0) return burden;
 
   const recency = compareLastCalled(a.lastCalledAt, b.lastCalledAt);
   if (recency !== 0) return recency;
 
-  return a.nurseId.localeCompare(b.nurseId);
+  // Last, and only within a tier: the tier already carries the cost difference that matters.
+  // The pessimistic figure, so a nurse with no rate on file is not called first as "free".
+  const cost = a.cost.pessimisticDelta - b.cost.pessimisticDelta;
+  if (cost !== 0) return cost;
+
+  // Total and host-locale independent, so the same call-off prints the same list everywhere.
+  return compareSeniority(nurses.get(a.nurseId)!, nurses.get(b.nurseId)!);
 }
 
 /**
@@ -312,19 +351,16 @@ function compareCandidates(
 function compareOvertimeRoster(
   a: ReplacementCandidate,
   b: ReplacementCandidate,
-  seniority: ReadonlyMap<Id, IsoDate>,
+  seniority: ReadonlyMap<Id, Nurse>,
 ): number {
   const aVolunteered = a.volunteeredForOvertime ?? false;
   const bVolunteered = b.volunteeredForOvertime ?? false;
   if (aVolunteered !== bVolunteered) return aVolunteered ? -1 : 1;
 
-  const aDate = seniority.get(a.nurseId)!;
-  const bDate = seniority.get(b.nurseId)!;
-  if (!aVolunteered) {
-    // Reverse seniority: the later start date is the more junior nurse, who goes first.
-    const junior = compareDates(bDate, aDate);
-    return junior !== 0 ? junior : a.nurseId.localeCompare(b.nurseId);
-  }
+  const na = seniority.get(a.nurseId)!;
+  const nb = seniority.get(b.nurseId)!;
+  // Reverse seniority: the more junior nurse goes first.
+  if (!aVolunteered) return compareSeniority(nb, na);
 
   // A nurse who has never worked overtime sorts before any date.
   if (a.lastOvertimeOn !== b.lastOvertimeOn) {
@@ -332,8 +368,7 @@ function compareOvertimeRoster(
     if (b.lastOvertimeOn === undefined) return 1;
     return compareDates(a.lastOvertimeOn, b.lastOvertimeOn);
   }
-  const senior = compareDates(aDate, bDate);
-  return senior !== 0 ? senior : a.nurseId.localeCompare(b.nurseId);
+  return compareSeniority(na, nb);
 }
 
 /** Never-called (`undefined`) sorts before any timestamp — the finder spreads the calls. */
@@ -352,6 +387,8 @@ function shiftAbbreviationsOn(world: SimState, nurseId: Id, date: IsoDate): stri
   const abbreviations = world.view
     .onDate(date)
     .filter((v) => v.nurse.id === nurseId)
-    .map((v) => world.engine.shiftType(v.assignment.shiftTypeId).abbreviation);
+    .map((v) => world.engine.shiftType(v.assignment.shiftTypeId))
+    .filter((type) => !type.isOnCall)
+    .map((type) => type.abbreviation);
   return abbreviations.join(', ');
 }

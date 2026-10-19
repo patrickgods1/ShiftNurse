@@ -120,8 +120,11 @@ export function ProposeDialog({
                     <td className="px-2 py-1.5 text-text">{describeMix(p.acuityMix, tierNames)}</td>
                     <td className="px-2 py-1.5 text-text-muted">
                       <div>
-                        {p.basis.samples} sample{p.basis.samples === 1 ? '' : 's'}, weekday avg{' '}
-                        {p.basis.weekdayAverage.toFixed(1)}
+                        {p.basis.samples} sample{p.basis.samples === 1 ? '' : 's'}
+                        {p.basis.projectedSamples > 0
+                          ? ` (${p.basis.projectedSamples} from earlier forecasts, not actual census)`
+                          : ''}
+                        , weekday avg {p.basis.weekdayAverage.toFixed(1)}
                         {p.basis.seasonalSamples > 0
                           ? `, seasonal index ${p.basis.seasonalIndex.toFixed(2)}`
                           : ''}

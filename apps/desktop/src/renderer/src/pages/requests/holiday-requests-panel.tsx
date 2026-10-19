@@ -166,7 +166,7 @@ function HolidayList({ entries, name }: { entries: HolidayEntry[]; name: (id: Id
                 {entry.volunteers.map((v) => (
                   <li key={v.nurseId}>
                     <span className="font-medium">
-                      {v.rank}. {name(v.nurseId)}
+                      {v.rank}. {name(v.nurseId)} ({v.role})
                     </span>{' '}
                     <span className="text-text-muted">{v.reason}</span>
                     {v.beyondNeed ? (

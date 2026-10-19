@@ -10,13 +10,17 @@
  * most junior. A float is borrowed help, so contracts send her back before the unit's own staff
  * (D21). The tiers are the unit's policy and may be reordered; the charge nurse is never
  * cancelled, since someone must run the shift. Within the agency, float, overtime and per diem
- * tiers the most junior goes first (reverse `seniorityOrder`); volunteers go in the order they
- * offered. Each place carries its reason, as the call-off list's do.
+ * tiers the most junior goes first (reverse `compareSeniority`); volunteers go in the order they
+ * offered. Each place carries its reason, as the call-off list's do. A nurse whose removal would
+ * leave the shift breaking a hard rule (the only experienced RN beside a new grad, the only
+ * holder of a required credential, an orientee's preceptor) is never in the order, with the rule's
+ * own words as the reason — the caller passes `removalBreaks`.
  */
 
 import type { Assignment, Id, Nurse } from '../domain/entities.js';
 import { compareDates, describeDate, type IsoDate } from '../domain/time.js';
-import { seniorityOrder } from '../leave/bidding.js';
+import { compareSeniority } from '../roster/seniority.js';
+import type { Violation } from '../rules/types.js';
 
 export type CancellationTier =
   | 'volunteer'
@@ -47,6 +51,11 @@ export interface CancellationInput {
   /** Nurses who offered to go home, in the order they offered. */
   volunteers: readonly Id[];
   history: CancellationHistory;
+  /**
+   * Keyed by assignment id: the hard breach sending that nurse home would leave (`removalBreaks`).
+   * Absent: nobody is kept for that reason.
+   */
+  removalBreaks?: ReadonlyMap<Id, Violation>;
 }
 
 export interface CancellationPlace {
@@ -78,6 +87,15 @@ export function cancellationOrder(input: CancellationInput): CancellationOrder {
         nurseId: entry.nurse.id,
         reason: `${nameOf(entry.nurse)} is the charge nurse on this shift.`,
       });
+      continue;
+    }
+    // A volunteer too: offering to go does not make the shift safe without her.
+    const breach = input.removalBreaks?.get(entry.assignment.id);
+    if (breach) {
+      excluded.push({
+        nurseId: entry.nurse.id,
+        reason: `Sending ${nameOf(entry.nurse)} home would leave the shift breaking a hard rule — ${breach.ruleName}: ${breach.message}`,
+      });
     } else pool.push(entry);
   }
 
@@ -92,12 +110,8 @@ export function cancellationOrder(input: CancellationInput): CancellationOrder {
     order.push({ nurseId: entry.nurse.id, assignmentId: entry.assignment.id, tier, reason });
   };
   /** Most junior first: the reverse of seniority. */
-  const juniorFirst = (entries: typeof pool) => {
-    const seniority = seniorityOrder(entries.map((e) => e.nurse)).map((n) => n.id);
-    return [...entries].sort(
-      (a, b) => seniority.indexOf(b.nurse.id) - seniority.indexOf(a.nurse.id),
-    );
-  };
+  const juniorFirst = (entries: typeof pool) =>
+    [...entries].sort((a, b) => compareSeniority(b.nurse, a.nurse));
   const open = () => pool.filter((e) => !placed.has(e.nurse.id));
 
   for (const tier of input.tiers) {

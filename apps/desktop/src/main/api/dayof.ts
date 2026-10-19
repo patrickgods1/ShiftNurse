@@ -50,6 +50,7 @@ import {
   type ShiftNurseTx,
   saveCancellationPolicy,
   transact,
+  updateAssignment,
 } from '@shiftnurse/db';
 import type {
   BackfillResult,
@@ -353,6 +354,12 @@ function backfill(db: ShiftNurseDb, callOffId: Id, nurseId: Id, notes?: string):
     }
     deleteAssignment(tx, absent.id, ACTOR, reason);
     log({ kind: 'removed', assignment: absent, before: absent });
+    // She is called in place of her standby: leaving the OC row would double-book her.
+    if (candidate.replacesOnCall) {
+      const standby = assignmentOrThrow(tx, candidate.replacesOnCall.assignmentId);
+      deleteAssignment(tx, standby.id, ACTOR, reason);
+      log({ kind: 'removed', assignment: standby, before: standby });
+    }
     const created = createAssignment(
       tx,
       { ...candidate.assignment, ...(notes ? { notes } : {}) },
@@ -360,6 +367,13 @@ function backfill(db: ShiftNurseDb, callOffId: Id, nurseId: Id, notes?: string):
       reason,
     );
     log({ kind: 'added', assignment: created, after: created });
+    // A pickup that cannot carry charge hands it to a nurse already on the shift; without this
+    // row the shift ends with no charge nurse.
+    if (candidate.chargeMovedTo) {
+      const prior = assignmentOrThrow(tx, candidate.chargeMovedTo.assignmentId);
+      const updated = updateAssignment(tx, prior.id, { isCharge: true }, ACTOR, reason);
+      log({ kind: 'changed', assignment: updated, before: prior, after: updated });
+    }
     const attempt = logCallAttempt(tx, callOff.id, nurseId, 'accepted', ACTOR, notes);
     const covered = markCallOffCovered(tx, callOff.id, created.id, ACTOR);
     return { callOff: covered, attempt, assignment: created };

@@ -722,8 +722,8 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'year from the first full pay period, RN annual leave at 8 hours a pay period (685-hour ' +
       'carryover; 1 per 10 in pay status, 240, for part-time), sick leave at 4 hours a pay ' +
       'period (1 per 20 for part-time). VA LVNs and nursing assistants (hybrid Title 38) earn ' +
-      'Title 5 leave, and the 6-hour tier’s extra 10 hours in the leave year’s last pay period ' +
-      'is not added.',
+      'Title 5 leave: 4, 6 or 8 hours a pay period by service (10 h in the year’s last pay ' +
+      'period on the 6-hour tier).',
     options: [
       {
         id: COMPRESSED_TOUR,
@@ -942,7 +942,7 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
           employmentTypes: ['full_time'],
           tiers: [
             { fromYearsOfService: 0, hoursPerPayPeriod: 4 },
-            { fromYearsOfService: 3, hoursPerPayPeriod: 6 },
+            { fromYearsOfService: 3, hoursPerPayPeriod: 6, lastPayPeriodOfYearHours: 10 },
             { fromYearsOfService: 15, hoursPerPayPeriod: 8 },
           ],
           carryoverCapHours: 240,

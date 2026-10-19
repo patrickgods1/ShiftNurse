@@ -28,6 +28,7 @@ import {
   type Id,
   isFloatedOff,
   type ReplacementCandidate,
+  type ReplacementReport,
   type SchedulePeriod,
   type TimeOffRequest,
 } from '@shiftnurse/core';
@@ -36,15 +37,17 @@ import {
   createAssignment,
   type DbLike,
   deleteAssignment,
+  getNurse,
   getShiftType,
   getTimeOffRequest,
   listAssignmentsForPeriod,
   listPeriodsForUnit,
   type ShiftNurseDb,
   transact,
+  updateAssignment,
 } from '@shiftnurse/db';
 import type { LeaveCover, LeaveCoverOption } from '../../shared/api.js';
-import { ACTOR, buildConflictInput, periodOrThrow } from './context.js';
+import { ACTOR, assignmentOrThrow, buildConflictInput, periodOrThrow } from './context.js';
 import { openChangeLog } from './schedule.js';
 
 const MAX_CANDIDATES = 6;
@@ -93,7 +96,16 @@ function freedShifts(db: DbLike, periodId: Id, request: TimeOffRequest): Assignm
   );
 }
 
-export function coverOptions(db: DbLike, periodId: Id, requestId: Id): LeaveCoverOption[] {
+/**
+ * Each shift the leave would free, with the ranked replacements judged as if the leave were
+ * already approved. This is what the dialog shows; the writer re-derives its own candidates
+ * (see `approveAndCover`) because it must judge the live, mid-transaction schedule.
+ */
+function coverReports(
+  db: DbLike,
+  periodId: Id,
+  requestId: Id,
+): { assignment: Assignment; report: ReplacementReport }[] {
   const request = requestOrThrow(db, requestId);
   return touchedPeriods(db, periodOrThrow(db, periodId), request).flatMap((period) => {
     // Each shift is judged against its own period: its roster, rules and neighbours.
@@ -102,25 +114,37 @@ export function coverOptions(db: DbLike, periodId: Id, requestId: Id): LeaveCove
     const timeOff = input.timeOff.map((r) =>
       r.id === requestId ? { ...r, status: 'approved' as const } : r,
     );
-    return freedShifts(db, period.id, request).map((assignment) => {
-      const report = findReplacements({
+    return freedShifts(db, period.id, request).map((assignment) => ({
+      assignment,
+      report: findReplacements({
         ...input,
         timeOff,
         absentAssignmentId: assignment.id,
         lastCalledAt: {},
-      });
-      return {
-        assignment,
-        shortfall: report.shortfall,
-        candidates: report.candidates.slice(0, MAX_CANDIDATES).map((c: ReplacementCandidate) => ({
-          nurseId: c.nurseId,
-          label: c.label,
-          payTier: c.payTier,
-          overtime: c.assignment.isOvertime,
-        })),
-      };
-    });
+      }),
+    }));
   });
+}
+
+/** The roster name the manager knows, not the call list's label with its licence suffix. */
+function nurseName(db: DbLike, nurseId: Id): string {
+  const n = getNurse(db, nurseId);
+  return n ? `${n.firstName} ${n.lastName}` : 'Another nurse';
+}
+
+export function coverOptions(db: DbLike, periodId: Id, requestId: Id): LeaveCoverOption[] {
+  return coverReports(db, periodId, requestId).map(({ assignment, report }) => ({
+    assignment,
+    shortfall: report.shortfall,
+    candidates: report.candidates.slice(0, MAX_CANDIDATES).map((c: ReplacementCandidate) => ({
+      nurseId: c.nurseId,
+      label: c.label,
+      payTier: c.payTier,
+      overtime: c.assignment.isOvertime,
+      ...(c.chargeMovedTo ? { takesChargeName: nurseName(db, c.chargeMovedTo.nurseId) } : {}),
+      ...(c.replacesOnCall ? { replacesOnCall: true as const } : {}),
+    })),
+  }));
 }
 
 export function approveAndCover(
@@ -178,7 +202,10 @@ export function approveAndCover(
       let working = input.assignments;
       for (const [k, cover] of mine.entries()) {
         const gone = freed.get(cover.assignmentId)!;
-        // The freed row is already deleted; the replacement search starts from the shift it held.
+        // Not `coverReports`: that judges the schedule before approval. Here the leave is applied,
+        // earlier covers are in place and the freed row is already deleted, so the search starts
+        // from the live state with the shift it held added back. The standby and charge-move ids
+        // written below come from this search, never from what the dialog saw.
         const report = findReplacements({
           ...input,
           assignments: [...working, gone],
@@ -197,6 +224,13 @@ export function approveAndCover(
           throw new Error(CANNOT_COVER);
         }
         working = [...working, { id: `cover:${k}`, ...candidate.assignment }];
+        const log = logs.get(period.id)!;
+        // She is covering in place of her standby; leaving the row would double-book her.
+        if (candidate.replacesOnCall) {
+          const standby = assignmentOrThrow(tx, candidate.replacesOnCall.assignmentId);
+          deleteAssignment(tx, standby.id, ACTOR, reason);
+          log({ kind: 'removed', assignment: standby, before: standby });
+        }
         const created = createAssignment(
           tx,
           {
@@ -205,12 +239,20 @@ export function approveAndCover(
             shiftTypeId: gone.shiftTypeId,
             date: gone.date,
             source: 'manual',
+            // The candidate decides charge: a charge nurse's leave covered without it left the
+            // shift with no charge nurse.
+            isCharge: candidate.assignment.isCharge,
             isOvertime: candidate.assignment.isOvertime,
           },
           ACTOR,
           reason,
         );
-        logs.get(period.id)!({ kind: 'added', assignment: created, after: created });
+        log({ kind: 'added', assignment: created, after: created });
+        if (candidate.chargeMovedTo) {
+          const prior = assignmentOrThrow(tx, candidate.chargeMovedTo.assignmentId);
+          const updated = updateAssignment(tx, prior.id, { isCharge: true }, ACTOR, reason);
+          log({ kind: 'changed', assignment: updated, before: prior, after: updated });
+        }
         covered.push(created);
       }
     }

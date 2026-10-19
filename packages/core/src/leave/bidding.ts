@@ -14,6 +14,10 @@
  * week — so every nurse gets a first week before anyone gets a second. Leave already approved
  * takes its places first. Places are per role per day (`offPerDay`), set by the manager from what
  * the unit can spare (the leave capacity on the Requests page is the guide).
+ *
+ * A nurse's own approved leave never counts against her own choice, and a day she already holds
+ * is not held twice (the award's `alreadyOnLeave` days are not paid again). Only active nurses on
+ * the round's unit are served; anyone else's bid is denied with the reason.
  */
 
 import type { Id, Nurse, NurseRole, TimeOffRequest } from '../domain/entities.js';
@@ -26,6 +30,7 @@ import {
   describeDateRange,
   type IsoDate,
 } from '../domain/time.js';
+import { compareSeniority } from '../roster/seniority.js';
 
 export interface LeaveBidRound {
   id: Id;
@@ -62,6 +67,11 @@ export interface LeaveAward {
   endDate: IsoDate;
   /** The pass it was won in: 1 is everyone's first week. */
   pass: number;
+  /**
+   * The award's days on which she already held approved leave, in date order. Paid once: the
+   * request the award becomes must not pay these days again.
+   */
+  alreadyOnLeave: IsoDate[];
 }
 
 export interface LeaveDenial {
@@ -88,12 +98,7 @@ export interface BidResult {
 
 /** Most senior first: earliest seniority date, then the lower employee number. */
 export function seniorityOrder(nurses: readonly Nurse[]): Nurse[] {
-  return [...nurses].sort(
-    (a, b) =>
-      compareDates(a.seniorityDate, b.seniorityDate) ||
-      a.employeeId.localeCompare(b.employeeId, undefined, { numeric: true }) ||
-      a.id.localeCompare(b.id),
-  );
+  return [...nurses].sort(compareSeniority);
 }
 
 const nameOf = (nurse: Nurse) => `${nurse.firstName} ${nurse.lastName}`;
@@ -127,7 +132,18 @@ export function awardBids(
     throw new Error(`${round.name} ends before it starts`);
   }
   const byId = new Map(nurses.map((n) => [n.id, n]));
-  const order = seniorityOrder(nurses.filter((n) => bids.some((b) => b.nurseId === n.id)));
+  for (const bid of bids) {
+    if (!byId.has(bid.nurseId)) {
+      throw new Error(
+        `Bid ${bid.id} names nurse ${bid.nurseId}, who was not passed in; pass every bidder, active or not`,
+      );
+    }
+  }
+  // A leaver or a nurse moved off the unit is not served: her bid is denied in words, and her
+  // approved leave frees its places, since she will not be on this roster to take them.
+  const onRoster = (n: Nurse) => n.active && n.unitId === round.unitId;
+  const bidders = seniorityOrder(nurses.filter((n) => bids.some((b) => b.nurseId === n.id)));
+  const order = bidders.filter(onRoster);
   const rank = new Map(order.map((n, i) => [n.id, i]));
 
   // role → date → the places taken that day, and how: leave approved before the round, or an
@@ -141,22 +157,19 @@ export function awardBids(
   };
   for (const request of approvedLeave) {
     const nurse = byId.get(request.nurseId);
-    if (!nurse || request.status !== 'approved') continue;
+    if (!nurse || !onRoster(nurse) || request.status !== 'approved') continue;
     for (const date of datesInRange(request.startDate, request.endDate)) {
       if (!dateInRange(date, round.coversStart, round.coversEnd)) continue;
       hold(nurse.role, date, { nurseId: nurse.id, by: 'leave' });
     }
   }
 
-  const remaining = new Map(
-    order.map((n) => {
-      const choices = bids
-        .filter((b) => b.nurseId === n.id)
-        .flatMap((b) => b.choices.map((c) => ({ bidId: b.id, ...c })))
-        .sort((a, b) => a.rank - b.rank);
-      return [n.id, choices];
-    }),
-  );
+  const choicesOf = (n: Nurse) =>
+    bids
+      .filter((b) => b.nurseId === n.id)
+      .flatMap((b) => b.choices.map((c) => ({ bidId: b.id, ...c })))
+      .sort((a, b) => a.rank - b.rank);
+  const remaining = new Map(order.map((n) => [n.id, choicesOf(n)] as const));
   const won = new Map<Id, number>();
   const awards: LeaveAward[] = [];
   const denials: LeaveDenial[] = [];
@@ -181,6 +194,13 @@ export function awardBids(
       reason: `Choice ${choice.rank} (${describeDateRange(choice.startDate, choice.endDate)}): ${why}.`,
     });
   };
+
+  for (const nurse of bidders) {
+    if (onRoster(nurse)) continue;
+    for (const choice of choicesOf(nurse)) {
+      deny(nurse, choice, 1, `${nameOf(nurse)} is no longer on ${round.name}'s unit roster`);
+    }
+  }
 
   for (let pass = 1; ; pass++) {
     let awardedThisPass = false;
@@ -229,9 +249,12 @@ export function awardBids(
           deny(nurse, choice, pass, `it overlaps a week ${nameOf(nurse)} has already won`);
           continue;
         }
-        const full = days.filter((d) => (held.get(key(nurse.role, d))?.length ?? 0) >= places);
+        // Her own leave on a day is not a place someone else took from her.
+        const others = (d: IsoDate) =>
+          (held.get(key(nurse.role, d)) ?? []).filter((p) => p.nurseId !== nurse.id);
+        const full = days.filter((d) => others(d).length >= places);
         if (full.length > 0) {
-          const taken = full.flatMap((d) => held.get(key(nurse.role, d)) ?? []);
+          const taken = full.flatMap(others);
           // Bidders in service order, then nurses on leave only, each by id: the same text
           // however the bids and the leave were listed.
           const holders = [...new Set(taken.map((p) => p.nurseId))].sort(
@@ -267,7 +290,13 @@ export function awardBids(
           );
           continue;
         }
-        for (const d of days) hold(nurse.role, d, { nurseId: nurse.id, by: 'award' });
+        const alreadyOnLeave: IsoDate[] = [];
+        for (const d of days) {
+          // A day she already has off holds her one place, not two.
+          if ((held.get(key(nurse.role, d)) ?? []).some((p) => p.nurseId === nurse.id)) {
+            alreadyOnLeave.push(d);
+          } else hold(nurse.role, d, { nurseId: nurse.id, by: 'award' });
+        }
         won.set(nurse.id, (won.get(nurse.id) ?? 0) + 1);
         awards.push({
           bidId: choice.bidId,
@@ -276,6 +305,7 @@ export function awardBids(
           startDate: choice.startDate,
           endDate: choice.endDate,
           pass,
+          alreadyOnLeave,
         });
         awardedThisPass = true;
         break;

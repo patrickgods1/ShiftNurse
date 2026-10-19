@@ -58,6 +58,17 @@ export function EvaluationPanel({
           ))}
         </ul>
       ) : null}
+      {/* What approving also does (a charge move). Plain text: these are not warnings. */}
+      {evaluation.notes.length > 0 ? (
+        <div className="text-sm">
+          <p className="text-xs text-text-muted">Also changes</p>
+          <ul className="mt-0.5 flex flex-col gap-0.5">
+            {keyed(evaluation.notes).map((n) => (
+              <li key={n.key}>{n.message}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className="grid grid-cols-2 gap-3 text-sm">
         <SideImpact
           title={`Requesting · ${nurseLabel(nursesById, evaluation.requesting.nurseId)}`}

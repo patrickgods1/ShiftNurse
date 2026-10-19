@@ -4,10 +4,12 @@
  * shown a result table, not ids.
  */
 
+import { today } from '@shiftnurse/core';
 import {
   awardRound,
   closeLeaveBidRound,
   createLeaveBidRound,
+  getNurse,
   listLeaveBidRounds,
   listLeaveBids,
   listNursesForUnit,
@@ -24,16 +26,24 @@ export function leaveBiddingApi(db: ShiftNurseDb): ShiftNurseApi['leaveBidding']
   return {
     rounds: (unitId) => listLeaveBidRounds(db, unitId),
     createRound: (input) => transact(db, (tx) => createLeaveBidRound(tx, input, ACTOR)),
-    updateRound: (id, patch) => transact(db, (tx) => updateLeaveBidRound(tx, id, patch, ACTOR)),
-    closeRound: (id) => transact(db, (tx) => closeLeaveBidRound(tx, id, ACTOR)),
+    updateRound: (id, patch, reason) =>
+      transact(db, (tx) => updateLeaveBidRound(tx, id, patch, ACTOR, reason)),
+    closeRound: (id, reason) =>
+      transact(db, (tx) => closeLeaveBidRound(tx, id, ACTOR, today(), reason)),
     bids: (roundId) => listLeaveBids(db, roundId),
     submitBid: (roundId, nurseId, choices) =>
-      transact(db, (tx) => submitLeaveBid(tx, roundId, nurseId, choices, ACTOR)),
+      transact(db, (tx) => submitLeaveBid(tx, roundId, nurseId, choices, ACTOR, today())),
     award: (roundId) =>
       transact(db, (tx) => {
         const { round, result, awarded } = awardRound(tx, roundId, ACTOR);
         const names = new Map(listNursesForUnit(tx, round.unitId).map((n) => [n.id, nurseName(n)]));
-        const nameFor = (id: string) => names.get(id) ?? id;
+        // A bidder who moved unit is still named in the result, not printed as an id.
+        const nameFor = (id: string) => {
+          const known = names.get(id);
+          if (known) return known;
+          const moved = getNurse(tx, id);
+          return moved ? nurseName(moved) : id;
+        };
         return {
           round,
           order: result.order.map((nurseId) => ({ nurseId, nurseName: nameFor(nurseId) })),

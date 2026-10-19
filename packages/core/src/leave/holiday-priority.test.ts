@@ -142,6 +142,24 @@ describe('holiday request priority', () => {
     });
     expect(claims[0]!.claimants.map((c) => c.nurseId)).toEqual(['dee', 'bo']);
   });
+
+  it('ranks employee E9 ahead of E10 for Christmas when they started the same day', () => {
+    // Same start date, neither worked last year: 9 < 10, so E9 is senior. A string compare
+    // would put "E10" first.
+    const e9 = makeNurse({ id: 'e9', employeeId: 'E9', seniorityDate: isoDate('2015-01-01') });
+    const e10 = makeNurse({ id: 'e10', employeeId: 'E10', seniorityDate: isoDate('2015-01-01') });
+    const claims = holidayRequestPriority({
+      pending: [
+        pending('r-e10', 'e10', '2026-12-25', '2026-12-25'),
+        pending('r-e9', 'e9', '2026-12-25', '2026-12-25'),
+      ],
+      approved: [],
+      nurses: [e10, e9],
+      holidays: HOLIDAYS,
+      holidayWork: [],
+    });
+    expect(claims[0]!.claimants.map((c) => c.nurseId)).toEqual(['e9', 'e10']);
+  });
 });
 
 describe('a nurse on the Baylor weekend plan', () => {
@@ -194,18 +212,67 @@ describe('nurses who want to work a holiday', () => {
         wantsToWork('fay', 'xmas26'),
         wantsToWork('eve', 'xmas26'),
       ],
-      needed: new Map([['xmas26', 2]]),
+      needed: new Map([['xmas26', { RN: 2 }]]),
     });
-    expect(claims.map((c) => [c.holidayId, c.nurseId, c.rank, c.beyondNeed])).toEqual([
-      ['xmas26', 'eve', 1, false],
-      ['xmas26', 'fay', 2, false],
-      ['xmas26', 'gus', 3, true],
+    expect(claims.map((c) => [c.holidayId, c.nurseId, c.role, c.rank, c.beyondNeed])).toEqual([
+      ['xmas26', 'eve', 'RN', 1, false],
+      ['xmas26', 'fay', 'RN', 2, false],
+      ['xmas26', 'gus', 'RN', 3, true],
     ]);
     expect(claims.map((c) => c.reason)).toEqual([
-      'most senior volunteer',
-      'volunteer, 1 more senior',
-      'volunteer, 2 more senior',
+      'most senior RN volunteer',
+      'RN volunteer, 1 more senior',
+      'RN volunteer, 2 more senior',
     ]);
+  });
+
+  it("measures each role's volunteers against what that role needs", () => {
+    // The LPN is the most senior volunteer overall, but she is first of one LPN, not ahead of the
+    // RNs. Two RNs and one LPN are needed, so rn1 (2015) and rn2 (2018) both fit and nobody is
+    // surplus; pooled against the total, rn2 would have been pushed out by the LPN.
+    const lpn = makeNurse({
+      id: 'lpn',
+      employeeId: 'E1',
+      role: 'LPN',
+      seniorityDate: isoDate('2005-01-15'),
+    });
+    const rn1 = makeNurse({ id: 'rn1', employeeId: 'E2', seniorityDate: isoDate('2015-01-15') });
+    const rn2 = makeNurse({ id: 'rn2', employeeId: 'E3', seniorityDate: isoDate('2018-01-15') });
+    const claims = holidayWorkPriority({
+      holidays: HOLIDAYS,
+      nurses: [lpn, rn2, rn1],
+      preferences: [
+        wantsToWork('lpn', 'xmas26'),
+        wantsToWork('rn2', 'xmas26'),
+        wantsToWork('rn1', 'xmas26'),
+      ],
+      needed: new Map([['xmas26', { RN: 2, LPN: 1 }]]),
+    });
+    expect(claims.map((c) => [c.nurseId, c.role, c.rank, c.beyondNeed])).toEqual([
+      ['rn1', 'RN', 1, false],
+      ['rn2', 'RN', 2, false],
+      ['lpn', 'LPN', 1, false],
+    ]);
+  });
+
+  it('does not mark a role surplus when the date states no need for it', () => {
+    const lpn = makeNurse({ id: 'lpn', employeeId: 'E1', role: 'LPN' });
+    const claims = holidayWorkPriority({
+      holidays: HOLIDAYS,
+      nurses: [lpn],
+      preferences: [wantsToWork('lpn', 'xmas26')],
+      needed: new Map([['xmas26', { RN: 0 }]]),
+    });
+    expect(claims.map((c) => c.beyondNeed)).toEqual([false]);
+
+    // A stated need of none is different from no statement: she is past it.
+    const none = holidayWorkPriority({
+      holidays: HOLIDAYS,
+      nurses: [lpn],
+      preferences: [wantsToWork('lpn', 'xmas26')],
+      needed: new Map([['xmas26', { LPN: 0 }]]),
+    });
+    expect(none.map((c) => c.beyondNeed)).toEqual([true]);
   });
 
   it('gives a Baylor-plan volunteer no claim, however senior', () => {
@@ -216,7 +283,7 @@ describe('nurses who want to work a holiday', () => {
       preferences: [wantsToWork('eve', 'xmas26'), wantsToWork('fay', 'xmas26')],
     });
     expect(claims.map((c) => [c.nurseId, c.rank, c.reason])).toEqual([
-      ['fay', 1, 'most senior volunteer'],
+      ['fay', 1, 'most senior RN volunteer'],
     ]);
   });
 

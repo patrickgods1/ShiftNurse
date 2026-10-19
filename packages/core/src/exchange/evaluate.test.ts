@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Assignment, Id } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
+import { defaultRuleSet } from '../rules/registry.js';
 import { floatedOff } from '../schedule/elsewhere.js';
 import {
   assign,
@@ -413,7 +414,7 @@ describe('evaluateExchange', () => {
   it('planExchange carries charge and notes across and swaps the nurse ids', () => {
     resetFixtureCounters();
     const alice = makeNurse({ firstName: 'Alice', lastName: 'Kwan' });
-    const bo = makeNurse({ firstName: 'Bo', lastName: 'Lindqvist' });
+    const bo = makeNurse({ firstName: 'Bo', lastName: 'Lindqvist', isChargeEligible: true });
 
     const aliceShift = assign(alice.id, DAY_12, '2026-01-06', {
       isCharge: true,
@@ -448,6 +449,159 @@ describe('evaluateExchange', () => {
       (a) => a.nurseId === alice.id && a.shiftTypeId === DAY_12.id && a.date === boShift.date,
     );
     expect(aliceGetsBosShift).toMatchObject({ isCharge: false, notes: 'bring badge' });
+  });
+
+  it('does not hand the charge flag to a nurse who cannot take charge', () => {
+    resetFixtureCounters();
+    const alice = makeNurse({ firstName: 'Alice', lastName: 'Kwan', isChargeEligible: true });
+    const bo = makeNurse({ firstName: 'Bo', lastName: 'Lindqvist' }); // not charge-eligible
+    const aliceShift = assign(alice.id, DAY_12, '2026-01-06', { isCharge: true });
+
+    const input: ExchangeInput = {
+      ...solveInputFrom({
+        startDate: START,
+        endDate: END,
+        nurses: [alice, bo],
+        assignments: [aliceShift],
+        coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1, 1),
+      }),
+      proposal: giveaway(aliceShift, bo.id),
+    };
+
+    const plan = planExchange(input);
+    expect(plan.create[0]!.isCharge).toBe(false);
+    expect(plan.chargeTo).toBeUndefined();
+
+    const result = evaluateExchange(input);
+    expect(result.verdict).toBe('blocked');
+    expect(result.shiftViolationsIntroduced.map((v) => v.code)).toContain('missing_charge_nurse');
+  });
+
+  it('lets a charge nurse give her shift to a nurse who cannot take charge when an eligible nurse stays on it', () => {
+    resetFixtureCounters();
+    // Per diem, so the giveaway does not also warn that it leaves Carla short of a contract.
+    const carla = makeNurse({
+      firstName: 'Carla',
+      lastName: 'Diaz',
+      isChargeEligible: true,
+      employmentType: 'per_diem',
+    });
+    const wes = makeNurse({ firstName: 'Wes', lastName: 'Tran' }); // not charge-eligible
+    const eli = makeNurse({ firstName: 'Eli', lastName: 'Moss', isChargeEligible: true });
+    const carlaRow = assign(carla.id, DAY_12, '2026-01-06', { isCharge: true });
+    const eliRow = assign(eli.id, DAY_12, '2026-01-06');
+
+    const input: ExchangeInput = {
+      ...solveInputFrom({
+        startDate: START,
+        endDate: END,
+        nurses: [carla, wes, eli],
+        assignments: [carlaRow, eliRow],
+        coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1, 1),
+      }),
+      proposal: giveaway(carlaRow, wes.id),
+    };
+
+    const result = evaluateExchange(input);
+    expect(result.verdict).toBe('ok');
+    expect(result.blockers).toEqual([]);
+    expect(result.notes).toEqual([
+      'Eli Moss takes charge of Tue Jan 6 D12, since Wes Tran cannot take charge.',
+    ]);
+
+    const plan = planExchange(input);
+    expect(plan.create[0]!.isCharge).toBe(false);
+    expect(plan.chargeTo).toEqual([eliRow.id]);
+  });
+
+  it("does not carry the giver's overtime flag to a nurse on straight time", () => {
+    resetFixtureCounters();
+    // Per diem, so the giveaway does not also warn that it leaves Gus short of a contract.
+    const gus = makeNurse({ firstName: 'Gus', lastName: 'Farah', employmentType: 'per_diem' });
+    const tia = makeNurse({ firstName: 'Tia', lastName: 'Lowe' });
+    const gusThursday = assign(gus.id, DAY_12, '2026-01-08', { isOvertime: true });
+    const rules = defaultRuleSet('unit-1');
+    const ruleSet = {
+      ...rules,
+      configs: rules.configs.map((c) =>
+        c.ruleId === 'no-mandatory-overtime' ? { ...c, enabled: true } : c,
+      ),
+    };
+
+    const input: ExchangeInput = {
+      ...solveInputFrom({
+        startDate: START,
+        endDate: END,
+        nurses: [gus, tia],
+        assignments: [gusThursday],
+        ruleSet,
+      }),
+      proposal: giveaway(gusThursday, tia.id),
+    };
+
+    // Hand: Tia has 0 h that week, so one 12 h shift is 28 h under the 40 h threshold.
+    expect(evaluateExchange(input).verdict).toBe('ok');
+    expect(planExchange(input).create[0]!.isOvertime).toBe(false);
+  });
+
+  it("prices the overtime warning at the pickup's own cost, not the whole exchange's", () => {
+    resetFixtureCounters();
+    const tia = makeNurse({ firstName: 'Tia', lastName: 'Lowe' });
+    const gus = makeNurse({ firstName: 'Gus', lastName: 'Farah' });
+    const tiaWeek = [
+      assign(tia.id, DAY_12, '2026-01-04'),
+      assign(tia.id, DAY_12, '2026-01-05'),
+      assign(tia.id, DAY_12, '2026-01-06'),
+    ];
+    const gusThursday = assign(gus.id, DAY_12, '2026-01-08');
+
+    const input: ExchangeInput = {
+      ...solveInputFrom({
+        startDate: START,
+        endDate: END,
+        nurses: [tia, gus],
+        assignments: [...tiaWeek, gusThursday],
+        cost: {
+          payRates: [payRate(50)],
+          differentials: [],
+          overtimeRules: [overtimeRule('weekly', 40, 1.5)],
+        },
+      }),
+      proposal: giveaway(gusThursday, tia.id),
+    };
+
+    // Hand: Tia 36 + 12 = 48 h, 8 past 40. Her pickup costs 12 × $50 = $600 plus 8 × $25
+    // premium = $200, so +$800. The exchange's net (+$200) nets out Gus's saved $600.
+    // 48 h is not over the default 48 h cap.
+    const result = evaluateExchange(input);
+    expect(result.warnings).toContain('Creates 8 hours of overtime for Tia Lowe, +$800.');
+  });
+
+  it("blocks a trade that makes a nurse's existing hours breach worse", () => {
+    resetFixtureCounters();
+    const ana = makeNurse({ firstName: 'Ana', lastName: 'Cruz' });
+    const ben = makeNurse({ firstName: 'Ben', lastName: 'Ortiz' });
+    // Spaced so no run of consecutive days is what blocks it.
+    const anaWeek = ['2026-01-04', '2026-01-05', '2026-01-07', '2026-01-08'].map((d) =>
+      assign(ana.id, DAY_12, d),
+    );
+    const benSaturday = assign(ben.id, DAY_12, '2026-01-10');
+
+    const input: ExchangeInput = {
+      ...solveInputFrom({
+        startDate: START,
+        endDate: END,
+        nurses: [ana, ben],
+        assignments: [...anaWeek, benSaturday],
+        ruleParams: { 'max-hours-per-week': { maxHoursPerWeek: 36 } },
+      }),
+      proposal: giveaway(benSaturday, ana.id),
+    };
+
+    // Hand: Ana already works 48 h against a 36 h cap (12 over); a fifth 12 makes 60 h, 24 over.
+    const result = evaluateExchange(input);
+    expect(result.verdict).toBe('blocked');
+    expect(result.blockers.some((b) => /cap/.test(b) && b.includes('Ana'))).toBe(true);
   });
 
   it('evaluating twice on the same input yields identical output', () => {

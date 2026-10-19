@@ -66,6 +66,23 @@ function everyoneComesIn(on = date()) {
   }
 }
 
+describe('a nurse the shift cannot spare', () => {
+  it('keeps the only experienced RN off the float list', () => {
+    everyoneComesIn();
+    const [experienced, ...rest] = f.rns;
+    // Ids are random, so the seed may have made her a new grad too.
+    updateNurse(f.handle.db, experienced!.id, { isNovice: false }, ACTOR);
+    for (const nurse of rest) updateNurse(f.handle.db, nurse.id, { isNovice: true }, ACTOR);
+
+    const view = api().order(request([experienced!.id]));
+    expect(view.excluded.find((e) => e.nurseId === experienced!.id)?.reason).toMatch(
+      /^Needed on this shift — floating them would break /,
+    );
+    expect(view.order.map((p) => p.nurseId)).not.toContain(experienced!.id);
+    expect(() => send(experienced!.id, [experienced!.id])).toThrow('Needed on this shift');
+  });
+});
+
 describe('floating a nurse off a shift', () => {
   it('ranks a volunteer first and names the nurses nobody may float', () => {
     everyoneComesIn();

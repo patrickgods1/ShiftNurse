@@ -9,9 +9,10 @@
  * say yes, which is how the same three nurses end up carrying every call-out and every hour
  * of overtime. The replacement finder replaces that memory with the rule engine — who is
  * *legal* for the shift right now (rest, consecutive limits, credentials, not already working,
- * not on leave) — and then orders the legal ones the way the contract says to: straight time
- * before overtime before agency, then who has carried the least, then who was called least
- * recently. The call log records every attempt so the next call-off starts from the facts.
+ * not on leave) — and then orders the legal ones the way the contract says to: the nurse on
+ * call for that window first, then straight time before overtime before agency, then who has
+ * carried the least, then who was called least recently, and only then cost. The call log
+ * records every attempt so the next call-off starts from the facts.
  *
  * ## Why the input is `ConflictInput`
  *
@@ -22,9 +23,12 @@
  *
  * ## The ordering is lexicographic, on purpose
  *
- * `payTier`, then cost, then burden, then recency. A weighted blend would let a cheap agency
- * nurse outrank an idle staff nurse, which is exactly the decision a manager must never make
- * silently — the tiers are the contract's priority, the rest breaks ties within a tier.
+ * On call, `payTier`, (offered), burden to one decimal — the precision the Fairness page
+ * shows — then recency, then cost. Within a tier a few cents must never outrank a fairness gap
+ * the manager can see; the tier already carries the cost difference that matters (straight,
+ * overtime, agency). A weighted blend would let a cheap agency nurse outrank an idle staff
+ * nurse, which is exactly the decision a manager must never make silently — the tiers are the
+ * contract's priority, the rest breaks ties within a tier.
  */
 
 import type { BindingConstraint } from '../acuity/demand.js';
@@ -73,6 +77,16 @@ export interface ReplacementCandidate {
    * call-out covered, `isOvertime` set only when that authorisation is what makes it legal.
    */
   assignment: Omit<Assignment, 'id'>;
+  /**
+   * A nurse already on the shift who takes charge because this pickup cannot ("Eli Moss (RN)"
+   * on the card). The backfill writes these too: her row is flagged charge in the same change.
+   */
+  chargeMovedTo?: { assignmentId: Id; nurseId: Id; label: string };
+  /**
+   * Her standby row for this window, when she is the nurse on call for it; she is called first.
+   * The backfill writes these too: the pickup replaces the standby row.
+   */
+  replacesOnCall?: { assignmentId: Id };
   /** Marginal dollars of putting this nurse on the shift, priced over their whole timeline. */
   cost: CostImpact;
   /**
@@ -109,7 +123,10 @@ export interface ReplacementReport {
   shortfall: number;
   /** Ordered best-first; every entry is legal to write as-is. */
   candidates: ReplacementCandidate[];
-  /** Same-role active nurses who were considered and ruled out, in nurse-id order. */
+  /**
+   * Active nurses who could fill the slot (same role, or an RN for an LVN under a licensed ratio)
+   * and were ruled out, in nurse-id order.
+   */
   excluded: ExcludedNurse[];
 }
 

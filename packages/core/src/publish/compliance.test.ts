@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CostContext } from '../cost/types.js';
-import type { CoverageRequirement } from '../domain/entities.js';
+import type { CoverageRequirement, RatioRule } from '../domain/entities.js';
 import { addDays, DEFAULT_WEEKEND, isoDate } from '../domain/time.js';
 import {
   assign,
@@ -19,6 +19,7 @@ import {
   scenario,
   TIER_ROUTINE,
   timeOff,
+  UNIT_ID,
 } from '../testing/fixtures.js';
 import { complianceAlerts } from './compliance.js';
 
@@ -187,6 +188,48 @@ describe('complianceAlerts', () => {
     expect(alertsFor(s).filter((a) => a.kind === 'hours_drift')).toEqual([]);
   });
 
+  it('does not flag drift for an employment type the contract rule exempts, and rounds the hours', () => {
+    resetFixtureCounters();
+    // A 30-day period (Sun 4 Jan – Mon 2 Feb) with nothing scheduled: both nurses are 100% under.
+    const s = scenario({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-02-02'),
+      nurses: [
+        makeNurse({ id: 'pt', employmentType: 'part_time', contractedHoursPerPeriod: 36 }),
+        makeNurse({ id: 'ft', contractedHoursPerPeriod: 72 }),
+      ],
+    });
+    const drift = alertsFor(s, {
+      contractedHours: {
+        exemptEmploymentTypes: ['per_diem', 'part_time'],
+        onCallCountsTowardHours: false,
+      },
+    }).filter((a) => a.kind === 'hours_drift');
+    expect(drift.map((a) => a.nurseId)).toEqual(['ft']);
+    // 72h per 14-day pay period over 30 days is 72 × 30 / 14 = 154.2857…, printed as 154.3.
+    expect(drift[0]!.message).toContain('against 154.3h contracted');
+  });
+
+  it('raises no overtime alert for a week that lies wholly before the period', () => {
+    resetFixtureCounters();
+    // Weeks start Monday, so the period's first week is Mon 29 Dec – Sun 4 Jan. n1's four twelves
+    // (48h) all fall on 29 Dec – 1 Jan, in the lookback: that overtime belonged to the last
+    // schedule, and this one has no shift of hers in the week to move.
+    const s = scenario({
+      nurses: [
+        makeNurse({ id: 'n1', contractedHoursPerPeriod: 12 }),
+        makeNurse({ id: 'n2', contractedHoursPerPeriod: 12 }),
+      ],
+      priorAssignments: assignRun('n1', DAY_12, '2025-12-29', 4),
+      assignments: [assign('n2', DAY_12, '2026-01-06')],
+    });
+    expect(
+      alertsFor(s, { workWeekStartsOn: 1 }).filter(
+        (a) => a.kind === 'overtime' && a.nurseId === 'n1',
+      ),
+    ).toEqual([]);
+  });
+
   it('reports a 48-hour week as 8 hours of overtime against a 40-hour threshold', () => {
     resetFixtureCounters();
     const s = scenario({
@@ -270,6 +313,55 @@ describe('complianceAlerts', () => {
       assignments: [assign('a', NIGHT_12, '2026-01-04'), assign('b', NIGHT_12, '2026-01-04')],
     });
     expect(alertsFor(s).filter((a) => a.kind === 'ratio_risk')).toEqual([]);
+  });
+
+  // Title 22's pooled rule: 1:5 licensed (RN + LPN), at least half RNs. Twenty routine patients
+  // need ceil(20 / 5) = 4 licensed nurses at the bedside, and ceil(4 × 0.5) = 2 of them RNs. No
+  // RN-only rule exists, so the RN minimum of 2 comes from the share alone.
+  const LICENSED_1_TO_5: RatioRule = {
+    id: 'ratio-licensed',
+    unitId: UNIT_ID,
+    role: 'licensed',
+    acuityTierId: null,
+    maxPatientsPerNurse: 5,
+    minRnShare: 0.5,
+    active: true,
+  };
+  const pooledNight = (lpns: number) => {
+    const rns = [makeNurse({ id: 'rn1' }), makeNurse({ id: 'rn2' })];
+    const lpnNurses = Array.from({ length: lpns }, (_, i) =>
+      makeNurse({ id: `lpn${i + 1}`, role: 'LPN' }),
+    );
+    return scenario({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-04'),
+      ratioRules: [LICENSED_1_TO_5],
+      nurses: [...rns, ...lpnNurses],
+      censusForecasts: [census('2026-01-04', NIGHT_12, { [TIER_ROUTINE.id]: 20 })],
+      assignments: [...rns, ...lpnNurses].map((n) =>
+        assign(n.id, NIGHT_12, '2026-01-04', { id: `a-${n.id}` }),
+      ),
+    });
+  };
+
+  it('warns when a shift sits exactly at its licensed pool requirement', () => {
+    resetFixtureCounters();
+    // Two RNs and two LPNs are the 4 licensed the pool needs: 20 patients ÷ 4 = 1:5.
+    const risk = alertsFor(pooledNight(2)).filter((a) => a.kind === 'ratio_risk');
+    expect(risk).toHaveLength(1);
+    expect(risk[0]!.message).toContain('licensed (RN + LPN) 4 for 20 patients, 1:5');
+    expect([...risk[0]!.assignmentIds].sort()).toEqual(['a-lpn1', 'a-lpn2', 'a-rn1', 'a-rn2']);
+  });
+
+  it("describes an RN minimum that comes from the pool's share as a share, not a ratio", () => {
+    resetFixtureCounters();
+    // Two RNs and three LPNs: the pool has 5 for its 4, one to spare, but the two RNs are exactly
+    // the share's 2 of the 4 licensed.
+    const risk = alertsFor(pooledNight(3)).filter((a) => a.kind === 'ratio_risk');
+    expect(risk).toHaveLength(1);
+    expect(risk[0]!.message).toContain('RN share 2 of 4 licensed');
+    expect(risk[0]!.message).not.toContain('1:');
+    expect([...risk[0]!.assignmentIds].sort()).toEqual(['a-rn1', 'a-rn2']);
   });
   it('does not flag a nurse back from a paid vacation as drifting under contract', () => {
     resetFixtureCounters();
@@ -592,7 +684,7 @@ describe('weekends off per year', () => {
     alertsFor(s, { weekendsOffPerYear: { minimum, ledger } }).filter(
       (a) => a.kind === 'weekends_off_per_year',
     );
-  // 24 worked over the year before, in two periods inside the 364-day window.
+  // 24 worked over the year before, in two periods inside the 52 weeks.
   const lastYear = [history('2025-10-05', 14), history('2025-07-06', 10)];
 
   it('leaves a nurse alone when 24 weekends before and 2 now still leave the 26 promised', () => {
@@ -634,16 +726,36 @@ describe('weekends off per year', () => {
     expect(yearAlerts(s, lastYear)).toEqual([]);
   });
 
-  it('ignores a period that began a year or more before this one', () => {
+  it("counts only ledger periods that began within the 52 weeks ending on the period's last day", () => {
     resetFixtureCounters();
     const s = month([
       assign('n1', DAY_12, '2026-01-10'),
       assign('n1', DAY_12, '2026-01-17'),
       assign('n1', DAY_12, '2026-01-24'),
     ]);
-    // 2025-01-04 is 365 days before the period; 2025-01-05 is 364 and still counts.
-    expect(yearAlerts(s, [history('2025-10-05', 14), history('2025-01-04', 10)])).toEqual([]);
-    expect(yearAlerts(s, [history('2025-10-05', 14), history('2025-01-05', 10)])).toHaveLength(1);
+    // The 52 weeks end Sat 31 Jan 2026 and so begin 363 days earlier, Sun 2 Feb 2025.
+    // A period from 1 Feb 2025 is left out: 14 + 3 = 17 worked.
+    expect(yearAlerts(s, [history('2025-10-05', 14), history('2025-02-01', 10)])).toEqual([]);
+    // One from 2 Feb 2025 counts: 14 + 10 + 3 = 27 worked, 25 off, short of 26.
+    expect(yearAlerts(s, [history('2025-10-05', 14), history('2025-02-02', 10)])).toHaveLength(1);
+  });
+
+  it('leaves an every-other-weekend nurse alone over a full year with a six-week period', () => {
+    resetFixtureCounters();
+    const s = scenario({
+      nurses: [makeNurse({ id: 'n1', firstName: 'Ana', lastName: 'Cruz' })],
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-02-14'),
+      assignments: ['2026-01-10', '2026-01-24', '2026-02-07'].map((d) => assign('n1', DAY_12, d)),
+    });
+    // Thirteen four-week periods of 2 weekends each, starting 28k days before 4 Jan 2026.
+    const ledger = Array.from({ length: 13 }, (_, i) =>
+      history(addDays(isoDate('2026-01-04'), -28 * (i + 1)), 2),
+    );
+    // The 52 weeks run Sun 16 Feb 2025 – Sat 14 Feb 2026 (14 Feb − 363 days). k = 11 starts
+    // 2 Mar 2025 (308 days back) and counts; k = 12 starts 2 Feb 2025, before 16 Feb, and does not.
+    // 11 × 2 = 22, plus 3 now = 25 worked, 27 off: the 26 promised is kept.
+    expect(yearAlerts(s, ledger)).toEqual([]);
   });
 
   it('still warns a nurse with no weekends this period when history alone breaks the promise', () => {

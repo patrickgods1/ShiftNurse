@@ -23,6 +23,7 @@ import {
   type IsoDate,
   isFloatedOff,
   type Nurse,
+  removalBreaks,
 } from '@shiftnurse/core';
 import {
   createFloatRecord,
@@ -44,7 +45,7 @@ import type {
   FloatPlaceView,
   ShiftNurseApi,
 } from '../../shared/api.js';
-import { ACTOR, periodOrThrow } from './context.js';
+import { ACTOR, buildConflictInput, periodOrThrow } from './context.js';
 import { firstInOrder, nurseName } from './order.js';
 import { editSchedule } from './schedule.js';
 
@@ -75,10 +76,18 @@ export function floatOrderFor(db: DbLike, request: FloatOrderRequest): FloatOrde
     });
   const result = floatOrder({
     date,
-    onShift: onShift.map(({ nurse, assignment }) => ({ nurse, isCharge: assignment.isCharge })),
+    onShift: onShift.map(({ nurse, assignment }) => ({
+      nurse,
+      assignmentId: assignment.id,
+      isCharge: assignment.isCharge,
+    })),
     volunteers,
     preceptorships: listPreceptorships(db, period.unitId),
     history: listFloatRecords(db, period.unitId, addDays(date, -FLOAT_HISTORY_DAYS)),
+    removalBreaks: removalBreaks(
+      buildConflictInput(db, periodId),
+      onShift.map((e) => e.assignment.id),
+    ),
   });
   const entryOf = (id: Id) => onShift.find((e) => e.nurse.id === id)!;
   return {

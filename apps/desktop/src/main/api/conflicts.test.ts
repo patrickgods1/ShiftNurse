@@ -14,6 +14,7 @@ import {
   proposeSwap,
   recentAudit,
   saveConflictPolicy,
+  updateNurse,
   updateUnit,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -66,6 +67,38 @@ describe('approving a shift exchange', () => {
       /Exchange blocked/,
     );
     expect(getSwap(f.handle.db, swap.id)?.status).toBe('proposed');
+  });
+
+  it('refuses an exchange that hands a shift to a nurse who has since been deactivated', () => {
+    const api = scheduleApi(f.handle.db);
+    const date = addDays(f.seeded.draftStart, 2);
+    const [ann, bea] = [f.rns[0]!, f.rns[1]!];
+    const annShift = api.createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: ann.id,
+      shiftTypeId: f.day.id,
+      date,
+    });
+    const swap = proposeSwap(
+      f.handle.db,
+      {
+        periodId: f.seeded.draftPeriodId,
+        kind: 'giveaway',
+        requestingNurseId: ann.id,
+        counterpartyNurseId: bea.id,
+        offeredAssignmentId: annShift.id,
+      },
+      ACTOR,
+    );
+    // Bea leaves after the giveaway was proposed.
+    updateNurse(f.handle.db, bea.id, { active: false }, ACTOR);
+    const rowsBefore = listAssignmentsForPeriod(f.handle.db, f.seeded.draftPeriodId);
+
+    expect(() => approveExchange(f.handle.db, swap.id, 'Bea agreed by phone')).toThrow(
+      /is inactive, so they cannot take new shifts/,
+    );
+    expect(getSwap(f.handle.db, swap.id)?.status).toBe('proposed');
+    expect(listAssignmentsForPeriod(f.handle.db, f.seeded.draftPeriodId)).toEqual(rowsBefore);
   });
 
   it('says a swap was already decided, without its id', () => {

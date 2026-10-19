@@ -64,6 +64,12 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
     return n ? `${n.lastName}, ${n.firstName}` : nurseId;
   }
 
+  // From the roster by id, as the manager knows her, rather than trimming the call list's label.
+  function nurseName(nurseId: Id): string {
+    const n = nursesById.get(nurseId);
+    return n ? `${n.firstName} ${n.lastName}` : 'Another nurse';
+  }
+
   return (
     <div
       id={`call-off-${callOff.callOff.id}`}
@@ -118,6 +124,11 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
                     {c.phone !== undefined ? (
                       <span className="text-xs text-text-muted">{c.phone}</span>
                     ) : null}
+                    {c.replacesOnCall !== undefined ? (
+                      <span className="rounded bg-border px-1.5 py-0.5 text-xs font-semibold uppercase text-text-muted">
+                        On call
+                      </span>
+                    ) : null}
                     <span
                       className={`rounded px-1.5 py-0.5 text-xs font-semibold uppercase ${TONE_CLASSES[payTierTone(c.payTier)]}`}
                     >
@@ -148,6 +159,11 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
                         : 'never called'}
                     </span>
                   </div>
+                  {c.chargeMovedTo !== undefined ? (
+                    <p className="mt-1 text-xs text-text-muted">
+                      {nurseName(c.chargeMovedTo.nurseId)} takes charge
+                    </p>
+                  ) : null}
                   {c.softViolationsIntroduced.length > 0 ? (
                     <ul className="mt-1 flex flex-col gap-0.5 text-xs text-text-muted">
                       {c.softViolationsIntroduced.map((v) => (

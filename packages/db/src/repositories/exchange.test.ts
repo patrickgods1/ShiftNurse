@@ -541,6 +541,92 @@ describe('approveSwap', () => {
     ]);
   });
 
+  it('approves an exchange that moves charge to a nurse on the shift, writing both rows', () => {
+    // Ada (charge) gives her night to Beatrice, who cannot take charge; Eli, on the same night,
+    // takes it.
+    const { offered, swap } = proposeGiveaway();
+    const eliRow = createAssignment(
+      handle.db,
+      { periodId, nurseId: mkNurse('Eli'), shiftTypeId, date: isoDate('2026-01-16') },
+      ACTOR,
+    );
+    publishSchedule(handle.db, { periodId }, ACTOR);
+
+    transact(handle.db, (tx) =>
+      approveSwap(
+        tx,
+        swap.id,
+        {
+          remove: [offered.id],
+          create: [
+            {
+              periodId,
+              nurseId: nurseBId,
+              shiftTypeId,
+              date: isoDate('2026-01-16'),
+              source: 'manual',
+              isLocked: false,
+              isCharge: false,
+              isOvertime: false,
+            },
+          ],
+          chargeTo: [eliRow.id],
+        },
+        ACTOR,
+        { overrode: false, reason: 'Beatrice covers for Ada' },
+      ),
+    );
+
+    expect(getAssignment(handle.db, eliRow.id)?.isCharge).toBe(true);
+    const update = auditHistoryFor(handle.db, 'assignment', eliRow.id).find(
+      (e) => e.action === 'update',
+    );
+    expect((update?.before as { isCharge: boolean } | undefined)?.isCharge).toBe(false);
+    const changed = listChanges(handle.db, periodId).filter((c) => c.kind === 'changed');
+    expect(changed.map((c) => [c.assignmentId, c.source, c.reason])).toEqual([
+      [eliRow.id, 'exchange', 'Beatrice covers for Ada'],
+    ]);
+  });
+
+  it('refuses a stale charge move before writing anything', () => {
+    const { offered, swap } = proposeGiveaway();
+    const eliRow = createAssignment(
+      handle.db,
+      { periodId, nurseId: mkNurse('Eli'), shiftTypeId, date: isoDate('2026-01-16') },
+      ACTOR,
+    );
+    deleteAssignment(handle.db, eliRow.id, ACTOR, 'Removed by another edit');
+
+    expect(() =>
+      transact(handle.db, (tx) =>
+        approveSwap(
+          tx,
+          swap.id,
+          {
+            remove: [offered.id],
+            create: [
+              {
+                periodId,
+                nurseId: nurseBId,
+                shiftTypeId,
+                date: isoDate('2026-01-16'),
+                source: 'manual',
+                isLocked: false,
+                isCharge: false,
+                isOvertime: false,
+              },
+            ],
+            chargeTo: [eliRow.id],
+          },
+          ACTOR,
+          { overrode: false },
+        ),
+      ),
+    ).toThrow(/stale/);
+    expect(getSwap(handle.db, swap.id)?.status).toBe('proposed');
+    expect(getAssignment(handle.db, offered.id)).toBeDefined();
+  });
+
   it('refuses to approve on an archived period', () => {
     const { offered, swap } = proposeGiveaway();
     publishSchedule(handle.db, { periodId }, ACTOR);

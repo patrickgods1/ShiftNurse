@@ -7,7 +7,7 @@
 - `packages/core` (M1, complete): `domain/time.ts`, `domain/entities.ts`, `acuity/demand.ts`,
   `schedule/view.ts`, `rules/` (registry + 8 hard rules), `roster/csv.ts` (M4: the one CSV
   parser/formatter), `acuity/forecast.ts` (M5: same-weekday moving average with seasonal
-  index, mix validation, back-test), `fairness/` (M7), `cost/` (M8: `resolvePayRate`,
+  index against the same lookback last year, mix validation, back-test), `fairness/` (M7), `cost/` (M8: `resolvePayRate`,
   `costSchedule`, `marginalCost`, `compareToBudget` — the pay model is documented in
   `cost/types.ts`), `solver/` (M9: `types.ts` is the `Solver` contract, `model.ts` the
   incremental state + objective, `greedy.ts` the seed, `anneal.ts` the moves, `solver.ts` the
@@ -20,7 +20,7 @@
   `objective.ts`, `builder.ts` (`CpBuilder`, whose `evaluate` prices a schedule without the
   runner), `decode.ts`, `params.ts`, `index.ts` (`prepareCpsat` / `finishCpsat`)), `dayof/` (M13:
   `types.ts` contract, `replacements.ts`,
-  `staffing.ts`), `rules/incompatibility-rules.ts` + `schedule/overlap.ts` (incompatible staff),
+  `staffing.ts`, `removal-safety.ts`), `rules/incompatibility-rules.ts` + `schedule/overlap.ts` (incompatible staff),
   `conflicts/` (M10: `types.ts` is the
   contract, `engine.ts` the shared indexes + simulation state, `detect.ts`, `resolve.ts`,
   `analyse.ts`), `exchange/` (M11: `evaluateExchange` / `planExchange` — trade and giveaway
@@ -122,6 +122,11 @@
   pattern creates D8 inside D12 and N8 inside N12. `canTakeCharge`
   (coverage-rules) is the one test of who may be marked charge, shared by the rule,
   `SolverModel.ensureCharge` and CP-SAT.
+- **A pickup's row is planned once.** `conflicts/pickup.ts`'s `planPickup` decides charge and
+  overtime for an exchange and a call-off. Charge goes to the recipient only if `canTakeCharge`,
+  else to the most senior unlocked nurse on the shift who can (`chargeTo` / `chargeMovedTo`,
+  written as an update). The recipient starts at straight time and is flagged authorised overtime
+  only when that alone stood in the way. Breaches are judged introduced or worsened.
 - **Incompatible staff are judged by the hours they share.** An `IncompatibilityGroup` (two or
   more nurses, a `maxTogether` cap, optional `startsOn`/`endsOn` applied by shift date) feeds two
   shift-scope rules in `rules/incompatibility-rules.ts`: `incompatible-staff-cap` (soft) and
@@ -202,6 +207,8 @@
   Excel cannot run a formula hidden in a name, and still re-imports as itself.
 - **A tier cited by a ratio rule (active or deactivated) or by a census day's mix cannot be deleted; rename it.**
   `deleteAcuityTier` refuses before writing, since the rule FK cascades and demand would drop to zero.
+- **Mixed acuity is pooled (D11).** `nursesRequiredForMix` sums fractional loads and rounds once;
+  the per-assignment reading can need more and is not applied.
 - **HPPD and acuity care hours are advisory.** `ShiftDemand.careHoursRecommendedNurses` (care hours
   ÷ shift length) and `hppdRecommendedNurses` show on the Demand page; `acuity/hppd.ts`'s
   `scheduledHppd` compares a period's scheduled hours per patient day with the target on the Demand
@@ -276,14 +283,15 @@
   but Generate does not steer. Hard, `solver/cpsat/rules/days-off.ts` and
   `SolverModel` forbid it.
 - **Weekends off per year is an alert.** `complianceAlerts`' `weekends_off_per_year`
-  (`publish/compliance.ts`) comes from `Unit.minWeekendsOffPerYear`: the ledger's `weekendsWorked`
-  over the 364 days before the period plus this period's weekends, against 52. `weekend-pattern`
-  sees one schedule and only the ledger knows the year; a short history under-counts and never
-  raises a false alert. It is in no preset: UC–CNA's 26 is a contract, not a state's law.
+  (`publish/compliance.ts`) comes from `Unit.minWeekendsOffPerYear`: the ledger's weekends over the
+  periods that began within the 52 weeks ending on the period's last day, plus this period's,
+  against 52; a period straddling the boundary is left out (under-counts, never a false alert).
+  `weekend-pattern` sees one schedule and only the ledger knows the year; a short history
+  under-counts the same way. It is in no preset: UC–CNA's 26 is a contract, not a state's law.
 - **Competing time-off requests get an advised order.** `leave/request-priority.ts`'s
   `competingRequestPriority` fills `Conflict.advisedOrder` on a `competing_time_off` conflict:
-  approval rate ascending (a nurse with no decided request ranks behind every nurse with a
-  record), then who worked last year's occurrence of a holiday, seniority, `submittedAt`,
+  approval rate ascending (a nurse with no decided request counts as never denied, level
+  with a 100% record), then who worked last year's occurrence of a holiday, seniority, `submittedAt`,
   `employeeId`. Advice only, like holiday priority: it approves nothing, and VA–NNU Art. 13
   § 2.D.7 wants equity and a written denial reason, which the manager still records.
 - **CP-SAT infeasible is an encoding bug that still gets a schedule.** Every hard constraint is
@@ -331,11 +339,20 @@
   Oregon's ED ceiling is the statute's instantaneous 5; the 12-hour 1:4 average is in the summary,
   unenforced (ratios are hard).
 - **Leave bids are awarded in seniority order, one a nurse a pass.** `leave/bidding.ts`'s
-  `awardBids` is pure and deterministic (seniority date, then employee number); leave already
-  approved takes its places first; every choice not awarded carries a quotable reason naming the
+  `awardBids` is pure and deterministic (seniority date, then employee number); seniority is
+  `roster/seniority.ts`'s `compareSeniority` (date, then employee number compared numerically),
+  the one order bidding, holiday and request priority, float, cancellation and the overtime roster
+  use or reverse; leave already approved takes its places first; every choice not awarded carries a quotable reason naming the
   full days and who holds them, labelled by how (an award, or leave approved before the round).
+  A nurse's own approved leave never counts against her own choice, and a day she already holds
+  is not held twice (the award's `alreadyOnLeave` days are not paid again). Only active nurses on
+  the round's unit are served; anyone else's bid is denied with the reason.
   `awardRound` (ShiftNurseTx) turns awards into approved PTO through the ordinary approval, with
-  `suggestedPaidLeaveHours`, and records each denial with `recordAuditStrict`.
+  `suggestedPaidLeaveHours` (only for days not in `alreadyOnLeave`), and records each denial with
+  `recordAuditStrict`. It awards only a closed round (closing on or before the last bidding day
+  needs a strict reason); bids outside `[opensOn, closesOn]` are refused; edits to a round with
+  bids need a reason and never strand a choice (D32). The db never reads the clock: main passes
+  `today()`.
 - **A shift's hard shortfall is priced convexly.** `SolverModel.coveragePenalty` charges
   `hardShortfall × s(s+1)/2` for s hard units on one shift; CP-SAT collects each shift's units
   (`EncodeContext.addHardUnits`) and prices them with `CpBuilder.minimiseTriangular`. Slot counts
@@ -358,12 +375,17 @@
 - **Sending staff home follows the unit's cancellation order.** `dayof/cancellation.ts`'s
   `cancellationOrder` ranks volunteers, agency, nurses floated in (D21: borrowed help goes back
   first; a float is anyone homed off `input.unitId`), overtime, per diem, then a rotation (fewest
-  cancellations, longest ago, most junior); the charge nurse is never cancelled. Main cancels only
-  the next in order, and the removal is logged under the change source `'census'`.
+  cancellations, longest ago, most junior); the charge nurse is never cancelled, and a nurse whose
+  removal would introduce or worsen a hard shift-scope breach (census-judged
+  `understaffed`/`ratio_breach` aside) is never in the order (`dayof/removal-safety.ts`'s
+  `removalBreaks`, built by main), so "only the next in order" never forces an unsafe one. Main
+  cancels only the next in order, and the removal is logged under the change source `'census'`.
 - **Floating a nurse out follows the contract's order.** `dayof/float-order.ts`'s `floatOrder` ranks
   volunteers (in the order offered), then a rotation (fewest *mandated* floats in the last year,
   longest ago, most junior); the charge nurse, a nurse not float-eligible and an orientee are never
-  floated. A volunteered float does not count against the rotation. An objection is recorded on the
+  floated; nor is a nurse whose removal would introduce or worsen a hard shift-scope breach
+  (census-judged `understaffed`/`ratio_breach` aside; `removalBreaks`, built by main), so "only the
+  next in order" never forces an unsafe one. A volunteered float does not count against the rotation. An objection is recorded on the
   `FloatRecord` and never bars the float. Main floats only the first, logged under source `'float'`.
   The floated shift stays on the schedule marked `floatedTo` (D20): `floatedOff` turns it into busy
   time for judging, and the floor counts (`ScheduleView.onShift`/`rosterAt`, `checkStaffing`,
@@ -421,7 +443,10 @@
 - **Overtime by the contract's rosters is a unit's choice.** `Unit.overtimeOrder: 'roster'` reorders
   only the overtime tier of `findReplacements`: volunteers longest since their last overtime
   (`lastOvertimeOn`, from `lastOvertimeDates`), then seniority; then the mandated roster most junior
-  first (VA–NNU Art. 14). Absent or `'cost'` keeps volunteers, cost, burden, recency.
+  first (VA–NNU Art. 14). Absent or `'cost'` keeps volunteers, burden (to one decimal), recency,
+  cost. In either mode the nurse on call for the window is called first, and backfill replaces
+  her standby (`replacesOnCall`); a pickup who cannot take charge is offered when an eligible
+  nurse on the shift can take it (`chargeMovedTo`).
 - **Overtime does not pyramid when the rule says so.** `OvertimeRule.pyramiding: 'none'`
   (`cost/cost.ts`) makes `weekly` and `pay_period` rules count only straight-time hours toward
   their threshold, so hours already paid at a daily premium are not paid again (Cal. Lab. Code
@@ -477,7 +502,9 @@
   A floor made hard would gate every shift added to an under-committed nurse.
 - **Holiday priority is advice.** `leave/holiday-priority.ts` ranks pending requests for the same
   holiday: worked last year's occurrence (`previousOccurrence`) first, then seniority (VA–NNU
-  Art. 10; peer agreement is the manager's decision). It approves nothing.
+  Art. 10; peer agreement is the manager's decision). It approves nothing. Volunteers to work
+  a holiday (`holidayWorkPriority`) are ranked and measured per role (`needed` is per role), so
+  an LVN volunteering never takes an RN's place.
 - **A posted shift changes with the nurse's consent when the unit says so.**
   `Unit.requireConsentForPostedChanges` makes `requireChangeConsent` refuse a `'manual'` edit to a
   published period without a consent note, stored on `schedule_change.consent` and in the audit
@@ -486,7 +513,9 @@
 - **Leave balances and FMLA warn, never block.** `leave/balances.ts`: `checkLeaveBalance`.
   `leave/accrual.ts`: `projectBalance` carries payroll's figure forward to a date — accrual on
   each closed pay period's last day by the nurse's `AccrualRule` (first match wins; tiers by
-  years since `hireDate ?? seniorityDate`), a balance cap, approved use, and the carryover cap
+  years since `hireDate ?? seniorityDate`; a new tier applies from the pay period after the one
+  holding the anniversary (D12, OPM); `lastPayPeriodOfYearHours` pays the leave year's last period
+  differently (§ 6303(a)(2), VA preset: 10)), a balance cap, approved use, and the carryover cap
   forfeiting the excess at each leave-year start (federal: the first full pay period of January).
   Same-day order is forfeit, accrue, use. A rule's `frontLoadHours` replaces per-period accrual
   with the year's amount set at each leave-year start (Lab. Code § 246(d)); `useCapHoursPerYear`
@@ -499,7 +528,8 @@
   § 825) has the 1,250-hour test, 12 × the usual (or 52-week average) week, and the unit's
   choice of the four 12-month methods; Title 5 (5 C.F.R. § 630.1203, VA staff) has no hours test,
   6 × the biweekly tour, and a period always measured forward from first use. Periods are
-  inclusive; rolling back is the 365 days ending on the date. `leave/policy.ts` validates a
+  inclusive; rolling back is the twelve months ending on the date: from the day after the same
+  date a year earlier (366 days when 29 February falls inside). `leave/policy.ts` validates a
   unit's `LeavePolicy`; absent, a unit runs `DEFAULT_LEAVE_POLICY` (Title I, rolling back, no
   accrual).
 - **Leave for a 72/80 nurse is charged 10 hours per 9 of absence.** 38 U.S.C. § 7456A(d):

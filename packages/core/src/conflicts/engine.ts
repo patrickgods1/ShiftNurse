@@ -43,6 +43,7 @@ import { addDays, dateInRange, datesInRange, type IsoDate } from '../domain/time
 import { FairnessEvaluator } from '../fairness/evaluator.js';
 import { deriveCounters } from '../fairness/ledger.js';
 import type { BurdenCounters, CounterContext } from '../fairness/types.js';
+import { type CoverageParams, coverageRule } from '../rules/coverage-rules.js';
 import { type MaxHoursParams, maxHoursRule } from '../rules/hours-rules.js';
 import {
   evaluatePrepared,
@@ -97,6 +98,8 @@ export class ConflictEngine {
   readonly nurseRules: readonly PreparedRule[];
   readonly shiftRules: readonly PreparedRule[];
   readonly maxHoursParams: MaxHoursParams;
+  /** Who may carry the charge flag on a pickup is judged by these (`canTakeCharge`). */
+  readonly coverageParams: CoverageParams;
   readonly costCtx: CostContext | undefined;
   /**
    * The highest hourly rate on file, 0 without one, and the highest active overtime multiplier,
@@ -137,6 +140,8 @@ export class ConflictEngine {
     const configs = resolveConfigs(input.ruleSet);
     this.maxHoursParams = (configs.find((c) => c.ruleId === maxHoursRule.id)?.params ??
       maxHoursRule.defaultParams) as MaxHoursParams;
+    this.coverageParams = (configs.find((c) => c.ruleId === coverageRule.id)?.params ??
+      coverageRule.defaultParams) as CoverageParams;
 
     const slots: Slot[] = [];
     for (const date of this.dates) {

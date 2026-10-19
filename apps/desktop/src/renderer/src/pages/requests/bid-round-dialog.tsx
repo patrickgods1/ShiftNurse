@@ -7,13 +7,19 @@
 import type { Id, IsoDate, NurseRole } from '@shiftnurse/core';
 import { type FormEvent, useId, useState } from 'react';
 import type { LeaveBidRoundRecord } from '../../../../shared/api.js';
-import { useCreateLeaveBidRound, useUpdateLeaveBidRound } from '../../api-leave-bidding.js';
+import {
+  useCreateLeaveBidRound,
+  useLeaveBids,
+  useUpdateLeaveBidRound,
+} from '../../api-leave-bidding.js';
 import { DateField } from '../../components/date-field.js';
 import { describedBy, Field } from '../../components/field-help.js';
 import { Modal } from '../../components/modal.js';
-import { errorMessage, INPUT, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from '../../components/ui.js';
 
 const ROLES: NurseRole[] = ['RN', 'LPN', 'CNA'];
+
+const placeFor = (round: LeaveBidRoundRecord, role: NurseRole) => round.offPerDay[role];
 
 interface Props {
   unitId: Id;
@@ -25,6 +31,8 @@ export function BidRoundDialog({ unitId, round, onClose }: Props) {
   const create = useCreateLeaveBidRound(unitId);
   const update = useUpdateLeaveBidRound(unitId);
   const ids = useId();
+  const bids = useLeaveBids(round?.id);
+  const [reason, setReason] = useState('');
 
   const [name, setName] = useState(round?.name ?? '');
   const [coversStart, setCoversStart] = useState<IsoDate | ''>(round?.coversStart ?? '');
@@ -44,6 +52,19 @@ export function BidRoundDialog({ unitId, round, onClose }: Props) {
   const badPlace = placeCounts.find(([, n]) => !Number.isInteger(n) || n < 0);
   const limitNumber = limit.trim() === '' ? undefined : Number(limit);
 
+  // Once bids are in, the dates and places they were made against need a stated reason to move.
+  const judgedChanged =
+    round !== undefined &&
+    (coversStart !== round.coversStart ||
+      coversEnd !== round.coversEnd ||
+      opensOn !== round.opensOn ||
+      closesOn !== round.closesOn ||
+      limitNumber !== round.maxAwardsPerNurse ||
+      ROLES.some(
+        (r) => (places[r].trim() === '' ? undefined : Number(places[r])) !== placeFor(round, r),
+      ));
+  const needsReason = judgedChanged && (bids.data?.length ?? 0) > 0;
+
   const problem = !name.trim()
     ? 'Give the round a name.'
     : !coversStart || !coversEnd
@@ -60,7 +81,9 @@ export function BidRoundDialog({ unitId, round, onClose }: Props) {
                 ? 'Give at least one role a place off a day.'
                 : limitNumber !== undefined && (!Number.isInteger(limitNumber) || limitNumber < 1)
                   ? 'The most choices one nurse can win must be a whole number, 1 or more.'
-                  : undefined;
+                  : needsReason && !reason.trim()
+                    ? 'Bids are already in; say why the dates or places are changing.'
+                    : undefined;
 
   const pending = create.isPending || update.isPending;
   const error = errorMessage(create.error ?? update.error);
@@ -82,6 +105,7 @@ export function BidRoundDialog({ unitId, round, onClose }: Props) {
             offPerDay,
             maxAwardsPerNurse: limitNumber ?? null,
           },
+          ...(needsReason ? { reason: reason.trim() } : {}),
         },
         { onSuccess: onClose },
       );
@@ -191,6 +215,18 @@ export function BidRoundDialog({ unitId, round, onClose }: Props) {
             onChange={(e) => setLimit(e.target.value)}
           />
         </Field>
+
+        {needsReason ? (
+          <label className={LABEL}>
+            Reason for the change
+            <textarea
+              className={`${INPUT} min-h-16`}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              required
+            />
+          </label>
+        ) : null}
 
         {problem && (name || coversStart || coversEnd || opensOn || closesOn) ? (
           <p className="text-xs text-text-muted">{problem}</p>

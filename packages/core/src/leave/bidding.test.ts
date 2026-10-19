@@ -261,6 +261,124 @@ describe('awarding leave by seniority', () => {
     expect(result.order).toEqual(['twin', 'ana']);
   });
 
+  it('serves employee E9 before E10 when they started the same day', () => {
+    // Same date: 9 < 10 as numbers, so E9 is senior and is served first.
+    const e9 = makeNurse({ id: 'e9', employeeId: 'E9', seniorityDate: isoDate('2015-01-01') });
+    const e10 = makeNurse({ id: 'e10', employeeId: 'E10', seniorityDate: isoDate('2015-01-01') });
+    const result = awardBids(
+      ROUND,
+      [bid(e10, ['2027-07-05', '2027-07-09']), bid(e9, ['2027-07-05', '2027-07-09'])],
+      [e10, e9],
+      [],
+    );
+    expect(result.order).toEqual(['e9', 'e10']);
+  });
+
+  it("does not let a nurse's own approved day off count against her bid", () => {
+    // One RN place. Ana already has 8 Jul off; the only person holding that day is Ana herself.
+    const result = award([bid(ana, ['2027-07-05', '2027-07-09'])], {
+      approved: [timeOff('ana', '2027-07-08', '2027-07-08')],
+    });
+    expect(result.denials).toEqual([]);
+    expect(result.awards).toEqual([
+      expect.objectContaining({ nurseId: 'ana', rank: 1, alreadyOnLeave: ['2027-07-08'] }),
+    ]);
+  });
+
+  it('holds one place, not two, on a day the winner already had off, so the next nurse still gets it', () => {
+    // Two RN places. Ana (leave on 8 Jul) wins 5–9 Jul: 8 Jul holds one place for her, not two,
+    // so Bo takes the second place on every day of the week.
+    const result = award(
+      [bid(ana, ['2027-07-05', '2027-07-09']), bid(bo, ['2027-07-05', '2027-07-09'])],
+      {
+        round: { offPerDay: { RN: 2 } },
+        approved: [timeOff('ana', '2027-07-08', '2027-07-08')],
+      },
+    );
+    expect(result.awards.map((a) => a.nurseId)).toEqual(['ana', 'bo']);
+    expect(result.awards.map((a) => a.alreadyOnLeave)).toEqual([['2027-07-08'], []]);
+    expect(result.denials).toEqual([]);
+  });
+
+  it('denies a nurse who has left, in words, and lets the next nurse have the week', () => {
+    const sen = makeNurse({
+      id: 'sen',
+      firstName: 'Sen',
+      lastName: 'N',
+      employeeId: 'S1',
+      seniorityDate: isoDate('2001-01-01'),
+      active: false,
+    });
+    const jun = makeNurse({
+      id: 'jun',
+      firstName: 'Jun',
+      lastName: 'M',
+      employeeId: 'J1',
+      seniorityDate: isoDate('2020-01-01'),
+    });
+    const result = awardBids(
+      ROUND,
+      [bid(sen, ['2027-07-05', '2027-07-09']), bid(jun, ['2027-07-05', '2027-07-09'])],
+      [sen, jun],
+      [],
+    );
+    expect(result.awards.map((a) => a.nurseId)).toEqual(['jun']);
+    expect(result.denials).toEqual([
+      expect.objectContaining({ nurseId: 'sen', pass: 1, fullDates: [], heldBy: [] }),
+    ]);
+    expect(result.denials[0]!.reason).toBe(
+      "Choice 1 (Mon Jul 5 – Fri Jul 9): Sen N is no longer on Summer 2027's unit roster.",
+    );
+    expect(result.order).toEqual(['jun']);
+  });
+
+  it('denies a nurse who has moved to another unit, in words', () => {
+    const moved = makeNurse({
+      id: 'moved',
+      firstName: 'Mo',
+      lastName: 'Ved',
+      unitId: 'unit-2',
+      seniorityDate: isoDate('2001-01-01'),
+    });
+    const result = awardBids(ROUND, [bid(moved, ['2027-07-05', '2027-07-09'])], [moved], []);
+    expect(result.awards).toEqual([]);
+    expect(result.denials[0]!.reason).toBe(
+      "Choice 1 (Mon Jul 5 – Fri Jul 9): Mo Ved is no longer on Summer 2027's unit roster.",
+    );
+  });
+
+  it('frees the days a departed nurse had approved', () => {
+    const gone = makeNurse({ id: 'gone', firstName: 'Gus', lastName: 'One', active: false });
+    const result = awardBids(
+      ROUND,
+      [bid(bo, ['2027-07-05', '2027-07-09'])],
+      [gone, bo],
+      [timeOff('gone', '2027-07-08', '2027-07-08')],
+    );
+    expect(result.awards).toEqual([expect.objectContaining({ nurseId: 'bo', alreadyOnLeave: [] })]);
+    expect(result.denials).toEqual([]);
+  });
+
+  it('frees a day held by leave of a nurse who has moved to another unit', () => {
+    // One RN place. Mo, now on unit-2, still has 8 Jul approved; she is not on this roster, so
+    // the day's one place is free and Bo wins the week.
+    const moved = makeNurse({ id: 'moved', firstName: 'Mo', lastName: 'Ved', unitId: 'unit-2' });
+    const result = awardBids(
+      ROUND,
+      [bid(bo, ['2027-07-05', '2027-07-09'])],
+      [moved, bo],
+      [timeOff('moved', '2027-07-08', '2027-07-08')],
+    );
+    expect(result.awards).toEqual([expect.objectContaining({ nurseId: 'bo', alreadyOnLeave: [] })]);
+    expect(result.denials).toEqual([]);
+  });
+
+  it('refuses to award bids for a nurse it was not given', () => {
+    expect(() => awardBids(ROUND, [bid(bo, ['2027-07-05', '2027-07-09'])], [ana], [])).toThrow(
+      /was not passed in/,
+    );
+  });
+
   it('gives the same awards whatever order the bids arrive in', () => {
     const bids = [
       bid(ana, ['2027-07-05', '2027-07-09'], ['2027-08-02', '2027-08-06']),

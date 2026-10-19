@@ -67,4 +67,11 @@ describe('diffAssignments', () => {
     ]);
     expect(diff.added).toBe(3);
   });
+
+  it('refuses a schedule that lists the same nurse twice on one shift', () => {
+    resetFixtureCounters();
+    const before = [assign('n1', DAY_12, '2026-01-05'), assign('n1', DAY_12, '2026-01-05')];
+    expect(() => diffAssignments(before, [])).toThrow(/two shifts for nurse n1 on 2026-01-05/);
+    expect(() => diffAssignments([], before)).toThrow(/The after schedule has two shifts/);
+  });
 });

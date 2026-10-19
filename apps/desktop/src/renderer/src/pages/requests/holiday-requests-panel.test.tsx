@@ -54,22 +54,25 @@ const volunteers: HolidayWorkClaim[] = [
   {
     holidayId: 'h-1',
     nurseId: 'n-ana',
+    role: 'RN',
     rank: 1,
-    reason: 'most senior volunteer',
+    reason: 'most senior RN volunteer',
     beyondNeed: false,
   },
   {
     holidayId: 'h-1',
     nurseId: 'n-cal',
+    role: 'RN',
     rank: 2,
-    reason: 'volunteer, 1 more senior',
+    reason: 'RN volunteer, 1 more senior',
     beyondNeed: true,
   },
   {
     holidayId: 'h-2',
     nurseId: 'n-ben',
+    role: 'RN',
     rank: 1,
-    reason: 'most senior volunteer',
+    reason: 'most senior RN volunteer',
     beyondNeed: false,
   },
 ];
@@ -136,10 +139,10 @@ describe('holiday requests on the Requests page', () => {
         (li) => li.textContent,
       );
     expect(working(holidays[0]!)).toEqual([
-      '1. Ana Martinez most senior volunteer',
-      '2. Cal Dunn volunteer, 1 more senior · more than the day needs',
+      '1. Ana Martinez (RN) most senior RN volunteer',
+      '2. Cal Dunn (RN) RN volunteer, 1 more senior · more than the day needs',
     ]);
-    expect(working(holidays[1]!)).toEqual(['1. Ben Okafor most senior volunteer']);
+    expect(working(holidays[1]!)).toEqual(['1. Ben Okafor (RN) most senior RN volunteer']);
     expect(holidays[1]!.querySelector('ol[aria-label="Wants it off"]')).toBeNull();
   });
 

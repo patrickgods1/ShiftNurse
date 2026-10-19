@@ -351,6 +351,7 @@ const CASES: Record<NurseScoped, Case> = {
         c.ana.id,
         [{ rank: 1, startDate: d('2026-07-06'), endDate: d('2026-07-12') }],
         ACTOR,
+        d('2026-03-15'),
       );
     },
   },

@@ -153,27 +153,89 @@ describe('projecting a balance forward from payroll', () => {
     expect(p.accruedHours).toBeCloseTo(7.2, 10);
   });
 
-  it('moves an LVN from 4 to 6 hours a period when she passes her 3-year anniversary', () => {
-    // Anniversary 2026-11-10. Period ending 10-31: 2 years, 4h. Ending 11-14: 3 years, 6h.
-    // 4 + 6 = 10.
+  const LVN_ANNUAL: AccrualRule = {
+    balanceType: 'annual',
+    roles: ['LPN'],
+    tiers: [
+      { fromYearsOfService: 0, hoursPerPayPeriod: 4 },
+      { fromYearsOfService: 3, hoursPerPayPeriod: 6 },
+      { fromYearsOfService: 15, hoursPerPayPeriod: 8 },
+    ],
+  };
+
+  it('keeps an LVN at 4 hours in the pay period her 3-year anniversary falls in, and pays 6 from the next', () => {
+    // Anniversary 2026-11-10. Periods closing before 12-01: 10-31 (10-18..10-31; the day before,
+    // 10-17, is 2 years in: 4), 11-14 (11-01..11-14, holding the anniversary; the day before,
+    // 10-31, is 2 years: 4), 11-28 (11-15..11-28; the day before, 11-14, is past 11-10: 3 years,
+    // 6). 4 + 4 + 6 = 14; 50 + 14 = 64.
     const p = projectBalance({
       ...base,
       balanceHours: 50,
       asOf: d('2026-10-17'),
-      onDate: d('2026-11-20'),
+      onDate: d('2026-12-01'),
       serviceStart: d('2023-11-10'),
-      rule: {
-        balanceType: 'annual',
-        roles: ['LPN'],
-        tiers: [
-          { fromYearsOfService: 0, hoursPerPayPeriod: 4 },
-          { fromYearsOfService: 3, hoursPerPayPeriod: 6 },
-          { fromYearsOfService: 15, hoursPerPayPeriod: 8 },
-        ],
-      },
+      rule: LVN_ANNUAL,
     });
-    expect(p.accruedHours).toBe(10);
-    expect(p.hours).toBe(60);
+    expect(p.accruedHours).toBe(14);
+    expect(p.hours).toBe(64);
+  });
+
+  it('starts the higher rate in the period after the one that opens on the anniversary', () => {
+    // Anniversary 2026-11-15, the first day of period 11-15..11-28: the service is completed in
+    // that period, so it still earns 4. Periods: 10-31 (day before 10-17: 2 years, 4), 11-14 (day
+    // before 10-31: 2, 4), 11-28 (day before 11-14: 2, 4), 12-12 (11-29..12-12; day before
+    // 11-28: 3, 6). 4 + 4 + 4 + 6 = 18; 50 + 18 = 68.
+    const p = projectBalance({
+      ...base,
+      balanceHours: 50,
+      asOf: d('2026-10-17'),
+      onDate: d('2026-12-15'),
+      serviceStart: d('2023-11-15'),
+      rule: LVN_ANNUAL,
+    });
+    expect(p.accruedHours).toBe(18);
+    expect(p.hours).toBe(68);
+  });
+
+  const FEDERAL_ANNUAL: AccrualRule = {
+    balanceType: 'annual',
+    tiers: [
+      { fromYearsOfService: 0, hoursPerPayPeriod: 4 },
+      { fromYearsOfService: 3, hoursPerPayPeriod: 6, lastPayPeriodOfYearHours: 10 },
+      { fromYearsOfService: 15, hoursPerPayPeriod: 8 },
+    ],
+  };
+
+  it("pays a federal nurse with 3 to 15 years 10 hours in the leave year's last pay period", () => {
+    // Leave year 2027 starts on the first period beginning on or after 1 January: periods start
+    // 12-27 and 01-10, so 2027-01-10. Period 12-13..12-26: no leave year starts in
+    // (12-26, 01-09], so 6. Period 12-27..01-09: 01-10 is in (01-09, 01-23], so 10. 6 + 10 = 16.
+    const p = projectBalance({
+      ...base,
+      leaveYearStart: 'first_full_pay_period',
+      balanceHours: 0,
+      asOf: d('2026-12-20'),
+      onDate: d('2027-01-20'),
+      serviceStart: d('2020-01-01'),
+      rule: FEDERAL_ANNUAL,
+    });
+    expect(p.accruedHours).toBe(16);
+  });
+
+  it('earns a federal nurse with 6 years exactly 20 days in a 26-period leave year', () => {
+    // Leave year 2027-01-10..2028-01-08: 2027-01-10 + 26 × 14 days = 2028-01-09, the next
+    // leave-year start, so 26 periods close inside. 25 × 6 + 10 = 160 = 20 days of 8 hours, the
+    // year § 6303(a)(2) promises (three-fourths day, 1¼ days in the last period).
+    const p = projectBalance({
+      ...base,
+      leaveYearStart: 'first_full_pay_period',
+      balanceHours: 0,
+      asOf: d('2027-01-09'),
+      onDate: d('2028-01-10'),
+      serviceStart: d('2020-01-01'),
+      rule: FEDERAL_ANNUAL,
+    });
+    expect(p.accruedHours).toBe(160);
   });
 
   it('forfeits the 10 hours a federal nurse holds above 240 at the leave-year turnover', () => {
@@ -435,7 +497,7 @@ describe('a front-loaded balance', () => {
   // Calendar leave year; periods close 12-26 and 2027-01-09 between the dates below.
   const FRONT_LOADED: AccrualRule = {
     balanceType: 'sick',
-    tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 8 }],
+    tiers: [],
     frontLoadHours: 40,
   };
 

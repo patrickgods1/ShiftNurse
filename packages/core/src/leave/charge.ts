@@ -5,7 +5,7 @@
  * absence". Leave is banked in paid hours while the tour is 12 worked hours, so one tour off costs
  * 13⅓ hours of balance. A request's `paidHours` stays the hours worked it covers (contracted hours
  * here are hours worked, and that is what counts toward the 72); only the debit grows, here, where
- * a balance or an FMLA entitlement is charged. Applying 10/9 at both ends would charge twice.
+ * a balance is charged. Applying 10/9 at both ends would charge twice.
  */
 
 import type { ScheduleKind } from '../domain/entities.js';

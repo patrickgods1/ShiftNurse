@@ -6,7 +6,8 @@
  * The ranking is core's `cancellationOrder`; this file loads what it needs (the shift's roster
  * for one role, the unit's tier order, each nurse's cancellations over the last year) and holds
  * the one rule the screen must never decide alone: only the nurse at the top of the order can be
- * cancelled, so the contract's order is what happened rather than what the manager clicked.
+ * cancelled, so the contract's order is what happened rather than what the manager clicked —
+ * and leaves out anyone whose removal would break a hard rule, so the next safe nurse is first.
  */
 
 import {
@@ -19,6 +20,7 @@ import {
   type Nurse,
   type NurseRole,
   type RoleStaffing,
+  removalBreaks,
   reportingPayOwed,
   type ShiftStaffingCheck,
   shiftWindow,
@@ -46,7 +48,7 @@ import type {
   ShiftCancellationRecord,
 } from '../../shared/api.js';
 import { hostWallMinute } from './clock.js';
-import { ACTOR, periodOrThrow } from './context.js';
+import { ACTOR, buildConflictInput, periodOrThrow } from './context.js';
 import { firstInOrder, nurseName } from './order.js';
 import { openChangeLog } from './schedule.js';
 
@@ -118,6 +120,11 @@ export function cancellationOrderFor(
     tiers: getCancellationPolicy(db, period.unitId),
     volunteers,
     history: cancellationHistory(db, period.unitId, date),
+    // Judged on `db`, which inside `cancelForCensus` is its transaction: the state that is written.
+    removalBreaks: removalBreaks(
+      buildConflictInput(db, periodId),
+      onShift.map((e) => e.assignment.id),
+    ),
   });
   const name = (id: Id) => nurseName(nurseById.get(id) as Nurse);
   return {

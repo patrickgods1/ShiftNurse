@@ -777,6 +777,9 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
       (verify: npm run check; smoke; seed:demo and seed:scenarios succeed)
 - [x] Phase 13 — Conflicts engine: worsened breaches, cross-day moves, authorised OT outside the
       FTE ceiling, unpriced ranked pessimistically (verify: npm run check; smoke)
+- [x] Phase 14 — Day-of, leave and bidding: removal safety, one pickup planner, one seniority
+      order, bid round lifecycle (D32), accrual timing (D12), alert windows (verify: npm run
+      check; smoke)
 
 ---
 

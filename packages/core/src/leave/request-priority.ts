@@ -6,11 +6,13 @@
  * claimants the manager decides from memory, and the nurse who is always denied keeps being
  * denied. This module orders them: lowest approval rate first (the fairness ledger's
  * `requestsApproved` / `requestsDenied`, summed over every period on file), then, on a holiday,
- * whoever worked last year's occurrence, then seniority, then who asked first. It is advice: it
+ * whoever worked last year's occurrence, then seniority date, then who asked first, then the lower
+ * employee number (compared numerically, as `roster/seniority.ts` does). It is advice: it
  * approves and denies nothing, and the solver does not read it.
  *
- * A nurse with no decided request has never been denied, so ranks behind every nurse with a
- * record rather than ahead as a 0% would put them. "Last year's occurrence" is
+ * A nurse with no decided request has never been denied, so ranks level with a nurse who has
+ * never been denied (a rate of 1): neither has been refused, so seniority and the rest decide
+ * between them, and a 0% never puts her first. "Last year's occurrence" is
  * `previousOccurrence`, the definition `holiday-priority.ts` and the rotation rule share; with no
  * such occurrence there is nothing to judge by and the step is skipped (`null`).
  */
@@ -23,6 +25,7 @@ import type {
   TimeOffRequest,
 } from '../domain/entities.js';
 import { compareDates, type IsoDate } from '../domain/time.js';
+import { compareEmployeeIds } from '../roster/seniority.js';
 import { previousOccurrence } from '../rules/holiday-rotation.js';
 import type { HolidayWorkRecord } from '../rules/types.js';
 
@@ -90,22 +93,16 @@ export function competingRequestPriority(input: RequestPriorityInput): RequestCl
   });
 
   entries.sort((a, b) => {
-    if (a.rate !== b.rate) {
-      if (a.rate === null) return 1;
-      if (b.rate === null) return -1;
-      return a.rate - b.rate;
-    }
+    const byRate = (a.rate ?? 1) - (b.rate ?? 1);
+    if (byRate !== 0) return byRate;
     const byWorked = Number(b.worked === true) - Number(a.worked === true);
     if (byWorked !== 0) return byWorked;
+    // Not `compareSeniority` whole: "who asked first" sits between the date and employee number.
     const bySeniority = compareDates(a.nurse.seniorityDate, b.nurse.seniorityDate);
     if (bySeniority !== 0) return bySeniority;
     if (a.request.submittedAt !== b.request.submittedAt)
       return a.request.submittedAt - b.request.submittedAt;
-    return a.nurse.employeeId < b.nurse.employeeId
-      ? -1
-      : a.nurse.employeeId > b.nurse.employeeId
-        ? 1
-        : 0;
+    return compareEmployeeIds(a.nurse, b.nurse);
   });
 
   return entries.map((e, i) => {

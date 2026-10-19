@@ -96,7 +96,10 @@ export interface NurseSideImpact {
   /** Period cost attributable to this nurse. */
   dollarsBefore: number;
   dollarsAfter: number;
-  /** Hard violations the exchange would introduce on this nurse's timeline. Any → blocked. */
+  /**
+   * Hard violations the exchange would introduce or make worse on this nurse's timeline.
+   * Any → blocked.
+   */
   hardViolations: Violation[];
   softViolationsIntroduced: Violation[];
   softViolationsCleared: Violation[];
@@ -122,8 +125,16 @@ export interface ExchangeEvaluation {
   /** Unit-level, same shapes the resolution cards use. */
   fairness: FairnessImpact;
   cost: CostImpact;
-  /** Shift-scope hard violations introduced (a shift losing its only charge nurse, a credential). */
+  /**
+   * Shift-scope hard violations introduced or made worse (a shift losing its only charge nurse,
+   * a credential).
+   */
   shiftViolationsIntroduced: Violation[];
+  /**
+   * What an approval also does beyond moving the shifts — a nurse already on the shift taking
+   * charge because the recipient cannot. Not warnings: they never change the verdict.
+   */
+  notes: string[];
   /** The assignments as they would exist after the exchange, for the preview grid. */
   after: Assignment[];
 }
@@ -132,6 +143,14 @@ export interface ExchangeEvaluation {
 export interface ExchangeApplication {
   /** Assignments to delete, by id. */
   remove: Id[];
-  /** Assignments to create, carrying charge/OT/notes across from the originals. */
+  /**
+   * Assignments to create, carrying notes across from the originals. Charge is carried only to a
+   * recipient who can take it, and a row starts at straight time (`conflicts/pickup.ts`).
+   */
   create: Omit<Assignment, 'id'>[];
+  /**
+   * Existing rows, by id, to flag charge because the recipient of a charge shift cannot take it.
+   * Written as updates in the same transaction; absent when no charge moves.
+   */
+  chargeTo?: Id[];
 }

@@ -15,10 +15,13 @@ import {
   getAssignment,
   getCallOff,
   getPeriod,
+  grantCredential,
   listAcuityTiersForUnit,
   listAssignmentsForPeriod,
   listCensusForecastsInRange,
   listChanges,
+  listCredentials,
+  listNurseCredentials,
   listNursesForUnit,
   listPeriodsForUnit,
   listShiftTypesForUnit,
@@ -211,6 +214,98 @@ describe('backfilling a call-off', () => {
     ]);
     expect(changes[1]!.nurseId).toBe(f.rns[0]!.id);
     expect(changes[0]!.reason).toMatch(/^Call-off: /);
+  });
+});
+
+/** The demo unit's shifts require credentials; the test nurses hold every one, so none decides. */
+function grantAclsToAll() {
+  for (const credential of listCredentials(f.handle.db)) {
+    for (const nurse of f.rns) {
+      const has = listNurseCredentials(f.handle.db, nurse.id).some(
+        (c) => c.credentialId === credential.id,
+      );
+      if (!has) {
+        grantCredential(f.handle.db, { nurseId: nurse.id, credentialId: credential.id }, ACTOR);
+      }
+    }
+  }
+}
+
+describe('backfilling with the extra rows a pickup needs', () => {
+  /** Only Ann and Bea may take charge; everyone else on the roster may not. */
+  function onlyAnnAndBeaTakeCharge() {
+    grantAclsToAll();
+    for (const [i, nurse] of f.rns.entries()) {
+      updateNurse(f.handle.db, nurse.id, { isChargeEligible: i < 2 }, ACTOR);
+    }
+  }
+
+  it('backfills a charge nurse’s call-off with a nurse who cannot take charge, moving charge to the eligible nurse on the shift', () => {
+    onlyAnnAndBeaTakeCharge();
+    const grid = scheduleApi(f.handle.db);
+    const date = addDays(f.seeded.draftStart, 4);
+    const [ann, bea, cal] = [f.rns[0]!, f.rns[1]!, f.rns[2]!];
+    const absent = grid.createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: ann.id,
+      shiftTypeId: f.day.id,
+      date,
+      isCharge: true,
+    });
+    const beaShift = grid.createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: bea.id,
+      shiftTypeId: f.day.id,
+      date,
+    });
+    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+
+    const dayOf = dayOfApi(f.handle.db);
+    const callOff = dayOf.reportCallOff(absent.id, 'sick');
+    dayOf.backfill(callOff.id, cal.id);
+
+    expect(getAssignment(f.handle.db, beaShift.id)?.isCharge).toBe(true);
+    const update = auditHistoryFor(f.handle.db, 'assignment', beaShift.id).find(
+      (e) => e.action === 'update',
+    );
+    expect((update?.before as { isCharge?: boolean } | undefined)?.isCharge).toBe(false);
+    const changed = listChanges(f.handle.db, f.seeded.draftPeriodId).find(
+      (c) => c.kind === 'changed',
+    );
+    expect(changed?.nurseId).toBe(bea.id);
+    expect(changed?.reason).toMatch(/^Call-off: /);
+  });
+
+  it('backfills a night call-off with the nurse on call, removing her standby', () => {
+    grantAclsToAll();
+    const grid = scheduleApi(f.handle.db);
+    const date = addDays(f.seeded.draftStart, 4);
+    const onCall = listShiftTypesForUnit(f.handle.db, f.seeded.unitId).find((s) => s.isOnCall)!;
+    const [ann, bea] = [f.rns[0]!, f.rns[1]!];
+    const absent = grid.createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: ann.id,
+      shiftTypeId: f.night.id,
+      date,
+    });
+    const standby = grid.createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: bea.id,
+      shiftTypeId: onCall.id,
+      date,
+    });
+    const dayOf = dayOfApi(f.handle.db);
+    const callOff = dayOf.reportCallOff(absent.id, 'sick');
+    dayOf.backfill(callOff.id, bea.id);
+
+    expect(getAssignment(f.handle.db, standby.id)).toBeUndefined();
+    expect(auditHistoryFor(f.handle.db, 'assignment', standby.id).map((e) => e.action)).toContain(
+      'delete',
+    );
+    const hers = listAssignmentsForPeriod(f.handle.db, f.seeded.draftPeriodId).filter(
+      (a) => a.nurseId === bea.id && a.date === date,
+    );
+    expect(hers.map((a) => a.shiftTypeId)).toEqual([f.night.id]);
   });
 });
 

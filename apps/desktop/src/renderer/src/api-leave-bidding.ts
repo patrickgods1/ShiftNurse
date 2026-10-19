@@ -49,8 +49,8 @@ export function useUpdateLeaveBidRound(unitId: Id) {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
-    mutationFn: ({ id, patch }: { id: Id; patch: LeaveBidRoundPatch }) =>
-      api.leaveBidding.updateRound(id, patch),
+    mutationFn: ({ id, patch, reason }: { id: Id; patch: LeaveBidRoundPatch; reason?: string }) =>
+      api.leaveBidding.updateRound(id, patch, reason),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: leaveBidKeys.rounds(unitId) }),
   });
 }
@@ -59,7 +59,8 @@ export function useCloseLeaveBidRound(unitId: Id) {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
-    mutationFn: (id: Id) => api.leaveBidding.closeRound(id),
+    mutationFn: ({ id, reason }: { id: Id; reason?: string }) =>
+      api.leaveBidding.closeRound(id, reason),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: leaveBidKeys.rounds(unitId) }),
   });
 }

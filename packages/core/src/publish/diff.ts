@@ -11,6 +11,9 @@
  *
  * Locks and the `source` of a row are the manager's bookkeeping and invisible to the nurse,
  * so they are deliberately not compared.
+ *
+ * Bad data is refused, not smoothed over: a schedule with two rows on one (nurse, date, shift)
+ * is refused, not collapsed, since a Map would keep the last and hide the corruption.
  */
 
 import type { Assignment, Id } from '../domain/entities.js';
@@ -58,12 +61,29 @@ function compareChanges(a: AssignmentChange, b: AssignmentChange): number {
   );
 }
 
+function indexByKey(
+  rows: readonly Assignment[],
+  side: 'before' | 'after',
+): Map<string, Assignment> {
+  const out = new Map<string, Assignment>();
+  for (const a of rows) {
+    const k = key(a);
+    if (out.has(k)) {
+      throw new Error(
+        `The ${side} schedule has two shifts for nurse ${a.nurseId} on ${a.date} (shift type ${a.shiftTypeId}); remove the duplicate row before comparing.`,
+      );
+    }
+    out.set(k, a);
+  }
+  return out;
+}
+
 export function diffAssignments(
   before: readonly Assignment[],
   after: readonly Assignment[],
 ): ScheduleDiff {
-  const beforeByKey = new Map(before.map((a) => [key(a), a]));
-  const afterByKey = new Map(after.map((a) => [key(a), a]));
+  const beforeByKey = indexByKey(before, 'before');
+  const afterByKey = indexByKey(after, 'after');
   const changes: AssignmentChange[] = [];
 
   for (const [k, prev] of beforeByKey) {

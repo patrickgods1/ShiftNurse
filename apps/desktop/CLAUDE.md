@@ -44,7 +44,9 @@
   on published-period edits; Settings › Backups) and Today (M13: `core/dayof/` — `findReplacements`
   ranks same-role nurses simulated on the conflicts engine, `checkStaffing`/`shiftsAround` for the
   live census re-check; `dayOf` IPC in `main/api/dayof.ts`, `backfill` goes through `editSchedule` as
-  `'backfill'`; `pages/today.tsx` + `api-dayof.ts`) are real.
+  `'backfill'` and writes the whole pickup in one transaction (the absent row's removal, the
+  replaced standby's removal, the new row, and a charge move to a nurse already on the shift; the
+  leave approve-and-cover does the same); `pages/today.tsx` + `api-dayof.ts`) are real.
   Renderer hooks: `api.ts` (roster), `api-config.ts` (configuration + rules; owns every configuration key, other modules import from it), `api-demand.ts`
   (census/demand), `api-schedule.ts` (grid mutations + validation), `api-fairness.ts`
   (report/trend/import), `api-cost.ts` (pay config, cost report, budget).

@@ -119,6 +119,7 @@ const accrualTier = z.strictObject({
   fromYearsOfService: z.number(),
   hoursPerPayPeriod: z.number().optional(),
   hoursPerAccruedHour: z.number().optional(),
+  lastPayPeriodOfYearHours: z.number().optional(),
 });
 
 const accrualRule = z.strictObject({

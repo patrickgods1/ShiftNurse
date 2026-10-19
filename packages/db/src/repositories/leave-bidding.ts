@@ -17,6 +17,8 @@ import {
   type BidResult,
   compareDates,
   daysBetween,
+  describeDate,
+  describeDateRange,
   type Id,
   type IsoDate,
   type LeaveAward,
@@ -146,6 +148,7 @@ export function updateLeaveBidRound(
   id: Id,
   patch: LeaveBidRoundPatch,
   actor: string,
+  reason?: string,
 ): LeaveBidRoundRecord {
   const before = requireRound(db, id);
   if (before.status === 'awarded') {
@@ -165,18 +168,65 @@ export function updateLeaveBidRound(
     after.maxAwardsPerNurse = changes.maxAwardsPerNurse;
   }
   validateRound(after);
+
+  // Once bidders have relied on the dates and places, changing them is a decision someone may
+  // ask about; and a season that no longer holds a bid's choice would only fail at the award.
+  const bids = listLeaveBids(db, id);
+  const judged = bids.length > 0 && judgedFieldsChanged(before, after);
+  if (bids.length > 0) {
+    assertNoStrandedChoice(db, after, bids);
+    if (judged && !reason?.trim()) {
+      throw new Error(
+        `Bids are already in for ${before.name}; say why its dates or places are changing.`,
+      );
+    }
+  }
   db.update(roundTable).set(toRow(after)).where(eq(roundTable.id, id)).run();
-  recordAudit(db, { entityType: ROUND, entityId: id, action: 'update', actor, before, after });
+  const entry = {
+    entityType: ROUND,
+    entityId: id,
+    action: 'update',
+    actor,
+    before,
+    after,
+  } as const;
+  if (judged) recordAuditStrict(db, { ...entry, reason }, { requireReason: true });
+  else recordAudit(db, { ...entry, ...(reason?.trim() ? { reason } : {}) });
   return after;
 }
 
-/** Stop taking bids. The manager can still award a closed round, or leave it unawarded. */
-export function closeLeaveBidRound(db: DbLike, id: Id, actor: string): LeaveBidRoundRecord {
+/**
+ * Stop taking bids; only a closed round can be awarded. `closedOn` is passed in (never read from
+ * a clock here). Closing on or before the last bidding day shuts out nurses who have not bid yet,
+ * so it needs a recorded reason.
+ */
+export function closeLeaveBidRound(
+  db: DbLike,
+  id: Id,
+  actor: string,
+  closedOn: IsoDate,
+  reason?: string,
+): LeaveBidRoundRecord {
   const before = requireRound(db, id);
   if (before.status !== 'open') throw new Error(`${before.name} is already ${before.status}`);
+  const early = compareDates(closedOn, before.closesOn) <= 0;
+  if (early && !reason?.trim()) {
+    throw new Error(
+      `Bidding for ${before.name} runs until ${describeDate(before.closesOn)}. Closing it now shuts out anyone who has not bid yet, so give a reason.`,
+    );
+  }
   const after: LeaveBidRoundRecord = { ...before, status: 'closed' };
   db.update(roundTable).set({ status: 'closed' }).where(eq(roundTable.id, id)).run();
-  recordAudit(db, { entityType: ROUND, entityId: id, action: 'update', actor, before, after });
+  const entry = {
+    entityType: ROUND,
+    entityId: id,
+    action: 'update',
+    actor,
+    before,
+    after,
+  } as const;
+  if (early) recordAuditStrict(db, { ...entry, reason }, { requireReason: true });
+  else recordAudit(db, { ...entry, ...(reason?.trim() ? { reason } : {}) });
   return after;
 }
 
@@ -191,11 +241,22 @@ export function submitLeaveBid(
   nurseId: Id,
   choices: readonly LeaveBidChoice[],
   actor: string,
+  enteredOn: IsoDate,
   enteredBy: RequestOrigin = 'manager',
 ): LeaveBidRecord {
   const round = requireRound(db, roundId);
   if (round.status !== 'open') {
     throw new Error(`${round.name} is ${round.status}; it no longer takes bids`);
+  }
+  if (compareDates(enteredOn, round.opensOn) < 0) {
+    throw new Error(
+      `Bidding for ${round.name} opens on ${describeDate(round.opensOn)}; a bid cannot be entered before then.`,
+    );
+  }
+  if (compareDates(enteredOn, round.closesOn) > 0) {
+    throw new Error(
+      `Bidding for ${round.name} closed on ${describeDate(round.closesOn)}; a late bid cannot be entered.`,
+    );
   }
   const nurse = getNurse(db, nurseId);
   if (!nurse || nurse.unitId !== round.unitId) throw new Error('That nurse is not on this unit');
@@ -255,10 +316,18 @@ export interface AwardRoundResult {
 export function awardRound(tx: ShiftNurseTx, roundId: Id, actor: string): AwardRoundResult {
   const before = requireRound(tx, roundId);
   if (before.status === 'awarded') throw new Error(`${before.name} has already been awarded`);
+  if (before.status !== 'closed')
+    throw new Error(`Close bidding for ${before.name} before awarding it.`);
   const bids = listLeaveBids(tx, roundId);
   if (bids.length === 0) throw new Error(`Nobody has bid in ${before.name} yet`);
 
+  // Core judges every bidder, so one who has since moved unit is passed too and denied in words.
   const nurses = listNursesForUnit(tx, before.unitId);
+  for (const bid of bids) {
+    if (nurses.some((n) => n.id === bid.nurseId)) continue;
+    const moved = getNurse(tx, bid.nurseId);
+    if (moved) nurses.push(moved);
+  }
   const result = awardBids(
     before,
     bids,
@@ -271,15 +340,25 @@ export function awardRound(tx: ShiftNurseTx, roundId: Id, actor: string): AwardR
   const unit = getUnit(tx, before.unitId)!;
   const shiftHours = typicalShiftHours(listShiftTypesForUnit(tx, before.unitId));
   const awarded: AwardedLeave[] = result.awards.map((award) => {
-    const reason = `Awarded in ${before.name}: choice ${award.rank}`;
+    const reason =
+      `Awarded in ${before.name}: choice ${award.rank}` +
+      (award.alreadyOnLeave.length > 0
+        ? `; ${award.alreadyOnLeave.length} day(s) already on approved leave, not paid again`
+        : '');
     const nurse = nurses.find((n) => n.id === award.nurseId)!;
-    const paidHours = suggestedPaidLeaveHours({
-      type: 'pto',
-      days: daysBetween(award.startDate, award.endDate) + 1,
-      contractedHoursPerPeriod: nurse.contractedHoursPerPeriod,
-      payPeriodDays: unit.payPeriodDays,
-      shiftHours,
-    });
+    // A day already on approved leave was paid with that leave; paying it again doubles it.
+    const unpaidDays =
+      daysBetween(award.startDate, award.endDate) + 1 - award.alreadyOnLeave.length;
+    const paidHours =
+      unpaidDays > 0
+        ? suggestedPaidLeaveHours({
+            type: 'pto',
+            days: unpaidDays,
+            contractedHoursPerPeriod: nurse.contractedHoursPerPeriod,
+            payPeriodDays: unit.payPeriodDays,
+            shiftHours,
+          })
+        : 0;
     const request = createTimeOffRequest(
       tx,
       {
@@ -329,6 +408,42 @@ export function awardRound(tx: ShiftNurseTx, roundId: Id, actor: string): AwardR
     reason: `Awarded in seniority order: ${result.awards.length} won, ${result.denials.length} denied`,
   });
   return { round, result, awarded };
+}
+
+function judgedFieldsChanged(a: LeaveBidRoundRecord, b: LeaveBidRoundRecord): boolean {
+  const places = (r: LeaveBidRoundRecord) =>
+    JSON.stringify(Object.entries(r.offPerDay).sort(([x], [y]) => x.localeCompare(y)));
+  return (
+    a.coversStart !== b.coversStart ||
+    a.coversEnd !== b.coversEnd ||
+    a.opensOn !== b.opensOn ||
+    a.closesOn !== b.closesOn ||
+    a.maxAwardsPerNurse !== b.maxAwardsPerNurse ||
+    places(a) !== places(b)
+  );
+}
+
+/** First offending bid by entry time, then choice rank, so the message is stable. */
+function assertNoStrandedChoice(
+  db: DbLike,
+  round: LeaveBidRoundRecord,
+  bids: readonly LeaveBidRecord[],
+): void {
+  for (const bid of bids) {
+    for (const choice of bid.choices) {
+      if (
+        compareDates(choice.startDate, round.coversStart) >= 0 &&
+        compareDates(choice.endDate, round.coversEnd) <= 0
+      ) {
+        continue;
+      }
+      const nurse = getNurse(db, bid.nurseId);
+      const who = nurse ? `${nurse.firstName} ${nurse.lastName}` : 'a nurse';
+      throw new Error(
+        `Choice ${choice.rank} of ${who}'s bid (${describeDateRange(choice.startDate, choice.endDate)}) falls outside the new dates. Change the bid first, or keep the season as it is.`,
+      );
+    }
+  }
 }
 
 function requireRound(db: DbLike, id: Id): LeaveBidRoundRecord {
