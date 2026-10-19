@@ -790,6 +790,9 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
       for coverage floors and pay rates (repairing migrations), cost/census/leave/day-of-pay writers
       validate, validation triggers and nurse-history delete guard, absent-key mappers, multi-write
       functions take ShiftNurseTx, DB tests that can fail (verify: npm run check)
+- [x] Phase 18 — Desktop main robustness: quit guard, crash/hang handling, all-or-relaunch
+      restore, runner stop/pid/kill, PDF from temp file, unit paper size (verify: npm run check;
+      smoke; owner macOS quit check)
 
 ---
 

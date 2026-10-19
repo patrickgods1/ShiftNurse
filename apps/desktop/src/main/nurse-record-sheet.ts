@@ -10,7 +10,13 @@
  * representative in another timezone, and "when" is the first thing a grievance turns on.
  */
 
-import { type IsoDate, type ShiftType, serializeCsv, type Unit } from '@shiftnurse/core';
+import {
+  type IsoDate,
+  type ScheduleChangeSource,
+  type ShiftType,
+  serializeCsv,
+  type Unit,
+} from '@shiftnurse/core';
 import type { NurseRecord } from '@shiftnurse/db';
 
 /** Said in the footer of every record, whether or not the nurse is in any such group. */
@@ -37,11 +43,22 @@ export interface RecordSheet {
     kind: string;
     shift: string;
     period: string;
-    source: string;
+    how: string;
     actor: string;
     reason: string;
   }[];
 }
+
+// The change log's words (renderer/…/change-log.tsx); keep them in step.
+const CHANGE_SOURCE_WORDS: Record<ScheduleChangeSource, string> = {
+  manual: 'grid edit',
+  exchange: 'shift exchange',
+  time_off: 'time off',
+  resolution: 'conflict resolution',
+  backfill: 'call-off backfill',
+  census: 'low-census cancellation',
+  float: 'float to another unit',
+};
 
 const ENTITY_WORDS: Record<string, string> = {
   assignment: 'Shift',
@@ -105,7 +122,7 @@ export function buildRecordSheet(
       kind: c.kind,
       shift: `${c.date} ${abbreviation.get(c.shiftTypeId) ?? c.shiftTypeId}`,
       period: c.periodName,
-      source: c.source,
+      how: CHANGE_SOURCE_WORDS[c.source as ScheduleChangeSource] ?? c.source,
       actor: c.actor,
       reason: c.reason,
     })),
@@ -143,7 +160,7 @@ export function recordCsv(sheet: RecordSheet): string {
       ...who,
       'published schedule change',
       c.time,
-      `Shift ${c.shift} (${c.period})`,
+      `Shift ${c.shift} (${c.period}), by ${c.how}`,
       c.kind,
       c.actor,
       c.shift.split(' ')[0] ?? '',

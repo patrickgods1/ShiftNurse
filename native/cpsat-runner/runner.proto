@@ -13,7 +13,8 @@ import "ortools/sat/sat_parameters.proto";
 
 // Main process -> runner.
 message Request {
-  // Echoed on every event about this request.
+  // Echoed on every event about this request; also on `stop`: only the solve with this id is
+  // stopped; an empty id stops whatever is running.
   string id = 1;
   // Ask the solve in flight to stop at its next check and report its best solution so far.
   bool stop = 2;

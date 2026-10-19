@@ -24,6 +24,8 @@
   `solve` in a worker thread; `main/solver-jobs.ts` runs a *batch* of 1–10 variations (seeds
   `seedFor(period) + k`, parallelism and time estimate from `main/solver-plan.ts`) and keeps each
   finished report in memory as a candidate — nothing reaches the draft until `solver.save`;
+  the runner client remembers a Stop asked for before its request is written, and reports the
+  runner's pid on spawn; main kills by PID only when the worker died or was terminated;
   `main/api/solver.ts` previews a candidate through the grid's own `validateView`/`costReportForView`
   and compares every candidate with the draft via core's `scoreAssignments`; the renderer's
   `useCurrentBatch` in `api-solver.ts` drives `schedule/generate-dialog.tsx`,
@@ -41,7 +43,8 @@
   `editSchedule` (and `openChangeLog`, its inside, for a handler that must word its reason from something read in the transaction) wraps every grid mutation and logs reasoned edits on a published period;
   `main/backups.ts` (publish/daily/manual/restore; a deleted backup waits 30 days in a trash —
   `backup-files.ts` on disk, `backup-trash.ts` its audit rows, both Electron-free and tested), `main/output.ts` + `print-html.ts` +
-  `xlsx.ts` for PDF/CSV/xlsx; Schedule › Publish dialog, change log, Export menu, reason dialog
+  `xlsx.ts` for PDF/CSV/xlsx (PDFs render from a private temp file under `userData/print` with
+  JavaScript off; the folder is cleared after each job and at launch; PDF paper is the unit's `paperSize`, else the OS region, `main/paper.ts`); Schedule › Publish dialog, change log, Export menu, reason dialog
   on published-period edits; Settings › Backups) and Today (M13: `core/dayof/` — `findReplacements`
   ranks same-role nurses simulated on the conflicts engine, `checkStaffing`/`shiftsAround` for the
   live census re-check; `dayOf` IPC in `main/api/dayof.ts`, `backfill` goes through `editSchedule` as
@@ -75,7 +78,7 @@
 
 ## Smoke tests
 
-`npm run smoke -w @shiftnurse/desktop` / `npm run smoke:packaged -w @shiftnurse/desktop` build and boot the real app headlessly against a temp `userData`, assert the preload bridge and dashboard rendered, and exit non-zero otherwise. `--screenshot <png>` captures the window. Run this after touching main/preload/IPC — unit tests cannot see a wrong-ABI native module or a preload that never ran. With the CP-SAT runner installed it generates with every solver twice (minutes); `SHIFTNURSE_SMOKE_TIMEOUT_MS` raises the 240 s limit for an emulated x64 run. `npm run fetch:cpsat -w @shiftnurse/desktop` fetches the pinned CP-SAT runner for this machine into `apps/desktop/.cpsat/host` and fails loudly (postinstall only warns).
+`npm run smoke -w @shiftnurse/desktop` / `npm run smoke:packaged -w @shiftnurse/desktop` build and boot the real app headlessly against a temp `userData` (the launcher sets `SHIFTNURSE_SMOKE_USER_DATA` and removes it afterwards), assert the preload bridge and dashboard rendered, and exit non-zero otherwise. `--screenshot <png>` captures the window. Run this after touching main/preload/IPC — unit tests cannot see a wrong-ABI native module or a preload that never ran. With the CP-SAT runner installed it generates with every solver twice (minutes); `SHIFTNURSE_SMOKE_TIMEOUT_MS` raises the 240 s limit for an emulated x64 run. `npm run fetch:cpsat -w @shiftnurse/desktop` fetches the pinned CP-SAT runner for this machine into `apps/desktop/.cpsat/host` and fails loudly (postinstall only warns).
 
 ## Conventions
 
@@ -152,9 +155,8 @@
   copies the packaged app to a temp dir first and fails unless the app prints the marker. Inside
   the repo a module missing from the app is found in the repo's `node_modules`, and a startup
   crash dialog exits 0 when dismissed; v0.1.0's first draft crashed on every real install that
-  way. Anything the packaged main process imports at runtime must be bundled (so the
-  `better-sqlite3` alias applies — `drizzle-orm` is, for exactly that reason) or be a real
-  `dependency`. `SHIFTNURSE_SMOKE_SOLVE_TIMEOUT_MS` / `SHIFTNURSE_SMOKE_TIMEOUT_MS` loosen its
+  way. Anything the packaged main process imports at runtime must be bundled (as `@shiftnurse/*`
+  and `drizzle-orm` are) or be a real `dependency`. `SHIFTNURSE_SMOKE_SOLVE_TIMEOUT_MS` / `SHIFTNURSE_SMOKE_TIMEOUT_MS` loosen its
   limits for slow CI runners. `SHIFTNURSE_TEST_SLOW_SCALE` likewise scales the solver-heavy tests'
   hang guards (`slow()`) on a slow machine; never raise a literal instead.
 - **Main never seeds the demo on its own.** `openAppDatabase` only migrates; the demo is loaded
@@ -175,14 +177,21 @@
   `NavigationGuard` guards routes and window unload, and main answers
   Electron's `will-prevent-unload` with a native dialog (skipped in a smoke run). An inline row
   editor or an Add form with typed values counts; settings forms use `EditorShell`.
+  Quitting with unsaved generated variations asks once per quit (`main/quit-guard.ts`). The dialog
+  is parented to whichever window is live when it is asked, and only 'Keep ShiftNurse open' keeps
+  the app running: a dialog that could not be shown must never block Quit or a macOS logout.
 - **Dialogs return focus.** `Modal` captures the opener and restores it on close
   (`components/focus.ts`); a dialog whose opener can disappear passes `returnFocus`. Every dialog
   uses `Modal` or `useConfirm`; never compose Radix `Dialog.Root` by hand.
 - **Backups use SQLite's online backup API**, never a file copy — a WAL database copied by
   hand loses un-checkpointed pages. The smoke run builds core/db from `dist`, so rebuild packages
   (`npm run build:packages`) after touching core before trusting a smoke result. Restore and
-  start over swap the file through `replaceDatabaseFile` (staged copy, then rename), so a failed
-  copy leaves the live database alone. The daily copy is due by the *local* date and re-checked
+  start over swap the file through `stageDatabaseFile` then `commitDatabaseFile` (staged copy, then
+  rename): the backup is copied in before the connection closes, so a failed copy changes nothing
+  and the app keeps running; once the connection is closed, a failure still relaunches onto the old
+  file, which is intact. The restore marker is written after the close; a staged file found at the
+  next launch means the swap never happened, and no restore is audited. One restore or start over
+  at a time. The daily copy is due by the *local* date and re-checked
   hourly while the app runs. Daily copies beyond the newest 14 are removed for good, each with an
   audit row (`pruned: true`); publish and manual copies are never pruned.
 - **An update never migrates the only copy.** `openAppDatabase` opens without migrating, reads
@@ -192,7 +201,10 @@
   and let this build's queries run against tables it has never seen.
 - **Main starts or says why not.** `index.ts` takes the single-instance lock (a second copy would
   share the database, and a restore would replace the file under it), and a startup failure
-  shows a native error box naming the database, backups and log paths before exiting. Main's
+  shows a native error box naming the database, backups and log paths before exiting.
+  It says why it stops too: a crashed or hung window offers Reload (`main/window-health.ts`), and an
+  uncaught main-process error runs the shutdown steps, closes the database and offers a restart; the
+  dialog names the log, never the error text. Main's
   console output is teed to `userData/logs/main.log` (`main/log.ts`, rolled at 5 MB), which
   Settings › About opens.
 - **Errors reach the manager in words.** `ipc.ts` logs every failed call in full and re-throws
@@ -201,4 +213,4 @@
   wrapper (`shared/ipc-error.ts`). Write refusals for people, since they reach the UI verbatim.
 - **The app says when a release is out, but cannot update itself** (builds are unsigned).
   `main/updates.ts` asks GitHub's latest-release API once at launch in a packaged, non-smoke run;
-  any failure is silence, and only a link to the project's own releases page is ever shown.
+  any failure is silence, and only a link to the project's own releases page is ever shown. A release candidate hears about its final release.

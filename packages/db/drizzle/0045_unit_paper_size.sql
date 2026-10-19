@@ -1,0 +1,1 @@
+ALTER TABLE `unit` ADD `paper_size` text;

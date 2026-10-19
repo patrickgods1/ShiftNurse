@@ -36,6 +36,7 @@ import type {
   NurseRole,
   OvertimeOrder,
   OvertimeRule,
+  PaperSize,
   PerDiemCommitment,
   PeriodStatus,
   PreferenceKind,
@@ -116,6 +117,8 @@ export const unit = sqliteTable(
     requireConsentForPostedChanges: bool('require_change_consent'),
     // Weekends off a year promised to each nurse (core's Unit.minWeekendsOffPerYear); null = not checked.
     minWeekendsOffPerYear: integer('min_weekends_off_per_year'),
+    // Paper the unit's printouts use; null follows the computer's region (main/paper.ts).
+    paperSize: text('paper_size').$type<PaperSize>(),
     // The unit the app opens (migration 0040). By id, not name: a float sibling that sorts first
     // once took the app over when the home unit was renamed. The partial index allows one.
     isHome: integer('is_home', { mode: 'boolean' }).notNull().default(false),

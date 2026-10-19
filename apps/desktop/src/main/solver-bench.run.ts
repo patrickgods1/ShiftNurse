@@ -166,10 +166,16 @@ const f0 = (x: number) => Math.round(x).toLocaleString('en-US');
 it.skipIf(RUNNER === undefined)(
   'benchmarks every solver and writes docs/solver-bench.md',
   async () => {
-    const version = await new CpsatRunner(RUNNER!).start().then(
-      (v) => v,
-      () => 'unknown',
-    );
+    const probe = new CpsatRunner(RUNNER!);
+    let version: string;
+    try {
+      version = await probe.start().then(
+        (v) => v,
+        () => 'unknown',
+      );
+    } finally {
+      probe.dispose();
+    }
     const rows: Row[] = [];
     for (const [unit, make] of UNITS) {
       for (const backend of BACKENDS) {

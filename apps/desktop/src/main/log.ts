@@ -3,7 +3,7 @@
  *
  * A packaged app has no console anyone reads: on Windows its stdout goes nowhere at all. So a
  * failed daily backup, a CP-SAT runner that crashed, an IPC call that threw — everything main
- * prints — also lands in `userData/logs/main.log`, which Settings › Backups can open for a
+ * prints — also lands in `userData/logs/main.log`, which Settings › About can open for a
  * support request. The file rolls over at a size cap so a long-running install cannot fill a
  * disk with it. No Electron here: the folder is a parameter, so it is tested on a temp dir.
  */

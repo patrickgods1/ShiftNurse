@@ -16,6 +16,13 @@ fail() { echo "FAIL: $1" >&2; exit 1; }
 grep -q '"type":"ready"' <<<"$out" || fail 'no ready event'
 grep '"type":"error"' <<<"$out" | grep -q '"message":"bad request' \
   || fail 'a malformed request was not answered with an error'
+# A line that is not JSON at all has no id to echo; one that only carried an unknown field keeps it.
+# Fields print in field-number order (id ... message), so filter on each rather than assume adjacency.
+grep '"type":"error"' <<<"$out" | grep '"id":""' | grep -q '"message":"bad request' \
+  || fail 'an unparseable line did not get an empty id'
+grep '"type":"error"' <<<"$out" | grep '"id":"bogus-id"' | grep -q '"message":"bad request' \
+  || fail 'a request with an unknown field lost its id'
+# {"id":"other","stop":true} names no solve in flight, so it must not stop the smoke solve.
 result="$(grep '"type":"result","id":"smoke"' <<<"$out")" || fail 'no result for the smoke model'
 grep -q '"status":"OPTIMAL"' <<<"$result" || fail "not optimal: $result"
 grep -q '"objective":-34' <<<"$result" || fail "wrong objective: $result"

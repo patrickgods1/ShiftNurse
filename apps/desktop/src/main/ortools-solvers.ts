@@ -45,7 +45,10 @@ export interface OrToolsOptions extends Omit<SolveOptions, 'onProgress' | 'shoul
 export interface OrToolsHooks {
   onProgress?: (progress: SolveProgress) => void;
   shouldCancel?: () => boolean;
-  /** Called with the runner's pid once it is up, so the caller can kill it on teardown. */
+  /**
+   * Called with the runner's pid as soon as it is spawned (again after any respawn), so the
+   * caller can kill it on teardown.
+   */
   onRunner?: (pid: number) => void;
 }
 
@@ -97,13 +100,12 @@ export async function solveCpsat(
     ...(options.weights ? { weights: options.weights } : {}),
   });
   const budgetMs = (job.params.max_deterministic_time ?? 60) * 1000;
-  const runner = new CpsatRunner(options.runnerPath);
+  const runner = new CpsatRunner(options.runnerPath, [], undefined, hooks.onRunner);
   const watch = watchCancel(runner, hooks);
   let improvements = 0;
   let infeasible: CpsatInfeasibleError;
   try {
     await runner.start();
-    if (runner.pid !== undefined) hooks.onRunner?.(runner.pid);
     const result = await runner.solve(job.model, job.params, (p) => {
       improvements++;
       hooks.onProgress?.({
@@ -230,7 +232,7 @@ export async function solveHybrid(
     return null;
   };
 
-  const runner = new CpsatRunner(options.runnerPath);
+  const runner = new CpsatRunner(options.runnerPath, [], undefined, hooks.onRunner);
   let runnerFailure: string | undefined;
   let iterations = 0;
   let accepted = 0;
@@ -260,7 +262,6 @@ export async function solveHybrid(
         try {
           await runner.start();
           started = true;
-          if (windows.tried === 0 && runner.pid !== undefined) hooks.onRunner?.(runner.pid);
         } catch (err) {
           runnerFailure = err instanceof Error ? err.message : String(err);
         }

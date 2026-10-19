@@ -69,19 +69,41 @@ export function dailyBackupDue(backups: readonly BackupInfo[], now: Date): boole
   return !backups.some((b) => b.kind === 'daily' && today(new Date(b.createdAt)) === day);
 }
 
+/** The name a backup wears beside the live file between being copied in and being swapped in. */
+export const STAGED_SUFFIX = '.restoring';
+
 /**
- * Swap the live database file for `source` (restore) or remove it (start over). The caller has
- * closed the connection. The source is copied next to the live file first and renamed over it,
- * so a copy that fails part way — a full disk, a backup that vanished — leaves the live file and
- * its WAL as they were. The WAL and shm files belong to the outgoing database: left behind they
- * would be replayed over the restored file (or a fresh one) on the next open.
+ * Copy `source` next to the live file; nothing live is touched. Returns the staged path. A
+ * restore stages while its connection is still open, so a copy that fails — a full disk, a
+ * backup that vanished — leaves the app running on the database it had. A half-written staged
+ * file is removed: the next launch reads a staged file as proof of an interrupted swap.
  */
-export function replaceDatabaseFile(live: string, source: string | undefined): void {
-  const staged = `${live}.restoring`;
-  if (source !== undefined) copyFileSync(source, staged);
+export function stageDatabaseFile(live: string, source: string): string {
+  const staged = `${live}${STAGED_SUFFIX}`;
+  try {
+    copyFileSync(source, staged);
+  } catch (err) {
+    rmSync(staged, { force: true });
+    throw err;
+  }
+  return staged;
+}
+
+/**
+ * The caller has closed the connection: drop the outgoing WAL/shm, then rename `staged` over
+ * `live` (or delete `live` when there is none, for a start over). The WAL and shm belong to the
+ * outgoing database: left behind they would be replayed over the restored file (or a fresh one)
+ * on the next open.
+ */
+export function commitDatabaseFile(live: string, staged: string | undefined): void {
   for (const suffix of ['-wal', '-shm']) rmSync(`${live}${suffix}`, { force: true });
-  if (source === undefined) rmSync(live, { force: true });
+  if (staged === undefined) rmSync(live, { force: true });
   else renameSync(staged, live);
+}
+
+/** Both steps at once, for a caller with nothing to do between the copy and the swap. */
+export function replaceDatabaseFile(live: string, source: string | undefined): void {
+  commitDatabaseFile(live, source === undefined ? undefined : stageDatabaseFile(live, source));
 }
 
 function trashDir(dir: string): string {
@@ -188,14 +210,23 @@ export function purgeExpired(dir: string, now: number): DeletedBackupInfo[] {
 /** A backup is written under this suffix and renamed once verified, so a crash never leaves a half file under a real name. */
 export const PARTIAL_SUFFIX = '.partial';
 
+/** A journal file SQLite left beside a half-written or finished backup: `<backup>.sqlite[.partial]-wal|-shm`. */
+const BACKUP_SIDECAR_RE = /^(.+\.sqlite)(?:\.partial)?-(?:wal|shm)$/;
+
 /**
- * Remove backups a crash or full disk left half-written. Only `<backup>.sqlite.partial` names
- * go: anything else in the folder is not ours to delete. Run at startup, before any backup of
- * this run could be in flight.
+ * Remove backups a crash or full disk left half-written, and the `-wal`/`-shm` files a read-only
+ * check of a WAL-mode copy left beside it (copies are no longer kept in WAL mode, but older
+ * installs have them). A backup is never written after it is taken, so its journal holds nothing
+ * the copy lacks. Only names that are a backup's go: anything else in the folder is not ours to
+ * delete. Run at startup, before any backup of this run could be in flight.
  */
 export function removeStalePartials(dir: string): string[] {
   if (!existsSync(dir)) return [];
-  const stale = readdirSync(dir).filter((name) => name.endsWith(`.sqlite${PARTIAL_SUFFIX}`));
+  const stale = readdirSync(dir).filter((name) => {
+    if (name.endsWith(`.sqlite${PARTIAL_SUFFIX}`)) return true;
+    const sidecar = BACKUP_SIDECAR_RE.exec(name);
+    return sidecar !== null && BACKUP_RE.test(sidecar[1]!);
+  });
   for (const name of stale) rmSync(join(dir, name), { force: true });
   return stale;
 }

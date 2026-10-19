@@ -11,8 +11,14 @@
  * confirms by naming what is kept: a `pre-reset` backup that Settings › Backups can restore.
  */
 
-import { ACUITY_PRESETS, type PerDiemCommitment, type RatioStaffing } from '@shiftnurse/core';
+import {
+  ACUITY_PRESETS,
+  type PaperSize,
+  type PerDiemCommitment,
+  type RatioStaffing,
+} from '@shiftnurse/core';
 import { useEffect, useRef, useState } from 'react';
+import { useAppInfo } from '../../api.js';
 import { useResumeSetup, useStartOver, useUpdateUnit } from '../../api-setup.js';
 import { EditorShell } from '../../components/editor-shell.js';
 import { CheckField, describedBy, Field, InfoTip } from '../../components/field-help.js';
@@ -59,6 +65,9 @@ export function UnitPoliciesForm() {
   const [weekendsOff, setWeekendsOff] = useState(savedWeekendsOff);
   const savedConsent = unit.requireConsentForPostedChanges ?? false;
   const [requireConsent, setRequireConsent] = useState(savedConsent);
+  const savedPaper = unit.paperSize ?? '';
+  const [paper, setPaper] = useState<PaperSize | ''>(savedPaper);
+  const detected = useAppInfo().data?.defaultPaperSize;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the form when the saved unit changes.
   useEffect(() => {
@@ -73,6 +82,7 @@ export function UnitPoliciesForm() {
     setWeekendShifts(String(shownCommitment.weekendShiftsPer4Weeks));
     setHolidayShifts(String(shownCommitment.holidayShiftsPerYear));
     setRequireConsent(savedConsent);
+    setPaper(savedPaper);
   }, [
     unit.id,
     unit.name,
@@ -82,6 +92,7 @@ export function UnitPoliciesForm() {
     unit.minWeekendsOffPerYear,
     unit.perDiemCommitment,
     unit.requireConsentForPostedChanges,
+    unit.paperSize,
   ]);
 
   // A charge nurse who takes patients has none to spare for breaks, so the box only counts
@@ -113,6 +124,7 @@ export function UnitPoliciesForm() {
     weekendsOff !== savedWeekendsOff ||
     commitmentOn !== (savedCommitment !== undefined) ||
     requireConsent !== savedConsent ||
+    paper !== savedPaper ||
     (commitmentOn &&
       (weekendShifts !== String(shownCommitment.weekendShiftsPer4Weeks) ||
         holidayShifts !== String(shownCommitment.holidayShiftsPerYear)));
@@ -134,6 +146,7 @@ export function UnitPoliciesForm() {
           : null,
         // False is stored as null: the unset reading is the same as off.
         requireConsentForPostedChanges: requireConsent ? true : null,
+        paperSize: paper === '' ? null : paper,
       },
     });
   };
@@ -149,6 +162,7 @@ export function UnitPoliciesForm() {
     setWeekendShifts(String(shownCommitment.weekendShiftsPer4Weeks));
     setHolidayShifts(String(shownCommitment.holidayShiftsPerYear));
     setRequireConsent(savedConsent);
+    setPaper(savedPaper);
     update.reset();
   };
 
@@ -382,6 +396,29 @@ export function UnitPoliciesForm() {
                 </Field>
               </div>
             </fieldset>
+            <Field
+              id="unit-paper-size"
+              className="max-w-xl"
+              label="Paper size for printouts"
+              tip={
+                'The size PDFs are laid out for. Left on "Follow this computer", it is Letter in the US and Canada and A4 in most other countries.'
+              }
+            >
+              <select
+                id="unit-paper-size"
+                className={INPUT}
+                value={paper}
+                onChange={(e) => setPaper(e.target.value as PaperSize | '')}
+              >
+                <option value="">
+                  {detected === undefined
+                    ? 'Follow this computer'
+                    : `Follow this computer (${detected === 'a4' ? 'A4' : 'Letter'})`}
+                </option>
+                <option value="letter">Letter (8.5 × 11 in)</option>
+                <option value="a4">A4 (210 × 297 mm)</option>
+              </select>
+            </Field>
             <fieldset className="flex max-w-xl flex-col gap-3 border-t border-border pt-3">
               <legend className="pr-2 text-sm font-semibold text-text">Posted schedules</legend>
               <CheckField

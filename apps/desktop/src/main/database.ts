@@ -9,6 +9,7 @@
  * unit into every real install.
  */
 
+import { existsSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import {
@@ -23,7 +24,7 @@ import {
   transact,
 } from '@shiftnurse/db';
 import { app } from 'electron';
-import { clearRestoreMarker, readRestoreMarker } from './backup-files.js';
+import { clearRestoreMarker, readRestoreMarker, STAGED_SUFFIX } from './backup-files.js';
 
 let opened: OpenedDatabase | undefined;
 
@@ -87,9 +88,31 @@ export async function openAppDatabase(
  * A restore swaps the file, so its audit row can only be written once the restored database is
  * open. The marker is removed only after the row commits: a crash in between audits it on the
  * next launch rather than losing it. Never blocks startup.
+ *
+ * The marker is written just before the staged backup is renamed over the live file, so a crash
+ * in that gap leaves both. A successful rename consumes the staged file, so finding it proves the
+ * swap never happened: this is the database the manager had, and auditing a restore into it
+ * would record one that did not take place.
  */
 function recordPendingRestore(db: ShiftNurseDb): void {
   const dir = dirname(databasePath());
+  const staged = `${databasePath()}${STAGED_SUFFIX}`;
+  if (existsSync(staged)) {
+    try {
+      rmSync(staged, { force: true });
+    } catch (err) {
+      console.error('[backup] could not remove the staged backup:', err);
+    }
+    try {
+      clearRestoreMarker(dir);
+    } catch (err) {
+      console.error('[backup] could not remove the restore marker:', err);
+    }
+    console.error(
+      '[backup] a restore was interrupted before the backup was swapped in; the database was not changed and no restore is recorded',
+    );
+    return;
+  }
   const marker = readRestoreMarker(dir);
   if (!marker) return;
   try {

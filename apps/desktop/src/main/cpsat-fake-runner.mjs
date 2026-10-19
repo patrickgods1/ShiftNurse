@@ -19,7 +19,9 @@ emit({ type: 'ready', version: 'fake-1' });
 createInterface({ input: process.stdin }).on('line', (line) => {
   const request = JSON.parse(line);
   if (request.stop) {
-    if (waiting) {
+    // As the v3 native runner: a stop naming another request is stale and ignored; one with no
+    // id (a v2 client) stops whatever is running.
+    if (waiting && (!request.id || request.id === waiting)) {
       emit({
         type: 'result',
         id: waiting,

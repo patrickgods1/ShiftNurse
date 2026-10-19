@@ -4,7 +4,7 @@
  * says can be tested under plain Node.
  */
 
-import type { Id, IsoDate } from '@shiftnurse/core';
+import type { Id, IsoDate, PaperSize } from '@shiftnurse/core';
 import { type DbLike, listShiftTypesForUnit, nurseRecord } from '@shiftnurse/db';
 import { buildRecordSheet, type RecordSheet, recordCsv } from '../nurse-record-sheet.js';
 import { recordHtml } from '../print-html.js';
@@ -16,6 +16,8 @@ export interface NurseRecordDocument {
   html: string;
   /** A file name without its extension: nurse, then the dates. */
   baseName: string;
+  /** The paper `html` is laid out for: the unit's, else the fallback. */
+  paper: PaperSize;
 }
 
 const slug = (text: string) => text.replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '');
@@ -26,14 +28,17 @@ export function nurseRecordDocument(
   start: IsoDate,
   end: IsoDate,
   generatedOn: IsoDate,
+  fallbackPaper: PaperSize = 'letter',
 ): NurseRecordDocument {
   const record = nurseRecord(db, nurseId, start, end);
   const unit = unitOrThrow(db, record.nurse.unitId);
   const sheet = buildRecordSheet(record, unit, listShiftTypesForUnit(db, unit.id), generatedOn);
+  const paper = unit.paperSize ?? fallbackPaper;
   return {
     sheet,
     csv: recordCsv(sheet),
-    html: recordHtml(sheet),
+    html: recordHtml(sheet, paper),
     baseName: `${slug(`${record.nurse.lastName}-${record.nurse.firstName}`)}-record-${start}-to-${end}`,
+    paper,
   };
 }

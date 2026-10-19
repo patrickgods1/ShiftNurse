@@ -28,7 +28,7 @@ import type {
   RosterImportPreview,
 } from '../../shared/api.js';
 import { openFile, saveFile } from '../native-dialogs.js';
-import { htmlToPdf } from '../output.js';
+import { htmlToPdf, osPaperSize } from '../output.js';
 
 import { unitOrThrow } from './context.js';
 import { nurseRecordDocument } from './nurse-record.js';
@@ -100,7 +100,7 @@ export async function exportNurseRecordToFile(
   format: NurseRecordFormat,
 ): Promise<string | undefined> {
   // Built before the dialog so a refusal (a range backwards, an unknown nurse) shows first.
-  const doc = nurseRecordDocument(db, nurseId, start, end, today());
+  const doc = nurseRecordDocument(db, nurseId, start, end, today(), osPaperSize());
   const extension = format === 'pdf' ? 'pdf' : 'csv';
   const path = await saveFile({
     title: `Export nurse record (${extension.toUpperCase()})`,
@@ -108,7 +108,7 @@ export async function exportNurseRecordToFile(
     filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
   });
   if (!path) return undefined;
-  if (format === 'pdf') writeFileSync(path, await htmlToPdf(doc.html, false));
+  if (format === 'pdf') writeFileSync(path, await htmlToPdf(doc.html, false, doc.paper));
   else writeFileSync(path, doc.csv, 'utf8');
   return path;
 }

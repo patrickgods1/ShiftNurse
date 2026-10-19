@@ -127,6 +127,8 @@
   one of weekday/date and min ≤ target.** The repository refuses in words; migration
   `0041_coverage_floor_keys` repaired older files, keeping the row core was reading (the highest
   rowid), and audited each change as actor `'upgrade'`.
+- **Units carry `paperSize`** (migration `0045_unit_paper_size`, nullable; null follows the computer's
+  region via the desktop's `main/paper.ts`).
 - **A pay rate is unique per (nurse, start date) or per (role default, start date).** The
   repository refuses a second one in words; migration `0042_pay_rate_keys` kept the rate that was
   already pricing shifts (the lowest rowid). Every cost writer checks its numbers itself, because

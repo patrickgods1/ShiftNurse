@@ -48,6 +48,7 @@ export const unitsSchemas = {
         perDiemCommitment: perDiemCommitment.nullable().optional(),
         requireConsentForPostedChanges: z.boolean().nullable().optional(),
         minWeekendsOffPerYear: z.number().int().min(0).max(52).nullable().optional(),
+        paperSize: z.enum(['letter', 'a4']).nullable().optional(),
       })
       .partial(),
   ]),

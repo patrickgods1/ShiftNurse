@@ -10,6 +10,7 @@ import {
   createTimeOffRequest,
   denyTimeOff,
   transact,
+  updateUnit,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { KEPT_APART_NOTE } from '../nurse-record-sheet.js';
@@ -56,6 +57,17 @@ const todayIso = () => today();
 const document = (nurse: Nurse) =>
   nurseRecordDocument(f.handle.db, nurse.id, todayIso(), todayIso(), isoDate('2026-10-05'));
 const rowsOf = (nurse: Nurse) => parseCsv(document(nurse).csv).slice(1);
+
+describe('the paper', () => {
+  it("lays a nurse record out on the unit's paper", () => {
+    const ana = f.rns[0]!;
+    expect(document(ana).paper).toBe('letter');
+    transact(f.handle.db, (tx) => updateUnit(tx, f.seeded.unitId, { paperSize: 'a4' }, 'manager'));
+    const doc = document(ana);
+    expect(doc.html).toContain('size: A4 portrait');
+    expect(doc.paper).toBe('a4');
+  });
+});
 
 function placeShift(nurse: Nurse) {
   return scheduleApi(f.handle.db).createAssignment({

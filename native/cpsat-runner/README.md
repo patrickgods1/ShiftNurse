@@ -24,11 +24,14 @@ strings, as protobuf's JSON mapping requires; every field is always present.
 | in | `{"id":"r1","model":{…CpModelProto…},"params":{…SatParameters…}}` | Solve. |
 | out | `{"type":"progress","id":"r1","objective":…,"bound":…,"wall_ms":"…",…}` | Each improving solution. |
 | out | `{"type":"result","id":"r1","status":"OPTIMAL","values":["6","4"],"objective":…,"bound":…,…}` | Exactly one per request. |
-| out | `{"type":"error","id":"r1","message":"…"}` | Instead of a result. `id` is empty if the line could not be parsed at all. |
-| in | `{"stop":true}` | Stop the solve in flight; it still sends its `result` with the best solution so far. |
+| out | `{"type":"error","id":"r1","message":"…"}` | Instead of a result. `id` is the request's own when it can still be read (a line with an unknown field keeps it), and empty if the line is not JSON at all. A line over 256 MiB gets `request too large`. |
+| in | `{"id":"r1","stop":true}` | Stop the solve with that id; it still sends its `result` with the best solution so far. A stop for an id that is not running is ignored; an empty id (`{"stop":true}`, v2 clients) stops whatever is running. |
 
-One solve at a time: a request while one is running gets an `error`. Closing stdin lets the
-solve in flight finish, then the runner exits; send `stop` first to cut it short.
+One solve at a time: a request while one is running gets an `error`. The runner clears its busy
+flag before it writes a `result`, so a request sent as soon as the result is read is never
+refused. A request without `max_time_in_seconds` gets 540 s, so an orphaned runner stops on its
+own. Closing stdin lets the solve in flight finish (bounded by that limit), then the runner exits;
+send `stop` first to cut it short.
 
 ## Building locally (macOS)
 
@@ -52,6 +55,10 @@ CI (`.github/workflows/cpsat-runner.yml`) builds and smoke-tests macOS arm64, ma
 Windows x64 on every push that touches this directory. Pushing a tag `cpsat-runner-vN` also
 publishes `cpsat-runner-<platform>-<arch>.tar.gz` and `SHA256SUMS` as a GitHub release. To ship a
 new runner, tag it, then update the tag and hashes pinned in `apps/desktop/scripts/fetch-cpsat.mjs`.
+
+- **v3:** `stop` carries an id; `busy` is cleared before the result; a parse error echoes a
+  recoverable id; lines over 256 MiB are refused; a 540 s default time limit. Unreleased until the
+  pin is bumped to `cpsat-runner-v3`. The desktop client works with v2 and v3.
 
 ## Bumping OR-Tools
 

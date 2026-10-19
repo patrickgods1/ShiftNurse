@@ -83,7 +83,15 @@ export interface Unit {
    * nurse's consent (VA, UC and Oregon contracts). Absent/false: a reason is enough.
    */
   requireConsentForPostedChanges?: boolean;
+  /**
+   * Paper the unit's printouts use. Absent: whatever this computer's region uses (Letter in the
+   * US, Canada, Mexico, the Philippines and parts of Latin America; A4 elsewhere). Not read by
+   * any rule.
+   */
+  paperSize?: PaperSize;
 }
+
+export type PaperSize = 'letter' | 'a4';
 
 export type OvertimeOrder = 'cost' | 'roster';
 

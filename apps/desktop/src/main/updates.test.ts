@@ -15,6 +15,25 @@ describe('telling a manager a fix is out', () => {
     expect(compareVersions('1.2.3', '1.3.0')).toBeLessThan(0);
   });
 
+  it('tells someone on a release candidate that the final release is out', () => {
+    const final = {
+      ...RELEASE,
+      tag_name: 'v1.0.0',
+      html_url: 'https://github.com/patrickgods1/ShiftNurse/releases/tag/v1.0.0',
+    };
+    expect(newerRelease(final, '1.0.0-rc.1')).toEqual({ version: '1.0.0', url: final.html_url });
+  });
+
+  it('orders release candidates by number, not as text', () => {
+    expect(compareVersions('1.0.0-rc.10', '1.0.0-rc.9')).toBeGreaterThan(0);
+    expect(compareVersions('1.0.0-beta.1', '1.0.0-rc.1')).toBeLessThan(0);
+    expect(compareVersions('1.0.0', '1.0.0+build.5')).toBe(0);
+  });
+
+  it('does not offer a release candidate to someone on the final release', () => {
+    expect(compareVersions('1.0.0-rc.1', '1.0.0')).toBeLessThan(0);
+  });
+
   it('offers a published release newer than the installed version', () => {
     expect(newerRelease(RELEASE, '0.1.0')).toEqual({ version: '0.2.0', url: RELEASE.html_url });
   });

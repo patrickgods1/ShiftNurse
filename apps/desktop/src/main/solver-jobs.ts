@@ -94,6 +94,8 @@ export interface SolverJobsDeps {
    * `total_changes()`); absent, every freshness check reloads the input.
    */
   changeCount?(): number;
+  /** Kills a runner by process id; tests record the pid instead of killing anything. */
+  killProcess?: (pid: number) => void;
   now?: () => number;
 }
 
@@ -162,9 +164,11 @@ export class SolverJobs {
   private readonly observedMs = new Map<string, number>();
   private counter = 0;
   private readonly now: () => number;
+  private readonly killProcess: (pid: number) => void;
 
   constructor(private readonly deps: SolverJobsDeps) {
     this.now = deps.now ?? Date.now;
+    this.killProcess = deps.killProcess ?? ((pid) => process.kill(pid));
   }
 
   start(periodId: Id, options: SolveBatchOptions = {}): SolveBatchStatus {
@@ -441,12 +445,16 @@ export class SolverJobs {
     });
     run.worker = worker;
     worker.on('message', (message) => this.onMessage(batch, run, message));
-    worker.on('error', (err) => this.finishRun(batch, run, 'failed', err.message));
+    worker.on('error', (err) =>
+      this.finishRun(batch, run, 'failed', err.message, { workerAlive: false }),
+    );
     worker.on('exit', (code) => {
       // A clean exit after `done` is the normal path; anything else while we still think the
       // run is going means the thread died without reporting.
       if (run.status.state === 'running') {
-        this.finishRun(batch, run, 'failed', `solver worker exited with code ${code}`);
+        this.finishRun(batch, run, 'failed', `solver worker exited with code ${code}`, {
+          workerAlive: false,
+        });
       }
     });
   }
@@ -515,14 +523,18 @@ export class SolverJobs {
     run: Run,
     state: 'done' | 'failed' | 'cancelled',
     error?: string,
+    opts: { workerAlive: boolean } = { workerAlive: true },
   ): void {
     run.status.state = state;
     run.status.finishedAt = this.now();
     if (error !== undefined) run.status.error = error;
     delete run.worker;
-    // A crashed worker thread never reaches its `runner.dispose()`; a finished one's runner is
-    // already gone, which the kill tolerates.
-    this.killRunner(run);
+    // A worker that reported (`done` or `error`) reached its `finally { runner.dispose() }`, so its
+    // runner is gone or going on its own, and its pid may already belong to another program
+    // (Windows reuses pids quickly). Only a thread that crashed or exited without a word left a
+    // runner nobody will stop.
+    if (opts.workerAlive) delete run.runnerPid;
+    else this.killRunner(run);
     this.pump(batch);
     this.settleIfIdle(batch);
   }
@@ -553,10 +565,13 @@ export class SolverJobs {
 
   private killRunner(run: Run): void {
     // A terminated or crashed worker cannot stop the runner it spawned; closing its pipes would
-    // only let the search run out its budget. Kill it.
+    // only let the search run out its budget. Kill it. The worker reports the pid the moment the
+    // runner is spawned, so the only runner this can miss is one whose worker was terminated
+    // between `spawn` and that message arriving: microseconds, and the wall-clock valve on every
+    // request (`SOLVE_VALVE_SECONDS`, nine minutes) bounds any solve such an orphan runs.
     if (run.runnerPid !== undefined) {
       try {
-        process.kill(run.runnerPid);
+        this.killProcess(run.runnerPid);
       } catch {
         // Already gone.
       }

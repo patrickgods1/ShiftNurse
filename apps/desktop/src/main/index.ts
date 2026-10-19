@@ -23,10 +23,14 @@ import {
 import { closeAppDatabase, databasePath, openAppDatabase } from './database.js';
 import { registerIpc } from './ipc.js';
 import { createFileLog, teeConsole } from './log.js';
+import { ask, askSync } from './native-dialogs.js';
+import { clearPrintScratch } from './output.js';
+import { createQuitGuard, KEEP_OPEN, type QuitGuard } from './quit-guard.js';
 import { isSmokeRun } from './smoke-flag.js';
 import spawnSolverWorker from './solver-worker?nodeWorker';
 import { type AppLocation, isAppUrl, isSafeExternalUrl } from './trusted-origin.js';
 import { checkForUpdate } from './updates.js';
+import { watchWindowHealth } from './window-health.js';
 
 const APP_LOCATION: AppLocation = {
   indexHtmlPath: join(import.meta.dirname, '../renderer/index.html'),
@@ -73,6 +77,13 @@ function createWindow(): BrowserWindow {
 
   win.on('ready-to-show', () => win.show());
 
+  watchWindowHealth(win, {
+    isSmoke: isSmokeRun,
+    ask: (_, options) => ask(win, options),
+    quit: () => app.quit(),
+    log: console.error,
+  });
+
   // A page holding unsaved edits blocks its own unload (the renderer's `beforeunload`). Electron
   // then cancels the close or reload silently, so the question is asked here, where a native
   // dialog can be shown. A smoke run never has anyone to answer it, and always proceeds.
@@ -90,7 +101,15 @@ function createWindow(): BrowserWindow {
       detail: 'Leave anyway and lose them?',
     });
     if (choice === 0) event.preventDefault();
+    else quitGuard?.quitCancelled();
   });
+
+  // Not on macOS: closing the window there does not quit, so the question waits for before-quit.
+  if (process.platform !== 'darwin') {
+    win.on('close', (event) => {
+      if (quitGuard?.shouldKeepOpen()) event.preventDefault();
+    });
+  }
 
   if (APP_LOCATION.devServerUrl !== undefined) {
     void win.loadURL(APP_LOCATION.devServerUrl);
@@ -102,13 +121,15 @@ function createWindow(): BrowserWindow {
 
 // A smoke run must never touch the real user database.
 if (isSmokeRun())
-  app.setPath('userData', join(app.getPath('temp'), `shiftnurse-smoke-${process.pid}`));
+  app.setPath(
+    'userData',
+    process.env.SHIFTNURSE_SMOKE_USER_DATA ??
+      join(app.getPath('temp'), `shiftnurse-smoke-${process.pid}`),
+  );
 
 // Everything main prints also goes to userData/logs/main.log: a packaged app has no console.
 const logsDir = join(app.getPath('userData'), 'logs');
 teeConsole(createFileLog(logsDir));
-process.on('uncaughtException', (err) => console.error('[main] uncaught exception:', err));
-process.on('unhandledRejection', (err) => console.error('[main] unhandled rejection:', err));
 
 // One copy of the app per user. A second would open the same database with its own solver
 // jobs and backup sweep, and a restore in one would replace the file under the other's open
@@ -120,6 +141,63 @@ let mainWindow: BrowserWindow | undefined;
 let update: UpdateInfo | undefined;
 /** Shutdown steps, run in order on quit: workers before the database they would write into. */
 const onQuit: (() => void)[] = [];
+
+/** Runs every shutdown step once, however it is reached (will-quit or the crash handler). */
+let shutdownRan = false;
+function runShutdownSteps(): void {
+  if (shutdownRan) return;
+  shutdownRan = true;
+  // One failing step must not strand the app windowless: every step runs, and quit follows.
+  for (const step of onQuit) {
+    try {
+      step();
+    } catch (err) {
+      console.error('[main] shutdown step failed:', err);
+    }
+  }
+}
+
+// After an uncaught throw main is in an unknown state, so it stops serving IPC and offers a
+// restart. app.exit skips will-quit, hence the shutdown steps here: otherwise a solver runner
+// would outlive us. The restart is the manager's choice, so a crash at every launch cannot
+// become a relaunch loop, and the dialog names the log, never err.message, which could quote data.
+let crashing = false;
+process.on('uncaughtException', (err) => {
+  console.error('[main] uncaught exception:', err);
+  if (crashing) return;
+  crashing = true;
+  runShutdownSteps();
+  if (isSmokeRun()) return void app.exit(1);
+  try {
+    closeAppDatabase();
+  } catch (e) {
+    console.error('[main] closing the database failed:', e);
+  }
+  const log = join(logsDir, 'main.log');
+  if (!app.isReady()) {
+    dialog.showErrorBox(
+      'ShiftNurse has to close',
+      `Something went wrong while starting. Details are in the log:\n${log}`,
+    );
+    return void app.exit(1);
+  }
+  const choice = dialog.showMessageBoxSync({
+    type: 'error',
+    buttons: ['Restart ShiftNurse', 'Quit'],
+    defaultId: 0,
+    cancelId: 1,
+    message: 'ShiftNurse ran into a problem and has to restart.',
+    detail:
+      'Everything you saved is safe: each change is saved as you make it. Generated schedules you had not saved are lost.\n\n' +
+      `If this keeps happening, send this log to whoever supports ShiftNurse:\n${log}`,
+  });
+  if (choice === 0) app.relaunch();
+  app.exit(1);
+});
+// Log-only on purpose: every main-process promise that matters is awaited or has a .catch
+// (backups, update check), so a stray rejection comes from a fire-and-forget path and leaves no
+// synchronous state half-done.
+process.on('unhandledRejection', (err) => console.error('[main] unhandled rejection:', err));
 
 app.on('second-instance', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -149,40 +227,11 @@ app.on('web-contents-created', (_, contents) => {
 });
 
 /**
- * Generated variations live in memory until one is saved, so quitting throws them away — minutes
- * of solving the manager may not realise they are leaving behind. Ask first. On Windows closing
- * the window quits; on macOS it does not (the variations survive a closed window), so there the
- * question is asked when the app itself quits.
+ * Generated variations live in memory until one is saved, so quitting throws them away. The
+ * question is asked by one guard shared by every window: on Windows a window's close quits, on
+ * macOS the window can close while the variations survive, so there it is asked when the app quits.
  */
-function guardUnsavedVariations(win: BrowserWindow, unsaved: () => number): void {
-  let confirmed = false;
-  const keep = (): boolean => {
-    if (confirmed || isSmokeRun()) return false;
-    const count = unsaved();
-    if (count === 0) return false;
-    const choice = dialog.showMessageBoxSync(win, {
-      type: 'question',
-      buttons: ['Quit anyway', 'Keep ShiftNurse open'],
-      defaultId: 1,
-      cancelId: 1,
-      message: `${count} generated schedule${count === 1 ? ' is' : 's are'} not saved.`,
-      detail:
-        'Generated variations are kept only while ShiftNurse is open. Save the one you want ' +
-        'to the draft first, or quit and lose them.',
-    });
-    if (choice === 0) confirmed = true;
-    return choice !== 0;
-  };
-  if (process.platform === 'darwin') {
-    app.on('before-quit', (event) => {
-      if (keep()) event.preventDefault();
-    });
-  } else {
-    win.on('close', (event) => {
-      if (keep()) event.preventDefault();
-    });
-  }
-}
+let quitGuard: QuitGuard | undefined;
 
 /**
  * Open the database, copying it first when an update is about to migrate it. The copy cannot
@@ -211,6 +260,16 @@ async function start(): Promise<void> {
   const db = await openDatabaseWithSafetyCopy();
   const solverJobs = createSolverJobs(db, (workerData) => spawnSolverWorker({ workerData }));
   onQuit.push(() => solverJobs.dispose());
+  quitGuard = createQuitGuard({
+    unsaved: () => solverJobs.unsavedVariations(),
+    ask: (q) => askSync({ type: 'question', defaultId: KEEP_OPEN, cancelId: KEEP_OPEN, ...q }),
+    isSmoke: isSmokeRun,
+  });
+  if (process.platform === 'darwin') {
+    app.on('before-quit', (event) => {
+      if (quitGuard?.shouldKeepOpen()) event.preventDefault();
+    });
+  }
   registerIpc(
     createApi(db, solverJobs, {
       update: () => update,
@@ -222,15 +281,15 @@ async function start(): Promise<void> {
   // slow disk must not delay the window.
   onQuit.push(startDailyBackups(db, { info: console.log, error: console.error }));
   mainWindow = createWindow();
-  guardUnsavedVariations(mainWindow, () => solverJobs.unsavedVariations());
   if (isSmokeRun()) {
     // The harness is large and only a smoke run needs it; a normal launch never loads it.
     const { runSmoke } = await import('./smoke.js');
-    runSmoke(mainWindow);
+    runSmoke(mainWindow, runShutdownSteps);
   }
   // Deleted backups wait 30 days in the trash; anything past that goes now. Off the startup
   // path like the daily copy: it is disk I/O and audit writes the first paint need not wait for.
   setImmediate(() => {
+    clearPrintScratch();
     try {
       for (const b of purgeExpiredBackups(db)) console.log(`[backup] purged ${b.fileName}`);
     } catch (err) {
@@ -287,14 +346,7 @@ app.on('will-quit', (event) => {
   if (quitting) return;
   quitting = true;
   event.preventDefault();
-  // One failing step must not strand the app windowless: every step runs, and quit follows.
-  for (const step of onQuit) {
-    try {
-      step();
-    } catch (err) {
-      console.error('[main] shutdown step failed:', err);
-    }
-  }
+  runShutdownSteps();
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<void>((resolve) => {
     timer = setTimeout(resolve, QUIT_BACKUP_WAIT_MS);

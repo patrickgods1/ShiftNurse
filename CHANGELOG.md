@@ -8,6 +8,15 @@ tags. Each release's notes link here.
 
 ### Fixed
 
+- On macOS, quitting after closing the window no longer does nothing when generated schedules are
+  unsaved; ShiftNurse asks, and quits when you say so.
+- A restore or start over that cannot replace the database now restarts ShiftNurse on the database
+  you had, instead of leaving it unable to load anything.
+- Pressing Stop while CP-SAT is starting now stops it.
+- Long nurse records export to PDF, and a PDF that cannot be produced says so in plain words.
+- Someone on a release candidate is told when the final release is out.
+- Daily backups no longer leave journal files beside them in the backups folder; existing ones are
+  tidied at the next launch.
 - A call-off that was cancelled because the nurse came in no longer counts as paid sick hours.
 - A second coverage floor or pay rate for the same day is refused ("change that one instead");
   before, which one applied depended on the order they were entered, and a same-day pay correction
@@ -140,6 +149,15 @@ tags. Each release's notes link here.
   census or the grid headcount. Floats made before this release were deleted and are not restored.
 - Low-census cancellation sends nurses floated in home before the unit's own staff (new tier
   "Nurses floated in from other units", after agency; saved orders are updated).
+
+### Added
+
+- Settings › Unit › Paper size for printouts: Letter or A4 (follows this computer's region until
+  chosen).
+- If the window crashes or stops responding, ShiftNurse offers to reload it; after an internal
+  error it offers to restart.
+- The nurse record shows how each change to a published shift was made (grid edit, call-off
+  backfill, low-census cancellation…).
 
 ## [0.1.0] - 2026-10-05
 
