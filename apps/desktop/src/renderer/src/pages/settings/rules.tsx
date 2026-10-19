@@ -101,8 +101,8 @@ const FAIRNESS_TIPS: Record<FairnessComponent, string> = {
     'Shifts that go against what a nurse said they prefer (for example a night for someone ' +
     'avoiding nights).',
   overtime:
-    'Overtime hours. Low by default, because many nurses want overtime; raise it if overtime ' +
-    'should be spread evenly.',
+    "Hours worked past a nurse's contract (per diem has none, so never counts). Low by default, " +
+    'because many nurses want the extra hours; raise it if they should be spread evenly.',
   preferences:
     'How often each nurse gets the shifts they prefer. Raise it to make preferences count for ' +
     'more when shifts are handed out.',

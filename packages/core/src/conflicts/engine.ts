@@ -120,6 +120,11 @@ export class ConflictEngine {
     this.fairnessEvaluator = new FairnessEvaluator({
       nurses: this.activeNurses,
       history: input.ledgerHistory,
+      scope: {
+        asOf: input.period.startDate,
+        periodDays: datesInRange(input.period.startDate, input.period.endDate).length,
+        payPeriodDays: input.unit.payPeriodDays,
+      },
       weights: input.ruleSet.fairnessWeights,
     });
     this.nursesById = new Map(this.nurses.map((n) => [n.id, n]));

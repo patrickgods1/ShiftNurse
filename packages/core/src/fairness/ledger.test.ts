@@ -4,17 +4,21 @@ import { addDays, DEFAULT_WEEKEND, isoDate, type WeekendDefinition } from '../do
 import {
   assign,
   assignRun,
+  DAY_8,
   DAY_12,
+  EVENING_8,
   makeNurse,
   NIGHT_12,
   ON_CALL,
   resetFixtureCounters,
   scenario,
   testUnit,
+  timeOff,
 } from '../testing/fixtures.js';
 import {
   deriveCounters,
   deriveOccurrences,
+  hoursOverContract,
   isUndesirable,
   preferenceSatisfaction,
   preferencesBroken,
@@ -395,6 +399,72 @@ describe('hours and overtime', () => {
   });
 });
 
+describe('nights by tour', () => {
+  it('counts a night by when it starts, not by the night-pay flag', () => {
+    // Mon 5 Jan: a 15:00 evening tour paid as a night (Title 38). Wed 7 Jan: a 23:00 shift with
+    // no night flag. tourOf('15:00') is evening and tourOf('23:00') is night, so one night.
+    const eveningNightPay = { ...EVENING_8, id: 'st-e8-np', isNight: true };
+    const lateUnflagged = { ...DAY_8, id: 'st-23', startTime: '23:00', isNight: false };
+    const ana = makeNurse();
+    const s = scenario({
+      nurses: [ana],
+      startDate: isoDate('2026-01-05'),
+      endDate: isoDate('2026-01-11'),
+      shiftTypes: [eveningNightPay, lateUnflagged],
+      assignments: [
+        assign(ana.id, eveningNightPay, '2026-01-05'),
+        assign(ana.id, lateUnflagged, '2026-01-07'),
+      ],
+    });
+    expect(deriveCounters(s.schedule, baseCtx()).get(ana.id)?.nightShifts).toBe(1);
+    expect(deriveOccurrences(s.schedule, baseCtx()).get(ana.id)?.nights).toEqual(['2026-01-07']);
+  });
+});
+
+describe('weekday preferences with a double', () => {
+  it('reads a double on the only Monday as that Monday worked, not twice', () => {
+    // Mon 5 – Sun 11 Jan holds one Monday. Ana avoids Mondays and works a D8 and an E8 on it:
+    // one of one Mondays worked, so 1 − 1/1 = 0.
+    const ana = makeNurse();
+    const s = scenario({
+      nurses: [ana],
+      startDate: isoDate('2026-01-05'),
+      endDate: isoDate('2026-01-11'),
+      shiftTypes: [DAY_8, EVENING_8],
+      assignments: [assign(ana.id, DAY_8, '2026-01-05'), assign(ana.id, EVENING_8, '2026-01-05')],
+    });
+    const counters = deriveCounters(
+      s.schedule,
+      baseCtx({
+        preferences: [{ id: 'p1', nurseId: ana.id, kind: 'avoid_weekday', weekday: 1, weight: 1 }],
+      }),
+    );
+    expect(counters.get(ana.id)?.preferenceHitRate).toBe(0);
+  });
+});
+
+describe('hours over contract', () => {
+  it('charges hours over contract only to contracted nurses', () => {
+    // 72h per 14-day pay period over a 14-day period; seven 12s are 84h: 84 − 72 = 12 over.
+    // The per-diem nurse works the same 84h and has no contract to be over.
+    const ana = makeNurse({ contractedHoursPerPeriod: 72 });
+    const pd = makeNurse({ contractedHoursPerPeriod: 0, employmentType: 'per_diem' });
+    const s = scenario({
+      nurses: [ana, pd],
+      assignments: [
+        ...assignRun(ana.id, DAY_12, '2026-01-05', 7),
+        ...assignRun(pd.id, DAY_12, '2026-01-05', 7),
+      ],
+    });
+    const counters = deriveCounters(s.schedule, baseCtx());
+    expect(counters.get(ana.id)?.overtimeHours).toBe(12);
+    expect(counters.get(pd.id)?.overtimeHours).toBe(0);
+    // Six weeks: 72 × 42 / 14 = 216h contracted, so 230h worked is 14 over.
+    expect(hoursOverContract({ contractedHoursPerPeriod: 72 }, 230, 42, 14)).toBe(14);
+    expect(hoursOverContract({ contractedHoursPerPeriod: 0 }, 230, 42, 14)).toBe(0);
+  });
+});
+
 describe('call-offs', () => {
   it('credits a call-off pickup', () => {
     const nurse = makeNurse();
@@ -469,6 +539,22 @@ describe('coverage of the roster', () => {
       overtimeHours: 0,
       preferenceHitRate: 1,
     });
+  });
+});
+
+describe('availability on the ledger row', () => {
+  it('records that a nurse on FMLA for the whole period was not there', () => {
+    const ana = makeNurse({ id: 'ana' });
+    const bea = makeNurse({ id: 'bea' });
+    // The default scenario period is 2026-01-04 to 2026-01-17: 14 days.
+    const s = scenario({
+      nurses: [ana, bea],
+      assignments: [assign(ana.id, DAY_12, '2026-01-05')],
+    });
+    const fmla = timeOff('bea', '2026-01-04', '2026-01-17', { type: 'fmla' });
+    const counters = deriveCounters(s.schedule, baseCtx({ timeOff: [fmla] }));
+    expect(counters.get('bea')).toMatchObject({ periodDays: 14, availableDays: 0 });
+    expect(counters.get('ana')).toMatchObject({ periodDays: 14, availableDays: 14 });
   });
 });
 

@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { Assignment, Holiday, Nurse, Preference, ShiftType } from '../domain/entities.js';
-import { addDays, DEFAULT_WEEKEND, isoDate, weekdayOf } from '../domain/time.js';
+import { addDays, DEFAULT_WEEKEND, datesInRange, isoDate, weekdayOf } from '../domain/time.js';
 import {
   assign,
   DAY_12,
@@ -123,6 +123,11 @@ function scoreOf(roster: Roster, nurseId: string): number {
     nurses: roster.nurses,
     current: deriveCounters(s.schedule, ctx),
     history: [],
+    scope: {
+      asOf: START,
+      periodDays: datesInRange(START, END).length,
+      payPeriodDays: s.unit.payPeriodDays,
+    },
     preferences: roster.preferences,
   });
   const mine = report.scores.find((x) => x.nurseId === nurseId);

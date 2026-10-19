@@ -144,7 +144,15 @@ describe('publishSchedule', () => {
         tx,
         {
           periodId,
-          ledger: [{ nurseId: ann, periodId, periodStart: isoDate('2026-01-04'), totalHours: 12 }],
+          ledger: [
+            {
+              nurseId: ann,
+              periodId,
+              periodStart: isoDate('2026-01-04'),
+              periodDays: 14,
+              totalHours: 12,
+            },
+          ],
         },
         ACTOR,
       ),
@@ -165,7 +173,10 @@ describe('publishSchedule', () => {
     transact(db, (tx) =>
       publishSchedule(
         tx,
-        { periodId, ledger: [{ nurseId: ann, periodId, periodStart, nightShifts: 1 }] },
+        {
+          periodId,
+          ledger: [{ nurseId: ann, periodId, periodStart, periodDays: 14, nightShifts: 1 }],
+        },
         ACTOR,
       ),
     );
@@ -179,7 +190,7 @@ describe('publishSchedule', () => {
         {
           periodId,
           reason: 'Ann on leave',
-          ledger: [{ nurseId: bo, periodId, periodStart, nightShifts: 1 }],
+          ledger: [{ nurseId: bo, periodId, periodStart, periodDays: 14, nightShifts: 1 }],
         },
         ACTOR,
       ),
@@ -199,7 +210,13 @@ describe('publishSchedule', () => {
     const db = handle.db;
     upsertFairnessLedgerEntry(
       db,
-      { nurseId: ann, periodId, periodStart: isoDate('2026-01-04'), nightShifts: 1 },
+      {
+        nurseId: ann,
+        periodId,
+        periodStart: isoDate('2026-01-04'),
+        periodDays: 14,
+        nightShifts: 1,
+      },
       ACTOR,
     );
     const result = transact(db, (tx) => publishSchedule(tx, { periodId }, ACTOR));

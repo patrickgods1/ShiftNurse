@@ -192,6 +192,8 @@ export type {
 export { evaluateExchange, planExchange } from './exchange/index.js';
 // Unit-wide spread of burdens
 export { gini } from './fairness/distribution.js';
+// Days a nurse was there to carry a period's burdens
+export { daysAvailable } from './fairness/exposure.js';
 // Importing prior burden history from CSV
 export { groupIntoPayPeriods, parseHistoricalScheduleCsv } from './fairness/history-csv.js';
 // Per-nurse burden counts and broken preferences
@@ -200,6 +202,7 @@ export { deriveCounters, deriveOccurrences, preferencesBroken } from './fairness
 export { scoreFairness } from './fairness/score.js';
 export type {
   BurdenCounters,
+  BurdenScope,
   ComponentScore,
   CounterContext,
   FairnessComponent,

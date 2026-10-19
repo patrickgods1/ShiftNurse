@@ -29,8 +29,26 @@ export function getFairnessLedgerEntry(
   return row ? toFairnessLedgerEntry(row) : undefined;
 }
 
-/** A ledger row's counters, with every omitted counter as 0 — the one place those defaults live. */
+/**
+ * A ledger row's counters, with every omitted counter as 0 — the one place those defaults live.
+ * Availability defaults to the whole period: a row with no say about leave was a full one.
+ */
 function ledgerValues(input: UpsertFairnessLedgerInput) {
+  const { periodDays } = input;
+  const availableDays = input.availableDays ?? periodDays;
+  // Refused before any write: a zero-day period or more days there than the period has would
+  // turn the rate fairness compares into a division by zero or a nurse "there" 110% of the time.
+  if (
+    !Number.isInteger(periodDays) ||
+    periodDays < 1 ||
+    !Number.isInteger(availableDays) ||
+    availableDays < 0 ||
+    availableDays > periodDays
+  ) {
+    throw new Error(
+      "A fairness history row needs a period of at least one day, and available days between 0 and the period's length.",
+    );
+  }
   return {
     periodStart: input.periodStart,
     nightShifts: input.nightShifts ?? 0,
@@ -44,6 +62,8 @@ function ledgerValues(input: UpsertFairnessLedgerInput) {
     totalHours: input.totalHours ?? 0,
     overtimeHours: input.overtimeHours ?? 0,
     preferenceHitRate: input.preferenceHitRate ?? 0,
+    periodDays,
+    availableDays,
   };
 }
 
@@ -125,6 +145,10 @@ export interface UpsertFairnessLedgerInput {
   totalHours?: number;
   overtimeHours?: number;
   preferenceHitRate?: number;
+  /** Days in the period the row covers. */
+  periodDays: number;
+  /** Days of it the nurse was there; absent means all of them. */
+  availableDays?: number;
 }
 
 export function upsertFairnessLedgerEntry(

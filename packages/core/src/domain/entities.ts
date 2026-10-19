@@ -1040,9 +1040,21 @@ export interface FairnessLedgerEntry {
   /** Times this nurse picked up a call-off backfill. */
   callOutsCovered: number;
   totalHours: number;
+  /**
+   * Hours worked past the pro-rata contract (`hoursOverContract`; 0 for per diem), the fairness
+   * burden. Not FLSA overtime: the cost engine's `overtimeHours` is that.
+   */
   overtimeHours: number;
   /** 0–1: share of this nurse's preferences the schedule honoured. */
   preferenceHitRate: number;
+  /** Days in the period this row covers (a schedule period, or a pay period for imported history). */
+  periodDays: number;
+  /**
+   * Days of `periodDays` the nurse was available: on or after `Nurse.hireDate` and not inside an
+   * approved time-off request. Fairness compares what a nurse carried per day she was there,
+   * so leave neither raises nor lowers her standing (29 CFR 825.220(c)).
+   */
+  availableDays: number;
 }
 
 // ---------------------------------------------------------------------------

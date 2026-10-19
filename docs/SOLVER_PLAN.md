@@ -258,7 +258,8 @@ Decisions:
 - [x] 4.14 Fairness: burden counts as integer expressions. The positive deviation from a fair
       share pinned to `contractedHoursPerPeriod` is squared via `AddMultiplicationEquality`.
       *(The annealer's fairness term turned out to be linear — `max(0, carried − teamTotal ·
-      share / teamShare)` — so it is encoded linearly, multiplied through by the team share so
+      fairWeight / teamFairWeight)`, the fair weights being `computeBurden`'s exposure-normalised,
+      age-decayed ones (phase 20) — so it is encoded linearly, multiplied through by the team fair weight so
       every coefficient is an exact integer; one pinned team-total variable per component keeps
       the model small. Weekend and overtime counters are pinned exactly, since a counter the
       solver could inflate would lower everyone else's over-share.)*

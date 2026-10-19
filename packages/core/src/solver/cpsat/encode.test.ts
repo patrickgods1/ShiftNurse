@@ -2227,6 +2227,8 @@ describe('parity with the annealer', () => {
       totalHours: 72,
       overtimeHours: 4,
       preferenceHitRate: 1,
+      periodDays: 14,
+      availableDays: 14,
     };
   }
 
@@ -2366,6 +2368,210 @@ describe('parity with the annealer', () => {
     };
     expect(fairnessOf(team())).toBeGreaterThan(0);
     expect(fairnessOf(team('va_baylor'))).toBe(0);
+  });
+
+  /** Only one burden priced, and the two rules that add their own fairness price switched off. */
+  function onlyBurden(component: 'nights' | 'overtime'): RuleSet {
+    const base = defaultRuleSet(UNIT_ID);
+    return {
+      ...base,
+      configs: base.configs.map((c) =>
+        c.ruleId === 'holiday-rotation' || c.ruleId === 'weekend-pattern'
+          ? { ...c, enabled: false }
+          : c,
+      ),
+      fairnessWeights: {
+        ...base.fairnessWeights,
+        nights: 0,
+        weekends: 0,
+        holidays: 0,
+        onCall: 0,
+        undesirable: 0,
+        overtime: 0,
+        preferences: 0,
+        timeOff: 0,
+        [component]: 1,
+      },
+    };
+  }
+
+  /** CP-SAT's price of `roster` must equal the model's; returns the model's fairness term. */
+  function fairnessBoth(input: SolveInput, roster: readonly Assignment[]): number {
+    const model = new SolverModel(input);
+    for (const a of roster) model.add(a);
+    expect(evaluate(encodeCpsat(input), roster).objective).toBeCloseTo(model.breakdown().total, 0);
+    return model.breakdown().fairness;
+  }
+
+  it('charges a per-diem nurse no hours-over-contract burden in CP-SAT either', () => {
+    // A full-timer (72h) and a per-diem nurse, overtime weight only. The per-diem works three
+    // day 12s (36h): she has no contract, so none of it is over one, and the full-timer works
+    // nothing. Both solvers price fairness at 0, as the ledger does.
+    const history = (nurseId: string, totalHours: number): FairnessLedgerEntry => ({
+      id: `ledger-${nurseId}`,
+      nurseId,
+      periodId: 'prev',
+      periodStart: isoDate('2025-12-21'),
+      nightShifts: 0,
+      weekendsWorked: 0,
+      holidaysWorked: 0,
+      onCallShifts: 0,
+      undesirableShifts: 0,
+      requestsApproved: 0,
+      requestsDenied: 0,
+      callOutsCovered: 0,
+      totalHours,
+      overtimeHours: 0,
+      preferenceHitRate: 1,
+      periodDays: 14,
+      availableDays: 14,
+    });
+    const input = unit(
+      [
+        makeNurse({ id: 'ft', isChargeEligible: true, contractedHoursPerPeriod: 72 }),
+        makeNurse({ id: 'pd', employmentType: 'per_diem', contractedHoursPerPeriod: 0 }),
+      ],
+      {
+        shiftTypes: [DAY_12],
+        coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1, 1),
+        ledgerHistory: [history('ft', 72), history('pd', 36)],
+        ruleSet: onlyBurden('overtime'),
+      },
+    );
+    const roster = ['2026-01-05', '2026-01-07', '2026-01-09'].map((d) => assign('pd', DAY_12, d));
+    expect(fairnessBoth(input, roster)).toBe(0);
+  });
+
+  it('counts night tours for the night burden, as the model does', () => {
+    // A 15:00 evening tour paid as a night, worked three times by Ada: no night tour is worked,
+    // so the night team total is 0. Counted by the pay flag she would be 1.5 over share.
+    const eveningNightPay = { ...EVENING_8, id: 'st-e8-np', isNight: true };
+    const input = unit(
+      [
+        makeNurse({ id: 'ada', isChargeEligible: true, contractedHoursPerPeriod: 72 }),
+        makeNurse({ id: 'bo', isChargeEligible: true, contractedHoursPerPeriod: 72 }),
+      ],
+      {
+        shiftTypes: [DAY_12, eveningNightPay],
+        coverageRequirements: [
+          ...coverageAllWeek(DAY_12, 'RN', 1, 1),
+          ...coverageAllWeek(eveningNightPay, 'RN', 0, 1),
+        ],
+        ruleSet: onlyBurden('nights'),
+      },
+    );
+    const roster = ['2026-01-05', '2026-01-07', '2026-01-09'].map((d) =>
+      assign('ada', eveningNightPay, d),
+    );
+    expect(fairnessBoth(input, roster)).toBe(0);
+  });
+
+  it('keeps every fair-share coefficient an exact whole number CP-SAT can carry', () => {
+    // A 26-nurse unit with a full year of history: exposure makes fair weights about a year's
+    // worth of pay periods × contract, in hundredths, and the over-share rows multiply them by
+    // the team's total and by FAIR. That is where a coefficient would leave JSON's exact range.
+    const contracts = [72, 48, 36];
+    const nurses = [
+      ...Array.from({ length: 24 }, (_, i) =>
+        makeNurse({
+          id: `rn${String(i).padStart(2, '0')}`,
+          isChargeEligible: i % 3 === 0,
+          contractedHoursPerPeriod: contracts[i % 3]!,
+        }),
+      ),
+      ...['pd0', 'pd1'].map((id) =>
+        makeNurse({ id, employmentType: 'per_diem', fte: 0, contractedHoursPerPeriod: 0 }),
+      ),
+    ];
+    // 26 fortnights back from the period's start (2026-01-04): the oldest row starts 2025-01-05,
+    // its midpoint 357 days back, inside the 365-day window. Some rows are part leave.
+    const ledgerHistory: FairnessLedgerEntry[] = nurses.flatMap((n, i) =>
+      Array.from({ length: 26 }, (_, k) => ({
+        id: `ledger-${n.id}-${k}`,
+        nurseId: n.id,
+        periodId: `prev-${k}`,
+        periodStart: addDays(isoDate('2025-12-21'), -14 * k),
+        nightShifts: (i + k) % 6,
+        weekendsWorked: (i * k) % 3,
+        holidaysWorked: k % 9 === 0 ? 1 : 0,
+        onCallShifts: (i + 2 * k) % 4,
+        undesirableShifts: (i + k) % 3,
+        requestsApproved: 0,
+        requestsDenied: 0,
+        callOutsCovered: 0,
+        totalHours: 36 + ((i + k) % 4) * 12,
+        overtimeHours: ((i * 7 + k) % 5) * 1.25,
+        preferenceHitRate: 1,
+        periodDays: 14,
+        availableDays: (i + k) % 5 === 0 ? 14 - ((i + k) % 11) : 14,
+      })),
+    );
+    const base = defaultRuleSet(UNIT_ID);
+    const input = unit(nurses, {
+      coverageRequirements: [
+        ...coverageAllWeek(DAY_12, 'RN', 4, 6),
+        ...coverageAllWeek(NIGHT_12, 'RN', 3, 5),
+      ],
+      ledgerHistory,
+      // The two rules that add their own price to the fairness bucket are off, so the bucket is
+      // the over-share term alone in both solvers.
+      ruleSet: {
+        ...base,
+        configs: base.configs.map((c) =>
+          c.ruleId === 'holiday-rotation' || c.ruleId === 'weekend-pattern'
+            ? { ...c, enabled: false }
+            : c,
+        ),
+      },
+    });
+
+    const encoding = encodeCpsat(input);
+    const { model: cp } = encoding;
+    const exact = (x: number, what: string) => {
+      expect(Number.isInteger(x), what).toBe(true);
+      expect(Math.abs(x), what).toBeLessThan(2 ** 53);
+    };
+    const reach = (v: number) => Math.max(...cp.variables[v]!.domain.map(Math.abs));
+    let linears = 0;
+    for (const constraint of cp.constraints) {
+      if ('linear' in constraint) {
+        const { vars, coeffs, domain } = constraint.linear;
+        for (const c of coeffs) exact(c, 'linear coefficient');
+        for (const d of domain) exact(d, 'linear domain');
+        const span = vars.reduce((t, v, i) => t + Math.abs(coeffs[i]!) * reach(v), 0);
+        expect(span, 'linear constraint span').toBeLessThan(2 ** 62);
+        linears++;
+      } else if ('lin_max' in constraint) {
+        for (const e of [constraint.lin_max.target, ...constraint.lin_max.exprs]) {
+          for (const c of e.coeffs) exact(c, 'lin_max coefficient');
+          exact(e.offset, 'lin_max offset');
+        }
+      }
+    }
+    expect(linears).toBeGreaterThan(0);
+    for (const c of cp.objective.coeffs) exact(c, 'objective coefficient');
+    // The offset is a double in CpObjectiveProto; it only has to be a finite number.
+    expect(Number.isFinite(cp.objective.offset)).toBe(true);
+
+    // A legal roster drawn by the model's own gate, priced by both solvers.
+    const model = new SolverModel(input);
+    const rng = new Rng(17);
+    for (let step = 0; step < 600; step++) {
+      const shift = rng.pick(model.solvableShifts);
+      const n = rng.pick(model.candidates);
+      if (!model.eligible(n, shift, null)) continue;
+      const a = model.make(n, shift);
+      if (model.canAdd(n, a)) model.add(a);
+    }
+    const roster = model.assignments();
+    expect(roster.length).toBeGreaterThan(50);
+    const priced = evaluate(encoding, roster);
+    expect(priced.violated).toEqual([]);
+    expect(priced.objective).toBeCloseTo(model.breakdown().total, 0);
+    // CP-SAT's fairness part: the same roster priced with the fairness weight at 0, subtracted.
+    const unfair = evaluate(encodeCpsat(input, { weights: { fairness: 0 } }), roster).objective;
+    expect(model.breakdown().fairness).toBeGreaterThan(0);
+    expect(priced.objective - unfair).toBeCloseTo(model.breakdown().fairness, 0);
   });
 
   describe('a shortage on one shift', () => {

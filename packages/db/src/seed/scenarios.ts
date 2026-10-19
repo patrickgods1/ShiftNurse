@@ -844,6 +844,10 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
         nurseId: t.nurse.id,
         periodId: period.id,
         periodStart: start,
+        // Every nurse was staffed through every 14-day history period before the scenario's
+        // historical leave (below) was seeded, so each row is a full one.
+        periodDays: 14,
+        availableDays: 14,
         nightShifts: nights,
         weekendsWorked: weekendKeys.size,
         holidaysWorked: worked.filter((a) => holidayDates.has(a.date)).length,

@@ -136,8 +136,9 @@ export function formatHistoricalScheduleCsv(rows: readonly HistoricalShiftRow[])
 
 /**
  * Bucket imported rows into the unit's own pay periods (anchored on `unit.payPeriodAnchor`,
- * length `unit.payPeriodDays`) — the granularity the fairness ledger is kept at. `periodId` is
- * synthetic (`import:<start>`) because these periods predate any `SchedulePeriod` the app
+ * length `unit.payPeriodDays`): imported history is kept per pay period and app history per
+ * schedule period; both carry `periodDays`, and the burden model weighs them by days, so the two
+ * mix correctly. `periodId` is synthetic (`import:<start>`) because these periods predate any `SchedulePeriod` the app
  * generated; the id is derived only from the period's start date, so importing the same file
  * twice (e.g. a corrected re-export) lands on the same period ids rather than minting new ones.
  */

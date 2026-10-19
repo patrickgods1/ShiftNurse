@@ -5,7 +5,7 @@
  */
 
 import type { FairnessComponent, FairnessReport } from '@shiftnurse/core';
-import { FAIRNESS_COMPONENT_LABELS, FAIRNESS_COMPONENTS, gini } from '@shiftnurse/core';
+import { FAIRNESS_COMPONENT_LABELS, FAIRNESS_COMPONENTS } from '@shiftnurse/core';
 import { StatCard } from '../../components/stat-card.js';
 
 /** Gini bands for the stat-card tone. There is no hard threshold in the domain model — these
@@ -45,24 +45,14 @@ function worstComponent(
 
 interface FairnessSummaryProps {
   report: FairnessReport;
-  /** Nurses with contracted hours, the ones the headline numbers are about. */
-  contracted: ReadonlySet<string>;
 }
 
-export function FairnessSummary({ report, contracted }: FairnessSummaryProps) {
-  // The headline is about staff with a contracted share: a per-diem nurse's low score means
-  // they picked up what they were asked to, and would otherwise set "lowest" for the unit.
-  const values = report.scores.filter((s) => contracted.has(s.nurseId)).map((s) => s.score);
-  const score =
-    values.length === 0
-      ? { count: 0, mean: 0, min: 0, max: 0, gini: 0 }
-      : {
-          count: values.length,
-          mean: values.reduce((a, b) => a + b, 0) / values.length,
-          min: Math.min(...values),
-          max: Math.max(...values),
-          gini: gini(values),
-        };
+export function FairnessSummary({ report }: FairnessSummaryProps) {
+  // The headline is over the nurses the model can compare (`comparable`: a contract, or hours
+  // on record, and some time at work in the window), as core counts them, so it agrees with the
+  // trend's Gini and the table above the fold. A nurse with nothing to compare would otherwise
+  // set "lowest" for the unit.
+  const score = report.distribution.score;
   const worst = worstComponent(report.distribution.components, report.weights);
 
   return (
@@ -139,9 +129,9 @@ export function ComponentDistributionStrip({ report }: ComponentStripProps) {
         </tbody>
       </table>
       <p className="border-t border-border px-3 py-2 text-xs text-text-muted">
-        Burdens (nights, weekends, holidays, on call, overtime) are shown as a share of each nurse's
-        fair share, this period and recently: 100% is exactly fair. Preferences and requests are the
-        share honoured.
+        Burdens (nights, weekends, holidays, on call, hours over contract) are shown as a share of
+        each nurse's fair share, this period and recently: 100% is exactly fair. Preferences and
+        requests are the share honoured.
       </p>
     </div>
   );

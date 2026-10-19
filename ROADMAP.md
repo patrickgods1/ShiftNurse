@@ -800,6 +800,8 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
       and dev smoke in CI, shipped-dependency audit, Electron Fuses, Windows CP-SAT required,
       notices, data-folder warning and IT guide (verify: npm run check; smoke; dist +
       smoke:packaged mac arm64; PR release dry run on 3 targets; cpsat-runner workflow green)
+- [x] Phase 20 — fairness model: exposure-normalised, age-decayed history (D15); one counter
+      definition shared by ledger and both solvers (verify: npm run check; smoke; bench re-run)
 
 ---
 

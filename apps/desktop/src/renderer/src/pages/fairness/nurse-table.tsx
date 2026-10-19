@@ -71,7 +71,7 @@ function dateLine(label: string, dates: readonly string[]): string | null {
   return dates.length === 0 ? null : `${label}: ${dates.map(formatDateWithWeekday).join(', ')}`;
 }
 
-/** Against the unit's mean over comparable nurses, so per-diem staff do not drag it down. */
+/** Against the unit's mean over comparable nurses, so nurses the model could not compare do not drag it down. */
 export function weekendComparison(score: NurseFairnessScore, all: NurseFairnessScore[]): string {
   const peers = all.filter((s) => s.comparable);
   if (peers.length === 0) return '';
@@ -169,7 +169,10 @@ function NurseRow({
           {score.comparable ? (
             <span className={SCORE_TONE_CLASSES[tone]}>{score.score.toFixed(0)}</span>
           ) : (
-            <span className="text-text-muted" title="No contracted-hours share to compare against">
+            <span
+              className="text-text-muted"
+              title="No contract or hours on record, or away all period"
+            >
               n/a
             </span>
           )}
@@ -198,13 +201,11 @@ function NurseRow({
 
 export function NurseFairnessTable({ scores, nurses, trend }: NurseFairnessTableProps) {
   const nursesById = new Map(nurses.map((n) => [n.id, n]));
-  // Per-diem and agency staff have no contracted share: a low score for them means they picked
-  // up the shifts they were asked to, not that they were treated unfairly. They get their own
-  // folded list instead of heading the table as the unit's "worst treated".
-  const contracted = (s: NurseFairnessScore) =>
-    (nursesById.get(s.nurseId)?.contractedHoursPerPeriod ?? 0) > 0;
-  const sorted = sortScores(scores.filter(contracted));
-  const asNeeded = sortScores(scores.filter((s) => !contracted(s)));
+  // The table holds the nurses the model compared with the team, as core counts them, so it
+  // agrees with the headline. The rest (no contract or hours on record, or away all period)
+  // get their own folded list instead of heading the table as the unit's "worst treated".
+  const sorted = sortScores(scores.filter((s) => s.comparable));
+  const notCompared = sortScores(scores.filter((s) => !s.comparable));
   const rowsFor = (list: NurseFairnessScore[]) =>
     list.map((score) => (
       <NurseRow
@@ -247,9 +248,9 @@ export function NurseFairnessTable({ scores, nurses, trend }: NurseFairnessTable
         <th
           scope="col"
           className="px-3 py-2 font-medium"
-          title="Longer-serving nurses' preferences count for more"
+          title="Shown for reference: Generate weighs a senior nurse's preferences more; it does not change this score"
         >
-          Seniority weight
+          Seniority (preference weight)
         </th>
         <th scope="col" className="px-3 py-2 font-medium">
           Trend
@@ -270,7 +271,7 @@ export function NurseFairnessTable({ scores, nurses, trend }: NurseFairnessTable
     <div className="overflow-x-auto rounded-md border border-border bg-surface">
       {sorted.length === 0 ? (
         <p className="p-4 text-center text-text-muted">
-          Nobody scored here has a contracted share to compare against.
+          Nobody scored here could be compared with the team.
         </p>
       ) : (
         <table
@@ -284,14 +285,15 @@ export function NurseFairnessTable({ scores, nurses, trend }: NurseFairnessTable
           <tbody>{rowsFor(sorted)}</tbody>
         </table>
       )}
-      {asNeeded.length > 0 ? (
+      {notCompared.length > 0 ? (
         <details className="border-t border-border" open={sorted.length === 0}>
           <summary className="cursor-pointer px-3 py-2 text-sm text-text-muted">
-            Per-diem and agency staff ({asNeeded.length}) — no contracted share to compare against
+            Not compared with the team ({notCompared.length}) — no contract or hours on record, or
+            away all period
           </summary>
           <table className="w-full min-w-[760px] border-collapse text-sm">
             {head}
-            <tbody>{rowsFor(asNeeded)}</tbody>
+            <tbody>{rowsFor(notCompared)}</tbody>
           </table>
         </details>
       ) : null}

@@ -548,5 +548,7 @@ export function toFairnessLedgerEntry(
     totalHours: r.totalHours,
     overtimeHours: r.overtimeHours,
     preferenceHitRate: r.preferenceHitRate,
+    periodDays: r.periodDays,
+    availableDays: r.availableDays,
   };
 }

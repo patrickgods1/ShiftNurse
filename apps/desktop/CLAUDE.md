@@ -18,7 +18,7 @@
   constraint, back-test) and Schedule (M6: nurses × days grid, native HTML5 drag-and-drop,
   lock/charge/OT popover, live violation badges from `schedule.validate`, Settings > Rules
   versioned editor incl. fairness weights) and Fairness (M7: unit distribution, per-nurse
-  breakdown with trend sparklines, history CSV import) and Cost (M8: Settings > Pay editor for
+  breakdown with trend sparklines, history CSV import; the headline, table and trend all follow core's comparable nurses, and the trend re-scores each period under its own rule-set snapshot) and Cost (M8: Settings > Pay editor for
   rates/differentials/OT rules, budget-vs-actual + overtime concentration on the Dashboard, a
   running cost strip on the Schedule page) and Generate (M9: `main/solver-worker.ts` runs core's
   `solve` in a worker thread; `main/solver-jobs.ts` runs a *batch* of 1–10 variations (seeds

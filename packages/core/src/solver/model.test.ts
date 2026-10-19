@@ -501,8 +501,8 @@ describe('annealer cache drift', () => {
 /**
  * What the Fairness page would say the model's fairness term is, computed with that page's own
  * machinery: the same view, `deriveCounters` and `computeBurden` that `report.ts` hands to
- * `scoreFairness`. The over-share sum is the definition both sides share; what this checks is the
- * counters, the decay and the fair shares the model keeps incrementally.
+ * `scoreFairness`, over-share read straight from the page's `fairShare`. What this checks is the
+ * counters, the age decay, the exposure and the fair weights the model keeps incrementally.
  */
 function fairnessAsThePageComputesIt(model: SolverModel): number {
   const { input } = model;
@@ -523,16 +523,19 @@ function fairnessAsThePageComputesIt(model: SolverModel): number {
   });
   const active = model.candidates.map((i) => model.nurses[i]!);
   const weights = input.ruleSet.fairnessWeights;
-  const burden = computeBurden(active, input.ledgerHistory, { weights }, counters);
-  const sharers = [...burden.byNurse.values()].filter((b) => b.shareWeight > 0);
-  const teamShare = sharers.reduce((sum, b) => sum + b.shareWeight, 0);
+  const scope = {
+    asOf: input.period.startDate,
+    periodDays: view.dates.length,
+    payPeriodDays: input.unit.payPeriodDays,
+  };
+  const burden = computeBurden(active, input.ledgerHistory, scope, { weights }, counters);
   let total = 0;
   for (const c of BURDEN_COMPONENTS) {
     if (weights[c] <= 0) continue;
     const key = BURDEN_COUNTER[c];
-    const teamTotal = sharers.reduce((sum, b) => sum + b.carried[key], 0);
-    for (const b of sharers) {
-      total += weights[c] * Math.max(0, b.carried[key] - (teamTotal * b.shareWeight) / teamShare);
+    for (const nb of burden.byNurse.values()) {
+      if (!nb.comparable) continue;
+      total += weights[c] * Math.max(0, nb.carried[key] - nb.fairShare[c]);
     }
   }
   return total * DEFAULT_OBJECTIVE_WEIGHTS.fairness;
@@ -560,6 +563,8 @@ function ledgerRow(
     totalHours: 0,
     overtimeHours: 0,
     preferenceHitRate: 1,
+    periodDays: 14,
+    availableDays: 14,
     ...counts,
   };
 }
@@ -615,7 +620,9 @@ describe('fairness priced as the Fairness page prices it', () => {
           weight: 4,
         },
       ],
-      // Four nurses with history that differs on every counter; nurses 4 and 5 have none.
+      // Four nurses with history that differs on every counter, dated at different ages (two weeks
+      // to half a year back) and part-available; nurse 3's leave period has no available days, so it
+      // must weigh nothing. Nurses 4 and 5 have none.
       ledgerHistory: [
         ledgerRow(nurses[0]!.id, 'prev', '2025-12-21', {
           nightShifts: 6,
@@ -635,12 +642,13 @@ describe('fairness priced as the Fairness page prices it', () => {
           overtimeHours: 0,
           totalHours: 72,
         }),
-        ledgerRow(nurses[1]!.id, 'prev2', '2025-12-07', {
+        ledgerRow(nurses[1]!.id, 'prev2', '2025-07-06', {
           nightShifts: 3,
           holidaysWorked: 2,
           totalHours: 72,
         }),
-        ledgerRow(nurses[2]!.id, 'prev', '2025-12-21', {
+        ledgerRow(nurses[2]!.id, 'prev', '2025-10-12', {
+          availableDays: 9,
           nightShifts: 0,
           weekendsWorked: 1,
           holidaysWorked: 1,
@@ -653,6 +661,12 @@ describe('fairness priced as the Fairness page prices it', () => {
           weekendsWorked: 0,
           undesirableShifts: 2,
           totalHours: 48,
+        }),
+        ledgerRow(nurses[3]!.id, 'leave', '2025-11-23', {
+          availableDays: 0,
+          nightShifts: 5,
+          weekendsWorked: 3,
+          totalHours: 0,
         }),
       ],
       ruleSet: burdenOnly(),
@@ -685,9 +699,9 @@ describe('fairness priced as the Fairness page prices it', () => {
     expect(peak).toBeGreaterThan(0);
   });
 
-  // Phase 20 flips this to `it`: the model counts a per-diem nurse's worked hours as overtime
-  // burden, while the ledger (and so the Fairness page) counts none, because she has no contract.
-  it.fails("prices a per-diem nurse's hours as overtime burden, which the ledger does not (M-19, phase 20)", () => {
+  // A per-diem nurse has no contract to be over, so the ledger (and so the Fairness page) counts
+  // none of her hours as burden; the model must price the same nothing.
+  it('charges a per-diem nurse no hours-over-contract burden, as the ledger does', () => {
     const ft = makeNurse({ isChargeEligible: true, contractedHoursPerPeriod: 72 });
     const pd = makeNurse({ employmentType: 'per_diem', contractedHoursPerPeriod: 0 });
     const input = solveInputFrom({
@@ -719,6 +733,44 @@ describe('fairness priced as the Fairness page prices it', () => {
     }
     expect(fairnessAsThePageComputesIt(model)).toBe(0);
     expect(model.breakdown().fairness).toBeCloseTo(fairnessAsThePageComputesIt(model), 6);
+  });
+
+  it('counts an evening tour that carries night pay as a day-side shift in the night burden', () => {
+    // A Title 38 evening tour starts at 15:00 and is paid the night differential. Ana works it
+    // three times; nobody works a night tour, so the night team total is 0 and nobody is over
+    // share. Counted by the pay flag, Ana would carry 3 against a share of 1.5.
+    const eveningNightPay = { ...EVENING_8, id: 'st-e8-np', isNight: true };
+    const ana = makeNurse({ isChargeEligible: true, contractedHoursPerPeriod: 72 });
+    const bo = makeNurse({ isChargeEligible: true, contractedHoursPerPeriod: 72 });
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: [ana, bo],
+      shiftTypes: [DAY_12, eveningNightPay],
+      coverageRequirements: [
+        ...coverageAllWeek(DAY_12, 'RN', 1, 1),
+        ...coverageAllWeek(eveningNightPay, 'RN', 0, 1),
+      ],
+      ruleSet: burdenOnly({
+        nights: 1,
+        weekends: 0,
+        holidays: 0,
+        onCall: 0,
+        undesirable: 0,
+        overtime: 0,
+        preferences: 0,
+        timeOff: 0,
+      }),
+    });
+    const model = new SolverModel(input);
+    const anaIdx = model.nurses.findIndex((n) => n.id === ana.id);
+    for (const date of ['2026-01-05', '2026-01-07', '2026-01-09']) {
+      const shift = model.shifts.find(
+        (s) => s.date === date && s.shiftType.id === eveningNightPay.id,
+      )!;
+      model.add(model.make(anaIdx, shift));
+    }
+    expect(model.breakdown().fairness).toBe(0);
   });
 });
 

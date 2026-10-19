@@ -70,6 +70,37 @@ describe('pay for what happened on the day', () => {
     expect(result.lines[0]).toMatchObject({ hours: 5, amount: 240 });
   });
 
+  it('pays a missed meal on each of two days, an hour each', () => {
+    const next = isoDate('2027-07-07');
+    const result = price([
+      { kind: 'missed_break', nurseId: 'ana', date: DATE, break: 'meal' },
+      { kind: 'missed_break', nurseId: 'ana', date: next, break: 'meal' },
+    ]);
+    // Labor Code § 226.7 is per workday: 1 h on the 6th + 1 h on the 7th = 2 h × $48 = $96. The
+    // once-a-day guard is keyed on the date, so the second day must not be swallowed.
+    expect(result.lines.map((l) => [l.kind, l.date, l.hours, l.amount])).toEqual([
+      ['missed_meal', DATE, 1, 48],
+      ['missed_meal', next, 1, 48],
+    ]);
+    expect(result.total).toBe(96);
+  });
+
+  it('pays four hours to a nurse sent home three hours into a twelve', () => {
+    const result = price([
+      { kind: 'sent_home', nurseId: 'ana', date: DATE, scheduledHours: 12, hoursWorked: 3 },
+    ]);
+    // Half of 12 is 6, capped at 4; the larger of 3 worked and 4 owed is 4 h × $48 = $192.
+    expect(result.lines[0]).toMatchObject({ kind: 'reporting_pay', hours: 4, amount: 192 });
+  });
+
+  it('pays the hours worked when they beat reporting-time pay', () => {
+    const result = price([
+      { kind: 'sent_home', nurseId: 'ana', date: DATE, scheduledHours: 4, hoursWorked: 3 },
+    ]);
+    // Half of 4 is 2, already at the 2 h floor; the larger of 3 worked and 2 owed is 3 h × $48 = $144.
+    expect(result.lines[0]).toMatchObject({ kind: 'reporting_pay', hours: 3, amount: 144 });
+  });
+
   it('pays a call-back at the call-back premium, and at least the contract minimum', () => {
     const callBack: Differential = {
       id: 'cb',

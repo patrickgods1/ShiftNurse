@@ -39,9 +39,15 @@
 - **A shift's broken preferences reach the grid.** `fairness/ledger.ts`'s `preferencesBroken`
   is the one definition (`isUndesirable` is its yes/no, which the ledger and digest count);
   `schedule.validate` returns `againstPreference` per assignment and the grid marks those chips.
-- **Fairness fair-share is pinned to `contractedHoursPerPeriod`, never worked hours.** That is
-  what makes the score monotone (an extra night can never raise it); basing shares on hours
-  actually worked would let a nurse who works only nights "improve" by taking one more. Only
+- **Fairness fair-share is pinned to `contractedHoursPerPeriod` × exposure, never worked hours.**
+  Exposure is each period's counters and available days, weighted 0.5 per 180 days of age
+  within a year (`fairness/burden.ts`, `BurdenScope`), so a hire, a returner and a veteran are
+  compared by rate. Approved leave and days before the hire date are not exposure. Every
+  consumer (Fairness page, both solvers via `historyFairness`, conflicts, day-of) reads the
+  `fairWeight`/`fairShare` `computeBurden` returns. Contract and exposure read leave, hire date
+  and history, never the assignment, which is what makes the score monotone (an extra night can
+  never raise it); basing shares on hours actually worked would let a nurse who works only
+  nights "improve" by taking one more. Only
   a shift that honours none of a nurse's preferences is unambiguously worse — a day shift for
   a nurse avoiding nights raises their hit rate — so the property test excludes such pairs.
 - **A finding keeps the severity its rule gave it** unless the rule set overrides the rule
@@ -418,9 +424,11 @@
   12:00–17:59 evening, otherwise night — never `isNight`, a pay flag a Title 38 evening tour also
   carries. `isNightTour` is the night test for min-rest's after-night rest, the night cap (which
   counts runs of night dates wherever they sit, `nightRuns`; a day beside them neither resets nor
-  hides the run) and recovery after nights; fairness's night count and the pay differential still
-  read `isNight`. `tour-rotation` (soft, off by default) caps distinct tours per schedule, wants
-  `minHoursBetweenTours` between shifts on different tours, and keeps a nurse with a
+  hides the run) and recovery after nights; fairness's night burden (ledger, occurrence dates,
+  `SolverModel.nights`, CP-SAT `current`, the Generate digest) counts worked night tours
+  (`isWorkedNight`); only the pay differential reads `isNight`. `tour-rotation` (soft, off by
+  default) caps distinct tours per schedule, wants `minHoursBetweenTours` between shifts on
+  different tours, and keeps a nurse with a
   `permanentTour` on it. A career nurse exempt from forced rotation is held to one tour and her
   permanent tour, except tours she asked for (a preferred shift type on them, `requestedTours`,
   read from `RuleContext.preferredShiftTypesByNurse`). Monotone under removal, so the gate is the

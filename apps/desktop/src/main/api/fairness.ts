@@ -21,11 +21,11 @@ import {
 } from '@shiftnurse/core';
 import {
   type DbLike,
+  getPeriod,
   importHistoricalLedger,
   LEDGER_LOOKBACK_DAYS,
   ledgerHistory,
   ledgerSince,
-  listActiveNursesForUnit,
   listNursesForUnit,
   listPreferencesForUnit,
   listShiftTypesForUnit,
@@ -63,6 +63,11 @@ export function fairnessReport(db: DbLike, periodId: Id) {
     current: deriveCounters(schedule, ctx),
     occurrences: deriveOccurrences(schedule, ctx),
     history: ledgerHistory(db, period.unitId, period.startDate),
+    scope: {
+      asOf: period.startDate,
+      periodDays: schedule.dates.length,
+      payPeriodDays: ctx.unit.payPeriodDays,
+    },
     preferences: ctx.preferences,
     weights: ruleSet.fairnessWeights,
   });
@@ -74,15 +79,18 @@ function countersFromEntry(entry: FairnessLedgerEntry): BurdenCounters {
 }
 
 /**
- * Re-score each ledger period as it would have looked at the time — judged against only the
- * history before it — so the trend shows whether the unit is getting fairer, not a moving
- * average smeared over the present.
+ * Re-score each ledger period against only the history before it, under the weights it was
+ * judged by (imported periods, which have none, use the unit's latest), over the nurses with a
+ * row in it — so the trend shows whether the unit is getting fairer, not today's rules and
+ * today's roster smeared over the past. A leaver is still in the periods she worked; a nurse
+ * hired since is absent from the ones before her.
  */
 export function fairnessTrend(db: DbLike, unitId: Id): FairnessTrendPoint[] {
   const entries = ledgerSince(db, unitId, addDays(today(), -LEDGER_LOOKBACK_DAYS));
-  const nurses = listActiveNursesForUnit(db, unitId);
-  const ruleSet = latestRuleSetOrDefault(db, unitId);
+  const nurses = listNursesForUnit(db, unitId);
+  const latestWeights = latestRuleSetOrDefault(db, unitId).fairnessWeights;
   const preferences = listPreferencesForUnit(db, unitId);
+  const { payPeriodDays } = unitOrThrow(db, unitId);
 
   const byPeriod = new Map<Id, { periodStart: IsoDate; rows: FairnessLedgerEntry[] }>();
   for (const e of entries) {
@@ -95,12 +103,21 @@ export function fairnessTrend(db: DbLike, unitId: Id): FairnessTrendPoint[] {
   );
 
   return periods.map(([periodId, { periodStart, rows }]) => {
+    const periodDays = rows[0]!.periodDays;
+    if (rows.some((r) => r.periodDays !== periodDays)) {
+      throw new Error(`Fairness history for ${periodStart} mixes period lengths.`);
+    }
+    // getPeriod, not periodOrThrow: an imported period's id is synthetic and has no row.
+    const period = getPeriod(db, periodId);
+    const weights = period ? ruleSetFor(db, period).fairnessWeights : latestWeights;
+    const present = new Set(rows.map((r) => r.nurseId));
     const report = scoreFairness({
-      nurses,
+      nurses: nurses.filter((n) => present.has(n.id)),
       current: new Map(rows.map((r) => [r.nurseId, countersFromEntry(r)])),
       history: entries.filter((e) => compareDates(e.periodStart, periodStart) < 0),
+      scope: { asOf: periodStart, periodDays, payPeriodDays },
       preferences,
-      weights: ruleSet.fairnessWeights,
+      weights,
     });
     const scores: Record<Id, number> = {};
     for (const s of report.scores) scores[s.nurseId] = s.score;

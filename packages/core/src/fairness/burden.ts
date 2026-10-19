@@ -1,16 +1,32 @@
 /**
- * Burden — how much of the team's undesirable-shift load each nurse has carried, across a
- * decayed ledger history plus (optionally) the period being scored right now.
+ * Burden — how much of the team's undesirable-shift load each nurse has carried, as a rate per
+ * day she was there, across an age-decayed ledger history plus (optionally) the period being
+ * scored right now.
  *
  * This is the one place that turns raw counters into a *fair share*, so `score.ts` (the
- * per-nurse breakdown) and anything the solver later reads for "who is owed relief" agree by
- * construction instead of re-deriving the same proportional split twice and drifting apart.
- * See `types.ts` for why fair share is pinned to `contractedHoursPerPeriod` rather than hours
+ * per-nurse breakdown), both solvers, the conflicts engine and day-of ranking agree by
+ * construction instead of re-deriving the same proportional split and drifting apart. See
+ * `types.ts` for why fair share is pinned to `contractedHoursPerPeriod` rather than hours
  * actually worked — this module never reads worked hours to decide who "should" carry more.
+ *
+ * ## The rate model (D15)
+ *
+ * Summing ledger rows by position made fairness a count of rows: a new hire with none read as
+ * owing the team's whole history, a nurse back from FMLA read as having dodged the nights she
+ * was not there for (29 CFR 825.220(c) forbids exactly that), and imported fortnights decayed
+ * three times as fast as six-week app periods. So each row is weighed by its age in days and by
+ * the days the nurse was available in it, and her fair share grows with that exposure. A
+ * zero-availability row adds nothing to any sum, so leave neither raises nor lowers anyone.
+ *
+ * A row's age is measured from its *midpoint*, not its start, so a six-week row and the three
+ * fortnights covering the same days weigh the same in total.
+ *
+ * Fair weights are rounded to hundredths so CP-SAT can carry them as exact integers and the
+ * Fairness page, SA and CP-SAT price the same number.
  */
 
 import type { FairnessLedgerEntry, Id, Nurse } from '../domain/entities.js';
-import { dayNumber } from '../domain/time.js';
+import { compareDates, dayNumber, type IsoDate } from '../domain/time.js';
 import {
   BURDEN_COMPONENTS,
   BURDEN_COUNTER,
@@ -18,6 +34,8 @@ import {
   type BurdenCounters,
   type BurdenOptions,
   type BurdenReport,
+  type BurdenScope,
+  type CarriedCounters,
   DEFAULT_BURDEN_OPTIONS,
   EMPTY_COUNTERS,
   FAIRNESS_COMPONENTS,
@@ -26,8 +44,8 @@ import {
 } from './types.js';
 
 /** Every counter that accumulates by summation across the window. `preferenceHitRate` is a
- * 0-1 rate, not a count, and is folded separately as a weighted mean (see `foldCounters`). */
-const SUMMED_COUNTERS: readonly (keyof BurdenCounters)[] = [
+ * 0-1 rate, not a count, and is folded separately as a weighted mean. */
+const SUMMED_COUNTERS: readonly (keyof CarriedCounters)[] = [
   'nightShifts',
   'weekendsWorked',
   'holidaysWorked',
@@ -40,8 +58,9 @@ const SUMMED_COUNTERS: readonly (keyof BurdenCounters)[] = [
   'overtimeHours',
 ];
 
-function zeroCounters(): BurdenCounters {
-  return { ...EMPTY_COUNTERS };
+function zeroCarried(): CarriedCounters {
+  const { periodDays: _days, availableDays: _available, ...carried } = EMPTY_COUNTERS;
+  return carried;
 }
 
 function emptyDeviation(): Record<FairnessComponent, number> {
@@ -50,40 +69,41 @@ function emptyDeviation(): Record<FairnessComponent, number> {
   return deviation;
 }
 
-interface WeightedRow {
-  counters: BurdenCounters;
-  weight: number;
+function emptyShares(): Record<BurdenComponent, number> {
+  const shares = {} as Record<BurdenComponent, number>;
+  for (const component of BURDEN_COMPONENTS) shares[component] = 0;
+  return shares;
 }
 
-/**
- * Fold decay-weighted rows into one carried total. Summing `preferenceHitRate` would let a
- * nurse with ten stale ledger rows out-rank one with two on a rate that is supposed to top
- * out at 1 — it has to be a weighted mean instead.
- */
-function foldCounters(rows: readonly WeightedRow[]): BurdenCounters {
-  const carried = zeroCounters();
-  let rateWeightTotal = 0;
-  let rateWeightedSum = 0;
-  for (const { counters, weight } of rows) {
-    for (const key of SUMMED_COUNTERS) {
-      carried[key] += counters[key] * weight;
-    }
-    rateWeightedSum += counters.preferenceHitRate * weight;
-    rateWeightTotal += weight;
-  }
-  carried.preferenceHitRate = rateWeightTotal > 0 ? rateWeightedSum / rateWeightTotal : 0;
-  return carried;
+/** Days between a row's midpoint and `asOf`: what both the window and the decay measure. */
+function ageDays(row: Pick<FairnessLedgerEntry, 'periodStart' | 'periodDays'>, asOf: IsoDate) {
+  return dayNumber(asOf) - dayNumber(row.periodStart) - row.periodDays / 2;
+}
+
+/** A history row's weight: halves every `halfLifeDays` between its midpoint and `asOf`. */
+export function ageWeight(
+  row: Pick<FairnessLedgerEntry, 'periodStart' | 'periodDays'>,
+  asOf: IsoDate,
+  halfLifeDays: number,
+): number {
+  return 0.5 ** (ageDays(row, asOf) / halfLifeDays);
 }
 
 export interface NurseInterim {
   nurseId: Id;
-  carried: BurdenCounters;
+  carried: CarriedCounters;
   shareWeight: number;
+  /** Pay periods available, age-weighted. */
+  exposure: number;
+  /** `shareWeight × exposure`, rounded to hundredths. */
+  fairWeight: number;
   periodsInWindow: number;
   /** True once this nurse has at least one row (current or historical) contributing to
-   * `carried`, distinct from `shareWeight > 0` — a nurse can have a preference/time-off
+   * `carried`, distinct from `fairWeight > 0` — a nurse can have a preference/time-off
    * record without contracted hours to compare burden against. */
   hasContributingRow: boolean;
+  /** True when a contributing row had a day available, so her preference rate means something. */
+  hasPreferenceRecord: boolean;
 }
 
 /** Each nurse's ledger rows inside the window, newest first. */
@@ -92,24 +112,42 @@ export type HistoryWindows = ReadonlyMap<Id, readonly FairnessLedgerEntry[]>;
 /**
  * Grouping and sorting the ledger was most of the cost of scoring fairness, and the conflicts
  * engine scores the same history once per simulated fix. A history array is never mutated once
- * built (inputs are plain data), so its windows are computed once per array and window size.
+ * built (inputs are plain data), so its windows are computed once per array, date and window.
  */
-const WINDOWS = new WeakMap<readonly FairnessLedgerEntry[], Map<number, HistoryWindows>>();
+const WINDOWS = new WeakMap<readonly FairnessLedgerEntry[], Map<string, HistoryWindows>>();
 
+/**
+ * Each nurse's rows that started before `asOf` and whose midpoint is at most `windowDays` old,
+ * newest first (then by period id) so every floating-point sum runs in one fixed order.
+ */
 export function historyWindows(
   history: readonly FairnessLedgerEntry[],
-  windowPeriods: number,
+  asOf: IsoDate,
+  windowDays: number,
 ): HistoryWindows {
-  let bySize = WINDOWS.get(history);
-  if (!bySize) {
-    bySize = new Map();
-    WINDOWS.set(history, bySize);
+  let byKey = WINDOWS.get(history);
+  if (!byKey) {
+    byKey = new Map();
+    WINDOWS.set(history, byKey);
   }
-  const cached = bySize.get(windowPeriods);
+  const key = `${asOf}|${windowDays}`;
+  const cached = byKey.get(key);
   if (cached) return cached;
 
   const byNurse = new Map<Id, FairnessLedgerEntry[]>();
   for (const row of history) {
+    // A zero-length row or more days available than the period would divide by nothing or
+    // credit a nurse with time that did not exist; both are corrupt data, not a judgement.
+    if (
+      !(row.periodDays >= 1) ||
+      !(row.availableDays >= 0 && row.availableDays <= row.periodDays)
+    ) {
+      throw new Error(
+        `Fairness history row ${row.id} has an invalid period length or available days.`,
+      );
+    }
+    if (compareDates(row.periodStart, asOf) >= 0) continue;
+    if (ageDays(row, asOf) > windowDays) continue;
     const rows = byNurse.get(row.nurseId);
     if (rows) rows.push(row);
     else byNurse.set(row.nurseId, [row]);
@@ -118,81 +156,107 @@ export function historyWindows(
   for (const [nurseId, rows] of byNurse) {
     windows.set(
       nurseId,
-      rows
-        .slice()
-        .sort(
-          (a, b) =>
-            dayNumber(b.periodStart) - dayNumber(a.periodStart) ||
-            a.periodId.localeCompare(b.periodId),
-        )
-        .slice(0, windowPeriods),
+      rows.sort(
+        (a, b) =>
+          dayNumber(b.periodStart) - dayNumber(a.periodStart) ||
+          a.periodId.localeCompare(b.periodId),
+      ),
     );
   }
-  bySize.set(windowPeriods, windows);
+  byKey.set(key, windows);
   return windows;
 }
 
 const NO_ROWS: readonly FairnessLedgerEntry[] = [];
 
 /**
- * Fold one nurse's ledger window (plus the current period, if given) into carried totals and
- * a fair-share basis. Kept separate from the team-aggregate pass below so that pass can read
- * every nurse's `carried`/`shareWeight` before any deviation is computed — and so the conflicts
- * engine can reuse a nurse's interim when a simulated fix left their counters unchanged.
+ * Fold one nurse's ledger window (plus the current period, if given) into carried totals,
+ * exposure and a fair weight. Kept separate from the team-aggregate pass below so that pass can
+ * read every nurse's interim before any deviation is computed — and so the conflicts engine can
+ * reuse a nurse's interim when a simulated fix left their counters unchanged.
  */
 export function buildInterim(
   nurse: Nurse,
   windows: HistoryWindows,
   options: BurdenOptions,
+  scope: BurdenScope,
   current: BurdenCounters | undefined,
 ): NurseInterim {
+  if (current !== undefined && current.periodDays !== scope.periodDays) {
+    throw new Error(
+      `Counters for nurse ${nurse.id} cover ${current.periodDays} days but the period being ` +
+        `scored has ${scope.periodDays}.`,
+    );
+  }
   const rows = windows.get(nurse.id) ?? NO_ROWS;
 
-  const hasCurrent = current !== undefined;
-  const weightedRows: WeightedRow[] = [];
-  if (hasCurrent) {
-    weightedRows.push({ counters: current, weight: 1 });
+  const carried = zeroCarried();
+  // Σ w × a over every contributing row: the preference mean's denominator and, over the pay
+  // period, the exposure. Weighting the hit rate by days available is what keeps a leave
+  // period's vacuous "every preference honoured" from lowering a returner's standing.
+  let availableWeight = 0;
+  let rateWeightedSum = 0;
+  // History only: the per-diem share must not read the assignment being judged.
+  let histAvailableWeight = 0;
+  let histHours = 0;
+
+  const fold = (counters: BurdenCounters, weight: number) => {
+    for (const key of SUMMED_COUNTERS) carried[key] += counters[key] * weight;
+    const available = weight * counters.availableDays;
+    rateWeightedSum += available * counters.preferenceHitRate;
+    availableWeight += available;
+  };
+
+  if (current !== undefined) fold(current, 1);
+  for (const row of rows) {
+    const weight = ageWeight(row, scope.asOf, options.halfLifeDays);
+    fold(row, weight);
+    histAvailableWeight += weight * row.availableDays;
+    histHours += weight * row.totalHours;
   }
-  // k = 0 is the most recent historical row. With a current row present it decays starting
-  // one step back (decay^(k+1)); without one, the most recent historical row itself carries
-  // full weight (decay^k, so decay^0 = 1).
-  rows.forEach((row, k) => {
-    const weight = hasCurrent ? options.decay ** (k + 1) : options.decay ** k;
-    weightedRows.push({ counters: row, weight });
-  });
+  carried.preferenceHitRate = availableWeight > 0 ? rateWeightedSum / availableWeight : 0;
 
-  const carried = foldCounters(weightedRows);
-
+  const exposure = availableWeight / scope.payPeriodDays;
   const shareWeight =
     nurse.contractedHoursPerPeriod > 0
       ? nurse.contractedHoursPerPeriod
-      : rows.length > 0
-        ? rows.reduce((sum, row) => sum + row.totalHours, 0) / rows.length
+      : histAvailableWeight > 0
+        ? (scope.payPeriodDays * histHours) / histAvailableWeight
         : 0;
 
   return {
     nurseId: nurse.id,
     carried,
     shareWeight,
+    exposure,
+    fairWeight: Math.round(shareWeight * exposure * 100) / 100,
     periodsInWindow: rows.length,
-    hasContributingRow: hasCurrent || rows.length > 0,
+    hasContributingRow: current !== undefined || rows.length > 0,
+    hasPreferenceRecord: availableWeight > 0,
   };
+}
+
+/** What a nurse with no counters this period carried: nothing, while there all period. */
+export function absentCounters(scope: BurdenScope): BurdenCounters {
+  return { ...EMPTY_COUNTERS, periodDays: scope.periodDays, availableDays: scope.periodDays };
 }
 
 export function computeBurden(
   nurses: readonly Nurse[],
   history: readonly FairnessLedgerEntry[],
+  scope: BurdenScope,
   options: Partial<BurdenOptions> = {},
   current?: ReadonlyMap<Id, BurdenCounters>,
 ): BurdenReport {
   const opts: BurdenOptions = { ...DEFAULT_BURDEN_OPTIONS, ...options };
-  const windows = historyWindows(history, opts.windowPeriods);
+  const windows = historyWindows(history, scope.asOf, opts.windowDays);
   const interims = nurses.map((nurse) =>
     buildInterim(
       nurse,
       windows,
       opts,
-      current === undefined ? undefined : (current.get(nurse.id) ?? zeroCounters()),
+      scope,
+      current === undefined ? undefined : (current.get(nurse.id) ?? absentCounters(scope)),
     ),
   );
   const byNurse = burdenByNurse(interims, opts);
@@ -203,6 +267,17 @@ export function computeBurden(
 }
 
 /**
+ * Over-share mapped into [0, 1), under-share left as is. Increasing and continuous, so the index
+ * still orders nurses the same way per component, but one holiday on a twenty-nurse team (19×
+ * over share) no longer outweighs everything else a nurse has carried.
+ */
+function bounded(deviation: number): number {
+  return deviation >= 0 ? deviation / (1 + deviation) : deviation;
+}
+
+const IS_BURDEN: ReadonlySet<FairnessComponent> = new Set(BURDEN_COMPONENTS);
+
+/**
  * The team pass: fair shares, deviations and the burden index, from every nurse's interim.
  * Everyone's deviation depends on the team totals, so this always runs over the whole roster.
  */
@@ -210,11 +285,12 @@ export function burdenByNurse(
   interims: readonly NurseInterim[],
   opts: BurdenOptions,
 ): Map<Id, NurseBurden> {
-  // Team aggregates for burden components: only nurses with a share weight can be measured
-  // against a fair share, so non-comparable nurses (per-diem with no history) drop out of
-  // both the numerator and denominator rather than silently reading as "carries nothing".
-  const comparable = interims.filter((i) => i.shareWeight > 0);
-  const teamShare = comparable.reduce((sum, i) => sum + i.shareWeight, 0);
+  // Team aggregates for burden components: only nurses with a fair weight can be measured
+  // against a fair share, so non-comparable nurses (per-diem with no history, a nurse away all
+  // window) drop out of both the numerator and denominator rather than reading as "carries
+  // nothing".
+  const comparable = interims.filter((i) => i.fairWeight > 0);
+  const teamFairWeight = comparable.reduce((sum, i) => sum + i.fairWeight, 0);
   const teamTotals = {} as Record<BurdenComponent, number>;
   for (const component of BURDEN_COMPONENTS) {
     const counterKey = BURDEN_COUNTER[component];
@@ -223,10 +299,10 @@ export function burdenByNurse(
 
   // Preferences: an unweighted mean of nurse rates, so one nurse with lots of ledger rows
   // doesn't drown out one with few — everyone who has an opinion counts equally.
-  const withRows = interims.filter((i) => i.hasContributingRow);
+  const withRecord = interims.filter((i) => i.hasPreferenceRecord);
   const teamPreferenceRate =
-    withRows.length > 0
-      ? withRows.reduce((sum, i) => sum + i.carried.preferenceHitRate, 0) / withRows.length
+    withRecord.length > 0
+      ? withRecord.reduce((sum, i) => sum + i.carried.preferenceHitRate, 0) / withRecord.length
       : 0;
 
   // Time off: a pooled rate across the whole roster (not just comparable nurses — a per-diem
@@ -241,17 +317,19 @@ export function burdenByNurse(
   const byNurse = new Map<Id, NurseBurden>();
   for (const interim of interims) {
     const deviation = emptyDeviation();
+    const fairShare = emptyShares();
+    const isComparable = interim.fairWeight > 0;
 
-    if (interim.shareWeight > 0) {
+    if (isComparable) {
       for (const component of BURDEN_COMPONENTS) {
         const counterKey = BURDEN_COUNTER[component];
-        const fairShare = (teamTotals[component] * interim.shareWeight) / teamShare;
-        deviation[component] =
-          fairShare > 0 ? (interim.carried[counterKey] - fairShare) / fairShare : 0;
+        const share = (teamTotals[component] * interim.fairWeight) / teamFairWeight;
+        fairShare[component] = share;
+        deviation[component] = share > 0 ? (interim.carried[counterKey] - share) / share : 0;
       }
     }
 
-    if (interim.hasContributingRow) {
+    if (interim.hasPreferenceRecord) {
       deviation.preferences = teamPreferenceRate - interim.carried.preferenceHitRate;
     }
 
@@ -263,46 +341,25 @@ export function burdenByNurse(
 
     let index = 0;
     for (const component of FAIRNESS_COMPONENTS) {
-      index += opts.weights[component] * deviation[component];
+      const value = deviation[component];
+      index += opts.weights[component] * (IS_BURDEN.has(component) ? bounded(value) : value);
     }
 
     byNurse.set(interim.nurseId, {
       nurseId: interim.nurseId,
       carried: interim.carried,
       shareWeight: interim.shareWeight,
+      exposure: interim.exposure,
+      fairWeight: interim.fairWeight,
+      fairShare,
+      comparable: isComparable,
       deviation,
       index,
       periodsInWindow: interim.periodsInWindow,
       hasRows: interim.hasContributingRow,
+      hasPreferenceRecord: interim.hasPreferenceRecord,
     });
   }
 
   return byNurse;
-}
-
-/**
- * Recompute one nurse's fair share for a burden component from an already-built report. It
- * has to reproduce `computeBurden`'s internal formula exactly (team total proportional to
- * share weight) rather than approximate it, since `score.ts` shows this number right next to
- * "carried" in the breakdown UI — if the two ever disagreed the explanation would be visibly
- * self-contradictory.
- */
-export function burdenFairShare(
-  byNurse: ReadonlyMap<Id, NurseBurden>,
-  nurseId: Id,
-  component: BurdenComponent,
-): number {
-  const nurse = byNurse.get(nurseId);
-  if (!nurse || nurse.shareWeight <= 0) return 0;
-
-  const counterKey = BURDEN_COUNTER[component];
-  let teamTotal = 0;
-  let teamShare = 0;
-  for (const other of byNurse.values()) {
-    if (other.shareWeight > 0) {
-      teamTotal += other.carried[counterKey];
-      teamShare += other.shareWeight;
-    }
-  }
-  return teamShare > 0 ? (teamTotal * nurse.shareWeight) / teamShare : 0;
 }

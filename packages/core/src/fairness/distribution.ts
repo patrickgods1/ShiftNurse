@@ -46,28 +46,32 @@ export function unitDistribution(
   scores: readonly NurseFairnessScore[],
 ): UnitDistribution {
   const comparableIds = new Set(
-    [...burden.byNurse.values()].filter((nb) => nb.shareWeight > 0).map((nb) => nb.nurseId),
+    [...burden.byNurse.values()].filter((nb) => nb.comparable).map((nb) => nb.nurseId),
   );
 
   const scoreValues = scores.filter((s) => comparableIds.has(s.nurseId)).map((s) => s.score);
 
   const components = {} as Record<FairnessComponent, DistributionStats>;
 
-  // Burdens: a per-nurse *rate* (carried / shareWeight) among comparable nurses, so a 0.5 FTE
-  // with half the nights of a full-timer reads as even rather than under-burdened.
+  // Burdens: carried ÷ fair share among comparable nurses, so 1.00 is exactly fair whatever the
+  // FTE or exposure — a 0.5 FTE with half the nights reads as even, not under-burdened. When the
+  // team carried none of a burden every share is 0 and everyone is exactly at it.
   for (const component of BURDEN_COMPONENTS) {
     const counterKey = BURDEN_COUNTER[component];
     const rates: number[] = [];
     for (const nb of burden.byNurse.values()) {
-      if (nb.shareWeight > 0) rates.push(nb.carried[counterKey] / nb.shareWeight);
+      if (!nb.comparable) continue;
+      const share = nb.fairShare[component];
+      rates.push(share > 0 ? nb.carried[counterKey] / share : 1);
     }
     components[component] = distributionStats(rates);
   }
 
-  // Preferences: the hit rate over nurses with any record — history or the current period.
+  // Preferences: the hit rate over nurses with a day available on record — history or the
+  // current period — the same nurses the burden model compares preferences for.
   const preferenceRates: number[] = [];
   for (const nb of burden.byNurse.values()) {
-    if (nb.hasRows) preferenceRates.push(nb.carried.preferenceHitRate);
+    if (nb.hasPreferenceRecord) preferenceRates.push(nb.carried.preferenceHitRate);
   }
   components.preferences = distributionStats(preferenceRates);
 
