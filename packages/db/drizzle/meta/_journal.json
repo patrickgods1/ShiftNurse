@@ -330,6 +330,13 @@
       "when": 1792428242253,
       "tag": "0046_ledger_exposure",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "6",
+      "when": 1792440602932,
+      "tag": "0047_week_and_holiday_attribution",
+      "breakpoints": true
     }
   ]
 }

@@ -209,9 +209,11 @@ describe('pricing and ranking', () => {
     expect(straight!.impact.cost.delta).toBe(648);
     expect(straight!.impact.cost.unpriced).toBe(false);
     expect(straight!.impact.cost.pessimisticDelta).toBe(648);
-    // Ana: the same $648, plus 8 of the 12 hours fall past 40h in her week, each earning an
-    // extra half of the $54 straight rate: 8 × $27 = $216 → $864.
-    expect(overtime!.impact.cost.delta).toBe(864);
+    // Ana: the same $648. By the clock the night's 19:00–24:00 is her week's (36 + 5 = 41h) and
+    // its Sunday hours the next week's (D17), so 1h is past 40. The premium is half the week's
+    // regular rate: 36 × 50 + 5/12 × 648 = 1800 + 270 = $2070 over 41h = 50.4878…; 0.5 × that =
+    // 25.2439… → $25.24. Delta 648 + 25.24 = $673.24.
+    expect(overtime!.impact.cost.delta).toBe(673.24);
     const create = overtime!.actions.find((a) => a.type === 'create_assignment');
     expect(create && create.type === 'create_assignment' && create.isOvertime).toBe(true);
     expect(overtime!.title).toContain('overtime');
@@ -543,10 +545,11 @@ describe('a nurse already past a limit', () => {
     const { resolutions } = analyse(input);
     const add = forConflict(resolutions, NIGHT_ID).find((r) => r.kind === 'assign_available');
     expect(add?.nurseIds).toEqual([lee.id]);
-    // 36h + 12h = 48h: 12 × $50 = $600, plus 8h past 40 at a $25 premium = $800.
-    expect(add!.impact.cost.delta).toBe(800);
-    expect(add!.impact.cost.overtimeHoursDelta).toBe(8);
-    expect(add!.title).toBe('Assign Lee Park (RN) — 8h at overtime pay');
+    // The Saturday night's 19:00–24:00 is her week's, 36h + 5h = 41h; its Sunday hours open the
+    // next week (D17). 12 × $50 = $600, plus 1h past 40 at a $25 premium = $625.
+    expect(add!.impact.cost.delta).toBe(625);
+    expect(add!.impact.cost.overtimeHoursDelta).toBe(1);
+    expect(add!.title).toBe('Assign Lee Park (RN) — 1h at overtime pay');
   });
 
   it('warns that a nurse already over a soft weekly cap goes further over it', () => {

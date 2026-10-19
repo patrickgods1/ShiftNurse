@@ -202,6 +202,12 @@
   is authoritative even empty). Both solvers price breaches from `SolverModel.holidayFacts` at
   `holidayRotation` (in the fairness bucket); hard, the gate and `encodeHolidayRotation` forbid
   them. A shift dated on the holiday counts, standby does not — as for pay and the ledger.
+  Which day a shift crossing midnight works is `Unit.holidayAttribution` (D18), shared by pay,
+  ledger, rotation, the per-diem alert and both solvers (`schedule/holiday-attribution.ts`; the
+  alert reads it from `ComplianceInput.holidayAttribution`). By the clock one night can work both
+  halves of a pair, and a lookback night both halves on its own: the pair is then judged only
+  once this period works a half. A holiday after the period's last day is left to the period
+  that holds it.
   Names are matched by `holidayNameKey` (case, spacing and punctuation ignored), and a year is
   added by rolling the last forward — `setup/holiday-year.ts`'s `planHolidayYear` (federal names
   take their new date, others keep month and day; pairings carried, a cross-year pair re-linked
@@ -269,6 +275,11 @@
   re-check is what covers it. Neither solver writes a holdover or overtime row, so `requiredOnly`
   makes `encodeLongStretch` add nothing; otherwise it forbids chains of shifts (bridging the same
   gaps, counting worked minutes) over the cap, and chains that earn rest followed too soon (while soft it is not priced, like `max-hours-in-24`).
+- **The statutory hour caps count hours worked.** In `max-hours-in-24`, `long-stretch` and
+  `no-mandatory-overtime`, hours are hours worked: on the DST nights the real minutes
+  (`schedule/real-minutes.ts`, D19, from `RuleContext.dstTransitions`), the window itself on the
+  wall clock. Window bounds, anchors, rest gaps and classification (a compressed tour) stay wall;
+  `encodeHoursIn24`'s coefficients and `encodeLongStretch`'s chain minutes are the same real minutes.
 - **Weekends are filed by `weekendKey`, everywhere.** Fairness, `weekend-pattern` and both
   solvers' prices use it; under `'overlaps'` a Friday night belongs to the weekend it runs into.
   `weekendBreaches` is the one count (`SolverModel.weekendFor`, CP-SAT `weekendBreachExprs`).
@@ -369,7 +380,7 @@
   scoring ranks by the convex `SimState.shortfallPrice()` instead (see "An unpriced option is
   ranked…" below).
 - **A holiday volunteer never overstaffs.** Over target on a holiday a nurse of that role wants to
-  work costs `overTarget` plus the largest volunteer reward on that date
+  work costs `overTarget` plus the largest volunteer reward on that shift
   (`SolverModel.overTargetPrice`, read by CP-SAT's `coverageTerms`), so the reward orders
   volunteers without paying for a surplus. A missed `prefer_*` is charged once per kind. A lock
   keeps its charge flag (`ensureCharge`).
@@ -462,9 +473,12 @@
 - **Overtime does not pyramid when the rule says so.** `OvertimeRule.pyramiding: 'none'`
   (`cost/cost.ts`) makes `weekly` and `pay_period` rules count only straight-time hours toward
   their threshold, so hours already paid at a daily premium are not paid again (Cal. Lab. Code
-  § 510; UC–CNA Art. 14 § M). Lookback shifts count their straight hours, or a week opened by the
-  last schedule would start from zero. Pinned by hand: four 12s under daily-8 plus weekly-40 is
-  `[4, 4, 4, 4]` overtime hours (`cost.test.ts`), 32 straight hours never reaching the 40.
+  § 510; UC–CNA Art. 14 § M). Absent, a window rule credits that way whenever a daily-style rule
+  (a non-window basis) applies to the nurse, and stacks otherwise (D16; 29 CFR 778.202(c)); only an
+  explicit `'stack'` counts daily premium hours again. Lookback shifts count their straight hours,
+  or a week opened by the last schedule would start from zero. Pinned by hand: four 12s under
+  daily-8 plus weekly-40 is `[4, 4, 4, 4]` overtime hours (`cost.test.ts`), 32 straight hours never
+  reaching the 40.
 - **A minimum overtime increment is per rule per shift.** `OvertimeRule.minimumMinutes` drops a
   rule's overtime on a shift when it is shorter than the minimum, measured on that rule's own
   hours (38 U.S.C. § 7453(e)(2): 15 minutes); another rule reaching the same hours still pays
@@ -486,9 +500,10 @@
   list their tests as alternatives, so an hour paid as daily overtime is not counted again.
 - **Premiums stack additively or compound, by the unit's choice.** `CostContext.premiumStacking`:
   `'compound'` (default) is the FLSA regular rate, `(base + flats) × Π multipliers`, with overtime
-  on that rate; `'additive'` takes each multiplier's premium and the overtime premium on base pay
-  alone, so nothing compounds (UC–CNA Art. 14 § N forbids pyramiding of premiums; Title 38 pays
-  differentials in addition to overtime on basic pay). The default stays compound so no existing
+  on the week's (or 8/80 pay period's) weighted regular rate (D16, `cost/CLAUDE.md`); `'additive'`
+  takes each multiplier's premium and the overtime premium on base pay alone, so nothing
+  compounds (UC–CNA Art. 14 § N forbids pyramiding of premiums; Title 38 pays differentials in
+  addition to overtime on basic pay). The default stays compound so no existing
   unit's payroll estimate moves.
 - **A preset may propose pay settings and a weekend, only where the unit set neither.**
   `JurisdictionPreset.paySettings` is planned as a whole `PaySettings` row (`DEFAULT_PAY_SETTINGS`

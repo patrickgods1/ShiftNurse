@@ -296,7 +296,8 @@ function current(
       return countExpr(worked.filter((e) => isNightTour(e.shiftType)));
     case 'holidays':
       if (isBaylorPlan(model.nurses[n]!)) return expr();
-      return countExpr(worked.filter((e) => model.ctx.holidayDates.has(e.date)));
+      // One per shift, however many holidays it works: the ledger's count.
+      return countExpr(worked.filter((e) => model.holidaysWorked(e.date, e.shiftType).length > 0));
     case 'onCall':
       return countExpr(entries.filter((e) => e.shiftType.isOnCall));
     case 'undesirable':
@@ -355,27 +356,47 @@ function holidayTerms(ctx: EncodeContext): void {
   for (let n = 0; n < model.nurses.length; n++) {
     if (!inHolidayRotation(model.nurses[n]!)) continue;
     const worked = ctx.timeline(n).filter((e) => !e.shiftType.isOnCall);
+    const holidaysOf = new Map(worked.map((e) => [e, model.holidaysWorked(e.date, e.shiftType)]));
     const owed = facts.owedOff.get(model.nurses[n]!.id);
     if (owed) {
-      ctx.b.minimise(countExpr(worked.filter((e) => e.inPeriod && owed.has(e.date))), price);
+      // Once per owed holiday the shift works, as `countHolidayRotation` counts each date.
+      const breaches = worked.flatMap((e) =>
+        e.inPeriod
+          ? holidaysOf
+              .get(e)!
+              .filter((d) => owed.has(d))
+              .map(() => e)
+          : [],
+      );
+      ctx.b.minimise(countExpr(breaches), price);
     }
     const nurseId = model.nurses[n]!.id;
     const start = input.period.startDate;
     for (const { minor, major } of facts.pairs) {
       const label = `holiday pair: ${ctx.name(n)} ${minor.date}/${major.date}`;
+      const on = (date: IsoDate) => worked.filter((e) => holidaysOf.get(e)!.includes(date));
       // A half behind the period may be on record rather than on the timeline.
-      const [onMinor, onMajor] = [minor, major].map((h) =>
-        workedInHistory(model.ctx, nurseId, h, start)
+      const history = [minor, major].map((h) => workedInHistory(model.ctx, nurseId, h, start));
+      const [onMinor, onMajor] = [minor, major].map((h, i) =>
+        history[i]
           ? expr([], 1)
-          : worked.some((e) => e.date === h.date)
-            ? anyOf(
-                ctx,
-                worked.filter((e) => e.date === h.date),
-                label,
-              )
+          : on(h.date).length > 0
+            ? anyOf(ctx, on(h.date), label)
             : undefined,
       );
       if (onMinor === undefined || onMajor === undefined) continue;
+      // The rule judges a pair only where this schedule works a half. That follows from both
+      // halves being worked unless each half has a source outside the period: by the clock, a
+      // lookback night can work both halves on its own.
+      const outside = [minor, major].map(
+        (h, i) => history[i]! || on(h.date).some((e) => !e.inPeriod),
+      );
+      if (outside[0] && outside[1]) {
+        const live = [...new Set([...on(minor.date), ...on(major.date)])].filter((e) => e.inPeriod);
+        if (live.length === 0) continue;
+        priced(ctx, sum(onMinor, onMajor, anyOf(ctx, live, label), expr([], -2)), price, label);
+        continue;
+      }
       priced(ctx, sum(onMinor, onMajor, expr([], -1)), price, label);
     }
   }

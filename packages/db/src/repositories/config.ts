@@ -12,6 +12,7 @@
 import type {
   CoverageRequirement,
   Holiday,
+  HolidayAttribution,
   Id,
   IsoDate,
   JurisdictionChoices,
@@ -113,6 +114,8 @@ export interface UnitPatch {
   leavePolicy?: LeavePolicy | null;
   /** Null returns day-of to the cost-first overtime order. */
   overtimeOrder?: OvertimeOrder | null;
+  /** Null returns holiday dating to the day a shift starts. */
+  holidayAttribution?: HolidayAttribution | null;
   /** Null stops checking per-diem commitments. */
   perDiemCommitment?: PerDiemCommitment | null;
   /** Null: a reason is enough for a change to a posted schedule. */
@@ -134,6 +137,7 @@ const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
   jurisdictionChoices: true,
   leavePolicy: true,
   overtimeOrder: true,
+  holidayAttribution: true,
   perDiemCommitment: true,
   requireConsentForPostedChanges: true,
   minWeekendsOffPerYear: true,
@@ -153,6 +157,8 @@ function validatePostingLead(lead: number | null | undefined): void {
   if (!Number.isInteger(lead) || lead < 0 || lead > 90)
     throw new Error('Posting notice must be a whole number of days from 0 to 90');
 }
+
+const HOLIDAY_ATTRIBUTIONS: readonly string[] = ['start', 'clock', 'majority'];
 
 function validateWeekendsOff(count: number | null | undefined): void {
   if (count === undefined || count === null) return;
@@ -184,6 +190,13 @@ export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string):
       validateWeekendsOff(values.minWeekendsOffPerYear);
       if (values.paperSize != null && values.paperSize !== 'letter' && values.paperSize !== 'a4')
         throw new Error('Paper size must be Letter or A4.');
+      if (
+        values.holidayAttribution != null &&
+        !HOLIDAY_ATTRIBUTIONS.includes(values.holidayAttribution)
+      )
+        throw new Error(
+          'Choose how a shift that crosses midnight counts toward a holiday: by the day it starts, by its hours on the holiday, or by the day holding most of it.',
+        );
       if (values.leavePolicy) validateLeavePolicy(values.leavePolicy);
       if (
         values.jurisdiction !== undefined &&

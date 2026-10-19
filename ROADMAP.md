@@ -802,6 +802,8 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
       smoke:packaged mac arm64; PR release dry run on 3 targets; cpsat-runner workflow green)
 - [x] Phase 20 — fairness model: exposure-normalised, age-decayed history (D15); one counter
       definition shared by ledger and both solvers (verify: npm run check; smoke; bench re-run)
+- [x] Phase 21 — Pay model: weekly regular rate, week-boundary split, FLSA crediting, DST hours for
+      pay and statutory caps, holiday attribution (verify: npm run check; smoke; bench)
 
 ---
 

@@ -16,7 +16,9 @@
  * included, on-call standby excluded; its hours are the time worked from first to last. A break of
  * at most `maxBreakMinutesInStretch` minutes does not end it (Massachusetts counts "consecutive
  * hours worked", and a meal break between two shifts does not reset that count), and the bridged
- * break is not counted as hours; absent, any gap ends a stretch. Two optional limits
+ * break is not counted as hours; absent, any gap ends a stretch. Hours are hours worked: on the DST
+ * nights the real minutes (`schedule/real-minutes.ts`, D19), the window itself on the wall clock,
+ * so the rest gap after a stretch is wall-clock geometry like every other rest. Two optional limits
  * judge it, and neither has a default number (a preset supplies them; a default would add a limit
  * some states do not have, so a newly enabled rule judges nothing until one is set):
  *
@@ -180,7 +182,7 @@ export const longStretchRule: Rule<LongStretchParams> = {
     for (const nurse of ctx.nurses) {
       const stretches: WorkedStretch<AssignmentView>[] = workedStretches(
         schedule.timelineFor(nurse.id),
-        { bridgeMinutes: bridge },
+        { bridgeMinutes: bridge, transitions: ctx.dstTransitions },
       );
       for (let i = 0; i < stretches.length; i++) {
         const stretch = stretches[i]!;

@@ -118,6 +118,19 @@ function otherUnitNurseWithRate(): { nurseId: string; rateId: string } {
 }
 
 describe('loadPeriodInput', () => {
+  it.skipIf(process.env.SHIFTNURSE_TEST_TZ !== undefined)(
+    'tells the rules and Generate about the clock change inside the period',
+    () => {
+      const base = getPeriod(handle.db, seeded.draftPeriodId)!;
+      const period = { ...base, startDate: isoDate('2026-10-25'), endDate: isoDate('2026-11-07') };
+      // 2026-11-01 is day 20758; 20758 * 1440 + 120 = 29_891_640, and the clock goes back an hour.
+      expect(loadPeriodInput(handle.db, period as SchedulePeriod).dstTransitions).toContainEqual({
+        atMinute: 29_891_640,
+        deltaMinutes: -60,
+      });
+    },
+  );
+
   it('loads the draft with only its own unit’s nurses and shift types', () => {
     const other = otherUnitNurseWithRate();
     const input = loadPeriodInput(handle.db, getPeriod(handle.db, seeded.draftPeriodId)!);
@@ -240,11 +253,56 @@ describe('the pay a period is costed under', () => {
         premiumStacking: 'additive',
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 2,
+        overtimeWindowAttribution: 'clock',
       },
       ACTOR,
     );
     expect(costContext(handle.db, unitId, ruleSet).premiumStacking).toBe('additive');
   });
+
+  it('hands the unit’s stacking, holiday coverage and week attribution to Generate and conflicts', () => {
+    const unitId = seeded.unitId;
+    savePaySettings(
+      handle.db,
+      unitId,
+      {
+        callBackMinimumHours: 0,
+        premiumStacking: 'additive',
+        holidayPayCoversOvertime: true,
+        reportingPayNoticeHours: 2,
+        overtimeWindowAttribution: 'start',
+      },
+      ACTOR,
+    );
+    const input = loadPeriodInput(handle.db, getPeriod(handle.db, seeded.draftPeriodId)!);
+    expect(input.cost).toMatchObject({
+      premiumStacking: 'additive',
+      holidayPayCoversOvertime: true,
+      overtimeWindowAttribution: 'start',
+    });
+    expect(costContext(handle.db, unitId, defaultRuleSet(unitId)).overtimeWindowAttribution).toBe(
+      'start',
+    );
+  });
+
+  // Skipped off the pinned zone (phase 1's sentinel): the clock change is a host fact.
+  it.skipIf(process.env.SHIFTNURSE_TEST_TZ !== undefined)(
+    'hands the period’s clock changes to the cost context',
+    () => {
+      const base = getPeriod(handle.db, seeded.draftPeriodId)!;
+      const period = {
+        ...base,
+        startDate: isoDate('2026-10-25'),
+        endDate: isoDate('2026-11-07'),
+      } as SchedulePeriod;
+      const ctx = costContext(handle.db, seeded.unitId, defaultRuleSet(seeded.unitId), period);
+      // 2026-11-01 is day 20758; 20758 * 1440 + 120 = 29_891_640.
+      expect(ctx.dstTransitions).toContainEqual({ atMinute: 29_891_640, deltaMinutes: -60 });
+      expect(
+        costContext(handle.db, seeded.unitId, defaultRuleSet(seeded.unitId)).dstTransitions,
+      ).toBeUndefined();
+    },
+  );
 });
 
 describe('the leave a period reads', () => {
@@ -794,6 +852,7 @@ describe('nurses who work on two units', () => {
     //   holidays describe the unit itself (credentials is the catalogue, not who holds what);
     // - assignments and priorAssignments are this unit's shifts (others' arrive as busy time);
     // - historyFrom is how far this unit's published history reaches;
+    // - dstTransitions are the host's clock changes over this period's dates;
     // - incompatibilityGroups keep apart nurses on this unit's floor;
     // - holidayWork is this unit's holiday rotation;
     // - ledgerHistory is this unit's fairness ledger.
@@ -809,6 +868,7 @@ describe('nurses who work on two units', () => {
       assignments: 'unit',
       priorAssignments: 'unit',
       historyFrom: 'unit',
+      dstTransitions: 'unit',
       timeOff: 'person',
       paidSickCalls: 'person',
       incompatibilityGroups: 'unit',

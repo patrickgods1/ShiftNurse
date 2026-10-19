@@ -59,6 +59,10 @@
  * in-24 emergency cap also judges an unvolunteered overtime *shift*: a required extra shift is
  * what (B)(10) is about.
  *
+ * Hours are hours worked: on the DST nights the real minutes (`schedule/real-minutes.ts`, D19),
+ * the window itself on the wall clock. That holds for the weekly required hours, a stretch's hours
+ * and the busiest 24; classification (a compressed tour) still reads declared hours.
+ *
  * Holdovers are recorded day-of on a published schedule, and only a draft is ever generated, so
  * Generate cannot breach this either.
  */
@@ -74,8 +78,10 @@ import {
   MINUTES_PER_HOUR,
   type ShiftWindow,
   type Weekday,
+  windowDurationMinutes,
 } from '../domain/time.js';
 import { type WorkedStretch, workedStretches } from '../schedule/holdover.js';
+import { type DstTransition, realMinutesIn } from '../schedule/real-minutes.js';
 import type { AssignmentView } from '../schedule/view.js';
 import { hoursText } from './format.js';
 import { windowsIn24 } from './hours-in-24.js';
@@ -162,6 +168,15 @@ function minutesText(minutes: number): string {
 }
 
 /**
+ * A row's hours worked: its paid hours, corrected by the hour a DST night gains or loses (D19).
+ * Written as a correction so that with no clock change it is `paidHours` exactly.
+ */
+function realHours(view: AssignmentView, tz: readonly DstTransition[]): number {
+  const skew = realMinutesIn(view.window, tz) - windowDurationMinutes(view.window);
+  return skew === 0 ? view.paidHours : view.paidHours + skew / MINUTES_PER_HOUR;
+}
+
+/**
  * The hours a nurse was required to work among `views` (one work week of their timeline,
  * lookback included): every worked row except overtime they volunteered for, and holdover time
  * not recorded as mandated. An "Emergency:" note excuses an item from being judged, not its hours
@@ -170,22 +185,24 @@ function minutesText(minutes: number): string {
  */
 function requiredHoursInWeek(
   views: readonly AssignmentView[],
-  ctx: Pick<RuleContext, 'overtimeVolunteersByNurse'>,
+  ctx: Pick<RuleContext, 'overtimeVolunteersByNurse' | 'dstTransitions'>,
   nurseId: Id,
 ): { required: number; volunteered: number; contributors: AssignmentView[] } {
+  const tz = ctx.dstTransitions;
   let required = 0;
   let volunteered = 0;
   const contributors: AssignmentView[] = [];
   for (const v of views) {
     if (!isWorked(v)) continue;
     const { assignment } = v;
+    const worked = realHours(v, tz);
     let offered = 0;
     if (assignment.isOvertime && volunteeredOn(ctx, nurseId, assignment.date)) {
-      offered = v.paidHours;
+      offered = worked;
     } else if (assignment.holdoverMandated !== true) {
-      offered = (assignment.holdoverMinutes ?? 0) / 60;
+      offered = realMinutesIn(requiredWindow(v, false), tz) / MINUTES_PER_HOUR;
     }
-    const hours = v.paidHours - offered;
+    const hours = worked - offered;
     volunteered += offered;
     required += hours;
     if (hours > 0 && v.inPeriod) contributors.push(v);
@@ -214,14 +231,18 @@ interface Peak {
  * so the result does not rest on that slope argument holding for every timeline.
  * `worked` must be sorted by start.
  */
-function peakIn24(worked: readonly AssignmentView[], required: ShiftWindow): Peak {
+function peakIn24(
+  worked: readonly AssignmentView[],
+  required: ShiftWindow,
+  tz: readonly DstTransition[],
+): Peak {
   let best: Peak = { hours: 0, views: [] };
   const anchors = [
     required.startMinute,
     required.startMinute - MINUTES_PER_DAY + 1,
     required.endMinute - 1,
   ];
-  const windows = [...windowsIn24(worked, anchors)].sort((a, b) => a.from - b.from);
+  const windows = [...windowsIn24(worked, anchors, tz)].sort((a, b) => a.from - b.from);
   for (const { from, minutes, views } of windows) {
     if (from >= required.endMinute || from + MINUTES_PER_DAY <= required.startMinute) continue;
     if (minutes / MINUTES_PER_HOUR > best.hours)
@@ -408,7 +429,9 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
     const stretchesOf = (nurseId: Id) => {
       let found = stretchesByNurse.get(nurseId);
       if (!found) {
-        found = workedStretches(schedule.timelineFor(nurseId));
+        found = workedStretches(schedule.timelineFor(nurseId), {
+          transitions: ctx.dstTransitions,
+        });
         stretchesByNurse.set(nurseId, found);
       }
       return found;
@@ -582,7 +605,11 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
       }
 
       if (in24 !== undefined && isWorked(view)) {
-        const peak = peakIn24(workedOf(nurse.id), requiredWindow(view, requiredOvertime));
+        const peak = peakIn24(
+          workedOf(nurse.id),
+          requiredWindow(view, requiredOvertime),
+          ctx.dstTransitions,
+        );
         if (peak.hours > in24) {
           const key = windowKey(nurse.id, peak);
           const reported = reportedWindows.get(key);
@@ -684,7 +711,11 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
           }
         }
         if (maxIn24 === undefined || !isWorked(view)) continue;
-        const peak = peakIn24(workedOf(nurse.id), requiredWindow(view, unvolunteered));
+        const peak = peakIn24(
+          workedOf(nurse.id),
+          requiredWindow(view, unvolunteered),
+          ctx.dstTransitions,
+        );
         if (peak.hours <= maxIn24) continue;
         const key = windowKey(nurse.id, peak);
         const reported = reportedWindows.get(key);

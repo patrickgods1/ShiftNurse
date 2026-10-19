@@ -192,9 +192,17 @@ export class ConflictEngine {
           majorHolidayDates: this.baseCtx.majorHolidayDates,
           weekendDefinition: input.ruleSet.weekendDefinition,
           workWeekStartsOn: this.maxHoursParams.workWeekStartsOn,
+          ...(input.cost.premiumStacking ? { premiumStacking: input.cost.premiumStacking } : {}),
+          ...(input.cost.holidayPayCoversOvertime !== undefined
+            ? { holidayPayCoversOvertime: input.cost.holidayPayCoversOvertime }
+            : {}),
+          ...(input.cost.overtimeWindowAttribution
+            ? { overtimeWindowAttribution: input.cost.overtimeWindowAttribution }
+            : {}),
           ...(this.maxHoursParams.paidLeaveCountsTowardOvertime
             ? { overtimeLeave: this.baseCtx.paidLeaveByNurse }
             : {}),
+          ...(input.dstTransitions ? { dstTransitions: input.dstTransitions } : {}),
         }
       : undefined;
     this.unpricedRateCeiling = Math.max(

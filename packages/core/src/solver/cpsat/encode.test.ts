@@ -46,6 +46,7 @@ import {
   type SolveScenarioOptions,
   solveInputFrom,
   TIER_ROUTINE,
+  testUnit,
   timeOff,
   UNIT_ID,
 } from '../../testing/fixtures.js';
@@ -591,6 +592,51 @@ describe('a Baylor nurse and the holiday rotation', () => {
   });
 });
 
+describe('holidays worked by the unit’s attribution', () => {
+  // Ana worked last year's Christmas, so this year's is owed off. The night of the 24th runs
+  // 19:00–07:00: seven of its twelve hours fall on Christmas.
+  const christmas = (holidayAttribution: 'start' | 'clock'): SolveInput => {
+    const base = defaultRuleSet(UNIT_ID);
+    const h = (id: string, date: string) => ({
+      id,
+      unitId: UNIT_ID,
+      date: isoDate(date),
+      name: 'Christmas Day',
+      isMajor: true,
+      pairedHolidayId: null,
+    });
+    return solveInputFrom({
+      unit: { ...testUnit, holidayAttribution },
+      startDate: isoDate('2026-12-20'),
+      endDate: isoDate('2027-01-02'),
+      nurses: [makeNurse({ id: 'ana', firstName: 'Ana', isChargeEligible: true })],
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: [
+        ...coverageAllWeek(DAY_12, 'RN', 1),
+        ...coverageAllWeek(NIGHT_12, 'RN', 1),
+      ],
+      holidays: [h('xmas-25', '2025-12-25'), h('xmas-26', '2026-12-25')],
+      holidayWork: [{ holidayId: 'xmas-25', nurseId: 'ana' }],
+      ruleSet: {
+        ...base,
+        configs: base.configs.map((c) =>
+          c.ruleId === 'holiday-rotation' ? { ...c, severityOverride: 'hard' as const } : c,
+        ),
+      },
+    });
+  };
+  const eveNight = [assign('ana', NIGHT_12, '2026-12-24')];
+
+  it('forbids last year’s Christmas nurse the night into Christmas morning under clock attribution when the rotation is hard', () => {
+    const clock = encodeCpsat(christmas('clock'));
+    expect(hasVariable(clock, 'ana', '2026-12-24', NIGHT_12.id)).toBe(true);
+    expect(evaluate(clock, eveNight).violated).toEqual([
+      expect.stringContaining('holiday owed off'),
+    ]);
+    expect(evaluate(encodeCpsat(christmas('start')), eveNight).violated).toEqual([]);
+  });
+});
+
 /** `days-off-together` on and hard. */
 function hardDaysOff(base: RuleSet = defaultRuleSet(UNIT_ID)): RuleSet {
   return {
@@ -791,6 +837,64 @@ describe('most hours in any 24 made hard', () => {
     expect(
       evaluate(encoding, [locked, assign('ada', DAY_12, '2026-01-13')]).violated.join('\n'),
     ).toMatch(/hours in 24/);
+  });
+});
+
+// 02:00 on Sun 2026-11-01 (day 20758 × 1440 + 120) goes back to 01:00: the night of Sat 31 Oct
+// is worked 13 real hours. The fortnight Sun 25 Oct – Sat 7 Nov is a fixture pay period (21 × 14
+// days after 4 Jan).
+const FALL_BACK = { atMinute: 29_891_640, deltaMinutes: -60 };
+const FALL_FORTNIGHT = { startDate: isoDate('2026-10-25'), endDate: isoDate('2026-11-07') };
+
+describe('the hour caps on the fall-back night', () => {
+  it('weights the fall-back night at thirteen hours in the twenty-four-hour limit', () => {
+    // [19:00 Sat, 19:00 Sun) holds the whole night: 780 real minutes against 720.
+    const night = [assign('ada', NIGHT_12, '2026-10-31')];
+    const fallBack = encodeCpsat(
+      unit([ada()], {
+        ...FALL_FORTNIGHT,
+        dstTransitions: [FALL_BACK],
+        ruleSet: hardHoursIn24(12),
+      }),
+    );
+    expect(evaluate(fallBack, night).violated.join('\n')).toMatch(/hours in 24/);
+    // On the wall clock it is 720, at the cap.
+    const wall = encodeCpsat(unit([ada()], { ...FALL_FORTNIGHT, ruleSet: hardHoursIn24(12) }));
+    expect(evaluate(wall, night).violated).toEqual([]);
+  });
+
+  it('counts the fall-back night as thirteen hours in a stretch, as the rule does', () => {
+    const night = [assign('ada', NIGHT_12, '2026-10-31')];
+    const capped = (dst: boolean) =>
+      encodeCpsat(
+        unit([ada()], {
+          ...FALL_FORTNIGHT,
+          ...(dst ? { dstTransitions: [FALL_BACK] } : {}),
+          ruleSet: hardLongStretch({ maxConsecutiveHours: 12 }),
+        }),
+      );
+    // 13 real hours past a cap of 12; 12 on the wall clock is not past it.
+    expect(evaluate(capped(true), night).violated.join('\n')).toMatch(/long stretch/);
+    expect(evaluate(capped(false), night).violated).toEqual([]);
+  });
+
+  it('owes rest after the fall-back night when more than twelve hours earn it', () => {
+    // Out at 07:00 Sun, back at 19:00 Sun: 12 hours off against 13 owed after more than 12.
+    const nights = [assign('ada', NIGHT_12, '2026-10-31'), assign('ada', NIGHT_12, '2026-11-01')];
+    const rest = (dst: boolean) =>
+      encodeCpsat(
+        unit([ada()], {
+          ...FALL_FORTNIGHT,
+          ...(dst ? { dstTransitions: [FALL_BACK] } : {}),
+          ruleSet: hardLongStretch({
+            restAfterHours: 12,
+            restOnlyPastThreshold: true,
+            restHours: 13,
+          }),
+        }),
+      );
+    expect(evaluate(rest(true), nights).violated.join('\n')).toMatch(/rest after long stretch/);
+    expect(evaluate(rest(false), nights).violated).toEqual([]);
   });
 });
 
@@ -1798,6 +1902,49 @@ describe('agreement with the rule engine', () => {
     );
   });
 
+  it('agrees with the rules when the holiday rotation is hard and holidays go by the clock', () => {
+    // By the clock Ada's lookback night works both First Eve and First Day, so any shift of hers
+    // on First Day completes the pair; a night before Winter Day works Winter Day.
+    const h = (
+      id: string,
+      date: string,
+      name: string,
+      isMajor: boolean,
+      paired: string | null,
+    ) => ({
+      id,
+      unitId: UNIT_ID,
+      date: isoDate(date),
+      name,
+      isMajor,
+      pairedHolidayId: paired,
+    });
+    const base = withParams('holiday-rotation', { pairMinorWithMajor: true });
+    const ruleSet: RuleSet = {
+      ...base,
+      configs: base.configs.map((c) =>
+        c.ruleId === 'holiday-rotation' ? { ...c, severityOverride: 'hard' as const } : c,
+      ),
+    };
+    for (const holidayAttribution of ['clock', 'majority'] as const) {
+      expectParity(
+        parityInput({
+          unit: { ...testUnit, holidayAttribution },
+          ruleSet,
+          holidays: [
+            h('winter-25', '2025-01-08', 'Winter Day', true, null),
+            h('winter-26', '2026-01-08', 'Winter Day', true, null),
+            h('eve-26', '2026-01-03', 'First Eve', false, 'first-26'),
+            h('first-26', '2026-01-04', 'First Day', true, null),
+            h('mid-eve', '2026-01-12', 'Mid Eve', false, 'mid-26'),
+            h('mid-26', '2026-01-13', 'Mid Day', true, null),
+          ],
+          holidayWork: [{ holidayId: 'winter-25', nurseId: 'ada' }],
+        }),
+      );
+    }
+  });
+
   it('agrees with the rules when days asked off must stay off', () => {
     const base = parityInput({
       timeOff: [timeOff('ada', '2026-01-07', '2026-01-09', { status: 'pending' })],
@@ -2803,7 +2950,10 @@ describe('parity with the annealer', () => {
   describe('holiday rotation', () => {
     // Last year's MLK Day was worked by nurses 0–2; the Sunday before this year's is a minor
     // holiday paired with it, so nurses working both are priced too.
-    const holidayInput = (severity?: 'hard'): SolveInput => {
+    const holidayInput = (
+      severity?: 'hard',
+      holidayAttribution?: 'clock' | 'majority',
+    ): SolveInput => {
       const base = richInput();
       const ids = base.nurses.map((n) => n.id);
       const h = (
@@ -2822,6 +2972,7 @@ describe('parity with the annealer', () => {
       });
       return {
         ...base,
+        ...(holidayAttribution ? { unit: { ...base.unit, holidayAttribution } } : {}),
         ruleSet: {
           ...base.ruleSet,
           configs: base.ruleSet.configs.map((c) =>
@@ -2871,6 +3022,57 @@ describe('parity with the annealer', () => {
       }
       // Most rosters must actually break the rotation, or this proves nothing.
       expect(breached).toBeGreaterThan(40);
+    });
+
+    it('prices random rosters the same as the annealer when holidays go by the clock or by majority', () => {
+      for (const attribution of ['clock', 'majority'] as const) {
+        const plain = holidayInput(undefined, attribution);
+        // A New Year pair opening the period, and nurse 5's night before it: by the clock that
+        // night works both halves, so any shift of hers on the 4th is judged a pair breach.
+        const ids = plain.nurses.map((n) => n.id);
+        const input: SolveInput = {
+          ...plain,
+          holidays: [
+            ...plain.holidays,
+            {
+              ...plain.holidays[2]!,
+              id: 'ny-eve',
+              date: isoDate('2026-01-03'),
+              name: 'NY Eve',
+              pairedHolidayId: 'ny',
+            },
+            { ...plain.holidays[0]!, id: 'ny', date: isoDate('2026-01-04'), name: 'New Year' },
+          ],
+          priorAssignments: [
+            ...plain.priorAssignments,
+            assign(ids[5]!, NIGHT_12, '2026-01-03', { periodId: 'prev' }),
+          ],
+        };
+        const encoding = encodeCpsat(input);
+        const rng = new Rng(23);
+        let breached = 0;
+        for (let trial = 0; trial < 60; trial++) {
+          const seen = new Set<string>();
+          const assignments = [...input.assignments];
+          for (const sv of encoding.shiftVars) {
+            const day = `${sv.nurseId}|${sv.shift.date}`;
+            // The eves too: a night before a holiday works it by the clock.
+            const near = ['2026-01-04', '2026-01-17', '2026-01-18', '2026-01-19'];
+            if (seen.has(day) || !rng.chance(near.includes(sv.shift.date) ? 0.5 : 0.1)) continue;
+            seen.add(day);
+            assignments.push(assign(sv.nurseId, sv.shift.shiftType, sv.shift.date));
+          }
+          const evaluation = evaluate(encoding, assignments);
+          const model = new SolverModel(input);
+          for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+          if (model.holidayBreaches() > 0) breached++;
+          expect(evaluation.objective, `${attribution} trial ${trial}`).toBeCloseTo(
+            model.breakdown().total,
+            0,
+          );
+        }
+        expect(breached, attribution).toBeGreaterThan(40);
+      }
     });
 
     it("accepts the annealer's schedules and prices them the same", () => {

@@ -442,6 +442,67 @@ describe('hours drift with a holdover', () => {
   });
 });
 
+describe('hours drift with authorised overtime', () => {
+  const drift = (s: ReturnType<typeof scenario>) =>
+    alertsFor(s, { overtimeThresholdHours: 100 }).filter((a) => a.kind === 'hours_drift');
+
+  it('does not warn about contract drift for hours the manager authorised as overtime', () => {
+    resetFixtureCounters();
+    // Contract 72h. Six 12s = 72h plus one authorised 12h = 84h. Over side: 84 - 12 = 72, so
+    // drift 0. Counting the overtime shift would read 84/72 - 1 = +16.7%, past the 10% tolerance.
+    const s = scenario({
+      nurses: [makeNurse({ id: 'n1', contractedHoursPerPeriod: 72 })],
+      assignments: [
+        ...assignRun('n1', DAY_12, '2026-01-05', 3),
+        ...assignRun('n1', DAY_12, '2026-01-12', 3),
+        assign('n1', DAY_12, '2026-01-09', { isOvertime: true }),
+      ],
+    });
+    expect(drift(s)).toEqual([]);
+  });
+
+  it('still counts authorised overtime against a nurse who is short of contract', () => {
+    resetFixtureCounters();
+    // Five 12s plus one authorised 12h = 72h: on contract, not short. Without the overtime shift
+    // she is 60h, 60/72 - 1 = -16.7%, past the 10% tolerance.
+    const regular = [
+      ...assignRun('n1', DAY_12, '2026-01-05', 3),
+      ...assignRun('n1', DAY_12, '2026-01-12', 2),
+    ];
+    const nurses = [makeNurse({ id: 'n1', contractedHoursPerPeriod: 72 })];
+    const withOvertime = scenario({
+      nurses,
+      assignments: [...regular, assign('n1', DAY_12, '2026-01-09', { isOvertime: true })],
+    });
+    expect(drift(withOvertime)).toEqual([]);
+    resetFixtureCounters();
+    const without = scenario({
+      nurses,
+      assignments: [
+        ...assignRun('n1', DAY_12, '2026-01-05', 3),
+        ...assignRun('n1', DAY_12, '2026-01-12', 2),
+      ],
+    });
+    expect(drift(without).map((a) => a.nurseId)).toEqual(['n1']);
+    expect(drift(without)[0]!.message).toContain('-17%');
+  });
+
+  it("says how much of an over-contract nurse's hours were authorised overtime", () => {
+    resetFixtureCounters();
+    // Eight 12s = 96h, 12h of it authorised: over side 96 - 12 = 84, +16.7% past the 10%
+    // tolerance, so it still warns and the message names the 12h.
+    const s = scenario({
+      nurses: [makeNurse({ id: 'n1', contractedHoursPerPeriod: 72 })],
+      assignments: [
+        ...assignRun('n1', DAY_12, '2026-01-05', 3),
+        ...assignRun('n1', DAY_12, '2026-01-12', 4),
+        assign('n1', DAY_12, '2026-01-09', { isOvertime: true }),
+      ],
+    });
+    expect(drift(s)[0]!.message).toContain('(12h of it authorised overtime)');
+  });
+});
+
 describe('late posting', () => {
   // The period starts Sunday 2026-11-01; with 14 days' notice the schedule is due Sunday 2026-10-18.
   const november = () =>
@@ -635,6 +696,16 @@ describe('per-diem commitment', () => {
         holidayWorkedBy: worked(['h-jul4', ['both', 'one']]),
       });
       expect(alerts.map((a) => a.nurseId)).toEqual(['one']);
+    });
+
+    it('credits a per-diem nurse’s Christmas Eve night toward her holiday commitment by the clock', () => {
+      resetFixtureCounters();
+      // 19:00 on the 24th to 07:00 on the 25th: seven hours worked on Christmas.
+      const s = december([perDiem('eve')], [assign('eve', NIGHT_12, '2026-12-24')]);
+      const judged = (holidayAttribution: 'start' | 'clock') =>
+        commitmentAlerts(s, { perDiemCommitment: commitment(0, 1), holidays, holidayAttribution });
+      expect(judged('clock')).toEqual([]);
+      expect(judged('start')).toHaveLength(1);
     });
 
     it("leaves the holiday commitment alone in a period without the year's last holiday", () => {

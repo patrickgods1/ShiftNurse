@@ -44,6 +44,7 @@ import type {
   HistoricalCsvError,
   HistoricalShiftRow,
   Holiday,
+  HolidayAttribution,
   HolidayClaim,
   HolidayWorkClaim,
   HolidayYearPlan,
@@ -156,6 +157,8 @@ export type UnitPatch = Partial<Pick<Unit, 'name' | 'unitType' | 'ratioStaffing'
   leavePolicy?: LeavePolicy | null;
   /** `null` clears the choice: overtime is ranked by cost and burden. */
   overtimeOrder?: OvertimeOrder | null;
+  /** `null` returns holiday dating to the day a shift starts. */
+  holidayAttribution?: HolidayAttribution | null;
   /** `null` stops checking per-diem commitments. */
   perDiemCommitment?: PerDiemCommitment | null;
   /** `null`: a reason is enough for a change to a posted schedule. */
@@ -756,6 +759,12 @@ export interface PaySettings {
    * reporting-time pay (D13). Default 2; 0 owes it only once the shift has started.
    */
   reportingPayNoticeHours: number;
+  /**
+   * How a shift that crosses into a new work week or pay period counts toward weekly or 80-hour
+   * overtime: each hour in the week it is worked (`'clock'`, 29 CFR 778.104), or the whole shift
+   * in the week it starts (`'start'`, some contracts). A unit that never chose reads `'clock'`.
+   */
+  overtimeWindowAttribution: 'clock' | 'start';
 }
 
 /** A day-of event as recorded: paid outside the schedule, priced beside its cost. */

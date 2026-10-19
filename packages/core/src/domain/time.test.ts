@@ -240,8 +240,9 @@ describe('shift windows', () => {
   });
 
   describe('DST', () => {
-    // US spring-forward 2026-03-08, fall-back 2026-11-01. A night shift spanning either
-    // one is 11 or 13 actual elapsed hours, but the contract — and payroll — call it 12.
+    // US spring-forward 2026-03-08, fall-back 2026-11-01. A night spanning either one is 11 or 13
+    // elapsed hours. The schedule's geometry (rest, overlap, windows) calls it 12 on purpose; pay and
+    // the statutory hour caps count the real minutes (schedule/real-minutes.ts, D19).
     it('keeps a night shift 12 hours across spring-forward', () => {
       const w = shiftWindow(isoDate('2026-03-07'), NIGHT_12H);
       expect(windowDurationMinutes(w)).toBe(720);

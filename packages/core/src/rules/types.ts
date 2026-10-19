@@ -37,6 +37,7 @@ import type {
 } from '../domain/entities.js';
 import type { IsoDate, WeekendDefinition } from '../domain/time.js';
 import type { FairnessWeights } from '../fairness/types.js';
+import type { DstTransition } from '../schedule/real-minutes.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
 import type { PaidLeaveCredit } from './paid-leave.js';
 
@@ -186,6 +187,11 @@ export interface RuleContext {
    * as before (`judgedPayPeriods`).
    */
   historyFrom: IsoDate | undefined;
+  /**
+   * The host's clock changes (D19), for the statutory hour caps' totals, which count real elapsed
+   * minutes; everything else about a rule stays on the wall clock. Empty: no clock changes.
+   */
+  dstTransitions: readonly DstTransition[];
   /**
    * The shift types each nurse has asked for (`prefer_shift_type` rows only). The one record of a
    * nurse's wish the rules can read: a career nurse exempt from forced rotation may work a tour

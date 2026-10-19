@@ -91,6 +91,7 @@ export function toUnit(r: typeof s.unit.$inferSelect): Unit {
     ...optKey('jurisdictionChoices', r.jurisdictionChoices),
     ...optKey('leavePolicy', r.leavePolicy),
     ...optKey('overtimeOrder', r.overtimeOrder),
+    ...optKey('holidayAttribution', r.holidayAttribution),
     ...optKey('perDiemCommitment', r.perDiemCommitment),
     ...optKey('requireConsentForPostedChanges', r.requireConsentForPostedChanges),
     ...optKey('minWeekendsOffPerYear', r.minWeekendsOffPerYear),

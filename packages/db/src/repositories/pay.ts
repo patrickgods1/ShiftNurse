@@ -728,6 +728,8 @@ export function getPaySettings(db: DbLike, unitId: Id): PaySettings {
         holidayPayCoversOvertime: row.holidayPayCoversOvertime ?? false,
         // A row saved before migration 0037 has no notice; D13's default is 2 hours.
         reportingPayNoticeHours: row.reportingPayNoticeHours ?? 2,
+        // A row saved before migration 0047 has no attribution; D17's default is the clock.
+        overtimeWindowAttribution: row.overtimeWindowAttribution ?? 'clock',
       }
     : { ...DEFAULT_PAY_SETTINGS };
 }
@@ -766,6 +768,12 @@ export function savePaySettings(
   if (!Number.isFinite(notice) || notice < 0 || notice > 24) {
     throw new Error('The reporting-pay notice must be between 0 and 24 hours');
   }
+  const attribution = settings.overtimeWindowAttribution;
+  if (attribution !== 'clock' && attribution !== 'start') {
+    throw new Error(
+      'Choose whether a shift that crosses into a new work week counts each hour in the week it is worked or the whole shift in the week it starts.',
+    );
+  }
   // A unit with no row has no stored settings: reading defaults as "before" would audit state
   // that never existed.
   const saved = paySettingsSaved(db, unitId);
@@ -776,6 +784,7 @@ export function savePaySettings(
     premiumStacking: stacking,
     holidayPayCoversOvertime: covers,
     reportingPayNoticeHours: notice,
+    overtimeWindowAttribution: attribution,
   };
   db.insert(paySettings)
     .values({
@@ -784,6 +793,7 @@ export function savePaySettings(
       premiumStacking: stacking,
       holidayPayCoversOvertime: covers,
       reportingPayNoticeHours: notice,
+      overtimeWindowAttribution: attribution,
       updatedAt: Date.now(),
     })
     .onConflictDoUpdate({
@@ -793,6 +803,7 @@ export function savePaySettings(
         premiumStacking: stacking,
         holidayPayCoversOvertime: covers,
         reportingPayNoticeHours: notice,
+        overtimeWindowAttribution: attribution,
         updatedAt: Date.now(),
       },
     })

@@ -11,6 +11,7 @@ import {
   resetFixtureCounters,
   type ScenarioOptions,
   scenario,
+  testUnit,
 } from '../testing/fixtures.js';
 import { holidayRotationFacts, previousOccurrence } from './holiday-rotation.js';
 import { evaluateSchedule } from './registry.js';
@@ -114,6 +115,53 @@ describe('major holidays rotate year to year', () => {
       },
       { rotateMajorHolidays: false },
     );
+    expect(found).toEqual([]);
+  });
+});
+
+describe('holidays worked by the unit’s attribution', () => {
+  // The night of the 24th runs 19:00–07:00: 5 h on Christmas Eve, 7 h on Christmas Day.
+  const by = (holidayAttribution: 'start' | 'clock' | 'majority') => ({
+    unit: { ...testUnit, holidayAttribution },
+  });
+
+  it('keeps last year’s Christmas nurse off the night into Christmas morning when the unit counts by the clock', () => {
+    const owed = {
+      holidayWork: [{ holidayId: XMAS_2025.id, nurseId: ana.id }],
+      assignments: [assign(ana.id, NIGHT_12, '2026-12-24')],
+    };
+    // Clock: the night works Christmas (7 h of it). Majority: 7 of 12 hours fall on Christmas.
+    // Start: it is a Christmas Eve shift, and Ana did not work last Christmas Eve.
+    for (const attribution of ['clock', 'majority'] as const) {
+      const found = rotationViolations({ ...owed, ...by(attribution) });
+      expect(
+        found.map((v) => v.code),
+        attribution,
+      ).toEqual(['holiday_rotation']);
+      expect(found[0]!.dates).toEqual([isoDate('2026-12-25')]);
+    }
+    expect(rotationViolations({ ...owed, ...by('start') })).toEqual([]);
+  });
+
+  it('counts the Christmas Eve night as both halves of the Eve–Christmas pair by the clock', () => {
+    // By the clock one night works both paired holidays; by its start, only the Eve.
+    const night = { assignments: [assign(ana.id, NIGHT_12, '2026-12-24')] };
+    const pairing = { pairMinorWithMajor: true };
+    expect(rotationViolations({ ...night, ...by('clock') }, pairing).map((v) => v.code)).toEqual([
+      'holiday_pair_both',
+    ]);
+    expect(rotationViolations({ ...night, ...by('start') }, pairing)).toEqual([]);
+  });
+
+  it('leaves a holiday after the schedule’s last day to the schedule that holds it, by the clock', () => {
+    // The schedule ends on the 24th; its last night runs into Christmas. Generate only weighs the
+    // holidays inside the schedule, so the grid does not flag one it could not have avoided.
+    const found = rotationViolations({
+      endDate: isoDate('2026-12-24'),
+      holidayWork: [{ holidayId: XMAS_2025.id, nurseId: ana.id }],
+      assignments: [assign(ana.id, NIGHT_12, '2026-12-24')],
+      ...by('clock'),
+    });
     expect(found).toEqual([]);
   });
 });

@@ -66,6 +66,7 @@ import type { IsoDate } from '../domain/time.js';
 import type { FairnessReport } from '../fairness/types.js';
 import type { PaidSickCall } from '../rules/paid-leave.js';
 import type { HolidayWorkRecord, RuleSet, Violation } from '../rules/types.js';
+import type { DstTransition } from '../schedule/real-minutes.js';
 import type { ScheduleDigest } from './digest.js';
 
 // ---------------------------------------------------------------------------
@@ -77,6 +78,13 @@ export interface SolveCostInput {
   payRates: readonly PayRate[];
   differentials: readonly Differential[];
   overtimeRules: readonly OvertimeRule[];
+  /**
+   * The unit's pay settings (`PaySettings`), so Generate and conflicts price with the same stacking,
+   * holiday coverage and week attribution the cost report does. Absent: the `CostContext` defaults.
+   */
+  premiumStacking?: 'compound' | 'additive';
+  holidayPayCoversOvertime?: boolean;
+  overtimeWindowAttribution?: 'clock' | 'start';
 }
 
 export interface SolveInput {
@@ -103,6 +111,11 @@ export interface SolveInput {
    * before (not at all, unless `onlyCompletePayPeriods` is off).
    */
   historyFrom?: IsoDate;
+  /**
+   * The host's clock changes over the period and its lookback (T05). Pay counts real elapsed
+   * minutes on those nights (D19); absent, every day is 1440 minutes.
+   */
+  dstTransitions?: readonly DstTransition[];
   timeOff: readonly TimeOffRequest[];
   /**
    * Missed shifts paid from sick leave whose assignment is off the schedule: credited toward

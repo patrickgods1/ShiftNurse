@@ -1,6 +1,9 @@
 /**
  * Invariant: giving a nurse one more shift in a week never lowers that week's overtime hours or
- * what the nurse costs, under a weekly 40h rule or an 80h pay-period rule.
+ * what the nurse costs, under a weekly 40h rule or an 80h pay-period rule. And reordering a week's
+ * shifts never changes the overtime premium: weekly overtime hours are max(0, total − 40), and the
+ * regular rate they are paid on (29 CFR 778.115) depends only on the week's shifts, not on which
+ * one comes last, so the premium is the same up to each line's cent rounding.
  *
  * Why it matters: overtime is priced by walking the nurse's timeline in order, so a shift added
  * early in the week shifts which later shift carries the premium. If the arithmetic ever let an
@@ -9,13 +12,14 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { Assignment, OvertimeRule } from '../domain/entities.js';
+import type { Assignment, Differential, OvertimeRule } from '../domain/entities.js';
 import { addDays, DEFAULT_WEEKEND, isoDate } from '../domain/time.js';
 import { Rng } from '../solver/rng.js';
 import {
   assign,
   DAY_8,
   DAY_12,
+  differential,
   makeNurse,
   NIGHT_12,
   overtimeRule,
@@ -34,11 +38,11 @@ const SHIFTS = [DAY_12, NIGHT_12, DAY_8];
 
 beforeEach(() => resetFixtureCounters());
 
-function ctxWith(rule: OvertimeRule): CostContext {
+function ctxWith(rule: OvertimeRule, differentials: Differential[] = []): CostContext {
   return {
     unit: testUnit,
     payRates: [payRate(48)],
-    differentials: [],
+    differentials,
     overtimeRules: [rule],
     holidayDates: new Set(),
     weekendDefinition: DEFAULT_WEEKEND,
@@ -80,4 +84,36 @@ describe('adding a shift to a nurse’s week', () => {
       }
     });
   }
+});
+
+describe('reordering a week’s shifts', () => {
+  // Weekdays only, so no weekend differential would make the dates themselves matter.
+  const WEEKDAYS = ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08', '2026-01-09'];
+  const DIFFERENTIALS = [differential('night', 'flat', 4.5), differential('charge', 'flat', 2.5)];
+
+  function premium(rows: Assignment[]) {
+    const s = scenario({ nurses: [makeNurse({ id: 'n' })], assignments: rows });
+    const report = costSchedule(s.schedule, ctxWith(overtimeRule('weekly', 40), DIFFERENTIALS));
+    const lines = report.assignments.flatMap((a) => a.lines).filter((l) => l.kind === 'overtime');
+    return { premium: report.totals.overtimePremium, lines: lines.length };
+  }
+
+  it('never changes the nurse’s overtime premium under a weekly 40h rule', () => {
+    const rng = new Rng(SEED + 77);
+    for (let i = 0; i < CASES; i++) {
+      const count = rng.nextInt(3, 5);
+      const shifts = Array.from({ length: count }, () => ({
+        type: rng.pick(SHIFTS),
+        isCharge: rng.chance(0.3),
+      }));
+      const used = rng.shuffle(WEEKDAYS).slice(0, count).sort();
+      const shuffled = rng.shuffle(used);
+      const place = (on: string[]) =>
+        shifts.map((s, k) => assign('n', s.type, on[k]!, { id: `s${k}`, isCharge: s.isCharge }));
+      const a = premium(place(used));
+      const b = premium(place(shuffled));
+      const msg = `seed ${SEED + 77} case ${i}: ${shifts.map((s) => `${s.type.id}${s.isCharge ? '*' : ''}`).join(',')} on ${used.join(',')} vs ${shuffled.join(',')}`;
+      expect(Math.abs(a.premium - b.premium), msg).toBeLessThanOrEqual(0.01 * (a.lines + b.lines));
+    }
+  });
 });

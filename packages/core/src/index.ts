@@ -409,8 +409,16 @@ export {
 } from './schedule/elsewhere.js';
 // How far back the published schedules are complete
 export { historyCompleteFrom } from './schedule/history.js';
+// Which holiday a shift works, by the unit's attribution (D18): pay, fairness, rotation, solvers
+export {
+  attributedHolidayDates,
+  type HolidayAttribution,
+  holidayMinutesOn,
+} from './schedule/holiday-attribution.js';
 // What a shift follows: rest and tour changes are measured from the shift that ends last
 export { latestEndingBefore } from './schedule/preceding.js';
+// Hours actually worked across a clock change: pay and the statutory hour caps only (D19)
+export { type DstTransition, realMinutesIn } from './schedule/real-minutes.js';
 // The schedule read model
 export { ScheduleView } from './schedule/view.js';
 export type {

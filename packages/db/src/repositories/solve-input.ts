@@ -47,6 +47,7 @@ import {
 } from '@shiftnurse/core';
 import { and, asc, eq, gte, inArray, lte, ne } from 'drizzle-orm';
 import type { DbLike } from '../client.js';
+import { dstTransitionsForPeriod } from '../host-dst.js';
 import { toAssignment } from '../mappers.js';
 import { assignment, schedulePeriod } from '../schema.js';
 import { getHppdTarget, listActiveRatioRulesForUnit, listAcuityTiersForUnit } from './acuity.js';
@@ -227,6 +228,10 @@ export function costContext(
     workWeekStartsOn: params.workWeekStartsOn ?? maxHoursRule.defaultParams.workWeekStartsOn,
     premiumStacking: pay.premiumStacking,
     holidayPayCoversOvertime: pay.holidayPayCoversOvertime,
+    overtimeWindowAttribution: pay.overtimeWindowAttribution,
+    ...(period
+      ? { dstTransitions: dstTransitionsForPeriod(period, PRIOR_ASSIGNMENT_LOOKBACK_DAYS) }
+      : {}),
     ...(params.paidLeaveCountsTowardOvertime
       ? {
           overtimeLeave: records
@@ -479,6 +484,7 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
   // just the three pay tables (it takes unit, holidays and the work week from the input itself).
   const demand = demandInputs(db, unitId, period.startDate, period.endDate);
   const unit = unitOrThrow(db, unitId);
+  const pay = getPaySettings(db, unitId);
   const nurses = rosterForPeriod(db, period);
   const records = perNurseRecordsFor(db, unit, period, nurses);
   const tail = periodTailFor(db, period, nurses);
@@ -531,10 +537,14 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     ),
     restWaivers: records.restWaivers,
     availabilityBlocks: records.availabilityBlocks,
+    dstTransitions: dstTransitionsForPeriod(period, PRIOR_ASSIGNMENT_LOOKBACK_DAYS),
     cost: {
       payRates: records.payRates,
       differentials: listActiveDifferentials(db, unitId),
       overtimeRules: listActiveOvertimeRules(db, unitId),
+      premiumStacking: pay.premiumStacking,
+      holidayPayCoversOvertime: pay.holidayPayCoversOvertime,
+      overtimeWindowAttribution: pay.overtimeWindowAttribution,
     },
   };
 }

@@ -46,6 +46,7 @@ import {
   resetFixtureCounters,
   solveInputFrom,
   TIER_ROUTINE,
+  testUnit,
   timeOff,
   UNIT_ID,
   withRuleParams,
@@ -72,6 +73,7 @@ function scenario({
   holidays = false,
   pending = false,
   weekends = false,
+  attribution = undefined as 'clock' | 'majority' | undefined,
 } = {}): SolveInput {
   const nurses: Nurse[] = [
     ...Array.from({ length: 8 }, (_, i) =>
@@ -115,6 +117,7 @@ function scenario({
     ),
   };
   return solveInputFrom({
+    ...(attribution ? { unit: { ...testUnit, holidayAttribution: attribution } } : {}),
     startDate: isoDate('2026-01-04'),
     endDate: isoDate('2026-01-17'),
     nurses,
@@ -697,6 +700,60 @@ describe('fairness priced as the Fairness page prices it', () => {
     expect(model.unlocked.length).toBeGreaterThan(10);
     // A walk that never moved the term would agree with anything.
     expect(peak).toBeGreaterThan(0);
+  });
+
+  it('counts holiday burden the same way as the ledger under every holiday attribution', () => {
+    // Christmas is the only holiday. Ana's night on the 24th has 7 of its 12 hours on Christmas,
+    // Bo's on the 25th 5. The ledger counts them, Ana then Bo: start 0 and 1, clock 1 and 1,
+    // majority 1 and 0. Ana's holiday in her last schedule breaks the tie, so a model counting by
+    // the start day prices the clock and majority schedules differently from the Fairness page.
+    const priced = (holidayAttribution: 'start' | 'clock' | 'majority') => {
+      const ana = makeNurse({ id: 'ana', isChargeEligible: true });
+      const bo = makeNurse({ id: 'bo', isChargeEligible: true });
+      const input = solveInputFrom({
+        unit: { ...testUnit, holidayAttribution },
+        startDate: isoDate('2026-12-20'),
+        endDate: isoDate('2027-01-02'),
+        nurses: [ana, bo],
+        shiftTypes: [NIGHT_12],
+        holidays: [
+          {
+            id: 'xmas',
+            unitId: 'unit-1',
+            date: isoDate('2026-12-25'),
+            name: 'Christmas Day',
+            isMajor: true,
+            pairedHolidayId: null,
+          },
+        ],
+        assignments: [
+          assign('ana', NIGHT_12, '2026-12-24', { isLocked: true }),
+          assign('bo', NIGHT_12, '2026-12-25', { isLocked: true }),
+        ],
+        ledgerHistory: [
+          ledgerRow('ana', 'prev', '2026-12-06', { holidaysWorked: 1, totalHours: 72 }),
+          ledgerRow('bo', 'prev', '2026-12-06', { totalHours: 72 }),
+        ],
+        ruleSet: burdenOnly({
+          nights: 0,
+          weekends: 0,
+          holidays: 1,
+          onCall: 0,
+          undesirable: 0,
+          overtime: 0,
+          preferences: 0,
+          timeOff: 0,
+        }),
+      });
+      const model = new SolverModel(input);
+      const page = fairnessAsThePageComputesIt(model);
+      expect(model.breakdown().fairness, holidayAttribution).toBeCloseTo(page, 6);
+      return page;
+    };
+    const start = priced('start');
+    // Clock adds Ana's night to her tally and majority also takes Bo's away: three schedules the
+    // page prices three ways, so agreement above is not agreement on one number.
+    expect(new Set([start, priced('clock'), priced('majority')]).size).toBe(3);
   });
 
   // A per-diem nurse has no contract to be over, so the ledger (and so the Fairness page) counts
@@ -1383,6 +1440,10 @@ describe('soft rules priced the way the grid judges them', () => {
       { holidays: true },
       { pending: true, holidays: true },
       { weekends: true },
+      // By the clock a night before Winter Day works it, and the Test day night works both halves
+      // of that pair; by majority the night goes to the morning it ends on.
+      { holidays: true, attribution: 'clock' as const },
+      { holidays: true, attribution: 'majority' as const },
     ]) {
       for (let seed = 1; seed <= 12; seed++) {
         resetFixtureCounters();

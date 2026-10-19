@@ -40,6 +40,7 @@ import { addDays, datesInRange, type IsoDate, isoDate, type Weekday } from '../d
 import type { PaidSickCall } from '../rules/paid-leave.js';
 import { buildRuleContext, defaultRuleSet } from '../rules/registry.js';
 import type { HolidayWorkRecord, RuleContext, RuleSet } from '../rules/types.js';
+import type { DstTransition } from '../schedule/real-minutes.js';
 import { ScheduleView } from '../schedule/view.js';
 import type { SolveCostInput, SolveInput } from '../solver/types.js';
 
@@ -278,6 +279,8 @@ export interface ScenarioOptions {
   historyFrom?: IsoDate;
   /** Nurses' stated preferences; a career nurse's asked-for tours read them. */
   preferences?: Preference[];
+  /** The host's clock changes (D19). Absent: none, every day is 1440 minutes. */
+  dstTransitions?: readonly DstTransition[];
 }
 
 export interface Scenario {
@@ -347,6 +350,7 @@ export function scenario(options: ScenarioOptions = {}): Scenario {
     ...(options.availabilityBlocks ? { availabilityBlocks: options.availabilityBlocks } : {}),
     ...(options.historyFrom ? { historyFrom: options.historyFrom } : {}),
     ...(options.preferences ? { preferences: options.preferences } : {}),
+    ...(options.dstTransitions ? { dstTransitions: options.dstTransitions } : {}),
   });
 
   const schedule = new ScheduleView({
@@ -409,6 +413,7 @@ export function solveInputFrom(options: SolveScenarioOptions = {}): SolveInput {
     assignments: options.assignments ?? [],
     priorAssignments: options.priorAssignments ?? [],
     ...(options.historyFrom ? { historyFrom: options.historyFrom } : {}),
+    ...(options.dstTransitions ? { dstTransitions: options.dstTransitions } : {}),
     timeOff: options.timeOff ?? [],
     ...(options.paidSickCalls ? { paidSickCalls: options.paidSickCalls } : {}),
     credentials: testCredentials,

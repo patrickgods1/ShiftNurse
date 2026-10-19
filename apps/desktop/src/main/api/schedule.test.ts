@@ -14,6 +14,7 @@ import {
   createNurseUnit,
   createPeriod,
   createUnit,
+  getLatestRuleSet,
   getPeriod,
   listAssignmentsForPeriod,
   listChanges,
@@ -24,6 +25,7 @@ import {
   publishSchedule,
   recentAudit,
   replaceNursePreferences,
+  saveRuleSet,
   transact,
   updateIncompatibilityGroup,
   updateNurse,
@@ -642,4 +644,56 @@ describe('a nurse’s hours in the pay period', () => {
       /not on .* roster/,
     );
   });
+});
+
+describe('the night the clocks go back', () => {
+  // Skipped off the pinned zone (phase 1's sentinel): the clock change is a host fact.
+  it.skipIf(process.env.SHIFTNURSE_TEST_TZ !== undefined)(
+    'judges a schedule with the host’s clock changes in its rule context',
+    () => {
+      const latest = getLatestRuleSet(f.handle.db, f.seeded.unitId)!;
+      const rules = transact(f.handle.db, (tx) =>
+        saveRuleSet(
+          tx,
+          {
+            ...latest,
+            configs: [
+              ...latest.configs.filter((c) => c.ruleId !== 'max-hours-in-24'),
+              { ruleId: 'max-hours-in-24', enabled: true, params: { maxHours: 12 } },
+            ],
+          },
+          ACTOR,
+        ),
+      );
+      const period = createPeriod(
+        f.handle.db,
+        {
+          unitId: f.seeded.unitId,
+          name: 'Fall back',
+          startDate: isoDate('2026-10-26'),
+          endDate: isoDate('2026-11-08'),
+          ruleSetId: rules.id,
+          ruleSetVersion: rules.version,
+        },
+        ACTOR,
+      );
+      // The night is shown 19:00 Sat 31 Oct to 07:00 Sun 1 Nov, but the clock goes back at 02:00,
+      // so the nurse is on her feet 12 + 1 = 13 real hours: over a 12-hour cap. The 12 hours on
+      // the wall clock alone would sit exactly on the cap and pass.
+      createAssignment(
+        f.handle.db,
+        {
+          periodId: period.id,
+          nurseId: f.rns[0]!.id,
+          shiftTypeId: f.night.id,
+          date: isoDate('2026-10-31'),
+        },
+        ACTOR,
+      );
+      const breaches = api
+        .validate(period.id)
+        .result.hardViolations.filter((v) => v.code === 'hours_in_24_exceeded');
+      expect(breaches).toHaveLength(1);
+    },
+  );
 });
