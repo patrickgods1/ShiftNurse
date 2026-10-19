@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { Nurse } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
 import type { RosterColumn, RosterCsvRow } from './csv.js';
-import { OPTIONAL_ROSTER_COLUMNS, planRosterImport, rosterChangesFor } from './import-plan.js';
+import {
+  matchStoredNurse,
+  OPTIONAL_ROSTER_COLUMNS,
+  planRosterImport,
+  rosterChangesFor,
+  sameEmployeeId,
+} from './import-plan.js';
 
 const REQUIRED: RosterColumn[] = [
   'employee_id',
@@ -181,6 +187,44 @@ describe('what a roster import changes', () => {
       'hire_date',
       'schedule_kind',
       'scheduled_days_per_week',
+    ]);
+  });
+});
+
+describe('matching a sheet to the nurses already on the unit', () => {
+  const bo: Nurse = { ...ana, id: 'n-bo', employeeId: 'e1', firstName: 'Bo', lastName: 'Diaz' };
+
+  it("matches a sheet's e1 to the stored E1, ignoring case and spaces", () => {
+    expect(matchStoredNurse([ana], ' e1 ')).toEqual({ kind: 'one', nurse: ana });
+    expect(matchStoredNurse([ana], 'E2')).toEqual({ kind: 'none' });
+    expect(sameEmployeeId(' e1 ', 'E1')).toBe(true);
+    expect(sameEmployeeId('E1', 'E2')).toBe(false);
+  });
+
+  it('refuses to guess when two stored nurses differ only by case', () => {
+    expect(matchStoredNurse([ana, bo], 'E1')).toEqual({ kind: 'ambiguous', nurses: [ana, bo] });
+  });
+
+  it("updates Ana, not a second nurse, when the sheet's e1 carries a new phone", () => {
+    const plan = planRosterImport(
+      [ana],
+      [anaRow({ employeeId: 'e1', phone: '555-0100' })],
+      [...REQUIRED, 'phone'],
+    );
+    expect(plan).toEqual([
+      {
+        employeeId: 'e1',
+        name: 'Cruz, Ana',
+        action: 'update',
+        inactive: false,
+        changes: [{ field: 'Phone', from: undefined, to: '555-0100' }],
+      },
+    ]);
+  });
+
+  it('flags a row whose id matches two stored nurses as ambiguous with no changes', () => {
+    expect(planRosterImport([ana, bo], [anaRow()], REQUIRED)).toEqual([
+      { employeeId: 'E1', name: 'Cruz, Ana', action: 'ambiguous', inactive: false, changes: [] },
     ]);
   });
 });

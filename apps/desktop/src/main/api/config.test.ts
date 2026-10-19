@@ -124,6 +124,20 @@ describe('coverage floors', () => {
     expect(mine.map((c) => `${c.minCount}/${c.targetCount}`)).toEqual(Array(7).fill('2/3'));
   });
 
+  it('says so when a coverage floor already exists for that day', () => {
+    const floor = {
+      unitId: unitId(),
+      shiftTypeId: f.day.id,
+      weekday: null,
+      date: isoDate('2026-12-25'),
+      role: 'RN' as const,
+      minCount: 2,
+      targetCount: 2,
+    };
+    api().coverage.upsert(floor);
+    expect(() => api().coverage.upsert(floor)).toThrow(/change that one instead/);
+  });
+
   it('says so when deleting a floor that does not exist', () => {
     expect(() => api().coverage.delete('gone')).toThrow(/not found/i);
   });

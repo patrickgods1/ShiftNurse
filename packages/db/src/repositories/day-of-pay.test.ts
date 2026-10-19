@@ -231,6 +231,36 @@ describe('recording a send-home and a call-back', () => {
     );
   });
 
+  it('will not let a call-back be changed to no hours', () => {
+    const e = createDayOfPayEvent(
+      handle.db,
+      { kind: 'call_back', unitId, nurseId: ana.id, date: day, hoursWorked: 3 },
+      ACTOR,
+    );
+    expect(() => updateDayOfPayEvent(handle.db, e.id, { hoursWorked: 0 }, ACTOR)).toThrow(
+      'Enter the hours the call-back worked',
+    );
+    expect(listDayOfPayEvents(handle.db, unitId, day, day)[0]?.hoursWorked).toBe(3);
+  });
+
+  it('refuses a sent-home record that worked longer than the shift', () => {
+    const sent = {
+      kind: 'sent_home',
+      unitId,
+      nurseId: ana.id,
+      date: day,
+      scheduledHours: 12,
+    } as const;
+    const message =
+      'Hours worked (13) cannot be more than the 12 scheduled; a nurse who worked past the shift was not sent home.';
+    expect(() => createDayOfPayEvent(handle.db, { ...sent, hoursWorked: 13 }, ACTOR)).toThrow(
+      message,
+    );
+    const e = createDayOfPayEvent(handle.db, { ...sent, hoursWorked: 4 }, ACTOR);
+    expect(() => updateDayOfPayEvent(handle.db, e.id, { hoursWorked: 13 }, ACTOR)).toThrow(message);
+    expect(listDayOfPayEvents(handle.db, unitId, day, day)[0]?.hoursWorked).toBe(4);
+  });
+
   it('removes an event and audits the delete with its before', () => {
     const e = createDayOfPayEvent(
       handle.db,

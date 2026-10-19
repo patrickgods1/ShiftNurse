@@ -312,6 +312,131 @@ describe('cost configuration', () => {
     });
   });
 
+  describe('one pay rate per person or role per start date', () => {
+    const jan1 = isoDate('2026-01-01');
+    const rate = (nurseId: string | null, hourlyRate: number, effectiveFrom: IsoDate) => ({
+      nurseId,
+      role: nurseId === null ? ('RN' as const) : null,
+      hourlyRate,
+      effectiveFrom,
+    });
+
+    it('refuses a second rate for Ana from the same day, and her correction applies once she changes the first', () => {
+      const ana = mkNurse('Ana');
+      const first = createPayRate(handle.db, rate(ana, 60, jan1), ACTOR);
+      expect(() => createPayRate(handle.db, rate(ana, 62, jan1), ACTOR)).toThrow(
+        'Ana Nurse already has a pay rate from Thu Jan 1, 2026; change that one instead.',
+      );
+      updatePayRate(handle.db, first.id, { hourlyRate: 62 }, ACTOR);
+      expect(effectiveRateForNurse(handle.db, ana, 'RN', isoDate('2026-01-10'))?.hourlyRate).toBe(
+        62,
+      );
+    });
+
+    it('refuses a second RN default from the same day', () => {
+      createPayRate(handle.db, rate(null, 48, isoDate('2026-01-04')), ACTOR);
+      expect(() => createPayRate(handle.db, rate(null, 50, isoDate('2026-01-04')), ACTOR)).toThrow(
+        'There is already a default RN rate from Sun Jan 4, 2026; change that one instead.',
+      );
+    });
+
+    it('refuses moving a rate onto the start date of another', () => {
+      const ana = mkNurse('Ana');
+      createPayRate(handle.db, rate(ana, 60, jan1), ACTOR);
+      const july = createPayRate(handle.db, rate(ana, 64, isoDate('2026-07-01')), ACTOR);
+      expect(() => updatePayRate(handle.db, july.id, { effectiveFrom: jan1 }, ACTOR)).toThrow(
+        'Ana Nurse already has a pay rate from Thu Jan 1, 2026; change that one instead.',
+      );
+      expect(
+        updatePayRate(handle.db, july.id, { effectiveFrom: isoDate('2026-07-01') }, ACTOR)
+          .effectiveFrom,
+      ).toBe('2026-07-01');
+    });
+
+    it("lets Ana's own rate and the RN default start on the same day", () => {
+      const ana = mkNurse('Ana');
+      createPayRate(handle.db, rate(null, 48, jan1), ACTOR);
+      expect(() => createPayRate(handle.db, rate(ana, 60, jan1), ACTOR)).not.toThrow();
+    });
+
+    it('says so when the nurse is gone', () => {
+      expect(() => createPayRate(handle.db, rate('nope', 60, jan1), ACTOR)).toThrow(
+        'That nurse was not found. Reload the page.',
+      );
+    });
+
+    it('refuses a negative or undated rate when it is created, as it does when it is changed', () => {
+      const dollars = 'An hourly rate must be a number of dollars, zero or more.';
+      expect(() => createPayRate(handle.db, rate(null, -5, jan1), ACTOR)).toThrow(dollars);
+      expect(() => createPayRate(handle.db, rate(null, Number.NaN, jan1), ACTOR)).toThrow(dollars);
+      expect(() =>
+        createPayRate(handle.db, rate(null, 48, 'next spring' as IsoDate), ACTOR),
+      ).toThrow('Effective from must be a date.');
+      expect(listPayRatesForUnit(handle.db, unitId)).toEqual([]);
+    });
+
+    it('accepts an empty change to a pay rate and records the save', () => {
+      const created = createPayRate(handle.db, rate(null, 48, jan1), ACTOR);
+      expect(updatePayRate(handle.db, created.id, {}, ACTOR)).toEqual(created);
+      const updates = auditHistoryFor(handle.db, 'pay_rate', created.id).filter(
+        (e) => e.action === 'update',
+      );
+      expect(updates).toHaveLength(1);
+      expect(updates[0]?.before).toEqual(created);
+      expect(updates[0]?.after).toEqual(created);
+    });
+  });
+
+  describe('cost writers check their own numbers', () => {
+    it('refuses a differential with a negative amount or an unknown mode, on create and on change', () => {
+      const base = { unitId, kind: 'weekend' as const, mode: 'flat' as const, active: true };
+      expect(() => createDifferential(handle.db, { ...base, amount: -2 }, ACTOR)).toThrow(
+        'A flat differential cannot be negative',
+      );
+      expect(() => createDifferential(handle.db, { ...base, amount: Number.NaN }, ACTOR)).toThrow(
+        'A differential amount must be a number, zero or more.',
+      );
+      expect(() =>
+        createDifferential(handle.db, { ...base, amount: 2, mode: 'percent' as never }, ACTOR),
+      ).toThrow('A differential is a multiplier or a flat amount.');
+      expect(() =>
+        createDifferential(handle.db, { ...base, amount: 2, kind: 'moonlight' as never }, ACTOR),
+      ).toThrow("A differential's kind must be one of night, evening,");
+      const saved = createDifferential(handle.db, { ...base, amount: 2 }, ACTOR);
+      expect(() => updateDifferential(handle.db, saved.id, { amount: -1 }, ACTOR)).toThrow(
+        'A flat differential cannot be negative',
+      );
+      expect(() =>
+        updateDifferential(handle.db, saved.id, { mode: 'percent' as never }, ACTOR),
+      ).toThrow('A differential is a multiplier or a flat amount.');
+      expect(listDifferentialsForUnit(handle.db, unitId)).toEqual([saved]);
+    });
+
+    it('refuses an overtime rule paying less than straight time, or with a negative threshold', () => {
+      const rule = {
+        unitId,
+        basis: 'weekly' as const,
+        thresholdHours: 40,
+        multiplier: 1.5,
+        active: true,
+      };
+      expect(() => createOvertimeRule(handle.db, { ...rule, multiplier: 0.5 }, ACTOR)).toThrow(
+        'An overtime multiplier must be 1 or more.',
+      );
+      expect(() => createOvertimeRule(handle.db, { ...rule, thresholdHours: -1 }, ACTOR)).toThrow(
+        'An overtime threshold must be a number of hours, zero or more.',
+      );
+      expect(() =>
+        createOvertimeRule(handle.db, { ...rule, basis: 'monthly' as never }, ACTOR),
+      ).toThrow("An overtime rule's basis must be one of daily, weekly,");
+      const saved = createOvertimeRule(handle.db, rule, ACTOR);
+      expect(() => updateOvertimeRule(handle.db, saved.id, { multiplier: 0.9 }, ACTOR)).toThrow(
+        'An overtime multiplier must be 1 or more.',
+      );
+      expect(listOvertimeRulesForUnit(handle.db, unitId)).toEqual([saved]);
+    });
+  });
+
   it('keeps a differential as it was and records the save when nothing was changed', () => {
     const night = createDifferential(
       handle.db,
@@ -1006,6 +1131,43 @@ describe('cost configuration', () => {
     );
     expect(listDifferentialsForUnit(handle.db, unitId)).toEqual([]);
     expect(listOvertimeRulesForUnit(handle.db, unitId)).toEqual([]);
+  });
+});
+
+describe('a period budget', () => {
+  it('sets a budget, then changes it with the old figure on the record', () => {
+    const first = setBudget(handle.db, unitId, _periodId, 50_000, ACTOR);
+    setBudget(handle.db, unitId, _periodId, 75_000, ACTOR);
+    expect(getBudget(handle.db, _periodId)?.targetDollars).toBe(75_000);
+    const history = auditHistoryFor(handle.db, 'budget', first.id);
+    expect(history.map((e) => e.action)).toEqual(['update', 'create']);
+    expect(history[0]?.before).toMatchObject({ targetDollars: 50_000 });
+  });
+
+  it('refuses a negative budget and a period from another unit', () => {
+    expect(() => setBudget(handle.db, unitId, _periodId, -1, ACTOR)).toThrow(
+      'A budget must be a number of dollars, zero or more.',
+    );
+    expect(() => setBudget(handle.db, unitId, _periodId, Number.NaN, ACTOR)).toThrow(
+      'A budget must be a number of dollars, zero or more.',
+    );
+    const other = createUnit(
+      handle.db,
+      {
+        name: '5 East',
+        unitType: 'Medical-Surgical',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    expect(() => setBudget(handle.db, other.id, _periodId, 1000, ACTOR)).toThrow(
+      'That schedule period is not on this unit.',
+    );
+    expect(() => setBudget(handle.db, unitId, 'nope', 1000, ACTOR)).toThrow(
+      'That schedule period was not found. Reload the page.',
+    );
+    expect(getBudget(handle.db, _periodId)).toBeUndefined();
   });
 });
 

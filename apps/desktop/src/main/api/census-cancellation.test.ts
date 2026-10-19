@@ -21,6 +21,7 @@ import {
   recordShiftCancellation,
   saveCancellationPolicy,
   savePaySettings,
+  transact,
   updateNurse,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -304,7 +305,9 @@ describe('cancelling for census', () => {
 
   it('on a published schedule writes the removal to the change log under the cancellation reason', () => {
     everyoneComesIn();
-    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) =>
+      publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+    );
     const first = orderView().order[0]!;
     dayOf().cancelForCensus(f.seeded.draftPeriodId, date(), f.day.id, 'RN', [], first.nurseId);
     const changes = listChanges(f.handle.db, f.seeded.draftPeriodId);
@@ -316,7 +319,9 @@ describe('cancelling for census', () => {
 
   it('cancels on a published schedule with the order’s reason in the change log', () => {
     everyoneComesIn();
-    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) =>
+      publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+    );
     const place = orderView().order[0]!;
     dayOf().cancelForCensus(f.seeded.draftPeriodId, date(), f.day.id, 'RN', [], place.nurseId);
     const changes = listChanges(f.handle.db, f.seeded.draftPeriodId);

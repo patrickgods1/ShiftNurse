@@ -27,6 +27,7 @@ import {
   listShiftTypesForUnit,
   publishSchedule,
   recordActualCensus,
+  transact,
   updateNurse,
   updateUnit,
 } from '@shiftnurse/db';
@@ -198,7 +199,9 @@ describe('backfilling a call-off', () => {
       shiftTypeId: f.day.id,
       date: addDays(f.seeded.draftStart, 4),
     });
-    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) =>
+      publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+    );
 
     const dayOf = dayOfApi(f.handle.db);
     const callOff = dayOf.reportCallOff(absent.id, 'sick');
@@ -235,6 +238,9 @@ describe('backfilling with the extra rows a pickup needs', () => {
   /** Only Ann and Bea may take charge; everyone else on the roster may not. */
   function onlyAnnAndBeaTakeCharge() {
     grantAclsToAll();
+    // Roster order follows random ids; a novice cannot take charge, so experienced RNs lead and
+    // rns[0] and rns[1] are the two who can.
+    f.rns = [...f.rns.filter((n) => !n.isNovice), ...f.rns.filter((n) => n.isNovice)];
     for (const [i, nurse] of f.rns.entries()) {
       updateNurse(f.handle.db, nurse.id, { isChargeEligible: i < 2 }, ACTOR);
     }
@@ -258,7 +264,9 @@ describe('backfilling with the extra rows a pickup needs', () => {
       shiftTypeId: f.day.id,
       date,
     });
-    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) =>
+      publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+    );
 
     const dayOf = dayOfApi(f.handle.db);
     const callOff = dayOf.reportCallOff(absent.id, 'sick');
@@ -322,7 +330,9 @@ describe('the call-off workflow on a published schedule', () => {
       shiftTypeId: f.day.id,
       date,
     });
-    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) =>
+      publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+    );
     const callOff = dayOf().reportCallOff(absent.id, 'sick', 12);
     return { date, absent, callOff };
   }
@@ -482,7 +492,9 @@ describe('recording a holdover day-of', () => {
       shiftTypeId: f.day.id,
       date: addDays(f.seeded.draftStart, 4),
     });
-    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) =>
+      publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+    );
     return a;
   }
 
@@ -615,6 +627,8 @@ describe('the overtime call order', () => {
     for (const [i, n] of others.entries()) {
       put(n.id, addDays(monday, -100 - i), true, f.day.id, history.id);
     }
+    // Only published history counts as overtime worked; a draft is still a plan.
+    transact(f.handle.db, (tx) => publishSchedule(tx, { periodId: history.id, ledger: [] }, ACTOR));
     const dayOf = dayOfApi(f.handle.db);
     const callOff = dayOf.reportCallOff(absent.id, 'sick');
 

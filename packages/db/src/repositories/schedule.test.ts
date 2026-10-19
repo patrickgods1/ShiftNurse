@@ -213,8 +213,11 @@ describe('periods', () => {
     expect(getPeriod(handle.db, draft.id)).toBeUndefined();
 
     const published = createPeriod(handle.db, basePeriod({ name: 'Locked in' }), ACTOR);
-    publishSchedule(handle.db, { periodId: published.id }, ACTOR);
-    expect(() => deleteDraftPeriod(handle.db, published.id, ACTOR)).toThrow();
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: published.id }, ACTOR));
+    expect(() => deleteDraftPeriod(handle.db, published.id, ACTOR)).toThrow(
+      /is published, not a draft/,
+    );
+    expect(getPeriod(handle.db, published.id)).toBeDefined();
   });
 
   it('archives a published schedule with a reason, and refuses a draft or a blank reason', () => {
@@ -223,7 +226,7 @@ describe('periods', () => {
       /only a published schedule can be archived/,
     );
 
-    publishSchedule(handle.db, { periodId: period.id }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: period.id }, ACTOR));
     const auditBefore = auditHistoryFor(handle.db, 'schedule_period', period.id).length;
     expect(() => archivePeriod(handle.db, period.id, ACTOR, '   ')).toThrow(/requires a reason/);
     expect(getPeriod(handle.db, period.id)?.status).toBe('published');
@@ -450,7 +453,7 @@ describe('placing a shift', () => {
       baseAssignment({ periodId: period.id, nurseId, date: isoDate('2026-01-20') }),
       ACTOR,
     );
-    publishSchedule(handle.db, { periodId: period.id }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: period.id }, ACTOR));
     recordHoldover(handle.db, { assignmentId: created.id, minutes: 90, mandated: false }, ACTOR);
     expect(() =>
       transact(handle.db, (tx) =>
@@ -476,14 +479,16 @@ describe('placing a shift', () => {
       ACTOR,
     );
     expect(() =>
-      replaceAssignments(
-        handle.db,
-        period.id,
-        [
-          baseAssignment({ nurseId, date: isoDate('2026-01-17') }),
-          baseAssignment({ nurseId, date: isoDate('2026-02-17') }),
-        ],
-        ACTOR,
+      transact(handle.db, (tx) =>
+        replaceAssignments(
+          tx,
+          period.id,
+          [
+            baseAssignment({ nurseId, date: isoDate('2026-01-17') }),
+            baseAssignment({ nurseId, date: isoDate('2026-02-17') }),
+          ],
+          ACTOR,
+        ),
       ),
     ).toThrow(/is outside/);
     expect(listAssignmentsForPeriod(handle.db, period.id).map((a) => a.id)).toEqual([existing.id]);
@@ -524,14 +529,77 @@ describe('placing a shift', () => {
       ACTOR,
     ).id;
     expect(() =>
-      replaceAssignments(
-        handle.db,
-        period.id,
-        [baseAssignment({ nurseId, date: isoDate('2026-01-17'), shiftTypeId: foreign })],
-        ACTOR,
+      transact(handle.db, (tx) =>
+        replaceAssignments(
+          tx,
+          period.id,
+          [baseAssignment({ nurseId, date: isoDate('2026-01-17'), shiftTypeId: foreign })],
+          ACTOR,
+        ),
       ),
     ).toThrow(/not one of this unit's shift types/);
     expect(listAssignmentsForPeriod(handle.db, period.id).map((a) => a.id)).toEqual([existing.id]);
+  });
+});
+
+describe('moving a shift', () => {
+  it('refuses to move a locked shift and leaves it where it was', () => {
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    const nurseId = mkNurse('Ada');
+    const created = createAssignment(
+      handle.db,
+      baseAssignment({ periodId: period.id, nurseId, date: isoDate('2026-01-16') }),
+      ACTOR,
+    );
+    setLocked(handle.db, created.id, true, ACTOR);
+    expect(() =>
+      transact(handle.db, (tx) =>
+        moveAssignment(
+          tx,
+          created.id,
+          { nurseId, shiftTypeId, date: isoDate('2026-01-17') },
+          ACTOR,
+        ),
+      ),
+    ).toThrow(/locked/);
+    const rows = listAssignmentsForPeriod(handle.db, period.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: created.id, date: '2026-01-16', isLocked: true });
+  });
+
+  it('carries charge, overtime and the note across a move, as a new shift', () => {
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    const nurseId = mkNurse('Ada');
+    const created = createAssignment(
+      handle.db,
+      baseAssignment({
+        periodId: period.id,
+        nurseId,
+        date: isoDate('2026-01-16'),
+        isCharge: true,
+        isOvertime: true,
+        notes: 'Covers Bea',
+      }),
+      ACTOR,
+    );
+    const moved = transact(handle.db, (tx) =>
+      moveAssignment(tx, created.id, { nurseId, shiftTypeId, date: isoDate('2026-01-17') }, ACTOR),
+    );
+    expect(moved).toMatchObject({
+      date: '2026-01-17',
+      isCharge: true,
+      isOvertime: true,
+      notes: 'Covers Bea',
+      source: 'manual',
+    });
+    expect(moved.id).not.toBe(created.id);
+    expect(getAssignment(handle.db, created.id)).toBeUndefined();
+    expect(auditHistoryFor(handle.db, 'assignment', created.id).map((e) => e.action)).toContain(
+      'delete',
+    );
+    expect(auditHistoryFor(handle.db, 'assignment', moved.id).map((e) => e.action)).toEqual([
+      'create',
+    ]);
   });
 });
 
@@ -589,7 +657,7 @@ describe('priorAssignmentsBefore', () => {
       basePeriod({ startDate: isoDate('2026-01-01'), endDate: isoDate('2026-01-14') }),
       ACTOR,
     );
-    publishSchedule(handle.db, { periodId: oldPeriod.id }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: oldPeriod.id }, ACTOR));
     const nurseId = mkNurse('Ada');
     const inWindow = createAssignment(
       handle.db,
@@ -625,7 +693,7 @@ describe('priorAssignmentsBefore', () => {
       basePeriod({ startDate: isoDate('2025-12-20'), endDate: isoDate('2026-01-14') }),
       ACTOR,
     );
-    publishSchedule(handle.db, { periodId: oldPeriod.id }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: oldPeriod.id }, ACTOR));
     const nurseId = mkNurse('Ada');
     // lookbackDays = 2 => window is [2026-01-13, 2026-01-14].
     const tooEarly = createAssignment(
@@ -657,7 +725,7 @@ describe('priorAssignmentsBefore', () => {
       baseAssignment({ periodId: oldPeriod.id, nurseId, date: isoDate('2026-01-14') }),
       ACTOR,
     );
-    publishSchedule(handle.db, { periodId: oldPeriod.id }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: oldPeriod.id }, ACTOR));
     archivePeriod(handle.db, oldPeriod.id, ACTOR, 'Pay period closed');
 
     const result = priorAssignmentsBefore(handle.db, unitId, newPeriodStart, 3);
@@ -670,7 +738,7 @@ describe('priorAssignmentsBefore', () => {
       basePeriod({ startDate: isoDate('2026-01-01'), endDate: isoDate('2026-01-21') }),
       ACTOR,
     );
-    publishSchedule(handle.db, { periodId: oldPeriod.id }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: oldPeriod.id }, ACTOR));
     const nurseId = mkNurse('Ada');
     const onStart = createAssignment(
       handle.db,
@@ -695,6 +763,14 @@ describe('priorAssignmentsBefore', () => {
 });
 
 describe('replaceAssignments', () => {
+  it('can only be called inside a transaction, so a regenerate is never half-written', () => {
+    // Never invoked: the point is that the compiler refuses a bare handle.
+    const bare = () =>
+      // @ts-expect-error a bare handle is not a ShiftNurseTx
+      replaceAssignments(handle.db, 'period', [], ACTOR);
+    expect(bare).toBeDefined();
+  });
+
   it('refuses to regenerate over a shift with a recorded holdover and deletes nothing', () => {
     const period = createPeriod(handle.db, basePeriod(), ACTOR);
     const nurseId = mkNurse('Ada');
@@ -703,9 +779,11 @@ describe('replaceAssignments', () => {
       baseAssignment({ periodId: period.id, nurseId, date: isoDate('2026-01-20') }),
       ACTOR,
     );
-    publishSchedule(handle.db, { periodId: period.id }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: period.id }, ACTOR));
     recordHoldover(handle.db, { assignmentId: held.id, minutes: 45, mandated: false }, ACTOR);
-    expect(() => replaceAssignments(handle.db, period.id, [], ACTOR)).toThrow(/45-minute holdover/);
+    expect(() => transact(handle.db, (tx) => replaceAssignments(tx, period.id, [], ACTOR))).toThrow(
+      /45-minute holdover/,
+    );
     expect(getAssignment(handle.db, held.id)!.holdoverMinutes).toBe(45);
   });
 
@@ -735,19 +813,21 @@ describe('replaceAssignments', () => {
     // The solver's output echoes the locked cell back (it had to know the slot was occupied)
     // and also proposes a brand-new assignment. The echoed locked cell collides on
     // (nurseId, date, shiftTypeId) with the row already on disk.
-    const result = replaceAssignments(
-      handle.db,
-      period.id,
-      [
-        baseAssignment({
-          periodId: period.id,
-          nurseId: lockedNurse,
-          date: lockedDate,
-          isLocked: true,
-        }),
-        baseAssignment({ periodId: period.id, nurseId: freshNurse, date: isoDate('2026-01-18') }),
-      ],
-      ACTOR,
+    const result = transact(handle.db, (tx) =>
+      replaceAssignments(
+        tx,
+        period.id,
+        [
+          baseAssignment({
+            periodId: period.id,
+            nurseId: lockedNurse,
+            date: lockedDate,
+            isLocked: true,
+          }),
+          baseAssignment({ periodId: period.id, nurseId: freshNurse, date: isoDate('2026-01-18') }),
+        ],
+        ACTOR,
+      ),
     );
 
     const remaining = listAssignmentsForPeriod(handle.db, period.id);
@@ -779,7 +859,7 @@ describe('replaceAssignments', () => {
       }),
       ACTOR,
     );
-    replaceAssignments(handle.db, period.id, [], ACTOR);
+    transact(handle.db, (tx) => replaceAssignments(tx, period.id, [], ACTOR));
 
     const generated = auditHistoryFor(handle.db, 'schedule_period', period.id).find(
       (e) => e.action === 'generate',
@@ -793,12 +873,14 @@ describe('replaceAssignments', () => {
   it('records which solver produced a generated schedule, and why it fell back', () => {
     const period = createPeriod(handle.db, basePeriod(), ACTOR);
     const nurse = mkNurse('Ada');
-    replaceAssignments(
-      handle.db,
-      period.id,
-      [baseAssignment({ periodId: period.id, nurseId: nurse, date: isoDate('2026-01-16') })],
-      ACTOR,
-      { solver: 'sa-lns', fellBackFrom: { solver: 'hybrid', reason: 'runner missing' } },
+    transact(handle.db, (tx) =>
+      replaceAssignments(
+        tx,
+        period.id,
+        [baseAssignment({ periodId: period.id, nurseId: nurse, date: isoDate('2026-01-16') })],
+        ACTOR,
+        { solver: 'sa-lns', fellBackFrom: { solver: 'hybrid', reason: 'runner missing' } },
+      ),
     );
     const generated = auditHistoryFor(handle.db, 'schedule_period', period.id).find(
       (e) => e.action === 'generate',
@@ -902,7 +984,7 @@ describe('floating a nurse off a shift (D20)', () => {
   it('keeps a floated shift when Generate replaces the draft', () => {
     const { period, row } = floatable();
     transact(handle.db, (tx) => markFloatedOff(tx, row.id, '5 East', ACTOR));
-    replaceAssignments(handle.db, period.id, [], ACTOR);
+    transact(handle.db, (tx) => replaceAssignments(tx, period.id, [], ACTOR));
     expect(listAssignmentsForPeriod(handle.db, period.id)).toEqual([
       expect.objectContaining({ id: row.id, floatedTo: '5 East', isLocked: true }),
     ]);

@@ -32,7 +32,11 @@ export function encodeConsecutive(ctx: EncodeContext, raw: Record<string, unknow
     if (worked.length === 0) continue;
 
     const byDay = new Map<number, TimelineEntry[]>();
-    for (const e of worked) byDay.set(e.day, [...(byDay.get(e.day) ?? []), e]);
+    for (const e of worked) {
+      const list = byDay.get(e.day);
+      if (list) list.push(e);
+      else byDay.set(e.day, [e]);
+    }
     const first = Math.min(...byDay.keys());
     const last = Math.max(...byDay.keys());
     const day = (d: number): Expr => dayExpr(byDay.get(d));

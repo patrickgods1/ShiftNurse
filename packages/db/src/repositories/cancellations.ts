@@ -18,7 +18,7 @@ import {
   type Id,
   type IsoDate,
 } from '@shiftnurse/core';
-import { and, asc, eq, gte } from 'drizzle-orm';
+import { and, asc, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
@@ -178,7 +178,9 @@ export function recordShiftCancellation(
 }
 
 /**
- * Each nurse's cancellations in the year up to `asOf`: how many, and the latest shift date. Only
+ * Each nurse's cancellations dated from 365 days before `asOf` through `asOf`: how many, and the
+ * latest shift date. A cancellation dated after `asOf` is a later decision and stays out; one
+ * dated `asOf` counts, because a nurse already sent home today is part of the rotation. Only
  * nurses cancelled at least once have an entry; core reads a missing nurse as "never".
  */
 export function cancellationHistory(db: DbLike, unitId: Id, asOf: IsoDate): CancellationHistory {
@@ -187,7 +189,7 @@ export function cancellationHistory(db: DbLike, unitId: Id, asOf: IsoDate): Canc
     .select({ nurseId: table.nurseId, date: table.date })
     .from(table)
     .innerJoin(schedulePeriod, eq(schedulePeriod.id, table.periodId))
-    .where(and(eq(schedulePeriod.unitId, unitId), gte(table.date, since)))
+    .where(and(eq(schedulePeriod.unitId, unitId), gte(table.date, since), lte(table.date, asOf)))
     .all();
   const history = new Map<Id, { count: number; lastOn?: IsoDate }>();
   for (const row of rows) {

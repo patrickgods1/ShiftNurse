@@ -230,7 +230,7 @@ describe('changing an orientation', () => {
     const record = pair('2026-10-05', '2026-11-15');
     expect(() =>
       updatePreceptorship(handle.db, record.id, { preceptorId: stranger.id } as never, ACTOR),
-    ).toThrow(/preceptorship/);
+    ).toThrow("A preceptorship update cannot change 'preceptorId'");
   });
 
   it('removes a record and audits it with what it was', () => {

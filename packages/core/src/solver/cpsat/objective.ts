@@ -300,7 +300,11 @@ function current(
       const byKey = new Map<string, TimelineEntry[]>();
       for (const e of worked) {
         const key = weekendKey(e.window, model.ctx.weekendDefinition);
-        if (key !== null) byKey.set(key, [...(byKey.get(key) ?? []), e]);
+        if (key !== null) {
+          const list = byKey.get(key);
+          if (list) list.push(e);
+          else byKey.set(key, [e]);
+        }
       }
       const e = expr();
       for (const [key, list] of [...byKey].sort(([a], [b]) => compareCodeUnits(a, b))) {

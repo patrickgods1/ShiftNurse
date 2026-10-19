@@ -76,7 +76,8 @@ export interface AuditedUpdate<Entity, Patch extends object> {
  * shares. It lives here so the audit contract (a `before` and an `after` on every update, in the
  * same call as the write) is made in one place: an updater that forgot the audit would be a
  * mutation with no record. The caller supplies only what differs per table — how to read the
- * entity, how to write the columns — and the helper always writes, even for an empty patch.
+ * entity, how to write the columns — and an empty patch writes nothing but is still audited
+ * (the manager pressed Save).
  */
 export function auditedUpdate<Entity, Patch extends object>(
   db: DbLike,
@@ -87,7 +88,8 @@ export function auditedUpdate<Entity, Patch extends object>(
   if (before === undefined) throw new Error(spec.notFound);
   const values = patchOf(spec.patch, spec.allowed, spec.entityLabel);
   spec.validate?.(values, before);
-  spec.write(id, values);
+  // An empty patch has no columns to set (drizzle throws); it is still the manager pressing Save.
+  if (Object.keys(values).length > 0) spec.write(id, values);
   const after = spec.read(id);
   if (after === undefined) throw new Error(spec.notFound);
   recordAudit(db, { entityType, entityId: id, action: 'update', actor: spec.actor, before, after });

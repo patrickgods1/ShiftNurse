@@ -19,10 +19,10 @@ import type {
   ScheduleKind,
   Tour,
 } from '@shiftnurse/core';
-import { addDays, SCHEDULE_KINDS } from '@shiftnurse/core';
+import { addDays, SCHEDULE_KINDS, sameEmployeeId } from '@shiftnurse/core';
 import { and, asc, eq, gte, isNotNull, isNull, lt, lte, or } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
-import type { DbLike } from '../client.js';
+import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import {
   fromPreference,
@@ -126,32 +126,30 @@ export function nursesBySeniority(db: DbLike, unitId: Id): Nurse[] {
     .map(toNurse);
 }
 
+/**
+ * The unique index is case-sensitive, so `e1` beside `E1` would save and later make every
+ * roster import ambiguous. Refused here rather than indexed on `lower()`: an existing file may
+ * already hold twins, and an index over them would fail the upgrade.
+ */
+function checkEmployeeIdFree(db: DbLike, unitId: Id, employeeId: string, selfId?: Id): void {
+  const clash = listNursesForUnit(db, unitId).find(
+    (n) => n.id !== selfId && sameEmployeeId(n.employeeId, employeeId),
+  );
+  if (clash) {
+    throw new Error(
+      `Employee id "${employeeId}" is already used by ${clash.lastName}, ${clash.firstName} ("${clash.employeeId}") on this unit.`,
+    );
+  }
+}
+
 export function createNurse(db: DbLike, input: Omit<Nurse, 'id'>, actor: string): Nurse {
+  checkEmployeeIdFree(db, input.unitId, input.employeeId);
   const id = ids.nurse();
   const row = buildNurseRow(id, input);
   db.insert(nurseTable).values(row).run();
   const after = toNurse(row as typeof nurseTable.$inferSelect);
   recordAudit(db, { entityType: 'nurse', entityId: id, action: 'create', actor, after });
   return after;
-}
-
-/**
- * Bulk insert for CSV import. One audit entry per nurse, action `'import'`, so the audit
- * history distinguishes "the manager typed this in" from "this arrived in a spreadsheet".
- */
-export function insertNurses(
-  db: DbLike,
-  nurses: readonly Omit<Nurse, 'id'>[],
-  actor: string,
-): Nurse[] {
-  if (nurses.length === 0) return [];
-  const rows = nurses.map((n) => buildNurseRow(ids.nurse(), n));
-  db.insert(nurseTable).values(rows).run();
-  const created = rows.map((r) => toNurse(r as typeof nurseTable.$inferSelect));
-  for (const n of created) {
-    recordAudit(db, { entityType: 'nurse', entityId: n.id, action: 'import', actor, after: n });
-  }
-  return created;
 }
 
 /**
@@ -211,6 +209,9 @@ export function updateNurse(db: DbLike, id: Id, patch: NursePatch, actor: string
   const before = toNurse(row);
   const values = patchOf(patch, NURSE_PATCH_KEYS, 'nurse');
   checkScheduleKind(values.scheduleKind);
+  if (values.employeeId !== undefined) {
+    checkEmployeeIdFree(db, row.unitId, values.employeeId, id);
+  }
   const merged = { ...row, ...values };
   db.update(nurseTable).set(merged).where(eq(nurseTable.id, id)).run();
   const after = toNurse(merged);
@@ -459,13 +460,11 @@ export function listPreferencesForUnit(db: DbLike, unitId: Id): Preference[] {
 }
 
 /**
- * Replace a nurse's whole preference set: delete then insert. Callers that need this atomic
- * alongside other profile changes should run it inside their own `transact()` — this function
- * only guarantees the delete and insert happen in the order shown, not that they are atomic
- * with anything else.
+ * Replace a nurse's whole preference set: delete then insert, in the caller's transaction.
  */
 export function replaceNursePreferences(
-  db: DbLike,
+  // A transaction, not any handle: these writes are only correct all-or-nothing.
+  db: ShiftNurseTx,
   nurseId: Id,
   preferences: readonly Preference[],
   actor: string,

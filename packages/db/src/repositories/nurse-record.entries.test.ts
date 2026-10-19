@@ -168,7 +168,7 @@ beforeEach(() => {
     ).id;
   const anasShift = shiftFor(ana.id, '2026-03-02');
   const beasShift = shiftFor(bea.id, '2026-03-03');
-  publishSchedule(db, { periodId: publishedId, ledger: [] }, ACTOR);
+  transact(db, (tx) => publishSchedule(tx, { periodId: publishedId, ledger: [] }, ACTOR));
   ctx = {
     db,
     unitId,
@@ -407,19 +407,21 @@ const CASES: Record<NurseScoped, Case> = {
   },
   preference: {
     act: (c) =>
-      replaceNursePreferences(
-        c.db,
-        c.ana.id,
-        [
-          {
-            id: 'pref-1',
-            nurseId: c.ana.id,
-            kind: 'prefer_shift_type',
-            shiftTypeId: c.dayId,
-            weight: 2,
-          },
-        ],
-        ACTOR,
+      transact(c.db, (tx) =>
+        replaceNursePreferences(
+          tx,
+          c.ana.id,
+          [
+            {
+              id: 'pref-1',
+              nurseId: c.ana.id,
+              kind: 'prefer_shift_type',
+              shiftTypeId: c.dayId,
+              weight: 2,
+            },
+          ],
+          ACTOR,
+        ),
       ),
   },
   rest_waiver: {

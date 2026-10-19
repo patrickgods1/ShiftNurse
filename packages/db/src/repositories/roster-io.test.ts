@@ -12,9 +12,11 @@ import {
   type RosterCsvRow,
   serializeCsv,
 } from '@shiftnurse/core';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor, recentAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
+import * as schema from '../schema.js';
 import { createUnit } from './config.js';
 import {
   createNurse,
@@ -143,6 +145,39 @@ describe('roster import reconciliation', () => {
     const nurses = listActiveNursesForUnit(handle.db, unitId);
     expect(nurses).toHaveLength(1);
     expect(nurses[0]!.fte).toBe(0.6);
+  });
+
+  it('updates Ada when the sheet writes her employee id in lower case', () => {
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ALL, ACTOR));
+    const lower = { ...ada, nurse: { ...ada.nurse, employeeId: 'e1', phone: '555-0199' } };
+    const summary = transact(handle.db, (tx) => importRoster(tx, unitId, [lower], ALL, ACTOR));
+    expect(summary).toMatchObject({ created: 0, updated: 1 });
+    const nurses = listActiveNursesForUnit(handle.db, unitId);
+    expect(nurses).toHaveLength(1);
+    expect(nurses[0]!.employeeId).toBe('E1');
+    expect(nurses[0]!.phone).toBe('555-0199');
+  });
+
+  it('refuses the whole import when an id matches two stored nurses', () => {
+    transact(handle.db, (tx) => importRoster(tx, unitId, [ada], ALL, ACTOR));
+    const bo = createNurse(
+      handle.db,
+      { ...ada.nurse, unitId, active: true, employeeId: 'B1', firstName: 'Bo', lastName: 'Diaz' },
+      ACTOR,
+    );
+    // A case-twin can only exist in a file older than the create refusal.
+    handle.db
+      .update(schema.nurse)
+      .set({ employeeId: 'e1' })
+      .where(eq(schema.nurse.id, bo.id))
+      .run();
+    const fresh = { ...ada, nurse: { ...ada.nurse, employeeId: 'E2', firstName: 'Cy' } };
+    expect(() =>
+      transact(handle.db, (tx) => importRoster(tx, unitId, [fresh, ada], ALL, ACTOR)),
+    ).toThrow(
+      'Employee id "E1" matches two nurses on this unit: Okafor, Ada ("E1") and Diaz, Bo ("e1"). Give one of them a different employee id under Roster, then import again.',
+    );
+    expect(getNurseByEmployeeId(handle.db, unitId, 'E2')).toBeUndefined();
   });
 
   it('carries a hire date through import, export and re-import, and an empty cell clears it', () => {

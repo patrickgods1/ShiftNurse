@@ -352,7 +352,9 @@ export function busyElsewhereFor(
     .all();
   const byUnit = new Map<Id, Assignment[]>();
   for (const r of rows) {
-    byUnit.set(r.otherUnitId, [...(byUnit.get(r.otherUnitId) ?? []), toAssignment(r.row)]);
+    const list = byUnit.get(r.otherUnitId);
+    if (list) list.push(toAssignment(r.row));
+    else byUnit.set(r.otherUnitId, [toAssignment(r.row)]);
   }
   const shiftTypes: ShiftType[] = [];
   const assignments: Assignment[] = [];

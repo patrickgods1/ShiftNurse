@@ -179,8 +179,11 @@ export function encodeCpsat(input: SolveInput, options: EncodeOptions = {}): Cps
     }
     // One shift start per day, as the annealer's eligibility filter has it.
     const byDay = new Map<number, number[]>();
-    for (const sv of byNurse[n]!)
-      byDay.set(sv.shift.dateIdx, [...(byDay.get(sv.shift.dateIdx) ?? []), sv.variable]);
+    for (const sv of byNurse[n]!) {
+      const list = byDay.get(sv.shift.dateIdx);
+      if (list) list.push(sv.variable);
+      else byDay.set(sv.shift.dateIdx, [sv.variable]);
+    }
     for (const [dateIdx, vars] of byDay) {
       if (vars.length > 1)
         b.atMostOne(

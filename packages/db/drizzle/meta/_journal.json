@@ -288,6 +288,34 @@
       "when": 1792337425743,
       "tag": "0040_home_unit",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1792382475025,
+      "tag": "0041_coverage_floor_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "6",
+      "when": 1792383594481,
+      "tag": "0042_pay_rate_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1792384766424,
+      "tag": "0043_validation_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1792384849600,
+      "tag": "0044_float_record_shift_type_no_cascade",
+      "breakpoints": true
     }
   ]
 }

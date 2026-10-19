@@ -42,7 +42,6 @@ import {
   deactivateNurse,
   getNurse,
   grantCredential,
-  insertNurses,
   lapsedCredentialsForUnit,
   listActiveNursesForUnit,
   listNurseCredentials,
@@ -106,19 +105,6 @@ describe('nurses', () => {
     expect(history).toHaveLength(1);
     expect(history[0]?.action).toBe('create');
     expect(history[0]?.actor).toBe(ACTOR);
-  });
-
-  it('bulk-inserts a roster and marks each row as an import', () => {
-    const created = insertNurses(
-      handle.db,
-      [baseNurse({ firstName: 'A' }), baseNurse({ firstName: 'B' }), baseNurse({ firstName: 'C' })],
-      ACTOR,
-    );
-    expect(created).toHaveLength(3);
-    expect(listNursesForUnit(handle.db, unitId)).toHaveLength(3);
-
-    const imports = recentAudit(handle.db).filter((e) => e.action === 'import');
-    expect(imports).toHaveLength(3);
   });
 
   it('treats an omitted patch key as "leave untouched"', () => {
@@ -196,6 +182,34 @@ describe('nurses', () => {
     const cleared = updateNurse(handle.db, nurse.id, { scheduledDaysPerWeek: null }, ACTOR);
     expect(cleared.scheduledDaysPerWeek).toBeUndefined();
     expect(getNurse(handle.db, nurse.id)?.scheduledDaysPerWeek).toBeUndefined();
+  });
+
+  it("refuses a new nurse whose employee id differs from Ana's only by case", () => {
+    createNurse(
+      handle.db,
+      baseNurse({ employeeId: 'E1', firstName: 'Ana', lastName: 'Cruz' }),
+      ACTOR,
+    );
+    expect(() => createNurse(handle.db, baseNurse({ employeeId: ' e1 ' }), ACTOR)).toThrow(
+      'Employee id " e1 " is already used by Cruz, Ana ("E1") on this unit.',
+    );
+  });
+
+  it("refuses to change a nurse's employee id to one that differs from Ana's only by case", () => {
+    createNurse(
+      handle.db,
+      baseNurse({ employeeId: 'E1', firstName: 'Ana', lastName: 'Cruz' }),
+      ACTOR,
+    );
+    const bo = createNurse(handle.db, baseNurse({ employeeId: 'E2' }), ACTOR);
+    expect(() => updateNurse(handle.db, bo.id, { employeeId: 'e1' }, ACTOR)).toThrow(
+      /already used by Cruz, Ana \("E1"\)/,
+    );
+  });
+
+  it('lets a nurse respell her own employee id in another case', () => {
+    const ana = createNurse(handle.db, baseNurse({ employeeId: 'E1' }), ACTOR);
+    expect(updateNurse(handle.db, ana.id, { employeeId: 'e1' }, ACTOR).employeeId).toBe('e1');
   });
 
   it('refuses to move a nurse to another unit through an edit', () => {
@@ -616,7 +630,7 @@ describe('preferences', () => {
       { id: 'p2', nurseId: nurse.id, kind: 'weekend_appetite', level: -1, weight: 5 },
       { id: 'p3', nurseId: nurse.id, kind: 'preferred_block_length', shifts: 3, weight: 2 },
     ];
-    replaceNursePreferences(handle.db, nurse.id, prefs, ACTOR);
+    transact(handle.db, (tx) => replaceNursePreferences(tx, nurse.id, prefs, ACTOR));
 
     const back = listPreferencesForNurse(handle.db, nurse.id);
     expect(back).toHaveLength(3);
@@ -637,7 +651,7 @@ describe('preferences', () => {
       holidayId: christmas.id,
       weight: 4,
     };
-    replaceNursePreferences(handle.db, nurse.id, [wish], ACTOR);
+    transact(handle.db, (tx) => replaceNursePreferences(tx, nurse.id, [wish], ACTOR));
     expect(listPreferencesForNurse(handle.db, nurse.id)).toEqual([wish]);
 
     transact(handle.db, (tx) => deleteHoliday(tx, christmas.id, ACTOR));
@@ -647,20 +661,24 @@ describe('preferences', () => {
   it('refuses a preference for another nurse in this nurse’s set, and keeps both sets as they were', () => {
     const ana = createNurse(handle.db, baseNurse({ firstName: 'Ana' }), ACTOR);
     const bea = createNurse(handle.db, baseNurse({ firstName: 'Bea' }), ACTOR);
-    replaceNursePreferences(
-      handle.db,
-      ana.id,
-      [{ id: 'p1', nurseId: ana.id, kind: 'weekend_appetite', level: 1, weight: 3 }],
-      ACTOR,
+    transact(handle.db, (tx) =>
+      replaceNursePreferences(
+        tx,
+        ana.id,
+        [{ id: 'p1', nurseId: ana.id, kind: 'weekend_appetite', level: 1, weight: 3 }],
+        ACTOR,
+      ),
     );
     const auditsBefore = recentAudit(handle.db, 1000).length;
 
     expect(() =>
-      replaceNursePreferences(
-        handle.db,
-        ana.id,
-        [{ id: 'p2', nurseId: bea.id, kind: 'weekend_appetite', level: 1, weight: 3 }],
-        ACTOR,
+      transact(handle.db, (tx) =>
+        replaceNursePreferences(
+          tx,
+          ana.id,
+          [{ id: 'p2', nurseId: bea.id, kind: 'weekend_appetite', level: 1, weight: 3 }],
+          ACTOR,
+        ),
       ),
     ).toThrow("A preference for another nurse cannot be saved in this nurse's set.");
 
@@ -671,13 +689,15 @@ describe('preferences', () => {
 
   it('replacing with an empty list clears them', () => {
     const nurse = createNurse(handle.db, baseNurse(), ACTOR);
-    replaceNursePreferences(
-      handle.db,
-      nurse.id,
-      [{ id: 'p1', nurseId: nurse.id, kind: 'weekend_appetite', level: 1, weight: 3 }],
-      ACTOR,
+    transact(handle.db, (tx) =>
+      replaceNursePreferences(
+        tx,
+        nurse.id,
+        [{ id: 'p1', nurseId: nurse.id, kind: 'weekend_appetite', level: 1, weight: 3 }],
+        ACTOR,
+      ),
     );
-    replaceNursePreferences(handle.db, nurse.id, [], ACTOR);
+    transact(handle.db, (tx) => replaceNursePreferences(tx, nurse.id, [], ACTOR));
     expect(listPreferencesForNurse(handle.db, nurse.id)).toHaveLength(0);
   });
 
@@ -685,17 +705,21 @@ describe('preferences', () => {
     // Fairness scoring reads these for the whole team; an N+1 here would be felt.
     const a = createNurse(handle.db, baseNurse(), ACTOR);
     const b = createNurse(handle.db, baseNurse(), ACTOR);
-    replaceNursePreferences(
-      handle.db,
-      a.id,
-      [{ id: 'pa', nurseId: a.id, kind: 'weekend_appetite', level: -1, weight: 3 }],
-      ACTOR,
+    transact(handle.db, (tx) =>
+      replaceNursePreferences(
+        tx,
+        a.id,
+        [{ id: 'pa', nurseId: a.id, kind: 'weekend_appetite', level: -1, weight: 3 }],
+        ACTOR,
+      ),
     );
-    replaceNursePreferences(
-      handle.db,
-      b.id,
-      [{ id: 'pb', nurseId: b.id, kind: 'preferred_block_length', shifts: 4, weight: 1 }],
-      ACTOR,
+    transact(handle.db, (tx) =>
+      replaceNursePreferences(
+        tx,
+        b.id,
+        [{ id: 'pb', nurseId: b.id, kind: 'preferred_block_length', shifts: 4, weight: 1 }],
+        ACTOR,
+      ),
     );
     expect(listPreferencesForUnit(handle.db, unitId)).toHaveLength(2);
   });

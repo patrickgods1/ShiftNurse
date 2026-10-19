@@ -18,6 +18,8 @@ import type {
 import {
   COST_LINE_LABELS,
   DEFAULT_PAY_SETTINGS,
+  DIFFERENTIAL_ORDER,
+  describeDate,
   isIsoDate,
   resolvePayRate,
   SCHEDULE_KINDS,
@@ -27,7 +29,15 @@ import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import { toBudget, toDifferential, toOvertimeRule, toPayRate } from '../mappers.js';
-import { budget, differential, nurse, overtimeRule, payRate, paySettings } from '../schema.js';
+import {
+  budget,
+  differential,
+  nurse,
+  overtimeRule,
+  payRate,
+  paySettings,
+  schedulePeriod,
+} from '../schema.js';
 import { auditedUpdate, type PatchKeys } from './patch.js';
 
 // ---------------------------------------------------------------------------
@@ -38,8 +48,8 @@ import { auditedUpdate, type PatchKeys } from './patch.js';
  * Every rate relevant to a unit: this unit's per-nurse overrides, plus every role-default row.
  * `pay_rate` has no unit column of its own — a per-nurse rate is scoped by joining through
  * `nurse`, and a role default has no owning unit at all (it is `nurseId: null`, the role's
- * base rate wherever it applies), so it is always included. In insertion order:
- * `resolvePayRate` keeps the first of two rates with the same effective date.
+ * base rate wherever it applies), so it is always included. In insertion order, which no
+ * longer matters to pricing: there is one rate per scope and start date (unique index).
  */
 export function listPayRatesForUnit(db: DbLike, unitId: Id): PayRate[] {
   const unitNurses = db.select({ id: nurse.id }).from(nurse).where(eq(nurse.unitId, unitId));
@@ -52,10 +62,7 @@ export function listPayRatesForUnit(db: DbLike, unitId: Id): PayRate[] {
     .map(toPayRate);
 }
 
-/**
- * These nurses' own rates (no role defaults), for `perNurseRecordsFor`. In insertion order, so
- * each nurse's same-date rates keep the order `resolvePayRate` depends on.
- */
+/** These nurses' own rates (no role defaults), for `perNurseRecordsFor`. */
 export function listPayRatesForNurses(db: DbLike, nurseIds: readonly Id[]): PayRate[] {
   if (nurseIds.length === 0) return [];
   return db
@@ -104,8 +111,78 @@ function assertPayRateScope(input: Pick<PayRate, 'nurseId' | 'role'>): void {
   }
 }
 
+/**
+ * A NaN or negative rate would misprice every shift it covers without failing anywhere. One
+ * function so creating a rate refuses what changing one always did.
+ */
+function checkPayRate(values: { hourlyRate?: number; effectiveFrom?: unknown }): void {
+  if (
+    values.hourlyRate !== undefined &&
+    !(Number.isFinite(values.hourlyRate) && values.hourlyRate >= 0)
+  ) {
+    throw new Error('An hourly rate must be a number of dollars, zero or more.');
+  }
+  if (
+    values.effectiveFrom !== undefined &&
+    !(typeof values.effectiveFrom === 'string' && isIsoDate(values.effectiveFrom))
+  ) {
+    throw new Error('Effective from must be a date.');
+  }
+}
+
+/**
+ * Refuses a second rate for the same person (or role default) from the same day. Core keeps the
+ * first of two same-day rates, so a later "correction" would be stored and never applied.
+ */
+function checkRateDateFree(
+  db: DbLike,
+  scope: Pick<PayRate, 'nurseId' | 'role'>,
+  effectiveFrom: IsoDate,
+  exceptId?: Id,
+): void {
+  if (scope.nurseId !== null) {
+    const person = db
+      .select({ firstName: nurse.firstName, lastName: nurse.lastName })
+      .from(nurse)
+      .where(eq(nurse.id, scope.nurseId))
+      .get();
+    if (!person) throw new Error('That nurse was not found. Reload the page.');
+    const clash = db
+      .select({ id: payRate.id })
+      .from(payRate)
+      .where(and(eq(payRate.nurseId, scope.nurseId), eq(payRate.effectiveFrom, effectiveFrom)))
+      .all()
+      .some((r) => r.id !== exceptId);
+    if (clash) {
+      throw new Error(
+        `${person.firstName} ${person.lastName} already has a pay rate from ${describeDate(effectiveFrom, { year: true })}; change that one instead.`,
+      );
+    }
+    return;
+  }
+  const clash = db
+    .select({ id: payRate.id })
+    .from(payRate)
+    .where(
+      and(
+        isNull(payRate.nurseId),
+        eq(payRate.role, scope.role as NurseRole),
+        eq(payRate.effectiveFrom, effectiveFrom),
+      ),
+    )
+    .all()
+    .some((r) => r.id !== exceptId);
+  if (clash) {
+    throw new Error(
+      `There is already a default ${scope.role} rate from ${describeDate(effectiveFrom, { year: true })}; change that one instead.`,
+    );
+  }
+}
+
 export function createPayRate(db: DbLike, input: PayRateInput, actor: string): PayRate {
   assertPayRateScope(input);
+  checkPayRate(input);
+  checkRateDateFree(db, input, input.effectiveFrom);
   const id = ids.payRate();
   const row = {
     id,
@@ -144,19 +221,10 @@ export function updatePayRate(db: DbLike, id: Id, patch: PayRatePatch, actor: st
     },
     write: (rowId, values) => db.update(payRate).set(values).where(eq(payRate.id, rowId)).run(),
     notFound: `Pay rate ${id} not found`,
-    validate: (values) => {
-      // A NaN or negative rate would misprice every shift it covers without failing anywhere.
-      if (
-        values.hourlyRate !== undefined &&
-        !(Number.isFinite(values.hourlyRate) && values.hourlyRate >= 0)
-      ) {
-        throw new Error('An hourly rate must be a number of dollars, zero or more.');
-      }
-      if (
-        values.effectiveFrom !== undefined &&
-        !(typeof values.effectiveFrom === 'string' && isIsoDate(values.effectiveFrom))
-      ) {
-        throw new Error('Effective from must be a date.');
+    validate: (values, before) => {
+      checkPayRate(values);
+      if (values.effectiveFrom !== undefined && values.effectiveFrom !== before.effectiveFrom) {
+        checkRateDateFree(db, before, values.effectiveFrom, before.id);
       }
     },
     actor,
@@ -303,6 +371,30 @@ function checkOneActive(db: DbLike, unitId: Id, kind: Differential['kind'], exce
   }
 }
 
+const DIFFERENTIAL_KINDS = DIFFERENTIAL_ORDER;
+
+/**
+ * IPC input is typed, not checked, and seeds call here directly: refuse what pricing cannot read.
+ * A negative amount is left to `checkAmount`, whose message says which kind of negative it is.
+ */
+function checkDifferentialFields(values: { kind?: unknown; mode?: unknown; amount?: unknown }) {
+  if (
+    values.kind !== undefined &&
+    !(DIFFERENTIAL_KINDS as readonly unknown[]).includes(values.kind)
+  ) {
+    throw new Error(`A differential's kind must be one of ${DIFFERENTIAL_KINDS.join(', ')}.`);
+  }
+  if (values.mode !== undefined && values.mode !== 'multiplier' && values.mode !== 'flat') {
+    throw new Error('A differential is a multiplier or a flat amount.');
+  }
+  if (
+    values.amount !== undefined &&
+    !(typeof values.amount === 'number' && Number.isFinite(values.amount))
+  ) {
+    throw new Error('A differential amount must be a number, zero or more.');
+  }
+}
+
 function consecutiveColumns(consecutive: Differential['consecutive'] | undefined) {
   return {
     consecutiveAfterShifts: consecutive?.afterShifts ?? null,
@@ -323,6 +415,7 @@ export function createDifferential(
   input: DifferentialInput,
   actor: string,
 ): Differential {
+  checkDifferentialFields(input);
   checkWindow(input.kind, input.window);
   checkConsecutive(input.kind, input.consecutive);
   checkAmount(input.kind, input.mode, input.amount);
@@ -359,6 +452,7 @@ export function updateDifferential(
       return row ? toDifferential(row) : undefined;
     },
     validate: (values, before) => {
+      checkDifferentialFields(values);
       const window = values.window === undefined ? before.window : (values.window ?? undefined);
       checkWindow(values.kind ?? before.kind, window);
       const consecutive =
@@ -376,7 +470,6 @@ export function updateDifferential(
         checkOneActive(db, before.unitId, values.kind ?? before.kind, before.id);
       }
     },
-    // The id rides along so an empty patch still writes, as the full-row update always did.
     write: (rowId, values) => {
       const { window, consecutive, ...columns } = values;
       db.update(differential)
@@ -384,7 +477,6 @@ export function updateDifferential(
           ...columns,
           ...(window === undefined ? {} : windowColumns(window ?? undefined)),
           ...(consecutive === undefined ? {} : consecutiveColumns(consecutive ?? undefined)),
-          id: rowId,
         })
         .where(eq(differential.id, rowId))
         .run();
@@ -438,15 +530,45 @@ const OVERTIME_RULE_PATCH_KEYS: PatchKeys<OvertimeRulePatch> = {
   tourDays: true,
 };
 
+// A Record keyed by the union makes a basis added to the entity a compile error here.
+const OVERTIME_BASIS_SET: Record<OvertimeRule['basis'], true> = {
+  daily: true,
+  weekly: true,
+  pay_period: true,
+  seventh_day: true,
+  beyond_scheduled_tour: true,
+  consecutive: true,
+  beyond_scheduled_days: true,
+  weekend: true,
+};
+const OVERTIME_BASES: readonly string[] = Object.keys(OVERTIME_BASIS_SET);
+
 /** IPC input is typed, not checked, and seeds call here directly: refuse what pricing cannot read. */
 function checkOvertimeOptions(values: {
   basis?: string | undefined;
+  thresholdHours?: number | undefined;
+  multiplier?: number | undefined;
   pyramiding?: string | null | undefined;
   minimumMinutes?: number | null | undefined;
   scheduleKinds?: readonly string[] | null | undefined;
   tourDays?: string | null | undefined;
 }): void {
   const { pyramiding, minimumMinutes, scheduleKinds, tourDays } = values;
+  if (values.basis !== undefined && !OVERTIME_BASES.includes(values.basis)) {
+    throw new Error(`An overtime rule's basis must be one of ${OVERTIME_BASES.join(', ')}.`);
+  }
+  if (
+    values.thresholdHours !== undefined &&
+    !(Number.isFinite(values.thresholdHours) && values.thresholdHours >= 0)
+  ) {
+    throw new Error('An overtime threshold must be a number of hours, zero or more.');
+  }
+  if (
+    values.multiplier !== undefined &&
+    !(Number.isFinite(values.multiplier) && values.multiplier >= 1)
+  ) {
+    throw new Error('An overtime multiplier must be 1 or more.');
+  }
   if (pyramiding != null && pyramiding !== 'stack' && pyramiding !== 'none') {
     throw new Error('Pyramiding must be stack or none');
   }
@@ -520,13 +642,8 @@ export function updateOvertimeRule(
       const row = db.select().from(overtimeRule).where(eq(overtimeRule.id, rowId)).get();
       return row ? toOvertimeRule(row) : undefined;
     },
-    // The id rides along so an empty patch still writes, as the full-row update always did.
     write: (rowId, values) =>
-      db
-        .update(overtimeRule)
-        .set({ ...values, id: rowId })
-        .where(eq(overtimeRule.id, rowId))
-        .run(),
+      db.update(overtimeRule).set(values).where(eq(overtimeRule.id, rowId)).run(),
     // Tour days are judged against the basis the rule will have, so a patch that moves a rule off
     // 'daily' cannot leave a tour-day filter behind that nothing reads.
     validate: (values, before) =>
@@ -560,6 +677,16 @@ export function setBudget(
   targetDollars: number,
   actor: string,
 ): Budget {
+  if (!(Number.isFinite(targetDollars) && targetDollars >= 0)) {
+    throw new Error('A budget must be a number of dollars, zero or more.');
+  }
+  const period = db
+    .select({ unitId: schedulePeriod.unitId })
+    .from(schedulePeriod)
+    .where(eq(schedulePeriod.id, periodId))
+    .get();
+  if (!period) throw new Error('That schedule period was not found. Reload the page.');
+  if (period.unitId !== unitId) throw new Error('That schedule period is not on this unit.');
   const existing = db.select().from(budget).where(eq(budget.periodId, periodId)).get();
   if (existing) {
     const before = toBudget(existing);

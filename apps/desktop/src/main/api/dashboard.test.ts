@@ -6,7 +6,7 @@
  */
 
 import { addDays } from '@shiftnurse/core';
-import { publishSchedule, updateNurse } from '@shiftnurse/db';
+import { publishSchedule, transact, updateNurse } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ACTOR } from './context.js';
 import { dashboardSummary, onShiftOn } from './dashboard.js';
@@ -36,7 +36,9 @@ describe("the dashboard's on-shift-today list", () => {
       shiftTypeId: f.day.id,
       date,
     });
-    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) =>
+      publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+    );
     const next = periodsApi(f.handle.db).create({
       unitId: f.seeded.unitId,
       name: 'Next draft',
@@ -61,7 +63,9 @@ describe("the dashboard's on-shift-today list", () => {
         date,
       });
     }
-    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) =>
+      publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+    );
     const request = {
       periodId: f.seeded.draftPeriodId,
       date,

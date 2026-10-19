@@ -621,7 +621,10 @@ export interface CoverageRequirement {
   id: Id;
   unitId: Id;
   shiftTypeId: Id;
-  /** Applies to this weekday; `null` with a `date` set makes it a one-off override. */
+  /**
+   * Exactly one of `weekday` and `date` is set (`minCount ≤ targetCount`). A weekday applies
+   * every week; `null` with a `date` set makes it a one-off override.
+   */
   weekday: Weekday | null;
   /** A specific date override, which takes precedence over the weekday rule. */
   date: IsoDate | null;
@@ -869,8 +872,9 @@ export interface CallOff {
   /** The backfill assignment, once someone accepts. */
   replacementAssignmentId?: Id;
   /**
-   * Hours paid from the nurse's sick leave for the missed shift. Once the shift is off the
-   * schedule they count toward contracted hours, as paid leave does.
+   * Hours paid from the nurse's sick leave for the missed shift. Credited toward contracted
+   * hours, as paid leave is, once the shift is off the schedule and not back on it; a cancelled
+   * call-off credits nothing.
    */
   paidSickHours?: number;
 }

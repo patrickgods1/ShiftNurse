@@ -4,7 +4,8 @@
  * Two impedance mismatches make this layer necessary rather than incidental:
  *
  * 1. **`null` vs `undefined`.** SQL has one absent value; the domain interfaces use optional
- *    properties. Leaking `null` into `packages/core` would force every rule to test for both.
+ *    properties, so NULL becomes an absent key, never `key: undefined` (`optKey`). Leaking
+ *    `null` into `packages/core` would force every rule to test for both.
  * 2. **The `Preference` discriminated union.** It is four shapes with different payloads,
  *    stored as one table with nullable columns. Reassembling the correct variant — and
  *    failing loudly on a row that matches none — belongs here, not in the rule engine.
@@ -47,9 +48,30 @@ import type {
 } from '@shiftnurse/core';
 import type * as s from './schema.js';
 
-/** SQL `NULL` becomes an absent optional property. */
-function opt<T>(value: T | null): T | undefined {
-  return value === null ? undefined : value;
+/** SQL `NULL` becomes an absent key, never `key: undefined`: an entity then equals its own
+ *  audit snapshot, which JSON writes without undefined keys. */
+function optKey<K extends string, T>(key: K, value: T | null | undefined): { [P in K]?: T } {
+  return value === null || value === undefined ? {} : ({ [key]: value } as { [P in K]?: T });
+}
+
+/** A corruption guard for a published version's JSON, not a schema validator. */
+function isAssignmentShape(x: unknown): x is Assignment {
+  if (typeof x !== 'object' || x === null) return false;
+  const o = x as Record<string, unknown>;
+  return ['id', 'periodId', 'nurseId', 'shiftTypeId', 'date'].every(
+    (k) => typeof o[k] === 'string',
+  );
+}
+
+const DAMAGED_CHANGE =
+  'A change-log entry for this schedule is damaged and cannot be read. Restore a backup (Settings › Backups).';
+
+function changeSide(x: unknown): Assignment | null {
+  if (x === null || x === undefined) return null;
+  if (typeof x !== 'object' || typeof (x as { id?: unknown }).id !== 'string') {
+    throw new Error(DAMAGED_CHANGE);
+  }
+  return x as Assignment;
 }
 
 export function toUnit(r: typeof s.unit.$inferSelect): Unit {
@@ -64,16 +86,14 @@ export function toUnit(r: typeof s.unit.$inferSelect): Unit {
       breakMinutesPerNurse: r.breakMinutesPerNurse,
       chargeCoversBreaks: r.chargeCoversBreaks,
     },
-    ...(r.postingLeadDays === null ? {} : { postingLeadDays: r.postingLeadDays }),
-    ...(r.jurisdiction === null ? {} : { jurisdiction: r.jurisdiction as JurisdictionId }),
-    ...(r.jurisdictionChoices === null ? {} : { jurisdictionChoices: r.jurisdictionChoices }),
-    ...(r.leavePolicy === null ? {} : { leavePolicy: r.leavePolicy }),
-    ...(r.overtimeOrder === null ? {} : { overtimeOrder: r.overtimeOrder }),
-    ...(r.perDiemCommitment === null ? {} : { perDiemCommitment: r.perDiemCommitment }),
-    ...(r.requireConsentForPostedChanges === null
-      ? {}
-      : { requireConsentForPostedChanges: r.requireConsentForPostedChanges }),
-    ...(r.minWeekendsOffPerYear === null ? {} : { minWeekendsOffPerYear: r.minWeekendsOffPerYear }),
+    ...optKey('postingLeadDays', r.postingLeadDays),
+    ...optKey('jurisdiction', r.jurisdiction as JurisdictionId | null),
+    ...optKey('jurisdictionChoices', r.jurisdictionChoices),
+    ...optKey('leavePolicy', r.leavePolicy),
+    ...optKey('overtimeOrder', r.overtimeOrder),
+    ...optKey('perDiemCommitment', r.perDiemCommitment),
+    ...optKey('requireConsentForPostedChanges', r.requireConsentForPostedChanges),
+    ...optKey('minWeekendsOffPerYear', r.minWeekendsOffPerYear),
   };
 }
 
@@ -119,17 +139,17 @@ export function toNurse(r: typeof s.nurse.$inferSelect): Nurse {
     fte: r.fte,
     contractedHoursPerPeriod: r.contractedHoursPerPeriod,
     seniorityDate: r.seniorityDate as Nurse['seniorityDate'],
-    hireDate: opt(r.hireDate as Nurse['hireDate'] | null),
-    permanentTour: opt(r.permanentTour),
-    scheduledDaysPerWeek: opt(r.scheduledDaysPerWeek),
-    scheduleKind: opt(r.scheduleKind),
+    ...optKey('hireDate', r.hireDate as Nurse['hireDate'] | null),
+    ...optKey('permanentTour', r.permanentTour),
+    ...optKey('scheduledDaysPerWeek', r.scheduledDaysPerWeek),
+    ...optKey('scheduleKind', r.scheduleKind),
     isChargeEligible: r.isChargeEligible,
     isNovice: r.isNovice,
     isFloatEligible: r.isFloatEligible,
-    phone: opt(r.phone),
-    email: opt(r.email),
+    ...optKey('phone', r.phone),
+    ...optKey('email', r.email),
     active: r.active,
-    notes: opt(r.notes),
+    ...optKey('notes', r.notes),
   };
 }
 
@@ -142,8 +162,8 @@ export function toNurseCredential(r: typeof s.nurseCredential.$inferSelect): Nur
     id: r.id,
     nurseId: r.nurseId,
     credentialId: r.credentialId,
-    issuedOn: opt(r.issuedOn) as NurseCredential['issuedOn'],
-    expiresOn: opt(r.expiresOn) as NurseCredential['expiresOn'],
+    ...optKey('issuedOn', r.issuedOn as NurseCredential['issuedOn'] | null),
+    ...optKey('expiresOn', r.expiresOn as NurseCredential['expiresOn'] | null),
   };
 }
 
@@ -242,11 +262,11 @@ export function toTimeOffRequest(r: typeof s.timeOffRequest.$inferSelect): TimeO
     status: r.status,
     enteredBy: r.enteredBy,
     submittedAt: r.submittedAt,
-    decidedAt: opt(r.decidedAt),
-    decidedBy: opt(r.decidedBy),
-    reason: opt(r.reason),
-    decisionReason: opt(r.decisionReason),
-    paidHours: opt(r.paidHours),
+    ...optKey('decidedAt', r.decidedAt),
+    ...optKey('decidedBy', r.decidedBy),
+    ...optKey('reason', r.reason),
+    ...optKey('decisionReason', r.decisionReason),
+    ...optKey('paidHours', r.paidHours),
   };
 }
 
@@ -269,27 +289,32 @@ export function toShiftSwap(r: typeof s.shiftSwap.$inferSelect): ShiftSwap {
     requestingNurseId: r.requestingNurseId,
     counterpartyNurseId: r.counterpartyNurseId,
     offeredAssignmentId: r.offeredAssignmentId,
-    requestedAssignmentId: opt(r.requestedAssignmentId),
+    ...optKey('requestedAssignmentId', r.requestedAssignmentId),
     status: r.status,
     enteredBy: r.enteredBy,
     submittedAt: r.submittedAt,
-    decidedAt: opt(r.decidedAt),
-    decidedBy: opt(r.decidedBy),
-    reason: opt(r.reason),
-    decisionReason: opt(r.decisionReason),
+    ...optKey('decidedAt', r.decidedAt),
+    ...optKey('decidedBy', r.decidedBy),
+    ...optKey('reason', r.reason),
+    ...optKey('decisionReason', r.decisionReason),
     overrode: r.overrode,
   };
 }
 
 export function toScheduleVersion(r: typeof s.scheduleVersion.$inferSelect): ScheduleVersion {
+  if (!Array.isArray(r.assignments) || !r.assignments.every(isAssignmentShape)) {
+    throw new Error(
+      `A published version (v${r.version}) of this schedule is damaged: its saved shifts cannot be read. Restore a backup (Settings › Backups).`,
+    );
+  }
   return {
     id: r.id,
     periodId: r.periodId,
     version: r.version,
     publishedAt: r.publishedAt,
     publishedBy: r.publishedBy,
-    reason: opt(r.reason),
-    assignments: r.assignments as Assignment[],
+    ...optKey('reason', r.reason),
+    assignments: r.assignments,
     added: r.added,
     removed: r.removed,
     changed: r.changed,
@@ -307,10 +332,10 @@ export function toScheduleChange(r: typeof s.scheduleChange.$inferSelect): Sched
     date: r.date as ScheduleChange['date'],
     shiftTypeId: r.shiftTypeId,
     assignmentId: r.assignmentId,
-    before: (r.before as Assignment | null) ?? undefined,
-    after: (r.after as Assignment | null) ?? undefined,
+    ...optKey('before', changeSide(r.before)),
+    ...optKey('after', changeSide(r.after)),
     reason: r.reason,
-    consent: opt(r.consent),
+    ...optKey('consent', r.consent),
     actor: r.actor,
     at: r.at,
   };
@@ -333,8 +358,8 @@ export function toRatioRule(r: typeof s.ratioRule.$inferSelect): RatioRule {
     role: r.role,
     acuityTierId: r.acuityTierId,
     maxPatientsPerNurse: r.maxPatientsPerNurse,
-    citation: opt(r.citation),
-    ...(r.minRnShare !== null ? { minRnShare: r.minRnShare } : {}),
+    ...optKey('citation', r.citation),
+    ...optKey('minRnShare', r.minRnShare),
     active: r.active,
   };
 }
@@ -347,8 +372,8 @@ export function toCensusForecast(r: typeof s.censusForecast.$inferSelect): Censu
     shiftTypeId: r.shiftTypeId,
     projectedCensus: r.projectedCensus,
     acuityMix: r.acuityMix,
-    actualCensus: opt(r.actualCensus),
-    actualAcuityMix: opt(r.actualAcuityMix),
+    ...optKey('actualCensus', r.actualCensus),
+    ...optKey('actualAcuityMix', r.actualAcuityMix),
     source: r.source,
   };
 }
@@ -387,10 +412,10 @@ export function toSchedulePeriod(r: typeof s.schedulePeriod.$inferSelect): Sched
     startDate: r.startDate as SchedulePeriod['startDate'],
     endDate: r.endDate as SchedulePeriod['endDate'],
     status: r.status,
-    publishedAt: opt(r.publishedAt),
+    ...optKey('publishedAt', r.publishedAt),
     ruleSetId: r.ruleSetId,
     ruleSetVersion: r.ruleSetVersion,
-    requestsCloseOn: opt(r.requestsCloseOn) as SchedulePeriod['requestsCloseOn'],
+    ...optKey('requestsCloseOn', r.requestsCloseOn as SchedulePeriod['requestsCloseOn'] | null),
   };
 }
 
@@ -405,12 +430,12 @@ export function toAssignment(r: typeof s.assignment.$inferSelect): Assignment {
     isLocked: r.isLocked,
     isCharge: r.isCharge,
     isOvertime: r.isOvertime,
-    notes: opt(r.notes),
+    ...optKey('notes', r.notes),
     // Absent, not 0/false, on an ordinary shift: rows and diffs compare these objects.
     ...(r.holdoverMinutes > 0
       ? { holdoverMinutes: r.holdoverMinutes, holdoverMandated: r.holdoverMandated ?? false }
       : {}),
-    ...(r.floatedTo !== null ? { floatedTo: r.floatedTo } : {}),
+    ...optKey('floatedTo', r.floatedTo),
   };
 }
 
@@ -427,10 +452,10 @@ export function toCallOff(r: typeof s.callOff.$inferSelect): CallOff {
     shiftTypeId: r.shiftTypeId,
     date: r.date,
     reportedAt: r.reportedAt,
-    reason: opt(r.reason),
+    ...optKey('reason', r.reason),
     status: r.status,
-    replacementAssignmentId: opt(r.replacementAssignmentId),
-    paidSickHours: opt(r.paidSickHours),
+    ...optKey('replacementAssignmentId', r.replacementAssignmentId),
+    ...optKey('paidSickHours', r.paidSickHours),
   };
 }
 
@@ -441,7 +466,7 @@ export function toCallAttempt(r: typeof s.callAttempt.$inferSelect): CallAttempt
     nurseId: r.nurseId,
     attemptedAt: r.attemptedAt,
     outcome: r.outcome,
-    notes: opt(r.notes),
+    ...optKey('notes', r.notes),
   };
 }
 
@@ -492,10 +517,10 @@ export function toOvertimeRule(r: typeof s.overtimeRule.$inferSelect): OvertimeR
     multiplier: r.multiplier,
     active: r.active,
     // Keys only when set, so a rule equals its own audit snapshot, which JSON drops undefined from.
-    ...(r.pyramiding != null ? { pyramiding: r.pyramiding } : {}),
-    ...(r.minimumMinutes != null ? { minimumMinutes: r.minimumMinutes } : {}),
-    ...(r.scheduleKinds != null ? { scheduleKinds: r.scheduleKinds } : {}),
-    ...(r.tourDays != null ? { tourDays: r.tourDays } : {}),
+    ...optKey('pyramiding', r.pyramiding),
+    ...optKey('minimumMinutes', r.minimumMinutes),
+    ...optKey('scheduleKinds', r.scheduleKinds),
+    ...optKey('tourDays', r.tourDays),
   };
 }
 

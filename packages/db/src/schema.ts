@@ -78,6 +78,7 @@ const bool = (name: string) => integer(name, { mode: 'boolean' });
 // Unit & shift types
 // ---------------------------------------------------------------------------
 
+// unit_valid_insert / unit_valid_update (migration 0043): pay period one day or more, real anchor.
 export const unit = sqliteTable(
   'unit',
   {
@@ -151,6 +152,8 @@ export const shiftType = sqliteTable(
 // Roster
 // ---------------------------------------------------------------------------
 
+// nurse_valid_insert / nurse_valid_update (migration 0043): known role and employment type,
+// FTE 0–1.5, contracted hours zero or more, real seniority and hire dates.
 export const nurse = sqliteTable(
   'nurse',
   {
@@ -444,9 +447,11 @@ export const floatRecord = sqliteTable(
       .references(() => nurse.id, { onDelete: 'cascade' })
       .$type<Id>(),
     date: isoDate('date').notNull().$type<IsoDate>(),
+    // No action, like every other history table: removing a shift type must not erase the
+    // record that a nurse was floated (migration 0044; it once cascaded).
     shiftTypeId: text('shift_type_id')
       .notNull()
-      .references(() => shiftType.id, { onDelete: 'cascade' })
+      .references(() => shiftType.id)
       .$type<Id>(),
     toUnit: text('to_unit').notNull(),
     volunteered: bool('volunteered').notNull(),
@@ -730,6 +735,14 @@ export const coverageRequirement = sqliteTable(
   (t) => [
     index('coverage_lookup_idx').on(t.shiftTypeId, t.role, t.weekday),
     index('coverage_unit_idx').on(t.unitId),
+    // One floor per shift, role and day: core keeps the last match, so a second row would make
+    // the binding floor depend on row order. A date override may sit beside its weekday floor.
+    uniqueIndex('coverage_weekday_key_idx')
+      .on(t.unitId, t.shiftTypeId, t.role, t.weekday)
+      .where(sql`date is null`),
+    uniqueIndex('coverage_date_key_idx')
+      .on(t.unitId, t.shiftTypeId, t.role, t.date)
+      .where(sql`date is not null`),
   ],
 );
 
@@ -830,6 +843,7 @@ export const ruleConfig = sqliteTable(
 // Schedules
 // ---------------------------------------------------------------------------
 
+// schedule_period_valid_insert / _update (migration 0043): known status, real dates, end >= start.
 export const schedulePeriod = sqliteTable(
   'schedule_period',
   {
@@ -862,6 +876,8 @@ export const assignment = sqliteTable(
       .notNull()
       .references(() => schedulePeriod.id, { onDelete: 'cascade' })
       .$type<Id>(),
+    // Cascades in the schema, but the nurse_keeps_history trigger refuses deleting a nurse who
+    // has rows here (migration 0043).
     nurseId: text('nurse_id')
       .notNull()
       .references(() => nurse.id, { onDelete: 'cascade' })
@@ -939,6 +955,8 @@ export const scheduleChange = sqliteTable(
     version: integer('version').notNull(),
     kind: text('kind').notNull().$type<ScheduleChangeKind>(),
     source: text('source').notNull().default('manual').$type<ScheduleChangeSource>(),
+    // Cascades in the schema, but the nurse_keeps_history trigger refuses deleting a nurse who
+    // has rows here (migration 0043).
     nurseId: text('nurse_id')
       .notNull()
       .references(() => nurse.id, { onDelete: 'cascade' })
@@ -1037,7 +1055,15 @@ export const payRate = sqliteTable(
     hourlyRate: real('hourly_rate').notNull(),
     effectiveFrom: isoDate('effective_from').notNull(),
   },
-  (t) => [index('pay_rate_lookup_idx').on(t.nurseId, t.effectiveFrom)],
+  (t) => [
+    index('pay_rate_lookup_idx').on(t.nurseId, t.effectiveFrom),
+    // `latestRateInForce` keeps the first of two same-date rates, so a "correction" entered later
+    // would silently lose. One rate per scope and start date; a nurse's and the role's may share.
+    uniqueIndex('pay_rate_nurse_date_idx')
+      .on(t.nurseId, t.effectiveFrom)
+      .where(sql`nurse_id is not null`),
+    uniqueIndex('pay_rate_role_date_idx').on(t.role, t.effectiveFrom).where(sql`nurse_id is null`),
+  ],
 );
 
 export const differential = sqliteTable('differential', {
@@ -1323,6 +1349,8 @@ export const fairnessLedger = sqliteTable(
   'fairness_ledger',
   {
     id: text('id').primaryKey().$type<Id>(),
+    // Cascades in the schema, but the nurse_keeps_history trigger refuses deleting a nurse who
+    // has rows here (migration 0043).
     nurseId: text('nurse_id')
       .notNull()
       .references(() => nurse.id, { onDelete: 'cascade' })

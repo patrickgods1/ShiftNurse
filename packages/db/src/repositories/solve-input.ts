@@ -241,7 +241,11 @@ export function costContext(
 function overtimeLeave(timeOff: readonly TimeOffRequest[], paidSickCalls: readonly PaidSickCall[]) {
   const byNurse = new Map<Id, PaidLeaveCredit[]>();
   const credits = paidLeaveCredits(timeOff, paidSickCalls);
-  for (const c of credits) byNurse.set(c.nurseId, [...(byNurse.get(c.nurseId) ?? []), c]);
+  for (const c of credits) {
+    const list = byNurse.get(c.nurseId);
+    if (list) list.push(c);
+    else byNurse.set(c.nurseId, [c]);
+  }
   return byNurse;
 }
 

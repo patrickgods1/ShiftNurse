@@ -14,6 +14,11 @@
  * is reported rather than reactivated: whether to bring her back is the manager's call, made by
  * the caller. Credentials are not covered: the import only grants and updates them, never
  * revokes, and the database layer counts those.
+ *
+ * A sheet's employee id finds a stored nurse trimmed and case-folded (`matchStoredNurse`):
+ * payroll exports and hand-typed sheets disagree on case, and an exact match would create a
+ * second person with her own seniority, ledger and audit trail. Two stored nurses matching is
+ * reported as ambiguous, never guessed.
  */
 
 import { EMPLOYMENT_TYPE_LABELS, type Nurse, SCHEDULE_KIND_LABELS } from '../domain/entities.js';
@@ -49,7 +54,8 @@ export interface RosterImportPlanRow {
   employeeId: string;
   /** "Cruz, Ana", from the file. */
   name: string;
-  action: 'create' | 'update' | 'unchanged';
+  /** `ambiguous`: the id matches two stored nurses; the import refuses until one is renamed. */
+  action: 'create' | 'update' | 'unchanged' | 'ambiguous';
   /** The matched nurse is inactive; the import reactivates only when asked. */
   inactive: boolean;
   changes: RosterFieldChange[];
@@ -137,6 +143,26 @@ const FIELD_RULES: readonly FieldRule[] = [
   { key: 'notes', column: 'notes', label: 'Notes', cell: 'clear', show: text },
 ];
 
+/** The one employee-id comparison: the plan, the import and the roster editor all use it. */
+export function sameEmployeeId(a: string, b: string): boolean {
+  return a.trim().toUpperCase() === b.trim().toUpperCase();
+}
+
+/**
+ * How a sheet's employee id finds a stored nurse: trimmed and case-folded, because payroll
+ * exports and hand-typed sheets disagree on case and an exact match would create a second
+ * person. More than one stored nurse matching is refused, never guessed.
+ */
+export function matchStoredNurse(
+  existing: readonly Nurse[],
+  employeeId: string,
+): { kind: 'none' } | { kind: 'one'; nurse: Nurse } | { kind: 'ambiguous'; nurses: Nurse[] } {
+  const nurses = existing.filter((n) => sameEmployeeId(n.employeeId, employeeId));
+  if (nurses.length === 0) return { kind: 'none' };
+  if (nurses.length === 1) return { kind: 'one', nurse: nurses[0]! };
+  return { kind: 'ambiguous', nurses };
+}
+
 type FieldValue = string | number | boolean | null;
 
 /** Only the fields this row would change on `existing`, by the column rules above. */
@@ -163,15 +189,17 @@ export function planRosterImport(
   rows: readonly RosterCsvRow[],
   columns: readonly RosterColumn[],
 ): RosterImportPlanRow[] {
-  // Exact employee id, as the database matches on import.
-  const byEmployeeId = new Map<string, Nurse>();
-  for (const n of existing) if (!byEmployeeId.has(n.employeeId)) byEmployeeId.set(n.employeeId, n);
-
   return rows.map((row) => {
     const { employeeId, firstName, lastName } = row.nurse;
     const name = `${lastName}, ${firstName}`;
-    const match = byEmployeeId.get(employeeId);
-    if (!match) return { employeeId, name, action: 'create', inactive: false, changes: [] };
+    const found = matchStoredNurse(existing, employeeId);
+    if (found.kind === 'none') {
+      return { employeeId, name, action: 'create', inactive: false, changes: [] };
+    }
+    if (found.kind === 'ambiguous') {
+      return { employeeId, name, action: 'ambiguous', inactive: false, changes: [] };
+    }
+    const match = found.nurse;
 
     const update = rosterChangesFor(match, row, columns) as Partial<
       Record<FieldRule['key'], FieldValue>

@@ -4,7 +4,7 @@
  * manager renamed the home unit so that it sorted second.
  */
 
-import { isoDate, type Unit } from '@shiftnurse/core';
+import { type IsoDate, isoDate, type Unit } from '@shiftnurse/core';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor, recentAudit } from '../audit.js';
@@ -198,5 +198,128 @@ describe('coverage floors', () => {
         ),
       ).toThrow('Coverage counts must be whole numbers, zero or more.');
     });
+  });
+});
+
+describe('one coverage floor per shift, role and day', () => {
+  function twoUnits() {
+    const west = addUnit('4 West');
+    const east = addUnit('5 East');
+    const shift = (unitId: string, name: string) =>
+      createShiftType(
+        handle.db,
+        {
+          unitId,
+          name,
+          abbreviation: name[0]!,
+          startTime: '07:00',
+          durationHours: 12,
+          isNight: false,
+          isOnCall: false,
+          color: '#ffffff',
+          sortOrder: 1,
+          active: true,
+        },
+        ACTOR,
+      );
+    const day = shift(west.id, 'Day 12');
+    const night = shift(east.id, 'Night 12');
+    const floor = (over: Partial<Parameters<typeof upsertCoverageRequirement>[1]> = {}) => ({
+      unitId: west.id,
+      shiftTypeId: day.id,
+      weekday: 1 as 0 | 1 | 2 | 3 | 4 | 5 | 6 | null,
+      date: null as IsoDate | null,
+      role: 'RN' as const,
+      minCount: 3,
+      targetCount: 3,
+      ...over,
+    });
+    const save = (over: Parameters<typeof floor>[0] = {}) =>
+      upsertCoverageRequirement(handle.db, floor(over), ACTOR);
+    return { west, east, day, night, floor, save };
+  }
+
+  it('refuses a second RN floor for Day 12 on Mondays', () => {
+    const { west, save } = twoUnits();
+    save();
+    expect(() => save({ minCount: 5, targetCount: 5 })).toThrow(
+      'Day 12 already has an RN floor for Mondays; change that one instead.',
+    );
+    const stored = listCoverageRequirementsForUnit(handle.db, west.id);
+    expect(stored.map((r) => `${r.minCount}/${r.targetCount}`)).toEqual(['3/3']);
+  });
+
+  it('refuses a second Christmas override for the same shift and role', () => {
+    const { save } = twoUnits();
+    // 2026-01-01 is a Thursday and Dec 25 is 358 days later; 358 mod 7 = 1, so a Friday.
+    save({ weekday: null, date: isoDate('2026-12-25') });
+    expect(() => save({ weekday: null, date: isoDate('2026-12-25') })).toThrow(
+      /for Fri Dec 25, 2026; change that one instead\.$/,
+    );
+  });
+
+  it('lets a Christmas override sit beside the Friday floor it overrides', () => {
+    const { west, save } = twoUnits();
+    save({ weekday: 5 });
+    save({ weekday: null, date: isoDate('2026-12-25') });
+    expect(listCoverageRequirementsForUnit(handle.db, west.id)).toHaveLength(2);
+  });
+
+  it('refuses a minimum above the target', () => {
+    const { west, save } = twoUnits();
+    expect(() => save({ minCount: 5, targetCount: 4 })).toThrow(
+      'The RN floor for Day 12 on Mondays has a minimum of 5 above its target of 4; raise the target or lower the minimum.',
+    );
+    expect(listCoverageRequirementsForUnit(handle.db, west.id)).toHaveLength(0);
+  });
+
+  it('refuses a floor for no day, and one for both a weekday and a date', () => {
+    const { save } = twoUnits();
+    expect(() => save({ weekday: null })).toThrow('Choose a weekday or a date for this floor.');
+    expect(() => save({ weekday: 5, date: isoDate('2026-12-25') })).toThrow(
+      'A floor is for a weekday or for one date, not both.',
+    );
+  });
+
+  it("refuses another unit's shift type", () => {
+    const { night, save } = twoUnits();
+    expect(() => save({ shiftTypeId: night.id })).toThrow(
+      'Night 12 is a shift on 5 East, not on 4 West.',
+    );
+  });
+
+  it('refuses moving a floor to another unit through an update', () => {
+    const { east, save, floor } = twoUnits();
+    const made = save();
+    expect(() =>
+      upsertCoverageRequirement(handle.db, { ...floor(), id: made.id, unitId: east.id }, ACTOR),
+    ).toThrow('A coverage floor cannot move to another unit.');
+  });
+
+  it('lets a floor be saved again unchanged, and refuses an edit that collides with another floor', () => {
+    const { save, floor } = twoUnits();
+    const monday = save();
+    const tuesday = save({ weekday: 2 });
+    expect(upsertCoverageRequirement(handle.db, { ...floor(), id: monday.id }, ACTOR)).toEqual(
+      monday,
+    );
+    expect(() =>
+      upsertCoverageRequirement(handle.db, { ...floor({ weekday: 1 }), id: tuesday.id }, ACTOR),
+    ).toThrow('Day 12 already has an RN floor for Mondays; change that one instead.');
+  });
+
+  it('leaves the stored floor and the audit log alone when an edit is refused', () => {
+    const { west, save, floor } = twoUnits();
+    const monday = save();
+    const auditBefore = recentAudit(handle.db, 1000).length;
+    expect(() =>
+      upsertCoverageRequirement(
+        handle.db,
+        { ...floor(), id: monday.id, minCount: 5, targetCount: 4 },
+        ACTOR,
+      ),
+    ).toThrow(/minimum of 5 above its target of 4/);
+    expect(listCoverageRequirementsForUnit(handle.db, west.id)).toEqual([monday]);
+    expect(recentAudit(handle.db, 1000).length).toBe(auditBefore);
   });
 });

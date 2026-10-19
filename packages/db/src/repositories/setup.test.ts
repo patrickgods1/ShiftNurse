@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { auditLog } from '../schema.js';
+import { loadDemo, loadScenarios } from '../seed/load.js';
 import {
   createRatioRule,
   getHppdTarget,
@@ -43,8 +44,6 @@ import {
   completeSetup,
   createSetupUnit,
   getSetupState,
-  loadDemo,
-  loadScenarios,
 } from './setup.js';
 
 // Several tests seed a whole demo unit (six months of history), about a second locally and

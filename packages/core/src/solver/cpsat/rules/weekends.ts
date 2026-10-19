@@ -58,8 +58,14 @@ export function nurseWeekendExprs(ctx: EncodeContext, n: number): NurseWeekendEx
     if (entry.shiftType.isOnCall) continue;
     const key = weekendKey(entry.window, def) as IsoDate | null;
     if (key === null) continue;
-    all.set(key, [...(all.get(key) ?? []), entry]);
-    if (entry.inPeriod) inPeriodEntries.set(key, [...(inPeriodEntries.get(key) ?? []), entry]);
+    const allList = all.get(key);
+    if (allList) allList.push(entry);
+    else all.set(key, [entry]);
+    if (entry.inPeriod) {
+      const inPeriodList = inPeriodEntries.get(key);
+      if (inPeriodList) inPeriodList.push(entry);
+      else inPeriodEntries.set(key, [entry]);
+    }
   }
   const name = ctx.name(n);
   const worked = new Map<IsoDate, Expr>();

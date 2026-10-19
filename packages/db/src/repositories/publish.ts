@@ -25,9 +25,9 @@ import type {
   Unit,
 } from '@shiftnurse/core';
 import { diffAssignments } from '@shiftnurse/core';
-import { and, asc, desc, eq, gt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
-import type { DbLike } from '../client.js';
+import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { toScheduleChange, toScheduleVersion } from '../mappers.js';
 import { scheduleChange, schedulePeriod, scheduleVersion } from '../schema.js';
@@ -100,7 +100,12 @@ export interface PublishResult {
  * republish of an unchanged schedule (a version that differs from the last by nothing would
  * only confuse whoever reads the history).
  */
-export function publishSchedule(db: DbLike, input: PublishInput, actor: string): PublishResult {
+export function publishSchedule(
+  // A transaction, not any handle: these writes are only correct all-or-nothing.
+  db: ShiftNurseTx,
+  input: PublishInput,
+  actor: string,
+): PublishResult {
   const before = getPeriod(db, input.periodId);
   if (!before) throw new Error(`Schedule period ${input.periodId} not found`);
   if (before.status === 'archived') {
@@ -353,11 +358,8 @@ export function changesSinceLastPublish(db: DbLike, periodId: Id): ScheduleChang
   return db
     .select()
     .from(scheduleChange)
-    .where(
-      and(eq(scheduleChange.periodId, periodId), gt(scheduleChange.at, current.publishedAt - 1)),
-    )
+    .where(and(eq(scheduleChange.periodId, periodId), eq(scheduleChange.version, current.version)))
     .orderBy(desc(scheduleChange.at), desc(sql`rowid`))
     .all()
-    .map(toScheduleChange)
-    .filter((c) => c.version === current.version);
+    .map(toScheduleChange);
 }

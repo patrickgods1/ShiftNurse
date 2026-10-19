@@ -912,7 +912,9 @@ export function seedFromProfile(
   const innerShifts = new Map<Id, ShiftType[]>();
   for (const s of shifts) {
     if (s.withinShiftTypeId === null) continue;
-    innerShifts.set(s.withinShiftTypeId, [...(innerShifts.get(s.withinShiftTypeId) ?? []), s]);
+    const list = innerShifts.get(s.withinShiftTypeId);
+    if (list) list.push(s);
+    else innerShifts.set(s.withinShiftTypeId, [s]);
   }
   const specOf = (s: ShiftType) => profile.shifts.find((x) => x.code === s.abbreviation)!;
 

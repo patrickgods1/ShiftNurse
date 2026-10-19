@@ -501,3 +501,226 @@ describe('assignment integrity', () => {
     ).toThrow();
   });
 });
+
+/**
+ * The validation triggers (migration 0043). IPC and the CSV importer refuse these values first;
+ * these tests write past them, as a seed or preset could, to show the file itself refuses.
+ */
+describe('the file refuses data the app would misread', () => {
+  const nurseRow = (overrides: Partial<typeof s.nurse.$inferInsert>) => ({
+    id: 'nurse-bad',
+    unitId: UNIT_ID,
+    employeeId: 'E0099',
+    firstName: 'Bad',
+    lastName: 'Row',
+    role: 'RN' as const,
+    employmentType: 'full_time' as const,
+    fte: 1,
+    contractedHoursPerPeriod: 72,
+    seniorityDate: '2019-03-01',
+    ...overrides,
+  });
+  const insertNurse = (overrides: Partial<typeof s.nurse.$inferInsert>) => () =>
+    handle.db.insert(s.nurse).values(nurseRow(overrides)).run();
+
+  function seedRuleSet(): void {
+    handle.db
+      .insert(s.ruleSet)
+      .values({
+        id: 'rs-1',
+        unitId: UNIT_ID,
+        name: 'Default',
+        version: 1,
+        weekendDefinition: {
+          startWeekday: 6,
+          startMinute: 0,
+          durationMinutes: 2880,
+          mode: 'starts_within',
+        },
+        createdAt: Date.now(),
+      })
+      .run();
+  }
+  const periodRow = (overrides: Partial<typeof s.schedulePeriod.$inferInsert>) => ({
+    id: 'per-1',
+    unitId: UNIT_ID,
+    name: 'Test',
+    startDate: '2026-01-04',
+    endDate: '2026-01-17',
+    status: 'draft' as const,
+    ruleSetId: 'rs-1',
+    ruleSetVersion: 1,
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    seedUnit();
+  });
+
+  it('refuses a nurse whose role is not RN, LPN or CNA', () => {
+    expect(insertNurse({ role: 'SURGEON' as 'RN' })).toThrow(
+      "A nurse's role must be RN, LPN or CNA.",
+    );
+    seedNurse();
+    expect(() =>
+      handle.sqlite.prepare(`UPDATE nurse SET role = 'SURGEON' WHERE id = 'nurse-1'`).run(),
+    ).toThrow("A nurse's role must be RN, LPN or CNA.");
+  });
+
+  it('refuses an employment type the contract rules do not know', () => {
+    expect(insertNurse({ employmentType: 'casual' as 'full_time' })).toThrow(
+      "A nurse's employment type must be full time, part time, per diem or agency.",
+    );
+  });
+
+  it('refuses an FTE outside 0 to 1.5 and negative contracted hours', () => {
+    expect(insertNurse({ fte: -3 })).toThrow("A nurse's FTE must be from 0 to 1.5.");
+    expect(insertNurse({ fte: 1.6 })).toThrow("A nurse's FTE must be from 0 to 1.5.");
+    expect(insertNurse({ contractedHoursPerPeriod: -72 })).toThrow(
+      'Contracted hours cannot be negative.',
+    );
+    // The edges are real contracts: a zero-FTE per-diem and a 1.5 FTE double-time agreement.
+    insertNurse({ id: 'n-zero', employeeId: 'E0100', fte: 0, contractedHoursPerPeriod: 0 })();
+    insertNurse({ id: 'n-max', employeeId: 'E0101', fte: 1.5 })();
+    expect(() =>
+      handle.db.update(s.nurse).set({ fte: 2 }).where(eq(s.nurse.id, 'n-max')).run(),
+    ).toThrow("A nurse's FTE must be from 0 to 1.5.");
+  });
+
+  it('refuses a seniority date that is not a real day', () => {
+    expect(insertNurse({ seniorityDate: 'yesterday' })).toThrow(
+      "A nurse's seniority date must be a date.",
+    );
+    // February 2026 has 28 days; SQLite's date() would quietly read this as March 2.
+    expect(insertNurse({ seniorityDate: '2026-02-30' })).toThrow(
+      "A nurse's seniority date must be a date.",
+    );
+    expect(insertNurse({ hireDate: '2026-13-01' })).toThrow("A nurse's hire date must be a date.");
+    insertNurse({ hireDate: '2024-02-29' })();
+  });
+
+  it('refuses a pay period of zero days', () => {
+    expect(() =>
+      handle.db
+        .insert(s.unit)
+        .values({
+          id: 'unit-zero',
+          name: '5 East',
+          unitType: 'ICU',
+          payPeriodDays: 0,
+          payPeriodAnchor: '2026-01-04',
+        })
+        .run(),
+    ).toThrow('A pay period must be a whole number of days, at least one.');
+    expect(() =>
+      handle.db.update(s.unit).set({ payPeriodDays: 0 }).where(eq(s.unit.id, UNIT_ID)).run(),
+    ).toThrow('A pay period must be a whole number of days, at least one.');
+    expect(() =>
+      handle.sqlite.prepare(`UPDATE unit SET pay_period_days = 13.5 WHERE id = ?`).run(UNIT_ID),
+    ).toThrow('A pay period must be a whole number of days, at least one.');
+    expect(() =>
+      handle.db
+        .update(s.unit)
+        .set({ payPeriodAnchor: 'next Sunday' })
+        .where(eq(s.unit.id, UNIT_ID))
+        .run(),
+    ).toThrow("The pay period's first day must be a date.");
+    expect(handle.db.select().from(s.unit).get()).toMatchObject({
+      payPeriodDays: 14,
+      payPeriodAnchor: '2026-01-04',
+    });
+  });
+
+  it('refuses a period status that does not exist, and a period that ends before it starts', () => {
+    seedRuleSet();
+    const insertPeriod = (overrides: Partial<typeof s.schedulePeriod.$inferInsert>) => () =>
+      handle.db.insert(s.schedulePeriod).values(periodRow(overrides)).run();
+    expect(insertPeriod({ status: 'bogus' as 'draft' })).toThrow(
+      'A schedule period is draft, published or archived.',
+    );
+    expect(insertPeriod({ endDate: '2026-01-03' })).toThrow('The period ends before it starts.');
+    expect(insertPeriod({ startDate: 'soon' })).toThrow(
+      "A schedule period's start and end must be dates.",
+    );
+    // A one-day period is a real period.
+    insertPeriod({ id: 'per-day', endDate: '2026-01-04' })();
+    insertPeriod({})();
+    expect(() =>
+      handle.db
+        .update(s.schedulePeriod)
+        .set({ status: 'bogus' as 'draft' })
+        .where(eq(s.schedulePeriod.id, 'per-1'))
+        .run(),
+    ).toThrow('A schedule period is draft, published or archived.');
+    expect(() =>
+      handle.db
+        .update(s.schedulePeriod)
+        .set({ endDate: '2026-01-01' })
+        .where(eq(s.schedulePeriod.id, 'per-1'))
+        .run(),
+    ).toThrow('The period ends before it starts.');
+  });
+
+  it('still lets a nurse be deactivated when an unrelated column holds an old bad value', () => {
+    // Only the guarded columns fire the update trigger, so a row an older release let through
+    // can still be deactivated or renamed rather than becoming impossible to touch.
+    const triggerSql = (name: string) =>
+      (
+        handle.sqlite.prepare('SELECT sql FROM sqlite_master WHERE name = ?').get(name) as {
+          sql: string;
+        }
+      ).sql;
+    expect(triggerSql('nurse_valid_update')).toContain('UPDATE OF `role`');
+    expect(triggerSql('unit_valid_update')).toContain('UPDATE OF `pay_period_days`');
+    expect(triggerSql('schedule_period_valid_update')).toContain('UPDATE OF `status`');
+    seedNurse();
+    handle.db.update(s.nurse).set({ active: false }).where(eq(s.nurse.id, 'nurse-1')).run();
+    expect(handle.db.select().from(s.nurse).get()?.active).toBe(false);
+  });
+
+  it('refuses to delete a nurse who has worked a shift, and keeps her shifts', () => {
+    const shiftTypeId = seedShiftType();
+    seedNurse();
+    seedRuleSet();
+    handle.db.insert(s.schedulePeriod).values(periodRow({})).run();
+    handle.db
+      .insert(s.assignment)
+      .values({
+        id: 'a1',
+        periodId: 'per-1',
+        nurseId: 'nurse-1',
+        shiftTypeId,
+        date: isoDate('2026-01-05'),
+        source: 'manual',
+      })
+      .run();
+    expect(() => handle.db.delete(s.nurse).where(eq(s.nurse.id, 'nurse-1')).run()).toThrow(
+      'A nurse with schedule history cannot be deleted; deactivate them instead.',
+    );
+    expect(handle.db.select().from(s.nurse).all()).toHaveLength(1);
+    expect(handle.db.select().from(s.assignment).all()).toHaveLength(1);
+  });
+
+  it('refuses to delete a nurse whose only history is her fairness ledger', () => {
+    seedNurse();
+    handle.db
+      .insert(s.fairnessLedger)
+      .values({
+        id: 'l1',
+        nurseId: 'nurse-1',
+        periodId: 'import:2025-12-07',
+        periodStart: '2025-12-07',
+      })
+      .run();
+    expect(() => handle.db.delete(s.nurse).where(eq(s.nurse.id, 'nurse-1')).run()).toThrow(
+      /deactivate them instead/,
+    );
+    expect(handle.db.select().from(s.fairnessLedger).all()).toHaveLength(1);
+  });
+
+  it('deletes a nurse who never worked a shift', () => {
+    seedNurse();
+    handle.db.delete(s.nurse).where(eq(s.nurse.id, 'nurse-1')).run();
+    expect(handle.db.select().from(s.nurse).all()).toHaveLength(0);
+  });
+});

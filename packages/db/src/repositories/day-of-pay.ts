@@ -196,7 +196,11 @@ export function updateDayOfPayEvent(
     if (before.kind === 'missed_break') {
       throw new Error('A missed break has no hours to change');
     }
+    if (before.kind === 'call_back' && !(changes.hoursWorked > 0)) {
+      throw new Error('Enter the hours the call-back worked');
+    }
     checkHours(changes.hoursWorked, 'Hours worked');
+    if (before.kind === 'sent_home') checkWithinShift(changes.hoursWorked, before.scheduledHours);
     after.hoursWorked = changes.hoursWorked;
   }
   if ('note' in changes) {
@@ -225,6 +229,15 @@ function checkHours(hours: number, label: string): void {
   }
 }
 
+/** Someone who worked past the shift was not sent home; equal hours are left to the manager. */
+function checkWithinShift(worked: number, scheduled: number | undefined): void {
+  if (scheduled !== undefined && worked > scheduled) {
+    throw new Error(
+      `Hours worked (${worked}) cannot be more than the ${scheduled} scheduled; a nurse who worked past the shift was not sent home.`,
+    );
+  }
+}
+
 function validate(db: DbLike, input: DayOfPayInput): void {
   const nurse = db.select().from(nurseTable).where(eq(nurseTable.id, input.nurseId)).get();
   if (!nurse) throw new Error('That nurse is not on the roster');
@@ -250,6 +263,7 @@ function validate(db: DbLike, input: DayOfPayInput): void {
       throw new Error('The scheduled hours must be more than 0 and at most 24');
     }
     checkHours(input.hoursWorked ?? 0, 'Hours worked');
+    checkWithinShift(input.hoursWorked ?? 0, scheduled);
     const same = listDayOfPayEvents(db, input.unitId, input.date, input.date).find(
       (e) =>
         e.kind === 'sent_home' &&

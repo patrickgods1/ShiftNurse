@@ -76,13 +76,8 @@ export function updateAcuityTier(
       const row = db.select().from(acuityTierTable).where(eq(acuityTierTable.id, rowId)).get();
       return row ? toAcuityTier(row) : undefined;
     },
-    // The id rides along so an empty patch still writes, as the full-row update always did.
     write: (rowId, values) =>
-      db
-        .update(acuityTierTable)
-        .set({ ...values, id: rowId })
-        .where(eq(acuityTierTable.id, rowId))
-        .run(),
+      db.update(acuityTierTable).set(values).where(eq(acuityTierTable.id, rowId)).run(),
     notFound: `Acuity tier ${id} not found`,
     actor,
   });
@@ -222,13 +217,8 @@ export function updateRatioRule(
       const row = db.select().from(ratioRuleTable).where(eq(ratioRuleTable.id, rowId)).get();
       return row ? toRatioRule(row) : undefined;
     },
-    // The id rides along so an empty patch still writes, as the full-row update always did.
     write: (rowId, values) =>
-      db
-        .update(ratioRuleTable)
-        .set({ ...values, id: rowId })
-        .where(eq(ratioRuleTable.id, rowId))
-        .run(),
+      db.update(ratioRuleTable).set(values).where(eq(ratioRuleTable.id, rowId)).run(),
     notFound: `Ratio rule ${id} not found`,
     validate: (values, before) =>
       validateRatioRule(

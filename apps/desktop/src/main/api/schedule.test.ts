@@ -61,7 +61,9 @@ function place(nurseIndex: number, dayOffset: number, reason?: string): Assignme
 }
 
 function publishDraft(): void {
-  publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+  transact(f.handle.db, (tx) =>
+    publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+  );
 }
 
 describe('a shift outside its schedule', () => {
@@ -290,7 +292,7 @@ describe('a draft laid over a published schedule of the same unit', () => {
       { periodId: a.id, nurseId: ana.id, shiftTypeId: f.day.id, date: addDays(D, 3) },
       ACTOR,
     );
-    publishSchedule(f.handle.db, { periodId: a.id }, ACTOR);
+    transact(f.handle.db, (tx) => publishSchedule(tx, { periodId: a.id }, ACTOR));
     const night = api.createAssignment({
       periodId: f.seeded.draftPeriodId,
       nurseId: ana.id,

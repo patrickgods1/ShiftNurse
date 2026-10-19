@@ -153,7 +153,7 @@ describe('approveTimeOffAndLiftAssignments', () => {
   it('leaves a published schedule alone and reports the shifts it did not touch', () => {
     const periodId = mkPeriod('Dec B', '2025-12-18', '2025-12-31');
     shift(periodId, '2025-12-24');
-    publishSchedule(handle.db, { periodId }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
     const req = createTimeOffRequest(
       handle.db,
       { nurseId, startDate: isoDate('2025-12-24'), endDate: isoDate('2025-12-26'), type: 'pto' },
@@ -330,7 +330,7 @@ describe('approving leave when the contract counts the night before', () => {
   it('reports, but does not edit, a published night that runs into the leave', () => {
     const periodId = mkCountingPeriod('Jan A', '2026-01-15', '2026-01-28');
     shift(periodId, '2026-01-16');
-    publishSchedule(handle.db, { periodId }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
     const id = leave('2026-01-17', '2026-01-17');
 
     const result = transact(handle.db, (tx) => approveTimeOffAndLiftAssignments(tx, id, ACTOR));

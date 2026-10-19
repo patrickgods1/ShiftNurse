@@ -265,7 +265,7 @@ describe('shift exchanges', () => {
 
   it('refuses a proposal on an archived schedule', () => {
     const { proposal } = annGivesAwayToBea();
-    publishSchedule(f.handle.db, { periodId: draft(), ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) => publishSchedule(tx, { periodId: draft(), ledger: [] }, ACTOR));
     archivePeriod(f.handle.db, draft(), ACTOR, 'Closed pay period');
     const before = api().exchange.list(f.seeded.unitId);
 

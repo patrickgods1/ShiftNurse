@@ -131,6 +131,32 @@ describe('a nurse’s leave balance from payroll', () => {
   });
 });
 
+describe('an older payroll figure', () => {
+  const set = (hours: number, asOf: string) =>
+    setLeaveBalance(
+      handle.db,
+      { nurseId, type: 'pto', balanceHours: hours, asOf: isoDate(asOf) },
+      ACTOR,
+    );
+
+  it('refuses an older payroll figure over a newer one', () => {
+    set(40, '2026-02-01');
+    expect(() => set(48, '2026-01-15')).toThrow(
+      "Ada Test's PTO balance is already recorded as of Sun Feb 1, 2026; a figure as of Thu Jan 15, 2026 is older. Enter the latest payroll figure.",
+    );
+    expect(getLeaveBalance(handle.db, nurseId, 'pto')).toMatchObject({
+      balanceHours: 40,
+      asOf: '2026-02-01',
+    });
+  });
+
+  it('accepts a correction for the same payroll date', () => {
+    set(40, '2026-02-01');
+    set(44, '2026-02-01');
+    expect(getLeaveBalance(handle.db, nurseId, 'pto')?.balanceHours).toBe(44);
+  });
+});
+
 describe('FMLA certifications', () => {
   const cert = (start: string, end: string, intermittent = false, note?: string) =>
     createFmlaCertification(
@@ -181,7 +207,7 @@ describe('FMLA certifications', () => {
     const c = cert('2026-10-01', '2026-12-31');
     expect(() =>
       updateFmlaCertification(handle.db, c.id, { nurseId: 'other' } as never, ACTOR),
-    ).toThrow(/FMLA certification/);
+    ).toThrow("A FMLA certification update cannot change 'nurseId'");
   });
 
   it('removes a certification and audits it with what it was', () => {

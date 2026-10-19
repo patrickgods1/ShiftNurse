@@ -8,6 +8,15 @@ tags. Each release's notes link here.
 
 ### Fixed
 
+- A call-off that was cancelled because the nurse came in no longer counts as paid sick hours.
+- A second coverage floor or pay rate for the same day is refused ("change that one instead");
+  before, which one applied depended on the order they were entered, and a same-day pay correction
+  was silently ignored. Existing duplicates were tidied on upgrade, keeping the one in use, and
+  listed in the activity log.
+- Pay rates, differentials, overtime rules and budgets refuse negative or impossible numbers
+  wherever they come from, and saving a pay rate with no changes no longer shows an error.
+- Census forecasts only accept this unit's acuity tiers and shifts, and an older payroll balance
+  can no longer overwrite a newer one.
 - Four nights in a row are now caught when a day shift sits next to them, and Generate no longer
   builds that pattern.
 - An evening tour that earns night pay is no longer treated as a night for rest and days off after

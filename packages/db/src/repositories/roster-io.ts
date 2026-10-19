@@ -15,6 +15,7 @@ import {
   type Credential,
   type Id,
   type IsoDate,
+  matchStoredNurse,
   type NurseCredential,
   type RosterColumn,
   type RosterCsvRow,
@@ -29,7 +30,6 @@ import { credential as credentialTable } from '../schema.js';
 import {
   createNurse,
   getNurse,
-  getNurseByEmployeeId,
   grantCredential,
   listCredentials,
   listNurseCredentials,
@@ -157,8 +157,22 @@ export function importRoster(
   };
   const credentialByCode = new Map(listCredentials(db).map((c) => [c.code, c]));
 
+  // Inactive nurses included: a departed nurse's row must find her, not create a twin. Matching
+  // is case-insensitive (core's matcher, the one the preview uses); the stored spelling is kept.
+  const stored = [...listNursesForUnit(db, unitId)];
   for (const row of rows) {
-    const existing = getNurseByEmployeeId(db, unitId, row.nurse.employeeId);
+    const found = matchStoredNurse(stored, row.nurse.employeeId);
+    if (found.kind !== 'ambiguous') continue;
+    throw new Error(
+      `Employee id "${row.nurse.employeeId}" matches two nurses on this unit: ${found.nurses
+        .map((n) => `${n.lastName}, ${n.firstName} ("${n.employeeId}")`)
+        .join(' and ')}. Give one of them a different employee id under Roster, then import again.`,
+    );
+  }
+
+  for (const row of rows) {
+    const found = matchStoredNurse(stored, row.nurse.employeeId);
+    const existing = found.kind === 'one' ? found.nurse : undefined;
     let nurseId: Id;
     if (existing) {
       const reactivating = options.reactivate && !existing.active;
@@ -177,7 +191,9 @@ export function importRoster(
       else if (!existing.active) summary.keptInactive.push(listName);
       nurseId = existing.id;
     } else {
-      nurseId = createNurse(db, { ...row.nurse, unitId, active: true }, actor).id;
+      const created = createNurse(db, { ...row.nurse, unitId, active: true }, actor);
+      stored.push(created);
+      nurseId = created.id;
       summary.created++;
     }
 
