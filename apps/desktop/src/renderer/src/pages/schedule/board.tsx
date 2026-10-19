@@ -23,10 +23,11 @@ import {
 } from '@shiftnurse/core';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useAssignments, useShiftTypes, useTimeOff } from '../../api.js';
+import { useRuleSet } from '../../api-config.js';
 import { useCostReport } from '../../api-cost.js';
 import { useDemand } from '../../api-demand.js';
 import { usePeriodRoster } from '../../api-nurse-units.js';
-import { useNurseHours, useValidation } from '../../api-schedule.js';
+import { useAdoptLatestRules, useNurseHours, useValidation } from '../../api-schedule.js';
 import { AsyncState } from '../../components/async-state.js';
 import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { useUnit } from '../../unit-context.js';
@@ -47,6 +48,7 @@ import { GridLegend } from './grid-legend.js';
 import { sortNurses } from './grid-utils.js';
 import { ShiftPalette } from './palette.js';
 import { PublishDialog } from './publish-dialog.js';
+import { rulesVersionPill } from './rules-version.js';
 import { type StatusItem, StatusRow } from './status-row.js';
 import { swapCandidates } from './swap-candidates.js';
 import { useGenerateFlow } from './use-generate-flow.js';
@@ -73,6 +75,8 @@ export function ScheduleBoard({ unitId, period, focusNurseId, leading }: Schedul
   const assignmentsQuery = useAssignments(period.id);
   const validationQuery = useValidation(period.id);
   const costQuery = useCostReport(period.id);
+  const latestRules = useRuleSet(unitId).data;
+  const adoptRules = useAdoptLatestRules(unitId);
   const pendingTimeOff = useTimeOff(unitId, 'pending').data;
   const demandQuery = useDemand(unitId, period.startDate, period.endDate);
 
@@ -232,6 +236,14 @@ export function ScheduleBoard({ unitId, period, focusNurseId, leading }: Schedul
       title: `${undecided} time-off request${undecided === 1 ? ' is' : 's are'} waiting for a decision in this period. Decide ${undecided === 1 ? 'it' : 'them'} before generating, so the schedule works around approved leave.`,
     });
   }
+  const rulesPill = rulesVersionPill({
+    period,
+    latest: latestRules,
+    onAdopt: () => adoptRules.mutate(period.id),
+    pending: adoptRules.isPending,
+    error: adoptRules.error,
+  });
+  if (rulesPill) pills.push(rulesPill);
   if (!emptyDraft) {
     pills.push(
       violationPill({
@@ -243,6 +255,7 @@ export function ScheduleBoard({ unitId, period, focusNurseId, leading }: Schedul
     const cost = costPill({
       report: preview ? preview.cost : costQuery.data,
       previewLabel,
+      period: preview ? undefined : period,
     });
     if (cost) pills.push(cost);
     if (alertsPill) pills.push(alertsPill);

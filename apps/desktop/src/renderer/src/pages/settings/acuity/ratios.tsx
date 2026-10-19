@@ -1,11 +1,13 @@
 /**
  * Patient-ratio rules: hard ceilings on patients per nurse, by role and optionally by tier.
  * Deactivated, never deleted — a rule's citation is what gets quoted if a staffing decision is
- * challenged, and published schedules were staffed against it.
+ * challenged, and published schedules were staffed against it. Loosening, re-citing, moving or
+ * deactivating one asks for a reason first (core's `protectedRatioChanges`, the repository's own
+ * test), so the manager is asked up front rather than shown a refusal.
  */
 
 import type { AcuityTier, RatioRole, RatioRule } from '@shiftnurse/core';
-import { NURSE_ROLES } from '@shiftnurse/core';
+import { describeRatioChanges, NURSE_ROLES, protectedRatioChanges } from '@shiftnurse/core';
 import { useState } from 'react';
 import type { RatioRuleInput, RatioRulePatch } from '../../../../../shared/api.js';
 import {
@@ -15,7 +17,8 @@ import {
 } from '../../../api-config.js';
 import { describedBy, Field } from '../../../components/field-help.js';
 import { Modal } from '../../../components/modal.js';
-import { DANGER_SOLID, INPUT, PRIMARY, SECONDARY } from '../../../components/ui.js';
+import { INPUT, PRIMARY, SECONDARY } from '../../../components/ui.js';
+import { ReasonDialog } from '../../requests/reason-dialog.js';
 
 const ALL_TIERS_VALUE = '__all__';
 
@@ -87,6 +90,21 @@ function diffRatioPatch(original: RatioRule, form: RatioFormState): RatioRulePat
     if (share !== original.minRnShare) patch.minRnShare = share ?? null;
   }
   return patch;
+}
+
+/** The rule as the patch would leave it, for core to judge and word before anything is sent. */
+function applyRatioPatch(original: RatioRule, patch: RatioRulePatch): RatioRule {
+  const { citation, minRnShare, ...rest } = patch;
+  const merged: RatioRule = { ...original, ...rest };
+  if (citation !== undefined) {
+    if (citation === null) delete merged.citation;
+    else merged.citation = citation;
+  }
+  if (minRnShare !== undefined) {
+    if (minRnShare === null) delete merged.minRnShare;
+    else merged.minRnShare = minRnShare;
+  }
+  return merged;
 }
 
 function ratioFormValid(form: RatioFormState): boolean {
@@ -286,6 +304,9 @@ export function RatioRulesSection({
   const [confirmingDeactivate, setConfirmingDeactivate] = useState<RatioRule | undefined>(
     undefined,
   );
+  const [askingReason, setAskingReason] = useState<
+    { original: RatioRule; patch: RatioRulePatch; description: string } | undefined
+  >(undefined);
   const [showInactive, setShowInactive] = useState(false);
 
   const tierById = new Map(tiers.map((tier) => [tier.id, tier]));
@@ -315,7 +336,19 @@ export function RatioRulesSection({
       setEditing(undefined);
       return;
     }
-    updateMutation.mutate({ id: original.id, patch }, { onSuccess: () => setEditing(undefined) });
+    const merged = applyRatioPatch(original, patch);
+    const changes = protectedRatioChanges(original, merged);
+    if (changes.length === 0) {
+      updateMutation.mutate({ id: original.id, patch }, { onSuccess: () => setEditing(undefined) });
+      return;
+    }
+    const tierNames = Object.fromEntries(tiers.map((tier) => [tier.id, tier.name]));
+    updateMutation.reset();
+    setAskingReason({
+      original,
+      patch,
+      description: `${describeRatioChanges(original, merged, changes, tierNames)}. Your reason is kept with the change.`,
+    });
   }
 
   return (
@@ -412,7 +445,11 @@ export function RatioRulesSection({
                       {rule.active ? (
                         <button
                           type="button"
-                          onClick={() => setConfirmingDeactivate(rule)}
+                          onClick={() => {
+                            // A refusal for the last rule must not greet the next one.
+                            deactivateMutation.reset();
+                            setConfirmingDeactivate(rule);
+                          }}
                           className="rounded-md border border-border px-2 py-1 text-xs text-danger hover:bg-bg"
                         >
                           Deactivate
@@ -453,44 +490,53 @@ export function RatioRulesSection({
         />
       ) : null}
 
-      <Modal
+      <ReasonDialog
+        open={askingReason !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setAskingReason(undefined);
+        }}
+        title="Why change this ratio?"
+        description={askingReason?.description}
+        confirmLabel="Save change"
+        pending={updateMutation.isPending}
+        error={updateMutation.error}
+        onConfirm={(reason) => {
+          if (askingReason === undefined) return;
+          updateMutation.mutate(
+            { id: askingReason.original.id, patch: askingReason.patch, reason },
+            {
+              onSuccess: () => {
+                setAskingReason(undefined);
+                setEditing(undefined);
+              },
+            },
+          );
+        }}
+      />
+
+      <ReasonDialog
         open={confirmingDeactivate !== undefined}
         onOpenChange={(open) => {
           if (!open) setConfirmingDeactivate(undefined);
         }}
         title="Deactivate ratio rule?"
-        variant="popup"
-        size="sm"
-        footer={
-          <>
-            <button
-              type="button"
-              onClick={() => setConfirmingDeactivate(undefined)}
-              className={SECONDARY}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (confirmingDeactivate === undefined) return;
-                deactivateMutation.mutate(confirmingDeactivate.id, {
-                  onSuccess: () => setConfirmingDeactivate(undefined),
-                });
-              }}
-              className={DANGER_SOLID}
-            >
-              Deactivate
-            </button>
-          </>
+        description={
+          confirmingDeactivate !== undefined
+            ? `This ${confirmingDeactivate.role} ceiling of 1:${confirmingDeactivate.maxPatientsPerNurse} will no longer set staffing on new schedules. Your reason is kept on the record.`
+            : ''
         }
-      >
-        <p className="mt-2 text-sm text-text-muted">
-          {confirmingDeactivate !== undefined
-            ? `This ${confirmingDeactivate.role} ceiling of ${confirmingDeactivate.maxPatientsPerNurse} will no longer constrain new schedules. Existing assignments are unaffected.`
-            : ''}
-        </p>
-      </Modal>
+        confirmLabel="Deactivate"
+        destructive
+        pending={deactivateMutation.isPending}
+        error={deactivateMutation.error}
+        onConfirm={(reason) => {
+          if (confirmingDeactivate === undefined) return;
+          deactivateMutation.mutate(
+            { id: confirmingDeactivate.id, reason },
+            { onSuccess: () => setConfirmingDeactivate(undefined) },
+          );
+        }}
+      />
     </section>
   );
 }

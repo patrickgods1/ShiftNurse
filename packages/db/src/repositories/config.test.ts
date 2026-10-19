@@ -4,22 +4,48 @@
  * manager renamed the home unit so that it sorted second.
  */
 
-import { type IsoDate, isoDate, type PaperSize, type Unit } from '@shiftnurse/core';
+import {
+  DEFAULT_FAIRNESS_WEIGHTS,
+  type Id,
+  type IsoDate,
+  isoDate,
+  type PaperSize,
+  type Unit,
+} from '@shiftnurse/core';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor, recentAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { unit as unitTable } from '../schema.js';
+import { listCensusHistory, upsertCensusForecast } from './census.js';
 import {
+  createShiftCredentialRequirement,
   createShiftType,
   createUnit,
+  deactivateShiftType,
+  duplicateShiftType,
   fillCoverageWeek,
   getHomeUnit,
   listCoverageRequirementsForUnit,
+  listShiftCredentialRequirementsForUnit,
+  listShiftTypesForUnit,
   listUnits,
+  lockedShiftTypeIds,
+  updateShiftType,
   updateUnit,
   upsertCoverageRequirement,
 } from './config.js';
+import { publishSchedule, recordScheduleChange } from './publish.js';
+import { createNurse, listPreferencesForNurse, replaceNursePreferences } from './roster.js';
+import { createCredential } from './roster-io.js';
+import { saveRuleSet } from './rulesets.js';
+import {
+  archivePeriod,
+  createAssignment,
+  createPeriod,
+  deleteAssignment,
+  listAssignmentsForPeriod,
+} from './schedule.js';
 
 const ACTOR = 'manager';
 let handle: OpenedDatabase;
@@ -382,5 +408,559 @@ describe('paper size', () => {
         updateUnit(tx, unit.id, { paperSize: 'legal' as PaperSize }, ACTOR),
       ),
     ).toThrow('Paper size must be Letter or A4.');
+  });
+});
+
+describe('shift types that published schedules used', () => {
+  let unitId: Id;
+  let nurseId: Id;
+  let ruleSet: { id: Id; version: number };
+
+  function addType(name: string, startTime: string, hours: number, isNight: boolean) {
+    return createShiftType(
+      handle.db,
+      {
+        unitId,
+        name,
+        abbreviation: name.slice(0, 3),
+        startTime,
+        durationHours: hours,
+        isNight,
+        isOnCall: false,
+        color: '#ffffff',
+        sortOrder: 1,
+        active: true,
+      },
+      ACTOR,
+    );
+  }
+
+  function addPeriod(name: string, startDate: string, endDate: string) {
+    return createPeriod(
+      handle.db,
+      {
+        unitId,
+        name,
+        startDate: isoDate(startDate),
+        endDate: isoDate(endDate),
+        ruleSetId: ruleSet.id,
+        ruleSetVersion: ruleSet.version,
+      },
+      ACTOR,
+    ).id;
+  }
+
+  const place = (periodId: Id, shiftTypeId: Id, date: string) =>
+    createAssignment(handle.db, { periodId, nurseId, shiftTypeId, date: isoDate(date) }, ACTOR);
+
+  const publish = (periodId: Id) =>
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
+
+  const edit = (id: Id, patch: Parameters<typeof updateShiftType>[2]) =>
+    updateShiftType(handle.db, id, patch, ACTOR);
+
+  beforeEach(() => {
+    unitId = addUnit('4 West').id;
+    ruleSet = transact(handle.db, (tx) =>
+      saveRuleSet(
+        tx,
+        {
+          unitId,
+          name: 'Default',
+          weekendDefinition: {
+            startWeekday: 6,
+            startMinute: 0,
+            durationMinutes: 2880,
+            mode: 'starts_within',
+          },
+          fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+          configs: [],
+        },
+        ACTOR,
+      ),
+    );
+    nurseId = createNurse(
+      handle.db,
+      {
+        unitId,
+        employeeId: 'E1',
+        firstName: 'Ana',
+        lastName: 'Nurse',
+        role: 'RN',
+        employmentType: 'full_time',
+        fte: 1,
+        contractedHoursPerPeriod: 72,
+        seniorityDate: isoDate('2020-01-01'),
+        isChargeEligible: true,
+        isNovice: false,
+        isFloatEligible: true,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+  });
+
+  /** Night 12 on a period with Ana on it on 2026-10-05; optionally published. */
+  function nightOnOctober(published: boolean) {
+    const night = addType('Night 12', '19:00', 12, true);
+    const periodId = addPeriod('October', '2026-10-04', '2026-10-17');
+    place(periodId, night.id, '2026-10-05');
+    if (published) publish(periodId);
+    return { night, periodId };
+  }
+
+  it('refuses new paid hours on a night shift a published schedule used', () => {
+    const { night } = nightOnOctober(true);
+    const audits = auditHistoryFor(handle.db, 'shift_type', night.id).length;
+
+    expect(() => edit(night.id, { durationHours: 8 })).toThrow(
+      'Night 12 is on 1 published or archived schedule, so its paid hours cannot change: that schedule was judged and priced with it. Duplicate it as a new type instead.',
+    );
+    expect(
+      listShiftTypesForUnit(handle.db, unitId).find((t) => t.id === night.id)!.durationHours,
+    ).toBe(12);
+    expect(auditHistoryFor(handle.db, 'shift_type', night.id)).toHaveLength(audits);
+  });
+
+  it('names every locked field the manager tried to change', () => {
+    const { night } = nightOnOctober(true);
+
+    let message = '';
+    try {
+      edit(night.id, { startTime: '18:00', isNight: false, isOnCall: true });
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toContain('its start time, night flag and on-call flag cannot change');
+    expect(message).toContain('judged and priced with them');
+  });
+
+  it('lets a published night shift be renamed, recoloured and reordered', () => {
+    const { night } = nightOnOctober(true);
+
+    const after = edit(night.id, { name: 'Nights', color: '#000000', sortOrder: 5 });
+
+    expect(after.name).toBe('Nights');
+    expect(auditHistoryFor(handle.db, 'shift_type', night.id)[0]!.before).toMatchObject({
+      name: 'Night 12',
+    });
+  });
+
+  it('accepts a save that repeats the current hours', () => {
+    const { night } = nightOnOctober(true);
+
+    const after = edit(night.id, { durationHours: 12, startTime: '19:00', name: 'Nights' });
+
+    expect(after.name).toBe('Nights');
+  });
+
+  it('lets a shift used only in drafts change its hours', () => {
+    const { night } = nightOnOctober(false);
+
+    expect(edit(night.id, { durationHours: 8 }).durationHours).toBe(8);
+  });
+
+  it('counts an archived schedule as history too', () => {
+    const { night, periodId } = nightOnOctober(true);
+    archivePeriod(handle.db, periodId, ACTOR, 'Closed pay period');
+
+    expect(() => edit(night.id, { durationHours: 8 })).toThrow(
+      /is on 1 published or archived schedule/,
+    );
+  });
+
+  it('counts a shift removed after publishing, because the change log still names it', () => {
+    const night = addType('Night 12', '19:00', 12, true);
+    const day = addType('Day 12', '07:00', 12, false);
+    const periodId = addPeriod('October', '2026-10-04', '2026-10-17');
+    place(periodId, night.id, '2026-10-05');
+    place(periodId, day.id, '2026-10-07');
+    publish(periodId);
+
+    const gone = listAssignmentsForPeriod(handle.db, periodId).find(
+      (a) => a.shiftTypeId === night.id,
+    )!;
+    deleteAssignment(handle.db, gone.id, ACTOR, 'Ana asked off');
+    recordScheduleChange(
+      handle.db,
+      {
+        periodId,
+        kind: 'removed',
+        assignmentId: gone.id,
+        nurseId,
+        date: gone.date,
+        shiftTypeId: night.id,
+        before: gone,
+        reason: 'Ana asked off',
+      },
+      ACTOR,
+    );
+
+    expect(() => edit(night.id, { durationHours: 8 })).toThrow(
+      /is on 1 published or archived schedule/,
+    );
+  });
+
+  it('counts each schedule once however many shifts it holds', () => {
+    const night = addType('Night 12', '19:00', 12, true);
+    const first = addPeriod('October A', '2026-10-04', '2026-10-17');
+    const second = addPeriod('October B', '2026-10-18', '2026-10-31');
+    place(first, night.id, '2026-10-05');
+    place(first, night.id, '2026-10-06');
+    place(first, night.id, '2026-10-07');
+    place(second, night.id, '2026-10-19');
+    publish(first);
+    publish(second);
+
+    let message = '';
+    try {
+      edit(night.id, { durationHours: 8 });
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toContain('is on 2 published or archived schedules');
+    expect(message).toContain('those schedules were');
+  });
+
+  it('lists the shift types whose timing is locked', () => {
+    const day = addType('Day 12', '07:00', 12, false);
+    const night = addType('Night 12', '19:00', 12, true);
+    addType('Mid 8', '11:00', 8, false);
+    const published = addPeriod('October A', '2026-10-04', '2026-10-17');
+    const draft = addPeriod('October B', '2026-10-18', '2026-10-31');
+    place(published, day.id, '2026-10-05');
+    place(draft, night.id, '2026-10-19');
+    publish(published);
+
+    expect(lockedShiftTypeIds(handle.db, unitId)).toEqual([day.id]);
+  });
+});
+
+describe('duplicating a shift type as a new one', () => {
+  let unitId: Id;
+  let ruleSet: { id: Id; version: number };
+
+  function addNurse(employeeId: string, firstName: string, homeUnitId = unitId): Id {
+    return createNurse(
+      handle.db,
+      {
+        unitId: homeUnitId,
+        employeeId,
+        firstName,
+        lastName: 'Nurse',
+        role: 'RN',
+        employmentType: 'full_time',
+        fte: 1,
+        contractedHoursPerPeriod: 72,
+        seniorityDate: isoDate('2020-01-01'),
+        isChargeEligible: true,
+        isNovice: false,
+        isFloatEligible: true,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+  }
+
+  function addPeriod(name: string, startDate: string, endDate: string): Id {
+    return createPeriod(
+      handle.db,
+      {
+        unitId,
+        name,
+        startDate: isoDate(startDate),
+        endDate: isoDate(endDate),
+        ruleSetId: ruleSet.id,
+        ruleSetVersion: ruleSet.version,
+      },
+      ACTOR,
+    ).id;
+  }
+
+  const forecast = (shiftTypeId: Id, date: string) =>
+    upsertCensusForecast(
+      handle.db,
+      {
+        unitId,
+        date: isoDate(date),
+        shiftTypeId,
+        projectedCensus: 20,
+        acuityMix: {},
+        source: 'manual',
+      },
+      ACTOR,
+    );
+
+  /**
+   * 4 West: Night 12 published on 2026-10-05 for Ana, with a Monday RN floor, a BLS requirement,
+   * two forecasts, Ana's wish for it, Late 4 inside it, and Ben on it in the November draft.
+   * `lateHistory` also publishes a Late 4 shift for Cara on 2026-10-06.
+   */
+  function setup(lateHistory = false) {
+    unitId = addUnit('4 West').id;
+    ruleSet = transact(handle.db, (tx) =>
+      saveRuleSet(
+        tx,
+        {
+          unitId,
+          name: 'Default',
+          weekendDefinition: {
+            startWeekday: 6,
+            startMinute: 0,
+            durationMinutes: 2880,
+            mode: 'starts_within',
+          },
+          fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+          configs: [],
+        },
+        ACTOR,
+      ),
+    );
+    const ana = addNurse('E1', 'Ana');
+    const ben = addNurse('E2', 'Ben');
+    const cara = addNurse('E3', 'Cara');
+    // Dee's home is 5 East; she floats to 4 West and has said she would rather not do its nights.
+    const dee = addNurse('E4', 'Dee', addUnit('5 East').id);
+    const night = createShiftType(
+      handle.db,
+      {
+        unitId,
+        name: 'Night 12',
+        abbreviation: 'N12',
+        startTime: '19:00',
+        durationHours: 12,
+        isNight: true,
+        isOnCall: false,
+        color: '#334455',
+        sortOrder: 2,
+        active: true,
+      },
+      ACTOR,
+    );
+    const late = createShiftType(
+      handle.db,
+      {
+        unitId,
+        name: 'Late 4',
+        abbreviation: 'L4',
+        startTime: '23:00',
+        durationHours: 4,
+        isNight: true,
+        isOnCall: false,
+        color: '#556677',
+        sortOrder: 3,
+        active: true,
+        withinShiftTypeId: night.id,
+      },
+      ACTOR,
+    );
+    upsertCoverageRequirement(
+      handle.db,
+      {
+        unitId,
+        shiftTypeId: night.id,
+        weekday: 1,
+        date: null,
+        role: 'RN',
+        minCount: 3,
+        targetCount: 4,
+      },
+      ACTOR,
+    );
+    const bls = createCredential(
+      handle.db,
+      { code: 'BLS', name: 'Basic Life Support', tracksExpiry: true },
+      ACTOR,
+    );
+    createShiftCredentialRequirement(
+      handle.db,
+      { unitId, shiftTypeId: night.id, role: 'RN', credentialId: bls.id, minCount: 1 },
+      ACTOR,
+    );
+    forecast(night.id, '2026-10-05');
+    forecast(night.id, '2026-11-10');
+    transact(handle.db, (tx) =>
+      replaceNursePreferences(
+        tx,
+        ana,
+        [
+          {
+            id: 'pref_ana_night' as Id,
+            nurseId: ana,
+            kind: 'prefer_shift_type',
+            shiftTypeId: night.id,
+            weight: 1,
+          },
+        ],
+        ACTOR,
+      ),
+    );
+    transact(handle.db, (tx) =>
+      replaceNursePreferences(
+        tx,
+        dee,
+        [
+          {
+            id: 'pref_dee_night' as Id,
+            nurseId: dee,
+            kind: 'avoid_shift_type',
+            shiftTypeId: night.id,
+            weight: 3,
+          },
+        ],
+        ACTOR,
+      ),
+    );
+    const october = addPeriod('October', '2026-10-04', '2026-10-17');
+    createAssignment(
+      handle.db,
+      { periodId: october, nurseId: ana, shiftTypeId: night.id, date: isoDate('2026-10-05') },
+      ACTOR,
+    );
+    if (lateHistory) {
+      createAssignment(
+        handle.db,
+        { periodId: october, nurseId: cara, shiftTypeId: late.id, date: isoDate('2026-10-06') },
+        ACTOR,
+      );
+    }
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: october }, ACTOR));
+    const november = addPeriod('November', '2026-11-01', '2026-11-14');
+    createAssignment(
+      handle.db,
+      { periodId: november, nurseId: ben, shiftTypeId: night.id, date: isoDate('2026-11-03') },
+      ACTOR,
+    );
+    return { ana, dee, night, late, bls };
+  }
+
+  const duplicate = (id: Id, changes: Parameters<typeof duplicateShiftType>[2]) =>
+    transact(handle.db, (tx) => duplicateShiftType(tx, id, changes, ACTOR));
+
+  const typeNamed = (name: string) =>
+    listShiftTypesForUnit(handle.db, unitId).find((t) => t.name === name);
+
+  it('makes an 8-hour night that keeps the 12-hour night’s floors, credentials and wishes', () => {
+    const { ana, dee, night, late, bls } = setup();
+
+    const result = duplicate(night.id, { name: 'Night 8', abbreviation: 'N8', durationHours: 8 });
+
+    const n8 = result.shiftType;
+    expect(n8).toMatchObject({
+      name: 'Night 8',
+      abbreviation: 'N8',
+      startTime: '19:00',
+      durationHours: 8,
+      isNight: true,
+      isOnCall: false,
+      active: true,
+    });
+    expect(result.retired.id).toBe(night.id);
+    expect(result.retired.active).toBe(false);
+    expect(typeNamed('Night 12')!.active).toBe(false);
+
+    const floors = listCoverageRequirementsForUnit(handle.db, unitId).filter(
+      (r) => r.shiftTypeId === n8.id,
+    );
+    expect(floors).toHaveLength(1);
+    expect(floors[0]).toMatchObject({ role: 'RN', weekday: 1, minCount: 3, targetCount: 4 });
+    const creds = listShiftCredentialRequirementsForUnit(handle.db, unitId).filter(
+      (r) => r.shiftTypeId === n8.id,
+    );
+    expect(creds).toHaveLength(1);
+    expect(creds[0]).toMatchObject({ role: 'RN', credentialId: bls.id, minCount: 1 });
+    expect(
+      auditHistoryFor(handle.db, 'coverage_requirement', floors[0]!.id).map((a) => a.action),
+    ).toEqual(['create']);
+    expect(
+      auditHistoryFor(handle.db, 'shift_credential_requirement', creds[0]!.id).map((a) => a.action),
+    ).toEqual(['create']);
+
+    const wishes = listPreferencesForNurse(handle.db, ana)
+      .map((p) => (p.kind === 'prefer_shift_type' ? `${p.shiftTypeId}:${p.weight}` : p.kind))
+      .sort();
+    expect(wishes).toEqual([`${n8.id}:1`, `${night.id}:1`].sort());
+    const [anaAudit] = auditHistoryFor(handle.db, 'preference', ana);
+    expect(anaAudit!.action).toBe('update');
+    expect((anaAudit!.before as { shiftTypeId: Id }[]).map((p) => p.shiftTypeId)).toEqual([
+      night.id,
+    ]);
+    expect((anaAudit!.after as { shiftTypeId: Id }[]).map((p) => p.shiftTypeId).sort()).toEqual(
+      [n8.id, night.id].sort(),
+    );
+
+    // Dee is not on 4 West's roster, but her wish names its night, so it follows the night.
+    const deeWishes = listPreferencesForNurse(handle.db, dee)
+      .map((p) => (p.kind === 'avoid_shift_type' ? `${p.shiftTypeId}:${p.weight}` : p.kind))
+      .sort();
+    expect(deeWishes).toEqual([`${n8.id}:3`, `${night.id}:3`].sort());
+
+    // Night 8 runs 19:00–03:00 and Late 4 runs 23:00–03:00; half-open windows, so it fits.
+    expect(typeNamed('Late 4')!.withinShiftTypeId).toBe(n8.id);
+    expect(late.withinShiftTypeId).toBe(night.id);
+    expect(result.stillInsideOld).toEqual([]);
+    // Ben's 2026-11-03 night in the November draft.
+    expect(result.draftShiftsOnOld).toBe(1);
+  });
+
+  it('moves future census forecasts to the new shift and leaves the published ones', () => {
+    const { night } = setup();
+
+    const { shiftType: n8 } = duplicate(night.id, { name: 'Night 8', durationHours: 8 });
+
+    const byDate = new Map(listCensusHistory(handle.db, unitId).map((f) => [f.date, f]));
+    expect(byDate.get(isoDate('2026-11-10'))!.shiftTypeId).toBe(n8.id);
+    expect(byDate.get(isoDate('2026-10-05'))!.shiftTypeId).toBe(night.id);
+    const moved = recentAudit(handle.db, 1000).filter(
+      (a) => a.entityType === 'census_forecast' && a.action === 'update',
+    );
+    expect(moved).toHaveLength(1);
+    expect((moved[0]!.before as { shiftTypeId: Id }).shiftTypeId).toBe(night.id);
+    expect((moved[0]!.after as { shiftTypeId: Id }).shiftTypeId).toBe(n8.id);
+  });
+
+  it('leaves a mid shift with its own published history inside the old night, and says so', () => {
+    const { night } = setup(true);
+
+    const result = duplicate(night.id, { name: 'Night 8', durationHours: 8 });
+
+    expect(typeNamed('Late 4')!.withinShiftTypeId).toBe(night.id);
+    expect(result.stillInsideOld).toEqual(['Late 4']);
+  });
+
+  it('refuses a new night that a mid shift no longer fits inside, and changes nothing', () => {
+    const { ana, night } = setup();
+    const anaWishesBefore = listPreferencesForNurse(handle.db, ana);
+    const floorsBefore = listCoverageRequirementsForUnit(handle.db, unitId).length;
+    const auditBefore = recentAudit(handle.db, 1000).length;
+
+    // Night 6 runs 19:00–01:00, which cannot hold Late 4's 23:00–03:00.
+    expect(() =>
+      duplicate(night.id, { name: 'Night 6', startTime: '19:00', durationHours: 6 }),
+    ).toThrow(/Late 4 .*does not fit inside the hours of Night 6/);
+
+    expect(typeNamed('Night 12')!.active).toBe(true);
+    expect(typeNamed('Night 6')).toBeUndefined();
+    expect(listCoverageRequirementsForUnit(handle.db, unitId)).toHaveLength(floorsBefore);
+    expect(recentAudit(handle.db, 1000)).toHaveLength(auditBefore);
+    // The forecast and the wish were rewritten before Late 4 was reached; both rolled back.
+    const november10 = listCensusHistory(handle.db, unitId).find(
+      (f) => f.date === isoDate('2026-11-10'),
+    );
+    expect(november10!.shiftTypeId).toBe(night.id);
+    expect(listPreferencesForNurse(handle.db, ana)).toEqual(anaWishesBefore);
+  });
+
+  it('refuses a copy with the same name', () => {
+    const { night } = setup();
+    expect(() => duplicate(night.id, { name: ' night 12 ' })).toThrow(
+      /Give the new shift type a different name from Night 12/,
+    );
+  });
+
+  it('refuses to duplicate a retired shift', () => {
+    const { night } = setup();
+    deactivateShiftType(handle.db, night.id, ACTOR);
+    expect(() => duplicate(night.id, { name: 'Night 8' })).toThrow(/already retired/);
   });
 });

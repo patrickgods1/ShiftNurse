@@ -17,6 +17,7 @@ import { publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
 import {
+  adoptLatestRules,
   archivePeriod,
   type CreateAssignmentInput,
   type CreatePeriodInput,
@@ -38,6 +39,7 @@ import {
   setRequestsCloseOn,
   updateAssignment,
 } from './schedule.js';
+import { loadPeriodInput } from './solve-input.js';
 
 const ACTOR = 'manager';
 let handle: OpenedDatabase;
@@ -218,6 +220,65 @@ describe('periods', () => {
       /is published, not a draft/,
     );
     expect(getPeriod(handle.db, published.id)).toBeDefined();
+  });
+
+  describe('moving a draft to newer rules', () => {
+    function saveNewerRules(): number {
+      return transact(handle.db, (tx) =>
+        saveRuleSet(
+          tx,
+          {
+            unitId,
+            name: 'Default',
+            weekendDefinition: weekendDefinition(),
+            fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+            configs: [
+              {
+                ruleId: 'min-rest-between-shifts',
+                enabled: true,
+                params: { minRestHours: 11, onCallCountsAsWork: false },
+              },
+            ],
+          },
+          ACTOR,
+        ),
+      ).version;
+    }
+
+    it('moves a draft to the rules saved after it was created, on the record', () => {
+      const draft = createPeriod(handle.db, basePeriod(), ACTOR);
+      expect(saveNewerRules()).toBe(ruleSetVersion + 1);
+      // Saving rules must never re-point a draft; only the explicit action does.
+      expect(getPeriod(handle.db, draft.id)?.ruleSetVersion).toBe(ruleSetVersion);
+      const moved = adoptLatestRules(handle.db, draft.id, ACTOR);
+      expect(moved.ruleSetVersion).toBe(ruleSetVersion + 1);
+      const entry = auditHistoryFor(handle.db, 'schedule_period', draft.id).find(
+        (e) => e.action === 'update',
+      );
+      expect((entry!.before as { ruleSetVersion: number }).ruleSetVersion).toBe(ruleSetVersion);
+      expect((entry!.after as { ruleSetVersion: number }).ruleSetVersion).toBe(ruleSetVersion + 1);
+      expect(loadPeriodInput(handle.db, getPeriod(handle.db, draft.id)!).ruleSet.version).toBe(
+        ruleSetVersion + 1,
+      );
+    });
+
+    it('keeps a published schedule on the rules it was published under', () => {
+      const period = createPeriod(handle.db, basePeriod(), ACTOR);
+      transact(handle.db, (tx) => publishSchedule(tx, { periodId: period.id }, ACTOR));
+      saveNewerRules();
+      expect(() => adoptLatestRules(handle.db, period.id, ACTOR)).toThrow(
+        /stays judged by the rules it was published under \(version 1\)/,
+      );
+    });
+
+    it('says so when the draft already uses the latest rules', () => {
+      const draft = createPeriod(handle.db, basePeriod(), ACTOR);
+      const audits = auditHistoryFor(handle.db, 'schedule_period', draft.id).length;
+      expect(() => adoptLatestRules(handle.db, draft.id, ACTOR)).toThrow(
+        /already uses the latest rules \(version 1\)/,
+      );
+      expect(auditHistoryFor(handle.db, 'schedule_period', draft.id)).toHaveLength(audits);
+    });
   });
 
   it('archives a published schedule with a reason, and refuses a draft or a blank reason', () => {

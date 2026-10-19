@@ -4,7 +4,7 @@
 
 ## What is here
 
-- `packages/db` (M2, complete): 49-table Drizzle schema, generated migrations, `client.ts`
+- `packages/db` (M2, complete): 50-table Drizzle schema, generated migrations, `client.ts`
   (WAL, foreign keys ON, `transact`), `audit.ts`, `mappers.ts`, and repositories under
   `repositories/` — `roster`, `config` (unit, shift types, coverage, holidays, credential
   requirements), `acuity` (tiers, ratios, HPPD), `rulesets`, `schedule`, `timeoff`, `calloffs`,
@@ -28,8 +28,23 @@
   pay settings (and a wider weekend) only to a unit that saved none, since a saved row may follow a
   contract the preset cannot see.
 
+- **A published period is priced under the pay configuration it was first published with
+  (`pay_config_snapshot`, migration `0048_pay_config_snapshot`):** differentials, overtime rules,
+  pay settings, the unit's holiday attribution and nearby holiday dates. Drafts are priced live.
+  `repricePeriod` takes a new snapshot with a strict reason. Pay rates are not snapshotted (they
+  carry `effectiveFrom`). `backfillPayConfigSnapshots` covers periods published before the table
+  existed.
+- **History is append-only in the file (migration `0049_history_is_append_only`):** `rule_set`,
+  `rule_config`, `schedule_version`, `schedule_change` and `pay_config_snapshot` refuse UPDATE and
+  DELETE, like `audit_log` (0013). They also abort FK cascades, so no unit or published period can
+  be deleted. A migration that rebuilds or backfills one of them drops and re-creates its trigger.
 - **Write the change, then its audit row; check a required reason first.** Audit-first only under
   `ShiftNurseTx`, where the whole call rolls back together (`audit.ts` header).
+- **A raised ceiling, a lowered RN share, a moved role or tier, a rewritten citation and a
+  deactivation of a ratio rule need a reason (`recordAuditStrict`); tightening does not.**
+  `updateRatioRule` judges the edit with core's `protectedRatioChanges` and refuses in
+  `describeRatioChanges`' words before writing (`auditedUpdate`'s `reasonRequired`/`reason`);
+  `deactivateRatioRule` always takes one. `applyJurisdiction` only tightens, so passes none.
 - **`better-sqlite3` is synchronous.** No `async`/`await`/`Promise` in `packages/db`.
 - **Repository patches go through `patchOf` with a `PatchKeys<Patch>` allow-list**
   (`db/src/repositories/patch.ts`). IPC payloads are typed, not checked, so spreading a patch
@@ -81,6 +96,16 @@
   shifts that were floated off are swapped in place for core's `floatedOff` copies on inactive
   `floated:` types. Same-unit drafts stay out; nothing it returns is added to the period's own
   `assignments`.
+- **A shift type used by a published or archived schedule keeps its timing** (`startTime`,
+  `durationHours`, `isNight`, `isOnCall`, `withinShiftTypeId`): `updateShiftType` refuses those
+  fields and the manager duplicates the type instead (`duplicateShiftType`). Published shifts are
+  judged and priced from the live shift-type row (`schedule_version` stores only assignment rows).
+  `shiftTypeHistoryCount` counts distinct periods, change-log rows included; repeating a current
+  value is not a change. A duplicate copies the floors and credential requirements, moves census
+  forecasts and repoints never-published mid shifts to the new type, adds a copy of each shift-type
+  wish, and retires the old type; it leaves forecasts dated inside a published or archived period,
+  mid shifts with published history of their own (named in `stillInsideOld`) and draft shifts
+  (counted in `draftShiftsOnOld`) on the old one.
 - **A published period is editable, with a reason.** Only `archived` is read-only. Every
   schedule mutation takes an optional `reason`; `requireChangeReason` throws on a published
   period without one and `editSchedule` in main writes each touched shift to `schedule_change`.

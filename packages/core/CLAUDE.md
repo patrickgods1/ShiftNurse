@@ -8,7 +8,8 @@
   `schedule/view.ts`, `rules/` (registry + 8 hard rules), `roster/csv.ts` (M4: the one CSV
   parser/formatter), `roster/import-plan.ts` (`rosterChangesFor` / `planRosterImport`: what an
   import changes per existing nurse — an absent column changes nothing; the preview and the
-  import share it), `acuity/forecast.ts` (M5: same-weekday moving average with seasonal
+  import share it), `acuity/ratio-changes.ts` (which ratio-table edits need a stated reason,
+  and the words the refusal and the editor share), `acuity/forecast.ts` (M5: same-weekday moving average with seasonal
   index against the same lookback last year, mix validation, back-test), `fairness/` (M7), `cost/` (M8: `resolvePayRate`,
   `costSchedule`, `marginalCost`, `compareToBudget` — the pay model is documented in
   `cost/types.ts`), `solver/` (M9: `types.ts` is the `Solver` contract, `model.ts` the
@@ -216,6 +217,9 @@
   hand-recorded list accepts only nurses on the unit (home, or floated there on the date); a
   holiday with a recorded list cannot be deleted until the list is cleared, and deleting one
   removes nurses' wishes to work it on the record.
+  A holiday's date can be changed; when a published or archived schedule covers the old or new date,
+  the change needs a reason (it changes who the rotation counts as having worked it; published
+  holiday pay is held by the period's pay snapshot).
 - **CSV exports defuse formulas.** `serializeCsv` prefixes `'` to a field starting `=`, `+`, `-`,
   `@`, tab or CR (numbers exempt) and `parseCsv` removes it, so an exported roster opened in
   Excel cannot run a formula hidden in a name, and still re-imports as itself.

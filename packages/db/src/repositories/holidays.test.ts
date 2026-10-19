@@ -33,7 +33,7 @@ import { createNurseUnit } from './nurse-units.js';
 import { publishSchedule } from './publish.js';
 import { createNurse, listPreferencesForNurse, replaceNursePreferences } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
-import { createAssignment, createPeriod } from './schedule.js';
+import { archivePeriod, createAssignment, createPeriod } from './schedule.js';
 import { holidayWorkForPeriod } from './solve-input.js';
 
 const ACTOR = 'manager';
@@ -84,6 +84,24 @@ function shift(name: string, isOnCall: boolean): string {
     },
     ACTOR,
   ).id;
+}
+
+/** A published, empty period with a manager-style name. */
+function publishedPeriod(name: string, start: string, end: string): string {
+  const period = createPeriod(
+    handle.db,
+    {
+      unitId,
+      name,
+      startDate: isoDate(start),
+      endDate: isoDate(end),
+      ruleSetId,
+      ruleSetVersion: 1,
+    },
+    ACTOR,
+  );
+  transact(handle.db, (tx) => publishSchedule(tx, { periodId: period.id }, ACTOR));
+  return period.id;
 }
 
 function holiday(date: string, name: string, isMajor: boolean, pairedHolidayId?: string): Holiday {
@@ -211,13 +229,11 @@ describe('moving a holiday between major and minor', () => {
     ]);
   });
 
-  it('refuses to change the date or unit through an update', () => {
+  it('refuses to move a holiday to another unit through an update', () => {
     const xmas = holiday('2026-12-25', 'Christmas Day', true);
     expect(() =>
-      transact(handle.db, (tx) =>
-        updateHoliday(tx, xmas.id, { date: '2026-12-26' } as never, ACTOR),
-      ),
-    ).toThrow(/cannot change 'date'/);
+      transact(handle.db, (tx) => updateHoliday(tx, xmas.id, { unitId: 'x' } as never, ACTOR)),
+    ).toThrow(/cannot change 'unitId'/);
   });
 
   it('unpairs a minor holiday when its major is deleted', () => {
@@ -268,14 +284,64 @@ describe('who worked a holiday', () => {
       },
       ACTOR,
     ).id;
-    schedule('2025-12-21', '2026-01-03', 'published', [[ana, nightId, '2025-12-24']]);
-    const range = window('2025-01-01', '2025-12-31');
-    expect(holidayWorkIn(handle.db, unitId, ...range)).toEqual([]);
-
+    // The schedule goes out after the switch, so it counts by the clock.
     transact(handle.db, (tx) => updateUnit(tx, unitId, { holidayAttribution: 'clock' }, ACTOR));
-    expect(holidayWorkIn(handle.db, unitId, ...range)).toEqual([
+    schedule('2025-12-21', '2026-01-03', 'published', [[ana, nightId, '2025-12-24']]);
+    expect(holidayWorkIn(handle.db, unitId, ...window('2025-01-01', '2025-12-31'))).toEqual([
       { holidayId: xmas.id, nurseId: ana.id },
     ]);
+  });
+
+  it('reads by the unit’s own clock setting when only a draft covers the holiday', () => {
+    const xmas = holiday('2025-12-25', 'Christmas Day', true);
+    const nightId = createShiftType(
+      handle.db,
+      {
+        unitId,
+        name: 'Night 12',
+        abbreviation: 'N12',
+        startTime: '19:00',
+        durationHours: 12,
+        isNight: true,
+        isOnCall: false,
+        color: '#1e3a8a',
+        sortOrder: 2,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+    // Christmas Eve's night went out on the schedule ending the 24th; Christmas itself is only
+    // in a draft, so no published schedule says how Christmas is counted and the unit's does.
+    schedule('2025-12-11', '2025-12-24', 'published', [[ana, nightId, '2025-12-24']]);
+    transact(handle.db, (tx) => updateUnit(tx, unitId, { holidayAttribution: 'clock' }, ACTOR));
+    schedule('2025-12-25', '2026-01-07', 'draft', []);
+    expect(holidayWorkIn(handle.db, unitId, ...window('2025-01-01', '2025-12-31'))).toEqual([
+      { holidayId: xmas.id, nurseId: ana.id },
+    ]);
+  });
+
+  it('decides who worked last Christmas the way last Christmas’s schedule counted it', () => {
+    holiday('2025-12-25', 'Christmas Day', true);
+    const nightId = createShiftType(
+      handle.db,
+      {
+        unitId,
+        name: 'Night 12',
+        abbreviation: 'N12',
+        startTime: '19:00',
+        durationHours: 12,
+        isNight: true,
+        isOnCall: false,
+        color: '#1e3a8a',
+        sortOrder: 2,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+    // Published under the start-day reading: a night dated the 24th is Christmas Eve's work.
+    schedule('2025-12-21', '2026-01-03', 'published', [[ana, nightId, '2025-12-24']]);
+    transact(handle.db, (tx) => updateUnit(tx, unitId, { holidayAttribution: 'clock' }, ACTOR));
+    expect(holidayWorkIn(handle.db, unitId, ...window('2025-01-01', '2025-12-31'))).toEqual([]);
   });
 
   it('uses a list recorded by hand instead, for a year before the app', () => {
@@ -518,5 +584,73 @@ describe('who can be recorded as working a holiday, and deleting one', () => {
     expect([(a.before as unknown[]).length, (a.after as unknown[]).length]).toEqual([2, 1]);
     const b = prefAudits(ben.id)[0]!;
     expect([(b.before as unknown[]).length, (b.after as unknown[]).length]).toEqual([1, 0]);
+  });
+});
+
+describe('moving a holiday to another date', () => {
+  const move = (id: string, date: string, reason?: string) =>
+    transact(handle.db, (tx) => updateHoliday(tx, id, { date: isoDate(date) }, ACTOR, reason));
+
+  it('moves a future holiday without asking why', () => {
+    const xmas = holiday('2026-12-25', 'Christmas Day', true);
+    expect(move(xmas.id, '2026-12-26').date).toBe('2026-12-26');
+    const entry = auditHistoryFor(handle.db, 'holiday', xmas.id)[0]!;
+    expect(entry.action).toBe('update');
+    expect((entry.before as Holiday).date).toBe('2026-12-25');
+    expect((entry.after as Holiday).date).toBe('2026-12-26');
+    expect(entry.reason).toBeUndefined();
+  });
+
+  it('needs a reason to move a holiday a published schedule covers', () => {
+    const xmas = holiday('2026-12-25', 'Christmas Day', true);
+    publishedPeriod('Dec 20 – Jan 2', '2026-12-20', '2027-01-02');
+    const audits = auditHistoryFor(handle.db, 'holiday', xmas.id).length;
+    expect(() => move(xmas.id, '2026-12-26')).toThrow(
+      'Moving Christmas Day from 2026-12-25 to 2026-12-26 needs a reason: Dec 20 – Jan 2 is published, and the holiday rotation counts who worked Christmas Day from it.',
+    );
+    expect(listHolidaysForUnit(handle.db, unitId).find((h) => h.id === xmas.id)?.date).toBe(
+      '2026-12-25',
+    );
+    expect(auditHistoryFor(handle.db, 'holiday', xmas.id)).toHaveLength(audits);
+
+    move(xmas.id, '2026-12-26', 'Entered on the wrong day');
+    const entry = auditHistoryFor(handle.db, 'holiday', xmas.id)[0]!;
+    expect(entry.action).toBe('update');
+    expect(entry.reason).toBe('Entered on the wrong day');
+    expect((entry.before as Holiday).date).toBe('2026-12-25');
+    expect((entry.after as Holiday).date).toBe('2026-12-26');
+  });
+
+  it('names both schedules when a published and an archived one cover the move', () => {
+    const xmas = holiday('2026-12-25', 'Christmas Day', true);
+    const older = publishedPeriod('Dec 20 – Jan 2', '2026-12-20', '2027-01-02');
+    transact(handle.db, (tx) => archivePeriod(tx, older, ACTOR, 'Closed pay period'));
+    publishedPeriod('Dec 26 – Jan 8', '2026-12-26', '2027-01-08');
+    expect(() => move(xmas.id, '2026-12-26')).toThrow(
+      'Moving Christmas Day from 2026-12-25 to 2026-12-26 needs a reason: Dec 20 – Jan 2, Dec 26 – Jan 8 are published, and the holiday rotation counts who worked Christmas Day from them.',
+    );
+  });
+
+  it('needs a reason when only the new date is covered', () => {
+    const thanks = holiday('2026-11-27', 'Thanksgiving Friday', false);
+    publishedPeriod('Late Nov', '2026-11-29', '2026-12-12');
+    expect(() => move(thanks.id, '2026-11-30')).toThrow(/needs a reason: Late Nov is published/);
+  });
+
+  it('refuses to put two holidays on one day', () => {
+    const xmas = holiday('2026-12-25', 'Christmas Day', true);
+    holiday('2026-12-24', 'Christmas Eve', false);
+    expect(() => move(xmas.id, '2026-12-24')).toThrow(
+      'Christmas Eve is already on 2026-12-24; a unit keeps one holiday a day.',
+    );
+  });
+
+  it('keeps the hand-recorded list when the holiday moves', () => {
+    const xmas = holiday('2026-12-25', 'Christmas Day', true);
+    transact(handle.db, (tx) => recordHolidayWork(tx, xmas.id, [ana.id], ACTOR));
+    move(xmas.id, '2026-12-26');
+    const summary = holidayWorkSummary(handle.db, xmas.id);
+    expect(summary.recorded).toBe(true);
+    expect(summary.nurseIds).toEqual([ana.id]);
   });
 });

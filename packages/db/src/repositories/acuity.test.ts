@@ -9,6 +9,7 @@ import {
   deleteAcuityTier,
   listActiveRatioRulesForUnit,
   listRatioRulesForUnit,
+  updateRatioRule,
 } from './acuity.js';
 import { listCensusForecastsInRange, recordActualCensus, upsertCensusForecast } from './census.js';
 import { createShiftType, createUnit } from './config.js';
@@ -92,7 +93,7 @@ describe('deleting an acuity tier', () => {
 
   it('refuses while only a deactivated rule cites it, because past periods were judged by that rule', () => {
     const rule = addRule('RN', 3);
-    deactivateRatioRule(handle.db, rule.id, ACTOR);
+    deactivateRatioRule(handle.db, rule.id, ACTOR, 'Unit closed its high-acuity beds');
     expect(() => deleteAcuityTier(handle.db, highId, ACTOR)).toThrow(
       '"High acuity" is cited by 1 ratio rule (deactivated ones included). Rename it instead; deleting it would drop that rule.',
     );
@@ -145,5 +146,107 @@ describe('deleting an acuity tier', () => {
     expect(
       nursesRequiredForMix(day.acuityMix, 'RN', listActiveRatioRulesForUnit(handle.db, unitId)),
     ).toBe(2);
+  });
+});
+
+describe('editing a ratio ceiling', () => {
+  function citedRule() {
+    return createRatioRule(
+      handle.db,
+      {
+        unitId,
+        role: 'RN',
+        acuityTierId: highId,
+        maxPatientsPerNurse: 4,
+        citation: 'CA Title 22 §70217',
+        active: true,
+      },
+      ACTOR,
+    );
+  }
+  const ruleAudits = (id: string) => auditHistoryFor(handle.db, 'ratio_rule', id);
+  const readRule = (id: string) =>
+    listRatioRulesForUnit(handle.db, unitId).find((r) => r.id === id)!;
+
+  it('refuses to raise a ceiling without a reason, and writes nothing', () => {
+    const rule = citedRule();
+    expect(() => updateRatioRule(handle.db, rule.id, { maxPatientsPerNurse: 6 }, ACTOR)).toThrow(
+      'Changing the RN ratio on High acuity (ceiling 1:4 → 1:6) needs a reason: a looser, re-cited or retired patient ratio is what gets quoted if staffing is challenged.',
+    );
+    expect(readRule(rule.id).maxPatientsPerNurse).toBe(4);
+    expect(ruleAudits(rule.id)).toHaveLength(1);
+  });
+
+  it('raises a ceiling with a reason and keeps the old one in the audit log', () => {
+    const rule = citedRule();
+    updateRatioRule(
+      handle.db,
+      rule.id,
+      { maxPatientsPerNurse: 6 },
+      ACTOR,
+      'Census below 20 per union MOU 2026-3',
+    );
+    const newest = ruleAudits(rule.id)[0]!;
+    expect(newest.action).toBe('update');
+    expect((newest.before as { maxPatientsPerNurse: number }).maxPatientsPerNurse).toBe(4);
+    expect((newest.after as { maxPatientsPerNurse: number }).maxPatientsPerNurse).toBe(6);
+    expect(newest.reason).toBe('Census below 20 per union MOU 2026-3');
+  });
+
+  it('tightens a ceiling without asking why', () => {
+    const rule = citedRule();
+    expect(updateRatioRule(handle.db, rule.id, { maxPatientsPerNurse: 3 }, ACTOR)).toMatchObject({
+      maxPatientsPerNurse: 3,
+    });
+    expect(ruleAudits(rule.id)).toHaveLength(2);
+  });
+
+  it('refuses to clear the citation without a reason', () => {
+    const rule = citedRule();
+    expect(() => updateRatioRule(handle.db, rule.id, { citation: null }, ACTOR)).toThrow(
+      'Changing the RN ratio on High acuity (citation removed) needs a reason',
+    );
+    expect(readRule(rule.id).citation).toBe('CA Title 22 §70217');
+  });
+
+  it('refuses to deactivate a ceiling without a reason', () => {
+    const rule = citedRule();
+    expect(() => deactivateRatioRule(handle.db, rule.id, ACTOR, '  ')).toThrow(
+      'Deactivating the RN ratio on High acuity (1:4) needs a reason: a retired patient ratio is what gets quoted if staffing is challenged.',
+    );
+    expect(readRule(rule.id).active).toBe(true);
+    expect(ruleAudits(rule.id)).toHaveLength(1);
+  });
+
+  it('deactivates with a reason, on the record', () => {
+    const rule = citedRule();
+    expect(
+      deactivateRatioRule(handle.db, rule.id, ACTOR, 'High-acuity beds moved to 5 East').active,
+    ).toBe(false);
+    const newest = ruleAudits(rule.id)[0]!;
+    expect(newest.action).toBe('delete');
+    expect(newest.reason).toBe('High-acuity beds moved to 5 East');
+    expect(() => deactivateRatioRule(handle.db, rule.id, ACTOR, 'Again')).toThrow(
+      'That ratio rule is already inactive.',
+    );
+  });
+
+  it('refuses deactivation slipped in as an update', () => {
+    const rule = citedRule();
+    expect(() => updateRatioRule(handle.db, rule.id, { active: false }, ACTOR)).toThrow(
+      /needs a reason/,
+    );
+    expect(readRule(rule.id).active).toBe(true);
+  });
+
+  it('names a rule for every tier that way', () => {
+    const rule = createRatioRule(
+      handle.db,
+      { unitId, role: 'licensed', acuityTierId: null, maxPatientsPerNurse: 5, active: true },
+      ACTOR,
+    );
+    expect(() => deactivateRatioRule(handle.db, rule.id, ACTOR, '')).toThrow(
+      'Deactivating the licensed-nurse ratio on every tier (1:5) needs a reason',
+    );
   });
 });

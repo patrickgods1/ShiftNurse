@@ -142,6 +142,8 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
   shifts and her status), `awardRound` (a bid round's awards, approvals, denials and status),
   `markFloatedOff` (a row marked and locked plus its audit), `grantNewCredential` (a credential
   type and its first grant), `fillCoverageWeek` (seven weekday floors set together),
+  `duplicateShiftType` (a new type, its copied floors, credentials, forecasts and wishes, and the
+  old type's retirement),
   `publishSchedule` (version, status, ledger), `replaceAssignments` (delete and insert),
   `replaceNursePreferences`, `importFairnessLedgerEntries` and `upsertCensusForecasts` (a batch of
   days accepted as one decision) — takes `ShiftNurseTx`, so calling it outside a transaction is a
@@ -152,12 +154,16 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
   leaves a change with no record.
 - **Every mutation writes an audit entry in the same call**, with `before` on updates/deletes.
   `audit_log` is append-only in the file itself (migration 0013's triggers refuse UPDATE and
-  DELETE); restore and start over replace the whole file instead.
+  DELETE); restore and start over replace the whole file instead. Rule sets, published versions,
+  the change log and pay snapshots are append-only the same way (triggers).
   Denials, resolutions and overrides go through `recordAuditStrict`, which refuses to record
   without a stated reason — that text is what gets quoted if a decision is challenged.
 - **Rule set versions are immutable.** `saveRuleSet` always inserts a new version; a published
   period snapshots the version it was solved under, so editing rules must never rewrite the
-  rules an existing schedule was judged by.
+  rules an existing schedule was judged by; likewise a published period keeps the pay
+  configuration it was published under (`pay_config_snapshot`). A draft keeps the version it was created under until
+  the manager moves it (`periods.adoptLatestRules`, audited); the Schedule page says when a newer
+  version exists.
 - Bad data throws loudly (`ScheduleView` throws on an unknown nurse id). Silently dropping a
   row hides corruption; in scheduling that becomes a grievance; the file itself refuses impossible
   roles, FTEs, dates and statuses (validation triggers).

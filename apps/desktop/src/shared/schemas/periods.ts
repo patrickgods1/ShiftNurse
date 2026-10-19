@@ -16,4 +16,5 @@ export const periodsSchemas = {
     }),
   ]),
   setRequestsCloseOn: z.tuple([id, isoDate.nullable()]),
+  adoptLatestRules: z.tuple([id]),
 } satisfies ResourceSchemas<'periods'>;

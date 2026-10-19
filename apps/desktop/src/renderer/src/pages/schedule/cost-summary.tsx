@@ -6,10 +6,18 @@
  *
  * Unpriced shifts are called out in the same breath as the total. A total that silently omits
  * twelve shifts because three nurses have no rate is worse than no total at all.
+ *
+ * A published period is priced from the pay settings it was published under, so the detail names
+ * them (and the reason, after a reprice) and offers the one audited way to move to today's.
  */
 
 import type { PeriodCostReport } from '@shared/api.js';
+import type { PeriodStatus } from '@shiftnurse/core';
+import { useState } from 'react';
+import { useRepricePeriod } from '../../api-cost.js';
+import { formatInstant } from '../../format.js';
 import { formatDollars, formatHours, formatSignedDollars } from '../../money.js';
+import { ReasonDialog } from '../requests/reason-dialog.js';
 import { PreviewTag } from './preview-tag.js';
 import type { StatusItem } from './status-row.js';
 
@@ -26,9 +34,11 @@ interface CostPillProps {
   report: PeriodCostReport | undefined;
   /** The previewed variation's name, when the report is that variation's. */
   previewLabel?: string | undefined;
+  /** Whose report this is; repricing is offered only while it is published. */
+  period?: { id: string; name: string; status: PeriodStatus } | undefined;
 }
 
-export function costPill({ report, previewLabel }: CostPillProps): StatusItem | undefined {
+export function costPill({ report, previewLabel, period }: CostPillProps): StatusItem | undefined {
   if (!report) return undefined;
   const { cost, variance } = report;
   const unpriced = cost.unpricedAssignments;
@@ -46,14 +56,22 @@ export function costPill({ report, previewLabel }: CostPillProps): StatusItem | 
     tone: unpriced > 0 || overBudget ? 'danger' : 'muted',
     label: parts.join(' · '),
     previewTag: <PreviewTag label={previewLabel} />,
-    detail: <CostDetail report={report} />,
+    detail: <CostDetail report={report} period={period} />,
   };
 }
 
-function CostDetail({ report }: { report: PeriodCostReport }) {
+function CostDetail({
+  report,
+  period,
+}: {
+  report: PeriodCostReport;
+  period: CostPillProps['period'];
+}) {
   const { cost, variance } = report;
   const overtime = cost.overtime;
   const overBudget = variance !== undefined && variance.variance > 0;
+  const priced = report.pricedUnder;
+  const canReprice = priced !== undefined && period !== undefined && period.status === 'published';
 
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -82,6 +100,48 @@ function CostDetail({ report }: { report: PeriodCostReport }) {
           pay rates in Settings › Pay
         </p>
       ) : null}
+      {canReprice ? <PricedUnder priced={priced} period={period} /> : null}
     </div>
+  );
+}
+
+function PricedUnder({
+  priced,
+  period,
+}: {
+  priced: { takenAt: number; reason?: string | undefined };
+  period: { id: string; name: string };
+}) {
+  const [asking, setAsking] = useState(false);
+  const reprice = useRepricePeriod();
+  return (
+    <>
+      <p className="text-text-muted" data-testid="cost-priced-under">
+        Priced with the pay settings of {formatInstant(priced.takenAt)}
+        {priced.reason !== undefined ? ` (repriced: ${priced.reason})` : ''}
+        <button
+          type="button"
+          className="ml-2 text-xs underline"
+          onClick={() => {
+            reprice.reset();
+            setAsking(true);
+          }}
+        >
+          Reprice with today’s settings…
+        </button>
+      </p>
+      <ReasonDialog
+        open={asking}
+        onOpenChange={setAsking}
+        title={`Reprice ${period.name}?`}
+        description="The schedule will be priced with today’s differentials, overtime rules and pay settings. Staff were paid under the old ones, so say why."
+        confirmLabel="Reprice"
+        pending={reprice.isPending}
+        error={reprice.error}
+        onConfirm={(reason) =>
+          reprice.mutate({ periodId: period.id, reason }, { onSuccess: () => setAsking(false) })
+        }
+      />
+    </>
   );
 }

@@ -21,6 +21,7 @@ import {
   listCredentials,
   listNurseCredentials,
   listPeriodsForUnit,
+  loadPeriodInput,
   proposeSwap,
   publishSchedule,
   recentAudit,
@@ -32,6 +33,7 @@ import {
   updateUnit,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { inputFingerprint } from '../solver-plan.js';
 import { approveExchange } from './conflicts.js';
 import { ACTOR } from './context.js';
 import { rosterApi } from './roster.js';
@@ -696,4 +698,33 @@ describe('the night the clocks go back', () => {
       expect(breaches).toHaveLength(1);
     },
   );
+});
+
+describe('moving a draft to newer rules', () => {
+  it('makes an earlier Generate run stale when the draft moves to new rules', () => {
+    const periodId = f.seeded.draftPeriodId;
+    const latest = getLatestRuleSet(f.handle.db, f.seeded.unitId)!;
+    transact(f.handle.db, (tx) =>
+      saveRuleSet(
+        tx,
+        {
+          ...latest,
+          configs: [
+            ...latest.configs.filter((c) => c.ruleId !== 'max-hours-in-24'),
+            { ruleId: 'max-hours-in-24', enabled: true, params: { maxHours: 12 } },
+          ],
+        },
+        ACTOR,
+      ),
+    );
+    const before = inputFingerprint(
+      loadPeriodInput(f.handle.db, getPeriod(f.handle.db, periodId)!),
+    );
+
+    const moved = periodsApi(f.handle.db).adoptLatestRules(periodId);
+
+    expect(moved.ruleSetVersion).toBe(latest.version + 1);
+    const after = inputFingerprint(loadPeriodInput(f.handle.db, getPeriod(f.handle.db, periodId)!));
+    expect(after).not.toBe(before);
+  });
 });

@@ -45,6 +45,7 @@ import {
   splitFloatedOff,
   timeOffForPeriod,
   uniqueById,
+  unitForPeriod,
 } from '@shiftnurse/db';
 
 /**
@@ -181,7 +182,8 @@ export function counterContext(
   // The period being counted; history import counts many periods, so it passes none and reads all.
   period?: SchedulePeriod,
 ): CounterContext {
-  const unit = unitOrThrow(db, unitId);
+  // A republish re-derives counters under the holiday attribution the period went out under.
+  const unit = period ? unitForPeriod(db, period) : unitOrThrow(db, unitId);
   const holidays = listHolidaysForUnit(db, unitId);
   return {
     unit,

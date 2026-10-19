@@ -20,6 +20,13 @@ export { backtest, proposeCensus, validateAcuityMix } from './acuity/forecast.js
 export type { HppdReport } from './acuity/hppd.js';
 // Scheduled hours per patient day against the target
 export { scheduledHppd } from './acuity/hppd.js';
+export type { RatioChange } from './acuity/ratio-changes.js';
+// Which ratio-table edits need a stated reason, and the words that name them
+export {
+  describeRatioChanges,
+  protectedRatioChanges,
+  ratioRuleSubject,
+} from './acuity/ratio-changes.js';
 export type {
   AutoResolvePolicy,
   CapacityVerdict,

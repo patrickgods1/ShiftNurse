@@ -1,7 +1,7 @@
 /** Argument schemas for `holidays`. */
 
 import { z } from 'zod';
-import { id, isoDate, name, object, type ResourceSchemas } from './primitives.js';
+import { id, isoDate, name, object, type ResourceSchemas, text } from './primitives.js';
 
 const holidayInput = object({
   unitId: id,
@@ -32,7 +32,8 @@ export const holidaysSchemas = {
   create: z.tuple([holidayInput]),
   update: z.tuple([
     id,
-    holidayInput.pick({ name: true, isMajor: true, pairedHolidayId: true }).partial(),
+    holidayInput.pick({ date: true, name: true, isMajor: true, pairedHolidayId: true }).partial(),
+    text.optional(),
   ]),
   delete: z.tuple([id]),
   work: z.tuple([id]),

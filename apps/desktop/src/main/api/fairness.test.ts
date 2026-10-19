@@ -20,11 +20,14 @@ import {
   createTimeOffRequest,
   deactivateNurse,
   getLatestRuleSet,
+  getUnit,
   ledgerSince,
   listNursesForUnit,
+  listPeriodsForUnit,
   listPreferencesForUnit,
   saveRuleSet,
   transact,
+  updateUnit,
   upsertFairnessLedgerEntry,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -86,6 +89,20 @@ describe('a wish to work a holiday in the counters the ledger records', () => {
     );
     expect(counters.get(ann!.id)?.preferenceHitRate).toBe(1);
     expect(counters.get(bea!.id)?.preferenceHitRate).toBe(0);
+  });
+});
+
+describe('counting a published schedule again', () => {
+  it('counts holidays the way the schedule was published, after the unit switches to the clock', () => {
+    const { db } = f.handle;
+    const unitId = f.seeded.unitId;
+    const published = listPeriodsForUnit(db, unitId).find((p) => p.status === 'published')!;
+    // The scenario unit never chose one, so its history went out under the start-day reading.
+    expect(getUnit(db, unitId)?.holidayAttribution).toBeUndefined();
+    transact(db, (tx) => updateUnit(tx, unitId, { holidayAttribution: 'clock' }, 'manager'));
+    const ruleSet = ruleSetFor(db, published);
+    expect(counterContext(db, unitId, ruleSet, published).unit.holidayAttribution).toBeUndefined();
+    expect(counterContext(db, unitId, ruleSet).unit.holidayAttribution).toBe('clock');
   });
 });
 

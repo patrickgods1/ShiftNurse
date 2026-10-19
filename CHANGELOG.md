@@ -113,9 +113,17 @@ tags. Each release's notes link here.
 - A roster sheet with a VA plan or scheduled days (including ShiftNurse's own export of a VA unit)
   now imports instead of being refused whole. Contracted hours must be a real number that fits in
   a pay period, and employee ids differing only in case count as duplicates.
+- Changing a differential, overtime rule, pay setting or holiday no longer changes the cost of
+  schedules already published. Each published schedule keeps the pay settings it went out under;
+  the cost detail says which, and "Reprice with today's settings" asks for a reason.
 
 ### Changed
 
+- Editing a shift type's hours after a schedule using it was published now offers a duplicate
+  instead; old schedules keep the hours they were built with.
+- Loosening, re-citing or deactivating a patient ratio asks for a reason.
+- Saved rule versions, published versions, the change log and pay snapshots can no longer be
+  edited or deleted in the database file itself.
 - Fairness now compares each nurse's share of nights, weekends and holidays as a rate per day
   they were available, with older history counting for less (half every 180 days, within a year).
   New hires and staff back from leave (FMLA included) are no longer pushed to the front of the
@@ -159,6 +167,8 @@ tags. Each release's notes link here.
 
 ### Added
 
+- Move a holiday to another date (a reason is asked for when a published schedule covers it).
+- A draft shows when newer rules exist and can switch to them.
 - Settings › Unit › Paper size for printouts: Letter or A4 (follows this computer's region until
   chosen).
 - If the window crashes or stops responding, ShiftNurse offers to reload it; after an internal

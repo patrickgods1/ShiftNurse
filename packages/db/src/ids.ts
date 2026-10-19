@@ -56,6 +56,7 @@ export const ids = {
   cancellationPolicy: () => newId('cxpol'),
   shiftCancellation: () => newId('cxl'),
   dayOfPayEvent: () => newId('dpe'),
+  payConfigSnapshot: () => newId('pcs'),
   solverSettings: () => newId('solv'),
   fairness: () => newId('fair'),
   audit: () => newId('aud'),

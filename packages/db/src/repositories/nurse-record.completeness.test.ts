@@ -35,6 +35,7 @@ const NOT_ABOUT_A_NURSE = [
   'hppd_target',
   'leave_bid_round',
   'overtime_rule',
+  'pay_config_snapshot',
   'pay_settings',
   'ratio_rule',
   'rule_set',

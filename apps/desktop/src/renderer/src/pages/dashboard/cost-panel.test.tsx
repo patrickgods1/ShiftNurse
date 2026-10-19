@@ -40,6 +40,7 @@ function report(dayOf: PeriodCostReport['dayOf']): PeriodCostReport {
     budget: undefined,
     variance: undefined,
     dayOf,
+    pricedUnder: undefined,
   };
 }
 

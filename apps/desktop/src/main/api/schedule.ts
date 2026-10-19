@@ -27,6 +27,7 @@ import {
   type SolveInput,
 } from '@shiftnurse/core';
 import {
+  adoptLatestRules,
   createAssignment,
   createPeriod,
   type DbLike,
@@ -226,6 +227,7 @@ export function periodsApi(db: ShiftNurseDb): ShiftNurseApi['periods'] {
       }),
     setRequestsCloseOn: (periodId, date) =>
       transact(db, (tx) => setRequestsCloseOn(tx, periodId, date ?? undefined, ACTOR)),
+    adoptLatestRules: (periodId) => transact(db, (tx) => adoptLatestRules(tx, periodId, ACTOR)),
   };
 }
 

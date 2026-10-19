@@ -22,10 +22,12 @@ import {
   getBudget,
   getNurse,
   getPaySettings,
+  latestPayConfigSnapshot,
   listDayOfPayEvents,
   listDifferentialsForUnit,
   listOvertimeRulesForUnit,
   listPayRatesForUnit,
+  repricePeriod,
   rosterForPeriod,
   type ShiftNurseDb,
   savePaySettings,
@@ -57,7 +59,11 @@ export function costReportForView(
 ): PeriodCostReport {
   // The period's own snapshot: the weekend definition and work week it was solved under.
   const ruleSet = ruleSetFor(db, period);
-  const ctx = costContext(db, period.unitId, ruleSet, period);
+  // Read once and handed on, so the schedule, the day-of events and the "priced under" line are
+  // all priced from the same kept configuration (a draft has none: it is priced live). The whole
+  // snapshot rather than `payConfigFor`, because the report says when it was taken and why.
+  const kept = period.status === 'draft' ? undefined : latestPayConfigSnapshot(db, period.id);
+  const ctx = costContext(db, period.unitId, ruleSet, period, kept?.config);
   const cost = costSchedule(schedule, ctx);
   const budget = getBudget(db, period.id);
   // Beside the schedule's cost, never in it. A floated-in nurse's missed break is this unit's pay.
@@ -77,13 +83,21 @@ export function costReportForView(
     known.add(nurseId);
     nurses.push(nurse);
   }
-  const dayOf = priceDayOfEvents(events, ctx, nurses, getPaySettings(db, period.unitId));
+  const dayOf = priceDayOfEvents(
+    events,
+    ctx,
+    nurses,
+    kept ? kept.config.paySettings : getPaySettings(db, period.unitId),
+  );
   return {
     period,
     cost,
     budget,
     variance: budget ? compareToBudget(cost.totals.total, budget.targetDollars) : undefined,
     dayOf,
+    pricedUnder: kept
+      ? { takenAt: kept.takenAt, ...(kept.reason !== undefined && { reason: kept.reason }) }
+      : undefined,
   };
 }
 
@@ -124,5 +138,6 @@ export function costApi(db: ShiftNurseDb): ShiftNurseApi['cost'] {
     paySettings: (unitId) => getPaySettings(db, unitId),
     savePaySettings: (unitId, settings) =>
       transact(db, (tx) => savePaySettings(tx, unitId, settings, ACTOR)),
+    reprice: (periodId, reason) => transact(db, (tx) => repricePeriod(tx, periodId, ACTOR, reason)),
   };
 }

@@ -29,6 +29,7 @@ import { toAssignment, toSchedulePeriod } from '../mappers.js';
 import { assignment, nurse, schedulePeriod, shiftType } from '../schema.js';
 import { insertRows } from './bulk.js';
 import { type PatchKeys, patchOf } from './patch.js';
+import { getLatestRuleSet } from './rulesets.js';
 
 // ---------------------------------------------------------------------------
 // Periods
@@ -128,6 +129,44 @@ export function setRequestsCloseOn(
   if ((before.requestsCloseOn ?? undefined) === date) return before;
   db.update(schedulePeriod)
     .set({ requestsCloseOn: date ?? null })
+    .where(eq(schedulePeriod.id, periodId))
+    .run();
+  const after = getPeriod(db, periodId)!;
+  recordAudit(db, {
+    entityType: 'schedule_period',
+    entityId: periodId,
+    action: 'update',
+    actor,
+    before,
+    after,
+  });
+  return after;
+}
+
+/**
+ * Move a draft to the unit's latest rule set (D22). A draft keeps the version it was created
+ * under, so Generate after a rule fix would judge under the old rules with nothing on screen
+ * saying so; moving is an explicit action, never a side effect of saving rules or generating.
+ * Published and archived periods never move: the version they were judged under is part of
+ * the record. A draft is free to change, so no reason is asked.
+ */
+export function adoptLatestRules(db: DbLike, periodId: Id, actor: string): SchedulePeriod {
+  const before = getPeriod(db, periodId);
+  if (!before) throw new Error(`Schedule period ${periodId} not found`);
+  if (before.status !== 'draft') {
+    throw new Error(
+      `"${before.name}" is ${before.status}; a ${before.status} schedule stays judged by the ` +
+        `rules it was published under (version ${before.ruleSetVersion}).`,
+    );
+  }
+  const latest = getLatestRuleSet(db, before.unitId);
+  if (!latest || latest.id === before.ruleSetId) {
+    throw new Error(
+      `"${before.name}" already uses the latest rules (version ${before.ruleSetVersion}).`,
+    );
+  }
+  db.update(schedulePeriod)
+    .set({ ruleSetId: latest.id, ruleSetVersion: latest.version })
     .where(eq(schedulePeriod.id, periodId))
     .run();
   const after = getPeriod(db, periodId)!;

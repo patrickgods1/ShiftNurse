@@ -315,6 +315,29 @@ describe('float records once shift types stopped cascading into them', () => {
   });
 });
 
+describe('files from before history was append-only', () => {
+  it('adds the history triggers to an older file', () => {
+    const { opened } = olderFile('_history_is_append_only');
+    migrateDatabase(opened.db, FULL);
+    const names = (
+      opened.sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'").all() as {
+        name: string;
+      }[]
+    ).map((r) => r.name);
+    for (const table of [
+      'rule_set',
+      'rule_config',
+      'schedule_version',
+      'schedule_change',
+      'pay_config_snapshot',
+    ]) {
+      expect(names).toContain(`${table}_no_update`);
+      expect(names).toContain(`${table}_no_delete`);
+    }
+    opened.sqlite.close();
+  });
+});
+
 /**
  * Insert with the columns given. Any other NOT NULL column without a default gets a neutral
  * value of its type, so a test names only the columns the migration under test reads.

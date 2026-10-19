@@ -3,21 +3,31 @@
  * every other screen (grid, solver, coverage floors) reads. Deactivating rather than deleting
  * matters here specifically because a shift type is referenced by historical assignments and
  * coverage requirements — deleting it out from under them would corrupt a published schedule's
- * explainability.
+ * explainability. For the same reason a type a published schedule used keeps its hours and flags:
+ * the form shows them disabled and offers "Duplicate as a new type" (main decides which are
+ * locked; this screen only reads it).
  */
 
 import type { Id, ShiftType } from '@shiftnurse/core';
 import { useState } from 'react';
-import type { ShiftTypeInput, ShiftTypePatch } from '../../../../shared/api.js';
+import type {
+  ShiftTypeDuplicateChanges,
+  ShiftTypeDuplicateResult,
+  ShiftTypeInput,
+  ShiftTypePatch,
+} from '../../../../shared/api.js';
 import { useShiftTypes } from '../../api.js';
 import {
   useCreateShiftType,
   useDeactivateShiftType,
+  useDuplicateShiftType,
+  useLockedShiftTypeIds,
   useUpdateShiftType,
 } from '../../api-config.js';
 import { AsyncState } from '../../components/async-state.js';
 import { CheckField, describedBy, Field } from '../../components/field-help.js';
 import { Modal } from '../../components/modal.js';
+import { useToast } from '../../components/toast.js';
 import { DANGER_SOLID, INPUT, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { useUnitId } from '../../unit-context.js';
 
@@ -88,6 +98,10 @@ function ShiftTypeForm({
   onSubmit,
   submitLabel,
   pending,
+  locked,
+  onDuplicate,
+  notice,
+  submitDisabled = false,
 }: {
   initial: FormState;
   /** Standalone shifts this one could run inside. */
@@ -97,6 +111,14 @@ function ShiftTypeForm({
   submitLabel: string;
   /** A save is in flight: a second click would make a second identical shift type. */
   pending: boolean;
+  /** Published schedules used this shift: its hours and flags are kept as they were. */
+  locked: boolean;
+  /** Offered only on a locked type: reopens the form as a new type. */
+  onDuplicate?: () => void;
+  /** Explains what the form does when it is not a plain edit. */
+  notice?: string;
+  /** Which fields are locked is not known yet: saving now could send a locked field. */
+  submitDisabled?: boolean;
 }) {
   const [form, setForm] = useState<FormState>(initial);
 
@@ -105,10 +127,11 @@ function ShiftTypeForm({
       className="mt-3 flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
-        if (pending) return;
+        if (pending || submitDisabled) return;
         onSubmit(form);
       }}
     >
+      {notice ? <p className="text-sm text-text-muted">{notice}</p> : null}
       <Field id="shift-name" label="Name" hint="As staff say it, such as “Day 12” or “Night 8”.">
         <input
           id="shift-name"
@@ -137,11 +160,12 @@ function ShiftTypeForm({
         />
       </Field>
       <div className="flex gap-3">
-        <Field id="shift-start" label="Start time" className="flex-1">
+        <Field id="shift-start" label="Start time" className="flex-1" disabled={locked}>
           <input
             id="shift-start"
             type="time"
             required
+            disabled={locked}
             value={form.startTime}
             onChange={(event) => setForm({ ...form, startTime: event.target.value })}
             className={INPUT}
@@ -151,6 +175,7 @@ function ShiftTypeForm({
           id="shift-duration"
           label="Paid hours"
           className="flex-1"
+          disabled={locked}
           tip={
             'The paid length of the shift. Rest, overtime, contracted hours and cost are all ' +
             'counted from this number, so enter the hours payroll pays (for example 12 for a ' +
@@ -161,6 +186,7 @@ function ShiftTypeForm({
             id="shift-duration"
             type="number"
             required
+            disabled={locked}
             min={1}
             max={24}
             step={0.5}
@@ -204,6 +230,7 @@ function ShiftTypeForm({
       <CheckField
         id="shift-night"
         label="Night shift"
+        disabled={locked}
         hint="Counts toward the consecutive-nights limit, the longer rest after nights, the night differential and the nights share in the fairness score."
         tip="Tick it for any tour your contract treats as a night or off-shift. Whether leave covers a shift is judged by its clock times instead, so this flag never changes that."
       >
@@ -211,6 +238,7 @@ function ShiftTypeForm({
           id="shift-night"
           type="checkbox"
           checked={form.isNight}
+          disabled={locked}
           aria-describedby={describedBy('shift-night', { hint: true })}
           onChange={(event) => setForm({ ...form, isNight: event.target.checked })}
         />
@@ -218,6 +246,7 @@ function ShiftTypeForm({
       <CheckField
         id="shift-on-call"
         label="On-call"
+        disabled={locked}
         hint="Standby, not worked time: paid at the on-call rate from the Pay tab, and never counted as on the floor."
         tip="Whether standby counts toward rest, consecutive days and hours is set per rule on the Rules tab. By default it does not."
       >
@@ -225,6 +254,7 @@ function ShiftTypeForm({
           id="shift-on-call"
           type="checkbox"
           checked={form.isOnCall}
+          disabled={locked}
           aria-describedby={describedBy('shift-on-call', { hint: true })}
           onChange={(event) => setForm({ ...form, isOnCall: event.target.checked })}
         />
@@ -232,6 +262,7 @@ function ShiftTypeForm({
       <Field
         id="shift-within"
         label="Runs inside"
+        disabled={locked}
         hint={
           'For a mid or short shift whose hours sit inside another, such as an 8 inside the day ' +
           '12. It is covered by whoever is on that shift: no charge nurse of its own, and that ' +
@@ -242,6 +273,7 @@ function ShiftTypeForm({
         <select
           id="shift-within"
           value={form.withinShiftTypeId}
+          disabled={locked}
           aria-describedby={describedBy('shift-within', { hint: true })}
           onChange={(event) => setForm({ ...form, withinShiftTypeId: event.target.value })}
           className={INPUT}
@@ -255,16 +287,43 @@ function ShiftTypeForm({
           ))}
         </select>
       </Field>
+      {locked ? (
+        <p className="text-xs text-text-muted">
+          Published schedules used this shift, so its hours and flags are kept as they were. To
+          change them, duplicate it as a new type.
+        </p>
+      ) : null}
       <div className="mt-2 flex flex-wrap justify-end gap-2">
         <button type="button" onClick={onCancel} className={SECONDARY}>
           Cancel
         </button>
-        <button type="submit" disabled={pending} className={PRIMARY}>
+        {onDuplicate ? (
+          <button type="button" onClick={onDuplicate} className={SECONDARY}>
+            Duplicate as a new type
+          </button>
+        ) : null}
+        <button type="submit" disabled={pending || submitDisabled} className={PRIMARY}>
           {pending ? 'Saving…' : submitLabel}
         </button>
       </div>
     </form>
   );
+}
+
+function duplicateMessage({
+  shiftType,
+  retired,
+  draftShiftsOnOld,
+  stillInsideOld,
+}: ShiftTypeDuplicateResult): string {
+  let message = `${shiftType.name} replaces ${retired.name}.`;
+  if (draftShiftsOnOld > 0) {
+    message += ` ${draftShiftsOnOld} shift${draftShiftsOnOld === 1 ? '' : 's'} in draft schedules still use ${retired.name}; generate again or move them.`;
+  }
+  for (const child of stillInsideOld) {
+    message += ` ${child} still runs inside ${retired.name}; duplicate it to run inside ${shiftType.name}.`;
+  }
+  return message;
 }
 
 function ShiftTypeDialog({
@@ -277,6 +336,10 @@ function ShiftTypeDialog({
   onSubmit,
   submitLabel,
   pending,
+  locked,
+  onDuplicate,
+  notice,
+  submitDisabled = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -288,6 +351,11 @@ function ShiftTypeDialog({
   onSubmit: (form: FormState) => void;
   submitLabel: string;
   pending: boolean;
+  locked: boolean;
+  onDuplicate?: () => void;
+  notice?: string;
+  /** Which fields are locked is not known yet: saving now could send a locked field. */
+  submitDisabled?: boolean;
 }) {
   return (
     <Modal open={open} onOpenChange={onOpenChange} title={title} variant="popup" size="md">
@@ -301,6 +369,10 @@ function ShiftTypeDialog({
         containers={containers}
         submitLabel={submitLabel}
         pending={pending}
+        locked={locked}
+        onDuplicate={onDuplicate}
+        notice={notice}
+        submitDisabled={submitDisabled}
         onCancel={() => onOpenChange(false)}
         onSubmit={onSubmit}
       />
@@ -314,9 +386,13 @@ export default function ShiftTypesPanel() {
   const createMutation = useCreateShiftType();
   const updateMutation = useUpdateShiftType();
   const deactivateMutation = useDeactivateShiftType();
+  const duplicateMutation = useDuplicateShiftType();
+  const lockedQuery = useLockedShiftTypeIds(unitId);
+  const toast = useToast();
 
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<ShiftType | undefined>(undefined);
+  const [duplicating, setDuplicating] = useState<ShiftType | undefined>(undefined);
   const [confirmingDeactivate, setConfirmingDeactivate] = useState<ShiftType | undefined>(
     undefined,
   );
@@ -330,6 +406,7 @@ export default function ShiftTypesPanel() {
     );
   }
 
+  const lockedIds = new Set(lockedQuery.data ?? []);
   const shiftTypes = [...shiftTypesQuery.data].sort((a, b) => a.sortOrder - b.sortOrder);
   // A shift runs inside a standalone one, never itself; main refuses one whose hours do not fit.
   // The container a shift already names stays listed when it has been deactivated: hiding it
@@ -360,6 +437,29 @@ export default function ShiftTypesPanel() {
     createMutation.mutate(input, { onSuccess: () => setCreating(false) });
   }
 
+  function handleDuplicate(original: ShiftType, form: FormState) {
+    const changes: ShiftTypeDuplicateChanges = {
+      name: form.name,
+      abbreviation: form.abbreviation,
+      startTime: form.startTime,
+      durationHours: Number(form.durationHours),
+      isNight: form.isNight,
+      isOnCall: form.isOnCall,
+      withinShiftTypeId: withinOf(form),
+      color: form.color,
+      sortOrder: Number(form.sortOrder),
+    };
+    duplicateMutation.mutate(
+      { id: original.id, changes },
+      {
+        onSuccess: (result) => {
+          setDuplicating(undefined);
+          toast.show({ message: duplicateMessage(result) });
+        },
+      },
+    );
+  }
+
   function handleUpdate(original: ShiftType, form: FormState) {
     const patch = diffPatch(original, form);
     if (Object.keys(patch).length === 0) {
@@ -377,7 +477,8 @@ export default function ShiftTypesPanel() {
           <p className="mt-1 max-w-prose text-sm text-text-muted">
             The shifts your unit works. Every schedule, coverage floor and pay rule refers to these.
             A shift type in use is deactivated rather than deleted, so schedules already built with
-            it still read correctly.
+            it still read correctly. Once a published schedule uses a shift, its hours are kept;
+            duplicate it to change them.
           </p>
         </div>
         <button
@@ -514,6 +615,7 @@ export default function ShiftTypesPanel() {
         error={createMutation.error}
         submitLabel="Create"
         pending={createMutation.isPending}
+        locked={false}
         onSubmit={handleCreate}
       />
 
@@ -529,7 +631,36 @@ export default function ShiftTypesPanel() {
           error={updateMutation.error}
           submitLabel="Save"
           pending={updateMutation.isPending}
+          locked={lockedIds.has(editing.id)}
+          submitDisabled={lockedQuery.isPending}
+          onDuplicate={
+            lockedIds.has(editing.id)
+              ? () => {
+                  duplicateMutation.reset();
+                  setEditing(undefined);
+                  setDuplicating(editing);
+                }
+              : undefined
+          }
           onSubmit={(form) => handleUpdate(editing, form)}
+        />
+      ) : null}
+
+      {duplicating !== undefined ? (
+        <ShiftTypeDialog
+          open={true}
+          onOpenChange={(open) => {
+            if (!open) setDuplicating(undefined);
+          }}
+          title="Duplicate as a new type"
+          initial={{ ...toFormState(duplicating), name: `${duplicating.name} (new)` }}
+          containers={containersFor(duplicating)}
+          error={duplicateMutation.error}
+          submitLabel={`Duplicate and retire ${duplicating.name}`}
+          pending={duplicateMutation.isPending}
+          locked={false}
+          notice={`The new type gets this shift’s coverage floors, credential requirements, future census forecasts and nurses’ shift wishes. ${duplicating.name} is retired; schedules already published keep it.`}
+          onSubmit={(form) => handleDuplicate(duplicating, form)}
         />
       ) : null}
 

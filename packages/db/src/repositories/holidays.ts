@@ -10,11 +10,14 @@
  * floated there that day) can be recorded, and a holiday with a recorded list cannot be deleted
  * until the list is cleared: the list is the rotation's only source for a year before the app,
  * and the foreign keys would cascade it away without a trace.
+ * A holiday's date can be changed (the recorded list stays with it), with a reason when a published
+ * or archived schedule covers either date.
  */
 
 import {
   addDays,
   attributedHolidayDates,
+  dateInRange,
   type Holiday,
   type HolidayWorkRecord,
   type Id,
@@ -23,7 +26,7 @@ import {
   type PlannedHoliday,
 } from '@shiftnurse/core';
 import { and, eq, gte, inArray, lte } from 'drizzle-orm';
-import { recordAudit } from '../audit.js';
+import { recordAudit, recordAuditStrict } from '../audit.js';
 import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { toHoliday } from '../mappers.js';
@@ -37,17 +40,23 @@ import {
   shiftType,
   unit as unitTable,
 } from '../schema.js';
+import { listHolidaysForUnit } from './config.js';
 import { nurseWorksOnUnit } from './nurse-units.js';
 import { type PatchKeys, patchOf } from './patch.js';
 import { listPreferencesForNurse } from './roster.js';
+import { listPeriodsForUnit } from './schedule.js';
+import { unitForPeriod } from './solve-input.js';
 
 export interface HolidayPatch {
+  /** A different day for the same holiday; `unitId` stays fixed. */
+  date?: IsoDate;
   name?: string;
   isMajor?: boolean;
   pairedHolidayId?: Id | null;
 }
 
 const HOLIDAY_PATCH_KEYS: PatchKeys<HolidayPatch> = {
+  date: true,
   name: true,
   isMajor: true,
   pairedHolidayId: true,
@@ -102,12 +111,17 @@ export function createHoliday(db: DbLike, input: HolidayInput, actor: string): H
  * Rename a holiday, move it between major and minor, or pair it. A major holiday is never
  * paired, so making one major drops its pairing; making a major minor unpairs the minors that
  * pointed at it — several rows only right together, hence the transaction.
+ *
+ * A holiday can also move to another date. Published holiday pay is held by each period's pay
+ * snapshot, but the rotation's who-worked list is read from published schedules by date, so a move
+ * that a published or archived period covers (old or new date) needs a stated reason.
  */
 export function updateHoliday(
   tx: ShiftNurseTx,
   id: Id,
   patch: HolidayPatch,
   actor: string,
+  reason?: string,
 ): Holiday {
   const before = holidayOrThrow(tx, id);
   const merged: Holiday = { ...before, ...patchOf(patch, HOLIDAY_PATCH_KEYS, 'holiday') };
@@ -115,11 +129,54 @@ export function updateHoliday(
   const after: Holiday = merged.isMajor ? { ...merged, pairedHolidayId: null } : merged;
   assertHolidayPairing(tx, after);
 
+  // Checked in words before any write, so the manager never meets the unique index.
+  let covered = false;
+  if (after.date !== before.date) {
+    const other = listHolidaysForUnit(tx, before.unitId).find(
+      (h) => h.id !== id && h.date === after.date,
+    );
+    if (other) {
+      throw new Error(`${other.name} is already on ${after.date}; a unit keeps one holiday a day.`);
+    }
+    const periods = listPeriodsForUnit(tx, before.unitId)
+      .filter((p) => p.status === 'published' || p.status === 'archived')
+      .filter(
+        (p) =>
+          dateInRange(before.date, p.startDate, p.endDate) ||
+          dateInRange(after.date, p.startDate, p.endDate),
+      )
+      .sort((a, b) => a.startDate.localeCompare(b.startDate));
+    covered = periods.length > 0;
+    if (covered && (reason === undefined || reason.trim() === '')) {
+      const many = periods.length > 1;
+      throw new Error(
+        `Moving ${before.name} from ${before.date} to ${after.date} needs a reason: ${periods.map((p) => p.name).join(', ')} ${many ? 'are' : 'is'} published, and the holiday rotation counts who worked ${before.name} from ${many ? 'them' : 'it'}.`,
+      );
+    }
+  }
+
   tx.update(holidayTable)
-    .set({ name: after.name, isMajor: after.isMajor, pairedHolidayId: after.pairedHolidayId })
+    .set({
+      date: after.date,
+      name: after.name,
+      isMajor: after.isMajor,
+      pairedHolidayId: after.pairedHolidayId,
+    })
     .where(eq(holidayTable.id, id))
     .run();
-  recordAudit(tx, { entityType: 'holiday', entityId: id, action: 'update', actor, before, after });
+  const audit = {
+    entityType: 'holiday' as const,
+    entityId: id,
+    action: 'update' as const,
+    actor,
+    before,
+    after,
+  };
+  if (covered) {
+    recordAuditStrict(tx, { ...audit, reason: reason?.trim() }, { requireReason: true });
+  } else {
+    recordAudit(tx, reason?.trim() ? { ...audit, reason: reason.trim() } : audit);
+  }
 
   if (before.isMajor && !after.isMajor) unpairMinorsOf(tx, id, actor);
   return after;
@@ -202,14 +259,21 @@ export function deleteHoliday(tx: ShiftNurseTx, id: Id, actor: string): void {
 /**
  * Nurses with a worked (not standby) shift that counts for `date` in a published or archived
  * schedule, by the unit's holiday attribution (D18): a shift dated the day before can run into it.
+ * The attribution is the one the schedule holding `date` went out under, so switching the unit to
+ * the clock reading does not change who worked last Christmas; with no such schedule, the unit's.
  */
 function workedFromSchedules(db: DbLike, unitId: Id, date: IsoDate): Id[] {
+  const covering = listPeriodsForUnit(db, unitId)
+    .filter((p) => p.status !== 'draft' && dateInRange(date, p.startDate, p.endDate))
+    .sort((a, b) => b.startDate.localeCompare(a.startDate))[0];
   const attribution =
-    db
-      .select({ holidayAttribution: unitTable.holidayAttribution })
-      .from(unitTable)
-      .where(eq(unitTable.id, unitId))
-      .get()?.holidayAttribution ?? 'start';
+    (covering
+      ? unitForPeriod(db, covering).holidayAttribution
+      : db
+          .select({ holidayAttribution: unitTable.holidayAttribution })
+          .from(unitTable)
+          .where(eq(unitTable.id, unitId))
+          .get()?.holidayAttribution) ?? 'start';
   const rows = db
     .select({
       nurseId: assignment.nurseId,
