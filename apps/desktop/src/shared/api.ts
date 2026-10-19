@@ -172,6 +172,8 @@ export interface AppInfo {
   platform: string;
   /** Absolute path of the SQLite file, shown in the About panel so support can find it. */
   databasePath: string;
+  /** Why the data folder may be unsafe, in words, or null. */
+  dataLocationWarning: string | null;
   /** What this computer's region prints on; a unit with no paper size uses it. */
   defaultPaperSize: PaperSize;
 }

@@ -6,7 +6,10 @@
 # which Biome's format check would flag in every file. Tests run on all three platforms the
 # app ships to or is developed on; on macOS and Windows `npm ci`'s postinstall fetches the
 # pinned CP-SAT runner, so the real-runner tests run there too (there is no Linux runner, and
-# they skip, except on macOS, which requires it).
+# they skip there). Both macOS and Windows require the runner: a missing one fails the leg.
+#
+# Also a reusable workflow: release.yml's `gate` calls it on the tagged commit. Keep it free of
+# secrets.
 name: ci
 
 on:
@@ -14,11 +17,15 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 # A newer push to a pull request supersedes the older run. On main every commit keeps its own
 # result: cancelling there would leave a merged commit with no CI verdict.
+# A called run (from release.yml's gate) sees the caller's `github` context. Without the workflow
+# name, a manual release dry run on main would share `ci-refs/heads/main` with main's own CI and
+# could cancel its pending run.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -42,8 +49,10 @@ jobs:
       # The production bundles. Typecheck and tests never run the bundler, so a plugin that
       # needs a newer Vite (@vitejs/plugin-react 6 on Vite 7) passed everything else.
       - run: npm run build -w @shiftnurse/desktop
-      # Only what ships: a high-severity advisory in a runtime dependency fails the build.
-      - run: npm audit --omit=dev --audit-level=high
+      # What ships: everything electron-vite bundles (scripts/shipped-packages.json "bundled") plus
+      # the packaged dependencies, and their dependency closure. A high advisory there fails the
+      # build; one in a build or test tool is a warning on the run page.
+      - run: node scripts/audit-shipped.mjs
 
   test:
     name: test (${{ matrix.os }})
@@ -57,16 +66,36 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Desktop tests import @shiftnurse/core and @shiftnurse/db from their built dist.
       - uses: ./.github/actions/setup
+      # The real-runner suites skip when the runner is missing; on the platforms that ship it,
+      # fail instead. One retry absorbs a flaky download (the cache usually means none).
+      - if: runner.os != 'Linux'
+        shell: bash
+        run: npm run fetch:cpsat -w @shiftnurse/desktop || { sleep 30; npm run fetch:cpsat -w @shiftnurse/desktop; }
+      # Both platforms that ship the runner insist on it (a missing one would otherwise skip the
+      # real-runner suites and pass green, and Windows is where most managers run the app).
       - if: runner.os != 'Linux'
         run: npm test
-        # One leg is enough to insist on the runner (a missing one would otherwise skip the
-        # real-runner suites and pass green); macOS fetches it on every run, and the rest still
-        # skip rather than fail if a download flakes.
         env:
-          SHIFTNURSE_REQUIRE_CPSAT: ${{ matrix.os == 'macos-15' && '1' || '' }}
+          SHIFTNURSE_REQUIRE_CPSAT: '1'
       # Coverage once, on the fastest runner; the summary lands on the run's page.
       - if: runner.os == 'Linux'
         shell: bash
         run: |
           npm run test:coverage
           node scripts/coverage-summary.mjs >> "$GITHUB_STEP_SUMMARY"
+
+  # Boots the dev build (electron-vite output, the dev Electron binary) and walks the smoke
+  # harness on every pull request: preload, IPC wiring and the externalize list fail here
+  # instead of at release time. Linux has no CP-SAT runner, so the solver section is short.
+  # Not yet a required check: add it to branch protection once it has proven stable.
+  smoke:
+    name: smoke (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      # Ubuntu 24.04 blocks the unprivileged user namespaces Chromium's sandbox uses; the
+      # app runs with sandbox: true, and turning the sandbox off would test something else.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: xvfb-run --auto-servernum npm run smoke -w @shiftnurse/desktop

@@ -34,6 +34,8 @@ The SHA-256 of each installer is at the end of these notes, and `SHA256SUMS` lis
 Windows run `certutil -hashfile <file> SHA256` in PowerShell. The output must match the file's line
 exactly; if it does not, the download is damaged or not ours — delete it and download it again.
 
+Deploying to many computers? See [For hospital IT](https://github.com/patrickgods1/ShiftNurse#for-hospital-it) (silent install, allowlisting, turning off the update check).
+
 ## Every build is tested
 
 Each installer was built on its own platform on GitHub Actions and then launched in a headless

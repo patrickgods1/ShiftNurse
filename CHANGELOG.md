@@ -158,6 +158,15 @@ tags. Each release's notes link here.
   error it offers to restart.
 - The nurse record shows how each change to a published shift was made (grid edit, call-off
   backfill, low-census cancellation…).
+- ShiftNurse now warns when its data folder is on a network drive, where the schedule database
+  could be damaged, and tells you to ask IT to keep it on this computer.
+- New README section for hospital IT: silent install, allowlisting, roaming profiles and how to
+  turn off the update check.
+
+### Security
+
+- The installed app can no longer be run as a plain Node.js runtime, and checks its own files for
+  tampering.
 
 ## [0.1.0] - 2026-10-05
 

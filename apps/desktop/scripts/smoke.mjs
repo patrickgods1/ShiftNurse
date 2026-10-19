@@ -32,6 +32,10 @@
  * - **Success is a line, not an exit code.** A main process that throws on startup shows an
  *   error dialog and exits 0 once it is dismissed. The run passes only if the app printed
  *   `[smoke] PASS`, and a run that hangs (a dialog nobody will click) is killed.
+ *
+ * A packaged run also reads the copy's Electron fuses before launching it (electron-builder.yml
+ * `electronFuses`): a build that still runs as Node or takes NODE_OPTIONS/--inspect fails here.
+ * The dev binary is unfused by design, so a dev run skips that check.
  */
 import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -56,6 +60,20 @@ if (windowSize !== undefined && !/^\d{3,5}x\d{3,5}$/.test(windowSize)) {
 const routeIndex = args.indexOf('--screenshot-route');
 const screenshotRoute = routeIndex !== -1 ? args[routeIndex + 1] : undefined;
 
+// Number('4min') is NaN, and a NaN timer fires at once: the run would kill the app it just
+// started. People and CI set these by hand, so a typo stops the run instead of falling back.
+for (const name of ['SHIFTNURSE_SMOKE_TIMEOUT_MS', 'SHIFTNURSE_SMOKE_SOLVE_TIMEOUT_MS']) {
+  const raw = process.env[name];
+  if (raw === undefined) continue;
+  const ms = Number(raw);
+  if (raw.trim() === '' || !Number.isFinite(ms) || ms <= 0) {
+    console.error(
+      `[smoke] ${name} must be a positive number of milliseconds, e.g. 1200000 (got "${raw}")`,
+    );
+    process.exit(1);
+  }
+}
+
 function packagedExecutablePath() {
   const root = join(import.meta.dirname, '..');
   if (process.platform === 'darwin') {
@@ -77,6 +95,41 @@ function appRoot(execPath) {
   return dirname(execPath);
 }
 
+// A fuse's state is a character code in the wire: '0' (48) off, '1' (49) on. `FuseState` is not
+// re-exported from @electron/fuses' package root, hence the local copies.
+const FUSE_DISABLED = 48;
+const FUSE_ENABLED = 49;
+
+/**
+ * Exits 1 unless the packaged executable carries the fuses electron-builder.yml asks for. Read
+ * from the copy that is about to run, so what is checked is exactly what launches.
+ */
+async function assertFuses(executable) {
+  const { getCurrentFuseWire, FuseV1Options } = await import('@electron/fuses');
+  const wire = await getCurrentFuseWire(executable);
+  const expected = [
+    ['RunAsNode', FUSE_DISABLED],
+    ['EnableNodeOptionsEnvironmentVariable', FUSE_DISABLED],
+    ['EnableNodeCliInspectArguments', FUSE_DISABLED],
+    ['EnableEmbeddedAsarIntegrityValidation', FUSE_ENABLED],
+    ['OnlyLoadAppFromAsar', FUSE_ENABLED],
+  ];
+  for (const [name, want] of expected) {
+    if (wire[FuseV1Options[name]] === want) continue;
+    const has = want === FUSE_ENABLED ? 'disabled' : 'enabled';
+    const asks = want === FUSE_ENABLED ? 'enabled' : 'disabled';
+    console.error(
+      `[smoke] FAIL: the packaged app has fuse ${name} ${has}; electron-builder.yml asks for ` +
+        `${asks}. A packaged build must not run as Node or accept NODE_OPTIONS/--inspect.`,
+    );
+    return false;
+  }
+  console.log(
+    '[smoke] fuses: run-as-node off, NODE_OPTIONS off, inspect off, asar integrity on, asar-only on',
+  );
+  return true;
+}
+
 let command;
 let commandArgs;
 let scratch;
@@ -93,6 +146,10 @@ if (packaged) {
   cpSync(root, copy, { recursive: true, verbatimSymlinks: true });
   command = join(copy, relative(root, execPath));
   commandArgs = [];
+  if (!(await assertFuses(command))) {
+    rmSync(scratch, { recursive: true, force: true });
+    process.exit(1);
+  }
   console.log(`[smoke] running a copy of the packaged app outside the repo: ${command}`);
 } else {
   command = require('electron');

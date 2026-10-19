@@ -118,6 +118,46 @@ Each release lists the SHA-256 of every file in `SHA256SUMS`. To check a downloa
 `shasum -a 256 <file>` (macOS Terminal) or `certutil -hashfile <file> SHA256` (Windows PowerShell)
 and compare the output with the file's line. ShiftNurse keeps its database in your user folder;
 installing a newer version keeps it, and an update that changes the database backs it up first.
+Deploying to many computers? See [For hospital IT](#for-hospital-it).
+
+## For hospital IT
+
+**Silent install (Windows).** `ShiftNurse-<version>-win-x64.exe /S` installs without prompts,
+**per user**, into `%LOCALAPPDATA%\Programs\shiftnurse` (the folder name comes from
+`extraMetadata.name` in `electron-builder.yml`). Run it as the user, for example from a logon
+script or a user-context deployment, not as SYSTEM. Silent uninstall: `"Uninstall ShiftNurse.exe" /S`
+in that folder. Uninstalling keeps the data folder.
+
+**Per-machine install.** Not available in this build. The installer is electron-builder's one-click
+per-user installer, which ignores `/allusers`. A per-machine installer is planned alongside code
+signing (M17). Ask the project if you need it sooner.
+
+**Allowlisting an unsigned build.** The builds are not code-signed yet. Allowlist by file hash:
+every release page lists each installer's SHA-256 in `SHA256SUMS`. AppLocker/WDAC hash rules and
+SmartScreen apply to the installer and to `ShiftNurse.exe`. The CP-SAT solver is a second
+executable at `resources\cpsat\cpsat-runner.exe` inside the install folder; allow it too, or
+Generate falls back to its built-in solver and says so.
+
+**Where the data lives, and roaming profiles.** The database, its backups and the log are in
+`%APPDATA%\ShiftNurse` on Windows (`~/Library/Application Support/ShiftNurse` on macOS). On Windows
+that is the **Roaming** profile. If your domain redirects AppData\Roaming to a network share, or
+roams profiles, exclude `AppData\Roaming\ShiftNurse`: through the Folder Redirection policy's
+exclusions, or the "Exclude directories in roaming profile" Group Policy setting (User
+Configuration › Administrative Templates › System › User Profiles). A database on a network share
+can be damaged, and ShiftNurse shows a warning when it detects one. With the folder kept on one PC,
+that PC holds the schedule. Move it with Settings › Backups (back up, then restore on the new PC).
+
+**Network access and the update check.** The app makes one network request: at launch, a packaged
+build asks `https://api.github.com/repos/patrickgods1/ShiftNurse/releases/latest` whether a newer
+release exists, and shows a banner linking to the release page. It never downloads or installs
+anything by itself. To turn the check off: on Windows set the environment variable
+`SHIFTNURSE_UPDATE_CHECK=off` for the user or machine (for example a Group Policy Preferences
+Environment item); on macOS deploy the managed preference `DisableUpdateCheck` = true in domain
+`com.shiftnurse.desktop` (configuration profile), or
+`defaults write com.shiftnurse.desktop DisableUpdateCheck -bool true`.
+
+**One copy per user.** A second launch focuses the running window. Two Windows users on one PC each
+have their own data folder and database.
 
 ## Prerequisites
 
@@ -300,8 +340,9 @@ request:
 
 | Job | Runs on | What |
 |---|---|---|
-| `lint-typecheck` | ubuntu-latest | `npm run lint`, `npm run typecheck`, `npm audit --omit=dev --audit-level=high` |
-| `test (…)` | ubuntu-latest, macos-15, windows-2022 | `npm run build:packages`, `npm test` — on macOS and Windows against the real CP-SAT runner, which `npm ci` fetches; on ubuntu with coverage, summarised on the run page |
+| `lint-typecheck` | ubuntu-latest | `npm run lint`, `npm run typecheck`, `node scripts/audit-shipped.mjs` (high advisories in anything that ships) |
+| `test (…)` | ubuntu-latest, macos-15, windows-2022 | `npm run build:packages`, `npm test` — on macOS and Windows against the real CP-SAT runner, which `npm ci` fetches and CI requires (one retry); on ubuntu with coverage, summarised on the run page |
+| `smoke (ubuntu-latest)` | ubuntu-latest | boots the dev build under xvfb and walks the smoke harness (preload, IPC wiring); not yet a required check |
 
 `main` is protected: a pull request merges only when those four checks pass (admins may still
 push directly). Lint runs on Linux only because Windows checks out with CRLF line endings, which
@@ -316,7 +357,8 @@ grouped updates for npm and for the actions themselves.
 1. Bump `version` in **both** `package.json` and `apps/desktop/package.json` (the release
    workflow refuses a tag that does not match both), merge to `main`.
 2. `git tag vX.Y.Z && git push origin vX.Y.Z`.
-3. [`release.yml`](.github/workflows/release.yml) builds each installer **natively** — mac arm64
+3. [`release.yml`](.github/workflows/release.yml) first re-runs the CI gate on the tagged commit
+   and refuses a tag that is not on `main`. Then it builds each installer **natively** — mac arm64
    on `macos-15`, mac x64 on `macos-15-intel`, Windows x64 on `windows-2022` — and boots each
    packaged app in smoke mode, **from a copy outside the repo**, generating with every solver and
    running publish, exports and the day-of console. Then it creates a **draft** GitHub release
@@ -324,6 +366,9 @@ grouped updates for npm and for the actions themselves.
    [`.github/release-notes.md`](.github/release-notes.md).
 4. Review the draft (download an installer, check it against `SHA256SUMS`, install it) and press
    **Publish**. Nothing is public before that.
+
+To do (repository settings): a tag ruleset for `v*` so only maintainers create tags and nobody
+moves or deletes them.
 
 A dry run (the same builds and smoke tests, no release) runs on any pull request that touches
 packaging, or by hand: `gh workflow run release.yml`. Builds are **unsigned** for now — the
@@ -373,6 +418,13 @@ Notes:
   app's final `[smoke] PASS` line. Inside the repo, Node would find a module the app forgot to
   ship in the repo's own `node_modules`, and a crash-on-launch dialog exits 0 when dismissed —
   both let v0.1.0's first draft pass here and crash on every real install.
+- The packaged app is **fused** (`electronFuses` in `electron-builder.yml`): it cannot be run as
+  plain Node (`ELECTRON_RUN_AS_NODE`), ignores `NODE_OPTIONS` and `--inspect`, and refuses an
+  `app.asar` changed after packaging. That matters once M17 signs it: a signed app that ran
+  anyone's JavaScript would lend them its signature. `smoke:packaged` reads the fuses and fails
+  before launching if one is wrong. Cookie encryption (no cookies to protect, and it would ask
+  for Keychain access on an unsigned mac build) and file-protocol privileges (the window is a
+  local file) stay at Electron's defaults on purpose.
 - Installers are unsigned (code signing, M17, is deferred), so Gatekeeper (macOS) and SmartScreen
   (Windows) warn on first launch — [Installing](#installing) has the steps users follow. Unsigned builds cannot update themselves; a
   packaged app checks GitHub's latest published release at launch and shows a banner linking
@@ -421,8 +473,8 @@ stdin/stdout (JSON lines defined in `runner.proto`). The app never compiles it:
   - Laurent Perron, Frédéric Didier and Steven Gay. "The CP-SAT-LP Solver." *CP 2023*, LIPIcs
     280, 3:1–3:2. [doi:10.4230/LIPIcs.CP.2023.3](https://doi.org/10.4230/LIPIcs.CP.2023.3)
 - The runner bundles OR-Tools' own dependencies — Abseil, Protocol Buffers, RE2, HiGHS, SCIP,
-  SoPlex, COIN-OR CBC/CLP, Eigen, zlib, bzip2 and, on Windows, the Microsoft Visual C++
-  runtime. Each keeps its licence; see
+  SoPlex (and, inside them, TClique, TinyCThread, {fmt} and zstr), COIN-OR CBC/CLP, Eigen,
+  zlib, bzip2 and, on Windows, the Microsoft Visual C++ runtime. Each keeps its licence; see
   [native/cpsat-runner/THIRD_PARTY_NOTICES.md](native/cpsat-runner/THIRD_PARTY_NOTICES.md), and
   every installer carries the full texts in `resources/cpsat/licenses/`.
 - **mulberry32**, the seeded random-number generator behind the solvers' determinism

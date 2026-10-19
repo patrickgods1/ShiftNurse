@@ -16,6 +16,7 @@ import { nurseRecordDocument } from './api/nurse-record.js';
 import { outputInput } from './api.js';
 import { getDb } from './database.js';
 import { htmlToPdf, osPaperSize, renderOutput } from './output.js';
+import { smokeTimeoutMs } from './smoke-flag.js';
 
 /** Printed once, last, on success; `scripts/smoke.mjs` requires it. */
 const SMOKE_PASS_MARKER = '[smoke] PASS: every check completed';
@@ -25,7 +26,7 @@ const SMOKE_PASS_MARKER = '[smoke] PASS: every check completed';
  * hybrid (the demo's default) twice, then SA + LNS and CP-SAT twice each — so it needs minutes,
  * not seconds; without the runner it finishes in well under one.
  */
-const TIMEOUT_MS = Number(process.env.SHIFTNURSE_SMOKE_TIMEOUT_MS ?? 240_000);
+const TIMEOUT_MS = smokeTimeoutMs(process.env.SHIFTNURSE_SMOKE_TIMEOUT_MS, 240_000);
 
 /** Each route must render an element carrying this test id. */
 const ROUTES: readonly { hash: string; testId: string }[] = [
@@ -293,7 +294,7 @@ const COST_SCRIPT = `
  * ~20–35 s; CI runners are several times slower — hybrid took 79 s on windows-2022 and 87 s on
  * macos-15-intel, then 90 s+ on one Windows run — so the release workflow raises it.
  */
-const SOLVE_TIMEOUT_MS = Number(process.env.SHIFTNURSE_SMOKE_SOLVE_TIMEOUT_MS ?? 90_000);
+const SOLVE_TIMEOUT_MS = smokeTimeoutMs(process.env.SHIFTNURSE_SMOKE_SOLVE_TIMEOUT_MS, 90_000);
 
 /**
  * The M9 check: Generate runs a batch of variations in worker threads against the seeded draft,

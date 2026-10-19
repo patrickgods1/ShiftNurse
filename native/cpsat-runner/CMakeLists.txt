@@ -19,6 +19,16 @@ set(ORTOOLS_ROOT "" CACHE PATH "Extracted OR-Tools C++ release archive")
 if(NOT ORTOOLS_ROOT)
   message(FATAL_ERROR "Set -DORTOOLS_ROOT to the extracted OR-Tools C++ archive")
 endif()
+
+# THIRD_PARTY_NOTICES.md promises these texts in every bundle; they come from the OR-Tools
+# archive, so a layout change there must fail the build rather than ship without them.
+foreach(text scip/LICENSE scip/tclique/LICENSE scip/tinycthread/COPYRIGHT
+             soplex/LICENSE soplex/fmt/LICENSE.rst soplex/zstr/License.txt)
+  if(NOT EXISTS "${ORTOOLS_ROOT}/share/licenses/${text}")
+    message(FATAL_ERROR "cpsat-runner: ${ORTOOLS_ROOT}/share/licenses/${text} is missing; "
+      "THIRD_PARTY_NOTICES.md says every bundle ships it. Check the OR-Tools archive layout.")
+  endif()
+endforeach()
 list(PREPEND CMAKE_PREFIX_PATH "${ORTOOLS_ROOT}")
 find_package(ortools CONFIG REQUIRED)
 
@@ -84,7 +94,9 @@ install(CODE [[
 ]])
 
 # Licences travel with the binaries: OR-Tools and every library the runner bundles (see
-# THIRD_PARTY_NOTICES.md). SCIP's and SoPlex's texts come from the OR-Tools archive itself.
+# THIRD_PARTY_NOTICES.md). SCIP's and SoPlex's texts, and those of the four components bundled
+# inside them (TClique, TinyCThread, fmt, zstr), come from the OR-Tools archive itself; the
+# configure-time check above refuses an archive that lacks any of them.
 install(FILES THIRD_PARTY_NOTICES.md DESTINATION .)
 install(DIRECTORY licenses/ DESTINATION licenses)
-install(DIRECTORY "${ORTOOLS_ROOT}/share/licenses/" DESTINATION licenses OPTIONAL)
+install(DIRECTORY "${ORTOOLS_ROOT}/share/licenses/" DESTINATION licenses)

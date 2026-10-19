@@ -3,8 +3,9 @@
 `cpsat-runner` is part of ShiftNurse. It links against **Google OR-Tools** and ships the
 OR-Tools shared libraries it loads. Each component below keeps its own licence; the full texts
 are in the `licenses/` folder installed next to the runner in every bundle (and in
-`native/cpsat-runner/licenses/` in the source tree). SCIP's and SoPlex's licence files are
-copied from the OR-Tools release archive at build time.
+`native/cpsat-runner/licenses/` in the source tree). SCIP's and SoPlex's licence files, and
+those of the four components they bundle, are copied from the OR-Tools release archive at build
+time; the build fails if any is missing.
 
 | Component | Used for | Licence | Source |
 |---|---|---|---|
@@ -13,7 +14,11 @@ copied from the OR-Tools release archive at build time.
 | [Protocol Buffers](https://protobuf.dev), incl. utf8_range | Model format and the runner's JSON protocol | BSD-3-Clause (`protobuf-LICENSE`); MIT (`utf8_range-LICENSE`) | https://github.com/protocolbuffers/protobuf |
 | [RE2](https://github.com/google/re2) | OR-Tools dependency | BSD-3-Clause (`re2-LICENSE`) | https://github.com/google/re2 |
 | [HiGHS](https://highs.dev) | Linear solver bundled with OR-Tools | MIT (`highs-LICENSE`) | https://github.com/ERGO-Code/HiGHS |
-| [SCIP](https://www.scipopt.org) and [SoPlex](https://soplex.zib.de) | MIP/LP solvers bundled with OR-Tools | Apache-2.0 (`scip/`, `soplex/` from the OR-Tools archive) | https://github.com/scipopt/scip |
+| [SCIP](https://www.scipopt.org) and [SoPlex](https://soplex.zib.de) | MIP/LP solvers bundled with OR-Tools | Apache-2.0 (`scip/LICENSE`, `soplex/LICENSE`, from the OR-Tools archive) | https://github.com/scipopt/scip |
+| [{fmt}](https://github.com/fmtlib/fmt) | Bundled inside SoPlex: formatting | MIT (`soplex/fmt/LICENSE.rst`) | https://github.com/fmtlib/fmt |
+| [zstr](https://github.com/mateidavid/zstr) | Bundled inside SoPlex: compressed file streams | MIT (`soplex/zstr/License.txt`) | https://github.com/mateidavid/zstr |
+| TClique | Bundled inside SCIP: clique algorithms | Apache-2.0 (`scip/tclique/LICENSE`) | https://github.com/scipopt/scip |
+| [TinyCThread](https://github.com/tinycthread/tinycthread) | Bundled inside SCIP: portable threads | zlib licence (`scip/tinycthread/COPYRIGHT`) | https://github.com/tinycthread/tinycthread |
 | [COIN-OR](https://www.coin-or.org) CBC, CLP, CGL, CoinUtils, OSI | MIP/LP solvers bundled with OR-Tools | EPL-2.0 (`coin-or-EPL-2.0`) | https://github.com/coin-or — source for these binaries is available from the COIN-OR projects at the versions OR-Tools v9.15 pins |
 | [Eigen](https://eigen.tuxfamily.org) | Linear algebra, compiled into OR-Tools | MPL-2.0 (`eigen-MPL2`) | https://gitlab.com/libeigen/eigen |
 | [zlib](https://zlib.net) | Compression | zlib licence (`zlib-LICENSE`) | https://github.com/madler/zlib |

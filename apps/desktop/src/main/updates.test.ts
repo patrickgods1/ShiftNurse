@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkForUpdate, compareVersions, newerRelease } from './updates.js';
+import { checkForUpdate, compareVersions, newerRelease, updateCheckSkipReason } from './updates.js';
 
 const RELEASE = {
   tag_name: 'v0.2.0',
@@ -67,5 +67,46 @@ describe('telling a manager a fix is out', () => {
       version: '0.2.0',
       url: RELEASE.html_url,
     });
+  });
+});
+
+describe('when the launch update check runs', () => {
+  const installed = { isPackaged: true, smoke: false, env: {}, macDisableUpdateCheck: false };
+
+  it('checks in an installed copy by default', () => {
+    expect(updateCheckSkipReason(installed)).toBeUndefined();
+  });
+
+  it('lets IT turn the check off with SHIFTNURSE_UPDATE_CHECK=off', () => {
+    for (const value of ['off', ' OFF ', '0', 'false', 'no']) {
+      expect(updateCheckSkipReason({ ...installed, env: { SHIFTNURSE_UPDATE_CHECK: value } })).toBe(
+        'environment',
+      );
+    }
+  });
+
+  it('keeps checking when the variable says anything else', () => {
+    for (const value of ['on', '1', '']) {
+      expect(
+        updateCheckSkipReason({ ...installed, env: { SHIFTNURSE_UPDATE_CHECK: value } }),
+      ).toBeUndefined();
+    }
+  });
+
+  it('honours the DisableUpdateCheck managed preference on a Mac', () => {
+    expect(updateCheckSkipReason({ ...installed, macDisableUpdateCheck: true })).toBe(
+      'managed-preference',
+    );
+  });
+
+  it('never checks in development or a smoke run', () => {
+    expect(updateCheckSkipReason({ ...installed, isPackaged: false })).toBe('development');
+    expect(
+      updateCheckSkipReason({
+        ...installed,
+        smoke: true,
+        env: { SHIFTNURSE_UPDATE_CHECK: 'off' },
+      }),
+    ).toBe('smoke');
   });
 });

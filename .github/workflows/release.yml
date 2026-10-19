@@ -4,6 +4,9 @@
 # Publish. `workflow_dispatch`, and any pull request touching packaging, is a dry run: the same
 # builds and smoke tests, no release.
 #
+# A tag is a promotion of a green commit on main: `version` refuses a tag whose commit is not on
+# main, and `gate` re-runs ci.yml on it before any installer is built.
+#
 # Why one native job per platform rather than cross-building from one Mac: each installer is
 # smoke-tested on the machine type it is for (the x64 mac app on Intel, the Windows app on
 # Windows), and a mac .app cannot be carried between jobs anyway — artifact upload drops the
@@ -22,13 +25,27 @@ on:
       - '.github/release-notes.md'
       - 'apps/desktop/electron-builder.yml'
       - 'apps/desktop/scripts/**'
-      - 'apps/desktop/src/main/smoke.ts'
+      - 'apps/desktop/src/main/smoke*.ts'
       # Window, IPC and preload wiring: unit tests cannot see a packaged window refused its own
       # IPC (the first trusted-origin check did exactly that on Windows, and only here).
       - 'apps/desktop/src/main/index.ts'
       - 'apps/desktop/src/main/ipc.ts'
       - 'apps/desktop/src/main/trusted-origin.ts'
       - 'apps/desktop/src/preload/**'
+      # What decides what the packaged app contains or where it looks for it: the bundler's
+      # externalize list, the packaged dependency set and lockfile, migrations and the runner,
+      # which main resolves under resources/, icons, and the shared setup.
+      - '.github/actions/setup/**'
+      - '.nvmrc'
+      - 'package-lock.json'
+      - 'apps/desktop/package.json'
+      - 'apps/desktop/electron.vite.config.ts'
+      - 'apps/desktop/build/**'
+      - 'packages/db/drizzle/**'
+      - 'apps/desktop/src/main/database.ts'
+      - 'apps/desktop/src/main/cpsat-*.ts'
+      - 'apps/desktop/src/main/ortools-solvers.ts'
+      - 'apps/desktop/src/main/solver-worker.ts'
   workflow_dispatch:
 
 permissions:
@@ -51,6 +68,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - id: check
         name: Tag and package versions agree
         run: |
@@ -63,10 +81,34 @@ jobs:
             echo "::error::tag ${GITHUB_REF_NAME} does not match version $root (expected v$root)"; exit 1
           fi
           echo "version=$root" >> "$GITHUB_OUTPUT"
+      - name: The tagged commit is on main
+        if: github.ref_type == 'tag'
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on main. Merge the change to main through a pull request, then tag the merged commit."
+            exit 1
+          fi
+
+  # A release is a promotion of a commit that already passes everything main requires: the
+  # same ci.yml (lint, typecheck, shipped-dependency audit, tests on three OSes), re-run on the
+  # tagged commit. Tags only: a packaging pull request already runs ci.yml on its own.
+  gate:
+    name: gate
+    if: github.ref_type == 'tag'
+    needs: version
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
 
   build:
     name: build (${{ matrix.target }})
-    needs: version
+    needs: [version, gate]
+    # On a tag, only after the gate passed. On a pull request or a manual dry run the gate is
+    # skipped, and `needs` would skip build with it, so say so explicitly.
+    if: >-
+      ${{ !cancelled() && needs.version.result == 'success' &&
+      (needs.gate.result == 'success' ||
+      (github.ref_type != 'tag' && needs.gate.result == 'skipped')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -139,7 +181,7 @@ jobs:
   release:
     name: release
     if: github.ref_type == 'tag'
-    needs: [version, build]
+    needs: [version, gate, build]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

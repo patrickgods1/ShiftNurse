@@ -126,11 +126,12 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
           cd bundles
           sha256sum cpsat-runner-*.tar.gz > SHA256SUMS
           cat SHA256SUMS
-          gh release create '${{ github.ref_name }}' -R '${{ github.repository }}' \
-            --title '${{ github.ref_name }}' \
+          gh release create "$TAG" -R "$REPO" --title "$TAG" \
             --notes "CP-SAT runner for ShiftNurse, built against OR-Tools $ORTOOLS_BUILD." \
             cpsat-runner-*.tar.gz SHA256SUMS
