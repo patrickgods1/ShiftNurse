@@ -13,6 +13,7 @@ import { AsyncState } from '../components/async-state.js';
 import { type Column, DataTable } from '../components/data-table.js';
 import { PageHeader } from '../components/page-header.js';
 import { PRIMARY, SECONDARY } from '../components/ui.js';
+import { useConfirmDiscard } from '../components/unsaved-changes.js';
 import { daysFromToday, formatDate, fteLabel } from '../format.js';
 import { useUnit } from '../unit-context.js';
 import { AccommodationsSection } from './roster/accommodations.js';
@@ -62,6 +63,12 @@ export default function RosterPage() {
   const [showInactive, setShowInactive] = useState(false);
   const [formTarget, setFormTarget] = useState<'new' | Nurse | undefined>(undefined);
   const [selectedNurseId, setSelectedNurseId] = useState<Id | undefined>(undefined);
+  const confirmDiscard = useConfirmDiscard();
+  // Closing the drawer or opening another nurse unmounts every editor in it.
+  async function selectNurse(id: Id | undefined) {
+    if (id === selectedNurseId) return;
+    if (await confirmDiscard()) setSelectedNurseId(id);
+  }
   const [importOpen, setImportOpen] = useState(false);
 
   const columns: Column<Nurse>[] = useMemo(
@@ -203,7 +210,7 @@ export default function RosterPage() {
             rows={filtered}
             rowKey={(nurse) => nurse.id}
             emptyLabel="No nurses match."
-            onRowClick={(nurse) => setSelectedNurseId(nurse.id)}
+            onRowClick={(nurse) => void selectNurse(nurse.id)}
             rowLabel={(nurse) => `Open ${nurse.lastName}, ${nurse.firstName}`}
           />
         </div>
@@ -242,7 +249,7 @@ export default function RosterPage() {
       {selectedNurseId !== undefined ? (
         <NurseDetail
           nurseId={selectedNurseId}
-          onClose={() => setSelectedNurseId(undefined)}
+          onClose={() => void selectNurse(undefined)}
           onEdit={(nurse) => setFormTarget(nurse)}
         />
       ) : null}

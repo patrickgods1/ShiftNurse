@@ -6,6 +6,7 @@
  */
 
 import {
+  ALL_RULES,
   DEFAULT_FAIRNESS_WEIGHTS,
   DEFAULT_WEEKEND,
   type RuleConfig,
@@ -185,6 +186,8 @@ describe('explaining a loosened protected rule', () => {
     fireEvent.click(within(card).getByLabelText('Enabled'));
     const reason = await screen.findByTestId('rules-reason');
     expect((saveButton() as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Say why this change is needed.')).toBeTruthy();
+    expect(reason.getAttribute('aria-required')).toBe('true');
 
     fireEvent.change(reason, { target: { value: 'Union side letter' } });
     await waitFor(() => expect((saveButton() as HTMLButtonElement).disabled).toBe(false));
@@ -285,5 +288,100 @@ describe('explaining a loosened protected rule', () => {
     expect((saveButton() as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(screen.getByTestId('rules-reason'), { target: { value: 'Side letter' } });
     await waitFor(() => expect((saveButton() as HTMLButtonElement).disabled).toBe(false));
+  });
+});
+
+describe('the weekend, the fairness weights and the name', () => {
+  const byId = (id: string) => document.getElementById(id) as HTMLInputElement;
+
+  it('lets the manager clear the weekend start time to retype it', async () => {
+    await renderRules();
+    fireEvent.change(byId('weekend-start-time'), { target: { value: '' } });
+
+    expect(await screen.findByText('Enter a start time.')).toBeTruthy();
+    expect((saveButton() as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(byId('weekend-start-time'), { target: { value: '19:00' } });
+    await waitFor(() => expect((saveButton() as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(saveButton());
+
+    await waitFor(() => expect(bridge.callsTo('rules', 'save')).toHaveLength(1));
+    const weekend = bridge.callsTo('rules', 'save')[0]![3];
+    expect(weekend.startMinute).toBe(1140);
+  });
+
+  it('does not turn a cleared fairness weight into zero', async () => {
+    await renderRules();
+    fireEvent.change(byId('fairness-nights'), { target: { value: '' } });
+
+    expect(byId('fairness-nights').value).toBe('');
+    expect(await screen.findByText('Enter a number.')).toBeTruthy();
+    expect((saveButton() as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(byId('fairness-nights'), { target: { value: '2.5' } });
+    await waitFor(() => expect((saveButton() as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(saveButton());
+
+    await waitFor(() => expect(bridge.callsTo('rules', 'save')).toHaveLength(1));
+    expect(bridge.callsTo('rules', 'save')[0]![4]).toEqual({
+      ...DEFAULT_FAIRNESS_WEIGHTS,
+      nights: 2.5,
+    });
+  });
+
+  it('puts back the saved start time and weight when the manager discards a cleared field', async () => {
+    await renderRules();
+    fireEvent.change(byId('weekend-start-time'), { target: { value: '' } });
+    fireEvent.change(byId('fairness-nights'), { target: { value: '' } });
+    expect(await screen.findByText('Enter a start time.')).toBeTruthy();
+    expect((discardButton() as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(discardButton());
+
+    await waitFor(() => expect(screen.queryByText('Enter a start time.')).toBeNull());
+    expect(screen.queryByText('Enter a number.')).toBeNull();
+    expect(byId('weekend-start-time').value).toBe('00:00');
+    expect(byId('fairness-nights').value).toBe(String(DEFAULT_FAIRNESS_WEIGHTS.nights));
+    expect((saveButton() as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('will not save a rule set with no name', async () => {
+    await renderRules();
+    fireEvent.change(nameInput(), { target: { value: '   ' } });
+
+    expect(await screen.findByText('Give the rule set a name.')).toBeTruthy();
+    expect((saveButton() as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('saves the rule set name without stray spaces', async () => {
+    await renderRules();
+    fireEvent.change(nameInput(), { target: { value: '  Night unit  ' } });
+    fireEvent.click(saveButton());
+
+    await waitFor(() => expect(bridge.callsTo('rules', 'save')).toHaveLength(1));
+    expect(bridge.callsTo('rules', 'save')[0]![1]).toBe('Night unit');
+  });
+
+  it('shows a field for every setting of every rule', async () => {
+    bridge.respond('rules', 'getLatest', {
+      ...loaded,
+      configs: ALL_RULES.map((rule) => ({
+        ruleId: rule.id,
+        enabled: true,
+        params: { ...(rule.defaultParams as Record<string, unknown>) },
+      })),
+    });
+    await renderRules();
+
+    const missing: string[] = [];
+    for (const rule of ALL_RULES) {
+      for (const key of Object.keys(rule.paramDocs)) {
+        const id = `${rule.id}-${key}`;
+        if (!document.getElementById(id) && !document.getElementById(`${id}-hint`)) {
+          missing.push(id);
+        }
+      }
+    }
+    expect(missing).toEqual([]);
   });
 });

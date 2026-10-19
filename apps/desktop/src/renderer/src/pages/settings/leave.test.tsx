@@ -6,7 +6,7 @@
  */
 
 import { isoDate, type LeavePolicy, type Unit } from '@shiftnurse/core';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
 import { renderWithApp } from '../../test/render.js';
@@ -238,9 +238,21 @@ describe('Settings › Leave', () => {
     expect(rules[1]).toEqual({ balanceType: 'sick', tiers: [], frontLoadHours: 40 });
   });
 
-  it('saves null when the manager goes back to the default', async () => {
+  it('asks before going back to the default leave policy', async () => {
     renderWithApp(<LeavePanel />, { unit });
     fireEvent.click(await screen.findByRole('button', { name: 'Use the default' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('Use the default leave policy?')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(bridge.callsTo('units', 'update')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use the default' }));
+    fireEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: 'Use the default',
+      }),
+    );
     await waitFor(() =>
       expect(bridge.callsTo('units', 'update')).toEqual([['unit-1', { leavePolicy: null }]]),
     );

@@ -8,13 +8,13 @@
  */
 
 import type { Id } from '@shiftnurse/core';
-import { useState } from 'react';
 import type { PaySettings } from '../../../../../shared/api.js';
 import { usePaySettings, useSavePaySettings } from '../../../api-cost.js';
 import { AsyncState } from '../../../components/async-state.js';
+import { EditorShell } from '../../../components/editor-shell.js';
 import { describedBy, Field } from '../../../components/field-help.js';
-import { errorMessage, INPUT, PRIMARY } from '../../../components/ui.js';
-import { useUnsavedChanges } from '../../../components/unsaved-changes.js';
+import { INPUT } from '../../../components/ui.js';
+import { numberFieldProblem, parseNumberField, useFieldDraft } from '../../../field-values.js';
 
 export function CallBackSection({ unitId }: { unitId: Id }) {
   const query = usePaySettings(unitId);
@@ -25,98 +25,118 @@ export function CallBackSection({ unitId }: { unitId: Id }) {
   return <CallBackForm unitId={unitId} settings={query.data} />;
 }
 
-const HOURS_PROBLEM = 'Enter a number of hours from 0 to 24.';
-
-/** A 0–24 hour figure typed into a field: its number, and whether it may be saved. */
-function dayHours(value: string): { hours: number; valid: boolean } {
-  const hours = Number(value);
-  return {
-    hours,
-    valid: value.trim() !== '' && Number.isFinite(hours) && hours >= 0 && hours <= 24,
-  };
-}
-
 function CallBackForm({ unitId, settings }: { unitId: Id; settings: PaySettings }) {
   const save = useSavePaySettings(unitId);
   const savedMinimum = settings.callBackMinimumHours;
   const savedNotice = settings.reportingPayNoticeHours;
-  const [value, setValue] = useState(String(savedMinimum));
-  const [noticeValue, setNoticeValue] = useState(String(savedNotice));
-  const minimum = dayHours(value);
-  const notice = dayHours(noticeValue);
-  const valid = minimum.valid && notice.valid;
-  const dirty = valid && (minimum.hours !== savedMinimum || notice.hours !== savedNotice);
-  useUnsavedChanges('Call-back minimum hours', value !== String(savedMinimum));
-  useUnsavedChanges('Reporting-pay notice', noticeValue !== String(savedNotice));
-  const error = errorMessage(save.error);
-  const minimumProblem = minimum.valid ? undefined : HOURS_PROBLEM;
-  const noticeProblem = notice.valid ? undefined : HOURS_PROBLEM;
+  const minimum = useFieldDraft(String(savedMinimum));
+  const notice = useFieldDraft(String(savedNotice));
+  const minimumProblem = numberFieldProblem(minimum.text, { min: 0, max: 24 });
+  const noticeProblem = numberFieldProblem(notice.text, { min: 0, max: 24 });
+  // A field with a problem is an edit too, or Discard would not offer to take it back; `2.0`
+  // against a saved 2 is no edit at all.
+  const minimumDirty =
+    minimumProblem !== undefined || parseNumberField(minimum.text) !== savedMinimum;
+  const noticeDirty = noticeProblem !== undefined || parseNumberField(notice.text) !== savedNotice;
+  const dirty = minimumDirty || noticeDirty;
+  const canSave = minimumProblem === undefined && noticeProblem === undefined;
+
+  function submit() {
+    const callBackMinimumHours = parseNumberField(minimum.text);
+    const reportingPayNoticeHours = parseNumberField(notice.text);
+    if (!canSave || callBackMinimumHours === undefined || reportingPayNoticeHours === undefined) {
+      return;
+    }
+    save.mutate(
+      { ...settings, callBackMinimumHours, reportingPayNoticeHours },
+      {
+        // Follow the saved row again, so a figure typed as 4.0 settles to what the server holds.
+        onSuccess: () => {
+          minimum.reset(String(callBackMinimumHours));
+          notice.reset(String(reportingPayNoticeHours));
+        },
+      },
+    );
+  }
+  function discard() {
+    minimum.reset(String(savedMinimum));
+    notice.reset(String(savedNotice));
+    save.reset();
+  }
 
   return (
     <section className="mt-8">
-      <h2 className="mb-1 text-sm font-semibold text-text">Call-back</h2>
-      <form
-        className="flex max-w-md flex-col gap-2 rounded-md border border-border bg-surface p-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (valid) {
-            save.mutate({
-              ...settings,
-              callBackMinimumHours: minimum.hours,
-              reportingPayNoticeHours: notice.hours,
-            });
-          }
-        }}
+      <EditorShell
+        label="Call-back minimum hours"
+        dirty={dirty}
+        saving={save.isPending}
+        error={save.error}
+        canSave={canSave}
+        formId="call-back-form"
+        onSave={submit}
+        onDiscard={discard}
       >
-        <Field
-          id="call-back-minimum"
-          label="Call-back minimum hours"
-          hint="The fewest hours a call-back pays. 0 pays the hours worked."
-          tip="Many contracts guarantee a call-back a minimum, such as 2 or 4 hours, even if the nurse is sent home sooner. Enter the figure from yours. The call-back differential, if you have one, is set above and applies to these hours."
-          error={minimumProblem ?? error}
+        <h2 className="mb-1 text-sm font-semibold text-text">Call-back</h2>
+        <form
+          id="call-back-form"
+          className="flex max-w-md flex-col gap-2 rounded-md border border-border bg-surface p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
         >
-          <input
+          <Field
             id="call-back-minimum"
-            type="number"
-            min={0}
-            max={24}
-            step={0.25}
-            className={`${INPUT} w-28`}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            aria-describedby={describedBy('call-back-minimum', {
-              hint: true,
-              error: (minimumProblem ?? error) !== undefined,
-            })}
-          />
-        </Field>
-        <Field
-          id="reporting-pay-notice"
-          label="Reporting-pay notice (hours)"
-          hint="Sending someone home with less notice than this before the shift starts still pays reporting time. 0 pays it only once the shift has started."
-          error={noticeProblem}
-        >
-          <input
+            label="Call-back minimum hours"
+            hint="The fewest hours a call-back pays. 0 pays the hours worked."
+            tip="Many contracts guarantee a call-back a minimum, such as 2 or 4 hours, even if the nurse is sent home sooner. Enter the figure from yours. The call-back differential, if you have one, is set above and applies to these hours."
+            error={minimumProblem}
+          >
+            <input
+              id="call-back-minimum"
+              type="number"
+              min={0}
+              max={24}
+              step={0.25}
+              className={`${INPUT} w-28`}
+              value={minimum.text}
+              onChange={(e) => minimum.setText(e.target.value)}
+              {...minimum.bind}
+              aria-describedby={describedBy('call-back-minimum', {
+                hint: true,
+                error: minimumProblem !== undefined,
+              })}
+            />
+          </Field>
+          <Field
             id="reporting-pay-notice"
-            type="number"
-            min={0}
-            max={24}
-            step={0.25}
-            className={`${INPUT} w-28`}
-            value={noticeValue}
-            onChange={(e) => setNoticeValue(e.target.value)}
-            aria-describedby={describedBy('reporting-pay-notice', {
-              hint: true,
-              error: noticeProblem !== undefined,
-            })}
-          />
-        </Field>
-        <div className="flex justify-end">
-          <button type="submit" className={PRIMARY} disabled={!dirty || save.isPending}>
-            {save.isPending ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-      </form>
+            label="Reporting-pay notice (hours)"
+            hint="Sending someone home with less notice than this before the shift starts still pays reporting time. 0 pays it only once the shift has started."
+            error={noticeProblem}
+          >
+            <input
+              id="reporting-pay-notice"
+              type="number"
+              min={0}
+              max={24}
+              step={0.25}
+              className={`${INPUT} w-28`}
+              value={notice.text}
+              onChange={(e) => notice.setText(e.target.value)}
+              {...notice.bind}
+              aria-describedby={describedBy('reporting-pay-notice', {
+                hint: true,
+                error: noticeProblem !== undefined,
+              })}
+            />
+          </Field>
+          {save.isSuccess && !dirty ? (
+            <p role="status" className="text-sm text-success">
+              Saved.
+            </p>
+          ) : null}
+        </form>
+      </EditorShell>
     </section>
   );
 }

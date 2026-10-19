@@ -21,6 +21,9 @@ export default function SolverPanel() {
   const unitId = useUnitId();
   const settingsQuery = useSolverSettings(unitId);
   const availabilityQuery = useSolverAvailability();
+  // The mutation lives here, above the form's key: the refetch after Save changes the key and
+  // remounts the form, which would take "Saved." with it.
+  const save = useSaveSolverSettings(unitId);
   if (settingsQuery.isPending || availabilityQuery.isPending) {
     return <AsyncState status="loading" label="Loading solver settings" />;
   }
@@ -46,6 +49,7 @@ export default function SolverPanel() {
     <SolverForm
       key={JSON.stringify(settingsQuery.data)}
       saved={settingsQuery.data}
+      save={save}
       availability={availabilityQuery.data}
     />
   );
@@ -53,21 +57,18 @@ export default function SolverPanel() {
 
 function SolverForm({
   saved,
+  save,
   availability,
 }: {
   saved: SolverSettings;
+  save: ReturnType<typeof useSaveSolverSettings>;
   availability: SolverAvailability[];
 }) {
-  const unitId = useUnitId();
-  const save = useSaveSolverSettings(unitId);
   const [solverId, setSolverId] = useState(saved.solverId);
-  const [message, setMessage] = useState<string | undefined>(undefined);
   const dirty = solverId !== saved.solverId;
-  const submit = () =>
-    save.mutate({ ...saved, solverId }, { onSuccess: () => setMessage('Saved.') });
+  const submit = () => save.mutate({ ...saved, solverId });
   const discard = () => {
     setSolverId(saved.solverId);
-    setMessage(undefined);
     save.reset();
   };
   const byId = new Map(availability.map((a) => [a.id, a]));
@@ -143,9 +144,9 @@ function SolverForm({
               its summary.
             </p>
           ) : null}
-          {save.error === null && message !== undefined && !dirty ? (
+          {save.isSuccess && !dirty ? (
             <p role="status" className="text-sm text-success">
-              {message}
+              Saved.
             </p>
           ) : null}
         </form>

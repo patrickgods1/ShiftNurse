@@ -18,6 +18,7 @@ import {
   deleteAcuityTier,
   deleteCoverageRequirement,
   deleteHoliday,
+  fillCoverageWeek,
   getHomeUnit,
   getHppdTarget,
   getSolverSettings,
@@ -66,6 +67,7 @@ export function configApi(
       list: (unitId) => listCoverageRequirementsForUnit(db, unitId),
       upsert: (input) => transact(db, (tx) => upsertCoverageRequirement(tx, input, ACTOR)),
       delete: (id) => transact(db, (tx) => deleteCoverageRequirement(tx, id, ACTOR)),
+      fillWeek: (input) => transact(db, (tx) => fillCoverageWeek(tx, input, ACTOR)),
     },
     holidays: {
       list: (unitId) => listHolidaysForUnit(db, unitId),
@@ -88,7 +90,7 @@ export function configApi(
       createRatioRule: (input) => transact(db, (tx) => createRatioRule(tx, input, ACTOR)),
       updateRatioRule: (id, patch) => transact(db, (tx) => updateRatioRule(tx, id, patch, ACTOR)),
       deactivateRatioRule: (id) => transact(db, (tx) => deactivateRatioRule(tx, id, ACTOR)),
-      hppd: (unitId) => getHppdTarget(db, unitId),
+      hppd: (unitId) => getHppdTarget(db, unitId) ?? null,
       setHppd: (unitId, targetHours) =>
         transact(db, (tx) => upsertHppdTarget(tx, unitId, targetHours, ACTOR)),
     },

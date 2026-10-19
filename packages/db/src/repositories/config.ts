@@ -17,6 +17,7 @@ import type {
   JurisdictionChoices,
   JurisdictionId,
   LeavePolicy,
+  NurseRole,
   OvertimeOrder,
   PerDiemCommitment,
   RatioStaffing,
@@ -27,7 +28,7 @@ import type {
 import { JURISDICTION_PRESETS, validateLeavePolicy, withinShiftProblem } from '@shiftnurse/core';
 import { and, asc, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
-import type { DbLike } from '../client.js';
+import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import {
   ratioStaffingColumns,
@@ -334,6 +335,43 @@ export function listCoverageRequirementsForUnit(db: DbLike, unitId: Id): Coverag
     .map(toCoverageRequirement);
 }
 
+/**
+ * Set one shift type and role to the same minimum and target on every weekday. Takes the
+ * transaction because seven writes are only correct together: a failure part-way would leave the
+ * week half-filled. Days already at those numbers write nothing (see the upsert).
+ */
+export function fillCoverageWeek(
+  tx: ShiftNurseTx,
+  input: { unitId: Id; shiftTypeId: Id; role: NurseRole; minCount: number; targetCount: number },
+  actor: string,
+): CoverageRequirement[] {
+  const whole = (n: number) => Number.isInteger(n) && n >= 0;
+  if (!whole(input.minCount) || !whole(input.targetCount)) {
+    throw new Error('Coverage counts must be whole numbers, zero or more.');
+  }
+  if (input.targetCount < input.minCount)
+    throw new Error('The target cannot be below the minimum.');
+  const existing = listCoverageRequirementsForUnit(tx, input.unitId).filter(
+    (r) => r.date === null && r.shiftTypeId === input.shiftTypeId && r.role === input.role,
+  );
+  return ([0, 1, 2, 3, 4, 5, 6] as const).map((weekday) =>
+    upsertCoverageRequirement(
+      tx,
+      {
+        id: existing.find((r) => r.weekday === weekday)?.id,
+        unitId: input.unitId,
+        shiftTypeId: input.shiftTypeId,
+        weekday,
+        date: null,
+        role: input.role,
+        minCount: input.minCount,
+        targetCount: input.targetCount,
+      },
+      actor,
+    ),
+  );
+}
+
 /** Create when `input.id` is absent, otherwise update the existing row in place. */
 export function upsertCoverageRequirement(
   db: DbLike,
@@ -348,6 +386,17 @@ export function upsertCoverageRequirement(
       .get();
     if (!row) throw new Error(`Coverage requirement ${input.id} not found`);
     const before = toCoverageRequirement(row);
+    // A cell left as it was is not an event: an audited no-op would bury the real edits.
+    if (
+      before.shiftTypeId === input.shiftTypeId &&
+      before.weekday === input.weekday &&
+      before.date === input.date &&
+      before.role === input.role &&
+      before.minCount === input.minCount &&
+      before.targetCount === input.targetCount
+    ) {
+      return before;
+    }
     const merged = {
       ...row,
       shiftTypeId: input.shiftTypeId,

@@ -4,7 +4,9 @@
  * CLAUDE.md's domain glossary). Weekday rows are edited as a grid because that is how a
  * manager thinks about it — "nights need 3 RNs every day but 4 on weekends" — while one-off
  * date overrides (a single Christmas Eve staffing bump) are rare enough to live in a plain
- * list below instead of cluttering the grid with a mostly-empty extra dimension.
+ * list below instead of cluttering the grid with a mostly-empty extra dimension. A cell saves
+ * when focus leaves its pair, and only if the numbers changed, so tabbing across the week
+ * writes nothing.
  */
 
 import type {
@@ -16,11 +18,13 @@ import type {
   Weekday,
 } from '@shiftnurse/core';
 import { WEEKDAY_NAMES } from '@shiftnurse/core';
-import { useState } from 'react';
-import { useDeleteCoverage, useUpsertCoverage } from '../../api-config.js';
+import { useEffect, useRef, useState } from 'react';
+import { useDeleteCoverage, useFillCoverageWeek, useUpsertCoverage } from '../../api-config.js';
 import { useConfirm } from '../../components/confirm.js';
 import { DateField } from '../../components/date-field.js';
 import { errorMessage, PRIMARY } from '../../components/ui.js';
+import { listLabels, useUnsavedChanges } from '../../components/unsaved-changes.js';
+import { numberFieldText, parseIntegerField } from '../../field-values.js';
 
 const ROLES: NurseRole[] = ['RN', 'LPN', 'CNA'];
 const WEEKDAYS: Weekday[] = [0, 1, 2, 3, 4, 5, 6];
@@ -54,77 +58,144 @@ function CoverageCell({
   requirement: CoverageRequirement | undefined;
 }) {
   const upsert = useUpsertCoverage();
-  const [min, setMin] = useState(String(requirement?.minCount ?? ''));
-  const [target, setTarget] = useState(String(requirement?.targetCount ?? ''));
+  const savedMin = numberFieldText(requirement?.minCount);
+  const savedTarget = numberFieldText(requirement?.targetCount);
+  const [min, setMin] = useState(savedMin);
+  const [target, setTarget] = useState(savedTarget);
+  const [focused, setFocused] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  // After a save the draft keeps the typed numbers until the refetch brings the saved ones, so
+  // the cell never flashes its old value in between.
+  const settling = useRef(false);
+  const seen = useRef(`${savedMin}/${savedTarget}`);
+
+  useEffect(() => {
+    const key = `${savedMin}/${savedTarget}`;
+    if (seen.current !== key) {
+      seen.current = key;
+      settling.current = false;
+    }
+    if (!focused && !dirty && !settling.current) {
+      setMin(savedMin);
+      setTarget(savedTarget);
+    }
+  }, [savedMin, savedTarget, focused, dirty]);
+
+  useUnsavedChanges('Coverage floors', dirty && error !== undefined);
 
   function commit() {
-    const minCount = Number(min);
-    const targetCount = Number(target);
-    if (min === '' || target === '' || Number.isNaN(minCount) || Number.isNaN(targetCount)) {
-      setError('Enter both numbers');
+    const minCount = parseIntegerField(min);
+    const targetCount = parseIntegerField(target);
+    if (requirement === undefined && min.trim() === '' && target.trim() === '') {
+      setError(undefined);
+      setDirty(false);
       return;
     }
-    if (minCount < 0 || targetCount < minCount) {
-      setError('Target must be ≥ min ≥ 0');
+    const problem =
+      minCount === undefined || targetCount === undefined
+        ? 'Enter both numbers as whole numbers.'
+        : minCount < 0
+          ? 'Must be at least 0.'
+          : targetCount < minCount
+            ? 'The target cannot be below the minimum.'
+            : undefined;
+    if (problem !== undefined || minCount === undefined || targetCount === undefined) {
+      setError(problem);
       return;
     }
     setError(undefined);
-    upsert.mutate({
-      id: requirement?.id,
-      unitId,
-      shiftTypeId,
-      weekday,
-      date: null,
-      role,
-      minCount,
-      targetCount,
-    });
+    if (requirement?.minCount === minCount && requirement.targetCount === targetCount) {
+      setDirty(false);
+      return;
+    }
+    upsert.mutate(
+      {
+        id: requirement?.id,
+        unitId,
+        shiftTypeId,
+        weekday,
+        date: null,
+        role,
+        minCount,
+        targetCount,
+      },
+      {
+        onSuccess: () => {
+          settling.current = true;
+          setDirty(false);
+        },
+        onError: (err) => setError(errorMessage(err)),
+      },
+    );
   }
 
+  const cellId = `${shiftTypeId}-${role}-${weekday}`;
   const label = `${role} minimum and target for ${WEEKDAY_NAMES[weekday]}`;
+  const describedBy = error !== undefined ? `${cellId}-error` : undefined;
+  const invalid = error !== undefined || undefined;
 
   return (
     <div className="flex flex-col items-center gap-0.5">
-      <div className="flex items-center gap-0.5">
-        <label className="sr-only" htmlFor={`min-${shiftTypeId}-${role}-${weekday}`}>
+      {/* The pair saves when focus leaves both inputs: Tab from Min to Target is still editing. */}
+      <fieldset
+        className="flex items-center gap-0.5"
+        onFocus={() => setFocused(true)}
+        onBlur={(event) => {
+          if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+          setFocused(false);
+          if (dirty) commit();
+        }}
+      >
+        <label className="sr-only" htmlFor={`min-${cellId}`}>
           Minimum {label}
         </label>
         <input
-          id={`min-${shiftTypeId}-${role}-${weekday}`}
+          id={`min-${cellId}`}
           type="number"
           min={0}
           value={min}
-          onChange={(event) => setMin(event.target.value)}
-          onBlur={commit}
+          onChange={(event) => {
+            setMin(event.target.value);
+            setDirty(true);
+          }}
+          aria-invalid={invalid}
+          aria-describedby={describedBy}
           className="w-12 rounded border border-border bg-bg px-1 py-0.5 text-center text-xs text-text"
-          aria-label={`Minimum ${label}`}
         />
         <span aria-hidden="true" className="text-text-muted">
           /
         </span>
-        <label className="sr-only" htmlFor={`target-${shiftTypeId}-${role}-${weekday}`}>
+        <label className="sr-only" htmlFor={`target-${cellId}`}>
           Target {label}
         </label>
         <input
-          id={`target-${shiftTypeId}-${role}-${weekday}`}
+          id={`target-${cellId}`}
           type="number"
           min={0}
           value={target}
-          onChange={(event) => setTarget(event.target.value)}
-          onBlur={commit}
+          onChange={(event) => {
+            setTarget(event.target.value);
+            setDirty(true);
+          }}
+          aria-invalid={invalid}
+          aria-describedby={describedBy}
           className="w-12 rounded border border-border bg-bg px-1 py-0.5 text-center text-xs text-text"
-          aria-label={`Target ${label}`}
         />
-      </div>
-      {error !== undefined ? <span className="text-[10px] text-danger">{error}</span> : null}
+      </fieldset>
+      {error !== undefined ? (
+        <span id={`${cellId}-error`} className="text-[10px] text-danger">
+          {error}
+        </span>
+      ) : null}
     </div>
   );
 }
 
 /**
  * Most units staff a shift the same every day: set one day, then copy it to the other six rather
- * than typing fourteen numbers. Copies the first day that has numbers, Sunday first.
+ * than typing fourteen numbers. Copies the first day that has numbers, Sunday first, in one
+ * transaction, and names the days it will change before it changes them.
  */
 function FillWeekButton({
   unitId,
@@ -137,8 +208,8 @@ function FillWeekButton({
   role: NurseRole;
   requirements: readonly CoverageRequirement[];
 }) {
-  const upsert = useUpsertCoverage();
-  const [busy, setBusy] = useState(false);
+  const fill = useFillCoverageWeek();
+  const confirm = useConfirm();
   const source = WEEKDAYS.map((d) => requirements.find((r) => r.weekday === d)).find(Boolean);
   const allSame =
     source !== undefined &&
@@ -146,40 +217,65 @@ function FillWeekButton({
       const r = requirements.find((x) => x.weekday === d);
       return r && r.minCount === source.minCount && r.targetCount === source.targetCount;
     });
+  // A day with no row is filled silently; only a day that has different numbers is overwritten.
+  const differentDays =
+    source === undefined
+      ? []
+      : WEEKDAYS.filter((d) => {
+          if (d === source.weekday) return false;
+          const r = requirements.find((x) => x.weekday === d);
+          return (
+            r !== undefined &&
+            (r.minCount !== source.minCount || r.targetCount !== source.targetCount)
+          );
+        }).map((d) => WEEKDAY_NAMES[d] as string);
+
+  function run() {
+    if (source === undefined) return;
+    fill.mutate({
+      unitId,
+      shiftTypeId,
+      role,
+      minCount: source.minCount,
+      targetCount: source.targetCount,
+    });
+  }
+
   return (
-    <button
-      type="button"
-      className="whitespace-nowrap text-xs text-accent underline underline-offset-2 disabled:text-text-muted disabled:no-underline"
-      disabled={source === undefined || allSame || busy}
-      title={
-        source === undefined
-          ? 'Fill in one day first'
-          : `Copy ${source.minCount} / ${source.targetCount} to every day`
-      }
-      onClick={async () => {
-        if (!source) return;
-        setBusy(true);
-        try {
-          for (const weekday of WEEKDAYS) {
-            const existing = requirements.find((r) => r.weekday === weekday);
-            await upsert.mutateAsync({
-              id: existing?.id,
-              unitId,
-              shiftTypeId,
-              weekday,
-              date: null,
-              role,
-              minCount: source.minCount,
-              targetCount: source.targetCount,
-            });
-          }
-        } finally {
-          setBusy(false);
+    <div className="flex flex-col items-start gap-0.5">
+      <button
+        type="button"
+        className="whitespace-nowrap text-xs text-accent underline underline-offset-2 disabled:text-text-muted disabled:no-underline"
+        disabled={source === undefined || allSame || fill.isPending}
+        title={
+          source === undefined
+            ? 'Fill in one day first'
+            : `Copy ${source.minCount} / ${source.targetCount} to every day`
         }
-      }}
-    >
-      {busy ? 'Copying…' : 'Same all week'}
-    </button>
+        onClick={() => {
+          if (source === undefined) return;
+          if (differentDays.length === 0) {
+            run();
+            return;
+          }
+          void confirm({
+            title: `Copy ${WEEKDAY_NAMES[source.weekday as Weekday]}'s ${source.minCount} / ${source.targetCount} to every day?`,
+            description: `${listLabels(differentDays)} ${differentDays.length === 1 ? 'is' : 'are'} different now and will be changed.`,
+            confirmLabel: 'Copy to every day',
+            danger: false,
+          }).then((ok) => {
+            if (ok) run();
+          });
+        }}
+      >
+        {fill.isPending ? 'Copying…' : 'Same all week'}
+      </button>
+      {fill.isError ? (
+        <span role="alert" className="max-w-40 text-[10px] text-danger">
+          {errorMessage(fill.error)}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -259,9 +355,11 @@ function OverrideForm({
   const [date, setDate] = useState<IsoDate | ''>('');
   const [shiftTypeId, setShiftTypeId] = useState<Id>(firstShiftType?.id ?? '');
   const [role, setRole] = useState<NurseRole>('RN');
-  const [min, setMin] = useState('0');
-  const [target, setTarget] = useState('0');
+  // Blank, not 0: a zero floor is a real answer, and pressing Add on only a date saved one.
+  const [min, setMin] = useState('');
+  const [target, setTarget] = useState('');
   const [error, setError] = useState<string | undefined>(undefined);
+  useUnsavedChanges('Coverage override', date !== '' || min !== '' || target !== '');
 
   if (firstShiftType === undefined) return null;
 
@@ -270,14 +368,22 @@ function OverrideForm({
       className="flex flex-wrap items-end gap-2"
       onSubmit={(event) => {
         event.preventDefault();
-        const minCount = Number(min);
-        const targetCount = Number(target);
-        if (date === '' || Number.isNaN(minCount) || Number.isNaN(targetCount)) {
+        const minCount = parseIntegerField(min);
+        const targetCount = parseIntegerField(target);
+        if (date === '') {
           setError('All fields are required');
           return;
         }
-        if (minCount < 0 || targetCount < minCount) {
-          setError('Target must be ≥ min ≥ 0');
+        if (minCount === undefined || targetCount === undefined) {
+          setError('Enter both numbers as whole numbers.');
+          return;
+        }
+        if (minCount < 0) {
+          setError('Must be at least 0.');
+          return;
+        }
+        if (targetCount < minCount) {
+          setError('The target cannot be below the minimum.');
           return;
         }
         setError(undefined);
@@ -291,9 +397,16 @@ function OverrideForm({
             minCount,
             targetCount,
           },
-          { onSuccess: onAdded },
+          {
+            // Only a saved override clears the form: a refused one keeps what was typed.
+            onSuccess: () => {
+              setDate('');
+              setMin('');
+              setTarget('');
+              onAdded();
+            },
+          },
         );
-        setDate('');
       }}
     >
       <DateField label="Date" required value={date} onChange={setDate} />
@@ -374,6 +487,12 @@ export default function CoverageFloors({ unitId, shiftTypes, requirements }: Cov
     rowKeys.set(rowKeyOf(row), row);
   }
 
+  // A row added with "Add row" is only a promise until one of its cells is saved.
+  const unsavedExtraRows = extraRows.filter(
+    (row) => !weekdayRequirements.some((r) => rowKeyOf(r) === rowKeyOf(row)),
+  );
+  useUnsavedChanges('Coverage rows', unsavedExtraRows.length > 0);
+
   const rows = [...rowKeys.values()].sort((a, b) => {
     const shiftA = shiftTypeById.get(a.shiftTypeId);
     const shiftB = shiftTypeById.get(b.shiftTypeId);
@@ -441,8 +560,6 @@ export default function CoverageFloors({ unitId, shiftTypes, requirements }: Cov
                       return (
                         <td key={weekday} className="px-1 py-1 text-center">
                           <CoverageCell
-                            // Remounts with the saved numbers after "Same all week" fills it.
-                            key={`${requirement?.minCount ?? ''}/${requirement?.targetCount ?? ''}`}
                             unitId={unitId}
                             shiftTypeId={row.shiftTypeId}
                             role={row.role}

@@ -5,7 +5,7 @@
  * see of who covered whom.
  */
 
-import { addDays, isoDate, shiftsAround } from '@shiftnurse/core';
+import { addDays, compareSeniority, isoDate, shiftsAround } from '@shiftnurse/core';
 import {
   auditHistoryFor,
   createNurse,
@@ -626,7 +626,9 @@ describe('the overtime call order', () => {
     expect(overtime.length).toBeGreaterThan(1);
     const juniorFirst = others
       .filter((n) => overtime.some((c) => c.nurseId === n.id))
-      .sort((x, y) => y.seniorityDate.localeCompare(x.seniorityDate) || x.id.localeCompare(y.id))
+      // The roster is the one seniority order reversed: a shared start date is broken by
+      // employee number, not by the random id, or the expectation flips run to run.
+      .sort((x, y) => compareSeniority(y, x))
       .map((n) => n.id);
     expect(overtime.map((c) => c.nurseId)).toEqual(juniorFirst);
     expect(overtime.every((c) => c.lastOvertimeOn !== undefined)).toBe(true);

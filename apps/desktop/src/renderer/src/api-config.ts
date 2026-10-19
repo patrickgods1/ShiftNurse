@@ -12,6 +12,7 @@ import type {
   AcuityTierInput,
   AcuityTierPatch,
   CoverageRequirementInput,
+  CoverageWeekInput,
   HolidayInput,
   HolidayPatch,
   HolidayYearInput,
@@ -94,6 +95,20 @@ export function useUpsertCoverage() {
     mutationFn: (input: CoverageRequirementInput) => api.coverage.upsert(input),
     onSuccess: (saved) => {
       queryClient.invalidateQueries({ queryKey: configKeys.coverage(saved.unitId) });
+      afterConfigChange(queryClient);
+    },
+  });
+}
+
+export function useFillCoverageWeek() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    // The button shows the refusal beside itself; the global toast would say it twice.
+    meta: { inlineError: true },
+    mutationFn: (input: CoverageWeekInput) => api.coverage.fillWeek(input),
+    // onSettled, not onSuccess: a refusal still refetches, so the grid shows what is really saved.
+    onSettled: (_rows, _error, variables) => {
+      queryClient.invalidateQueries({ queryKey: configKeys.coverage(variables.unitId) });
       afterConfigChange(queryClient);
     },
   });
@@ -319,7 +334,7 @@ export function useDeactivateRatioRule() {
 export function useHppdTarget(unitId: Id | undefined) {
   return useQuery({
     queryKey: configKeys.hppdTarget(unitId ?? ''),
-    queryFn: () => api.acuity.hppd(unitId as Id),
+    queryFn: async () => (await api.acuity.hppd(unitId as Id)) ?? null,
     enabled: unitId !== undefined,
   });
 }

@@ -91,6 +91,8 @@ export function useCreatePayRate(unitId: Id) {
   return useMutation({
     mutationFn: (input: PayRateInput) => api.cost.createPayRate(input),
     onSuccess: invalidate,
+    // The form that calls this shows the refusal beside itself; the toast would say it twice.
+    meta: { inlineError: true },
   });
 }
 
@@ -128,6 +130,8 @@ export function useCreateDifferential(unitId: Id) {
   return useMutation({
     mutationFn: (input: DifferentialInput) => api.cost.createDifferential(input),
     onSuccess: invalidate,
+    // The form that calls this shows the refusal beside itself; the toast would say it twice.
+    meta: { inlineError: true },
   });
 }
 
@@ -165,6 +169,8 @@ export function useCreateOvertimeRule(unitId: Id) {
   return useMutation({
     mutationFn: (input: OvertimeRuleInput) => api.cost.createOvertimeRule(input),
     onSuccess: invalidate,
+    // The form that calls this shows the refusal beside itself; the toast would say it twice.
+    meta: { inlineError: true },
   });
 }
 

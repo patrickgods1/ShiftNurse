@@ -87,6 +87,7 @@ function ShiftTypeForm({
   onCancel,
   onSubmit,
   submitLabel,
+  pending,
 }: {
   initial: FormState;
   /** Standalone shifts this one could run inside. */
@@ -94,6 +95,8 @@ function ShiftTypeForm({
   onCancel: () => void;
   onSubmit: (form: FormState) => void;
   submitLabel: string;
+  /** A save is in flight: a second click would make a second identical shift type. */
+  pending: boolean;
 }) {
   const [form, setForm] = useState<FormState>(initial);
 
@@ -102,6 +105,7 @@ function ShiftTypeForm({
       className="mt-3 flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
+        if (pending) return;
         onSubmit(form);
       }}
     >
@@ -246,6 +250,7 @@ function ShiftTypeForm({
           {containers.map((t) => (
             <option key={t.id} value={t.id}>
               {t.name} ({t.abbreviation}, {t.startTime}, {t.durationHours}h)
+              {t.active ? '' : ' — inactive'}
             </option>
           ))}
         </select>
@@ -254,8 +259,8 @@ function ShiftTypeForm({
         <button type="button" onClick={onCancel} className={SECONDARY}>
           Cancel
         </button>
-        <button type="submit" className={PRIMARY}>
-          {submitLabel}
+        <button type="submit" disabled={pending} className={PRIMARY}>
+          {pending ? 'Saving…' : submitLabel}
         </button>
       </div>
     </form>
@@ -271,6 +276,7 @@ function ShiftTypeDialog({
   error,
   onSubmit,
   submitLabel,
+  pending,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -281,6 +287,7 @@ function ShiftTypeDialog({
   error: Error | null;
   onSubmit: (form: FormState) => void;
   submitLabel: string;
+  pending: boolean;
 }) {
   return (
     <Modal open={open} onOpenChange={onOpenChange} title={title} variant="popup" size="md">
@@ -293,6 +300,7 @@ function ShiftTypeDialog({
         initial={initial}
         containers={containers}
         submitLabel={submitLabel}
+        pending={pending}
         onCancel={() => onOpenChange(false)}
         onSubmit={onSubmit}
       />
@@ -324,9 +332,15 @@ export default function ShiftTypesPanel() {
 
   const shiftTypes = [...shiftTypesQuery.data].sort((a, b) => a.sortOrder - b.sortOrder);
   // A shift runs inside a standalone one, never itself; main refuses one whose hours do not fit.
+  // The container a shift already names stays listed when it has been deactivated: hiding it
+  // would show "standalone" for a value that is still stored.
   const containersFor = (self: ShiftType | undefined) =>
     shiftTypes.filter(
-      (t) => t.withinShiftTypeId === null && t.id !== self?.id && !t.isOnCall && t.active,
+      (t) =>
+        t.withinShiftTypeId === null &&
+        t.id !== self?.id &&
+        !t.isOnCall &&
+        (t.active || t.id === self?.withinShiftTypeId),
     );
 
   function handleCreate(form: FormState) {
@@ -499,6 +513,7 @@ export default function ShiftTypesPanel() {
         containers={containersFor(undefined)}
         error={createMutation.error}
         submitLabel="Create"
+        pending={createMutation.isPending}
         onSubmit={handleCreate}
       />
 
@@ -513,6 +528,7 @@ export default function ShiftTypesPanel() {
           containers={containersFor(editing)}
           error={updateMutation.error}
           submitLabel="Save"
+          pending={updateMutation.isPending}
           onSubmit={(form) => handleUpdate(editing, form)}
         />
       ) : null}

@@ -49,8 +49,14 @@ function ratioToFormState(rule: RatioRule): RatioFormState {
     acuityTierId: rule.acuityTierId ?? ALL_TIERS_VALUE,
     maxPatientsPerNurse: String(rule.maxPatientsPerNurse),
     citation: rule.citation ?? '',
-    rnSharePercent: rule.minRnShare === undefined ? '' : String(Math.round(rule.minRnShare * 100)),
+    // Rounding to a whole percent would turn a stored 0.333 into 33 and save 0.33 back.
+    rnSharePercent: rule.minRnShare === undefined ? '' : sharePercentText(rule.minRnShare),
   };
+}
+
+/** A fraction as the percent the manager typed: 0.333 is 33.3, 0.5 is 50. */
+function sharePercentText(share: number): string {
+  return String(Number((share * 100).toFixed(6)));
 }
 
 /** The share as stored (a fraction), or undefined: only a licensed rule carries one. */
@@ -72,8 +78,14 @@ function diffRatioPatch(original: RatioRule, form: RatioFormState): RatioRulePat
   if (form.citation !== originalCitation) {
     patch.citation = form.citation === '' ? null : form.citation;
   }
-  const share = rnShareOf(form);
-  if (share !== original.minRnShare) patch.minRnShare = share ?? null;
+  // Compared as the text the form showed, so an untouched share is never re-derived from it.
+  if (
+    form.rnSharePercent !== ratioToFormState(original).rnSharePercent ||
+    form.role !== original.role
+  ) {
+    const share = rnShareOf(form);
+    if (share !== original.minRnShare) patch.minRnShare = share ?? null;
+  }
   return patch;
 }
 
@@ -90,12 +102,15 @@ function RatioForm({
   onCancel,
   onSubmit,
   submitLabel,
+  pending,
 }: {
   tiers: AcuityTier[];
   initial: RatioFormState;
   onCancel: () => void;
   onSubmit: (form: RatioFormState) => void;
   submitLabel: string;
+  /** A save is in flight: a second click would make a second identical rule. */
+  pending: boolean;
 }) {
   const [form, setForm] = useState<RatioFormState>(initial);
   const valid = ratioFormValid(form);
@@ -106,7 +121,7 @@ function RatioForm({
       className="mt-3 flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!valid) return;
+        if (!valid || pending) return;
         onSubmit(form);
       }}
     >
@@ -138,9 +153,9 @@ function RatioForm({
           <input
             id="ratio-rn-share"
             type="number"
-            min={1}
+            min={0.01}
             max={100}
-            step={1}
+            step="any"
             value={form.rnSharePercent}
             aria-describedby={describedBy('ratio-rn-share', { hint: true })}
             onChange={(event) => setForm({ ...form, rnSharePercent: event.target.value })}
@@ -183,7 +198,7 @@ function RatioForm({
           type="number"
           required
           min={0.01}
-          step={1}
+          step="any"
           value={form.maxPatientsPerNurse}
           aria-describedby={describedBy('ratio-max', { hint: true })}
           onChange={(event) => setForm({ ...form, maxPatientsPerNurse: event.target.value })}
@@ -212,8 +227,8 @@ function RatioForm({
         <button type="button" onClick={onCancel} className={SECONDARY}>
           Cancel
         </button>
-        <button type="submit" disabled={!valid} className={PRIMARY}>
-          {submitLabel}
+        <button type="submit" disabled={!valid || pending} className={PRIMARY}>
+          {pending ? 'Saving…' : submitLabel}
         </button>
       </div>
     </form>
@@ -228,6 +243,7 @@ function RatioDialog({
   initial,
   onSubmit,
   submitLabel,
+  pending,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -236,6 +252,7 @@ function RatioDialog({
   initial: RatioFormState;
   onSubmit: (form: RatioFormState) => void;
   submitLabel: string;
+  pending: boolean;
 }) {
   return (
     <Modal open={open} onOpenChange={onOpenChange} title={title} variant="popup" size="md">
@@ -243,6 +260,7 @@ function RatioDialog({
         tiers={tiers}
         initial={initial}
         submitLabel={submitLabel}
+        pending={pending}
         onCancel={() => onOpenChange(false)}
         onSubmit={onSubmit}
       />
@@ -371,7 +389,7 @@ export function RatioRulesSection({
                   <td className="px-3 py-2 text-text">
                     {roleLabel(rule.role)}
                     {rule.minRnShare !== undefined
-                      ? `, at least ${Math.round(rule.minRnShare * 100)}% RNs`
+                      ? `, at least ${sharePercentText(rule.minRnShare)}% RNs`
                       : ''}
                   </td>
                   <td className="px-3 py-2 text-text">
@@ -416,6 +434,7 @@ export function RatioRulesSection({
         tiers={tiers}
         initial={emptyRatioForm()}
         submitLabel="Create"
+        pending={createMutation.isPending}
         onSubmit={handleCreate}
       />
 
@@ -429,6 +448,7 @@ export function RatioRulesSection({
           tiers={tiers}
           initial={ratioToFormState(editing)}
           submitLabel="Save"
+          pending={updateMutation.isPending}
           onSubmit={(form) => handleUpdate(editing, form)}
         />
       ) : null}

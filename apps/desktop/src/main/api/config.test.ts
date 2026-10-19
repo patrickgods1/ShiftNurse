@@ -6,7 +6,13 @@
  */
 
 import { isoDate } from '@shiftnurse/core';
-import { applyJurisdiction, auditHistoryFor, recentAudit, transact } from '@shiftnurse/db';
+import {
+  applyJurisdiction,
+  auditHistoryFor,
+  createUnit,
+  recentAudit,
+  transact,
+} from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { configApi } from './config.js';
 import { ACTOR } from './context.js';
@@ -101,6 +107,21 @@ describe('coverage floors', () => {
       'delete',
       'create',
     ]);
+  });
+
+  it('copies a floor to the whole week', () => {
+    const rows = api().coverage.fillWeek({
+      unitId: unitId(),
+      shiftTypeId: f.day.id,
+      role: 'RN',
+      minCount: 2,
+      targetCount: 3,
+    });
+    expect(rows.map((r) => r.weekday)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    const mine = api()
+      .coverage.list(unitId())
+      .filter((c) => c.shiftTypeId === f.day.id && c.role === 'RN' && c.date === null);
+    expect(mine.map((c) => `${c.minCount}/${c.targetCount}`)).toEqual(Array(7).fill('2/3'));
   });
 
   it('says so when deleting a floor that does not exist', () => {
@@ -256,6 +277,21 @@ describe('acuity tiers, ratios and the HPPD target', () => {
         .find((r) => r.id === rule.id)?.active,
     ).toBe(false);
     expect(auditsOf('ratio_rule', rule.id)).toHaveLength(3);
+  });
+
+  it('reads a unit that never set an HPPD target as no target', () => {
+    const unit = createUnit(
+      f.handle.db,
+      {
+        name: '6 East',
+        unitType: 'MedSurg',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    // null, not undefined: TanStack Query refuses undefined data, which left Save dead.
+    expect(api().acuity.hppd(unit.id)).toBeNull();
   });
 
   it('sets the HPPD target and then changes it', () => {

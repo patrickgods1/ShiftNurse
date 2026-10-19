@@ -7,6 +7,7 @@
 import type { FmlaCertificationRecord, LeaveBalanceRecord } from '@shared/api.js';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { useConfirmDiscard } from '../../components/unsaved-changes.js';
 import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
 import { renderWithApp } from '../../test/render.js';
 import { LeaveSection } from './nurse-leave.js';
@@ -146,5 +147,36 @@ describe('a nurse’s leave on the roster', () => {
     await waitFor(() =>
       expect(bridge.callsTo('leaveBalances', 'removeCertification')).toEqual([['fc-1']]),
     );
+  });
+
+  it('counts a typed balance and an edited certification as unsaved changes', async () => {
+    let ask: ReturnType<typeof useConfirmDiscard> | undefined;
+    function Probe() {
+      ask = useConfirmDiscard();
+      return null;
+    }
+    renderWithApp(
+      <>
+        <Probe />
+        <LeaveSection nurseId="n-1" />
+      </>,
+    );
+    // Nothing typed yet: leaving asks nothing.
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit certification' }));
+    expect(await ask?.()).toBe(true);
+
+    fireEvent.change(screen.getByLabelText('Certified through'), {
+      target: { value: '2027-04-30' },
+    });
+    const pending = ask?.();
+    await screen.findByText('Discard unsaved changes to FMLA certification?');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await pending).toBe(false);
+
+    fireEvent.change(screen.getByLabelText('PTO balance (hours)'), { target: { value: '41' } });
+    const both = ask?.();
+    await screen.findByText('Discard unsaved changes to FMLA certification and PTO balance?');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await both).toBe(false);
   });
 });

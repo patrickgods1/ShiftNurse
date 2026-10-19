@@ -78,6 +78,8 @@
 
 ## Conventions
 
+- **Start over needs the unit's name typed**; restore and delete-backup prompts are focus-trapped
+  dialogs.
 - **Colour pairs are tested.** `theme-contrast.test.ts` reads `styles.css` and requires 4.5:1 for
   every text-on-surface and on-fill pair; add a pair there when you add a token. A solid fill uses
   a `*-fill` token with its `on-*` text (`PRIMARY`, `DANGER_SOLID`, `SELECTED` in `ui.ts`), never
@@ -170,7 +172,8 @@
 - **Forms that hold edits until Save register with `useUnsavedChanges`.** Settings tab switches
   await `useConfirmDiscard` (so do the setup guide's Back, Skip, Continue and summary links),
   `NavigationGuard` guards routes and window unload, and main answers
-  Electron's `will-prevent-unload` with a native dialog (skipped in a smoke run).
+  Electron's `will-prevent-unload` with a native dialog (skipped in a smoke run). An inline row
+  editor or an Add form with typed values counts; settings forms use `EditorShell`.
 - **Dialogs return focus.** `Modal` captures the opener and restores it on close
   (`components/focus.ts`); a dialog whose opener can disappear passes `returnFocus`. Every dialog
   uses `Modal` or `useConfirm`; never compose Radix `Dialog.Root` by hand.

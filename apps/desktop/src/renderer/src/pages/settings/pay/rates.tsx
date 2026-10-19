@@ -13,6 +13,7 @@ import { AsyncState } from '../../../components/async-state.js';
 import { useConfirm } from '../../../components/confirm.js';
 import { DateField } from '../../../components/date-field.js';
 import { INPUT, LABEL, PRIMARY, SMALL, SMALL_DANGER, TD, TH } from '../../../components/ui.js';
+import { useUnsavedChanges } from '../../../components/unsaved-changes.js';
 import { formatDate } from '../../../format.js';
 import { formatDollars } from '../../../money.js';
 
@@ -34,6 +35,11 @@ function describeScope(rate: PayRate, nursesById: ReadonlyMap<Id, Nurse>): strin
   return `${rate.role ?? '?'} default`;
 }
 
+/** Two nurses can share a name; only the id says whose rate this is. */
+function scopeKey(rate: PayRate): string {
+  return rate.nurseId !== null ? `nurse:${rate.nurseId}` : `role:${rate.role}`;
+}
+
 export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[] }) {
   const confirm = useConfirm();
   const ratesQuery = usePayRates(unitId);
@@ -50,6 +56,13 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
 
+  const editing = ratesQuery.data?.find((r) => r.id === editingId);
+  useUnsavedChanges(
+    'Pay rates',
+    editing !== undefined && editHourly !== String(editing.hourlyRate),
+  );
+  useUnsavedChanges('New pay rate', hourly !== '' || effectiveFrom !== '');
+
   if (ratesQuery.isPending) return <AsyncState status="loading" label="Loading pay rates" />;
   if (ratesQuery.isError) {
     return <AsyncState status="error" label="Could not load pay rates" error={ratesQuery.error} />;
@@ -59,11 +72,34 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
   const activeNurses = [...nurses]
     .filter((n) => n.active)
     .sort((a, b) => nurseName(a).localeCompare(nurseName(b)));
-  // Role defaults first, then nurses alphabetically; newest effective date first within each.
+  // Labels shared by two different nurses get the employee id, so the manager can tell them apart.
+  const labelOf = new Map<string, string>();
+  const keysByLabel = new Map<string, Set<string>>();
+  for (const rate of ratesQuery.data) {
+    const key = scopeKey(rate);
+    const label = describeScope(rate, nursesById);
+    labelOf.set(key, label);
+    keysByLabel.set(label, (keysByLabel.get(label) ?? new Set()).add(key));
+  }
+  for (const [key, label] of labelOf) {
+    if ((keysByLabel.get(label)?.size ?? 0) < 2) continue;
+    const nurse = nursesById.get(key.slice('nurse:'.length));
+    if (nurse) labelOf.set(key, `${label} (${nurse.employeeId})`);
+  }
+  // Role defaults first (by role), then nurses by label, then key so equal names keep a fixed
+  // order; newest effective date first within each.
   const sorted = [...ratesQuery.data].sort((a, b) => {
-    const aScope = a.nurseId === null ? `0:${a.role}` : `1:${describeScope(a, nursesById)}`;
-    const bScope = b.nurseId === null ? `0:${b.role}` : `1:${describeScope(b, nursesById)}`;
-    return aScope.localeCompare(bScope) || b.effectiveFrom.localeCompare(a.effectiveFrom);
+    const aKey = scopeKey(a);
+    const bKey = scopeKey(b);
+    const aRole = a.nurseId === null;
+    const bRole = b.nurseId === null;
+    if (aRole !== bRole) return aRole ? -1 : 1;
+    return (
+      (aRole
+        ? String(a.role).localeCompare(String(b.role))
+        : (labelOf.get(aKey) ?? '').localeCompare(labelOf.get(bKey) ?? '') ||
+          aKey.localeCompare(bKey)) || b.effectiveFrom.localeCompare(a.effectiveFrom)
+    );
   });
   // One line per role default or nurse: the rate in force today and any raise still to come.
   // Older rates still price older shifts, so they stay — folded behind "+N earlier".
@@ -73,23 +109,25 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
     rate: (typeof sorted)[number];
     earlier: number;
     history: boolean;
+    key: string;
     scope: string;
   }[] = [];
   const scopes = new Map<string, typeof sorted>();
   for (const rate of sorted) {
-    const scope = describeScope(rate, nursesById);
-    if (needle && !scope.toLowerCase().includes(needle)) continue;
-    scopes.set(scope, [...(scopes.get(scope) ?? []), rate]);
+    const key = scopeKey(rate);
+    if (needle && !(labelOf.get(key) ?? '').toLowerCase().includes(needle)) continue;
+    scopes.set(key, [...(scopes.get(key) ?? []), rate]);
   }
-  for (const [scope, rates] of scopes) {
+  for (const [key, rates] of scopes) {
+    const scope = labelOf.get(key) ?? '';
     const currentIdx = rates.findIndex((r) => r.effectiveFrom <= now);
     const cut = currentIdx === -1 ? rates.length : currentIdx + 1;
     const older = rates.slice(cut);
     for (const [i, rate] of rates.slice(0, cut).entries()) {
-      visible.push({ rate, earlier: i === cut - 1 ? older.length : 0, history: false, scope });
+      visible.push({ rate, earlier: i === cut - 1 ? older.length : 0, history: false, key, scope });
     }
-    if (expanded.has(scope)) {
-      for (const rate of older) visible.push({ rate, earlier: 0, history: true, scope });
+    if (expanded.has(key)) {
+      for (const rate of older) visible.push({ rate, earlier: 0, history: true, key, scope });
     }
   }
 
@@ -122,6 +160,7 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
             {
               onSuccess: () => {
                 setHourly('');
+                setEffectiveFrom('');
               },
               onError: (e) => setError(e.message),
             },
@@ -213,8 +252,14 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
                   No pay rates yet — every shift is unpriced until a role default exists.
                 </td>
               </tr>
+            ) : visible.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-3 py-6 text-center text-text-muted">
+                  No rates match “{search.trim()}”.
+                </td>
+              </tr>
             ) : (
-              visible.map(({ rate, earlier, history, scope }) => (
+              visible.map(({ rate, earlier, history, key, scope }) => (
                 <tr
                   key={rate.id}
                   className={`border-b border-border last:border-0 ${history ? 'bg-bg text-text-muted' : ''}`}
@@ -236,13 +281,13 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
                         onClick={() =>
                           setExpanded((prev) => {
                             const next = new Set(prev);
-                            if (next.has(scope)) next.delete(scope);
-                            else next.add(scope);
+                            if (next.has(key)) next.delete(key);
+                            else next.add(key);
                             return next;
                           })
                         }
                       >
-                        {expanded.has(scope) ? 'hide earlier' : `+${earlier} earlier`}
+                        {expanded.has(key) ? 'hide earlier' : `+${earlier} earlier`}
                       </button>
                     ) : null}
                   </td>
@@ -306,7 +351,7 @@ export function PayRatesSection({ unitId, nurses }: { unitId: Id; nurses: Nurse[
                             onClick={async () => {
                               if (
                                 await confirm({
-                                  title: `Delete the ${describeScope(rate, nursesById)} rate of ${formatDollars(rate.hourlyRate, { cents: true })}?`,
+                                  title: `Delete the ${scope} rate of ${formatDollars(rate.hourlyRate, { cents: true })}?`,
                                   confirmLabel: 'Delete',
                                 })
                               ) {

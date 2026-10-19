@@ -780,6 +780,9 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
 - [x] Phase 14 — Day-of, leave and bidding: removal safety, one pickup planner, one seniority
       order, bid round lifecycle (D32), accrual timing (D12), alert windows (verify: npm run
       check; smoke)
+- [x] Phase 15 — Renderer: Settings screens (HPPD first target, differential validation,
+      coverage drafts and fillWeek, blank-safe fields, EditorShell save bars, destructive-action
+      dialogs, Settings component tests) (verify: npm run check; smoke)
 
 ---
 

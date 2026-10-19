@@ -50,6 +50,7 @@ import { AsyncState } from '../../components/async-state.js';
 import { EditorShell } from '../../components/editor-shell.js';
 import { CheckField, describedBy, Field, InfoTip } from '../../components/field-help.js';
 import { INPUT } from '../../components/ui.js';
+import { numberFieldProblem, parseNumberField } from '../../field-values.js';
 import { formatInstant } from '../../format.js';
 import { useUnit } from '../../unit-context.js';
 import { invalidParams, numberFieldValue, paramError, withNumberParam } from './rule-params.js';
@@ -491,13 +492,25 @@ function weekendDurationError(value: WeekendDefinition): string | undefined {
     : 'Enter between 1 and 168 hours.';
 }
 
+/** A time input emits '' while a segment is cleared; core's parser throws on that. */
+const TIME_TEXT = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function weekendStartError(text: string): string | undefined {
+  return TIME_TEXT.test(text) ? undefined : 'Enter a start time.';
+}
+
 function WeekendSection({
   value,
+  startText,
+  onStartText,
   onChange,
 }: {
   value: WeekendDefinition;
+  startText: string;
+  onStartText: (text: string) => void;
   onChange: (next: WeekendDefinition) => void;
 }) {
+  const startError = weekendStartError(startText);
   const durationHours = minutesToHours(value.durationMinutes);
   const durationError = weekendDurationError(value);
 
@@ -530,14 +543,16 @@ function WeekendSection({
             ))}
           </select>
         </Field>
-        <Field id="weekend-start-time" label="Start time">
+        <Field id="weekend-start-time" label="Start time" error={startError}>
           <input
             id="weekend-start-time"
             type="time"
-            value={formatTimeOfDay(value.startMinute)}
-            onChange={(event) =>
-              onChange({ ...value, startMinute: parseTimeOfDay(event.target.value) })
-            }
+            value={startText}
+            aria-invalid={startError !== undefined || undefined}
+            aria-describedby={describedBy('weekend-start-time', {
+              error: startError !== undefined,
+            })}
+            onChange={(event) => onStartText(event.target.value)}
             className={INPUT}
           />
         </Field>
@@ -596,17 +611,28 @@ function WeekendSection({
   );
 }
 
+function fairnessWeightError(text: string): string | undefined {
+  return numberFieldProblem(text, { min: 0 });
+}
+
+function weightTexts(weights: FairnessWeights): Record<FairnessComponent, string> {
+  return Object.fromEntries(FAIRNESS_COMPONENTS.map((c) => [c, String(weights[c])])) as Record<
+    FairnessComponent,
+    string
+  >;
+}
+
 /**
  * The soft weights. These never make a schedule illegal — they decide how much each fairness
  * component moves the 0–100 score and the solver's objective, so a unit that grieves holidays
  * far more than nights can say so here.
  */
 function FairnessWeightsSection({
-  value,
+  texts,
   onChange,
 }: {
-  value: FairnessWeights;
-  onChange: (next: FairnessWeights) => void;
+  texts: Record<FairnessComponent, string>;
+  onChange: (component: FairnessComponent, text: string) => void;
 }) {
   return (
     <section
@@ -620,26 +646,32 @@ function FairnessWeightsSection({
         nothing. Raise the ones your staff complain about most.
       </p>
       <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {FAIRNESS_COMPONENTS.map((component) => (
-          <Field
-            key={component}
-            id={`fairness-${component}`}
-            label={FAIRNESS_COMPONENT_LABELS[component]}
-            tip={FAIRNESS_TIPS[component]}
-          >
-            <input
+        {FAIRNESS_COMPONENTS.map((component) => {
+          const error = fairnessWeightError(texts[component]);
+          return (
+            <Field
+              key={component}
               id={`fairness-${component}`}
-              type="number"
-              min={0}
-              step={0.5}
-              value={value[component]}
-              onChange={(event) =>
-                onChange({ ...value, [component]: Math.max(0, Number(event.target.value) || 0) })
-              }
-              className={INPUT}
-            />
-          </Field>
-        ))}
+              label={FAIRNESS_COMPONENT_LABELS[component]}
+              tip={FAIRNESS_TIPS[component]}
+              error={error}
+            >
+              <input
+                id={`fairness-${component}`}
+                type="number"
+                min={0}
+                step={0.5}
+                value={texts[component]}
+                aria-invalid={error !== undefined || undefined}
+                aria-describedby={describedBy(`fairness-${component}`, {
+                  error: error !== undefined,
+                })}
+                onChange={(event) => onChange(component, event.target.value)}
+                className={INPUT}
+              />
+            </Field>
+          );
+        })}
       </div>
     </section>
   );
@@ -658,7 +690,14 @@ export default function RulesPanel() {
   const [name, setName] = useState('');
   const [configs, setConfigs] = useState<RuleConfig[]>([]);
   const [weekendDefinition, setWeekendDefinition] = useState<WeekendDefinition>(DEFAULT_WEEKEND);
-  const [fairnessWeights, setFairnessWeights] = useState<FairnessWeights>(DEFAULT_FAIRNESS_WEIGHTS);
+  // Text beside the typed values: a cleared time or weight must stay cleared on screen (and block
+  // Save) instead of being parsed into a wrong value or thrown away.
+  const [weekendStartText, setWeekendStartText] = useState(
+    formatTimeOfDay(DEFAULT_WEEKEND.startMinute),
+  );
+  const [fairnessText, setFairnessText] = useState<Record<FairnessComponent, string>>(
+    weightTexts(DEFAULT_FAIRNESS_WEIGHTS),
+  );
   const [savedMessage, setSavedMessage] = useState<string | undefined>(undefined);
   const [reason, setReason] = useState('');
   const [savedVersion, setSavedVersion] = useState<number | undefined>(undefined);
@@ -684,18 +723,42 @@ export default function RulesPanel() {
     setName(data.name);
     setConfigs(editableConfigs(data));
     setWeekendDefinition(data.weekendDefinition);
-    setFairnessWeights(data.fairnessWeights);
+    setWeekendStartText(formatTimeOfDay(data.weekendDefinition.startMinute));
+    setFairnessText(weightTexts(data.fairnessWeights));
     // The refetch after our own save lands here too; it is the version the message names, so
     // only a different version (another window, a unit switch) clears it.
     if (data.version !== savedVersion) setSavedMessage(undefined);
   }
 
+  // What Save would send: the parsed drafts. A draft with a problem keeps the saved value here,
+  // and counts as dirty below so the manager is not told there is nothing to save.
+  const weekendStartInvalid = weekendStartError(weekendStartText) !== undefined;
+  const effectiveWeekend: WeekendDefinition = {
+    ...weekendDefinition,
+    startMinute: weekendStartInvalid
+      ? weekendDefinition.startMinute
+      : parseTimeOfDay(weekendStartText),
+  };
+  const weightProblems = FAIRNESS_COMPONENTS.filter(
+    (c) => fairnessWeightError(fairnessText[c]) !== undefined,
+  );
+  const effectiveWeights = Object.fromEntries(
+    FAIRNESS_COMPONENTS.map((c) => [
+      c,
+      weightProblems.includes(c)
+        ? (data?.fairnessWeights[c] ?? DEFAULT_FAIRNESS_WEIGHTS[c])
+        : parseNumberField(fairnessText[c])!,
+    ]),
+  ) as FairnessWeights;
+
   const dirty =
     data !== undefined &&
     (name !== data.name ||
       JSON.stringify(configs) !== JSON.stringify(editableConfigs(data)) ||
-      JSON.stringify(weekendDefinition) !== JSON.stringify(data.weekendDefinition) ||
-      JSON.stringify(fairnessWeights) !== JSON.stringify(data.fairnessWeights));
+      JSON.stringify(effectiveWeekend) !== JSON.stringify(data.weekendDefinition) ||
+      weekendStartInvalid ||
+      JSON.stringify(effectiveWeights) !== JSON.stringify(data.fairnessWeights) ||
+      weightProblems.length > 0);
 
   if (ruleSetQuery.isPending) {
     return <AsyncState status="loading" label="Loading rules" />;
@@ -707,7 +770,12 @@ export default function RulesPanel() {
   const nextVersion = data.version + 1;
   const problems = invalidParams(ALL_RULES, configs);
   const weekendError = weekendDurationError(weekendDefinition);
+  if (weekendStartInvalid) problems.push('Weekend definition: Start time');
   if (weekendError !== undefined) problems.push('Weekend definition: Length (hours)');
+  for (const c of weightProblems)
+    problems.push(`Fairness weights: ${FAIRNESS_COMPONENT_LABELS[c]}`);
+  const nameError = name.trim() === '' ? 'Give the rule set a name.' : undefined;
+  if (nameError !== undefined) problems.push('Rule set name');
   // Switching off or softening a protected rule (the ratio rule, a rule a state preset turned on)
   // must be explained, and the repository refuses it otherwise, so ask here rather than surface that.
   const loosened = protectedRuleChanges(
@@ -716,7 +784,9 @@ export default function RulesPanel() {
     unit.jurisdiction,
     unit.jurisdictionChoices ?? {},
   );
-  if (loosened.length > 0 && reason.trim() === '') problems.push('Reason for the change');
+  const reasonError =
+    loosened.length > 0 && reason.trim() === '' ? 'Say why this change is needed.' : undefined;
+  if (reasonError !== undefined) problems.push('Reason for the change');
 
   function updateConfig(ruleId: string, next: RuleConfig) {
     setConfigs((prev) => prev.map((c) => (c.ruleId === ruleId ? next : c)));
@@ -726,7 +796,8 @@ export default function RulesPanel() {
     setName(data!.name);
     setConfigs(editableConfigs(data!));
     setWeekendDefinition(data!.weekendDefinition);
-    setFairnessWeights(data!.fairnessWeights);
+    setWeekendStartText(formatTimeOfDay(data!.weekendDefinition.startMinute));
+    setFairnessText(weightTexts(data!.fairnessWeights));
     setReason('');
     setSavedMessage(undefined);
   }
@@ -735,10 +806,10 @@ export default function RulesPanel() {
     saveMutation.mutate(
       {
         unitId,
-        name,
+        name: name.trim(),
         configs,
-        weekendDefinition,
-        fairnessWeights,
+        weekendDefinition: effectiveWeekend,
+        fairnessWeights: effectiveWeights,
         reason: loosened.length > 0 ? reason.trim() : undefined,
       },
       {
@@ -779,12 +850,15 @@ export default function RulesPanel() {
               id="rule-set-name"
               label="Rule set name"
               className="min-w-[240px] flex-1"
+              error={nameError}
               tip="A name for your own reference, such as the contract it follows. Each save keeps the name with the new version."
             >
               <input
                 id="rule-set-name"
                 type="text"
                 value={name}
+                aria-invalid={nameError !== undefined || undefined}
+                aria-describedby={describedBy('rule-set-name', { error: nameError !== undefined })}
                 onChange={(event) => setName(event.target.value)}
                 className={INPUT}
               />
@@ -812,8 +886,18 @@ export default function RulesPanel() {
               </div>
               {id === 'equity' ? (
                 <>
-                  <FairnessWeightsSection value={fairnessWeights} onChange={setFairnessWeights} />
-                  <WeekendSection value={weekendDefinition} onChange={setWeekendDefinition} />
+                  <FairnessWeightsSection
+                    texts={fairnessText}
+                    onChange={(component, text) =>
+                      setFairnessText((prev) => ({ ...prev, [component]: text }))
+                    }
+                  />
+                  <WeekendSection
+                    value={weekendDefinition}
+                    startText={weekendStartText}
+                    onStartText={setWeekendStartText}
+                    onChange={setWeekendDefinition}
+                  />
                 </>
               ) : null}
               {rulesInCategory.map((rule) => {
@@ -846,15 +930,20 @@ export default function RulesPanel() {
               id="rules-reason"
               label="Reason"
               hint="Recorded with this version; it is what gets quoted if the change is questioned."
+              error={reasonError}
               className="mt-3"
             >
               <textarea
                 id="rules-reason"
                 data-testid="rules-reason"
-                required
+                aria-required="true"
                 rows={2}
                 value={reason}
-                aria-describedby={describedBy('rules-reason', { hint: true })}
+                aria-invalid={reasonError !== undefined || undefined}
+                aria-describedby={describedBy('rules-reason', {
+                  hint: true,
+                  error: reasonError !== undefined,
+                })}
                 onChange={(event) => setReason(event.target.value)}
                 className={INPUT}
               />

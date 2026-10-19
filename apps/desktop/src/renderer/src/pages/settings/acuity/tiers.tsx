@@ -60,11 +60,14 @@ function TierForm({
   onCancel,
   onSubmit,
   submitLabel,
+  pending,
 }: {
   initial: TierFormState;
   onCancel: () => void;
   onSubmit: (form: TierFormState) => void;
   submitLabel: string;
+  /** A save is in flight: a second click would make a second identical tier. */
+  pending: boolean;
 }) {
   const [form, setForm] = useState<TierFormState>(initial);
   const valid = tierFormValid(form);
@@ -74,7 +77,7 @@ function TierForm({
       className="mt-3 flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!valid) return;
+        if (!valid || pending) return;
         onSubmit(form);
       }}
     >
@@ -121,7 +124,7 @@ function TierForm({
           type="number"
           required
           min={0.01}
-          step={0.1}
+          step="any"
           value={form.careHoursPerPatientDay}
           aria-describedby={describedBy('tier-care-hours', { hint: true })}
           onChange={(event) => setForm({ ...form, careHoursPerPatientDay: event.target.value })}
@@ -132,8 +135,8 @@ function TierForm({
         <button type="button" onClick={onCancel} className={SECONDARY}>
           Cancel
         </button>
-        <button type="submit" disabled={!valid} className={PRIMARY}>
-          {submitLabel}
+        <button type="submit" disabled={!valid || pending} className={PRIMARY}>
+          {pending ? 'Saving…' : submitLabel}
         </button>
       </div>
     </form>
@@ -147,6 +150,7 @@ function TierDialog({
   initial,
   onSubmit,
   submitLabel,
+  pending,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -154,12 +158,14 @@ function TierDialog({
   initial: TierFormState;
   onSubmit: (form: TierFormState) => void;
   submitLabel: string;
+  pending: boolean;
 }) {
   return (
     <Modal open={open} onOpenChange={onOpenChange} title={title} variant="popup" size="md">
       <TierForm
         initial={initial}
         submitLabel={submitLabel}
+        pending={pending}
         onCancel={() => onOpenChange(false)}
         onSubmit={onSubmit}
       />
@@ -277,6 +283,7 @@ export function AcuityTiersSection({ unitId, tiers }: { unitId: string; tiers: A
         title="Add acuity tier"
         initial={EMPTY_TIER_FORM}
         submitLabel="Create"
+        pending={createMutation.isPending}
         onSubmit={handleCreate}
       />
 
@@ -289,6 +296,7 @@ export function AcuityTiersSection({ unitId, tiers }: { unitId: string; tiers: A
           title="Edit acuity tier"
           initial={tierToFormState(editing)}
           submitLabel="Save"
+          pending={updateMutation.isPending}
           onSubmit={(form) => handleUpdate(editing, form)}
         />
       ) : null}

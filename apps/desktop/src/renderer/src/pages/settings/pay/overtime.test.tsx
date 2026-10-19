@@ -152,4 +152,20 @@ describe('overtime bases in Settings › Pay', () => {
     renderWithApp(<OvertimeSection unitId="u-1" />);
     expect(await screen.findByText(/72\/80 nurses, tour days/)).toBeTruthy();
   });
+
+  it('puts the Add form back to its starting values after a rule is added', async () => {
+    renderWithApp(<OvertimeSection unitId="u-1" />);
+    fireEvent.change(await screen.findByLabelText('Basis'), { target: { value: 'daily' } });
+    fireEvent.change(screen.getByLabelText('Threshold (hours)'), { target: { value: '8' } });
+    fireEvent.change(screen.getByLabelText('Multiplier'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('Minimum minutes'), { target: { value: '15' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+    await waitFor(() => expect(bridge.callsTo('cost', 'createOvertimeRule')).toHaveLength(1));
+    await waitFor(() =>
+      expect((screen.getByLabelText('Basis') as HTMLSelectElement).value).toBe('weekly'),
+    );
+    expect((screen.getByLabelText('Threshold (hours)') as HTMLInputElement).value).toBe('40');
+    expect((screen.getByLabelText('Multiplier') as HTMLInputElement).value).toBe('1.5');
+    expect((screen.getByLabelText('Minimum minutes') as HTMLInputElement).value).toBe('');
+  });
 });

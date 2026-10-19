@@ -26,6 +26,7 @@ import {
 } from '@shiftnurse/core';
 import { useEffect, useState } from 'react';
 import { useUpdateUnit } from '../../api-setup.js';
+import { useConfirm } from '../../components/confirm.js';
 import { EditorShell } from '../../components/editor-shell.js';
 import { CheckField, describedBy, Field } from '../../components/field-help.js';
 import { INPUT, SECONDARY, SMALL, SMALL_DANGER } from '../../components/ui.js';
@@ -210,6 +211,7 @@ function toggle<T>(list: readonly T[], item: T): T[] {
 export default function LeavePanel() {
   const unit = useUnit();
   const update = useUpdateUnit();
+  const confirm = useConfirm();
   const saved = unit.leavePolicy ?? DEFAULT_LEAVE_POLICY;
   const [draft, setDraft] = useState<Draft>(() => draftFrom(saved));
   const savedFingerprint = fingerprint(draftFrom(saved));
@@ -219,6 +221,16 @@ export default function LeavePanel() {
   useEffect(() => {
     setDraft(draftFrom(saved));
   }, [unit.id, savedFingerprint]);
+
+  const onUseDefault = async () => {
+    const ok = await confirm({
+      title: 'Use the default leave policy?',
+      description:
+        "This unit's accrual rules and FMLA settings are removed: FMLA is read as Title I with a rolling 12 months back, and balances are not carried forward.",
+      confirmLabel: 'Use the default',
+    });
+    if (ok) update.mutate({ id: unit.id, patch: { leavePolicy: null } });
+  };
 
   const problems = problemsIn(draft);
   const dirty = fingerprint(draft) !== savedFingerprint;
@@ -418,7 +430,7 @@ export default function LeavePanel() {
           type="button"
           className={SECONDARY}
           disabled={unit.leavePolicy === undefined || update.isPending}
-          onClick={() => update.mutate({ id: unit.id, patch: { leavePolicy: null } })}
+          onClick={() => void onUseDefault()}
         >
           Use the default
         </button>

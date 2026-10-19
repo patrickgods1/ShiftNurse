@@ -15,7 +15,13 @@ import type {
   PaySettings,
   ScheduleKind,
 } from '@shiftnurse/core';
-import { DEFAULT_PAY_SETTINGS, isIsoDate, resolvePayRate, SCHEDULE_KINDS } from '@shiftnurse/core';
+import {
+  COST_LINE_LABELS,
+  DEFAULT_PAY_SETTINGS,
+  isIsoDate,
+  resolvePayRate,
+  SCHEDULE_KINDS,
+} from '@shiftnurse/core';
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
@@ -252,6 +258,51 @@ function checkConsecutive(
   }
 }
 
+/**
+ * Refuses an amount that would take pay away. Pricing adds `base * (amount - 1)` for a multiplier,
+ * so a cleared 1.5x holiday premium saved as 0 would subtract a whole shift's base pay. Exactly 1
+ * is allowed: it pays nothing extra but keeps the line visible (the agency premium in the seeds).
+ * On-call standby is the exception: it is paid instead of base, at `base * amount`, so the VA's
+ * 0.15 (15% of basic pay) is a real rate and only a negative one takes pay away.
+ */
+function checkAmount(kind: Differential['kind'], mode: Differential['mode'], amount: number): void {
+  if (mode === 'multiplier' && kind === 'on_call') {
+    if (!(amount >= 0)) throw new Error('An on-call multiplier cannot be negative');
+    return;
+  }
+  if (mode === 'multiplier' && !(amount >= 1)) {
+    throw new Error(
+      `A multiplier must be 1 or more: 1.5 pays time and a half, and ${amount} would take pay away`,
+    );
+  }
+  if (mode === 'flat' && !(amount >= 0)) throw new Error('A flat differential cannot be negative');
+}
+
+/**
+ * Refuses a second active differential of a kind on a unit. Core's `differentialOf` pays the first
+ * active row of a kind, so a second would show Active and never be paid; a new rate has to wait
+ * inactive until the old one is turned off.
+ */
+function checkOneActive(db: DbLike, unitId: Id, kind: Differential['kind'], exceptId?: Id): void {
+  const clash = db
+    .select({ id: differential.id })
+    .from(differential)
+    .where(
+      and(
+        eq(differential.unitId, unitId),
+        eq(differential.kind, kind),
+        eq(differential.active, true),
+      ),
+    )
+    .all()
+    .some((row) => row.id !== exceptId);
+  if (clash) {
+    throw new Error(
+      `This unit already has an active ${COST_LINE_LABELS[kind].toLowerCase()}, and only one of each kind is paid. Change its amount, or turn it off first.`,
+    );
+  }
+}
+
 function consecutiveColumns(consecutive: Differential['consecutive'] | undefined) {
   return {
     consecutiveAfterShifts: consecutive?.afterShifts ?? null,
@@ -274,6 +325,8 @@ export function createDifferential(
 ): Differential {
   checkWindow(input.kind, input.window);
   checkConsecutive(input.kind, input.consecutive);
+  checkAmount(input.kind, input.mode, input.amount);
+  if (input.active) checkOneActive(db, input.unitId, input.kind);
   const id = ids.differential();
   const { window, consecutive, ...rest } = input;
   const row = { id, ...rest, ...windowColumns(window), ...consecutiveColumns(consecutive) };
@@ -311,6 +364,17 @@ export function updateDifferential(
       const consecutive =
         values.consecutive === undefined ? before.consecutive : (values.consecutive ?? undefined);
       checkConsecutive(values.kind ?? before.kind, consecutive);
+      checkAmount(
+        values.kind ?? before.kind,
+        values.mode ?? before.mode,
+        values.amount ?? before.amount,
+      );
+      // An untouched active row is already the one paid; only becoming active or changing kind
+      // can make it a second.
+      const active = values.active ?? before.active;
+      if (active && (values.active === true || values.kind !== undefined)) {
+        checkOneActive(db, before.unitId, values.kind ?? before.kind, before.id);
+      }
     },
     // The id rides along so an empty patch still writes, as the full-row update always did.
     write: (rowId, values) => {

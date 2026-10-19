@@ -25,4 +25,10 @@ describe('a coverage floor arriving over IPC', () => {
     expect(coverageSchemas.upsert.safeParse([{ ...floor, weekday: 7 }]).success).toBe(false);
     expect(coverageSchemas.upsert.safeParse([{ ...floor, minCount: 2.5 }]).success).toBe(false);
   });
+
+  it('accepts a whole-week fill and refuses half a nurse in it', () => {
+    const week = { unitId: 'u-1', shiftTypeId: 'st-1', role: 'RN', minCount: 4, targetCount: 4 };
+    expect(coverageSchemas.fillWeek.safeParse([week]).success).toBe(true);
+    expect(coverageSchemas.fillWeek.safeParse([{ ...week, minCount: 2.5 }]).success).toBe(false);
+  });
 });

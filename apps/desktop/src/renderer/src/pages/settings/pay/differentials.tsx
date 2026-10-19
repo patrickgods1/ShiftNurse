@@ -16,6 +16,8 @@ import { AsyncState } from '../../../components/async-state.js';
 import { useConfirm } from '../../../components/confirm.js';
 import { describedBy, Field } from '../../../components/field-help.js';
 import { INPUT, LABEL, PRIMARY, SMALL, SMALL_DANGER, TD, TH } from '../../../components/ui.js';
+import { useUnsavedChanges } from '../../../components/unsaved-changes.js';
+import { parseNumberField } from '../../../field-values.js';
 import { formatDollars } from '../../../money.js';
 
 const DIFFERENTIAL_HELP: Record<DifferentialKind, string> = {
@@ -201,6 +203,32 @@ function WindowFields({
   );
 }
 
+/**
+ * The lowest amount the cost engine prices without taking pay away: a multiplier adds
+ * `base * (amount - 1)`, so below 1 it subtracts. On-call standby is paid instead of base at
+ * `base * amount`, so 0.15 (the VA's 15% of basic pay) is a real rate. The repository refuses the
+ * same; checking here says so before the round trip.
+ */
+function minimumAmount(kind: DifferentialKind, mode: Differential['mode']): number {
+  return mode === 'multiplier' && kind !== 'on_call' ? 1 : 0;
+}
+
+/** The amount the form describes, or the reason it cannot be saved. */
+function amountOf(
+  kind: DifferentialKind,
+  mode: Differential['mode'],
+  text: string,
+): number | string {
+  const amount = parseNumberField(text);
+  if (amount === undefined) return 'Enter an amount.';
+  if (amount < minimumAmount(kind, mode)) {
+    return mode === 'multiplier' && kind !== 'on_call'
+      ? 'A multiplier must be at least 1 (1.5 is time and a half).'
+      : 'Enter an amount of zero or more.';
+  }
+  return amount;
+}
+
 function describeConsecutive(consecutive: NonNullable<Differential['consecutive']>): string {
   return `after more than ${consecutive.afterShifts} full shifts within ${consecutive.withinDays} days, until a day off`;
 }
@@ -222,6 +250,8 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
   const query = useDifferentials(unitId);
   const create = useCreateDifferential(unitId);
   const update = useUpdateDifferential(unitId);
+  // Its own mutation so a refused Active tick is shown apart from the inline edit's error.
+  const toggle = useUpdateDifferential(unitId);
   const remove = useDeleteDifferential(unitId);
 
   const [kind, setKind] = useState<DifferentialKind>('night');
@@ -237,6 +267,26 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
   const [editConsecutive, setEditConsecutive] = useState<ConsecutiveForm>(EMPTY_CONSECUTIVE);
   const [editError, setEditError] = useState<string | undefined>(undefined);
 
+  // Field by field, not by reference: the forms are fresh objects after every keystroke.
+  const sameWindow = (a: WindowForm, b: WindowForm) =>
+    a.start === b.start && a.end === b.end && a.whole === b.whole;
+  const sameConsecutive = (a: ConsecutiveForm, b: ConsecutiveForm) =>
+    a.after === b.after && a.within === b.within;
+  const editedRow = query.data?.find((d) => d.id === editingId);
+  useUnsavedChanges(
+    'Differentials',
+    editedRow !== undefined &&
+      (editAmount !== String(editedRow.amount) ||
+        !sameWindow(editWindow, windowFormOf(editedRow.window)) ||
+        !sameConsecutive(editConsecutive, consecutiveFormOf(editedRow.consecutive))),
+  );
+  useUnsavedChanges(
+    'New differential',
+    amount !== '' ||
+      !sameWindow(windowForm, EMPTY_WINDOW) ||
+      !sameConsecutive(consecutiveForm, EMPTY_CONSECUTIVE),
+  );
+
   if (query.isPending) return <AsyncState status="loading" label="Loading differentials" />;
   if (query.isError) {
     return <AsyncState status="error" label="Could not load differentials" error={query.error} />;
@@ -245,6 +295,12 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
   const sorted = [...query.data].sort(
     (a, b) => DIFFERENTIAL_ORDER.indexOf(a.kind) - DIFFERENTIAL_ORDER.indexOf(b.kind),
   );
+  // Rows saved before the repository refused duplicates. Costing pays the first by rowid, which
+  // the renderer cannot see, so the badge names no winner.
+  const activeOfKind = new Map<DifferentialKind, number>();
+  for (const d of query.data) {
+    if (d.active) activeOfKind.set(d.kind, (activeOfKind.get(d.kind) ?? 0) + 1);
+  }
 
   return (
     <section className="mb-8">
@@ -258,9 +314,9 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
         className="mb-4 flex flex-wrap items-end gap-2 rounded-md border border-border bg-surface p-3"
         onSubmit={(event) => {
           event.preventDefault();
-          const parsed = Number(amount);
-          if (!(parsed >= 0)) {
-            setError('An amount is required');
+          const parsed = amountOf(kind, mode, amount);
+          if (typeof parsed === 'string') {
+            setError(parsed);
             return;
           }
           // Evening has no flag to fall back on, so it is always by the clock.
@@ -329,7 +385,7 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
           {mode === 'flat' ? 'Dollars per hour' : 'Multiplier'}
           <input
             type="number"
-            min={0}
+            min={minimumAmount(kind, mode)}
             step={0.01}
             required
             value={amount}
@@ -418,13 +474,19 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
                         Paid {describeConsecutive(d.consecutive)}
                       </span>
                     ) : null}
+                    {d.active && (activeOfKind.get(d.kind) ?? 0) > 1 ? (
+                      <span className="block text-xs text-warn">
+                        Two active {COST_LINE_LABELS[d.kind].toLowerCase()}s: only one is paid. Turn
+                        one off.
+                      </span>
+                    ) : null}
                   </td>
                   <td className={TD}>
                     {editingId === d.id ? (
                       <div className="flex flex-col gap-2">
                         <input
                           type="number"
-                          min={0}
+                          min={minimumAmount(d.kind, d.mode)}
                           step={0.01}
                           value={editAmount}
                           onChange={(event) => setEditAmount(event.target.value)}
@@ -482,7 +544,7 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
                       checked={d.active}
                       aria-label={`${COST_LINE_LABELS[d.kind]} active`}
                       onChange={(event) =>
-                        update.mutate({ id: d.id, patch: { active: event.target.checked } })
+                        toggle.mutate({ id: d.id, patch: { active: event.target.checked } })
                       }
                     />
                   </td>
@@ -494,8 +556,11 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
                             type="button"
                             className={SMALL}
                             onClick={() => {
-                              const parsed = Number(editAmount);
-                              if (!(parsed >= 0)) return;
+                              const parsed = amountOf(d.kind, d.mode, editAmount);
+                              if (typeof parsed === 'string') {
+                                setEditError(parsed);
+                                return;
+                              }
                               const clock =
                                 takesWindow(d.kind) &&
                                 (editWindow.start !== '' || editWindow.end !== '');
@@ -584,6 +649,11 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
           </tbody>
         </table>
       </div>
+      {toggle.error ? (
+        <p role="alert" className="mt-2 text-xs text-danger">
+          {toggle.error.message}
+        </p>
+      ) : null}
     </section>
   );
 }

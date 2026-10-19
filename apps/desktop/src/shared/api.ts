@@ -534,6 +534,15 @@ export type PreferenceInput = Preference extends infer P
 
 export type CoverageRequirementInput = Omit<CoverageRequirement, 'id'> & { id?: Id };
 
+/** One shift type and role, to be set to the same floor on every weekday. */
+export interface CoverageWeekInput {
+  unitId: Id;
+  shiftTypeId: Id;
+  role: NurseRole;
+  minCount: number;
+  targetCount: number;
+}
+
 /** A new holiday; unpaired unless `pairedHolidayId` names the major holiday it goes with. */
 export type HolidayInput = Omit<Holiday, 'id' | 'pairedHolidayId'> &
   Partial<Pick<Holiday, 'pairedHolidayId'>>;
@@ -1393,6 +1402,11 @@ export interface ShiftNurseApi {
     list(unitId: Id): CoverageRequirement[];
     upsert(input: CoverageRequirementInput): CoverageRequirement;
     delete(id: Id): void;
+    /**
+     * Sets one shift type and role to the same minimum and target on every weekday, in one
+     * transaction; unchanged days are not rewritten.
+     */
+    fillWeek(input: CoverageWeekInput): CoverageRequirement[];
   };
   holidays: {
     list(unitId: Id): Holiday[];
@@ -1420,7 +1434,8 @@ export interface ShiftNurseApi {
     createRatioRule(input: RatioRuleInput): RatioRule;
     updateRatioRule(id: Id, patch: RatioRulePatch): RatioRule;
     deactivateRatioRule(id: Id): RatioRule;
-    hppd(unitId: Id): HppdTarget | undefined;
+    /** `null` when the unit has never set a target. */
+    hppd(unitId: Id): HppdTarget | null;
     setHppd(unitId: Id, targetHours: number): HppdTarget;
   };
   census: {
@@ -1841,7 +1856,7 @@ export const API_CHANNELS = {
     'award',
   ],
   shiftTypes: ['list', 'create', 'update', 'deactivate'],
-  coverage: ['list', 'upsert', 'delete'],
+  coverage: ['list', 'upsert', 'delete', 'fillWeek'],
   holidays: [
     'list',
     'create',

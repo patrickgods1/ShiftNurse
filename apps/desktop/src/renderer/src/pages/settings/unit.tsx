@@ -12,13 +12,13 @@
  */
 
 import { ACUITY_PRESETS, type PerDiemCommitment, type RatioStaffing } from '@shiftnurse/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useResumeSetup, useStartOver, useUpdateUnit } from '../../api-setup.js';
-import { useConfirm } from '../../components/confirm.js';
 import { EditorShell } from '../../components/editor-shell.js';
 import { CheckField, describedBy, Field, InfoTip } from '../../components/field-help.js';
+import { Modal } from '../../components/modal.js';
 import { StateLawSection } from '../../components/state-law.js';
-import { DANGER, errorMessage, INPUT, SECONDARY } from '../../components/ui.js';
+import { DANGER, DANGER_SOLID, errorMessage, INPUT, SECONDARY } from '../../components/ui.js';
 import { useUnit } from '../../unit-context.js';
 
 /** The reading before the settings existed: the charge nurse counts, and nobody takes breaks. */
@@ -414,17 +414,13 @@ export function UnitPoliciesForm() {
 export default function UnitPanel() {
   const resume = useResumeSetup();
   const startOver = useStartOver();
-  const confirm = useConfirm();
-
-  const onStartOver = async () => {
-    const ok = await confirm({
-      title: 'Start over with an empty database?',
-      description:
-        'Every unit, nurse, schedule and setting is deleted and ShiftNurse restarts at the welcome screen. A "Before start over" backup is saved first; restore it from Settings › Backups to undo this.',
-      confirmLabel: 'Delete everything and restart',
-    });
-    if (ok) startOver.mutate();
-  };
+  const unit = useUnit();
+  const [asking, setAsking] = useState(false);
+  const [typed, setTyped] = useState('');
+  const opener = useRef<HTMLButtonElement>(null);
+  // Start over deletes every unit, so one click past a confirm is too easy to give by reflex:
+  // the manager types the name of the unit they are about to lose.
+  const nameMatches = typed.trim().toLowerCase() === unit.name.toLowerCase();
 
   return (
     <div className="flex flex-col gap-4" data-testid="unit-panel">
@@ -462,19 +458,72 @@ export default function UnitPanel() {
           your real unit. A backup is saved first.
         </p>
         <button
+          ref={opener}
           type="button"
           className={DANGER}
           disabled={startOver.isPending || startOver.isSuccess}
-          onClick={() => void onStartOver()}
+          onClick={() => {
+            startOver.reset();
+            setTyped('');
+            setAsking(true);
+          }}
           data-testid="start-over"
         >
           {startOver.isPending || startOver.isSuccess ? 'Restarting…' : 'Start over'}
         </button>
-        {startOver.isError ? (
-          <p role="alert" className="mt-2 text-sm text-danger">
-            {errorMessage(startOver.error)}
-          </p>
-        ) : null}
+        <Modal
+          open={asking}
+          onOpenChange={(open) => {
+            if (!open && !startOver.isPending) setAsking(false);
+          }}
+          onEscapeKeyDown={(event) => startOver.isPending && event.preventDefault()}
+          onInteractOutside={(event) => startOver.isPending && event.preventDefault()}
+          variant="popup"
+          size="md"
+          role="alertdialog"
+          title="Start over with an empty database?"
+          description='Every unit, nurse, schedule and setting is deleted and ShiftNurse restarts at the welcome screen. A "Before start over" backup is saved first; restore it from Settings › Backups to undo this.'
+          returnFocus={() => opener.current}
+          footer={
+            <>
+              <button
+                type="button"
+                className={SECONDARY}
+                disabled={startOver.isPending}
+                onClick={() => setAsking(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={DANGER_SOLID}
+                disabled={!nameMatches || startOver.isPending || startOver.isSuccess}
+                onClick={() => startOver.mutate()}
+              >
+                {startOver.isPending || startOver.isSuccess
+                  ? 'Restarting…'
+                  : 'Delete everything and restart'}
+              </button>
+            </>
+          }
+        >
+          <div className="mt-3">
+            <Field id="start-over-name" label={`Type the unit name, ${unit.name}, to confirm`}>
+              <input
+                id="start-over-name"
+                className={INPUT}
+                autoComplete="off"
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+              />
+            </Field>
+          </div>
+          {startOver.isError ? (
+            <p role="alert" className="mt-2 text-sm text-danger">
+              {errorMessage(startOver.error)}
+            </p>
+          ) : null}
+        </Modal>
       </section>
     </div>
   );

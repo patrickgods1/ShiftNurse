@@ -13,7 +13,12 @@ import { AsyncState } from '../../../components/async-state.js';
 import { DateField } from '../../../components/date-field.js';
 import { Modal } from '../../../components/modal.js';
 import { errorMessage, INPUT, PRIMARY, SECONDARY } from '../../../components/ui.js';
+import { parseIntegerField } from '../../../field-values.js';
 import { applyPlanEdits, type PlanEdit } from './model.js';
+
+// The top matches `holidays.planYear`'s schema bound, so the box is never looser than main.
+const MIN_YEAR = 1971;
+const MAX_YEAR = 2200;
 
 export function HolidayYearDialog({
   unitId,
@@ -58,7 +63,12 @@ function YearForm({
   defaultYear: number;
   onClose: () => void;
 }) {
+  // The box holds what is typed; `year` follows it only while it is a plan year, so `202` on the
+  // way to `2028` neither asks main for a plan nor snaps the box back.
+  const [yearText, setYearText] = useState(String(defaultYear));
   const [year, setYear] = useState(defaultYear);
+  const typed = parseIntegerField(yearText);
+  const yearValid = typed !== undefined && typed >= MIN_YEAR && typed <= MAX_YEAR;
   const planQuery = useHolidayYearPlan(unitId, year);
   const add = useAddHolidayYear();
   const [edits, setEdits] = useState<Record<string, PlanEdit>>({});
@@ -80,12 +90,16 @@ function YearForm({
         Year
         <input
           type="number"
-          min={1971}
-          max={9999}
-          value={year}
+          min={MIN_YEAR}
+          max={MAX_YEAR}
+          value={yearText}
+          aria-invalid={!yearValid}
+          aria-describedby={yearValid ? undefined : 'holiday-year-problem'}
           onChange={(event) => {
-            const next = Number(event.target.value);
-            if (Number.isInteger(next) && next >= 1971 && next <= 9999) {
+            const text = event.target.value;
+            setYearText(text);
+            const next = parseIntegerField(text);
+            if (next !== undefined && next >= MIN_YEAR && next <= MAX_YEAR && next !== year) {
               setYear(next);
               setEdits({});
               setDroppedRepairs(new Set());
@@ -94,6 +108,11 @@ function YearForm({
           className={`${INPUT} w-24`}
         />
       </label>
+      {yearValid ? null : (
+        <p id="holiday-year-problem" className="mt-1 text-xs text-danger">
+          Enter a year from {MIN_YEAR} to {MAX_YEAR}.
+        </p>
+      )}
 
       {planQuery.isPending ? (
         <AsyncState status="loading" label="Proposing holidays" />
@@ -213,6 +232,7 @@ function YearForm({
               className={PRIMARY}
               disabled={
                 add.isPending ||
+                !yearValid ||
                 badDate ||
                 badName ||
                 (input.holidays.length === 0 && input.repairs.length === 0)

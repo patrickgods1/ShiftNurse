@@ -54,6 +54,38 @@ describe('pay settings arriving over IPC', () => {
     ).toBe(false);
   });
 
+  it('refuses a multiplier below 1 at the door', () => {
+    const holiday = { unitId: 'u', kind: 'holiday', mode: 'multiplier', amount: 0.5, active: true };
+    const refused = costSchemas.createDifferential.safeParse([holiday]);
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]).toMatchObject({
+      path: [0, 'amount'],
+      message: 'must be 1 or more for a multiplier',
+    });
+    expect(costSchemas.createDifferential.safeParse([{ ...holiday, mode: 'flat' }]).success).toBe(
+      true,
+    );
+    expect(
+      costSchemas.updateDifferential.safeParse([
+        'd-1',
+        { kind: 'holiday', mode: 'multiplier', amount: 0.5 },
+      ]).success,
+    ).toBe(false);
+    // Without the mode the patch cannot be judged here; the repository reads the stored one.
+    expect(costSchemas.updateDifferential.safeParse(['d-1', { amount: 0.5 }]).success).toBe(true);
+  });
+
+  it('lets on-call standby through at 15% of basic pay', () => {
+    const standby = {
+      unitId: 'u',
+      kind: 'on_call',
+      mode: 'multiplier',
+      amount: 0.15,
+      active: true,
+    };
+    expect(costSchemas.createDifferential.safeParse([standby]).success).toBe(true);
+  });
+
   it('accepts an 8/80 overtime rule over a pay period', () => {
     const rule = {
       unitId: 'u-1',
