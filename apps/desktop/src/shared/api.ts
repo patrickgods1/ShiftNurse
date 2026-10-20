@@ -497,6 +497,25 @@ export type ShiftTypeInput = Omit<ShiftType, 'id' | 'withinShiftTypeId' | 'elsew
   Partial<Pick<ShiftType, 'withinShiftTypeId'>>;
 export type ShiftTypePatch = Partial<Omit<ShiftType, 'id' | 'unitId' | 'elsewhere'>>;
 
+/** A shift a nurse holds from today on, on a draft or published schedule. */
+export interface FutureShiftView {
+  assignmentId: Id;
+  periodId: Id;
+  periodName: string;
+  date: IsoDate;
+  shiftTypeName: string;
+}
+
+/** What deactivating a nurse would do to the shifts she holds from today on. */
+export interface DeactivationImpact {
+  /** Today by the computer's clock: shifts dated on or after it are "from today on". */
+  fromDate: IsoDate;
+  /** Draft shifts that deactivating takes off the schedule, in date order. */
+  draft: FutureShiftView[];
+  /** Published shifts: deactivating is refused until each is given away or removed. */
+  published: FutureShiftView[];
+}
+
 /** A preference as the editor submits it: identity is assigned on save. */
 export type PreferenceInput = Preference extends infer P
   ? P extends Preference
@@ -573,6 +592,21 @@ export interface MoveAssignmentInput {
   nurseId: Id;
   shiftTypeId: Id;
   date: IsoDate;
+}
+
+/** A nurse's hours in the pay period holding one date, as the contracted-hours rule counts them. */
+export interface NurseHoursReadout {
+  payPeriod: { start: IsoDate; end: IsoDate };
+  /** This unit's scheduled hours dated in the pay period, the published schedule before included. */
+  scheduledHours: number;
+  /** The part of `scheduledHours` dated before this schedule. */
+  priorHours: number;
+  /** Approved paid leave and paid sick calls credited (0 when the rule set does not count them). */
+  paidLeaveHours: number;
+  contractedHours: number;
+  /** False when part of the pay period is on no loaded schedule (after this one ends, or
+   * before the published history reaches): the figures are what is on record. */
+  complete: boolean;
 }
 
 export interface ScheduleValidation {
@@ -1215,6 +1249,13 @@ export interface ShiftNurseApi {
     get(id: Id): Nurse | undefined;
     create(input: NurseInput): Nurse;
     update(id: Id, patch: NursePatch): Nurse;
+    /** What deactivating would do to the nurse's shifts from today on. */
+    deactivationImpact(id: Id): DeactivationImpact;
+    /**
+     * Takes the nurse's draft shifts from today on off the schedule and marks them inactive, in
+     * one transaction. Refused while they hold a shift on a published schedule from today on,
+     * or when already inactive.
+     */
     deactivate(id: Id): Nurse;
   };
   /** A nurse's record for a grievance: their audit entries and published-shift changes. */
@@ -1413,6 +1454,8 @@ export interface ShiftNurseApi {
   schedule: {
     /** Every hard/soft violation for the period's current assignments, under its rule set. */
     validate(periodId: Id): ScheduleValidation;
+    /** A nurse's hours in the pay period holding `date`, counted as the contracted-hours rule does. */
+    nurseHours(periodId: Id, nurseId: Id, date: IsoDate): NurseHoursReadout;
     /**
      * On a published period every one of these needs `reason` and writes the change log;
      * on a draft no reason is required; one given is kept on the shift's audit row. Refused on
@@ -1758,7 +1801,7 @@ export const API_CHANNELS = {
     'startOver',
   ],
   dashboard: ['summary'],
-  nurses: ['list', 'get', 'create', 'update', 'deactivate'],
+  nurses: ['list', 'get', 'create', 'update', 'deactivationImpact', 'deactivate'],
   nurseRecord: ['exportToFile'],
   nurseUnits: ['forNurse', 'floatingIn', 'roster', 'create', 'update', 'remove'],
   credentials: ['list', 'create', 'forNurse', 'grant', 'updateExpiry', 'revoke'],
@@ -1826,6 +1869,7 @@ export const API_CHANNELS = {
   periods: ['list', 'assignments', 'create', 'setRequestsCloseOn'],
   schedule: [
     'validate',
+    'nurseHours',
     'createAssignment',
     'moveAssignment',
     'swapAssignments',

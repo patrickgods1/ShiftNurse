@@ -150,6 +150,39 @@ describe('asking Generate for options', () => {
     );
   });
 
+  it('lets the manager clear the number of options and type a new one', async () => {
+    renderDialog();
+    const field = (await screen.findByTestId('generate-count')) as HTMLInputElement;
+    fireEvent.change(field, { target: { value: '' } });
+    expect(field.value).toBe('');
+    expect((screen.getByTestId('generate-confirm') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Enter a whole number from 1 to 10.')).toBeTruthy();
+    fireEvent.change(field, { target: { value: '5' } });
+    expect(field.value).toBe('5');
+    const generate = screen.getByTestId('generate-confirm') as HTMLButtonElement;
+    expect(generate.disabled).toBe(false);
+    fireEvent.click(generate);
+    await waitFor(() => expect(bridge.callsTo('solver', 'start')).toEqual([['p-1', { count: 5 }]]));
+  });
+
+  it('brings 15 down to 10 when the manager leaves the field', async () => {
+    renderDialog();
+    const field = (await screen.findByTestId('generate-count')) as HTMLInputElement;
+    fireEvent.change(field, { target: { value: '15' } });
+    expect(field.value).toBe('15');
+    fireEvent.blur(field);
+    expect(field.value).toBe('10');
+  });
+
+  it('puts the last good number back when the manager leaves the field blank', async () => {
+    renderDialog();
+    const field = (await screen.findByTestId('generate-count')) as HTMLInputElement;
+    fireEvent.change(field, { target: { value: '4' } });
+    fireEvent.change(field, { target: { value: '' } });
+    fireEvent.blur(field);
+    expect(field.value).toBe('4');
+  });
+
   it('leaves the search method to the unit default when the manager does not pick one', async () => {
     renderDialog();
     fireEvent.click(await screen.findByRole('button', { name: 'Generate 3 options' }));
@@ -172,6 +205,84 @@ describe('asking Generate for options', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Generate 3 options' }));
     expect((await screen.findByRole('alert')).textContent).toContain(
       'Another schedule is being generated.',
+    );
+  });
+
+  it('stops a running Generate when the manager presses Stop', async () => {
+    bridge.respond('solver', 'cancel', undefined as never);
+    renderDialog({ ...finishedBatch, state: 'running', runs: [run(0, 200)] });
+
+    fireEvent.click(await screen.findByTestId('generate-cancel'));
+
+    await waitFor(() => expect(bridge.callsTo('solver', 'cancel')).toEqual([['batch-1']]));
+  });
+});
+
+describe('the Generate summary', () => {
+  it('says in the summary why options 1 and 3 ran SA + LNS', async () => {
+    const reason =
+      'CP-SAT found no schedule around the locked shifts: unlock Ana Cruz Mon Jan 5 N12';
+    const fell = { solver: 'cp-sat' as const, reason };
+    const batch: SolveBatchStatus = {
+      ...finishedBatch,
+      count: 3,
+      runs: [
+        { ...run(0, 100), fellBackFrom: fell },
+        run(1, 110),
+        { ...run(2, 120), fellBackFrom: fell },
+      ],
+    };
+    renderWithApp(
+      <GenerateDialog
+        open
+        onOpenChange={() => {}}
+        unitId="unit-1"
+        period={period}
+        lockedCount={0}
+        unlockedCount={0}
+        undecidedRequests={0}
+        batch={batch}
+        view="batch"
+        onViewChange={() => {}}
+        onCompare={() => {}}
+        onPreview={() => {}}
+      />,
+    );
+    const note = await screen.findByTestId('generate-run-fallback');
+    expect(note.textContent?.startsWith('Options 1, 3: Ran Fastest instead of Exhaustive:')).toBe(
+      true,
+    );
+    expect(note.textContent).toContain('unlock Ana Cruz');
+  });
+});
+
+describe('the Generate progress', () => {
+  it('announces how many options are done politely', async () => {
+    const running: SolveBatchStatus = {
+      ...finishedBatch,
+      state: 'running',
+      runs: [run(0, 100), { ...run(1, 0), state: 'running' as const }],
+    };
+    renderWithApp(
+      <GenerateDialog
+        open
+        onOpenChange={() => {}}
+        unitId="unit-1"
+        period={period}
+        lockedCount={0}
+        unlockedCount={0}
+        undecidedRequests={0}
+        batch={running}
+        view="batch"
+        onViewChange={() => {}}
+        onCompare={() => {}}
+        onPreview={() => {}}
+      />,
+    );
+    const text = await screen.findByText('1 of 2 done');
+    expect(text.getAttribute('aria-live')).toBe('polite');
+    expect(screen.getByRole('progressbar').getAttribute('aria-valuetext')).toBe(
+      '1 of 2 options done',
     );
   });
 });

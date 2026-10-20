@@ -4,14 +4,16 @@
  * without the record of it (see `audit.ts`).
  */
 
-import { formatRosterCsv, type Preference } from '@shiftnurse/core';
+import { formatRosterCsv, type Preference, today } from '@shiftnurse/core';
 import {
   createCredential,
   createIncompatibilityGroup,
   createNurse,
-  deactivateNurse,
+  deactivateNurseLiftingDrafts,
   deleteIncompatibilityGroup,
   exportRoster,
+  type FutureShift,
+  futureShiftsFor,
   getNurse,
   grantCredential,
   ids,
@@ -29,8 +31,29 @@ import {
   updateIncompatibilityGroup,
   updateNurse,
 } from '@shiftnurse/db';
-import type { ShiftNurseApi } from '../../shared/api.js';
+import type { DeactivationImpact, FutureShiftView, ShiftNurseApi } from '../../shared/api.js';
 import { ACTOR } from './context.js';
+
+function shiftView(s: FutureShift): FutureShiftView {
+  return {
+    assignmentId: s.assignment.id,
+    periodId: s.assignment.periodId,
+    periodName: s.periodName,
+    date: s.assignment.date,
+    shiftTypeName: s.shiftTypeName,
+  };
+}
+
+function impactOf(
+  fromDate: DeactivationImpact['fromDate'],
+  shifts: FutureShift[],
+): DeactivationImpact {
+  return {
+    fromDate,
+    draft: shifts.filter((s) => s.periodStatus === 'draft').map(shiftView),
+    published: shifts.filter((s) => s.periodStatus === 'published').map(shiftView),
+  };
+}
 
 export function rosterApi(db: ShiftNurseDb): Pick<
   ShiftNurseApi,
@@ -44,7 +67,14 @@ export function rosterApi(db: ShiftNurseDb): Pick<
       get: (id) => getNurse(db, id),
       create: (input) => transact(db, (tx) => createNurse(tx, input, ACTOR)),
       update: (id, patch) => transact(db, (tx) => updateNurse(tx, id, patch, ACTOR)),
-      deactivate: (id) => transact(db, (tx) => deactivateNurse(tx, id, ACTOR)),
+      // "From today on" is the manager's today, so these read the host clock (core's `today()`).
+      deactivationImpact: (id) => {
+        if (!getNurse(db, id)) throw new Error(`Nurse ${id} not found`);
+        const from = today();
+        return impactOf(from, futureShiftsFor(db, id, from));
+      },
+      deactivate: (id) =>
+        transact(db, (tx) => deactivateNurseLiftingDrafts(tx, id, today(), ACTOR)).nurse,
     },
     credentials: {
       list: () => listCredentials(db),

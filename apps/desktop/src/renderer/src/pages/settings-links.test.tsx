@@ -12,7 +12,7 @@ import {
   type Unit,
 } from '@shiftnurse/core';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useUnsavedChanges } from '../components/unsaved-changes.js';
 import { installFakeBridge } from '../test/fake-bridge.js';
 import { renderWithApp } from '../test/render.js';
@@ -38,6 +38,15 @@ const ruleSet: RuleSet = {
   createdAt: 0,
 };
 
+// jsdom may not define scrollIntoView; define it for the spy and put things back as found.
+const hadScrollIntoView = 'scrollIntoView' in Element.prototype;
+beforeAll(() => {
+  if (!hadScrollIntoView) Element.prototype.scrollIntoView = () => {};
+});
+afterAll(() => {
+  if (!hadScrollIntoView) delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+});
+
 beforeEach(() => {
   installFakeBridge().respond('rules', 'getLatest', ruleSet);
 });
@@ -48,14 +57,13 @@ afterEach(() => {
 
 describe('Settings deep links', () => {
   it('scrolls to and highlights the rule a violation link names', async () => {
-    const scroll = vi.fn();
-    Element.prototype.scrollIntoView = scroll;
+    const scroll = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {});
     const target = ALL_RULES[1]!.id;
     renderWithApp(<SettingsPage />, { route: `/settings?tab=rules&rule=${target}`, unit });
 
     const card = await screen.findByTestId(`rule-card-${target}`);
     await waitFor(() => expect(scroll).toHaveBeenCalled());
-    expect(scroll.mock.instances[0]).toBe(card);
+    expect(scroll.mock.contexts[0]).toBe(card);
     expect(card.className).toContain('ring-accent');
     expect(screen.getByTestId(`rule-card-${ALL_RULES[0]!.id}`).className).not.toContain(
       'ring-accent',

@@ -65,26 +65,6 @@ function isTypingTarget(target: EventTarget | null): boolean {
   );
 }
 
-/**
- * Per-call work for one edit: `onSuccess` with the result, then `cleanup` whatever happened.
- * The rejection is swallowed on purpose — the mutation hook has already put it in `failedEdit`
- * (`meta.inlineError`), and an unhandled rejection would only add a console error.
- */
-function settle<T>(
-  call: Promise<T>,
-  onSuccess: ((result: T) => void) | undefined,
-  cleanup: (() => void) | undefined,
-): void {
-  call
-    .then(
-      (result) => {
-        onSuccess?.(result);
-      },
-      () => {},
-    )
-    .finally(cleanup);
-}
-
 function makeGhost(
   periodId: Id,
   input: { nurseId: Id; date: IsoDate; shiftTypeId: Id },
@@ -142,6 +122,30 @@ export function useGridEdits({
   const shiftTypesRef = useRef(shiftTypes);
   shiftTypesRef.current = shiftTypes;
   const undoStack = useRef<UndoEntry[]>([]);
+
+  const [lastError, setLastError] = useState<{ error: unknown } | undefined>(undefined);
+
+  // The one door every edit and every undo inverse goes through. Starting an edit retires the
+  // last failure; a rejection replaces it, so the banner shows the latest one, not the first in
+  // some list. A success never clears: an edit that failed after this one started must stay up.
+  const run = useCallback(
+    <T>(
+      call: Promise<T>,
+      onSuccess: ((result: T) => void) | undefined,
+      cleanup: (() => void) | undefined,
+    ): void => {
+      setLastError(undefined);
+      call
+        .then(
+          (result) => {
+            onSuccess?.(result);
+          },
+          (error: unknown) => setLastError({ error }),
+        )
+        .finally(cleanup);
+    },
+    [],
+  );
 
   const [pendingIds, setPendingIds] = useState<ReadonlySet<Id>>(new Set());
   const [pendingCreates, setPendingCreates] = useState<readonly Assignment[]>([]);
@@ -212,8 +216,23 @@ export function useGridEdits({
     undoStack.current = [];
   }, [toast]);
 
+  // The board remounts per period; an Undo left behind would re-edit a schedule the manager has
+  // left. A ref, so a change of `toast`'s identity never fires the cleanup mid-life.
+  const clearUndoRef = useRef(clearUndo);
+  clearUndoRef.current = clearUndo;
+  // An edit still in flight can land after that; it must not offer an Undo for the old board.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      clearUndoRef.current();
+    };
+  }, []);
+
   const record = useCallback(
     (message: string, reason: string | undefined, inverse: UndoEntry['inverse']) => {
+      if (!mountedRef.current) return;
       const entry: UndoEntry = { inverse, reason, toastId: undefined };
       undoStack.current = [...undoStack.current, entry].slice(-MAX_UNDO);
       entry.toastId = toast.show({
@@ -224,20 +243,20 @@ export function useGridEdits({
     [toast, undoEntry],
   );
 
-  // The inverses run through the same mutations, so a failure reaches `failedEdit` unchanged.
+  // The inverses run through the same helper, so a failure reaches `failedEdit` unchanged.
   const inverseDelete = useCallback(
     (assignmentId: Id, reason: string | undefined, consent: string | undefined) => {
       markPending(assignmentId);
-      settle(deleteMutate({ assignmentId, reason, consent }), undefined, () =>
+      run(deleteMutate({ assignmentId, reason, consent }), undefined, () =>
         clearPending(assignmentId),
       );
     },
-    [deleteMutate, markPending, clearPending],
+    [deleteMutate, markPending, clearPending, run],
   );
   const inverseMove = useCallback(
     (assignmentId: Id, to: Assignment, reason: string | undefined, consent: string | undefined) => {
       markPending(assignmentId);
-      settle(
+      run(
         moveMutate({
           assignmentId,
           nurseId: to.nurseId,
@@ -250,7 +269,7 @@ export function useGridEdits({
         () => clearPending(assignmentId),
       );
     },
-    [moveMutate, markPending, clearPending],
+    [moveMutate, markPending, clearPending, run],
   );
   const inversePatch = useCallback(
     (
@@ -260,11 +279,11 @@ export function useGridEdits({
       consent: string | undefined,
     ) => {
       markPending(assignmentId);
-      settle(updateMutate({ assignmentId, patch, reason, consent }), undefined, () =>
+      run(updateMutate({ assignmentId, patch, reason, consent }), undefined, () =>
         clearPending(assignmentId),
       );
     },
-    [updateMutate, markPending, clearPending],
+    [updateMutate, markPending, clearPending, run],
   );
 
   useEffect(() => {
@@ -288,7 +307,7 @@ export function useGridEdits({
       withReason('Add a shift to the published schedule', (reason, consent) => {
         const ghost = makeGhost(period.id, input);
         setPendingCreates((prev) => [...prev, ghost]);
-        settle(
+        run(
           createMutate({ periodId: period.id, ...input, reason, consent }),
           (created) =>
             record(
@@ -300,7 +319,17 @@ export function useGridEdits({
         );
       });
     },
-    [readOnly, period.id, createMutate, withReason, record, inverseDelete, shiftName, nurseName],
+    [
+      readOnly,
+      period.id,
+      createMutate,
+      withReason,
+      record,
+      inverseDelete,
+      shiftName,
+      nurseName,
+      run,
+    ],
   );
 
   const handleMove = useCallback(
@@ -311,7 +340,7 @@ export function useGridEdits({
         const ghost = makeGhost(period.id, input);
         setPendingCreates((prev) => [...prev, ghost]);
         const before = heldAssignment(input.assignmentId);
-        settle(
+        run(
           moveMutate({ ...input, reason, consent }),
           (moved) => {
             // No held row to go back to (a move normally starts from a chip the board holds, so
@@ -343,18 +372,19 @@ export function useGridEdits({
       shiftName,
       heldAssignment,
       nurseName,
+      run,
     ],
   );
 
   const handleToggleLock = useCallback(
     (assignment: Assignment) => {
       markPending(assignment.id);
-      settle(
+      run(
         lockMutate({ assignmentId: assignment.id, locked: !assignment.isLocked }),
         () =>
           record(assignment.isLocked ? 'Shift unlocked' : 'Shift locked', undefined, () => {
             markPending(assignment.id);
-            settle(
+            run(
               lockMutate({ assignmentId: assignment.id, locked: assignment.isLocked }),
               undefined,
               () => clearPending(assignment.id),
@@ -363,14 +393,14 @@ export function useGridEdits({
         () => clearPending(assignment.id),
       );
     },
-    [lockMutate, markPending, clearPending, record],
+    [lockMutate, markPending, clearPending, record, run],
   );
 
   const handleToggleCharge = useCallback(
     (assignment: Assignment) => {
       withReason('Change the charge nurse on the published schedule', (reason, consent) => {
         markPending(assignment.id);
-        settle(
+        run(
           updateMutate({
             assignmentId: assignment.id,
             patch: { isCharge: !assignment.isCharge },
@@ -385,14 +415,14 @@ export function useGridEdits({
         );
       });
     },
-    [updateMutate, markPending, clearPending, withReason, record, inversePatch],
+    [updateMutate, markPending, clearPending, withReason, record, inversePatch, run],
   );
 
   const handleToggleOvertime = useCallback(
     (assignment: Assignment) => {
       withReason('Change overtime authorisation on the published schedule', (reason, consent) => {
         markPending(assignment.id);
-        settle(
+        run(
           updateMutate({
             assignmentId: assignment.id,
             patch: { isOvertime: !assignment.isOvertime },
@@ -412,7 +442,7 @@ export function useGridEdits({
         );
       });
     },
-    [updateMutate, markPending, clearPending, withReason, record, inversePatch],
+    [updateMutate, markPending, clearPending, withReason, record, inversePatch, run],
   );
 
   const handleRemove = useCallback(
@@ -420,7 +450,7 @@ export function useGridEdits({
       onRemoveStart?.();
       withReason('Remove a shift from the published schedule', (reason, consent) => {
         markPending(assignment.id);
-        settle(
+        run(
           deleteMutate({ assignmentId: assignment.id, reason, consent }),
           () => {
             const removed = `Removed ${nurseName(assignment.nurseId)} from ${shiftName(assignment.shiftTypeId)} on ${formatDateWithWeekday(assignment.date)}`;
@@ -439,7 +469,7 @@ export function useGridEdits({
               // Main stamps every create `manual`, so a solver-placed shift comes back as a
               // hand-placed one; the nurse, day, shift and flags are what a manager sees.
               (undoReason) =>
-                settle(
+                run(
                   createMutate({
                     periodId: assignment.periodId,
                     nurseId: assignment.nurseId,
@@ -472,6 +502,7 @@ export function useGridEdits({
       toast,
       shiftName,
       nurseName,
+      run,
     ],
   );
 
@@ -489,7 +520,7 @@ export function useGridEdits({
       withReason('Swap two shifts on the published schedule', (reason, consent) => {
         const first = heldAssignment(firstId);
         const second = heldAssignment(secondId);
-        settle(
+        run(
           swapMutate({ firstId, secondId, reason, consent }),
           ([a, b]) =>
             record(
@@ -499,7 +530,7 @@ export function useGridEdits({
               reason,
               // Both rows were re-created, so the swap back is between the new ids.
               (undoReason) =>
-                settle(
+                run(
                   swapMutate({ firstId: a.id, secondId: b.id, reason: undoReason, consent }),
                   undefined,
                   undefined,
@@ -508,21 +539,17 @@ export function useGridEdits({
           undefined,
         );
       }),
-    [withReason, swapMutate, heldAssignment, nurseName, record],
+    [withReason, swapMutate, heldAssignment, nurseName, record, run],
   );
 
   // A rejected edit (locked source, archived period, missing reason, DB error) silently snaps
   // the chip back on settle; without this the manager cannot tell a refusal from a glitch.
-  // A mutation keeps its error until its next run, so the latest failure stays up until
-  // dismissed or retried.
-  const failedEdit = [
-    createAssignment,
-    moveAssignment,
-    swapAssignments,
-    updateAssignment,
-    deleteAssignment,
-    setLocked,
-  ].find((m) => m.isError);
+  // Held as state rather than read off the mutations: a mutation keeps its error until its own
+  // next run, so that would show the first failure in a list, not the latest.
+  const failedEdit = lastError && {
+    error: lastError.error,
+    reset: () => setLastError(undefined),
+  };
 
   return {
     pendingIds,

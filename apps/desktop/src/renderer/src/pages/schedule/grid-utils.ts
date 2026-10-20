@@ -14,20 +14,34 @@ import type {
   ShiftType,
   Violation,
 } from '@shiftnurse/core';
+import { violationKey } from '@shiftnurse/core';
 import { formatMonthYear } from '../../format.js';
 
 export function cellKey(nurseId: Id, date: IsoDate): string {
   return `${nurseId}__${date}`;
 }
 
-/** Rows are active nurses only, sorted by last name (the way the unit calls the roster). */
+function byName(a: Nurse, b: Nurse): number {
+  const byLast = a.lastName.localeCompare(b.lastName);
+  return byLast !== 0 ? byLast : a.firstName.localeCompare(b.firstName);
+}
+
+/** Active nurses only, sorted by last name (the way the unit calls the roster). This is who a
+ * shift may be moved or added to; the grid's own rows come from `gridNurses`. */
 export function sortNurses(nurses: readonly Nurse[]): Nurse[] {
-  return [...nurses]
-    .filter((n) => n.active)
-    .sort((a, b) => {
-      const byLast = a.lastName.localeCompare(b.lastName);
-      return byLast !== 0 ? byLast : a.firstName.localeCompare(b.firstName);
-    });
+  return [...nurses].filter((n) => n.active).sort(byName);
+}
+
+/**
+ * The grid's rows: every active nurse, plus any nurse who has left but still holds a shift. Her
+ * shifts count as staffed, so dropping her row left shifts nobody could see, move or remove.
+ */
+export function gridNurses(
+  nurses: readonly Nurse[],
+  assignments: readonly Pick<Assignment, 'nurseId'>[],
+): Nurse[] {
+  const holders = new Set(assignments.map((a) => a.nurseId));
+  return [...nurses].filter((n) => n.active || holders.has(n.id)).sort(byName);
 }
 
 export function buildCellIndex<T extends Pick<Assignment, 'nurseId' | 'date'>>(
@@ -41,6 +55,87 @@ export function buildCellIndex<T extends Pick<Assignment, 'nurseId' | 'date'>>(
     else map.set(key, [assignment]);
   }
   return map;
+}
+
+/** Everything one nurse's row draws from the period-wide indexes, and nothing else. */
+export interface RowSlice {
+  cells: ReadonlyMap<IsoDate, readonly Assignment[]>;
+  /** Violations on this row's assignments only. */
+  violations: ReadonlyMap<Id, readonly Violation[]>;
+  nurseViolations: readonly Violation[];
+  /** Preference notes for this row's assignments only. */
+  preferenceNotes: ReadonlyMap<Id, string>;
+}
+
+const NO_VIOLATIONS: readonly Violation[] = [];
+
+function sameItems<T>(a: readonly T[], b: readonly T[]): boolean {
+  return a.length === b.length && a.every((item, i) => item === b[i]);
+}
+
+function sameSlice(a: RowSlice, b: RowSlice): boolean {
+  if (!sameItems(a.nurseViolations, b.nurseViolations)) return false;
+  if (a.cells.size !== b.cells.size) return false;
+  for (const [date, list] of a.cells) {
+    const other = b.cells.get(date);
+    if (!other || !sameItems(list, other)) return false;
+  }
+  if (a.violations.size !== b.violations.size) return false;
+  for (const [id, list] of a.violations) {
+    const other = b.violations.get(id);
+    if (!other || !sameItems(list, other)) return false;
+  }
+  if (a.preferenceNotes.size !== b.preferenceNotes.size) return false;
+  for (const [id, note] of a.preferenceNotes) if (b.preferenceNotes.get(id) !== note) return false;
+  return true;
+}
+
+/**
+ * Splits the period-wide indexes into one slice per nurse, and hands back the previous slice
+ * whenever nothing in the row changed. A row is skipped by `React.memo` only if its props are
+ * identical, and the whole-period maps are rebuilt on every refetch, so without this a single new
+ * shift redrew every chip on the grid. Comparison is by identity (`===`), not by value: TanStack
+ * Query keeps unchanged rows and violations as the same objects across a refetch, and a deep
+ * compare would cost more than the render it saves.
+ */
+export function rowSlices(input: {
+  nurses: readonly Nurse[];
+  assignments: readonly Assignment[];
+  violationsByAssignment: ReadonlyMap<Id, readonly Violation[]>;
+  violationsByNurse: ReadonlyMap<Id, readonly Violation[]>;
+  preferenceNotes: ReadonlyMap<Id, string>;
+  previous?: ReadonlyMap<Id, RowSlice> | undefined;
+}): Map<Id, RowSlice> {
+  const byNurse = new Map<Id, Assignment[]>();
+  for (const a of input.assignments) {
+    const list = byNurse.get(a.nurseId);
+    if (list) list.push(a);
+    else byNurse.set(a.nurseId, [a]);
+  }
+  const out = new Map<Id, RowSlice>();
+  for (const nurse of input.nurses) {
+    const cells = new Map<IsoDate, Assignment[]>();
+    const violations = new Map<Id, readonly Violation[]>();
+    const preferenceNotes = new Map<Id, string>();
+    for (const a of byNurse.get(nurse.id) ?? []) {
+      const day = cells.get(a.date);
+      if (day) day.push(a);
+      else cells.set(a.date, [a]);
+      const found = input.violationsByAssignment.get(a.id);
+      if (found) violations.set(a.id, found);
+      const note = input.preferenceNotes.get(a.id);
+      if (note !== undefined) preferenceNotes.set(a.id, note);
+    }
+    const slice: RowSlice = {
+      cells,
+      violations,
+      nurseViolations: input.violationsByNurse.get(nurse.id) ?? NO_VIOLATIONS,
+      preferenceNotes,
+    };
+    const before = input.previous?.get(nurse.id);
+    out.set(nurse.id, before && sameSlice(before, slice) ? before : slice);
+  }
+  return out;
 }
 
 /** Optimistic chips get a client-generated id so the grid can render them before the round trip
@@ -95,15 +190,22 @@ export function monthSpans(dates: readonly IsoDate[]): MonthSpan[] {
   return spans;
 }
 
-/** Violations have no id of their own; the rule plus the entities it names is stable and
- * unique enough within one validation result to key a React list on. */
-export function violationKey(violation: Violation): string {
-  return [
-    violation.ruleId,
-    ...violation.nurseIds,
-    ...violation.assignmentIds,
-    ...violation.dates,
-  ].join('|');
+/**
+ * Violations have no id of their own, so a React list needs one made. Core's `violationKey` is
+ * the identity (shift, role, credential, group or nurses) but is not unique within one result:
+ * the ratio rule's per-role RN breach and its `rn_share` breach on the same shift share it.
+ * The occurrence index separates those, and stays stable for a given list order.
+ */
+export function keyedViolations(
+  violations: readonly Violation[],
+): { key: string; violation: Violation }[] {
+  const seen = new Map<string, number>();
+  return violations.map((violation) => {
+    const base = violationKey(violation);
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return { key: `${base}#${n}`, violation };
+  });
 }
 
 export interface HeadcountCell {
@@ -115,7 +217,8 @@ export interface HeadcountCell {
 
 export interface HeadcountRow {
   shiftType: ShiftType;
-  role: NurseRole;
+  /** 'licensed' is the pooled RN + LPN count a licensed ratio rule judges. */
+  role: NurseRole | 'licensed';
   cells: HeadcountCell[];
 }
 
@@ -144,9 +247,14 @@ export function headcountRows(input: {
     staffed.set(key, (staffed.get(key) ?? 0) + 1);
   }
   const required = new Map<string, number>();
+  const pooled = new Set<string>();
   for (const d of input.demand) {
     for (const role of ROLES) {
       required.set(`${d.date}|${d.shiftTypeId}|${role}`, d.byRole[role]?.minCount ?? 0);
+    }
+    if (d.licensed) {
+      pooled.add(d.shiftTypeId);
+      required.set(`${d.date}|${d.shiftTypeId}|licensed`, d.licensed.ratioDerived);
     }
   }
   const rows: HeadcountRow[] = [];
@@ -163,6 +271,16 @@ export function headcountRows(input: {
         rows.push({ shiftType, role, cells });
       }
     }
+    if (pooled.has(shiftType.id)) {
+      const cells = input.dates.map((date) => ({
+        date,
+        staffed:
+          (staffed.get(`${date}|${shiftType.id}|RN`) ?? 0) +
+          (staffed.get(`${date}|${shiftType.id}|LPN`) ?? 0),
+        required: required.get(`${date}|${shiftType.id}|licensed`) ?? 0,
+      }));
+      rows.push({ shiftType, role: 'licensed', cells });
+    }
   }
   return rows;
 }
@@ -178,7 +296,9 @@ export interface StaffingSummaryCell {
 /**
  * The single row that stands in for the per-shift headcount rows on a small screen: one number a
  * day. Shortfalls are summed per shift and role, never netted — a spare RN on days does not cover
- * a missing CNA, and adding staffed and required across rows first would say it does.
+ * a missing CNA, and adding staffed and required across rows first would say it does. The
+ * licensed pool counts only what the RN shortfall leaves: every RN it is short is also one of the
+ * pool, so the sum is the fewest nurses that fix both (`licensedBreaches`' `rnShort` + `poolExtra`).
  */
 export function staffingSummary(
   rows: readonly HeadcountRow[],
@@ -190,7 +310,18 @@ export function staffingSummary(
     for (const row of rows) {
       const cell = row.cells[col];
       if (!cell || cell.staffed >= cell.required) continue;
-      short += cell.required - cell.staffed;
+      const missing = cell.required - cell.staffed;
+      if (row.role === 'licensed') {
+        const rnCell = rows.find((r) => r.shiftType.id === row.shiftType.id && r.role === 'RN')
+          ?.cells[col];
+        const rnShort = rnCell ? Math.max(0, rnCell.required - rnCell.staffed) : 0;
+        const extra = missing - Math.min(missing, rnShort);
+        if (extra === 0) continue;
+        short += extra;
+        details.push(`${row.shiftType.abbreviation} RN+LPN ${cell.staffed}/${cell.required}`);
+        continue;
+      }
+      short += missing;
       details.push(`${row.shiftType.abbreviation} ${row.role} ${cell.staffed}/${cell.required}`);
     }
     return { date, short, details };

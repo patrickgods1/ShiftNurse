@@ -37,16 +37,20 @@ describe('violationReadout', () => {
 
   it('shows green only when a finished check found nothing', () => {
     expect(violationReadout('success', resultWith(0, 0))).toEqual({
-      label: '0 hard · 0 soft violations',
+      label: '0 hard violations · 0 soft',
       tone: 'text-success',
     });
   });
 
   it('leads with red when any hard violation is present', () => {
     expect(violationReadout('success', resultWith(1, 0))).toEqual({
-      label: '1 hard · 0 soft violation',
+      label: '1 hard violation · 0 soft',
       tone: 'text-danger',
     });
+  });
+
+  it('says "2 hard violations · 1 soft" for two breaks and a warning', () => {
+    expect(violationReadout('success', resultWith(2, 1)).label).toBe('2 hard violations · 1 soft');
   });
 
   it('warns amber for soft-only schedules', () => {

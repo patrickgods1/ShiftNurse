@@ -1,6 +1,6 @@
 import type { SolveBatchStatus, SolveRunStatus } from '@shared/api.js';
 import { describe, expect, it } from 'vitest';
-import { bestChoice, digestLine, spread } from './candidates.js';
+import { bestChoice, digestLine, runFallbacks, spread } from './candidates.js';
 
 function run(index: number, objective: number | undefined): SolveRunStatus {
   return {
@@ -136,5 +136,30 @@ describe('a variation in a manager’s words', () => {
       '3 quick night-to-day flips',
       '4 shifts against preferences',
     ]);
+  });
+});
+
+describe('why options ran a different search', () => {
+  const reason = 'CP-SAT found no schedule around the locked shifts: unlock Ana Cruz Mon Jan 5 N12';
+  const fell = { solver: 'cp-sat' as const, reason };
+
+  it('lists each reason an option fell back once, with the options it applies to', () => {
+    const b = batch([100, 200, 300]);
+    b.runs = b.runs.map((r) => (r.index === 1 ? r : { ...r, fellBackFrom: fell }));
+    expect(runFallbacks(b)).toEqual([{ solver: 'sa-lns', fellBackFrom: fell, options: [1, 3] }]);
+  });
+
+  it('leaves out the reason the whole batch already gave', () => {
+    const b = batch([100, 200]);
+    b.fellBackFrom = fell;
+    b.runs = b.runs.map((r) => ({ ...r, fellBackFrom: { ...fell } }));
+    expect(runFallbacks(b)).toEqual([]);
+  });
+
+  it('numbers the options after the variations the manager already has', () => {
+    const b = batch([100, 200]);
+    b.offset = 3;
+    b.runs = [{ ...b.runs[1]!, fellBackFrom: fell }, b.runs[0]!];
+    expect(runFallbacks(b)[0]?.options).toEqual([5]);
   });
 });

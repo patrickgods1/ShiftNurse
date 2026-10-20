@@ -19,7 +19,7 @@ import {
   NIGHT_12,
   resetFixtureCounters,
 } from '@shiftnurse/core/testing';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConfirmProvider, useConfirm } from '../../components/confirm.js';
 import { ToastProvider } from '../../components/toast.js';
@@ -37,6 +37,20 @@ class FakeDataTransfer {
     return this.data.get(type) ?? '';
   }
 }
+
+// Counts every chip the grid draws, so a test can tell which rows re-rendered. The real chip is
+// memoised, so counting inside it would hide exactly what is being measured: its parent row.
+const chipDraws = vi.hoisted(() => ({ count: 0 }));
+vi.mock('./chip.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('./chip.js')>();
+  return {
+    ...real,
+    AssignmentChip: (props: React.ComponentProps<typeof real.AssignmentChip>) => {
+      chipDraws.count += 1;
+      return <real.AssignmentChip {...props} />;
+    },
+  };
+});
 
 const COLUMNS: GridColumn[] = [
   { date: isoDate('2026-10-05'), weekday: 1, isWeekend: false },
@@ -265,9 +279,23 @@ describe('showing a problem on the grid', () => {
     expect(lit[0]).toBe(cell(ben, '2026-10-06'));
     expect(lit[0]?.getAttribute('data-spotlit')).toBe('cell');
     const chips = [...document.querySelectorAll('[data-testid="assignment-chip"][data-spotlit]')];
-    expect(chips.map((c) => c.getAttribute('aria-label'))).toEqual(['D12 on 2026-10-06']);
+    expect(chips.map((c) => c.getAttribute('aria-label'))).toEqual(['D12 on Tue, Oct 6']);
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
     expect(scrollIntoView.mock.contexts[0]).toBe(cell(ben, '2026-10-06'));
+  });
+
+  it('pulses the ringed cell only for people who have not asked for reduced motion', () => {
+    const shift = assign(ben.id, DAY_12, '2026-10-06');
+    renderSpotlit([shift], {
+      date: isoDate('2026-10-06'),
+      nurseId: ben.id,
+      assignmentIds: [shift.id],
+      nonce: 1,
+    });
+    const classes = cell(ben, '2026-10-06').className.split(/\s+/);
+    // A bare animate-pulse would keep flashing for someone who set "reduce motion".
+    expect(classes).toContain('motion-safe:animate-pulse');
+    expect(classes).not.toContain('animate-pulse');
   });
 
   it('tints the whole day and scrolls to its header when the alert names no nurse', () => {
@@ -388,6 +416,108 @@ describe('the staffing summary under the grid', () => {
     expect(cells.map((c) => c.textContent)).toEqual(['1 short', '✓']);
   });
 
+  it("shows Gail's leftover Saturday shift on a row marked inactive, and counts it once", () => {
+    const gail = makeNurse({ firstName: 'Gail', lastName: 'Gray', active: false });
+    render(
+      <ScheduleGrid
+        nurses={[alice, gail]}
+        shiftTypes={[DAY_12]}
+        columns={COLUMNS}
+        assignments={[assign(gail.id, DAY_12, '2026-10-06')]}
+        pendingIds={new Set()}
+        readOnly={false}
+        violationsByAssignment={new Map()}
+        violationsByNurse={new Map()}
+        violationsByDate={new Map()}
+        demand={[floorDemand('2026-10-05', DAY_12.id, 1), floorDemand('2026-10-06', DAY_12.id, 1)]}
+        onMove={vi.fn()}
+        onCreate={vi.fn()}
+        onChipOpen={vi.fn()}
+        onChipDelete={vi.fn()}
+      />,
+    );
+    const row = document.querySelector(`[data-nurse-id="${gail.id}"]`) as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(within(row).getByTestId('inactive-nurse')).toBeTruthy();
+    const cells = within(screen.getByTestId('staffing-summary')).getAllByRole('gridcell');
+    expect(cells.map((c) => c.textContent)).toEqual(['1 short', '✓']);
+  });
+
+  it('ignores a palette shift dropped on a nurse who left', () => {
+    const gail = makeNurse({ firstName: 'Gail', lastName: 'Gray', active: false });
+    const onCreate = vi.fn();
+    render(
+      <>
+        <ShiftPalette shiftTypes={[DAY_12]} readOnly={false} />
+        <ScheduleGrid
+          nurses={[alice, gail]}
+          shiftTypes={[DAY_12]}
+          columns={COLUMNS}
+          assignments={[assign(gail.id, DAY_12, '2026-10-06')]}
+          pendingIds={new Set()}
+          readOnly={false}
+          violationsByAssignment={new Map()}
+          violationsByNurse={new Map()}
+          violationsByDate={new Map()}
+          onMove={vi.fn()}
+          onCreate={onCreate}
+          onChipOpen={vi.fn()}
+          onChipDelete={vi.fn()}
+        />
+      </>,
+    );
+    const tile = within(screen.getByTestId('shift-palette')).getByText(DAY_12.abbreviation);
+    drag(tile.closest('[draggable]') as HTMLElement, cell(gail, '2026-10-05'));
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
+  function mountWithLeaver() {
+    const gail = makeNurse({ firstName: 'Gail', lastName: 'Gray', active: false });
+    const aliceShift = assign(alice.id, DAY_12, '2026-10-05');
+    const gailShift = assign(gail.id, DAY_12, '2026-10-06');
+    const onMove = vi.fn();
+    const onChipOpen = vi.fn();
+    render(
+      <ScheduleGrid
+        nurses={[alice, gail]}
+        shiftTypes={[DAY_12]}
+        columns={COLUMNS}
+        assignments={[aliceShift, gailShift]}
+        pendingIds={new Set()}
+        readOnly={false}
+        violationsByAssignment={new Map()}
+        violationsByNurse={new Map()}
+        violationsByDate={new Map()}
+        onMove={onMove}
+        onCreate={vi.fn()}
+        onChipOpen={onChipOpen}
+        onChipDelete={vi.fn()}
+      />,
+    );
+    return { gail, onMove, onChipOpen };
+  }
+
+  it("ignores Alice's shift dragged onto Gail's row, since Gail has left", () => {
+    const { gail, onMove } = mountWithLeaver();
+    const chip = within(cell(alice, '2026-10-05')).getByTestId('assignment-chip');
+    drag(chip, cell(gail, '2026-10-05'));
+    expect(onMove).not.toHaveBeenCalled();
+  });
+
+  it("opens no shift picker on Gail's empty day", () => {
+    const { gail } = mountWithLeaver();
+    fireEvent.keyDown(cell(gail, '2026-10-05'), { key: 'Enter' });
+    expect(screen.queryByTestId('shift-picker')).toBeNull();
+  });
+
+  it("still lets the manager pick up and open Gail's leftover shift to move it to a colleague", () => {
+    const { gail, onChipOpen } = mountWithLeaver();
+    const chip = within(cell(gail, '2026-10-06')).getByTestId('assignment-chip');
+    expect(chip.getAttribute('draggable')).toBe('true');
+    fireEvent.click(chip);
+    expect(onChipOpen).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the per-shift breakdown hidden until the manager opens it', () => {
     mountWithDemand();
     const toggle = screen.getByTestId('staffing-breakdown-toggle');
@@ -492,5 +622,166 @@ describe('keyboard focus around the grid', () => {
     const question = await screen.findByRole('alertdialog');
     fireEvent.click(within(question).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(document.activeElement).toBe(chip));
+  });
+});
+
+type GridProps = React.ComponentProps<typeof ScheduleGrid>;
+
+// Shared so a rerender hands the grid the same callbacks, as the Schedule page's stable ones do.
+const NOOPS = {
+  onMove: vi.fn(),
+  onCreate: vi.fn(),
+  onChipOpen: vi.fn(),
+  onChipDelete: vi.fn(),
+};
+
+const NO_PENDING_IDS = new Set<string>();
+const NO_VIOLATIONS = new Map<never, never>();
+const SHIFT_TYPES = [DAY_12, NIGHT_12];
+
+function gridProps(overrides: Partial<GridProps>): GridProps {
+  return {
+    nurses: [alice, ben],
+    shiftTypes: SHIFT_TYPES,
+    columns: COLUMNS,
+    assignments: [],
+    pendingIds: NO_PENDING_IDS,
+    readOnly: false,
+    violationsByAssignment: NO_VIOLATIONS,
+    violationsByNurse: NO_VIOLATIONS,
+    violationsByDate: NO_VIOLATIONS,
+    ...NOOPS,
+    ...overrides,
+  };
+}
+
+function gridCell(row: number, col: number): HTMLElement {
+  return document.querySelector(`[data-cell="${row}:${col}"]`) as HTMLElement;
+}
+
+describe('redrawing the grid after a refetch', () => {
+  it('redraws only the nurse whose shifts changed', () => {
+    const cara = makeNurse({ firstName: 'Cara', lastName: 'Clark' });
+    const nurses = [alice, ben, cara];
+    const columns: GridColumn[] = [
+      ...COLUMNS,
+      { date: isoDate('2026-10-07'), weekday: 3, isWeekend: false },
+    ];
+    const shifts = nurses.flatMap((n) =>
+      columns.map((c) => assign(n.id, DAY_12, c.date as string)),
+    );
+    const { rerender } = render(
+      <ScheduleGrid {...gridProps({ nurses, columns, assignments: shifts })} />,
+    );
+    chipDraws.count = 0;
+
+    const added = assign(ben.id, NIGHT_12, '2026-10-05');
+    rerender(<ScheduleGrid {...gridProps({ nurses, columns, assignments: [...shifts, added] })} />);
+
+    // Ben's row: his three old chips and the new one. Alice's and Cara's rows are skipped.
+    expect(chipDraws.count).toBe(4);
+  });
+
+  it('keeps a tab stop when the nurse whose cell was active leaves the list', () => {
+    const cara = makeNurse({ firstName: 'Cara', lastName: 'Clark' });
+    const { rerender } = render(<ScheduleGrid {...gridProps({ nurses: [alice, ben, cara] })} />);
+    act(() => gridCell(2, 0).focus());
+    expect(gridCell(2, 0).getAttribute('tabindex')).toBe('0');
+
+    rerender(<ScheduleGrid {...gridProps({ nurses: [alice, ben] })} />);
+
+    const stops = document.querySelectorAll('[role="gridcell"][tabindex="0"]');
+    expect(stops).toHaveLength(1);
+    expect(stops[0]).toBe(gridCell(1, 0));
+  });
+});
+
+describe('moving around the grid by keyboard', () => {
+  it('moves to the next day with the arrow key while a shift is focused', () => {
+    const shift = assign(alice.id, DAY_12, '2026-10-05');
+    render(<ScheduleGrid {...gridProps({ assignments: [shift] })} />);
+    const chip = within(gridCell(0, 0)).getByTestId('assignment-chip');
+    chip.focus();
+
+    fireEvent.keyDown(chip, { key: 'ArrowRight' });
+
+    expect(document.activeElement).toBe(gridCell(0, 1));
+  });
+
+  it('jumps to the first and last cell with Ctrl+Home and Ctrl+End', () => {
+    render(<ScheduleGrid {...gridProps({})} />);
+    gridCell(0, 1).focus();
+
+    fireEvent.keyDown(gridCell(0, 1), { key: 'End', ctrlKey: true });
+    expect(document.activeElement).toBe(gridCell(1, 1));
+
+    fireEvent.keyDown(gridCell(1, 1), { key: 'Home', ctrlKey: true });
+    expect(document.activeElement).toBe(gridCell(0, 0));
+  });
+
+  it('moves ten nurses down with Page Down, stopping at the last', () => {
+    const nurses = Array.from({ length: 12 }, (_, i) =>
+      makeNurse({ firstName: `N${i}`, lastName: `L${String(i).padStart(2, '0')}` }),
+    );
+    render(<ScheduleGrid {...gridProps({ nurses })} />);
+    gridCell(0, 0).focus();
+
+    fireEvent.keyDown(gridCell(0, 0), { key: 'PageDown' });
+    expect(document.activeElement).toBe(gridCell(10, 0));
+
+    fireEvent.keyDown(gridCell(10, 0), { key: 'PageDown' });
+    expect(document.activeElement).toBe(gridCell(11, 0));
+
+    fireEvent.keyDown(gridCell(11, 0), { key: 'PageUp' });
+    expect(document.activeElement).toBe(gridCell(1, 0));
+  });
+
+  it('leaves Ctrl+Arrow alone for the browser', () => {
+    render(<ScheduleGrid {...gridProps({})} />);
+    gridCell(0, 0).focus();
+    fireEvent.keyDown(gridCell(0, 0), { key: 'ArrowRight', ctrlKey: true });
+    expect(document.activeElement).toBe(gridCell(0, 0));
+  });
+});
+
+describe('counting rule breaks in a date header', () => {
+  it("tells a screen reader where the date's breaks are listed", () => {
+    const violation = {
+      ruleId: 'x',
+      severity: 'hard',
+      message: 'Day shift is under its minimum',
+      nurseIds: [],
+      dates: [isoDate('2026-10-05')],
+    } as unknown as Violation;
+    render(
+      <ScheduleGrid
+        {...gridProps({ violationsByDate: new Map([[isoDate('2026-10-05'), [violation]]]) })}
+      />,
+    );
+    const header = document.querySelector('[role="columnheader"][data-date="2026-10-05"]')!;
+    const badge = header.querySelector('span[title]') as HTMLElement;
+    expect(badge.textContent).toContain('⬣1');
+    expect(badge.textContent).toContain('1 rule break; listed under Violations above the grid');
+  });
+});
+
+describe('counting rule breaks in a nurse row', () => {
+  it('shows both counts with their shapes when a nurse has a break and a warning', () => {
+    const v = (severity: 'hard' | 'soft', message: string) =>
+      ({ ruleId: 'x', severity, message, nurseIds: [alice.id], dates: [] }) as unknown as Violation;
+    render(
+      <ScheduleGrid
+        {...gridProps({
+          violationsByNurse: new Map([
+            [alice.id, [v('hard', 'Too many nights'), v('soft', 'Short rest')]],
+          ]),
+        })}
+      />,
+    );
+    const header = document.querySelector(`[data-nurse-id="${alice.id}"] [role="rowheader"]`)!;
+    const badge = header.querySelector('p span[title]') as HTMLElement;
+    expect(badge.textContent).toContain('⬣1');
+    expect(badge.textContent).toContain('▲1');
+    expect(badge.textContent).toContain('1 rule break, 1 warning');
   });
 });

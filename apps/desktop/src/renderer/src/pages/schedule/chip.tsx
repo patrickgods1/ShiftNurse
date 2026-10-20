@@ -9,7 +9,7 @@
 import type { Assignment, ShiftType, Violation } from '@shiftnurse/core';
 import { memo } from 'react';
 import { readableTextColor } from '../../contrast.js';
-import { formatHoldover } from '../../format.js';
+import { formatDateWithWeekday, formatHoldover } from '../../format.js';
 import { setDragPayload } from './dnd.js';
 import { chipHeightClass, chipWidthClass, isPendingId } from './grid-utils.js';
 
@@ -77,7 +77,7 @@ export const AssignmentChip = memo(function AssignmentChip({
       draggable={draggable}
       disabled={optimistic}
       title={title}
-      aria-label={`${shiftType?.abbreviation ?? 'Shift'} on ${assignment.date}${
+      aria-label={`${shiftType?.abbreviation ?? 'Shift'} on ${formatDateWithWeekday(assignment.date)}${
         assignment.isLocked ? ', locked' : ''
       }${assignment.floatedTo !== undefined ? `, floated to ${assignment.floatedTo}` : ''}${assignment.isCharge ? ', charge nurse' : ''}${hard ? ', hard violation' : soft ? ', soft violation' : ''}${
         highlighted ? ', differs from the draft' : ''

@@ -181,4 +181,24 @@ describe('publishing a schedule', () => {
     fireEvent.click(await confirm());
     await screen.findByText(/12 shifts for 2 nurses\./);
   });
+
+  it('will not publish a first version with no shifts', async () => {
+    bridge.respond(
+      'publish',
+      'preview',
+      preview({
+        diff: { added: 0, removed: 0, changed: 0, changes: [], affectedNurseIds: [] },
+      }),
+    );
+    renderDialog();
+    const button = await confirm();
+    expect(
+      await screen.findByText(
+        'There are no shifts on this schedule yet. Generate or add shifts before publishing it.',
+      ),
+    ).toBeTruthy();
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(bridge.callsTo('publish', 'publish')).toEqual([]);
+  });
 });

@@ -10,13 +10,14 @@
  * shift type in place (days to nights) and swap with someone working that day.
  */
 
+import type { NurseHoursReadout } from '@shared/api.js';
 import type { Assignment, Id, IsoDate, Nurse, ShiftType, Violation } from '@shiftnurse/core';
 import { useEffect, useState } from 'react';
 import { useConfirm } from '../../components/confirm.js';
 import { Modal } from '../../components/modal.js';
-import { INPUT, LABEL, SECONDARY } from '../../components/ui.js';
-import { formatDateWithWeekday, listName } from '../../format.js';
-import { violationKey } from './grid-utils.js';
+import { errorMessage, INPUT, LABEL, SECONDARY } from '../../components/ui.js';
+import { formatDateWithWeekday, listName, periodRange } from '../../format.js';
+import { isPendingId, keyedViolations } from './grid-utils.js';
 
 interface AssignmentDialogProps {
   assignment: Assignment | undefined;
@@ -36,9 +37,12 @@ interface AssignmentDialogProps {
   onMove: (input: { assignmentId: Id; nurseId: Id; shiftTypeId: Id; date: IsoDate }) => void;
   /** What the manager wants to know about this shift before changing it. */
   context?: {
-    hoursThisPayPeriod: number;
-    contractedHours: number;
-    payPeriodLabel: string;
+    /** The nurse's pay-period hours as main counts them (`schedule.nurseHours`). */
+    hours: {
+      status: 'pending' | 'error' | 'success';
+      data: NurseHoursReadout | undefined;
+      error: unknown;
+    };
     alsoOnShift: readonly Nurse[];
   };
   /** Every active shift type, for "change to". */
@@ -46,6 +50,33 @@ interface AssignmentDialogProps {
   /** Other nurses' shifts on the same date, for "swap with". */
   swapOptions: readonly { assignment: Assignment; nurse: Nurse; shiftType: ShiftType }[];
   onSwap: (firstId: Id, secondId: Id) => void;
+}
+
+/** Main's count, shown as given: nothing here adds hours (the contract's maths is core's). */
+function HoursText({ hours }: { hours: NonNullable<AssignmentDialogProps['context']>['hours'] }) {
+  if (hours.status === 'error') return <p>Could not count hours: {errorMessage(hours.error)}</p>;
+  const r = hours.data;
+  if (hours.status === 'pending' || r === undefined) {
+    return <p>Counting hours in this pay period…</p>;
+  }
+  const label = periodRange({ startDate: r.payPeriod.start, endDate: r.payPeriod.end });
+  const parts = [
+    r.priorHours > 0 ? `${r.priorHours}h before this schedule` : '',
+    r.paidLeaveHours > 0 ? `${r.paidLeaveHours}h paid leave` : '',
+  ].filter((p) => p !== '');
+  return (
+    <>
+      <p>
+        {`${r.scheduledHours + r.paidLeaveHours}h${r.contractedHours > 0 ? ` of ${r.contractedHours}h` : ''} in the pay period ${label}`}
+        {parts.length > 0 ? ` (${parts.join(', ')})` : ''}
+      </p>
+      {r.complete ? null : (
+        <p>
+          Part of this pay period is on no schedule here, so this counts only what is on record.
+        </p>
+      )}
+    </>
+  );
 }
 
 export function AssignmentDialog({
@@ -88,12 +119,13 @@ export function AssignmentDialog({
         <>
           {context ? (
             <div className="mt-2 flex flex-col gap-1 text-xs text-text-muted">
-              <p data-testid="assignment-hours">
-                {context.contractedHours > 0
-                  ? `${context.hoursThisPayPeriod}h of ${context.contractedHours}h`
-                  : `${context.hoursThisPayPeriod}h`}{' '}
-                scheduled in the pay period {context.payPeriodLabel}
-              </p>
+              <div data-testid="assignment-hours">
+                {isPendingId(assignment.id) ? (
+                  <p>Save the shift to see its pay-period hours.</p>
+                ) : (
+                  <HoursText hours={context.hours} />
+                )}
+              </div>
               <p>
                 {context.alsoOnShift.length === 0
                   ? 'Nobody else on this shift yet.'
@@ -109,9 +141,9 @@ export function AssignmentDialog({
 
           {violations.length > 0 ? (
             <ul className="mt-3 flex flex-col gap-1 rounded-md border border-border p-2">
-              {violations.map((violation) => (
+              {keyedViolations(violations).map(({ key, violation }) => (
                 <li
-                  key={violationKey(violation)}
+                  key={key}
                   className={`text-xs ${
                     violation.severity === 'hard' ? 'text-danger' : 'text-warn'
                   }`}

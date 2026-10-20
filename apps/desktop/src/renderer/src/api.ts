@@ -28,7 +28,7 @@ import type {
   PreferenceInput,
   RestWaiverInput,
 } from '../../shared/api.js';
-import { afterConfigChange } from './period-cache.js';
+import { afterAssignmentsChange, afterConfigChange } from './period-cache.js';
 import { queryRoots } from './query-roots.js';
 
 export const api = window.shiftnurse;
@@ -39,6 +39,7 @@ export const queryKeys = {
   dashboard: (unitId: Id) => [...queryRoots.dashboard, unitId] as const,
   nurses: (unitId: Id) => [...queryRoots.nurses, unitId] as const,
   nurse: (id: Id) => [...queryRoots.nurse, id] as const,
+  nurseDeactivation: (id: Id) => [...queryRoots.nurseDeactivation, id] as const,
   shiftTypes: (unitId: Id) => [...queryRoots.shiftTypes, unitId] as const,
   periods: (unitId: Id) => [...queryRoots.periods, unitId] as const,
   assignments: (periodId: Id) => [...queryRoots.assignments, periodId] as const,
@@ -184,13 +185,30 @@ export function useUpdateNurse(unitId: Id | undefined) {
   });
 }
 
+/**
+ * What deactivating would do to the nurse's shifts from today on. Never stale: a shift added
+ * since the dialog last opened is exactly what the manager must see before confirming.
+ */
+export function useDeactivationImpact(nurseId: Id, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.nurseDeactivation(nurseId),
+    queryFn: () => api.nurses.deactivationImpact(nurseId),
+    enabled,
+    staleTime: 0,
+  });
+}
+
 export function useDeactivateNurse(unitId: Id | undefined) {
   const invalidate = useInvalidateRoster(unitId);
   const queryClient = useQueryClient();
   return useMutation({
+    // Main refuses while a published shift remains; the dialog shows that, not a toast.
+    meta: { inlineError: true },
     mutationFn: (id: Id) => api.nurses.deactivate(id),
     onSuccess: (nurse) => {
       invalidate();
+      // Deactivating lifts her draft shifts from every period, so every grid changes.
+      afterAssignmentsChange(queryClient);
       void queryClient.invalidateQueries({ queryKey: queryKeys.nurse(nurse.id) });
     },
   });

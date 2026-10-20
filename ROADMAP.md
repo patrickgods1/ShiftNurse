@@ -768,6 +768,9 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
 - [x] Phase 10 — Renderer: setup guide guards unsaved edits, one shared period choice, Requests
       close date / coverage / decide dialog, leave across two periods, Today refresh and cards,
       tierless census, budget removal, honest loading states (verify: npm run check; smoke)
+- [x] Phase 11 — Renderer: schedule grid and dialogs; deactivation lifts drafts and refuses on
+      posted shifts, leavers' rows marked, licensed pool in Staffing, pay-period hours from main
+      (verify: npm run check; smoke)
 
 ---
 

@@ -26,11 +26,19 @@ import {
   useStartBatch,
 } from '../../api-solver.js';
 import { Modal } from '../../components/modal.js';
-import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { errorMessage, INPUT, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { parseIntegerField } from '../../field-values.js';
 import { periodLabel } from '../../format.js';
 import { formatDollars } from '../../money.js';
 import { fallbackNote, SOLVER_LABELS, SOLVER_ORDER } from '../../solver-labels.js';
-import { bestChoice, digestLine, finishedRuns, spread, variationNumber } from './candidates.js';
+import {
+  bestChoice,
+  digestLine,
+  finishedRuns,
+  runFallbacks,
+  spread,
+  variationNumber,
+} from './candidates.js';
 import { UnfilledList } from './unfilled-list.js';
 
 /** Matches `MAX_BATCH_SIZE` in main; main clamps whatever arrives. */
@@ -77,7 +85,12 @@ export function GenerateDialog({
 }: GenerateDialogProps) {
   /** A one-off override; undefined means "the unit's saved solver". */
   const [solver, setSolver] = useState<SolverId | undefined>(undefined);
-  const [count, setCount] = useState(DEFAULT_VARIATIONS);
+  // The field's text, not a number: clamping per keystroke made it impossible to clear "3" and
+  // type "5" (the blank became 1, then 15 became 10). Everything below uses the last valid count.
+  const [countText, setCountText] = useState(String(DEFAULT_VARIATIONS));
+  const [lastCount, setLastCount] = useState(DEFAULT_VARIATIONS);
+  const typed = parseCount(countText);
+  const count = typed ?? lastCount;
   const savedSolver = useSolverSettings(unitId).data?.solverId;
   const availability = useSolverAvailability().data;
   const start = useStartBatch(period.id);
@@ -155,7 +168,22 @@ export function GenerateDialog({
             continuing={continuing}
             onContinueChange={setContinueSeeds}
             count={count}
-            onCountChange={setCount}
+            countText={countText}
+            countValid={typed !== undefined}
+            onCountTextChange={(text) => {
+              setCountText(text);
+              const next = parseCount(text);
+              if (next !== undefined) setLastCount(next);
+            }}
+            onCountBlur={() => {
+              // Out of range is brought into range; blank or not a number goes back to the last
+              // good value. Only here, never while typing.
+              const n = parseIntegerField(countText);
+              const settled =
+                n === undefined ? lastCount : Math.min(MAX_VARIATIONS, Math.max(1, n));
+              setLastCount(settled);
+              setCountText(String(settled));
+            }}
             estimate={estimate.data}
             pending={start.isPending}
             error={start.isError ? errorMessage(start.error) : undefined}
@@ -168,6 +196,29 @@ export function GenerateDialog({
         )}
       </div>
     </Modal>
+  );
+}
+
+/** A whole number from 1 to MAX_VARIATIONS as typed, or undefined. */
+function parseCount(text: string): number | undefined {
+  const n = parseIntegerField(text);
+  return n !== undefined && n >= 1 && n <= MAX_VARIATIONS ? n : undefined;
+}
+
+/** Per-run fallbacks the batch note does not cover, each with the options it applies to. */
+function RunFallbacks({ batch, tense }: { batch: SolveBatchStatus; tense: 'running' | 'ran' }) {
+  return (
+    <>
+      {runFallbacks(batch).map((g) => (
+        <p
+          key={`${g.fellBackFrom.solver}-${g.solver}-${g.fellBackFrom.reason}`}
+          className="mt-1 text-sm text-warn"
+          data-testid="generate-run-fallback"
+        >
+          {`Option${g.options.length === 1 ? '' : 's'} ${g.options.join(', ')}: ${fallbackNote(g.solver, g.fellBackFrom, tense)}`}
+        </p>
+      ))}
+    </>
   );
 }
 
@@ -202,7 +253,10 @@ function Confirm({
   continuing,
   onContinueChange,
   count,
-  onCountChange,
+  countText,
+  countValid,
+  onCountTextChange,
+  onCountBlur,
   estimate,
   pending,
   error,
@@ -216,13 +270,15 @@ function Confirm({
   lockedCount: number;
   undecidedRequests: number;
   unlockedCount: number;
-  /** Variations already waiting above the grid, which this Generate replaces. */
   /** The period's last batch, finished: what this Generate replaces or carries on from. */
   previous: SolveBatchStatus | undefined;
   continuing: boolean;
   onContinueChange: (continuing: boolean) => void;
   count: number;
-  onCountChange: (count: number) => void;
+  countText: string;
+  countValid: boolean;
+  onCountTextChange: (text: string) => void;
+  onCountBlur: () => void;
   estimate: SolveEstimate | undefined;
   pending: boolean;
   error: string | undefined;
@@ -283,14 +339,20 @@ function Confirm({
             data-testid="generate-count"
             min={1}
             max={MAX_VARIATIONS}
-            value={count}
-            onChange={(e) => {
-              const next = Math.round(Number(e.target.value));
-              if (Number.isFinite(next)) onCountChange(Math.min(MAX_VARIATIONS, Math.max(1, next)));
-            }}
-            className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-text"
+            step={1}
+            value={countText}
+            onChange={(e) => onCountTextChange(e.target.value)}
+            onBlur={onCountBlur}
+            aria-invalid={!countValid}
+            aria-describedby={countValid ? undefined : 'generate-count-hint'}
+            className={INPUT}
           />
         </label>
+        {countValid ? null : (
+          <p id="generate-count-hint" className="mt-1 text-xs text-danger">
+            Enter a whole number from 1 to {MAX_VARIATIONS}.
+          </p>
+        )}
       </div>
       <details className="mt-3 text-xs text-text-muted">
         <summary className="cursor-pointer select-none">Advanced: search method</summary>
@@ -347,15 +409,15 @@ function Confirm({
         </p>
       ) : null}
       <div className="mt-6 flex flex-wrap justify-end gap-2">
-        <button type="button" className={secondaryButton} onClick={onClose}>
+        <button type="button" className={SECONDARY} onClick={onClose}>
           Cancel
         </button>
         <button
           type="button"
           data-testid="generate-confirm"
-          disabled={pending}
+          disabled={pending || !countValid}
           onClick={onGenerate}
-          className={primaryButton}
+          className={PRIMARY}
         >
           {pending
             ? 'Starting…'
@@ -481,7 +543,7 @@ function Running({
           {batch.count === 1 ? 'Generating' : `Generating ${batch.count} options`} with{' '}
           {SOLVER_LABELS[batch.solver].name}
         </span>
-        <span className="text-text-muted">
+        <span className="text-text-muted" aria-live="polite">
           {finished} of {batch.count} done
         </span>
       </div>
@@ -491,12 +553,14 @@ function Running({
         value={fraction}
         max={1}
         aria-label="Generate progress"
+        aria-valuetext={`${finished} of ${batch.count} options done`}
       />
       {batch.fellBackFrom ? (
         <p className="mt-2 text-sm text-warn" data-testid="generate-fallback">
           {fallbackNote(batch.solver, batch.fellBackFrom, 'running')}
         </p>
       ) : null}
+      <RunFallbacks batch={batch} tense="running" />
       <ol className="mt-3 max-h-56 overflow-y-auto rounded-md border border-border text-xs">
         {batch.runs.map((run) => (
           <li
@@ -532,11 +596,11 @@ function Running({
           data-testid="generate-cancel"
           disabled={cancelling}
           onClick={onCancel}
-          className={secondaryButton}
+          className={SECONDARY}
         >
           {cancelling ? 'Stopping…' : 'Stop'}
         </button>
-        <button type="button" className={primaryButton} onClick={onClose}>
+        <button type="button" className={PRIMARY} onClick={onClose}>
           Close
         </button>
       </div>
@@ -582,10 +646,10 @@ function Finished({
           schedule as it is now.
         </p>
         <div className="mt-6 flex flex-wrap justify-end gap-2">
-          <button type="button" className={secondaryButton} onClick={onClose}>
+          <button type="button" className={SECONDARY} onClick={onClose}>
             Close
           </button>
-          <button type="button" onClick={onGenerateAgain} className={primaryButton}>
+          <button type="button" onClick={onGenerateAgain} className={PRIMARY}>
             Generate again
           </button>
         </div>
@@ -625,6 +689,7 @@ function Finished({
           {fallbackNote(batch.solver, batch.fellBackFrom, 'ran')}
         </p>
       ) : null}
+      <RunFallbacks batch={batch} tense="ran" />
       <div className="mt-3 overflow-x-auto">
         <table className="w-full border-collapse text-xs">
           <thead>
@@ -732,7 +797,7 @@ function Finished({
           type="button"
           data-testid="generate-again"
           onClick={onGenerateAgain}
-          className={secondaryButton}
+          className={SECONDARY}
         >
           Generate more
         </button>
@@ -741,18 +806,13 @@ function Finished({
             type="button"
             data-testid="generate-compare"
             onClick={onCompare}
-            className={secondaryButton}
+            className={SECONDARY}
           >
             Compare all
           </button>
         ) : null}
         {choice?.kind === 'grid' ? (
-          <button
-            type="button"
-            data-testid="generate-keep"
-            className={primaryButton}
-            onClick={onClose}
-          >
+          <button type="button" data-testid="generate-keep" className={PRIMARY} onClick={onClose}>
             Keep the grid
           </button>
         ) : bestIndex !== undefined ? (
@@ -760,12 +820,12 @@ function Finished({
             type="button"
             data-testid="generate-preview-best"
             onClick={() => onPreview(bestIndex)}
-            className={primaryButton}
+            className={PRIMARY}
           >
             Preview option {variationNumber(batch, bestIndex)} on the grid
           </button>
         ) : (
-          <button type="button" className={primaryButton} onClick={onClose}>
+          <button type="button" className={PRIMARY} onClick={onClose}>
             Close
           </button>
         )}
@@ -773,6 +833,3 @@ function Finished({
     </div>
   );
 }
-
-const primaryButton = PRIMARY;
-const secondaryButton = SECONDARY;

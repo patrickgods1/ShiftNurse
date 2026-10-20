@@ -80,8 +80,13 @@ export function usePublish(periodId: Id | undefined, _unitId: Id | undefined) {
   });
 }
 
-export function useExport(periodId: Id | undefined) {
+/**
+ * A caller that shows the failure beside its own control asks for `inlineError`; the default is
+ * the toast, because the publish dialog's export buttons have nowhere else to put it.
+ */
+export function useExport(periodId: Id | undefined, options: { inlineError?: boolean } = {}) {
   return useMutation({
+    ...(options.inlineError === true ? { meta: { inlineError: true } } : {}),
     mutationFn: (format: OutputFormat) => api.output.exportToFile(periodId as Id, format),
   });
 }

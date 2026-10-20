@@ -97,7 +97,9 @@
   `dependencies` is exactly the set the packaged main process loads from disk. `npm run
   smoke:packaged` boots the built `.app`/`.exe` from `release/` in smoke mode — run it after any
   packaging change; the dev-binary smoke cannot see a missing migration or wrong-ABI binary.
-- **The renderer never re-derives time maths.** `renderer/src/format.ts` splits ISO strings
+- **The renderer never re-derives time maths — nor rule maths:** the shift popover's pay-period
+  hours come from `schedule.nurseHours`, the same `payPeriodHoursFor` the contracted-hours rule
+  judges by. `renderer/src/format.ts` splits ISO strings
   for display and calls core's `weekdayOf`/`dayNumber` for anything else. The first version
   computed weekday as `dayNumber % 7` and labelled Sunday 2026-09-20 "Wed" — day 0 of the
   epoch was a Thursday. Renderer unit tests live next to the code and run under `npm test`;
@@ -122,6 +124,9 @@
   policy: `will-navigate` is blocked for any other URL (a file dropped on the grid would
   otherwise load with the preload bridge), `ipc.ts` refuses untrusted sender frames, and
   `openExternal` takes only `https:`/`mailto:`.
+- **An inactive nurse can give shifts away but never receive one** (`requireActiveRecipient`:
+  create, move to her, swap). A swap involving her is refused outright, since each side receives
+  the other's shift, so her shifts leave by a move to a colleague.
 - **Swapping two shifts is both moves in one `transact`** (`schedule.swapAssignments`): a refusal
   of either half — a lock, a nurse already on that shift — leaves both where they were.
 - **The smoke test creates data through the raw bridge**, which bypasses the renderer's

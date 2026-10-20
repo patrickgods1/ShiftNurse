@@ -18,8 +18,6 @@ import {
   violationsByDate as indexByDate,
   violationsByNurse as indexByNurse,
   isWeekendDate,
-  payPeriodIndex,
-  payPeriodWindow,
   rangesOverlap,
   weekdayOf,
 } from '@shiftnurse/core';
@@ -28,10 +26,9 @@ import { useAssignments, useShiftTypes, useTimeOff } from '../../api.js';
 import { useCostReport } from '../../api-cost.js';
 import { useDemand } from '../../api-demand.js';
 import { usePeriodRoster } from '../../api-nurse-units.js';
-import { useValidation } from '../../api-schedule.js';
+import { useNurseHours, useValidation } from '../../api-schedule.js';
 import { AsyncState } from '../../components/async-state.js';
 import { errorMessage, PRIMARY, SECONDARY } from '../../components/ui.js';
-import { periodRange } from '../../format.js';
 import { useUnit } from '../../unit-context.js';
 import { ReasonDialog } from '../requests/reason-dialog.js';
 import { type AlertTarget, useAlertsPill } from './alerts-panel.js';
@@ -45,19 +42,20 @@ import { ExportMenu } from './export-menu.js';
 import { GenerateDialog } from './generate-dialog.js';
 import type { GridColumn, GridSpotlight } from './grid.js';
 
-/** How long "Show on grid" keeps its ring: long enough to find, short enough to not be a mark. */
-const SPOTLIGHT_MS = 4000;
-
 import { ScheduleGrid } from './grid.js';
 import { GridLegend } from './grid-legend.js';
 import { sortNurses } from './grid-utils.js';
 import { ShiftPalette } from './palette.js';
 import { PublishDialog } from './publish-dialog.js';
 import { type StatusItem, StatusRow } from './status-row.js';
+import { swapCandidates } from './swap-candidates.js';
 import { useGenerateFlow } from './use-generate-flow.js';
 import { useGridEdits } from './use-grid-edits.js';
 import { useScheduleDialogs } from './use-schedule-dialogs.js';
 import { violationPill } from './violation-summary.js';
+
+/** How long "Show on grid" keeps its ring: long enough to find, short enough to not be a mark. */
+const SPOTLIGHT_MS = 4000;
 
 interface ScheduleBoardProps {
   unitId: Id;
@@ -182,6 +180,10 @@ export function ScheduleBoard({ unitId, period, focusNurseId, leading }: Schedul
     preview: preview && previewLabel ? { alerts: preview.alerts, label: previewLabel } : undefined,
   });
 
+  // Asked before the loading returns below (hooks run unconditionally). A saved shift only: an
+  // unsaved preview shift is not in the query's rows, so nothing is asked for it.
+  const openSaved = assignmentsQuery.data?.find((a) => a.id === dialogs.openAssignmentId);
+  const openHours = useNurseHours(period.id, openSaved?.nurseId, openSaved?.date);
   const { openAssignment: openAssignmentById } = dialogs;
   const handleChipOpen = useCallback(
     (a: Assignment) => openAssignmentById(a.id),
@@ -259,17 +261,6 @@ export function ScheduleBoard({ unitId, period, focusNurseId, leading }: Schedul
     : undefined;
   const openContext = (() => {
     if (!openAssignment || !openNurse) return undefined;
-    const window = payPeriodWindow(payPeriodIndex(openAssignment.date, unit), unit);
-    const byType = new Map(shiftTypesQuery.data.map((st) => [st.id, st]));
-    const hours = allAssignments
-      .filter(
-        (a) =>
-          a.nurseId === openNurse.id &&
-          a.date >= window.start &&
-          a.date <= window.end &&
-          !byType.get(a.shiftTypeId)?.isOnCall,
-      )
-      .reduce((sum, a) => sum + (byType.get(a.shiftTypeId)?.durationHours ?? 0), 0);
     const alsoOnShift = allAssignments
       .filter(
         (a) =>
@@ -281,21 +272,12 @@ export function ScheduleBoard({ unitId, period, focusNurseId, leading }: Schedul
       .filter((n): n is NonNullable<typeof n> => n !== undefined)
       .sort((a, b) => a.lastName.localeCompare(b.lastName));
     return {
-      hoursThisPayPeriod: hours,
-      contractedHours: openNurse.contractedHoursPerPeriod,
-      payPeriodLabel: periodRange({ startDate: window.start, endDate: window.end }),
+      hours: { status: openHours.status, data: openHours.data, error: openHours.error },
       alsoOnShift,
     };
   })();
   const swapOptions = openAssignment
-    ? allAssignments
-        .filter(
-          (a) =>
-            a.date === openAssignment.date &&
-            a.nurseId !== openAssignment.nurseId &&
-            a.shiftTypeId !== openAssignment.shiftTypeId &&
-            !a.isLocked,
-        )
+    ? swapCandidates(allAssignments, openAssignment)
         .flatMap((a) => {
           const nurse = nursesQuery.data.find((n) => n.id === a.nurseId);
           const shiftType = shiftTypesQuery.data.find((st) => st.id === a.shiftTypeId);
@@ -519,7 +501,7 @@ export function ScheduleBoard({ unitId, period, focusNurseId, leading }: Schedul
         assignment={openAssignment}
         nurse={openNurse}
         shiftType={openShiftType}
-        violations={openViolations ?? []}
+        violations={openViolations}
         pending={openAssignment ? pendingIds.has(openAssignment.id) : false}
         onClose={dialogs.closeAssignment}
         onToggleLock={edits.handleToggleLock}

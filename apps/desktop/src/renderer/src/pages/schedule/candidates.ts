@@ -5,7 +5,7 @@
  */
 
 import type { SolveBatchStatus, SolveRunStatus, SolveRunSummary } from '@shared/api.js';
-import type { CountRange } from '@shiftnurse/core';
+import type { CountRange, SolverId } from '@shiftnurse/core';
 import { formatDollars } from '../../money.js';
 
 export type BestChoice =
@@ -16,6 +16,45 @@ export type BestChoice =
 /** The number a manager sees: run `index` of a batch that continued after `offset` variations. */
 export function variationNumber(batch: Pick<SolveBatchStatus, 'offset'>, index: number): number {
   return batch.offset + index + 1;
+}
+
+export interface FallbackGroup {
+  solver: SolverId;
+  fellBackFrom: { solver: SolverId; reason: string };
+  /** Variation numbers, as the manager sees them. */
+  options: number[];
+}
+
+/**
+ * Options that fell back, grouped by what ran, what was asked for and why, in order of first
+ * appearance. A reason the whole batch already gave is left out when `skipReason` is passed: the
+ * batch-level note says it once.
+ */
+export function groupFallbacks(
+  items: readonly {
+    index: number;
+    solver?: SolverId | undefined;
+    fellBackFrom?: { solver: SolverId; reason: string } | undefined;
+  }[],
+  offset: number,
+  skipReason?: string,
+): FallbackGroup[] {
+  const groups = new Map<string, FallbackGroup>();
+  for (const item of items) {
+    const { fellBackFrom, solver } = item;
+    if (!fellBackFrom || !solver || fellBackFrom.reason === skipReason) continue;
+    const key = JSON.stringify([fellBackFrom.solver, solver, fellBackFrom.reason]);
+    const number = variationNumber({ offset }, item.index);
+    const group = groups.get(key);
+    if (group) group.options.push(number);
+    else groups.set(key, { solver, fellBackFrom, options: [number] });
+  }
+  return [...groups.values()];
+}
+
+/** The per-run fallbacks a batch's own note does not already explain. */
+export function runFallbacks(batch: SolveBatchStatus): FallbackGroup[] {
+  return groupFallbacks(batch.runs, batch.offset, batch.fellBackFrom?.reason);
 }
 
 export function finishedRuns(batch: SolveBatchStatus): SolveRunStatus[] {

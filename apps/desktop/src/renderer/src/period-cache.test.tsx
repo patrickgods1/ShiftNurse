@@ -66,6 +66,7 @@ type MutationHook = () => { mutateAsync: (v: never) => Promise<unknown> };
 
 const CONFIG_SCREENS: Screens = [
   ["another period's rule badges", scheduleKeys.validation('p2')],
+  ["another period's pay-period hours", scheduleKeys.nurseHours('p2', 'n1', '2026-11-03')],
   ['its conflicts list', requestKeys.conflicts('p2')],
   ['its cost strip', costKeys.report('p2')],
   ['its fairness report', fairnessQueryKeys.report('p2')],
@@ -86,6 +87,7 @@ const CONFIG_SCREENS: Screens = [
 const ASSIGNMENT_SCREENS = [
   ["another period's grid", queryKeys.assignments('p2')],
   ["another period's rule badges", scheduleKeys.validation('p2')],
+  ["another period's pay-period hours", scheduleKeys.nurseHours('p2', 'n1', '2026-11-03')],
   ['its conflicts list', requestKeys.conflicts('p2')],
   ['its cost strip', costKeys.report('p2')],
   ['its fairness report', fairnessQueryKeys.report('p2')],
@@ -187,6 +189,8 @@ const assignmentHooks: [string, MutationHook, unknown][] = [
   ['recording a holdover', () => dayof.useRecordHoldover(UNIT), {}],
   ['approving a shift exchange', () => exchange.useApproveExchange(UNIT, 'p1'), { id: 'x' }],
   ['floating a nurse to another unit', () => floatOut.useFloatNurse(UNIT), { periodId: 'p1' }],
+  // Deactivating lifts the nurse's draft shifts from every period, so every grid changes.
+  ['deactivating a nurse', () => roster.useDeactivateNurse(UNIT), 'x'],
 ];
 
 const leaveHooks: [string, MutationHook, unknown][] = [

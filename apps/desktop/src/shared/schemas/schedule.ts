@@ -36,6 +36,7 @@ const assignmentPatch = object({
 
 export const scheduleSchemas = {
   validate: z.tuple([id]),
+  nurseHours: z.tuple([id, id, isoDate]),
   createAssignment: z.tuple([createAssignmentInput, reason, consent]),
   moveAssignment: z.tuple([moveAssignmentInput, reason, consent]),
   swapAssignments: z.tuple([id, id, reason, consent]),

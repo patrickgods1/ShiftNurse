@@ -41,6 +41,8 @@ function withConsent(consent: string | undefined): [] | [string] {
 
 export const scheduleKeys = {
   validation: (periodId: Id) => [...queryRoots.validation, periodId] as const,
+  nurseHours: (periodId: Id, nurseId: Id, date: string) =>
+    [...queryRoots.nurseHours, periodId, nurseId, date] as const,
 };
 
 export function useValidation(periodId: Id | undefined) {
@@ -48,6 +50,15 @@ export function useValidation(periodId: Id | undefined) {
     queryKey: scheduleKeys.validation(periodId ?? ''),
     queryFn: () => api.schedule.validate(periodId as Id),
     enabled: periodId !== undefined,
+  });
+}
+
+/** The popover's pay-period hours; asks only once a shift is open. */
+export function useNurseHours(periodId: Id, nurseId: Id | undefined, date: IsoDate | undefined) {
+  return useQuery({
+    queryKey: scheduleKeys.nurseHours(periodId, nurseId ?? '', date ?? ''),
+    queryFn: () => api.schedule.nurseHours(periodId, nurseId as Id, date as IsoDate),
+    enabled: nurseId !== undefined && date !== undefined,
   });
 }
 

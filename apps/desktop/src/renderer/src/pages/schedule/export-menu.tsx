@@ -1,14 +1,17 @@
 /**
  * The Export menu: PDF grid, per-nurse PDF sheets, CSV (grid or shift list) and an Excel
  * workbook. Each item opens a native save dialog in main; the renderer only learns the path
- * that was written, which it shows briefly so the manager knows where the file went.
+ * that was written, which it shows for 8 seconds so the manager knows where the file went and
+ * then lets go of it — a stale path beside a later failure reads as if that one had saved too.
  */
 
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import type { OutputFormat } from '@shared/api.js';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useExport } from '../../api-publish.js';
 import { errorMessage } from '../../components/ui.js';
+
+const SAVED_PATH_MS = 8000;
 
 const ITEMS: readonly { format: OutputFormat; label: string }[] = [
   { format: 'pdf-grid', label: 'Unit grid (PDF)' },
@@ -23,8 +26,14 @@ interface ExportMenuProps {
 }
 
 export function ExportMenu({ periodId }: ExportMenuProps) {
-  const exportFile = useExport(periodId);
+  const exportFile = useExport(periodId, { inlineError: true });
   const [lastPath, setLastPath] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (lastPath === undefined) return;
+    const timer = setTimeout(() => setLastPath(undefined), SAVED_PATH_MS);
+    return () => clearTimeout(timer);
+  }, [lastPath]);
 
   return (
     <div className="flex items-center gap-2">
@@ -58,11 +67,13 @@ export function ExportMenu({ periodId }: ExportMenuProps) {
             {ITEMS.map((item) => (
               <DropdownMenu.Item
                 key={item.format}
-                onSelect={() =>
+                onSelect={() => {
+                  setLastPath(undefined);
+                  exportFile.reset();
                   exportFile.mutate(item.format, {
                     onSuccess: (path) => setLastPath(path ?? undefined),
-                  })
-                }
+                  });
+                }}
                 className="cursor-pointer rounded px-2 py-1.5 text-sm text-text outline-none data-[highlighted]:bg-bg"
               >
                 {item.label}

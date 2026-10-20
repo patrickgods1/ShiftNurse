@@ -8,7 +8,7 @@ import { ALL_RULES, type EvaluationResult, type Violation } from '@shiftnurse/co
 import { Link } from '@tanstack/react-router';
 import { useMemo } from 'react';
 import { formatDate } from '../../format.js';
-import { violationKey } from './grid-utils.js';
+import { keyedViolations } from './grid-utils.js';
 import { PreviewTag } from './preview-tag.js';
 import type { StatusItem } from './status-row.js';
 import { type ValidationStatus, violationReadout } from './violation-readout.js';
@@ -48,20 +48,20 @@ function ViolationList({ violations }: { violations: readonly Violation[] }) {
   // Hard-first, so the most urgent problems are always at the top of an open list.
   const sorted = useMemo(
     () =>
-      [...violations].sort((a, b) => {
-        if (a.severity === b.severity) return 0;
-        return a.severity === 'hard' ? -1 : 1;
-      }),
+      keyedViolations(
+        [...violations].sort((a, b) => {
+          if (a.severity === b.severity) return 0;
+          return a.severity === 'hard' ? -1 : 1;
+        }),
+      ),
     [violations],
   );
 
   return (
     <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto">
-      {sorted.map((violation) => (
-        // Violations have no id of their own; the rule plus the entities it names is
-        // stable and unique enough within one validation result to key a render on.
+      {sorted.map(({ key, violation }) => (
         <li
-          key={violationKey(violation)}
+          key={key}
           className={`text-xs ${violation.severity === 'hard' ? 'text-danger' : 'text-warn'}`}
         >
           <span className="font-medium">{violation.severity === 'hard' ? 'Hard' : 'Soft'}</span>

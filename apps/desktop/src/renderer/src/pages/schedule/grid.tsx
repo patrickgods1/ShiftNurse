@@ -1,16 +1,19 @@
 /**
- * The nurse x day grid. Rows are memoised (`React.memo` + stable callbacks from the parent) so
- * that redrawing 42 nurses x 42 days on every validation refresh doesn't mean re-rendering
- * every cell that didn't change — only the row(s) whose props actually differ do. That only
- * holds if per-row props are per-row: a row sees the drag highlight only when it is in that
- * row, and the pending set only when one of its own shifts is pending.
+ * The nurse x day grid. Each row is handed its own slice of the period's indexes (`rowSlices`:
+ * its cells, its shifts' violations and notes, its nurse-level violations), and a slice is reused
+ * as the same object when nothing in it changed. Rows are `React.memo`, so a refetch that adds one
+ * shift redraws that nurse's row and skips the rest. That only holds if every per-row prop is
+ * per-row: a row sees the drag highlight only when it is in that row, and the pending set only
+ * when one of its own shifts is pending.
  *
  * Keyboard: a roving tabindex, as ARIA's grid pattern describes. The tab stops are the active
  * cell and the shift chips inside it — every other cell and chip is `tabIndex=-1` — so Tab enters
- * the grid, reaches that cell's shifts, and leaves. Arrow keys move the active cell, Home/End jump
- * along the row, and Enter on a cell opens the shift-type picker (the keyboard route for
- * dropping a palette shift there). A chip opens its dialog with Enter, where "Move to" is the
- * keyboard route for dragging it.
+ * the grid, reaches that cell's shifts, and leaves. Arrow keys move the active cell (from a cell
+ * or from a shift chip in it), Home/End jump along the row, Ctrl+Home/Ctrl+End to the first and
+ * last cell, PageUp/PageDown ten nurses at a time, and Enter on a cell opens the shift-type picker
+ * (the keyboard route for dropping a palette shift there). A chip opens its dialog with Enter,
+ * where "Move to" is the keyboard route for dragging it. If the roster shrinks under the active
+ * cell, the tab stop moves to the nearest cell that still exists.
  *
  * Violation indexes are built once per validation result by the caller (`board.tsx`) and passed
  * in as plain maps, so this component never re-walks the violations array itself.
@@ -43,12 +46,12 @@ import { AssignmentChip } from './chip.js';
 import type { DragPayload } from './dnd.js';
 import { readDragPayload } from './dnd.js';
 import {
-  buildCellIndex,
-  cellKey,
+  gridNurses,
   headcountRows,
   monthSpans,
+  type RowSlice,
+  rowSlices,
   SHORT_WEEKDAY,
-  sortNurses,
   staffingSummary,
 } from './grid-utils.js';
 
@@ -75,11 +78,14 @@ export interface GridSpotlight {
 }
 
 /** The problem the manager asked to see: a ring that pulses until the spotlight clears. */
-const SPOTLIGHT_CELL = 'ring-2 ring-inset ring-danger bg-danger/10 animate-pulse';
+const SPOTLIGHT_CELL = 'ring-2 ring-inset ring-danger bg-danger/10 motion-safe:animate-pulse';
 const SPOTLIGHT_COLUMN = 'bg-danger/10';
 const EMPTY_IDS: ReadonlySet<Id> = new Set();
 
 const EMPTY_VIOLATIONS: readonly Violation[] = [];
+
+/** How many nurses PageUp and PageDown move: a screenful at the usual window size. */
+const PAGE_ROWS = 10;
 
 /** Height of one row under the grid, in rem; the sticky offsets stack in these units. */
 const FOOTER_ROW_REM = 1.75;
@@ -129,15 +135,29 @@ function scrollParent(el: HTMLElement): HTMLElement | undefined {
   return undefined;
 }
 
+/**
+ * Break and warning counts, told apart by shape as well as colour (the same ⬣ and ▲ the legend
+ * describes), with the same facts in words for a screen reader. The messages themselves stay in
+ * `title`; keyboard users reach every one, with its dates, through the Violations pill above the
+ * grid, so header badges are not tab stops (the grid has one roving stop).
+ */
 function CountBadge({ hard, soft, title }: { hard: number; soft: number; title: string }) {
   if (hard === 0 && soft === 0) return null;
+  const spoken = [
+    hard > 0 ? `${hard} rule break${hard === 1 ? '' : 's'}` : undefined,
+    soft > 0 ? `${soft} warning${soft === 1 ? '' : 's'}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(', ');
   return (
-    <span
-      title={title}
-      className={`ml-1 inline-flex min-w-[1rem] items-center justify-center rounded-full px-1
-        text-xs font-semibold ${hard > 0 ? 'bg-danger/15 text-danger' : 'bg-warn/15 text-warn'}`}
-    >
-      {hard > 0 ? hard : soft}
+    <span title={title} className="ml-1 inline-flex items-center gap-1 text-xs font-semibold">
+      <span aria-hidden="true" className="inline-flex items-center gap-1">
+        {hard > 0 ? (
+          <span className="rounded-full bg-danger/15 px-1 text-danger">⬣{hard}</span>
+        ) : null}
+        {soft > 0 ? <span className="rounded-full bg-warn/15 px-1 text-warn">▲{soft}</span> : null}
+      </span>
+      <span className="sr-only">{`${spoken}; listed under Violations above the grid`}</span>
     </span>
   );
 }
@@ -154,7 +174,7 @@ interface GridCellProps {
   onOpenPicker: (nurseId: Id, date: IsoDate, cell: HTMLElement) => void;
   assignments: readonly Assignment[];
   shiftTypesById: ReadonlyMap<Id, ShiftType>;
-  violationsByAssignment: ReadonlyMap<Id, Violation[]>;
+  violationsByAssignment: ReadonlyMap<Id, readonly Violation[]>;
   pendingIds: ReadonlySet<Id>;
   /** Shifts to mark as differing from the draft (`nurseId|date|shiftTypeId`), when previewing. */
   highlightKeys: ReadonlySet<string> | undefined;
@@ -171,6 +191,8 @@ interface GridCellProps {
   onChipOpen: (assignment: Assignment) => void;
   onChipDelete: (assignment: Assignment) => void;
   preferenceNotes: ReadonlyMap<Id, string>;
+  /** False on a nurse who has left: her shifts can be moved off her, none can land on her. */
+  acceptsShifts: boolean;
 }
 
 function GridCell({
@@ -198,7 +220,9 @@ function GridCell({
   onChipOpen,
   onChipDelete,
   preferenceNotes,
+  acceptsShifts,
 }: GridCellProps) {
+  const droppable = !readOnly && acceptsShifts;
   return (
     // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern on a flex layout with sticky headers (see the module header)
     <div
@@ -214,7 +238,7 @@ function GridCell({
       // Focus landing on a chip (a click, say) makes its cell the active one too.
       onFocus={() => onFocusCell(row, col)}
       onKeyDown={(event) => {
-        if (readOnly || event.target !== event.currentTarget) return;
+        if (!droppable || event.target !== event.currentTarget) return;
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           onOpenPicker(nurseId, date, event.currentTarget);
@@ -226,7 +250,7 @@ function GridCell({
           isDragOver ? 'outline outline-2 -outline-offset-2 outline-accent' : ''
         } ${spotlit === 'cell' ? SPOTLIGHT_CELL : spotlit === 'column' ? SPOTLIGHT_COLUMN : ''}`}
       onDragEnter={
-        readOnly
+        !droppable
           ? undefined
           : (event) => {
               event.preventDefault();
@@ -234,7 +258,7 @@ function GridCell({
             }
       }
       onDragOver={
-        readOnly
+        !droppable
           ? undefined
           : (event) => {
               event.preventDefault();
@@ -242,7 +266,7 @@ function GridCell({
             }
       }
       onDragLeave={
-        readOnly
+        !droppable
           ? undefined
           : (event) => {
               if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
@@ -251,7 +275,7 @@ function GridCell({
             }
       }
       onDrop={
-        readOnly
+        !droppable
           ? undefined
           : (event) => {
               event.preventDefault();
@@ -288,14 +312,13 @@ function GridCell({
 interface GridRowProps {
   nurse: Nurse;
   columns: readonly GridColumn[];
-  assignmentsByCell: ReadonlyMap<string, Assignment[]>;
+  /** This nurse's cells, violations and notes; the same object while none of them change. */
+  slice: RowSlice;
   shiftTypesById: ReadonlyMap<Id, ShiftType>;
-  violationsByAssignment: ReadonlyMap<Id, Violation[]>;
   pendingIds: ReadonlySet<Id>;
   highlightKeys: ReadonlySet<string> | undefined;
   /** This row is the nurse a link asked to see; a boolean so no other row re-renders. */
   highlighted: boolean;
-  nurseViolations: readonly Violation[] | undefined;
   /** The day a link points at, when it is this nurse's or every nurse's. */
   spotlightDate: IsoDate | undefined;
   /** Whether that link named this nurse (a cell) or only the day (the column). */
@@ -313,7 +336,6 @@ interface GridRowProps {
   onDragOverCell: (nurseId: Id, date: IsoDate, over: boolean) => void;
   onChipOpen: (assignment: Assignment) => void;
   onChipDelete: (assignment: Assignment) => void;
-  preferenceNotes: ReadonlyMap<Id, string>;
 }
 
 const EMPTY_ASSIGNMENTS: readonly Assignment[] = [];
@@ -322,16 +344,14 @@ const NO_PENDING: ReadonlySet<Id> = new Set();
 const GridRow = memo(function GridRow({
   nurse,
   columns,
-  assignmentsByCell,
+  slice,
   shiftTypesById,
-  violationsByAssignment,
   pendingIds,
   highlightKeys,
   highlighted,
   spotlightDate,
   spotlightKind,
   spotlightIds,
-  nurseViolations,
   dragOverDate,
   row,
   activeCol,
@@ -342,8 +362,8 @@ const GridRow = memo(function GridRow({
   onDragOverCell,
   onChipOpen,
   onChipDelete,
-  preferenceNotes,
 }: GridRowProps) {
+  const { nurseViolations } = slice;
   const counts = severityCounts(nurseViolations);
   const nurseLabel = `${nurse.firstName} ${nurse.lastName}`;
   return (
@@ -367,15 +387,22 @@ const GridRow = memo(function GridRow({
           <CountBadge
             hard={counts.hard}
             soft={counts.soft}
-            title={(nurseViolations ?? []).map((v) => v.message).join('\n')}
+            title={nurseViolations.map((v) => v.message).join('\n')}
           />
         </p>
         <p className="text-xs text-text-muted">
           {nurse.role} · {fteLabel(nurse)}
+          {nurse.active ? null : (
+            <span
+              data-testid="inactive-nurse"
+              className="ml-1 rounded border border-border px-1 text-[10px] text-text-muted"
+            >
+              Inactive
+            </span>
+          )}
         </p>
       </div>
       {columns.map((column, col) => {
-        const key = cellKey(nurse.id, column.date);
         return (
           <GridCell
             key={column.date}
@@ -387,9 +414,9 @@ const GridRow = memo(function GridRow({
             tabbable={activeCol === col}
             onFocusCell={onFocusCell}
             onOpenPicker={onOpenPicker}
-            assignments={assignmentsByCell.get(key) ?? EMPTY_ASSIGNMENTS}
+            assignments={slice.cells.get(column.date) ?? EMPTY_ASSIGNMENTS}
             shiftTypesById={shiftTypesById}
-            violationsByAssignment={violationsByAssignment}
+            violationsByAssignment={slice.violations}
             pendingIds={pendingIds}
             highlightKeys={highlightKeys}
             isDragOver={dragOverDate === column.date}
@@ -402,7 +429,8 @@ const GridRow = memo(function GridRow({
             onDragOverChange={(over) => onDragOverCell(nurse.id, column.date, over)}
             onChipOpen={onChipOpen}
             onChipDelete={onChipDelete}
-            preferenceNotes={preferenceNotes}
+            preferenceNotes={slice.preferenceNotes}
+            acceptsShifts={nurse.active}
           />
         );
       })}
@@ -466,7 +494,7 @@ export function ScheduleGrid({
     });
   }, []);
 
-  const activeNurses = useMemo(() => sortNurses(nurses), [nurses]);
+  const rowNurses = useMemo(() => gridNurses(nurses, assignments), [nurses, assignments]);
   const gridRef = useRef<HTMLDivElement>(null);
 
   // The grid's own scroll area ends at the window bottom, whatever sits above it (the status
@@ -514,7 +542,7 @@ export function ScheduleGrid({
     const grid = gridRef.current;
     if (!spotlight || !grid) return;
     const col = columns.findIndex((c) => c.date === spotlight.date);
-    const row = activeNurses.findIndex((n) => n.id === spotlight.nurseId);
+    const row = rowNurses.findIndex((n) => n.id === spotlight.nurseId);
     const target =
       row >= 0 && col >= 0
         ? grid.querySelector<HTMLElement>(`[data-cell="${row}:${col}"]`)
@@ -523,7 +551,7 @@ export function ScheduleGrid({
           );
     target?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
     // The nonce is the trigger; a new spotlight with the same target still scrolls.
-  }, [spotlight, columns, activeNurses]);
+  }, [spotlight, columns, rowNurses]);
   const spotlightIds = useMemo(
     () => (spotlight ? new Set(spotlight.assignmentIds) : EMPTY_IDS),
     [spotlight],
@@ -542,33 +570,54 @@ export function ScheduleGrid({
     setPicker({ nurseId, date, top: rect.bottom + 4, left: rect.left });
   }, []);
 
+  // The roster can shrink under the active cell (a nurse leaves); the tab stop must land on a
+  // row that still exists, or the grid has none and Tab skips it.
+  const activeRow = Math.max(0, Math.min(active.row, rowNurses.length - 1));
+  const activeCol = Math.max(0, Math.min(active.col, columns.length - 1));
+
   const handleGridKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const cell = (event.target as HTMLElement).dataset.cell;
-    if (cell === undefined) return;
-    const [row = 0, col = 0] = cell.split(':').map(Number);
-    const lastRow = activeNurses.length - 1;
+    // From a cell or from a shift chip inside one; the picker's buttons have no cell around them
+    // and keep their own keys.
+    const cell = (event.target as HTMLElement).closest<HTMLElement>('[data-cell]');
+    if (!cell || !gridRef.current?.contains(cell) || cell.dataset.cell === undefined) return;
+    const [row = 0, col = 0] = cell.dataset.cell.split(':').map(Number);
+    const lastRow = rowNurses.length - 1;
     const lastCol = columns.length - 1;
-    const next =
-      event.key === 'ArrowUp'
-        ? { row: Math.max(0, row - 1), col }
-        : event.key === 'ArrowDown'
-          ? { row: Math.min(lastRow, row + 1), col }
-          : event.key === 'ArrowLeft'
-            ? { row, col: Math.max(0, col - 1) }
-            : event.key === 'ArrowRight'
-              ? { row, col: Math.min(lastCol, col + 1) }
-              : event.key === 'Home'
-                ? { row, col: 0 }
-                : event.key === 'End'
-                  ? { row, col: lastCol }
-                  : undefined;
+    const jump = event.ctrlKey || event.metaKey;
+    const next = (() => {
+      if (jump) {
+        if (event.altKey || event.shiftKey) return undefined;
+        if (event.key === 'Home') return { row: 0, col: 0 };
+        if (event.key === 'End') return { row: lastRow, col: lastCol };
+        return undefined;
+      }
+      switch (event.key) {
+        case 'ArrowUp':
+          return { row: Math.max(0, row - 1), col };
+        case 'ArrowDown':
+          return { row: Math.min(lastRow, row + 1), col };
+        case 'ArrowLeft':
+          return { row, col: Math.max(0, col - 1) };
+        case 'ArrowRight':
+          return { row, col: Math.min(lastCol, col + 1) };
+        case 'Home':
+          return { row, col: 0 };
+        case 'End':
+          return { row, col: lastCol };
+        case 'PageUp':
+          return { row: Math.max(0, row - PAGE_ROWS), col };
+        case 'PageDown':
+          return { row: Math.min(lastRow, row + PAGE_ROWS), col };
+        default:
+          return undefined;
+      }
+    })();
     if (!next) return;
     event.preventDefault();
     setActive(next);
     gridRef.current?.querySelector<HTMLElement>(`[data-cell="${next.row}:${next.col}"]`)?.focus();
   };
   const shiftTypesById = useMemo(() => new Map(shiftTypes.map((st) => [st.id, st])), [shiftTypes]);
-  const assignmentsByCell = useMemo(() => buildCellIndex(assignments), [assignments]);
   const preferenceNotes = useMemo(() => {
     const notes = new Map<Id, string>();
     if (!againstPreference) return notes;
@@ -584,16 +633,32 @@ export function ScheduleGrid({
     }
     return notes;
   }, [againstPreference, shiftTypes, nurses]);
+  const previousSlices = useRef<ReadonlyMap<Id, RowSlice>>(new Map());
+  const slices = useMemo(
+    () =>
+      rowSlices({
+        nurses: rowNurses,
+        assignments,
+        violationsByAssignment,
+        violationsByNurse,
+        preferenceNotes,
+        previous: previousSlices.current,
+      }),
+    [rowNurses, assignments, violationsByAssignment, violationsByNurse, preferenceNotes],
+  );
+  useEffect(() => {
+    previousSlices.current = slices;
+  }, [slices]);
   const headcount = useMemo(
     () =>
       headcountRows({
         shiftTypes,
-        nurses,
+        nurses: rowNurses,
         assignments,
         demand: demand ?? [],
         dates: columns.map((c) => c.date),
       }),
-    [shiftTypes, nurses, assignments, demand, columns],
+    [shiftTypes, rowNurses, assignments, demand, columns],
   );
   const summary = useMemo(
     () =>
@@ -634,7 +699,7 @@ export function ScheduleGrid({
       ref={gridRef}
       role="grid"
       aria-label="Schedule: nurses by day"
-      aria-rowcount={activeNurses.length + 2 + (headcount.length > 0 ? 1 + breakdown.length : 0)}
+      aria-rowcount={rowNurses.length + 2 + (headcount.length > 0 ? 1 + breakdown.length : 0)}
       aria-colcount={columns.length + 1}
       data-testid="schedule-grid"
       onKeyDown={handleGridKeyDown}
@@ -717,18 +782,17 @@ export function ScheduleGrid({
           })}
         </div>
 
-        {activeNurses.map((nurse, row) => (
+        {rowNurses.map((nurse, row) => (
           <GridRow
             key={nurse.id}
             nurse={nurse}
             row={row}
-            activeCol={active.row === row ? active.col : undefined}
+            activeCol={activeRow === row ? activeCol : undefined}
             onFocusCell={handleFocusCell}
             onOpenPicker={handleOpenPicker}
             columns={columns}
-            assignmentsByCell={assignmentsByCell}
+            slice={slices.get(nurse.id)!}
             shiftTypesById={shiftTypesById}
-            violationsByAssignment={violationsByAssignment}
             pendingIds={nursesWithPending.has(nurse.id) ? pendingIds : NO_PENDING}
             highlightKeys={highlightKeys}
             highlighted={nurse.id === focusNurseId}
@@ -739,14 +803,12 @@ export function ScheduleGrid({
             }
             spotlightKind={spotlight?.nurseId === undefined ? 'column' : 'cell'}
             spotlightIds={spotlight?.nurseId === nurse.id ? spotlightIds : EMPTY_IDS}
-            nurseViolations={violationsByNurse.get(nurse.id)}
             dragOverDate={dragOver?.nurseId === nurse.id ? dragOver.date : undefined}
             readOnly={readOnly}
             onDrop={handleDrop}
             onDragOverCell={handleDragOverCell}
             onChipOpen={onChipOpen}
             onChipDelete={onChipDelete}
-            preferenceNotes={preferenceNotes}
           />
         ))}
         {headcount.length > 0 ? (
@@ -816,7 +878,8 @@ export function ScheduleGrid({
               className="sticky left-0 z-20 flex h-7 w-48 shrink-0 items-center border-r
                 border-border bg-bg px-3 pl-7 text-xs text-text-muted"
             >
-              {line.shiftType.abbreviation} {line.role}s on shift
+              {line.shiftType.abbreviation} {line.role === 'licensed' ? 'RN+LPN' : `${line.role}s`}{' '}
+              on shift
             </div>
             {line.cells.map((cell, col) => {
               const short = cell.staffed < cell.required;
@@ -827,9 +890,11 @@ export function ScheduleGrid({
                   key={cell.date}
                   role="gridcell"
                   title={
-                    cell.required > 0
-                      ? `${cell.staffed} of ${cell.required} ${line.role}s needed on ${line.shiftType.name}, ${formatDateWithWeekday(cell.date)}`
-                      : `${cell.staffed} ${line.role}s on ${line.shiftType.name}, ${formatDateWithWeekday(cell.date)}`
+                    line.role === 'licensed'
+                      ? `${cell.staffed} of ${cell.required} licensed nurses (RN or LPN) needed on ${line.shiftType.name}, ${formatDateWithWeekday(cell.date)}`
+                      : cell.required > 0
+                        ? `${cell.staffed} of ${cell.required} ${line.role}s needed on ${line.shiftType.name}, ${formatDateWithWeekday(cell.date)}`
+                        : `${cell.staffed} ${line.role}s on ${line.shiftType.name}, ${formatDateWithWeekday(cell.date)}`
                   }
                   className={`flex h-7 w-16 shrink-0 items-center justify-center border-r
                     border-border bg-bg text-xs ${columns[col]?.weekStart ? WEEK_DIVIDER : ''} ${
@@ -878,6 +943,7 @@ function ShiftPicker({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   usePanelFocus(ref, true, onClose);
+  const active = shiftTypes.filter((st) => st.active);
   // A click anywhere else dismisses it, as a menu would.
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
@@ -888,7 +954,7 @@ function ShiftPicker({
   }, [onClose]);
   // Opened from a cell near the window's bottom or right edge, it would spill off-screen.
   const style = {
-    top: Math.min(top, window.innerHeight - 8 - 40 * (shiftTypes.length + 1)),
+    top: Math.min(top, window.innerHeight - 8 - 40 * (active.length + 1)),
     left: Math.min(left, window.innerWidth - 8 - 176),
   };
   return (
@@ -902,19 +968,17 @@ function ShiftPicker({
         shadow-lg"
     >
       <p className="px-1 text-xs font-medium text-text-muted">Add a shift</p>
-      {shiftTypes
-        .filter((st) => st.active)
-        .map((st) => (
-          <button
-            key={st.id}
-            type="button"
-            onClick={() => onPick(st.id)}
-            className="rounded px-2 py-1 text-left text-sm text-text hover:bg-bg focus-visible:bg-bg
-              focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-          >
-            <span className="font-medium">{st.abbreviation}</span> {st.name}
-          </button>
-        ))}
+      {active.map((st) => (
+        <button
+          key={st.id}
+          type="button"
+          onClick={() => onPick(st.id)}
+          className="rounded px-2 py-1 text-left text-sm text-text hover:bg-bg focus-visible:bg-bg
+            focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+        >
+          <span className="font-medium">{st.abbreviation}</span> {st.name}
+        </button>
+      ))}
     </div>
   );
 }

@@ -24,6 +24,7 @@ import { queryRoots } from './query-roots.js';
 const ASSIGNMENT_ROOTS = [
   queryRoots.assignments,
   queryRoots.validation,
+  queryRoots.nurseHours,
   queryRoots.conflicts,
   queryRoots.coverOptions,
   queryRoots.timeOffImpact,
@@ -51,6 +52,7 @@ const LEAVE_ROOTS = [
 
 const CONFIG_ROOTS = [
   queryRoots.validation,
+  queryRoots.nurseHours,
   queryRoots.conflicts,
   queryRoots.coverOptions,
   queryRoots.timeOffImpact,
