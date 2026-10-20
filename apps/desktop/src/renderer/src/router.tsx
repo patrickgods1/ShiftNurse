@@ -15,6 +15,7 @@ import {
 } from '@tanstack/react-router';
 import { type CSSProperties, useEffect, useRef } from 'react';
 import { AsyncState } from './components/async-state.js';
+import { DataLocationBanner } from './components/data-location-banner.js';
 import { TipProvider } from './components/field-help.js';
 import {
   RequestsBadge,
@@ -108,6 +109,7 @@ function AppShell() {
           <ThemeToggle />
         </header>
         <UpdateBanner />
+        <DataLocationBanner />
         {/* @container: pages lay out by this content width, not the window, which the nav eats 208px of. */}
         <main ref={mainRef} className="@container flex-1 overflow-y-auto p-6 max-lg:p-4 short:py-3">
           <Outlet />

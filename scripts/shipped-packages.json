@@ -1,0 +1,31 @@
+{
+  "bundled": [
+    "@radix-ui/react-dialog",
+    "@radix-ui/react-dropdown-menu",
+    "@radix-ui/react-tooltip",
+    "@shiftnurse/core",
+    "@shiftnurse/db",
+    "@tanstack/react-query",
+    "@tanstack/react-router",
+    "drizzle-orm",
+    "electron",
+    "react",
+    "react-dom",
+    "zod"
+  ],
+  "buildOnly": [
+    "@electron/fuses",
+    "@tailwindcss/vite",
+    "@testing-library/dom",
+    "@testing-library/react",
+    "@types/react",
+    "@types/react-dom",
+    "@vitejs/plugin-react",
+    "electron-builder",
+    "electron-vite",
+    "jsdom",
+    "tailwindcss",
+    "vite"
+  ],
+  "exceptions": []
+}

@@ -28,6 +28,7 @@ beforeEach(() => {
     version: '1.0.0',
     platform: 'darwin',
     databasePath: '/tmp/shiftnurse.db',
+    dataLocationWarning: null,
     defaultPaperSize: 'letter',
   });
 });

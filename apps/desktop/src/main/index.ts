@@ -9,7 +9,7 @@
 
 import { join } from 'node:path';
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
-import { app, BrowserWindow, dialog, screen, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, screen, session, shell, systemPreferences } from 'electron';
 import type { UpdateInfo } from '../shared/api.js';
 import { createApi, createSolverJobs } from './api.js';
 import {
@@ -20,6 +20,7 @@ import {
   recordBackup,
   startDailyBackups,
 } from './backups.js';
+import { classifyDataLocation } from './data-location.js';
 import { closeAppDatabase, databasePath, openAppDatabase } from './database.js';
 import { registerIpc } from './ipc.js';
 import { createFileLog, teeConsole } from './log.js';
@@ -29,7 +30,7 @@ import { createQuitGuard, KEEP_OPEN, type QuitGuard } from './quit-guard.js';
 import { isSmokeRun } from './smoke-flag.js';
 import spawnSolverWorker from './solver-worker?nodeWorker';
 import { type AppLocation, isAppUrl, isSafeExternalUrl } from './trusted-origin.js';
-import { checkForUpdate } from './updates.js';
+import { checkForUpdate, updateCheckSkipReason } from './updates.js';
 import { watchWindowHealth } from './window-health.js';
 
 const APP_LOCATION: AppLocation = {
@@ -258,6 +259,14 @@ async function start(): Promise<void> {
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window));
 
   const db = await openDatabaseWithSafetyCopy();
+  // The path and the class only, never database content.
+  const dataDir = app.getPath('userData');
+  const dataLocation = classifyDataLocation({
+    platform: process.platform,
+    dataDir,
+    localAppData: process.env.LOCALAPPDATA,
+  });
+  if (dataLocation !== 'local') console.warn(`[startup] data folder: ${dataLocation} (${dataDir})`);
   const solverJobs = createSolverJobs(db, (workerData) => spawnSolverWorker({ workerData }));
   onQuit.push(() => solverJobs.dispose());
   quitGuard = createQuitGuard({
@@ -297,7 +306,21 @@ async function start(): Promise<void> {
     }
   });
   // Ask GitHub once whether a newer release is out; never in development or a smoke run.
-  if (app.isPackaged && !isSmokeRun()) {
+  // IT can turn it off (environment variable, or a macOS managed preference).
+  const skipReason = updateCheckSkipReason({
+    isPackaged: app.isPackaged,
+    smoke: isSmokeRun(),
+    env: process.env,
+    macDisableUpdateCheck:
+      process.platform === 'darwin'
+        ? systemPreferences.getUserDefault('DisableUpdateCheck', 'boolean')
+        : false,
+  });
+  if (skipReason === 'environment')
+    console.log('[update] launch check turned off by SHIFTNURSE_UPDATE_CHECK');
+  else if (skipReason === 'managed-preference')
+    console.log('[update] launch check turned off by the DisableUpdateCheck managed preference');
+  if (!skipReason) {
     void checkForUpdate(app.getVersion()).then((found) => {
       update = found;
       if (found) console.log(`[update] ShiftNurse ${found.version} is available: ${found.url}`);

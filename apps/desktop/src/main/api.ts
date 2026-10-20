@@ -53,6 +53,7 @@ import {
   restoreBackup,
   undeleteBackup,
 } from './backups.js';
+import { classifyDataLocation, dataLocationWarning } from './data-location.js';
 import { databasePath } from './database.js';
 import { exportToFile as exportPeriodToFile, osPaperSize, renderCsv } from './output.js';
 import type { SolverJobs } from './solver-jobs.js';
@@ -71,12 +72,23 @@ export function createApi(db: ShiftNurseDb, solverJobs: SolverJobs, host: AppHos
   const roster = rosterApi(db);
   return {
     app: {
-      info: () => ({
-        version: app.getVersion(),
-        platform: process.platform,
-        databasePath: databasePath(),
-        defaultPaperSize: osPaperSize(),
-      }),
+      info: () => {
+        const dir = app.getPath('userData');
+        return {
+          version: app.getVersion(),
+          platform: process.platform,
+          databasePath: databasePath(),
+          defaultPaperSize: osPaperSize(),
+          dataLocationWarning: dataLocationWarning(
+            dir,
+            classifyDataLocation({
+              platform: process.platform,
+              dataDir: dir,
+              localAppData: process.env.LOCALAPPDATA,
+            }),
+          ),
+        };
+      },
       update: () => host.update() ?? null,
       openLogs: () => host.openLogs(),
     },

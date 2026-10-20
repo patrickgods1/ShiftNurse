@@ -85,3 +85,23 @@ export async function checkForUpdate(
     return undefined;
   }
 }
+
+/**
+ * Why the launch check is skipped, or undefined to run it. A hospital that forbids outbound
+ * calls from clinical workstations needs an off switch IT can deploy without touching the app:
+ * an environment variable, or on a Mac a managed preference.
+ */
+export function updateCheckSkipReason(input: {
+  isPackaged: boolean;
+  smoke: boolean;
+  env: Readonly<Record<string, string | undefined>>;
+  /** macOS: `systemPreferences.getUserDefault('DisableUpdateCheck', 'boolean')`. */
+  macDisableUpdateCheck: boolean;
+}): 'development' | 'smoke' | 'environment' | 'managed-preference' | undefined {
+  if (!input.isPackaged) return 'development';
+  if (input.smoke) return 'smoke';
+  const setting = input.env.SHIFTNURSE_UPDATE_CHECK?.trim().toLowerCase();
+  if (setting !== undefined && ['off', '0', 'false', 'no'].includes(setting)) return 'environment';
+  if (input.macDisableUpdateCheck) return 'managed-preference';
+  return undefined;
+}

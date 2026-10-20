@@ -480,6 +480,9 @@ fix in PR #6 reached nobody who had already installed the first draft. Nothing h
 - [ ] Verify: a signed dmg opens without a Gatekeeper prompt on a clean Mac; the signed installer
       passes SmartScreen on real Windows 11; v0.1.x updates itself to v0.1.y from a draft release
 
+Fuses and the release gate landed first (review-fix phase 19); signing needs no fuse change, only
+the CSC secrets.
+
 ### M18 — Release hardening (in progress)
 The 2026-10-03 release audit: data safety, renderer correctness, maintainability, tests, the
 manager's experience and the contract rules a real hospital would check first. One PR per phase.
@@ -793,6 +796,10 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
 - [x] Phase 18 — Desktop main robustness: quit guard, crash/hang handling, all-or-relaunch
       restore, runner stop/pid/kill, PDF from temp file, unit paper size (verify: npm run check;
       smoke; owner macOS quit check)
+- [x] Phase 19 — Release and CI hardening: gated release tags + ancestry, wider packaging dry run
+      and dev smoke in CI, shipped-dependency audit, Electron Fuses, Windows CP-SAT required,
+      notices, data-folder warning and IT guide (verify: npm run check; smoke; dist +
+      smoke:packaged mac arm64; PR release dry run on 3 targets; cpsat-runner workflow green)
 
 ---
 

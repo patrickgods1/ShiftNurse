@@ -98,6 +98,9 @@ function AboutTab() {
           <dd className="break-all text-text">{appInfoQuery.data.databasePath}</dd>
         </dl>
       )}
+      {appInfoQuery.data?.dataLocationWarning ? (
+        <p className="mt-2 text-sm text-text">{appInfoQuery.data.dataLocationWarning}</p>
+      ) : null}
 
       <h2 className="mb-1 mt-6 text-sm font-semibold text-text">Support</h2>
       <p className="mb-3 text-sm text-text-muted">

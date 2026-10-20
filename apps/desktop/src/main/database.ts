@@ -3,10 +3,11 @@
  *
  * The file lives in Electron's `userData` directory — the per-user, per-app location the OS
  * expects application state in, which survives reinstalls and is what a backup job or a
- * support request will be pointed at. Opening only migrates: an empty file is left empty, and
- * the renderer's first-run welcome screen decides what goes in it (the demo unit, a bare unit,
- * or the assisted guide — see `api/setup.ts`). Seeding here would put a fictional 42-nurse
- * unit into every real install.
+ * support request will be pointed at. On Windows that is the Roaming profile; a redirected one
+ * is detected and named (`data-location.ts`, D24), not moved. Opening only migrates: an empty
+ * file is left empty, and the renderer's first-run welcome screen decides what goes in it (the
+ * demo unit, a bare unit, or the assisted guide — see `api/setup.ts`). Seeding here would put a
+ * fictional 42-nurse unit into every real install.
  */
 
 import { existsSync, rmSync } from 'node:fs';

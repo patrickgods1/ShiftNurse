@@ -105,6 +105,10 @@
   `dependencies` is exactly the set the packaged main process loads from disk. `npm run
   smoke:packaged` boots the built `.app`/`.exe` from `release/` in smoke mode — run it after any
   packaging change; the dev-binary smoke cannot see a missing migration or wrong-ABI binary.
+  The packaged binary is fused (`electronFuses` in `electron-builder.yml`): no run-as-Node, no
+  `NODE_OPTIONS`, no `--inspect`, ASAR integrity and asar-only loading; `smoke.mjs --packaged`
+  fails if a fuse is wrong. Cookie encryption and file-protocol privileges stay at Electron's
+  defaults on purpose (see the yml).
 - **The renderer never re-derives time maths — nor rule maths:** the shift popover's pay-period
   hours come from `schedule.nurseHours`, the same `payPeriodHoursFor` the contracted-hours rule
   judges by. `renderer/src/format.ts` splits ISO strings
@@ -113,10 +117,11 @@
   epoch was a Thursday. Renderer unit tests live next to the code and run under `npm test`;
   component tests are `*.test.tsx` with `// @vitest-environment jsdom` and Testing Library
   (the grid's drag and drop uses a stand-in `DataTransfer`, which jsdom lacks).
-- **`ELECTRON_RUN_AS_NODE` must be unset when launching Electron.** VS Code's integrated
-  terminal exports it, and with it set the Electron binary is a bare Node runtime — the
+- **`ELECTRON_RUN_AS_NODE` must be unset when launching the dev Electron binary.** VS Code's
+  integrated terminal exports it, and with it set the dev binary is a bare Node runtime — the
   symptom is `'electron' does not provide an export named 'BrowserWindow'`. `scripts/smoke.mjs`
-  strips it; for `npm run dev` in a VS Code terminal, `unset ELECTRON_RUN_AS_NODE` first.
+  strips it; for `npm run dev` in a VS Code terminal, `unset ELECTRON_RUN_AS_NODE` first. The
+  packaged binary ignores the variable (its `RunAsNode` fuse is off).
 - **The preload is CommonJS** (`out/preload/index.cjs`) because a sandboxed preload has no ESM
   loader. Everything else in the app is ESM.
 - **`scheduleViewFor` takes a required `floated: 'busy' | 'worked'`** (D20): a shift the nurse was
@@ -213,4 +218,8 @@
   wrapper (`shared/ipc-error.ts`). Write refusals for people, since they reach the UI verbatim.
 - **The app says when a release is out, but cannot update itself** (builds are unsigned).
   `main/updates.ts` asks GitHub's latest-release API once at launch in a packaged, non-smoke run;
-  any failure is silence, and only a link to the project's own releases page is ever shown. A release candidate hears about its final release.
+  any failure is silence, and only a link to the project's own releases page is ever shown. A release candidate hears about its final release. IT can turn the check off (`SHIFTNURSE_UPDATE_CHECK=off`, or the macOS managed
+  preference `DisableUpdateCheck`; `updateCheckSkipReason` in `updates.ts`).
+- **A redirected data folder is named, not moved** (D24): `main/data-location.ts` classifies
+  `userData` (UNC/other drive on Windows, `/Network`/`/Volumes` on macOS), and `app.info()`
+  carries the warning the banner and Settings › About show.

@@ -6,11 +6,12 @@
 
 - **M16 — CI/CD** (complete; plan `docs/CI_PLAN.md`): `.github/workflows/ci.yml` (lint +
   typecheck on Linux; tests on ubuntu/macos-15/windows-2022) guards `main` through branch
-  protection; `.github/workflows/release.yml` builds each installer natively on a `vX.Y.Z` tag,
+  protection; `.github/workflows/release.yml` builds each installer natively on a `vX.Y.Z` tag
+  after re-running `ci.yml` on the tagged commit (`gate`) and checking the commit is on `main`,
   smoke-tests it, and creates a **draft** release (`.github/release-notes.md`); it dry-runs on PRs
   touching packaging. Builds are unsigned.
 
-`npm test` runs two Vitest projects: `unit` in parallel, then `solver-heavy` (full-solve files) one file at a time. `npm run test:coverage` runs tests with v8 coverage over `packages/*` and desktop `main`; CI's ubuntu leg posts a per-area table (`scripts/coverage-summary.mjs`) to the run summary. Coverage scales test timeouts 3× (config sets `COVERAGE=1`; explicit ones use `slow()`); `SHIFTNURSE_TEST_SLOW_SCALE=<n>` scales those hang guards further on a slow machine (CI does not set it; never raise a literal instead); CI's macOS leg sets `SHIFTNURSE_REQUIRE_CPSAT=1`, so a missing CP-SAT runner fails the cpsat tests instead of skipping them.
+`npm test` runs two Vitest projects: `unit` in parallel, then `solver-heavy` (full-solve files) one file at a time. `npm run test:coverage` runs tests with v8 coverage over `packages/*` and desktop `main`; CI's ubuntu leg posts a per-area table (`scripts/coverage-summary.mjs`) to the run summary. Coverage scales test timeouts 3× (config sets `COVERAGE=1`; explicit ones use `slow()`); `SHIFTNURSE_TEST_SLOW_SCALE=<n>` scales those hang guards further on a slow machine (CI does not set it; never raise a literal instead); CI's macOS and Windows legs fetch the runner strictly (one retry) and set `SHIFTNURSE_REQUIRE_CPSAT=1`, so a missing CP-SAT runner fails the cpsat tests instead of skipping them. The `smoke (ubuntu-latest)` job boots the dev build under xvfb on every PR; it is not yet a required check.
 
 CI inherits the test time zone pin (`TZ=America/New_York`) from `vitest.config.ts`; `ci.yml` sets no `TZ`, so there is one source. `SHIFTNURSE_TEST_TZ` overrides it for hand runs only.
 
@@ -23,10 +24,14 @@ CI inherits the test time zone pin (`TZ=America/New_York`) from `vitest.config.t
   its own when it sees CI + tag + token) and name their target explicitly (`--mac dmg --arm64`):
   `electron-builder.yml` lists both mac archs, which overrides a bare `--arm64` and once made each
   mac job build — and upload — an untested copy of the other arch's dmg.
+- **`ci.yml` is also a reusable workflow** (`workflow_call`) — release.yml's gate calls it; keep it
+  free of secrets and keep the workflow name in its concurrency group.
 - **Workflows share `.github/actions/setup`** (Node from `.nvmrc`, npm + download caches,
   `npm ci`, `build:packages`). Every third-party action is pinned to a commit SHA with a
   `# vX.Y.Z` comment; Dependabot (`.github/dependabot.yml`) bumps both. Every job has a
   `timeout-minutes`. The OR-Tools archive the runner links against is checked against a
   per-matrix `sha256` (GitHub's asset digest) whether downloaded or cached.
-  `lint-typecheck` installs with `--ignore-scripts` and fails on a high-severity advisory in a
-  runtime dependency (`npm audit --omit=dev`).
+  `lint-typecheck` installs with `--ignore-scripts` and fails on a high-severity advisory in
+  anything that ships (`scripts/audit-shipped.mjs`: packaged dependencies plus everything
+  electron-vite bundles, classified in `scripts/shipped-packages.json`; a new desktop devDependency
+  must be classified there).
