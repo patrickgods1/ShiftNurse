@@ -33,6 +33,7 @@ import RosterPage from './pages/roster.js';
 import SchedulePage from './pages/schedule.js';
 import SettingsPage from './pages/settings.js';
 import TodayPage from './pages/today.js';
+import { SelectedPeriodProvider } from './selected-period.js';
 import { SetupGate } from './setup/setup-gate.js';
 import { UnitProvider, useUnit } from './unit-context.js';
 
@@ -126,7 +127,9 @@ function RootLayout() {
         <NavigationGuard />
         <SetupGate>
           <UnitProvider>
-            <AppShell />
+            <SelectedPeriodProvider>
+              <AppShell />
+            </SelectedPeriodProvider>
           </UnitProvider>
         </SetupGate>
       </UnsavedChangesProvider>

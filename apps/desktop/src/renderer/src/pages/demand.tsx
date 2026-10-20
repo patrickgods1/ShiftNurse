@@ -5,11 +5,14 @@
  * This is the one page where a manager's raw guess ("22 patients Tuesday") turns into a
  * contractual/ratio-driven nurse count — see packages/core/src/acuity/demand.ts for why that
  * derivation exists and packages/core/src/acuity/forecast.ts for why the model stays simple.
+ *
+ * The range is capped at 120 days (demand/demand-range.ts): each day is a row of editors and a
+ * demand computation in main, and a half-typed year used to ask for 666,261 of them.
  */
 
 import type { Id, IsoDate, SchedulePeriod, ShiftType } from '@shiftnurse/core';
 import { addDays, datesInRange, today } from '@shiftnurse/core';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { usePeriods, useShiftTypes } from '../api.js';
 import { useAcuityTiers } from '../api-config.js';
 import {
@@ -27,28 +30,30 @@ import { DateField } from '../components/date-field.js';
 import { HppdSummary } from '../components/hppd-summary.js';
 import { PageHeader } from '../components/page-header.js';
 import { PRIMARY } from '../components/ui.js';
-import { formatDate } from '../format.js';
+import { formatDate, periodLabel } from '../format.js';
+import { useSelectedPeriod } from '../selected-period.js';
 import { useUnitId } from '../unit-context.js';
 import { BacktestPanel } from './demand/backtest-panel.js';
 import { CensusGrid } from './demand/census-grid.js';
+import { rangeProblem } from './demand/demand-range.js';
 import { DemandTable } from './demand/demand-table.js';
 import { ProposeDialog } from './demand/propose-dialog.js';
 
 const LOOKBACK_OPTIONS = [4, 8, 12] as const;
 
-/** The current draft period if there is one, else the next 14 days from today. */
+/** The period the manager chose on any page, else the next 14 days from today. */
 function useDefaultRange(unitId: Id | undefined): {
   start: IsoDate;
   end: IsoDate;
-  draft: SchedulePeriod | undefined;
+  period: SchedulePeriod | undefined;
 } {
   const periodsQuery = usePeriods(unitId);
+  const { period } = useSelectedPeriod(periodsQuery.data ?? []);
   return useMemo(() => {
-    const draft = periodsQuery.data?.find((p) => p.status === 'draft');
-    if (draft !== undefined) return { start: draft.startDate, end: draft.endDate, draft };
+    if (period !== undefined) return { start: period.startDate, end: period.endDate, period };
     const start = today();
-    return { start, end: addDays(start, 13), draft: undefined };
-  }, [periodsQuery.data]);
+    return { start, end: addDays(start, 13), period: undefined };
+  }, [period]);
 }
 
 function shiftTypesById(shiftTypes: ShiftType[] | undefined): Map<Id, ShiftType> {
@@ -60,8 +65,17 @@ export default function DemandPage() {
   const defaultRange = useDefaultRange(unitId);
   const [start, setStart] = useState<IsoDate | undefined>(undefined);
   const [end, setEnd] = useState<IsoDate | undefined>(undefined);
-  const rangeStart = start ?? defaultRange.start;
-  const rangeEnd = end ?? defaultRange.end;
+  const typedStart = start ?? defaultRange.start;
+  const typedEnd = end ?? defaultRange.end;
+  // The grid and queries only ever see a range that passed rangeProblem; an edit that breaks it
+  // is explained under the fields and the last good range stays on screen.
+  const rangeIssue = rangeProblem(typedStart, typedEnd);
+  const lastValid = useRef<{ start: IsoDate; end: IsoDate } | undefined>(undefined);
+  if (rangeIssue === undefined) lastValid.current = { start: typedStart, end: typedEnd };
+  const rangeStart =
+    rangeIssue === undefined ? typedStart : (lastValid.current?.start ?? defaultRange.start);
+  const rangeEnd =
+    rangeIssue === undefined ? typedEnd : (lastValid.current?.end ?? defaultRange.end);
 
   const [lookbackWeeks, setLookbackWeeks] = useState<(typeof LOOKBACK_OPTIONS)[number]>(8);
   const [seasonal, setSeasonal] = useState(true);
@@ -117,13 +131,16 @@ export default function DemandPage() {
         <DateField
           id="demand-start"
           label="Start date"
-          value={rangeStart}
+          value={typedStart}
+          commitOnBlur
           onChange={(v) => setStart(v === '' ? undefined : v)}
         />
         <DateField
           id="demand-end"
           label="End date"
-          value={rangeEnd}
+          value={typedEnd}
+          min={typedStart}
+          commitOnBlur
           onChange={(v) => setEnd(v === '' ? undefined : v)}
         />
         <div>
@@ -155,6 +172,12 @@ export default function DemandPage() {
         </label>
       </div>
 
+      {rangeIssue !== undefined ? (
+        <p role="alert" className="-mt-4 mb-6 text-sm text-danger">
+          {rangeIssue} Showing {formatDate(rangeStart)} to {formatDate(rangeEnd)} until it is fixed.
+        </p>
+      ) : null}
+
       {loading ? (
         <AsyncState status="loading" label="Loading demand data" />
       ) : erroredQuery !== undefined ? (
@@ -169,7 +192,6 @@ export default function DemandPage() {
               forecast from history, not yet entered by hand
             </p>
             <CensusGrid
-              unitId={unitId}
               dates={dates}
               shiftTypes={shiftTypesQuery.data ?? []}
               census={censusQuery.data ?? []}
@@ -192,11 +214,11 @@ export default function DemandPage() {
             />
           </section>
 
-          {defaultRange.draft !== undefined ? (
+          {defaultRange.period !== undefined ? (
             <section className="mb-8 max-w-xl">
               <HppdSummary
-                periodId={defaultRange.draft.id}
-                title={`Scheduled HPPD, draft ${formatDate(defaultRange.draft.startDate)} – ${formatDate(defaultRange.draft.endDate)}`}
+                periodId={defaultRange.period.id}
+                title={`Scheduled HPPD, ${periodLabel(defaultRange.period)}`}
               />
             </section>
           ) : null}

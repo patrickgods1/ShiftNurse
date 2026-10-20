@@ -4,7 +4,8 @@
  * Upsert rather than create/update because the manager thinks in cells of a grid, not in
  * records — "Tuesday nights, 24 patients" is the same statement whether or not a row
  * already exists. Validation runs here, not only in the UI, so a proposal accepted in bulk
- * cannot slip in a mix that does not add up.
+ * cannot slip in a mix that does not add up. The mix is judged against the unit's own tiers,
+ * so messages name tiers rather than ids and a unit with no tiers saves a census with no mix.
  */
 
 import { type CensusForecast, type Id, type IsoDate, validateAcuityMix } from '@shiftnurse/core';
@@ -14,6 +15,7 @@ import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import { toCensusForecast } from '../mappers.js';
 import { censusForecast as table } from '../schema.js';
+import { listAcuityTiersForUnit } from './acuity.js';
 
 export function listCensusForecastsInRange(
   db: DbLike,
@@ -55,7 +57,11 @@ export function upsertCensusForecast(
   input: CensusForecastInput,
   actor: string,
 ): CensusForecast {
-  const problems = validateAcuityMix(input.projectedCensus, input.acuityMix);
+  const problems = validateAcuityMix(
+    input.projectedCensus,
+    input.acuityMix,
+    listAcuityTiersForUnit(db, input.unitId),
+  );
   if (problems.length > 0) {
     throw new Error(`Invalid census for ${input.date}: ${problems.join('; ')}`);
   }
@@ -111,10 +117,15 @@ export function recordActualCensus(
   actualAcuityMix: Record<Id, number>,
   actor: string,
 ): CensusForecast {
-  const problems = validateAcuityMix(actualCensus, actualAcuityMix);
-  if (problems.length > 0) throw new Error(`Invalid actual census: ${problems.join('; ')}`);
+  // The row first: its unit's tiers are what the mix is judged against.
   const row = db.select().from(table).where(eq(table.id, id)).get();
   if (!row) throw new Error(`Census forecast ${id} not found`);
+  const problems = validateAcuityMix(
+    actualCensus,
+    actualAcuityMix,
+    listAcuityTiersForUnit(db, row.unitId),
+  );
+  if (problems.length > 0) throw new Error(`Invalid actual census: ${problems.join('; ')}`);
   const before = toCensusForecast(row);
   const merged = { ...row, actualCensus, actualAcuityMix };
   db.update(table).set(merged).where(eq(table.id, id)).run();

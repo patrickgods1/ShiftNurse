@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAdvanceSetup, useCompleteSetup } from '../api-setup.js';
 import { ThemeToggle } from '../components/theme-toggle.js';
 import { errorMessage, PRIMARY, SECONDARY, SELECTED } from '../components/ui.js';
+import { useConfirmDiscard } from '../components/unsaved-changes.js';
 import { useUnit } from '../unit-context.js';
 import { StepBody, useSetupCounts } from './assisted-steps.js';
 import { PresetRegistry, type RegisteredPreset } from './preset-registry.js';
@@ -41,8 +42,44 @@ export function AssistedSetup({ state }: { state: SetupState }) {
   // unit with no shifts at all. With no starting point to apply, moving on counts as a skip.
   const empty = step !== 'finish' && stepStatus(step, counts, []) === 'empty';
   const applyOnContinue = empty && preset !== undefined && !preset.disabled();
+  const confirmDiscard = useConfirmDiscard();
+  // Held across the confirmation and the move: the dialog is open for a while, and a second click
+  // meanwhile would otherwise queue a second move.
+  const moving = useRef(false);
+
+  const move = async (to: SetupStepId | undefined, skipped: boolean) => {
+    if (to === undefined) return;
+    try {
+      await advance.mutateAsync({ from: step, to, skipped });
+    } catch {
+      // advance.isError shows the message in the footer.
+    }
+  };
+
+  // The step change is not a route change, so NavigationGuard never sees it; the editor below
+  // unmounts with its edits, and for the reviewed-by-default steps Continue would record them as
+  // "reviewed".
+  const go = async (to: SetupStepId | undefined, skipped: boolean) => {
+    if (to === undefined || moving.current) return;
+    moving.current = true;
+    try {
+      if (!(await confirmDiscard())) return;
+      await move(to, skipped);
+    } finally {
+      moving.current = false;
+    }
+  };
+
   const onContinue = async () => {
-    if (applyOnContinue) {
+    if (!applyOnContinue) {
+      await go(next, empty);
+      return;
+    }
+    if (moving.current) return;
+    moving.current = true;
+    try {
+      // Continue is about to apply the preset's typed values, so they are not being discarded.
+      if (!(await confirmDiscard({ ignore: [preset.title()] }))) return;
       setApplying(true);
       try {
         await preset.run();
@@ -52,10 +89,10 @@ export function AssistedSetup({ state }: { state: SetupState }) {
       } finally {
         setApplying(false);
       }
-      go(next, false);
-      return;
+      await move(next, false);
+    } finally {
+      moving.current = false;
     }
-    go(next, empty);
   };
 
   // A new step replaces the whole body; move focus to its heading so a keyboard or screen
@@ -67,10 +104,6 @@ export function AssistedSetup({ state }: { state: SetupState }) {
     if (body.current) body.current.scrollTop = 0;
     heading.current?.focus();
   }, [step]);
-
-  const go = (to: SetupStepId | undefined, skipped: boolean) => {
-    if (to !== undefined) advance.mutate({ from: step, to, skipped });
-  };
 
   const finish = () => complete.mutate(undefined, { onSuccess: () => void navigate({ to: '/' }) });
 
@@ -105,7 +138,11 @@ export function AssistedSetup({ state }: { state: SetupState }) {
         </header>
         <main ref={body} className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
           <PresetRegistry.Provider value={register}>
-            <StepBody step={step} skipped={state.skippedSteps} onGoTo={(to) => go(to, false)} />
+            <StepBody
+              step={step}
+              skipped={state.skippedSteps}
+              onGoTo={(to) => void go(to, false)}
+            />
           </PresetRegistry.Provider>
         </main>
         <footer className="flex items-center justify-between gap-3 border-t border-border bg-surface px-6 py-3">
@@ -114,7 +151,7 @@ export function AssistedSetup({ state }: { state: SetupState }) {
             className={SECONDARY}
             disabled={busy || previous === undefined}
             // Going back neither completes nor skips the step being left.
-            onClick={() => go(previous, state.skippedSteps.includes(step))}
+            onClick={() => void go(previous, state.skippedSteps.includes(step))}
           >
             Back
           </button>
@@ -130,7 +167,7 @@ export function AssistedSetup({ state }: { state: SetupState }) {
                   type="button"
                   className={SECONDARY}
                   disabled={busy}
-                  onClick={() => go(next, true)}
+                  onClick={() => void go(next, true)}
                   data-testid="setup-skip"
                 >
                   Skip for now

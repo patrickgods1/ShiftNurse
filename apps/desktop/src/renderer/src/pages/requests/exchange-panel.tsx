@@ -19,6 +19,7 @@ import { PRIMARY, SMALL } from '../../components/ui.js';
 import { formatDateWithWeekday, periodLabel } from '../../format.js';
 import { nurseLabel } from './decide-dialog.js';
 import { DecideExchangeDialog } from './decide-exchange-dialog.js';
+import { SWAP_STATUS_LABELS } from './labels.js';
 import { NewExchangeDialog } from './new-exchange-dialog.js';
 import { ReasonDialog } from './reason-dialog.js';
 
@@ -69,7 +70,7 @@ export function ExchangePanel({
           : offeredLabel;
       },
     },
-    { key: 'status', header: 'Status', render: (s) => s.status },
+    { key: 'status', header: 'Status', render: (s) => SWAP_STATUS_LABELS[s.status] },
     {
       key: 'actions',
       header: '',

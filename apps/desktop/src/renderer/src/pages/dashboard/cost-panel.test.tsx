@@ -6,8 +6,8 @@
 
 import type { PeriodCostReport } from '@shared/api.js';
 import type { Nurse, SchedulePeriod } from '@shiftnurse/core';
-import { cleanup, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
 import { renderWithApp } from '../../test/render.js';
 import { CostPanel } from './cost-panel.js';
@@ -86,7 +86,7 @@ describe('day-of pay on the cost card', () => {
     expect((await screen.findByTestId('day-of-pay-total')).textContent).toBe('$250.00');
     expect(screen.getByTestId('cost-total').textContent).toBe('$50,000');
     expect(screen.getByText('Missed meal break on Tue Oct 6')).toBeTruthy();
-    expect(screen.getAllByText('Ana Cruz')).toHaveLength(2);
+    expect(screen.getAllByText('Cruz, Ana')).toHaveLength(2);
     expect(screen.queryByTestId('day-of-pay-unpriced')).toBeNull();
   });
 
@@ -97,5 +97,52 @@ describe('day-of pay on the cost card', () => {
       '2 events could not be priced',
     );
     expect(screen.getByText('Nothing recorded for this period.')).toBeTruthy();
+  });
+});
+
+describe('the budget on the cost card', () => {
+  const withBudget = (): PeriodCostReport => ({
+    ...report({ lines: [], total: 0, unpriced: 0 }),
+    budget: { targetDollars: 50000 } as PeriodCostReport['budget'],
+  });
+
+  it('removes the budget when the manager clears the field and saves', async () => {
+    bridge.respond('cost', 'report', withBudget());
+    renderWithApp(<CostPanel period={period} nurses={[ana]} />);
+    fireEvent.click(await screen.findByTestId('edit-budget'));
+    fireEvent.change(screen.getByLabelText('Budget in dollars'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(bridge.callsTo('cost', 'clearBudget')).toEqual([['p-1']]));
+    expect(bridge.callsTo('cost', 'setBudget')).toEqual([]);
+  });
+
+  it('refuses a negative budget and says why', async () => {
+    bridge.respond('cost', 'report', withBudget());
+    renderWithApp(<CostPanel period={period} nurses={[ana]} />);
+    fireEvent.click(await screen.findByTestId('edit-budget'));
+    fireEvent.change(screen.getByLabelText('Budget in dollars'), { target: { value: '-5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Must be at least 0. Leave it blank to remove the budget.',
+    );
+    expect(bridge.callsTo('cost', 'setBudget')).toEqual([]);
+    expect(bridge.callsTo('cost', 'clearBudget')).toEqual([]);
+  });
+
+  it('shows names, not ids, while the roster is still loading', async () => {
+    const base = report({ lines: [], total: 0, unpriced: 0 });
+    bridge.respond('cost', 'report', {
+      ...base,
+      cost: {
+        ...base.cost,
+        overtime: {
+          ...base.cost.overtime,
+          ranked: [{ nurseId: 'n-ana', hours: 8, premium: 200, share: 1 }],
+        },
+      },
+    } as PeriodCostReport);
+    renderWithApp(<CostPanel period={period} nurses={undefined} />);
+    expect(await screen.findByLabelText('Loading name')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('n-ana');
   });
 });

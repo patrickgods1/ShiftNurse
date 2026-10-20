@@ -9,19 +9,23 @@
  * (capacity, judged without the draft, so it means the same before and after Generate); then,
  * if the draft already has them working, who takes each freed shift — "Approve and cover" does
  * the approval and the cover in one step instead of regenerating the whole schedule.
+ *
+ * Approval waits for the cover options: until they arrive the dialog cannot tell a plain
+ * approval from one that takes shifts off a posted schedule.
  */
 
 import type { LeaveCoverOption } from '@shared/api.js';
-import type {
-  CapacityVerdict,
-  Conflict,
-  DayCapacity,
-  Id,
-  Nurse,
-  SchedulePeriod,
-  ShiftType,
-  TimeOffImpact,
-  TimeOffRequest,
+import {
+  type CapacityVerdict,
+  type Conflict,
+  type DayCapacity,
+  type Id,
+  type Nurse,
+  type SchedulePeriod,
+  type ShiftType,
+  TIME_OFF_TYPE_LABELS,
+  type TimeOffImpact,
+  type TimeOffRequest,
 } from '@shiftnurse/core';
 import { useEffect, useState } from 'react';
 import {
@@ -41,6 +45,11 @@ import { LeaveStanding } from './leave-standing.js';
 interface DecideDialogProps {
   request: TimeOffRequest | undefined;
   period: SchedulePeriod | undefined;
+  /**
+   * The unit's periods, to name and judge each one whose shifts approval frees: a request that
+   * spans a published period and the next draft frees shifts on both.
+   */
+  periods: readonly SchedulePeriod[];
   unitId: Id;
   nursesById: ReadonlyMap<Id, Nurse>;
   shiftTypesById: ReadonlyMap<Id, ShiftType>;
@@ -58,6 +67,7 @@ export { nurseLabel };
 export function DecideDialog({
   request,
   period,
+  periods,
   unitId,
   nursesById,
   shiftTypesById,
@@ -107,9 +117,17 @@ export function DecideDialog({
   const busy = approve.isPending || deny.isPending || approveAndCover.isPending;
   const error =
     errorMessage(approve.error) ?? errorMessage(deny.error) ?? errorMessage(approveAndCover.error);
-  const freesShifts = period !== undefined && options.length > 0;
-  // Taking shifts off a published schedule is a change staff will hear about: it needs a reason.
-  const needsReason = freesShifts && period?.status === 'published';
+  // No period means nothing to free; otherwise a pending or failed lookup must not read as "no
+  // options", or the plain approval would leave posted shifts rostered during approved leave.
+  const coverReady = period === undefined || coverQuery.isSuccess;
+  const freesShifts = coverReady && period !== undefined && options.length > 0;
+  const periodsById = new Map(periods.map((p) => [p.id, p]));
+  if (period !== undefined) periodsById.set(period.id, period);
+  // Taking shifts off a published schedule is a change staff will hear about: it needs a reason,
+  // whichever of the periods the request touches that schedule is.
+  const needsReason =
+    freesShifts &&
+    options.some((o) => periodsById.get(o.assignment.periodId)?.status === 'published');
 
   return (
     <Modal
@@ -123,7 +141,7 @@ export function DecideDialog({
       description={
         request === undefined ? undefined : (
           <>
-            {request.type.toUpperCase()} · {formatDateWithWeekday(request.startDate)} –{' '}
+            {TIME_OFF_TYPE_LABELS[request.type]} · {formatDateWithWeekday(request.startDate)} –{' '}
             {formatDateWithWeekday(request.endDate)}
             {request.reason ? ` · “${request.reason}”` : ''}
           </>
@@ -157,10 +175,16 @@ export function DecideDialog({
               <ImpactView
                 impact={impactQuery.data}
                 period={period}
+                periodsById={periodsById}
                 nursesById={nursesById}
                 shiftTypesById={shiftTypesById}
                 conflicts={conflicts}
                 options={options}
+                cover={{
+                  status: coverQuery.status,
+                  error: coverQuery.error,
+                  retry: () => void coverQuery.refetch(),
+                }}
                 covers={covers}
                 onCover={(assignmentId, nurseId) =>
                   setCovers((prev) => ({ ...prev, [assignmentId]: nurseId }))
@@ -184,6 +208,11 @@ export function DecideDialog({
                 data-testid="decision-reason"
               />
             </label>
+            {coverQuery.isError ? (
+              <p className="text-sm text-text-muted">
+                Approval waits until the dialog knows which shifts it frees.
+              </p>
+            ) : null}
             {error !== undefined ? (
               <p role="alert" className="text-sm text-danger">
                 {error}
@@ -208,7 +237,7 @@ export function DecideDialog({
                 type="button"
                 className={PRIMARY}
                 data-testid="approve-request"
-                disabled={busy || (needsReason && reason.trim().length === 0)}
+                disabled={busy || !coverReady || (needsReason && reason.trim().length === 0)}
                 onClick={() => {
                   const note = reason.trim() ? { reason: reason.trim() } : {};
                   if (freesShifts) {
@@ -232,9 +261,11 @@ export function DecideDialog({
               >
                 {approve.isPending || approveAndCover.isPending
                   ? 'Approving…'
-                  : freesShifts
-                    ? 'Approve and cover'
-                    : 'Approve'}
+                  : coverQuery.isPending && period !== undefined
+                    ? 'Checking who could cover…'
+                    : freesShifts
+                      ? 'Approve and cover'
+                      : 'Approve'}
               </button>
             </div>
           </form>
@@ -287,19 +318,23 @@ function CapacityView({ days }: { days: readonly DayCapacity[] }) {
 function ImpactView({
   impact,
   period,
+  periodsById,
   nursesById,
   shiftTypesById,
   conflicts,
   options,
+  cover,
   covers,
   onCover,
 }: {
   impact: TimeOffImpact;
   period: SchedulePeriod;
+  periodsById: ReadonlyMap<Id, SchedulePeriod>;
   nursesById: ReadonlyMap<Id, Nurse>;
   shiftTypesById: ReadonlyMap<Id, ShiftType>;
   conflicts: readonly Conflict[];
   options: readonly LeaveCoverOption[];
+  cover: { status: 'pending' | 'error' | 'success'; error: unknown; retry: () => void };
   covers: Readonly<Record<Id, Id | ''>>;
   onCover: (assignmentId: Id, nurseId: Id | '') => void;
 }) {
@@ -320,49 +355,60 @@ function ImpactView({
         <p className="text-xs text-text-muted">Can the unit spare them on these days?</p>
         <CapacityView days={impact.capacity} />
       </div>
-      <div className="rounded-md border border-border p-3">
-        <p className="text-xs text-text-muted">
-          Shifts this frees on {periodLabel(period)}
-          {period.status === 'published' ? ' (published: staff will be told)' : ''}
-        </p>
-        {options.length === 0 ? (
-          <p className="mt-1 text-text-muted">
-            {impact.displacedAssignments.length === 0
-              ? 'Not scheduled on these days: nothing to cover.'
-              : 'Loading who could cover…'}
-          </p>
-        ) : (
-          <ul className="mt-1 flex flex-col gap-2">
-            {options.map((o) => (
-              <li key={o.assignment.id} className="flex flex-wrap items-center gap-2">
-                <span className="min-w-56 text-text">
-                  {formatDateWithWeekday(o.assignment.date)} ·{' '}
-                  {shiftTypesById.get(o.assignment.shiftTypeId)?.name ?? o.assignment.shiftTypeId}
-                  {o.assignment.isCharge ? ' (charge)' : ''}
-                </span>
-                <select
-                  className={INPUT}
-                  aria-label={`Who covers ${formatDateWithWeekday(o.assignment.date)}`}
-                  data-testid="cover-pick"
-                  value={covers[o.assignment.id] ?? ''}
-                  onChange={(e) => onCover(o.assignment.id, e.target.value)}
-                >
-                  {o.candidates.map((c) => (
-                    <option key={c.nurseId} value={c.nurseId}>
-                      {c.label}
-                      {c.overtime ? ' — overtime' : c.payTier === 'agency' ? ' — agency' : ''}
-                    </option>
-                  ))}
-                  <option value="">Leave it open for now</option>
-                </select>
-                {o.candidates.length === 0 ? (
-                  <span className="text-xs text-danger">Nobody can legally take it.</span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {cover.status === 'pending' ? (
+        <div className="rounded-md border border-border p-3">
+          <FreedHeading period={period} />
+          <AsyncState status="loading" label="Checking who could cover…" />
+        </div>
+      ) : cover.status === 'error' ? (
+        <div className="rounded-md border border-border p-3">
+          <FreedHeading period={period} />
+          <AsyncState status="error" label="Could not find who could cover" error={cover.error} />
+          <button type="button" className={`${SECONDARY} mt-2`} onClick={cover.retry}>
+            Try again
+          </button>
+        </div>
+      ) : options.length === 0 ? (
+        <div className="rounded-md border border-border p-3">
+          <FreedHeading period={period} />
+          <p className="mt-1 text-text-muted">Not scheduled on these days: nothing to cover.</p>
+        </div>
+      ) : (
+        groupByPeriod(options).map(([periodId, group]) => (
+          <div key={periodId} className="rounded-md border border-border p-3">
+            <FreedHeading period={periodsById.get(periodId)} />
+            <ul className="mt-1 flex flex-col gap-2">
+              {group.map((o) => (
+                <li key={o.assignment.id} className="flex flex-wrap items-center gap-2">
+                  <span className="min-w-56 text-text">
+                    {formatDateWithWeekday(o.assignment.date)} ·{' '}
+                    {shiftTypesById.get(o.assignment.shiftTypeId)?.name ?? o.assignment.shiftTypeId}
+                    {o.assignment.isCharge ? ' (charge)' : ''}
+                  </span>
+                  <select
+                    className={INPUT}
+                    aria-label={`Who covers ${formatDateWithWeekday(o.assignment.date)}`}
+                    data-testid="cover-pick"
+                    value={covers[o.assignment.id] ?? ''}
+                    onChange={(e) => onCover(o.assignment.id, e.target.value)}
+                  >
+                    {o.candidates.map((c) => (
+                      <option key={c.nurseId} value={c.nurseId}>
+                        {c.label}
+                        {c.overtime ? ' — overtime' : c.payTier === 'agency' ? ' — agency' : ''}
+                      </option>
+                    ))}
+                    <option value="">Leave it open for now</option>
+                  </select>
+                  {o.candidates.length === 0 ? (
+                    <span className="text-xs text-danger">Nobody can legally take it.</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
+      )}
       <div className="grid grid-cols-2 gap-3">
         <ConflictList title="New problems if approved" items={impact.introduced} tone="danger" />
         <ConflictList title="Problems it settles" items={cleared} tone="success" />
@@ -376,7 +422,7 @@ function ImpactView({
             {impact.competing.map((r) => (
               <li key={r.id}>
                 {nurseLabel(nursesById, r.nurseId)} · {formatDate(r.startDate)} –{' '}
-                {formatDate(r.endDate)} · {r.type.toUpperCase()}
+                {formatDate(r.endDate)} · {TIME_OFF_TYPE_LABELS[r.type]}
               </li>
             ))}
           </ul>
@@ -384,6 +430,28 @@ function ImpactView({
       </div>
     </div>
   );
+}
+
+/** A period id the page does not list still gets a heading rather than an id. */
+function FreedHeading({ period }: { period: SchedulePeriod | undefined }) {
+  return (
+    <p className="text-xs text-text-muted">
+      {period === undefined
+        ? 'Shifts this frees on another schedule'
+        : `Shifts this frees on ${periodLabel(period)}${
+            period.status === 'published' ? ' (published: staff will be told)' : ''
+          }`}
+    </p>
+  );
+}
+
+/** Options in main's order (the anchor period first), one group per period. */
+function groupByPeriod(options: readonly LeaveCoverOption[]): [Id, LeaveCoverOption[]][] {
+  const groups = new Map<Id, LeaveCoverOption[]>();
+  for (const o of options) {
+    groups.set(o.assignment.periodId, [...(groups.get(o.assignment.periodId) ?? []), o]);
+  }
+  return [...groups];
 }
 
 function ConflictList({

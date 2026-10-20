@@ -100,6 +100,7 @@ function renderDialog(p: SchedulePeriod | undefined = period, onClose = () => {}
     <DecideDialog
       request={request}
       period={p}
+      periods={p ? [p] : []}
       unitId="unit-1"
       nursesById={new Map()}
       shiftTypesById={new Map()}
@@ -223,13 +224,129 @@ describe('approving a time-off request from the review dialog', () => {
     expect(pick().value).toBe('nurse-cara');
   });
 
+  it('lists the posted shifts a spanning request frees and asks for a reason', async () => {
+    const posted: SchedulePeriod = {
+      ...period,
+      id: 'period-p',
+      name: 'September',
+      startDate: isoDate('2026-09-26'),
+      endDate: isoDate('2026-10-09'),
+      status: 'published',
+    };
+    const draft: SchedulePeriod = {
+      ...period,
+      id: 'period-q',
+      name: 'October',
+      startDate: isoDate('2026-10-10'),
+      endDate: isoDate('2026-10-23'),
+    };
+    bridge.respond('timeOff', 'coverOptions', [
+      {
+        assignment: { ...assignment('a-q', '2026-10-10'), periodId: 'period-q' },
+        shortfall: 1,
+        candidates: [candidate('nurse-2', 'Ada Park')],
+      },
+      {
+        assignment: { ...assignment('a-p', '2026-10-09'), periodId: 'period-p' },
+        shortfall: 1,
+        candidates: [candidate('nurse-3', 'Bo Lin')],
+      },
+    ]);
+    renderWithApp(
+      <DecideDialog
+        request={request}
+        period={draft}
+        periods={[posted, draft]}
+        unitId="unit-1"
+        nursesById={new Map()}
+        shiftTypesById={new Map()}
+        onClose={() => {}}
+      />,
+    );
+    await screen.findByText(
+      'Shifts this frees on September (Sep 26 – Oct 9, 2026) (published: staff will be told)',
+      undefined,
+      { timeout: 5000 },
+    );
+    expect(screen.getByText('Shifts this frees on October (Oct 10 – Oct 23, 2026)')).toBeTruthy();
+    expect(
+      screen.getByText('Reason (required: staff already hold this schedule)', { exact: false }),
+    ).toBeTruthy();
+    const button = screen.getByRole('button', { name: 'Approve and cover' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.change(screen.getByTestId('decision-reason'), {
+      target: { value: 'Family emergency' },
+    });
+    expect(button.disabled).toBe(false);
+  });
+
   it('shows the message when main refuses the approval', async () => {
     bridge.respond('timeOff', 'coverOptions', options);
+    // An unanswered leave check now shows its own alert; this test is about the refused approval.
+    bridge.respond('leaveBalances', 'checkRequest', {});
     bridge.fail('timeOff', 'approveAndCover', new Error('Bo Lin is already on that shift.'));
     renderDialog();
     fireEvent.click(await screen.findByRole('button', { name: 'Approve and cover' }));
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toBe('Bo Lin is already on that shift.');
+  });
+});
+
+describe('a decision waits for what approval frees', () => {
+  it('will not approve while it is still finding who could cover', async () => {
+    bridge.respond('timeOff', 'impact', {
+      ...impact,
+      displacedAssignments: [assignment('a-1', '2026-10-09')],
+    });
+    // Never settles; the fake bridge awaits whatever a scripted function returns.
+    bridge.respond(
+      'timeOff',
+      'coverOptions',
+      (() => new Promise(() => {})) as unknown as () => LeaveCoverOption[],
+    );
+    renderDialog({ ...period, status: 'published' });
+    const approve = (await screen.findByTestId('approve-request')) as HTMLButtonElement;
+    expect(approve.disabled).toBe(true);
+    expect(approve.textContent).toBe('Checking who could cover…');
+    fireEvent.click(approve);
+    expect(bridge.callsTo('timeOff', 'approve')).toEqual([]);
+    expect(bridge.callsTo('timeOff', 'approveAndCover')).toEqual([]);
+  });
+
+  it('says it could not find cover options, offers to try again, and keeps Approve off', async () => {
+    bridge.respond('timeOff', 'impact', {
+      ...impact,
+      displacedAssignments: [assignment('a-1', '2026-10-09')],
+    });
+    bridge.fail('timeOff', 'coverOptions', new Error('The period changed'));
+    renderDialog();
+    await screen.findByText('The period changed');
+    expect(screen.queryByText('Loading who could cover…')).toBeNull();
+    const approve = screen.getByTestId('approve-request') as HTMLButtonElement;
+    expect(approve.disabled).toBe(true);
+    expect(approve.textContent).not.toBe('Checking who could cover…');
+    bridge.respond('timeOff', 'coverOptions', options);
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(screen.getAllByTestId('cover-pick')).toHaveLength(2));
+    expect(screen.getByTestId('approve-request').textContent).toBe('Approve and cover');
+  });
+
+  it('names the leave type in words', async () => {
+    bridge.respond('timeOff', 'coverOptions', []);
+    renderWithApp(
+      <DecideDialog
+        request={{ ...request, type: 'state_family' }}
+        period={period}
+        periods={[period]}
+        unitId="unit-1"
+        nursesById={new Map()}
+        shiftTypesById={new Map()}
+        onClose={() => {}}
+      />,
+    );
+    const dialog = await screen.findByTestId('decide-dialog');
+    expect(dialog.textContent).toContain('State family leave');
+    expect(dialog.textContent).not.toContain('STATE_FAMILY');
   });
 });
 

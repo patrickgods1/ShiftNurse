@@ -138,10 +138,13 @@ function NextSteps({
   summary,
   shiftTypes,
   coverageRows,
+  checkFailed,
 }: {
   summary: DashboardSummary;
-  shiftTypes: number;
-  coverageRows: number;
+  /** Undefined while the query loads or failed: a count not known is not a count of zero. */
+  shiftTypes: number | undefined;
+  coverageRows: number | undefined;
+  checkFailed: boolean;
 }) {
   const soon = dueWithin30Days(summary.expiringCredentials);
   const lapsed = summary.lapsedCredentials.length;
@@ -151,7 +154,9 @@ function NextSteps({
     urgent?: boolean;
   }[] = [];
   // A unit that cannot be scheduled yet: what it is missing comes first.
-  if (shiftTypes === 0) {
+  if (checkFailed) {
+    steps.push({ text: 'Could not check the unit’s shifts and staffing floors.' });
+  } else if (shiftTypes === 0) {
     steps.push({
       text: 'Add the shifts your unit works (Settings › Shift types)',
       to: '/settings',
@@ -165,7 +170,12 @@ function NextSteps({
   if (summary.activeNurses === 0) {
     steps.push({ text: 'Add your nurses, or import them from a spreadsheet', to: '/roster' });
   }
-  if (!summary.currentDraft && shiftTypes > 0 && summary.activeNurses > 0) {
+  if (
+    !summary.currentDraft &&
+    shiftTypes !== undefined &&
+    shiftTypes > 0 &&
+    summary.activeNurses > 0
+  ) {
     steps.push({ text: 'Create your next schedule period', to: '/schedule' });
   }
   if (summary.openCallOffs > 0) {
@@ -261,8 +271,9 @@ export default function DashboardPage() {
 
       <NextSteps
         summary={summary}
-        shiftTypes={(shiftTypesQuery.data ?? []).filter((s) => s.active).length}
-        coverageRows={(coverageQuery.data ?? []).length}
+        shiftTypes={shiftTypesQuery.data?.filter((s) => s.active).length}
+        coverageRows={coverageQuery.data?.length}
+        checkFailed={shiftTypesQuery.isError || coverageQuery.isError}
       />
 
       <div className="grid grid-cols-2 gap-4 @4xl:grid-cols-4">
@@ -323,7 +334,7 @@ export default function DashboardPage() {
           <p className="text-sm text-text-muted">No scheduling period to price yet.</p>
         ) : (
           <>
-            <CostPanel period={costPeriod} nurses={nursesQuery.data ?? []} />
+            <CostPanel period={costPeriod} nurses={nursesQuery.data} />
             <div className="mt-4 max-w-xl">
               <HppdSummary
                 periodId={costPeriod.id}

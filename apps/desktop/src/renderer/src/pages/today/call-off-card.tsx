@@ -3,6 +3,8 @@
  * ends without a backfill — mark uncovered (the shift ran short) or cancel (the nurse turned up,
  * or it was a mistake). The ranking itself is `dayOf.replacements`, judged live against the
  * period's own rule-set snapshot in main; this card only renders what it returns.
+ *
+ * The outcome is the manager's record of what the nurse said, so nothing is pre-selected.
  */
 
 import type { CallOffView } from '@shared/api.js';
@@ -29,7 +31,8 @@ const NON_ACCEPTED_OUTCOMES: readonly Exclude<CallOutcome, 'accepted'>[] = [
   'left_message',
 ];
 
-const OUTCOME_LABEL: Record<Exclude<CallOutcome, 'accepted'>, string> = {
+const CALL_OUTCOME_LABELS: Record<CallOutcome, string> = {
+  accepted: 'Accepted',
   declined: 'Declined',
   no_answer: 'No answer',
   left_message: 'Left message',
@@ -84,9 +87,14 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
       </div>
 
       {report !== undefined ? (
-        <p className="mt-2 text-sm text-warn">
-          Shift is {report.shortfall} nurse-slot(s) short with them gone
-        </p>
+        report.shortfall === 0 ? (
+          <p className="mt-2 text-sm text-text-muted">Still fully staffed without them</p>
+        ) : (
+          <p className="mt-2 text-sm text-warn">
+            Shift is {report.shortfall} nurse-slot{report.shortfall === 1 ? '' : 's'} short with
+            them gone
+          </p>
+        )
       ) : null}
 
       <div className="mt-3" data-testid="replacement-list">
@@ -101,7 +109,7 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
         ) : report !== undefined && report.candidates.length > 0 ? (
           <ul className="flex flex-col gap-2">
             {report.candidates.map((c) => {
-              const outcome = outcomeByNurse[c.nurseId] ?? 'declined';
+              const outcome = outcomeByNurse[c.nurseId];
               return (
                 <li key={c.nurseId} className="rounded-md border border-border p-2">
                   <div className="flex flex-wrap items-center gap-2">
@@ -143,7 +151,9 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
                   {c.softViolationsIntroduced.length > 0 ? (
                     <ul className="mt-1 flex flex-col gap-0.5 text-xs text-text-muted">
                       {c.softViolationsIntroduced.map((v) => (
-                        <li key={v.ruleId}>{v.message}</li>
+                        <li key={`${v.ruleId}:${v.nurseIds.join(',')}:${v.dates.join(',')}`}>
+                          {v.message}
+                        </li>
                       ))}
                     </ul>
                   ) : null}
@@ -161,7 +171,7 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
                     <select
                       aria-label={`Call outcome for ${c.label}`}
                       className={INPUT}
-                      value={outcome}
+                      value={outcome ?? ''}
                       onChange={(e) =>
                         setOutcomeByNurse((m) => ({
                           ...m,
@@ -169,17 +179,21 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
                         }))
                       }
                     >
+                      <option value="" disabled>
+                        Outcome…
+                      </option>
                       {NON_ACCEPTED_OUTCOMES.map((o) => (
                         <option key={o} value={o}>
-                          {OUTCOME_LABEL[o]}
+                          {CALL_OUTCOME_LABELS[o]}
                         </option>
                       ))}
                     </select>
                     <button
                       type="button"
                       className={SMALL}
-                      disabled={logCall.isPending}
+                      disabled={logCall.isPending || outcome === undefined}
                       onClick={() =>
+                        outcome !== undefined &&
                         logCall.mutate({
                           callOffId: callOff.callOff.id,
                           nurseId: c.nurseId,
@@ -222,7 +236,8 @@ export function CallOffCard({ unitId, callOff }: { unitId: Id; callOff: CallOffV
           <ul className="mt-1 flex flex-col gap-0.5 text-xs text-text-muted">
             {callOff.attempts.map((a) => (
               <li key={a.id}>
-                {formatInstant(a.attemptedAt)} — {nurseLabel(a.nurseId)} — {a.outcome}
+                {formatInstant(a.attemptedAt)} — {nurseLabel(a.nurseId)} —{' '}
+                {CALL_OUTCOME_LABELS[a.outcome]}
                 {a.notes !== undefined ? ` — ${a.notes}` : ''}
               </li>
             ))}

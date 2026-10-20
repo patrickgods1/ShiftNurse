@@ -10,6 +10,8 @@ import { createContext, useContext, useEffect, useRef } from 'react';
 
 /** A step's starting point, offered to the guide's Continue button. */
 export interface RegisteredPreset {
+  /** The card's title, which is also the label its typed values register as unsaved. */
+  title: () => string;
   label: () => string;
   disabled: () => boolean;
   run: () => Promise<unknown>;
@@ -31,13 +33,18 @@ export function useRegisterPreset(preset: RegisteredPreset, enabled = true): voi
   // the effect runs once per `register` identity rather than on every render.
   const latest = useRef(preset);
   latest.current = preset;
+  // The guide's Continue label and behaviour follow `disabled`, but the guide does not re-render
+  // when a step's local input changes; re-registering when it flips is what tells it to.
+  const isDisabled = preset.disabled();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: isDisabled only triggers re-registering.
   useEffect(() => {
     if (!enabled) return;
     register?.({
+      title: () => latest.current.title(),
       label: () => latest.current.label(),
       disabled: () => latest.current.disabled(),
       run: () => latest.current.run(),
     });
     return () => register?.(undefined);
-  }, [register, enabled]);
+  }, [register, enabled, isDisabled]);
 }

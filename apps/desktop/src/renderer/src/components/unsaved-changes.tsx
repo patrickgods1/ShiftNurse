@@ -6,7 +6,10 @@
  * A form calls `useUnsavedChanges('Rules', dirty)`. Anything about to unmount forms — a Settings
  * tab switch — awaits `useConfirmDiscard()`; route changes and window close/reload are guarded
  * by `NavigationGuard`. The window case ends in main (`will-prevent-unload`), because Electron
- * cancels an unload the page blocks without showing anything.
+ * cancels an unload the page blocks without showing anything. The setup guide's Back, Skip,
+ * Continue and summary links change step without a route change, so they await it too; a
+ * Continue that is about to apply a form's typed values passes that form's label in `ignore`,
+ * because those values are being used, not discarded.
  */
 
 import { useBlocker } from '@tanstack/react-router';
@@ -57,18 +60,24 @@ export function listLabels(labels: readonly string[]): string {
 }
 
 /** Resolves true when nothing is unsaved, or when the manager chooses to discard it. */
-export function useConfirmDiscard(): () => Promise<boolean> {
+export function useConfirmDiscard(): (options?: {
+  ignore?: readonly string[];
+}) => Promise<boolean> {
   const registry = useRegistry();
   const confirm = useConfirm();
-  return useCallback(async () => {
-    const labels = [...registry.current.values()];
-    if (labels.length === 0) return true;
-    return confirm({
-      title: `Discard unsaved changes to ${listLabels(labels)}?`,
-      description: 'Your edits have not been saved. Leaving now loses them.',
-      confirmLabel: 'Discard changes',
-    });
-  }, [registry, confirm]);
+  return useCallback(
+    async (options) => {
+      const ignore = options?.ignore ?? [];
+      const labels = [...registry.current.values()].filter((l) => !ignore.includes(l));
+      if (labels.length === 0) return true;
+      return confirm({
+        title: `Discard unsaved changes to ${listLabels(labels)}?`,
+        description: 'Your edits have not been saved. Leaving now loses them.',
+        confirmLabel: 'Discard changes',
+      });
+    },
+    [registry, confirm],
+  );
 }
 
 /** Mounted once inside the router: guards page changes and the window itself. */

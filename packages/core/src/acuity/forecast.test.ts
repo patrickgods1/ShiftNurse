@@ -152,6 +152,37 @@ describe('acuity mix validation', () => {
       2,
     );
   });
+
+  it('names the tier, not its id, when a count is fractional', () => {
+    const problems = validateAcuityMix(3, { [TIER_ROUTINE.id]: 1.5, [TIER_HIGH.id]: 1.5 }, [
+      TIER_ROUTINE,
+      TIER_HIGH,
+    ]);
+    expect(problems).toContain('Routine: 1.5 must be a whole number of patients, 0 or more');
+    expect(problems.some((p) => p.includes(TIER_ROUTINE.id))).toBe(false);
+  });
+
+  it('takes a census with no mix on a unit that has no acuity tiers', () => {
+    expect(validateAcuityMix(20, {}, [])).toEqual([]);
+  });
+
+  it('still wants the mix to add up on a unit that has tiers', () => {
+    expect(validateAcuityMix(20, {}, [TIER_ROUTINE])).toEqual([
+      'Acuity mix adds up to 0 patients but the census is 20',
+    ]);
+  });
+
+  it('refuses a mix on a unit with no tiers', () => {
+    expect(validateAcuityMix(2, { x: 2 }, [])).toEqual([
+      'This unit has no acuity tiers; record the census without a mix.',
+    ]);
+  });
+
+  it('refuses a mix that cites a tier no longer on the unit, without quoting its id', () => {
+    expect(validateAcuityMix(2, { 'tier-gone': 2 }, [TIER_ROUTINE])).toEqual([
+      'An acuity tier in this mix is no longer on the unit.',
+    ]);
+  });
 });
 
 describe('forecast back-test', () => {

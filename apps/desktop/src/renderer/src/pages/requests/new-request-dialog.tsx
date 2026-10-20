@@ -20,6 +20,7 @@ import { useCreateTimeOff } from '../../api-requests.js';
 import { DateField } from '../../components/date-field.js';
 import { Modal } from '../../components/modal.js';
 import { errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { parseNumberField } from '../../field-values.js';
 import { useUnit } from '../../unit-context.js';
 import { LeaveStanding } from './leave-standing.js';
 import { typicalShiftHours } from './paid-hours.js';
@@ -50,7 +51,11 @@ export function NewRequestDialog({
   const [end, setEnd] = useState('');
   const [type, setType] = useState<TimeOffType>('pto');
   const [reason, setReason] = useState('');
-  /** Paid hours as typed; `undefined` until the manager overrides the suggestion. */
+  /**
+   * Paid hours as typed; `undefined` until the manager overrides the suggestion. Any change of
+   * nurse, dates or type returns it to the suggestion, so a figure typed for Mon–Wed is not
+   * saved against Mon–Sun.
+   */
   const [paidHours, setPaidHours] = useState<string | undefined>(undefined);
   const [problem, setProblem] = useState<string | undefined>(undefined);
   const unit = useUnit();
@@ -92,8 +97,9 @@ export function NewRequestDialog({
     if (!nurseId) return setProblem('Pick a nurse.');
     if (!isIsoDate(start) || !isIsoDate(end)) return setProblem('Enter both dates.');
     if (compareDates(end, start) < 0) return setProblem('The end date is before the start date.');
-    const paid = Number(paidValue);
-    if (!Number.isFinite(paid) || paid < 0) return setProblem('Paid hours must be 0 or more.');
+    const paid = parseNumberField(paidValue);
+    if (paid === undefined) return setProblem('Enter the paid hours, or 0 if none.');
+    if (paid < 0) return setProblem('Paid hours must be 0 or more.');
     setProblem(undefined);
     create.mutate(
       {
@@ -131,7 +137,10 @@ export function NewRequestDialog({
           <select
             className={INPUT}
             value={nurseId}
-            onChange={(e) => setNurseId(e.target.value)}
+            onChange={(e) => {
+              setNurseId(e.target.value);
+              setPaidHours(undefined);
+            }}
             required
           >
             <option value="">Select…</option>
@@ -146,13 +155,19 @@ export function NewRequestDialog({
           <DateField
             label="First day off"
             value={isIsoDate(start) ? start : ''}
-            onChange={setStart}
+            onChange={(v) => {
+              setStart(v);
+              setPaidHours(undefined);
+            }}
             required
           />
           <DateField
             label="Last day off"
             value={isIsoDate(end) ? end : ''}
-            onChange={setEnd}
+            onChange={(v) => {
+              setEnd(v);
+              setPaidHours(undefined);
+            }}
             min={isIsoDate(start) ? start : undefined}
             required
           />
@@ -162,7 +177,10 @@ export function NewRequestDialog({
           <select
             className={INPUT}
             value={type}
-            onChange={(e) => setType(e.target.value as TimeOffType)}
+            onChange={(e) => {
+              setType(e.target.value as TimeOffType);
+              setPaidHours(undefined);
+            }}
           >
             {TYPES.map((t) => (
               <option key={t.value} value={t.value}>
@@ -188,19 +206,22 @@ export function NewRequestDialog({
               ? 'Unpaid leave does not count toward contracted hours.'
               : 'The shifts this nurse would have worked. Counts toward contracted hours once approved.'}
           </span>
-          {nurse?.scheduleKind === 'va_72_80' && type !== 'unpaid' && Number(paidValue) > 0 && (
-            <span>
-              Charged as {leaveChargeHours(nurse.scheduleKind, Number(paidValue)).toFixed(2)} h of
-              leave: 10 hours for each 9 of absence (38 U.S.C. § 7456A(d))
-            </span>
-          )}
+          {nurse?.scheduleKind === 'va_72_80' &&
+            type !== 'unpaid' &&
+            (parseNumberField(paidValue) ?? 0) > 0 && (
+              <span>
+                Charged as{' '}
+                {leaveChargeHours(nurse.scheduleKind, parseNumberField(paidValue) ?? 0).toFixed(2)}{' '}
+                h of leave: 10 hours for each 9 of absence (38 U.S.C. § 7456A(d))
+              </span>
+            )}
         </label>
         <LeaveStanding
           nurseId={nurseId || undefined}
           type={type}
           start={days > 0 && isIsoDate(start) ? start : undefined}
           end={days > 0 && isIsoDate(end) ? end : undefined}
-          paidHours={Number.isFinite(Number(paidValue)) ? Math.max(0, Number(paidValue)) : 0}
+          paidHours={Math.max(0, parseNumberField(paidValue) ?? 0)}
         />
         <label className={LABEL}>
           Reason (optional)

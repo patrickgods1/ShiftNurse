@@ -2,7 +2,8 @@
  * The day-of console: what a published schedule meets on the ground. One read (`dayOf.today`)
  * drives the whole page — current/next shifts with their live staffing check, and every open
  * call-off on the unit — so a manager watching an 05:40 call-out sees the same picture the
- * replacement finder is judging against, not a stale grid.
+ * replacement finder is judging against, not a stale grid. The read refreshes every minute, so a
+ * page left open across a handover moves on with the clock.
  */
 
 import type { RosterEntryView, TodayShiftView } from '@shared/api.js';
@@ -78,7 +79,7 @@ export default function TodayPage() {
     <div data-testid="today-page">
       <PageHeader
         title="Today"
-        description={`${formatDateWithWeekday(summary.date)} · ${formatClock(summary.minuteOfDay)}`}
+        description={`${formatDateWithWeekday(summary.date)} · as of ${formatClock(summary.minuteOfDay)}`}
         actions={
           <button
             type="button"
@@ -116,8 +117,6 @@ export default function TodayPage() {
           <ShiftCard
             key={`${shift.date}-${shift.shiftType.id}`}
             unitId={unitId}
-            periodId={summary.period?.id}
-            periodStatus={summary.period?.status}
             shift={shift}
             onReport={(entry) => {
               setReporting({ entry, shift });

@@ -4,6 +4,8 @@
  * when several periods touch the range — a request straddling a boundary — the draft wins,
  * because that is the schedule still open to change, and otherwise the one containing the
  * request's start date.
+ * Cover options and approval reach every period the request touches; the anchor only decides
+ * which period's impact the dialog simulates.
  */
 
 import type { SchedulePeriod, TimeOffRequest } from '@shiftnurse/core';

@@ -39,8 +39,12 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
   }
 
   async function handlePickFile() {
-    const result = await pickFile.mutateAsync(unitId);
-    if (result !== undefined) setPreview(result);
+    try {
+      const result = await pickFile.mutateAsync(unitId);
+      if (result !== undefined) setPreview(result);
+    } catch {
+      // The mutation's own error state renders the message below.
+    }
   }
 
   function handleImport() {
@@ -88,7 +92,7 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
             </p>
             {pickFile.isError ? (
               <p role="alert" className="mb-3 text-sm text-danger">
-                Could not read that file.
+                Could not read that file: {errorMessage(pickFile.error)}
               </p>
             ) : null}
             <div className="flex flex-wrap justify-end gap-2">
@@ -146,7 +150,9 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
               </div>
             ) : null}
 
-            {preview.periods.length > 0 ? (
+            {preview.periods.length === 0 ? (
+              <p className="mb-4 text-sm text-text-muted">No pay periods found in this file.</p>
+            ) : (
               <div className="mb-4 max-h-56 overflow-auto rounded-md border border-border">
                 <table className="w-full text-left text-xs">
                   <thead>
@@ -183,7 +189,7 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
                   </tbody>
                 </table>
               </div>
-            ) : null}
+            )}
 
             {importHistory.isError ? (
               <p role="alert" className="mb-3 text-sm text-danger">
@@ -198,7 +204,11 @@ export function ImportHistoryDialog({ open, onOpenChange, unitId }: ImportHistor
               <button
                 type="button"
                 onClick={handleImport}
-                disabled={preview.errors.length > 0 || importHistory.isPending}
+                disabled={
+                  preview.errors.length > 0 ||
+                  preview.periods.length === 0 ||
+                  importHistory.isPending
+                }
                 className={PRIMARY}
               >
                 {importHistory.isPending

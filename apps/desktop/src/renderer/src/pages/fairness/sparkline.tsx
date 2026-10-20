@@ -3,6 +3,9 @@
  * installed, and a handful of points scaled into an inline `<svg>` is the whole job. Values
  * are always paired with the numeric score elsewhere in the row, so the sparkline is a
  * secondary, at-a-glance cue rather than the only place the trend is legible.
+ *
+ * Fixed 0–100 axis, like the trend panel: a rescaled axis makes a one-point change look like a
+ * collapse.
  */
 
 const WIDTH = 96;
@@ -22,16 +25,12 @@ export function Sparkline({ values }: SparklineProps) {
     return <span className="text-xs text-text-muted">1 period only</span>;
   }
 
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  // A flat run (min === max) would divide by zero; draw it as a level line instead.
-  const range = max - min || 1;
   const innerWidth = WIDTH - PADDING * 2;
   const innerHeight = HEIGHT - PADDING * 2;
 
   const points = values.map((value, index) => {
     const x = PADDING + (index / (values.length - 1)) * innerWidth;
-    const y = PADDING + innerHeight - ((value - min) / range) * innerHeight;
+    const y = PADDING + innerHeight - (Math.min(Math.max(value, 0), 100) / 100) * innerHeight;
     return { x, y };
   });
 

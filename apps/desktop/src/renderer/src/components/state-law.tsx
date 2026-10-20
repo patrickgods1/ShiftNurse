@@ -87,6 +87,8 @@ export function StateLawSection({ offerToContinue = false }: { offerToContinue?:
 
   useRegisterPreset(
     {
+      // Registers no unsaved edits, so the guide never needs this to match a label.
+      title: () => 'State and contract law',
       label: () =>
         chosen === ''
           ? 'Apply'

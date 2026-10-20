@@ -43,7 +43,8 @@ export function BidEntryDialog({ round, nurses, bids, nurseId: initialNurse, onC
   const [rows, setRows] = useState<Row[]>(() => rowsFor(initialNurse ?? ''));
 
   const choices = [...nurses]
-    .filter((n) => n.active)
+    // A bidder who left after bidding stays listed, or their bid would open on "Choose a nurse…".
+    .filter((n) => n.active || n.id === initialNurse)
     .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`));
 
   const incomplete = rows.some((r) => !r.startDate || !r.endDate);
@@ -96,6 +97,7 @@ export function BidEntryDialog({ round, nurses, bids, nurseId: initialNurse, onC
             {choices.map((n) => (
               <option key={n.id} value={n.id}>
                 {n.lastName}, {n.firstName}
+                {n.active ? '' : ' (no longer active)'}
               </option>
             ))}
           </select>

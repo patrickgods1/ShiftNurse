@@ -138,6 +138,21 @@ describe('the period budget and cost report', () => {
     );
   });
 
+  it('clears a budget through the API', () => {
+    const periodId = f.seeded.draftPeriodId;
+    const set = api().setBudget(periodId, 90_000);
+    api().clearBudget(periodId);
+    expect(api().report(periodId).budget).toBeUndefined();
+    expect(auditsOf('budget', set.id)[0]).toMatchObject({
+      action: 'delete',
+      before: { targetDollars: 90_000 },
+    });
+  });
+
+  it('refuses to clear the budget of a period that does not exist', () => {
+    expect(() => api().clearBudget('no-period')).toThrow(/no longer exists/i);
+  });
+
   it('prices the shifts on the grid and compares the total with the budget', () => {
     const periodId = f.seeded.draftPeriodId;
     expect(api().report(periodId).cost.totals.total).toBe(0);

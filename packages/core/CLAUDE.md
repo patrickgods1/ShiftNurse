@@ -74,8 +74,8 @@
   adds a whole shift to the usual per-diem gap, or a unit built to lean on per diem (the community
   demo) reads every request on every day as tight. `main/api/leave.ts` is the late path: `coverOptions` ranks legal cover for each
   freed shift (the day-of `findReplacements`, with the leave approved) and `approveAndCover`
-  approves, takes the shifts off (a published period's too, under a reason, in the change log)
-  and writes the chosen cover in one transaction, re-checking every pick first. A period's
+  approves, takes the shifts off every period the request touches (a published period's too,
+  under a reason, in that period's change log) and writes the chosen cover in one transaction, re-checking every pick first. A period's
   optional `requestsCloseOn` (migration 0014) marks later requests as late; it never refuses one.
 - **Every rule declares a `scope`** (`'nurse'` or `'shift'`). The solver evaluates hard rules
   incrementally on a view holding one nurse's timeline or one shift's roster, so a rule that

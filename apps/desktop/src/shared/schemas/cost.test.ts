@@ -204,4 +204,9 @@ describe('pay settings arriving over IPC', () => {
     expect(costSchemas.setBudget.safeParse(['p-1', 0]).success).toBe(true);
     expect(costSchemas.setBudget.safeParse(['p-1', -100]).success).toBe(false);
   });
+
+  it('takes only the period when removing a budget', () => {
+    expect(costSchemas.clearBudget.safeParse(['p-1']).success).toBe(true);
+    expect(costSchemas.clearBudget.safeParse(['p-1', 5]).success).toBe(false);
+  });
 });

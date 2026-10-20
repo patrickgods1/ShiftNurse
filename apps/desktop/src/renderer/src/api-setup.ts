@@ -71,7 +71,9 @@ export function useAdvanceSetup() {
     meta: { inlineError: true },
     mutationFn: (move: { from: SetupStepId; to: SetupStepId; skipped: boolean }) =>
       api.setup.advance(move),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: setupKeys.status() }),
+    // Returned, so the mutation stays pending until the next step has arrived and a quick
+    // second Continue cannot send a second move.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: setupKeys.status() }),
   });
 }
 

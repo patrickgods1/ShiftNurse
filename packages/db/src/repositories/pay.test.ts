@@ -12,6 +12,7 @@ import * as s from '../schema.js';
 import { createShiftType, createUnit } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
 import {
+  clearBudget,
   createDifferential,
   createOvertimeRule,
   createPayRate,
@@ -19,6 +20,7 @@ import {
   deleteOvertimeRule,
   deletePayRate,
   effectiveRateForNurse,
+  getBudget,
   getPaySettings,
   listActiveDifferentials,
   listActiveOvertimeRules,
@@ -27,6 +29,7 @@ import {
   listPayRatesForUnit,
   paySettingsSaved,
   savePaySettings,
+  setBudget,
   updateDifferential,
   updateOvertimeRule,
   updatePayRate,
@@ -866,5 +869,28 @@ describe('cost configuration', () => {
     );
     expect(listDifferentialsForUnit(handle.db, unitId)).toEqual([]);
     expect(listOvertimeRulesForUnit(handle.db, unitId)).toEqual([]);
+  });
+});
+
+describe('removing a period budget', () => {
+  it('removes a period’s budget and records what it was', () => {
+    const saved = setBudget(handle.db, unitId, _periodId, 90_000, ACTOR);
+    clearBudget(handle.db, _periodId, ACTOR);
+    expect(getBudget(handle.db, _periodId)).toBeUndefined();
+    expect(auditHistoryFor(handle.db, 'budget', saved.id)[0]).toMatchObject({
+      action: 'delete',
+      before: { targetDollars: 90_000 },
+    });
+  });
+
+  it('writes nothing when there is no budget to remove', () => {
+    clearBudget(handle.db, _periodId, ACTOR);
+    expect(
+      handle.db
+        .select()
+        .from(s.auditLog)
+        .all()
+        .filter((r) => r.entityType === 'budget'),
+    ).toHaveLength(0);
   });
 });

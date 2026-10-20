@@ -6,7 +6,7 @@
  */
 
 import type { RosterEntryView, TodayShiftView } from '@shared/api.js';
-import type { Id, PeriodStatus, RoleStaffing } from '@shiftnurse/core';
+import type { Id, RoleStaffing } from '@shiftnurse/core';
 import { SMALL } from '../../components/ui.js';
 import { formatDateWithWeekday } from '../../format.js';
 import { CensusDrop } from './census-drop.js';
@@ -56,16 +56,10 @@ function rosterLabel(entry: RosterEntryView): string {
 
 export function ShiftCard({
   unitId,
-  periodId,
-  periodStatus,
   shift,
   onReport,
 }: {
   unitId: Id;
-  /** The period whose assignments these are, when one covers the day; floating needs it. */
-  periodId?: Id;
-  /** A holdover is recorded on a published shift only; a draft refuses it, so no button there. */
-  periodStatus?: PeriodStatus;
   shift: TodayShiftView;
   /** The page owns the one report dialog, which the header's picker also opens. */
   onReport: (entry: RosterEntryView) => void;
@@ -127,8 +121,8 @@ export function ShiftCard({
         <CensusDrop key={over.role} unitId={unitId} shift={shift} over={over} />
       ))}
 
-      {periodId !== undefined ? (
-        <FloatOut unitId={unitId} periodId={periodId} shift={shift} />
+      {shift.period !== undefined ? (
+        <FloatOut unitId={unitId} periodId={shift.period.id} shift={shift} />
       ) : null}
 
       <ul className="mt-3 flex flex-col gap-1 border-t border-border pt-3 text-sm">
@@ -148,7 +142,8 @@ export function ShiftCard({
             </span>
             {entry.callOff === undefined &&
             !shift.shiftType.isOnCall &&
-            periodStatus === 'published' ? (
+            // A holdover is recorded on a published shift only; a draft refuses it.
+            shift.period?.status === 'published' ? (
               <HoldoverAction unitId={unitId} shift={shift} entry={entry} />
             ) : null}
             {entry.callOff === undefined ? (

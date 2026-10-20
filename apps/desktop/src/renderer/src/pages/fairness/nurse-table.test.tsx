@@ -98,4 +98,16 @@ describe('fairness breakdown', () => {
     // Mean (1 + 4) / 2 = 2.5; Ana is 1.5 under.
     expect(screen.getByText('1.5 fewer weekend days than the unit average of 2.5.')).toBeTruthy();
   });
+
+  it('lists per-diem staff when nobody scored has a contracted share', async () => {
+    const ana = makeNurse({ firstName: 'Ana', lastName: 'Reyes', contractedHoursPerPeriod: 0 });
+    const ben = makeNurse({ firstName: 'Ben', lastName: 'Cole', contractedHoursPerPeriod: 0 });
+    const scores = [scoreFor(ana.id, []), scoreFor(ben.id, [])];
+    renderWithApp(<NurseFairnessTable scores={scores} nurses={[ana, ben]} trend={[]} />);
+
+    expect(await screen.findByText(/Nobody scored here has a contracted share/)).toBeTruthy();
+    expect(screen.getByText(/Ana/)).toBeTruthy();
+    expect(screen.getByText(/Ben/)).toBeTruthy();
+    expect(screen.queryByText('No nurses scored for this period.')).toBeNull();
+  });
 });

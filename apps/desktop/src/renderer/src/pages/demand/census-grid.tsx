@@ -5,11 +5,11 @@
  */
 
 import type { AcuityTier, CensusForecast, Id, IsoDate, ShiftType } from '@shiftnurse/core';
+import { useMemo } from 'react';
 import { formatDateWithWeekday } from '../../format.js';
 import { CensusCell } from './census-cell.js';
 
 interface CensusGridProps {
-  unitId: Id;
   dates: IsoDate[];
   shiftTypes: ShiftType[];
   census: CensusForecast[];
@@ -21,7 +21,6 @@ interface CensusGridProps {
 }
 
 export function CensusGrid({
-  unitId,
   dates,
   shiftTypes,
   census,
@@ -31,6 +30,11 @@ export function CensusGrid({
   onSaveActual,
   saving,
 }: CensusGridProps) {
+  // One pass over the census instead of a scan per cell (rows x shift types x census rows).
+  const censusByCell = useMemo(
+    () => new Map(census.map((c) => [`${c.date}::${c.shiftTypeId}`, c])),
+    [census],
+  );
   const activeShiftTypes = shiftTypes.filter((s) => s.active && !s.isOnCall);
 
   if (activeShiftTypes.length === 0) {
@@ -47,9 +51,11 @@ export function CensusGrid({
       <table className="w-full min-w-[640px] border-collapse text-sm">
         <thead>
           <tr className="border-b border-border text-left text-text-muted">
-            <th className="px-3 py-2 font-medium">Date</th>
+            <th scope="col" className="px-3 py-2 font-medium">
+              Date
+            </th>
             {activeShiftTypes.map((s) => (
-              <th key={s.id} className="px-3 py-2 font-medium">
+              <th key={s.id} scope="col" className="px-3 py-2 font-medium">
                 {s.name}
               </th>
             ))}
@@ -58,17 +64,16 @@ export function CensusGrid({
         <tbody>
           {dates.map((date) => (
             <tr key={date} className="border-b border-border last:border-0">
-              <td className="px-3 py-2 text-text">{formatDateWithWeekday(date)}</td>
+              <th scope="row" className="px-3 py-2 text-left font-normal text-text">
+                {formatDateWithWeekday(date)}
+              </th>
               {activeShiftTypes.map((shiftType) => {
-                const existing = census.find(
-                  (c) => c.date === date && c.shiftTypeId === shiftType.id,
-                );
+                const existing = censusByCell.get(`${date}::${shiftType.id}`);
                 return (
                   <td key={shiftType.id} className="p-1 text-center">
                     <CensusCell
                       date={date}
                       shiftTypeId={shiftType.id}
-                      unitId={unitId}
                       existing={existing}
                       tiers={tiers}
                       isPast={date < todayIso}

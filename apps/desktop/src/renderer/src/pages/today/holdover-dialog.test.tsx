@@ -153,15 +153,14 @@ describe('the roster line', () => {
 });
 
 describe('the roster on a card', () => {
-  const card = (periodStatus: 'draft' | 'published') =>
+  const card = (period: { id: string; status: 'draft' | 'published' }) =>
     renderWithApp(
       <ShiftCard
         unitId="u-1"
-        periodId="p-1"
-        periodStatus={periodStatus}
         shift={
           {
             ...shift,
+            period,
             status: 'other',
             overstaffed: [],
             staffing: { basis: 'floor', byRole: {} },
@@ -173,12 +172,18 @@ describe('the roster on a card', () => {
     );
 
   it('offers Held over on a published shift', async () => {
-    card('published');
+    card({ id: 'p-1', status: 'published' });
+    expect(await screen.findByRole('button', { name: 'Held over: Cruz' })).toBeTruthy();
+  });
+
+  it('offers Held over on last night’s posted shift even when today’s period is still a draft', async () => {
+    // The card reads the slot's own period, not the page's, so a draft today changes nothing here.
+    card({ id: 'p-prev', status: 'published' });
     expect(await screen.findByRole('button', { name: 'Held over: Cruz' })).toBeTruthy();
   });
 
   it('offers no Held over on a draft schedule, where it would only be refused', async () => {
-    card('draft');
+    card({ id: 'p-1', status: 'draft' });
     await screen.findByRole('button', { name: 'Report call-off' });
     expect(screen.queryByRole('button', { name: 'Held over: Cruz' })).toBeNull();
   });

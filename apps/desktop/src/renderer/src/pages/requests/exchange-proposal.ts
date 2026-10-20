@@ -45,7 +45,7 @@ export function buildExchangeProposal(form: ExchangeFormState): ExchangeProposal
   };
 }
 
-/** "Fri 2026-01-16 · N12 (charge)" — enough to tell two shifts on the same grid apart. */
+/** "Fri, Jan 16 · N12 (charge)" — enough to tell two shifts on the same grid apart. */
 export function assignmentOptionLabel(
   assignment: Assignment,
   shiftTypesById: ReadonlyMap<Id, ShiftType>,

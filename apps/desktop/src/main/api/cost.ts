@@ -9,6 +9,7 @@ import {
   type ScheduleView,
 } from '@shiftnurse/core';
 import {
+  clearBudget,
   costContext,
   createDifferential,
   createOvertimeRule,
@@ -81,6 +82,13 @@ export function setPeriodBudget(db: ShiftNurseDb, periodId: Id, targetDollars: n
   });
 }
 
+export function clearPeriodBudget(db: ShiftNurseDb, periodId: Id): void {
+  transact(db, (tx) => {
+    periodOrThrow(tx, periodId);
+    clearBudget(tx, periodId, ACTOR);
+  });
+}
+
 /** Pay configuration and the period cost report; every write audited in one transaction. */
 export function costApi(db: ShiftNurseDb): ShiftNurseApi['cost'] {
   return {
@@ -100,6 +108,7 @@ export function costApi(db: ShiftNurseDb): ShiftNurseApi['cost'] {
     deleteOvertimeRule: (id) => transact(db, (tx) => deleteOvertimeRule(tx, id, ACTOR)),
     report: (periodId) => costReport(db, periodId),
     setBudget: (periodId, targetDollars) => setPeriodBudget(db, periodId, targetDollars),
+    clearBudget: (periodId) => clearPeriodBudget(db, periodId),
     paySettings: (unitId) => getPaySettings(db, unitId),
     savePaySettings: (unitId, settings) =>
       transact(db, (tx) => savePaySettings(tx, unitId, settings, ACTOR)),

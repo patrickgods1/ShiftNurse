@@ -58,6 +58,22 @@ tags. Each release's notes link here.
 - Overtime offers, orientations, rest waivers, missed-break pay, float records and low-census
   cancellations can be recorded for a nurse floated in, on the days her float membership covers.
   The missed-break premium is paid once a day, even across two units.
+- The setup guide asks before Back, Skip, Continue or "Set it up now" throws away unsaved edits,
+  and a cleared staffing count no longer sets a floor of zero.
+- A half-typed date no longer clears the saved one; Escape puts the saved date back. The request
+  close date is saved once, when you leave the field, and an unchanged date writes nothing.
+- Requests no longer calls a draft "Covered" before anything is built, and Approve waits until
+  the dialog knows which shifts the leave frees.
+- Approving leave that spans a published and a draft schedule takes the nurse off every posted
+  shift in both, asks for a reason for the published one, and logs each in its own schedule.
+- Schedule, Requests, Fairness and Staffing needs share one chosen schedule period.
+- Today refreshes every minute and judges last night's shift against the schedule it was worked
+  in; a call-off has no pre-selected outcome and never reads "0 slots short".
+- A unit with no acuity tiers can record a census; census messages name tiers, not ids.
+- A period budget can be removed. Loading no longer reads as "not set up", "no nurses scored" or
+  as ids; failed checks and file imports say what failed.
+- Staffing needs ranges are capped at 120 days and commit when you finish typing; the census
+  editor can be cleared and keeps what you typed when the data refreshes.
 
 ### Changed
 

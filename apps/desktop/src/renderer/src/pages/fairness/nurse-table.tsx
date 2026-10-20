@@ -218,7 +218,47 @@ export function NurseFairnessTable({ scores, nurses, trend }: NurseFairnessTable
       />
     ));
 
-  if (sorted.length === 0) {
+  const head = (
+    <thead>
+      <tr className="border-b border-border text-left text-text-muted">
+        <th scope="col" className="px-3 py-2 font-medium">
+          Nurse
+        </th>
+        <th scope="col" className="px-3 py-2 font-medium">
+          Role
+        </th>
+        <th scope="col" className="px-3 py-2 font-medium">
+          FTE
+        </th>
+        <th
+          scope="col"
+          className="px-3 py-2 font-medium"
+          title="100 means at or under their fair share of every burden"
+        >
+          Fairness (0–100)
+        </th>
+        <th
+          scope="col"
+          className="px-3 py-2 font-medium"
+          title="Above 0: carrying more than their share of nights, weekends and holidays, this period and recently"
+        >
+          Load vs fair share
+        </th>
+        <th
+          scope="col"
+          className="px-3 py-2 font-medium"
+          title="Longer-serving nurses' preferences count for more"
+        >
+          Seniority weight
+        </th>
+        <th scope="col" className="px-3 py-2 font-medium">
+          Trend
+        </th>
+      </tr>
+    </thead>
+  );
+
+  if (scores.length === 0) {
     return (
       <div className="rounded-md border border-border bg-surface p-8 text-center text-text-muted">
         No nurses scored for this period.
@@ -228,55 +268,29 @@ export function NurseFairnessTable({ scores, nurses, trend }: NurseFairnessTable
 
   return (
     <div className="overflow-x-auto rounded-md border border-border bg-surface">
-      <table data-testid="fairness-table" className="w-full min-w-[760px] border-collapse text-sm">
-        <caption className="sr-only">
-          Per-nurse fairness scores for this period, lowest score first
-        </caption>
-        <thead>
-          <tr className="border-b border-border text-left text-text-muted">
-            <th scope="col" className="px-3 py-2 font-medium">
-              Nurse
-            </th>
-            <th scope="col" className="px-3 py-2 font-medium">
-              Role
-            </th>
-            <th scope="col" className="px-3 py-2 font-medium">
-              FTE
-            </th>
-            <th
-              scope="col"
-              className="px-3 py-2 font-medium"
-              title="100 means at or under their fair share of every burden"
-            >
-              Fairness (0–100)
-            </th>
-            <th
-              scope="col"
-              className="px-3 py-2 font-medium"
-              title="Above 0: carrying more than their share of nights, weekends and holidays, this period and recently"
-            >
-              Load vs fair share
-            </th>
-            <th
-              scope="col"
-              className="px-3 py-2 font-medium"
-              title="Longer-serving nurses' preferences count for more"
-            >
-              Seniority weight
-            </th>
-            <th scope="col" className="px-3 py-2 font-medium">
-              Trend
-            </th>
-          </tr>
-        </thead>
-        <tbody>{rowsFor(sorted)}</tbody>
-      </table>
+      {sorted.length === 0 ? (
+        <p className="p-4 text-center text-text-muted">
+          Nobody scored here has a contracted share to compare against.
+        </p>
+      ) : (
+        <table
+          data-testid="fairness-table"
+          className="w-full min-w-[760px] border-collapse text-sm"
+        >
+          <caption className="sr-only">
+            Per-nurse fairness scores for this period, lowest score first
+          </caption>
+          {head}
+          <tbody>{rowsFor(sorted)}</tbody>
+        </table>
+      )}
       {asNeeded.length > 0 ? (
-        <details className="border-t border-border">
+        <details className="border-t border-border" open={sorted.length === 0}>
           <summary className="cursor-pointer px-3 py-2 text-sm text-text-muted">
             Per-diem and agency staff ({asNeeded.length}) — no contracted share to compare against
           </summary>
           <table className="w-full min-w-[760px] border-collapse text-sm">
+            {head}
             <tbody>{rowsFor(asNeeded)}</tbody>
           </table>
         </details>

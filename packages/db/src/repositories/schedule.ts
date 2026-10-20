@@ -114,7 +114,8 @@ export function createPeriod(db: DbLike, input: CreatePeriodInput, actor: string
 /**
  * When time-off requests for this period close: the request window units run, after which a
  * request is late and decided first-come with a cover plan. Undefined clears it. Advisory — the
- * app flags late requests, it never refuses them.
+ * app flags late requests, it never refuses them. Setting the date it already has writes nothing,
+ * so a field that commits on blur cannot leave audit noise.
  */
 export function setRequestsCloseOn(
   db: DbLike,
@@ -124,6 +125,7 @@ export function setRequestsCloseOn(
 ): SchedulePeriod {
   const before = getPeriod(db, periodId);
   if (!before) throw new Error(`Schedule period ${periodId} not found`);
+  if ((before.requestsCloseOn ?? undefined) === date) return before;
   db.update(schedulePeriod)
     .set({ requestsCloseOn: date ?? null })
     .where(eq(schedulePeriod.id, periodId))

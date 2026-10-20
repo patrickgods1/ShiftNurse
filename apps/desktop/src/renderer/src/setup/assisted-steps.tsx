@@ -25,6 +25,8 @@ import { usePayRates } from '../api-cost.js';
 import { useApplyPreset } from '../api-setup.js';
 import { StateLawSection } from '../components/state-law.js';
 import { errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from '../components/ui.js';
+import { useUnsavedChanges } from '../components/unsaved-changes.js';
+import { parseIntegerField } from '../field-values.js';
 import { ImportDialog } from '../pages/roster/import-dialog.js';
 import { NurseFormDialog } from '../pages/roster/nurse-form-dialog.js';
 import AcuityPanel from '../pages/settings/acuity.js';
@@ -43,6 +45,7 @@ import { useRegisterPreset } from './preset-registry.js';
 import { type SetupCounts, STEP_HOME, STEP_TITLES, stepStatus } from './steps.js';
 
 const ROLES: readonly NurseRole[] = ['RN', 'LPN', 'CNA'];
+const COVERAGE_DEFAULTS: Record<NurseRole, string> = { RN: '4', LPN: '0', CNA: '1' };
 
 function describeResult(result: SetupPresetResult): string {
   const parts = [];
@@ -59,18 +62,23 @@ function PresetCard({
   applyLabel,
   preset,
   disabled = false,
+  dirty = false,
 }: {
   title: string;
   children?: ReactNode;
   applyLabel: string;
   preset: () => SetupPreset;
   disabled?: boolean;
+  /** Typed values the manager has not applied yet; leaving the step would lose them. */
+  dirty?: boolean;
 }) {
   const unit = useUnit();
   const apply = useApplyPreset(unit.id);
   const onApply = () => apply.mutate(preset());
   // Offered to the guide's Continue: on a step still empty, Continue applies this preset.
+  useUnsavedChanges(title, dirty && !apply.isSuccess);
   useRegisterPreset({
+    title: () => title,
     label: () => applyLabel,
     disabled: () => disabled,
     run: () => apply.mutateAsync(preset()),
@@ -158,13 +166,15 @@ function CoverageStep() {
   const shiftTypesQuery = useShiftTypes(unit.id);
   const staffed = (shiftTypesQuery.data ?? []).filter((s) => s.active && !s.isOnCall);
   const [excluded, setExcluded] = useState<ReadonlySet<string>>(new Set());
-  const [counts, setCounts] = useState<Record<NurseRole, string>>({ RN: '4', LPN: '0', CNA: '1' });
+  const [counts, setCounts] = useState<Record<NurseRole, string>>({ ...COVERAGE_DEFAULTS });
   const chosen = staffed.filter((s) => !excluded.has(s.id));
-  const parsed = Object.fromEntries(ROLES.map((r) => [r, Number(counts[r])])) as Record<
+  // A cleared box is "not entered", not 0: Number('') is 0 and would set an RN floor of 0.
+  const parsed = Object.fromEntries(ROLES.map((r) => [r, parseIntegerField(counts[r])])) as Record<
     NurseRole,
-    number
+    number | undefined
   >;
-  const valid = ROLES.every((r) => Number.isInteger(parsed[r]) && parsed[r] >= 0);
+  const valid = ROLES.every((r) => parsed[r] !== undefined && parsed[r] >= 0);
+  const dirty = excluded.size > 0 || ROLES.some((r) => counts[r] !== COVERAGE_DEFAULTS[r]);
 
   return (
     <>
@@ -172,10 +182,11 @@ function CoverageStep() {
         title="Set the same minimum on every shift, every day"
         applyLabel="Set these floors"
         disabled={chosen.length === 0 || !valid}
+        dirty={dirty}
         preset={() => ({
           kind: 'coverage',
           shiftTypeIds: chosen.map((s) => s.id),
-          counts: parsed,
+          counts: parsed as Record<NurseRole, number>,
         })}
       >
         {staffed.length === 0 ? (
@@ -216,6 +227,11 @@ function CoverageStep() {
                 </label>
               ))}
             </div>
+            {valid ? null : (
+              <p role="alert" className="text-xs text-danger">
+                Enter a number for every role (0 if the unit has none).
+              </p>
+            )}
             <p className="text-xs text-text-muted">
               Weekend or weekday differences can be edited in the table below afterwards. Demand
               from census and acuity can raise staffing above these floors, never below.
@@ -335,6 +351,7 @@ function PayStep() {
         title="Base hourly rates by role"
         applyLabel="Save base rates"
         disabled={!valid}
+        dirty={entered.length > 0}
         preset={() => ({ kind: 'base-rates', rates: parsed })}
       >
         <div className="flex gap-3">
@@ -472,8 +489,8 @@ function FinishStep({
       </h2>
       <p className="mb-3 text-xs text-text-muted">
         {missing.length === 0
-          ? 'Anything left for later can be set up any time; the Dashboard lists it.'
-          : `Still needed: ${missing.map((s) => STEP_TITLES[s].toLowerCase()).join(', ')}. You can open ShiftNurse now and finish them later — the Dashboard will list them.`}
+          ? 'Anything left for later is listed above with where to find it. The Dashboard reminds you only about shift types, staffing floors and nurses.'
+          : `Still needed: ${missing.map((s) => STEP_TITLES[s].toLowerCase()).join(', ')}. You can open ShiftNurse now; the Dashboard lists these until they are done. Other steps left for later are listed above with where to find them.`}
       </p>
       <ul className="flex flex-col gap-2 text-sm">
         {steps.map((step) => {
