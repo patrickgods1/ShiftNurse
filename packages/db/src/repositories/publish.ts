@@ -31,7 +31,11 @@ import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import { toScheduleChange, toScheduleVersion } from '../mappers.js';
 import { scheduleChange, schedulePeriod, scheduleVersion } from '../schema.js';
-import { type UpsertFairnessLedgerInput, upsertFairnessLedgerEntry } from './ledger.js';
+import {
+  removeLedgerEntriesExcept,
+  type UpsertFairnessLedgerInput,
+  upsertFairnessLedgerEntry,
+} from './ledger.js';
 import { getPeriod, listAssignmentsForPeriod } from './schedule.js';
 
 // ---------------------------------------------------------------------------
@@ -69,7 +73,10 @@ export interface PublishInput {
   periodId: Id;
   /** Required when republishing; the first publication may go out without one. */
   reason?: string;
-  /** This period's burden counters, derived by the caller with core's `deriveCounters`. */
+  /**
+   * This period's burden counters, derived by the caller with core's `deriveCounters`. When given
+   * (even empty) it is the whole truth for the period: rows of nurses not in it are deleted.
+   */
   ledger?: readonly UpsertFairnessLedgerInput[];
 }
 
@@ -78,6 +85,8 @@ export interface PublishResult {
   version: ScheduleVersion;
   diff: ScheduleDiff;
   ledgerEntries: number;
+  /** Ledger rows of nurses no longer on the period, deleted. */
+  ledgerRemoved: number;
 }
 
 /**
@@ -159,7 +168,17 @@ export function publishSchedule(db: DbLike, input: PublishInput, actor: string):
     upsertFairnessLedgerEntry(db, entry, actor);
     ledgerEntries++;
   }
-  return { period, version, diff, ledgerEntries };
+  // Only a caller that books a ledger vouches for the whole period; none given means untouched.
+  const ledgerRemoved = input.ledger
+    ? removeLedgerEntriesExcept(
+        db,
+        input.periodId,
+        new Set(input.ledger.map((e) => e.nurseId)),
+        actor,
+        `Not on version ${version.version} of ${period.name}`,
+      )
+    : 0;
+  return { period, version, diff, ledgerEntries, ledgerRemoved };
 }
 
 // ---------------------------------------------------------------------------

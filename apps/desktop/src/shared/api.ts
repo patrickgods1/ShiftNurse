@@ -770,6 +770,8 @@ export interface PublishOutcome {
   version: ScheduleVersion;
   diff: ScheduleDiff;
   ledgerEntries: number;
+  /** Ledger rows of nurses no longer on the period, deleted. */
+  ledgerRemoved: number;
   /** The backup written on publish, if the file system allowed one. */
   backup: BackupInfo | undefined;
 }

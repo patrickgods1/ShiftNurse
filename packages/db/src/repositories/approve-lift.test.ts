@@ -10,14 +10,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { createShiftType, createUnit } from './config.js';
+import { publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
-import {
-  createAssignment,
-  createPeriod,
-  listAssignmentsForPeriod,
-  publishPeriod,
-} from './schedule.js';
+import { createAssignment, createPeriod, listAssignmentsForPeriod } from './schedule.js';
 import { approveTimeOffAndLiftAssignments, createTimeOffRequest } from './timeoff.js';
 
 const ACTOR = 'manager';
@@ -116,7 +112,7 @@ beforeEach(() => {
 afterEach(() => handle.close());
 
 describe('approveTimeOffAndLiftAssignments', () => {
-  it('takes the nurse off the draft shifts inside the approved weekend, and no others', () => {
+  it('takes the nurse off the draft shifts inside the approved weekend, and leaves the night before when leave is booked by start day', () => {
     const periodId = mkPeriod('Jan A', '2026-01-15', '2026-01-28');
     shift(periodId, '2026-01-16');
     const sat = shift(periodId, '2026-01-17');
@@ -157,7 +153,7 @@ describe('approveTimeOffAndLiftAssignments', () => {
   it('leaves a published schedule alone and reports the shifts it did not touch', () => {
     const periodId = mkPeriod('Dec B', '2025-12-18', '2025-12-31');
     shift(periodId, '2025-12-24');
-    publishPeriod(handle.db, periodId, ACTOR);
+    publishSchedule(handle.db, { periodId }, ACTOR);
     const req = createTimeOffRequest(
       handle.db,
       { nurseId, startDate: isoDate('2025-12-24'), endDate: isoDate('2025-12-26'), type: 'pto' },
@@ -167,6 +163,180 @@ describe('approveTimeOffAndLiftAssignments', () => {
     expect(result.request.status).toBe('approved');
     expect(result.lifted).toHaveLength(0);
     expect(result.stillRostered).toHaveLength(1);
+    expect(listAssignmentsForPeriod(handle.db, periodId)).toHaveLength(1);
+  });
+});
+
+describe('approving leave when the contract counts the night before', () => {
+  let countingId: string;
+  let countingVersion: number;
+
+  function mkCountingPeriod(name: string, start: string, end: string): string {
+    return createPeriod(
+      handle.db,
+      {
+        unitId,
+        name,
+        startDate: isoDate(start),
+        endDate: isoDate(end),
+        ruleSetId: countingId,
+        ruleSetVersion: countingVersion,
+      },
+      ACTOR,
+    ).id;
+  }
+
+  function leave(start: string, end: string): string {
+    return createTimeOffRequest(
+      handle.db,
+      { nurseId, startDate: isoDate(start), endDate: isoDate(end), type: 'pto' },
+      ACTOR,
+    ).id;
+  }
+
+  beforeEach(() => {
+    const rs = transact(handle.db, (tx) =>
+      saveRuleSet(
+        tx,
+        {
+          unitId,
+          name: 'Counts the night before',
+          weekendDefinition: {
+            startWeekday: 6,
+            startMinute: 0,
+            durationMinutes: 2880,
+            mode: 'starts_within',
+          },
+          fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+          configs: [
+            {
+              ruleId: 'approved-time-off-is-absolute',
+              enabled: true,
+              params: { nightShiftEndingOnLeaveCounts: true },
+            },
+          ],
+        },
+        ACTOR,
+      ),
+    );
+    countingId = rs.id;
+    countingVersion = rs.version;
+  });
+
+  it('lifts the night that runs into the first morning of leave when the contract counts it', () => {
+    const periodId = mkCountingPeriod('Jan A', '2026-01-15', '2026-01-28');
+    for (const d of ['2026-01-16', '2026-01-17', '2026-01-18', '2026-01-19']) shift(periodId, d);
+    const id = leave('2026-01-17', '2026-01-18');
+
+    const result = transact(handle.db, (tx) => approveTimeOffAndLiftAssignments(tx, id, ACTOR));
+
+    expect(result.lifted.map((a) => a.date).sort()).toEqual([
+      '2026-01-16',
+      '2026-01-17',
+      '2026-01-18',
+    ]);
+    expect(listAssignmentsForPeriod(handle.db, periodId).map((a) => a.date)).toEqual([
+      '2026-01-19',
+    ]);
+  });
+
+  it('keeps a day shift the day before leave even when the contract counts the night before', () => {
+    const periodId = mkCountingPeriod('Jan A', '2026-01-15', '2026-01-28');
+    const dayId = createShiftType(
+      handle.db,
+      {
+        unitId,
+        name: 'Day 12',
+        abbreviation: 'D12',
+        startTime: '07:00',
+        durationHours: 12,
+        isNight: false,
+        isOnCall: false,
+        color: '#0369a1',
+        sortOrder: 1,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+    createAssignment(
+      handle.db,
+      {
+        periodId,
+        nurseId,
+        shiftTypeId: dayId,
+        date: isoDate('2026-01-16'),
+        source: 'manual',
+        isLocked: false,
+      },
+      ACTOR,
+    );
+    const id = leave('2026-01-17', '2026-01-18');
+
+    const result = transact(handle.db, (tx) => approveTimeOffAndLiftAssignments(tx, id, ACTOR));
+
+    expect(result.lifted).toHaveLength(0);
+    expect(listAssignmentsForPeriod(handle.db, periodId)).toHaveLength(1);
+  });
+
+  it('leaves the night before alone when the time-off rule is switched off, whatever its setting says', () => {
+    const off = transact(handle.db, (tx) =>
+      saveRuleSet(
+        tx,
+        {
+          unitId,
+          name: 'Rule off',
+          weekendDefinition: {
+            startWeekday: 6,
+            startMinute: 0,
+            durationMinutes: 2880,
+            mode: 'starts_within',
+          },
+          fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+          configs: [
+            {
+              ruleId: 'approved-time-off-is-absolute',
+              enabled: false,
+              params: { nightShiftEndingOnLeaveCounts: true },
+            },
+          ],
+        },
+        ACTOR,
+      ),
+    );
+    const periodId = createPeriod(
+      handle.db,
+      {
+        unitId,
+        name: 'Jan A',
+        startDate: isoDate('2026-01-15'),
+        endDate: isoDate('2026-01-28'),
+        ruleSetId: off.id,
+        ruleSetVersion: off.version,
+      },
+      ACTOR,
+    ).id;
+    shift(periodId, '2026-01-16');
+    const id = leave('2026-01-17', '2026-01-17');
+
+    const result = transact(handle.db, (tx) => approveTimeOffAndLiftAssignments(tx, id, ACTOR));
+
+    expect(result.lifted).toHaveLength(0);
+    expect(result.stillRostered).toHaveLength(0);
+    expect(listAssignmentsForPeriod(handle.db, periodId).map((a) => a.date)).toEqual([
+      '2026-01-16',
+    ]);
+  });
+
+  it('reports, but does not edit, a published night that runs into the leave', () => {
+    const periodId = mkCountingPeriod('Jan A', '2026-01-15', '2026-01-28');
+    shift(periodId, '2026-01-16');
+    publishSchedule(handle.db, { periodId }, ACTOR);
+    const id = leave('2026-01-17', '2026-01-17');
+
+    const result = transact(handle.db, (tx) => approveTimeOffAndLiftAssignments(tx, id, ACTOR));
+
+    expect(result.lifted).toHaveLength(0);
+    expect(result.stillRostered.map((a) => a.date)).toEqual(['2026-01-16']);
     expect(listAssignmentsForPeriod(handle.db, periodId)).toHaveLength(1);
   });
 });

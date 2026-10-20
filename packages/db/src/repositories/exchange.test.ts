@@ -23,16 +23,17 @@ import {
   listSwapsForUnit,
   proposeSwap,
 } from './exchange.js';
+import { recordHoldover } from './holdovers.js';
 import { listChanges, publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
 import {
+  archivePeriod,
   createAssignment,
   createPeriod,
   deleteAssignment,
   getAssignment,
   listAssignmentsForPeriod,
-  updatePeriodStatus,
 } from './schedule.js';
 
 const ACTOR = 'manager';
@@ -347,6 +348,43 @@ describe('approveSwap', () => {
     expect(approved.decisionReason).toBe('Drops Ada below her fair share but she asked for it');
   });
 
+  it('refuses an exchange that would drop a recorded holdover', () => {
+    const { offered, swap } = proposeGiveaway();
+    publishSchedule(handle.db, { periodId }, ACTOR);
+    recordHoldover(handle.db, { assignmentId: offered.id, minutes: 60, mandated: false }, ACTOR);
+
+    expect(() =>
+      transact(handle.db, (tx) =>
+        approveSwap(
+          tx,
+          swap.id,
+          {
+            remove: [offered.id],
+            create: [
+              {
+                periodId,
+                nurseId: nurseBId,
+                shiftTypeId,
+                date: isoDate('2026-01-16'),
+                source: 'manual',
+                isLocked: false,
+                isCharge: false,
+                isOvertime: false,
+              },
+            ],
+          },
+          ACTOR,
+          { overrode: false, reason: 'Covering a sick call' },
+        ),
+      ),
+    ).toThrow(/60-minute holdover/);
+    expect(getSwap(handle.db, swap.id)?.status).toBe('proposed');
+    expect(getAssignment(handle.db, offered.id)?.holdoverMinutes).toBe(60);
+    expect(
+      auditHistoryFor(handle.db, 'shift_swap', swap.id).find((e) => e.action === 'approve'),
+    ).toBeUndefined();
+  });
+
   it('refuses a stale remove id rather than dropping the row silently', () => {
     const { offered, swap } = proposeGiveaway();
     // Someone else's edit removes the offered assignment before this approval lands.
@@ -421,7 +459,8 @@ describe('approveSwap', () => {
 
   it('refuses to approve on an archived period', () => {
     const { offered, swap } = proposeGiveaway();
-    updatePeriodStatus(handle.db, periodId, 'archived', ACTOR);
+    publishSchedule(handle.db, { periodId }, ACTOR);
+    archivePeriod(handle.db, periodId, ACTOR, 'Closed pay period');
 
     expect(() =>
       transact(handle.db, (tx) =>

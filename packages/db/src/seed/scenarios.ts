@@ -81,14 +81,10 @@ import {
   listPayRatesForUnit,
   setBudget,
 } from '../repositories/pay.js';
+import { publishSchedule } from '../repositories/publish.js';
 import { createNurse, grantCredential, replaceNursePreferences } from '../repositories/roster.js';
 import { saveRuleSet } from '../repositories/rulesets.js';
-import {
-  createAssignment,
-  createPeriod,
-  deleteAssignment,
-  publishPeriod,
-} from '../repositories/schedule.js';
+import { createAssignment, createPeriod, deleteAssignment } from '../repositories/schedule.js';
 import { approveTimeOff, createTimeOffRequest, denyTimeOff } from '../repositories/timeoff.js';
 import * as s from '../schema.js';
 import type { SeedOptions, SeedResult } from './types.js';
@@ -810,7 +806,7 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
       }
     }
     periodAssignments.push(...historicalAssignments.slice(startIndex));
-    publishPeriod(db, period.id, ACTOR);
+    publishSchedule(db, { periodId: period.id }, ACTOR);
 
     // Budgets sit a few percent either side of what the period actually cost, so the
     // dashboard's budget-vs-actual shows both over and under without being wildly off.

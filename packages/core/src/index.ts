@@ -155,6 +155,7 @@ export {
   dayNumber,
   daysBetween,
   describeDate,
+  describeDateRange,
   formatTimeOfDay,
   hoursToMinutes,
   isIsoDate,
@@ -276,6 +277,12 @@ export {
   blockedAt,
   blockOccurrencesOverlapping,
 } from './rules/availability-blocks.js';
+// Leave: the one definition of which leave day a shift falls on, and its params
+export {
+  overlappingLeaveDate,
+  type TimeOffParams,
+  timeOffRule,
+} from './rules/availability-rules.js';
 export { credentialLapsedOn } from './rules/coverage-rules.js';
 // Two days off together for a nurse who works every weekend of a pay period
 export { daysOffTogetherRule, payPeriodWeekends } from './rules/days-off-together.js';

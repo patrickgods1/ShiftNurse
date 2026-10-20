@@ -25,9 +25,10 @@ import { createNurseUnit } from './nurse-units.js';
 import { createOvertimeVolunteer } from './overtime-volunteers.js';
 import { createPayRate, listPayRatesForUnit, savePaySettings } from './pay.js';
 import { createPreceptorship } from './preceptorships.js';
+import { publishSchedule } from './publish.js';
 import { createNurse, listNursesForUnit } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
-import { createAssignment, createPeriod, getPeriod, updatePeriodStatus } from './schedule.js';
+import { archivePeriod, createAssignment, createPeriod, getPeriod } from './schedule.js';
 import {
   costContext,
   historyFromFor,
@@ -580,7 +581,7 @@ describe('nurses who work on two units', () => {
     });
   });
 
-  it('counts a draft on 5 West as busy time, but not a period archived there', () => {
+  it('counts a draft and an archived period on 5 West as busy time', () => {
     const { night, period, mkPeriod } = westWing();
     const [ana] = listNursesForUnit(handle.db, seeded.unitId);
     const draft = mkPeriod();
@@ -592,12 +593,13 @@ describe('nurses who work on two units', () => {
         ACTOR,
       );
     const planned = place(draft.id, period.startDate);
-    place(old.id, addDays(period.startDate, 1));
-    updatePeriodStatus(handle.db, old.id, 'archived', ACTOR);
+    const archivedRow = place(old.id, addDays(period.startDate, 1));
+    publishSchedule(handle.db, { periodId: old.id }, ACTOR);
+    archivePeriod(handle.db, old.id, ACTOR, 'Closed pay period');
     const busy = loadPeriodInput(handle.db, period).priorAssignments!.filter((a) =>
       a.shiftTypeId.startsWith('elsewhere:'),
     );
-    expect(busy.map((a) => a.id)).toEqual([planned.id]);
+    expect(busy.map((a) => a.id)).toEqual([planned.id, archivedRow.id]);
   });
 
   it('puts nurses floated in from 5 West after the home roster, with their own credentials', () => {
@@ -621,7 +623,7 @@ describe('nurses who work on two units', () => {
   });
 
   describe('how far published history reaches', () => {
-    function twoPeriods(earlier: 'published' | 'draft') {
+    function twoPeriods(earlier: 'published' | 'archived' | 'draft') {
       const unit = createUnit(
         handle.db,
         {
@@ -647,12 +649,17 @@ describe('nurses who work on two units', () => {
           ACTOR,
         );
       const before = mk('Before', '2026-01-04', '2026-01-17');
-      if (earlier === 'published') updatePeriodStatus(handle.db, before.id, 'published', ACTOR);
+      if (earlier !== 'draft') publishSchedule(handle.db, { periodId: before.id }, ACTOR);
+      if (earlier === 'archived') archivePeriod(handle.db, before.id, ACTOR, 'Pay period closed');
       return mk('Now', '2026-01-18', '2026-01-31');
     }
 
     it('says the history reaches back through the published schedule before this one', () => {
       expect(historyFromFor(handle.db, twoPeriods('published'))).toBe('2026-01-04');
+    });
+
+    it('still reaches back through the schedule before once it has been archived', () => {
+      expect(historyFromFor(handle.db, twoPeriods('archived'))).toBe('2026-01-04');
     });
 
     it('says there is no history when the schedule before is still a draft', () => {
@@ -663,5 +670,71 @@ describe('nurses who work on two units', () => {
       const draft = twoPeriods('published');
       expect(loadPeriodInput(handle.db, draft).historyFrom).toBe(historyFromFor(handle.db, draft));
     });
+  });
+});
+
+describe('a draft laid over another schedule of the same unit', () => {
+  /** Period A on the draft's own unit and dates, with Ana on Day 12 on the draft's fourth day. */
+  function overlapping() {
+    const draft = getPeriod(handle.db, seeded.draftPeriodId)!;
+    const day = listShiftTypesForUnit(handle.db, seeded.unitId).find(
+      (t) => t.abbreviation === 'D12',
+    )!;
+    const [ana] = listNursesForUnit(handle.db, seeded.unitId);
+    const a = createPeriod(
+      handle.db,
+      {
+        unitId: seeded.unitId,
+        name: 'Overlapping',
+        startDate: draft.startDate,
+        endDate: addDays(draft.startDate, 13),
+        ruleSetId: draft.ruleSetId,
+        ruleSetVersion: draft.ruleSetVersion,
+      },
+      ACTOR,
+    );
+    const shift = createAssignment(
+      handle.db,
+      { periodId: a.id, nurseId: ana!.id, shiftTypeId: day.id, date: addDays(draft.startDate, 3) },
+      ACTOR,
+    );
+    return { draft, day, a, shift };
+  }
+
+  it('carries a shift on an overlapping published schedule as locked busy time', () => {
+    const { draft, day, a, shift } = overlapping();
+    publishSchedule(handle.db, { periodId: a.id }, ACTOR);
+    const input = loadPeriodInput(handle.db, draft);
+    const carried = input.priorAssignments!.filter((r) => r.id === shift.id);
+    expect(carried).toHaveLength(1);
+    expect(carried[0]).toMatchObject({
+      shiftTypeId: `elsewhere:${day.id}`,
+      isLocked: true,
+      date: addDays(draft.startDate, 3),
+    });
+    expect(input.shiftTypes.find((t) => t.id === `elsewhere:${day.id}`)).toMatchObject({
+      active: false,
+    });
+    // Not this draft's own work: the grid and the solver's own rows never see it.
+    expect(input.assignments.some((r) => r.id === shift.id)).toBe(false);
+  });
+
+  it('keeps a shift on an overlapping schedule as busy time once that schedule is archived', () => {
+    const { draft, day, a, shift } = overlapping();
+    publishSchedule(handle.db, { periodId: a.id }, ACTOR);
+    archivePeriod(handle.db, a.id, ACTOR, 'Pay period closed');
+    const carried = loadPeriodInput(handle.db, draft).priorAssignments!.filter(
+      (r) => r.id === shift.id,
+    );
+    expect(carried).toHaveLength(1);
+    expect(carried[0]).toMatchObject({ shiftTypeId: `elsewhere:${day.id}`, isLocked: true });
+  });
+
+  it('leaves another draft on the same unit out of the busy time', () => {
+    const { draft, day } = overlapping();
+    const input = loadPeriodInput(handle.db, draft);
+    expect(input.priorAssignments!.some((r) => r.shiftTypeId === `elsewhere:${day.id}`)).toBe(
+      false,
+    );
   });
 });

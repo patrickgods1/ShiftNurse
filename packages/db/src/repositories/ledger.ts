@@ -74,6 +74,40 @@ export function ledgerSince(db: DbLike, unitId: Id, sinceDate: IsoDate): Fairnes
   return rows.map((r) => toFairnessLedgerEntry(r.ledger));
 }
 
+/**
+ * Delete this period's ledger rows for nurses not in `keepNurseIds`. A republish that moves a
+ * nurse's last shift away would otherwise leave their old burden on the books, and every later
+ * fairness score would balance against a night they no longer work. Deleted, not zeroed: a nurse
+ * absent from a period has no row on first publish either, and `ledgerHistory` must see both alike.
+ * Imported history uses synthetic `import:` period ids, so it can never match a real period.
+ */
+export function removeLedgerEntriesExcept(
+  db: DbLike,
+  periodId: Id,
+  keepNurseIds: ReadonlySet<Id>,
+  actor: string,
+  reason: string,
+): number {
+  const stale = db
+    .select()
+    .from(fairnessLedger)
+    .where(eq(fairnessLedger.periodId, periodId))
+    .all()
+    .filter((row) => !keepNurseIds.has(row.nurseId));
+  for (const row of stale) {
+    db.delete(fairnessLedger).where(eq(fairnessLedger.id, row.id)).run();
+    recordAudit(db, {
+      entityType: 'fairness_ledger',
+      entityId: row.id,
+      action: 'delete',
+      actor,
+      before: toFairnessLedgerEntry(row),
+      reason,
+    });
+  }
+  return stale.length;
+}
+
 export interface UpsertFairnessLedgerInput {
   nurseId: Id;
   periodId: Id;

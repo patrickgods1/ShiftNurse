@@ -75,6 +75,24 @@ export interface RecordAuditStrictOptions {
   requireReason?: boolean;
 }
 
+/**
+ * The trimmed reason, or a throw in the one wording every strict write shares. Exported so a
+ * caller can refuse before touching a row, rather than relying on the audit insert to fail
+ * after the change is made.
+ */
+export function requireAuditReason(
+  input: Pick<AuditInput, 'action' | 'entityType' | 'entityId' | 'reason'>,
+): string {
+  const reason = input.reason?.trim();
+  if (!reason) {
+    throw new Error(
+      `Audit action "${input.action}" on ${input.entityType} ${input.entityId} requires a reason. ` +
+        'This text is what gets quoted if the decision is challenged.',
+    );
+  }
+  return reason;
+}
+
 /** Record a change, refusing to proceed if this action demands a reason and none was given. */
 export function recordAuditStrict(
   db: DbLike,
@@ -82,12 +100,7 @@ export function recordAuditStrict(
   opts?: RecordAuditStrictOptions,
 ): Id {
   const required = opts?.requireReason ?? requiresReason(input.action);
-  if (required && !input.reason?.trim()) {
-    throw new Error(
-      `Audit action "${input.action}" on ${input.entityType} ${input.entityId} requires a reason. ` +
-        'This text is what gets quoted if the decision is challenged.',
-    );
-  }
+  if (required) requireAuditReason(input);
   return recordAudit(db, input);
 }
 

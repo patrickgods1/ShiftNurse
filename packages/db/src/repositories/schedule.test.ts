@@ -8,31 +8,34 @@
 
 import { addDays, DEFAULT_FAIRNESS_WEIGHTS, type IsoDate, isoDate } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { auditHistoryFor } from '../audit.js';
+import { auditHistoryFor, recentAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { createShiftType, createUnit } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
+import { recordHoldover } from './holdovers.js';
+import { publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
 import {
+  archivePeriod,
   type CreateAssignmentInput,
   type CreatePeriodInput,
   createAssignment,
   createPeriod,
   deleteAssignment,
   deleteDraftPeriod,
+  getAssignment,
   getCurrentDraft,
   getPeriod,
   listAssignmentsForNurseInRange,
   listAssignmentsForPeriod,
   listPeriodsForUnit,
+  moveAssignment,
   priorAssignmentsBefore,
-  publishPeriod,
   replaceAssignments,
   setLocked,
   setRequestsCloseOn,
   updateAssignment,
-  updatePeriodStatus,
 } from './schedule.js';
 
 const ACTOR = 'manager';
@@ -191,34 +194,70 @@ describe('periods', () => {
     expect(listPeriodsForUnit(handle.db, unitId).map((p) => p.id)).toEqual([newer.id, older.id]);
   });
 
-  it('publishing sets status and publishedAt, and records a publish audit entry', () => {
-    const period = createPeriod(handle.db, basePeriod(), ACTOR);
-    expect(period.publishedAt).toBeUndefined();
-
-    const published = publishPeriod(handle.db, period.id, ACTOR, 'Ready for the floor');
-    expect(published.status).toBe('published');
-    expect(published.publishedAt).toBeTypeOf('number');
-
-    const history = auditHistoryFor(handle.db, 'schedule_period', period.id);
-    const publishEntry = history.find((h) => h.action === 'publish');
-    expect(publishEntry).toMatchObject({ reason: 'Ready for the floor' });
-  });
-
   it('deletes a draft but refuses to delete a published period', () => {
     const draft = createPeriod(handle.db, basePeriod(), ACTOR);
     deleteDraftPeriod(handle.db, draft.id, ACTOR);
     expect(getPeriod(handle.db, draft.id)).toBeUndefined();
 
     const published = createPeriod(handle.db, basePeriod({ name: 'Locked in' }), ACTOR);
-    publishPeriod(handle.db, published.id, ACTOR);
+    publishSchedule(handle.db, { periodId: published.id }, ACTOR);
     expect(() => deleteDraftPeriod(handle.db, published.id, ACTOR)).toThrow();
   });
 
-  it('generic status updates are a distinct path from publish', () => {
+  it('archives a published schedule with a reason, and refuses a draft or a blank reason', () => {
     const period = createPeriod(handle.db, basePeriod(), ACTOR);
-    const archived = updatePeriodStatus(handle.db, period.id, 'archived', ACTOR);
+    expect(() => archivePeriod(handle.db, period.id, ACTOR, 'Closed pay period')).toThrow(
+      /only a published schedule can be archived/,
+    );
+
+    publishSchedule(handle.db, { periodId: period.id }, ACTOR);
+    const auditBefore = auditHistoryFor(handle.db, 'schedule_period', period.id).length;
+    expect(() => archivePeriod(handle.db, period.id, ACTOR, '   ')).toThrow(/requires a reason/);
+    expect(getPeriod(handle.db, period.id)?.status).toBe('published');
+    expect(auditHistoryFor(handle.db, 'schedule_period', period.id)).toHaveLength(auditBefore);
+
+    const archived = archivePeriod(handle.db, period.id, ACTOR, 'Closed pay period');
     expect(archived.status).toBe('archived');
-    expect(archived.publishedAt).toBeUndefined();
+    const entry = auditHistoryFor(handle.db, 'schedule_period', period.id)[0]!;
+    expect(entry.before).toMatchObject({ status: 'published' });
+    expect(entry.after).toMatchObject({ status: 'archived' });
+    expect(entry.reason).toBe('Closed pay period');
+
+    const auditArchived = auditHistoryFor(handle.db, 'schedule_period', period.id).length;
+    expect(() => archivePeriod(handle.db, period.id, ACTOR, 'Again')).toThrow(/already archived/);
+    expect(auditHistoryFor(handle.db, 'schedule_period', period.id)).toHaveLength(auditArchived);
+  });
+
+  it('refuses to archive a schedule that does not exist, and records nothing', () => {
+    const auditBefore = recentAudit(handle.db, 1000).length;
+    expect(() => archivePeriod(handle.db, 'per_missing', ACTOR, 'Closed pay period')).toThrow(
+      /not found/,
+    );
+    expect(recentAudit(handle.db, 1000)).toHaveLength(auditBefore);
+  });
+
+  it('refuses a period that ends before it starts, or a start that is not a date', () => {
+    expect(() =>
+      createPeriod(
+        handle.db,
+        basePeriod({ startDate: isoDate('2026-01-15'), endDate: isoDate('2026-01-14') }),
+        ACTOR,
+      ),
+    ).toThrow(/ends before it starts/);
+    expect(() =>
+      createPeriod(handle.db, basePeriod({ startDate: 'soon' as IsoDate }), ACTOR),
+    ).toThrow(/start date "soon" is not a date/);
+    expect(() =>
+      createPeriod(handle.db, basePeriod({ endDate: '2026-02-30' as IsoDate }), ACTOR),
+    ).toThrow(/end date "2026-02-30" is not a date/);
+    expect(listPeriodsForUnit(handle.db, unitId)).toHaveLength(0);
+
+    const oneDay = createPeriod(
+      handle.db,
+      basePeriod({ startDate: isoDate('2026-01-15'), endDate: isoDate('2026-01-15') }),
+      ACTOR,
+    );
+    expect(getPeriod(handle.db, oneDay.id)?.endDate).toBe('2026-01-15');
   });
 });
 
@@ -301,6 +340,188 @@ describe('assignment CRUD', () => {
   });
 });
 
+describe('placing a shift', () => {
+  const auditCount = () => recentAudit(handle.db, 10000).length;
+
+  it('refuses a shift dated outside its schedule, in words', () => {
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    const nurseId = mkNurse('Ada');
+    const before = auditCount();
+    expect(() =>
+      createAssignment(
+        handle.db,
+        baseAssignment({ periodId: period.id, nurseId, date: isoDate('2026-06-01') }),
+        ACTOR,
+      ),
+    ).toThrow(/Mon Jun 1, 2026 is outside/);
+    expect(listAssignmentsForPeriod(handle.db, period.id)).toHaveLength(0);
+    expect(auditCount()).toBe(before);
+  });
+
+  it('refuses a date that is not a date', () => {
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    const nurseId = mkNurse('Ada');
+    expect(() =>
+      createAssignment(
+        handle.db,
+        baseAssignment({ periodId: period.id, nurseId, date: 'next tuesday' as IsoDate }),
+        ACTOR,
+      ),
+    ).toThrow(/"next tuesday" is not a date/);
+  });
+
+  it("refuses another unit's shift type", () => {
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    const nurseId = mkNurse('Ada');
+    const other = createUnit(
+      handle.db,
+      {
+        name: '5 East',
+        unitType: 'Medical-Surgical',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    const foreign = createShiftType(
+      handle.db,
+      {
+        unitId: other.id,
+        name: 'Day 12',
+        abbreviation: 'D12',
+        startTime: '07:00',
+        durationHours: 12,
+        isNight: false,
+        isOnCall: false,
+        color: '#f59e0b',
+        sortOrder: 1,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+    expect(() =>
+      createAssignment(
+        handle.db,
+        baseAssignment({ periodId: period.id, nurseId, shiftTypeId: foreign }),
+        ACTOR,
+      ),
+    ).toThrow(/not one of this unit's shift types/);
+  });
+
+  it('refuses to move a shift out of its schedule', () => {
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    const nurseId = mkNurse('Ada');
+    const created = createAssignment(
+      handle.db,
+      baseAssignment({ periodId: period.id, nurseId, date: isoDate('2026-01-20') }),
+      ACTOR,
+    );
+    expect(() =>
+      transact(handle.db, (tx) =>
+        moveAssignment(
+          tx,
+          created.id,
+          { nurseId, shiftTypeId, date: isoDate('2026-01-29') },
+          ACTOR,
+        ),
+      ),
+    ).toThrow(/is outside/);
+    expect(listAssignmentsForPeriod(handle.db, period.id).map((a) => a.id)).toEqual([created.id]);
+  });
+
+  it('refuses to move a shift with a recorded holdover and keeps the minutes', () => {
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    const nurseId = mkNurse('Ada');
+    const created = createAssignment(
+      handle.db,
+      baseAssignment({ periodId: period.id, nurseId, date: isoDate('2026-01-20') }),
+      ACTOR,
+    );
+    publishSchedule(handle.db, { periodId: period.id }, ACTOR);
+    recordHoldover(handle.db, { assignmentId: created.id, minutes: 90, mandated: false }, ACTOR);
+    expect(() =>
+      transact(handle.db, (tx) =>
+        moveAssignment(
+          tx,
+          created.id,
+          { nurseId, shiftTypeId, date: isoDate('2026-01-21') },
+          ACTOR,
+          'manual',
+          'Nurse asked to swap days',
+        ),
+      ),
+    ).toThrow(/90-minute holdover/);
+    expect(getAssignment(handle.db, created.id)!.holdoverMinutes).toBe(90);
+  });
+
+  it('refuses solver output dated outside the schedule and deletes nothing', () => {
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    const nurseId = mkNurse('Ada');
+    const existing = createAssignment(
+      handle.db,
+      baseAssignment({ periodId: period.id, nurseId, date: isoDate('2026-01-16') }),
+      ACTOR,
+    );
+    expect(() =>
+      replaceAssignments(
+        handle.db,
+        period.id,
+        [
+          baseAssignment({ nurseId, date: isoDate('2026-01-17') }),
+          baseAssignment({ nurseId, date: isoDate('2026-02-17') }),
+        ],
+        ACTOR,
+      ),
+    ).toThrow(/is outside/);
+    expect(listAssignmentsForPeriod(handle.db, period.id).map((a) => a.id)).toEqual([existing.id]);
+  });
+
+  it("refuses solver output on another unit's shift type and deletes nothing", () => {
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    const nurseId = mkNurse('Ada');
+    const existing = createAssignment(
+      handle.db,
+      baseAssignment({ periodId: period.id, nurseId, date: isoDate('2026-01-16') }),
+      ACTOR,
+    );
+    const other = createUnit(
+      handle.db,
+      {
+        name: '5 East',
+        unitType: 'Medical-Surgical',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    const foreign = createShiftType(
+      handle.db,
+      {
+        unitId: other.id,
+        name: 'Day 12',
+        abbreviation: 'D12',
+        startTime: '07:00',
+        durationHours: 12,
+        isNight: false,
+        isOnCall: false,
+        color: '#f59e0b',
+        sortOrder: 1,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+    expect(() =>
+      replaceAssignments(
+        handle.db,
+        period.id,
+        [baseAssignment({ nurseId, date: isoDate('2026-01-17'), shiftTypeId: foreign })],
+        ACTOR,
+      ),
+    ).toThrow(/not one of this unit's shift types/);
+    expect(listAssignmentsForPeriod(handle.db, period.id).map((a) => a.id)).toEqual([existing.id]);
+  });
+});
+
 describe('listAssignmentsForNurseInRange', () => {
   it('is inclusive at both ends of the range', () => {
     const period = createPeriod(handle.db, basePeriod(), ACTOR);
@@ -315,9 +536,19 @@ describe('listAssignmentsForNurseInRange', () => {
       baseAssignment({ periodId: period.id, nurseId, date: isoDate('2026-01-21') }),
       ACTOR,
     );
+    // 01-14 is outside the 01-15 period, so it lives in the period before it.
+    const earlier = createPeriod(
+      handle.db,
+      basePeriod({
+        name: 'Earlier',
+        startDate: isoDate('2026-01-01'),
+        endDate: isoDate('2026-01-14'),
+      }),
+      ACTOR,
+    );
     createAssignment(
       handle.db,
-      baseAssignment({ periodId: period.id, nurseId, date: isoDate('2026-01-14') }),
+      baseAssignment({ periodId: earlier.id, nurseId, date: isoDate('2026-01-14') }),
       ACTOR,
     );
     createAssignment(
@@ -345,7 +576,7 @@ describe('priorAssignmentsBefore', () => {
       basePeriod({ startDate: isoDate('2026-01-01'), endDate: isoDate('2026-01-14') }),
       ACTOR,
     );
-    publishPeriod(handle.db, oldPeriod.id, ACTOR);
+    publishSchedule(handle.db, { periodId: oldPeriod.id }, ACTOR);
     const nurseId = mkNurse('Ada');
     const inWindow = createAssignment(
       handle.db,
@@ -381,7 +612,7 @@ describe('priorAssignmentsBefore', () => {
       basePeriod({ startDate: isoDate('2025-12-20'), endDate: isoDate('2026-01-14') }),
       ACTOR,
     );
-    publishPeriod(handle.db, oldPeriod.id, ACTOR);
+    publishSchedule(handle.db, { periodId: oldPeriod.id }, ACTOR);
     const nurseId = mkNurse('Ada');
     // lookbackDays = 2 => window is [2026-01-13, 2026-01-14].
     const tooEarly = createAssignment(
@@ -401,13 +632,32 @@ describe('priorAssignmentsBefore', () => {
     expect(ids).not.toContain(tooEarly.id);
   });
 
+  it('keeps an archived pay period in the lookback: it is what was worked', () => {
+    const oldPeriod = createPeriod(
+      handle.db,
+      basePeriod({ startDate: isoDate('2026-01-01'), endDate: isoDate('2026-01-14') }),
+      ACTOR,
+    );
+    const nurseId = mkNurse('Ada');
+    const lastDay = createAssignment(
+      handle.db,
+      baseAssignment({ periodId: oldPeriod.id, nurseId, date: isoDate('2026-01-14') }),
+      ACTOR,
+    );
+    publishSchedule(handle.db, { periodId: oldPeriod.id }, ACTOR);
+    archivePeriod(handle.db, oldPeriod.id, ACTOR, 'Pay period closed');
+
+    const result = priorAssignmentsBefore(handle.db, unitId, newPeriodStart, 3);
+    expect(result.map((a) => a.id)).toEqual([lastDay.id]);
+  });
+
   it('excludes assignments on or after the start date itself', () => {
     const oldPeriod = createPeriod(
       handle.db,
       basePeriod({ startDate: isoDate('2026-01-01'), endDate: isoDate('2026-01-21') }),
       ACTOR,
     );
-    publishPeriod(handle.db, oldPeriod.id, ACTOR);
+    publishSchedule(handle.db, { periodId: oldPeriod.id }, ACTOR);
     const nurseId = mkNurse('Ada');
     const onStart = createAssignment(
       handle.db,
@@ -432,6 +682,20 @@ describe('priorAssignmentsBefore', () => {
 });
 
 describe('replaceAssignments', () => {
+  it('refuses to regenerate over a shift with a recorded holdover and deletes nothing', () => {
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    const nurseId = mkNurse('Ada');
+    const held = createAssignment(
+      handle.db,
+      baseAssignment({ periodId: period.id, nurseId, date: isoDate('2026-01-20') }),
+      ACTOR,
+    );
+    publishSchedule(handle.db, { periodId: period.id }, ACTOR);
+    recordHoldover(handle.db, { assignmentId: held.id, minutes: 45, mandated: false }, ACTOR);
+    expect(() => replaceAssignments(handle.db, period.id, [], ACTOR)).toThrow(/45-minute holdover/);
+    expect(getAssignment(handle.db, held.id)!.holdoverMinutes).toBe(45);
+  });
+
   it('replaces unlocked rows while leaving locked rows untouched, without unique-constraint errors', () => {
     const period = createPeriod(handle.db, basePeriod(), ACTOR);
     const lockedNurse = mkNurse('Locked');

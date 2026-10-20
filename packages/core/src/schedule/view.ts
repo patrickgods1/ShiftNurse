@@ -49,7 +49,10 @@ export interface AssignmentView {
 export interface ScheduleViewInput {
   period: SchedulePeriod;
   assignments: readonly Assignment[];
-  /** Already-published assignments from before `period.startDate`, for cross-boundary rules. */
+  /**
+   * Already-published assignments from before `period.startDate`, and busy time elsewhere (other
+   * units, other periods of this unit) that may fall inside it, for cross-boundary rules.
+   */
   priorAssignments?: readonly Assignment[];
   nurses: readonly Nurse[];
   shiftTypes: readonly ShiftType[];

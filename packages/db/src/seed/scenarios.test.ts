@@ -142,10 +142,21 @@ describe('test-scenario seed', () => {
   });
 
   it('writes an audit trail for the whole seed', () => {
-    expect(count("SELECT COUNT(*) n FROM audit_log WHERE action='publish'")).toBe(4);
+    expect(
+      count(
+        "SELECT COUNT(*) n FROM audit_log WHERE entity_type='schedule_period' AND action='publish'",
+      ),
+    ).toBe(4);
     expect(count("SELECT COUNT(*) n FROM audit_log WHERE action='deny'")).toBeGreaterThan(0);
     // The seeder itself is the actor, so the trail says where the data came from.
     expect(count("SELECT COUNT(*) n FROM audit_log WHERE actor!='scenario-seed'")).toBe(0);
+  });
+
+  it('gives every published period a version, so a manager can edit it', () => {
+    expect(
+      count(`SELECT COUNT(*) n FROM schedule_period p WHERE status='published' AND NOT EXISTS
+             (SELECT 1 FROM schedule_version v WHERE v.period_id=p.id)`),
+    ).toBe(0);
   });
 
   it('references the schema tables the queries above depend on', () => {

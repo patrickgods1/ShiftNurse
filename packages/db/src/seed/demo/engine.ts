@@ -140,6 +140,7 @@ import {
   setBudget,
 } from '../../repositories/pay.js';
 import { createPreceptorship } from '../../repositories/preceptorships.js';
+import { publishSchedule } from '../../repositories/publish.js';
 import {
   createNurse,
   grantCredential,
@@ -147,12 +148,7 @@ import {
 } from '../../repositories/roster.js';
 import { createCredential } from '../../repositories/roster-io.js';
 import { getLatestRuleSet, saveRuleSet } from '../../repositories/rulesets.js';
-import {
-  createAssignment,
-  createPeriod,
-  deleteAssignment,
-  publishPeriod,
-} from '../../repositories/schedule.js';
+import { createAssignment, createPeriod, deleteAssignment } from '../../repositories/schedule.js';
 import { applyJurisdiction } from '../../repositories/setup.js';
 import { approveTimeOff, createTimeOffRequest, denyTimeOff } from '../../repositories/timeoff.js';
 import type { SeedOptions, SeedResult } from '../types.js';
@@ -2153,7 +2149,7 @@ export function seedFromProfile(
       }
     }
 
-    publishPeriod(db, period.id, ACTOR);
+    publishSchedule(db, { periodId: period.id }, ACTOR);
     const periodAssignments = periodRows.map((id) => rows.get(id)!);
     const actual = costSchedule(
       new ScheduleView({

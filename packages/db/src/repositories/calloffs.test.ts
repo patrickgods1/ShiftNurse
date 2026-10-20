@@ -34,6 +34,7 @@ let handle: OpenedDatabase;
 let unitId: string;
 let shiftTypeId: string;
 let periodId: string;
+let earlierPeriodId: string;
 
 function mkNurse(firstName: string): string {
   return createNurse(
@@ -57,15 +58,25 @@ function mkNurse(firstName: string): string {
   ).id;
 }
 
+// History before the 01-15 period belongs to the period before it: a shift cannot sit outside
+// the schedule that holds it.
+function periodFor(date: string): string {
+  return date < '2026-01-15' ? earlierPeriodId : periodId;
+}
+
 function mkAssignment(nurseId: string, date: IsoDate) {
-  return createAssignment(handle.db, { periodId, nurseId, shiftTypeId, date }, ACTOR);
+  return createAssignment(
+    handle.db,
+    { periodId: periodFor(date), nurseId, shiftTypeId, date },
+    ACTOR,
+  );
 }
 
 describe('last overtime dates', () => {
   function overtime(nurseId: string, date: string, isOvertime = true) {
     return createAssignment(
       handle.db,
-      { periodId, nurseId, shiftTypeId, date: isoDate(date), isOvertime },
+      { periodId: periodFor(date), nurseId, shiftTypeId, date: isoDate(date), isOvertime },
       ACTOR,
     );
   }
@@ -215,6 +226,18 @@ beforeEach(() => {
       name: 'Test Period',
       startDate: isoDate('2026-01-15'),
       endDate: isoDate('2026-01-28'),
+      ruleSetId: ruleSet.id,
+      ruleSetVersion: ruleSet.version,
+    },
+    ACTOR,
+  ).id;
+  earlierPeriodId = createPeriod(
+    handle.db,
+    {
+      unitId,
+      name: 'Earlier Period',
+      startDate: isoDate('2026-01-01'),
+      endDate: isoDate('2026-01-14'),
       ruleSetId: ruleSet.id,
       ruleSetVersion: ruleSet.version,
     },

@@ -27,9 +27,10 @@ import {
   recordHolidayWork,
   updateHoliday,
 } from './holidays.js';
+import { publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
-import { createAssignment, createPeriod, updatePeriodStatus } from './schedule.js';
+import { createAssignment, createPeriod } from './schedule.js';
 import { holidayWorkForPeriod } from './solve-input.js';
 
 const ACTOR = 'manager';
@@ -116,7 +117,7 @@ function schedule(
       ACTOR,
     );
   }
-  if (status === 'published') updatePeriodStatus(handle.db, period.id, 'published', ACTOR);
+  if (status === 'published') publishSchedule(handle.db, { periodId: period.id }, ACTOR);
 }
 
 beforeEach(() => {

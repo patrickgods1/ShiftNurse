@@ -3,11 +3,14 @@
  *
  * Lived in the desktop main process until M15, when the solver benchmark needed the real demo
  * unit's `SolveInput` in plain Node; a second copy there would have been a second, drifting
- * definition of what the solver is given. It is only reads, composed — no new data access.
+ * definition of what the solver is given. It is only reads: mostly the repositories' own,
+ * composed, plus the one query no repository owns, `periodTailFor`'s same-unit overlap.
  */
 
 import {
+  type Assignment,
   addDays,
+  busyElsewhere,
   type CostContext,
   compareDates,
   dateInRange,
@@ -28,11 +31,15 @@ import {
   paidLeaveCredits,
   type RuleSet,
   type SchedulePeriod,
+  type ShiftType,
   type SolveInput,
   type TimeOffRequest,
   type Unit,
 } from '@shiftnurse/core';
+import { and, asc, eq, gte, inArray, lte, ne } from 'drizzle-orm';
 import type { DbLike } from '../client.js';
+import { toAssignment } from '../mappers.js';
+import { assignment, schedulePeriod } from '../schema.js';
 import { getHppdTarget, listActiveRatioRulesForUnit, listAcuityTiersForUnit } from './acuity.js';
 import { listAvailabilityBlocks } from './availability-blocks.js';
 import { paidSickCallsForUnit } from './calloffs.js';
@@ -101,8 +108,9 @@ export const LEDGER_LOOKBACK_DAYS = 400;
 export const PRIOR_ASSIGNMENT_LOOKBACK_DAYS = 28;
 
 /**
- * The first date from which the lookback tail is complete: the same published periods
- * `priorAssignmentsBefore` reads, so the date says exactly how far that tail is complete. The
+ * The first date from which the lookback tail is complete: the same published and archived
+ * periods `priorAssignmentsBefore` reads, so the date says exactly how far that tail is complete;
+ * archiving a pay period must not turn it into a gap. The
  * contracted-hours rule judges a pay period that began before the period only from here; without
  * it a gap in history would read as a nurse who worked nothing.
  */
@@ -111,7 +119,7 @@ export function historyFromFor(
   period: Pick<SchedulePeriod, 'unitId' | 'startDate'>,
 ): IsoDate {
   return historyCompleteFrom(
-    listPeriodsForUnit(db, period.unitId).filter((p) => p.status === 'published'),
+    listPeriodsForUnit(db, period.unitId).filter((p) => p.status !== 'draft'),
     period.startDate,
     PRIOR_ASSIGNMENT_LOOKBACK_DAYS,
   );
@@ -293,15 +301,68 @@ export function floatExtras(
   };
 }
 
-/** The other units' shifts for this period's nurses, over the period and its lookback tail. */
-export function elsewhereForPeriod(db: DbLike, period: SchedulePeriod, nurses: readonly Nurse[]) {
+/**
+ * Everything a period is judged against but does not own: its own unit's published and archived
+ * shifts before it (real shift types) and inside it on other periods (as busy time), and other
+ * units' shifts over the tail and the period (as busy time). The one loader of a period's tail,
+ * so Generate and the grid judge a period against the same rows.
+ */
+export function periodTailFor(
+  db: DbLike,
+  period: SchedulePeriod,
+  nurses: readonly Nurse[],
+): { priorAssignments: Assignment[]; shiftTypes: ShiftType[] } {
+  const nurseIds = nurses.map((n) => n.id);
+  const overlap = sameUnitOverlap(db, period, nurseIds);
   const { start, end } = elsewhereWindow(period);
-  return busyElsewhereFor(
-    db,
-    period.unitId,
-    nurses.map((n) => n.id),
-    start,
-    end,
+  const elsewhere = busyElsewhereFor(db, period.unitId, nurseIds, start, end);
+  return {
+    priorAssignments: [
+      ...priorAssignmentsBefore(
+        db,
+        period.unitId,
+        period.startDate,
+        PRIOR_ASSIGNMENT_LOOKBACK_DAYS,
+      ),
+      ...overlap.assignments,
+      ...elsewhere.assignments,
+    ],
+    shiftTypes: [...overlap.shiftTypes, ...elsewhere.shiftTypes],
+  };
+}
+
+/**
+ * This unit's posted shifts on other periods dated inside this one: a draft laid over a published
+ * period. Without them Generate could put a nurse on a night before the day they are already
+ * posted to work, and validation would not see the turnaround. They go through `busyElsewhere`
+ * rather than keep their real types: those are active, and an active locked row inside the
+ * horizon would count as this period's staffing in coverage, cost and the CP-SAT encoder. Drafts
+ * stay out for `priorAssignmentsBefore`'s reason; rows dated before the period already arrive
+ * there with their real types.
+ */
+function sameUnitOverlap(db: DbLike, period: SchedulePeriod, nurseIds: readonly Id[]) {
+  if (nurseIds.length === 0) return { shiftTypes: [], assignments: [] };
+  const rows = db
+    .select({ row: assignment })
+    .from(assignment)
+    .innerJoin(schedulePeriod, eq(assignment.periodId, schedulePeriod.id))
+    .where(
+      and(
+        eq(schedulePeriod.unitId, period.unitId),
+        ne(schedulePeriod.id, period.id),
+        inArray(schedulePeriod.status, ['published', 'archived']),
+        gte(assignment.date, period.startDate),
+        lte(assignment.date, period.endDate),
+        inArray(assignment.nurseId, [...nurseIds]),
+      ),
+    )
+    .orderBy(asc(assignment.date), asc(assignment.id))
+    .all()
+    .map((r) => toAssignment(r.row));
+  return busyElsewhere(
+    rows,
+    listShiftTypesForUnit(db, period.unitId),
+    `another ${unitOrThrow(db, period.unitId).name} schedule`,
   );
 }
 
@@ -316,22 +377,19 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
   const unit = unitOrThrow(db, unitId);
   const nurses = rosterForPeriod(db, period);
   const floats = floatExtras(db, unit, period, nurses);
-  const elsewhere = elsewhereForPeriod(db, period, nurses);
+  const tail = periodTailFor(db, period, nurses);
   const timeOff = [...timeOffForPeriod(db, unit, period), ...floats.timeOff];
   return {
     unit,
     period,
     ruleSet,
     nurses,
-    // Other units' shift types are inactive: demand, coverage and the solvers leave them alone.
-    shiftTypes: [...demand.shiftTypes, ...elsewhere.shiftTypes],
+    // Busy-time shift types are inactive: demand, coverage and the solvers leave them alone.
+    shiftTypes: [...demand.shiftTypes, ...tail.shiftTypes],
     demand: deriveDemand(datesInRange(period.startDate, period.endDate), demand).all(),
     assignments: listAssignmentsForPeriod(db, period.id),
-    // Other units' shifts ride with the lookback tail: judged by every nurse rule, never moved.
-    priorAssignments: [
-      ...priorAssignmentsBefore(db, unitId, period.startDate, PRIOR_ASSIGNMENT_LOOKBACK_DAYS),
-      ...elsewhere.assignments,
-    ],
+    // Busy time rides with the lookback tail: judged by every nurse rule, never moved.
+    priorAssignments: tail.priorAssignments,
     historyFrom: historyFromFor(db, period),
     timeOff,
     // From the lookback tail on, as far as the weekly rules read.

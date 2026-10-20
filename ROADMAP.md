@@ -747,6 +747,10 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
 - [x] Phase 4 — Solver soundness: identity gate, final-state decode, typed CP-SAT errors, convex
       shortfall (D10), same-day retype move, bench re-run (verify: npm run check; smoke;
       bench:solvers)
+- [x] Phase 5 — Periods, assignments, time-off lifecycle, publish path: one publish path, archive
+      with reason, placeable shifts, overlap-aware tail, time-off transition table, D31
+      night-before lift, republish ledger reconciliation, holdover-safe moves (verify: npm run
+      check; smoke)
 
 ---
 

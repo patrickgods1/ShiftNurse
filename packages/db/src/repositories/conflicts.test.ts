@@ -20,14 +20,10 @@ import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { createShiftType, createUnit } from './config.js';
 import { applyResolution, getConflictPolicy, saveConflictPolicy } from './conflicts.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
+import { publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
-import {
-  createAssignment,
-  createPeriod,
-  listAssignmentsForPeriod,
-  publishPeriod,
-} from './schedule.js';
+import { createAssignment, createPeriod, listAssignmentsForPeriod } from './schedule.js';
 import { createTimeOffRequest, getTimeOffRequest } from './timeoff.js';
 
 const ACTOR = 'manager';
@@ -383,7 +379,7 @@ describe('applying a resolution', () => {
   });
 
   it('refuses to touch a published period', () => {
-    publishPeriod(handle.db, periodId, ACTOR);
+    publishSchedule(handle.db, { periodId }, ACTOR);
     const res = resolution(
       [{ type: 'accept_shortfall', conflictId: 'conf_sat_night' }],
       'accept_shortfall',
