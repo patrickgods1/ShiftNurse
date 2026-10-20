@@ -839,7 +839,7 @@ date, with full-disk encryption as the protection; the Windows installer stays p
 The plan researched and planned every deferred or decision-gated item and every gap the README
 states, in 15 phases, one PR per phase.
 
-- [ ] Phase 1 — Release hygiene: update banner, docs, attestations
+- [x] Phase 1 — Release hygiene: update banner, docs, attestations
 - [ ] Phase 2 — Repository tidy-ups + limits tripwire
 - [ ] Phase 3 — Float staff only inside their membership dates
 - [ ] Phase 4 — Demand rules as they were on each past date
