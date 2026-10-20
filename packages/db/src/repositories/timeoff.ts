@@ -14,6 +14,7 @@ import {
   datesInRange,
   type Id,
   type IsoDate,
+  isFloatedOff,
   isIsoDate,
   overlappingLeaveDate,
   type RuleSet,
@@ -66,7 +67,8 @@ export function listTimeOffForNurse(db: DbLike, nurseId: Id): TimeOffRequest[] {
       .select()
       .from(timeOffRequest)
       .where(eq(timeOffRequest.nurseId, nurseId))
-      // Feeds floatExtras, which is solver input: identical inputs must give identical schedules.
+      // Feeds perNurseRecordsFor, which is solver input: identical inputs must give identical
+      // schedules.
       .orderBy(asc(timeOffRequest.startDate), asc(timeOffRequest.id))
       .all()
       .map(toTimeOffRequest)
@@ -315,6 +317,7 @@ function nightBeforeCounts(ruleSet: RuleSet): TimeOffParams | undefined {
  * `scheduled_on_leave` conflict for the manager to resolve deliberately. When the period's own
  * rule set counts a night ending on the first leave day (`nightShiftEndingOnLeaveCounts`), the
  * night dated the day before is handled the same way, so approval never leaves a violation (D31).
+ * A shift she was floated off (D20) is neither lifted nor reported: it records hours she worked.
  */
 export function approveTimeOffAndLiftAssignments(
   // A transaction, not any handle: these writes are only correct all-or-nothing.
@@ -361,6 +364,8 @@ export function approveTimeOffAndLiftAssignments(
     addDays(request.startDate, -1),
     request.endDate,
   )) {
+    // A shift she was floated off is a record of hours worked elsewhere, not one the leave frees.
+    if (isFloatedOff(a)) continue;
     const info = infoFor(a.periodId);
     if (compareDates(a.date, request.startDate) < 0) {
       if (

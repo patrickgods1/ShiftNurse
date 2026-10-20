@@ -58,8 +58,10 @@
 - **`periodTailFor` is the one loader of a period's tail**, for `loadPeriodInput` and main's
   `scheduleViewFor` alike: the unit's own earlier shifts (real types), its published or archived
   shifts of another period dated inside this one, and other units' shifts (any status), the last
-  two as core's `busyElsewhere` locked rows on inactive `elsewhere:` types. Same-unit drafts stay
-  out; nothing it returns is added to the period's own `assignments`.
+  two as core's `busyElsewhere` locked rows on inactive `elsewhere:` types. The unit's own earlier
+  shifts that were floated off are swapped in place for core's `floatedOff` copies on inactive
+  `floated:` types. Same-unit drafts stay out; nothing it returns is added to the period's own
+  `assignments`.
 - **A published period is editable, with a reason.** Only `archived` is read-only. Every
   schedule mutation takes an optional `reason`; `requireChangeReason` throws on a published
   period without one and `editSchedule` in main writes each touched shift to `schedule_change`.
@@ -78,6 +80,22 @@
   nurse must carry one of them), but `RECORD_EXCLUDED_ENTITIES` keeps kept-apart groups, FMLA
   certifications and accommodations (`availability_block`) out, and every record's footer says so whether or not the nurse has either.
   Two tripwires guard this: `nurse-record.completeness.test.ts` fails when a new audited entity type is unclassified or when a new column points at a nurse under a key the record does not look for, and `nurse-record.entries.test.ts` fails when a nurse-scoped type's entry, written by its real repository function, does not reach the record.
+- **Saved cancellation orders gain `"float"` after `"agency"`** (migration 0038, data only;
+  after `"volunteer"` where there is no agency tier, else first). A float on the unit that day can
+  be recorded as sent home: `recordShiftCancellation` checks `requireWorksOnUnit`.
+- **`perNurseRecordsFor` is the one source of person-scoped records** (credentials, preferences,
+  leave, sick pay, rest waivers, accommodations, per-nurse pay rates) for `loadPeriodInput`,
+  `costContext` and alerts: each list is this unit's rows in today's order, then what the roster
+  brings from other units appended, so a unit nobody floats to reads exactly as before. The
+  `satisfies Record<keyof SolveInput, Scope>` test in `solve-input.test.ts` makes a new
+  `SolveInput` field a compile error until it is classified person, recorded-here, unit or roster.
+- **One membership predicate.** `nurseWorksOnUnit`/`requireWorksOnUnit` (`nurse-units.ts`): home
+  unit, or a float membership covering the dates. Every validator that asks 'does this nurse work
+  here' uses it. Accommodations stay on the home unit and apply everywhere.
+- **A floated shift stays (migration 0039, `assignment.floated_to`).** `markFloatedOff` locks and
+  marks it, `updateAssignment` refuses to unlock it, and loaders turn it into busy time for
+  judging (`splitFloatedOff`, `periodTailFor`): it never reaches `SolveInput.assignments`, and
+  Generate keeps it as a locked row. Floats deleted before this change are not reconstructed.
 - **A holdover is recorded on a published shift, never a draft.** `recordHoldover`
   (`repositories/holdovers.ts`, migration 0029: `assignment.holdover_minutes`, default 0, and
   `holdover_mandated`) refuses drafts and standby, takes whole minutes 0–720 (0 clears, and a clear

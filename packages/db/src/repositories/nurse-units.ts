@@ -20,6 +20,8 @@ import {
   type BusyElsewhere,
   busyElsewhere,
   compareDates,
+  describeDate,
+  describeDateRange,
   type Id,
   type IsoDate,
   type Nurse,
@@ -218,6 +220,54 @@ function validate(db: DbLike, record: NurseUnit): void {
   if (record.startDate && record.endDate && compareDates(record.endDate, record.startDate) < 0) {
     throw new Error('The float assignment ends before it starts');
   }
+}
+
+export interface DateRange {
+  start: IsoDate;
+  end: IsoDate;
+}
+
+/**
+ * Whether the nurse may be scheduled on the unit on every day of `range` (inclusive): it is
+ * their home unit, or their one float membership of it covers the whole range (an open end
+ * covers). The one membership predicate every validator uses, so "works on this unit" cannot
+ * mean one thing to cancellations and another to overtime offers. Active or not, like the home
+ * roster: records about past shifts may name a nurse who has since left.
+ */
+export function nurseWorksOnUnit(db: DbLike, nurseId: Id, unitId: Id, range: DateRange): boolean {
+  const owner = db
+    .select({ unitId: nurseTable.unitId })
+    .from(nurseTable)
+    .where(eq(nurseTable.id, nurseId))
+    .get();
+  if (!owner) return false;
+  if (owner.unitId === unitId) return true;
+  // At most one membership per nurse and unit (createNurseUnit refuses a second), so no union.
+  const m = db
+    .select()
+    .from(table)
+    .where(and(eq(table.nurseId, nurseId), eq(table.unitId, unitId)))
+    .get();
+  if (!m) return false;
+  return (
+    (!m.startDate || compareDates(m.startDate as IsoDate, range.start) <= 0) &&
+    (!m.endDate || compareDates(m.endDate as IsoDate, range.end) >= 0)
+  );
+}
+
+/** The same, as a refusal the manager can act on. */
+export function requireWorksOnUnit(db: DbLike, nurseId: Id, unitId: Id, range: DateRange): void {
+  const who = db.select().from(nurseTable).where(eq(nurseTable.id, nurseId)).get();
+  if (!who) throw new Error('That nurse is not on the roster.');
+  const unit = db.select().from(unitTable).where(eq(unitTable.id, unitId)).get();
+  if (!unit) throw new Error('That unit does not exist.');
+  if (nurseWorksOnUnit(db, nurseId, unitId, range)) return;
+  const name = `${who.firstName} ${who.lastName}`;
+  throw new Error(
+    range.start === range.end
+      ? `${name} is not on ${unit.name}'s roster on ${describeDate(range.start)}; add a float membership covering that day under Roster.`
+      : `${name} is not on ${unit.name}'s roster for every day of ${describeDateRange(range.start, range.end)}; widen the float membership under Roster.`,
+  );
 }
 
 /**

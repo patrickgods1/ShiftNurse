@@ -665,6 +665,13 @@ export interface Assignment {
    * Only meaningful with `holdoverMinutes`; mandatory-overtime laws judge only required time.
    */
   holdoverMandated?: boolean;
+  /**
+   * The unit the nurse was floated to for this shift, as the manager named it (D20). The row
+   * stays: she still worked the hours, so nurse-scope rules and pay count it, but this unit's
+   * floor does not. Judging reads it as busy time (`floatedOff`); counting skips it
+   * (`isFloatedOff`). Absent on an ordinary shift.
+   */
+  floatedTo?: string;
 }
 
 /**
@@ -801,7 +808,8 @@ export interface AvailabilityBlock {
  * volunteered. The float rotation reads this history (volunteers first, then the mandated
  * turn in reverse seniority, VA–NNU Art. 12). `objection` is the nurse's own recorded
  * objection (not competent on the receiving unit, say) — kept, never a bar to the float.
- * No foreign key on the assignment: floating removes the home shift.
+ * No foreign key on the assignment: the record outlives it (a floated shift can later
+ * be removed). The shift itself stays, marked `floatedTo`.
  */
 export interface FloatRecord {
   id: Id;

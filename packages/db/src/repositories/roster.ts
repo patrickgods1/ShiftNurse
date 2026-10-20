@@ -20,7 +20,7 @@ import type {
   Tour,
 } from '@shiftnurse/core';
 import { addDays, SCHEDULE_KINDS } from '@shiftnurse/core';
-import { and, asc, eq, gte, isNotNull, lt, lte } from 'drizzle-orm';
+import { and, asc, eq, gte, isNotNull, isNull, lt, lte, or } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
@@ -35,6 +35,7 @@ import {
   credential as credentialTable,
   nurseCredential as nurseCredentialTable,
   nurse as nurseTable,
+  nurseUnit as nurseUnitTable,
   preference as preferenceTable,
 } from '../schema.js';
 import { type PatchKeys, patchOf } from './patch.js';
@@ -320,9 +321,32 @@ export interface ExpiringCredential {
   nurseCredential: NurseCredential;
 }
 
-/** Nurse + credential pairs whose `expiresOn` falls inside `[start, end]`. Drives the compliance alert. */
+/**
+ * Whether the nurse works `unitId` at some point in `[from, to]`: homed there, or a float with a
+ * membership of it touching the range. Without the float arm a floated-in nurse's lapsing ACLS
+ * never reaches the unit whose shifts she takes. Active-only is the caller's `WHERE`.
+ */
+function worksOnUnitBetween(unitId: Id, from: IsoDate, to: IsoDate) {
+  return or(
+    eq(nurseTable.unitId, unitId),
+    and(
+      isNotNull(nurseUnitTable.id),
+      or(isNull(nurseUnitTable.startDate), lte(nurseUnitTable.startDate, to)),
+      or(isNull(nurseUnitTable.endDate), gte(nurseUnitTable.endDate, from)),
+    ),
+  );
+}
+
+/**
+ * Credentials expiring inside `[start, end]` of the active nurses who work `unitId`: those homed
+ * there and the floats whose membership of it touches the window. Not every nurse in the
+ * database: another unit's nurses and people who have left are not this manager's to chase.
+ * Soonest first, then by name, so the dashboard list does not reshuffle between loads. Drives the
+ * compliance alert.
+ */
 export function credentialsExpiringBetween(
   db: DbLike,
+  unitId: Id,
   start: IsoDate,
   end: IsoDate,
 ): ExpiringCredential[] {
@@ -335,12 +359,25 @@ export function credentialsExpiringBetween(
     .from(nurseCredentialTable)
     .innerJoin(nurseTable, eq(nurseCredentialTable.nurseId, nurseTable.id))
     .innerJoin(credentialTable, eq(nurseCredentialTable.credentialId, credentialTable.id))
+    .leftJoin(
+      nurseUnitTable,
+      and(eq(nurseUnitTable.nurseId, nurseTable.id), eq(nurseUnitTable.unitId, unitId)),
+    )
     .where(
       and(
+        eq(nurseTable.active, true),
+        worksOnUnitBetween(unitId, start, end),
         isNotNull(nurseCredentialTable.expiresOn),
         gte(nurseCredentialTable.expiresOn, start),
         lte(nurseCredentialTable.expiresOn, end),
       ),
+    )
+    .orderBy(
+      asc(nurseCredentialTable.expiresOn),
+      asc(nurseTable.lastName),
+      asc(nurseTable.firstName),
+      asc(nurseTable.id),
+      asc(credentialTable.code),
     )
     .all();
   return rows.map((r) => ({
@@ -351,11 +388,12 @@ export function credentialsExpiringBetween(
 }
 
 /**
- * Credentials of active nurses on the unit that lapsed in the `lookbackDays` before `onDate`,
- * oldest first. The expiry day itself is the last valid day (`credentialLapsedOn`). A renewal is
- * recorded by editing the date in place (`updateCredentialExpiry`): `nurse_credential` is unique
- * per nurse and credential, so there is never a second, newer record to look for. The window is
- * bounded so years-old history never floods the list.
+ * Credentials of active nurses who work the unit (home nurses and floats whose membership touches
+ * the lookback window) that lapsed in the `lookbackDays` before `onDate`, oldest first. The expiry
+ * day itself is the last valid day (`credentialLapsedOn`). A renewal is recorded by editing the
+ * date in place (`updateCredentialExpiry`): `nurse_credential` is unique per nurse and
+ * credential, so there is never a second, newer record to look for. The window is bounded so
+ * years-old history never floods the list.
  */
 export function lapsedCredentialsForUnit(
   db: DbLike,
@@ -373,16 +411,20 @@ export function lapsedCredentialsForUnit(
     .from(nurseCredentialTable)
     .innerJoin(nurseTable, eq(nurseCredentialTable.nurseId, nurseTable.id))
     .innerJoin(credentialTable, eq(nurseCredentialTable.credentialId, credentialTable.id))
+    .leftJoin(
+      nurseUnitTable,
+      and(eq(nurseUnitTable.nurseId, nurseTable.id), eq(nurseUnitTable.unitId, unitId)),
+    )
     .where(
       and(
-        eq(nurseTable.unitId, unitId),
         eq(nurseTable.active, true),
+        worksOnUnitBetween(unitId, earliest, onDate),
         isNotNull(nurseCredentialTable.expiresOn),
         gte(nurseCredentialTable.expiresOn, earliest),
         lt(nurseCredentialTable.expiresOn, onDate),
       ),
     )
-    .orderBy(asc(nurseCredentialTable.expiresOn))
+    .orderBy(asc(nurseCredentialTable.expiresOn), asc(nurseTable.id))
     .all();
   return rows.map((r) => ({
     nurse: toNurse(r.nurse),

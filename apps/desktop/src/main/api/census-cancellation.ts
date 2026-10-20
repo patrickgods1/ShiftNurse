@@ -15,6 +15,7 @@ import {
   checkStaffing,
   type Id,
   type IsoDate,
+  isFloatedOff,
   type Nurse,
   type NurseRole,
   type RoleStaffing,
@@ -105,12 +106,14 @@ export function cancellationOrderFor(
   const { required, staffed } = check.byRole[role];
 
   const onShift = onDate
-    .filter((a) => a.shiftTypeId === shiftTypeId)
+    // Already sent to another unit: there is nothing here to cancel.
+    .filter((a) => a.shiftTypeId === shiftTypeId && !isFloatedOff(a))
     .flatMap((assignment) => {
       const nurse = nurseById.get(assignment.nurseId);
       return nurse?.role === role ? [{ nurse, assignment }] : [];
     });
   const result = cancellationOrder({
+    unitId: period.unitId,
     onShift,
     tiers: getCancellationPolicy(db, period.unitId),
     volunteers,

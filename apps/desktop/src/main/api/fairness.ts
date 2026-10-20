@@ -54,7 +54,7 @@ export function fairnessReport(db: DbLike, periodId: Id) {
   // No lookback: the counters are what *this* period scheduled; history comes from the ledger.
   // The view carries floated-in nurses too (their shifts here are on the schedule); the score is
   // over the unit's own nurses, whose burden history this unit keeps.
-  const schedule = scheduleViewFor(db, period, { lookback: false });
+  const schedule = scheduleViewFor(db, period, { lookback: false, floated: 'worked' });
   const ctx = counterContext(db, period.unitId, ruleSet, period);
   // Only rows strictly before this period: if this period was published before, its own
   // ledger row would otherwise be counted as history *and* as the current draft.

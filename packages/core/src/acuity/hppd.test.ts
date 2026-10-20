@@ -147,4 +147,19 @@ describe('scheduled nursing hours per patient day', () => {
     expect(report.hppd).toBeUndefined();
     expect(report.targetHours).toBeUndefined();
   });
+
+  it('does not count the hours of a nurse floated to another unit', () => {
+    // Two day 12s on the schedule, one sent to 5 East: 24 − 12 = 12 hours of this unit's care.
+    const report = scheduledHppd({
+      dates: [MONDAY],
+      shiftTypes: SHIFTS,
+      demand: demandFor(['2026-10-05'], twentyAllDay),
+      assignments: [
+        assign('a', DAY_12, '2026-10-05'),
+        assign('b', DAY_12, '2026-10-05', { floatedTo: '5 East' }),
+      ],
+      target: TARGET,
+    });
+    expect(report.days.find((d) => d.date === MONDAY)?.nursingHours).toBe(12);
+  });
 });

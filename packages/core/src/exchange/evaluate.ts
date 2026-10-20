@@ -192,7 +192,14 @@ function findHeldAssignment(
 ): Assignment {
   const inPeriod = engine.input.assignments.find((a) => a.id === assignmentId);
   if (!inPeriod) {
-    const inTail = engine.input.priorAssignments.some((a) => a.id === assignmentId);
+    const inTail = engine.input.priorAssignments.find((a) => a.id === assignmentId);
+    // The loader carries a floated-off shift in the tail as busy time (D20); it is this
+    // period's date, so "outside the period" would send the manager looking in the wrong place.
+    if (inTail?.floatedTo !== undefined) {
+      throw new Error(
+        `${nurseName(engine.nurse(inTail.nurseId))} was floated to ${inTail.floatedTo} for that shift; it cannot be traded.`,
+      );
+    }
     if (inTail) {
       throw new Error(
         'That shift is outside this schedule period; only this period’s shifts can be exchanged.',

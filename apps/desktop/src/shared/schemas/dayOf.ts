@@ -14,7 +14,7 @@ import {
 
 // `accepted` is deliberately absent: an accepted call goes through `backfill`.
 const cancellationTiers = z.array(
-  z.enum(['volunteer', 'agency', 'overtime', 'per_diem', 'rotation']),
+  z.enum(['volunteer', 'agency', 'float', 'overtime', 'per_diem', 'rotation']),
 );
 
 const unansweredOutcome = z.enum(['declined', 'no_answer', 'left_message', 'ineligible']);

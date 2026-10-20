@@ -10,6 +10,7 @@ import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase } from '../client.js';
 import { createUnit } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
+import { createNurseUnit } from './nurse-units.js';
 import {
   createPreceptorship,
   deletePreceptorship,
@@ -99,10 +100,34 @@ describe('recording an orientation', () => {
       'A nurse cannot be their own preceptor',
     );
     expect(() => pair('2026-10-06', '2026-10-05')).toThrow('The orientation ends before it starts');
-    expect(() => pair('2026-10-05', '2026-10-06', stranger)).toThrow(
-      'That nurse is not on this unit',
-    );
+    expect(() => pair('2026-10-05', '2026-10-06', stranger)).toThrow(/not on 4 West's roster/);
     expect(listPreceptorships(handle.db, unitId)).toEqual([]);
+  });
+
+  it('orients a nurse floated in to learn the unit', () => {
+    const fran = mkNurse(mkUnit('5 West').id, 'Fran');
+    createNurseUnit(
+      handle.db,
+      {
+        nurseId: fran.id,
+        unitId,
+        startDate: isoDate('2026-03-01'),
+        endDate: isoDate('2026-03-31'),
+      },
+      ACTOR,
+    );
+    const record = createPreceptorship(
+      handle.db,
+      {
+        unitId,
+        orienteeId: fran.id,
+        preceptorId: veteran.id,
+        startDate: isoDate('2026-03-02'),
+        endDate: isoDate('2026-03-20'),
+      },
+      ACTOR,
+    );
+    expect(listPreceptorships(handle.db, unitId)).toEqual([record]);
   });
 
   it('lists only the records that touch the window, whole', () => {

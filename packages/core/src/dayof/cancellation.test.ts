@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Assignment, Nurse } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
-import { assign, DAY_12, makeNurse } from '../testing/fixtures.js';
+import { assign, DAY_12, makeNurse, UNIT_ID } from '../testing/fixtures.js';
 import {
   type CancellationHistory,
   cancellationOrder,
@@ -76,6 +76,7 @@ function order(
   } = {},
 ) {
   return cancellationOrder({
+    unitId: UNIT_ID,
     onShift: onShift(nurses, options.extra),
     tiers: DEFAULT_CANCELLATION_TIERS,
     volunteers: options.volunteers ?? [],
@@ -131,6 +132,7 @@ describe('who goes home first when the census drops', () => {
 
   it('follows the unit’s own order of tiers', () => {
     const result = cancellationOrder({
+      unitId: UNIT_ID,
       onShift: onShift([bo, agent, perDiem]),
       tiers: ['per_diem', 'agency', 'rotation'],
       volunteers: [],
@@ -145,6 +147,117 @@ describe('who goes home first when the census drops', () => {
     expect(result.order.map((o) => `${o.nurseId}:${o.tier}`)).toEqual([
       'ag:volunteer',
       'bo:rotation',
+    ]);
+  });
+});
+
+/**
+ * 4 West borrows Fran from 5 West and Gus from 6 West for the day. Ana is 4 West's own; nobody is
+ * in charge. Ali is agency, booked on 4 West. Seniority: Fran (2001), Ana (2008), Gus (2016), Ali
+ * (2026). Fran is senior to Ana on purpose, so a rotation alone would keep Fran and send Ana home
+ * first; only the float tier puts Fran ahead of her.
+ */
+describe('a nurse floated in from another unit when the census drops', () => {
+  const WEST_4 = 'u-4w';
+  const ana4w = makeNurse({
+    id: 'ana',
+    unitId: WEST_4,
+    firstName: 'Ana',
+    lastName: 'Cruz',
+    employeeId: 'E1',
+    seniorityDate: isoDate('2008-03-01'),
+  });
+  const fran = makeNurse({
+    id: 'fran',
+    unitId: 'u-5w',
+    firstName: 'Fran',
+    lastName: 'Hale',
+    employeeId: 'E9',
+    seniorityDate: isoDate('2001-02-01'),
+  });
+  const gus = makeNurse({
+    id: 'gus',
+    unitId: 'u-6w',
+    firstName: 'Gus',
+    lastName: 'Lund',
+    employeeId: 'E10',
+    seniorityDate: isoDate('2016-05-01'),
+  });
+  const ali = makeNurse({
+    id: 'ali',
+    unitId: WEST_4,
+    firstName: 'Ali',
+    lastName: 'Shah',
+    employeeId: 'A2',
+    employmentType: 'agency',
+    seniorityDate: isoDate('2026-02-01'),
+  });
+
+  function westOrder(
+    nurses: Nurse[],
+    options: {
+      tiers?: Parameters<typeof cancellationOrder>[0]['tiers'];
+      extra?: Record<string, Partial<Assignment>>;
+      history?: CancellationHistory;
+    } = {},
+  ) {
+    return cancellationOrder({
+      unitId: WEST_4,
+      onShift: onShift(nurses, options.extra),
+      tiers: options.tiers ?? DEFAULT_CANCELLATION_TIERS,
+      volunteers: [],
+      history: options.history ?? new Map(),
+    });
+  }
+
+  it('sends a nurse floated in home before the unit’s own staff', () => {
+    const result = westOrder([ana4w, fran]);
+    // No volunteers, no agency; the float tier takes Fran, then rotation takes Ana. A rotation
+    // alone would have sent Ana (junior) first.
+    expect(result.order.map((p) => p.nurseId)).toEqual(['fran', 'ana']);
+    expect(result.order[0]!.tier).toBe('float');
+    expect(result.order[0]!.reason).toBe(
+      'Floated in from another unit; floated-in nurses go back before the unit’s own staff.',
+    );
+  });
+
+  it('still cancels agency staff before a float', () => {
+    const result = westOrder([ana4w, fran, ali, gus]);
+    // Agency takes Ali; the float tier takes Gus (2016) before the senior Fran (2001); rotation
+    // takes Ana. Without the float tier it would be Ali, Gus, Ana, Fran.
+    expect(result.order.map((p) => `${p.nurseId}:${p.tier}`)).toEqual([
+      'ali:agency',
+      'gus:float',
+      'fran:float',
+      'ana:rotation',
+    ]);
+  });
+
+  it('keeps the old order for a unit whose saved order leaves out the float tier', () => {
+    const tiers = ['volunteer', 'agency', 'overtime', 'per_diem', 'rotation'] as const;
+    const first = westOrder([ana4w, fran], {
+      tiers,
+      history: new Map([['ana', { count: 2 }]]),
+    });
+    // Rotation: Fran has none, Ana has 2.
+    expect(first.order.map((p) => p.nurseId)).toEqual(['fran', 'ana']);
+    expect(first.order[0]!.tier).toBe('rotation');
+
+    const second = westOrder([ana4w, fran], {
+      tiers,
+      history: new Map([
+        ['ana', { count: 2 }],
+        ['fran', { count: 3 }],
+      ]),
+    });
+    expect(second.order.map((p) => p.nurseId)).toEqual(['ana', 'fran']);
+  });
+
+  it('never sends home the charge nurse, even a float in charge', () => {
+    const result = westOrder([ana4w, fran], { extra: { fran: { isCharge: true } } });
+    expect(result.order.map((p) => p.nurseId)).toEqual(['ana']);
+    expect(result.excluded).toEqual([
+      { nurseId: 'fran', reason: 'Fran Hale is the charge nurse on this shift.' },
     ]);
   });
 });

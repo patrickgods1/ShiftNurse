@@ -35,7 +35,7 @@ import {
   shiftType,
   unit as unitTable,
 } from '../schema.js';
-import { listFloatNurses } from './nurse-units.js';
+import { nurseWorksOnUnit } from './nurse-units.js';
 import { type PatchKeys, patchOf } from './patch.js';
 import { listPreferencesForNurse } from './roster.js';
 
@@ -305,7 +305,6 @@ export function holidayWorkSummary(db: DbLike, holidayId: Id): HolidayWorkSummar
 /**
  * Refuse anyone who was not on the holiday's unit that day. A nurse who has since left still
  * counts (they may have worked a past holiday); a float counts only inside their membership.
- * Phase 8's `nurseWorksOnUnit` should replace this local check.
  */
 function requireHolidayWorkers(tx: ShiftNurseTx, holiday: Holiday, ids: readonly Id[]): void {
   if (ids.length === 0) return;
@@ -320,12 +319,11 @@ function requireHolidayWorkers(tx: ShiftNurseTx, holiday: Holiday, ids: readonly
       'One of the nurses chosen is no longer on the roster. Reopen the list and choose again.',
     );
   }
-  const floats = new Set(
-    listFloatNurses(tx, holiday.unitId, holiday.date, holiday.date).map((n) => n.id),
-  );
   for (const id of ids) {
     const n = byId.get(id)!;
-    if (n.unitId === holiday.unitId || floats.has(id)) continue;
+    if (nurseWorksOnUnit(tx, id, holiday.unitId, { start: holiday.date, end: holiday.date })) {
+      continue;
+    }
     const unitName = tx
       .select({ name: unitTable.name })
       .from(unitTable)

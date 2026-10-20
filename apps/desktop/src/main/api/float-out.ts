@@ -3,6 +3,11 @@
  * another unit, rank who floats by the contract's order and float the first one with the order's
  * reason on the record.
  *
+ * The shift she is floated off stays on the schedule, marked with the unit she went to and
+ * locked (D20): she still worked those hours, so weekly overtime, rest and pay count them, while
+ * this unit's floor no longer does. Deleting it once made a 48-hour week read as 36 and priced
+ * a shift payroll still paid as if it never happened.
+ *
  * The ranking is core's `floatOrder`; this file loads what it needs (the shift's roster for one
  * role, the unit's float history over the last year, the preceptorships) and holds the one rule
  * the screen must never decide alone: only the nurse at the top of the order can be floated, so
@@ -16,17 +21,18 @@ import {
   floatOrder,
   type Id,
   type IsoDate,
+  isFloatedOff,
   type Nurse,
 } from '@shiftnurse/core';
 import {
   createFloatRecord,
   type DbLike,
-  deleteAssignment,
   getNurse,
   getShiftType,
   listAssignmentsForPeriodOnDate,
   listFloatRecords,
   listPreceptorships,
+  markFloatedOff,
   recordFloatObjection,
   rosterForPeriod,
   type ShiftNurseDb,
@@ -54,7 +60,8 @@ export function floatOrderFor(db: DbLike, request: FloatOrderRequest): FloatOrde
     periodId,
     date,
   )
-    .filter((a) => a.shiftTypeId === shiftTypeId)
+    // A nurse already floated off is on another unit's floor, not this shift's.
+    .filter((a) => a.shiftTypeId === shiftTypeId && !isFloatedOff(a))
     .flatMap((assignment) => {
       const nurse = nurseById.get(assignment.nurseId);
       // Silently dropping the row would hide a nurse who is on the shift but could not be ranked.
@@ -138,8 +145,8 @@ export function floatOutApi(db: ShiftNurseDb): ShiftNurseApi['floatOut'] {
           },
           ACTOR,
         );
-        deleteAssignment(tx, assignment.id, ACTOR, reason);
-        log({ kind: 'removed', assignment, before: assignment });
+        const after = markFloatedOff(tx, assignment.id, input.toUnit, ACTOR, reason);
+        log({ kind: 'changed', assignment: after, before: assignment, after });
         return record;
       });
     },

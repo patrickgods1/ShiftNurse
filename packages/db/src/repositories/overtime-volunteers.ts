@@ -14,7 +14,8 @@ import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import { toOvertimeVolunteer } from '../mappers.js';
-import { nurse as nurseTable, overtimeVolunteer as table } from '../schema.js';
+import { overtimeVolunteer as table } from '../schema.js';
+import { requireWorksOnUnit } from './nurse-units.js';
 import { type PatchKeys, patchOf } from './patch.js';
 
 const ENTITY = 'overtime_volunteer';
@@ -135,12 +136,8 @@ function validate(db: DbLike, volunteer: OvertimeVolunteer): void {
   if (compareDates(volunteer.endDate, volunteer.startDate) < 0) {
     throw new Error('The offer ends before it starts');
   }
-  const row = db
-    .select({ unitId: nurseTable.unitId })
-    .from(nurseTable)
-    .where(eq(nurseTable.id, volunteer.nurseId))
-    .get();
-  if (!row || row.unitId !== volunteer.unitId) {
-    throw new Error('That nurse is not on this unit');
-  }
+  requireWorksOnUnit(db, volunteer.nurseId, volunteer.unitId, {
+    start: volunteer.startDate,
+    end: volunteer.endDate,
+  });
 }

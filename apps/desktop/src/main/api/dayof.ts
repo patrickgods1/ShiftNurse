@@ -13,6 +13,7 @@ import {
   findReplacements,
   type Id,
   type IsoDate,
+  isFloatedOff,
   type Nurse,
   type ReplacementReport,
   type ShiftType,
@@ -201,7 +202,9 @@ function dayOfSummary(db: DbLike, unitId: Id, date?: IsoDate): DayOfSummary {
       (c) => c.shiftTypeId === slot.shiftTypeId && c.date === slot.date,
     );
     const roster: RosterEntryView[] = plan.assignments
-      .filter((a) => a.shiftTypeId === slot.shiftTypeId && a.date === slot.date)
+      // A floated-off shift stays on the schedule for her hours but she is not on this unit's
+      // floor, so no call-off or backfill is offered for her.
+      .filter((a) => a.shiftTypeId === slot.shiftTypeId && a.date === slot.date && !isFloatedOff(a))
       .map((a) => {
         const nurse = nurseById.get(a.nurseId);
         if (!nurse)
@@ -236,6 +239,18 @@ function dayOfSummary(db: DbLike, unitId: Id, date?: IsoDate): DayOfSummary {
   };
 }
 
+/** The shift a call-off or backfill acts on; a floated-off row is not this unit's to call off. */
+function onUnitShiftOrThrow(db: DbLike, assignmentId: Id) {
+  const row = assignmentOrThrow(db, assignmentId);
+  if (isFloatedOff(row)) {
+    const nurse = getNurse(db, row.nurseId);
+    throw new Error(
+      `${nurse ? `${nurse.firstName} ${nurse.lastName}` : 'That nurse'} was floated to ${row.floatedTo} for this shift; she is not on this unit's shift.`,
+    );
+  }
+  return row;
+}
+
 function reportDayOfCallOff(
   db: ShiftNurseTx,
   assignmentId: Id,
@@ -245,7 +260,7 @@ function reportDayOfCallOff(
   if (openCallOffForAssignment(db, assignmentId)) {
     throw new Error('A call-off is already open for this assignment');
   }
-  const absent = assignmentOrThrow(db, assignmentId);
+  const absent = onUnitShiftOrThrow(db, assignmentId);
   const period = periodOrThrow(db, absent.periodId);
   if (period.status === 'archived') {
     throw new Error(`Period "${period.name}" is archived; cannot report a call-off against it`);
@@ -315,7 +330,7 @@ function backfill(db: ShiftNurseDb, callOffId: Id, nurseId: Id, notes?: string):
     (callOff.reason ? ` — ${callOff.reason}` : '');
 
   return editSchedule(db, callOff.periodId, reason, 'backfill', (tx, log) => {
-    const absent = assignmentOrThrow(tx, callOff.assignmentId);
+    const absent = onUnitShiftOrThrow(tx, callOff.assignmentId);
     // The cover is a new row; the absent nurse's recorded holdover cannot move to it.
     if ((absent.holdoverMinutes ?? 0) > 0) throw new Error(holdoverRefusal(absent));
     const report = findReplacements({

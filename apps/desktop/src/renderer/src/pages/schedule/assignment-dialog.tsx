@@ -123,15 +123,21 @@ export function AssignmentDialog({
           ) : null}
 
           <div className="mt-4 flex flex-col gap-2">
-            <button
-              type="button"
-              data-testid="assignment-toggle-lock"
-              disabled={pending}
-              onClick={() => onToggleLock(assignment)}
-              className={secondaryBtn}
-            >
-              {assignment.isLocked ? 'Unlock' : 'Lock'}
-            </button>
+            {assignment.floatedTo !== undefined ? (
+              <p data-testid="assignment-floated" className="text-sm text-text-muted">
+                Floated to {assignment.floatedTo}
+              </p>
+            ) : (
+              <button
+                type="button"
+                data-testid="assignment-toggle-lock"
+                disabled={pending}
+                onClick={() => onToggleLock(assignment)}
+                className={secondaryBtn}
+              >
+                {assignment.isLocked ? 'Unlock' : 'Lock'}
+              </button>
+            )}
             <button
               type="button"
               data-testid="assignment-toggle-charge"
@@ -166,36 +172,40 @@ export function AssignmentDialog({
             </button>
           </div>
 
-          <ChangeSection
-            assignment={assignment}
-            shiftTypes={shiftTypes}
-            swapOptions={swapOptions}
-            disabled={pending}
-            onChangeType={(shiftTypeId) => {
-              onClose();
-              onMove({
-                assignmentId: assignment.id,
-                nurseId: assignment.nurseId,
-                shiftTypeId,
-                date: assignment.date,
-              });
-            }}
-            onSwap={(otherId) => {
-              onClose();
-              onSwap(assignment.id, otherId);
-            }}
-          />
+          {assignment.floatedTo === undefined ? (
+            <>
+              <ChangeSection
+                assignment={assignment}
+                shiftTypes={shiftTypes}
+                swapOptions={swapOptions}
+                disabled={pending}
+                onChangeType={(shiftTypeId) => {
+                  onClose();
+                  onMove({
+                    assignmentId: assignment.id,
+                    nurseId: assignment.nurseId,
+                    shiftTypeId,
+                    date: assignment.date,
+                  });
+                }}
+                onSwap={(otherId) => {
+                  onClose();
+                  onSwap(assignment.id, otherId);
+                }}
+              />
 
-          <MoveSection
-            assignment={assignment}
-            nurses={nurses}
-            dates={dates}
-            disabled={pending}
-            onMove={(input) => {
-              onClose();
-              onMove(input);
-            }}
-          />
+              <MoveSection
+                assignment={assignment}
+                nurses={nurses}
+                dates={dates}
+                disabled={pending}
+                onMove={(input) => {
+                  onClose();
+                  onMove(input);
+                }}
+              />
+            </>
+          ) : null}
 
           <div className="mt-4 flex justify-end">
             <button type="button" className={SECONDARY} onClick={onClose}>

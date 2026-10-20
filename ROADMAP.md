@@ -760,6 +760,9 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
       together, Today clock and roster, worked hours from published shifts and PDL per pregnancy
       (D14), reporting-time pay only when late (D13), exchange checked on entry, IPC input bounds,
       refusals in words (verify: npm run check; smoke)
+- [x] Phase 8 — Float seam: one membership predicate (`nurseWorksOnUnit`), floats' own records
+      reach Generate/grid/cost/alerts (`perNurseRecordsFor`), floated shifts kept and off the floor
+      (D20), floats go home first on low census (D21) (verify: npm run check; smoke)
 
 ---
 

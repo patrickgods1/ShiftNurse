@@ -11,11 +11,11 @@
  */
 
 import { type AvailabilityBlock, type Id, type IsoDate, parseTimeOfDay } from '@shiftnurse/core';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import { recordAuditStrict } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
-import { nurse as nurseTable, availabilityBlock as table } from '../schema.js';
+import { nurse as nurseTable, availabilityBlock as table, unit as unitTable } from '../schema.js';
 import { type PatchKeys, patchOf } from './patch.js';
 
 const ENTITY = 'availability_block';
@@ -75,6 +75,22 @@ export function listAvailabilityBlocks(db: DbLike, unitId: Id): AvailabilityBloc
     .select()
     .from(table)
     .where(eq(table.unitId, unitId))
+    .orderBy(asc(table.nurseId), asc(table.startTime), asc(table.id))
+    .all()
+    .map(toBlock);
+}
+
+/** Blocks these nurses carry from other units, for `perNurseRecordsFor`. */
+export function availabilityBlocksElsewhere(
+  db: DbLike,
+  unitId: Id,
+  nurseIds: readonly Id[],
+): AvailabilityBlock[] {
+  if (nurseIds.length === 0) return [];
+  return db
+    .select()
+    .from(table)
+    .where(and(ne(table.unitId, unitId), inArray(table.nurseId, [...nurseIds])))
     .orderBy(asc(table.nurseId), asc(table.startTime), asc(table.id))
     .all()
     .map(toBlock);
@@ -178,11 +194,27 @@ function validate(db: DbLike, block: AvailabilityBlock): void {
     throw new Error('The accommodation ends before it starts');
   }
   const owner = db
-    .select({ unitId: nurseTable.unitId })
+    .select({
+      unitId: nurseTable.unitId,
+      firstName: nurseTable.firstName,
+      lastName: nurseTable.lastName,
+    })
     .from(nurseTable)
     .where(eq(nurseTable.id, block.nurseId))
     .get();
-  if (!owner || owner.unitId !== block.unitId) throw new Error('That nurse is not on this unit');
+  if (!owner) throw new Error('That nurse is not on the roster.');
+  if (owner.unitId !== block.unitId) {
+    // Recorded once, on the home unit, and read on every unit she works: two units holding
+    // two versions of one ADA/Title VII record is how an accommodation gets lost.
+    const home = db
+      .select({ name: unitTable.name })
+      .from(unitTable)
+      .where(eq(unitTable.id, owner.unitId))
+      .get();
+    throw new Error(
+      `Record ${owner.firstName} ${owner.lastName}'s accommodation on ${home?.name ?? 'their home unit'}, their home unit; it applies on every unit they work.`,
+    );
+  }
 }
 
 function requireReason(reason: string, doing: string): string {

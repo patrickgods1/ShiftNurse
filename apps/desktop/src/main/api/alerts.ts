@@ -33,9 +33,7 @@ import {
   ledgerHistory,
   listCredentials,
   listHolidaysForUnit,
-  listNurseCredentialsForUnit,
-  paidSickCallsForUnit,
-  timeOffForPeriod,
+  perNurseRecordsFor,
 } from '@shiftnurse/db';
 import { periodOrThrow, ruleSetFor, scheduleViewFor, unitOrThrow } from './context.js';
 
@@ -76,11 +74,13 @@ export function alertsForView(
   const fte = configs.find((c) => c.ruleId === contractedHoursRule.id)!
     .params as unknown as ContractedHoursParams;
   const unit = unitOrThrow(db, period.unitId);
+  // Whoever is on this schedule, floats included, with their own credentials and leave.
+  const records = perNurseRecordsFor(db, unit, period, [...schedule.nursesById.values()]);
   // Paid leave counts as the hours rules count it, so a nurse back from vacation is not "drift".
   const paidLeaveByNurse = new Map<Id, PaidLeaveCredit[]>();
   const credits = paidLeaveCredits(
-    timeOffForPeriod(db, unit, period),
-    paidSickCallsForUnit(db, period.unitId, { start: period.startDate, end: period.endDate }),
+    records.timeOff,
+    records.paidSickCalls.filter((c) => dateInRange(c.date, period.startDate, period.endDate)),
   );
   for (const c of credits) {
     paidLeaveByNurse.set(c.nurseId, [...(paidLeaveByNurse.get(c.nurseId) ?? []), c]);
@@ -118,7 +118,7 @@ export function alertsForView(
     schedule,
     cost: costContext(db, period.unitId, ruleSet, period),
     credentials: listCredentials(db),
-    nurseCredentials: listNurseCredentialsForUnit(db, period.unitId),
+    nurseCredentials: records.nurseCredentials,
     demand: deriveDemand(
       datesInRange(period.startDate, period.endDate),
       demandInputs(db, period.unitId, period.startDate, period.endDate),
@@ -140,6 +140,6 @@ export function alertsForView(
 
 export function alertsFor(db: DbLike, periodId: Id): ComplianceAlert[] {
   const period = periodOrThrow(db, periodId);
-  const schedule = scheduleViewFor(db, period, { lookback: true });
+  const schedule = scheduleViewFor(db, period, { lookback: true, floated: 'worked' });
   return alertsForView(db, period, ruleSetFor(db, period), schedule);
 }

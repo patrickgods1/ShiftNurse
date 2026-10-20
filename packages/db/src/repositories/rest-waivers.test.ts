@@ -10,6 +10,7 @@ import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase } from '../client.js';
 import { createUnit } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
+import { createNurseUnit } from './nurse-units.js';
 import {
   createRestWaiver,
   deleteRestWaiver,
@@ -114,7 +115,32 @@ describe('recording a rest waiver', () => {
   });
 
   it('refuses a nurse from another unit', () => {
-    expect(() => waive(stranger, '2026-10-06')).toThrow('That nurse is not on this unit');
+    expect(() => waive(stranger, '2026-10-06')).toThrow(/not on 4 West's roster/);
+  });
+
+  describe('for a nurse floated in', () => {
+    let fran: Nurse;
+    beforeEach(() => {
+      fran = mkNurse(mkUnit('5 West').id, 'Fran');
+      createNurseUnit(
+        handle.db,
+        {
+          nurseId: fran.id,
+          unitId,
+          startDate: isoDate('2026-03-01'),
+          endDate: isoDate('2026-03-31'),
+        },
+        ACTOR,
+      );
+    });
+
+    it('records a rest waiver for a float on a day she works here', () => {
+      expect(waive(fran, '2026-03-10').nurseId).toBe(fran.id);
+    });
+
+    it('refuses a rest waiver for a float on a day she is not on the unit', () => {
+      expect(() => waive(fran, '2026-04-10')).toThrow(/not on .*'s roster on Fri Apr 10/);
+    });
   });
 
   it('lists by date, then nurse', () => {

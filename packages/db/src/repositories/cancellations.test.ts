@@ -17,6 +17,7 @@ import {
 } from './cancellations.js';
 import { createShiftType, createUnit } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
+import { createNurseUnit } from './nurse-units.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
 import { createPeriod } from './schedule.js';
@@ -177,7 +178,35 @@ describe('recording a nurse sent home', () => {
     const ada = mkNurse(unitId, 'Ada');
     expect(() => cancel(ada, '2026-01-20', '   ')).toThrow(/needs a stated reason/);
     const stranger = mkNurse(mkUnit('Other').id, 'Zed');
-    expect(() => cancel(stranger, '2026-01-20')).toThrow('That nurse is not on this unit');
+    expect(() => cancel(stranger, '2026-01-20')).toThrow(
+      "Zed Nurse is not on 4 West's roster on Tue Jan 20",
+    );
+    expect(listShiftCancellationsForPeriod(handle.db, periodId)).toEqual([]);
+  });
+
+  it('records a cancellation for a nurse floated in that day', () => {
+    const fran = mkNurse(mkUnit('5 West').id, 'Fran');
+    createNurseUnit(
+      handle.db,
+      { nurseId: fran, unitId, startDate: isoDate('2026-01-15'), endDate: isoDate('2026-01-28') },
+      ACTOR,
+    );
+    const reason =
+      'Floated in from another unit; floated-in nurses go back before the unit’s own staff.';
+    const record = cancel(fran, '2026-01-20', reason);
+    expect(listShiftCancellationsForPeriod(handle.db, periodId)).toEqual([record]);
+    const [entry] = auditHistoryFor(handle.db, 'shift_cancellation', record.id);
+    expect(entry).toMatchObject({ action: 'create', reason, after: { nurseId: fran } });
+  });
+
+  it('refuses to cancel a float whose time on the unit has ended', () => {
+    const fran = mkNurse(mkUnit('5 West').id, 'Fran');
+    createNurseUnit(
+      handle.db,
+      { nurseId: fran, unitId, startDate: isoDate('2026-01-15'), endDate: isoDate('2026-01-18') },
+      ACTOR,
+    );
+    expect(() => cancel(fran, '2026-01-20')).toThrow(/not on .*'s roster on/);
     expect(listShiftCancellationsForPeriod(handle.db, periodId)).toEqual([]);
   });
 });

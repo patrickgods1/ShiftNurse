@@ -136,8 +136,9 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
   `approveTimeOffAndLiftAssignments`, `applyResolution`, `saveRuleSet` (a header, its configs and
   the audit row — a header alone would be a "latest" rule set with no rules), and the holiday
   writes (`updateHoliday`, `deleteHoliday`, `recordHolidayWork`, `clearHolidayWork`,
-  `addHolidayYear`), `applyJurisdiction` and `awardRound` (a bid round's awards, approvals,
-  denials and status) — takes `ShiftNurseTx`, so calling it
+  `addHolidayYear`), `applyJurisdiction`, `awardRound` (a bid round's awards, approvals,
+  denials and status) and `markFloatedOff` (a row marked and locked plus its audit) — takes
+  `ShiftNurseTx`, so calling it
   outside a transaction is a type error rather than a docstring nobody read.
 - **Every IPC write runs in one `transact`**, in the `main/api/` module that builds its resource
   (`api.ts` is only the wiring table): a repository function given the bare `db` commits its

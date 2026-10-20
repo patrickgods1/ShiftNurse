@@ -61,7 +61,7 @@ describe('a wish to work a holiday in the counters the ledger records', () => {
 
     const period = periodOrThrow(db, f.seeded.draftPeriodId);
     const counters = deriveCounters(
-      scheduleViewFor(db, period, { lookback: false }),
+      scheduleViewFor(db, period, { lookback: false, floated: 'worked' }),
       counterContext(db, unitId, ruleSetFor(db, period), period),
     );
     expect(counters.get(ann!.id)?.preferenceHitRate).toBe(1);

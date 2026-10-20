@@ -10,8 +10,10 @@ import {
   getTimeOffRequest,
   listAssignmentsForPeriod,
   listChanges,
+  markFloatedOff,
   publishSchedule,
   recentAudit,
+  transact,
   updateUnit,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -368,5 +370,21 @@ describe('covering several freed shifts at once', () => {
     expect(changes.some((c) => c.assignmentId === elsewhere.id)).toBe(false);
     expect(changes.some((c) => c.assignmentId === own.id && c.kind === 'removed')).toBe(true);
     expect(listAssignmentsForPeriod(f.handle.db, other.id)).toEqual([]);
+  });
+});
+
+describe('leave over a day she was floated off', () => {
+  it('neither offers her floated shift for cover nor takes it off when the leave is approved', () => {
+    const { date, shift, request } = annAsksOff();
+    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) => markFloatedOff(tx, shift.id, '5 East', ACTOR));
+    expect(coverOptions(f.handle.db, f.seeded.draftPeriodId, request.id)).toEqual([]);
+    approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, 'Approved late: family', []);
+    expect(getTimeOffRequest(f.handle.db, request.id)?.status).toBe('approved');
+    // She worked that day on 5 East; the row is the record of those hours.
+    expect(onDay(date, f.rns[0]!.id)).toEqual([
+      expect.objectContaining({ id: shift.id, floatedTo: '5 East', isLocked: true }),
+    ]);
+    expect(listChanges(f.handle.db, f.seeded.draftPeriodId)).toEqual([]);
   });
 });

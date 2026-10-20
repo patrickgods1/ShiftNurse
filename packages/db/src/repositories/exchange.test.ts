@@ -34,6 +34,8 @@ import {
   deleteAssignment,
   getAssignment,
   listAssignmentsForPeriod,
+  markFloatedOff,
+  setLocked,
 } from './schedule.js';
 
 const ACTOR = 'manager';
@@ -419,6 +421,52 @@ describe('approveSwap', () => {
     expect(
       auditHistoryFor(handle.db, 'shift_swap', swap.id).find((e) => e.action === 'approve'),
     ).toBeUndefined();
+  });
+
+  function approveGiveaway(swapId: string, offeredId: string) {
+    return transact(handle.db, (tx) =>
+      approveSwap(
+        tx,
+        swapId,
+        {
+          remove: [offeredId],
+          create: [
+            {
+              periodId,
+              nurseId: nurseBId,
+              shiftTypeId,
+              date: isoDate('2026-01-16'),
+              source: 'manual',
+              isLocked: false,
+              isCharge: false,
+              isOvertime: false,
+            },
+          ],
+        },
+        ACTOR,
+        { overrode: false },
+      ),
+    );
+  }
+
+  it('refuses to trade a shift the nurse was floated off, and changes nothing', () => {
+    const { offered, swap } = proposeGiveaway();
+    transact(handle.db, (tx) => markFloatedOff(tx, offered.id, '5 East', ACTOR));
+    expect(() => approveGiveaway(swap.id, offered.id)).toThrow(
+      'Ada Nurse was floated to 5 East for that shift; it cannot be traded.',
+    );
+    expect(getSwap(handle.db, swap.id)?.status).toBe('proposed');
+    expect(listAssignmentsForPeriod(handle.db, periodId)).toEqual([
+      expect.objectContaining({ id: offered.id, floatedTo: '5 East' }),
+    ]);
+  });
+
+  it('refuses to trade a shift the manager locked, and changes nothing', () => {
+    const { offered, swap } = proposeGiveaway();
+    setLocked(handle.db, offered.id, true, ACTOR);
+    expect(() => approveGiveaway(swap.id, offered.id)).toThrow(/locked/);
+    expect(getSwap(handle.db, swap.id)?.status).toBe('proposed');
+    expect(getAssignment(handle.db, offered.id)?.isLocked).toBe(true);
   });
 
   it('refuses a stale remove id rather than dropping the row silently', () => {

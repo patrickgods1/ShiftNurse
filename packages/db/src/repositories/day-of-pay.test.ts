@@ -11,6 +11,7 @@ import { type OpenedDatabase, openTestDatabase } from '../client.js';
 import { createUnit } from './config.js';
 import {
   createDayOfPayEvent,
+  dayOfPayEventsForNurseOn,
   dayOfPayEventsOf,
   deleteDayOfPayEvent,
   listDayOfPayEvents,
@@ -103,9 +104,64 @@ describe('recording a missed break', () => {
       date: day,
       break: 'rest',
     } as const;
-    expect(() => createDayOfPayEvent(handle.db, entry, ACTOR)).toThrow('not on this unit');
+    expect(() => createDayOfPayEvent(handle.db, entry, ACTOR)).toThrow("not on 4 West's roster");
     createNurseUnit(handle.db, { nurseId: fran.id, unitId }, ACTOR);
     expect(() => createDayOfPayEvent(handle.db, entry, ACTOR)).not.toThrow();
+  });
+
+  it('pays one missed-meal premium a day even when she worked two units', () => {
+    const west = mkUnit('5 West');
+    const fran = mkNurse(west.id, 'Fran');
+    createNurseUnit(
+      handle.db,
+      {
+        nurseId: fran.id,
+        unitId,
+        startDate: isoDate('2026-03-01'),
+        endDate: isoDate('2026-03-31'),
+      },
+      ACTOR,
+    );
+    const meal = (forUnit: string) =>
+      ({
+        kind: 'missed_break',
+        unitId: forUnit,
+        nurseId: fran.id,
+        date: isoDate('2026-03-10'),
+        break: 'meal',
+      }) as const;
+    createDayOfPayEvent(handle.db, meal(west.id), ACTOR);
+    expect(() => createDayOfPayEvent(handle.db, meal(unitId), ACTOR)).toThrow(
+      /already recorded for Fran Test that day on 5 West/,
+    );
+    expect(dayOfPayEventsForNurseOn(handle.db, fran.id, isoDate('2026-03-10'))).toHaveLength(1);
+  });
+
+  it('refuses a float’s missed break on a day outside her membership', () => {
+    const fran = mkNurse(mkUnit('5 West').id, 'Fran');
+    createNurseUnit(
+      handle.db,
+      {
+        nurseId: fran.id,
+        unitId,
+        startDate: isoDate('2026-03-01'),
+        endDate: isoDate('2026-03-31'),
+      },
+      ACTOR,
+    );
+    expect(() =>
+      createDayOfPayEvent(
+        handle.db,
+        {
+          kind: 'missed_break',
+          unitId,
+          nurseId: fran.id,
+          date: isoDate('2026-04-10'),
+          break: 'meal',
+        },
+        ACTOR,
+      ),
+    ).toThrow(/not on 4 West's roster on Fri Apr 10/);
   });
 });
 

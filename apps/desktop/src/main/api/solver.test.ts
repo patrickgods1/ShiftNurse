@@ -16,6 +16,9 @@ import {
   auditHistoryFor,
   createTimeOffRequest,
   listAssignmentsForPeriod,
+  listShiftTypesForUnit,
+  markFloatedOff,
+  transact,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { slow } from '../slow.test-support.js';
@@ -207,6 +210,46 @@ describe('previewing and comparing', () => {
       preferencePoints: 0,
     });
     expect(comparison.candidates.find((c) => c.index === 1)!.shiftsChanged).toBeGreaterThan(0);
+  });
+});
+
+describe('a shift floated off before Generate', () => {
+  function floatOne() {
+    const row = scheduleApi(f.handle.db).createAssignment({
+      periodId,
+      nurseId: f.rns[0]!.id,
+      shiftTypeId: f.day.id,
+      date: addDays(f.seeded.draftStart, 2),
+    });
+    transact(f.handle.db, (tx) => markFloatedOff(tx, row.id, '5 East', ACTOR));
+    return row;
+  }
+
+  it('shows a floated shift on the preview and never as removed', async () => {
+    const row = floatOne();
+    const id = await generate(1);
+    const preview = previewCandidate(f.handle.db, jobs, id, 0);
+    // The draft holds only the floated shift, so nothing of the draft's is removed.
+    expect(preview.diff.removed).toBe(0);
+    expect(preview.assignments.filter((a) => a.id === row.id)).toEqual([
+      expect.objectContaining({ shiftTypeId: f.day.id, floatedTo: '5 East' }),
+    ]);
+  });
+
+  it('keeps the floated shift when a variation is saved, and writes only real shift types', async () => {
+    const row = floatOne();
+    const id = await generate(1);
+    saveCandidate(f.handle.db, jobs, id, 0);
+    const saved = listAssignmentsForPeriod(f.handle.db, periodId);
+    const real = new Set(listShiftTypesForUnit(f.handle.db, f.seeded.unitId).map((t) => t.id));
+    expect(saved.filter((a) => !real.has(a.shiftTypeId))).toEqual([]);
+    expect(saved.filter((a) => a.id === row.id)).toEqual([
+      expect.objectContaining({ shiftTypeId: f.day.id, floatedTo: '5 East', isLocked: true }),
+    ]);
+    // She is on 5 East that day, so the solver gives her nothing else here.
+    expect(
+      saved.filter((a) => a.nurseId === row.nurseId && a.date === row.date && a.id !== row.id),
+    ).toEqual([]);
   });
 });
 

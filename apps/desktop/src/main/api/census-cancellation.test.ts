@@ -9,6 +9,9 @@ import { addDays, isoDate, type Nurse } from '@shiftnurse/core';
 import {
   auditHistoryFor,
   cancellationHistory,
+  createNurse,
+  createNurseUnit,
+  createUnit,
   getAssignment,
   listAssignmentsForPeriodOnDate,
   listChanges,
@@ -18,11 +21,13 @@ import {
   recordShiftCancellation,
   saveCancellationPolicy,
   savePaySettings,
+  updateNurse,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { overstaffedRoles } from './census-cancellation.js';
 import { ACTOR } from './context.js';
 import { dayOfApi } from './dayof.js';
+import { floatOutApi } from './float-out.js';
 import { scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
 
@@ -50,6 +55,60 @@ function everyoneComesIn() {
 
 const orderView = (volunteers: string[] = []) =>
   dayOf().cancellationOrder(f.seeded.draftPeriodId, date(), f.day.id, 'RN', volunteers);
+
+describe('a nurse already floated off the shift', () => {
+  it('does not offer to send home a nurse already floated off', () => {
+    for (const nurse of f.rns) updateNurse(f.handle.db, nurse.id, { isFloatEligible: true }, ACTOR);
+    everyoneComesIn();
+    const request = {
+      periodId: f.seeded.draftPeriodId,
+      date: date(),
+      shiftTypeId: f.day.id,
+      role: 'RN' as const,
+      volunteers: [],
+    };
+    const first = floatOutApi(f.handle.db).order(request).order[0]!;
+    floatOutApi(f.handle.db).send({
+      ...request,
+      nurseId: first.nurseId,
+      toUnit: '5 East',
+      reason: 'Floated to 5 East',
+    });
+
+    const view = orderView();
+    expect(view.order.map((p) => p.nurseId)).not.toContain(first.nurseId);
+    expect(view.order).toHaveLength(f.rns.length - 1);
+  });
+});
+
+describe('cancelling a nurse who was floated off', () => {
+  it('refuses to send home a nurse already floated off, and leaves her row alone', () => {
+    for (const nurse of f.rns) updateNurse(f.handle.db, nurse.id, { isFloatEligible: true }, ACTOR);
+    everyoneComesIn();
+    const request = {
+      periodId: f.seeded.draftPeriodId,
+      date: date(),
+      shiftTypeId: f.day.id,
+      role: 'RN' as const,
+      volunteers: [],
+    };
+    const first = floatOutApi(f.handle.db).order(request).order[0]!;
+    floatOutApi(f.handle.db).send({
+      ...request,
+      nurseId: first.nurseId,
+      toUnit: '5 East',
+      reason: 'Floated to 5 East',
+    });
+    const row = listAssignmentsForPeriodOnDate(f.handle.db, f.seeded.draftPeriodId, date()).find(
+      (a) => a.nurseId === first.nurseId,
+    )!;
+
+    expect(() =>
+      dayOf().cancelForCensus(f.seeded.draftPeriodId, date(), f.day.id, 'RN', [], first.nurseId),
+    ).toThrow(/not on this shift/);
+    expect(getAssignment(f.handle.db, row.id)).toMatchObject({ floatedTo: '5 East' });
+  });
+});
 
 describe('a shift with more nurses than its patients need', () => {
   it('reports the excess on the Today read, and not on a shift staffed to need', () => {
@@ -232,6 +291,80 @@ describe('cancelling for census', () => {
     everyoneComesIn();
     saveCancellationPolicy(f.handle.db, f.seeded.unitId, ['rotation'], ACTOR);
     expect(orderView(['x']).order.every((p) => p.tier === 'rotation')).toBe(true);
+  });
+});
+
+describe('a nurse floated in from another unit', () => {
+  it('sends home a nurse floated in first, then the unit’s own', () => {
+    const west = createUnit(
+      f.handle.db,
+      {
+        name: '5 West',
+        unitType: 'ICU',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    const fran = createNurse(
+      f.handle.db,
+      {
+        unitId: west.id,
+        employeeId: 'W-9',
+        firstName: 'Fran',
+        lastName: 'Float',
+        role: 'RN',
+        employmentType: 'full_time',
+        fte: 1,
+        contractedHoursPerPeriod: 72,
+        seniorityDate: isoDate('2020-01-01'),
+        isChargeEligible: false,
+        isNovice: false,
+        isFloatEligible: true,
+        active: true,
+      },
+      ACTOR,
+    );
+    createNurseUnit(
+      f.handle.db,
+      { nurseId: fran.id, unitId: f.seeded.unitId, startDate: date(), endDate: date() },
+      ACTOR,
+    );
+    // The day shift needs 5 RNs; six of the unit's own full-time RNs and Fran make it 2 over.
+    // Full-time only, so no agency or per diem nurse goes ahead of her.
+    const own = f.rns.filter((n) => n.employmentType === 'full_time').slice(0, 6);
+    for (const nurse of [...own, fran]) {
+      scheduleApi(f.handle.db).createAssignment({
+        periodId: f.seeded.draftPeriodId,
+        nurseId: nurse.id,
+        shiftTypeId: f.day.id,
+        date: date(),
+      });
+    }
+    const view = orderView();
+    expect(view.excess).toBe(2);
+    expect(view.order[0]).toMatchObject({ nurseId: fran.id, tier: 'float' });
+
+    const record = dayOf().cancelForCensus(
+      f.seeded.draftPeriodId,
+      date(),
+      f.day.id,
+      'RN',
+      [],
+      fran.id,
+    );
+    expect(record).toMatchObject({
+      nurseId: fran.id,
+      reason:
+        'Floated in from another unit; floated-in nurses go back before the unit’s own staff.',
+    });
+
+    const next = orderView().order[0]!;
+    expect(own.map((n) => n.id)).toContain(next.nurseId);
+    dayOf().cancelForCensus(f.seeded.draftPeriodId, date(), f.day.id, 'RN', [], next.nurseId);
+    expect(
+      listShiftCancellationsForPeriod(f.handle.db, f.seeded.draftPeriodId).map((c) => c.nurseId),
+    ).toEqual([fran.id, next.nurseId]);
   });
 });
 

@@ -133,7 +133,7 @@ describe('recording an accommodation', () => {
   });
 
   it('refuses a nurse from another unit', () => {
-    expect(() => sabbath(stranger)).toThrow('That nurse is not on this unit');
+    expect(() => sabbath(stranger)).toThrow(/Record .*accommodation on .*their home unit/);
   });
 
   it('keeps the days in week order', () => {

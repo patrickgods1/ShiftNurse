@@ -30,6 +30,7 @@ import {
   listAssignmentsForNurseInRange,
   listAssignmentsForPeriod,
   listPeriodsForUnit,
+  markFloatedOff,
   moveAssignment,
   priorAssignmentsBefore,
   replaceAssignments,
@@ -796,5 +797,108 @@ describe('replaceAssignments', () => {
       created: 1,
       preservedLocked: 0,
     });
+  });
+});
+
+describe('floating a nurse off a shift (D20)', () => {
+  function floatable() {
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    const ana = mkNurse('Ana');
+    const row = createAssignment(
+      handle.db,
+      baseAssignment({ periodId: period.id, nurseId: ana, date: isoDate('2026-01-18') }),
+      ACTOR,
+    );
+    return { period, ana, row };
+  }
+
+  it('keeps a floated shift on the schedule, locked and marked with where she went', () => {
+    const { row } = floatable();
+    const after = transact(handle.db, (tx) =>
+      markFloatedOff(tx, row.id, ' 5 East ', ACTOR, 'Census'),
+    );
+    expect(after).toMatchObject({ id: row.id, floatedTo: '5 East', isLocked: true });
+    expect(getAssignment(handle.db, row.id)).toMatchObject({
+      floatedTo: '5 East',
+      isLocked: true,
+    });
+    const updates = auditHistoryFor(handle.db, 'assignment', row.id).filter(
+      (e) => e.action === 'update',
+    );
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      before: { isLocked: false },
+      after: { floatedTo: '5 East', isLocked: true },
+      reason: 'Census',
+    });
+    expect((updates[0]!.before as Record<string, unknown>).floatedTo).toBeUndefined();
+  });
+
+  it('refuses to unlock a shift the nurse was floated off', () => {
+    const { row } = floatable();
+    transact(handle.db, (tx) => markFloatedOff(tx, row.id, '5 East', ACTOR));
+    const before = getAssignment(handle.db, row.id);
+    expect(() => updateAssignment(handle.db, row.id, { isLocked: false }, ACTOR)).toThrow(
+      /stays fixed as a record of the day/,
+    );
+    expect(() => setLocked(handle.db, row.id, false, ACTOR)).toThrow(/floated to 5 East/);
+    expect(getAssignment(handle.db, row.id)).toEqual(before);
+  });
+
+  it('cannot be re-dated, re-typed or handed to another nurse once floated', () => {
+    const { row, ana } = floatable();
+    transact(handle.db, (tx) => markFloatedOff(tx, row.id, '5 East', ACTOR));
+    const before = getAssignment(handle.db, row.id);
+    for (const patch of [{ date: isoDate('2026-01-19') }, { nurseId: ana }, { shiftTypeId: 'x' }]) {
+      expect(() => updateAssignment(handle.db, row.id, patch as never, ACTOR)).toThrow(
+        /cannot change/,
+      );
+    }
+    expect(() =>
+      transact(handle.db, (tx) =>
+        moveAssignment(
+          tx,
+          row.id,
+          { nurseId: ana, shiftTypeId: row.shiftTypeId, date: isoDate('2026-01-19') },
+          ACTOR,
+        ),
+      ),
+    ).toThrow(/locked/);
+    expect(getAssignment(handle.db, row.id)).toEqual(before);
+  });
+
+  it('refuses to float the same shift twice', () => {
+    const { row } = floatable();
+    transact(handle.db, (tx) => markFloatedOff(tx, row.id, '5 East', ACTOR));
+    expect(() => transact(handle.db, (tx) => markFloatedOff(tx, row.id, '6 North', ACTOR))).toThrow(
+      'Ana Nurse was already floated to 5 East for this shift.',
+    );
+    expect(getAssignment(handle.db, row.id)?.floatedTo).toBe('5 East');
+  });
+
+  it('refuses a float with no unit named, or a shift no longer on the schedule', () => {
+    const { row } = floatable();
+    expect(() => transact(handle.db, (tx) => markFloatedOff(tx, row.id, '  ', ACTOR))).toThrow(
+      /Name the unit the nurse is floated to/,
+    );
+    expect(() =>
+      transact(handle.db, (tx) => markFloatedOff(tx, 'missing', '5 East', ACTOR)),
+    ).toThrow('That shift is no longer on the schedule.');
+    expect(getAssignment(handle.db, row.id)?.floatedTo).toBeUndefined();
+  });
+
+  it('keeps a floated shift when Generate replaces the draft', () => {
+    const { period, row } = floatable();
+    transact(handle.db, (tx) => markFloatedOff(tx, row.id, '5 East', ACTOR));
+    replaceAssignments(handle.db, period.id, [], ACTOR);
+    expect(listAssignmentsForPeriod(handle.db, period.id)).toEqual([
+      expect.objectContaining({ id: row.id, floatedTo: '5 East', isLocked: true }),
+    ]);
+  });
+
+  it('reads an ordinary shift exactly as before', () => {
+    const { row } = floatable();
+    expect('floatedTo' in row).toBe(false);
+    expect('floatedTo' in getAssignment(handle.db, row.id)!).toBe(false);
   });
 });

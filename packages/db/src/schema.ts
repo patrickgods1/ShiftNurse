@@ -870,6 +870,11 @@ export const assignment = sqliteTable(
     holdoverMinutes: integer('holdover_minutes').notNull().default(0),
     /** Required (true) or volunteered (false); null while there is no holdover. */
     holdoverMandated: bool('holdover_mandated'),
+    /**
+     * The unit she was floated to for this shift (D20). The row stays because she worked the
+     * hours; null on an ordinary shift.
+     */
+    floatedTo: text('floated_to'),
   },
   (t) => [
     // The two hot paths: rendering a period's grid, and walking one nurse's timeline for

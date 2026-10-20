@@ -47,6 +47,21 @@ export function listPayRatesForUnit(db: DbLike, unitId: Id): PayRate[] {
 }
 
 /**
+ * These nurses' own rates (no role defaults), for `perNurseRecordsFor`. In insertion order, so
+ * each nurse's same-date rates keep the order `resolvePayRate` depends on.
+ */
+export function listPayRatesForNurses(db: DbLike, nurseIds: readonly Id[]): PayRate[] {
+  if (nurseIds.length === 0) return [];
+  return db
+    .select()
+    .from(payRate)
+    .where(inArray(payRate.nurseId, [...nurseIds]))
+    .orderBy(sql`rowid`)
+    .all()
+    .map(toPayRate);
+}
+
+/**
  * The rate in effect for a nurse on a date. The resolution rule itself — per-nurse beats the
  * role default, latest `effectiveFrom` not after the date wins — lives in core's
  * `resolvePayRate`, so the costing engine and this lookup can never disagree about what a

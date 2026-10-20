@@ -66,6 +66,21 @@ describe('the headcount under the grid', () => {
     ]);
   });
 
+  it('does not count a floated shift in the headcount', () => {
+    const [a, b] = [makeNurse(), makeNurse()];
+    const rows = headcountRows({
+      shiftTypes: [DAY_12],
+      nurses: [a!, b!],
+      assignments: [
+        assign(a!.id, DAY_12, '2026-10-05'),
+        assign(b!.id, DAY_12, '2026-10-05', { isLocked: true, floatedTo: '5 East' }),
+      ],
+      demand: [demand('2026-10-05', DAY_12.id, 2)],
+      dates: [MON],
+    });
+    expect(rows[0]!.cells).toEqual([{ date: MON, staffed: 1, required: 2 }]);
+  });
+
   it('leaves out on-call and any shift and role nobody needs or works', () => {
     const a = makeNurse();
     const rows = headcountRows({

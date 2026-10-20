@@ -28,6 +28,7 @@ import {
 } from '../domain/time.js';
 import { HISTORY_COLUMNS } from '../fairness/history-csv.js';
 import { serializeCsv } from '../roster/csv.js';
+import { isFloatedOff } from '../schedule/elsewhere.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
 
 export interface GridCell {
@@ -104,6 +105,7 @@ function cellLabel(view: AssignmentView): string {
   let label = view.shiftType.abbreviation;
   if (view.assignment.isCharge) label += '*';
   if (view.assignment.isOvertime) label += ' OT';
+  if (isFloatedOff(view.assignment)) label += ` → ${view.assignment.floatedTo}`;
   return label;
 }
 

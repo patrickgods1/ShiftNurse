@@ -1,7 +1,7 @@
 /**
  * Floating a nurse to another unit. The order itself is core's; what is tested here is what main
  * adds: it refuses anyone but the first in the order, and in one transaction records the float,
- * removes the home shift (with the reason on a published period) and audits it.
+ * keeps the home shift marked and locked (with the reason on a published period) and audits it.
  */
 
 import { addDays, isoDate, type Nurse } from '@shiftnurse/core';
@@ -11,14 +11,17 @@ import {
   createNurse,
   createUnit,
   getAssignment,
+  listAssignmentsForPeriod,
   listAssignmentsForPeriodOnDate,
   listChanges,
+  listFloatRecords,
   publishSchedule,
   updateNurse,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ACTOR } from './context.js';
-import { floatOutApi } from './float-out.js';
+import { costReport } from './cost.js';
+import { floatOrderFor, floatOutApi } from './float-out.js';
 import { scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
 
@@ -31,9 +34,9 @@ afterEach(() => f.handle.close());
 const date = () => addDays(f.seeded.draftStart, 4);
 const api = () => floatOutApi(f.handle.db);
 const name = (n: Nurse) => `${n.firstName} ${n.lastName}`;
-const request = (volunteers: string[] = []) => ({
+const request = (volunteers: string[] = [], on = date()) => ({
   periodId: f.seeded.draftPeriodId,
-  date: date(),
+  date: on,
   shiftTypeId: f.day.id,
   role: 'RN' as const,
   volunteers,
@@ -51,14 +54,14 @@ const send = (nurseId: string, volunteers: string[] = [], extra = {}) =>
  * Every RN works the day shift. Nurse ids are random, so which RNs the seed made float-eligible
  * varies run to run; make all of them eligible so the order never depends on that.
  */
-function everyoneComesIn() {
+function everyoneComesIn(on = date()) {
   for (const nurse of f.rns) updateNurse(f.handle.db, nurse.id, { isFloatEligible: true }, ACTOR);
   for (const nurse of f.rns) {
     scheduleApi(f.handle.db).createAssignment({
       periodId: f.seeded.draftPeriodId,
       nurseId: nurse.id,
       shiftTypeId: f.day.id,
-      date: date(),
+      date: on,
     });
   }
 }
@@ -89,7 +92,7 @@ describe('floating a nurse off a shift', () => {
     });
   });
 
-  it('records the float and takes the shift off the home schedule, with an audit row', () => {
+  it('records the float and keeps the shift on the home schedule, marked, with an audit row', () => {
     everyoneComesIn();
     const volunteer = f.rns[2]!;
     const place = api().order(request([volunteer.id])).order[0]!;
@@ -103,7 +106,11 @@ describe('floating a nurse off a shift', () => {
       volunteered: true,
       objection: 'Not competent on tele',
     });
-    expect(getAssignment(f.handle.db, place.assignmentId)).toBeUndefined();
+    expect(getAssignment(f.handle.db, place.assignmentId)).toMatchObject({
+      nurseId: volunteer.id,
+      floatedTo: '4B Telemetry',
+      isLocked: true,
+    });
     expect(api().history(f.seeded.unitId, addDays(date(), -365))).toEqual([record]);
     expect(auditHistoryFor(f.handle.db, 'float_record', record.id)[0]).toMatchObject({
       action: 'create',
@@ -116,14 +123,10 @@ describe('floating a nurse off a shift', () => {
     const first = api().order(request()).order[0]!;
     const record = send(first.nurseId);
     expect(record.volunteered).toBe(false);
-    // Put the same nurse back on the shift: the one just floated now sorts after the rest.
-    scheduleApi(f.handle.db).createAssignment({
-      periodId: f.seeded.draftPeriodId,
-      nurseId: first.nurseId,
-      shiftTypeId: f.day.id,
-      date: date(),
-    });
-    const after = api().order(request()).order;
+    // The next day's day shift: the one just floated now sorts after the rest.
+    const next = addDays(date(), 1);
+    everyoneComesIn(next);
+    const after = api().order(request([], next)).order;
     expect(after.at(-1)!.nurseId).toBe(first.nurseId);
     // One mandated float in the last year, where everyone else has none.
     expect(after.at(-1)!.reason).toMatch(
@@ -183,7 +186,7 @@ describe('floating a nurse off a shift', () => {
     expect(() => send(fixed.id)).toThrow(/Not float-eligible/);
   });
 
-  it('on a published schedule writes the removal to the change log under the float reason', () => {
+  it('on a published schedule writes the float to the change log under the float reason', () => {
     everyoneComesIn();
     publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
     const first = api().order(request()).order[0]!;
@@ -191,7 +194,7 @@ describe('floating a nurse off a shift', () => {
     const changes = listChanges(f.handle.db, f.seeded.draftPeriodId);
     expect(changes).toHaveLength(1);
     expect(changes[0]).toMatchObject({
-      kind: 'removed',
+      kind: 'changed',
       nurseId: first.nurseId,
       source: 'float',
       reason: 'Floated to 4B Telemetry',
@@ -208,5 +211,59 @@ describe('floating a nurse off a shift', () => {
     expect(auditHistoryFor(f.handle.db, 'float_record', record.id)[0]).toMatchObject({
       action: 'update',
     });
+  });
+
+  it('keeps the floated nurse’s shift and her hours', () => {
+    everyoneComesIn();
+    const ana = f.rns[2]!;
+    send(ana.id, [ana.id]);
+    const kept = listAssignmentsForPeriod(f.handle.db, f.seeded.draftPeriodId).filter(
+      (a) => a.nurseId === ana.id && a.date === date(),
+    );
+    expect(kept).toEqual([
+      expect.objectContaining({
+        shiftTypeId: f.day.id,
+        floatedTo: '4B Telemetry',
+        isLocked: true,
+      }),
+    ]);
+    expect(listFloatRecords(f.handle.db, f.seeded.unitId, addDays(date(), -365))).toHaveLength(1);
+  });
+
+  it('still flags the turnaround into a shift she was floated off', () => {
+    everyoneComesIn();
+    const ana = f.rns[2]!;
+    // Her night the evening before runs 19:00 to 07:00, and the day shift starts at 07:00:
+    // 0 hours of rest, whichever unit's floor she spent the day on.
+    const night = scheduleApi(f.handle.db).createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: ana.id,
+      shiftTypeId: f.night.id,
+      date: addDays(date(), -1),
+    });
+    send(ana.id, [ana.id]);
+    const { hardViolations } = scheduleApi(f.handle.db).validate(f.seeded.draftPeriodId).result;
+    const rest = hardViolations.filter(
+      (v) => v.code === 'insufficient_rest' && v.assignmentIds.includes(night.id),
+    );
+    expect(rest).toHaveLength(1);
+    expect(rest[0]!.nurseIds).toEqual([ana.id]);
+  });
+
+  it('prices the floated shift as before: floating does not change what the period costs', () => {
+    everyoneComesIn();
+    const ana = f.rns[2]!;
+    const before = costReport(f.handle.db, f.seeded.draftPeriodId).cost.totals.total;
+    send(ana.id, [ana.id]);
+    expect(costReport(f.handle.db, f.seeded.draftPeriodId).cost.totals.total).toBe(before);
+  });
+
+  it('does not offer a nurse already floated off for the next float', () => {
+    everyoneComesIn();
+    const ana = f.rns[2]!;
+    send(ana.id, [ana.id]);
+    const view = floatOrderFor(f.handle.db, request([ana.id]));
+    expect(view.order.some((p) => p.nurseId === ana.id)).toBe(false);
+    expect(view.excluded.some((e) => e.nurseId === ana.id)).toBe(false);
   });
 });

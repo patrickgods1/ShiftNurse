@@ -10,11 +10,12 @@
  */
 
 import type { Id, IsoDate, RestWaiver } from '@shiftnurse/core';
-import { and, asc, eq, gte, lte } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, lte, ne } from 'drizzle-orm';
 import { recordAuditStrict } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
-import { nurse as nurseTable, restWaiver as table } from '../schema.js';
+import { restWaiver as table } from '../schema.js';
+import { requireWorksOnUnit } from './nurse-units.js';
 
 const ENTITY = 'rest_waiver';
 
@@ -65,6 +66,34 @@ export function restWaiversForPeriod(
     .map(toRestWaiver);
 }
 
+/**
+ * These nurses' waivers recorded on other units, dated within `[startDate, endDate]`, for
+ * `perNurseRecordsFor`. This unit's own rows are left out so none is listed twice.
+ */
+export function restWaiversElsewhere(
+  db: DbLike,
+  unitId: Id,
+  nurseIds: readonly Id[],
+  startDate: IsoDate,
+  endDate: IsoDate,
+): RestWaiver[] {
+  if (nurseIds.length === 0) return [];
+  return db
+    .select()
+    .from(table)
+    .where(
+      and(
+        ne(table.unitId, unitId),
+        inArray(table.nurseId, [...nurseIds]),
+        gte(table.date, startDate),
+        lte(table.date, endDate),
+      ),
+    )
+    .orderBy(asc(table.date), asc(table.nurseId))
+    .all()
+    .map(toRestWaiver);
+}
+
 export function getRestWaiver(db: DbLike, id: Id): RestWaiver | undefined {
   const row = db.select().from(table).where(eq(table.id, id)).get();
   return row ? toRestWaiver(row) : undefined;
@@ -72,12 +101,7 @@ export function getRestWaiver(db: DbLike, id: Id): RestWaiver | undefined {
 
 export function createRestWaiver(db: DbLike, input: RestWaiverInput, actor: string): RestWaiver {
   const reason = requireReason(input.reason, 'record a rest waiver');
-  const owner = db
-    .select({ unitId: nurseTable.unitId })
-    .from(nurseTable)
-    .where(eq(nurseTable.id, input.nurseId))
-    .get();
-  if (!owner || owner.unitId !== input.unitId) throw new Error('That nurse is not on this unit');
+  requireWorksOnUnit(db, input.nurseId, input.unitId, { start: input.date, end: input.date });
   const existing = db
     .select({ id: table.id })
     .from(table)
