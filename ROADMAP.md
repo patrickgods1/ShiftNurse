@@ -405,7 +405,7 @@ and can start over (after a `pre-reset` backup).
 - [ ] Verify by hand: a guided setup on a fresh `userData` applying every preset, quit and resume
       mid-guide, Generate fills the floors of a new period; Start over returns to the welcome
       screen and its `pre-reset` backup restores
-- [ ] Hand check: fresh userData → Guided setup → step 1 pick a state → Continue applies it with no
+- [x] Hand check: fresh userData → Guided setup → step 1 pick a state → Continue applies it with no
       dialog and 'Last applied' shows → walk to Summary → Open ShiftNurse; Settings › Unit › 'Open
       the setup guide' reopens on 'State and contract law'
 - [x] Realistic demo (`seed/demo.ts`): a 28-bed med-surg unit sized from real staffing practice;
@@ -739,9 +739,9 @@ and now first; manual setup still starts as an empty unit), shift types, coverag
 holidays, rules, pay, unit policies, leave, requests and generation (including the solver), roster
 and the summary.
 
-- [ ] Guide: the twelve steps in that order, the state-law preset applied by Continue through the
+- [x] Guide: the twelve steps in that order, the state-law preset applied by Continue through the
       preset registry, `UnitPoliciesForm` shared with Settings › Unit
-- [ ] Verify: the hand check under First-run setup above (fresh `userData` → state → Summary →
+- [x] Verify: the hand check under First-run setup above (fresh `userData` → state → Summary →
       reopen on 'State and contract law')
 
 ### M43 — 2026-10-16 in-depth review fixes ✅
