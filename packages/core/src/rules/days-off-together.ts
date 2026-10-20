@@ -8,11 +8,14 @@
  *
  * A pay period's weekends are the `weekendKey`s of its days, each day taken whole under the
  * unit's weekend window ('overlaps'), so under the default definition Saturday and Sunday both
- * key to the Saturday. A weekend is worked as `nurseWeekends` reads it — any worked (not standby)
- * shift filed under it, last schedule's tail included, so a Saturday worked before the period
- * counts toward a pay period opening on the Sunday. A day off is a date with no worked shift
- * *dated* on it: shifts are dated by their start, as the grid and the unit date them, so the night
- * of Friday does not spoil Saturday as a day off.
+ * key to the Saturday. A weekend is worked for a pay period only when a worked (not standby) shift
+ * *dated in that pay period* is filed under it: a Saturday worked in the previous pay period is
+ * that pay period's weekend, and crediting it here made a nurse off on the Sunday owe a pair for a
+ * weekend she never worked in this one. A day off is a date with no worked shift *dated* on it:
+ * shifts are dated by their start, as the grid and the unit date them, so the night of Friday does
+ * not spoil Saturday as a day off. Any worked shift spoils it — the lookback's, and another unit's
+ * (`busyElsewhere`): a day on 5 West is not a day off, though only this schedule's shifts are named
+ * in a finding.
  *
  * Known limits: only pay periods lying wholly inside the schedule are judged — one that straddles
  * its end has days this schedule cannot see, so whether they hold the pair is unknown. While soft,
@@ -37,7 +40,6 @@ import {
 import type { ScheduleView } from '../schedule/view.js';
 import { type DateWindow, type PayCalendar, payPeriodsIn } from './hours-rules.js';
 import { isWorked, nurseName, type Rule, type Violation, violation } from './types.js';
-import { nurseWeekends } from './weekend-pattern.js';
 
 export type DaysOffTogetherParams = Record<string, never>;
 
@@ -93,11 +95,16 @@ export const daysOffTogetherRule: Rule<DaysOffTogetherParams> = {
     const violations: Violation[] = [];
 
     for (const nurse of ctx.nurses) {
-      const worked = nurseWeekends(schedule, nurse.id, ctx).worked;
-      const shifts = schedule.timelineFor(nurse.id).filter((v) => v.inPeriod && isWorked(v));
-      const busy = new Set<IsoDate>(shifts.map((v) => v.assignment.date));
+      const timeline = schedule.timelineFor(nurse.id).filter(isWorked);
+      const shifts = timeline.filter((v) => v.inPeriod);
+      const busy = new Set<IsoDate>(timeline.map((v) => v.assignment.date));
 
       for (const pp of payPeriods) {
+        const worked = new Set<IsoDate | null>(
+          timeline
+            .filter((v) => dateInRange(v.assignment.date, pp.start, pp.end))
+            .map((v) => weekendKey(v.window, ctx.weekendDefinition) as IsoDate | null),
+        );
         if (!pp.weekends.every((w) => worked.has(w))) continue;
         let together = false;
         for (let d = pp.start; compareDates(d, pp.end) < 0; d = addDays(d, 1)) {

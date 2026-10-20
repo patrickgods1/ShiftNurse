@@ -140,6 +140,11 @@ export interface ShiftType {
    * sit inside that shift's (`schedule/cover.ts`).
    */
   withinShiftTypeId: Id | null;
+  /**
+   * Set only by busyElsewhere on the copy of another unit's shift type: busy time for this unit's
+   * nurse rules, never on this unit's floor. Never stored, never accepted over IPC.
+   */
+  elsewhere?: true;
 }
 
 // ---------------------------------------------------------------------------

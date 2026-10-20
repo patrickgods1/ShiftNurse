@@ -25,6 +25,7 @@ import {
   credentialRequirement,
   DAY_8,
   DAY_12,
+  EVENING_8,
   MID_8,
   makeNurse,
   NIGHT_12,
@@ -358,6 +359,29 @@ describe('SolverModel bookkeeping', () => {
     // Two breaches at 45 points each, counted with preferences.
     expect(priced.breakdown().preferences - free.breakdown().preferences).toBeCloseTo(90, 6);
     expect(priced.objective() - free.objective()).toBeCloseTo(90, 6);
+  });
+
+  it('prices an evening tour after a night as the quick flip the grid flags', () => {
+    // A Title 38 evening tour (15:30, paid as a night) is a day-side shift: night Mon 5, evening
+    // Wed 7 leaves 7 − 5 − 1 = 1 day off, short of 2, so one breach.
+    const eveningTour = { ...EVENING_8, id: 'st-e8-va', startTime: '15:30', isNight: true };
+    const nurse = makeNurse({ id: 'nurse-e' });
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: [nurse],
+      shiftTypes: [DAY_12, NIGHT_12, eveningTour],
+      coverageRequirements: [
+        coverage(NIGHT_12, 'RN', 1, 1, null, isoDate('2026-01-05')),
+        coverage(eveningTour, 'RN', 1, 1, null, isoDate('2026-01-07')),
+      ],
+    });
+    const model = new SolverModel(input);
+    const n = model.nurseIdx.get('nurse-e')!;
+    // Date indexes from Sun 4 Jan: Mon 5 is 1, Wed 7 is 3.
+    model.add(model.make(n, model.shiftAt(1, NIGHT_12)));
+    model.add(model.make(n, model.shiftAt(3, eveningTour)));
+    expect(model.recoveryBreaches()).toBe(1);
   });
 
   it('stops pricing the day shift once the night before it is taken away, and back on undo', () => {

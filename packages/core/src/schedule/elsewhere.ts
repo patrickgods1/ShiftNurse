@@ -11,6 +11,12 @@
  * it alone — and each shift locked, for the list of shifts that are judged but never flagged or
  * moved (the lookback tail's list, `priorAssignments`). Rest, overlap, hours and overtime then
  * count them; this unit's coverage, fairness and cost do not, which is right: they are 5 West's.
+ *
+ * The copy carries `ShiftType.elsewhere`, and `isElsewhere` is the one test for it. A nurse busy
+ * on 5 West is not on this unit's floor, so the incompatibility floor, `SolverModel`'s floor
+ * stretches and CP-SAT's terms leave those shifts out: without the marker a kept-apart pair split
+ * across two units read as together here, and a nurse on 5 West stood in for this floor's
+ * outside staff. The marker, not the id prefix, so renaming the prefix cannot quietly undo that.
  */
 
 import type { Assignment, ShiftType } from '../domain/entities.js';
@@ -41,9 +47,15 @@ export function busyElsewhere(
         name: `${type.name} on ${otherUnitName}`,
         active: false,
         withinShiftTypeId: null,
+        elsewhere: true,
       });
     }
     out.push({ ...a, shiftTypeId: id, isLocked: true, isCharge: false });
   }
   return { shiftTypes: [...used.values()], assignments: out };
+}
+
+/** Whether a shift type is another unit's work: busy time for the nurse, not this unit's floor. */
+export function isElsewhere(shiftType: Pick<ShiftType, 'elsewhere'>): boolean {
+  return shiftType.elsewhere === true;
 }

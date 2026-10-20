@@ -6,6 +6,21 @@ tags. Each release's notes link here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Four nights in a row are now caught when a day shift sits next to them, and Generate no longer
+  builds that pattern.
+- An evening tour that earns night pay is no longer treated as a night for rest and days off after
+  nights.
+- A shift nested inside another no longer hides a double booking or a short rest after it.
+- Kept-apart staff are no longer flagged, or "covered", by colleagues working on another unit.
+- Two days off together now count a day worked on another unit, and no longer credit a Saturday
+  from the previous pay period.
+- Massachusetts: a break of up to an hour between shifts no longer resets the 16-consecutive-hour
+  limit.
+- A holdover that runs into the nurse's own next shift is refused with the number of minutes that
+  would fit.
+
 ## [0.1.0] - 2026-10-05
 
 First release: unsigned installers for macOS (Apple silicon and Intel) and Windows 10/11, each

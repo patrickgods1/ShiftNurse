@@ -13,7 +13,10 @@
  * owes eight, reads as compliant on the grid and surfaces as a complaint to the state.
  *
  * A stretch is `workedStretches`' unit: shifts worked with no break between them, holdovers
- * included, on-call standby excluded; its hours are the span on the clock. Two optional limits
+ * included, on-call standby excluded; its hours are the time worked from first to last. A break of
+ * at most `maxBreakMinutesInStretch` minutes does not end it (Massachusetts counts "consecutive
+ * hours worked", and a meal break between two shifts does not reset that count), and the bridged
+ * break is not counted as hours; absent, any gap ends a stretch. Two optional limits
  * judge it, and neither has a default number (a preset supplies them; a default would add a limit
  * some states do not have, so a newly enabled rule judges nothing until one is set):
  *
@@ -64,6 +67,12 @@ export interface LongStretchParams {
   restHours: number;
   /** Whether a nurse's recorded rest waiver excuses the rest. */
   honorsRestWaiver: boolean;
+  /**
+   * The longest gap between shifts that does not end a stretch. Absent: 0, any gap ends one. Not
+   * defaulted, because `resolveConfigs` spreads defaults into every stored rule set and a number
+   * here would silently tighten every state that already has this rule on.
+   */
+  maxBreakMinutesInStretch?: number;
 }
 
 /** "Mon Jan 5 07:00": a minute on the wall-clock timeline, for rule messages. */
@@ -151,6 +160,18 @@ export const longStretchRule: Rule<LongStretchParams> = {
         'Pennsylvania lets the employee waive the rest. Leave this off where the law does not, ' +
         'or a waiver would excuse what the manager cannot.',
     },
+    maxBreakMinutesInStretch: {
+      label: 'Longest break that does not end a stretch (minutes)',
+      hint:
+        'A gap between shifts this long or shorter does not end a stretch: the hours either side ' +
+        'count as one run. The break itself is not counted as hours worked. Leave blank to end a ' +
+        'stretch at any gap.',
+      why:
+        'Massachusetts counts "16 consecutive hours worked", and a 30-minute meal break between ' +
+        'two shifts does not reset that count. 60 minutes is a common reading.',
+      optional: true,
+      min: 0,
+    },
   },
 
   evaluate(schedule, params, ctx): Violation[] {
@@ -158,10 +179,12 @@ export const longStretchRule: Rule<LongStretchParams> = {
     const cap = params.maxConsecutiveHours;
     const threshold = params.restAfterHours;
     if (cap === undefined && threshold === undefined) return violations;
+    const bridge = params.maxBreakMinutesInStretch ?? 0;
 
     for (const nurse of ctx.nurses) {
       const stretches: WorkedStretch<AssignmentView>[] = workedStretches(
         schedule.timelineFor(nurse.id),
+        { bridgeMinutes: bridge },
       );
       for (let i = 0; i < stretches.length; i++) {
         const stretch = stretches[i]!;
@@ -180,15 +203,22 @@ export const longStretchRule: Rule<LongStretchParams> = {
           stretch.hours > cap &&
           !(params.emergencyLiftsCap && stretch.views.some((v) => isEmergency(v.assignment)))
         ) {
+          const message =
+            stretch.breakMinutes > 0
+              ? `${nurseName(nurse)} would work ${hoursText(stretch.hours)} in one stretch, ${span}, ` +
+                `counting the shifts either side of breaks of ${bridge} minutes or less as one — ` +
+                `more than ${hoursText(cap)} in a row.`
+              : `${nurseName(nurse)} would work ${hoursText(stretch.hours)} straight, ${span} — more ` +
+                `than ${hoursText(cap)} in a row.`;
           violations.push(
-            violation(
-              longStretchRule,
-              'hard',
-              'long_stretch',
-              `${nurseName(nurse)} would work ${hoursText(stretch.hours)} straight, ${span} — more ` +
-                `than ${hoursText(cap)} in a row.`,
-              { ...parts, details: { stretchHours: stretch.hours, maxConsecutiveHours: cap } },
-            ),
+            violation(longStretchRule, 'hard', 'long_stretch', message, {
+              ...parts,
+              details: {
+                stretchHours: stretch.hours,
+                maxConsecutiveHours: cap,
+                breakMinutes: stretch.breakMinutes,
+              },
+            }),
           );
         }
 
@@ -209,7 +239,11 @@ export const longStretchRule: Rule<LongStretchParams> = {
             'hard',
             'rest_after_long_stretch',
             `${nurseName(nurse)} has only ${hoursText(hoursOff)} off after ${hoursText(stretch.hours)} ` +
-              `straight (${span}) before the shift starting ${describeMinute(next.window.startMinute)}. ` +
+              (stretch.breakMinutes > 0
+                ? `in one stretch (${span}), counting the shifts either side of breaks of ${bridge} ` +
+                  'minutes or less as one, '
+                : `straight (${span}) `) +
+              `before the shift starting ${describeMinute(next.window.startMinute)}. ` +
               `${hoursText(params.restHours)} required.`,
             {
               ...parts,

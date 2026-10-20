@@ -167,18 +167,106 @@ describe('block moves', () => {
   });
 });
 
+/**
+ * The rule set for a waived turnaround: 36 hours owed after a night, the weekly cap lifted so
+ * only rest is in play.
+ */
+function restAfterNightRules() {
+  const base = defaultRuleSet(UNIT_ID);
+  return {
+    ...base,
+    configs: base.configs.map((c) => {
+      if (c.ruleId === 'max-hours-per-week') {
+        return { ...c, params: { ...c.params, maxHoursPerWeek: 84, overtimeThresholdHours: 84 } };
+      }
+      if (c.ruleId === 'min-rest-between-shifts') {
+        return {
+          ...c,
+          params: { minRestHours: 10, minRestHoursAfterNight: 36, onCallCountsAsWork: false },
+        };
+      }
+      return c;
+    }),
+  };
+}
+
+/** Xena signed away her rest before Tuesday's day, the turnaround off Monday's night. */
+const TUESDAY_WAIVER = {
+  id: 'w-x',
+  unitId: UNIT_ID,
+  nurseId: 'nurse-x',
+  date: isoDate('2026-01-06'),
+  reason: 'Signed waiver',
+  createdAt: 0,
+};
+
+/** Night Mon, day Tue, day Wed: the pattern only Tuesday's waived day keeps legal. */
+const NIGHT_THEN_TWO_DAYS = [
+  [MON, NIGHT_12],
+  [MON + 1, DAY_12],
+  [MON + 2, DAY_12],
+] as const;
+
+const NIGHT_THEN_TWO_DAYS_COVER = [
+  coverage(NIGHT_12, 'RN', 1, 1, null, isoDate('2026-01-05')),
+  coverage(DAY_12, 'RN', 1, 1, null, isoDate('2026-01-06')),
+  coverage(DAY_12, 'RN', 1, 1, null, isoDate('2026-01-07')),
+];
+
 describe('a move that takes a shift away', () => {
   /**
-   * The consecutive-nights limit only counts stretches made *entirely* of nights, so taking a
-   * shift away can create a violation: day Mon + nights Tue–Fri is a legal five-day stretch, but
-   * without Monday's day it is four nights in a row, against a limit of three. Found by the
-   * release pipeline: SA + LNS emitted exactly that for a demo nurse.
+   * Rest after a waived turnaround is not monotone under removal: N12 Mon ends Tue 07:00 and D12
+   * Tue starts 07:00, 0 hours of rest, waived in writing for the 6th; D12 Tue ends 19:00 and D12
+   * Wed starts 07:00, 12 hours >= 10. Take Tuesday away and N12 Mon sits against D12 Wed:
+   * Tue 07:00 → Wed 07:00 is 24 hours, short of the 36 owed after a night, and the waiver is for
+   * the 6th, not the 7th. `long-stretch` is the other rule a removal can break (a short gap
+   * left behind can join two stretches). The night cap no longer is: it counts runs of nights
+   * wherever they sit, so taking a shift away never lengthens one.
    */
-  function dayThenFourNights() {
+  function waivedTurnaround() {
     const nurseX = makeNurse({ id: 'nurse-x', firstName: 'Xena' });
     const nurseZ = makeNurse({ id: 'nurse-z', firstName: 'Zara' });
+    const input = solveInputFrom({
+      startDate: isoDate(PERIOD_START),
+      endDate: isoDate(PERIOD_END),
+      nurses: [nurseX, nurseZ],
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: NIGHT_THEN_TWO_DAYS_COVER,
+      restWaivers: [TUESDAY_WAIVER],
+      ruleSet: restAfterNightRules(),
+    });
+    const model = new SolverModel(input);
+    const x = model.nurseIdx.get('nurse-x')!;
+    const z = model.nurseIdx.get('nurse-z')!;
+    for (const [d, st] of NIGHT_THEN_TWO_DAYS) {
+      const a = model.make(x, model.shiftAt(d, st));
+      if (!model.canAdd(x, a)) throw new Error(`setup: Xena cannot take ${st.name} on day ${d}`);
+      model.add(a);
+    }
+    return { model, x, z };
+  }
+
+  it('knows a nurse left with too little rest after a night is no longer legal', () => {
+    const { model, x } = waivedTurnaround();
+    expect(model.isLegal(x)).toBe(true);
+    const tuesday = model.timeline(x).find((a) => a.date === '2026-01-06')!;
+    model.remove(tuesday);
+    expect(model.isLegal(x)).toBe(false);
+  });
+
+  it('refuses to hand away the day shift that keeps the rest after a night legal', () => {
+    const { model, x, z } = waivedTurnaround();
+    const before = codes(model, x);
+    expect(exchangeBlock(model, x, z, MON + 1, MON + 1, 'give')).toBeNull();
+    expect(codes(model, x)).toEqual(before);
+    expect(codes(model, z)).toEqual([]);
+  });
+
+  it('refuses a fourth night after a day shift', () => {
+    // Day Mon, nights Tue–Thu; a night on Fri would make the night run Tue–Fri 4 > 3, though the
+    // five-day stretch is within the limit of five.
+    const nurseX = makeNurse({ id: 'nurse-x', firstName: 'Xena' });
     const base = defaultRuleSet(UNIT_ID);
-    // Five 12s in a week is 60h: lift the weekly cap so only the night rule is in play.
     const ruleSet = {
       ...base,
       configs: base.configs.map((c) =>
@@ -190,10 +278,10 @@ describe('a move that takes a shift away', () => {
     const input = solveInputFrom({
       startDate: isoDate(PERIOD_START),
       endDate: isoDate(PERIOD_END),
-      nurses: [nurseX, nurseZ],
+      nurses: [nurseX],
       shiftTypes: [DAY_12, NIGHT_12],
       coverageRequirements: [
-        ...['2026-01-05'].map((d) => coverage(DAY_12, 'RN', 1, 1, null, isoDate(d))),
+        coverage(DAY_12, 'RN', 1, 1, null, isoDate('2026-01-05')),
         ...['2026-01-06', '2026-01-07', '2026-01-08', '2026-01-09'].map((d) =>
           coverage(NIGHT_12, 'RN', 1, 1, null, isoDate(d)),
         ),
@@ -202,69 +290,38 @@ describe('a move that takes a shift away', () => {
     });
     const model = new SolverModel(input);
     const x = model.nurseIdx.get('nurse-x')!;
-    const z = model.nurseIdx.get('nurse-z')!;
-    const pattern: [number, typeof DAY_12][] = [
+    for (const [d, st] of [
       [MON, DAY_12],
       [MON + 1, NIGHT_12],
       [MON + 2, NIGHT_12],
       [MON + 3, NIGHT_12],
-      [MON + 4, NIGHT_12],
-    ];
-    for (const [d, st] of pattern) {
+    ] as const) {
       const a = model.make(x, model.shiftAt(d, st));
       if (!model.canAdd(x, a)) throw new Error(`setup: Xena cannot take ${st.name} on day ${d}`);
       model.add(a);
     }
-    return { model, x, z };
-  }
-
-  it('knows a nurse left with four nights in a row is no longer legal', () => {
-    const { model, x } = dayThenFourNights();
-    expect(model.isLegal(x)).toBe(true);
-    const monday = model.timeline(x).find((a) => a.shiftTypeId === DAY_12.id)!;
-    model.remove(monday);
-    expect(model.isLegal(x)).toBe(false);
-  });
-
-  it('refuses to hand away the day shift that keeps a run of nights legal', () => {
-    const { model, x, z } = dayThenFourNights();
-    const before = codes(model, x);
-    expect(exchangeBlock(model, x, z, MON, MON, 'give')).toBeNull();
-    expect(codes(model, x)).toEqual(before);
-    expect(codes(model, z)).toEqual([]);
+    expect(model.canAdd(x, model.make(x, model.shiftAt(MON + 4, NIGHT_12)))).toBe(false);
   });
 });
 
 describe('the annealer, when giving a shift away looks like an improvement', () => {
-  it('keeps the day shift that keeps a run of nights legal', () => {
-    // Xena holds day Mon + nights Tue–Fri and has asked to avoid days; Yusuf is on leave Tue–Fri,
-    // so all he can take is Monday's day. Handing it to him scores better and leaves Xena with
-    // four nights in a row — illegal. The annealer must not take that trade, however many times
-    // it is offered.
-    // Both per-diem: no contracted-hours floor, so losing Monday costs Xena nothing but the
+  it('keeps the day shift that keeps the rest after a night legal', () => {
+    // Xena holds night Mon, day Tue (a waived turnaround), day Wed, and has asked to avoid days;
+    // Yusuf is on leave every day but Tuesday, so all he can take is Tuesday's day. Handing it to
+    // him scores better and leaves Xena 24 hours between Monday's night and Wednesday's day,
+    // against 36 — illegal. The annealer must not take that trade, however many times it is
+    // offered.
+    // Both per-diem: no contracted-hours floor, so losing Tuesday costs Xena nothing but the
     // preference she gains — the trade is a pure improvement unless the gate stops it.
     const perDiem = { employmentType: 'per_diem' as const, contractedHoursPerPeriod: 0 };
     const xena = makeNurse({ id: 'nurse-x', firstName: 'Xena', ...perDiem });
     const yusuf = makeNurse({ id: 'nurse-y', firstName: 'Yusuf', ...perDiem });
-    const base = defaultRuleSet(UNIT_ID);
-    const ruleSet = {
-      ...base,
-      configs: base.configs.map((c) =>
-        c.ruleId === 'max-hours-per-week'
-          ? { ...c, params: { ...c.params, maxHoursPerWeek: 84, overtimeThresholdHours: 84 } }
-          : c,
-      ),
-    };
-    const nights = ['2026-01-06', '2026-01-07', '2026-01-08', '2026-01-09'];
     const input = solveInputFrom({
       startDate: isoDate(PERIOD_START),
       endDate: isoDate(PERIOD_END),
       nurses: [xena, yusuf],
       shiftTypes: [DAY_12, NIGHT_12],
-      coverageRequirements: [
-        coverage(DAY_12, 'RN', 1, 1, null, isoDate('2026-01-05')),
-        ...nights.map((d) => coverage(NIGHT_12, 'RN', 1, 1, null, isoDate(d))),
-      ],
+      coverageRequirements: NIGHT_THEN_TWO_DAYS_COVER,
       preferences: [
         {
           id: 'p-x',
@@ -274,19 +331,17 @@ describe('the annealer, when giving a shift away looks like an improvement', () 
           weight: 5,
         },
       ],
-      timeOff: [timeOff('nurse-y', '2026-01-06', '2026-01-09')],
-      ruleSet,
+      timeOff: [
+        timeOff('nurse-y', PERIOD_START, '2026-01-05'),
+        timeOff('nurse-y', '2026-01-07', PERIOD_END),
+      ],
+      restWaivers: [TUESDAY_WAIVER],
+      ruleSet: restAfterNightRules(),
     });
     for (let seed = 1; seed <= 10; seed++) {
       const model = new SolverModel(input);
       const x = model.nurseIdx.get('nurse-x')!;
-      for (const [d, st] of [
-        [MON, DAY_12],
-        [MON + 1, NIGHT_12],
-        [MON + 2, NIGHT_12],
-        [MON + 3, NIGHT_12],
-        [MON + 4, NIGHT_12],
-      ] as const) {
+      for (const [d, st] of NIGHT_THEN_TWO_DAYS) {
         const a = model.make(x, model.shiftAt(d, st));
         if (!model.canAdd(x, a)) throw new Error('setup: Xena cannot take her starting pattern');
         model.add(a);

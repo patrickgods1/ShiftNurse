@@ -92,6 +92,7 @@ import {
   requireParams,
   resolveConfigs,
 } from '../rules/registry.js';
+import { isNightTour } from '../rules/tour-rotation.js';
 import type { RuleContext, RuleSet, RuleSeverity, Violation } from '../rules/types.js';
 import {
   judgesWeekends,
@@ -100,6 +101,7 @@ import {
   weekendPatternRule,
 } from '../rules/weekend-pattern.js';
 import { coveringShift } from '../schedule/cover.js';
+import { isElsewhere } from '../schedule/elsewhere.js';
 import { workedHours } from '../schedule/holdover.js';
 import { floorSegments } from '../schedule/overlap.js';
 import { type AssignmentView, ScheduleView } from '../schedule/view.js';
@@ -594,7 +596,7 @@ export class SolverModel {
       const offsets: number[] = [];
       for (const a of list) {
         const st = this.shiftTypeById.get(a.shiftTypeId);
-        if (!st || st.isOnCall || !st.isNight) continue;
+        if (!st || st.isOnCall || !isNightTour(st)) continue;
         const k = periodFirstDay - dayNumber(a.date);
         if (k >= 1 && k <= this.recoveryDays) offsets.push(k);
       }
@@ -660,15 +662,17 @@ export class SolverModel {
     if (this.incompatibilityGroups.length === 0) return [];
     type Item = { window: ShiftWindow; shift?: Shift; tail?: Assignment[] };
     const items: Item[] = [];
+    // Another unit's shifts are busy time, not this floor (`schedule/elsewhere.ts`): neither its
+    // unsolvable shifts nor its rows in the tail may set a member here or stand in as outside staff.
     for (const shift of this.shifts) {
-      if (shift.shiftType.isOnCall) continue;
+      if (shift.shiftType.isOnCall || isElsewhere(shift.shiftType)) continue;
       items.push({ window: shiftWindow(shift.date, shift.shiftType), shift });
     }
     const within = items.map((item) => item.window);
     const tails = new Map<string, Item>();
     for (const a of this.input.priorAssignments) {
       const type = shiftTypesById.get(a.shiftTypeId);
-      if (!type || type.isOnCall) continue;
+      if (!type || type.isOnCall || isElsewhere(type)) continue;
       const key = `${a.date}|${a.shiftTypeId}`;
       const item = tails.get(key);
       if (item) item.tail!.push(a);
@@ -1023,12 +1027,10 @@ export class SolverModel {
       this.workedHours[n]! += sign * st.durationHours;
       this.bucketHours[n]![this.bucketOfDate[shift.dateIdx]!]! += sign * st.durationHours;
       if (this.pendingOn[n]![shift.dateIdx]) this.pendingSum += sign;
-      if (st.isNight) {
-        this.nights[n]! += sign;
-        this.nightsOn[n]![shift.dateIdx]! += sign;
-      } else {
-        this.daySideOn[n]![shift.dateIdx]! += sign;
-      }
+      // The fairness night burden reads the pay flag; recovery reads the tour, as the rule does.
+      if (st.isNight) this.nights[n]! += sign;
+      if (isNightTour(st)) this.nightsOn[n]![shift.dateIdx]! += sign;
+      else this.daySideOn[n]![shift.dateIdx]! += sign;
       if (this.ctx.holidayDates.has(shift.date)) this.holidays[n]! += sign;
       if (this.isUndesirable(n, shift)) this.undesirable[n]! += sign;
       if (this.ctx.holidayDates.has(shift.date)) this.countHolidayRotation(n, shift.date, sign);

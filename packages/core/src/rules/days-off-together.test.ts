@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Assignment, ShiftType } from '../domain/entities.js';
 import { DEFAULT_WEEKEND, isoDate } from '../domain/time.js';
+import { busyElsewhere } from '../schedule/elsewhere.js';
 import type { ScenarioOptions } from '../testing/fixtures.js';
 import {
   assign,
@@ -10,6 +11,7 @@ import {
   ON_CALL,
   resetFixtureCounters,
   scenario,
+  testShiftTypes,
 } from '../testing/fixtures.js';
 import { daysOffTogetherRule } from './days-off-together.js';
 import { defaultRuleSet } from './registry.js';
@@ -180,9 +182,12 @@ describe('two days off together for a nurse who works every weekend', () => {
     expect(evaluate([...rest, assign('ana', DAY_12, '2026-01-17')])).toHaveLength(1);
   });
 
-  it('counts last schedule’s Saturday toward the first weekend of the pay period', () => {
-    // Sat 3 Jan was worked last schedule, so the weekend of the 3rd is worked with Sun 4 off.
-    // Off 4, 6, 8, 12, 14, 16: none together.
+  it('does not credit last pay period’s Saturday to this pay period’s first weekend', () => {
+    // Sat 3 Jan was worked last schedule, in the previous pay period, and Sun 4 is off. The
+    // weekends are keyed {Sat 3, Sat 10, Sat 17}; no shift dated 4–17 Jan is filed under Sat 3,
+    // so not every weekend of this pay period is worked and nothing is owed, though the days off
+    // (4, 6, 8, 12, 14, 16) are scattered. This once counted Sat 3 as working the weekend; a
+    // Saturday in another pay period is not this pay period's weekend (D5).
     const shifts = days([
       '2026-01-05',
       '2026-01-07',
@@ -194,10 +199,40 @@ describe('two days off together for a nurse who works every weekend', () => {
       '2026-01-17',
     ]);
     const prior = [assign('ana', DAY_12, '2026-01-03', { periodId: 'prev' })];
-    const found = evaluate(shifts, { priorAssignments: prior });
+    expect(evaluate(shifts, { priorAssignments: prior })).toEqual([]);
+  });
+
+  it('counts a day worked on another unit as a day worked, not a day off', () => {
+    // Here every weekend is worked (Sun 4, Sat 10, Sun 11, Sat 17) and the days off are 6, 8, 12,
+    // 15 and 16: Thu 15 and Fri 16 are a pair, so nothing is owed. 5 West has Ana on Thu 15, so
+    // her days off are 6, 8, 12 and 16, no two adjacent: one finding, which names only this
+    // unit's shifts.
+    const shifts = days([
+      '2026-01-04',
+      '2026-01-05',
+      '2026-01-07',
+      '2026-01-09',
+      '2026-01-10',
+      '2026-01-11',
+      '2026-01-13',
+      '2026-01-14',
+      '2026-01-17',
+    ]);
+    expect(evaluate(shifts)).toEqual([]);
+    const WEST_DAY: ShiftType = { ...DAY_12, id: 'west-d12', unitId: 'unit-west' };
+    const west = busyElsewhere(
+      [assign('ana', WEST_DAY, '2026-01-15', { id: 'w15', periodId: 'west' })],
+      [WEST_DAY],
+      '5 West',
+    );
+    const found = evaluate(shifts, {
+      priorAssignments: west.assignments,
+      shiftTypes: [...testShiftTypes, ...west.shiftTypes],
+    });
     expect(found).toHaveLength(1);
-    expect(found[0]!.dates).not.toContain('2026-01-03');
-    expect(found[0]!.details).toMatchObject({ weekends: 3 });
+    expect(found[0]!.code).toBe('no_days_off_together');
+    expect(found[0]!.assignmentIds).not.toContain('w15');
+    expect(found[0]!.dates).not.toContain('2026-01-15');
   });
 
   it('judges only the pay period the schedule wholly covers', () => {

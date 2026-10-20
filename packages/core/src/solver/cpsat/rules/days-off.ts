@@ -5,51 +5,61 @@
  * Per nurse and complete pay period: a Boolean `all` that every weekend of it is worked
  * (`Σ worked − all ≤ |K| − 1` forces it to 1 when they all are; a constant 1 when locked shifts
  * and the lookback tail already work them all), a Boolean per adjacent pair of its dates that may
- * be 1 only when neither date has a worked shift dated on it, and `Σ pair ≥ all`. A weekend the
- * nurse has no shift filed under is a constant 0, so the pay period asks nothing. A pinned
+ * be 1 only when neither date has a worked shift dated on it, and `Σ pair ≥ all`. As in the rule,
+ * a weekend is worked for a pay period only by shifts dated inside it, and any shift on the
+ * timeline (lookback and another unit's included) makes its date busy. A weekend the nurse has no
+ * shift filed under within the pay period is a constant 0, so the pay period asks nothing. A pinned
  * breach — every weekend fixed worked and no pair left that could be free — is left to stand
  * rather than make the model infeasible, as `atMost` treats a standing violation.
  */
 
-import { addDays, compareDates, datesInRange, type IsoDate } from '../../../domain/time.js';
+import {
+  addDays,
+  compareDates,
+  dateInRange,
+  datesInRange,
+  type IsoDate,
+  weekendKey,
+} from '../../../domain/time.js';
 import { payPeriodWeekends } from '../../../rules/days-off-together.js';
 import { type Expr, evalExpr, expr, scale, sum } from '../builder.js';
 import type { EncodeContext } from '../context.js';
-import { anyWorked, nurseWeekendExprs } from './weekends.js';
+import { anyWorked } from './weekends.js';
 
 const isConstant = (e: Expr) => e.terms.length === 0;
 
 export function encodeDaysOffTogether(ctx: EncodeContext, _raw: Record<string, unknown>): void {
   const { period, unit, ruleSet } = ctx.input;
-  const payPeriods = payPeriodWeekends(
-    { start: period.startDate, end: period.endDate },
-    unit,
-    ruleSet.weekendDefinition,
-  );
+  const def = ruleSet.weekendDefinition;
+  const payPeriods = payPeriodWeekends({ start: period.startDate, end: period.endDate }, unit, def);
   if (payPeriods.length === 0) return;
 
   for (const [n, vars] of ctx.byNurse.entries()) {
     if (vars.length === 0) continue;
     const name = ctx.name(n);
-    const worked = nurseWeekendExprs(ctx, n).worked;
     const timeline = ctx.timeline(n).filter((e) => !e.shiftType.isOnCall);
 
     for (const pp of payPeriods) {
-      const weekends = pp.weekends.map((w) => worked.get(w));
-      if (weekends.some((e) => e === undefined)) continue;
+      const inPayPeriod = timeline.filter((e) => dateInRange(e.date, pp.start, pp.end));
+      const weekends: Expr[] = [];
+      for (const w of pp.weekends) {
+        const entries = inPayPeriod.filter((e) => weekendKey(e.window, def) === w);
+        if (entries.length === 0) break;
+        weekends.push(anyWorked(ctx, entries, `weekend: ${name} ${w} in pay period ${pp.start}`));
+      }
+      if (weekends.length < pp.weekends.length) continue;
       const label = `days off together: ${name} ${pp.start}`;
 
       let all: Expr;
-      if (weekends.every((e) => isConstant(e!))) all = expr([], 1);
+      if (weekends.every(isConstant)) all = expr([], 1);
       else {
-        const given = weekends.map((e) => e!);
         // Its value in a finished schedule, for `CpBuilder.evaluate`: the solver is free to set
         // it higher, never lower, than the constraint below allows.
         const every = ctx.b.auxiliary(`${label} every weekend`, 0, 1, (value) =>
-          given.every((e) => evalExpr(e, value) === 1) ? 1 : 0,
+          weekends.every((e) => evalExpr(e, value) === 1) ? 1 : 0,
         );
         all = expr([[every, 1]]);
-        ctx.b.atMost(sum(...weekends.map((e) => e!), scale(all, -1)), weekends.length - 1, label);
+        ctx.b.atMost(sum(...weekends, scale(all, -1)), weekends.length - 1, label);
       }
 
       const busy = new Map<IsoDate, Expr>();

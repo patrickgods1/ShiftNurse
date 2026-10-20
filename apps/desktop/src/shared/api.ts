@@ -483,10 +483,14 @@ export type NursePatch = Partial<
   notes?: string | null;
 };
 
-/** A new shift type; standalone unless `withinShiftTypeId` names the shift it runs inside. */
-export type ShiftTypeInput = Omit<ShiftType, 'id' | 'withinShiftTypeId'> &
+/**
+ * A new shift type; standalone unless `withinShiftTypeId` names the shift it runs inside.
+ * `elsewhere` marks only busyElsewhere's in-memory copy of another unit's type; a stored type that
+ * carried it would drop off this unit's floor, so neither this shape nor the patch can name it.
+ */
+export type ShiftTypeInput = Omit<ShiftType, 'id' | 'withinShiftTypeId' | 'elsewhere'> &
   Partial<Pick<ShiftType, 'withinShiftTypeId'>>;
-export type ShiftTypePatch = Partial<Omit<ShiftType, 'id' | 'unitId'>>;
+export type ShiftTypePatch = Partial<Omit<ShiftType, 'id' | 'unitId' | 'elsewhere'>>;
 
 /** A preference as the editor submits it: identity is assigned on save. */
 export type PreferenceInput = Preference extends infer P

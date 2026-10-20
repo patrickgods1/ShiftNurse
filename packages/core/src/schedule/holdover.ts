@@ -60,35 +60,55 @@ export interface StretchItem {
   window: ShiftWindow;
 }
 
-/** Shifts worked without a break between them, and the hours on the floor from first to last. */
+/** Shifts worked as one run, and the hours worked from first to last, breaks left out. */
 export interface WorkedStretch<T extends StretchItem> {
   views: T[];
   window: ShiftWindow;
   hours: number;
+  /** Minutes of the gaps the stretch bridged; 0 when its shifts touch or overlap. */
+  breakMinutes: number;
+}
+
+export interface StretchOptions {
+  /**
+   * The longest gap between shifts that does not end a stretch (default 0: any gap ends it).
+   * Massachusetts counts "consecutive hours worked", and a meal break between two shifts does not
+   * reset that count; without a bridge 07:00–15:00 then 15:30–00:30 would read as 8 and 9.
+   */
+  bridgeMinutes?: number;
 }
 
 /**
  * A nurse's worked shifts grouped into continuous stretches: a shift that starts at or before
- * the previous one's worked end joins it (half-open windows, so 15:00 to 15:00 joins). Hours are
- * the stretch's span on the clock, so an overlap from a holdover is counted once. On-call
- * standby is not worked and never joins or starts a stretch. `timeline` must be sorted by start,
- * as `ScheduleView.timelineFor` is.
+ * the previous one's worked end, or at most `bridgeMinutes` after it, joins it (half-open windows,
+ * so 15:00 to 15:00 joins). Hours are the time worked: the stretch's span on the clock less the
+ * bridged breaks, so an overlap from a holdover is counted once and a break not at all. On-call
+ * standby is not worked and never joins, starts or fills the gap in a stretch. `timeline` must be
+ * sorted by start, as `ScheduleView.timelineFor` is.
  */
-export function workedStretches<T extends StretchItem>(timeline: readonly T[]): WorkedStretch<T>[] {
+export function workedStretches<T extends StretchItem>(
+  timeline: readonly T[],
+  options: StretchOptions = {},
+): WorkedStretch<T>[] {
+  const bridge = options.bridgeMinutes ?? 0;
   const out: WorkedStretch<T>[] = [];
-  let current: { views: T[]; startMinute: number; endMinute: number } | undefined;
+  let current:
+    | { views: T[]; startMinute: number; endMinute: number; breakMinutes: number }
+    | undefined;
   const close = () => {
     if (!current) return;
     out.push({
       views: current.views,
       window: { startMinute: current.startMinute, endMinute: current.endMinute },
-      hours: (current.endMinute - current.startMinute) / MINUTES_PER_HOUR,
+      hours: (current.endMinute - current.startMinute - current.breakMinutes) / MINUTES_PER_HOUR,
+      breakMinutes: current.breakMinutes,
     });
   };
   for (const view of timeline) {
     if (view.shiftType.isOnCall) continue;
-    if (current && view.window.startMinute <= current.endMinute) {
+    if (current && view.window.startMinute <= current.endMinute + bridge) {
       current.views.push(view);
+      current.breakMinutes += Math.max(0, view.window.startMinute - current.endMinute);
       current.endMinute = Math.max(current.endMinute, view.window.endMinute);
       continue;
     }
@@ -97,6 +117,7 @@ export function workedStretches<T extends StretchItem>(timeline: readonly T[]): 
       views: [view],
       startMinute: view.window.startMinute,
       endMinute: view.window.endMinute,
+      breakMinutes: 0,
     };
   }
   close();

@@ -808,9 +808,11 @@ function breaksApart(
 }
 
 /**
- * Could this person's shift on `date` come off the schedule without breaking a rule? Removal
- * only shortens stretches, but the consecutive-nights limit counts all-night stretches, so
- * taking the day off the front of "day, night, night, night, night" leaves four nights.
+ * Could this person's shift on `date` come off the schedule without breaking a rule? The check
+ * is conservative now: the rule counts runs of nights wherever they sit, so a removal cannot
+ * create one. It once counted only all-night stretches, where taking the day off the front of
+ * "day, night, night, night, night" left four nights. Kept, unchanged, so the seeded demo data
+ * do not move.
  */
 function canRemove(worked: Worked, staff: Staff, date: IsoDate, limits: Limits): boolean {
   const mine = worked.get(staff.nurse.id)!;

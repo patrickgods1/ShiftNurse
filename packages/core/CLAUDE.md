@@ -45,8 +45,12 @@
   (`PreparedRule.override`): `fte-target-hours` refuses hours past the contract (hard) but only
   advises on a shortfall (soft) — being short is a manager's decision, not a breach — and a
   contract that guarantees full hours sets the rule hard, which makes both hard.
+- **Rest and tour changes are measured from the shift that ends last.**
+  `schedule/preceding.ts`'s `latestEndingBefore` is the one walk (min-rest, tour change). Overlap
+  reports every overlapping pair. CP-SAT's rest pairs drop out when a worked shift between them
+  ends later (a waiver or a longer after-night rest is where that matters).
 - **Days off after nights** (`rules/night-recovery.ts`, soft, nurse scope): a day or evening
-  shift within `daysOffAfterNights` (2) days of a night is flagged once, against the last night,
+  shift within `daysOffAfterNights` (2) days of a night tour is flagged once, against the last night,
   lookback nights included. Both solvers price it per such shift at `nightRecovery` (45, in the
   preferences bucket): `SolverModel.recoveryFor` and CP-SAT's `nightRecoveryTerms`; hard, it is
   `encodeNightRecovery`'s forbidden pairs. Rest hours alone allowed Night, Day, Night in four days.
@@ -98,15 +102,15 @@
   shift-scope rules in `rules/incompatibility-rules.ts`: `incompatible-staff-cap` (soft) and
   `incompatible-staff-buffer` (hard: while two or more members overlap, `minOutsideStaff` people
   from outside the group on the floor). `schedule/overlap.ts` is the one definition of "on the
-  floor together" (half-open windows, on-call excluded) and `judgeFloor` the one verdict; the
-  rules, `SolverModel` (per-stretch cache, `stretchesOf`), CP-SAT (`incompatibilityTerms`, priced
-  at either severity, hence `'by-construction'` in `CPSAT_ENCODERS`) and the conflicts engine
-  (overlapping rosters, only when the input has groups) all use them. Both are priced per
-  person-hour — `incompatibility` when soft, `hardShortfall / 12` when hard — which makes any
-  cutting of the floor into stretches price the same; they are kept out of `shiftHardIds`
-  because one shift's roster cannot judge them. The group's reason is HR-sensitive: audited
-  (`recordAuditStrict`, always required) and shown on Roster › Kept apart, never in a violation
-  message, which reaches the grid, exports and grievances.
+  floor together" (half-open windows, on-call excluded, this unit's floor only) and `judgeFloor`
+  the one verdict; the rules, `SolverModel` (per-stretch cache, `stretchesOf`), CP-SAT
+  (`incompatibilityTerms`, priced at either severity, hence `'by-construction'` in
+  `CPSAT_ENCODERS`) and the conflicts engine (overlapping rosters, only when the input has groups)
+  all use them. Both are priced per person-hour — `incompatibility` when soft, `hardShortfall / 12`
+  when hard — which makes any cutting of the floor into stretches price the same; they are kept
+  out of `shiftHardIds` because one shift's roster cannot judge them. The group's reason is
+  HR-sensitive: audited (`recordAuditStrict`, always required) and shown on Roster › Kept apart,
+  never in a violation message, which reaches the grid, exports and grievances.
 - **Accommodations are absolute, and judged by the hour.** An `AvailabilityBlock` (a recurring
   weekday window, optional dates, `rules/availability-blocks.ts`) bars any shift whose wall-clock
   window overlaps one of its occurrences — unlike leave, which removes shifts *dated* in it — so a
@@ -204,10 +208,13 @@
   stretch; an emergency never excuses the rest, a recorded rest waiver does when `honorsRestWaiver`
   (keyed on the later stretch's first shift, as `min-rest` keys it). `requiredOnly` judges only
   stretches holding a mandated holdover or unvolunteered overtime (Illinois, Maine, New Hampshire).
-  Not monotone under removal, so `SolverModel.isLegal`'s generic re-check is what covers it. Neither
-  solver writes a holdover or overtime row, so `requiredOnly` makes `encodeLongStretch` add nothing;
-  otherwise it forbids chains of contiguous shifts over the cap, and chains that earn rest followed
-  too soon (while soft it is not priced, like `max-hours-in-24`).
+  `maxBreakMinutesInStretch` (optional, absent = 0, not defaulted so stored rule sets do not move):
+  a break of at most that many minutes does not end a stretch, and the stretch's hours exclude it
+  (Massachusetts sets 60; the preset only ever raises it). Cost and `no-mandatory-overtime` call
+  `workedStretches` with no bridge. Not monotone under removal, so `SolverModel.isLegal`'s generic
+  re-check is what covers it. Neither solver writes a holdover or overtime row, so `requiredOnly`
+  makes `encodeLongStretch` add nothing; otherwise it forbids chains of shifts (bridging the same
+  gaps, counting worked minutes) over the cap, and chains that earn rest followed too soon (while soft it is not priced, like `max-hours-in-24`).
 - **Weekends are filed by `weekendKey`, everywhere.** Fairness, `weekend-pattern` and both
   solvers' prices use it; under `'overlaps'` a Friday night belongs to the weekend it runs into.
   `weekendBreaches` is the one count (`SolverModel.weekendFor`, CP-SAT `weekendBreachExprs`).
@@ -222,7 +229,9 @@
   (`days-off-together`, soft, `no_days_off_together`): a nurse working every weekend of a complete
   pay period needs two consecutive days off in it (VA–NNU Art. 13 § 2.D.3); weekend shifts alone
   otherwise leave weekday days off scattered, never a real break. A day off is a day with no
-  shift *dated* on it, so Friday's night does not spoil Saturday; a pay period straddling the
+  shift *dated* on it, so Friday's night does not spoil Saturday; a shift on another unit is a day
+  worked; a weekend counts only if worked on a day of the pay period (a Saturday in the previous
+  pay period does not credit it); a pay period straddling the
   schedule is not judged, as its far days are unseen; while soft it is not priced, so the grid and
   alerts flag it but Generate does not steer. Hard, `solver/cpsat/rules/days-off.ts` and
   `SolverModel` forbid it.
@@ -300,10 +309,11 @@
 - **Another unit's shifts are busy time, not this unit's.** `schedule/elsewhere.ts`'s
   `busyElsewhere` copies the other unit's shift types as inactive `elsewhere:<id>` types and its
   shifts as locked rows in `priorAssignments`, so every nurse rule judges them and nothing staffs,
-  flags or prices them here. `loadPeriodInput` and the grid's validation read them from other
-  units' draft and published periods. Float members (`nurse_unit`, migration 0024) join the
-  roster *after* the home nurses — order is behaviour — with their own leave, credentials and
-  preferences (`rosterForPeriod`, `floatExtras`).
+  flags or prices them here. They carry `ShiftType.elsewhere` (`isElsewhere`); the incompatibility
+  floor, `SolverModel`'s floor stretches and CP-SAT's terms leave them out. `loadPeriodInput` and
+  the grid's validation read them from other units' draft and published periods. Float members
+  (`nurse_unit`, migration 0024) join the roster *after* the home nurses — order is behaviour — with
+  their own leave, credentials and preferences (`rosterForPeriod`, `floatExtras`).
 - **An orientee works with their preceptor.** `rules/preceptor.ts` (`orientee-with-preceptor`,
   hard, shift scope, on by default and silent without preceptorships) counts a preceptor on the
   shift or on the one it runs inside; standby is not judged. CP-SAT prices it at `hardShortfall`
@@ -314,7 +324,10 @@
   which must skip the pair too or a locked turnaround makes CP-SAT infeasible (VA–NNU Art. 13 §2).
 - **Tours are named by when a shift starts.** `rules/tour-rotation.ts`'s `tourOf`: 04:00–11:59 day,
   12:00–17:59 evening, otherwise night — never `isNight`, a pay flag a Title 38 evening tour also
-  carries. `tour-rotation` (soft, off by default) caps distinct tours per schedule, wants
+  carries. `isNightTour` is the night test for min-rest's after-night rest, the night cap (which
+  counts runs of night dates wherever they sit, `nightRuns`; a day beside them neither resets nor
+  hides the run) and recovery after nights; fairness's night count and the pay differential still
+  read `isNight`. `tour-rotation` (soft, off by default) caps distinct tours per schedule, wants
   `minHoursBetweenTours` between shifts on different tours, and keeps a nurse with a
   `permanentTour` on it. Monotone under removal, so the gate is the generic nurse-scope one;
   `encodeTourRotation` enforces it when hard (locked breaches stand, `atMost` stops them growing).

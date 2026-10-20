@@ -242,9 +242,17 @@ const TITLE_38_PAY = '38 U.S.C. § 7453';
 /** The answer that releases a preset's `contractOnly` rules from protection. */
 const OWN_CONTRACT = 'ownContract';
 
-/** `long-stretch` with a state's numbers; any cap the law does not give stays unset. */
+/**
+ * `long-stretch` with a state's numbers; any cap the law does not give stays unset. A longer bridge
+ * joins more shifts into one stretch, so like the rest it is stricter the higher it is.
+ */
 function longStretch(params: Record<string, unknown>): PresetRule {
-  return { ruleId: 'long-stretch', params, raise: ['restHours'], absentCapIsUnlimited: true };
+  return {
+    ruleId: 'long-stretch',
+    params,
+    raise: ['restHours', 'maxBreakMinutesInStretch'],
+    absentCapIsUnlimited: true,
+  };
 }
 
 export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = {
@@ -438,7 +446,7 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'overtime outside an emergency with no reasonable alternative (§ 226(b)); record those on ' +
       'the shift as "Emergency: …". And whether required or volunteered, a nurse may not work ' +
       'more than 16 consecutive hours, and after 16 must have 8 hours off (§ 226(f)); no ' +
-      'emergency lifts that.',
+      'emergency lifts that. A break of up to an hour between shifts does not reset the 16.',
     ratios: {
       icu: rn(2, 'M.G.L. c.111 § 231: intensive care 1:2, or 1:1 by acuity'),
     },
@@ -447,7 +455,9 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       NO_MANDATORY_OVERTIME,
       // § 226(f): "A nurse shall not be allowed to exceed 16 consecutive hours worked in a 24 hour
       // period. In the event a nurse works 16 consecutive hours, that nurse must be given at least
-      // 8 consecutive hours of off-duty time immediately after the worked overtime."
+      // 8 consecutive hours of off-duty time immediately after the worked overtime." A meal break
+      // does not interrupt "consecutive hours worked", so a break of up to an hour joins the shifts
+      // either side into one stretch (D4).
       longStretch({
         requiredOnly: false,
         maxConsecutiveHours: 16,
@@ -455,6 +465,7 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
         restAfterHours: 16,
         restOnlyPastThreshold: false,
         restHours: 8,
+        maxBreakMinutesInStretch: 60,
       }),
     ],
   },

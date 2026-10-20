@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { IncompatibilityGroup, Nurse, ShiftType } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
+import { busyElsewhere } from '../schedule/elsewhere.js';
 import {
   assign,
   DAY_12,
@@ -249,5 +250,60 @@ describe('outside staff on the floor when incompatible nurses overlap', () => {
       ruleParams: { 'incompatible-staff-buffer': { minOutsideStaff: 3 } },
     });
     expect(unbuffered[0]!.details).toMatchObject({ outside: 2, required: 3, shortfall: 1 });
+  });
+});
+
+describe('a nurse working on another unit', () => {
+  // 5 West's own day 12, 07:00–19:00 like ours, reaching this unit only as busy time.
+  const WEST_DAY: ShiftType = { ...DAY_12, id: 'west-d12', unitId: 'unit-west' };
+
+  function onWest(nurse: Nurse) {
+    return busyElsewhere(
+      [assign(nurse.id, WEST_DAY, WED, { id: `w-${nurse.id}`, periodId: 'west' })],
+      [WEST_DAY],
+      '5 West',
+    );
+  }
+
+  it('does not count a member on 5 West as on this floor with the other member', () => {
+    const [ana, ben] = [makeNurse(), makeNurse()];
+    const cover = outsiders(DAY_12, WED);
+    const busy = onWest(ben);
+    // Only Ana of the group is here; Ben's day is 5 West's, so nobody is over the cap of 1 and no
+    // two members overlap on this floor to need a buffer.
+    const { together, unbuffered } = found({
+      shiftTypes: [...testShiftTypes, ...busy.shiftTypes],
+      nurses: [ana, ben, ...cover.nurses],
+      assignments: [assign(ana.id, DAY_12, WED), ...cover.assignments],
+      priorAssignments: busy.assignments,
+      incompatibilityGroups: [group([ana, ben])],
+    });
+    expect(together).toEqual([]);
+    expect(unbuffered).toEqual([]);
+  });
+
+  it('does not let a nurse on 5 West stand in for the outside staff on this floor', () => {
+    const [ana, ben, cy, dee] = [makeNurse(), makeNurse(), makeNurse(), makeNurse()];
+    const busy = onWest(dee);
+    const { unbuffered } = found({
+      shiftTypes: [...testShiftTypes, ...busy.shiftTypes],
+      nurses: [ana, ben, cy, dee],
+      assignments: [
+        assign(ana.id, DAY_12, WED),
+        assign(ben.id, DAY_12, WED),
+        assign(cy.id, DAY_12, WED),
+      ],
+      priorAssignments: busy.assignments,
+      incompatibilityGroups: [group([ana, ben])],
+    });
+    // Outside staff on this floor: Cy alone = 1, against 2 required, short 1, for the whole
+    // shared 07:00–19:00 = 12 hours. Dee is on 5 West and counts for nothing here.
+    expect(unbuffered).toHaveLength(1);
+    expect(unbuffered[0]!.details).toMatchObject({
+      outside: 1,
+      required: 2,
+      shortfall: 1,
+      hours: 12,
+    });
   });
 });

@@ -52,6 +52,8 @@
 - **A holdover is recorded on a published shift, never a draft.** `recordHoldover`
   (`repositories/holdovers.ts`, migration 0029: `assignment.holdover_minutes`, default 0, and
   `holdover_mandated`) refuses drafts and standby, takes whole minutes 0–720 (0 clears, and a clear
-  is never "required"), and audits with `before`; a required one goes through `recordAuditStrict`.
+  is never "required"), refuses minutes that run into the nurse's own next worked shift on any unit
+  (a holdover there is double-counted time), and audits with `before`; a required one goes through
+  `recordAuditStrict`.
   `toAssignment` emits the fields only when minutes > 0, so an untouched row maps as before. Only a
   draft is generated, so the solvers never write over one.

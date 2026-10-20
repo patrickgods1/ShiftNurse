@@ -13,11 +13,13 @@
  *
  * Known limit: while the rule is soft, Generate does not price it, so it will not steer around a
  * breach; the grid and compliance report flag it. Made hard, every encoder and `SolverModel`
- * forbid the breach. It is monotone under removal (taking a shift away never adds a distinct
- * tour, an off-tour shift, or a closer pair of neighbours on a different tour — a shift left
- * between two others is at least as close to one of them on its own tour), which is what
- * `SolverModel.isLegal` relies on when it re-checks a removal. Overlapping shifts are the overlap
- * rule's business and are skipped here.
+ * forbid the breach. A change of tour is measured from the shift the nurse last stopped working
+ * (`latestEndingBefore`), not from the start-order neighbour, which a short shift nested inside a
+ * night would be. The rule is monotone under removal on any schedule without overlaps (taking a
+ * shift away never adds a distinct tour or an off-tour shift, and if removing B leaves C measured
+ * from an A on another tour, B ended after A and started before C, so A → B was already as short
+ * a change), which is what `SolverModel.isLegal` relies on when it re-checks a removal.
+ * Overlapping shifts are the overlap rule's business and are skipped here.
  *
  * Career nurses (UC–CNA Art. 14 § P.1.a: ten years) are exempt from forced rotation: one tour a
  * schedule, and a permanent tour that holds whatever the unit's enforcement setting. Service is
@@ -36,6 +38,7 @@ import {
   restMinutesBetween,
 } from '../domain/time.js';
 import { yearsOfService } from '../leave/accrual.js';
+import { latestEndingBefore } from '../schedule/preceding.js';
 import { isWorked, nurseName, type Rule, type Violation, violation } from './types.js';
 
 export interface TourRotationParams {
@@ -82,6 +85,16 @@ export function tourOf(shiftType: Pick<ShiftType, 'startTime'>): Tour {
   if (start >= 4 * 60 && start < 12 * 60) return 'day';
   if (start >= 12 * 60 && start < 18 * 60) return 'evening';
   return 'night';
+}
+
+/**
+ * The one night test for rest after a night, the night cap and recovery after nights. A night is
+ * a night *tour*: `isNight` is the differential's flag and also sits on a Title 38 evening tour,
+ * which would otherwise be owed a night's rest and cap a run of evenings as nights. Fairness's
+ * night count and the pay differential still read `isNight`, on purpose.
+ */
+export function isNightTour(shiftType: Pick<ShiftType, 'startTime'>): boolean {
+  return tourOf(shiftType) === 'night';
 }
 
 const TOUR_ORDER: readonly Tour[] = ['day', 'evening', 'night'];
@@ -175,15 +188,21 @@ export const tourRotationRule: Rule<TourRotationParams> = {
         );
       }
 
-      for (let i = 1; i < timeline.length; i++) {
-        const previous = timeline[i - 1]!;
+      const preceding = latestEndingBefore(timeline);
+      for (let i = 0; i < timeline.length; i++) {
         const current = timeline[i]!;
-        const fromTour = tourOf(previous.shiftType);
-        const toTour = tourOf(current.shiftType);
-        if (fromTour === toTour) continue;
+        // Measured from the shift the nurse last stopped working, so a short day shift nested
+        // inside a night does not hide the night → day change.
+        const before = preceding[i]!;
+        const first = before[0];
+        if (!first) continue;
         // Overlaps belong to the overlap rule.
-        const restMinutes = restMinutesBetween(previous.window, current.window);
+        const restMinutes = restMinutesBetween(first.window, current.window);
         if (restMinutes < 0) continue;
+        const toTour = tourOf(current.shiftType);
+        const previous = before.find((p) => tourOf(p.shiftType) !== toTour);
+        if (!previous) continue;
+        const fromTour = tourOf(previous.shiftType);
         const restHours = minutesToHours(restMinutes);
         if (restHours >= params.minHoursBetweenTours) continue;
         // History cannot be fixed; only flag when this schedule can do something about it.

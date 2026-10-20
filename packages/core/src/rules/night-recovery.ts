@@ -13,10 +13,15 @@
  * before it, so a stretch of three nights followed too soon by a day reads as one problem.
  * The lookback tail counts: a night at the end of the last schedule still needs its days off.
  * The solver prices it per day-side shift the same way (`SolverModel`, `nightRecoveryTerms`).
+ *
+ * A night is a night *tour* (`isNightTour`, by start time), not the `isNight` pay flag: a Title 38
+ * evening tour carries that flag, and treating it as a night would both demand days off after
+ * it and miss it as the day-side shift that follows a real night too soon.
  */
 
 import { dayNumber, describeDate } from '../domain/time.js';
 import type { AssignmentView } from '../schedule/view.js';
+import { isNightTour } from './tour-rotation.js';
 import type { Rule, Violation } from './types.js';
 import { isWorked, nurseName, violation } from './types.js';
 
@@ -25,14 +30,14 @@ export interface NightRecoveryParams {
   daysOffAfterNights: number;
 }
 
-/** A worked shift that is not a night: day, evening, mid. */
+/** A worked shift that is not a night tour: day, evening (paid as a night or not), mid. */
 export function isDaySide(view: Pick<AssignmentView, 'shiftType'>): boolean {
-  return !view.shiftType.isOnCall && !view.shiftType.isNight;
+  return !view.shiftType.isOnCall && !isNightTour(view.shiftType);
 }
 
-/** A worked night shift. */
+/** A worked night tour. */
 export function isWorkedNight(view: Pick<AssignmentView, 'shiftType'>): boolean {
-  return !view.shiftType.isOnCall && view.shiftType.isNight;
+  return !view.shiftType.isOnCall && isNightTour(view.shiftType);
 }
 
 /**

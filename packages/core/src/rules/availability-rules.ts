@@ -197,34 +197,39 @@ export const overlapRule: Rule<OverlapParams> = {
 
     for (const nurse of ctx.nurses) {
       const timeline = schedule.timelineFor(nurse.id);
-      for (let i = 1; i < timeline.length; i++) {
-        const previous = timeline[i - 1];
-        const current = timeline[i];
-        if (!previous || !current) continue;
-        if (!previous.inPeriod && !current.inPeriod) continue;
-        if (!windowsOverlap(previous.window, current.window)) continue;
-        if (
-          params.allowOnCallDuringShift &&
-          (previous.shiftType.isOnCall || current.shiftType.isOnCall)
-        ) {
-          continue;
-        }
+      // Every pair, not only start-order neighbours: a triple booking is three double bookings,
+      // and the grid keys on the pair of assignments.
+      for (let i = 0; i < timeline.length; i++) {
+        const previous = timeline[i]!;
+        for (let j = i + 1; j < timeline.length; j++) {
+          const current = timeline[j]!;
+          // Sorted by start: once one starts after this one ends, every later one does too.
+          if (current.window.startMinute >= previous.window.endMinute) break;
+          if (!previous.inPeriod && !current.inPeriod) continue;
+          if (!windowsOverlap(previous.window, current.window)) continue;
+          if (
+            params.allowOnCallDuringShift &&
+            (previous.shiftType.isOnCall || current.shiftType.isOnCall)
+          ) {
+            continue;
+          }
 
-        violations.push(
-          violation(
-            overlapRule,
-            'hard',
-            'overlapping_assignments',
-            `${nurseName(nurse)} is double-booked: the ${previous.shiftType.name} on ` +
-              `${describeDate(previous.assignment.date)} overlaps the ${current.shiftType.name} on ` +
-              `${describeDate(current.assignment.date)}.`,
-            {
-              nurseIds: [nurse.id],
-              dates: [previous.assignment.date, current.assignment.date],
-              assignmentIds: [previous.assignment.id, current.assignment.id],
-            },
-          ),
-        );
+          violations.push(
+            violation(
+              overlapRule,
+              'hard',
+              'overlapping_assignments',
+              `${nurseName(nurse)} is double-booked: the ${previous.shiftType.name} on ` +
+                `${describeDate(previous.assignment.date)} overlaps the ${current.shiftType.name} on ` +
+                `${describeDate(current.assignment.date)}.`,
+              {
+                nurseIds: [nurse.id],
+                dates: [previous.assignment.date, current.assignment.date],
+                assignmentIds: [previous.assignment.id, current.assignment.id],
+              },
+            ),
+          );
+        }
       }
     }
 

@@ -3,6 +3,7 @@ import { isoDate } from '../domain/time.js';
 import type { ScenarioOptions } from '../testing/fixtures.js';
 import {
   assign,
+  DAY_8,
   DAY_12,
   makeNurse,
   NIGHT_8,
@@ -29,8 +30,29 @@ const EARLY_12 = {
   startTime: '06:00',
 };
 
+// Afternoon starts after a day 8 (07:00–15:00): a half-hour meal break, or an hour.
+const LATE_9 = {
+  ...DAY_8,
+  id: 'st-l9',
+  name: 'Late 9',
+  abbreviation: 'L9',
+  startTime: '15:30',
+  durationHours: 9,
+};
+const LATE_8 = { ...DAY_8, id: 'st-l8', name: 'Late 8', abbreviation: 'L8', startTime: '15:30' };
+const AFTERNOON_8 = {
+  ...DAY_8,
+  id: 'st-a8',
+  name: 'Afternoon 8',
+  abbreviation: 'A8',
+  startTime: '16:00',
+};
+
 function evaluate(options: ScenarioOptions, params: Partial<LongStretchParams>) {
-  const s = scenario({ shiftTypes: [...testShiftTypes, EARLY_12], ...options });
+  const s = scenario({
+    shiftTypes: [...testShiftTypes, EARLY_12, LATE_9, LATE_8, AFTERNOON_8],
+    ...options,
+  });
   return longStretchRule.evaluate(
     s.schedule,
     { ...longStretchRule.defaultParams, ...params },
@@ -353,5 +375,76 @@ describe('long stretches of work', () => {
     );
     expect(found).toHaveLength(1);
     expect(found[0]!.assignmentIds).toHaveLength(3);
+  });
+
+  describe('when a short break does not end a stretch', () => {
+    it('refuses a Massachusetts nurse 17 hours on the floor around a 30-minute break', () => {
+      const nurse = grace();
+      // 07:00–15:00, break, 15:30–00:30: 8 + 9 = 17 worked, past 16. The half hour is not counted.
+      const assignments = [
+        assign(nurse.id, DAY_8, '2026-01-05'),
+        assign(nurse.id, LATE_9, '2026-01-05'),
+      ];
+      const found = evaluate(
+        { nurses: [nurse], assignments },
+        { maxConsecutiveHours: 16, maxBreakMinutesInStretch: 60 },
+      );
+      expect(found).toHaveLength(1);
+      expect(found[0]).toMatchObject({
+        code: 'long_stretch',
+        assignmentIds: assignments.map((a) => a.id),
+        details: { stretchHours: 17, breakMinutes: 30, maxConsecutiveHours: 16 },
+      });
+      expect(found[0]!.message).toContain('17h');
+      expect(found[0]!.message).toContain('breaks of 60 minutes or less');
+      // Without a bridge the break ends the stretch: 8 and 9, each under 16.
+      expect(evaluate({ nurses: [nurse], assignments }, { maxConsecutiveHours: 16 })).toEqual([]);
+    });
+
+    it('owes 8 hours off after 16 worked around a 30-minute break', () => {
+      const nurse = grace();
+      // 07:00–15:00 and 15:30–23:30 Monday: 8 + 8 = 16 worked, which earns the rest. Back at
+      // 07:00 Tuesday is 23:30 → 07:00 = 7.5 hours off, short of 8.
+      const found = evaluate(
+        {
+          nurses: [nurse],
+          assignments: [
+            assign(nurse.id, DAY_8, '2026-01-05'),
+            assign(nurse.id, LATE_8, '2026-01-05'),
+            assign(nurse.id, DAY_12, '2026-01-06'),
+          ],
+        },
+        { restAfterHours: 16, restHours: 8, maxBreakMinutesInStretch: 60 },
+      );
+      expect(found).toHaveLength(1);
+      expect(found[0]).toMatchObject({
+        code: 'rest_after_long_stretch',
+        details: { stretchHours: 16, restHours: 8, hoursOff: 7.5 },
+      });
+      // The 16 were not straight: the message says the break was bridged.
+      expect(found[0]!.message).toContain('breaks of 60 minutes or less');
+      expect(found[0]!.message).not.toContain('straight');
+    });
+
+    it('bridges a break of exactly the limit', () => {
+      const nurse = grace();
+      // 15:00 to 16:00 is 60 minutes, not more than 60, so 07:00–15:00 and 16:00–00:00 are one
+      // stretch of 8 + 8 = 16 worked, past a 15-hour cap.
+      const found = evaluate(
+        {
+          nurses: [nurse],
+          assignments: [
+            assign(nurse.id, DAY_8, '2026-01-05'),
+            assign(nurse.id, AFTERNOON_8, '2026-01-05'),
+          ],
+        },
+        { maxConsecutiveHours: 15, maxBreakMinutesInStretch: 60 },
+      );
+      expect(found).toHaveLength(1);
+      expect(found[0]).toMatchObject({
+        code: 'long_stretch',
+        details: { stretchHours: 16, breakMinutes: 60 },
+      });
+    });
   });
 });
