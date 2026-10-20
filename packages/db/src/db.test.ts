@@ -7,13 +7,19 @@
  * reach a user as "the app won't start".
  */
 
-import { isoDate } from '@shiftnurse/core';
+import { DEFAULT_FAIRNESS_WEIGHTS, type Id, isoDate } from '@shiftnurse/core';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor, recordAudit, recordAuditStrict } from './audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from './client.js';
 import { ids } from './ids.js';
 import { fromPreference, toNurse, toPreference, toTimeOffRequest } from './mappers.js';
+import { createShiftType, createUnit } from './repositories/config.js';
+import { repricePeriod } from './repositories/pay-snapshot.js';
+import { publishSchedule, recordScheduleChange } from './repositories/publish.js';
+import { createNurse } from './repositories/roster.js';
+import { saveRuleSet } from './repositories/rulesets.js';
+import { createAssignment, createPeriod, deleteDraftPeriod } from './repositories/schedule.js';
 import * as s from './schema.js';
 
 let handle: OpenedDatabase;
@@ -722,5 +728,175 @@ describe('the file refuses data the app would misread', () => {
     seedNurse();
     handle.db.delete(s.nurse).where(eq(s.nurse.id, 'nurse-1')).run();
     expect(handle.db.select().from(s.nurse).all()).toHaveLength(0);
+  });
+});
+
+describe('history the app never rewrites', () => {
+  const ACTOR = 'manager';
+  const ruleDraft = (unitId: Id) => ({
+    unitId,
+    name: 'Default',
+    weekendDefinition: {
+      startWeekday: 6 as const,
+      startMinute: 0,
+      durationMinutes: 2880,
+      mode: 'starts_within' as const,
+    },
+    fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+    configs: [{ ruleId: 'no-mandatory-overtime', enabled: false, params: {} }],
+  });
+  let unitId: Id;
+  let periodId: Id;
+  let nurseId: Id;
+  let shiftTypeId: Id;
+  let assignmentId: Id;
+
+  beforeEach(() => {
+    const db = handle.db;
+    unitId = createUnit(
+      db,
+      {
+        name: '4 West',
+        unitType: 'Med-Surg',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    ).id;
+    const ruleSet = transact(db, (tx) => saveRuleSet(tx, ruleDraft(unitId), ACTOR));
+    shiftTypeId = createShiftType(
+      db,
+      {
+        unitId,
+        name: 'Day 12',
+        abbreviation: 'D12',
+        startTime: '07:00',
+        durationHours: 12,
+        isNight: false,
+        isOnCall: false,
+        color: '#fff',
+        sortOrder: 1,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+    nurseId = createNurse(
+      db,
+      {
+        unitId,
+        employeeId: 'E1',
+        firstName: 'Ana',
+        lastName: 'Reyes',
+        role: 'RN',
+        employmentType: 'full_time',
+        fte: 1,
+        contractedHoursPerPeriod: 72,
+        seniorityDate: isoDate('2020-01-01'),
+        isChargeEligible: true,
+        isNovice: false,
+        isFloatEligible: true,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+    periodId = createPeriod(
+      db,
+      {
+        unitId,
+        name: 'October 4–17',
+        startDate: isoDate('2026-10-04'),
+        endDate: isoDate('2026-10-17'),
+        ruleSetId: ruleSet.id,
+        ruleSetVersion: ruleSet.version,
+      },
+      ACTOR,
+    ).id;
+    assignmentId = createAssignment(
+      db,
+      { periodId, nurseId, shiftTypeId, date: isoDate('2026-10-05') },
+      ACTOR,
+    ).id;
+    transact(db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
+    recordScheduleChange(
+      db,
+      {
+        periodId,
+        kind: 'added',
+        assignmentId,
+        nurseId,
+        date: isoDate('2026-10-05'),
+        shiftTypeId,
+        reason: 'Covering a sick call',
+      },
+      ACTOR,
+    );
+  });
+
+  const run = (sql: string) => handle.sqlite.prepare(sql).run();
+
+  it('refuses to edit or delete a saved rule set version', () => {
+    expect(() => run("UPDATE rule_set SET name = 'x'")).toThrow(/save a new version instead/);
+    expect(() => run('DELETE FROM rule_set')).toThrow(/schedules were judged by it/);
+    expect(() => run("UPDATE rule_config SET params = '{}'")).toThrow(/save a new version instead/);
+    expect(() => run('DELETE FROM rule_config')).toThrow(/schedules were judged by it/);
+  });
+
+  it('refuses to edit or delete what went out to staff', () => {
+    expect(() => run("UPDATE schedule_version SET reason = 'x'")).toThrow(/cannot be changed/);
+    expect(() => run('DELETE FROM schedule_version')).toThrow(/cannot be deleted/);
+  });
+
+  it('refuses to edit or delete the change log', () => {
+    expect(() => run("UPDATE schedule_change SET reason = 'x'")).toThrow(
+      /change log of a published schedule cannot be changed/,
+    );
+    expect(() => run('DELETE FROM schedule_change')).toThrow(
+      /change log of a published schedule cannot be deleted/,
+    );
+  });
+
+  it('refuses to edit or delete a pay snapshot', () => {
+    expect(() => run("UPDATE pay_config_snapshot SET reason = 'x'")).toThrow(/reprice it instead/);
+    expect(() => run('DELETE FROM pay_config_snapshot')).toThrow(/cannot be deleted/);
+  });
+
+  it('still saves new rules, publishes, republishes and logs changes', () => {
+    const v2 = transact(handle.db, (tx) => saveRuleSet(tx, ruleDraft(unitId), ACTOR));
+    expect(v2.version).toBe(2);
+    createAssignment(
+      handle.db,
+      { periodId, nurseId, shiftTypeId, date: isoDate('2026-10-07') },
+      ACTOR,
+      'Extra day',
+    );
+    const again = transact(handle.db, (tx) =>
+      publishSchedule(tx, { periodId, reason: 'Extra day' }, ACTOR),
+    );
+    expect(again.version.version).toBe(2);
+    const snap = transact(handle.db, (tx) => repricePeriod(tx, periodId, ACTOR, 'New contract'));
+    expect(snap.seq).toBe(2);
+  });
+
+  it('still deletes a draft that was never published', () => {
+    const draft = createPeriod(
+      handle.db,
+      {
+        unitId,
+        name: 'October 18–31',
+        startDate: isoDate('2026-10-18'),
+        endDate: isoDate('2026-10-31'),
+        ruleSetId: handle.db.select().from(s.ruleSet).get()!.id,
+        ruleSetVersion: 1,
+      },
+      ACTOR,
+    );
+    deleteDraftPeriod(handle.db, draft.id, ACTOR);
+    expect(handle.db.select().from(s.schedulePeriod).all()).toHaveLength(1);
+  });
+
+  it('refuses to delete a unit that has saved rules', () => {
+    // The cascade reaches rule sets, versions and the change log; whichever it meets first aborts.
+    expect(() => run('DELETE FROM unit')).toThrow(/cannot be deleted/);
+    expect(handle.db.select().from(s.unit).all()).toHaveLength(1);
   });
 });

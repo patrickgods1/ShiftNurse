@@ -5,11 +5,13 @@
  * schedule by nothing.
  */
 
-import { isoDate } from '@shiftnurse/core';
+import { addDays, isoDate } from '@shiftnurse/core';
 import {
   applyJurisdiction,
   auditHistoryFor,
+  createAssignment,
   createUnit,
+  publishSchedule,
   recentAudit,
   transact,
 } from '@shiftnurse/db';
@@ -73,6 +75,58 @@ describe('the unit and its shift types', () => {
       'update',
       'create',
     ]);
+  });
+
+  /** The day shift goes out on a published schedule, as it would once the manager publishes. */
+  function publishWithDayShift() {
+    createAssignment(
+      f.handle.db,
+      {
+        periodId: f.seeded.draftPeriodId,
+        nurseId: f.rns[0]!.id,
+        shiftTypeId: f.day.id,
+        date: addDays(f.seeded.draftStart, 4),
+      },
+      ACTOR,
+    );
+    transact(f.handle.db, (tx) =>
+      publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+    );
+  }
+
+  it('refuses new paid hours on a published shift through the app, in words', () => {
+    publishWithDayShift();
+    expect(() => api().shiftTypes.update(f.day.id, { durationHours: 8 })).toThrow(
+      /Duplicate it as a new type instead/,
+    );
+  });
+
+  it('tells the screen which shift types are locked', () => {
+    publishWithDayShift();
+    // The seeded unit already has published history on its own types; a type nobody has
+    // scheduled is the one that must stay free.
+    const fresh = api().shiftTypes.create({
+      unitId: unitId(),
+      name: 'Mid 10',
+      abbreviation: 'M10',
+      startTime: '10:00',
+      durationHours: 10,
+      isNight: false,
+      isOnCall: false,
+      color: '#aabbcc',
+      sortOrder: 9,
+      active: true,
+    });
+    const locked = api().shiftTypes.lockedIds(unitId());
+    expect(locked).toContain(f.day.id);
+    expect(locked).not.toContain(fresh.id);
+  });
+
+  it('duplicates a locked shift through the app in one step', () => {
+    publishWithDayShift();
+    const result = api().shiftTypes.duplicate(f.day.id, { name: 'Day 8', durationHours: 8 });
+    expect(result.shiftType.durationHours).toBe(8);
+    expect(result.retired.active).toBe(false);
   });
 
   it('says so when retiring a shift type that is not there', () => {
@@ -183,6 +237,16 @@ describe('holidays', () => {
     expect(auditsOf('holiday', h.id).map((a) => a.action)).toEqual(['delete', 'update', 'create']);
   });
 
+  it('moves a holiday through the app with a reason', () => {
+    const h = api().holidays.create(christmas());
+    const moved = api().holidays.update(h.id, { date: isoDate('2026-12-26') }, 'Entered wrong');
+    expect(moved.date).toBe('2026-12-26');
+    expect(auditsOf('holiday', h.id)[0]).toMatchObject({
+      action: 'update',
+      reason: 'Entered wrong',
+    });
+  });
+
   it('refuses to delete a holiday whose who-worked list was recorded by hand', () => {
     const h = api().holidays.create(christmas());
     api().holidays.recordWork(h.id, [f.rns[0]!.id]);
@@ -284,13 +348,34 @@ describe('acuity tiers, ratios and the HPPD target', () => {
     expect(
       api().acuity.updateRatioRule(rule.id, { maxPatientsPerNurse: 5 }).maxPatientsPerNurse,
     ).toBe(5);
-    expect(api().acuity.deactivateRatioRule(rule.id).active).toBe(false);
+    expect(api().acuity.deactivateRatioRule(rule.id, 'Beds closed for refit').active).toBe(false);
     expect(
       api()
         .acuity.ratioRules(unitId())
         .find((r) => r.id === rule.id)?.active,
     ).toBe(false);
     expect(auditsOf('ratio_rule', rule.id)).toHaveLength(3);
+  });
+
+  it('asks for a reason before loosening a ratio through the app', () => {
+    const rule = api().acuity.createRatioRule({
+      unitId: unitId(),
+      role: 'RN',
+      acuityTierId: null,
+      maxPatientsPerNurse: 4,
+      active: true,
+    });
+    expect(() => api().acuity.updateRatioRule(rule.id, { maxPatientsPerNurse: 6 })).toThrow(
+      'Changing the RN ratio on every tier (ceiling 1:4 → 1:6) needs a reason',
+    );
+    expect(() => api().acuity.deactivateRatioRule(rule.id, '')).toThrow(
+      'Deactivating the RN ratio on every tier (1:4) needs a reason',
+    );
+    expect(auditsOf('ratio_rule', rule.id)).toHaveLength(1);
+    expect(
+      api().acuity.updateRatioRule(rule.id, { maxPatientsPerNurse: 6 }, 'Union MOU 2026-3')
+        .maxPatientsPerNurse,
+    ).toBe(6);
   });
 
   it('reads a unit that never set an HPPD target as no target', () => {

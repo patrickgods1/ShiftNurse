@@ -6,11 +6,9 @@
  */
 
 import { DEFAULT_FAIRNESS_WEIGHTS, isoDate } from '@shiftnurse/core';
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { auditHistoryFor, recentAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
-import { scheduleChange } from '../schema.js';
 import { createShiftType, createUnit } from './config.js';
 import { getFairnessLedgerEntry, upsertFairnessLedgerEntry } from './ledger.js';
 import {
@@ -386,11 +384,10 @@ describe('publishSchedule', () => {
     // The clock stepped backwards: this v2 edit is stamped before v2 went out. Version 2 is
     // still its definition, so it is still pending.
     const publishedAt = latestVersion(db, periodId)!.publishedAt;
+    // The change log refuses edits, so the clock itself steps back while the entry is written.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(publishedAt - 1);
     const early = note('added', 'Stamped before the publish');
-    db.update(scheduleChange)
-      .set({ at: publishedAt - 1 })
-      .where(eq(scheduleChange.id, early.id))
-      .run();
+    clock.mockRestore();
     expect(
       changesSinceLastPublish(db, periodId)
         .map((c) => c.id)

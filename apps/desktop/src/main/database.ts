@@ -14,6 +14,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import {
+  backfillPayConfigSnapshots,
   DatabaseNewerThanAppError,
   type MigrationStatus,
   migrateDatabase,
@@ -82,7 +83,22 @@ export async function openAppDatabase(
   }
   opened = candidate;
   recordPendingRestore(candidate.db);
+  recordEarlierPayConfigs(candidate.db);
   return opened.db;
+}
+
+/**
+ * Keep the pay settings of any published schedule that has none: the first launch after
+ * snapshots were introduced, or a restored older backup. Those are priced live until now, so this
+ * changes no figure; it stops later edits from repricing them. Writes only when one is missing,
+ * and like `recordPendingRestore` never blocks startup.
+ */
+function recordEarlierPayConfigs(db: ShiftNurseDb): void {
+  try {
+    transact(db, (tx) => backfillPayConfigSnapshots(tx, 'manager'));
+  } catch (err) {
+    console.error(`[pay] could not record the pay settings of earlier schedules: ${err}`);
+  }
 }
 
 /**

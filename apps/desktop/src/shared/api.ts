@@ -524,6 +524,33 @@ export type ShiftTypeInput = Omit<ShiftType, 'id' | 'withinShiftTypeId' | 'elsew
   Partial<Pick<ShiftType, 'withinShiftTypeId'>>;
 export type ShiftTypePatch = Partial<Omit<ShiftType, 'id' | 'unitId' | 'elsewhere'>>;
 
+/** What may differ on a duplicate. Mirrors `ShiftTypeDuplicateChanges` in `@shiftnurse/db`. */
+export type ShiftTypeDuplicateChanges = Partial<
+  Pick<
+    ShiftType,
+    | 'name'
+    | 'abbreviation'
+    | 'startTime'
+    | 'durationHours'
+    | 'isNight'
+    | 'isOnCall'
+    | 'withinShiftTypeId'
+    | 'color'
+    | 'sortOrder'
+  >
+>;
+
+/** A duplicate and what it left behind. Mirrors `ShiftTypeDuplicateResult` in `@shiftnurse/db`. */
+export interface ShiftTypeDuplicateResult {
+  shiftType: ShiftType;
+  /** The old type, now inactive. */
+  retired: ShiftType;
+  /** Shifts still on the old type in drafts; not moved. */
+  draftShiftsOnOld: number;
+  /** Mid shifts with published history of their own, left running inside the old type. */
+  stillInsideOld: string[];
+}
+
 /** A shift a nurse holds from today on, on a draft or published schedule. */
 export interface FutureShiftView {
   assignmentId: Id;
@@ -564,7 +591,7 @@ export interface CoverageWeekInput {
 /** A new holiday; unpaired unless `pairedHolidayId` names the major holiday it goes with. */
 export type HolidayInput = Omit<Holiday, 'id' | 'pairedHolidayId'> &
   Partial<Pick<Holiday, 'pairedHolidayId'>>;
-export type HolidayPatch = Partial<Pick<Holiday, 'name' | 'isMajor' | 'pairedHolidayId'>>;
+export type HolidayPatch = Partial<Pick<Holiday, 'date' | 'name' | 'isMajor' | 'pairedHolidayId'>>;
 
 /** A year of holidays as the manager approved it: `HolidayYearPlan`'s rows, edited. */
 export interface HolidayYearInput {
@@ -744,6 +771,12 @@ export interface PeriodCostReport {
    * the day. `unpriced` counts events for nurses with no pay rate, which are not $0.
    */
   dayOf: DayOfPay;
+  /**
+   * The kept pay configuration a published or archived period is priced under: when it was taken
+   * (epoch millis) and, for a reprice, why. Undefined for a draft, which is priced with today's
+   * settings, and for a published period with no snapshot yet.
+   */
+  pricedUnder: { takenAt: number; reason?: string } | undefined;
 }
 
 /** Pay settings that are not rates, differentials or overtime rules. */
@@ -765,6 +798,32 @@ export interface PaySettings {
    * in the week it starts (`'start'`, some contracts). A unit that never chose reads `'clock'`.
    */
   overtimeWindowAttribution: 'clock' | 'start';
+}
+
+/** The pay configuration a published period is priced under. Mirrors `PayConfig` in `@shiftnurse/db`. */
+export interface PayConfig {
+  differentials: Differential[];
+  overtimeRules: OvertimeRule[];
+  paySettings: PaySettings;
+  /** Absent reads 'start'. */
+  holidayAttribution?: HolidayAttribution;
+  /** The unit's holidays near the period when it was taken. */
+  holidays: { date: IsoDate; isMajor: boolean }[];
+}
+
+/**
+ * One kept pay configuration: taken at first publication, and again only by `cost.reprice`.
+ * Pay rates are not in it (they carry their own start dates).
+ */
+export interface PayConfigSnapshot {
+  id: Id;
+  periodId: Id;
+  /** 1 at first publication; each reprice adds one. */
+  seq: number;
+  takenAt: number;
+  takenBy: string;
+  reason?: string;
+  config: PayConfig;
 }
 
 /** A day-of event as recorded: paid outside the schedule, priced beside its cost. */
@@ -1437,9 +1496,17 @@ export interface ShiftNurseApi {
   };
   shiftTypes: {
     list(unitId: Id): ShiftType[];
+    /** Shift types whose timing, pay and night fields are locked, because a published or
+     * archived schedule used them. */
+    lockedIds(unitId: Id): Id[];
     create(input: ShiftTypeInput): ShiftType;
     update(id: Id, patch: ShiftTypePatch): ShiftType;
     deactivate(id: Id): ShiftType;
+    /**
+     * Replace a shift type with a new one carrying its floors, credentials, future forecasts,
+     * wishes and unlocked mid shifts, and retire the old one, in one transaction.
+     */
+    duplicate(id: Id, changes: ShiftTypeDuplicateChanges): ShiftTypeDuplicateResult;
   };
   coverage: {
     list(unitId: Id): CoverageRequirement[];
@@ -1454,8 +1521,12 @@ export interface ShiftNurseApi {
   holidays: {
     list(unitId: Id): Holiday[];
     create(input: HolidayInput): Holiday;
-    /** Rename, move between major and minor, or pair a minor holiday with a major one. */
-    update(id: Id, patch: HolidayPatch): Holiday;
+    /**
+     * Rename, move between major and minor, pair a minor holiday with a major one, or move it to
+     * another date. `reason` is required when a published or archived schedule covers the old or
+     * new date.
+     */
+    update(id: Id, patch: HolidayPatch, reason?: string): Holiday;
     delete(id: Id): void;
     /** Who the holiday rotation counts as having worked a holiday, and where that comes from. */
     work(holidayId: Id): HolidayWorkSummary;
@@ -1475,8 +1546,9 @@ export interface ShiftNurseApi {
     deleteTier(id: Id): void;
     ratioRules(unitId: Id): RatioRule[];
     createRatioRule(input: RatioRuleInput): RatioRule;
-    updateRatioRule(id: Id, patch: RatioRulePatch): RatioRule;
-    deactivateRatioRule(id: Id): RatioRule;
+    /** A looser, moved, re-cited or retired ceiling needs `reason`; the refusal says which. */
+    updateRatioRule(id: Id, patch: RatioRulePatch, reason?: string): RatioRule;
+    deactivateRatioRule(id: Id, reason: string): RatioRule;
     /** `null` when the unit has never set a target. */
     hppd(unitId: Id): HppdTarget | null;
     setHppd(unitId: Id, targetHours: number): HppdTarget;
@@ -1526,6 +1598,8 @@ export interface ShiftNurseApi {
     }): SchedulePeriod;
     /** Set or clear when time-off requests close for this period (advisory). */
     setRequestsCloseOn(periodId: Id, date: IsoDate | null): SchedulePeriod;
+    /** Move a draft to the unit's latest rule version (D22). Published and archived periods stay pinned. */
+    adoptLatestRules(periodId: Id): SchedulePeriod;
   };
   schedule: {
     /** Every hard/soft violation for the period's current assignments, under its rule set. */
@@ -1678,6 +1752,11 @@ export interface ShiftNurseApi {
     clearBudget(periodId: Id): void;
     paySettings(unitId: Id): PaySettings;
     savePaySettings(unitId: Id, settings: PaySettings): PaySettings;
+    /**
+     * Prices a published period with today's pay settings from now on (a retroactive contract
+     * change). The reason is required; drafts and archived periods are refused.
+     */
+    reprice(periodId: Id, reason: string): PayConfigSnapshot;
   };
   /** Events paid outside the schedule, recorded from the Today screen. */
   dayOfPay: {
@@ -1905,7 +1984,7 @@ export const API_CHANNELS = {
     'submitBid',
     'award',
   ],
-  shiftTypes: ['list', 'create', 'update', 'deactivate'],
+  shiftTypes: ['list', 'lockedIds', 'create', 'update', 'deactivate', 'duplicate'],
   coverage: ['list', 'upsert', 'delete', 'fillWeek'],
   holidays: [
     'list',
@@ -1942,7 +2021,7 @@ export const API_CHANNELS = {
     'hppd',
   ],
   roster: ['pickImportFile', 'importRows', 'exportToFile', 'exportCsv'],
-  periods: ['list', 'assignments', 'create', 'setRequestsCloseOn'],
+  periods: ['list', 'assignments', 'create', 'setRequestsCloseOn', 'adoptLatestRules'],
   schedule: [
     'validate',
     'nurseHours',
@@ -1989,6 +2068,7 @@ export const API_CHANNELS = {
     'clearBudget',
     'paySettings',
     'savePaySettings',
+    'reprice',
   ],
   dayOfPay: ['list', 'record', 'update', 'remove'],
   timeOff: [

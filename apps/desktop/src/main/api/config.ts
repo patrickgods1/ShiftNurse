@@ -18,6 +18,7 @@ import {
   deleteAcuityTier,
   deleteCoverageRequirement,
   deleteHoliday,
+  duplicateShiftType,
   fillCoverageWeek,
   getHomeUnit,
   getHppdTarget,
@@ -29,6 +30,7 @@ import {
   listRatioRulesForUnit,
   listShiftTypesForUnit,
   listUnits,
+  lockedShiftTypeIds,
   recordHolidayWork,
   type ShiftNurseDb,
   saveRuleSet,
@@ -59,9 +61,11 @@ export function configApi(
     },
     shiftTypes: {
       list: (unitId) => listShiftTypesForUnit(db, unitId),
+      lockedIds: (unitId) => lockedShiftTypeIds(db, unitId),
       create: (input) => transact(db, (tx) => createShiftType(tx, input, ACTOR)),
       update: (id, patch) => transact(db, (tx) => updateShiftType(tx, id, patch, ACTOR)),
       deactivate: (id) => transact(db, (tx) => deactivateShiftType(tx, id, ACTOR)),
+      duplicate: (id, changes) => transact(db, (tx) => duplicateShiftType(tx, id, changes, ACTOR)),
     },
     coverage: {
       list: (unitId) => listCoverageRequirementsForUnit(db, unitId),
@@ -72,7 +76,8 @@ export function configApi(
     holidays: {
       list: (unitId) => listHolidaysForUnit(db, unitId),
       create: (input) => transact(db, (tx) => createHoliday(tx, input, ACTOR)),
-      update: (id, patch) => transact(db, (tx) => updateHoliday(tx, id, patch, ACTOR)),
+      update: (id, patch, reason) =>
+        transact(db, (tx) => updateHoliday(tx, id, patch, ACTOR, reason)),
       delete: (id) => transact(db, (tx) => deleteHoliday(tx, id, ACTOR)),
       work: (holidayId) => holidayWorkSummary(db, holidayId),
       recordWork: (holidayId, nurseIds) =>
@@ -88,8 +93,10 @@ export function configApi(
       deleteTier: (id) => transact(db, (tx) => deleteAcuityTier(tx, id, ACTOR)),
       ratioRules: (unitId) => listRatioRulesForUnit(db, unitId),
       createRatioRule: (input) => transact(db, (tx) => createRatioRule(tx, input, ACTOR)),
-      updateRatioRule: (id, patch) => transact(db, (tx) => updateRatioRule(tx, id, patch, ACTOR)),
-      deactivateRatioRule: (id) => transact(db, (tx) => deactivateRatioRule(tx, id, ACTOR)),
+      updateRatioRule: (id, patch, reason) =>
+        transact(db, (tx) => updateRatioRule(tx, id, patch, ACTOR, reason)),
+      deactivateRatioRule: (id, reason) =>
+        transact(db, (tx) => deactivateRatioRule(tx, id, ACTOR, reason)),
       hppd: (unitId) => getHppdTarget(db, unitId) ?? null,
       setHppd: (unitId, targetHours) =>
         transact(db, (tx) => upsertHppdTarget(tx, unitId, targetHours, ACTOR)),

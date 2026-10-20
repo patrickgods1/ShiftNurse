@@ -14,7 +14,7 @@
  */
 
 import type { Id } from '@shiftnurse/core';
-import { recordAudit } from '../audit.js';
+import { recordAudit, recordAuditStrict } from '../audit.js';
 import type { DbLike } from '../client.js';
 
 export type PatchKeys<T> = { readonly [K in keyof Required<T>]: true };
@@ -68,6 +68,14 @@ export interface AuditedUpdate<Entity, Patch extends object> {
   notFound: string;
   /** Throw to refuse; runs after the key check and before anything is written. */
   validate?(values: Partial<Patch>, before: Entity): void;
+  /**
+   * True when this edit is one that must be explained (a looser ratio ceiling): the audit row is
+   * then written with `recordAuditStrict`, which refuses a blank `reason`. Refuse in `validate`
+   * first, in the manager's words — the strict audit runs after the write, as a backstop.
+   */
+  reasonRequired?(values: Partial<Patch>, before: Entity): boolean;
+  /** Why the change was made; recorded on the audit row whenever it is given. */
+  reason?: string;
   actor: string;
 }
 
@@ -88,10 +96,14 @@ export function auditedUpdate<Entity, Patch extends object>(
   if (before === undefined) throw new Error(spec.notFound);
   const values = patchOf(spec.patch, spec.allowed, spec.entityLabel);
   spec.validate?.(values, before);
+  const strict = spec.reasonRequired?.(values, before) ?? false;
   // An empty patch has no columns to set (drizzle throws); it is still the manager pressing Save.
   if (Object.keys(values).length > 0) spec.write(id, values);
   const after = spec.read(id);
   if (after === undefined) throw new Error(spec.notFound);
-  recordAudit(db, { entityType, entityId: id, action: 'update', actor: spec.actor, before, after });
+  const entry = { entityType, entityId: id, action: 'update' as const, actor: spec.actor, before };
+  const reason = spec.reason?.trim() ? { reason: spec.reason } : {};
+  if (strict) recordAuditStrict(db, { ...entry, after, ...reason }, { requireReason: true });
+  else recordAudit(db, { ...entry, after, ...reason });
   return after;
 }

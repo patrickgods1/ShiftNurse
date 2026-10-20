@@ -2,14 +2,28 @@
  * Acuity configuration: the unit's acuity tiers, the patient-ratio rules keyed on them, and the
  * HPPD target. Together with census these are what `deriveDemand` turns into required staff.
  *
+ * A ratio rule is deactivated, never deleted, and an edit that loosens, moves, re-cites or
+ * retires one needs a stated reason (`protectedRatioChanges`, audited strictly): that ceiling is
+ * what gets quoted if a shift's staffing is challenged, so the record must say why it changed.
+ * Tightening needs none — a state preset lowering a ceiling asks nobody.
+ *
  * A tier that a ratio rule (active or deactivated) or a census day's mix cites cannot be deleted:
  * the rule FK cascades and the census mix is a JSON map with no FK, so a delete would silently
  * drop the rules and leave those patients counted against no ratio, i.e. demand of zero.
  */
 
-import type { AcuityTier, HppdTarget, Id, RatioRole, RatioRule } from '@shiftnurse/core';
+import {
+  type AcuityTier,
+  describeRatioChanges,
+  type HppdTarget,
+  type Id,
+  protectedRatioChanges,
+  type RatioRole,
+  type RatioRule,
+  ratioRuleSubject,
+} from '@shiftnurse/core';
 import { and, asc, eq, sql } from 'drizzle-orm';
-import { recordAudit } from '../audit.js';
+import { recordAudit, recordAuditStrict } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
 import { toAcuityTier, toRatioRule } from '../mappers.js';
@@ -201,11 +215,34 @@ function validateRatioRule(role: RatioRole, minRnShare: number | null | undefine
   }
 }
 
+/** The rule as it would read after `values`: a `null` clears an optional field. */
+function ratioRuleAfter(before: RatioRule, values: Partial<RatioRulePatch>): RatioRule {
+  const { citation, minRnShare, ...rest } = values;
+  const { citation: oldCitation, minRnShare: oldShare, ...kept } = before;
+  const nextCitation = citation === undefined ? oldCitation : (citation ?? undefined);
+  const nextShare = minRnShare === undefined ? oldShare : (minRnShare ?? undefined);
+  return {
+    ...kept,
+    ...rest,
+    ...(nextCitation === undefined ? {} : { citation: nextCitation }),
+    ...(nextShare === undefined ? {} : { minRnShare: nextShare }),
+  };
+}
+
+function tierNamesFor(db: DbLike, unitId: Id): Record<Id, string> {
+  return Object.fromEntries(listAcuityTiersForUnit(db, unitId).map((t) => [t.id, t.name]));
+}
+
+/**
+ * A raised ceiling, a lowered RN share, a moved role or tier, a rewritten citation or a
+ * deactivation needs `reason`; it is refused, in words, before anything is written.
+ */
 export function updateRatioRule(
   db: DbLike,
   id: Id,
   patch: RatioRulePatch,
   actor: string,
+  reason?: string,
 ): RatioRule {
   return auditedUpdate<RatioRule, RatioRulePatch>(db, {
     id,
@@ -220,31 +257,52 @@ export function updateRatioRule(
     write: (rowId, values) =>
       db.update(ratioRuleTable).set(values).where(eq(ratioRuleTable.id, rowId)).run(),
     notFound: `Ratio rule ${id} not found`,
-    validate: (values, before) =>
+    validate: (values, before) => {
       validateRatioRule(
         values.role ?? before.role,
         values.minRnShare === undefined ? before.minRnShare : values.minRnShare,
-      ),
+      );
+      const after = ratioRuleAfter(before, values);
+      const changes = protectedRatioChanges(before, after);
+      if (changes.length > 0 && !reason?.trim()) {
+        const describe = describeRatioChanges(
+          before,
+          after,
+          changes,
+          tierNamesFor(db, before.unitId),
+        );
+        throw new Error(
+          `${describe} needs a reason: a looser, re-cited or retired patient ratio is what gets quoted if staffing is challenged.`,
+        );
+      }
+    },
+    reasonRequired: (values, before) =>
+      protectedRatioChanges(before, ratioRuleAfter(before, values)).length > 0,
+    ...(reason === undefined ? {} : { reason }),
     actor,
   });
 }
 
-/** Deactivate rather than delete: past periods were solved under this rule and must stay explainable. */
-export function deactivateRatioRule(db: DbLike, id: Id, actor: string): RatioRule {
+/** Deactivate rather than delete: past periods were solved under this rule, and the reason says why it went. */
+export function deactivateRatioRule(db: DbLike, id: Id, actor: string, reason: string): RatioRule {
   const row = db.select().from(ratioRuleTable).where(eq(ratioRuleTable.id, id)).get();
   if (!row) throw new Error(`Ratio rule ${id} not found`);
   const before = toRatioRule(row);
+  if (!before.active) throw new Error('That ratio rule is already inactive.');
+  if (!reason?.trim()) {
+    const subject = ratioRuleSubject(before, tierNamesFor(db, before.unitId));
+    throw new Error(
+      `Deactivating the ${subject} (1:${before.maxPatientsPerNurse}) needs a reason: a retired patient ratio is what gets quoted if staffing is challenged.`,
+    );
+  }
   const merged = { ...row, active: false };
   db.update(ratioRuleTable).set(merged).where(eq(ratioRuleTable.id, id)).run();
   const after = toRatioRule(merged);
-  recordAudit(db, {
-    entityType: 'ratio_rule',
-    entityId: id,
-    action: 'delete',
-    actor,
-    before,
-    after,
-  });
+  recordAuditStrict(
+    db,
+    { entityType: 'ratio_rule', entityId: id, action: 'delete', actor, before, after, reason },
+    { requireReason: true },
+  );
   return after;
 }
 

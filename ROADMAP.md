@@ -804,6 +804,9 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
       definition shared by ledger and both solvers (verify: npm run check; smoke; bench re-run)
 - [x] Phase 21 — Pay model: weekly regular rate, week-boundary split, FLSA crediting, DST hours for
       pay and statutory caps, holiday attribution (verify: npm run check; smoke; bench)
+- [x] Phase 22 — configuration versioning: shift-type lock and duplicate, ratio reasons, pay
+      snapshots, holiday re-dating, draft rule versions, history triggers (M-37 M-38 M-34 L-48
+      P2-10; verify: npm run check; smoke)
 
 ---
 

@@ -18,6 +18,7 @@ import type {
   HolidayYearInput,
   RatioRuleInput,
   RatioRulePatch,
+  ShiftTypeDuplicateChanges,
   ShiftTypeInput,
   ShiftTypePatch,
 } from '../../shared/api.js';
@@ -61,6 +62,38 @@ export function useUpdateShiftType() {
       api.shiftTypes.update(id, patch),
     onSuccess: (updated) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.shiftTypes(updated.unitId) });
+      afterConfigChange(queryClient);
+    },
+  });
+}
+
+/** Shift types a published or archived schedule used; main decides, the screen only reads. */
+export function useLockedShiftTypeIds(unitId: Id | undefined) {
+  return useQuery({
+    queryKey: [...queryKeys.shiftTypes(unitId ?? ''), 'locked'] as const,
+    queryFn: () => api.shiftTypes.lockedIds(unitId as Id),
+    enabled: unitId !== undefined,
+  });
+}
+
+export function useDuplicateShiftType() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: ({ id, changes }: { id: Id; changes: ShiftTypeDuplicateChanges }) =>
+      api.shiftTypes.duplicate(id, changes),
+    onSuccess: (result) => {
+      // The shift-type root covers the list and the locked ids; a duplicate also moves floors,
+      // credential requirements, future forecasts and wishes onto the new type.
+      queryClient.invalidateQueries({ queryKey: queryKeys.shiftTypes(result.shiftType.unitId) });
+      for (const queryKey of [
+        queryRoots.coverage,
+        queryRoots.credentials,
+        queryRoots.census,
+        queryRoots.preferences,
+      ]) {
+        queryClient.invalidateQueries({ queryKey });
+      }
       afterConfigChange(queryClient);
     },
   });
@@ -152,13 +185,25 @@ export function useCreateHoliday() {
   });
 }
 
-/** Rename, move between major and minor, or pair. Unpairing minors changes other rows too. */
+/** Rename, move between major and minor, pair, or re-date. Unpairing minors changes other rows too. */
 export function useUpdateHoliday() {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
-    mutationFn: ({ id, patch }: { id: Id; unitId: Id; patch: HolidayPatch }) =>
-      api.holidays.update(id, patch),
+    mutationFn: ({
+      id,
+      patch,
+      reason,
+    }: {
+      id: Id;
+      unitId: Id;
+      patch: HolidayPatch;
+      reason?: string;
+    }) =>
+      // Absent, not undefined: the bridge call records its arguments.
+      reason === undefined
+        ? api.holidays.update(id, patch)
+        : api.holidays.update(id, patch, reason),
     onSuccess: (_updated, variables) => {
       queryClient.invalidateQueries({ queryKey: configKeys.holidays(variables.unitId) });
       afterConfigChange(queryClient);
@@ -311,8 +356,8 @@ export function useCreateRatioRule() {
 export function useUpdateRatioRule() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, patch }: { id: Id; patch: RatioRulePatch }) =>
-      api.acuity.updateRatioRule(id, patch),
+    mutationFn: ({ id, patch, reason }: { id: Id; patch: RatioRulePatch; reason?: string }) =>
+      api.acuity.updateRatioRule(id, patch, reason),
     onSuccess: (updated) => {
       queryClient.invalidateQueries({ queryKey: configKeys.ratioRules(updated.unitId) });
       afterConfigChange(queryClient);
@@ -323,7 +368,8 @@ export function useUpdateRatioRule() {
 export function useDeactivateRatioRule() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: Id) => api.acuity.deactivateRatioRule(id),
+    mutationFn: ({ id, reason }: { id: Id; reason: string }) =>
+      api.acuity.deactivateRatioRule(id, reason),
     onSuccess: (deactivated) => {
       queryClient.invalidateQueries({ queryKey: configKeys.ratioRules(deactivated.unitId) });
       afterConfigChange(queryClient);

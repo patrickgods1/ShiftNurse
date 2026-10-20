@@ -8,8 +8,11 @@
  * my Saturday move?" Republishing after edits folds those changes into the next version, with
  * the diff computed by core so the version row says in plain numbers what changed.
  *
- * Everything here takes `DbLike` so a publish — version, status, ledger, audit — composes into
- * one `transact()` in the host. A partial publish is worse than a failed one.
+ * The first publication also keeps the pay configuration the period is priced under
+ * (`pay-snapshot.ts`); a republish keeps the one it went out with.
+ *
+ * Everything here takes `DbLike` so a publish — version, status, ledger, pay snapshot, audit —
+ * composes into one `transact()` in the host. A partial publish is worse than a failed one.
  */
 
 import type {
@@ -36,6 +39,7 @@ import {
   type UpsertFairnessLedgerInput,
   upsertFairnessLedgerEntry,
 } from './ledger.js';
+import { takePayConfigSnapshot } from './pay-snapshot.js';
 import { getPeriod, listAssignmentsForPeriod } from './schedule.js';
 
 // ---------------------------------------------------------------------------
@@ -187,6 +191,9 @@ export function publishSchedule(
     reason,
     at: publishedAt,
   });
+  // Only the first publication: staff are paid under what went out, and a republish is a change
+  // to the shifts, not to the contract. A deliberate `repricePeriod` is the only later snapshot.
+  if (!republish) takePayConfigSnapshot(db, period, actor);
 
   let ledgerEntries = 0;
   for (const entry of input.ledger ?? []) {

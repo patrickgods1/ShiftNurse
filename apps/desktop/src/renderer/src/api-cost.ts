@@ -65,6 +65,17 @@ export function useClearBudget(periodId: Id | undefined) {
   });
 }
 
+/** Re-pricing a published period is a configuration-wide refresh: its report and alerts move. */
+export function useRepricePeriod() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: ({ periodId, reason }: { periodId: Id; reason: string }) =>
+      api.cost.reprice(periodId, reason),
+    onSuccess: () => afterConfigChange(queryClient),
+  });
+}
+
 /** Pay configuration changes re-price every period, and feed publish alerts and Generate's cost. */
 function useInvalidateConfig(unitId: Id, key: (typeof costKeys)[keyof typeof costKeys]) {
   const queryClient = useQueryClient();

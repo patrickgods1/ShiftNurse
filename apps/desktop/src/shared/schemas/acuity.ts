@@ -38,8 +38,10 @@ export const acuitySchemas = {
       .omit({ unitId: true, citation: true, minRnShare: true })
       .partial()
       .extend({ citation: text.nullable().optional(), minRnShare: rnShare.nullable().optional() }),
+    text.optional(),
   ]),
-  deactivateRatioRule: z.tuple([id]),
+  // A blank reason is refused by the repository, which can name the rule.
+  deactivateRatioRule: z.tuple([id, text]),
   hppd: z.tuple([id]),
   setHppd: z.tuple([id, z.number().gt(0, 'must be more than zero')]),
 } satisfies ResourceSchemas<'acuity'>;

@@ -28,7 +28,9 @@ const shiftTypeInput = object({
 
 export const shiftTypesSchemas = {
   list: z.tuple([id]),
+  lockedIds: z.tuple([id]),
   create: z.tuple([shiftTypeInput]),
   update: z.tuple([id, shiftTypeInput.omit({ unitId: true }).partial()]),
   deactivate: z.tuple([id]),
+  duplicate: z.tuple([id, shiftTypeInput.omit({ unitId: true, active: true }).partial()]),
 } satisfies ResourceSchemas<'shiftTypes'>;

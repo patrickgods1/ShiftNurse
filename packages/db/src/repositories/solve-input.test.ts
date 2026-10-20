@@ -31,7 +31,14 @@ import {
 import { createIncompatibilityGroup } from './incompatibility.js';
 import { createNurseUnit } from './nurse-units.js';
 import { createOvertimeVolunteer } from './overtime-volunteers.js';
-import { createPayRate, listPayRatesForUnit, savePaySettings } from './pay.js';
+import {
+  createPayRate,
+  getPaySettings,
+  listActiveOvertimeRules,
+  listPayRatesForUnit,
+  savePaySettings,
+  updateOvertimeRule,
+} from './pay.js';
 import { createPreceptorship } from './preceptorships.js';
 import { publishSchedule } from './publish.js';
 import { createRestWaiver, restWaiversForPeriod } from './rest-waivers.js';
@@ -305,6 +312,53 @@ describe('the pay a period is costed under', () => {
   );
 });
 
+describe('the pay a published period went out under', () => {
+  const published = () =>
+    listPeriodsForUnit(handle.db, seeded.unitId).find((p) => p.status === 'published')!;
+  const draft = () => getPeriod(handle.db, seeded.draftPeriodId)!;
+
+  it('gives Generate and conflicts the overtime rules a published period went out under', () => {
+    const rules = listActiveOvertimeRules(handle.db, seeded.unitId);
+    expect(rules.length).toBeGreaterThan(0);
+    for (const r of rules) updateOvertimeRule(handle.db, r.id, { active: false }, ACTOR);
+    expect(loadPeriodInput(handle.db, published()).cost!.overtimeRules.map((r) => r.id)).toEqual(
+      rules.map((r) => r.id),
+    );
+    expect(loadPeriodInput(handle.db, draft()).cost!.overtimeRules).toEqual([]);
+  });
+
+  it('keeps the stacking, holiday coverage and week attribution a published period went out under', () => {
+    const old = getPaySettings(handle.db, seeded.unitId);
+    const changed = {
+      ...old,
+      premiumStacking: old.premiumStacking === 'compound' ? 'additive' : 'compound',
+      holidayPayCoversOvertime: !old.holidayPayCoversOvertime,
+      overtimeWindowAttribution: old.overtimeWindowAttribution === 'clock' ? 'start' : 'clock',
+    } as const;
+    savePaySettings(handle.db, seeded.unitId, changed, ACTOR);
+    expect(loadPeriodInput(handle.db, published()).cost).toMatchObject({
+      premiumStacking: old.premiumStacking,
+      holidayPayCoversOvertime: old.holidayPayCoversOvertime,
+      overtimeWindowAttribution: old.overtimeWindowAttribution,
+    });
+    expect(loadPeriodInput(handle.db, draft()).cost).toMatchObject({
+      premiumStacking: changed.premiumStacking,
+      holidayPayCoversOvertime: changed.holidayPayCoversOvertime,
+      overtimeWindowAttribution: changed.overtimeWindowAttribution,
+    });
+  });
+
+  it('judges a published period under the holiday attribution it was published with', () => {
+    // The scenario unit never chose one, so its schedules went out under the start-day reading.
+    expect(getUnit(handle.db, seeded.unitId)?.holidayAttribution).toBeUndefined();
+    transact(handle.db, (tx) =>
+      updateUnit(tx, seeded.unitId, { holidayAttribution: 'clock' }, ACTOR),
+    );
+    expect(loadPeriodInput(handle.db, published()).unit.holidayAttribution).toBeUndefined();
+    expect(loadPeriodInput(handle.db, draft()).unit.holidayAttribution).toBe('clock');
+  });
+});
+
 describe('the leave a period reads', () => {
   const march = { startDate: isoDate('2026-03-01'), endDate: isoDate('2026-03-14') };
 
@@ -568,7 +622,7 @@ describe('a licensed-nurse ratio', () => {
   it('clears the share with null, and refuses one on a single-role rule or past 100%', () => {
     const rule = licensedRule(0.5);
     const cleared = transact(handle.db, (tx) =>
-      updateRatioRule(tx, rule.id, { minRnShare: null }, ACTOR),
+      updateRatioRule(tx, rule.id, { minRnShare: null }, ACTOR, 'RN mix agreed with the union'),
     );
     expect(cleared.minRnShare).toBeUndefined();
     expect(() =>

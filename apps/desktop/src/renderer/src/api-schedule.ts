@@ -25,7 +25,7 @@ import type {
   MoveAssignmentInput,
 } from '../../shared/api.js';
 import { api, queryKeys } from './api.js';
-import { afterAssignmentsChange } from './period-cache.js';
+import { afterAssignmentsChange, afterConfigChange } from './period-cache.js';
 import { queryRoots } from './query-roots.js';
 
 export interface WithReason {
@@ -145,6 +145,25 @@ export function useSetRequestsCloseOn(unitId: Id | undefined) {
     mutationFn: ({ periodId, date }: { periodId: Id; date: IsoDate | null }) =>
       api.periods.setRequestsCloseOn(periodId, date),
     onSuccess: () => {
+      if (unitId !== undefined) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.periods(unitId) });
+      }
+    },
+  });
+}
+
+/**
+ * Move a draft to the unit's latest rules. The verdicts, prices, alerts and any Generate batch
+ * were all made under the old version, so this refreshes what a configuration change does, and
+ * the periods list that carries the version the pill reads.
+ */
+export function useAdoptLatestRules(unitId: Id | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (periodId: Id) => api.periods.adoptLatestRules(periodId),
+    onSuccess: () => {
+      afterConfigChange(queryClient);
       if (unitId !== undefined) {
         void queryClient.invalidateQueries({ queryKey: queryKeys.periods(unitId) });
       }

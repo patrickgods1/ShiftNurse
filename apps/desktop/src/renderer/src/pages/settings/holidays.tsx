@@ -351,6 +351,9 @@ function HolidayRow({
   const status = lastYearStatus(holiday, all);
   const [renaming, setRenaming] = useState<string | undefined>(undefined);
   useUnsavedChanges('Holiday name', renaming !== undefined && renaming.trim() !== holiday.name);
+  const [moving, setMoving] = useState<{ date: Holiday['date'] | ''; reason: string } | undefined>(
+    undefined,
+  );
 
   const move = async () => {
     const toMajor = !holiday.isMajor;
@@ -422,6 +425,15 @@ function HolidayRow({
               Rename
             </button>
           ) : null}
+          {moving === undefined ? (
+            <button
+              type="button"
+              className={SMALL}
+              onClick={() => setMoving({ date: holiday.date, reason: '' })}
+            >
+              Change date
+            </button>
+          ) : null}
           {past ? (
             <button type="button" className={SMALL} onClick={() => onWhoWorked(holiday)}>
               Who worked
@@ -464,6 +476,53 @@ function HolidayRow({
           </button>
         </span>
       </div>
+      {moving !== undefined ? (
+        <form
+          aria-label={`Change the date of ${holiday.name}`}
+          className="flex flex-wrap items-end gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (moving.date === '' || moving.date === holiday.date) return;
+            const reason = moving.reason.trim();
+            update.mutate(
+              {
+                id: holiday.id,
+                unitId,
+                patch: { date: moving.date },
+                ...(reason === '' ? {} : { reason }),
+              },
+              { onSuccess: () => setMoving(undefined) },
+            );
+          }}
+        >
+          <DateField
+            id={`move-date-${holiday.id}`}
+            label="New date"
+            required
+            value={moving.date}
+            onChange={(date) => setMoving({ ...moving, date })}
+          />
+          <Field
+            id={`move-reason-${holiday.id}`}
+            label="Reason"
+            hint="Needed when a published schedule covers either date."
+            compact
+          >
+            <textarea
+              id={`move-reason-${holiday.id}`}
+              value={moving.reason}
+              onChange={(event) => setMoving({ ...moving, reason: event.target.value })}
+              className={`${INPUT} min-h-16`}
+            />
+          </Field>
+          <button type="submit" className={SMALL} disabled={update.isPending}>
+            Save
+          </button>
+          <button type="button" className={SMALL} onClick={() => setMoving(undefined)}>
+            Cancel
+          </button>
+        </form>
+      ) : null}
       {status.kind === 'continues' ? (
         <p className="text-xs text-text-muted">
           Rotates from {status.previous.name}, {formatDateWithWeekday(status.previous.date)}

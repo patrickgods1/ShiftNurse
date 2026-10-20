@@ -10,6 +10,7 @@ import {
   nurseRole,
   object,
   type ResourceSchemas,
+  text,
   timeOfDay,
 } from './primitives.js';
 
@@ -162,4 +163,5 @@ export const costSchemas = {
       overtimeWindowAttribution: z.enum(['clock', 'start']),
     }),
   ]),
+  reprice: z.tuple([id, text]),
 } satisfies ResourceSchemas<'cost'>;

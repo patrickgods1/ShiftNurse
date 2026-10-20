@@ -7,6 +7,10 @@
  * year — but it is what every solve and every compliance report is judged against, so reads
  * here favour returning a complete, ready-to-use shape (see `getRuleSet`/`getLatestRuleSet`)
  * over a thin row projection the caller has to reassemble itself.
+ *
+ * A shift type a published or archived schedule used keeps its timing, pay and night fields
+ * (`updateShiftType` refuses them): those schedules are judged and priced from the live row.
+ * `duplicateShiftType` is the way forward: a new type carrying the old one's configuration.
  */
 
 import type {
@@ -28,6 +32,7 @@ import type {
   Unit,
 } from '@shiftnurse/core';
 import {
+  dateInRange,
   describeDate,
   isIsoDate,
   JURISDICTION_PRESETS,
@@ -35,7 +40,7 @@ import {
   WEEKDAY_NAMES,
   withinShiftProblem,
 } from '@shiftnurse/core';
-import { and, asc, eq, gte, lte, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, lte, ne, sql } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
@@ -44,17 +49,25 @@ import {
   toCoverageRequirement,
   toCredentialRequirement,
   toHoliday,
+  toSchedulePeriod,
   toShiftType,
   toUnit,
 } from '../mappers.js';
 import {
+  assignment as assignmentTable,
+  censusForecast as censusForecastTable,
   coverageRequirement as coverageRequirementTable,
   holiday as holidayTable,
+  preference as preferenceTable,
+  scheduleChange as scheduleChangeTable,
+  schedulePeriod as schedulePeriodTable,
   shiftCredentialRequirement as shiftCredentialRequirementTable,
   shiftType as shiftTypeTable,
   unit as unitTable,
 } from '../schema.js';
-import { auditedUpdate, type PatchKeys } from './patch.js';
+import { listCensusHistory } from './census.js';
+import { auditedUpdate, type PatchKeys, patchOf } from './patch.js';
+import { listPreferencesForNurse, replaceNursePreferences } from './roster.js';
 
 // ---------------------------------------------------------------------------
 // Unit
@@ -294,6 +307,99 @@ const SHIFT_TYPE_PATCH_KEYS: PatchKeys<ShiftTypePatch> = {
   withinShiftTypeId: true,
 };
 
+/**
+ * Fields a published schedule was judged and priced with. `schedule_version` stores only
+ * assignment rows, so a published shift is read through its shift type's live row: changing
+ * these on a type a published or archived schedule used would silently re-judge and reprice it.
+ * (`ShiftType.elsewhere` is never stored or patchable, so it is not a column to lock.)
+ */
+const LOCKED_SHIFT_TYPE_FIELDS = [
+  'startTime',
+  'durationHours',
+  'isNight',
+  'isOnCall',
+  'withinShiftTypeId',
+] as const;
+
+const LOCKED_FIELD_LABELS: Record<(typeof LOCKED_SHIFT_TYPE_FIELDS)[number], string> = {
+  startTime: 'start time',
+  durationHours: 'paid hours',
+  isNight: 'night flag',
+  isOnCall: 'on-call flag',
+  withinShiftTypeId: 'the shift it runs inside',
+};
+
+/**
+ * How many published or archived schedules used this shift type. A shift removed after publishing
+ * survives only in the change log, and that schedule was still judged with it, so the log counts.
+ */
+export function shiftTypeHistoryCount(db: DbLike, shiftTypeId: Id): number {
+  const live = db
+    .selectDistinct({ id: schedulePeriodTable.id })
+    .from(assignmentTable)
+    .innerJoin(schedulePeriodTable, eq(assignmentTable.periodId, schedulePeriodTable.id))
+    .where(
+      and(
+        eq(assignmentTable.shiftTypeId, shiftTypeId),
+        inArray(schedulePeriodTable.status, ['published', 'archived']),
+      ),
+    )
+    .all();
+  const logged = db
+    .selectDistinct({ id: schedulePeriodTable.id })
+    .from(scheduleChangeTable)
+    .innerJoin(schedulePeriodTable, eq(scheduleChangeTable.periodId, schedulePeriodTable.id))
+    .where(
+      and(
+        eq(scheduleChangeTable.shiftTypeId, shiftTypeId),
+        inArray(schedulePeriodTable.status, ['published', 'archived']),
+      ),
+    )
+    .all();
+  return new Set([...live, ...logged].map((r) => r.id)).size;
+}
+
+/** The unit's shift types whose timing is locked, in display order; one query for the screen. */
+export function lockedShiftTypeIds(db: DbLike, unitId: Id): Id[] {
+  return db
+    .select({ id: shiftTypeTable.id })
+    .from(shiftTypeTable)
+    .where(
+      and(
+        eq(shiftTypeTable.unitId, unitId),
+        sql`(exists (select 1 from ${assignmentTable}
+              join ${schedulePeriodTable} on ${schedulePeriodTable.id} = ${assignmentTable.periodId}
+              where ${assignmentTable.shiftTypeId} = ${shiftTypeTable.id}
+                and ${schedulePeriodTable.status} in ('published', 'archived'))
+          or exists (select 1 from ${scheduleChangeTable}
+              join ${schedulePeriodTable} on ${schedulePeriodTable.id} = ${scheduleChangeTable.periodId}
+              where ${scheduleChangeTable.shiftTypeId} = ${shiftTypeTable.id}
+                and ${schedulePeriodTable.status} in ('published', 'archived')))`,
+      ),
+    )
+    .orderBy(asc(shiftTypeTable.sortOrder), asc(shiftTypeTable.name))
+    .all()
+    .map((r) => r.id);
+}
+
+function listWords(words: string[]): string {
+  if (words.length <= 1) return words.join('');
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}
+
+function assertTimingNotLocked(db: DbLike, values: Partial<ShiftTypePatch>, before: ShiftType) {
+  const changed = LOCKED_SHIFT_TYPE_FIELDS.filter((k) => k in values && values[k] !== before[k]);
+  if (changed.length === 0) return;
+  const n = shiftTypeHistoryCount(db, before.id);
+  if (n === 0) return;
+  throw new Error(
+    `${before.name} is on ${n} published or archived schedule${n === 1 ? '' : 's'}, so its ` +
+      `${listWords(changed.map((k) => LOCKED_FIELD_LABELS[k]))} cannot change: ` +
+      `${n === 1 ? 'that schedule was' : 'those schedules were'} judged and priced with ` +
+      `${changed.length === 1 ? 'it' : 'them'}. Duplicate it as a new type instead.`,
+  );
+}
+
 export function updateShiftType(
   db: DbLike,
   id: Id,
@@ -314,7 +420,10 @@ export function updateShiftType(
       db.update(shiftTypeTable).set(values).where(eq(shiftTypeTable.id, rowId)).run(),
     notFound: `Shift type ${id} not found`,
     // A new time or length can stop it fitting inside its shift, or stop another fitting inside it.
-    validate: (values, before) => assertCoverFits(db, { ...before, ...values }),
+    validate: (values, before) => {
+      assertTimingNotLocked(db, values, before);
+      assertCoverFits(db, { ...before, ...values });
+    },
     actor,
   });
 }
@@ -340,6 +449,165 @@ export function deactivateShiftType(db: DbLike, id: Id, actor: string): ShiftTyp
     after,
   });
   return after;
+}
+
+/** What may differ on the copy; everything else is the old type's. */
+export type ShiftTypeDuplicateChanges = Partial<
+  Pick<
+    ShiftType,
+    | 'name'
+    | 'abbreviation'
+    | 'startTime'
+    | 'durationHours'
+    | 'isNight'
+    | 'isOnCall'
+    | 'withinShiftTypeId'
+    | 'color'
+    | 'sortOrder'
+  >
+>;
+
+const SHIFT_TYPE_DUPLICATE_KEYS: PatchKeys<ShiftTypeDuplicateChanges> = {
+  name: true,
+  abbreviation: true,
+  startTime: true,
+  durationHours: true,
+  isNight: true,
+  isOnCall: true,
+  withinShiftTypeId: true,
+  color: true,
+  sortOrder: true,
+};
+
+export interface ShiftTypeDuplicateResult {
+  shiftType: ShiftType;
+  /** The old type, now inactive. */
+  retired: ShiftType;
+  /** Shifts on the old type in this unit's drafts: left for the manager or the next Generate. */
+  draftShiftsOnOld: number;
+  /** Names of shifts with published history of their own, which still run inside the old type. */
+  stillInsideOld: string[];
+}
+
+/**
+ * Replace a locked shift type with a new one in one step. A type made by hand starts with no
+ * floors, credentials, forecasts or wishes, so retiring the old one would silently drop its demand
+ * from every future draft. Takes the transaction because the copies are only correct together
+ * with the retirement: a half-done duplicate leaves two active types splitting one shift's demand.
+ * What published schedules were judged with stays on the old type: forecasts dated inside them,
+ * and mid shifts that have published history of their own (moving those would re-judge it).
+ */
+export function duplicateShiftType(
+  tx: ShiftNurseTx,
+  id: Id,
+  changes: ShiftTypeDuplicateChanges,
+  actor: string,
+): ShiftTypeDuplicateResult {
+  // An undefined key spread over the old fields would blank them; a `unitId` would move the copy.
+  const wanted = patchOf(changes, SHIFT_TYPE_DUPLICATE_KEYS, 'shift type copy');
+  const old = getShiftType(tx, id);
+  if (!old) throw new Error(`Shift type ${id} not found`);
+  if (!old.active)
+    throw new Error(`${old.name} is already retired; create a new shift type instead.`);
+  const name = wanted.name ?? old.name;
+  if (name.trim().toLowerCase() === old.name.trim().toLowerCase()) {
+    throw new Error(
+      `Give the new shift type a different name from ${old.name}, so the two can be told apart on old schedules.`,
+    );
+  }
+
+  const { id: _oldId, elsewhere: _elsewhere, ...fields } = old;
+  const created = createShiftType(tx, { ...fields, ...wanted, active: true }, actor);
+
+  for (const floor of listCoverageRequirementsForUnit(tx, old.unitId)) {
+    if (floor.shiftTypeId !== old.id) continue;
+    const { id: _floorId, ...copy } = floor;
+    upsertCoverageRequirement(tx, { ...copy, shiftTypeId: created.id }, actor);
+  }
+
+  for (const req of listShiftCredentialRequirementsForUnit(tx, old.unitId)) {
+    if (req.shiftTypeId !== old.id) continue;
+    const { id: _reqId, ...copy } = req;
+    createShiftCredentialRequirement(tx, { ...copy, shiftTypeId: created.id }, actor);
+  }
+
+  const judged = tx
+    .select()
+    .from(schedulePeriodTable)
+    .where(
+      and(
+        eq(schedulePeriodTable.unitId, old.unitId),
+        inArray(schedulePeriodTable.status, ['published', 'archived']),
+      ),
+    )
+    .all()
+    .map(toSchedulePeriod);
+  for (const before of listCensusHistory(tx, old.unitId)) {
+    if (before.shiftTypeId !== old.id) continue;
+    if (judged.some((p) => dateInRange(before.date, p.startDate, p.endDate))) continue;
+    tx.update(censusForecastTable)
+      .set({ shiftTypeId: created.id })
+      .where(eq(censusForecastTable.id, before.id))
+      .run();
+    recordAudit(tx, {
+      entityType: 'census_forecast',
+      entityId: before.id,
+      action: 'update',
+      actor,
+      before,
+      after: { ...before, shiftTypeId: created.id },
+    });
+  }
+
+  // Found through the preference rows, not the unit's roster: a float nurse may hold the wish.
+  const wishers = tx
+    .selectDistinct({ nurseId: preferenceTable.nurseId })
+    .from(preferenceTable)
+    .where(
+      and(
+        eq(preferenceTable.shiftTypeId, old.id),
+        inArray(preferenceTable.kind, ['prefer_shift_type', 'avoid_shift_type']),
+      ),
+    )
+    .all()
+    .map((r) => r.nurseId)
+    .sort();
+  for (const nurseId of wishers) {
+    const current = listPreferencesForNurse(tx, nurseId);
+    const copies = current.flatMap((p) =>
+      (p.kind === 'prefer_shift_type' || p.kind === 'avoid_shift_type') && p.shiftTypeId === old.id
+        ? [{ ...p, id: ids.preference(), shiftTypeId: created.id }]
+        : [],
+    );
+    replaceNursePreferences(tx, nurseId, [...current, ...copies], actor);
+  }
+
+  const stillInsideOld: string[] = [];
+  for (const child of listShiftTypesForUnit(tx, old.unitId)) {
+    if (!child.active || child.withinShiftTypeId !== old.id) continue;
+    if (shiftTypeHistoryCount(tx, child.id) === 0) {
+      updateShiftType(tx, child.id, { withinShiftTypeId: created.id }, actor);
+    } else {
+      stillInsideOld.push(child.name);
+    }
+  }
+
+  const retired = deactivateShiftType(tx, old.id, actor);
+
+  const draftShiftsOnOld = tx
+    .select({ id: assignmentTable.id })
+    .from(assignmentTable)
+    .innerJoin(schedulePeriodTable, eq(assignmentTable.periodId, schedulePeriodTable.id))
+    .where(
+      and(
+        eq(assignmentTable.shiftTypeId, old.id),
+        eq(schedulePeriodTable.unitId, old.unitId),
+        eq(schedulePeriodTable.status, 'draft'),
+      ),
+    )
+    .all().length;
+
+  return { shiftType: created, retired, draftShiftsOnOld, stillInsideOld };
 }
 
 // ---------------------------------------------------------------------------

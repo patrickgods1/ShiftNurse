@@ -98,7 +98,6 @@ describe('a ratio rule in Settings', () => {
       role: 'licensed',
       acuityTierId: null,
       maxPatientsPerNurse: 5,
-      citation: 'old',
       minRnShare: 0.333,
       active: true,
     };
@@ -128,6 +127,13 @@ describe('a ratio rule in Settings', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
     fireEvent.change(field('ratio-role'), { target: { value: 'RN' } });
     fireEvent.submit((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).form!);
+    // Moving the ceiling to another role is a protected edit, so the reason comes first.
+    fireEvent.change(await screen.findByLabelText(/Reason/), {
+      target: { value: 'Unit reclassed' },
+    });
+    fireEvent.submit(
+      (screen.getByRole('button', { name: 'Save change' }) as HTMLButtonElement).form!,
+    );
 
     await waitFor(() => expect(bridge.callsTo('acuity', 'updateRatioRule')).toHaveLength(1));
     expect(bridge.callsTo('acuity', 'updateRatioRule')[0]![1]).toEqual({
@@ -148,5 +154,72 @@ describe('a ratio rule in Settings', () => {
     };
     renderWithApp(<RatioRulesSection unitId="unit-1" tiers={[]} rules={[rule]} />);
     expect(await screen.findByText(/at least 33\.3% RNs/)).toBeTruthy();
+  });
+});
+
+describe('changing a ratio ceiling', () => {
+  const rule: RatioRule = {
+    id: 'r1',
+    unitId: 'unit-1',
+    role: 'RN',
+    acuityTierId: 't-high',
+    maxPatientsPerNurse: 4,
+    active: true,
+  };
+  const tiers = [{ id: 't-high', name: 'High', level: 3 }] as never;
+
+  async function editMax(value: string) {
+    renderWithApp(<RatioRulesSection unitId="unit-1" tiers={tiers} rules={[rule]} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    fireEvent.change(field('ratio-max'), { target: { value } });
+    fireEvent.submit((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).form!);
+  }
+
+  it('asks why before raising a ceiling, and sends the reason', async () => {
+    bridge.respond('acuity', 'updateRatioRule', (() => ({})) as never);
+    await editMax('6');
+    expect(await screen.findByText(/ceiling 1:4 → 1:6/)).toBeTruthy();
+    expect(bridge.callsTo('acuity', 'updateRatioRule')).toHaveLength(0);
+    const confirm = screen.getByRole('button', { name: 'Save change' }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: 'MOU 2026-3' } });
+    fireEvent.submit(confirm.form!);
+    await waitFor(() => expect(bridge.callsTo('acuity', 'updateRatioRule')).toHaveLength(1));
+    expect(bridge.callsTo('acuity', 'updateRatioRule')[0]).toEqual([
+      'r1',
+      { maxPatientsPerNurse: 6 },
+      'MOU 2026-3',
+    ]);
+  });
+
+  it('saves a tighter ceiling straight away', async () => {
+    bridge.respond('acuity', 'updateRatioRule', (() => ({})) as never);
+    await editMax('3');
+    await waitFor(() => expect(bridge.callsTo('acuity', 'updateRatioRule')).toHaveLength(1));
+    expect(bridge.callsTo('acuity', 'updateRatioRule')[0]).toEqual([
+      'r1',
+      { maxPatientsPerNurse: 3 },
+      undefined,
+    ]);
+    expect(screen.queryByText('Why change this ratio?')).toBeNull();
+  });
+
+  it('needs a reason to deactivate a ceiling', async () => {
+    bridge.respond('acuity', 'deactivateRatioRule', (() => ({})) as never);
+    renderWithApp(<RatioRulesSection unitId="unit-1" tiers={tiers} rules={[rule]} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Deactivate' }));
+    const confirm = screen
+      .getAllByRole('button', { name: 'Deactivate' })
+      .find((b) => (b as HTMLButtonElement).type === 'submit') as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(/Reason/), {
+      target: { value: 'Unit closed to step-down' },
+    });
+    fireEvent.submit(confirm.form!);
+    await waitFor(() => expect(bridge.callsTo('acuity', 'deactivateRatioRule')).toHaveLength(1));
+    expect(bridge.callsTo('acuity', 'deactivateRatioRule')[0]).toEqual([
+      'r1',
+      'Unit closed to step-down',
+    ]);
   });
 });

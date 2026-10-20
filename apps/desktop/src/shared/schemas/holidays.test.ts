@@ -18,9 +18,13 @@ describe('a holiday arriving over IPC', () => {
     expect(holidaysSchemas.create.safeParse([input]).success).toBe(false);
   });
 
-  it('lets a rename unpair the holiday but not move its date', () => {
+  it('lets a rename unpair the holiday, and a move to another date carry a reason', () => {
     expect(holidaysSchemas.update.safeParse(['h-1', { pairedHolidayId: null }]).success).toBe(true);
-    expect(holidaysSchemas.update.safeParse(['h-1', { date: '2026-12-25' }]).success).toBe(false);
+    expect(
+      holidaysSchemas.update.safeParse(['h-1', { date: '2026-12-26' }, 'Entered wrong']).success,
+    ).toBe(true);
+    expect(holidaysSchemas.update.safeParse(['h-1', { date: '2026-02-30' }]).success).toBe(false);
+    expect(holidaysSchemas.update.safeParse(['h-1', { unitId: 'u-2' }]).success).toBe(false);
   });
 
   it('accepts a proposed year with a minor holiday waiting on a partner in the plan', () => {

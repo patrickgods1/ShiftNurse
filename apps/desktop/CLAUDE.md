@@ -129,10 +129,12 @@
   it. The rule is rules → `'busy'`, everything else → `'worked'`; the publish preview and the
   Generate preview build both views.
 - **`schedule.validate` judges a period by its own `ruleSetId` snapshot, never "latest",**
-  and from `loadPeriodInput`, the same input Generate and conflicts read (`ruleContextForInput`),
-  so an input added there reaches the grid too. A full pass is cheap enough in main that the grid
+  with the unit's holiday attribution taken from the period's pay snapshot. It judges from
+  `loadPeriodInput`, the same input Generate and conflicts read (`ruleContextForInput`), so an
+  input added there reaches the grid too. A full pass is cheap enough in main that the grid
   re-validates after every mutation via query invalidation rather than predicting violations
-  client-side.
+  client-side. A draft stays on its version until `periods.adoptLatestRules` (explicit, audited,
+  drafts only); the board's `rules-version` pill offers it when a newer version exists.
 - **Only the app's own page may navigate or call IPC.** `main/trusted-origin.ts` is the
   policy: `will-navigate` is blocked for any other URL (a file dropped on the grid would
   otherwise load with the preload bridge), `ipc.ts` refuses untrusted sender frames, and

@@ -5,7 +5,12 @@
  */
 
 import type { PublishOutcome, PublishPreview } from '@shared/api.js';
-import { isoDate, type SchedulePeriod, type ScheduleVersion } from '@shiftnurse/core';
+import {
+  defaultRuleSet,
+  isoDate,
+  type SchedulePeriod,
+  type ScheduleVersion,
+} from '@shiftnurse/core';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
@@ -70,6 +75,18 @@ function renderDialog() {
 const confirm = async () => (await screen.findByTestId('publish-confirm')) as HTMLButtonElement;
 
 describe('publishing a schedule', () => {
+  it('says which rule version the schedule goes out under', async () => {
+    bridge.respond('publish', 'preview', preview());
+    bridge.respond('rules', 'getLatest', { ...defaultRuleSet('unit-1'), id: 'rs-2', version: 2 });
+    renderDialog();
+    await confirm();
+    await waitFor(() =>
+      expect(screen.getByTestId('publish-rules-version').textContent).toBe(
+        'Published under rules version 1. The latest is version 2.',
+      ),
+    );
+  });
+
   it('publishes a first version with no reason asked for', async () => {
     bridge.respond('publish', 'preview', preview());
     renderDialog();

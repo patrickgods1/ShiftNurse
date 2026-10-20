@@ -802,6 +802,7 @@ export const holidayWork = sqliteTable(
 // Rule sets
 // ---------------------------------------------------------------------------
 
+// Append-only in the file: `rule_set_no_update` / `rule_set_no_delete` (migration 0049).
 export const ruleSet = sqliteTable(
   'rule_set',
   {
@@ -829,6 +830,7 @@ export const ruleSet = sqliteTable(
   (t) => [uniqueIndex('rule_set_version_idx').on(t.unitId, t.version)],
 );
 
+// Append-only in the file: `rule_config_no_update` / `rule_config_no_delete` (migration 0049).
 export const ruleConfig = sqliteTable(
   'rule_config',
   {
@@ -926,6 +928,7 @@ export const assignment = sqliteTable(
  * date, and normalising it would invite someone to join it back to live rows that have since
  * moved. `version` is 1-based per period.
  */
+// Append-only in the file: `schedule_version_no_update` / `schedule_version_no_delete` (migration 0049).
 export const scheduleVersion = sqliteTable(
   'schedule_version',
   {
@@ -950,6 +953,7 @@ export const scheduleVersion = sqliteTable(
  * The post-publish change log. `assignment_id` carries no foreign key on purpose: a removal
  * deletes the row it points at, and the log must keep pointing at the historical id.
  */
+// Append-only in the file: `schedule_change_no_update` / `schedule_change_no_delete` (migration 0049).
 export const scheduleChange = sqliteTable(
   'schedule_change',
   {
@@ -1239,6 +1243,31 @@ export const paySettings = sqliteTable('pay_settings', {
   overtimeWindowAttribution: text('overtime_window_attribution').$type<'clock' | 'start'>(),
   updatedAt: timestamp('updated_at').notNull(),
 });
+
+/**
+ * The pay configuration a published period is priced under: differentials, overtime rules, pay
+ * settings, the unit's holiday attribution and nearby holidays, as one JSON `PayConfig`. Taken at
+ * first publication and again only by a deliberate reprice (`seq` counts them), so editing the
+ * live configuration never reprices a schedule staff were already paid under. `period_id` has no
+ * cascade: a period with a snapshot is published, and published periods are never deleted.
+ */
+// Append-only in the file: `pay_config_snapshot_no_update` / `pay_config_snapshot_no_delete` (migration 0049).
+export const payConfigSnapshot = sqliteTable(
+  'pay_config_snapshot',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    periodId: text('period_id')
+      .notNull()
+      .references(() => schedulePeriod.id)
+      .$type<Id>(),
+    seq: integer('seq').notNull(),
+    takenAt: timestamp('taken_at').notNull(),
+    takenBy: text('taken_by').notNull(),
+    reason: text('reason'),
+    config: text('config', { mode: 'json' }).notNull(),
+  },
+  (t) => [uniqueIndex('pay_config_snapshot_period_seq_idx').on(t.periodId, t.seq)],
+);
 
 // ---------------------------------------------------------------------------
 // Conflicts

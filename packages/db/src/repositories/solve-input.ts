@@ -7,6 +7,9 @@
  * composed, plus the one query no repository owns, `periodTailFor`'s same-unit overlap.
  * `perNurseRecordsFor` is the only source of person-scoped records (credentials, leave, pay
  * rates and the rest), so a nurse floated in brings hers wherever every caller reads them.
+ *
+ * A published period's pay configuration and holiday attribution come from its snapshot
+ * (`payConfigFor`); a draft's are live. Pay rates are always live (they carry `effectiveFrom`).
  */
 
 import {
@@ -73,6 +76,7 @@ import {
   listPayRatesForNurses,
   listPayRatesForUnit,
 } from './pay.js';
+import { type PayConfig, payConfigFor } from './pay-snapshot.js';
 import { listPreceptorshipsOverlapping } from './preceptorships.js';
 import { restWaiversElsewhere, restWaiversForPeriod } from './rest-waivers.js';
 import {
@@ -99,6 +103,24 @@ function unitOrThrow(db: DbLike, unitId: Id) {
   const unit = getUnit(db, unitId);
   if (!unit) throw new Error(`Unknown unit ${unitId}`);
   return unit;
+}
+
+/** The live unit with the holiday attribution `config` was kept under; live when there is none. */
+function unitUnder(unit: Unit, config: PayConfig | undefined): Unit {
+  if (!config) return unit;
+  const { holidayAttribution: _live, ...rest } = unit;
+  return config.holidayAttribution === undefined
+    ? rest
+    : { ...rest, holidayAttribution: config.holidayAttribution };
+}
+
+/**
+ * The unit as a period is judged and priced with: a published or archived period keeps the
+ * holiday attribution it went out under, so switching the unit to the clock reading does not
+ * change what last Christmas's schedule paid or who it counted as working the holiday.
+ */
+export function unitForPeriod(db: DbLike, period: SchedulePeriod): Unit {
+  return unitUnder(unitOrThrow(db, period.unitId), payConfigFor(db, period));
 }
 
 /**
@@ -207,12 +229,15 @@ export function costContext(
   ruleSet: RuleSet,
   // The period being priced bounds the leave read; without one all of the unit's leave is read.
   period?: SchedulePeriod,
+  // The period's kept pay configuration, for a caller that has already read it.
+  kept: PayConfig | undefined = period ? payConfigFor(db, period) : undefined,
 ): CostContext {
   const maxHours = ruleSet.configs.find((c) => c.ruleId === maxHoursRule.id);
   const params = (maxHours?.params ?? maxHoursRule.defaultParams) as Partial<MaxHoursParams>;
-  const holidays = listHolidaysForUnit(db, unitId);
-  const pay = getPaySettings(db, unitId);
-  const unit = unitOrThrow(db, unitId);
+  // A published period is priced under what it went out with; rates and leave stay live.
+  const holidays = kept ? kept.holidays : listHolidaysForUnit(db, unitId);
+  const pay = kept ? kept.paySettings : getPaySettings(db, unitId);
+  const unit = unitUnder(unitOrThrow(db, unitId), kept);
   // A priced period prices its whole roster, floats included, at their own rates and leave.
   const records = period
     ? perNurseRecordsFor(db, unit, period, rosterForPeriod(db, period))
@@ -220,8 +245,8 @@ export function costContext(
   return {
     unit,
     payRates: records ? records.payRates : listPayRatesForUnit(db, unitId),
-    differentials: listActiveDifferentials(db, unitId),
-    overtimeRules: listActiveOvertimeRules(db, unitId),
+    differentials: kept ? kept.differentials : listActiveDifferentials(db, unitId),
+    overtimeRules: kept ? kept.overtimeRules : listActiveOvertimeRules(db, unitId),
     holidayDates: new Set<IsoDate>(holidays.map((h) => h.date)),
     majorHolidayDates: new Set<IsoDate>(holidays.filter((h) => h.isMajor).map((h) => h.date)),
     weekendDefinition: ruleSet.weekendDefinition,
@@ -483,8 +508,11 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
   // Each table read once: the demand inputs carry the shift types, and the solver's cost data is
   // just the three pay tables (it takes unit, holidays and the work week from the input itself).
   const demand = demandInputs(db, unitId, period.startDate, period.endDate);
-  const unit = unitOrThrow(db, unitId);
-  const pay = getPaySettings(db, unitId);
+  // A published period is judged and priced under what it went out with; rates stay live, and
+  // the rules' holiday list stays live (the snapshot only holds what pricing reads).
+  const kept = payConfigFor(db, period);
+  const unit = unitUnder(unitOrThrow(db, unitId), kept);
+  const pay = kept ? kept.paySettings : getPaySettings(db, unitId);
   const nurses = rosterForPeriod(db, period);
   const records = perNurseRecordsFor(db, unit, period, nurses);
   const tail = periodTailFor(db, period, nurses);
@@ -540,8 +568,8 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     dstTransitions: dstTransitionsForPeriod(period, PRIOR_ASSIGNMENT_LOOKBACK_DAYS),
     cost: {
       payRates: records.payRates,
-      differentials: listActiveDifferentials(db, unitId),
-      overtimeRules: listActiveOvertimeRules(db, unitId),
+      differentials: kept ? kept.differentials : listActiveDifferentials(db, unitId),
+      overtimeRules: kept ? kept.overtimeRules : listActiveOvertimeRules(db, unitId),
       premiumStacking: pay.premiumStacking,
       holidayPayCoversOvertime: pay.holidayPayCoversOvertime,
       overtimeWindowAttribution: pay.overtimeWindowAttribution,

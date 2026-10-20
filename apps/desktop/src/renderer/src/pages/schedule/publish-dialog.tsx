@@ -11,11 +11,13 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import type { Id, Nurse, SchedulePeriod, ShiftType } from '@shiftnurse/core';
 import { useEffect, useMemo, useState } from 'react';
+import { useRuleSet } from '../../api-config.js';
 import { useExport, usePublish, usePublishPreview } from '../../api-publish.js';
 import { AsyncState } from '../../components/async-state.js';
 import { Modal } from '../../components/modal.js';
 import { errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { formatDate, periodLabel } from '../../format.js';
+import { latestRulesVersionAfter } from './rules-version.js';
 
 interface PublishDialogProps {
   open: boolean;
@@ -38,6 +40,7 @@ export function PublishDialog({
 }: PublishDialogProps) {
   const previewQuery = usePublishPreview(period.id, open);
   const publish = usePublish(period.id, unitId);
+  const latestRules = useRuleSet(unitId).data;
   const [reason, setReason] = useState('');
   const [acknowledged, setAcknowledged] = useState(false);
   const exportFile = useExport(period.id);
@@ -177,6 +180,12 @@ export function PublishDialog({
             {preview.hardViolations === 0 && preview.softViolations === 0
               ? 'No rule breaks or warnings.'
               : `${preview.hardViolations} rule break${preview.hardViolations === 1 ? '' : 's'} · ${preview.softViolations} warning${preview.softViolations === 1 ? '' : 's'}`}
+          </p>
+          <p className="text-xs text-text-muted" data-testid="publish-rules-version">
+            Published under rules version {period.ruleSetVersion}.
+            {latestRulesVersionAfter(period, latestRules) !== undefined
+              ? ` The latest is version ${latestRules?.version}.`
+              : ''}
           </p>
           {empty ? (
             <p className="text-sm text-danger">
