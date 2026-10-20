@@ -29,6 +29,7 @@ import { and, asc, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict, requireAuditReason } from '../audit.js';
 import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
+import { requireWholeMillis } from '../local-days.js';
 import { toShiftType, toTimeOffRequest } from '../mappers.js';
 import { nurse, shiftType, timeOffRequest } from '../schema.js';
 import { getRuleSet } from './rulesets.js';
@@ -173,13 +174,16 @@ function checkPaidHours(input: CreateTimeOffInput): number | null {
  * manager transcribing something asked verbally, on paper or by email. It is a parameter
  * rather than a hardcoded literal so nurse self-service can call this same function later
  * with `'nurse'` and reuse the identical table and approval workflow unchanged.
+ * `at` records a past event (seeding, imports); live calls omit it.
  */
 export function createTimeOffRequest(
   db: DbLike,
   input: CreateTimeOffInput,
   actor: string,
   enteredBy: TimeOffRequest['enteredBy'] = 'manager',
+  options: { at?: number } = {},
 ): TimeOffRequest {
+  if (options.at !== undefined) requireWholeMillis(options.at);
   // A backwards or malformed request covers no dates, so the heatmap and solver would ignore it.
   if (!isIsoDate(input.startDate)) {
     throw new Error(`The leave's start date "${input.startDate}" is not a date.`);
@@ -200,7 +204,7 @@ export function createTimeOffRequest(
     type: input.type,
     status: 'pending' as TimeOffStatus,
     enteredBy,
-    submittedAt: Date.now(),
+    submittedAt: options.at ?? Date.now(),
     decidedAt: null,
     decidedBy: null,
     reason: input.reason ?? null,
@@ -215,8 +219,17 @@ export function createTimeOffRequest(
     action: 'create',
     actor,
     after: created,
+    at: row.submittedAt,
   });
   return created;
+}
+
+/** Only for a recorded time: a live decision must not fail because the clock stepped back. */
+function requireDecidableAt(request: TimeOffRequest, at: number): void {
+  requireWholeMillis(at);
+  if (at < request.submittedAt) {
+    throw new Error('A request cannot be decided before it was submitted.');
+  }
 }
 
 export type TimeOffDecision = 'approve' | 'deny' | 'cancel' | 'withdraw';
@@ -268,11 +281,19 @@ export function requireTimeOffTransition(request: TimeOffRequest, decision: Time
   );
 }
 
-export function approveTimeOff(db: DbLike, id: Id, actor: string, reason?: string): TimeOffRequest {
+/** `at` records a past event (seeding, imports); live calls omit it. */
+export function approveTimeOff(
+  db: DbLike,
+  id: Id,
+  actor: string,
+  reason?: string,
+  options: { at?: number } = {},
+): TimeOffRequest {
   const before = getTimeOffRequest(db, id);
   if (!before) throw new Error(`Time-off request ${id} not found`);
   requireTimeOffTransition(before, 'approve');
-  const decidedAt = Date.now();
+  if (options.at !== undefined) requireDecidableAt(before, options.at);
+  const decidedAt = options.at ?? Date.now();
   db.update(timeOffRequest)
     .set({ status: 'approved', decidedAt, decidedBy: actor, decisionReason: reason ?? null })
     .where(eq(timeOffRequest.id, id))
@@ -287,6 +308,7 @@ export function approveTimeOff(db: DbLike, id: Id, actor: string, reason?: strin
     before,
     after,
     reason,
+    at: decidedAt,
   });
   return after;
 }
@@ -388,24 +410,26 @@ export function approveTimeOffAndLiftAssignments(
  * Denial requires a non-empty reason, checked before the row is touched; the row and its audit
  * entry (with both snapshots) then exist only together. This text is what gets quoted,
  * verbatim, if the denial is ever grieved — so it cannot be an afterthought or a blank field
- * slipped past validation.
+ * slipped past validation. `at` records a past event (seeding, imports); live calls omit it.
  */
 export function denyTimeOff(
   db: DbLike,
   id: Id,
   actor: string,
   decisionReason: string,
+  options: { at?: number } = {},
 ): TimeOffRequest {
   const before = getTimeOffRequest(db, id);
   if (!before) throw new Error(`Time-off request ${id} not found`);
   requireTimeOffTransition(before, 'deny');
+  if (options.at !== undefined) requireDecidableAt(before, options.at);
   const reason = requireAuditReason({
     action: 'deny',
     entityType: 'time_off_request',
     entityId: id,
     reason: decisionReason,
   });
-  const decidedAt = Date.now();
+  const decidedAt = options.at ?? Date.now();
   db.update(timeOffRequest)
     .set({ status: 'denied', decidedAt, decidedBy: actor, decisionReason: reason })
     .where(eq(timeOffRequest.id, id))
@@ -420,6 +444,7 @@ export function denyTimeOff(
     before,
     after,
     reason,
+    at: decidedAt,
   });
   return after;
 }

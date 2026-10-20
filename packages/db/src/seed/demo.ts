@@ -33,14 +33,14 @@ export const DEMO_SUMMARIES: readonly DemoSummary[] = [
   {
     id: 'community-med-surg',
     name: COMMUNITY_MED_SURG.unit.name,
-    setting: 'Community hospital · adult medical-surgical · 28 beds',
+    setting: 'California community hospital · adult medical-surgical · 28 beds',
     summary:
       'The most common inpatient unit: 52 RNs and CNAs on 12-hour days and nights, with travelers and per-diem staff covering the gaps.',
     highlights: [
       '12-hour day and night shifts, six-week schedules',
-      'RN ratios 1:5 / 1:4 / 1:3 by acuity',
-      'Seniority step pay; flat night, weekend and charge differentials',
-      'Overtime after 40 hours a week; six hospital holidays',
+      'RN ratios 1:5 (Title 22) / 1:4 / 1:3 by acuity',
+      'Illustrative RN step pay, nursing assistants at California’s health-care minimum wage or above; flat night, weekend and charge differentials',
+      '12-hour alternative workweek: overtime past 12 hours a day (double) or 40 a week, and on the seventh day in a row; six hospital holidays',
     ],
   },
   {
@@ -68,7 +68,7 @@ export const DEMO_SUMMARIES: readonly DemoSummary[] = [
       'California Title 22 ratios: ICU 1:2, critical 1:1',
       'All-RN care with one ICU technician; ACLS for every RN, four per shift',
       '12-hour alternative workweek: overtime after 12 hours a day or 40 a week',
-      'Critical-care pay scale and CCRN certifications',
+      'Illustrative critical-care RN pay scale and CCRN certifications',
     ],
   },
 ];

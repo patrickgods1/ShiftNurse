@@ -590,3 +590,57 @@ describe('call attempts', () => {
     expect(last.has(phoned)).toBe(false);
   });
 });
+
+describe('recording a past call-off', () => {
+  // 05:00 EST on 2026-01-16 (10:00 UTC), worked by hand.
+  const at = Date.parse('2026-01-16T10:00:00Z');
+
+  it('records a call-off phoned in at 5 a.m. at the time it was phoned in, in the log and the audit trail', () => {
+    const a = mkAssignment(mkNurse('Ada'), isoDate('2026-01-16'));
+    const co = reportCallOff(handle.db, a.id, ACTOR, 'Sick', { at });
+    expect(co.reportedAt).toBe(1768557600000);
+    const audit = auditHistoryFor(handle.db, 'call_off', co.id);
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.at).toBe(1768557600000);
+  });
+
+  it('lists calls by when they were made, not the order they were typed in', () => {
+    const ada = mkNurse('Ada');
+    const a = mkAssignment(ada, isoDate('2026-01-16'));
+    const co = reportCallOff(handle.db, a.id, ACTOR, 'Sick', { at });
+    const caller = mkNurse('Bea');
+    logCallAttempt(handle.db, co.id, caller, 'declined', ACTOR, undefined, {
+      at: at + 20 * 60_000,
+    });
+    logCallAttempt(handle.db, co.id, caller, 'no_answer', ACTOR, undefined, {
+      at: at + 10 * 60_000,
+    });
+    const attempts = listCallAttempts(handle.db, co.id);
+    expect(attempts.map((x) => x.outcome)).toEqual(['declined', 'no_answer']);
+    expect(attempts.map((x) => x.attemptedAt)).toEqual([1768558800000, 1768558200000]);
+    const first = auditHistoryFor(handle.db, 'call_attempt', attempts[0]!.id);
+    expect(first[0]!.at).toBe(1768558800000);
+  });
+
+  it('refuses a call logged before the call-off was reported', () => {
+    const a = mkAssignment(mkNurse('Ada'), isoDate('2026-01-16'));
+    const co = reportCallOff(handle.db, a.id, ACTOR, 'Sick', { at });
+    expect(() =>
+      logCallAttempt(handle.db, co.id, mkNurse('Bea'), 'declined', ACTOR, undefined, {
+        at: at - 60_000,
+      }),
+    ).toThrow(/cannot be logged before the call-off was reported/);
+    expect(listCallAttempts(handle.db, co.id)).toEqual([]);
+  });
+
+  it('refuses a recorded time that is not a whole number of milliseconds', () => {
+    const a = mkAssignment(mkNurse('Ada'), isoDate('2026-01-16'));
+    const before = listCallOffsForUnit(handle.db, unitId).length;
+    for (const bad of [1.5, Number.NaN]) {
+      expect(() => reportCallOff(handle.db, a.id, ACTOR, 'Sick', { at: bad })).toThrow(
+        /whole number of milliseconds/,
+      );
+    }
+    expect(listCallOffsForUnit(handle.db, unitId)).toHaveLength(before);
+  });
+});

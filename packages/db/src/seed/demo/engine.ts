@@ -13,7 +13,8 @@
  * - **Legal first.** Every placement passes `canWork`, which mirrors the rules the app enforces
  *   on the unit's own rule set: rest between shift windows, consecutive-day and all-night stretch
  *   limits, days off after a maximum stretch, approved leave (including a night ending on its
- *   first morning), and nobody before their hire date.
+ *   first morning), and nobody before their hire date (the hire date, not a
+ *   bridged seniority date).
  * - **To the forecast.** Floors are raised to the ratio need of the *forecast* census — what the
  *   rule engine judges a period by — and of the actual one when the day ran busier.
  * - **Asked in order.** Contracted staff short of their hours, then per-diem, then contracted staff
@@ -57,7 +58,6 @@ import {
   costSchedule,
   coveringShift,
   datesInRange,
-  daysAvailable,
   daysBetween,
   defaultRuleSet,
   type EmploymentType,
@@ -88,7 +88,6 @@ import {
   type ShiftType,
   shiftWindow,
   suggestedPaidLeaveHours,
-  type TimeOffRequest,
   today,
   usFederalHolidays,
   type Weekday,
@@ -102,6 +101,7 @@ import {
 } from '@shiftnurse/core';
 import type { ShiftNurseTx } from '../../client.js';
 import { ids } from '../../ids.js';
+import { localInstant } from '../../local-days.js';
 import { createAcuityTier, createRatioRule, upsertHppdTarget } from '../../repositories/acuity.js';
 import {
   logCallAttempt,
@@ -115,6 +115,7 @@ import {
   createShiftType,
   createUnit,
   getUnit,
+  listShiftTypesForUnit,
   upsertCoverageRequirement,
 } from '../../repositories/config.js';
 import { recordHoldover } from '../../repositories/holdovers.js';
@@ -126,10 +127,6 @@ import {
   createLeaveBidRound,
   submitLeaveBid,
 } from '../../repositories/leave-bidding.js';
-import {
-  importFairnessLedgerEntries,
-  type UpsertFairnessLedgerInput,
-} from '../../repositories/ledger.js';
 import { createNurseUnit } from '../../repositories/nurse-units.js';
 import { createOvertimeVolunteer } from '../../repositories/overtime-volunteers.js';
 import {
@@ -143,6 +140,7 @@ import {
   listPayRatesForUnit,
   setBudget,
 } from '../../repositories/pay.js';
+import { counterContextFor, periodLedgerRows } from '../../repositories/period-ledger.js';
 import { createPreceptorship } from '../../repositories/preceptorships.js';
 import { publishSchedule } from '../../repositories/publish.js';
 import {
@@ -151,9 +149,15 @@ import {
   replaceNursePreferences,
 } from '../../repositories/roster.js';
 import { createCredential } from '../../repositories/roster-io.js';
-import { getLatestRuleSet, saveRuleSet } from '../../repositories/rulesets.js';
-import { createAssignment, createPeriod, deleteAssignment } from '../../repositories/schedule.js';
+import { getLatestRuleSet, getRuleSet, saveRuleSet } from '../../repositories/rulesets.js';
+import {
+  createAssignment,
+  createPeriod,
+  deleteAssignment,
+  listAssignmentsForPeriod,
+} from '../../repositories/schedule.js';
 import { applyJurisdiction } from '../../repositories/setup.js';
+import { rosterForPeriod } from '../../repositories/solve-input.js';
 import { approveTimeOff, createTimeOffRequest, denyTimeOff } from '../../repositories/timeoff.js';
 import type { SeedOptions, SeedResult } from '../types.js';
 
@@ -613,7 +617,9 @@ function canWork(
   lend = false,
 ): boolean {
   const id = staff.nurse.id;
-  if (compareDates(date, staff.nurse.seniorityDate) < 0) return false; // Not hired yet.
+  // Employment here begins at the hire date; seniority may be bridged from earlier service.
+  const hired = staff.nurse.hireDate ?? staff.nurse.seniorityDate;
+  if (compareDates(date, hired) < 0) return false; // Not hired yet.
   const kind = staff.nurse.scheduleKind;
   if (kind === 'va_72_80' || kind === 'va_baylor') {
     // The `schedule-kind-tours` rule: only the plan's 12-hour tours. A Baylor tour is dated
@@ -1150,6 +1156,9 @@ export function seedFromProfile(
     spec,
     orientee: undefined as Staff | undefined,
   }));
+  // Counted, not taken from the index: every bridged index is a multiple of 6, so `index % 3`
+  // would give all of them the same two years.
+  let bridgedSoFar = 0;
   const staff: Staff[] = planned.map((p, index) => {
     const { row } = p;
     const traveler = row.employmentType === 'agency';
@@ -1165,8 +1174,8 @@ export function seedFromProfile(
       ? addDays(draftStart, orientation.spec.hiredIn)
       : drawnSeniority;
     // About one in six of the 6+ year employees has seniority credited from an earlier facility,
-    // their employment here beginning two to four years later. Always before the history, so
-    // staffing is unaffected.
+    // their employment here beginning two, three or four years later, in turn. Always before the
+    // history, so staffing is unaffected.
     const bridged =
       profile.bridgedService === true &&
       !traveler &&
@@ -1192,7 +1201,7 @@ export function seedFromProfile(
           : {}),
         ...(row.scheduleKind !== undefined ? { scheduleKind: row.scheduleKind } : {}),
         seniorityDate,
-        ...(bridged ? { hireDate: addDays(seniorityDate, 365 * (2 + (index % 3))) } : {}),
+        ...(bridged ? { hireDate: addDays(seniorityDate, 365 * (2 + (bridgedSoFar++ % 3))) } : {}),
         isChargeEligible: p.charge,
         isNovice: p.newGrad,
         isFloatEligible: !p.newGrad && !traveler && rng.chance(0.4),
@@ -1497,8 +1506,6 @@ export function seedFromProfile(
   // Decided before the history is staffed, as it would have been: approved leave keeps the nurse
   // off the schedule. A request is denied when too many of the same role are already off.
   const leave = new Set<string>();
-  /** The approved requests, which the history's ledger rows take out of each nurse's availability. */
-  const approvedLeave: TimeOffRequest[] = [];
   /** Paid leave hours by nurse and date, once approved: they count toward the contract. */
   const leavePaid = new Map<string, number>();
   const offByRoleDate = new Map<string, number>();
@@ -1506,6 +1513,13 @@ export function seedFromProfile(
     Math.max(1, Math.floor(staff.filter((s) => s.nurse.role === role).length / 10));
   // Vacation is drawn from the balance the profile keeps it in, as payroll would.
   const vacationType = profile.leaveBalances?.vacationType ?? 'pto';
+  // Past events carry the time they happened, not the time the demo was seeded: a decided
+  // request was submitted four weeks before its leave (or yesterday, if sooner) and decided two
+  // hours later; a call-off is reported two hours before its shift and calls follow ten minutes
+  // apart. Pending requests are waiting on the manager now and keep the seeding time.
+  const submittedAtFor = (startDate: IsoDate) =>
+    localInstant(minDate(addDays(startDate, -28), addDays(now, -1)), '09:00');
+  const callAt = (reportedAt: number, k: number) => reportedAt + (k + 1) * 10 * 60_000;
   const requestLeave = (
     s: Staff,
     startDate: IsoDate,
@@ -1535,10 +1549,22 @@ export function seedFromProfile(
             payPeriodDays: 14,
             shiftHours: s.shiftHours,
           });
+    // A second vacation over days already approved would pay those days twice; a manager would
+    // have turned it away.
+    if (
+      decision !== 'pending' &&
+      datesInRange(startDate, endDate).some((d) => leave.has(`${s.nurse.id}|${d}`))
+    ) {
+      bump('timeOffSkippedOverlap');
+      return;
+    }
+    const submittedAt = decision === 'pending' ? undefined : submittedAtFor(startDate);
     const request = createTimeOffRequest(
       db,
       { nurseId: s.nurse.id, startDate, endDate, type, reason, paidHours },
       ACTOR,
+      'manager',
+      submittedAt === undefined ? {} : { at: submittedAt },
     );
     bump('timeOffRequest');
     if (decision === 'pending') {
@@ -1549,12 +1575,13 @@ export function seedFromProfile(
     const key = (d: IsoDate) => `${s.nurse.role}|${d}`;
     const full = dates.some((d) => (offByRoleDate.get(key(d)) ?? 0) >= offLimit(s.nurse.role));
     if (decision === 'decide' && full) {
-      denyTimeOff(db, request.id, ACTOR, 'Too many staff already approved off on those dates');
+      denyTimeOff(db, request.id, ACTOR, 'Too many staff already approved off on those dates', {
+        at: submittedAt! + 2 * 3_600_000,
+      });
       bump('timeOffDenied');
       return;
     }
-    approveTimeOff(db, request.id, ACTOR);
-    approvedLeave.push({ ...request, status: 'approved' });
+    approveTimeOff(db, request.id, ACTOR, undefined, { at: submittedAt! + 2 * 3_600_000 });
     bump('timeOffApproved');
     // The pay-period credit is what the `paid-leave` rule reads: whole 12s on the request's days.
     // Spread by the day it can put half a tour in a pay period the rule credits nothing, so a
@@ -1581,7 +1608,9 @@ export function seedFromProfile(
   for (const s of employees) {
     for (let r = rng.nextInt(1, 3); r > 0; r--) {
       const startDate = addDays(historyStart, rng.nextInt(0, 14 * historyPeriods - 5));
-      if (compareDates(startDate, s.nurse.seniorityDate) < 0) continue; // Before they were hired.
+      // Employment here begins at the hire date; seniority may be bridged from earlier service.
+      const hired = s.nurse.hireDate ?? s.nurse.seniorityDate;
+      if (compareDates(startDate, hired) < 0) continue; // Before they were hired.
       if (rng.chance(0.1)) {
         requestLeave(s, startDate, startDate, 'education', 'Continuing education', 'decide');
       } else {
@@ -1613,7 +1642,6 @@ export function seedFromProfile(
     premiumStacking: pay.premiumStacking,
     holidayPayCoversOvertime: pay.holidayPayCoversOvertime,
   };
-  const ledgerInputs: UpsertFairnessLedgerInput[] = [];
   const historyCosts: number[] = [];
   const roundToThousand = (dollars: number) => Math.round(dollars / 1000) * 1000;
   const contracted = (s: Staff) => s.nurse.employmentType !== 'per_diem';
@@ -2066,8 +2094,11 @@ export function seedFromProfile(
           ),
       )
       .slice(0, rng.nextInt(3, 5));
-    // A plan nurse's hours are held to the plan: one who calls off (paid sick for the tour) is not
-    // phoned for another, and one who has picked a tour up is not also called off.
+    // Nobody who called in sick is phoned back that day, onto any shift: she is paid the sick
+    // hours, and working the tour as well would count it twice. A plan nurse's hours are also held
+    // to the plan: one who calls off is not phoned for another tour on any date, and one who has
+    // picked a tour up is not also called off.
+    const calledOff = new Set<string>();
     const planCalledOff = new Set<Id>();
     const planPickedUp = new Set<Id>();
     for (const absent of callable) {
@@ -2085,8 +2116,12 @@ export function seedFromProfile(
         absentNurse.nurse.employmentType === 'part_time'
           ? { paidSickHours: shifts.find((x) => x.id === absent.shiftTypeId)!.durationHours }
           : {};
-      const callOff = reportCallOff(db, absent.id, ACTOR, reason, sickPay);
+      const reportedAt =
+        localInstant(absent.date, shifts.find((x) => x.id === absent.shiftTypeId)!.startTime) -
+        2 * 3_600_000;
+      const callOff = reportCallOff(db, absent.id, ACTOR, reason, { ...sickPay, at: reportedAt });
       bump('callOff');
+      calledOff.add(`${absent.nurseId}|${absent.date}`);
       if (absentNurse.nurse.scheduleKind !== undefined) planCalledOff.add(absent.nurseId);
       deleteAssignment(db, absent.id, ACTOR, `Called off: ${reason}`);
       rows.delete(absent.id);
@@ -2109,7 +2144,12 @@ export function seedFromProfile(
         ...rng.shuffle(catchUp!),
         ...rng.shuffle(overtime!),
       ]
-        .filter((s) => s !== absentStaff && !planCalledOff.has(s.nurse.id))
+        .filter(
+          (s) =>
+            s !== absentStaff &&
+            !planCalledOff.has(s.nurse.id) &&
+            !calledOff.has(`${s.nurse.id}|${absent.date}`),
+        )
         .slice(0, rng.nextInt(2, 5));
       // An RN call-off is covered whenever anyone can legally come in — below ratio the unit
       // cannot run — while an assistant's shift sometimes just runs one short.
@@ -2117,7 +2157,9 @@ export function seedFromProfile(
       for (const [i, s] of phoneList.entries()) {
         if (covered && i === phoneList.length - 1) {
           if (contracted(s) && hours(s) >= periodTarget(s)) bump('overtimeCallouts');
-          logCallAttempt(db, callOff.id, s.nurse.id, 'accepted', ACTOR);
+          logCallAttempt(db, callOff.id, s.nurse.id, 'accepted', ACTOR, undefined, {
+            at: callAt(reportedAt, i),
+          });
           bump('callAttempt');
           const before = overtimeByPayPeriod
             ? hoursBetween(worked, s, start, end)
@@ -2149,7 +2191,9 @@ export function seedFromProfile(
           break;
         }
         const outcome = rng.pick(['no_answer', 'declined', 'left_message'] as const);
-        logCallAttempt(db, callOff.id, s.nurse.id, outcome, ACTOR);
+        logCallAttempt(db, callOff.id, s.nurse.id, outcome, ACTOR, undefined, {
+          at: callAt(reportedAt, i),
+        });
         bump('callAttempt');
       }
       if (!covered) {
@@ -2158,7 +2202,28 @@ export function seedFromProfile(
       }
     }
 
-    publishSchedule(db, { periodId: period.id }, ACTOR);
+    // Booked as the app books it: core's counters over what was committed, under the rule set
+    // the period snapshots. History has no floats (the sibling unit comes later), so this is
+    // main's 'worked' view; leave was decided before the history, so its time off is all in.
+    const periodRuleSet = getRuleSet(db, period.ruleSetId)!;
+    const counting = new ScheduleView({
+      period,
+      assignments: listAssignmentsForPeriod(db, period.id),
+      nurses: rosterForPeriod(db, period),
+      shiftTypes: listShiftTypesForUnit(db, unit.id),
+    });
+    const published = publishSchedule(
+      db,
+      {
+        periodId: period.id,
+        ledger: periodLedgerRows(
+          counting,
+          counterContextFor(db, unit.id, periodRuleSet.weekendDefinition, period),
+        ),
+      },
+      ACTOR,
+    );
+    bump('fairnessLedger', published.ledgerEntries);
     const periodAssignments = periodRows.map((id) => rows.get(id)!);
     const actual = costSchedule(
       new ScheduleView({
@@ -2174,49 +2239,7 @@ export function seedFromProfile(
     const budget = roundToThousand(actual * (0.97 + 0.07 * rng.nextFloat()));
     setBudget(db, unit.id, period.id, budget, ACTOR);
     bump('budget');
-
-    const hoursOf = (a: Assignment) => shifts.find((s) => s.id === a.shiftTypeId)!.durationHours;
-    const nightIds = new Set(shifts.filter((s) => s.isNight).map((s) => s.id));
-    for (const s of staff) {
-      const mine = periodAssignments.filter((a) => a.nurseId === s.nurse.id);
-      const nights = mine.filter((a) => nightIds.has(a.shiftTypeId)).length;
-      const nightPosition = shiftByCode.get(s.position)?.isNight ?? false;
-      const weekends = new Set(
-        mine
-          .filter((a) => isWeekendDate(a.date))
-          .map((a) => addDays(a.date, -((weekdayOf(a.date) + 1) % 7))),
-      );
-      const totalHours = mine.reduce((h, a) => h + hoursOf(a), 0);
-      const overtimeHours = overtimeByPayPeriod
-        ? Math.max(0, totalHours - overtimeThreshold)
-        : [0, 7].reduce((sum, offset) => {
-            const from = addDays(start, offset);
-            const to = addDays(from, 6);
-            const inWeek = mine
-              .filter((a) => compareDates(a.date, from) >= 0 && compareDates(a.date, to) <= 0)
-              .reduce((h, a) => h + hoursOf(a), 0);
-            return sum + Math.max(0, inWeek - 40);
-          }, 0);
-      ledgerInputs.push({
-        nurseId: s.nurse.id,
-        periodId: period.id,
-        periodStart: start,
-        periodDays: datesInRange(start, end).length,
-        availableDays: daysAvailable(s.nurse, start, end, approvedLeave),
-        nightShifts: nights,
-        weekendsWorked: weekends.size,
-        holidaysWorked: mine.filter((a) => holidayDates.has(a.date)).length,
-        onCallShifts: 0,
-        undesirableShifts: nightPosition ? 0 : nights,
-        totalHours,
-        overtimeHours,
-        preferenceHitRate:
-          mine.length === 0 ? 1 : nightPosition ? nights / mine.length : 1 - nights / mine.length,
-      });
-    }
   }
-  importFairnessLedgerEntries(db, ledgerInputs, ACTOR);
-  bump('fairnessLedger', ledgerInputs.length);
 
   // --- Holdovers ------------------------------------------------------------------------------
   // After every period is published and priced (budgets and run rate stay as they were), and with
@@ -2381,15 +2404,31 @@ export function seedFromProfile(
     const pool = rng.shuffle(
       employees.filter((s) => !s.nurse.isChargeEligible && s.years >= 1 && !taken.has(s.nurse.id)),
     );
-    for (const [i, spec] of profile.fmla.entries()) {
-      const s = pool[i];
+    const used = new Set<Id>();
+    for (const spec of profile.fmla) {
+      const startDate = addDays(draftStart, spec.startsIn);
+      const endDate = addDays(draftStart, spec.endsIn);
+      // A block is leave the history and the draft know nothing about, so its nurse would be
+      // rostered straight through it.
+      if (!spec.intermittent && startDate <= draftEnd && endDate >= historyStart) {
+        throw new Error(
+          `FMLA block "${spec.note}" falls inside the seeded history or the next schedule, where its nurse is rostered; place it outside both or approve leave for it.`,
+        );
+      }
+      // FMLA asks a year's service when leave begins (29 U.S.C. § 2611(2) / 5 U.S.C. § 6381).
+      const s = pool.find(
+        (c) =>
+          !used.has(c.nurse.id) &&
+          daysBetween(c.nurse.hireDate ?? c.nurse.seniorityDate, startDate) >= 365,
+      );
       if (!s) throw new Error('Not enough staff for the FMLA certifications');
+      used.add(s.nurse.id);
       createFmlaCertification(
         db,
         {
           nurseId: s.nurse.id,
-          startDate: addDays(draftStart, spec.startsIn),
-          endDate: addDays(draftStart, spec.endsIn),
+          startDate,
+          endDate,
           intermittent: spec.intermittent,
           note: spec.note,
         },

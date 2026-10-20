@@ -681,3 +681,67 @@ describe('approving leave over a day she was floated off', () => {
     ]);
   });
 });
+
+describe('recording a past request', () => {
+  // 09:00 EST on 2026-01-05 (14:00 UTC), worked by hand.
+  const sub = Date.parse('2026-01-05T14:00:00Z');
+
+  function pastRequest(): string {
+    return createTimeOffRequest(
+      handle.db,
+      {
+        nurseId: mkNurse('Ada'),
+        startDate: isoDate('2026-02-02'),
+        endDate: isoDate('2026-02-04'),
+        type: 'pto',
+      },
+      ACTOR,
+      'manager',
+      { at: sub },
+    ).id;
+  }
+
+  it('keeps when a past request came in and when it was approved', () => {
+    const id = pastRequest();
+    expect(getTimeOffRequest(handle.db, id)!.submittedAt).toBe(1767621600000);
+    const approved = approveTimeOff(handle.db, id, ACTOR, undefined, { at: sub + 2 * 3_600_000 });
+    expect(approved.decidedAt).toBe(1767628800000);
+    const row = auditHistoryFor(handle.db, 'time_off_request', id).find(
+      (e) => e.action === 'approve',
+    );
+    expect(row!.at).toBe(1767628800000);
+  });
+
+  it('keeps when a past denial was made', () => {
+    const id = pastRequest();
+    const denied = denyTimeOff(handle.db, id, ACTOR, 'Two nurses already off', {
+      at: sub + 3_600_000,
+    });
+    expect(denied.decidedAt).toBe(1767625200000);
+    const row = auditHistoryFor(handle.db, 'time_off_request', id).find((e) => e.action === 'deny');
+    expect(row!.at).toBe(1767625200000);
+    expect(row!.reason).toBe('Two nurses already off');
+  });
+
+  it('refuses a decision dated before the request came in, and leaves it pending', () => {
+    const id = pastRequest();
+    expect(() => approveTimeOff(handle.db, id, ACTOR, undefined, { at: sub - 1 })).toThrow(
+      /cannot be decided before it was submitted/,
+    );
+    expect(getTimeOffRequest(handle.db, id)!.status).toBe('pending');
+    expect(
+      auditHistoryFor(handle.db, 'time_off_request', id).filter((e) => e.action === 'approve'),
+    ).toEqual([]);
+  });
+
+  it('refuses a denial dated before the request came in, and leaves it pending', () => {
+    const id = pastRequest();
+    expect(() => denyTimeOff(handle.db, id, ACTOR, 'Short staffed', { at: sub - 1 })).toThrow(
+      /cannot be decided before it was submitted/,
+    );
+    expect(getTimeOffRequest(handle.db, id)!.status).toBe('pending');
+    expect(
+      auditHistoryFor(handle.db, 'time_off_request', id).filter((e) => e.action === 'deny'),
+    ).toEqual([]);
+  });
+});

@@ -29,6 +29,7 @@ import {
   listNursesForUnit,
   listPreferencesForUnit,
   listShiftTypesForUnit,
+  periodLedgerRows,
   type ShiftNurseDb,
   transact,
   type UpsertFairnessLedgerInput,
@@ -179,14 +180,10 @@ export function importHistory(
         };
       });
       const schedule = new ScheduleView({ period, assignments, nurses, shiftTypes });
-      const present = new Set(assignments.map((a) => a.nurseId));
-      for (const [nurseId, counters] of deriveCounters(schedule, ctx)) {
-        // Only nurses who appear in this period's file: a nurse absent from a period may not
-        // have been on the unit yet, and a zero row would read as "worked no nights" rather
-        // than "no record".
-        if (!present.has(nurseId)) continue;
-        entries.push({ nurseId, periodId: group.periodId, periodStart: group.start, ...counters });
-      }
+      // Only nurses who appear in this period's file: a nurse absent from a period may not
+      // have been on the unit yet, and a zero row would read as "worked no nights" rather
+      // than "no record".
+      entries.push(...periodLedgerRows(schedule, ctx));
     }
     const result = importHistoricalLedger(tx, unitId, entries, ACTOR);
     return {

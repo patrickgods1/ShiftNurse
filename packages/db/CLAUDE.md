@@ -38,6 +38,10 @@
   `rule_config`, `schedule_version`, `schedule_change` and `pay_config_snapshot` refuse UPDATE and
   DELETE, like `audit_log` (0013). They also abort FK cascades, so no unit or published period can
   be deleted. A migration that rebuilds or backfills one of them drops and re-creates its trigger.
+- **Event writers (`reportCallOff`, `logCallAttempt`, `createTimeOffRequest`, `approveTimeOff`,
+  `denyTimeOff`) take an optional `at` for past events: seeds and imports pass it, live paths never
+  do. The audit row carries the same time. `localInstant` (`local-days.ts`) turns a local date and
+  time into that instant.
 - **Write the change, then its audit row; check a required reason first.** Audit-first only under
   `ShiftNurseTx`, where the whole call rolls back together (`audit.ts` header).
 - **A raised ceiling, a lowered RN share, a moved role or tier, a rewritten citation and a
@@ -179,3 +183,5 @@
   stored nurse whose id differs only by case (the stored spelling is kept), a case-twin is refused
   at create and update, and an import whose id matches two stored nurses is refused before any
   write. No `lower()` unique index: an existing file may already hold twins.
+- **A period's ledger is `periodLedgerRows(view, counterContextFor(...))`** (`period-ledger.ts`):
+  main's publish, the history importer and the demo seeds all book it there.

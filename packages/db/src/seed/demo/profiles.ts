@@ -3,8 +3,9 @@
  * the others in what real units differ in: shift pattern, skill mix, whether ratios are law,
  * how nights and weekends are paid, which holidays count, and the contract limits on stretches.
  *
- * Figures are typical of their setting in 2026 and rounded; they are there to make the demo
- * behave like the real thing, not to quote any one employer's pay table.
+ * Staffing, skill mix, ratios and rules are typical of their setting in 2026. Pay is
+ * illustrative, except where a law sets a floor: the California nursing assistants are at or
+ * above the state's health-care minimum wage. The figures are not any one employer's pay table.
  */
 
 import { DEFAULT_WEEKEND, isoDate } from '@shiftnurse/core';
@@ -114,7 +115,8 @@ export const COMMUNITY_MED_SURG: DemoProfile = {
       role: 'RN',
       tierLevel: 1,
       max: 5,
-      citation: 'Unit staffing plan, approved by the staffing committee',
+      citation:
+        'Cal. Code Regs. tit. 22 § 70217(a)(11): medical/surgical 1:5, which the unit staffing plan meets',
     },
     {
       role: 'RN',
@@ -133,13 +135,19 @@ export const COMMUNITY_MED_SURG: DemoProfile = {
   hppdTarget: 8.2,
   credentials: { aclsPerShift: 1, aclsForAllRNs: false },
   pay: {
-    roleDefault: { RN: 42, CNA: 19.5 },
-    // RN $42/h new graduate plus $1.10 a year to year 20; CNA $19.50 plus $0.40 a year; a
-    // per-diem premium in place of benefits; a travel agency bill rate.
+    roleDefault: { RN: 42, CNA: 23 },
+    // RN steps are illustrative ($42 new graduate plus $1.10 a year to year 20), not a California
+    // market survey: California RN pay runs well above them, so the cost screens read low for a
+    // California unit. CNAs start at California's health-care minimum wage (SB 525, Lab. Code
+    // § 1182.14, tier for "all other covered health care facilities", which fits an independent
+    // community hospital): $23.00 from 1 July 2026, $21.00 before. The rate below is the one in
+    // force before the July raise, and it also pays 1 July up to the first July pay period, so it
+    // is the July 2026 floor itself. It holds until 30 June 2028, when the floor becomes $25.
+    // A per-diem premium stands in for benefits; a travel agency bill rate.
     rate: ({ role, employmentType, years }) => {
       if (employmentType === 'agency') return 96;
       const rn = role === 'RN';
-      const step = rn ? 42 + 1.1 * Math.min(years, 20) : 19.5 + 0.4 * Math.min(years, 15);
+      const step = rn ? 42 + 1.1 * Math.min(years, 20) : 23 + 0.4 * Math.min(years, 15);
       return step + (employmentType === 'per_diem' ? (rn ? 6 : 2.5) : 0);
     },
     raise: { month: 7, percent: 3 },
@@ -375,14 +383,15 @@ export const VA_SF_MED_SURG: DemoProfile = {
     },
   },
   leaveBalances: {
-    // 5 U.S.C. §6303: 4 hours of annual leave a pay period under 3 years of service, 6 from 3
-    // to 15 and 8 beyond; Title 38 RNs earn 8 from the start. Sick leave is 4 hours.
+    // 5 U.S.C. § 6303(a): 4 hours a pay period under 3 years of service, 6 from 3 to under 15
+    // (plus 4 more in the year's last pay period, which the demo leaves out), 8 at 15 or more;
+    // Title 38 RNs earn 8 from the start. Sick leave is 4 hours.
     vacationType: 'annual',
     // VA Handbook 5011 pt. III ch. 2: Title 38 full-time nurses carry up to 685 hours; LVNs and
     // nursing assistants are Title 5, whose ceiling is 240 (5 U.S.C. § 6304(a)).
     carryoverCapHours: (role) => (role === 'RN' ? 685 : 240),
     accrual: ({ role, years }) => ({
-      annual: role === 'RN' ? 8 : years < 3 ? 4 : years <= 15 ? 6 : 8,
+      annual: role === 'RN' ? 8 : years < 3 ? 4 : years < 15 ? 6 : 8,
       sick: 4,
     }),
   },
@@ -396,14 +405,14 @@ export const VA_SF_MED_SURG: DemoProfile = {
     {
       note: 'Surgery and recovery — one block, returned to full duty.',
       intermittent: false,
-      startsIn: -150,
-      endsIn: -80,
+      startsIn: -270,
+      endsIn: -200,
     },
     {
-      note: 'Caring for spouse after hip replacement — one block of up to 12 weeks, certification on file.',
+      note: 'Caring for spouse after a planned hip replacement — one block of up to 12 weeks, starting after the next schedule; certification on file.',
       intermittent: false,
-      startsIn: -28,
-      endsIn: 55,
+      startsIn: 35,
+      endsIn: 118,
     },
   ],
   // One orientation that began in the history and runs into the draft schedule, and one that
@@ -593,6 +602,8 @@ export const CA_ICU: DemoProfile = {
   },
   pay: {
     roleDefault: { RN: 50, CNA: 23 },
+    // The RN scale is illustrative, not a California market survey; the CNA scale starts at the
+    // SB 525 health-care minimum wage of $23.00 (from 1 July 2026, holding to 30 June 2028).
     rate: ({ role, employmentType, years }) => {
       if (employmentType === 'agency') return 118;
       const rn = role === 'RN';
