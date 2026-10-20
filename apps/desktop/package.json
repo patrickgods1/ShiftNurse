@@ -39,7 +39,7 @@
     "drizzle-orm": "^0.45.3",
     "electron": "44.9.0",
     "electron-builder": "^26.0.12",
-    "electron-vite": "^5.0.0",
+    "electron-vite": "^6.0.0",
     "jsdom": "^30.1.2",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
