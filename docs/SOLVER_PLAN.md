@@ -9,6 +9,13 @@
 > share the branch `feat/or-tools` and are pushed per phase. That branch is merged to `main` only
 > after Phase 5 passes, so `main` never has a half-wired OR-Tools setup.
 
+> **Historical.** This is the plan M15 was built from, kept as the record. Some file names
+> below are as planned, not as built: `cpsat/vars.ts` → the variables are built in
+> `cpsat/encode.ts` (via `CpBuilder.decision` in `cpsat/builder.ts`); `cpsat/rules/contract.ts` →
+> `encodeContractCap` in `cpsat/rules/hours.ts`; `cpsat/encoders.ts` → `CPSAT_ENCODERS` in
+> `cpsat/encode.ts`; `solver/stepwise.ts` → `LocalSearch` in `solver/hybrid.ts`. How the solvers
+> work now is in `packages/core/src/solver/CLAUDE.md`.
+
 ## Context
 ShiftNurse ships one solver (greedy seed → annealing + ruin-and-recreate). `solver/types.ts`
 already defines a `Solver` interface, but `solve()` in `solver.ts` and `main/solver-worker.ts`
@@ -159,7 +166,7 @@ Decisions:
 - [x] 3.3 `native/cpsat-runner/main.cc`, reading and writing one JSON object per line:
   - Requests: `{"id","model"(CpModelProto JSON),"params"(SatParameters JSON)}` or
     `{"stop":true}`.
-  - Progress lines: `{"id","type":"progress","objective","bound","wallMs"}`, sent from the
+  - Progress lines: `{"id","type":"progress","objective","bound","wall_ms"}`, sent from the
     solution callback.
   - Final line: `{"id","type":"result","status","values":[...],"objective","bound"}`.
   - Errors: `{"id","type":"error","message"}`. The process stays alive for the next request.

@@ -381,8 +381,9 @@ export interface HistoricalCsvError {
 }
 
 /**
- * Imported shifts bucketed into pay periods (anchored on the unit's `payPeriodAnchor`), the
- * granularity the ledger is kept at. `periodId` is synthetic — `import:<start>` — because the
+ * Imported shifts bucketed into pay periods (anchored on the unit's `payPeriodAnchor`). The
+ * ledger keeps imported history per pay period and app history per schedule period, and weighs
+ * each by the days it covers. `periodId` is synthetic — `import:<start>` — because the
  * ledger's `periodId` has no foreign key precisely so history can predate the app.
  */
 export interface HistoricalPeriod {

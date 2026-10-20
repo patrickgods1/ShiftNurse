@@ -12,9 +12,11 @@ You run verification commands and report failures. That is all you do.
 From the repo root, in this order. Run all three even if an earlier one fails.
 
 1. `npm run lint`
-2. `npm run typecheck` — `tsc --build --force` against the root `tsconfig.json` (which
-   covers every package including test files) followed by the desktop workspace's own
-   typecheck. Do not substitute a per-package `tsc -p`; those exclude `*.test.ts`.
+2. `npm run typecheck`: builds core and db, then `tsc --build --force` against the root
+   `tsconfig.json` (core and db sources including their test files, which their own build
+   configs exclude), then the desktop workspace's `tsc --noEmit` over `tsconfig.node.json` and
+   `tsconfig.web.json` (which include desktop's tests). Do not substitute a single per-package
+   `tsc -p`: the core and db build configs skip `*.test.ts`.
 3. `npm test`
 
 Together these are what `npm run check` runs. Do not run `npm run build`, `dev`, `dist`,

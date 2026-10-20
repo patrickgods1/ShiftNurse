@@ -19,8 +19,9 @@ pickup) is modelled as *a request with a submitter and a decider*, with v1 alway
 `enteredBy: 'manager'`. That seam is deliberate: nurse self-service later becomes an intake
 surface on the same data model, not a rewrite.
 
-**Status:** pre-1.0. All 16 roadmap milestones are complete, with installers verified on macOS
-and on native Windows; signed installers and auto-update are the proposed M17.
+**Status:** pre-1.0. Milestones M1–M16 and M19–M43 are complete, with installers verified on
+macOS and on native Windows. M18 (release hardening) has one follow-up open; signed installers
+and auto-update are M17, deferred.
 
 See [ROADMAP.md](ROADMAP.md) for the full plan of record (locked-in decisions, milestone
 detail, verification steps) and [CLAUDE.md](CLAUDE.md) for the conventions and invariants
@@ -84,6 +85,7 @@ These are yours to do by hand until the app handles them (the same list is in Se
 - Break premiums are priced at the base rate: California pays them at the regular rate, which includes differentials, so add the difference in payroll.
 - Float staff: Generate may offer a float nurse on any day of the period, not only the dates of their membership; check the dates yourself.
 - Tour rotation limits (Settings › Rules) are checked on the grid, but Generate does not steer away from them while the rule is soft: make it hard to have Generate keep to them.
+- Most hours in any 24, long stretches of work and two days off together are checked on the grid, but Generate does not steer away from them while they are soft: make them hard to have Generate keep to them.
 - Leave bids and other requests are entered by the manager: nurses do not submit them in the app yet.
 - In-lieu-of holidays (federal, 5 U.S.C. § 6103(b)): when a nurse's regular day off falls on a holiday, their in-lieu day is not marked and work on it is not paid at the holiday premium here; holiday pay applies only to the calendar holiday.
 - Compensatory time earned instead of overtime pay: the app prices overtime and holds a comp-leave balance, but does not convert overtime worked into comp time earned; add earned comp time to the nurse's balance under Leave on their Roster page.
@@ -159,6 +161,39 @@ Environment item); on macOS deploy the managed preference `DisableUpdateCheck` =
 **One copy per user.** A second launch focuses the running window. Two Windows users on one PC each
 have their own data folder and database.
 
+## What data ShiftNurse stores
+
+Everything lives in one SQLite database file on this computer, next to its backups and a log, in
+the data folder ([where that is](#for-hospital-it), under "Where the data lives"). Nothing is
+sent anywhere; the one network request is the update check, which sends no schedule data.
+
+The file holds:
+
+- names, employee numbers, roles, FTE, seniority and hire dates, phone numbers and email
+  addresses, free-text notes on a nurse, and credentials with their expiry dates;
+- schedules and the notes on their shifts, time-off and shift-exchange requests, call-offs and the
+  calls made about them, holdovers, floats, and the reasons typed for them;
+- **HR and medical text**: FMLA certifications and their notes, availability blocks (the
+  accommodations a nurse works under) and their reasons, kept-apart groups and their reasons,
+  rest-waiver reasons, float objections, and any reason typed for a denial, a published change or
+  an override.
+
+**The audit log keeps what you type.** Every change, with its reason and its before and after
+values, is written to an audit log that the database itself refuses to edit or delete. A reason
+that names a medical condition stays in the file and in every backup made afterwards. Write
+reasons as you would for a grievance file.
+
+**Nothing is encrypted yet.** The database, its backups and the log are ordinary files, readable
+by anyone who can sign in as you or who has the disk. Encryption waits for signed builds (M17),
+because an unsigned app cannot keep a key in the system keychain without prompting on every
+update. Until then, use full-disk encryption (FileVault on macOS, BitLocker on Windows) and a
+computer account only you use. Copy a backup off the computer only to storage your hospital
+approves for HR records. The log records the app's own messages (a failed backup, a solver
+crash); it rolls over at 5 MB and keeps three older files.
+
+A nurse's exported record (Roster › Export record…) leaves out kept-apart groups, FMLA
+certifications and accommodations (availability blocks).
+
 ## Prerequisites
 
 - **Node.js ≥ 22.12** (see `engines` in [package.json](package.json); `.nvmrc` pins the major CI uses).
@@ -192,7 +227,7 @@ Then see [Launching the app](#launching-the-app).
 packages/core/     # Pure TypeScript domain: rules, acuity, solver, fairness, cost,
                     # conflicts, exchange, publish, day-of. No Electron, no database, no I/O.
 native/cpsat-runner/ # C++ CP-SAT runner linked against OR-Tools, built by CI (see below).
-packages/db/        # Drizzle schema (49 tables) + migrations + repositories over
+packages/db/        # Drizzle schema (50 tables) + migrations + repositories over
                     # better-sqlite3. Owned by the Electron main process only.
 apps/desktop/       # Electron app.
   src/shared/api.ts   #   The IPC contract (ShiftNurseApi, API_CHANNELS) — read this first.
@@ -200,7 +235,7 @@ apps/desktop/       # Electron app.
                       #   worker thread (spawning the CP-SAT runner for CP-SAT/hybrid),
                       #   handles backups/output/print/xlsx.
   src/preload/        #   Exposes window.shiftnurse from the same channel table (CommonJS).
-  src/renderer/src/   #   React 18 + TanStack Router/Query + Tailwind v4. Routes: Dashboard,
+  src/renderer/src/   #   React 19 + TanStack Router/Query + Tailwind v4. Routes: Dashboard,
                       #   Today, Schedule (grid, generate, publish, export), Demand, Fairness,
                       #   Roster, Requests (time off + exchanges), Settings (shift types,
                       #   coverage, acuity, holidays, rules, pay, solver, conflicts, backups).
@@ -222,13 +257,13 @@ Run from the repo root unless noted.
 | Command | What it does |
 |---|---|
 | `npm run dev` | Builds packages, then runs package watchers + `electron-vite dev` with HMR. |
-| `npm test` | `vitest run` over `packages/*/src/**/*.test.ts`, renderer tests, and `apps/desktop/src/main/**/*.test.ts`. |
+| `npm test` | `vitest run` over `packages/*/src/**/*.test.ts` and the desktop app's main, shared and renderer tests (`unit` project, then the `solver-heavy` files one at a time). |
 | `npm run test:watch` | Vitest in watch mode. |
-| `npm run test:coverage` | Tests with v8 coverage (`packages/*` and the desktop main process). |
+| `npm run test:coverage` | Tests with v8 coverage over `packages/*` and the desktop main, shared and renderer code. |
 | `npm run lint` | `biome check .` — format + lint, no writes. |
 | `npm run lint:fix` | `biome check --write .`. |
 | `npm run format` | `biome format --write .`. |
-| `npm run typecheck` | Builds `core` and `db`, then `tsc --build --force` against the root `tsconfig.json` (every package **including test files**), then the desktop's own `tsc --noEmit` over its `tsconfig.node.json` and `tsconfig.web.json`. |
+| `npm run typecheck` | Builds `core` and `db`, then `tsc --build --force` against the root `tsconfig.json` (core and db sources **including their tests**, which their build configs exclude), then the desktop's own `tsc --noEmit` over `tsconfig.node.json` (main, preload, shared) and `tsconfig.web.json` (renderer, shared), tests included. |
 | `npm run check` | lint + typecheck + test — the full gate CI runs. |
 | `npm run build:packages` | Builds `core` then `db` with `tsc`. `dev`, `build` and `seed:demo` run it for you; run it by hand after touching core before trusting a smoke result. |
 | `npm run seed:demo` | Builds and runs the demo seeder into a standalone `packages/db/demo.sqlite` (optional; the app loads its own demo from the welcome screen). `-- --demo <id>` picks the unit (`community-med-surg`, `va-sf-med-surg`, `ca-icu`), `-- --force` overwrites, `-- --seed <n>` changes the RNG seed. |
@@ -340,8 +375,8 @@ request:
 
 | Job | Runs on | What |
 |---|---|---|
-| `lint-typecheck` | ubuntu-latest | `npm run lint`, `npm run typecheck`, `node scripts/audit-shipped.mjs` (high advisories in anything that ships) |
-| `test (…)` | ubuntu-latest, macos-15, windows-2022 | `npm run build:packages`, `npm test` — on macOS and Windows against the real CP-SAT runner, which `npm ci` fetches and CI requires (one retry); on ubuntu with coverage, summarised on the run page |
+| `lint-typecheck` | ubuntu-latest | `npm run lint`, `node scripts/check-single-copies.mjs`, `npm run typecheck`, `npm run build -w @shiftnurse/desktop`, `node scripts/audit-shipped.mjs` (high advisories in anything that ships) |
+| `test (…)` | ubuntu-latest, macos-15, windows-2022 | `npm run build:packages`, `npm test` — on macOS and Windows against the real CP-SAT runner, which CI fetches with `npm run fetch:cpsat` and requires (one retry); on ubuntu with coverage, summarised on the run page |
 | `smoke (ubuntu-latest)` | ubuntu-latest | boots the dev build under xvfb and walks the smoke harness (preload, IPC wiring); not yet a required check |
 
 `main` is protected: a pull request merges only when those four checks pass (admins may still
@@ -362,7 +397,8 @@ grouped updates for npm and for the actions themselves.
    on `macos-15`, mac x64 on `macos-15-intel`, Windows x64 on `windows-2022` — and boots each
    packaged app in smoke mode, **from a copy outside the repo**, generating with every solver and
    running publish, exports and the day-of console. Then it creates a **draft** GitHub release
-   with the three installers, their blockmaps and `SHA256SUMS`, and notes from
+   with the three installers and `SHA256SUMS` (no blockmaps: only an
+   auto-updater reads them, and there is none yet), and notes from
    [`.github/release-notes.md`](.github/release-notes.md).
 4. Review the draft (download an installer, check it against `SHA256SUMS`, install it) and press
    **Publish**. Nothing is public before that.

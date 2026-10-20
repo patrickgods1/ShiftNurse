@@ -14,12 +14,11 @@ self-service later becomes an intake surface rather than a new data model.
 
 ## Where things are
 
-Every milestone through M16 is complete and green. **M18 — Release hardening** is in progress
-(boxes in `ROADMAP.md`): the 2026-10-03 release audit's fixes, one PR per phase — data safety,
-renderer correctness, the manager's experience, core maintainability, tests, contract rules for
-1.0, unsigned distribution. M17 (signing) is deferred; M19–M26 are the union and HR features
-planned for after 1.0. M27–M39 (law, contracts, the VA demo, the 2026-10-06 audit's fixes and its 2026-10-07
-follow-ups) are complete.
+Milestones M1–M16 and M19–M42 are complete and green, and so is **M43** — the 2026-10-16
+in-depth review's fixes, one PR per phase (`ROADMAP.md`). **M18 — Release hardening** is in
+progress (the 2026-10-03 release audit's fixes): its one open box is the copy-on-write
+`ScheduleView` follow-up. M17 (signing) is deferred, and so are the review items that wait on an
+owner decision (on-call caps, INRC-II pattern terms, encryption at rest; listed under M43).
 
 Detail lives next to the code, in CLAUDE.md files that load when you work in that folder:
 
@@ -97,10 +96,10 @@ violations of their own.
 
 | Command | What it does |
 |---|---|
-| `npm test` | Vitest over packages, renderer and desktop `main`. The real gate. |
+| `npm test` | Vitest over packages and the desktop app's main, shared and renderer tests. The real gate. |
 | `npm run test:watch` / `test:coverage` | Watch mode / v8 coverage (see `.github/CLAUDE.md`). |
 | `npm run lint` / `lint:fix` / `format` | Biome check / with `--write` / format only. |
-| `npm run typecheck` | Builds `core` + `db` (their `dist` typings are what `db` and desktop resolve), then `tsc --build --force` on the root config, which is the only one that includes test files. |
+| `npm run typecheck` | Builds `core` + `db` (their `dist` typings are what `db` and desktop resolve), then `tsc --build --force` on the root config (core and db sources with their tests, which their build configs exclude), then desktop's `tsc --noEmit` over `tsconfig.node.json` and `tsconfig.web.json`, which include desktop's tests. |
 | `npm run check` | lint + typecheck + test — the gate CI runs. |
 | `npm run build:packages` | Builds `core` then `db`. Required before `seed:demo` and before trusting a smoke run after a core change. |
 | `npm run seed:demo` / `seed:scenarios` | Seeds the demo / test-scenario SQLite file. |
@@ -229,7 +228,7 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
 
 ## Pointers
 
-- **`ROADMAP.md` is the plan of record** — milestones M1–M38, locked-in decisions, verification
+- **`ROADMAP.md` is the plan of record** — milestones M1–M43, locked-in decisions, verification
   steps. Tick a box when the work lands *and* its verification passes, not when code is written.
 - **`.claude/skills/scheduling-review`** — the domain review checklist for scheduling changes.
 - `.claude/scripts/` — SessionStart roadmap summary and a non-blocking Stop hook that runs the unit tests related to the turn's changes (100 s budget).
