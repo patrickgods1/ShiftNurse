@@ -11,6 +11,7 @@
 
 import type { FmlaCertificationRecord, LeaveBalanceRecord } from '@shared/api.js';
 import {
+  compareDates,
   type Id,
   type IsoDate,
   LEAVE_BALANCE_TYPES,
@@ -30,7 +31,7 @@ import { useConfirm } from '../../components/confirm.js';
 import { DateField } from '../../components/date-field.js';
 import { errorMessage, INPUT, PRIMARY, SECONDARY, SMALL } from '../../components/ui.js';
 import { useUnsavedChanges } from '../../components/unsaved-changes.js';
-import { formatDate } from '../../format.js';
+import { formatDate, formatSpan } from '../../format.js';
 
 export function LeaveSection({ nurseId }: { nurseId: Id }) {
   const records = useLeaveRecords(nurseId);
@@ -57,7 +58,7 @@ export function LeaveSection({ nurseId }: { nurseId: Id }) {
           <div className="flex flex-col gap-3">
             {shown.map((type) => (
               <BalanceRow
-                key={`${type}-${records.data.balances.find((b) => b.type === type)?.asOf ?? ''}`}
+                key={`${nurseId}-${type}-${records.data.balances.find((b) => b.type === type)?.asOf ?? ''}`}
                 nurseId={nurseId}
                 type={type}
                 label={TIME_OFF_TYPE_LABELS[type]}
@@ -189,10 +190,20 @@ function Certifications({
                   {c.note ? <div className="text-text-muted">{c.note}</div> : null}
                 </div>
                 <div className="flex gap-1">
-                  <button type="button" className={SMALL} onClick={() => setEditing(c)}>
+                  <button
+                    type="button"
+                    className={SMALL}
+                    aria-label={`Edit certification ${formatSpan(c.startDate, c.endDate, '')}`}
+                    onClick={() => setEditing(c)}
+                  >
                     Edit certification
                   </button>
-                  <button type="button" className={SMALL} onClick={() => void onRemove(c)}>
+                  <button
+                    type="button"
+                    className={SMALL}
+                    aria-label={`Remove certification ${formatSpan(c.startDate, c.endDate, '')}`}
+                    onClick={() => void onRemove(c)}
+                  >
                     Remove certification
                   </button>
                 </div>
@@ -244,7 +255,7 @@ function CertificationForm({
   const problem =
     !startDate || !endDate
       ? 'Enter the first and last day the certification covers.'
-      : endDate < startDate
+      : compareDates(endDate, startDate) < 0
         ? 'The last day is before the first.'
         : undefined;
   const pending = add.isPending || update.isPending;

@@ -81,8 +81,26 @@ tags. Each release's notes link here.
 - Rule settings the scheduler cannot use (a blank saved as nothing, a word in a number field) are
   refused when saved and reported in words when a schedule is checked, instead of silently
   switching a rule off.
+- Switching nurses in the open Roster drawer no longer carries one nurse's unsaved balance or
+  open form into the next nurse's record.
+- Preferences that fail to load show the error instead of an empty list whose Save would erase
+  them; a row missing its shift type or holiday says which row, and prefer-and-avoid the same
+  shift is refused.
+- Granting a new credential type creates and grants it in one step, so a failed grant no longer
+  leaves an orphan type that blocks the retry. Revoking a credential asks first and can record why.
+- Recording why an accommodation or kept-apart group changed no longer overwrites the reason the
+  accommodation or group exists.
+- Only an experienced RN, or an experienced nurse of the orientee's own role, can be named a
+  preceptor.
+- A roster sheet with a VA plan or scheduled days (including ShiftNurse's own export of a VA unit)
+  now imports instead of being refused whole. Contracted hours must be a real number that fits in
+  a pay period, and employee ids differing only in case count as duplicates.
 
 ### Changed
+
+- Roster import changes only what the file holds: a column the file lacks leaves that detail
+  alone, and the preview lists the details each nurse would have changed or cleared. A departed
+  nurse in the file stays inactive unless the manager ticks Reactivate.
 
 - Applying a state preset now also tightens on/off settings of a rule that was already on (for
   example Massachusetts' 16-hour limit now counts volunteered hours and ignores emergency notes,

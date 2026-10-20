@@ -4,10 +4,12 @@
  * `orientee-with-preceptor` keeps an orientee only on shifts one of their preceptors is on, and
  * Generate plans them together. An orientee may have several preceptors (the same weeks, covered
  * by whoever is on), so the dialog takes several and stores one record each. The dates are
- * inclusive and compare with the shift's start date.
+ * inclusive and compare with the shift's start date. Only nurses who may supervise the orientee
+ * (`mayPrecept`, which the repository also enforces) are offered as preceptors.
  */
 
 import type { Id, IsoDate, Nurse, Preceptorship } from '@shiftnurse/core';
+import { compareDates, mayPrecept } from '@shiftnurse/core';
 import { type FormEvent, useId, useState } from 'react';
 import {
   useCreatePreceptorship,
@@ -21,7 +23,7 @@ import { DateField } from '../../components/date-field.js';
 import { Field } from '../../components/field-help.js';
 import { Modal } from '../../components/modal.js';
 import { errorMessage, INPUT, PRIMARY, SECONDARY, SMALL } from '../../components/ui.js';
-import { formatDate } from '../../format.js';
+import { formatSpan } from '../../format.js';
 
 const HELP =
   'An orientee works only on shifts one of their preceptors is on; Generate keeps them together.';
@@ -29,10 +31,6 @@ const HELP =
 interface SectionProps {
   unitId: Id;
   nurses: readonly Nurse[];
-}
-
-function rangeLabel(p: Pick<Preceptorship, 'startDate' | 'endDate'>): string {
-  return `${formatDate(p.startDate)} to ${formatDate(p.endDate)}`;
 }
 
 export function OrientationSection({ unitId, nurses }: SectionProps) {
@@ -46,7 +44,7 @@ export function OrientationSection({ unitId, nurses }: SectionProps) {
   const onRemove = async (p: Preceptorship) => {
     const ok = await confirm({
       title: `End ${name(p.orienteeId)}’s orientation with ${name(p.preceptorId)}?`,
-      description: `${rangeLabel(p)}. ${name(p.orienteeId)} will no longer be kept to ${name(p.preceptorId)}’s shifts.`,
+      description: `${formatSpan(p.startDate, p.endDate, '')}. ${name(p.orienteeId)} will no longer be kept to ${name(p.preceptorId)}’s shifts.`,
       confirmLabel: 'Remove',
     });
     if (ok) remove.mutate(p.id);
@@ -85,13 +83,25 @@ export function OrientationSection({ unitId, nurses }: SectionProps) {
                 <div className="text-sm font-medium text-text">
                   {name(p.orienteeId)} with {name(p.preceptorId)}
                 </div>
-                <div className="mt-1 text-xs text-text-muted">{rangeLabel(p)}</div>
+                <div className="mt-1 text-xs text-text-muted">
+                  {formatSpan(p.startDate, p.endDate, '')}
+                </div>
               </div>
               <div className="flex gap-2">
-                <button type="button" className={SMALL} onClick={() => setEditing(p)}>
+                <button
+                  type="button"
+                  className={SMALL}
+                  aria-label={`Edit ${name(p.orienteeId)}’s orientation with ${name(p.preceptorId)}, ${formatSpan(p.startDate, p.endDate, '')}`}
+                  onClick={() => setEditing(p)}
+                >
                   Edit
                 </button>
-                <button type="button" className={SMALL} onClick={() => void onRemove(p)}>
+                <button
+                  type="button"
+                  className={SMALL}
+                  aria-label={`Remove ${name(p.orienteeId)}’s orientation with ${name(p.preceptorId)}, ${formatSpan(p.startDate, p.endDate, '')}`}
+                  onClick={() => void onRemove(p)}
+                >
                   Remove
                 </button>
               </div>
@@ -137,13 +147,34 @@ function OrientationDialog({ unitId, nurses, record, onClose }: DialogProps) {
     .filter((n) => n.active)
     .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`));
 
+  const orientee = nurses.find((n) => n.id === orienteeId);
+  // An edit cannot change the pair, so the recorded preceptor stays listed even if the rule would
+  // not allow them today; hiding them would make the record look like it has no preceptor.
+  const eligible = orientee
+    ? choices.filter(
+        (n) => n.id !== orientee.id && (mayPrecept(n, orientee) || n.id === record?.preceptorId),
+      )
+    : [];
+  const chooseOrientee = (id: string) => {
+    setOrienteeId(id);
+    const next = choices.find((n) => n.id === id);
+    setPreceptorIds((checked) =>
+      next
+        ? checked.filter((pid) => {
+            const p = choices.find((n) => n.id === pid);
+            return p !== undefined && p.id !== next.id && mayPrecept(p, next);
+          })
+        : [],
+    );
+  };
+
   const problem = !orienteeId
     ? 'Choose the nurse in orientation.'
     : preceptorIds.length === 0
       ? 'Choose at least one preceptor.'
       : !startDate || !endDate
         ? 'Enter the first and last day of the orientation.'
-        : endDate < startDate
+        : compareDates(endDate, startDate) < 0
           ? 'The last day is before the first.'
           : undefined;
   const pending = create.isPending || update.isPending;
@@ -178,7 +209,7 @@ function OrientationDialog({ unitId, nurses, record, onClose }: DialogProps) {
             className={INPUT}
             value={orienteeId}
             disabled={record !== undefined}
-            onChange={(e) => setOrienteeId(e.target.value)}
+            onChange={(e) => chooseOrientee(e.target.value)}
           >
             <option value="">Choose a nurse…</option>
             {choices.map((n) => (
@@ -192,12 +223,12 @@ function OrientationDialog({ unitId, nurses, record, onClose }: DialogProps) {
         <fieldset className="flex flex-col gap-1" disabled={record !== undefined}>
           <legend className="text-xs text-text-muted">Preceptors</legend>
           <p className="text-xs text-text-muted">
-            The orientee may work any shift one of these nurses is on.
+            Experienced RNs, or experienced nurses of the orientee's own role. The orientee may work
+            any shift one of them is on.
           </p>
-          <div className="mt-1 grid max-h-40 grid-cols-2 gap-1 overflow-y-auto">
-            {choices
-              .filter((n) => n.id !== orienteeId)
-              .map((n) => (
+          {orientee ? (
+            <div className="mt-1 grid max-h-40 grid-cols-2 gap-1 overflow-y-auto">
+              {eligible.map((n) => (
                 <label key={n.id} className="flex items-center gap-2 text-sm text-text">
                   <input
                     type="checkbox"
@@ -213,7 +244,10 @@ function OrientationDialog({ unitId, nurses, record, onClose }: DialogProps) {
                   {n.firstName} {n.lastName}
                 </label>
               ))}
-          </div>
+            </div>
+          ) : (
+            <p className="mt-1 text-sm text-text-muted">Choose the orientee first.</p>
+          )}
         </fieldset>
 
         <div className="grid grid-cols-2 gap-4">

@@ -266,6 +266,99 @@ describe('roster CSV import', () => {
     ]);
   });
 
+  it('numbers an error by spreadsheet row even after a cell with a line break', () => {
+    // Pins the existing contract rather than a fix: a quoted note spanning two text lines is
+    // still one spreadsheet row, so the next record is row 3, the number Excel shows.
+    const { errors } = parseRosterCsv(
+      csv(
+        'E1,A,B,RN,full_time,1,80,2020-01-01,no,no,no,,,"line one\nline two",',
+        'E2,C,D,RN,full_time,abc,80,2020-01-01,no,no,no,,,,',
+      ),
+      { payPeriodDays: 14 },
+    );
+    expect(errors).toEqual([{ line: 3, column: 'fte', message: expect.any(String) }]);
+  });
+
+  it('reports a duplicate employee id even when the first copy had another error', () => {
+    const { errors } = parseRosterCsv(
+      csv(
+        'E1,A,B,Doctor,full_time,1,80,2020-01-01,no,no,no,,,,',
+        'E1,C,D,RN,full_time,1,80,2020-01-01,no,no,no,,,,',
+      ),
+      { payPeriodDays: 14 },
+    );
+    expect(errors).toContainEqual({
+      line: 2,
+      column: 'role',
+      message: expect.stringContaining('Doctor'),
+    });
+    expect(errors).toContainEqual({
+      line: 3,
+      column: 'employee_id',
+      message: 'Duplicate employee id "E1" (row 2 has "E1")',
+    });
+  });
+
+  it('treats e1 and E1 as the same employee', () => {
+    const { rows, errors } = parseRosterCsv(
+      csv(
+        'E1,A,B,RN,full_time,1,80,2020-01-01,no,no,no,,,,',
+        'e1,C,D,RN,full_time,1,80,2020-01-01,no,no,no,,,,',
+      ),
+      { payPeriodDays: 14 },
+    );
+    expect(rows).toHaveLength(1);
+    expect(errors).toEqual([
+      {
+        line: 3,
+        column: 'employee_id',
+        message: 'Duplicate employee id "e1" (row 2 has "E1")',
+      },
+    ]);
+  });
+
+  it('refuses contracted hours of Infinity or more than the pay period holds', () => {
+    const hours = (value: string) =>
+      parseRosterCsv(csv(`E1,A,B,RN,full_time,1,${value},2020-01-01,no,no,no,,,,`), {
+        payPeriodDays: 14,
+      });
+    expect(hours('Infinity').errors).toEqual([
+      {
+        line: 2,
+        column: 'contracted_hours_per_period',
+        message: 'Contracted hours "Infinity" is not a number',
+      },
+    ]);
+    // 14 days x 24 hours = 336.
+    expect(hours('400').errors).toEqual([
+      {
+        line: 2,
+        column: 'contracted_hours_per_period',
+        message: 'Contracted hours 400 is more than a 14-day pay period holds (336)',
+      },
+    ]);
+    const full = hours('336');
+    expect(full.errors).toEqual([]);
+    expect(full.rows[0]!.nurse.contractedHoursPerPeriod).toBe(336);
+  });
+
+  it('says which optional columns the sheet carries', () => {
+    const text = [
+      'employee_id,first_name,last_name,role,employment_type,fte,notes,seniority_date',
+      'E100,Ada,Okafor,RN,full_time,1,,2015-03-02',
+    ].join('\n');
+    expect(parseRosterCsv(text, { payPeriodDays: 14 }).columns).toEqual([
+      'employee_id',
+      'first_name',
+      'last_name',
+      'role',
+      'employment_type',
+      'fte',
+      'seniority_date',
+      'notes',
+    ]);
+  });
+
   it('fails the whole file when required headers are missing', () => {
     const { rows, errors } = parseRosterCsv('first_name,last_name\nAda,Okafor', {
       payPeriodDays: 14,

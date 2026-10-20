@@ -4,11 +4,11 @@
  * A religious, disability, pregnancy or lactation accommodation (ADA, Title VII, PWFA, the PUMP
  * Act) is a legal promise, so Generate never schedules into one and the grid flags any shift
  * that does. The reason names a faith, a condition or a pregnancy: it is shown here and nowhere
- * else, and every add, change and removal needs one, which is kept in the audit trail.
+ * else, and every change and removal says why, in the audit trail.
  */
 
 import type { AvailabilityBlock, Id, IsoDate, Nurse, Weekday } from '@shiftnurse/core';
-import { WEEKDAY_NAMES } from '@shiftnurse/core';
+import { compareDates, WEEKDAY_NAMES } from '@shiftnurse/core';
 import { type FormEvent, useId, useState } from 'react';
 import {
   useAvailabilityBlocks,
@@ -21,7 +21,7 @@ import { DateField } from '../../components/date-field.js';
 import { describedBy, Field } from '../../components/field-help.js';
 import { Modal } from '../../components/modal.js';
 import { errorMessage, INPUT, PRIMARY, SECONDARY, SMALL } from '../../components/ui.js';
-import { formatDate } from '../../format.js';
+import { formatSpan } from '../../format.js';
 
 const HELP =
   'A recurring window this nurse cannot work — a religious, disability, pregnancy or lactation accommodation. Generate never schedules into it.';
@@ -34,13 +34,6 @@ const dayLabel = (d: Weekday) => WEEKDAY_NAMES[d].slice(0, 3);
 interface SectionProps {
   unitId: Id;
   nurses: readonly Nurse[];
-}
-
-function datesInForce(b: AvailabilityBlock): string {
-  if (b.startsOn && b.endsOn) return `${formatDate(b.startsOn)} – ${formatDate(b.endsOn)}`;
-  if (b.startsOn) return `From ${formatDate(b.startsOn)}`;
-  if (b.endsOn) return `Until ${formatDate(b.endsOn)}`;
-  return 'Ongoing';
 }
 
 export function AccommodationsSection({ unitId, nurses }: SectionProps) {
@@ -76,7 +69,10 @@ export function AccommodationsSection({ unitId, nurses }: SectionProps) {
           No accommodations recorded.
         </p>
       ) : (
-        <table className="w-full rounded-md border border-border bg-surface text-left text-sm">
+        <table
+          aria-label="Accommodations"
+          className="w-full rounded-md border border-border bg-surface text-left text-sm"
+        >
           <thead className="text-xs text-text-muted">
             <tr>
               <th className="p-3 font-medium">Nurse</th>
@@ -84,7 +80,9 @@ export function AccommodationsSection({ unitId, nurses }: SectionProps) {
               <th className="p-3 font-medium">Times</th>
               <th className="p-3 font-medium">In force</th>
               <th className="p-3 font-medium">Reason</th>
-              <th className="p-3" />
+              <th className="p-3">
+                <span className="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -96,14 +94,14 @@ export function AccommodationsSection({ unitId, nurses }: SectionProps) {
                   {b.startTime} – {b.endTime}
                   {b.startTime === b.endTime ? ' (24 hours)' : null}
                 </td>
-                <td className="p-3 text-text">{datesInForce(b)}</td>
+                <td className="p-3 text-text">{formatSpan(b.startsOn, b.endsOn, 'Ongoing')}</td>
                 <td className="p-3 text-text-muted">{b.reason}</td>
                 <td className="p-3 text-right">
                   <div className="flex justify-end gap-2">
                     <button
                       type="button"
                       className={SMALL}
-                      aria-label={`Edit ${name(b.nurseId)}’s accommodation`}
+                      aria-label={`Edit ${name(b.nurseId)}’s accommodation, ${formatSpan(b.startsOn, b.endsOn, 'Ongoing')}`}
                       onClick={() => setEditing(b)}
                     >
                       Edit
@@ -111,7 +109,7 @@ export function AccommodationsSection({ unitId, nurses }: SectionProps) {
                     <button
                       type="button"
                       className={SMALL}
-                      aria-label={`Remove ${name(b.nurseId)}’s accommodation`}
+                      aria-label={`Remove ${name(b.nurseId)}’s accommodation, ${formatSpan(b.startsOn, b.endsOn, 'Ongoing')}`}
                       onClick={() => setRemoving(b)}
                     >
                       Remove
@@ -165,6 +163,8 @@ function EditDialog({
   const [startsOn, setStartsOn] = useState<IsoDate | ''>(block?.startsOn ?? '');
   const [endsOn, setEndsOn] = useState<IsoDate | ''>(block?.endsOn ?? '');
   const [reason, setReason] = useState(block?.reason ?? '');
+  // Why the record changes is not why it exists: the first is audit-only, the second is HR's basis.
+  const [changeReason, setChangeReason] = useState('');
 
   const choices = nurses
     .filter((n) => n.active || n.id === block?.nurseId)
@@ -176,11 +176,13 @@ function EditDialog({
       ? 'Choose at least one day.'
       : !startTime || !endTime
         ? 'Enter when the window starts and ends.'
-        : startsOn && endsOn && endsOn < startsOn
+        : startsOn && endsOn && compareDates(endsOn, startsOn) < 0
           ? 'The accommodation ends before it starts.'
           : !reason.trim()
-            ? 'A reason is required; it is kept for HR and the audit trail.'
-            : undefined;
+            ? 'Say why this accommodation exists; it is kept for HR.'
+            : block && !changeReason.trim()
+              ? 'Say why you are changing it; it is kept in the audit trail.'
+              : undefined;
   const pending = create.isPending || update.isPending;
   const error = errorMessage(create.error ?? update.error);
 
@@ -202,8 +204,9 @@ function EditDialog({
             endTime,
             startsOn: startsOn || null,
             endsOn: endsOn || null,
+            ...(reason.trim() !== block.reason ? { reason: reason.trim() } : {}),
           },
-          reason: reason.trim(),
+          changeReason: changeReason.trim(),
         },
         { onSuccess: onClose },
       );
@@ -305,9 +308,9 @@ function EditDialog({
 
         <Field
           id={`${ids}-reason`}
-          label="Reason"
+          label="Why this accommodation exists"
           tip={REASON_TIP}
-          hint="Shown here only. Required for every change."
+          hint="Shown here only."
         >
           <textarea
             id={`${ids}-reason`}
@@ -318,6 +321,23 @@ function EditDialog({
             onChange={(e) => setReason(e.target.value)}
           />
         </Field>
+
+        {block ? (
+          <Field
+            id={`${ids}-change`}
+            label="Why are you changing it?"
+            hint="Kept in the audit trail."
+          >
+            <textarea
+              id={`${ids}-change`}
+              className={INPUT}
+              rows={2}
+              value={changeReason}
+              aria-describedby={describedBy(`${ids}-change`, { hint: true })}
+              onChange={(e) => setChangeReason(e.target.value)}
+            />
+          </Field>
+        ) : null}
 
         {problem && (nurseId || weekdays.length > 0 || reason) ? (
           <p className="text-xs text-text-muted">{problem}</p>

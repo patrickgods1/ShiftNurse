@@ -27,6 +27,8 @@ export interface DateFieldProps {
   disabled?: boolean;
   /** Hold the typed date locally and call onChange only on blur or Enter, with a valid ISO date or '' that differs from `value`. Default false (today's per-change behaviour). */
   commitOnBlur?: boolean;
+  /** A problem the form found (say, "required"); shown when the date itself is not at fault. */
+  error?: string;
 }
 
 /** The problem with `value`, or undefined. Empty is the form's business (`required`). */
@@ -58,6 +60,7 @@ export function DateField({
   id,
   disabled,
   commitOnBlur = false,
+  error,
 }: DateFieldProps) {
   const generated = useId();
   const fieldId = id ?? generated;
@@ -84,13 +87,16 @@ export function DateField({
     window.addEventListener('keydown', onKey, { capture: true });
     return () => window.removeEventListener('keydown', onKey, { capture: true });
   }, [reverting, reset]);
-  const problem = partial ? 'Enter a valid date.' : dateProblem(shownValue, min, max);
+  // The form's own error must not stop a corrected date from committing, so `finish` checks only
+  // the date's own problem.
+  const ownProblem = partial ? 'Enter a valid date.' : dateProblem(shownValue, min, max);
+  const problem = ownProblem ?? error;
   const finish = (badInput: boolean) => {
     if (badInput && draft.text === '') {
       setPartial(true);
       return;
     }
-    if (problem !== undefined) return;
+    if (ownProblem !== undefined) return;
     if (draft.text !== value) onChange(draft.text as IsoDate | '');
     draft.reset(draft.text);
   };

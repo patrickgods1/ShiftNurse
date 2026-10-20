@@ -5,7 +5,9 @@
  * Generate treats a block as absolute, so creating or loosening one is a decision that may be
  * questioned, and its reason names a faith, a disability or a pregnancy. Every write is audited
  * with that reason (`recordAuditStrict`, always required). The reason is checked first, then the
- * row is written, then the audit, so a failed write leaves no entry. Like an incompatibility
+ * row is written, then the audit, so a failed write leaves no entry. An update's reason is why it
+ * changed and goes to the audit row; the record's own reason (its basis) changes only when the
+ * patch carries `reason`. Like an incompatibility
  * group's, the reason is shown on the roster only: it is never copied into a violation message,
  * and `RECORD_EXCLUDED_ENTITIES` keeps the audit entries out of a nurse's exported record.
  */
@@ -23,7 +25,10 @@ const ENTITY = 'availability_block';
 /** What a manager enters; `reason` is the stated reason, kept on the block and in the audit. */
 export type AvailabilityBlockInput = Omit<AvailabilityBlock, 'id'>;
 
-/** Optional dates take `null` to clear them; an omitted key is left alone. `reason` is required. */
+/**
+ * Optional dates take `null` to clear them; an omitted key is left alone. `reason` is the
+ * accommodation's own basis: absent keeps it, and the reason for the change travels separately.
+ */
 export interface AvailabilityBlockPatch {
   weekdays?: AvailabilityBlock['weekdays'];
   startTime?: string;
@@ -134,18 +139,31 @@ export function createAvailabilityBlock(
   return block;
 }
 
-/** `patch.reason` is required: it is the stated reason for this change and replaces the stored one. */
+/**
+ * `changeReason` is why this change is made and goes to the audit row only; the block's own
+ * reason is replaced only by `patch.reason`. Folding the two together once lost the basis HR quotes.
+ */
 export function updateAvailabilityBlock(
   db: DbLike,
   id: Id,
   patch: AvailabilityBlockPatch,
+  changeReason: string,
   actor: string,
 ): AvailabilityBlock {
   const before = getAvailabilityBlock(db, id);
   if (!before) throw new Error(`Accommodation ${id} not found`);
   const changes = patchOf(patch, PATCH_KEYS, 'accommodation');
-  const reason = requireReason(changes.reason ?? '', 'change an accommodation');
-  const after: AvailabilityBlock = { ...before, reason };
+  const reason = requireReason(changeReason, 'change an accommodation');
+  const after: AvailabilityBlock = { ...before };
+  if (changes.reason !== undefined) {
+    const basis = changes.reason.trim();
+    if (!basis) {
+      throw new Error(
+        'Give the reason for the accommodation; it is kept for HR and the audit trail',
+      );
+    }
+    after.reason = basis;
+  }
   if (changes.weekdays !== undefined) after.weekdays = [...changes.weekdays].sort((a, b) => a - b);
   if (changes.startTime !== undefined) after.startTime = changes.startTime;
   if (changes.endTime !== undefined) after.endTime = changes.endTime;

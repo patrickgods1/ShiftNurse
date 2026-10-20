@@ -19,6 +19,9 @@ afterEach(() => f.handle.close());
 
 const api = () => preceptorshipsApi(f.handle.db);
 
+// The fixture's RNs sort by generated id, so any index may be a new grad, who cannot precept.
+const mentor = (i: number) => f.rns.filter((n) => !n.isNovice && n.id !== f.rns[0]!.id)[i]!;
+
 function orientation(preceptorIds: string[]) {
   const period = getPeriod(f.handle.db, f.seeded.draftPeriodId)!;
   return {
@@ -32,8 +35,8 @@ function orientation(preceptorIds: string[]) {
 
 describe('recording an orientation', () => {
   it('records one row per preceptor and audits each', () => {
-    const records = api().create(orientation([f.rns[1]!.id, f.rns[2]!.id]));
-    expect(records.map((r) => r.preceptorId)).toEqual([f.rns[1]!.id, f.rns[2]!.id]);
+    const records = api().create(orientation([mentor(0).id, mentor(1).id]));
+    expect(records.map((r) => r.preceptorId)).toEqual([mentor(0).id, mentor(1).id]);
     // Same start date, so the list breaks the tie by id: compare as sets.
     expect(
       new Set(
@@ -51,24 +54,24 @@ describe('recording an orientation', () => {
   });
 
   it('records nothing when one of the preceptors is the orientee', () => {
-    expect(() => api().create(orientation([f.rns[1]!.id, f.rns[0]!.id]))).toThrow(
+    expect(() => api().create(orientation([mentor(0).id, f.rns[0]!.id]))).toThrow(
       'A nurse cannot be their own preceptor',
     );
     expect(api().list(f.seeded.unitId)).toEqual([]);
   });
 
   it('puts the orientation in the period input Generate and conflicts read', () => {
-    const [record] = api().create(orientation([f.rns[1]!.id]));
+    const [record] = api().create(orientation([mentor(0).id]));
     const period = getPeriod(f.handle.db, f.seeded.draftPeriodId)!;
     expect(loadPeriodInput(f.handle.db, period).preceptorships).toEqual([record]);
   });
 });
 
 describe('the grid with an orientee on it', () => {
-  const place = (nurseIndex: number, shiftTypeId: string) =>
+  const place = (nurseId: string, shiftTypeId: string) =>
     scheduleApi(f.handle.db).createAssignment({
       periodId: f.seeded.draftPeriodId,
-      nurseId: f.rns[nurseIndex]!.id,
+      nurseId,
       shiftTypeId,
       date: addDays(f.seeded.draftStart, 3),
     });
@@ -78,18 +81,18 @@ describe('the grid with an orientee on it', () => {
       .result.violations.filter((v) => v.code === 'orientee_without_preceptor');
 
   it('flags an orientee working without their preceptor, and stops once the preceptor joins', () => {
-    api().create(orientation([f.rns[1]!.id]));
-    const alone = place(0, f.day.id);
+    api().create(orientation([mentor(0).id]));
+    const alone = place(f.rns[0]!.id, f.day.id);
     const violations = flagged();
     expect(violations).toHaveLength(1);
     expect(violations[0]!.assignmentIds).toEqual([alone.id]);
 
-    place(1, f.day.id);
+    place(mentor(0).id, f.day.id);
     expect(flagged()).toEqual([]);
   });
 
   it('flags nobody when no orientation is recorded', () => {
-    place(0, f.day.id);
+    place(f.rns[0]!.id, f.day.id);
     expect(flagged()).toEqual([]);
   });
 });

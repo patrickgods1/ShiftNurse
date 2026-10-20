@@ -144,6 +144,43 @@ describe('incompatibility groups', () => {
     expect((latest!.before as { nurseIds: string[] }).nurseIds).toHaveLength(3);
   });
 
+  it('keeps why the group exists when only its members change', () => {
+    const group = create(input(), 'Open HR investigation');
+    const updated = transact(handle.db, (tx) =>
+      updateIncompatibilityGroup(
+        tx,
+        group.id,
+        { nurseIds: [nurses[2]!.id, nurses[3]!.id] },
+        'Investigation closing in June',
+        ACTOR,
+      ),
+    );
+    expect(updated.reason).toBe('Open HR investigation');
+    const [latest] = auditHistoryFor(handle.db, 'incompatibility_group', group.id);
+    expect(latest!.reason).toBe('Investigation closing in June');
+    expect((latest!.before as { reason: string }).reason).toBe('Open HR investigation');
+    expect((latest!.after as { reason: string }).reason).toBe('Open HR investigation');
+  });
+
+  it('changes why the group exists when the manager rewrites it', () => {
+    const group = create(input(), 'Open HR investigation');
+    const updated = transact(handle.db, (tx) =>
+      updateIncompatibilityGroup(
+        tx,
+        group.id,
+        { reason: 'Restraining order on file' },
+        'Wording',
+        ACTOR,
+      ),
+    );
+    expect(updated.reason).toBe('Restraining order on file');
+    expect(() =>
+      transact(handle.db, (tx) =>
+        updateIncompatibilityGroup(tx, group.id, { reason: ' ' }, 'Wording', ACTOR),
+      ),
+    ).toThrow('A kept-apart group needs its reason; it is kept for HR and the audit trail');
+  });
+
   it('refuses an update that tries to move the group to another unit', () => {
     const group = create(input());
     expect(() =>

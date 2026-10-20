@@ -8,6 +8,7 @@
  */
 
 import type { Id, IsoDate, Nurse, OvertimeVolunteer } from '@shiftnurse/core';
+import { compareDates } from '@shiftnurse/core';
 import { type FormEvent, useId, useState } from 'react';
 import {
   useCreateOvertimeVolunteer,
@@ -21,7 +22,7 @@ import { DateField } from '../../components/date-field.js';
 import { describedBy, Field } from '../../components/field-help.js';
 import { Modal } from '../../components/modal.js';
 import { errorMessage, INPUT, PRIMARY, SECONDARY, SMALL } from '../../components/ui.js';
-import { formatDate } from '../../format.js';
+import { formatSpan } from '../../format.js';
 
 const HELP =
   'Where the law or your contract bans mandatory overtime (New York, Washington, Oregon, ' +
@@ -44,7 +45,7 @@ export function OvertimeVolunteersSection({ unitId, nurses }: SectionProps) {
     const who = nameOf.get(offer.nurseId) ?? offer.nurseId;
     const ok = await confirm({
       title: `Remove ${who}’s overtime offer?`,
-      description: `${rangeLabel(offer)}. Overtime shifts on those dates will no longer count as volunteered.`,
+      description: `${formatSpan(offer.startDate, offer.endDate, '')}. Overtime shifts on those dates will no longer count as volunteered.`,
       confirmLabel: 'Remove offer',
     });
     if (ok) remove.mutate(offer.id);
@@ -83,16 +84,28 @@ export function OvertimeVolunteersSection({ unitId, nurses }: SectionProps) {
                 <div className="text-sm font-medium text-text">
                   {nameOf.get(offer.nurseId) ?? offer.nurseId}
                 </div>
-                <div className="mt-1 text-xs text-text-muted">{rangeLabel(offer)}</div>
+                <div className="mt-1 text-xs text-text-muted">
+                  {formatSpan(offer.startDate, offer.endDate, '')}
+                </div>
                 {offer.note ? (
                   <div className="mt-1 text-xs text-text-muted">{offer.note}</div>
                 ) : null}
               </div>
               <div className="flex gap-2">
-                <button type="button" className={SMALL} onClick={() => setEditing(offer)}>
+                <button
+                  type="button"
+                  className={SMALL}
+                  aria-label={`Edit ${nameOf.get(offer.nurseId) ?? offer.nurseId}’s overtime offer, ${formatSpan(offer.startDate, offer.endDate, '')}`}
+                  onClick={() => setEditing(offer)}
+                >
                   Edit
                 </button>
-                <button type="button" className={SMALL} onClick={() => void onRemove(offer)}>
+                <button
+                  type="button"
+                  className={SMALL}
+                  aria-label={`Remove ${nameOf.get(offer.nurseId) ?? offer.nurseId}’s overtime offer, ${formatSpan(offer.startDate, offer.endDate, '')}`}
+                  onClick={() => void onRemove(offer)}
+                >
                   Remove
                 </button>
               </div>
@@ -116,12 +129,6 @@ export function OvertimeVolunteersSection({ unitId, nurses }: SectionProps) {
       ) : null}
     </section>
   );
-}
-
-function rangeLabel(offer: Pick<OvertimeVolunteer, 'startDate' | 'endDate'>): string {
-  return offer.startDate === offer.endDate
-    ? formatDate(offer.startDate)
-    : `${formatDate(offer.startDate)} to ${formatDate(offer.endDate)}`;
 }
 
 interface DialogProps {
@@ -152,7 +159,7 @@ function OfferDialog({ unitId, nurses, offer, onClose }: DialogProps) {
     ? 'Choose a nurse.'
     : !startDate || !endDate
       ? 'Enter the first and last day of the offer.'
-      : endDate < startDate
+      : compareDates(endDate, startDate) < 0
         ? 'The last day is before the first.'
         : undefined;
   const pending = create.isPending || update.isPending;

@@ -11,7 +11,7 @@ import {
   scenario,
   UNIT_ID,
 } from '../testing/fixtures.js';
-import { preceptorRule } from './preceptor.js';
+import { mayPrecept, preceptorRule } from './preceptor.js';
 import { defaultRuleSet, resolveConfigs } from './registry.js';
 
 beforeEach(() => resetFixtureCounters());
@@ -129,5 +129,26 @@ describe('an orientee works with their preceptor', () => {
     expect(judge({ nurses: [new_()], assignments: [assign('new', DAY_12, '2026-01-06')] })).toEqual(
       [],
     );
+  });
+});
+
+describe('who may precept', () => {
+  it('lets an experienced RN orient anyone and an LPN or aide only their own role', () => {
+    const cases = [
+      [{ role: 'RN', isNovice: false }, { role: 'RN' }, true],
+      [{ role: 'RN', isNovice: false }, { role: 'CNA' }, true],
+      [{ role: 'RN', isNovice: true }, { role: 'RN' }, false],
+      [{ role: 'LPN', isNovice: false }, { role: 'RN' }, false],
+      [{ role: 'CNA', isNovice: false }, { role: 'RN' }, false],
+      [{ role: 'LPN', isNovice: false }, { role: 'LPN' }, true],
+      [{ role: 'CNA', isNovice: false }, { role: 'CNA' }, true],
+      [{ role: 'CNA', isNovice: true }, { role: 'CNA' }, false],
+    ] as const;
+    for (const [preceptor, orientee, expected] of cases) {
+      expect(
+        mayPrecept(preceptor, orientee),
+        `${JSON.stringify(preceptor)} -> ${orientee.role}`,
+      ).toBe(expected);
+    }
   });
 });

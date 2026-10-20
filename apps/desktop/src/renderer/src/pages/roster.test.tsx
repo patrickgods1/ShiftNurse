@@ -59,6 +59,42 @@ afterEach(() => {
   bridge.uninstall();
 });
 
+function emptySummary(): DashboardSummary {
+  return {
+    unit,
+    today: today(),
+    activeNurses: 0,
+    currentDraft: undefined,
+    draftShifts: 0,
+    latestPublished: undefined,
+    pendingTimeOff: 0,
+    openCallOffs: 0,
+    expiringCredentials: [],
+    lapsedCredentials: [],
+    todayOnShift: [],
+  } satisfies DashboardSummary;
+}
+
+describe('the roster when there is nothing to list', () => {
+  it('invites the manager to add or import nurses when the roster is empty', async () => {
+    bridge.respond('nurses', 'list', []);
+    bridge.respond('dashboard', 'summary', emptySummary());
+    renderWithApp(<RosterPage />, { unit });
+    expect(await screen.findByText('No nurses yet. Add a nurse or import a CSV.')).toBeTruthy();
+  });
+
+  it('says every nurse is inactive rather than that none match', async () => {
+    bridge.respond('nurses', 'list', [{ ...nurse('n1', 'Gone'), active: false }]);
+    bridge.respond('dashboard', 'summary', emptySummary());
+    renderWithApp(<RosterPage />, { unit });
+    expect(
+      await screen.findByText(
+        'Every nurse on this unit is inactive. Tick Show inactive to see them.',
+      ),
+    ).toBeTruthy();
+  });
+});
+
 describe('credential badges on the roster', () => {
   it('marks a lapsed nurse and a nurse expiring soon, and leaves the rest alone', async () => {
     const lapsed = nurse('n1', 'Expired');

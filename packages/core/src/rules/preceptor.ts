@@ -21,6 +21,18 @@ import { isWorked, nurseName, violation } from './types.js';
 
 export type PreceptorParams = Record<string, never>;
 
+/**
+ * Whether `preceptor` may orient `orientee`: an experienced (not novice) RN may orient anyone;
+ * an experienced LPN or CNA may orient a nurse of their own role. An LPN or nursing assistant
+ * cannot supervise an RN, as for the novice rule.
+ */
+export function mayPrecept(
+  preceptor: Pick<Nurse, 'role' | 'isNovice'>,
+  orientee: Pick<Nurse, 'role'>,
+): boolean {
+  return !preceptor.isNovice && (preceptor.role === 'RN' || preceptor.role === orientee.role);
+}
+
 /** The preceptors in force for an orientee on a shift dated `date`; empty when not oriented. */
 export function preceptorsOn(
   ctx: Pick<RuleContext, 'preceptorshipsByOrientee'>,

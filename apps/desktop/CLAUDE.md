@@ -12,7 +12,8 @@
   `src/preload/` builds `window.shiftnurse` from the same channel table; `src/renderer/` is
   React 19 + TanStack Router (hash history, code-based routes) + TanStack Query + Tailwind v4
   tokens. Dashboard, Roster (CRUD, credentials, preferences, CSV import/export via native
-  dialogs in main), Settings (shift types, coverage floors, acuity tiers/ratios/HPPD,
+  dialogs in main; the import preview lists each change and asks before reactivating anyone, and
+  a column the file lacks is left alone), Settings (shift types, coverage floors, acuity tiers/ratios/HPPD,
   holidays) and Demand (census grid, forecaster proposals, derived demand with binding
   constraint, back-test) and Schedule (M6: nurses × days grid, native HTML5 drag-and-drop,
   lock/charge/OT popover, live violation badges from `schedule.validate`, Settings > Rules

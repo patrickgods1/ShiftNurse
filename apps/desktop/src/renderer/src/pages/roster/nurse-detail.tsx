@@ -2,11 +2,12 @@
  * The nurse detail drawer: summary, credential tracking and the preference editor. Lives
  * beside the roster table rather than behind its own route because a manager clicking through
  * fifty nurses in one sitting shouldn't wait on a route transition each time — it's state on
- * `roster.tsx`, not a page.
+ * `roster.tsx`, not a page. The body is keyed by nurse, so a section's unsaved state never
+ * follows the manager to the next nurse.
  */
 
 import type { DeactivationImpact, FutureShiftView } from '@shared/api.js';
-import type { Id, Nurse } from '@shiftnurse/core';
+import { EMPLOYMENT_TYPE_LABELS, type Id, type Nurse } from '@shiftnurse/core';
 import { Link } from '@tanstack/react-router';
 import { useRef, useState } from 'react';
 import {
@@ -65,7 +66,7 @@ export function NurseDetail({ nurseId, onClose, onEdit }: NurseDetailProps) {
       ) : nurseQuery.data === undefined ? (
         <AsyncState status="empty" label="Nurse not found" />
       ) : (
-        <NurseDetailBody nurseId={nurseId} nurse={nurseQuery.data} onEdit={onEdit} />
+        <NurseDetailBody key={nurseId} nurseId={nurseId} nurse={nurseQuery.data} onEdit={onEdit} />
       )}
     </div>
   );
@@ -281,7 +282,7 @@ function NurseSummary({ nurse }: { nurse: Nurse }) {
         {nurse.lastName}, {nurse.firstName}
       </p>
       <p className="text-text-muted">
-        {nurse.employeeId} · {nurse.role} · {nurse.employmentType.replace('_', ' ')}
+        {nurse.employeeId} · {nurse.role} · {EMPLOYMENT_TYPE_LABELS[nurse.employmentType]}
       </p>
       <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-text-muted">
         <dt>FTE</dt>

@@ -196,6 +196,24 @@ describe('credentials and preferences', () => {
   });
 });
 
+describe('granting a credential type that is not in the catalogue yet', () => {
+  it('grants a new credential type through one call', () => {
+    const ann = f.rns[0]!;
+    // The fixture's nurses already hold credentials; the new one is added to them.
+    const held = api().credentials.forNurse(ann.id).length;
+    const out = api().credentials.grantNew({
+      nurseId: ann.id,
+      code: 'TNCC',
+      name: 'Trauma Nursing Core Course',
+      tracksExpiry: true,
+      expiresOn: isoDate('2027-05-01'),
+    });
+    expect(out.credential.code).toBe('TNCC');
+    expect(out.nurseCredential.credentialId).toBe(out.credential.id);
+    expect(api().credentials.forNurse(ann.id)).toHaveLength(held + 1);
+  });
+});
+
 describe('keeping two nurses apart', () => {
   const pair = () => ({
     unitId: f.seeded.unitId,
@@ -237,13 +255,17 @@ describe('keeping two nurses apart', () => {
 });
 
 describe('the roster CSV', () => {
-  it('exports the roster so that importing it back updates every nurse and creates none', () => {
+  it('exports the roster so that importing it back changes no nurse and creates none', () => {
     const csv = api().roster.exportCsv(f.seeded.unitId);
     const parsed = parseRosterCsv(csv, { payPeriodDays: 14 });
     expect(parsed.errors).toEqual([]);
-    const summary = api().roster.importRows(f.seeded.unitId, parsed.rows);
+    const summary = api().roster.importRows(f.seeded.unitId, parsed.rows, {
+      columns: parsed.columns,
+      reactivate: false,
+    });
     expect(summary.created).toBe(0);
-    expect(summary.updated).toBe(parsed.rows.length);
+    expect(summary.updated).toBe(0);
+    expect(summary.unchanged).toBe(parsed.rows.length);
   });
 
   it('adds a nurse who appears only in the file, with an audit entry', () => {
@@ -252,7 +274,10 @@ describe('the roster CSV', () => {
     const extra = structuredClone(parsed.rows[0]!);
     extra.nurse.employeeId = 'E-CSV-9';
     extra.nurse.firstName = 'Cy';
-    const summary = api().roster.importRows(f.seeded.unitId, [extra]);
+    const summary = api().roster.importRows(f.seeded.unitId, [extra], {
+      columns: parsed.columns,
+      reactivate: false,
+    });
     expect(summary.created).toBe(1);
     const cy = api()
       .nurses.list(f.seeded.unitId)

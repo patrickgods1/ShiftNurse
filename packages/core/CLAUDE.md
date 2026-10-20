@@ -6,7 +6,9 @@
 
 - `packages/core` (M1, complete): `domain/time.ts`, `domain/entities.ts`, `acuity/demand.ts`,
   `schedule/view.ts`, `rules/` (registry + 8 hard rules), `roster/csv.ts` (M4: the one CSV
-  parser/formatter), `acuity/forecast.ts` (M5: same-weekday moving average with seasonal
+  parser/formatter), `roster/import-plan.ts` (`rosterChangesFor` / `planRosterImport`: what an
+  import changes per existing nurse — an absent column changes nothing; the preview and the
+  import share it), `acuity/forecast.ts` (M5: same-weekday moving average with seasonal
   index against the same lookback last year, mix validation, back-test), `fairness/` (M7), `cost/` (M8: `resolvePayRate`,
   `costSchedule`, `marginalCost`, `compareToBudget` — the pay model is documented in
   `cost/types.ts`), `solver/` (M9: `types.ts` is the `Solver` contract, `model.ts` the
@@ -406,6 +408,8 @@
   hard, shift scope, on by default and silent without preceptorships) counts a preceptor on the
   shift or on the one it runs inside; standby is not judged. CP-SAT prices it as a unit on the
   orientee's shift, priced convexly with the shift's other hard units (D10) (`encodePreceptor`).
+  A preceptor is an experienced RN, or an experienced nurse of the orientee's own role
+  (`mayPrecept`); the repository refuses others when an orientation is created.
 - **A rest waiver excuses one turnaround, keyed on the later shift.** A `RestWaiver` (nurse, date,
   reason, `recordAuditStrict`) lets `min-rest-between-shifts` pass a short rest only when the shift
   *after* it starts on the waiver's date; `restWaivedOn` is shared by the rule and `encodeRest`,

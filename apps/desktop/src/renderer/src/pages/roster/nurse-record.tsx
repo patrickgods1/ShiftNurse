@@ -1,13 +1,14 @@
 /**
  * "Export record…": one nurse's audit entries and published-shift changes for a date range, as a
  * CSV or a PDF, for a grievance or an HR file. The file says when, what, who and why for each
- * entry, oldest first. It leaves out kept-apart groups and their reasons, which are HR-sensitive,
- * and the dialog says so before the manager chooses, not after the file is on a shared drive.
+ * entry, oldest first. It leaves out kept-apart groups, FMLA certifications and accommodations,
+ * and the reasons recorded for them, which are HR- and medically sensitive; the dialog says so
+ * before the manager chooses, not after the file is on a shared drive.
  */
 
 import type { NurseRecordFormat } from '@shared/api.js';
-import { addDays, type IsoDate, type Nurse, today } from '@shiftnurse/core';
-import { useState } from 'react';
+import { addDays, compareDates, type IsoDate, type Nurse, today } from '@shiftnurse/core';
+import { useId, useState } from 'react';
 import { useExportNurseRecord } from '../../api-nurse-record.js';
 import { DateField } from '../../components/date-field.js';
 import { Field } from '../../components/field-help.js';
@@ -27,6 +28,7 @@ export function ExportRecordButton({ nurse }: { nurse: Nurse }) {
 }
 
 function ExportRecordDialog({ nurse, onClose }: { nurse: Nurse; onClose: () => void }) {
+  const formatId = useId();
   const exportRecord = useExportNurseRecord();
   const [end, setEnd] = useState<IsoDate | ''>(() => today());
   const [start, setStart] = useState<IsoDate | ''>(() => addDays(today(), -365));
@@ -35,7 +37,7 @@ function ExportRecordDialog({ nurse, onClose }: { nurse: Nurse; onClose: () => v
   const problem =
     start === '' || end === ''
       ? 'Choose the first and last day.'
-      : end < start
+      : compareDates(end, start) < 0
         ? 'The last day is before the first.'
         : undefined;
   const error = errorMessage(exportRecord.error);
@@ -77,12 +79,12 @@ function ExportRecordDialog({ nurse, onClose }: { nurse: Nurse; onClose: () => v
           <DateField label="Through" value={end} onChange={setEnd} />
         </div>
         <Field
-          id="record-format"
+          id={formatId}
           label="Format"
           hint="A PDF is for reading and printing; a CSV opens in a spreadsheet."
         >
           <select
-            id="record-format"
+            id={formatId}
             className={INPUT}
             value={format}
             onChange={(e) => setFormat(e.target.value as NurseRecordFormat)}
@@ -92,7 +94,8 @@ function ExportRecordDialog({ nurse, onClose }: { nurse: Nurse; onClose: () => v
           </select>
         </Field>
         <p className="text-xs text-text-muted">
-          Kept-apart groups and the reasons recorded for them are never included.
+          Kept-apart groups, FMLA certifications and accommodations, and the reasons recorded for
+          them, are never included.
         </p>
         {problem !== undefined && (start !== '' || end !== '') ? (
           <p className="text-xs text-text-muted">{problem}</p>

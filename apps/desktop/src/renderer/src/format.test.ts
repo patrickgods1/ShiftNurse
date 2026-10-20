@@ -7,12 +7,31 @@ import {
   formatDateWithWeekday,
   formatHoldover,
   formatMonthYear,
+  formatSpan,
   fteLabel,
   instantFormat,
   listName,
   periodLabel,
   periodRange,
 } from './format.js';
+
+describe('formatSpan', () => {
+  it('prints a closed span with both dates', () => {
+    expect(formatSpan(isoDate('2026-10-05'), isoDate('2026-11-15'), 'Ongoing')).toBe(
+      'Oct 5, 2026 to Nov 15, 2026',
+    );
+  });
+  it('prints one date when the span is a single day', () => {
+    expect(formatSpan(isoDate('2026-10-05'), isoDate('2026-10-05'), '')).toBe('Oct 5, 2026');
+  });
+  it('says From or Until for an open end', () => {
+    expect(formatSpan(isoDate('2026-10-05'), undefined, 'x')).toBe('From Oct 5, 2026');
+    expect(formatSpan(undefined, isoDate('2026-12-31'), 'x')).toBe('Until Dec 31, 2026');
+  });
+  it('prints the open wording when neither end is set', () => {
+    expect(formatSpan(undefined, undefined, 'Ongoing')).toBe('Ongoing');
+  });
+});
 
 describe('display date formatting', () => {
   it('prints the correct weekday — 2026-09-20 is a Sunday, not a Wednesday', () => {

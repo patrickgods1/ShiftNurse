@@ -10,6 +10,7 @@ import type {
   Id,
   IsoDate,
   NurseCredential,
+  RosterColumn,
   RosterCsvRow,
   TimeOffStatus,
 } from '@shiftnurse/core';
@@ -241,6 +242,20 @@ export function useCreateCredential() {
   });
 }
 
+export function useGrantNewCredential(nurseId: Id | undefined) {
+  const queryClient = useQueryClient();
+  const invalidate = useInvalidateNurseCredentials(nurseId);
+  return useMutation({
+    mutationFn: (input: Parameters<typeof api.credentials.grantNew>[0]) =>
+      api.credentials.grantNew(input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.credentials() });
+      invalidate();
+    },
+    meta: { inlineError: true },
+  });
+}
+
 function useInvalidateNurseCredentials(nurseId: Id | undefined) {
   const queryClient = useQueryClient();
   return () => {
@@ -257,6 +272,7 @@ export function useGrantCredential(nurseId: Id | undefined) {
   return useMutation({
     mutationFn: (input: Omit<NurseCredential, 'id'>) => api.credentials.grant(input),
     onSuccess: invalidate,
+    meta: { inlineError: true },
   });
 }
 
@@ -266,14 +282,16 @@ export function useUpdateCredentialExpiry(nurseId: Id | undefined) {
     mutationFn: ({ id, expiresOn }: { id: Id; expiresOn: IsoDate | undefined }) =>
       api.credentials.updateExpiry(id, expiresOn),
     onSuccess: invalidate,
+    meta: { inlineError: true },
   });
 }
 
 export function useRevokeCredential(nurseId: Id | undefined) {
   const invalidate = useInvalidateNurseCredentials(nurseId);
   return useMutation({
-    mutationFn: (id: Id) => api.credentials.revoke(id),
+    mutationFn: ({ id, reason }: { id: Id; reason?: string }) => api.credentials.revoke(id, reason),
     onSuccess: invalidate,
+    meta: { inlineError: true },
   });
 }
 
@@ -348,12 +366,12 @@ export function useUpdateIncompatibilityGroup(unitId: Id | undefined) {
     mutationFn: ({
       id,
       patch,
-      reason,
+      changeReason,
     }: {
       id: Id;
       patch: IncompatibilityGroupPatch;
-      reason: string;
-    }) => api.incompatibility.update(id, patch, reason),
+      changeReason: string;
+    }) => api.incompatibility.update(id, patch, changeReason),
     onSuccess: invalidate,
   });
 }
@@ -545,12 +563,12 @@ export function useUpdateAvailabilityBlock(unitId: Id) {
     mutationFn: ({
       id,
       patch,
-      reason,
+      changeReason,
     }: {
       id: Id;
       patch: AvailabilityBlockPatch;
-      reason: string;
-    }) => api.availabilityBlocks.update(id, patch, reason),
+      changeReason: string;
+    }) => api.availabilityBlocks.update(id, patch, changeReason),
     onSuccess: invalidate,
   });
 }
@@ -580,7 +598,13 @@ export function useImportRosterRows(unitId: Id | undefined) {
   const invalidate = useInvalidateRoster(unitId);
   return useMutation({
     meta: { inlineError: true },
-    mutationFn: (rows: RosterCsvRow[]) => api.roster.importRows(unitId as Id, rows),
+    mutationFn: ({
+      rows,
+      options,
+    }: {
+      rows: RosterCsvRow[];
+      options: { columns: RosterColumn[]; reactivate: boolean };
+    }) => api.roster.importRows(unitId as Id, rows, options),
     onSuccess: invalidate,
   });
 }

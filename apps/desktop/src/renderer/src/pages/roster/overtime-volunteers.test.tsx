@@ -92,7 +92,11 @@ describe('recording overtime offers on the roster', () => {
   it('extends an offer and clears its note with null', async () => {
     renderSection();
     await screen.findByText('Ana Martinez');
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Edit Ana Martinez’s overtime offer, Oct 5, 2026 to Oct 11, 2026',
+      }),
+    );
     const dialog = within(await screen.findByRole('dialog'));
     fireEvent.change(dialog.getByLabelText('Last day'), { target: { value: '2026-10-14' } });
     fireEvent.change(dialog.getByLabelText(/How the offer was made/), { target: { value: '' } });
@@ -107,7 +111,11 @@ describe('recording overtime offers on the roster', () => {
   it('removes an offer only after the manager confirms', async () => {
     renderSection();
     await screen.findByText('Ana Martinez');
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Remove Ana Martinez’s overtime offer, Oct 5, 2026 to Oct 11, 2026',
+      }),
+    );
     expect(bridge.callsTo('overtimeVolunteers', 'remove')).toEqual([]);
     fireEvent.click(await screen.findByRole('button', { name: 'Remove offer' }));
     await waitFor(() =>

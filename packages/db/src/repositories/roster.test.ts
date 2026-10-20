@@ -51,6 +51,7 @@ import {
   listPreferencesForUnit,
   nursesBySeniority,
   replaceNursePreferences,
+  revokeCredential,
   updateCredentialExpiry,
   updateNurse,
 } from './roster.js';
@@ -292,6 +293,16 @@ describe('credentials', () => {
     expect(found).toHaveLength(1);
     expect(found[0]?.nurse.firstName).toBe('Expiring');
     expect(found[0]?.credential.code).toBe('ACLS');
+  });
+
+  it('keeps the reason the manager gave for revoking a credential', () => {
+    const acls = seedCredential('ACLS');
+    const nurse = createNurse(handle.db, baseNurse(), ACTOR);
+    const nc = grantCredential(handle.db, { nurseId: nurse.id, credentialId: acls }, ACTOR);
+    revokeCredential(handle.db, nc.id, ACTOR, ' Not renewed ');
+    const [latest] = auditHistoryFor(handle.db, 'nurse_credential', nc.id);
+    expect(latest).toMatchObject({ action: 'delete', reason: 'Not renewed' });
+    expect((latest!.before as { id: string }).id).toBe(nc.id);
   });
 
   it('excludes credentials expiring outside the window', () => {

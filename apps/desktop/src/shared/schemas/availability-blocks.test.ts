@@ -28,5 +28,6 @@ describe('an accommodation arriving over IPC', () => {
   it('will not let an update move the block to another nurse', () => {
     expect(update.safeParse(['ablk-1', { nurseId: 'n-2' }, 'why']).success).toBe(false);
     expect(update.safeParse(['ablk-1', { endsOn: null }, 'Ongoing now']).success).toBe(true);
+    expect(update.safeParse(['ablk-1', { reason: 'Sabbath' }, 'Wording']).success).toBe(true);
   });
 });

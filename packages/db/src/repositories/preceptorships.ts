@@ -3,12 +3,14 @@
  *
  * `orientee-with-preceptor` keeps an orientee only on shifts a preceptor works, so a record that
  * pairs a nurse with themselves, names someone from another unit, or runs backwards would look
- * like orientation and constrain nothing (or, for a self-pairing, everything vacuously). All are
- * refused in words, and every change is audited with its `before`.
+ * like orientation and constrain nothing (or, for a self-pairing, everything vacuously). So would
+ * a preceptor who could not supervise the orientee — a nursing assistant "keeping" a new RN — so
+ * a new record must pass `mayPrecept`. All are refused in words, and every change is audited with
+ * its `before`.
  */
 
-import type { Id, IsoDate, Preceptorship } from '@shiftnurse/core';
-import { compareDates } from '@shiftnurse/core';
+import type { Id, IsoDate, NurseRole, Preceptorship } from '@shiftnurse/core';
+import { compareDates, mayPrecept } from '@shiftnurse/core';
 import { and, asc, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
@@ -16,6 +18,7 @@ import { ids } from '../ids.js';
 import { preceptorship as table } from '../schema.js';
 import { requireWorksOnUnit } from './nurse-units.js';
 import { type PatchKeys, patchOf } from './patch.js';
+import { getNurse } from './roster.js';
 
 const ENTITY = 'preceptorship';
 
@@ -85,6 +88,7 @@ export function createPreceptorship(
     endDate: input.endDate,
   };
   validate(db, record);
+  requireMayPrecept(db, record);
   db.insert(table)
     .values({ ...record, createdAt: Date.now() })
     .run();
@@ -139,4 +143,25 @@ function validate(db: DbLike, record: Preceptorship): void {
       end: record.endDate,
     });
   }
+}
+
+const NEEDS: Record<NurseRole, string> = {
+  RN: 'an RN in orientation needs an experienced RN',
+  LPN: 'an LPN in orientation needs an experienced RN or LPN',
+  CNA: 'a CNA in orientation needs an experienced RN or CNA',
+};
+
+/**
+ * Checked on create only: an update can move only the dates, and refusing it would strand an
+ * orientation recorded before this rule, which the manager can still end or delete.
+ */
+function requireMayPrecept(db: DbLike, record: Preceptorship): void {
+  // validate's membership check has already proven both nurses exist.
+  const preceptor = getNurse(db, record.preceptorId)!;
+  const orientee = getNurse(db, record.orienteeId)!;
+  if (mayPrecept(preceptor, orientee)) return;
+  throw new Error(
+    `${preceptor.firstName} ${preceptor.lastName} cannot precept ` +
+      `${orientee.firstName} ${orientee.lastName}: ${NEEDS[orientee.role]}.`,
+  );
 }

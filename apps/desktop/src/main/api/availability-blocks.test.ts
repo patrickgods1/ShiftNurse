@@ -54,9 +54,10 @@ describe('recording an accommodation', () => {
     const record = api().create(block());
     expect(() => api().update(record.id, { endTime: '06:00' }, '')).toThrow(/Give a reason/);
     const changed = api().update(record.id, { endTime: '06:00' }, 'Shortened after review');
-    expect(changed).toMatchObject({ endTime: '06:00', reason: 'Shortened after review' });
+    expect(changed).toMatchObject({ endTime: '06:00', reason: record.reason });
     expect(auditHistoryFor(f.handle.db, 'availability_block', record.id)[0]).toMatchObject({
       action: 'update',
+      reason: 'Shortened after review',
       before: { endTime: '00:00' },
     });
   });

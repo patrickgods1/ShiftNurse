@@ -58,13 +58,18 @@ export function RestWaiversSection({ unitId, nurses }: SectionProps) {
           No rest waivers recorded.
         </p>
       ) : (
-        <table className="w-full rounded-md border border-border bg-surface text-left text-sm">
+        <table
+          aria-label="Rest waivers"
+          className="w-full rounded-md border border-border bg-surface text-left text-sm"
+        >
           <thead className="text-xs text-text-muted">
             <tr>
               <th className="p-3 font-medium">Nurse</th>
               <th className="p-3 font-medium">Shift starting</th>
               <th className="p-3 font-medium">Reason</th>
-              <th className="p-3" />
+              <th className="p-3">
+                <span className="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
