@@ -133,7 +133,9 @@ describe('the period budget and cost report', () => {
   });
 
   it('says so when setting a budget for a period that does not exist', () => {
-    expect(() => api().setBudget('no-period', 1000)).toThrow(/unknown period/i);
+    expect(() => api().setBudget('no-period', 1000)).toThrow(
+      'That schedule period no longer exists. Reload the page.',
+    );
   });
 
   it('prices the shifts on the grid and compares the total with the budget', () => {

@@ -100,10 +100,18 @@ export function LeaveStanding({
             Pregnancy disability leave: {pdl.remainingHours} hours left of {pdl.entitlementHours}{' '}
             (four months of a {pdl.weeklyHours}-hour week); this request uses {pdl.requestHours}.
           </p>
-          <p className="text-[11px]">
-            {pdl.usedHours} hours taken in the 12 months {formatDate(pdl.period.from)} to{' '}
-            {formatDate(pdl.period.to)}.
-          </p>
+          {pdl.basis === 'certification' ? (
+            <p className="text-[11px]">
+              {pdl.usedHours} hours taken under the certification {formatDate(pdl.period.from)} to{' '}
+              {formatDate(pdl.period.to)}.
+            </p>
+          ) : (
+            <p className="text-[11px]">
+              {pdl.usedHours} hours taken in the 12 months {formatDate(pdl.period.from)} to{' '}
+              {formatDate(pdl.period.to)}. No certification on file covers the first day, so this
+              counts by year rather than per pregnancy.
+            </p>
+          )}
           {pdl.requestHours > pdl.remainingHours ? (
             <p role="alert" className="font-medium text-warn">
               This request uses {pdl.requestHours} hours; only {pdl.remainingHours} are left.

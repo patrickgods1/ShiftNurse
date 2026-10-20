@@ -1,23 +1,23 @@
 /** Argument schemas for `holidays`. */
 
 import { z } from 'zod';
-import { id, isoDate, object, type ResourceSchemas, text } from './primitives.js';
+import { id, isoDate, name, object, type ResourceSchemas } from './primitives.js';
 
 const holidayInput = object({
   unitId: id,
   date: isoDate,
-  name: text,
+  name,
   isMajor: z.boolean(),
   pairedHolidayId: id.nullable().optional(),
 });
 
 /** The major holiday a minor one pairs with: one already saved, or one in the same plan. */
-const pairTarget = z.union([object({ holidayId: id }), object({ key: text })]);
+const pairTarget = z.union([object({ holidayId: id }), object({ key: name })]);
 
 const plannedHoliday = object({
-  key: text,
+  key: name,
   date: isoDate,
-  name: text,
+  name,
   isMajor: z.boolean(),
   pairWith: pairTarget.nullable(),
 });
@@ -38,6 +38,6 @@ export const holidaysSchemas = {
   work: z.tuple([id]),
   recordWork: z.tuple([id, z.array(id)]),
   clearWork: z.tuple([id]),
-  planYear: z.tuple([id, z.number().int()]),
+  planYear: z.tuple([id, z.number().int().min(1900).max(2200)]),
   addYear: z.tuple([id, holidayYearInput]),
 } satisfies ResourceSchemas<'holidays'>;

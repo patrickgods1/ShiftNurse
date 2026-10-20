@@ -768,6 +768,9 @@ const EXCHANGE_SCRIPT = `
     }
     if (!proposal) return { error: 'no trade candidate found' };
     const swap = await api.exchange.propose(draft.id, proposal, 'smoke trade');
+    // Entered before the first is decided: once it is approved the shifts have moved, and a
+    // proposal naming them is (rightly) refused when entered.
+    const secondSwap = await api.exchange.propose(draft.id, proposal, 'smoke trade 2');
     let decided;
     let decideError;
     try {
@@ -779,7 +782,6 @@ const EXCHANGE_SCRIPT = `
       decideError = String(e);
     }
 
-    const secondSwap = await api.exchange.propose(draft.id, proposal, 'smoke trade 2');
     let blankDenyRefused = false;
     try {
       await api.exchange.deny(secondSwap.id, '   ');
@@ -810,7 +812,11 @@ const PUBLISH_SCRIPT = `
     const draft = (await api.periods.list(unit.id)).find((p) => p.status === 'draft');
     if (!draft) return { error: 'no draft to publish' };
     const preview = await api.publish.preview(draft.id);
-    const first = await api.publish.publish(draft.id);
+    const first = await api.publish.publish(
+      draft.id,
+      preview.hardViolations > 0 ? 'Smoke: publish over the named shortfalls' : undefined,
+      preview.hardViolations,
+    );
     const types = await api.shiftTypes.list(unit.id);
     const day = types.find((t) => !t.isNight && !t.isOnCall && t.durationHours === 12);
     const nurse = (await api.nurses.list(unit.id)).find((n) => n.active && n.employmentType === 'per_diem');
@@ -830,7 +836,11 @@ const PUBLISH_SCRIPT = `
     );
     const changes = await api.publish.changes(draft.id);
     const second = await api.publish.preview(draft.id);
-    const republished = await api.publish.publish(draft.id, 'Smoke: republish after cover');
+    const republished = await api.publish.publish(
+      draft.id,
+      'Smoke: republish after cover',
+      second.hardViolations,
+    );
     const versions = await api.publish.versions(draft.id);
     const csv = await api.output.renderCsv(draft.id, 'csv-long');
     const backups = await api.backups.list();

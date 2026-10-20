@@ -113,6 +113,9 @@ export interface AppliedResolution {
  * on anything other than a draft — a published schedule changes through the post-publish
  * change log, not here — and refuses to double-book a nurse rather than letting the unique
  * index raise a bare SQL error halfway through the actions.
+ *
+ * Callers pass a resolution `analyseConflicts` produced against the period as it stands in this
+ * transaction (`conflicts.resolve` re-derives it by id); it is never a payload from the renderer.
  */
 export function applyResolution(
   // A transaction: a resolution writes several rows and must land all-or-nothing.

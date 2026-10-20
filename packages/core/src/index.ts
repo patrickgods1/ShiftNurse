@@ -43,7 +43,7 @@ export {
 export { compareToBudget, costSchedule, isBaylorTour } from './cost/cost.js';
 export type { DayOfPay, DayOfPayEvent, DayOfPayLine, DayOfPayPolicy } from './cost/events.js';
 // Pay for what happened on the day: missed breaks, reporting-time pay, call-backs
-export { priceDayOfEvents } from './cost/events.js';
+export { priceDayOfEvents, reportingPayOwed } from './cost/events.js';
 // The pay rate in force for a nurse on a date
 export { resolvePayRate } from './cost/rates.js';
 export type { BudgetVariance, CostContext, PaySettings, ScheduleCost } from './cost/types.js';
@@ -446,6 +446,8 @@ export type { ScheduleScore } from './solver/report.js';
 export { scoreAssignments } from './solver/report.js';
 // The seeded RNG shared with the seeder
 export { Rng } from './solver/rng.js';
+// The one SolveInput → RuleContext mapping the grid, conflicts and the solver share
+export { ruleContextForInput } from './solver/rule-context.js';
 // Solver entry point
 export { solve } from './solver/solver.js';
 // Solver contract types

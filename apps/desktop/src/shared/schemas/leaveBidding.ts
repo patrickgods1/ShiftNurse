@@ -1,7 +1,7 @@
 /** Argument schemas for `leaveBidding`. */
 
 import { z } from 'zod';
-import { count, id, isoDate, object, type ResourceSchemas, text } from './primitives.js';
+import { count, id, isoDate, name, object, type ResourceSchemas } from './primitives.js';
 
 /** Places off a day per role. Whole numbers: a place is a person. */
 const offPerDay = object({
@@ -14,7 +14,7 @@ const maxAwards = z.number().int('must be a whole number').min(1, 'must be 1 or 
 
 const roundInput = object({
   unitId: id,
-  name: text,
+  name,
   coversStart: isoDate,
   coversEnd: isoDate,
   opensOn: isoDate,
@@ -25,7 +25,7 @@ const roundInput = object({
 
 /** The unit never changes, and a limit takes `null` to be removed. */
 const roundPatch = object({
-  name: text,
+  name,
   coversStart: isoDate,
   coversEnd: isoDate,
   opensOn: isoDate,

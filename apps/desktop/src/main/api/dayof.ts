@@ -9,6 +9,7 @@ import {
   type CallOff,
   type CallOutcome,
   checkStaffing,
+  describeDate,
   findReplacements,
   type Id,
   type IsoDate,
@@ -59,6 +60,7 @@ import type {
 } from '../../shared/api.js';
 
 import { cancelForCensus, cancellationOrderFor, overstaffedRoles } from './census-cancellation.js';
+import { hostMinuteOfDay } from './clock.js';
 import {
   ACTOR,
   assignmentOrThrow,
@@ -71,26 +73,17 @@ import { editSchedule } from './schedule.js';
 /** How far back the call log is read when spreading calls across the pool. */
 const LAST_CALL_LOOKBACK_DAYS = 180;
 
-/**
- * The one place main reads the wall clock for "what shift is running right now" — the same
- * exception `today()` makes: this is an event (what time is it), not schedule geometry.
- */
-function hostMinuteOfDay(): number {
-  const now = new Date();
-  return now.getHours() * 60 + now.getMinutes();
-}
-
 function getCallOffOrThrow(db: DbLike, id: Id): CallOff {
   const callOff = getCallOff(db, id);
-  if (!callOff) throw new Error(`Call-off ${id} not found`);
+  if (!callOff) throw new Error('That call-off was not found; it may have been cancelled.');
   return callOff;
 }
 
 function callOffView(db: DbLike, callOff: CallOff): CallOffView {
   const nurse = getNurse(db, callOff.nurseId);
-  if (!nurse) throw new Error(`Unknown nurse ${callOff.nurseId}`);
+  if (!nurse) throw new Error('That nurse was not found. Reload the page.');
   const shiftType = getShiftType(db, callOff.shiftTypeId);
-  if (!shiftType) throw new Error(`Unknown shift type ${callOff.shiftTypeId}`);
+  if (!shiftType) throw new Error('That shift type was not found. Reload the page.');
   const period = periodOrThrow(db, callOff.periodId);
   const assignment = getAssignment(db, callOff.assignmentId);
   const attempts = listCallAttempts(db, callOff.id);
@@ -170,19 +163,25 @@ function dayOfSummary(db: DbLike, unitId: Id, date?: IsoDate): DayOfSummary {
   const d = date ?? today();
   const minuteOfDay = hostMinuteOfDay();
   const shiftTypes = listShiftTypesForUnit(db, unitId);
-  const nurses = rosterForPeriod(db, { unitId, startDate: d, endDate: d });
   const shiftTypeById = new Map(shiftTypes.map((t) => [t.id, t]));
-  const nurseById = new Map(nurses.map((n) => [n.id, n]));
 
-  const around = shiftsAround(shiftTypes, d, minuteOfDay);
+  // The host clock says where "now" is only on today's date; another day has no running shift,
+  // so every slot is `other` rather than tagging tomorrow's Day shift current at 15:00.
+  const around =
+    d === today() ? shiftsAround(shiftTypes, d, minuteOfDay) : { current: [], next: undefined };
   const slots = collectSlots(shiftTypes, d, around);
+
+  // Spans every slot's date: late in the evening `next` is tomorrow's shift, and a float whose
+  // membership starts tomorrow is not on a roster that ends today.
+  const dates = [...new Set(slots.map((s) => s.date))].sort();
+  const nurses = rosterForPeriod(db, { unitId, startDate: dates[0]!, endDate: dates.at(-1)! });
+  const nurseById = new Map(nurses.map((n) => [n.id, n]));
 
   // Loaded once: every open call-off on the unit, whatever its date, so a roster row can show
   // the call-off against it without a query per assignment.
   const openCallOffRows = listCallOffsForUnit(db, unitId, { status: 'open' });
   const callOffByAssignment = new Map(openCallOffRows.map((c) => [c.assignmentId, c]));
 
-  const dates = [...new Set(slots.map((s) => s.date))];
   const perDate = new Map<IsoDate, ReturnType<typeof planForDate>>();
   for (const slotDate of dates) {
     perDate.set(slotDate, planForDate(db, unitId, shiftTypes, nurses, slotDate));
@@ -192,9 +191,12 @@ function dayOfSummary(db: DbLike, unitId: Id, date?: IsoDate): DayOfSummary {
     const plan = perDate.get(slot.date);
     if (!plan) throw new Error(`No staffing plan computed for ${slot.date}`);
     const shiftType = shiftTypeById.get(slot.shiftTypeId);
-    if (!shiftType) throw new Error(`Unknown shift type ${slot.shiftTypeId}`);
+    if (!shiftType) throw new Error('That shift type was not found. Reload the page.');
     const staffing = plan.checks.find((c) => c.shiftTypeId === slot.shiftTypeId);
-    if (!staffing) throw new Error(`No staffing check for ${slot.date} ${slot.shiftTypeId}`);
+    if (!staffing)
+      throw new Error(
+        `Today could not check staffing for ${describeDate(slot.date)} ${shiftType.abbreviation}.`,
+      );
     const census = plan.census.find(
       (c) => c.shiftTypeId === slot.shiftTypeId && c.date === slot.date,
     );
@@ -202,7 +204,10 @@ function dayOfSummary(db: DbLike, unitId: Id, date?: IsoDate): DayOfSummary {
       .filter((a) => a.shiftTypeId === slot.shiftTypeId && a.date === slot.date)
       .map((a) => {
         const nurse = nurseById.get(a.nurseId);
-        if (!nurse) throw new Error(`Unknown nurse ${a.nurseId}`);
+        if (!nurse)
+          throw new Error(
+            `${describeDate(a.date)}: a shift is held by a nurse who is not on this unit's roster for that day. Check their float membership under Roster.`,
+          );
         const callOff = callOffByAssignment.get(a.id);
         return { assignment: a, nurse, ...(callOff ? { callOff } : {}) };
       })
@@ -258,7 +263,7 @@ function reportDayOfCallOff(
 function replacementsFor(db: DbLike, callOffId: Id): ReplacementReport {
   const callOff = getCallOffOrThrow(db, callOffId);
   if (callOff.status !== 'open') {
-    throw new Error(`Call-off ${callOffId} is ${callOff.status}, not open`);
+    throw new Error(`This call-off is ${callOff.status}, not open.`);
   }
   const period = periodOrThrow(db, callOff.periodId);
   const lastCalled = Object.fromEntries(
@@ -296,15 +301,15 @@ function logCall(
 function backfill(db: ShiftNurseDb, callOffId: Id, nurseId: Id, notes?: string): BackfillResult {
   const callOff = getCallOffOrThrow(db, callOffId);
   if (callOff.status !== 'open') {
-    throw new Error(`Call-off ${callOffId} is ${callOff.status}, not open`);
+    throw new Error(`This call-off is ${callOff.status}, not open.`);
   }
-  if (!getNurse(db, nurseId)) throw new Error(`Unknown nurse ${nurseId}`);
+  if (!getNurse(db, nurseId)) throw new Error('That nurse was not found. Reload the page.');
   // The reason names who was ABSENT — that is the fact being explained. The replacement's
   // name is already on the `added` row the change log writes below.
   const absentNurse = getNurse(db, callOff.nurseId);
-  if (!absentNurse) throw new Error(`Unknown nurse ${callOff.nurseId}`);
+  if (!absentNurse) throw new Error('That nurse was not found. Reload the page.');
   const shiftType = getShiftType(db, callOff.shiftTypeId);
-  if (!shiftType) throw new Error(`Unknown shift type ${callOff.shiftTypeId}`);
+  if (!shiftType) throw new Error('That shift type was not found. Reload the page.');
   const reason =
     `Call-off: ${absentNurse.firstName} ${absentNurse.lastName}, ${callOff.date} ${shiftType.abbreviation}` +
     (callOff.reason ? ` — ${callOff.reason}` : '');
@@ -316,12 +321,10 @@ function backfill(db: ShiftNurseDb, callOffId: Id, nurseId: Id, notes?: string):
     const report = findReplacements({
       ...buildConflictInput(tx, callOff.periodId),
       absentAssignmentId: absent.id,
+      // Only whether the nurse is still a candidate matters here, not where they rank: the
+      // manager already phoned down the list. So the ranking inputs (call history, last
+      // overtime) are not reloaded.
       lastCalledAt: {},
-      // The re-check must rank as the screen did, or the roster's order differs from what the
-      // manager phoned down.
-      lastOvertimeOn: Object.fromEntries(
-        lastOvertimeDates(tx, periodOrThrow(tx, callOff.periodId).unitId, callOff.date),
-      ),
     });
     const candidate = report.candidates.find((c) => c.nurseId === nurseId);
     if (!candidate) {
@@ -329,7 +332,7 @@ function backfill(db: ShiftNurseDb, callOffId: Id, nurseId: Id, notes?: string):
       throw new Error(
         excluded
           ? `${excluded.label} is not eligible for this shift: ${excluded.reason}`
-          : `Nurse ${nurseId} is not eligible for this shift`,
+          : 'That nurse is not eligible for this shift.',
       );
     }
     deleteAssignment(tx, absent.id, ACTOR, reason);

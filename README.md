@@ -79,6 +79,7 @@ These are yours to do by hand until the app handles them (the same list is in Se
 - Leave accrual is projected from the last payroll figure under Settings › Leave: part-time accrual counts hours worked, not other paid hours, and the federal 6-hour tier's extra 10 hours in the leave year's last pay period is not added, so re-enter payroll's figures now and then.
 - Military leave (120 hours a fiscal year), court leave and paid parental leave are leave types without entitlements of their own: check the hours available with HR.
 - FMLA leave already taken is counted at the nurse's current contract: if their FTE changed during the year, check the hours used with HR.
+- Pregnancy disability leave is counted per pregnancy through the certification you record. Without one it is counted over the last 12 months.
 - Break premiums are priced at the base rate: California pays them at the regular rate, which includes differentials, so add the difference in payroll.
 - Float staff: Generate may offer a float nurse on any day of the period, not only the dates of their membership; check the dates yourself.
 - Tour rotation limits (Settings › Rules) are checked on the grid, but Generate does not steer away from them while the rule is soft: make it hard to have Generate keep to them.

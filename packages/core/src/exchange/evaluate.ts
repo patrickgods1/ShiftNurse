@@ -164,7 +164,7 @@ function validateProposal(engine: ConflictEngine, proposal: ExchangeProposal): V
   } = proposal;
 
   if (requestingNurseId === counterpartyNurseId) {
-    throw new Error(`An exchange cannot be between a nurse (${requestingNurseId}) and themself.`);
+    throw new Error('An exchange needs two different nurses.');
   }
   // Throws loudly on an unknown nurse id.
   engine.nurse(requestingNurseId);
@@ -174,9 +174,7 @@ function validateProposal(engine: ConflictEngine, proposal: ExchangeProposal): V
     throw new Error('A trade must name the assignment the counterparty gives up in return.');
   }
   if (kind === 'giveaway' && requestedAssignmentId) {
-    throw new Error(
-      'A giveaway takes nothing back; it must not name a requestedAssignmentId (that makes it a trade).',
-    );
+    throw new Error('A giveaway takes nothing back; to get a shift in return, propose a trade.');
   }
 
   const offered = findHeldAssignment(engine, offeredAssignmentId, requestingNurseId);
@@ -197,21 +195,19 @@ function findHeldAssignment(
     const inTail = engine.input.priorAssignments.some((a) => a.id === assignmentId);
     if (inTail) {
       throw new Error(
-        `Assignment ${assignmentId} is outside this period (it is history, not something this ` +
-          'schedule can exchange).',
+        'That shift is outside this schedule period; only this period’s shifts can be exchanged.',
       );
     }
-    throw new Error(`Unknown assignment ${assignmentId}.`);
+    throw new Error('That shift is no longer on this schedule.');
   }
   if (inPeriod.nurseId !== expectedNurseId) {
     throw new Error(
-      `Assignment ${assignmentId} is held by ${inPeriod.nurseId}, not the stated nurse ${expectedNurseId}.`,
+      `That shift belongs to ${nurseName(engine.nurse(inPeriod.nurseId))}, not ` +
+        `${nurseName(engine.nurse(expectedNurseId))}.`,
     );
   }
   if (inPeriod.isLocked) {
-    throw new Error(
-      `Assignment ${assignmentId} is locked; unlock it before proposing an exchange that moves it.`,
-    );
+    throw new Error('That shift is locked; unlock it before proposing an exchange that moves it.');
   }
   return inPeriod;
 }

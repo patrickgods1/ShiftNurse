@@ -324,7 +324,7 @@ describe('the rule set', () => {
         latest.weekendDefinition,
         latest.fairnessWeights,
       ),
-    ).toThrow();
+    ).toThrow(/UNIQUE constraint failed/);
     expect(api().rules.getLatest(unitId()).id).toBe(latest.id);
     expect(recentAudit(f.handle.db, 1000)).toHaveLength(audits);
   });

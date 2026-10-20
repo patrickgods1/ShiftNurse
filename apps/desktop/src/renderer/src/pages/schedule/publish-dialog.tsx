@@ -74,7 +74,7 @@ export function PublishDialog({
     !empty &&
     !publish.isPending &&
     (preview.hardViolations === 0 || acknowledged) &&
-    (!republish || reason.trim().length > 0);
+    ((!republish && preview.hardViolations === 0) || reason.trim().length > 0);
   const done = publish.data;
 
   return (
@@ -157,7 +157,12 @@ export function PublishDialog({
           className="mt-4 flex flex-col gap-3"
           onSubmit={(e) => {
             e.preventDefault();
-            if (canPublish) publish.mutate(reason.trim() || undefined);
+            if (canPublish && preview) {
+              publish.mutate({
+                reason: reason.trim() || undefined,
+                acknowledged: preview.hardViolations,
+              });
+            }
           }}
         >
           <p
@@ -265,16 +270,18 @@ export function PublishDialog({
           ) : null}
 
           <label className={LABEL}>
-            Reason{republish ? '' : ' (optional)'}
+            Reason{republish || (preview?.hardViolations ?? 0) > 0 ? '' : ' (optional)'}
             <textarea
               data-testid="publish-reason"
               className={`${INPUT} min-h-16`}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder={
-                republish
-                  ? 'What changed and why — staff will see this'
-                  : 'Optional note for the audit trail'
+                preview.hardViolations > 0
+                  ? 'Why it goes out with rule breaks — quoted if it is challenged'
+                  : republish
+                    ? 'What changed and why — staff will see this'
+                    : 'Optional note for the audit trail'
               }
             />
           </label>

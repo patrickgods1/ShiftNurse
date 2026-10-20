@@ -1,11 +1,11 @@
 /** Argument schemas for `credentials`. */
 
 import { z } from 'zod';
-import { id, isoDate, none, object, type ResourceSchemas, text } from './primitives.js';
+import { id, isoDate, name, none, object, type ResourceSchemas } from './primitives.js';
 
 const credentialInput = object({
-  code: text,
-  name: text,
+  code: name,
+  name,
   tracksExpiry: z.boolean(),
 });
 

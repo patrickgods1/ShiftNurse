@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import type { Differential, PayRate } from '../domain/entities.js';
 import { DEFAULT_WEEKEND, isoDate } from '../domain/time.js';
 import { makeNurse, testUnit, UNIT_ID } from '../testing/fixtures.js';
-import { type DayOfPayEvent, priceDayOfEvents } from './events.js';
+import { type DayOfPayEvent, priceDayOfEvents, reportingPayOwed } from './events.js';
 import type { CostContext } from './types.js';
 
 const RN_RATE: PayRate = {
@@ -114,5 +114,35 @@ describe('pay for what happened on the day', () => {
     );
     expect(result.lines).toEqual([]);
     expect(result.unpriced).toBe(1);
+  });
+});
+
+describe('reporting-time pay for a nurse sent home', () => {
+  // 07:00 on day 20000 of the wall-clock timeline.
+  const S = 20_000 * 1440 + 420;
+  const owed = (recordedAtMinute: number, noticeHours = 2) =>
+    reportingPayOwed({ shiftStartMinute: S, recordedAtMinute, noticeHours });
+
+  it('owes it to a nurse sent home after she arrived', () => {
+    expect(owed(S + 30)).toBe(true);
+  });
+
+  it('owes it when the call came 90 minutes before a 07:00 start', () => {
+    expect(owed(S - 90)).toBe(true);
+  });
+
+  it('owes nothing for a cancellation phoned at 20:00 the evening before', () => {
+    // 20:00 to 07:00 is 11 hours, well past the 2-hour notice.
+    expect(owed(S - 660)).toBe(false);
+  });
+
+  it('owes nothing when told exactly the notice ahead', () => {
+    expect(owed(S - 120)).toBe(false);
+  });
+
+  it('with no notice set, owes it only once the shift has begun', () => {
+    expect(owed(S - 1, 0)).toBe(false);
+    expect(owed(S, 0)).toBe(false);
+    expect(owed(S + 1, 0)).toBe(true);
   });
 });

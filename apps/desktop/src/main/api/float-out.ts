@@ -12,6 +12,7 @@
 import {
   type Assignment,
   addDays,
+  describeDate,
   floatOrder,
   type Id,
   type IsoDate,
@@ -21,6 +22,7 @@ import {
   createFloatRecord,
   type DbLike,
   deleteAssignment,
+  getNurse,
   getShiftType,
   listAssignmentsForPeriodOnDate,
   listFloatRecords,
@@ -37,12 +39,11 @@ import type {
   ShiftNurseApi,
 } from '../../shared/api.js';
 import { ACTOR, periodOrThrow } from './context.js';
+import { firstInOrder, nurseName } from './order.js';
 import { editSchedule } from './schedule.js';
 
 /** The rotation counts a year of floats, as contracts do. */
 const FLOAT_HISTORY_DAYS = 365;
-
-const nameOf = (nurse: Nurse) => `${nurse.firstName} ${nurse.lastName}`;
 
 export function floatOrderFor(db: DbLike, request: FloatOrderRequest): FloatOrderView {
   const { periodId, date, shiftTypeId, role, volunteers } = request;
@@ -58,8 +59,9 @@ export function floatOrderFor(db: DbLike, request: FloatOrderRequest): FloatOrde
       const nurse = nurseById.get(assignment.nurseId);
       // Silently dropping the row would hide a nurse who is on the shift but could not be ranked.
       if (!nurse) {
+        const known = getNurse(db, assignment.nurseId);
         throw new Error(
-          `Assignment ${assignment.id} is for nurse ${assignment.nurseId}, who is not on this period's roster`,
+          `${known ? nurseName(known) : 'A nurse'} is on this shift but not on this period's roster; add a float membership covering ${describeDate(date)} under Roster.`,
         );
       }
       return nurse.role === role ? [{ nurse, assignment }] : [];
@@ -80,14 +82,14 @@ export function floatOrderFor(db: DbLike, request: FloatOrderRequest): FloatOrde
     order: result.order.map((p) => ({
       nurseId: p.nurseId,
       assignmentId: entryOf(p.nurseId).assignment.id,
-      name: nameOf(entryOf(p.nurseId).nurse),
+      name: nurseName(entryOf(p.nurseId).nurse),
       rank: p.rank,
       basis: p.basis,
       reason: p.reason,
     })),
     excluded: result.excluded.map((e) => ({
       nurseId: e.nurseId,
-      name: nameOf(entryOf(e.nurseId).nurse),
+      name: nurseName(entryOf(e.nurseId).nurse),
       reason: e.reason,
     })),
   };
@@ -95,17 +97,11 @@ export function floatOrderFor(db: DbLike, request: FloatOrderRequest): FloatOrde
 
 /** The place `nurseId` holds, or the refusal a manager can act on. */
 function nextInOrder(view: FloatOrderView, nurseId: Id): FloatPlaceView {
-  const excluded = view.excluded.find((e) => e.nurseId === nurseId);
-  if (excluded) throw new Error(`${excluded.name}: ${excluded.reason}.`);
-  const first = view.order[0];
-  const mine = view.order.find((p) => p.nurseId === nurseId);
-  if (!mine) throw new Error('That nurse is not on this shift.');
-  if (first && first.nurseId !== nurseId) {
-    throw new Error(
+  return firstInOrder(view, nurseId, {
+    excluded: (e) => `${e.name}: ${e.reason}.`,
+    notFirst: (first, mine) =>
       `${first.name} floats before ${mine.name}. ${first.reason}. Float ${first.name} first.`,
-    );
-  }
-  return mine;
+  });
 }
 
 export function floatOutApi(db: ShiftNurseDb): ShiftNurseApi['floatOut'] {
@@ -120,7 +116,8 @@ export function floatOutApi(db: ShiftNurseDb): ShiftNurseApi['floatOut'] {
         role: input.role,
         volunteers: input.volunteers,
       };
-      if (!getShiftType(db, shiftTypeId)) throw new Error(`Unknown shift type ${shiftTypeId}`);
+      if (!getShiftType(db, shiftTypeId))
+        throw new Error('That shift type was not found. Reload the page.');
       return editSchedule(db, periodId, reason, 'float', (tx, log) => {
         // Ranked inside the transaction, so what is acted on is what is recorded.
         const place = nextInOrder(floatOrderFor(tx, request), nurseId);

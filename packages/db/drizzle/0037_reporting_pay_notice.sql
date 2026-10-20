@@ -1,0 +1,1 @@
+ALTER TABLE `pay_settings` ADD `reporting_pay_notice_hours` real;

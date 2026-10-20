@@ -24,8 +24,12 @@ const weekday = z.union([
 
 const weekendDefinition = object({
   startWeekday: weekday,
-  startMinute: count,
-  durationMinutes: count,
+  startMinute: count.max(1439, 'must be 1439 or fewer'),
+  durationMinutes: z
+    .number()
+    .int('must be a whole number')
+    .min(1, 'must be 1 or more')
+    .max(10080, 'must be 10080 or fewer'),
   mode: z.enum(['starts_within', 'overlaps']),
 });
 

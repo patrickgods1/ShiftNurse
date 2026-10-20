@@ -128,7 +128,7 @@ describe('publishing', () => {
   it('refreshes the period and the lists it wrote, not every query in the app', async () => {
     const { result, spy, keys } = setup(() => usePublish('p1', UNIT));
     await act(async () => {
-      await result.current.mutateAsync(undefined);
+      await result.current.mutateAsync({ acknowledged: 0 });
     });
     expect(spy.mock.calls.every((call) => call[0]?.queryKey !== undefined)).toBe(true);
     const asked = keys().map((k) => JSON.stringify(k));

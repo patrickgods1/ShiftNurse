@@ -61,7 +61,9 @@ describe('adding and changing nurses', () => {
 
   it('refuses a patch that tries to move a nurse to another unit', () => {
     const before = recentAudit(f.handle.db, 1000).length;
-    expect(() => api().nurses.update(f.rns[0]!.id, { unitId: 'elsewhere' } as never)).toThrow();
+    expect(() => api().nurses.update(f.rns[0]!.id, { unitId: 'elsewhere' } as never)).toThrow(
+      /cannot change 'unitId'/,
+    );
     expect(api().nurses.get(f.rns[0]!.id)?.unitId).toBe(f.seeded.unitId);
     expect(recentAudit(f.handle.db, 1000)).toHaveLength(before);
   });

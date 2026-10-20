@@ -63,7 +63,8 @@ export function usePublish(periodId: Id | undefined, unitId: Id | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
-    mutationFn: (reason: string | undefined) => api.publish.publish(periodId as Id, reason),
+    mutationFn: ({ reason, acknowledged }: { reason?: string; acknowledged: number }) =>
+      api.publish.publish(periodId as Id, reason, acknowledged),
     onSettled: () => {
       if (periodId !== undefined) {
         invalidatePeriod(queryClient, periodId);

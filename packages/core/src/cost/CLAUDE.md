@@ -55,6 +55,8 @@
   `priceDayOfEvents` prices missed meal and rest breaks (one hour a day each), reporting-time pay
   (half the shift, 2–4 hours) and call-backs (at least the contract minimum) at the base rate.
   Events are `day_of_pay_event` rows (migration 0025); the call-back minimum is `pay_settings`.
+  Reporting-time pay is booked only for a cancellation recorded after the start or within
+  `reportingPayNoticeHours` of it (default 2, D13): `reportingPayOwed` decides, main asks.
 - **A night or evening differential can be earned by the clock.** With a `window` it ignores
   `ShiftType.isNight`: `hoursInDailyWindow` counts the shift's hours inside the daily window (end
   ≤ start wraps midnight). At `wholeShiftAtHours` it is a whole-shift differential like any other;

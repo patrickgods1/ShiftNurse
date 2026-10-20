@@ -14,11 +14,13 @@
   `publishSchedule` writes a `schedule_version` + status + ledger; `requireChangeReason` /
   `recordScheduleChange` are the post-publish change log; M15: `solver` (the per-unit
   `solver_settings`) and `solve-input` (`loadPeriodInput`, the one definition of a period's
-  `SolveInput`, shared by Generate, conflicts, cost and the solver benchmark)).
+  `SolveInput`, shared by Generate, conflicts, cost, grid validation and the solver benchmark)).
 
 ## Conventions
 
-- **Pay settings carry `holidayPayCoversOvertime` (migration 0036, nullable, null reads false).**
+- **`PublishInput.hardViolations` is the caller's in-transaction count of hard rule breaks.** Above zero `publishSchedule` refuses without a reason and records `{ count, codes }` in the strict `schedule_version` audit; omitted (seeds, repo callers) records nothing new.
+- **Pay settings carry `holidayPayCoversOvertime` (migration 0036, nullable, null reads false)
+  and `reportingPayNoticeHours` (migration 0037, nullable, null reads 2; saves refuse outside 0–24).**
   `paySettingsSaved` says whether a unit has a row at all: `applyJurisdiction` offers the preset's
   pay settings (and a wider weekend) only to a unit that saved none, since a saved row may follow a
   contract the preset cannot see.
@@ -46,6 +48,10 @@
 - **The ledger's `periodId` has no foreign key on purpose:** imported history uses synthetic
   `import:<start>` ids for pay periods that predate the app. A historical re-import's audit row
   holds the replaced and written rows in full.
+- **Hours worked are `workedShiftsForNurseInRange`** (`repositories/worked-hours.ts`): published
+  or archived periods' shifts on any unit, at each shift type's own `durationHours`, standby
+  excluded. A draft is a proposal, not work. `listAssignmentsForNurseInRange` returns drafts too,
+  for approve-and-lift; never sum hours worked from it.
 - **The lookback tail is published and archived periods only** (`PRIOR_ASSIGNMENT_LOOKBACK_DAYS`).
   `historyFromFor` says how far that tail is complete; the contracted-hours rule judges a pay
   period that began before the period only from there.

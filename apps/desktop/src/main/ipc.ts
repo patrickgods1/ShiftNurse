@@ -36,6 +36,8 @@ export function registerIpc(api: ShiftNurseApi, isTrustedSender: (url: string) =
       ipcMain.handle(channel, async (event, ...args: unknown[]) => {
         const sender = event.senderFrame?.url ?? '';
         if (!isTrustedSender(sender)) {
+          // Logged first: a navigation-guard bypass is the one event this log must never miss.
+          console.error(`[ipc] refused ${channel} from an untrusted page (${sender || 'unknown'})`);
           throw new Error(`Refused ${channel} from an untrusted page (${sender || 'unknown'})`);
         }
         try {

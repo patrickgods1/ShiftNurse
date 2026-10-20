@@ -1,13 +1,21 @@
 /** Argument schemas for `shiftTypes`. */
 
 import { z } from 'zod';
-import { id, object, type ResourceSchemas, shiftHours, text, timeOfDay } from './primitives.js';
+import {
+  id,
+  name,
+  object,
+  type ResourceSchemas,
+  shiftHours,
+  text,
+  timeOfDay,
+} from './primitives.js';
 
 /** Containment is the repository's call (its hours must hold the inside shift): shape only. */
 const shiftTypeInput = object({
   unitId: id,
-  name: text,
-  abbreviation: text,
+  name,
+  abbreviation: name,
   startTime: timeOfDay,
   durationHours: shiftHours,
   isNight: z.boolean(),

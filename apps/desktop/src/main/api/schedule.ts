@@ -6,58 +6,40 @@
 
 import {
   type Assignment,
-  addDays,
-  buildRuleContext,
-  datesInRange,
   defaultRuleSet,
-  deriveDemand,
   evaluateSchedule,
   type Id,
   type Preference,
   preferencesBroken,
-  type RuleSet,
+  ruleContextForInput,
   type ScheduleChangeKind,
   type ScheduleChangeSource,
   type SchedulePeriod,
   type ScheduleView,
+  type SolveInput,
 } from '@shiftnurse/core';
 import {
   createAssignment,
   createPeriod,
   type DbLike,
   deleteAssignment,
-  demandInputs,
-  floatExtras,
   getLatestRuleSet,
   getNurse,
-  historyFromFor,
-  holidayWorkForPeriod,
   listAssignmentsForPeriod,
-  listAvailabilityBlocks,
-  listCredentials,
-  listHolidaysForUnit,
-  listIncompatibilityGroups,
-  listNurseCredentialsForUnit,
-  listOvertimeVolunteers,
   listPeriodsForUnit,
-  listPreceptorshipsOverlapping,
-  listPreferencesForUnit,
-  listShiftCredentialRequirementsForUnit,
+  loadPeriodInput,
   moveAssignment,
-  paidSickCallsForUnit,
   reasonWithConsent,
   recordScheduleChange,
   requireChangeConsent,
   requireChangeReason,
   requirePeriodEditable,
-  restWaiversForPeriod,
   rosterForPeriod,
   type ShiftNurseDb,
   type ShiftNurseTx,
   saveRuleSet,
   setLocked as setAssignmentLocked,
   setRequestsCloseOn,
-  timeOffForPeriod,
   transact,
   updateAssignment as updateAssignmentDb,
 } from '@shiftnurse/db';
@@ -66,68 +48,34 @@ import type { ScheduleValidation, ShiftNurseApi } from '../../shared/api.js';
 import {
   ACTOR,
   assignmentOrThrow,
-  LOOKBACK_DAYS,
   periodOrThrow,
-  ruleSetFor,
   scheduleViewFor,
   unitOrThrow,
 } from './context.js';
 
-/** The full context the rule engine needs to score one period, over a view the caller built. */
+/**
+ * The grid's verdict on a view the caller built (the period's own rows, or a Generate candidate).
+ * It is judged from `loadPeriodInput`, the same input Generate and conflicts read, through the
+ * same mapping (`ruleContextForInput`), and by the period's own rule-set snapshot: a context
+ * assembled here by hand once missed floats' leave and credentials, and any input added to
+ * `loadPeriodInput` only would have been honoured by Generate and silently ignored on screen.
+ * Callers that already loaded the input pass it, so one call reads the tables once.
+ */
 export function validateView(
   db: DbLike,
   period: SchedulePeriod,
-  ruleSet: RuleSet,
   schedule: ScheduleView,
+  input: SolveInput = loadPeriodInput(db, period),
 ): ScheduleValidation {
-  const nurses = [...schedule.nursesById.values()];
-  const shiftTypes = [...schedule.shiftTypesById.values()];
-  const unit = unitOrThrow(db, period.unitId);
-  const floats = floatExtras(db, unit, period, nurses);
-  const preferences = [...listPreferencesForUnit(db, period.unitId), ...floats.preferences];
-  const ctx = buildRuleContext({
-    unit,
-    demand: deriveDemand(
-      datesInRange(period.startDate, period.endDate),
-      demandInputs(db, period.unitId, period.startDate, period.endDate),
-    ),
-    nurses,
-    shiftTypes,
-    // Nurses floated in from other units bring their own leave and credentials; the unit-scoped
-    // lists miss them, as loadPeriodInput's do (it reads the same `floatExtras`).
-    timeOff: [...timeOffForPeriod(db, unit, period), ...floats.timeOff],
-    credentials: listCredentials(db),
-    nurseCredentials: [
-      ...listNurseCredentialsForUnit(db, period.unitId),
-      ...floats.nurseCredentials,
-    ],
-    shiftCredentialRequirements: listShiftCredentialRequirementsForUnit(db, period.unitId),
-    holidays: listHolidaysForUnit(db, period.unitId),
-    weekendDefinition: ruleSet.weekendDefinition,
-    paidSickCalls: paidSickCallsForUnit(db, period.unitId, {
-      start: addDays(period.startDate, -LOOKBACK_DAYS),
-      end: period.endDate,
-    }),
-    incompatibilityGroups: listIncompatibilityGroups(db, period.unitId),
-    overtimeVolunteers: listOvertimeVolunteers(db, period.unitId),
-    // The same window loadPeriodInput reads, lookback included.
-    preceptorships: listPreceptorshipsOverlapping(
-      db,
-      period.unitId,
-      addDays(period.startDate, -LOOKBACK_DAYS),
-      period.endDate,
-    ),
-    restWaivers: restWaiversForPeriod(db, period.unitId, period.startDate, period.endDate),
-    availabilityBlocks: listAvailabilityBlocks(db, period.unitId),
-    holidayWork: holidayWorkForPeriod(db, period),
-    historyFrom: historyFromFor(db, period),
-    // A career nurse's asked-for tours are read from these (`requestedTours`).
-    preferences,
-  });
+  const { ruleSet } = input;
+  const ctx = ruleContextForInput(input);
   // Which preferences each worked shift goes against, so the grid can say "avoids nights"
-  // rather than leave a broken request invisible until the nurse complains.
+  // rather than leave a broken request invisible until the nurse complains. Floats' preferences
+  // ride in the input's list.
   const byNurse = new Map<Id, Preference[]>();
-  for (const p of preferences) byNurse.set(p.nurseId, [...(byNurse.get(p.nurseId) ?? []), p]);
+  for (const p of input.preferences) {
+    byNurse.set(p.nurseId, [...(byNurse.get(p.nurseId) ?? []), p]);
+  }
   const againstPreference: Record<Id, Preference[]> = {};
   for (const view of schedule.assignments()) {
     if (view.shiftType.isOnCall) continue;
@@ -143,8 +91,7 @@ export function validateView(
 
 export function buildScheduleValidation(db: DbLike, periodId: Id): ScheduleValidation {
   const period = periodOrThrow(db, periodId);
-  const ruleSet = ruleSetFor(db, period);
-  return validateView(db, period, ruleSet, scheduleViewFor(db, period, { lookback: true }));
+  return validateView(db, period, scheduleViewFor(db, period, { lookback: true }));
 }
 
 export interface ChangeLogEntry {
@@ -156,8 +103,9 @@ export interface ChangeLogEntry {
 
 /**
  * Run a grid edit inside one transaction and, when the period is published, write each
- * touched shift to the change log under the manager's reason. On a draft `log` is a no-op
- * and the reason is dropped; on an archived period the edit is refused before it starts.
+ * touched shift to the change log under the manager's reason. On a draft the change log is
+ * skipped; the reason, if given, is still kept on the shift's audit row. On an archived period
+ * the edit is refused before it starts.
  */
 export function editSchedule<T>(
   db: ShiftNurseDb,
@@ -167,33 +115,45 @@ export function editSchedule<T>(
   work: (tx: ShiftNurseTx, log: (entry: ChangeLogEntry) => void) => T,
   consent?: string,
 ): T {
-  return transact(db, (tx) => {
-    const period = periodOrThrow(tx, periodId);
-    const required = requireChangeReason(period, reason);
-    const agreed = requireChangeConsent(period, unitOrThrow(tx, period.unitId), source, consent);
-    const log = (entry: ChangeLogEntry) => {
-      if (required === undefined) return;
-      const a = entry.assignment;
-      recordScheduleChange(
-        tx,
-        {
-          periodId,
-          kind: entry.kind,
-          source,
-          assignmentId: a.id,
-          nurseId: a.nurseId,
-          date: a.date,
-          shiftTypeId: a.shiftTypeId,
-          before: entry.before,
-          after: entry.after,
-          reason: required,
-          ...(agreed ? { consent: agreed } : {}),
-        },
-        ACTOR,
-      );
-    };
-    return work(tx, log);
-  });
+  return transact(db, (tx) => work(tx, openChangeLog(tx, periodId, reason, source, consent)));
+}
+
+/**
+ * The inside of `editSchedule`, for a handler that must word its reason from something it reads
+ * in the transaction (the place a nurse holds in an order). Refuses exactly as `editSchedule`
+ * does; call it first in the transaction.
+ */
+export function openChangeLog(
+  tx: ShiftNurseTx,
+  periodId: Id,
+  reason: string | undefined,
+  source: ScheduleChangeSource,
+  consent?: string,
+): (entry: ChangeLogEntry) => void {
+  const period = periodOrThrow(tx, periodId);
+  const required = requireChangeReason(period, reason);
+  const agreed = requireChangeConsent(period, unitOrThrow(tx, period.unitId), source, consent);
+  return (entry) => {
+    if (required === undefined) return;
+    const a = entry.assignment;
+    recordScheduleChange(
+      tx,
+      {
+        periodId,
+        kind: entry.kind,
+        source,
+        assignmentId: a.id,
+        nurseId: a.nurseId,
+        date: a.date,
+        shiftTypeId: a.shiftTypeId,
+        before: entry.before,
+        after: entry.after,
+        reason: required,
+        ...(agreed ? { consent: agreed } : {}),
+      },
+      ACTOR,
+    );
+  };
 }
 
 export function periodsApi(db: ShiftNurseDb): ShiftNurseApi['periods'] {

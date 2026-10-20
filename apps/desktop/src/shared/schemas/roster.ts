@@ -2,30 +2,33 @@
 
 import type { IsoDate } from '@shiftnurse/core';
 import { z } from 'zod';
-import { hours, id, isoDate, nurseRole, object, type ResourceSchemas, text } from './primitives.js';
+import { nurseFields } from './nurses.js';
+import { id, isoDate, name, object, type ResourceSchemas } from './primitives.js';
 
 /** A previewed CSV row, sent back to be applied: `RosterCsvRow` field for field. */
 const rosterRow = object({
-  nurse: object({
-    employeeId: text,
-    firstName: text,
-    lastName: text,
-    role: nurseRole,
-    employmentType: z.enum(['full_time', 'part_time', 'per_diem', 'agency']),
-    fte: hours,
-    contractedHoursPerPeriod: hours,
-    seniorityDate: isoDate,
-    hireDate: isoDate.optional(),
-    isChargeEligible: z.boolean(),
-    isNovice: z.boolean(),
-    isFloatEligible: z.boolean(),
-    phone: text.optional(),
-    email: text.optional(),
-    notes: text.optional(),
+  nurse: nurseFields.pick({
+    employeeId: true,
+    firstName: true,
+    lastName: true,
+    role: true,
+    employmentType: true,
+    fte: true,
+    contractedHoursPerPeriod: true,
+    seniorityDate: true,
+    hireDate: true,
+    isChargeEligible: true,
+    isNovice: true,
+    isFloatEligible: true,
+    phone: true,
+    email: true,
+    notes: true,
+    scheduleKind: true,
+    scheduledDaysPerWeek: true,
   }),
   credentials: z.array(
     object({
-      code: text,
+      code: name,
       // The type says a required key that may be undefined; typed as a plain schema so the
       // output keeps that shape, while a payload that omits the key still means "never expires".
       expiresOn: isoDate.optional() as z.ZodType<IsoDate | undefined>,

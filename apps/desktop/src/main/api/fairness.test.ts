@@ -109,7 +109,9 @@ describe('the fairness report for a period', () => {
   });
 
   it('refuses a period that does not exist', () => {
-    expect(() => fairnessApi(f.handle.db).report('nope')).toThrow();
+    expect(() => fairnessApi(f.handle.db).report('nope')).toThrow(
+      'That schedule period no longer exists. Reload the page.',
+    );
   });
 });
 

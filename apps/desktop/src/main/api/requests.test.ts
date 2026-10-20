@@ -7,15 +7,20 @@
 
 import { addDays, isoDate } from '@shiftnurse/core';
 import {
+  archivePeriod,
   auditHistoryFor,
   createHoliday,
+  createNurse,
+  createUnit,
   listAssignmentsForPeriod,
   listCredentials,
   listNurseCredentials,
+  publishSchedule,
   recordHolidayWork,
   transact,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ACTOR } from './context.js';
 import { requestsApi } from './requests.js';
 import { rosterApi } from './roster.js';
 import { scheduleApi } from './schedule.js';
@@ -256,6 +261,85 @@ describe('shift exchanges', () => {
         .map((s) => s.id),
     ).toContain(swap.id);
     expect(auditsOf('shift_swap', swap.id)[0]!.action).toBe('create');
+  });
+
+  it('refuses a proposal on an archived schedule', () => {
+    const { proposal } = annGivesAwayToBea();
+    publishSchedule(f.handle.db, { periodId: draft(), ledger: [] }, ACTOR);
+    archivePeriod(f.handle.db, draft(), ACTOR, 'Closed pay period');
+    const before = api().exchange.list(f.seeded.unitId);
+
+    expect(() => api().exchange.propose(draft(), proposal)).toThrow(/is archived/);
+    expect(api().exchange.list(f.seeded.unitId)).toEqual(before);
+  });
+
+  it('refuses a giveaway of a shift the nurse does not hold, naming both nurses', () => {
+    const { ann, bea, date } = annGivesAwayToBea();
+    const beasShift = scheduleApi(f.handle.db).createAssignment({
+      periodId: draft(),
+      nurseId: bea.id,
+      shiftTypeId: f.night.id,
+      date: addDays(date, 1),
+    });
+    const before = api().exchange.list(f.seeded.unitId);
+
+    expect(() =>
+      api().exchange.propose(draft(), {
+        kind: 'giveaway',
+        requestingNurseId: ann.id,
+        counterpartyNurseId: f.rns[2]!.id,
+        offeredAssignmentId: beasShift.id,
+      }),
+    ).toThrow(
+      `That shift belongs to ${bea.firstName} ${bea.lastName}, not ${ann.firstName} ${ann.lastName}.`,
+    );
+    expect(api().exchange.list(f.seeded.unitId)).toEqual(before);
+  });
+
+  it('refuses a proposal naming a nurse who is not on this unit’s roster, and writes nothing', () => {
+    const { proposal } = annGivesAwayToBea();
+    const elsewhere = createUnit(
+      f.handle.db,
+      {
+        name: 'Elsewhere',
+        unitType: 'Medical-Surgical',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    const stranger = createNurse(
+      f.handle.db,
+      { ...f.rns[0]!, id: undefined, unitId: elsewhere.id, employeeId: 'X-9001' } as never,
+      ACTOR,
+    );
+    const before = api().exchange.list(f.seeded.unitId);
+
+    expect(() =>
+      api().exchange.propose(draft(), { ...proposal, counterpartyNurseId: stranger.id }),
+    ).toThrow(/is not on this unit's roster/);
+    expect(api().exchange.list(f.seeded.unitId)).toEqual(before);
+  });
+
+  it('refuses an exchange between a nurse and herself', () => {
+    const { proposal, ann } = annGivesAwayToBea();
+    expect(() =>
+      api().exchange.propose(draft(), { ...proposal, counterpartyNurseId: ann.id }),
+    ).toThrow('An exchange needs two different nurses.');
+  });
+
+  it('still records a proposal the rules would block, for the manager to decide', () => {
+    const { proposal, bea, date } = annGivesAwayToBea();
+    // Bea already works that day, so taking Ann's shift would double-book her.
+    scheduleApi(f.handle.db).createAssignment({
+      periodId: draft(),
+      nurseId: bea.id,
+      shiftTypeId: f.day.id,
+      date,
+    });
+
+    expect(api().exchange.evaluate(draft(), proposal).verdict).toBe('blocked');
+    expect(api().exchange.propose(draft(), proposal).status).toBe('proposed');
   });
 
   it('hands the shift to Bea on approval and audits the decision', () => {

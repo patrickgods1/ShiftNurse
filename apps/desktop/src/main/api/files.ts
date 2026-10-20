@@ -109,6 +109,7 @@ export async function exportNurseRecordToFile(
     filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
   });
   if (!path) return undefined;
-  writeFileSync(path, format === 'pdf' ? await htmlToPdf(doc.html, false) : doc.csv, 'utf8');
+  if (format === 'pdf') writeFileSync(path, await htmlToPdf(doc.html, false));
+  else writeFileSync(path, doc.csv, 'utf8');
   return path;
 }

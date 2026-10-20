@@ -1,7 +1,7 @@
 /** Argument schemas for `leaveBalances`. */
 
 import { z } from 'zod';
-import { hours, id, isoDate, object, type ResourceSchemas, text } from './primitives.js';
+import { hours, id, isoDate, object, type ResourceSchemas, readRange, text } from './primitives.js';
 
 const balanceType = z.enum(['pto', 'annual', 'sick', 'comp']);
 const requestType = z.enum([
@@ -43,5 +43,7 @@ export const leaveBalancesSchemas = {
   addCertification: z.tuple([certificationInput]),
   updateCertification: z.tuple([id, certificationPatch]),
   removeCertification: z.tuple([id]),
-  checkRequest: z.tuple([id, requestType, isoDate, isoDate, hours]),
+  checkRequest: z
+    .tuple([id, requestType, isoDate, isoDate, hours])
+    .superRefine(readRange(400, 2, 3)),
 } satisfies ResourceSchemas<'leaveBalances'>;

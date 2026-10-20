@@ -12,12 +12,14 @@ import {
   getAssignment,
   listAssignmentsForPeriodOnDate,
   listChanges,
+  listDayOfPayEvents,
   listShiftCancellationsForPeriod,
   publishSchedule,
   recordShiftCancellation,
   saveCancellationPolicy,
+  savePaySettings,
 } from '@shiftnurse/db';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { overstaffedRoles } from './census-cancellation.js';
 import { ACTOR } from './context.js';
 import { dayOfApi } from './dayof.js';
@@ -214,10 +216,92 @@ describe('cancelling for census', () => {
     expect(changes[0]!.reason).toContain(first.reason);
   });
 
+  it('cancels on a published schedule with the order’s reason in the change log', () => {
+    everyoneComesIn();
+    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    const place = orderView().order[0]!;
+    dayOf().cancelForCensus(f.seeded.draftPeriodId, date(), f.day.id, 'RN', [], place.nurseId);
+    const changes = listChanges(f.handle.db, f.seeded.draftPeriodId);
+    expect(changes).toHaveLength(1);
+    expect(changes[0]!.kind).toBe('removed');
+    expect(changes[0]!.reason.startsWith('Low census: ')).toBe(true);
+    expect(changes[0]!.reason).toContain(place.reason);
+  });
+
   it('follows the unit’s own order of tiers', () => {
     everyoneComesIn();
     saveCancellationPolicy(f.handle.db, f.seeded.unitId, ['rotation'], ACTOR);
     expect(orderView(['x']).order.every((p) => p.tier === 'rotation')).toBe(true);
+  });
+});
+
+describe('reporting-time pay for a nurse sent home', () => {
+  /** Pins the host clock to `day` at hh:mm local; tests run under TZ=America/New_York. */
+  function setClock(day: string, hh: number, mm: number) {
+    const [y, m, d] = day.split('-').map(Number) as [number, number, number];
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(y, m - 1, d, hh, mm));
+  }
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const payEvents = () => listDayOfPayEvents(f.handle.db, f.seeded.unitId, date(), date());
+  const cancelFirst = () => {
+    const first = orderView().order[0]!;
+    dayOf().cancelForCensus(f.seeded.draftPeriodId, date(), f.day.id, 'RN', [], first.nurseId);
+    return first;
+  };
+
+  it('books no reporting pay for a nurse told the evening before', () => {
+    everyoneComesIn();
+    // 20:00 the evening before a 07:00 start is 11 hours' notice, past the default 2.
+    setClock(addDays(date(), -1), 20, 0);
+    const first = cancelFirst();
+    expect(listShiftCancellationsForPeriod(f.handle.db, f.seeded.draftPeriodId)).toHaveLength(1);
+    expect(getAssignment(f.handle.db, first.assignmentId)).toBeUndefined();
+    expect(payEvents()).toEqual([]);
+  });
+
+  it('books reporting pay for a nurse sent home an hour before her shift', () => {
+    expect(f.day.startTime).toBe('07:00');
+    everyoneComesIn();
+    // 06:00 for 07:00 is 60 minutes, under the default 120.
+    setClock(date(), 6, 0);
+    const first = cancelFirst();
+    expect(payEvents()).toEqual([
+      expect.objectContaining({
+        kind: 'sent_home',
+        nurseId: first.nurseId,
+        date: date(),
+        scheduledHours: 12,
+        hoursWorked: 0,
+      }),
+    ]);
+  });
+
+  it('books it under a unit with no notice only once the shift has begun', () => {
+    expect(f.day.startTime).toBe('07:00');
+    everyoneComesIn();
+    savePaySettings(
+      f.handle.db,
+      f.seeded.unitId,
+      {
+        callBackMinimumHours: 0,
+        premiumStacking: 'compound',
+        holidayPayCoversOvertime: false,
+        reportingPayNoticeHours: 0,
+      },
+      ACTOR,
+    );
+    setClock(date(), 6, 0);
+    cancelFirst();
+    expect(payEvents()).toEqual([]);
+    setClock(date(), 7, 30);
+    const second = cancelFirst();
+    expect(payEvents()).toEqual([
+      expect.objectContaining({ kind: 'sent_home', nurseId: second.nurseId }),
+    ]);
   });
 });
 

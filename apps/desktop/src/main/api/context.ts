@@ -60,13 +60,13 @@ export const LOOKBACK_DAYS = PRIOR_ASSIGNMENT_LOOKBACK_DAYS;
 
 export function unitOrThrow(db: DbLike, unitId: Id): Unit {
   const unit = getUnit(db, unitId);
-  if (!unit) throw new Error(`Unknown unit ${unitId}`);
+  if (!unit) throw new Error('That unit no longer exists. Reload the app.');
   return unit;
 }
 
 export function periodOrThrow(db: DbLike, periodId: Id): SchedulePeriod {
   const period = getPeriod(db, periodId);
-  if (!period) throw new Error(`Unknown period ${periodId}`);
+  if (!period) throw new Error('That schedule period no longer exists. Reload the page.');
   return period;
 }
 
@@ -77,13 +77,19 @@ export function periodOrThrow(db: DbLike, periodId: Id): SchedulePeriod {
  */
 export function ruleSetFor(db: DbLike, period: SchedulePeriod): RuleSet {
   const ruleSet = getRuleSet(db, period.ruleSetId);
-  if (!ruleSet) throw new Error(`Period ${period.id} cites unknown rule set ${period.ruleSetId}`);
+  if (!ruleSet)
+    throw new Error(
+      `${period.name} cites a rule set that is missing from the database. Restore a backup (Settings › Backups).`,
+    );
   return ruleSet;
 }
 
 export function assignmentOrThrow(db: DbLike, assignmentId: Id): Assignment {
   const existing = getAssignment(db, assignmentId);
-  if (!existing) throw new Error(`Assignment ${assignmentId} not found`);
+  if (!existing)
+    throw new Error(
+      'That shift was not found; it may have been moved or removed. Refresh the page.',
+    );
   return existing;
 }
 

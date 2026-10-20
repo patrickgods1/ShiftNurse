@@ -224,23 +224,35 @@ describe('the unit’s call-back minimum', () => {
       callBackMinimumHours: 0,
       premiumStacking: 'compound',
       holidayPayCoversOvertime: false,
+      reportingPayNoticeHours: 2,
     });
     savePaySettings(
       handle.db,
       unitId,
-      { callBackMinimumHours: 4, premiumStacking: 'compound', holidayPayCoversOvertime: false },
+      {
+        callBackMinimumHours: 4,
+        premiumStacking: 'compound',
+        holidayPayCoversOvertime: false,
+        reportingPayNoticeHours: 2,
+      },
       ACTOR,
     );
     savePaySettings(
       handle.db,
       unitId,
-      { callBackMinimumHours: 3, premiumStacking: 'compound', holidayPayCoversOvertime: false },
+      {
+        callBackMinimumHours: 3,
+        premiumStacking: 'compound',
+        holidayPayCoversOvertime: false,
+        reportingPayNoticeHours: 2,
+      },
       ACTOR,
     );
     expect(getPaySettings(handle.db, unitId)).toEqual({
       callBackMinimumHours: 3,
       premiumStacking: 'compound',
       holidayPayCoversOvertime: false,
+      reportingPayNoticeHours: 2,
     });
     expect(auditHistoryFor(handle.db, 'pay_settings', unitId)[0]).toMatchObject({
       before: { callBackMinimumHours: 4 },
@@ -252,13 +264,19 @@ describe('the unit’s call-back minimum', () => {
     savePaySettings(
       handle.db,
       unitId,
-      { callBackMinimumHours: 2, premiumStacking: 'additive', holidayPayCoversOvertime: false },
+      {
+        callBackMinimumHours: 2,
+        premiumStacking: 'additive',
+        holidayPayCoversOvertime: false,
+        reportingPayNoticeHours: 2,
+      },
       ACTOR,
     );
     expect(getPaySettings(handle.db, unitId)).toEqual({
       callBackMinimumHours: 2,
       premiumStacking: 'additive',
       holidayPayCoversOvertime: false,
+      reportingPayNoticeHours: 2,
     });
     const entry = auditHistoryFor(handle.db, 'pay_settings', unitId)[0];
     expect(entry).toMatchObject({
@@ -273,7 +291,12 @@ describe('the unit’s call-back minimum', () => {
       savePaySettings(
         handle.db,
         unitId,
-        { callBackMinimumHours: 30, premiumStacking: 'compound', holidayPayCoversOvertime: false },
+        {
+          callBackMinimumHours: 30,
+          premiumStacking: 'compound',
+          holidayPayCoversOvertime: false,
+          reportingPayNoticeHours: 2,
+        },
         ACTOR,
       ),
     ).toThrow('between 0 and 24 hours');
@@ -281,7 +304,12 @@ describe('the unit’s call-back minimum', () => {
       savePaySettings(
         handle.db,
         unitId,
-        { callBackMinimumHours: -1, premiumStacking: 'compound', holidayPayCoversOvertime: false },
+        {
+          callBackMinimumHours: -1,
+          premiumStacking: 'compound',
+          holidayPayCoversOvertime: false,
+          reportingPayNoticeHours: 2,
+        },
         ACTOR,
       ),
     ).toThrow('between 0 and 24 hours');

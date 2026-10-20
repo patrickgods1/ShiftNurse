@@ -260,6 +260,13 @@
       "when": 1791387036953,
       "tag": "0036_holiday_pay_covers_overtime",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1792294567537,
+      "tag": "0037_reporting_pay_notice",
+      "breakpoints": true
     }
   ]
 }

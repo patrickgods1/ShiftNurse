@@ -290,8 +290,75 @@ describe('evaluateExchange', () => {
       proposal: giveaway(lockedShift, other.id),
     };
 
-    expect(() => evaluateExchange(input)).toThrow(/locked/i);
+    expect(() => evaluateExchange(input)).toThrow(
+      'That shift is locked; unlock it before proposing an exchange that moves it.',
+    );
     expect(() => planExchange(input)).toThrow(/locked/i);
+  });
+
+  it('names the nurses, not their ids, when the shift belongs to someone else', () => {
+    resetFixtureCounters();
+    const ann = makeNurse({ firstName: 'Ann', lastName: 'Lee' });
+    const bea = makeNurse({ firstName: 'Bea', lastName: 'Ng' });
+    const cy = makeNurse({ firstName: 'Cy', lastName: 'Ode' });
+    const beasShift = assign(bea.id, DAY_12, '2026-01-06');
+    const input: ExchangeInput = {
+      ...solveInputFrom({
+        startDate: START,
+        endDate: END,
+        nurses: [ann, bea, cy],
+        assignments: [beasShift],
+      }),
+      proposal: { ...giveaway(beasShift, cy.id), requestingNurseId: ann.id },
+    };
+
+    expect(() => evaluateExchange(input)).toThrow('That shift belongs to Bea Ng, not Ann Lee.');
+  });
+
+  it('says a shift from before the period is history, without quoting an id', () => {
+    resetFixtureCounters();
+    const ann = makeNurse({ firstName: 'Ann', lastName: 'Lee' });
+    const bea = makeNurse({ firstName: 'Bea', lastName: 'Ng' });
+    const lastWeek = assign(ann.id, DAY_12, '2025-12-30');
+    const input: ExchangeInput = {
+      ...solveInputFrom({
+        startDate: START,
+        endDate: END,
+        nurses: [ann, bea],
+        assignments: [],
+        priorAssignments: [{ ...lastWeek, inPeriod: false }] as never,
+      }),
+      proposal: giveaway(lastWeek, bea.id),
+    };
+
+    expect(() => evaluateExchange(input)).toThrow(
+      'That shift is outside this schedule period; only this period’s shifts can be exchanged.',
+    );
+  });
+
+  it('says a shift that is gone is no longer on the schedule, without quoting an id', () => {
+    resetFixtureCounters();
+    const ann = makeNurse({ firstName: 'Ann', lastName: 'Lee' });
+    const bea = makeNurse({ firstName: 'Bea', lastName: 'Ng' });
+    const removed = assign(ann.id, DAY_12, '2026-01-06');
+    const input: ExchangeInput = {
+      ...solveInputFrom({ startDate: START, endDate: END, nurses: [ann, bea], assignments: [] }),
+      proposal: giveaway(removed, bea.id),
+    };
+
+    expect(() => evaluateExchange(input)).toThrow('That shift is no longer on this schedule.');
+  });
+
+  it('refuses an exchange between a nurse and herself without quoting an id', () => {
+    resetFixtureCounters();
+    const ann = makeNurse({ firstName: 'Ann', lastName: 'Lee' });
+    const shift = assign(ann.id, DAY_12, '2026-01-06');
+    const input: ExchangeInput = {
+      ...solveInputFrom({ startDate: START, endDate: END, nurses: [ann], assignments: [shift] }),
+      proposal: giveaway(shift, ann.id),
+    };
+
+    expect(() => evaluateExchange(input)).toThrow('An exchange needs two different nurses.');
   });
 
   it('a giveaway with a requested assignment is malformed', () => {
@@ -317,7 +384,9 @@ describe('evaluateExchange', () => {
       },
     };
 
-    expect(() => evaluateExchange(input)).toThrow(/giveaway/i);
+    expect(() => evaluateExchange(input)).toThrow(
+      'A giveaway takes nothing back; to get a shift in return, propose a trade.',
+    );
   });
 
   it('planExchange carries charge and notes across and swaps the nurse ids', () => {

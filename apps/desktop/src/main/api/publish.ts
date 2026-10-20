@@ -39,7 +39,7 @@ export function publishPreview(db: DbLike, periodId: Id): PublishPreview {
   const schedule = scheduleViewFor(db, period, { lookback: true });
   const latest = latestVersion(db, periodId);
   const diff = pendingDiff(db, periodId);
-  const { result } = validateView(db, period, ruleSet, schedule);
+  const { result } = validateView(db, period, schedule);
   return {
     period,
     latestVersion: latest,
@@ -62,9 +62,23 @@ export async function publish(
   db: ShiftNurseDb,
   periodId: Id,
   reason?: string,
+  acknowledged?: number,
 ): Promise<PublishOutcome> {
   const committed = transact(db, (tx) => {
     const period = periodOrThrow(tx, periodId);
+    // Counted again here, by the verdict the preview used: the count she reviewed may be stale,
+    // and a schedule that goes out broken must carry her reason on the record.
+    const judged = validateView(tx, period, scheduleViewFor(tx, period, { lookback: true }));
+    const count = judged.result.hardViolations.length;
+    const s = count === 1 ? '' : 's';
+    if (count > 0 && acknowledged !== count) {
+      throw new Error(
+        acknowledged === undefined
+          ? `This schedule breaks ${count} hard rule${s}. Review them and confirm before publishing.`
+          : `The schedule now has ${count} rule break${s}, not the ${acknowledged} you reviewed. Look at the publish summary again.`,
+      );
+    }
+    const codes = [...new Set(judged.result.hardViolations.map((v) => v.code))].sort();
     const ruleSet = ruleSetFor(tx, period);
     // No lookback: the ledger records what this period scheduled.
     const schedule = scheduleViewFor(tx, period, { lookback: false });
@@ -79,7 +93,11 @@ export async function publish(
       if (!present.has(nurseId)) continue;
       ledger.push({ nurseId, periodId, periodStart: period.startDate, ...counters });
     }
-    return publishSchedule(tx, { periodId, reason, ledger }, ACTOR);
+    return publishSchedule(
+      tx,
+      { periodId, reason, ledger, hardViolations: { count, codes } },
+      ACTOR,
+    );
   });
   let backup: PublishOutcome['backup'];
   try {
@@ -112,7 +130,7 @@ export function outputInput(db: DbLike, periodId: Id): OutputInput {
 export function publishApi(db: ShiftNurseDb): ShiftNurseApi['publish'] {
   return {
     preview: (periodId) => publishPreview(db, periodId),
-    publish: (periodId, reason) => publish(db, periodId, reason),
+    publish: (periodId, reason, acknowledged) => publish(db, periodId, reason, acknowledged),
     versions: (periodId) => listVersions(db, periodId),
     changes: (periodId) => listChanges(db, periodId),
     alerts: (periodId) => alertsFor(db, periodId),

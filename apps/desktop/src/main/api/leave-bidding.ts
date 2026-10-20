@@ -18,6 +18,7 @@ import {
 } from '@shiftnurse/db';
 import type { ShiftNurseApi } from '../../shared/api.js';
 import { ACTOR } from './context.js';
+import { nurseName } from './order.js';
 
 export function leaveBiddingApi(db: ShiftNurseDb): ShiftNurseApi['leaveBidding'] {
   return {
@@ -31,21 +32,19 @@ export function leaveBiddingApi(db: ShiftNurseDb): ShiftNurseApi['leaveBidding']
     award: (roundId) =>
       transact(db, (tx) => {
         const { round, result, awarded } = awardRound(tx, roundId, ACTOR);
-        const names = new Map(
-          listNursesForUnit(tx, round.unitId).map((n) => [n.id, `${n.firstName} ${n.lastName}`]),
-        );
-        const nameOf = (id: string) => names.get(id) ?? id;
+        const names = new Map(listNursesForUnit(tx, round.unitId).map((n) => [n.id, nurseName(n)]));
+        const nameFor = (id: string) => names.get(id) ?? id;
         return {
           round,
-          order: result.order.map((nurseId) => ({ nurseId, nurseName: nameOf(nurseId) })),
+          order: result.order.map((nurseId) => ({ nurseId, nurseName: nameFor(nurseId) })),
           awards: awarded.map((a) => ({
             ...a.award,
-            nurseName: nameOf(a.award.nurseId),
+            nurseName: nameFor(a.award.nurseId),
             requestId: a.request.id,
             liftedShifts: a.lifted.length,
             stillRostered: a.stillRostered.length,
           })),
-          denials: result.denials.map((d) => ({ ...d, nurseName: nameOf(d.nurseId) })),
+          denials: result.denials.map((d) => ({ ...d, nurseName: nameFor(d.nurseId) })),
         };
       }),
   };

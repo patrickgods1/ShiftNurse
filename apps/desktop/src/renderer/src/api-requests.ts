@@ -11,7 +11,7 @@
  * the database holds.
  */
 
-import type { AutoResolvePolicy, Id, IsoDate, Resolution } from '@shiftnurse/core';
+import type { AutoResolvePolicy, Id, IsoDate } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CreateTimeOffInput, LeaveCover } from '../../shared/api.js';
 import { api, queryKeys } from './api.js';
@@ -182,8 +182,8 @@ export function useResolveConflict(unitId: Id | undefined, periodId: Id | undefi
   const invalidate = useInvalidateRequests(unitId, periodId);
   return useMutation({
     meta: { inlineError: true },
-    mutationFn: ({ resolution, reason }: { resolution: Resolution; reason: string }) =>
-      api.conflicts.resolve(periodId as Id, resolution, reason),
+    mutationFn: ({ resolutionId, reason }: { resolutionId: string; reason: string }) =>
+      api.conflicts.resolve(periodId as Id, resolutionId, reason),
     onSettled: invalidate,
   });
 }

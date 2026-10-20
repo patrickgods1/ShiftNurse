@@ -45,7 +45,6 @@ import { deriveCounters } from '../fairness/ledger.js';
 import type { BurdenCounters, CounterContext } from '../fairness/types.js';
 import { type MaxHoursParams, maxHoursRule } from '../rules/hours-rules.js';
 import {
-  buildRuleContext,
   evaluatePrepared,
   evaluateSchedule,
   type PreparedRule,
@@ -57,6 +56,7 @@ import type { EvaluationResult, RuleContext, Violation } from '../rules/types.js
 import { containingDate, coveringShift } from '../schedule/cover.js';
 import { overlappingShifts } from '../schedule/overlap.js';
 import { ScheduleView } from '../schedule/view.js';
+import { ruleContextForInput } from '../solver/rule-context.js';
 import type { ConflictInput } from './types.js';
 
 /** One (date, shift type, role) cell with a hard minimum or soft target, in calendar order. */
@@ -192,32 +192,11 @@ export class ConflictEngine {
   /** The rule context for a set of requests; the input's own is built once and reused. */
   contextFor(timeOff: readonly TimeOffRequest[]): RuleContext {
     if (this.baseCtx && timeOff === this.input.timeOff) return this.baseCtx;
-    return buildRuleContext({
-      unit: this.input.unit,
-      demand: this.demand,
+    return ruleContextForInput(this.input, {
       nurses: this.nurses,
       shiftTypes: this.shiftTypes,
       timeOff,
-      credentials: this.input.credentials,
-      nurseCredentials: this.input.nurseCredentials,
-      shiftCredentialRequirements: this.input.shiftCredentialRequirements,
-      holidays: this.input.holidays,
-      weekendDefinition: this.input.ruleSet.weekendDefinition,
-      ...(this.input.paidSickCalls ? { paidSickCalls: this.input.paidSickCalls } : {}),
-      ...(this.input.incompatibilityGroups
-        ? { incompatibilityGroups: this.input.incompatibilityGroups }
-        : {}),
-      ...(this.input.holidayWork ? { holidayWork: this.input.holidayWork } : {}),
-      ...(this.input.overtimeVolunteers
-        ? { overtimeVolunteers: this.input.overtimeVolunteers }
-        : {}),
-      ...(this.input.preceptorships ? { preceptorships: this.input.preceptorships } : {}),
-      ...(this.input.restWaivers ? { restWaivers: this.input.restWaivers } : {}),
-      ...(this.input.availabilityBlocks
-        ? { availabilityBlocks: this.input.availabilityBlocks }
-        : {}),
-      ...(this.input.historyFrom ? { historyFrom: this.input.historyFrom } : {}),
-      preferences: this.input.preferences,
+      demand: this.demand,
     });
   }
 

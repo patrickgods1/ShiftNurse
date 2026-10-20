@@ -39,9 +39,10 @@ function StackingForm({ unitId, saved }: { unitId: Id; saved: PaySettings }) {
         className="flex max-w-xl flex-col gap-2 rounded-md border border-border bg-surface p-3"
         onSubmit={(event) => {
           event.preventDefault();
-          // The call-back minimum rides along: the save replaces the unit's whole settings row.
+          // The call-back minimum and notice ride along: the save replaces the whole settings row.
           save.mutate({
             callBackMinimumHours: saved.callBackMinimumHours,
+            reportingPayNoticeHours: saved.reportingPayNoticeHours,
             premiumStacking: value,
             holidayPayCoversOvertime: coversOvertime,
           });

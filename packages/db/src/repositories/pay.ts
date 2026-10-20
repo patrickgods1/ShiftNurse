@@ -520,6 +520,8 @@ export function getPaySettings(db: DbLike, unitId: Id): PaySettings {
         callBackMinimumHours: row.callBackMinimumHours,
         premiumStacking: row.premiumStacking ?? 'compound',
         holidayPayCoversOvertime: row.holidayPayCoversOvertime ?? false,
+        // A row saved before migration 0037 has no notice; D13's default is 2 hours.
+        reportingPayNoticeHours: row.reportingPayNoticeHours ?? 2,
       }
     : { ...DEFAULT_PAY_SETTINGS };
 }
@@ -554,6 +556,10 @@ export function savePaySettings(
   if (stacking !== 'compound' && stacking !== 'additive') {
     throw new Error('Premium stacking must be compound or additive');
   }
+  const notice = settings.reportingPayNoticeHours;
+  if (!Number.isFinite(notice) || notice < 0 || notice > 24) {
+    throw new Error('The reporting-pay notice must be between 0 and 24 hours');
+  }
   // A unit with no row has no stored settings: reading defaults as "before" would audit state
   // that never existed.
   const saved = paySettingsSaved(db, unitId);
@@ -563,6 +569,7 @@ export function savePaySettings(
     callBackMinimumHours: hours,
     premiumStacking: stacking,
     holidayPayCoversOvertime: covers,
+    reportingPayNoticeHours: notice,
   };
   db.insert(paySettings)
     .values({
@@ -570,6 +577,7 @@ export function savePaySettings(
       callBackMinimumHours: hours,
       premiumStacking: stacking,
       holidayPayCoversOvertime: covers,
+      reportingPayNoticeHours: notice,
       updatedAt: Date.now(),
     })
     .onConflictDoUpdate({
@@ -578,6 +586,7 @@ export function savePaySettings(
         callBackMinimumHours: hours,
         premiumStacking: stacking,
         holidayPayCoversOvertime: covers,
+        reportingPayNoticeHours: notice,
         updatedAt: Date.now(),
       },
     })

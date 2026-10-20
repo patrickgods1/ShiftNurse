@@ -7,6 +7,7 @@ import {
   isoDate,
   object,
   type ResourceSchemas,
+  readRange,
   shiftHours,
   text,
 } from './primitives.js';
@@ -34,7 +35,7 @@ const entry = z.discriminatedUnion('kind', [
 const patch = object({ hoursWorked: hours, note: text.nullable() }).partial();
 
 export const dayOfPaySchemas = {
-  list: z.tuple([id, isoDate, isoDate]),
+  list: z.tuple([id, isoDate, isoDate]).superRefine(readRange(400)),
   record: z.tuple([entry]),
   update: z.tuple([id, patch]),
   remove: z.tuple([id]),

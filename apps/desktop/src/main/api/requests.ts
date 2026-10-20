@@ -17,7 +17,6 @@ import {
   today,
 } from '@shiftnurse/core';
 import {
-  applyResolution,
   approveTimeOffAndLiftAssignments,
   cancelSwap,
   cancelTimeOff,
@@ -42,9 +41,10 @@ import {
   withdrawApproval,
 } from '@shiftnurse/db';
 import type { ShiftNurseApi } from '../../shared/api.js';
-import { analyse, approveExchange, autoResolve } from './conflicts.js';
-import { ACTOR, buildConflictInput } from './context.js';
+import { analyse, approveExchange, autoResolve, resolveConflict } from './conflicts.js';
+import { ACTOR, buildConflictInput, periodOrThrow } from './context.js';
 import { approveAndCover, coverOptions } from './leave.js';
+import { requireOnRoster } from './schedule.js';
 
 /**
  * Pending requests that cover a holiday, ranked by the contract's order. Read-only: the ranking
@@ -119,12 +119,8 @@ export function requestsApi(
       policy: (unitId) => getConflictPolicy(db, unitId),
       savePolicy: (unitId, policy) =>
         transact(db, (tx) => saveConflictPolicy(tx, unitId, policy, ACTOR)),
-      resolve: (periodId, resolution, reason) =>
-        transact(
-          db,
-          (tx) =>
-            applyResolution(tx, periodId, resolution, ACTOR, { auto: false, reason }).resolution,
-        ),
+      resolve: (periodId, resolutionId, reason) =>
+        resolveConflict(db, periodId, resolutionId, reason),
       autoResolve: (periodId) => autoResolve(db, periodId),
     },
     exchange: {
@@ -133,7 +129,21 @@ export function requestsApi(
       evaluate: (periodId, proposal) =>
         evaluateExchange({ ...buildConflictInput(db, periodId), proposal }),
       propose: (periodId, proposal, reason) =>
-        transact(db, (tx) => proposeSwap(tx, { ...proposal, periodId, reason }, ACTOR)),
+        transact(db, (tx) => {
+          const period = periodOrThrow(tx, periodId);
+          if (period.status === 'archived') {
+            throw new Error(
+              `${period.name} is archived; a shift exchange cannot be proposed on it.`,
+            );
+          }
+          requireOnRoster(tx, periodId, proposal.requestingNurseId);
+          requireOnRoster(tx, periodId, proposal.counterpartyNurseId);
+          // Structural refusals throw here, so a malformed proposal never reaches the queue. The
+          // verdict is discarded: a proposal the rules would block is still recorded, because the
+          // nurses asked and the manager decides (approval judges it again).
+          evaluateExchange({ ...buildConflictInput(tx, periodId), proposal });
+          return proposeSwap(tx, { ...proposal, periodId, reason }, ACTOR);
+        }),
       approve: (id, reason) => approveExchange(db, id, reason),
       deny: (id, reason) => transact(db, (tx) => denySwap(tx, id, ACTOR, reason)),
       cancel: (id, reason) => transact(db, (tx) => cancelSwap(tx, id, ACTOR, reason)),

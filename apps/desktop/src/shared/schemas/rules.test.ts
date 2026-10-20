@@ -54,3 +54,31 @@ describe('a rule set arriving over IPC', () => {
     );
   });
 });
+
+describe('the weekend definition arriving over IPC', () => {
+  const weights = {
+    nights: 1,
+    weekends: 1,
+    holidays: 1,
+    onCall: 1,
+    undesirable: 1,
+    overtime: 1,
+    preferences: 1,
+    timeOff: 1,
+  };
+  const save = (startMinute: number, durationMinutes: number) =>
+    rulesSchemas.save.safeParse([
+      'u-1',
+      'x',
+      [],
+      { startWeekday: 6, startMinute, durationMinutes, mode: 'starts_within' },
+      weights,
+    ]).success;
+
+  it('refuses a weekend that starts at minute 1440 or lasts more than a week', () => {
+    expect(save(1440, 2880)).toBe(false);
+    expect(save(1439, 2880)).toBe(true);
+    expect(save(0, 10081)).toBe(false);
+    expect(save(0, 10080)).toBe(true);
+  });
+});

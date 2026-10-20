@@ -187,6 +187,11 @@ export interface PaySettings {
    * overtime is paid on holiday hours too, as the FLSA regular rate does.
    */
   holidayPayCoversOvertime: boolean;
+  /**
+   * Notice before a shift's start below which a low-census cancellation still owes
+   * reporting-time pay (D13). Default 2.
+   */
+  reportingPayNoticeHours: number;
 }
 
 /** What a unit that has never saved pay settings runs: no call-back minimum, FLSA stacking. */
@@ -194,6 +199,7 @@ export const DEFAULT_PAY_SETTINGS: PaySettings = {
   callBackMinimumHours: 0,
   premiumStacking: 'compound',
   holidayPayCoversOvertime: false,
+  reportingPayNoticeHours: 2,
 };
 
 // ---------------------------------------------------------------------------

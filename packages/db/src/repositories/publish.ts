@@ -78,6 +78,12 @@ export interface PublishInput {
    * (even empty) it is the whole truth for the period: rows of nurses not in it are deleted.
    */
   ledger?: readonly UpsertFairnessLedgerInput[];
+  /**
+   * The hard rule breaks the caller counted in the same transaction. Above zero a reason is
+   * required (it is the override on record) and the count and codes go into the audit row.
+   * Omitted by seeds and repo callers, which then record nothing new.
+   */
+  hardViolations?: { count: number; codes: readonly string[] };
 }
 
 export interface PublishResult {
@@ -103,6 +109,13 @@ export function publishSchedule(db: DbLike, input: PublishInput, actor: string):
   const previous = latestVersion(db, input.periodId);
   const republish = previous !== undefined;
   const reason = input.reason?.trim() || undefined;
+  // Before the republish-reason check, so a republish over breaks gets the more specific message.
+  const breaks = input.hardViolations?.count ?? 0;
+  if (breaks > 0 && !reason) {
+    throw new Error(
+      `Publishing with ${breaks} rule break${breaks === 1 ? '' : 's'} needs a reason: it is what gets quoted if the schedule is challenged.`,
+    );
+  }
   if (republish && !reason) {
     throw new Error(
       'Republishing a schedule requires a reason: staff already hold the last version',
@@ -129,22 +142,29 @@ export function publishSchedule(db: DbLike, input: PublishInput, actor: string):
   };
   db.insert(scheduleVersion).values(versionRow).run();
   const version = toScheduleVersion(versionRow);
-  recordAudit(db, {
-    entityType: 'schedule_version',
-    entityId: version.id,
-    action: 'publish',
-    actor,
-    after: {
-      periodId: version.periodId,
-      version: version.version,
-      added: diff.added,
-      removed: diff.removed,
-      changed: diff.changed,
-      affectedNurseIds: diff.affectedNurseIds,
+  recordAuditStrict(
+    db,
+    {
+      entityType: 'schedule_version',
+      entityId: version.id,
+      action: 'publish',
+      actor,
+      after: {
+        periodId: version.periodId,
+        version: version.version,
+        added: diff.added,
+        removed: diff.removed,
+        changed: diff.changed,
+        affectedNurseIds: diff.affectedNurseIds,
+        ...(input.hardViolations && {
+          hardViolations: { count: input.hardViolations.count, codes: input.hardViolations.codes },
+        }),
+      },
+      reason,
+      at: publishedAt,
     },
-    reason,
-    at: publishedAt,
-  });
+    { requireReason: breaks > 0 },
+  );
 
   db.update(schedulePeriod)
     .set({ status: 'published', publishedAt })

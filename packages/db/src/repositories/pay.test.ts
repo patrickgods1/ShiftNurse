@@ -716,6 +716,7 @@ describe('cost configuration', () => {
           callBackMinimumHours: 1,
           premiumStacking: 'maybe' as never,
           holidayPayCoversOvertime: false,
+          reportingPayNoticeHours: 2,
         },
         ACTOR,
       ),
@@ -729,6 +730,7 @@ describe('cost configuration', () => {
       callBackMinimumHours: 2,
       premiumStacking: 'additive' as const,
       holidayPayCoversOvertime: true,
+      reportingPayNoticeHours: 2,
     };
     savePaySettings(handle.db, unitId, settings, ACTOR);
     expect(paySettingsSaved(handle.db, unitId)).toBe(true);
@@ -744,7 +746,12 @@ describe('cost configuration', () => {
       savePaySettings(
         handle.db,
         unitId,
-        { callBackMinimumHours, premiumStacking: 'compound', holidayPayCoversOvertime: false },
+        {
+          callBackMinimumHours,
+          premiumStacking: 'compound',
+          holidayPayCoversOvertime: false,
+          reportingPayNoticeHours: 2,
+        },
         ACTOR,
       );
     save(2);
@@ -754,6 +761,56 @@ describe('cost configuration', () => {
       before: { callBackMinimumHours: 2 },
       after: { callBackMinimumHours: 3 },
     });
+  });
+
+  it('reads a unit that never set the reporting-pay notice as two hours', () => {
+    // A row saved before the notice existed: the column is null.
+    handle.db
+      .insert(s.paySettings)
+      .values({ unitId, callBackMinimumHours: 1, updatedAt: Date.now() })
+      .run();
+    expect(getPaySettings(handle.db, unitId).reportingPayNoticeHours).toBe(2);
+  });
+
+  it('saves a four-hour notice and audits what it was', () => {
+    handle.db
+      .insert(s.paySettings)
+      .values({ unitId, callBackMinimumHours: 1, updatedAt: Date.now() })
+      .run();
+    savePaySettings(
+      handle.db,
+      unitId,
+      {
+        callBackMinimumHours: 1,
+        premiumStacking: 'compound',
+        holidayPayCoversOvertime: false,
+        reportingPayNoticeHours: 4,
+      },
+      ACTOR,
+    );
+    expect(getPaySettings(handle.db, unitId).reportingPayNoticeHours).toBe(4);
+    expect(auditHistoryFor(handle.db, 'pay_settings', unitId)[0]).toMatchObject({
+      action: 'update',
+      before: { reportingPayNoticeHours: 2 },
+      after: { reportingPayNoticeHours: 4 },
+    });
+  });
+
+  it('refuses a notice of 25 hours', () => {
+    expect(() =>
+      savePaySettings(
+        handle.db,
+        unitId,
+        {
+          callBackMinimumHours: 1,
+          premiumStacking: 'compound',
+          holidayPayCoversOvertime: false,
+          reportingPayNoticeHours: 25,
+        },
+        ACTOR,
+      ),
+    ).toThrow('The reporting-pay notice must be between 0 and 24 hours');
+    expect(paySettingsSaved(handle.db, unitId)).toBe(false);
   });
 
   it('manages overtime rules the same way', () => {

@@ -5,7 +5,7 @@ import { id, object, type ResourceSchemas } from './primitives.js';
 
 const solverSettings = object({
   solverId: z.enum(['hybrid', 'sa-lns', 'cp-sat']),
-  maxIterations: z.number().int().min(1).optional(),
+  maxIterations: z.number().int().min(1).max(10_000_000).optional(),
 });
 
 export const solverSettingsSchemas = {

@@ -12,7 +12,7 @@ const solveBatchOptions = object({
   count: z.number().min(1).max(10).optional(),
   continueAfter: id.optional(),
   seed: z.number().int().optional(),
-  maxIterations: z.number().int().gt(0).optional(),
+  maxIterations: z.number().int().gt(0).max(10_000_000).optional(),
   solver: solverId.optional(),
   deterministicTime: z.number().gt(0).optional(),
 });

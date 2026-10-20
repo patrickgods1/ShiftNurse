@@ -17,11 +17,13 @@ beforeEach(() => {
     callBackMinimumHours: 2,
     premiumStacking: 'compound',
     holidayPayCoversOvertime: false,
+    reportingPayNoticeHours: 2,
   });
   bridge.respond('cost', 'savePaySettings', {
     callBackMinimumHours: 2,
     premiumStacking: 'additive',
     holidayPayCoversOvertime: false,
+    reportingPayNoticeHours: 2,
   });
 });
 afterEach(() => {
@@ -48,7 +50,12 @@ describe('premium stacking in Settings › Pay', () => {
       expect(bridge.callsTo('cost', 'savePaySettings')).toEqual([
         [
           'u-1',
-          { callBackMinimumHours: 2, premiumStacking: 'additive', holidayPayCoversOvertime: false },
+          {
+            callBackMinimumHours: 2,
+            premiumStacking: 'additive',
+            holidayPayCoversOvertime: false,
+            reportingPayNoticeHours: 2,
+          },
         ],
       ]),
     );
@@ -64,7 +71,12 @@ describe('premium stacking in Settings › Pay', () => {
       expect(bridge.callsTo('cost', 'savePaySettings')).toEqual([
         [
           'u-1',
-          { callBackMinimumHours: 2, premiumStacking: 'compound', holidayPayCoversOvertime: true },
+          {
+            callBackMinimumHours: 2,
+            premiumStacking: 'compound',
+            holidayPayCoversOvertime: true,
+            reportingPayNoticeHours: 2,
+          },
         ],
       ]),
     );

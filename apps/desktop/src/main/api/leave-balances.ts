@@ -23,14 +23,24 @@
  * the hire date, not the seniority date, starts the length-of-service test where the roster
  * keeps one.
  *
+ * Hours worked — for per-hour accrual, the 1,250-hour test and the 52-week average — are the
+ * shifts of published or archived schedules on any unit, each at its own shift type's length
+ * (`workedShiftsForNurseInRange`). A draft is a proposal, and a night floated to another unit is
+ * still work.
+ *
  * A balance whose rule caps yearly use (California sick leave, 40 hours) also reports a request
  * that would pass the cap, however large the balance. California pregnancy disability leave is
- * counted like FMLA, at the usual week's pace, against its own four months and over the 12 months
- * back from the first day; it has no eligibility test and no certification is looked for.
+ * counted like FMLA, at the usual week's pace, against its own four months, which the law grants
+ * per pregnancy (Gov. Code § 12945(a)(1)). The app has no pregnancy record, so the certification
+ * covering the first day stands for this pregnancy's episode (D14) and the leave is counted over
+ * its dates: a second pregnancy within a year starts fresh, and one pregnancy's leave spread over
+ * more than a year is counted whole. Without a covering certification it falls back to the 12
+ * months back from the first day and says so (`basis`). The certification table is the FMLA one;
+ * if PDL ever gets an episode record of its own, it replaces that lookup alone. PDL has no
+ * eligibility test.
  */
 
 import {
-  type Assignment,
   accrualRuleFor,
   addDays,
   checkLeaveBalance,
@@ -59,15 +69,14 @@ import {
   getLeaveBalance,
   getNurse,
   getUnit,
-  listAssignmentsForNurseInRange,
   listFmlaCertifications,
   listLeaveBalancesForNurse,
-  listShiftTypesForUnit,
   listTimeOffForNurse,
   type ShiftNurseDb,
   setLeaveBalance,
   transact,
   updateFmlaCertification,
+  workedShiftsForNurseInRange,
 } from '@shiftnurse/db';
 import type { LeaveRequestCheck, ShiftNurseApi } from '../../shared/api.js';
 import { ACTOR } from './context.js';
@@ -86,21 +95,14 @@ export function checkLeaveRequest(
   paidHours: number,
 ): LeaveRequestCheck {
   const nurse = getNurse(db, nurseId);
-  if (!nurse) throw new Error(`Unknown nurse ${nurseId}`);
+  if (!nurse) throw new Error('That nurse was not found. Reload the page.');
   const unit = getUnit(db, nurse.unitId);
-  if (!unit) throw new Error(`Unknown unit ${nurse.unitId}`);
+  if (!unit) throw new Error("That nurse's unit was not found. Reload the app.");
   const policy = unit.leavePolicy ?? DEFAULT_LEAVE_POLICY;
   const result: LeaveRequestCheck = {};
 
-  // Hours worked (on-call standby is not work), per assignment date, for per-hour accrual and
-  // the Title I hours tests. The declared shift length is the truth, never end minus start.
-  const shiftTypes = listShiftTypesForUnit(db, nurse.unitId);
-  const unworked = new Set(shiftTypes.filter((t) => t.isOnCall).map((t) => t.id));
-  const lengthOf = new Map(shiftTypes.map((t) => [t.id, t.durationHours]));
-  const workedHours = (assignments: readonly Assignment[]) =>
-    assignments
-      .filter((a) => !unworked.has(a.shiftTypeId))
-      .reduce((sum, a) => sum + (lengthOf.get(a.shiftTypeId) ?? 0), 0);
+  const workedHours = (from: IsoDate, to: IsoDate) =>
+    workedShiftsForNurseInRange(db, nurseId, from, to).reduce((sum, s) => sum + s.hours, 0);
 
   const serviceStart = nurse.hireDate ?? nurse.seniorityDate;
 
@@ -120,13 +122,9 @@ export function checkLeaveRequest(
       if (rule?.tiers.some((t) => t.hoursPerAccruedHour !== undefined)) {
         const from = payPeriodWindow(payPeriodIndex(balance.asOf, unit), unit).start;
         const through = addDays(startDate, -1);
-        const byPeriod = new Map<IsoDate, Assignment[]>();
-        for (const a of listAssignmentsForNurseInRange(db, nurseId, from, through)) {
-          const key = payPeriodWindow(payPeriodIndex(a.date, unit), unit).start;
-          byPeriod.set(key, [...(byPeriod.get(key) ?? []), a]);
-        }
-        for (const [key, assignments] of byPeriod) {
-          hoursByPayPeriodStart.set(key, workedHours(assignments));
+        for (const shift of workedShiftsForNurseInRange(db, nurseId, from, through)) {
+          const key = payPeriodWindow(payPeriodIndex(shift.date, unit), unit).start;
+          hoursByPayPeriodStart.set(key, (hoursByPayPeriodStart.get(key) ?? 0) + shift.hours);
         }
       }
       const projection = projectBalance({
@@ -172,8 +170,15 @@ export function checkLeaveRequest(
   if (type === 'pregnancy_disability') {
     const weeklyHours = (nurse.contractedHoursPerPeriod * 7) / unit.payPeriodDays;
     const perDay = weeklyHours / 7;
-    // The 365 days ending on the first day, as FMLA's rolling-back year counts them.
-    const period = { from: addDays(startDate, -364), to: startDate };
+    // This pregnancy's certification, else the 365 days ending on the first day, as FMLA's
+    // rolling-back year counts them.
+    const cert = listFmlaCertifications(db, nurseId).find(
+      (c) => compareDates(c.startDate, startDate) <= 0 && compareDates(c.endDate, startDate) >= 0,
+    );
+    const basis = cert ? ('certification' as const) : ('rolling_year' as const);
+    const period = cert
+      ? { from: cert.startDate, to: cert.endDate }
+      : { from: addDays(startDate, -364), to: startDate };
     const usedHours =
       perDay *
       listTimeOffForNurse(db, nurseId)
@@ -190,6 +195,7 @@ export function checkLeaveRequest(
       usedHours: round2(usedHours),
       requestHours: round2(perDay * datesInRange(startDate, endDate).length),
       remainingHours: round2(Math.max(0, entitlementHours - usedHours)),
+      basis,
     };
   }
 
@@ -206,9 +212,7 @@ export function checkLeaveRequest(
       );
 
     // The year back from the first day of leave: the regulation's 1,250-hour test.
-    const hoursLast12Months = workedHours(
-      listAssignmentsForNurseInRange(db, nurseId, addDays(startDate, -365), addDays(startDate, -1)),
-    );
+    const hoursLast12Months = workedHours(addDays(startDate, -365), addDays(startDate, -1));
 
     // The 52-week average stands in for the usual week only where the record reaches back the
     // whole 52 weeks; a shorter record would average a new hire's first weeks as the whole year.
@@ -216,7 +220,7 @@ export function checkLeaveRequest(
     // then has a record that reaches back the year. A longer gap (leave) reads as a short record,
     // which falls back to the contract week, the safer figure.
     const recordCoversYear =
-      listAssignmentsForNurseInRange(
+      workedShiftsForNurseInRange(
         db,
         nurseId,
         addDays(startDate, -364 - 28),
@@ -228,12 +232,8 @@ export function checkLeaveRequest(
       ...(policy.fmla.regime === 'title1' && recordCoversYear
         ? {
             scheduledHoursLast52Weeks: workedHours(
-              listAssignmentsForNurseInRange(
-                db,
-                nurseId,
-                addDays(startDate, -364),
-                addDays(startDate, -1),
-              ),
+              addDays(startDate, -364),
+              addDays(startDate, -1),
             ),
           }
         : {}),

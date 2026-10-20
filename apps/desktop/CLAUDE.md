@@ -31,11 +31,13 @@
   `analyseConflicts`, `selectAutoResolutions`, `timeOffImpact` over the same `SolveInput` the
   solver uses; `db/repositories/conflicts.ts` holds the per-unit auto-resolve policy and
   `applyResolution`, which audits before it writes; the Requests page has the queue, entry
-  dialog, overlap heatmap, decide-with-impact dialog and ranked resolution cards, and Settings >
+  dialog, overlap heatmap, decide-with-impact dialog and ranked resolution cards — applied by id:
+  `conflicts.resolve` re-analyses in main and applies the option as it stands, refusing one that no
+  longer exists — and Settings >
   Conflicts holds the auto-resolve policy, off by default) and Exchanges (M11: Requests ›
   Exchanges — proposal dialog with live verdict, decide dialog; `exchange.approve` re-evaluates
-  in main and requires an override reason on `warn`) and Publish (M12: `main/api/schedule.ts`
-  `editSchedule` wraps every grid mutation and logs reasoned edits on a published period;
+  in main and requires an override reason on `warn`) and Publish (M12: publishing over hard rule breaks needs the manager's reason and the count she reviewed; main recounts and records both; `main/api/schedule.ts`
+  `editSchedule` (and `openChangeLog`, its inside, for a handler that must word its reason from something read in the transaction) wraps every grid mutation and logs reasoned edits on a published period;
   `main/backups.ts` (publish/daily/manual/restore; a deleted backup waits 30 days in a trash —
   `backup-files.ts` on disk, `backup-trash.ts` its audit rows, both Electron-free and tested), `main/output.ts` + `print-html.ts` +
   `xlsx.ts` for PDF/CSV/xlsx; Schedule › Publish dialog, change log, Export menu, reason dialog
@@ -99,9 +101,11 @@
   strips it; for `npm run dev` in a VS Code terminal, `unset ELECTRON_RUN_AS_NODE` first.
 - **The preload is CommonJS** (`out/preload/index.cjs`) because a sandboxed preload has no ESM
   loader. Everything else in the app is ESM.
-- **`schedule.validate` judges a period by its own `ruleSetId` snapshot, never "latest".**
-  A full pass over a 6-week, 42-nurse draft takes ~14ms in main, so the grid re-validates
-  after every mutation via query invalidation rather than predicting violations client-side.
+- **`schedule.validate` judges a period by its own `ruleSetId` snapshot, never "latest",**
+  and from `loadPeriodInput`, the same input Generate and conflicts read (`ruleContextForInput`),
+  so an input added there reaches the grid too. A full pass is cheap enough in main that the grid
+  re-validates after every mutation via query invalidation rather than predicting violations
+  client-side.
 - **Only the app's own page may navigate or call IPC.** `main/trusted-origin.ts` is the
   policy: `will-navigate` is blocked for any other URL (a file dropped on the grid would
   otherwise load with the preload bridge), `ipc.ts` refuses untrusted sender frames, and
@@ -119,7 +123,9 @@
   the two tables at runtime. `ipc.ts` parses every
   call's arguments against `API_SCHEMAS` before the handler runs: object schemas are strict
   (`object` in `schemas/primitives.ts`), so an unknown key is refused rather than dropped, and a
-  schema must never be stricter than what the renderer actually sends.
+  schema must never be stricter than what the renderer actually sends. Strings use `text`
+  (≤ 5,000 characters) or `name` (≤ 200), never a bare `z.string()`; a start/end pair of dates
+  uses `readRange` so one careless date field cannot make main walk 8,000 years.
 - **The packaged smoke test runs outside the repo and needs `[smoke] PASS`.** `scripts/smoke.mjs`
   copies the packaged app to a temp dir first and fails unless the app prints the marker. Inside
   the repo a module missing from the app is found in the repo's `node_modules`, and a startup

@@ -7,11 +7,12 @@
  * pay rate, a date of "2026-02-30" or an object where an id belongs is refused at the door
  * instead of being written and silently mispricing every shift after it.
  *
- * Values are checked for *shape and range*, never for business rules: whether a nurse may
+ * Values are checked for *shape and range*, including sizes (free text ≤ 5,000 characters,
+ * names ≤ 200, read ranges capped per method), never for business rules: whether a nurse may
  * work a shift, or a rate is plausible, is the repository's and the rule engine's call.
  */
 
-import { type IsoDate, isIsoDate, type NurseRole } from '@shiftnurse/core';
+import { dayNumber, type IsoDate, isIsoDate, type NurseRole } from '@shiftnurse/core';
 import { z } from 'zod';
 import type { ShiftNurseApi } from '../api.js';
 
@@ -57,7 +58,36 @@ export const nurseRole = z.enum(['RN', 'LPN', 'CNA']) satisfies z.ZodType<NurseR
 
 /** Free text a manager typed: a reason, a note, a name. Required reasons are checked by the
  * audit layer (`recordAuditStrict`), which words the refusal for the manager. */
-export const text = z.string();
+export const text = z.string().max(5000, 'must be 5,000 characters or fewer');
+
+/** A short label: a person's name, a unit, a code. */
+export const name = z.string().max(200, 'must be 200 characters or fewer');
+
+/**
+ * For a tuple holding a start and end date at known indexes (`.superRefine(readRange(400))`):
+ * a read over 1970..9999 would walk every day in main for one careless date field.
+ */
+export function readRange(maxDays: number, startIndex = 1, endIndex = 2) {
+  return (args: readonly unknown[], ctx: z.RefinementCtx): void => {
+    const start = args[startIndex];
+    const end = args[endIndex];
+    if (typeof start !== 'string' || typeof end !== 'string') return;
+    if (!isIsoDate(start) || !isIsoDate(end)) return;
+    const span = dayNumber(end) - dayNumber(start);
+    if (span < 0) {
+      ctx.addIssue({ code: 'custom', message: 'the range ends before it starts' });
+    } else if (span > maxDays) {
+      ctx.addIssue({ code: 'custom', message: `the range is longer than ${maxDays} days` });
+    }
+  };
+}
+
+/** A pay period is at most a month: the pay calendar is built by walking it. */
+export const payPeriodDays = z
+  .number()
+  .int('must be a whole number')
+  .min(1, 'must be 1 or more')
+  .max(31, 'must be 31 or fewer');
 
 /** A method that takes no arguments. */
 export const none = z.tuple([]);

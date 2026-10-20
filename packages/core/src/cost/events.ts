@@ -11,7 +11,9 @@
  *   missed, and one for each a rest period is — at most one of each a day, however many are
  *   missed.
  * - **Sent home on arrival** (IWC Wage Order 5 § 5, reporting-time pay): half the scheduled
- *   shift, never under 2 hours nor over 4 — and never less than the hours actually worked.
+ *   shift, never under 2 hours nor over 4 — and never less than the hours actually worked. It is
+ *   owed only when she reported, or was told too late not to (`reportingPayOwed`, D13): a
+ *   cancellation phoned the evening before owes nothing, so the day-of console books no event.
  * - **Call-back**: the hours worked, or the contract's minimum if more, at the call-back
  *   differential (a multiplier on base, or dollars added to it); base pay with none configured.
  *
@@ -52,6 +54,21 @@ export interface DayOfPay {
   total: number;
   /** Events for nurses with no resolvable pay rate. */
   unpriced: number;
+}
+
+/** Whether sending a nurse home owes reporting-time pay: she reported (the cancellation was
+ *  recorded after the shift began), or was told less than the unit's notice before it.
+ *  Minutes are on the continuous wall-clock timeline (time.ts).
+ *
+ *  `recordedAtMinute` is read from the host clock, which repeats 01:00–02:00 at the autumn
+ *  fall-back; a cancellation recorded in that hour can be judged 60 minutes off. Not
+ *  special-cased: the timeline has no DST by design, and the error is one hour once a year. */
+export function reportingPayOwed(input: {
+  shiftStartMinute: number;
+  recordedAtMinute: number;
+  noticeHours: number;
+}): boolean {
+  return input.shiftStartMinute - input.recordedAtMinute < input.noticeHours * 60;
 }
 
 const REPORTING_MIN_HOURS = 2;
