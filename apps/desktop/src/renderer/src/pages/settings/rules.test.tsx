@@ -253,4 +253,37 @@ describe('explaining a loosened protected rule', () => {
     fireEvent.click(within(again).getByLabelText('Enabled'));
     expect(((await screen.findByTestId('rules-reason')) as HTMLTextAreaElement).value).toBe('');
   });
+
+  it('names the setting a Massachusetts unit loosened', async () => {
+    const LONG = 'long-stretch';
+    bridge.respond('rules', 'getLatest', {
+      ...loaded,
+      configs: [
+        {
+          ruleId: LONG,
+          enabled: true,
+          params: {
+            requiredOnly: false,
+            maxConsecutiveHours: 16,
+            emergencyLiftsCap: false,
+            restAfterHours: 16,
+            restOnlyPastThreshold: false,
+            restHours: 8,
+            maxBreakMinutesInStretch: 60,
+          },
+        },
+      ],
+    });
+    renderWithApp(<RulesPanel />, { unit: { id: 'unit-1', jurisdiction: 'MA' } as Unit });
+    const card = await screen.findByTestId(`rule-card-${LONG}`);
+    fireEvent.change(card.querySelector(`#${LONG}-maxConsecutiveHours`) as HTMLInputElement, {
+      target: { value: '24' },
+    });
+    expect((await screen.findByTestId('rules-reason-section')).textContent).toMatch(
+      /Long stretches of work › Most consecutive hours is looser than the Massachusetts preset sets/,
+    );
+    expect((saveButton() as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByTestId('rules-reason'), { target: { value: 'Side letter' } });
+    await waitFor(() => expect((saveButton() as HTMLButtonElement).disabled).toBe(false));
+  });
 });

@@ -153,3 +153,27 @@ describe('California sick leave: a use cap and a front-loaded year', () => {
     ).toThrow(/front-load/i);
   });
 });
+
+describe('California sick-leave caps given in days', () => {
+  const sick = (over: Partial<AccrualRule> = {}): AccrualRule => ({
+    balanceType: 'sick',
+    tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 30 }],
+    ...over,
+  });
+
+  it('refuses a balance cap of 2.5 days', () => {
+    expect(() => validateLeavePolicy(policy({ accrual: [sick({ balanceCapDays: 2.5 })] }))).toThrow(
+      'The sick accrual rule has a balance cap in days that is not a whole number greater than zero',
+    );
+    expect(() =>
+      validateLeavePolicy(policy({ accrual: [sick({ useCapDaysPerYear: 0 })] })),
+    ).toThrow(
+      'The sick accrual rule has a yearly use cap in days that is not a whole number greater than zero',
+    );
+  });
+
+  it('accepts a use cap of 5 days', () => {
+    const p = policy({ accrual: [sick({ useCapHoursPerYear: 40, useCapDaysPerYear: 5 })] });
+    expect(() => validateLeavePolicy(p)).not.toThrow();
+  });
+});

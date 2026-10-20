@@ -152,6 +152,17 @@ describe('calendar arithmetic', () => {
   });
 });
 
+describe('day numbers', () => {
+  it('refuses a day count that is not a whole number instead of inventing a date', () => {
+    expect(() => fromDayNumber(Number.NaN)).toThrow(RangeError);
+    // Second call must throw too: nothing was cached on the first.
+    expect(() => fromDayNumber(Number.NaN)).toThrow(RangeError);
+    expect(() => fromDayNumber(1.5)).toThrow(RangeError);
+    // 56 years x 365 + 14 leap days (1972-2024) = 20,454 is 2026-01-01; the 15th is 14 later.
+    expect(fromDayNumber(20_468)).toBe('2026-01-15');
+  });
+});
+
 describe('dates as a manager reads them', () => {
   it('names Sunday 4 January 2026 "Sun Jan 4"', () => {
     expect(describeDate(isoDate('2026-01-04'))).toBe('Sun Jan 4');

@@ -132,6 +132,7 @@ export const weekendPatternRule: Rule<WeekendPatternParams> = {
         'Set it to what the contract promises. Many give every other weekend off; some units ' +
         'with weekend-only staff allow 2 or more.',
       min: 1,
+      integer: true,
     },
     maxWeekendsPerPeriod: {
       label: 'Weekends per schedule',
@@ -139,8 +140,10 @@ export const weekendPatternRule: Rule<WeekendPatternParams> = {
       why: 'For contracts that cap weekends per schedule, such as "no more than 3 in six weeks".',
       optional: true,
       min: 0,
+      integer: true,
     },
     maxWeekendsPer4Weeks: {
+      stricter: 'lower',
       label: 'Weekends in any four weeks',
       hint:
         'The most weekends a nurse works in any four in a row, counted across schedules. ' +
@@ -150,6 +153,8 @@ export const weekendPatternRule: Rule<WeekendPatternParams> = {
         'Unlike the per-schedule limit, it reads the same whatever length your schedules are.',
       optional: true,
       min: 0,
+      integer: true,
+      max: 4,
     },
   },
 

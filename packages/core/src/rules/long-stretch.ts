@@ -97,6 +97,7 @@ export const longStretchRule: Rule<LongStretchParams> = {
   },
   paramDocs: {
     requiredOnly: {
+      strictValue: false,
       label: 'Only judge hours the nurse was required to work',
       hint: 'A stretch counts only if it holds a required holdover or overtime the nurse did not volunteer for.',
       why:
@@ -104,6 +105,7 @@ export const longStretchRule: Rule<LongStretchParams> = {
         'Pennsylvania) limit every hour. Leave this off unless your law speaks of required hours only.',
     },
     maxConsecutiveHours: {
+      stricter: 'lower',
       label: 'Most consecutive hours',
       hint: 'Leave blank for no cap on a stretch.',
       why:
@@ -113,6 +115,7 @@ export const longStretchRule: Rule<LongStretchParams> = {
       min: 1,
     },
     emergencyLiftsCap: {
+      strictValue: false,
       label: 'A recorded emergency excuses the cap',
       hint: 'A shift in the stretch whose notes begin "Emergency:" lets it pass the cap.',
       why:
@@ -120,6 +123,7 @@ export const longStretchRule: Rule<LongStretchParams> = {
         'allows none. It never excuses the rest owed afterwards.',
     },
     restAfterHours: {
+      stricter: 'lower',
       label: 'Rest is owed after a stretch of',
       hint: 'Hours worked in a row that earn time off. Leave blank for no rest rule.',
       why:
@@ -129,17 +133,20 @@ export const longStretchRule: Rule<LongStretchParams> = {
       min: 1,
     },
     restOnlyPastThreshold: {
+      strictValue: false,
       label: 'Only after more than that many hours',
       hint: 'Off: a stretch of exactly that long earns the rest. On: it must run longer.',
       why: 'Pennsylvania says "more than 12", so a plain 12-hour shift owes nothing.',
     },
     restHours: {
+      stricter: 'higher',
       label: 'Hours off owed',
       hint: 'The least time between the end of the long stretch and the next shift.',
       why: 'The number your law gives: 8 in Massachusetts, 10 in Pennsylvania.',
       min: 1,
     },
     honorsRestWaiver: {
+      strictValue: false,
       label: 'A rest waiver excuses the rest',
       hint: 'A written waiver (Roster › Rest waivers) dated on the next shift lets it start early.',
       why:
@@ -147,6 +154,7 @@ export const longStretchRule: Rule<LongStretchParams> = {
         'or a waiver would excuse what the manager cannot.',
     },
     maxBreakMinutesInStretch: {
+      stricter: 'higher',
       label: 'Longest break that does not end a stretch (minutes)',
       hint:
         'A gap between shifts this long or shorter does not end a stretch: the hours either side ' +
@@ -157,6 +165,8 @@ export const longStretchRule: Rule<LongStretchParams> = {
         'two shifts does not reset that count. 60 minutes is a common reading.',
       optional: true,
       min: 0,
+      integer: true,
+      max: 240,
     },
   },
 

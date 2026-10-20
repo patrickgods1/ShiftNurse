@@ -771,6 +771,10 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
 - [x] Phase 11 — Renderer: schedule grid and dialogs; deactivation lifts drafts and refuses on
       posted shifts, leavers' rows marked, licensed pool in Staffing, pay-period hours from main
       (verify: npm run check; smoke)
+- [x] Phase 12 — Rule parameter validation and jurisdiction presets: unusable settings refused
+      at save and at judging, presets tighten booleans, loosening a law's figure needs a reason,
+      CA sick caps in hours or days, OR/AK preset corrections, nested 8s in the "both" pattern
+      (verify: npm run check; smoke; seed:demo and seed:scenarios succeed)
 
 ---
 

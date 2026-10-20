@@ -172,6 +172,7 @@ export const incompatibleBufferRule: Rule<IncompatibleBufferParams> = {
       why:
         'Two means they are never the only ones running the unit together. Raise it for a ' +
         'tense situation; lower it if the unit is small and the pair rarely overlaps anyway.',
+      integer: true,
     },
   },
 

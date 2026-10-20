@@ -14,11 +14,15 @@
 
 import type { CoverageRequirement, NurseRole, ShiftType } from '../domain/entities.js';
 import type { Weekday } from '../domain/time.js';
+import { matchAlias } from './unit-type-aliases.js';
 
 export type ShiftTypePreset = Pick<
   ShiftType,
   'name' | 'abbreviation' | 'startTime' | 'durationHours' | 'isNight' | 'isOnCall' | 'color'
->;
+> & {
+  /** Abbreviation of a type in the same pattern whose hours this one runs inside. */
+  within?: string;
+};
 
 export type ShiftPatternId = '12h' | '8h' | 'both';
 
@@ -87,8 +91,9 @@ export const SHIFT_PATTERNS: Record<ShiftPatternId, ShiftPattern> = {
   },
   both: {
     label: 'Both 12- and 8-hour shifts',
-    description: 'The 12-hour pair plus the three 8-hour shifts.',
-    shiftTypes: [D12, N12, D8, E8, N8],
+    description:
+      'The 12-hour pair, the 8-hour day and night running inside them, and an evening 8 of its own.',
+    shiftTypes: [D12, N12, { ...D8, within: 'D12' }, E8, { ...N8, within: 'N12' }],
   },
 };
 
@@ -189,11 +194,7 @@ const UNIT_TYPE_ALIASES: Record<AcuityPresetId, readonly string[]> = {
 
 /** The preset matching a free-text unit type, or `undefined` when none does. */
 export function acuityPresetForUnitType(unitType: string): AcuityPresetId | undefined {
-  const key = unitType.trim().toLowerCase();
-  for (const [id, aliases] of Object.entries(UNIT_TYPE_ALIASES)) {
-    if (aliases.includes(key)) return id as AcuityPresetId;
-  }
-  return undefined;
+  return matchAlias(UNIT_TYPE_ALIASES, unitType);
 }
 
 export type CoverageQuickFillRow = Omit<CoverageRequirement, 'id' | 'unitId'>;
@@ -206,12 +207,16 @@ const WEEKDAYS: readonly Weekday[] = [0, 1, 2, 3, 4, 5, 6];
  * of "4 RNs" should not quietly put four people on call every night.
  */
 export function coverageQuickFill(
-  shiftTypes: readonly Pick<ShiftType, 'id' | 'isOnCall'>[],
+  shiftTypes: readonly Pick<ShiftType, 'id' | 'isOnCall' | 'withinShiftTypeId'>[],
   counts: Partial<Record<NurseRole, number>>,
 ): CoverageQuickFillRow[] {
   const rows: CoverageQuickFillRow[] = [];
   for (const shiftType of shiftTypes) {
     if (shiftType.isOnCall) continue;
+    // Its hours are inside a standalone shift whose roster already counts toward them
+    // (`schedule/cover.ts`), so the same floor on it adds nothing but a second set of staff to
+    // find.
+    if (shiftType.withinShiftTypeId !== null) continue;
     for (const weekday of WEEKDAYS) {
       for (const role of ['RN', 'LPN', 'CNA'] as const) {
         const count = counts[role] ?? 0;

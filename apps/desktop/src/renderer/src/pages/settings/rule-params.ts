@@ -4,7 +4,12 @@
  * "Minimum rest" to retype it saved a rule set requiring 0 hours between shifts.
  */
 
-import type { ParamDoc, Rule, RuleConfig } from '@shiftnurse/core';
+import {
+  type ParamDoc,
+  paramProblem as paramError,
+  type Rule,
+  type RuleConfig,
+} from '@shiftnurse/core';
 
 /** The value a number input should hold for a param: '' for an unset optional one. */
 export function numberFieldValue(value: unknown): string {
@@ -30,22 +35,11 @@ export function withNumberParam(
   return { ...params, [key]: Number.isFinite(parsed) ? parsed : raw };
 }
 
-/** Why a param's value cannot be saved, or undefined when it can. */
-export function paramError(
-  doc: ParamDoc,
-  defaultValue: unknown,
-  value: unknown,
-): string | undefined {
-  const numeric = typeof defaultValue === 'number' || (doc.optional && defaultValue === undefined);
-  if (!numeric) return undefined;
-  if (value === undefined) return doc.optional ? undefined : 'Enter a number.';
-  if (typeof value !== 'number' || !Number.isFinite(value)) return 'Enter a number.';
-  if (doc.input === 'weekday') {
-    return Number.isInteger(value) && value >= 0 && value <= 6 ? undefined : 'Pick a day.';
-  }
-  const min = doc.min ?? 0;
-  return value < min ? `Must be at least ${min}.` : undefined;
-}
+/**
+ * Why a param's value cannot be saved, or undefined when it can. Core's definition, so the form
+ * is never stricter or looser than the repository and the rule engine.
+ */
+export { paramError };
 
 /** Every unsaveable field across a rule set's configs, as "Rule name: Field label". */
 export function invalidParams(

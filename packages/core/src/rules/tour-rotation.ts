@@ -148,12 +148,15 @@ export const tourRotationRule: Rule<TourRotationParams> = {
   defaultParams: { maxToursPerPeriod: 2, minHoursBetweenTours: 48, permanentTourEnforced: true },
   paramDocs: {
     maxToursPerPeriod: {
+      stricter: 'lower',
       label: 'Most tours per schedule',
       min: 1,
       hint: 'The most different tours (day, evening, night) one nurse may work in a schedule.',
       why:
         'Rotation clauses, such as VA–NNU Art. 13 and the UC–CNA contracts, cap how widely a ' +
         'nurse is moved around. Two is common; set 1 to keep every nurse on a single tour.',
+      integer: true,
+      max: 3,
     },
     minHoursBetweenTours: {
       label: 'Break when changing tour (hours)',
@@ -183,6 +186,7 @@ export const tourRotationRule: Rule<TourRotationParams> = {
         'otherwise enforced.',
       optional: true,
       min: 0,
+      integer: true,
     },
   },
 

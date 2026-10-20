@@ -103,6 +103,7 @@ export const coverageRule: Rule<CoverageParams> = {
         "run inside another use that shift's charge nurse.",
     },
     chargeMustBeRN: {
+      strictValue: true,
       label: 'Charge nurse must be an RN',
       hint: 'Only a charge-eligible RN may be marked charge.',
       why:
@@ -116,6 +117,7 @@ export const coverageRule: Rule<CoverageParams> = {
       why:
         'One is the usual minimum. Raise it while a large new-grad cohort is on orientation. ' +
         'Only RNs count; an experienced LPN or nursing assistant cannot supervise an RN.',
+      integer: true,
     },
     enforceCredentialRequirements: {
       label: 'Enforce credential requirements',

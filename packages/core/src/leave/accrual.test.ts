@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { AccrualRule } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
-import { accrualRuleFor, leaveYearStarts, projectBalance, yearsOfService } from './accrual.js';
+import {
+  accrualRuleFor,
+  leaveCapsFor,
+  leaveYearStarts,
+  projectBalance,
+  yearsOfService,
+} from './accrual.js';
 
 const d = isoDate;
 
@@ -478,5 +484,74 @@ describe('a front-loaded balance', () => {
       forfeitedHours: 0,
       usedThisYearHours: 0,
     });
+  });
+});
+
+describe('caps in hours or days, whichever is greater', () => {
+  it('lets a 12-hour nurse use 60 hours of sick leave a year, not 40', () => {
+    // 5 days x 12 h = 60, more than 40.
+    expect(leaveCapsFor({ useCapHoursPerYear: 40, useCapDaysPerYear: 5 }, 12)).toEqual({
+      useCapHoursPerYear: 60,
+    });
+  });
+
+  it('keeps an 8-hour nurse at 40 hours', () => {
+    // 5 days x 8 h = 40, the same as the hours.
+    expect(leaveCapsFor({ useCapHoursPerYear: 40, useCapDaysPerYear: 5 }, 8)).toEqual({
+      useCapHoursPerYear: 40,
+    });
+  });
+
+  it('lets a 12-hour nurse bank 120 hours', () => {
+    // 10 days x 12 h = 120, more than 80.
+    expect(leaveCapsFor({ balanceCapHours: 80, balanceCapDays: 10 }, 12)).toEqual({
+      balanceCapHours: 120,
+    });
+  });
+
+  it('needs the shift length to apply a cap in days', () => {
+    expect(() => leaveCapsFor({ balanceCapDays: 10 }, undefined)).toThrow(/usual shift length/);
+  });
+
+  it('refuses to project a balance capped in days without the unit’s usual shift', () => {
+    expect(() =>
+      projectBalance({
+        ...base,
+        balanceHours: 50,
+        asOf: d('2026-10-17'),
+        onDate: d('2026-11-05'),
+        rule: {
+          balanceType: 'sick',
+          tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 10 }],
+          balanceCapHours: 80,
+          balanceCapDays: 10,
+        },
+      }),
+    ).toThrow(/usual shift length/);
+  });
+
+  it('stops a 12-hour nurse’s accrual at 120 hours, not 80', () => {
+    // One period closes inside (10-18..10-31): 115 + 10 = 125, capped at 120, so 5 earned.
+    const rule: AccrualRule = {
+      balanceType: 'sick',
+      tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 10 }],
+      balanceCapHours: 80,
+      balanceCapDays: 10,
+    };
+    const input = {
+      ...base,
+      balanceHours: 115,
+      asOf: d('2026-10-17'),
+      onDate: d('2026-11-05'),
+      shiftHours: 12,
+    };
+    const p = projectBalance({ ...input, rule });
+    expect(p.hours).toBe(120);
+    expect(p.accruedHours).toBe(5);
+    // The same nurse under an hours-only cap of 80 is already over it and earns nothing.
+    const { balanceCapDays: _, ...hoursOnly } = rule;
+    const old = projectBalance({ ...input, rule: hoursOnly });
+    expect(old.hours).toBe(115);
+    expect(old.accruedHours).toBe(0);
   });
 });

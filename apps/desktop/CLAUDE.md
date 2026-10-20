@@ -155,10 +155,12 @@
 - **Main never seeds the demo on its own.** `openAppDatabase` only migrates; the demo is loaded
   by the welcome screen through `setup.loadDemo` (the test scenarios through
   `setup.loadScenarios`, which main allows only under the electron-vite dev server), and all of
-  them and `setup.createUnit` refuse once any unit exists. `setupPhase` treats units-but-no-`setup_state`-row as `ready`, so an install
+  them and `setup.createUnit` refuse once any unit exists. `setupPhase` treats
+  units-but-no-`setup_state`-row as `ready`, so an install
   from before first-run setup never sees the welcome screen. Presets are idempotent — they only
-  add what is missing (coverage quick-fill sets the floors it names) — so pressing one twice, or
-  revisiting a step, never duplicates rows. The smoke run starts empty and clicks "Explore the
+  add what is missing (coverage quick-fill sets the floors it names, skipping a shift that runs
+  inside another; the 'both' pattern puts the 8-hour day and night inside the 12s) — so pressing
+  one twice, or revisiting a step, never duplicates rows. The smoke run starts empty and clicks "Explore the
   demo" before any other check, then walks the guide once on the demo unit.
 - **Number and date inputs go through `field-values.ts` / `NumberField` / `DateField commitOnBlur`.**
   A cleared number is `undefined`, never 0; a field that writes to the database commits on blur,

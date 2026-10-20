@@ -7,13 +7,17 @@
 import {
   ALL_RULES,
   defaultRuleSet,
+  describeParamProblems,
   type FairnessWeights,
   type Id,
   JURISDICTION_PRESETS,
+  type ParamDoc,
   protectedRuleChanges,
   type RuleConfig,
   type RuleSet,
   resolveConfigs,
+  resolveConfigsUnchecked,
+  ruleConfigProblems,
   type WeekendDefinition,
 } from '@shiftnurse/core';
 import { desc, eq } from 'drizzle-orm';
@@ -80,9 +84,13 @@ export function getLatestRuleSet(db: DbLike, unitId: Id): RuleSet | undefined {
  * produces version N+1; version N is retained forever.
  *
  * Switching off or softening the patient-ratio rule, or a rule the unit's state preset switched
- * on (bar the contract's own rules on a unit that said it is under another agreement), is
+ * on (bar the contract's own rules on a unit that said it is under another agreement), or
+ * loosening a setting that preset set past both the old value and the law's, is
  * allowed but needs `opts.reason`: a softened ratio with no stated reason is a grievance
  * with no record. It throws before any insert, so a caller's transaction holds no header row.
+ *
+ * Every parameter is checked against its rule (`ruleConfigProblems`) first; an unusable value
+ * or an unknown rule or setting is refused before any insert.
  */
 export function saveRuleSet(
   db: ShiftNurseTx,
@@ -93,22 +101,41 @@ export function saveRuleSet(
   const latest = getLatestRuleSet(db, draft.unitId);
   const unit = getUnit(db, draft.unitId);
   if (!unit) throw new Error(`Unit ${draft.unitId} not found`);
+  const problems = ruleConfigProblems(draft.configs, { unknown: 'refuse' });
+  if (problems.length > 0) {
+    throw new Error(
+      `These rule settings cannot be saved: ${describeParamProblems(problems).join('; ')}.`,
+    );
+  }
   // Both sides resolved against the registry: a rule absent from a stored set runs its default,
-  // so a draft that omits the ratio rule has not switched it off.
+  // so a draft that omits the ratio rule has not switched it off. The stored side is read
+  // unchecked so a manager can save a fix over a version that is itself unusable.
   const loosened = protectedRuleChanges(
-    resolveConfigs(latest ?? defaultRuleSet(draft.unitId)),
+    resolveConfigsUnchecked(latest ?? defaultRuleSet(draft.unitId)),
     resolveConfigs({ ...defaultRuleSet(draft.unitId), configs: draft.configs }),
     unit.jurisdiction,
     unit.jurisdictionChoices ?? {},
   );
   if (loosened.length > 0 && !opts?.reason?.trim()) {
-    const names = loosened
-      .map((c) => ALL_RULES.find((r) => r.id === c.ruleId)?.name ?? c.ruleId)
-      .join(', ');
-    const why = unit.jurisdiction
-      ? `it is a rule the ${JURISDICTION_PRESETS[unit.jurisdiction].label} preset switched on, or the patient-ratio rule.`
+    const nameOf = (ruleId: string) => ALL_RULES.find((r) => r.id === ruleId)?.name ?? ruleId;
+    const presetLabel = unit.jurisdiction && JURISDICTION_PRESETS[unit.jurisdiction].label;
+    const why = presetLabel
+      ? `it is a rule the ${presetLabel} preset switched on, or the patient-ratio rule.`
       : 'it is the patient-ratio rule.';
-    throw new Error(`Switching off or softening ${names} needs a reason: ${why}`);
+    // Without a loosened setting the wording is the one managers and tests already know.
+    if (loosened.every((c) => c.change !== 'loosened')) {
+      const names = loosened.map((c) => nameOf(c.ruleId)).join(', ');
+      throw new Error(`Switching off or softening ${names} needs a reason: ${why}`);
+    }
+    const phrases = loosened.map((c) => {
+      if (c.change !== 'loosened')
+        return `${nameOf(c.ruleId)} ${c.change === 'disabled' ? 'is switched off' : 'is made advisory'}`;
+      const docs = ALL_RULES.find((r) => r.id === c.ruleId)?.paramDocs as
+        | Record<string, ParamDoc>
+        | undefined;
+      return `${nameOf(c.ruleId)} › ${docs?.[c.param]?.label ?? c.param} is looser than the ${presetLabel} preset sets`;
+    });
+    throw new Error(`${phrases.join('; ')}: a change like this needs a reason, because ${why}`);
   }
   const id = ids.ruleSet();
   const version = (latest?.version ?? 0) + 1;

@@ -213,6 +213,7 @@ export {
 export type { BalanceProjection } from './leave/accrual.js';
 export {
   accrualRuleFor,
+  leaveCapsFor,
   leaveYearStarts,
   projectBalance,
   yearsOfService,
@@ -325,6 +326,14 @@ export {
   suggestedPaidLeaveHours,
   typicalShiftHours,
 } from './rules/paid-leave.js';
+export type { ParamProblem } from './rules/param-validation.js';
+// The one definition of a usable rule setting, for the form, the save and the judge
+export {
+  describeParamProblems,
+  paramProblem,
+  RuleParamsError,
+  ruleConfigProblems,
+} from './rules/param-validation.js';
 // Orientees work with their preceptor
 export { preceptorRule, preceptorsOn } from './rules/preceptor.js';
 // The rule registry the solver, grid and compliance report share
@@ -335,9 +344,11 @@ export {
   evaluateSchedule,
   requireParams,
   resolveConfigs,
+  resolveConfigsUnchecked,
   violationsByAssignment,
   violationsByDate,
   violationsByNurse,
+  withoutUnknownParams,
 } from './rules/registry.js';
 export { restWaivedOn } from './rules/rest-rules.js';
 // Tour rotation limits and the tour a shift belongs to

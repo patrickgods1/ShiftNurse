@@ -209,8 +209,18 @@ export interface ParamDoc {
   optional?: boolean;
   /** The smallest number that makes sense. Absent means 0. */
   min?: number;
+  /** A count: only whole numbers make sense. */
+  integer?: true;
+  /** The largest number that makes sense. Absent: no upper bound. */
+  max?: number;
   /** The parameter only matters while a boolean parameter of the same rule has this value. */
   activeWhen?: { param: string; equals: boolean };
+  /** For a number a preset may set: which way is stricter ('lower' for a cap, 'higher' for a
+   *  rest or a bridge). Presets only move it that way; moving it the other way past the
+   *  preset's value needs a reason. */
+  stricter?: 'lower' | 'higher';
+  /** For an on/off setting a preset may set: the stricter value. */
+  strictValue?: boolean;
 }
 
 /**

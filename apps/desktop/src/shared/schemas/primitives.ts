@@ -127,8 +127,10 @@ const accrualRule = z.strictObject({
   employmentTypes: z.array(z.enum(['full_time', 'part_time', 'per_diem', 'agency'])).optional(),
   tiers: z.array(accrualTier),
   balanceCapHours: z.number().optional(),
+  balanceCapDays: z.number().optional(),
   carryoverCapHours: z.number().optional(),
   useCapHoursPerYear: z.number().optional(),
+  useCapDaysPerYear: z.number().optional(),
   frontLoadHours: z.number().optional(),
   citation: z.string().optional(),
 });

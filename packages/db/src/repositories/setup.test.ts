@@ -19,6 +19,7 @@ import {
   listAcuityTiersForUnit,
 } from './acuity.js';
 import {
+  createShiftType,
   createUnit,
   getUnit,
   listCoverageRequirementsForUnit,
@@ -201,6 +202,74 @@ describe('presets', () => {
     });
     const codes = listShiftTypesForUnit(handle.db, unit.id).map((s) => s.abbreviation);
     expect(codes).toEqual(['D12', 'N12', 'D8', 'E8', 'N8']);
+  });
+
+  it('asks for 12 RN shifts a day, not 20, when a both-pattern unit quick-fills 4 RNs', () => {
+    const unit = newUnit();
+    apply(unit.id, { kind: 'shift-pattern', pattern: 'both' });
+    const ids = listShiftTypesForUnit(handle.db, unit.id).map((s) => s.id);
+    apply(unit.id, { kind: 'coverage', shiftTypeIds: ids, counts: { RN: 4 } });
+    const monday = listCoverageRequirementsForUnit(handle.db, unit.id).filter(
+      (f) => f.weekday === 1,
+    );
+    // D12 4 + N12 4 + E8 4; D8 and N8 run inside the 12s and add nothing.
+    expect(monday.reduce((sum, f) => sum + f.minCount, 0)).toBe(12);
+  });
+
+  it('creates the 8-hour day inside the existing day 12', () => {
+    const unit = newUnit();
+    apply(unit.id, { kind: 'shift-pattern', pattern: 'both' });
+    const types = listShiftTypesForUnit(handle.db, unit.id);
+    const by = (code: string) => types.find((s) => s.abbreviation === code)!;
+    expect(by('D8').withinShiftTypeId).toBe(by('D12').id);
+    expect(by('N8').withinShiftTypeId).toBe(by('N12').id);
+    expect(by('E8').withinShiftTypeId).toBeNull();
+  });
+
+  it('creates the 8-hour day on its own when the existing day 12 no longer holds it', () => {
+    const unit = newUnit();
+    createShiftType(
+      handle.db,
+      {
+        unitId: unit.id,
+        name: 'Day 12',
+        abbreviation: 'D12',
+        startTime: '09:00',
+        durationHours: 12,
+        isNight: false,
+        isOnCall: false,
+        color: '#000000',
+        sortOrder: 1,
+        active: true,
+      },
+      ACTOR,
+    );
+    apply(unit.id, { kind: 'shift-pattern', pattern: 'both' });
+    const d8 = listShiftTypesForUnit(handle.db, unit.id).find((s) => s.abbreviation === 'D8')!;
+    expect(d8.withinShiftTypeId).toBeNull();
+  });
+
+  it('creates the 8-hour day on its own when the existing day 12 has been switched off', () => {
+    const unit = newUnit();
+    createShiftType(
+      handle.db,
+      {
+        unitId: unit.id,
+        name: 'Day 12',
+        abbreviation: 'D12',
+        startTime: '07:00',
+        durationHours: 12,
+        isNight: false,
+        isOnCall: false,
+        color: '#000000',
+        sortOrder: 1,
+        active: false,
+      },
+      ACTOR,
+    );
+    apply(unit.id, { kind: 'shift-pattern', pattern: 'both' });
+    const d8 = listShiftTypesForUnit(handle.db, unit.id).find((s) => s.abbreviation === 'D8')!;
+    expect(d8.withinShiftTypeId).toBeNull();
   });
 
   it('sets a flat staffing floor, and changing the numbers updates it rather than stacking', () => {

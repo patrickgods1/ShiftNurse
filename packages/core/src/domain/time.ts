@@ -107,6 +107,10 @@ export function dayNumber(date: IsoDate): number {
 export function fromDayNumber(days: number): IsoDate {
   const cached = ISO_DATE_CACHE.get(days);
   if (cached !== undefined) return cached;
+  // Only on a miss, so the hot path is untouched; NaN or a fraction would be cached as a date.
+  if (!Number.isInteger(days)) {
+    throw new RangeError(`A date needs a whole number of days since 1970-01-01, not ${days}`);
+  }
   const dt = new Date(days * MS_PER_DAY);
   const y = String(dt.getUTCFullYear()).padStart(4, '0');
   const m = String(dt.getUTCMonth() + 1).padStart(2, '0');

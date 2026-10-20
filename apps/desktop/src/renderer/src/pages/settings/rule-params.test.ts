@@ -55,6 +55,12 @@ describe('editing a rule setting', () => {
   it('never flags an on/off setting', () => {
     expect(paramError(hours, true, false)).toBeUndefined();
   });
+
+  it('refuses a count of nights in a row that is not whole', () => {
+    const rule = ALL_RULES.find((r) => r.id === 'max-consecutive-shifts')!;
+    const doc = (rule.paramDocs as Record<string, ParamDoc>).maxConsecutiveNights!;
+    expect(paramError(doc, 3, 2.5)).toBe('Must be a whole number.');
+  });
 });
 
 describe('saving a rule set', () => {
@@ -72,5 +78,16 @@ describe('saving a rule set', () => {
     expect(invalidParams(ALL_RULES, configs)).toEqual([
       'Minimum rest between shifts: Minimum rest (hours)',
     ]);
+  });
+
+  it('flags an on/off setting that is not on or off', () => {
+    const configs = resolveConfigs(defaultRuleSet('unit-1')).map((c) =>
+      c.ruleId === 'coverage-minimums'
+        ? { ...c, params: { ...c.params, requireChargeNurse: 'yes' } }
+        : c,
+    );
+    expect(invalidParams(ALL_RULES, configs)).toContain(
+      'Coverage minimums and skill mix: Require a charge nurse',
+    );
   });
 });

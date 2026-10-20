@@ -273,6 +273,7 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
         'voluntary cover was tried. Turn this off if your contract allows none.',
     },
     maxMandatedWeeklyHours: {
+      stricter: 'lower',
       label: 'Most hours a nurse can be required to work in a week',
       hint: 'Leave blank to refuse all overtime the nurse did not volunteer for.',
       why:
@@ -280,8 +281,10 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
         'weekend plan, rather than banning them. Hours the nurse offered do not count against it.',
       optional: true,
       min: 1,
+      max: 168,
     },
     baylorMaxMandatedWeeklyHours: {
+      stricter: 'lower',
       label: 'Required hours a week on the Baylor plan',
       hint: 'The weekly cap for nurses on the § 7456 weekend plan; 24 at the VA.',
       why:
@@ -290,8 +293,10 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
         'them too.',
       optional: true,
       min: 0,
+      max: 168,
     },
     maxRequiredConsecutiveHours: {
+      stricter: 'lower',
       label: 'Most consecutive hours a nurse can be required to work',
       hint: 'Leave blank for no consecutive-hours limit.',
       why:
@@ -302,6 +307,7 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
       min: 1,
     },
     compressedTourConsecutiveHours: {
+      stricter: 'lower',
       label: 'Most consecutive hours on a compressed tour',
       hint: 'Used instead when a shift in the stretch is scheduled longer than the limit above.',
       why:
@@ -311,6 +317,7 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
       min: 1,
     },
     emergencyMaxHoursPastShift: {
+      stricter: 'lower',
       label: 'Most hours a required holdover can run past the shift, even in an emergency',
       hint: 'Leave blank for no limit on an emergency holdover.',
       why:
@@ -321,6 +328,7 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
       min: 1,
     },
     emergencyMaxConsecutiveHours: {
+      stricter: 'lower',
       label: 'Most consecutive hours a required holdover can reach, even in an emergency',
       hint: 'Leave blank for no limit on an emergency holdover.',
       why:
@@ -331,6 +339,7 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
       min: 1,
     },
     maxRequiredHoursIn24: {
+      stricter: 'lower',
       label: 'Most hours a nurse can be required to work in any 24',
       hint:
         'Counts every hour worked in the busiest 24 hours holding the required time. Leave blank ' +
@@ -342,8 +351,10 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
         'than 12 in a row. Hours the nurse offered still count toward the 24.',
       optional: true,
       min: 1,
+      max: 24,
     },
     emergencyMaxHoursIn24: {
+      stricter: 'lower',
       label: 'Most hours in any 24 a nurse can be required to reach, even in an emergency',
       hint: 'Leave blank for no limit on emergency hours in 24.',
       why:
@@ -353,6 +364,7 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
         'overtime shift past this.',
       optional: true,
       min: 1,
+      max: 24,
     },
     workWeekStartsOn: {
       label: 'Work week starts on',
