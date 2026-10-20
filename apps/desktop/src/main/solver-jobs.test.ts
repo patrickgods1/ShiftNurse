@@ -74,9 +74,12 @@ function input(): SolveInput {
 
 let loads: number;
 let changes: number | undefined;
+let killed: number[];
 
-function jobs(cores = 3) {
+/** `realKill` keeps `process.kill`, for the one test that proves a real process dies. */
+function jobs(cores = 3, { realKill = false } = {}) {
   return new SolverJobs({
+    ...(realKill ? {} : { killProcess: (pid: number) => killed.push(pid) }),
     loadInput: () => {
       loads++;
       return input();
@@ -99,6 +102,7 @@ beforeEach(() => {
   inputVersion = 0;
   loads = 0;
   changes = undefined;
+  killed = [];
 });
 
 describe('a batch of variations', () => {
@@ -299,7 +303,7 @@ describe('a worker that dies with its CP-SAT runner still going', () => {
       stdio: 'ignore',
     });
     try {
-      const j = jobs(3);
+      const j = jobs(3, { realKill: true });
       j.start('period-1', { count: 1, seed: 100 });
       workers[0]!.emit('message', {
         type: 'runner',
@@ -311,6 +315,70 @@ describe('a worker that dies with its CP-SAT runner still going', () => {
       // A failed or timed-out run must not leave the stand-in running on the developer's machine.
       stand.kill();
     }
+  });
+});
+
+describe('the CP-SAT runner a run spawned', () => {
+  const runner = (worker: FakeWorker) =>
+    worker.emit('message', { type: 'runner', pid: 4242 } satisfies SolverWorkerMessage);
+
+  it('kills the runner of a run still going when the app shuts down', () => {
+    const j = jobs(3);
+    j.start('period-1', { count: 1 });
+    runner(workers[0]!);
+    j.dispose();
+    expect(killed).toEqual([4242]);
+    expect(workers[0]!.terminated).toBe(true);
+  });
+
+  it('kills the runner when the inputs change under a running batch', () => {
+    changes = 10;
+    const j = jobs(3);
+    j.start('period-1', { count: 1 });
+    runner(workers[0]!);
+    inputVersion = 1;
+    changes = 11;
+    expect(j.current('period-1')!.stale).toMatch(/changed since they were generated/);
+    expect(killed).toEqual([4242]);
+  });
+
+  it('does not kill by process id after a run finished normally, when the id may belong to another program', () => {
+    const j = jobs(3);
+    j.start('period-1', { count: 1 });
+    runner(workers[0]!);
+    workers[0]!.finish(10);
+    expect(killed).toEqual([]);
+  });
+
+  it('does not kill after the worker reported an error, because it disposed its runner', () => {
+    const j = jobs(3);
+    const batch = j.start('period-1', { count: 1 });
+    runner(workers[0]!);
+    workers[0]!.emit('message', { type: 'error', message: 'boom' } satisfies SolverWorkerMessage);
+    expect(killed).toEqual([]);
+    expect(j.status(batch.id)!.runs[0]).toMatchObject({ state: 'failed', error: 'boom' });
+  });
+
+  it('kills the runner when the solver thread dies without a word', () => {
+    const j = jobs(3);
+    const batch = j.start('period-1', { count: 1 });
+    runner(workers[0]!);
+    workers[0]!.emit('exit', 1);
+    expect(j.status(batch.id)!.runs[0]).toMatchObject({
+      state: 'failed',
+      error: 'solver worker exited with code 1',
+    });
+    expect(killed).toEqual([4242]);
+  });
+
+  it('raises the shared stop flag when the manager presses Stop', () => {
+    const j = jobs(3);
+    const batch = j.start('period-1', { count: 1 });
+    runner(workers[0]!);
+    const flag = new Int32Array(workers[0]!.data.cancelFlag);
+    expect(Atomics.load(flag, 0)).toBe(0);
+    j.cancel(batch.id);
+    expect(Atomics.load(flag, 0)).toBe(1);
   });
 });
 

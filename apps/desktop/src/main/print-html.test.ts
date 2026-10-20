@@ -1,6 +1,8 @@
-import type { GridSheet, NurseSheet, Unit } from '@shiftnurse/core';
+import type { GridSheet, IsoDate, NurseSheet, Unit } from '@shiftnurse/core';
+import type { NurseRecord } from '@shiftnurse/db';
 import { describe, expect, it } from 'vitest';
-import { gridHtml, nurseSheetsHtml } from './print-html.js';
+import { buildRecordSheet, type RecordSheet, recordCsv } from './nurse-record-sheet.js';
+import { gridHtml, nurseSheetsHtml, recordHtml } from './print-html.js';
 
 const unit: Unit = {
   id: 'u1',
@@ -129,5 +131,102 @@ describe('nurseSheetsHtml', () => {
     expect(html).toContain('19:00–07:00');
     expect(html).toContain('Version 2, published');
     expect(html).toContain('12h scheduled · 72h contracted');
+  });
+});
+
+describe('dates in the heading', () => {
+  const bad = '<b>2026-01-01</b>' as IsoDate;
+
+  it('escapes the dates in the heading, whatever reached the database', () => {
+    const record: RecordSheet = {
+      nurseName: 'Ann Lee',
+      employeeId: 'E1',
+      unitName: '4 West',
+      start: bad,
+      end: '2026-01-31' as IsoDate,
+      generatedOn: '2026-02-01' as IsoDate,
+      audit: [],
+      changes: [],
+    };
+    const recordPage = recordHtml(record);
+    expect(recordPage).toContain('&lt;b&gt;2026-01-01&lt;/b&gt;');
+    expect(recordPage).not.toContain('<b>2026-01-01');
+
+    const grid: GridSheet = {
+      periodName: 'PP1',
+      startDate: bad,
+      endDate: '2026-01-04' as IsoDate,
+      dates: [],
+      rows: [],
+      dailyCounts: [],
+    };
+    const gridPage = gridHtml(grid, { unit, version: undefined, status: 'draft' });
+    expect(gridPage).toContain('&lt;b&gt;2026-01-01&lt;/b&gt;');
+    expect(gridPage).not.toContain('<b>2026-01-01');
+  });
+});
+
+describe('paper size', () => {
+  const ctx = { unit, version: undefined, status: 'draft' as const };
+  const grid: GridSheet = {
+    periodName: 'PP1',
+    startDate: '2026-01-03' as never,
+    endDate: '2026-01-03' as never,
+    dates: ['2026-01-03'] as never,
+    rows: [],
+    dailyCounts: [],
+  };
+  const nurseSheet: NurseSheet = {
+    nurse,
+    periodName: 'PP1',
+    startDate: '2026-01-04' as never,
+    endDate: '2026-01-17' as never,
+    shifts: [],
+    totalHours: 0,
+    onCallHours: 0,
+    contractedHours: 72,
+  };
+
+  it('lays the grid out on A4 when the unit prints on A4', () => {
+    expect(gridHtml(grid, ctx, 'a4')).toContain('@page { size: A4 landscape;');
+    expect(nurseSheetsHtml([nurseSheet], ctx, 'a4')).toContain('@page { size: A4 portrait;');
+  });
+
+  it('keeps Letter by default', () => {
+    expect(gridHtml(grid, ctx)).toContain('@page { size: letter landscape;');
+  });
+});
+
+describe('how a published shift was changed', () => {
+  it('says how a published shift was changed, so a backfill reads as a backfill', () => {
+    const record: NurseRecord = {
+      nurse,
+      start: '2026-01-01' as IsoDate,
+      end: '2026-01-31' as IsoDate,
+      audit: [],
+      scheduleChanges: [
+        {
+          id: 'c1',
+          at: Date.UTC(2026, 0, 10, 12, 0),
+          periodId: 'p1',
+          periodName: 'PP1',
+          kind: 'added',
+          source: 'backfill',
+          date: '2026-01-12' as IsoDate,
+          shiftTypeId: 'st1',
+          actor: 'manager',
+          reason: 'Covering a call-off',
+        },
+      ],
+    };
+    const sheet = buildRecordSheet(
+      record,
+      unit,
+      [{ id: 'st1', abbreviation: 'N' }],
+      '2026-02-01' as IsoDate,
+    );
+    expect(sheet.changes[0]?.how).toBe('call-off backfill');
+    expect(recordHtml(sheet)).toContain('<td>call-off backfill</td>');
+    expect(recordCsv(sheet)).toContain('by call-off backfill');
   });
 });

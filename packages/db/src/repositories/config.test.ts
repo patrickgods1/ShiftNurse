@@ -4,7 +4,7 @@
  * manager renamed the home unit so that it sorted second.
  */
 
-import { type IsoDate, isoDate, type Unit } from '@shiftnurse/core';
+import { type IsoDate, isoDate, type PaperSize, type Unit } from '@shiftnurse/core';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor, recentAudit } from '../audit.js';
@@ -321,5 +321,30 @@ describe('one coverage floor per shift, role and day', () => {
     ).toThrow(/minimum of 5 above its target of 4/);
     expect(listCoverageRequirementsForUnit(handle.db, west.id)).toEqual([monday]);
     expect(recentAudit(handle.db, 1000).length).toBe(auditBefore);
+  });
+});
+
+describe('paper size', () => {
+  it('remembers that the unit prints on A4, and can go back to following the computer', () => {
+    const unit = addUnit('4A Medicine-Surgery');
+    transact(handle.db, (tx) => updateUnit(tx, unit.id, { paperSize: 'a4' }, ACTOR));
+    expect(getHomeUnit(handle.db)!.paperSize).toBe('a4');
+    const row = recentAudit(handle.db, 20).find((a) => a.entityType === 'unit');
+    expect((row!.after as { paperSize?: string }).paperSize).toBe('a4');
+    expect((row!.before as { paperSize?: string } | null)?.paperSize).toBeUndefined();
+
+    transact(handle.db, (tx) => updateUnit(tx, unit.id, { paperSize: null }, ACTOR));
+    expect(getHomeUnit(handle.db)!.paperSize).toBeUndefined();
+    const cleared = recentAudit(handle.db, 20).find((a) => a.entityType === 'unit');
+    expect((cleared!.before as { paperSize?: string }).paperSize).toBe('a4');
+  });
+
+  it('refuses a paper size it cannot print', () => {
+    const unit = addUnit('4A Medicine-Surgery');
+    expect(() =>
+      transact(handle.db, (tx) =>
+        updateUnit(tx, unit.id, { paperSize: 'legal' as PaperSize }, ACTOR),
+      ),
+    ).toThrow('Paper size must be Letter or A4.');
   });
 });

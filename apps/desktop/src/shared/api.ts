@@ -67,6 +67,7 @@ import type {
   OvertimeOrder,
   OvertimeRule,
   OvertimeVolunteer,
+  PaperSize,
   PayRate,
   PerDiemCommitment,
   PeriodStatus,
@@ -161,6 +162,8 @@ export type UnitPatch = Partial<Pick<Unit, 'name' | 'unitType' | 'ratioStaffing'
   requireConsentForPostedChanges?: boolean | null;
   /** `null` stops checking weekends off per year. */
   minWeekendsOffPerYear?: number | null;
+  /** `null` follows the computer's region. */
+  paperSize?: PaperSize | null;
 };
 
 export interface AppInfo {
@@ -169,6 +172,8 @@ export interface AppInfo {
   platform: string;
   /** Absolute path of the SQLite file, shown in the About panel so support can find it. */
   databasePath: string;
+  /** What this computer's region prints on; a unit with no paper size uses it. */
+  defaultPaperSize: PaperSize;
 }
 
 /** A published release newer than the running app (see `main/updates.ts`). */

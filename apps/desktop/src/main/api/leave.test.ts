@@ -251,25 +251,28 @@ describe('covering leave with the extra rows a pickup needs', () => {
 
   it('takes the standby off the nurse on call when she covers the night', () => {
     grantAclsToAll();
+    // Roster order follows random ids; a novice alone on the night breaches the novice rule and
+    // drops out of the cover list.
+    const cover = f.rns.slice(1).find((n) => !n.isNovice)!;
     const onCall = listShiftTypesForUnit(f.handle.db, f.seeded.unitId).find((s) => s.isOnCall)!;
     const { date, request } = annAsksOffOn(f.night.id);
     const standby = scheduleApi(f.handle.db).createAssignment({
       periodId: f.seeded.draftPeriodId,
-      nurseId: f.rns[1]!.id,
+      nurseId: cover.id,
       shiftTypeId: onCall.id,
       date,
     });
     const [option] = coverOptions(f.handle.db, f.seeded.draftPeriodId, request.id);
-    expect(option!.candidates.find((c) => c.nurseId === f.rns[1]!.id)?.replacesOnCall).toBe(true);
+    expect(option!.candidates.find((c) => c.nurseId === cover.id)?.replacesOnCall).toBe(true);
     approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, undefined, [
-      { assignmentId: option!.assignment.id, nurseId: f.rns[1]!.id },
+      { assignmentId: option!.assignment.id, nurseId: cover.id },
     ]);
 
     expect(getAssignment(f.handle.db, standby.id)).toBeUndefined();
     expect(auditHistoryFor(f.handle.db, 'assignment', standby.id).map((e) => e.action)).toContain(
       'delete',
     );
-    expect(onDay(date, f.rns[1]!.id).map((a) => a.shiftTypeId)).toEqual([f.night.id]);
+    expect(onDay(date, cover.id).map((a) => a.shiftTypeId)).toEqual([f.night.id]);
   });
 });
 

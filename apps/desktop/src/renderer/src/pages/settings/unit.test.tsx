@@ -24,6 +24,12 @@ let bridge: FakeBridge;
 beforeEach(() => {
   bridge = installFakeBridge();
   bridge.respond('units', 'update', unit);
+  bridge.respond('app', 'info', {
+    version: '1.0.0',
+    platform: 'darwin',
+    databasePath: '/tmp/shiftnurse.db',
+    defaultPaperSize: 'letter',
+  });
 });
 afterEach(() => {
   cleanup();
@@ -279,5 +285,18 @@ describe('Settings › Unit start over', () => {
     });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete everything and restart' }));
     expect(await within(dialog).findByText('The backup could not be written')).toBeTruthy();
+  });
+});
+
+describe('Settings › Unit paper size', () => {
+  it("saves A4 as the unit's paper size", async () => {
+    renderWithApp(<UnitPanel />, { unit });
+    const paper = (await screen.findByLabelText('Paper size for printouts')) as HTMLSelectElement;
+    await screen.findByRole('option', { name: 'Follow this computer (Letter)' });
+    fireEvent.change(paper, { target: { value: 'a4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(bridge.callsTo('units', 'update')).toHaveLength(1));
+    expect(bridge.callsTo('units', 'update')[0]![1].paperSize).toBe('a4');
   });
 });

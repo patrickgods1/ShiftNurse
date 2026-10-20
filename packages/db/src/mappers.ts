@@ -94,6 +94,7 @@ export function toUnit(r: typeof s.unit.$inferSelect): Unit {
     ...optKey('perDiemCommitment', r.perDiemCommitment),
     ...optKey('requireConsentForPostedChanges', r.requireConsentForPostedChanges),
     ...optKey('minWeekendsOffPerYear', r.minWeekendsOffPerYear),
+    ...optKey('paperSize', r.paperSize),
   };
 }
 

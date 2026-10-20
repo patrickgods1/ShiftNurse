@@ -18,13 +18,14 @@ import type {
   ComplianceAlert,
   GridSheet,
   NurseSheet,
+  PaperSize,
   ScheduleVersion,
   Unit,
 } from '@shiftnurse/core';
 import { isWeekendDate, WEEKDAY_NAMES, weekdayOf } from '@shiftnurse/core';
-
 import type { RecordSheet } from './nurse-record-sheet.js';
 import { KEPT_APART_NOTE } from './nurse-record-sheet.js';
+import { cssPageSize } from './paper.js';
 
 export interface PrintContext {
   unit: Unit;
@@ -71,11 +72,11 @@ const BASE_CSS = `
   .alerts li.critical { color: #b91c1c; font-weight: 600; }
 `;
 
-export function gridHtml(sheet: GridSheet, ctx: PrintContext): string {
+export function gridHtml(sheet: GridSheet, ctx: PrintContext, paper: PaperSize = 'letter'): string {
   const head = sheet.dates
     .map((date) => {
       const cls = isWeekendDate(date) ? ' class="weekend"' : '';
-      return `<th${cls}>${WEEKDAY_NAMES[weekdayOf(date)].slice(0, 2)}<br>${monthDay(date)}</th>`;
+      return `<th${cls}>${WEEKDAY_NAMES[weekdayOf(date)].slice(0, 2)}<br>${esc(monthDay(date))}</th>`;
     })
     .join('');
   const rows = sheet.rows
@@ -93,14 +94,14 @@ export function gridHtml(sheet: GridSheet, ctx: PrintContext): string {
         })
         .join('');
       const name = `${row.nurse.lastName}, ${row.nurse.firstName}${row.nurse.active ? '' : ' (inactive)'}`;
-      return `<tr><td class="name">${esc(name)}</td><td>${esc(row.nurse.role)}</td>${cells}<td>${row.hours}</td></tr>`;
+      return `<tr><td class="name">${esc(name)}</td><td>${esc(row.nurse.role)}</td>${cells}<td>${esc(String(row.hours))}</td></tr>`;
     })
     .join('');
   const footer = sheet.dailyCounts
     .map(
       (dc) =>
         `<tr><th class="name">${esc(dc.shiftType.abbreviation)} on</th><th></th>${dc.counts
-          .map((n) => `<th>${n}</th>`)
+          .map((n) => `<th>${esc(String(n))}</th>`)
           .join('')}<th></th></tr>`,
     )
     .join('');
@@ -113,10 +114,10 @@ export function gridHtml(sheet: GridSheet, ctx: PrintContext): string {
         .join('')}</ul>`
     : '';
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(sheet.periodName)}</title>
-<style>@page { size: letter landscape; margin: 10mm; } ${BASE_CSS} td { font-size: 8.5pt; }</style></head>
+<style>@page { size: ${cssPageSize(paper)} landscape; margin: 10mm; } ${BASE_CSS} td { font-size: 8.5pt; }</style></head>
 <body>
 <h1>${esc(ctx.unit.name)} — ${esc(sheet.periodName)}</h1>
-<div class="meta">${sheet.startDate} to ${sheet.endDate} · ${stamp(ctx)} · ${sheet.rows.length} nurses</div>
+<div class="meta">${esc(sheet.startDate)} to ${esc(sheet.endDate)} · ${stamp(ctx)} · ${esc(String(sheet.rows.length))} nurses</div>
 <table><thead><tr><th class="name">Nurse</th><th>Role</th>${head}<th>Hrs</th></tr></thead>
 <tbody>${rows}</tbody><tfoot>${footer}</tfoot></table>
 <div class="legend">${legend}<span><b>*</b> charge</span><span class="ot"><b>OT</b> authorised overtime</span></div>
@@ -124,17 +125,21 @@ ${alerts}
 </body></html>`;
 }
 
-export function nurseSheetsHtml(sheets: readonly NurseSheet[], ctx: PrintContext): string {
+export function nurseSheetsHtml(
+  sheets: readonly NurseSheet[],
+  ctx: PrintContext,
+  paper: PaperSize = 'letter',
+): string {
   const pages = sheets
     .map((sheet) => {
       const rows = sheet.shifts
         .map(
           (s) =>
-            `<tr><td>${esc(s.weekday)} ${monthDay(s.date)}</td><td class="name">${esc(s.shiftTypeName)}${
+            `<tr><td>${esc(s.weekday)} ${esc(monthDay(s.date))}</td><td class="name">${esc(s.shiftTypeName)}${
               s.isCharge ? ' <b>(charge)</b>' : ''
             }${s.isOvertime ? ' <span class="ot">(OT)</span>' : ''}</td><td>${esc(s.start)}–${esc(
               s.end,
-            )}</td><td>${s.isOnCall ? 'on call' : `${s.hours}h`}</td><td class="name">${esc(
+            )}</td><td>${s.isOnCall ? 'on call' : `${esc(String(s.hours))}h`}</td><td class="name">${esc(
               s.notes ?? '',
             )}</td></tr>`,
         )
@@ -142,15 +147,15 @@ export function nurseSheetsHtml(sheets: readonly NurseSheet[], ctx: PrintContext
       const name = `${sheet.nurse.firstName} ${sheet.nurse.lastName}`;
       return `<section class="page">
 <h1>${esc(name)}</h1>
-<div class="meta">${esc(ctx.unit.name)} · ${esc(sheet.periodName)} · ${sheet.startDate} to ${sheet.endDate} · ${stamp(ctx)}</div>
+<div class="meta">${esc(ctx.unit.name)} · ${esc(sheet.periodName)} · ${esc(sheet.startDate)} to ${esc(sheet.endDate)} · ${stamp(ctx)}</div>
 <table><thead><tr><th>Day</th><th class="name">Shift</th><th>Time</th><th>Hours</th><th class="name">Notes</th></tr></thead>
 <tbody>${rows}</tbody></table>
-<p class="meta">${sheet.totalHours}h scheduled${sheet.onCallHours ? ` + ${sheet.onCallHours}h on call` : ''} · ${sheet.contractedHours}h contracted</p>
+<p class="meta">${esc(String(sheet.totalHours))}h scheduled${sheet.onCallHours ? ` + ${esc(String(sheet.onCallHours))}h on call` : ''} · ${esc(String(sheet.contractedHours))}h contracted</p>
 </section>`;
     })
     .join('');
   return `<!doctype html><html><head><meta charset="utf-8"><title>Nurse sheets</title>
-<style>@page { size: letter portrait; margin: 14mm; } ${BASE_CSS} .page { break-after: page; } .page:last-child { break-after: auto; }</style></head>
+<style>@page { size: ${cssPageSize(paper)} portrait; margin: 14mm; } ${BASE_CSS} .page { break-after: page; } .page:last-child { break-after: auto; }</style></head>
 <body>${pages || '<p class="meta">No nurse has a shift in this period.</p>'}</body></html>`;
 }
 
@@ -159,7 +164,7 @@ export function nurseSheetsHtml(sheets: readonly NurseSheet[], ctx: PrintContext
  * every change to a published shift, oldest first, then the note on what is left out. Portrait,
  * with the reason column wide because the reason is what gets quoted.
  */
-export function recordHtml(sheet: RecordSheet): string {
+export function recordHtml(sheet: RecordSheet, paper: PaperSize = 'letter'): string {
   const audit = sheet.audit
     .map(
       (r) =>
@@ -171,7 +176,7 @@ export function recordHtml(sheet: RecordSheet): string {
   const changes = sheet.changes
     .map(
       (c) =>
-        `<tr><td>${esc(c.time)}</td><td>${esc(c.kind)}</td><td class="name">${esc(c.shift)}</td><td>${esc(
+        `<tr><td>${esc(c.time)}</td><td>${esc(c.kind)}</td><td>${esc(c.how)}</td><td class="name">${esc(c.shift)}</td><td>${esc(
           c.period,
         )}</td><td>${esc(c.actor)}</td><td class="name">${esc(c.reason)}</td></tr>`,
     )
@@ -179,16 +184,16 @@ export function recordHtml(sheet: RecordSheet): string {
   const none = (cols: number) =>
     `<tr><td colspan="${cols}" class="name">Nothing recorded in these dates.</td></tr>`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>Record of ${esc(sheet.nurseName)}</title>
-<style>@page { size: letter portrait; margin: 14mm; } ${BASE_CSS} td, th { font-size: 8.5pt; } h2 { font-size: 11pt; margin: 12pt 0 4pt; } .note { margin-top: 12pt; font-size: 8.5pt; color: #333; }</style></head>
+<style>@page { size: ${cssPageSize(paper)} portrait; margin: 14mm; } ${BASE_CSS} td, th { font-size: 8.5pt; } h2 { font-size: 11pt; margin: 12pt 0 4pt; } .note { margin-top: 12pt; font-size: 8.5pt; color: #333; }</style></head>
 <body>
 <h1>Record of ${esc(sheet.nurseName)}</h1>
-<div class="meta">Employee ${esc(sheet.employeeId)} · ${esc(sheet.unitName)} · ${sheet.start} to ${sheet.end}<br>Generated ${sheet.generatedOn} by ShiftNurse</div>
+<div class="meta">Employee ${esc(sheet.employeeId)} · ${esc(sheet.unitName)} · ${esc(sheet.start)} to ${esc(sheet.end)}<br>Generated ${esc(sheet.generatedOn)} by ShiftNurse</div>
 <h2>Entries about this nurse</h2>
 <table><thead><tr><th>When</th><th class="name">What</th><th>Action</th><th>By</th><th>Concerns</th><th class="name">Reason</th></tr></thead>
 <tbody>${audit || none(6)}</tbody></table>
 <h2>Changes to published shifts</h2>
-<table><thead><tr><th>When</th><th>Change</th><th class="name">Shift</th><th>Schedule</th><th>By</th><th class="name">Reason</th></tr></thead>
-<tbody>${changes || none(6)}</tbody></table>
+<table><thead><tr><th>When</th><th>Change</th><th>How</th><th class="name">Shift</th><th>Schedule</th><th>By</th><th class="name">Reason</th></tr></thead>
+<tbody>${changes || none(7)}</tbody></table>
 <p class="note">Times are UTC. ${esc(KEPT_APART_NOTE)}</p>
 </body></html>`;
 }

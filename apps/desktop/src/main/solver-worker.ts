@@ -44,7 +44,10 @@ export type SolverWorkerMessage =
   | { type: 'progress'; progress: SolveProgress }
   | { type: 'done'; report: SolveReport }
   | { type: 'error'; message: string }
-  /** The CP-SAT runner's process id, so the main process can kill it if the job is torn down. */
+  /**
+   * The CP-SAT runner's process id, sent as soon as it is spawned (again after a respawn), so the
+   * main process can kill it if the job is torn down.
+   */
   | { type: 'runner'; pid: number };
 
 const port = parentPort;

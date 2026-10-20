@@ -7,21 +7,26 @@
  * because the app already ships it, it handles page breaks and table headers properly, and
  * the same HTML is what a browser-hosted version would print.
  *
- * The hidden window is sandboxed with no preload and loads a `data:` URL, so the document it
- * renders can reach nothing: not the database, not IPC, not the file system.
+ * The hidden window is sandboxed with no preload, has JavaScript off, and loads the document
+ * from a private temp file, so what it renders can reach nothing: not the database, not IPC,
+ * not the file system. A file rather than a `data:` URL because a `data:` URL fails past about
+ * 1-2 MB (a long nurse record crosses that) and its error message would carry the document's
+ * head, nurse name and employee id included, into the log and the dialog.
  */
 
-import { writeFileSync } from 'node:fs';
-import type { GridSheet, NurseSheet, ScheduleView } from '@shiftnurse/core';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { GridSheet, NurseSheet, PaperSize, ScheduleView } from '@shiftnurse/core';
 import {
   buildGridSheet,
   buildNurseSheets,
   formatAssignmentsCsv,
   formatGridCsv,
 } from '@shiftnurse/core';
-import { BrowserWindow } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import type { OutputFormat } from '../shared/api.js';
 import { saveFile } from './native-dialogs.js';
+import { paperForRegion, pdfPageSize } from './paper.js';
 import { gridHtml, nurseSheetsHtml, type PrintContext } from './print-html.js';
 import { buildXlsx } from './xlsx.js';
 
@@ -95,33 +100,92 @@ function workbook(grid: GridSheet, sheets: readonly NurseSheet[]): Buffer {
   ]);
 }
 
-/** Render HTML to PDF bytes in a throwaway hidden window. */
-export async function htmlToPdf(html: string, landscape: boolean): Promise<Buffer> {
-  const win = new BrowserWindow({
-    show: false,
-    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
-  });
+/** Where print jobs stage their HTML: inside userData, which already holds this data. */
+export function printScratchDir(): string {
+  const dir = join(app.getPath('userData'), 'print');
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/** Start-up sweep: a crash mid-print must not leave nurse data on disk past the next launch. */
+export function clearPrintScratch(): void {
   try {
-    await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    rmSync(join(app.getPath('userData'), 'print'), { recursive: true, force: true });
+  } catch (err) {
+    console.error(`[output] clearing print files failed (${errorCode(err)})`);
+  }
+}
+
+// Only a code or a name: the message of a load failure can quote the document.
+function errorCode(err: unknown): string {
+  return (err as { code?: string }).code ?? (err as Error).name ?? 'unknown';
+}
+
+/** What this computer's region prints on; a unit with no paper size of its own uses it. */
+export function osPaperSize(): PaperSize {
+  return paperForRegion(app.getLocaleCountryCode());
+}
+
+/** Render HTML to PDF bytes in a throwaway hidden window. */
+export async function htmlToPdf(
+  html: string,
+  landscape: boolean,
+  paper: PaperSize,
+): Promise<Buffer> {
+  // Inside the try: a full disk or a locked userData would otherwise surface its own message,
+  // with the folder's path, instead of the fixed words below.
+  let dir: string | undefined;
+  let win: BrowserWindow | undefined;
+  try {
+    dir = mkdtempSync(join(printScratchDir(), 'job-'));
+    const file = join(dir, 'document.html');
+    writeFileSync(file, html, { encoding: 'utf8', mode: 0o600 });
+    win = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        javascript: false,
+      },
+    });
+    await win.loadFile(file);
     return await win.webContents.printToPDF({
       landscape,
-      pageSize: 'Letter',
+      pageSize: pdfPageSize(paper),
       printBackground: true,
       preferCSSPageSize: true,
     });
+  } catch (err) {
+    console.error(`[output] PDF rendering failed (${errorCode(err)})`);
+    throw new Error(
+      'The PDF could not be produced. Try a shorter date range, or export CSV instead.',
+    );
   } finally {
-    win.destroy();
+    try {
+      win?.destroy();
+    } catch {
+      // Nothing useful to say; the folder removal below still has to run.
+    }
+    if (dir !== undefined) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch (err) {
+        console.error(`[output] removing print file failed (${errorCode(err)})`);
+      }
+    }
   }
 }
 
 /** The bytes for any format, with no dialog — what the smoke test and the file export share. */
 export async function renderOutput(input: OutputInput, format: OutputFormat): Promise<Buffer> {
   const { schedule, ctx } = input;
+  const paper = ctx.unit.paperSize ?? osPaperSize();
   switch (format) {
     case 'pdf-grid':
-      return htmlToPdf(gridHtml(buildGridSheet(schedule), ctx), true);
+      return htmlToPdf(gridHtml(buildGridSheet(schedule), ctx, paper), true, paper);
     case 'pdf-nurses':
-      return htmlToPdf(nurseSheetsHtml(buildNurseSheets(schedule), ctx), false);
+      return htmlToPdf(nurseSheetsHtml(buildNurseSheets(schedule), ctx, paper), false, paper);
     case 'csv-grid':
     case 'csv-long':
       return Buffer.from(renderCsv(schedule, format), 'utf8');

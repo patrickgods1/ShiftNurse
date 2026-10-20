@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -121,6 +121,81 @@ describe('the CP-SAT runner client', { timeout: 30_000 }, () => {
     await expect(solving).resolves.toMatchObject({ status: 'FEASIBLE', objective: 7, values: [1] });
   });
 
+  it('honours a Stop pressed while the runner was still starting', async () => {
+    const r = fakeRunner();
+    const starting = r.start();
+    r.stop();
+    await starting;
+    await expect(
+      r.solve({ fake: 'slow' }, {}, undefined, { watchdogMs: 2000 }),
+    ).resolves.toMatchObject({ status: 'FEASIBLE', objective: 7 });
+  });
+
+  it('spends a remembered Stop on one solve only', async () => {
+    const r = fakeRunner();
+    const starting = r.start();
+    r.stop();
+    await starting;
+    await expect(
+      r.solve({ fake: 'slow' }, {}, undefined, { watchdogMs: 2000 }),
+    ).resolves.toMatchObject({ status: 'FEASIBLE', objective: 7 });
+    // Nobody pressed Stop for this one, so it runs until the watchdog gives up on it.
+    await expect(r.solve({ fake: 'slow' }, {}, undefined, { watchdogMs: 300 })).rejects.toThrow(
+      /stopped responding/,
+    );
+  });
+
+  it('tells the caller the runner pid as soon as it is spawned', async () => {
+    const pids: number[] = [];
+    const r = new CpsatRunner(process.execPath, [FAKE], undefined, (p) => pids.push(p));
+    runners.push(r);
+    const starting = r.start();
+    expect(pids).toEqual([childPid(r)]);
+    await starting;
+  });
+
+  it('tells the caller the new pid when a crashed runner is started again', async () => {
+    const pids: number[] = [];
+    const r = new CpsatRunner(process.execPath, [FAKE], undefined, (p) => pids.push(p));
+    runners.push(r);
+    await r.start();
+    const first = childPid(r);
+    await expect(r.solve({ fake: 'crash' }, {})).rejects.toThrow(/code 3/);
+    await expect(r.solve({ fake: 'optimal' }, {})).resolves.toMatchObject({ status: 'OPTIMAL' });
+    const second = childPid(r);
+    expect(second).not.toBe(first);
+    expect(pids).toEqual([first, second]);
+  });
+
+  it('lets a solve carry on when a late Stop names a request that already finished', async () => {
+    const r = fakeRunner();
+    // Written straight to the pipe, as a stop sent just before the previous answer arrived would be.
+    const client = r as unknown as { write(message: object): void };
+    const solving = r.solve({ fake: 'slow' }, {}, () => client.write({ id: 'r999', stop: true }), {
+      watchdogMs: 300,
+    });
+    // The fake answers a slow solve only when stopped, so carrying on ends at the watchdog.
+    await expect(solving).rejects.toThrow(/stopped responding/);
+  });
+
+  it('puts a wall-clock limit on a request that has none', async () => {
+    const r = fakeRunner();
+    // Test-only peek at the lines the client writes to the runner's stdin.
+    const sent: { params?: object }[] = [];
+    const client = r as unknown as { write(message: object): void };
+    const write = client.write.bind(r);
+    client.write = (message) => {
+      sent.push(message);
+      write(message);
+    };
+    await r.solve({ fake: 'optimal' }, { num_workers: 1 });
+    await r.solve({ fake: 'optimal' }, { max_time_in_seconds: 5 });
+    expect(sent.map((m) => m.params)).toEqual([
+      { num_workers: 1, max_time_in_seconds: 540 },
+      { max_time_in_seconds: 5 },
+    ]);
+  });
+
   it('runs requests one after another rather than letting them collide', async () => {
     const runner = fakeRunner();
     const [first, second] = await Promise.all([
@@ -170,17 +245,21 @@ describe.skipIf(REAL === undefined)('the real CP-SAT runner', () => {
 describe('finding the runner', () => {
   it('looks in resources/cpsat when packaged and .cpsat/host in development', () => {
     const root = mkdtempSync(join(tmpdir(), 'cpsat-path-'));
-    const resources = join(root, 'resources');
-    const app = join(root, 'app');
-    mkdirSync(join(resources, 'cpsat'), { recursive: true });
-    mkdirSync(join(app, '.cpsat', 'host'), { recursive: true });
-    const file = runnerFileName('darwin');
-    writeFileSync(join(resources, 'cpsat', file), '');
+    try {
+      const resources = join(root, 'resources');
+      const app = join(root, 'app');
+      mkdirSync(join(resources, 'cpsat'), { recursive: true });
+      mkdirSync(join(app, '.cpsat', 'host'), { recursive: true });
+      const file = runnerFileName('darwin');
+      writeFileSync(join(resources, 'cpsat', file), '');
 
-    const base = { resourcesPath: resources, appPath: app, platform: 'darwin' as const };
-    expect(resolveRunnerPath({ ...base, packaged: true })).toBe(join(resources, 'cpsat', file));
-    // Not fetched in development yet: CP-SAT and hybrid must report unavailable, not crash.
-    expect(resolveRunnerPath({ ...base, packaged: false })).toBeUndefined();
+      const base = { resourcesPath: resources, appPath: app, platform: 'darwin' as const };
+      expect(resolveRunnerPath({ ...base, packaged: true })).toBe(join(resources, 'cpsat', file));
+      // Not fetched in development yet: CP-SAT and hybrid must report unavailable, not crash.
+      expect(resolveRunnerPath({ ...base, packaged: false })).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('names the runner with .exe on Windows only', () => {

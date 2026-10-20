@@ -54,7 +54,7 @@ import {
   undeleteBackup,
 } from './backups.js';
 import { databasePath } from './database.js';
-import { exportToFile as exportPeriodToFile, renderCsv } from './output.js';
+import { exportToFile as exportPeriodToFile, osPaperSize, renderCsv } from './output.js';
 import type { SolverJobs } from './solver-jobs.js';
 
 export { outputInput } from './api/publish.js';
@@ -75,6 +75,7 @@ export function createApi(db: ShiftNurseDb, solverJobs: SolverJobs, host: AppHos
         version: app.getVersion(),
         platform: process.platform,
         databasePath: databasePath(),
+        defaultPaperSize: osPaperSize(),
       }),
       update: () => host.update() ?? null,
       openLogs: () => host.openLogs(),

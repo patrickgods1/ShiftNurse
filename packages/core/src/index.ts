@@ -110,6 +110,7 @@ export type {
   OvertimeOrder,
   OvertimeRule,
   OvertimeVolunteer,
+  PaperSize,
   PayRate,
   PerDiemCommitment,
   PeriodStatus,

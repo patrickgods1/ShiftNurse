@@ -15,16 +15,16 @@ import { app } from 'electron';
 import { nurseRecordDocument } from './api/nurse-record.js';
 import { outputInput } from './api.js';
 import { getDb } from './database.js';
-import { htmlToPdf, renderOutput } from './output.js';
+import { htmlToPdf, osPaperSize, renderOutput } from './output.js';
+
+/** Printed once, last, on success; `scripts/smoke.mjs` requires it. */
+const SMOKE_PASS_MARKER = '[smoke] PASS: every check completed';
 
 /**
  * The whole run. With the OR-Tools runner installed the solver section generates six times —
  * hybrid (the demo's default) twice, then SA + LNS and CP-SAT twice each — so it needs minutes,
  * not seconds; without the runner it finishes in well under one.
  */
-/** Printed once, last, on success; `scripts/smoke.mjs` requires it. */
-const SMOKE_PASS_MARKER = '[smoke] PASS: every check completed';
-
 const TIMEOUT_MS = Number(process.env.SHIFTNURSE_SMOKE_TIMEOUT_MS ?? 240_000);
 
 /** Each route must render an element carrying this test id. */
@@ -39,8 +39,14 @@ const ROUTES: readonly { hash: string; testId: string }[] = [
   { hash: '#/settings', testId: 'settings-tabs' },
 ];
 
+// app.exit skips will-quit, so a failure mid-solve would leave the runner to finish its budget.
+let stopWork: () => void = () => {};
+
 function fail(message: string): never {
   console.error(`[smoke] FAIL: ${message}`);
+  try {
+    stopWork();
+  } catch {}
   app.exit(1);
   throw new Error(message);
 }
@@ -283,19 +289,19 @@ const COST_SCRIPT = `
   })()`;
 
 /**
- * The M9 check: Generate runs a batch of variations in worker threads against the seeded draft,
- * they compare and preview, the saved one lands in the database with locked rows untouched, the
- * grid's own validator finds no nurse-level hard violation in it, and running it again on
- * unchanged inputs writes the identical schedule. A short iteration budget keeps each run to a
- * couple of seconds; the property is the same.
- */
-/**
  * One variation (a batch of N gets N times this). 90 s is generous on a developer machine, where the default (hybrid) solve takes
  * ~20–35 s; CI runners are several times slower — hybrid took 79 s on windows-2022 and 87 s on
  * macos-15-intel, then 90 s+ on one Windows run — so the release workflow raises it.
  */
 const SOLVE_TIMEOUT_MS = Number(process.env.SHIFTNURSE_SMOKE_SOLVE_TIMEOUT_MS ?? 90_000);
 
+/**
+ * The M9 check: Generate runs a batch of variations in worker threads against the seeded draft,
+ * they compare and preview, the saved one lands in the database with locked rows untouched, the
+ * grid's own validator finds no nurse-level hard violation in it, and running it again on
+ * unchanged inputs writes the identical schedule. A short iteration budget keeps each run to a
+ * couple of seconds; the property is the same.
+ */
 const SOLVER_SCRIPT = `
   (async () => {
     const api = window.shiftnurse;
@@ -968,6 +974,10 @@ function dayOfScript(periodId: string): string {
       acceptedRefused = true;
     }
 
+    // Whether the absent nurse was charge, and the pickup cannot take it, depends on what the
+    // solver produced; the candidate says so, and the backfill then logs a "changed" row for the
+    // nurse who takes charge instead.
+    const chargeMoved = !!report.candidates[0].chargeMovedTo;
     const result = await api.dayOf.backfill(callOff.id, report.candidates[0].nurseId, 'smoke pickup');
     const covered =
       result.callOff.status === 'covered' && result.callOff.replacementAssignmentId === result.assignment.id;
@@ -1022,7 +1032,7 @@ function dayOfScript(periodId: string): string {
       candidateCount, excludedCount, tiers, ranks, sameRole, disjoint, absentNotListed,
       excludedReasons, allCallout, notCalloutDetail,
       acceptedRefused, covered, calloutSource, acceptedLogged,
-      backfillChanges, backfillReasonOk, logOutcomes,
+      backfillChanges, chargeMoved, backfillReasonOk, logOutcomes,
       absentGone, replacementPresent, stillOpen, viewHasReplacement, viewAssignmentGone,
       cancelBlankRefused, cancelled, date,
     };
@@ -1311,7 +1321,8 @@ async function captureAfterFirstFrame(win: BrowserWindow, limitMs = 5000): Promi
   }
 }
 
-export function runSmoke(win: BrowserWindow): void {
+export function runSmoke(win: BrowserWindow, stopSolverWork: () => void): void {
+  stopWork = stopSolverWork;
   const timer = setTimeout(() => fail(`did not finish within ${TIMEOUT_MS}ms`), TIMEOUT_MS);
 
   win.webContents.on('render-process-gone', (_e, details) =>
@@ -1917,8 +1928,9 @@ export function runSmoke(win: BrowserWindow): void {
           addDays(today(), -30),
           today(),
           today(),
+          osPaperSize(),
         );
-        const recordPdf = await htmlToPdf(recordDoc.html, false);
+        const recordPdf = await htmlToPdf(recordDoc.html, false, recordDoc.paper);
         if (recordPdf.subarray(0, 4).toString() !== '%PDF') fail('nurse record PDF did not render');
         if (!recordDoc.csv.includes('Entries about kept-apart')) fail('record CSV lacks its note');
       }
@@ -1950,6 +1962,7 @@ export function runSmoke(win: BrowserWindow): void {
         calloutSource: boolean;
         acceptedLogged: boolean;
         backfillChanges: string[];
+        chargeMoved: boolean;
         backfillReasonOk: boolean;
         logOutcomes: string[];
         absentGone: boolean;
@@ -1994,9 +2007,10 @@ export function runSmoke(win: BrowserWindow): void {
         fail('backfill did not mark the call-off covered with a matching assignment');
       if (!dayOf.calloutSource) fail('backfill assignment is not source: callout');
       if (!dayOf.acceptedLogged) fail('backfill did not log the accepted attempt');
-      if (
-        JSON.stringify([...dayOf.backfillChanges].sort()) !== JSON.stringify(['added', 'removed'])
-      ) {
+      const expectedChanges = dayOf.chargeMoved
+        ? ['added', 'changed', 'removed']
+        : ['added', 'removed'];
+      if (JSON.stringify([...dayOf.backfillChanges].sort()) !== JSON.stringify(expectedChanges)) {
         fail(`backfill change log entries: ${JSON.stringify(dayOf.backfillChanges)}`);
       }
       if (!dayOf.backfillReasonOk)

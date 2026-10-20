@@ -1,4 +1,5 @@
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -28,6 +29,7 @@ import {
   replaceDatabaseFile,
   restoreFromTrash,
   restoreRefusal,
+  stageDatabaseFile,
   verifyDatabaseFile,
   writeRestoreMarker,
 } from './backup-files.js';
@@ -138,6 +140,14 @@ describe('swapping the live database for a restore or a start over', () => {
     expect(listBackupFiles(dir)).toHaveLength(2);
   });
 
+  it('stages a copy beside the live file without touching it', () => {
+    const path = live();
+    expect(stageDatabaseFile(path, join(dir, MANUAL))).toBe(`${path}.restoring`);
+    expect(readFileSync(path, 'utf8')).toBe('SQLite format 3\0live');
+    expect(readFileSync(`${path}-wal`, 'utf8')).toBe('pages not yet checkpointed');
+    expect(readFileSync(`${path}.restoring`, 'utf8')).toBe('SQLite format 3\0manual');
+  });
+
   it('leaves the live database untouched when the backup cannot be read', () => {
     const path = live();
     expect(() => replaceDatabaseFile(path, join(dir, 'gone.sqlite'))).toThrow();
@@ -187,6 +197,20 @@ describe('checking a backup before it is trusted', () => {
     expect(verifyDatabaseFile(realDatabase('good.sqlite'), FOLDER)).toEqual({ ok: true });
   });
 
+  it('accepts a backup from an older version, which opening it will migrate', () => {
+    // The newest migration dropped from a copy of the folder: a file one release behind.
+    const older = join(dir, 'older-migrations');
+    cpSync(FOLDER, older, { recursive: true });
+    const journalPath = join(older, 'meta', '_journal.json');
+    const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as { entries: unknown[] };
+    journal.entries.pop();
+    writeFileSync(journalPath, JSON.stringify(journal));
+    const path = join(dir, 'older.sqlite');
+    openDatabase({ url: path, migrationsFolder: older }).close();
+
+    expect(verifyDatabaseFile(path, FOLDER)).toEqual({ ok: true });
+  });
+
   it('reports a backup that is no longer on disk', () => {
     expect(verifyDatabaseFile(join(dir, 'gone.sqlite'), FOLDER)).toMatchObject({
       ok: false,
@@ -230,6 +254,27 @@ describe('a backup that was still being written', () => {
     expect(existsSync(join(dir, partial))).toBe(false);
     expect(existsSync(join(dir, 'readme.txt'))).toBe(true);
     expect(existsSync(join(dir, MANUAL))).toBe(true);
+  });
+});
+
+describe('journal files left beside backups', () => {
+  it('are removed at the next launch, with the backups and anything not ours left alone', () => {
+    const sidecars = [
+      `${MANUAL}.partial-wal`,
+      `${MANUAL}.partial-shm`,
+      `${MANUAL}-wal`,
+      `${MANUAL}-shm`,
+      // Its backup has gone to the trash; the journal files are still ours.
+      'daily-2026-09-01-1790000200000.sqlite-wal',
+    ];
+    for (const name of sidecars) writeFileSync(join(dir, name), '');
+    writeFileSync(join(dir, 'notes.sqlite-wal'), 'not ours');
+
+    expect(removeStalePartials(dir).sort()).toEqual([...sidecars].sort());
+    for (const name of sidecars) expect(existsSync(join(dir, name))).toBe(false);
+    expect(existsSync(join(dir, 'notes.sqlite-wal'))).toBe(true);
+    expect(existsSync(join(dir, MANUAL))).toBe(true);
+    expect(existsSync(join(dir, PUBLISH))).toBe(true);
   });
 });
 

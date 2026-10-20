@@ -19,6 +19,7 @@ import type {
   LeavePolicy,
   NurseRole,
   OvertimeOrder,
+  PaperSize,
   PerDiemCommitment,
   RatioStaffing,
   ShiftCredentialRequirement,
@@ -118,6 +119,8 @@ export interface UnitPatch {
   requireConsentForPostedChanges?: boolean | null;
   /** Null stops checking. */
   minWeekendsOffPerYear?: number | null;
+  /** Null follows the computer's region. */
+  paperSize?: PaperSize | null;
 }
 
 const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
@@ -134,6 +137,7 @@ const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
   perDiemCommitment: true,
   requireConsentForPostedChanges: true,
   minWeekendsOffPerYear: true,
+  paperSize: true,
 };
 
 /** Break minutes are a whole number a shift can hold; anything else is a typing slip. */
@@ -178,6 +182,8 @@ export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string):
       validateRatioStaffing(values.ratioStaffing);
       validatePostingLead(values.postingLeadDays);
       validateWeekendsOff(values.minWeekendsOffPerYear);
+      if (values.paperSize != null && values.paperSize !== 'letter' && values.paperSize !== 'a4')
+        throw new Error('Paper size must be Letter or A4.');
       if (values.leavePolicy) validateLeavePolicy(values.leavePolicy);
       if (
         values.jurisdiction !== undefined &&

@@ -25,6 +25,8 @@ const runnerBehaviour = vi.hoisted(() => ({
 vi.mock('./cpsat-process.js', () => ({
   CpsatRunner: class {
     readonly pid = undefined;
+    // No constructor: the real one's (command, args, readyTimeoutMs, onSpawn) are accepted and
+    // ignored, since the stub spawns nothing.
     start() {
       return runnerBehaviour.start();
     }

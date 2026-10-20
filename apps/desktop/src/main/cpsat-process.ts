@@ -4,10 +4,9 @@
  *
  * ## Why here and not in core or the worker thread
  *
- * `packages/core` may not start processes — it builds the model (`encode`) and reads the answer
- * (`decode`) as plain data. The solver worker thread runs a *synchronous* solve that cannot await
- * a subprocess. So the OR-Tools backends run in main: encode, `await runner.solve(...)`, decode.
- * Main is never blocked while CP-SAT searches; the search runs in another process entirely.
+ * `packages/core` may not start processes. The solver worker thread (`solver-worker.ts`) runs the
+ * OR-Tools backends: encode, `await runner.solve(...)`, decode. The search itself runs in this
+ * separate process, so neither main nor the worker's event loop is blocked while CP-SAT searches.
  *
  * ## Protocol
  *
@@ -64,6 +63,12 @@ const READY_TIMEOUT_MS = 120_000;
  * a hung runner holds its eight search threads and the Generate run waits forever.
  */
 export const SOLVE_WATCHDOG_MS = 10 * 60_000;
+/**
+ * Nine minutes: inside `SOLVE_WATCHDOG_MS` (ten), so a runner that outlives its client stops on
+ * its own and a healthy one answers before the watchdog kills it (L-40). Added only to a request
+ * that names no wall-clock limit of its own.
+ */
+export const SOLVE_VALVE_SECONDS = 540;
 /** After a stop and EOF, how long a runner gets to finish before it is killed. */
 const EXIT_GRACE_MS = 2_000;
 const STDERR_TAIL = 2_000;
@@ -111,12 +116,21 @@ export class CpsatRunner {
   private counter = 0;
   private stderr = '';
   private exited = false;
+  /** A Stop asked for while no request was in flight, spent on the next request written. */
+  private stopWanted = false;
+  /** The id of the request written and not yet answered. */
+  private inFlight: string | undefined;
 
-  /** `command`/`args` are injectable so tests can run a fake runner script under Node. */
+  /**
+   * `command`/`args` are injectable so tests can run a fake runner script under Node. `onSpawn`
+   * hears every process this runner spawns, a respawn after a crash included, so whoever owns
+   * the runner can kill it even if it never gets as far as ready.
+   */
   constructor(
     private readonly command: string,
     private readonly args: readonly string[] = [],
     private readonly readyTimeoutMs: number = READY_TIMEOUT_MS,
+    private readonly onSpawn?: (pid: number) => void,
   ) {}
 
   /** The runner's process id while it is running. */
@@ -131,6 +145,7 @@ export class CpsatRunner {
     this.stderr = '';
     const child = spawn(this.command, [...this.args], { stdio: ['pipe', 'pipe', 'pipe'] });
     this.child = child;
+    if (child.pid !== undefined) this.onSpawn?.(child.pid);
     this.ready = new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         // Rejecting alone would leave a live process behind that every later start() ignores.
@@ -205,7 +220,16 @@ export class CpsatRunner {
           },
           ...(onProgress ? { onProgress } : {}),
         };
-        this.write({ id, model, params });
+        const limited =
+          (params as { max_time_in_seconds?: unknown }).max_time_in_seconds !== undefined
+            ? params
+            : { ...params, max_time_in_seconds: SOLVE_VALVE_SECONDS };
+        this.write({ id, model, params: limited });
+        this.inFlight = id;
+        if (this.stopWanted) {
+          this.stopWanted = false;
+          this.write({ id, stop: true });
+        }
       });
     };
     const result = this.queue.then(run, run);
@@ -213,12 +237,22 @@ export class CpsatRunner {
     return result;
   }
 
-  /** Ask the solve in flight to stop; it still resolves, with the best solution found so far. */
+  /**
+   * Ask the solve in flight to stop; it still resolves, with the best solution found so far.
+   * With nothing in flight the Stop is remembered and sent right after the next request: a stop
+   * line the runner reads while idle would be cleared by that request and lost, and the search
+   * would run its whole budget. The stop names its request, which a v3 runner checks so a late
+   * stop cannot cut the next solve short; a v2 runner ignores the id.
+   */
   stop(): void {
-    if (this.child && !this.exited) this.write({ stop: true });
+    if (this.inFlight === undefined) this.stopWanted = true;
+    else if (this.child && !this.exited) this.write({ id: this.inFlight, stop: true });
   }
 
-  /** Stop any solve, close stdin and make sure the process is gone. */
+  /**
+   * Stop any solve, close stdin and make sure the process is gone. With nothing in flight the
+   * stop is only remembered, which is harmless: the process is going away.
+   */
   dispose(): void {
     const child = this.child;
     if (!child || this.exited) return;
@@ -235,12 +269,14 @@ export class CpsatRunner {
   private onEvent(event: RunnerEvent): void {
     const pending = this.pending;
     if (!pending) return;
-    // An unparseable request comes back with an empty id; with one request in flight it is ours.
+    // A line the runner cannot read at all comes back with an empty id (v2 always did, v3 echoes
+    // the id when it can); with one request in flight it is ours.
     if (event.id !== pending.id && !(event.type === 'error' && event.id === '')) return;
     if (event.type === 'progress') {
       pending.onProgress?.(progressOf(event));
     } else if (event.type === 'result') {
       this.pending = undefined;
+      this.inFlight = undefined;
       pending.resolve({
         ...progressOf(event),
         status: event.status,
@@ -248,6 +284,7 @@ export class CpsatRunner {
       });
     } else if (event.type === 'error') {
       this.pending = undefined;
+      this.inFlight = undefined;
       pending.reject(new Error(`CP-SAT runner: ${event.message}`));
     }
   }
@@ -255,6 +292,7 @@ export class CpsatRunner {
   private failPending(error: Error): void {
     const pending = this.pending;
     this.pending = undefined;
+    this.inFlight = undefined;
     pending?.reject(error);
   }
 }

@@ -64,7 +64,7 @@ function olderFile(): void {
 }
 
 describe('opening the application database', () => {
-  it('migrates a fresh file without taking a pre-migrate backup', async () => {
+  it('tells the safety-copy hook that a brand-new file is fresh', async () => {
     const before = vi.fn(async () => {});
     // A brand-new file is "pending" for every migration, so the hook is told it is fresh.
     await openAppDatabase(before);
@@ -124,6 +124,23 @@ describe('opening the application database', () => {
     expect(restores).toHaveLength(1);
     expect(restores[0]!.entityId).toBe('backup-1.sqlite');
     expect(existsSync(join(root, 'restore-pending.json'))).toBe(false);
+  });
+
+  it('records no restore when the app stopped before the backup was swapped in', async () => {
+    migratedFile();
+    writeRestoreMarker(root, {
+      fileName: 'backup-1.sqlite',
+      restoredFrom: 'manual',
+      savedAs: 'pre-restore.sqlite',
+      at: 1_700_000_000_000,
+    });
+    // The staged copy is renamed over the live file by the swap; still here, the swap never ran.
+    writeFileSync(`${databasePath()}.restoring`, 'SQLite format 3\0staged');
+    await openAppDatabase(async () => {});
+
+    expect(recentAudit(getDb(), 10).filter((a) => a.action === 'restore')).toHaveLength(0);
+    expect(existsSync(join(root, 'restore-pending.json'))).toBe(false);
+    expect(existsSync(`${databasePath()}.restoring`)).toBe(false);
   });
 
   it('ignores a malformed restore marker and still opens', async () => {

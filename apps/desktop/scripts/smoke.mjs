@@ -99,7 +99,10 @@ if (packaged) {
   commandArgs = ['.'];
 }
 
-const env = { ...process.env, SHIFTNURSE_SMOKE: '1' };
+// A fresh userData per run, removed below: the app would otherwise leave a database and backups
+// in temp every time.
+const userDataDir = mkdtempSync(join(tmpdir(), 'shiftnurse-smoke-data-'));
+const env = { ...process.env, SHIFTNURSE_SMOKE: '1', SHIFTNURSE_SMOKE_USER_DATA: userDataDir };
 delete env.ELECTRON_RUN_AS_NODE;
 if (screenshot) env.SHIFTNURSE_SMOKE_SCREENSHOT = screenshot;
 if (windowSize) env.SHIFTNURSE_SMOKE_WINDOW_SIZE = windowSize;
@@ -148,4 +151,5 @@ const outcome = await new Promise((resolve) => {
 });
 
 if (scratch) rmSync(scratch, { recursive: true, force: true });
+rmSync(userDataDir, { recursive: true, force: true });
 process.exit(outcome);
