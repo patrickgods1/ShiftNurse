@@ -13,20 +13,25 @@
  * ## Sign and share conventions — read before adding a component
  *
  * - A nurse's **fair share** of a burden is proportional to their `contractedHoursPerPeriod`
- *   (i.e. FTE), never to the hours they actually worked. If the share were based on worked
- *   hours, giving a nurse one more night shift would also raise their share of nights, and
- *   in the edge case of a nurse who works nothing but nights the extra shift would *improve*
- *   their relative standing. Contracted hours are fixed with respect to the assignment being
- *   judged, which is what makes the score monotone: a worse assignment never raises it.
+ *   (i.e. FTE) **× exposure**, never to the hours they actually worked. Exposure is the pay
+ *   periods she was there for: each period's available days (approved leave and days before
+ *   the hire date taken out), weighted 0.5 per 180 days of age and forgotten after 365, so a
+ *   new hire, a nurse back from FMLA and a veteran are compared by *rate*, not by how many
+ *   ledger rows each happens to have. If the share were based on worked hours, giving a nurse
+ *   one more night shift would also raise their share of nights, and in the edge case of a
+ *   nurse who works nothing but nights the extra shift would *improve* their relative
+ *   standing. Contract and exposure read leave, hire date and history, never the assignment
+ *   being judged, which is what keeps the score monotone: a worse assignment never raises it.
  * - **Deviation** is `(carried − fairShare) / fairShare`, so `+0.5` reads "50% over share".
  *   Under-share is favourable to the nurse and is clamped to a perfect component score.
  * - The **burden index** is signed: positive means the nurse has carried more than their share
  *   and is owed relief; the solver prefers to hand the next undesirable shift to the most
  *   negative index. Preference and time-off equity enter with the same sign convention
  *   (behind the team → positive).
- * - Seniority is a **multiplier on preference weight**, never an override: a senior nurse's
- *   unmet preference costs more in the objective and in their own score, but no amount of
- *   seniority moves a night shift off the books.
+ * - Seniority is a multiplier on the solver's preference price, never on the displayed score:
+ *   a senior nurse's unmet preference is honoured sooner, but the same burden reads the same
+ *   for everyone. It is never an override either: no amount of seniority moves a night shift
+ *   off the books.
  */
 
 import type {
@@ -101,7 +106,7 @@ export const FAIRNESS_COMPONENT_LABELS: Record<FairnessComponent, string> = {
   holidays: 'Holidays worked',
   onCall: 'On-call shifts',
   undesirable: 'Shifts against stated preferences',
-  overtime: 'Overtime hours',
+  overtime: 'Hours over contract',
   preferences: 'Preferences honoured',
   timeOff: 'Time-off requests approved',
 };
@@ -128,6 +133,8 @@ export const EMPTY_COUNTERS: Readonly<BurdenCounters> = Object.freeze({
   totalHours: 0,
   overtimeHours: 0,
   preferenceHitRate: 0,
+  periodDays: 0,
+  availableDays: 0,
 });
 
 /**
@@ -146,12 +153,18 @@ export interface CounterContext {
   holidayDateById: ReadonlyMap<Id, IsoDate>;
   weekendDefinition: WeekendDefinition;
   preferences: readonly Preference[];
-  /** Requests whose `startDate` falls in the period feed the approved/denied tallies. */
+  /**
+   * Approved/denied tallies count requests whose `startDate` falls in the period; availability
+   * counts every approved request overlapping it.
+   */
   timeOff?: readonly TimeOffRequest[];
 }
 
+/** Decay-weighted totals over a window: counters with no period of their own. */
+export type CarriedCounters = Omit<BurdenCounters, 'periodDays' | 'availableDays'>;
+
 /** Which ledger counter each burden component reads. */
-export const BURDEN_COUNTER: Record<BurdenComponent, keyof BurdenCounters> = {
+export const BURDEN_COUNTER: Record<BurdenComponent, keyof CarriedCounters> = {
   nights: 'nightShifts',
   weekends: 'weekendsWorked',
   holidays: 'holidaysWorked',
@@ -179,42 +192,71 @@ export const DEFAULT_SENIORITY: SeniorityOptions = { boost: 0.5 };
 // Historical burden
 // ---------------------------------------------------------------------------
 
+/** Which period is being scored, which every age and every pro-rata share is measured from. */
+export interface BurdenScope {
+  /** First day of the period being scored. Only history rows starting before it count. */
+  asOf: IsoDate;
+  /** Days in the period being scored. A nurse missing from `current` was available for all of
+   * them and worked none. */
+  periodDays: number;
+  /** The unit's pay period: `contractedHoursPerPeriod` is per pay period (root CLAUDE.md). */
+  payPeriodDays: number;
+}
+
 export interface BurdenOptions {
-  /** How many most-recent ledger periods per nurse to consider. */
-  windowPeriods: number;
+  /** History rows whose midpoint is more than this many days before `asOf` are ignored. */
+  windowDays: number;
   /**
-   * Per-period geometric decay applied walking back from the most recent ledger period, so
-   * last month's holiday weighs more than one from a year ago. `1` disables decay.
+   * A row's weight halves every this many days between its midpoint and `asOf`, so last
+   * month's holiday weighs more than one from a year ago. `Infinity` disables decay.
    */
-  decay: number;
+  halfLifeDays: number;
   weights: FairnessWeights;
 }
 
+/**
+ * A year matches the look-back of holiday rotation and `weekends_off_per_year`, and fits inside
+ * the 400 days the loaders read.
+ */
 export const DEFAULT_BURDEN_OPTIONS: BurdenOptions = {
-  windowPeriods: 13,
-  decay: 0.85,
+  windowDays: 365,
+  halfLifeDays: 180,
   weights: DEFAULT_FAIRNESS_WEIGHTS,
 };
 
 /** One nurse's standing relative to the team, per component and in total. */
 export interface NurseBurden {
   nurseId: Id;
-  /** Decay-weighted sum of ledger counters across the window. */
-  carried: BurdenCounters;
+  /** Age-weighted sum of ledger counters across the window, plus the current period. */
+  carried: CarriedCounters;
   /**
-   * The basis for this nurse's fair share: `contractedHoursPerPeriod`, or their mean historical
-   * `totalHours` when they have no contracted hours (per-diem, agency). Zero means the nurse
-   * cannot be compared and every burden component reads as neutral.
+   * The basis for this nurse's fair share per pay period available: `contractedHoursPerPeriod`,
+   * or, with no contracted hours (per-diem, agency), her historical hours per pay period
+   * available. Zero means no basis at all.
    */
   shareWeight: number;
+  /** Pay periods available: age-weighted available days over the current period and history,
+   * divided by the unit's pay period. */
+  exposure: number;
+  /** `shareWeight × exposure`, rounded to hundredths. Fair share is proportional to it. */
+  fairWeight: number;
+  /** Per burden component, `teamTotal × fairWeight / teamFairWeight`; 0 when not comparable. */
+  fairShare: Record<BurdenComponent, number>;
+  /** `fairWeight > 0`. False = every burden component reads as neutral. */
+  comparable: boolean;
   /** Per component, `(carried − fairShare) / fairShare`; equity components use `(team − nurse)`. */
   deviation: Record<FairnessComponent, number>;
-  /** Weighted sum of `deviation`. Positive = owed relief. */
+  /**
+   * Weighted sum of deviations, each burden's over-share bounded as `x / (1 + x)` so one holiday
+   * on a large team cannot swamp every other component. Positive = owed relief.
+   */
   index: number;
   /** Ledger periods that contributed, most recent first. Zero means "no history". */
   periodsInWindow: number;
   /** True when anything contributed — history or the current period. False = no record at all. */
   hasRows: boolean;
+  /** True when any contributing period had a day available, so preferences could be judged. */
+  hasPreferenceRecord: boolean;
 }
 
 export interface BurdenReport {
@@ -232,7 +274,7 @@ export interface ComponentScore {
   component: FairnessComponent;
   /** 0–100. 100 = at or under fair share (burden) or every request honoured (equity). */
   score: number;
-  /** Effective weight after the seniority multiplier, so the breakdown sums transparently. */
+  /** The component's fairness weight, so the breakdown sums to the composite transparently. */
   weight: number;
   /** What the nurse carried (burden) or achieved (equity rate, 0–1). */
   actual: number;
@@ -262,11 +304,12 @@ export interface NurseFairnessScore {
   /** 0–100 composite: weighted mean of the component scores. */
   score: number;
   components: ComponentScore[];
-  /** The seniority multiplier applied to this nurse's preference weight. */
+  /** The seniority multiplier the solver applies to this nurse's preference price; shown, not
+   * scored. */
   seniorityMultiplier: number;
   /** Signed burden index over history *plus* this period; what the solver reads. */
   burdenIndex: number;
-  /** False when the nurse has no share weight, so burden components were neutral. */
+  /** False when the nurse has no fair weight, so burden components were neutral. */
   comparable: boolean;
 }
 
@@ -278,7 +321,7 @@ export interface DistributionStats {
   mean: number;
   /** `max − min`. */
   spread: number;
-  /** How many nurses were included (excluded nurses have no share weight). */
+  /** How many nurses were included (excluded nurses have no fair weight). */
   count: number;
 }
 
@@ -286,9 +329,10 @@ export interface UnitDistribution {
   /** Over the per-nurse composite scores. */
   score: DistributionStats;
   /**
-   * Over each component's per-nurse *rate* — carried ÷ share weight for burdens, the raw
-   * rate for equity — so that a 0.5 FTE nurse with half the nights of a full-timer reads as
-   * even, not as under-burdened.
+   * Over each component's per-nurse *rate* among comparable nurses — carried ÷ fair share for
+   * burdens (1.00 = exactly fair; 1 for everyone when the team carried none), the raw rate for
+   * equity — so that a 0.5 FTE nurse with half the nights of a full-timer reads as even, not
+   * as under-burdened.
    */
   components: Record<FairnessComponent, DistributionStats>;
 }
@@ -307,6 +351,8 @@ export interface ScoreInput {
   occurrences?: ReadonlyMap<Id, NurseOccurrences>;
   /** Historical ledger rows, any order; the window and decay are applied inside. */
   history: readonly FairnessLedgerEntry[];
+  /** The period `current` covers: what ages and pro-rata shares are measured from. */
+  scope: BurdenScope;
   preferences: readonly Preference[];
   weights?: FairnessWeights;
   burden?: Partial<Omit<BurdenOptions, 'weights'>>;

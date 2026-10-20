@@ -2,12 +2,13 @@
  * The annealer's objective (`SolverModel.objective`), term for term, over the CP-SAT variables.
  *
  * Every term reads the same `SolverModel` tables — pay-period buckets and their pro-rata
- * targets, the historical burden and fair-share weights, preference and cost per (nurse, shift) —
+ * targets, the historical burden and fair weights, preference and cost per (nurse, shift) —
  * so the two solvers optimise the same number; `encode.test.ts` checks they price a schedule
  * identically. Shifts and nurses with no variables are constants, priced by the model itself.
  *
  * Fairness here is the model's *linear* over-share: per burden component and nurse,
- * `max(0, carried − teamTotal · share / teamShare)`. The weekend and overtime counters feed
+ * `max(0, carried − teamTotal · fairWeight / teamFairWeight)`, each nurse's fair weight (contract ×
+ * exposure, in hundredths) from `computeBurden`. The weekend and overtime counters feed
  * `teamTotal` with a negative sign for everyone else, so they are pinned exactly — a counter the
  * solver could inflate for an under-share nurse would lower everyone else's over-share.
  */
@@ -20,6 +21,7 @@ import { BURDEN_COMPONENTS, type BurdenComponent } from '../../fairness/types.js
 import { inHolidayRotation, workedInHistory } from '../../rules/holiday-rotation.js';
 import { groupInForce } from '../../rules/incompatibility-rules.js';
 import { isDaySide, isWorkedNight, tooSoonAfterNight } from '../../rules/night-recovery.js';
+import { isNightTour } from '../../rules/tour-rotation.js';
 import { judgesWeekends } from '../../rules/weekend-pattern.js';
 import { compareCodeUnits } from '../model.js';
 import { type Expr, evalExpr, expr, scale, sum } from './builder.js';
@@ -182,17 +184,17 @@ function hoursTerms(ctx: EncodeContext): void {
 
 function fairnessTerms(ctx: EncodeContext): void {
   const { model, input, weights } = ctx;
-  if (model.teamShare <= 0 || weights.fairness === 0) return;
-  const team = model.candidates.filter((n) => model.shareWeight[n]! > 0);
+  if (model.teamFairWeight <= 0 || weights.fairness === 0) return;
+  const team = model.candidates.filter((n) => model.fairWeight[n]! > 0);
   const inPeriod = new Map(team.map((n) => [n, ctx.timeline(n).filter((e) => e.inPeriod)]));
 
-  // Shares as exact integers: contracted hours usually are already; a history-average share may
-  // need a power of ten. Multiplying through by the team share (instead of dividing by it) keeps
-  // every coefficient exact — rounding `share / teamShare` per term was off by whole points once
-  // multiplied by overtime counted in hundredths of an hour.
-  const unit = shareUnit(team.map((n) => model.shareWeight[n]!));
-  const share = new Map(team.map((n) => [n, Math.round(model.shareWeight[n]! * unit)]));
-  const teamShare = [...share.values()].reduce((t, x) => t + x, 0);
+  // Fair weights as exact integers: `computeBurden` rounds them to hundredths, so the unit is
+  // always 1, 10 or 100. Multiplying through by the team's weight (instead of dividing by it)
+  // keeps every coefficient exact — rounding `weight / teamWeight` per term was off by whole
+  // points once multiplied by overtime counted in hundredths of an hour.
+  const unit = shareUnit(team.map((n) => model.fairWeight[n]!));
+  const weight = new Map(team.map((n) => [n, Math.round(model.fairWeight[n]! * unit)]));
+  const teamWeight = [...weight.values()].reduce((t, x) => t + x, 0);
 
   for (const component of BURDEN_COMPONENTS) {
     const w = input.ruleSet.fairnessWeights[component];
@@ -208,15 +210,15 @@ function fairnessTerms(ctx: EncodeContext): void {
     );
     const teamTotal = pinnedTeamTotal(ctx, [...carried.values()], component);
     for (const n of team) {
-      // FAIR·over = FAIR·(carried − teamTotal·share/teamShare), times teamShare to stay integral.
+      // FAIR·over = FAIR·(carried − teamTotal·weight/teamWeight), times teamWeight to stay integral.
       const scaled = scale(
-        sum(scale(carried.get(n)!, teamShare), scale(teamTotal, -share.get(n)!)),
+        sum(scale(carried.get(n)!, teamWeight), scale(teamTotal, -weight.get(n)!)),
         FAIR,
       );
       const label = `over share: ${ctx.name(n)} ${component}`;
       if (scaled.terms.length === 0) {
         ctx.b.minimise(
-          expr([], Math.max(0, scaled.constant / teamShare)),
+          expr([], Math.max(0, scaled.constant / teamWeight)),
           (weights.fairness * w) / FAIR,
         );
         continue;
@@ -224,17 +226,17 @@ function fairnessTerms(ctx: EncodeContext): void {
       const terms = scaled.terms.map(([v, c]) => [v, Math.round(c)] as [number, number]);
       const hi = Math.max(
         0,
-        Math.ceil(ctx.b.bounds({ terms, constant: scaled.constant })[1] / teamShare),
+        Math.ceil(ctx.b.bounds({ terms, constant: scaled.constant })[1] / teamWeight),
       );
       const over = ctx.b.auxiliary(label, 0, hi, (value) =>
         Math.max(
           0,
-          Math.ceil(evalExpr({ terms, constant: scaled.constant }, value) / teamShare - 1e-9),
+          Math.ceil(evalExpr({ terms, constant: scaled.constant }, value) / teamWeight - 1e-9),
         ),
       );
-      // teamShare·over ≥ scaled, over ≥ 0: the smallest such `over` is ⌈scaled / teamShare⌉.
+      // teamWeight·over ≥ scaled, over ≥ 0: the smallest such `over` is ⌈scaled / teamWeight⌉.
       ctx.b.linear(
-        sum(expr([[over, teamShare]]), scale({ terms, constant: scaled.constant }, -1)),
+        sum(expr([[over, teamWeight]]), scale({ terms, constant: scaled.constant }, -1)),
         0,
         Number.POSITIVE_INFINITY,
         label,
@@ -268,7 +270,11 @@ function pinnedTeamTotal(ctx: EncodeContext, carried: readonly Expr[], component
   return expr([[t, 1 / HOURS]], total.constant);
 }
 
-/** The smallest power of ten (≤ 10 000) that makes every share an integer. */
+/**
+ * The smallest power of ten (≤ 10 000) that makes every fair weight an integer. Fair weights come
+ * rounded to hundredths, so this finds 1, 10 or 100; the larger units stay for a weight that ever
+ * arrives unrounded.
+ */
 function shareUnit(shares: readonly number[]): number {
   for (const unit of [1, 10, 100, 1000, 10_000]) {
     if (shares.every((x) => Math.abs(x * unit - Math.round(x * unit)) < 1e-9)) return unit;
@@ -287,7 +293,7 @@ function current(
   const worked = entries.filter((e) => !e.shiftType.isOnCall);
   switch (component) {
     case 'nights':
-      return countExpr(worked.filter((e) => e.shiftType.isNight));
+      return countExpr(worked.filter((e) => isNightTour(e.shiftType)));
     case 'holidays':
       if (isBaylorPlan(model.nurses[n]!)) return expr();
       return countExpr(worked.filter((e) => model.ctx.holidayDates.has(e.date)));
@@ -322,6 +328,8 @@ function current(
       return e;
     }
     case 'overtime': {
+      // `hoursOverContract`: a nurse with no contracted hours has no floor to be over.
+      if (model.nurses[n]!.contractedHoursPerPeriod === 0) return expr();
       const over = sum(
         hoursExpr(worked),
         expr([], -Math.round(model.contractedProRata[n]! * HOURS)),

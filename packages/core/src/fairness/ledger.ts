@@ -17,7 +17,7 @@
  */
 
 import { isBaylorPlan } from '../cost/cost.js';
-import type { Id, Preference } from '../domain/entities.js';
+import type { Id, Nurse, Preference } from '../domain/entities.js';
 import {
   dateInRange,
   type IsoDate,
@@ -27,9 +27,11 @@ import {
   weekdayOf,
   weekendKey,
 } from '../domain/time.js';
+import { isWorkedNight } from '../rules/night-recovery.js';
 import { buildStretches } from '../rules/rest-rules.js';
 import { isWorked } from '../rules/types.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
+import { daysAvailable } from './exposure.js';
 import type { BurdenCounters, CounterContext, NurseOccurrences } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -74,6 +76,18 @@ export function preferencesBroken(
 // ---------------------------------------------------------------------------
 // Preference satisfaction
 // ---------------------------------------------------------------------------
+
+/**
+ * Distinct dates worked on the given weekday. A double (a D8 and an E8) on one Monday is one
+ * Monday worked: counting shifts would read it as two of the period's one Monday.
+ */
+function datesWorkedOnWeekday(views: readonly AssignmentView[], weekday: number): number {
+  const dates = new Set<IsoDate>();
+  for (const v of views) {
+    if (weekdayOf(v.assignment.date) === weekday) dates.add(v.assignment.date);
+  }
+  return dates.size;
+}
 
 /** How many dates in `dates` fall on the given weekday. */
 function countWeekday(dates: readonly IsoDate[], weekday: number): number {
@@ -125,19 +139,16 @@ export function preferenceSatisfaction(
       return 1 - matches.length / workedViews.length;
     }
     case 'prefer_weekday': {
-      const onWeekday = workedViews.filter(
-        (v) => weekdayOf(v.assignment.date) === pref.weekday,
-      ).length;
+      const onWeekday = datesWorkedOnWeekday(workedViews, pref.weekday);
       const weekdayCount = countWeekday(dates, pref.weekday);
-      const denom = Math.min(weekdayCount, workedViews.length);
+      const datesWorked = new Set(workedViews.map((v) => v.assignment.date)).size;
+      const denom = Math.min(weekdayCount, datesWorked);
       // No opportunity to satisfy it either way — nothing was dishonoured.
       if (denom === 0) return 1;
       return Math.min(1, onWeekday / denom);
     }
     case 'avoid_weekday': {
-      const onWeekday = workedViews.filter(
-        (v) => weekdayOf(v.assignment.date) === pref.weekday,
-      ).length;
+      const onWeekday = datesWorkedOnWeekday(workedViews, pref.weekday);
       const weekdayCount = countWeekday(dates, pref.weekday);
       if (weekdayCount === 0) return 1;
       return 1 - onWeekday / weekdayCount;
@@ -219,7 +230,9 @@ function weightedPreferenceHitRate(
 // What counts as a burden — the one definition, shared by the counters and the date lists
 // ---------------------------------------------------------------------------
 
-const countsAsNight = (view: AssignmentView): boolean => view.shiftType.isNight;
+// By tour, not the `isNight` pay flag: a Title 38 evening tour carries that flag, and nurses grieve
+// nights as the tour they work. Both solvers' night counters use the same test.
+const countsAsNight = (view: AssignmentView): boolean => isWorkedNight(view);
 
 // Shifts are dated by their start day, so a night shift running into a holiday morning
 // is not "worked on" the holiday — the nurse clocked in the day before.
@@ -230,6 +243,22 @@ const countsAsHoliday = (view: AssignmentView, ctx: CounterContext): boolean =>
 // entitlement; counting either as burden would make their score a complaint about their own plan,
 // and push the fairness pressure onto the nurses who were never hired for weekends. `isBaylorPlan`
 // is the test the rules and both solvers' counters use, so Generate prices what the ledger records.
+
+/**
+ * Hours worked past the contract, pro rata to the period (contractedHoursPerPeriod is per pay
+ * period). Zero for a nurse with no contracted hours: per diem has no floor to be over. The
+ * ledger's `overtimeHours` and both solvers' current-period counter are this one number, so
+ * Generate balances what the Fairness page reports.
+ */
+export function hoursOverContract(
+  nurse: Pick<Nurse, 'contractedHoursPerPeriod'>,
+  workedHours: number,
+  periodDays: number,
+  payPeriodDays: number,
+): number {
+  if (nurse.contractedHoursPerPeriod === 0) return 0;
+  return Math.max(0, workedHours - (nurse.contractedHoursPerPeriod * periodDays) / payPeriodDays);
+}
 
 // ---------------------------------------------------------------------------
 // Counter derivation
@@ -300,15 +329,7 @@ export function deriveCounters(
       else if (request.status === 'denied') requestsDenied++;
     }
 
-    // Per-diem nurses (contractedHoursPerPeriod 0) have no hours floor, so there is no
-    // baseline to be "over" — charging them overtime here would invent a violation out of a
-    // target that was never set.
-    const contracted =
-      nurse.contractedHoursPerPeriod === 0
-        ? 0
-        : (nurse.contractedHoursPerPeriod * periodDays) / ctx.unit.payPeriodDays;
-    const overtimeHours =
-      nurse.contractedHoursPerPeriod === 0 ? 0 : Math.max(0, totalHours - contracted);
+    const overtimeHours = hoursOverContract(nurse, totalHours, periodDays, ctx.unit.payPeriodDays);
 
     const preferenceHitRate = weightedPreferenceHitRate(
       nursePrefs,
@@ -330,6 +351,13 @@ export function deriveCounters(
       totalHours,
       overtimeHours,
       preferenceHitRate,
+      periodDays,
+      availableDays: daysAvailable(
+        nurse,
+        schedule.period.startDate,
+        schedule.period.endDate,
+        timeOffByNurse.get(nurseId) ?? [],
+      ),
     });
   }
 

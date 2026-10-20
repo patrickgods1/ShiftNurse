@@ -572,6 +572,8 @@ describe('fairness and preferences in the objective', () => {
       totalHours: 72,
       overtimeHours: 0,
       preferenceHitRate: 1,
+      periodDays: 14,
+      availableDays: 14,
     };
   }
 
@@ -586,8 +588,41 @@ describe('fairness and preferences in the objective', () => {
       report.assignments.filter((x) => x.shiftTypeId === NIGHT_12.id),
       (x) => x.nurseId,
     );
-    // Direction only until phase 20 (H-05) pins exposure-normalised counts.
-    expect(nights.get(b!.id) ?? 0).toBeGreaterThan(nights.get(a!.id) ?? 0);
+    const nA = nights.get(a!.id) ?? 0;
+    const nB = nights.get(b!.id) ?? 0;
+    expect(nB).toBeGreaterThan(nA);
+    // The period starts 2026-01-04; last period's row (2025-12-21, 14 days) has its midpoint
+    // 2025-12-28, 7 days back, so it weighs w = 0.5^(7/180) = 0.973404 and A carries 6w = 5.840426
+    // nights into it. Same contract, both fully available: equal fair shares, so the nights term is
+    // zero when 6w + nA = nB, i.e. nA = (N − 5.840426) / 2 for N nights in all.
+    const total = nA + nB;
+    expect(Math.abs(nA - (total - 5.840426) / 2)).toBeLessThanOrEqual(1);
+  });
+
+  it('gives less weight to nights a nurse carried half a year ago', () => {
+    const [a, b] = fullTimers(2, { isChargeEligible: true });
+    // Both nurses' only row is the fortnight from 2025-07-01: midpoint 2025-07-08, exactly 180
+    // days before the period starts on 2026-01-04, so it weighs 0.5^(180/180) = 0.5. Same row
+    // age, same contract, both fully available: equal fair shares. A's 6 nights count as 3, and
+    // the nights term is |nA − (N − 3)/2| over N nights in all: at N = 5, nA = 1. Undecayed the
+    // target would be (N − 6)/2, nA = 0 at N = 5; by the old 0.85-per-row weight (N − 5.1)/2, also
+    // 0. From N = 5 up, 0.5 of tolerance tells the two apart.
+    const halfYearAgo = { periodStart: isoDate('2025-07-01') };
+    const input = twelveHourUnit([a!, b!], 1, {
+      ledgerHistory: [
+        { ...history(a!.id, 6), ...halfYearAgo },
+        { ...history(b!.id, 0), ...halfYearAgo },
+      ],
+    });
+    const report = solve(input, QUICK);
+    const nights = countBy(
+      report.assignments.filter((x) => x.shiftTypeId === NIGHT_12.id),
+      (x) => x.nurseId,
+    );
+    const nA = nights.get(a!.id) ?? 0;
+    const nB = nights.get(b!.id) ?? 0;
+    expect(nA + nB).toBeGreaterThanOrEqual(5);
+    expect(Math.abs(nA - (nA + nB - 3) / 2)).toBeLessThanOrEqual(0.5);
   });
 
   it('steers nights away from a nurse who asked to avoid them', () => {

@@ -18,6 +18,7 @@
 
 import type { FairnessLedgerEntry, Id, Nurse } from '../domain/entities.js';
 import {
+  absentCounters,
   buildInterim,
   burdenByNurse,
   type HistoryWindows,
@@ -25,10 +26,10 @@ import {
   type NurseInterim,
 } from './burden.js';
 import { compositeScore } from './score.js';
-import { seniorityMultipliers } from './seniority.js';
 import {
   type BurdenCounters,
   type BurdenOptions,
+  type BurdenScope,
   DEFAULT_BURDEN_OPTIONS,
   DEFAULT_FAIRNESS_WEIGHTS,
   EMPTY_COUNTERS,
@@ -39,9 +40,10 @@ import {
 export interface FairnessEvaluatorInput {
   nurses: readonly Nurse[];
   history: readonly FairnessLedgerEntry[];
+  /** The period every simulated fix belongs to; fixed, so a cached interim stays exact. */
+  scope: BurdenScope;
   weights?: FairnessWeights;
   burden?: ScoreInput['burden'];
-  seniority?: ScoreInput['seniority'];
 }
 
 export interface FairnessScores {
@@ -65,8 +67,9 @@ export class FairnessEvaluator {
   private readonly byIdOrder: readonly Nurse[];
   private readonly windows: HistoryWindows;
   private readonly options: BurdenOptions;
+  private readonly scope: BurdenScope;
+  private readonly absent: BurdenCounters;
   private readonly weights: FairnessWeights;
-  private readonly multipliers: ReadonlyMap<Id, number>;
   private readonly interims = new Map<Id, Map<string, NurseInterim>>();
 
   constructor(input: FairnessEvaluatorInput) {
@@ -74,14 +77,15 @@ export class FairnessEvaluator {
     this.byIdOrder = [...input.nurses].sort((a, b) => a.id.localeCompare(b.id));
     this.weights = input.weights ?? DEFAULT_FAIRNESS_WEIGHTS;
     this.options = { ...DEFAULT_BURDEN_OPTIONS, ...input.burden, weights: this.weights };
-    this.windows = historyWindows(input.history, this.options.windowPeriods);
-    this.multipliers = seniorityMultipliers(input.nurses, input.seniority);
+    this.scope = input.scope;
+    this.absent = absentCounters(input.scope);
+    this.windows = historyWindows(input.history, input.scope.asOf, this.options.windowDays);
   }
 
   /** Scores for one version of the period, given its counters (`deriveCounters`). */
   score(current: ReadonlyMap<Id, BurdenCounters>): FairnessScores {
     const interims = this.nurses.map((nurse) =>
-      this.interimFor(nurse, current.get(nurse.id) ?? EMPTY_COUNTERS),
+      this.interimFor(nurse, current.get(nurse.id) ?? this.absent),
     );
     const burden = burdenByNurse(interims, this.options);
 
@@ -91,9 +95,9 @@ export class FairnessEvaluator {
     for (const nurse of this.byIdOrder) {
       const nurseBurden = burden.get(nurse.id);
       if (!nurseBurden) throw new Error(`No burden computed for nurse ${nurse.id}`);
-      const score = compositeScore(nurseBurden, this.weights, this.multipliers.get(nurse.id) ?? 1);
+      const score = compositeScore(nurseBurden, this.weights);
       byNurse.set(nurse.id, score);
-      if (nurseBurden.shareWeight > 0) {
+      if (nurseBurden.comparable) {
         comparableTotal += score;
         comparableCount += 1;
       }
@@ -111,7 +115,7 @@ export class FairnessEvaluator {
     const cached = byKey.get(key);
     if (cached) return cached;
     if (byKey.size >= INTERIMS_PER_NURSE) byKey.clear();
-    const interim = buildInterim(nurse, this.windows, this.options, counters);
+    const interim = buildInterim(nurse, this.windows, this.options, this.scope, counters);
     byKey.set(key, interim);
     return interim;
   }

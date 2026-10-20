@@ -16,6 +16,7 @@ function scoreFor(
   nights: string[] = [],
   holidays: string[] = [],
   score = 70,
+  comparable = true,
 ): NurseFairnessScore {
   return {
     nurseId,
@@ -23,7 +24,7 @@ function scoreFor(
     components: [],
     seniorityMultiplier: 1,
     burdenIndex: 1.8,
-    comparable: true,
+    comparable,
     occurrences: {
       nights: nights.map(isoDate),
       weekends: weekends.map(isoDate),
@@ -100,13 +101,18 @@ describe('fairness breakdown', () => {
     expect(screen.getByText('1.5 fewer weekend days than the unit average of 2.5.')).toBeTruthy();
   });
 
-  it('lists per-diem staff when nobody scored has a contracted share', async () => {
+  it('says so when nobody scored could be compared with the team', async () => {
     const ana = makeNurse({ firstName: 'Ana', lastName: 'Reyes', contractedHoursPerPeriod: 0 });
     const ben = makeNurse({ firstName: 'Ben', lastName: 'Cole', contractedHoursPerPeriod: 0 });
-    const scores = [scoreFor(ana.id, []), scoreFor(ben.id, [])];
+    const scores = [
+      scoreFor(ana.id, [], [], [], 70, false),
+      scoreFor(ben.id, [], [], [], 70, false),
+    ];
     renderWithApp(<NurseFairnessTable scores={scores} nurses={[ana, ben]} trend={[]} />);
 
-    expect(await screen.findByText(/Nobody scored here has a contracted share/)).toBeTruthy();
+    expect(
+      await screen.findByText('Nobody scored here could be compared with the team.'),
+    ).toBeTruthy();
     expect(screen.getByText(/Ana/)).toBeTruthy();
     expect(screen.getByText(/Ben/)).toBeTruthy();
     expect(screen.queryByText('No nurses scored for this period.')).toBeNull();
@@ -131,10 +137,10 @@ describe('fairness breakdown', () => {
     ]);
   });
 
-  it('folds per-diem staff into their own list instead of heading the table', async () => {
+  it('folds staff it cannot compare into their own list', async () => {
     const ana = makeNurse({ firstName: 'Ana', lastName: 'Reyes', contractedHoursPerPeriod: 72 });
     const dee = makeNurse({ firstName: 'Dee', lastName: 'Park', contractedHoursPerPeriod: 0 });
-    const scores = [scoreFor(ana.id, [], [], [], 90), scoreFor(dee.id, [], [], [], 20)];
+    const scores = [scoreFor(ana.id, [], [], [], 90), scoreFor(dee.id, [], [], [], 20, false)];
     renderWithApp(<NurseFairnessTable scores={scores} nurses={[ana, dee]} trend={[]} />);
 
     const main = await screen.findByTestId('fairness-table');
@@ -143,8 +149,23 @@ describe('fairness breakdown', () => {
     expect(mainRows[0]!.textContent).toContain('Ana');
     expect(within(main).queryByText(/Dee/)).toBeNull();
 
-    const summary = screen.getByText(/^Per-diem and agency staff \(1\)/);
+    const summary = screen.getByText(/^Not compared with the team \(1\)/);
     const folded = summary.closest('details')!;
     expect(within(folded).getByText(/Dee/)).toBeTruthy();
+  });
+
+  it('lists a per-diem nurse with hours on record in the main table', async () => {
+    const ana = makeNurse({ firstName: 'Ana', lastName: 'Reyes', contractedHoursPerPeriod: 72 });
+    const eve = makeNurse({ firstName: 'Eve', lastName: 'Diaz', contractedHoursPerPeriod: 0 });
+    const scores = [scoreFor(ana.id, [], [], [], 90), scoreFor(eve.id, [], [], [], 60)];
+    renderWithApp(<NurseFairnessTable scores={scores} nurses={[ana, eve]} trend={[]} />);
+
+    const main = await screen.findByTestId('fairness-table');
+    const rows = within(main).getAllByTestId('fairness-row');
+    expect(rows.map((r) => within(r).getByRole('button').textContent)).toEqual([
+      expect.stringContaining('Eve'),
+      expect.stringContaining('Ana'),
+    ]);
+    expect(screen.queryByText(/^Not compared with the team/)).toBeNull();
   });
 });

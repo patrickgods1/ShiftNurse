@@ -13,8 +13,9 @@
 import { type DemandTable, NURSE_ROLES } from '../acuity/demand.js';
 import type { CostContext } from '../cost/types.js';
 import type { Id, Nurse, ShiftType } from '../domain/entities.js';
-import { dateInRange, dayNumber, type IsoDate, weekdayOf } from '../domain/time.js';
+import { dateInRange, datesInRange, dayNumber, type IsoDate, weekdayOf } from '../domain/time.js';
 import { computeBurden } from '../fairness/burden.js';
+import { daysAvailable } from '../fairness/exposure.js';
 import {
   BURDEN_COMPONENTS,
   BURDEN_COUNTER,
@@ -264,16 +265,33 @@ function priorHoursByPayPeriod(
   return { prior: out, priorOvertime: overtime };
 }
 
-/** Historical burden, weighted exactly as computeBurden weights it under a current row. */
+/**
+ * Historical burden, weighted exactly as computeBurden weights it under a current row, and each
+ * nurse's fair weight. The current row carries no work but the period's length and the days the
+ * nurse is available in it: exposure reads leave and the hire date, never the assignment, which
+ * is what lets the model hold the fair weights fixed for the whole search.
+ */
 export function historyFairness(
   nurses: readonly Nurse[],
   activeNurses: readonly Nurse[],
   input: SolveInput,
-): { histCarried: Record<BurdenComponent, number>[]; shareWeight: number[] } {
-  const zero = new Map<Id, BurdenCounters>(activeNurses.map((x) => [x.id, EMPTY_COUNTERS]));
+): { histCarried: Record<BurdenComponent, number>[]; fairWeight: number[] } {
+  const { startDate, endDate } = input.period;
+  const periodDays = datesInRange(startDate, endDate).length;
+  const zero = new Map<Id, BurdenCounters>(
+    activeNurses.map((x) => [
+      x.id,
+      {
+        ...EMPTY_COUNTERS,
+        periodDays,
+        availableDays: daysAvailable(x, startDate, endDate, input.timeOff),
+      },
+    ]),
+  );
   const burden = computeBurden(
     activeNurses,
     input.ledgerHistory,
+    { asOf: startDate, periodDays, payPeriodDays: input.unit.payPeriodDays },
     { weights: input.ruleSet.fairnessWeights },
     zero,
   );
@@ -283,6 +301,6 @@ export function historyFairness(
     for (const c of BURDEN_COMPONENTS) out[c] = row ? row.carried[BURDEN_COUNTER[c]] : 0;
     return out;
   });
-  const shareWeight = nurses.map((nurse) => burden.byNurse.get(nurse.id)?.shareWeight ?? 0);
-  return { histCarried, shareWeight };
+  const fairWeight = nurses.map((nurse) => burden.byNurse.get(nurse.id)?.fairWeight ?? 0);
+  return { histCarried, fairWeight };
 }

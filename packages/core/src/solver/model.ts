@@ -29,7 +29,11 @@
  * in the counter's own units (nights, weekends…), weighted by the same fairness weights,
  * because a nurse carrying seven nights against a share of three-and-a-half must cost more
  * than one carrying two against one — a relative penalty would price them the same. Both
- * read the same `carried − fairShare`, with the same fair-share formula as `computeBurden`.
+ * read the same `carried − fairShare`, the fair share being `teamTotal × fairWeight /
+ * teamFairWeight` with each nurse's fair weight (contract × exposure) from `computeBurden`, and
+ * the current-period counters come from the ledger's definitions (`isWorkedNight`,
+ * `hoursOverContract`), so a per-diem nurse's hours and a night-paid evening tour are no burden
+ * here either.
  */
 
 import { DemandTable, NURSE_ROLES, type ShiftDemand } from '../acuity/demand.js';
@@ -55,7 +59,7 @@ import {
   weekdayOf,
   weekendKey,
 } from '../domain/time.js';
-import { isUndesirable } from '../fairness/ledger.js';
+import { hoursOverContract, isUndesirable } from '../fairness/ledger.js';
 import { seniorityMultipliers } from '../fairness/seniority.js';
 import { BURDEN_COMPONENTS, type BurdenComponent } from '../fairness/types.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
@@ -326,8 +330,12 @@ export class SolverModel {
   private readonly overtimeCount: number;
   private readonly overtimeThreshold: number;
   readonly histCarried: Record<BurdenComponent, number>[];
-  readonly shareWeight: number[];
-  readonly teamShare: number;
+  /**
+   * Each nurse's contracted share × exposure (decay-weighted pay periods available), rounded to
+   * hundredths by `computeBurden`. Fair share = team total × fairWeight / teamFairWeight.
+   */
+  readonly fairWeight: number[];
+  readonly teamFairWeight: number;
   readonly seniority: number[];
   /** What the holiday rotation owes and pairs for this period; empty while the rule is off. */
   readonly holidayFacts: HolidayRotationFacts;
@@ -525,9 +533,9 @@ export class SolverModel {
     const activeNurses = this.candidates.map((i) => this.nurses[i]!);
     const history = historyFairness(this.nurses, activeNurses, input);
     this.histCarried = history.histCarried;
-    this.shareWeight = history.shareWeight;
-    this.teamShare = this.shareWeight.reduce((sum, w) => sum + w, 0);
-    this.sharers = this.candidates.filter((i) => this.shareWeight[i]! > 0);
+    this.fairWeight = history.fairWeight;
+    this.teamFairWeight = this.fairWeight.reduce((sum, w) => sum + w, 0);
+    this.sharers = this.candidates.filter((i) => this.fairWeight[i]! > 0);
     this.fairnessScratch = new Array<number>(this.sharers.length).fill(0);
 
     const multipliers = seniorityMultipliers(activeNurses);
@@ -1076,12 +1084,15 @@ export class SolverModel {
     if (st.isOnCall) {
       this.onCall[n]! += sign;
     } else {
+      // In-period rows here are drafts with no holdover, so this equals the ledger's paidHours;
+      // a held-over published row would differ.
       this.workedHours[n]! += sign * st.durationHours;
       if (this.pendingOn[n]![shift.dateIdx]) this.pendingSum += sign;
-      // The fairness night burden reads the pay flag; recovery reads the tour, as the rule does.
-      if (st.isNight) this.nights[n]! += sign;
-      if (isNightTour(st)) this.nightsOn[n]![shift.dateIdx]! += sign;
-      else this.daySideOn[n]![shift.dateIdx]! += sign;
+      // Nights are counted by tour, for the fairness burden as for recovery: the ledger's test.
+      if (isNightTour(st)) {
+        this.nights[n]! += sign;
+        this.nightsOn[n]![shift.dateIdx]! += sign;
+      } else this.daySideOn[n]![shift.dateIdx]! += sign;
       if (this.ctx.holidayDates.has(shift.date)) this.holidays[n]! += sign;
       if (this.isUndesirable(n, shift)) this.undesirable[n]! += sign;
       if (this.ctx.holidayDates.has(shift.date)) this.countHolidayRotation(n, shift.date, sign);
@@ -1358,7 +1369,7 @@ export class SolverModel {
    * every candidate and skipping the rest — the result is bit-identical, which determinism needs.
    */
   private computeFairness(): number {
-    if (this.teamShare <= 0) return 0;
+    if (this.teamFairWeight <= 0) return 0;
     const weights = this.ruleSet.fairnessWeights;
     const sharers = this.sharers;
     const carried = this.fairnessScratch;
@@ -1374,7 +1385,8 @@ export class SolverModel {
       }
       if (teamTotal <= 0) continue;
       for (let k = 0; k < sharers.length; k++) {
-        const over = carried[k]! - (teamTotal * this.shareWeight[sharers[k]!]!) / this.teamShare;
+        const over =
+          carried[k]! - (teamTotal * this.fairWeight[sharers[k]!]!) / this.teamFairWeight;
         if (over > 0) total += w * over;
       }
     }
@@ -1400,7 +1412,12 @@ export class SolverModel {
       case 'undesirable':
         return this.undesirable[n]!;
       case 'overtime':
-        return Math.max(0, this.workedHours[n]! - this.contractedProRata[n]!);
+        return hoursOverContract(
+          this.nurses[n]!,
+          this.workedHours[n]!,
+          this.dates.length,
+          this.input.unit.payPeriodDays,
+        );
     }
   }
 

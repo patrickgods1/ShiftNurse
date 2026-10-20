@@ -170,4 +170,76 @@ describe('upgrading saved data', () => {
     expect(getHomeUnit(opened.db)?.name).toBe('Zeta');
     opened.close();
   });
+
+  it('works out period length and availability for history recorded before the upgrade', () => {
+    const url = join(dir, 'live.sqlite');
+    // By tag, not olderRelease(1): later migrations will follow this one.
+    const before = openDatabase({ url, migrationsFolder: olderRelease('0046_ledger_exposure') });
+    const run = (sql: string, ...params: unknown[]) => before.sqlite.prepare(sql).run(...params);
+    run(
+      "insert into unit (id, name, unit_type, pay_period_days, pay_period_anchor) values ('u', 'Unit', 'Medical-Surgical', 14, '2026-01-04')",
+    );
+    const insertNurse = (id: string, employeeId: string, hireDate: string | null) =>
+      run(
+        `insert into nurse (id, unit_id, employee_id, first_name, last_name, role, employment_type,
+           fte, contracted_hours_per_period, seniority_date, hire_date)
+         values (?, 'u', ?, 'First', 'Last', 'RN', 'full_time', 1, 72, '2020-01-01', ?)`,
+        id,
+        employeeId,
+        hireDate,
+      );
+    insertNurse('a', 'E1', null);
+    insertNurse('b', 'E2', '2026-03-29');
+    run(
+      `insert into rule_set (id, unit_id, name, version, weekend_definition, created_at)
+       values ('rs', 'u', 'Rules', 1, '{"startWeekday":6,"startMinute":0,"durationMinutes":2880,"mode":"within"}', 0)`,
+    );
+    run(
+      `insert into schedule_period (id, unit_id, name, start_date, end_date, status, rule_set_id,
+         rule_set_version)
+       values ('p1', 'u', 'Spring', '2026-03-01', '2026-04-11', 'published', 'rs', 1)`,
+    );
+    const request = (id: string, nurseId: string, start: string, end: string, status: string) =>
+      run(
+        `insert into time_off_request (id, nurse_id, start_date, end_date, type, status, submitted_at)
+         values (?, ?, ?, ?, 'pto', ?, 0)`,
+        id,
+        nurseId,
+        start,
+        end,
+        status,
+      );
+    request('t1', 'a', '2026-02-25', '2026-03-07', 'approved');
+    request('t2', 'a', '2026-03-10', '2026-03-11', 'approved');
+    request('t3', 'a', '2026-03-10', '2026-03-20', 'denied');
+    request('t4', 'a', '2026-01-10', '2026-01-10', 'approved');
+    request('t5', 'b', '2026-04-01', '2026-04-02', 'approved');
+    const ledger = (id: string, nurseId: string, periodId: string, periodStart: string) =>
+      run(
+        'insert into fairness_ledger (id, nurse_id, period_id, period_start) values (?, ?, ?, ?)',
+        id,
+        nurseId,
+        periodId,
+        periodStart,
+      );
+    ledger('fa', 'a', 'p1', '2026-03-01');
+    ledger('fb', 'b', 'p1', '2026-03-01');
+    ledger('fi', 'a', 'import:2026-01-04', '2026-01-04');
+    before.close();
+
+    const opened = openDatabase({ url, migrateOnOpen: false });
+    migrateDatabase(opened.db, FULL);
+    const rows = opened.sqlite
+      .prepare('select id, period_days, available_days from fairness_ledger order by id')
+      .all();
+    expect(rows).toEqual([
+      // Mar 1 – Apr 11 is 42 days; leave Mar 1–7 (7) and Mar 10–11 (2) leaves 33. Denied ignored.
+      { id: 'fa', period_days: 42, available_days: 33 },
+      // Hired Mar 29: Mar 29 – Apr 11 is 14 days, less Apr 1–2.
+      { id: 'fb', period_days: 42, available_days: 12 },
+      // No schedule period: the unit's 14-day pay period, less Jan 10.
+      { id: 'fi', period_days: 14, available_days: 13 },
+    ]);
+    opened.close();
+  });
 });

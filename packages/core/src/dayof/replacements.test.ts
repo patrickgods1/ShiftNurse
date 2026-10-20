@@ -80,6 +80,8 @@ function ledgerRow(
     totalHours: 0,
     overtimeHours: 0,
     preferenceHitRate: 0,
+    periodDays: 14,
+    availableDays: 14,
     ...overrides,
   };
 }
@@ -768,23 +770,26 @@ describe('the call-off list a manager works down', () => {
         nurses: [absent, ana, bea],
         assignments: [absentShift],
         ledgerHistory: [
-          ledgerRow('ana', '2026-01-01', { preferenceHitRate: 0.6 }),
-          ledgerRow('bea', '2026-01-01', { preferenceHitRate: 0.61 }),
+          // The fortnight ending the day before the period starts.
+          ledgerRow('ana', '2025-12-22', { preferenceHitRate: 0.6 }),
+          ledgerRow('bea', '2025-12-22', { preferenceHitRate: 0.61 }),
         ],
         // Bea was phoned yesterday; Ana never has been.
         lastCalledAt: { bea: Date.parse('2026-01-09T06:00:00Z') },
         absentAssignmentId: absentShift.id,
       }),
     );
-    // Hand: only preferences differ (weight 2). This period is a full-weight row for everyone,
-    // at a hit rate of 1 (no shifts, nothing against a preference); last period's row decays to
-    // 0.85. Ana (1 + 0.85 × 0.60) / 1.85 = 0.816216, Bea (1 + 0.85 × 0.61) / 1.85 = 0.820811,
-    // Priya 1. Team mean 2.637027 / 3 = 0.879009. Index: Ana 2 × (0.879009 − 0.816216) = 0.1256,
-    // Bea 2 × (0.879009 − 0.820811) = 0.1164. Both read 0.1 at one decimal, so recency decides:
+    // Hand: only preferences differ (weight 2). The hit rate is weighted by days available. This
+    // period (13 days, weight 1) is at a hit rate of 1 for everyone (no shifts, nothing against
+    // a preference). Last period's row has its midpoint 2025-12-29, 7 days before 2026-01-05, so
+    // w = 0.5^(7/180) = 0.973404 over 14 days: 14w = 13.627661. Ana (13 + 13.627661 × 0.60) /
+    // 26.627661 = 0.795286, Bea (13 + 13.627661 × 0.61) / 26.627661 = 0.800404, Priya 1. Team
+    // mean 2.595689 / 3 = 0.865230. Index: Ana 2 × (0.865230 − 0.795286) = 0.13989, Bea
+    // 2 × (0.865230 − 0.800404) = 0.12965. Both read 0.1 at one decimal, so recency decides:
     // Ana first, though Bea's raw index is lower.
     const burden = (id: string) => report.candidates.find((c) => c.nurseId === id)!.burdenIndex;
-    expect(burden('ana')).toBeCloseTo(0.1256, 4);
-    expect(burden('bea')).toBeCloseTo(0.1164, 4);
+    expect(burden('ana')).toBeCloseTo(0.13989, 4);
+    expect(burden('bea')).toBeCloseTo(0.12965, 4);
     expect(report.candidates.map((c) => c.nurseId)).toEqual(['ana', 'bea']);
   });
 

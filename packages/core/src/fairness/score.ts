@@ -11,8 +11,8 @@
  * the score and the solver's burden index agree: they read the same deviations.
  */
 
-import type { Id, Nurse } from '../domain/entities.js';
-import { burdenFairShare, computeBurden } from './burden.js';
+import type { Nurse } from '../domain/entities.js';
+import { computeBurden } from './burden.js';
 import { unitDistribution } from './distribution.js';
 import { seniorityMultipliers } from './seniority.js';
 import {
@@ -45,7 +45,7 @@ const BURDEN_NOUN: Record<BurdenComponent, string> = {
   holidays: 'holidays',
   onCall: 'on-call shifts',
   undesirable: 'shifts against stated preferences',
-  overtime: 'overtime hours',
+  overtime: 'hours over contract',
 };
 
 function pct(rate: number): string {
@@ -60,12 +60,11 @@ function signedPct(deviation: number): string {
 function burdenComponent(
   component: BurdenComponent,
   burden: NurseBurden,
-  byNurse: ReadonlyMap<Id, NurseBurden>,
   weight: number,
 ): ComponentScore {
   const actual = burden.carried[BURDEN_COUNTER[component]];
   const deviation = burden.deviation[component];
-  if (burden.shareWeight <= 0) {
+  if (!burden.comparable) {
     return {
       component,
       score: 100,
@@ -73,10 +72,15 @@ function burdenComponent(
       actual,
       expected: 0,
       deviation: 0,
-      explanation: 'No contracted hours on record, so burden was not compared',
+      // Said apart so a manager can tell a missing contract from a nurse who was simply away:
+      // the second is leave working as it should, not a data problem.
+      explanation:
+        burden.shareWeight <= 0
+          ? 'No contracted hours and no hours on record, so burden was not compared'
+          : 'Away for this period and all of recent history, so burden was not compared',
     };
   }
-  const expected = burdenFairShare(byNurse, burden.nurseId, component);
+  const expected = burden.fairShare[component];
   const noun = BURDEN_NOUN[component];
   const explanation =
     expected > 0
@@ -102,7 +106,7 @@ function equityComponent(
   if (component === 'preferences') {
     const actual = burden.carried.preferenceHitRate;
     const expected = actual + deviation;
-    const explanation = burden.hasRows
+    const explanation = burden.hasPreferenceRecord
       ? `Preferences honoured ${pct(actual)} of the time; team average ${pct(expected)}`
       : 'No schedule on record yet, so preferences were not compared';
     return {
@@ -144,13 +148,9 @@ function equityComponent(
  * The composite score alone, without the explanations — what the conflicts engine needs for
  * every simulated fix. `scoreNurse` uses it too, so the number on the Fairness page and the one
  * a resolution card compares against are computed by the same arithmetic in the same order:
- * each burden component, then preferences (scaled by seniority), then time off.
+ * each burden component, then preferences, then time off.
  */
-export function compositeScore(
-  burden: NurseBurden,
-  weights: FairnessWeights,
-  seniorityMultiplier: number,
-): number {
+export function compositeScore(burden: NurseBurden, weights: FairnessWeights): number {
   let weightTotal = 0;
   let weighted = 0;
   const add = (weight: number, score: number) => {
@@ -160,10 +160,10 @@ export function compositeScore(
   for (const component of BURDEN_COMPONENTS) {
     add(
       weights[component],
-      burden.shareWeight <= 0 ? 100 : componentScore(burden.deviation[component]),
+      burden.fairWeight <= 0 ? 100 : componentScore(burden.deviation[component]),
     );
   }
-  add(weights.preferences * seniorityMultiplier, componentScore(burden.deviation.preferences));
+  add(weights.preferences, componentScore(burden.deviation.preferences));
   const decisions = burden.carried.requestsApproved + burden.carried.requestsDenied;
   add(weights.timeOff, decisions === 0 ? 100 : componentScore(burden.deviation.timeOff));
   return weightTotal > 0 ? Math.round((weighted / weightTotal) * 10) / 10 : 100;
@@ -172,23 +172,20 @@ export function compositeScore(
 function scoreNurse(
   nurse: Nurse,
   burden: NurseBurden,
-  byNurse: ReadonlyMap<Id, NurseBurden>,
   weights: FairnessWeights,
   seniorityMultiplier: number,
   occurrences: NurseOccurrences,
 ): NurseFairnessScore {
   const components: ComponentScore[] = [];
   for (const component of BURDEN_COMPONENTS) {
-    components.push(burdenComponent(component, burden, byNurse, weights[component]));
+    components.push(burdenComponent(component, burden, weights[component]));
   }
-  // Seniority scales how much an unmet preference costs — a multiplier on the weight, never a
-  // different rule. A senior nurse with everything honoured scores the same 100 as anyone.
-  components.push(
-    equityComponent('preferences', burden, weights.preferences * seniorityMultiplier),
-  );
+  // Seniority is a multiplier on the solver's preference price, never on this score: it decides
+  // whose wish Generate honours first, but the same burden must read the same for everyone.
+  components.push(equityComponent('preferences', burden, weights.preferences));
   components.push(equityComponent('timeOff', burden, weights.timeOff));
 
-  const score = compositeScore(burden, weights, seniorityMultiplier);
+  const score = compositeScore(burden, weights);
 
   return {
     nurseId: nurse.id,
@@ -197,7 +194,7 @@ function scoreNurse(
     components,
     seniorityMultiplier,
     burdenIndex: burden.index,
-    comparable: burden.shareWeight > 0,
+    comparable: burden.comparable,
   };
 }
 
@@ -206,6 +203,7 @@ export function scoreFairness(input: ScoreInput): FairnessReport {
   const burden = computeBurden(
     input.nurses,
     input.history,
+    input.scope,
     { ...input.burden, weights },
     input.current,
   );
@@ -220,7 +218,6 @@ export function scoreFairness(input: ScoreInput): FairnessReport {
       return scoreNurse(
         nurse,
         nurseBurden,
-        burden.byNurse,
         weights,
         multipliers.get(nurse.id) ?? 1,
         input.occurrences?.get(nurse.id) ?? { nights: [], weekends: [], holidays: [] },

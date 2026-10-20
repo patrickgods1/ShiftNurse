@@ -126,12 +126,12 @@ describe('fairness ledger', () => {
     const nurseId = mkNurse('Tracked');
     upsertFairnessLedgerEntry(
       handle.db,
-      { nurseId, periodId, periodStart: isoDate('2026-01-15'), nightShifts: 3 },
+      { nurseId, periodId, periodStart: isoDate('2026-01-15'), periodDays: 14, nightShifts: 3 },
       ACTOR,
     );
     upsertFairnessLedgerEntry(
       handle.db,
-      { nurseId, periodId, periodStart: isoDate('2026-01-15'), nightShifts: 5 },
+      { nurseId, periodId, periodStart: isoDate('2026-01-15'), periodDays: 14, nightShifts: 5 },
       ACTOR,
     );
 
@@ -146,9 +146,27 @@ describe('fairness ledger', () => {
       importFairnessLedgerEntries(
         tx,
         [
-          { nurseId, periodId: 'old', periodStart: isoDate('2025-06-01'), nightShifts: 9 },
-          { nurseId, periodId: 'recent', periodStart: isoDate('2025-12-01'), nightShifts: 2 },
-          { nurseId, periodId: 'boundary', periodStart: isoDate('2025-10-01'), nightShifts: 4 },
+          {
+            nurseId,
+            periodId: 'old',
+            periodStart: isoDate('2025-06-01'),
+            periodDays: 14,
+            nightShifts: 9,
+          },
+          {
+            nurseId,
+            periodId: 'recent',
+            periodStart: isoDate('2025-12-01'),
+            periodDays: 14,
+            nightShifts: 2,
+          },
+          {
+            nurseId,
+            periodId: 'boundary',
+            periodStart: isoDate('2025-10-01'),
+            periodDays: 14,
+            nightShifts: 4,
+          },
         ],
         ACTOR,
       ),
@@ -164,8 +182,20 @@ describe('fairness ledger', () => {
       importFairnessLedgerEntries(
         tx,
         [
-          { nurseId, periodId: 'p0', periodStart: isoDate('2025-06-01'), weekendsWorked: 4 },
-          { nurseId, periodId: 'p1', periodStart: isoDate('2025-06-15'), weekendsWorked: 2 },
+          {
+            nurseId,
+            periodId: 'p0',
+            periodStart: isoDate('2025-06-01'),
+            periodDays: 14,
+            weekendsWorked: 4,
+          },
+          {
+            nurseId,
+            periodId: 'p1',
+            periodStart: isoDate('2025-06-15'),
+            periodDays: 14,
+            weekendsWorked: 2,
+          },
         ],
         ACTOR,
       ),
@@ -178,6 +208,49 @@ describe('fairness ledger', () => {
     );
     expect(imports).toHaveLength(1);
     expect(imports[0]?.after).toMatchObject({ count: 2 });
+  });
+
+  it('keeps the period length and the days the nurse was there', () => {
+    const nurseId = mkNurse('Returner');
+    upsertFairnessLedgerEntry(
+      handle.db,
+      { nurseId, periodId, periodStart: isoDate('2026-01-15'), periodDays: 42, availableDays: 33 },
+      ACTOR,
+    );
+    expect(getFairnessLedgerEntry(handle.db, nurseId, periodId)).toMatchObject({
+      periodDays: 42,
+      availableDays: 33,
+    });
+  });
+
+  it('treats a nurse as there all period when availability is not given', () => {
+    const nurseId = mkNurse('Present');
+    upsertFairnessLedgerEntry(
+      handle.db,
+      { nurseId, periodId, periodStart: isoDate('2026-01-15'), periodDays: 14 },
+      ACTOR,
+    );
+    expect(getFairnessLedgerEntry(handle.db, nurseId, periodId)?.availableDays).toBe(14);
+  });
+
+  it('refuses a history row with more days available than the period has', () => {
+    const nurseId = mkNurse('Overcounted');
+    expect(() =>
+      upsertFairnessLedgerEntry(
+        handle.db,
+        {
+          nurseId,
+          periodId,
+          periodStart: isoDate('2026-01-15'),
+          periodDays: 14,
+          availableDays: 15,
+        },
+        ACTOR,
+      ),
+    ).toThrow(
+      "A fairness history row needs a period of at least one day, and available days between 0 and the period's length.",
+    );
+    expect(handle.db.select().from(s.fairnessLedger).all()).toHaveLength(0);
   });
 });
 
@@ -193,6 +266,7 @@ describe('historical schedule import', () => {
             nurseId,
             periodId: 'import:2025-06-01',
             periodStart: isoDate('2025-06-01'),
+            periodDays: 14,
             nightShifts: 3,
           },
         ],
@@ -209,6 +283,7 @@ describe('historical schedule import', () => {
             nurseId,
             periodId: 'import:2025-06-01',
             periodStart: isoDate('2025-06-01'),
+            periodDays: 14,
             nightShifts: 4,
           },
         ],
@@ -229,8 +304,18 @@ describe('historical schedule import', () => {
         tx,
         unitId,
         [
-          { nurseId, periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') },
-          { nurseId, periodId: 'import:2025-06-15', periodStart: isoDate('2025-06-15') },
+          {
+            nurseId,
+            periodId: 'import:2025-06-01',
+            periodStart: isoDate('2025-06-01'),
+            periodDays: 14,
+          },
+          {
+            nurseId,
+            periodId: 'import:2025-06-15',
+            periodStart: isoDate('2025-06-15'),
+            periodDays: 14,
+          },
         ],
         ACTOR,
       ),
@@ -239,7 +324,14 @@ describe('historical schedule import', () => {
       importHistoricalLedger(
         tx,
         unitId,
-        [{ nurseId, periodId: 'import:2025-06-15', periodStart: isoDate('2025-06-15') }],
+        [
+          {
+            nurseId,
+            periodId: 'import:2025-06-15',
+            periodStart: isoDate('2025-06-15'),
+            periodDays: 14,
+          },
+        ],
         ACTOR,
       ),
     );
@@ -279,7 +371,11 @@ describe('historical schedule import', () => {
     ).id;
   }
 
-  const JUNE = { periodId: 'import:2025-06-01', periodStart: isoDate('2025-06-01') };
+  const JUNE = {
+    periodId: 'import:2025-06-01',
+    periodStart: isoDate('2025-06-01'),
+    periodDays: 14,
+  };
 
   it('refuses a nurse from another unit before writing anything', () => {
     const stranger = mkNurseOn(mkUnit('5 East'), 'Else', 'X1');
@@ -350,7 +446,11 @@ describe('historical schedule import', () => {
     const ana = mkNurse('Ana');
     const cy = mkNurse('Cy');
     const bo = mkNurseOn(mkUnit('5 East'), 'Bo', 'B1');
-    const JUNE15 = { periodId: 'import:2025-06-15', periodStart: isoDate('2025-06-15') };
+    const JUNE15 = {
+      periodId: 'import:2025-06-15',
+      periodStart: isoDate('2025-06-15'),
+      periodDays: 14,
+    };
     const batch = (nightShifts: number) =>
       [JUNE15, JUNE, JUNE15, JUNE].map((p, i) => ({
         nurseId: i < 2 ? ana : cy,

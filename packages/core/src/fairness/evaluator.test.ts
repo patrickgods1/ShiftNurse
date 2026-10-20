@@ -12,9 +12,13 @@ import { Rng } from '../solver/rng.js';
 import { makeNurse, resetFixtureCounters } from '../testing/fixtures.js';
 import { FairnessEvaluator } from './evaluator.js';
 import { scoreFairness } from './score.js';
-import { type BurdenCounters, DEFAULT_FAIRNESS_WEIGHTS } from './types.js';
+import { type BurdenCounters, type BurdenScope, DEFAULT_FAIRNESS_WEIGHTS } from './types.js';
 
-function randomCounters(rng: Rng): BurdenCounters {
+/** The period every simulated fix belongs to: a fortnight after a year of six-week history. */
+const SCOPE: BurdenScope = { asOf: isoDate('2026-01-04'), periodDays: 14, payPeriodDays: 14 };
+
+/** Counters for a period of `periodDays`, available for a random part of it. */
+function randomCounters(rng: Rng, periodDays = SCOPE.periodDays): BurdenCounters {
   const approved = rng.nextInt(0, 3);
   return {
     nightShifts: rng.nextInt(0, 8),
@@ -28,6 +32,8 @@ function randomCounters(rng: Rng): BurdenCounters {
     totalHours: rng.nextInt(0, 7) * 12,
     overtimeHours: rng.nextInt(0, 1) * 12,
     preferenceHitRate: rng.nextInt(0, 10) / 10,
+    periodDays,
+    availableDays: rng.nextInt(0, periodDays),
   };
 }
 
@@ -55,7 +61,7 @@ function randomUnit(seed: number): {
         nurseId: nurse.id,
         periodId: `period-${p}`,
         periodStart: addDays(isoDate('2025-01-05'), p * 42),
-        ...randomCounters(rng),
+        ...randomCounters(rng, 42),
       });
     }
   }
@@ -72,6 +78,7 @@ function oracle(
     nurses,
     current,
     history,
+    scope: SCOPE,
     preferences: [],
     weights: DEFAULT_FAIRNESS_WEIGHTS,
   });
@@ -88,6 +95,7 @@ describe('scoring a simulated fix for fairness', () => {
       const evaluator = new FairnessEvaluator({
         nurses,
         history,
+        scope: SCOPE,
         weights: DEFAULT_FAIRNESS_WEIGHTS,
       });
       const lean = evaluator.score(current);
@@ -103,6 +111,7 @@ describe('scoring a simulated fix for fairness', () => {
       const evaluator = new FairnessEvaluator({
         nurses,
         history,
+        scope: SCOPE,
         weights: DEFAULT_FAIRNESS_WEIGHTS,
       });
       const baseline = new Map(current);
@@ -126,15 +135,27 @@ describe('scoring a simulated fix for fairness', () => {
     // A fix that hands Ana one more night changes one number; reusing her old totals then
     // would leave the card's fairness delta at zero.
     const { nurses, history, current } = randomUnit(11);
-    const evaluator = new FairnessEvaluator({ nurses, history, weights: DEFAULT_FAIRNESS_WEIGHTS });
+    const evaluator = new FairnessEvaluator({
+      nurses,
+      history,
+      scope: SCOPE,
+      weights: DEFAULT_FAIRNESS_WEIGHTS,
+    });
     evaluator.score(current);
     const ana = nurses.find((n) => n.contractedHoursPerPeriod > 0)!;
     for (const key of Object.keys(current.get(ana.id)!) as (keyof BurdenCounters)[]) {
+      // The period's length is the scope's, not a counter a fix can change (a mismatch throws).
+      if (key === 'periodDays') continue;
       const world = new Map(current);
       const was = current.get(ana.id)!;
       world.set(ana.id, {
         ...was,
-        [key]: key === 'preferenceHitRate' ? 1 - was[key] : was[key] + 1,
+        [key]:
+          key === 'preferenceHitRate'
+            ? 1 - was[key]
+            : key === 'availableDays' && was[key] === was.periodDays
+              ? was[key] - 1
+              : was[key] + 1,
       });
       const lean = evaluator.score(world);
       const full = oracle(nurses, history, world);
@@ -146,7 +167,12 @@ describe('scoring a simulated fix for fairness', () => {
   it('counts a nurse missing from the period counters as having worked nothing', () => {
     const { nurses, history, current } = randomUnit(7);
     const partial = new Map([...current].slice(1));
-    const evaluator = new FairnessEvaluator({ nurses, history, weights: DEFAULT_FAIRNESS_WEIGHTS });
+    const evaluator = new FairnessEvaluator({
+      nurses,
+      history,
+      scope: SCOPE,
+      weights: DEFAULT_FAIRNESS_WEIGHTS,
+    });
     const lean = evaluator.score(partial);
     const full = oracle(nurses, history, partial);
     expect(lean.mean).toBe(full.mean);

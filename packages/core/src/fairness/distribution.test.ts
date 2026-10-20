@@ -1,8 +1,29 @@
 import { describe, expect, it } from 'vitest';
+import { isoDate } from '../domain/time.js';
 import { makeNurse, resetFixtureCounters } from '../testing/fixtures.js';
 import { computeBurden } from './burden.js';
 import { distributionStats, gini, unitDistribution } from './distribution.js';
-import { EMPTY_COUNTERS, type NurseFairnessScore } from './types.js';
+import {
+  type BurdenReport,
+  type BurdenScope,
+  EMPTY_COUNTERS,
+  type NurseFairnessScore,
+} from './types.js';
+
+const SCOPE: BurdenScope = { asOf: isoDate('2026-07-05'), periodDays: 14, payPeriodDays: 14 };
+const FORTNIGHT = { periodDays: 14, availableDays: 14 };
+
+function scoresFor(burden: BurdenReport, ids: readonly string[]): NurseFairnessScore[] {
+  return ids.map((nurseId) => ({
+    nurseId,
+    score: 100,
+    components: [],
+    seniorityMultiplier: 1,
+    occurrences: { nights: [], weekends: [], holidays: [] },
+    burdenIndex: burden.byNurse.get(nurseId)!.index,
+    comparable: burden.byNurse.get(nurseId)!.comparable,
+  }));
+}
 
 describe('gini', () => {
   it('is 0 when everyone carries the same amount: [1,1,1,1]', () => {
@@ -45,46 +66,56 @@ describe('distributionStats', () => {
 });
 
 describe('unit distribution', () => {
-  it('reads burden rates per share weight so a 0.5 FTE with half the nights looks even, not under-burdened', () => {
+  it("shows each burden as a share of the nurse's fair share", () => {
     resetFixtureCounters();
     const fullTime = makeNurse({ contractedHoursPerPeriod: 72 });
     const halfTime = makeNurse({ contractedHoursPerPeriod: 36 });
+    const nightsFor = (full: number, half: number) => {
+      const current = new Map([
+        [fullTime.id, { ...EMPTY_COUNTERS, ...FORTNIGHT, nightShifts: full }],
+        [halfTime.id, { ...EMPTY_COUNTERS, ...FORTNIGHT, nightShifts: half }],
+      ]);
+      const burden = computeBurden([fullTime, halfTime], [], SCOPE, {}, current);
+      return unitDistribution(burden, scoresFor(burden, [fullTime.id, halfTime.id]));
+    };
+
+    // 8 + 4 = 12 nights split 72:36 is a fair share of 8 and 4: each carried exactly hers.
+    const even = nightsFor(8, 4);
+    expect(even.components.nights.min).toBeCloseTo(1, 9);
+    expect(even.components.nights.max).toBeCloseTo(1, 9);
+    expect(even.components.nights.gini).toBeCloseTo(0, 9);
+    // Nobody carried a weekend, so each is at her (zero) share of them: 1.00, not 0.
+    expect(even.components.weekends.mean).toBe(1);
+    expect(even.components.weekends.count).toBe(2);
+
+    // 12 + 2 = 14 nights split 72:36 is 9.333 and 4.667: 12 / 9.333 = 1.2857, 2 / 4.667 = 0.4286.
+    const lopsided = nightsFor(12, 2);
+    expect(lopsided.components.nights.max).toBeCloseTo(1.2857, 4);
+    expect(lopsided.components.nights.min).toBeCloseTo(0.4286, 4);
+  });
+
+  it('leaves a nurse with no fair share out of the burden rates', () => {
+    resetFixtureCounters();
+    const staffed = makeNurse({ contractedHoursPerPeriod: 72 });
+    const perDiem = makeNurse({ contractedHoursPerPeriod: 0 });
+    // The per-diem nurse has no contract and no hours on record, so nothing to divide by.
     const current = new Map([
-      [fullTime.id, { ...EMPTY_COUNTERS, nightShifts: 8 }],
-      [halfTime.id, { ...EMPTY_COUNTERS, nightShifts: 4 }],
+      [staffed.id, { ...EMPTY_COUNTERS, ...FORTNIGHT, nightShifts: 3 }],
+      [perDiem.id, { ...EMPTY_COUNTERS, ...FORTNIGHT, nightShifts: 2 }],
     ]);
-    const burden = computeBurden([fullTime, halfTime], [], {}, current);
-    const scores: NurseFairnessScore[] = [
-      {
-        nurseId: fullTime.id,
-        score: 100,
-        components: [],
-        seniorityMultiplier: 1,
-        occurrences: { nights: [], weekends: [], holidays: [] },
-        burdenIndex: burden.byNurse.get(fullTime.id)!.index,
-        comparable: true,
-      },
-      {
-        nurseId: halfTime.id,
-        score: 100,
-        components: [],
-        seniorityMultiplier: 1,
-        occurrences: { nights: [], weekends: [], holidays: [] },
-        burdenIndex: burden.byNurse.get(halfTime.id)!.index,
-        comparable: true,
-      },
-    ];
-    const distribution = unitDistribution(burden, scores);
-    // 8 nights / 72h = 4 nights / 36h = 0.1111 each — identical rates, zero inequality.
-    expect(distribution.components.nights.mean).toBeCloseTo(8 / 72, 9);
-    expect(distribution.components.nights.gini).toBeCloseTo(0, 9);
+    const burden = computeBurden([staffed, perDiem], [], SCOPE, {}, current);
+    const distribution = unitDistribution(burden, scoresFor(burden, [staffed.id, perDiem.id]));
+    // Only the staffed nurse is compared, and the team total is hers alone: 3 / 3 = 1.
+    expect(distribution.components.nights.count).toBe(1);
+    expect(distribution.components.nights.mean).toBeCloseTo(1, 9);
   });
 
   it('excludes a non-comparable nurse from the score distribution entirely', () => {
     resetFixtureCounters();
     const staffed = makeNurse({ contractedHoursPerPeriod: 72 });
     const perDiem = makeNurse({ contractedHoursPerPeriod: 0 });
-    const burden = computeBurden([staffed, perDiem], []);
+    // Both on the period being scored with nothing worked: the staffed nurse is there all of it.
+    const burden = computeBurden([staffed, perDiem], [], SCOPE, {}, new Map());
     const scores: NurseFairnessScore[] = [
       {
         nurseId: staffed.id,

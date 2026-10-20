@@ -116,6 +116,13 @@ tags. Each release's notes link here.
 
 ### Changed
 
+- Fairness now compares each nurse's share of nights, weekends and holidays as a rate per day
+  they were available, with older history counting for less (half every 180 days, within a year).
+  New hires and staff back from leave (FMLA included) are no longer pushed to the front of the
+  line, and per-diem staff are compared by their usual hours.
+- "Overtime hours" on the Fairness page is now "Hours over contract".
+- The fairness trend scores each past schedule under the rules it was published with.
+
 - Roster import changes only what the file holds: a column the file lacks leaves that detail
   alone, and the preview lists the details each nurse would have changed or cleared. A departed
   nurse in the file stays inactive unless the manager ticks Reactivate.

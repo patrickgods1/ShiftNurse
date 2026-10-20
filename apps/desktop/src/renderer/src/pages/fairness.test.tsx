@@ -64,7 +64,11 @@ describe('the Fairness page', { timeout: 15000 }, () => {
     components.nights = { gini: 0.3, min: 0.2, max: 0.8, mean: 0.5, spread: 0.6, count: 2 };
     const report: FairnessReport = {
       scores: [score(ana.id, 80), score(ben.id, 60)],
-      distribution: { score: flat, components },
+      // The headline is the report's own distribution (core's gini of 80 and 60: 0.07).
+      distribution: {
+        score: { gini: 0.0714, min: 60, max: 80, mean: 70, spread: 20, count: 2 },
+        components,
+      },
       weights: DEFAULT_FAIRNESS_WEIGHTS as Record<FairnessComponent, number>,
     };
     bridge.respond('periods', 'list', [draft]);

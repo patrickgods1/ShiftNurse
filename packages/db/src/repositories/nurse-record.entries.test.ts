@@ -282,6 +282,7 @@ const CASES: Record<NurseScoped, Case> = {
               nurseId: c.ana.id,
               periodId: c.draftId,
               periodStart: d('2026-01-15'),
+              periodDays: 14,
               nightShifts: 3,
             },
           ],

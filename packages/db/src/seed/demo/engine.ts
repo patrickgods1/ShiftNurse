@@ -57,6 +57,7 @@ import {
   costSchedule,
   coveringShift,
   datesInRange,
+  daysAvailable,
   daysBetween,
   defaultRuleSet,
   type EmploymentType,
@@ -87,6 +88,7 @@ import {
   type ShiftType,
   shiftWindow,
   suggestedPaidLeaveHours,
+  type TimeOffRequest,
   today,
   usFederalHolidays,
   type Weekday,
@@ -1495,6 +1497,8 @@ export function seedFromProfile(
   // Decided before the history is staffed, as it would have been: approved leave keeps the nurse
   // off the schedule. A request is denied when too many of the same role are already off.
   const leave = new Set<string>();
+  /** The approved requests, which the history's ledger rows take out of each nurse's availability. */
+  const approvedLeave: TimeOffRequest[] = [];
   /** Paid leave hours by nurse and date, once approved: they count toward the contract. */
   const leavePaid = new Map<string, number>();
   const offByRoleDate = new Map<string, number>();
@@ -1550,6 +1554,7 @@ export function seedFromProfile(
       return;
     }
     approveTimeOff(db, request.id, ACTOR);
+    approvedLeave.push({ ...request, status: 'approved' });
     bump('timeOffApproved');
     // The pay-period credit is what the `paid-leave` rule reads: whole 12s on the request's days.
     // Spread by the day it can put half a tour in a pay period the rule credits nothing, so a
@@ -2196,6 +2201,8 @@ export function seedFromProfile(
         nurseId: s.nurse.id,
         periodId: period.id,
         periodStart: start,
+        periodDays: datesInRange(start, end).length,
+        availableDays: daysAvailable(s.nurse, start, end, approvedLeave),
         nightShifts: nights,
         weekendsWorked: weekends.size,
         holidaysWorked: mine.filter((a) => holidayDates.has(a.date)).length,

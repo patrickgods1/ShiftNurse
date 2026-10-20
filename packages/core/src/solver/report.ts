@@ -11,7 +11,7 @@
 
 import { costSchedule } from '../cost/cost.js';
 import type { Assignment, Id, RatioRole } from '../domain/entities.js';
-import type { IsoDate } from '../domain/time.js';
+import { datesInRange, type IsoDate } from '../domain/time.js';
 import { deriveCounters } from '../fairness/ledger.js';
 import { scoreFairness } from '../fairness/score.js';
 import { evaluateSchedule } from '../rules/registry.js';
@@ -68,6 +68,11 @@ function scoreModel(model: SolverModel, assignments: Assignment[]): ScheduleScor
     nurses: activeNurses,
     current: counters,
     history: input.ledgerHistory,
+    scope: {
+      asOf: input.period.startDate,
+      periodDays: datesInRange(input.period.startDate, input.period.endDate).length,
+      payPeriodDays: input.unit.payPeriodDays,
+    },
     preferences: input.preferences,
     weights: input.ruleSet.fairnessWeights,
   });

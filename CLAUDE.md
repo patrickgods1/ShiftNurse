@@ -216,7 +216,8 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
 - **Hard vs soft rule** — hard = illegal, the solver will never emit one. Soft = advisory, the
   manager can knowingly accept it. Fairness pressure lives in the objective function, not here.
 - **Fairness ledger** — per nurse per period: nights, weekends, holidays, on-call, denied
-  requests, OT. The rolling burden history that fairness scoring balances against.
+  requests, OT, with the period's length and the days the nurse was available, so history is
+  compared as a rate. The rolling burden history that fairness scoring balances against.
 
 ## Pointers
 

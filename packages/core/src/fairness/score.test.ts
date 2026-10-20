@@ -1,9 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import type { Id } from '../domain/entities.js';
-import { isoDate } from '../domain/time.js';
+import type { FairnessLedgerEntry, Id } from '../domain/entities.js';
+import { addDays, isoDate } from '../domain/time.js';
 import { makeNurse, resetFixtureCounters } from '../testing/fixtures.js';
 import { componentScore, scoreFairness } from './score.js';
-import { type BurdenCounters, DEFAULT_FAIRNESS_WEIGHTS, EMPTY_COUNTERS } from './types.js';
+import {
+  type BurdenCounters,
+  type BurdenScope,
+  DEFAULT_FAIRNESS_WEIGHTS,
+  EMPTY_COUNTERS,
+  type FairnessComponent,
+} from './types.js';
+
+const SCOPE: BurdenScope = { asOf: isoDate('2026-10-04'), periodDays: 14, payPeriodDays: 14 };
+
+/** This period's counters for a fully available fortnight. */
+function now(overrides: Partial<BurdenCounters> = {}): BurdenCounters {
+  return { ...EMPTY_COUNTERS, periodDays: 14, availableDays: 14, ...overrides };
+}
 
 describe('componentScore', () => {
   it('scores at-or-under fair share as a perfect 100', () => {
@@ -32,10 +45,16 @@ describe('scoreFairness', () => {
     // Identical counters on identical contracted hours -> both exactly at fair share on every
     // burden component; no preference or time-off rows means those default to neutral (0) too.
     const current = new Map<Id, BurdenCounters>([
-      [a.id, { ...EMPTY_COUNTERS, nightShifts: 4, weekendsWorked: 2 }],
-      [b.id, { ...EMPTY_COUNTERS, nightShifts: 4, weekendsWorked: 2 }],
+      [a.id, now({ nightShifts: 4, weekendsWorked: 2 })],
+      [b.id, now({ nightShifts: 4, weekendsWorked: 2 })],
     ]);
-    const report = scoreFairness({ nurses: [a, b], current, history: [], preferences: [] });
+    const report = scoreFairness({
+      nurses: [a, b],
+      current,
+      history: [],
+      scope: SCOPE,
+      preferences: [],
+    });
     const scoreA = report.scores.find((s) => s.nurseId === a.id)!;
     expect(scoreA.score).toBe(100);
     expect(scoreA.comparable).toBe(true);
@@ -48,8 +67,8 @@ describe('scoreFairness', () => {
     // second nurse anchors the fair share at a nonzero baseline.
     const peer = makeNurse({ contractedHoursPerPeriod: 72 });
     const current = new Map<Id, BurdenCounters>([
-      [nurse.id, { ...EMPTY_COUNTERS, onCallShifts: 8 }],
-      [peer.id, { ...EMPTY_COUNTERS, onCallShifts: 0 }],
+      [nurse.id, now({ onCallShifts: 8 })],
+      [peer.id, now({ onCallShifts: 0 })],
     ]);
     const weightsWithOnCall = { ...DEFAULT_FAIRNESS_WEIGHTS, onCall: 1 };
     const weightsWithoutOnCall = { ...DEFAULT_FAIRNESS_WEIGHTS, onCall: 0 };
@@ -57,6 +76,7 @@ describe('scoreFairness', () => {
       nurses: [nurse, peer],
       current,
       history: [],
+      scope: SCOPE,
       preferences: [],
       weights: weightsWithOnCall,
     });
@@ -64,6 +84,7 @@ describe('scoreFairness', () => {
       nurses: [nurse, peer],
       current,
       history: [],
+      scope: SCOPE,
       preferences: [],
       weights: weightsWithoutOnCall,
     });
@@ -75,59 +96,48 @@ describe('scoreFairness', () => {
     expect(scoreWithout.components.find((c) => c.component === 'onCall')!.weight).toBe(0);
   });
 
-  it("charges more composite points for a senior nurse's unmet preferences than an identical junior miss", () => {
-    resetFixtureCounters();
-    const senior = makeNurse({
-      contractedHoursPerPeriod: 72,
-      seniorityDate: isoDate('2010-01-01'),
-    });
-    const junior = makeNurse({
-      contractedHoursPerPeriod: 72,
-      seniorityDate: isoDate('2020-01-01'),
-    });
-    // Same counters for both -- at fair share on every burden, but both carry the same
-    // below-team preference hit rate via history, so only seniority should separate them.
-    const history = [
-      {
-        id: 'ledger-senior',
-        nurseId: senior.id,
-        periodId: 'p1',
-        periodStart: isoDate('2026-08-01'),
-        ...EMPTY_COUNTERS,
-        preferenceHitRate: 0.4,
-      },
-      {
-        id: 'ledger-junior',
-        nurseId: junior.id,
-        periodId: 'p1',
-        periodStart: isoDate('2026-08-01'),
-        ...EMPTY_COUNTERS,
-        preferenceHitRate: 0.4,
-      },
-      // A third nurse with a perfect rate pulls the team average above both, so deviation > 0.
-      {
-        id: 'ledger-peer',
-        nurseId: 'peer-anchor',
-        periodId: 'p1',
-        periodStart: isoDate('2026-08-01'),
-        ...EMPTY_COUNTERS,
-        preferenceHitRate: 1.0,
-      },
-    ];
-    const peerAnchor = makeNurse({ id: 'peer-anchor', contractedHoursPerPeriod: 72 });
-    const report = scoreFairness({
-      nurses: [senior, junior, peerAnchor],
-      current: new Map(),
-      history,
-      preferences: [],
-    });
-    const seniorScore = report.scores.find((s) => s.nurseId === senior.id)!;
-    const juniorScore = report.scores.find((s) => s.nurseId === junior.id)!;
-    const seniorPref = seniorScore.components.find((c) => c.component === 'preferences')!;
-    const juniorPref = juniorScore.components.find((c) => c.component === 'preferences')!;
-    expect(seniorPref.deviation).toBeCloseTo(juniorPref.deviation, 9); // same underlying gap
-    expect(seniorPref.weight).toBeGreaterThan(juniorPref.weight); // seniority scales the weight
-    expect(seniorScore.score).toBeLessThan(juniorScore.score); // costs more in the composite
+  it('reads a senior and a junior nurse with the same burden as equally fair', () => {
+    // A carries 6 nights, B 2, C 4 on identical 72h contracts with no history: 12 nights over
+    // three equal fair weights is a fair share of 4 each, so A is +50% (component 50), B is
+    // under share and C is exactly at it. Everyone avoids a shift type nobody worked, so every
+    // hit rate is 1 and the preference component is a perfect 100. Nobody carried weekends,
+    // holidays, on-call, undesirable shifts or overtime, and nobody had a time-off decision.
+    //
+    // A's composite with the default weights and no seniority term, in summation order:
+    //   (2×50 + 3×100 + 3×100 + 1.5×100 + 2×100 + 0.5×100 + 2×100 + 1.5×100) / 15.5
+    //   = 1450 / 15.5 = 93.548… → 93.5
+    // With the old 1.5× seniority on A's preference weight it read 1550 / 16.5 = 93.9 instead.
+    const build = (aSeniority: string, bSeniority: string) => {
+      resetFixtureCounters();
+      const a = makeNurse({ contractedHoursPerPeriod: 72, seniorityDate: isoDate(aSeniority) });
+      const b = makeNurse({ contractedHoursPerPeriod: 72, seniorityDate: isoDate(bSeniority) });
+      const c = makeNurse({ contractedHoursPerPeriod: 72, seniorityDate: isoDate('2015-01-01') });
+      const current = new Map<Id, BurdenCounters>([
+        [a.id, now({ nightShifts: 6, preferenceHitRate: 1 })],
+        [b.id, now({ nightShifts: 2, preferenceHitRate: 1 })],
+        [c.id, now({ nightShifts: 4, preferenceHitRate: 1 })],
+      ]);
+      const report = scoreFairness({
+        nurses: [a, b, c],
+        current,
+        history: [],
+        scope: SCOPE,
+        preferences: [],
+      });
+      return report.scores.find((s) => s.nurseId === a.id)!;
+    };
+    const aMostSenior = build('2010-01-01', '2020-01-01');
+    const aMostJunior = build('2020-01-01', '2010-01-01');
+
+    // The table still shows how senior she is; it just no longer moves her score.
+    expect(aMostSenior.seniorityMultiplier).toBe(1.5);
+    expect(aMostJunior.seniorityMultiplier).toBe(1);
+    expect(aMostSenior.score).toBe(93.5);
+    expect(aMostJunior.score).toBe(93.5);
+    const prefWeight = (s: typeof aMostSenior) =>
+      s.components.find((c) => c.component === 'preferences')!.weight;
+    expect(prefWeight(aMostSenior)).toBe(DEFAULT_FAIRNESS_WEIGHTS.preferences);
+    expect(prefWeight(aMostJunior)).toBe(DEFAULT_FAIRNESS_WEIGHTS.preferences);
   });
 });
 
@@ -202,55 +212,100 @@ function applyBump(counters: BurdenCounters, bump: BurdenBump): BurdenCounters {
   return next;
 }
 
-/** Build a random-ish roster: 4-7 nurses, each with modest, non-degenerate current-period
- * counters, so no single nurse can dominate a pooled team rate (see burden.ts's time-off
- * rate) and swamp the property with an artifact of extreme concentration rather than a real
- * fairness regression. */
+/** Which deviation a bump must not lower. */
+const BUMPED_COMPONENT: Record<BurdenBump, FairnessComponent> = {
+  nights: 'nights',
+  weekends: 'weekends',
+  holidays: 'holidays',
+  onCall: 'onCall',
+  undesirable: 'undesirable',
+  overtime: 'overtime',
+  requestsDenied: 'timeOff',
+  preferenceHitRate: 'preferences',
+};
+
+/** Modest, non-degenerate counters, so no single nurse can dominate a pooled team rate (see
+ * burden.ts's time-off rate) and swamp the property with an artifact of extreme concentration
+ * rather than a real fairness regression. */
+function randomCounters(
+  rng: () => number,
+  periodDays: number,
+): Omit<BurdenCounters, 'availableDays'> {
+  return {
+    ...EMPTY_COUNTERS,
+    periodDays,
+    nightShifts: randomInt(rng, 6),
+    weekendsWorked: randomInt(rng, 4),
+    holidaysWorked: randomInt(rng, 2),
+    onCallShifts: randomInt(rng, 3),
+    undesirableShifts: randomInt(rng, 3),
+    overtimeHours: randomInt(rng, 10),
+    requestsApproved: 1 + randomInt(rng, 4),
+    requestsDenied: randomInt(rng, 3),
+    totalHours: 40 + randomInt(rng, 40),
+    preferenceHitRate: 0.4 + rng() * 0.5,
+  };
+}
+
+/** A random roster of 4-7 nurses, each with 0-13 ledger rows from the 400 days before `asOf`
+ * (fortnights and six-week periods, any availability) and a random availability now. */
 function randomScenario(rng: () => number) {
   resetFixtureCounters();
   const nurseCount = 4 + randomInt(rng, 3);
   const nurses = Array.from({ length: nurseCount }, () =>
     makeNurse({ contractedHoursPerPeriod: 60 + randomInt(rng, 5) * 12 }),
   );
+  const history: FairnessLedgerEntry[] = [];
   const current = new Map<Id, BurdenCounters>();
   for (const nurse of nurses) {
-    const approved = 1 + randomInt(rng, 4);
-    const denied = randomInt(rng, 3);
+    const rows = randomInt(rng, 13);
+    for (let r = 0; r < rows; r++) {
+      const periodDays = rng() < 0.5 ? 14 : 42;
+      history.push({
+        id: `${nurse.id}-h${r}`,
+        nurseId: nurse.id,
+        periodId: `period-${r}`,
+        periodStart: addDays(SCOPE.asOf, -(1 + randomInt(rng, 399))),
+        ...randomCounters(rng, periodDays),
+        availableDays: randomInt(rng, periodDays),
+      });
+    }
     current.set(nurse.id, {
-      ...EMPTY_COUNTERS,
-      nightShifts: randomInt(rng, 6),
-      weekendsWorked: randomInt(rng, 4),
-      holidaysWorked: randomInt(rng, 2),
-      onCallShifts: randomInt(rng, 3),
-      undesirableShifts: randomInt(rng, 3),
-      overtimeHours: randomInt(rng, 10),
-      requestsApproved: approved,
-      requestsDenied: denied,
-      totalHours: 40 + randomInt(rng, 40),
-      preferenceHitRate: 0.4 + rng() * 0.5,
+      ...randomCounters(rng, SCOPE.periodDays),
+      availableDays: randomInt(rng, SCOPE.periodDays),
     });
   }
-  return { nurses, current };
+  return { nurses, history, current };
 }
 
 describe('fairness score monotonicity', () => {
   it('never rewards a nurse with a higher score after their burden gets strictly worse', () => {
-    const trials = 30;
+    const trials = 200;
     for (let seed = 1; seed <= trials; seed++) {
       const rng = makeRng(seed * 2_654_435_761);
-      const { nurses, current } = randomScenario(rng);
+      const { nurses, history, current } = randomScenario(rng);
       const target = nurses[randomInt(rng, nurses.length - 1)]!;
       const bump = BUMPS[randomInt(rng, BUMPS.length - 1)]!;
+      const score = (counters: ReadonlyMap<Id, BurdenCounters>) =>
+        scoreFairness({ nurses, current: counters, history, scope: SCOPE, preferences: [] });
 
-      const before = scoreFairness({ nurses, current, history: [], preferences: [] });
+      const before = score(current);
       const bumpedCurrent = new Map(current);
       bumpedCurrent.set(target.id, applyBump(current.get(target.id)!, bump));
-      const after = scoreFairness({ nurses, current: bumpedCurrent, history: [], preferences: [] });
+      const after = score(bumpedCurrent);
 
-      const scoreBefore = before.scores.find((s) => s.nurseId === target.id)!.score;
-      const scoreAfter = after.scores.find((s) => s.nurseId === target.id)!.score;
+      const mine = (report: ReturnType<typeof score>) =>
+        report.scores.find((s) => s.nurseId === target.id)!;
+      const component = BUMPED_COMPONENT[bump];
+      const deviation = (report: ReturnType<typeof score>) =>
+        mine(report).components.find((c) => c.component === component)!.deviation;
 
-      expect(scoreAfter).toBeLessThanOrEqual(scoreBefore + 1e-9);
+      expect(mine(after).score, `seed ${seed} ${bump}`).toBeLessThanOrEqual(
+        mine(before).score + 1e-9,
+      );
+      expect(deviation(after), `seed ${seed} ${bump}`).toBeGreaterThanOrEqual(
+        deviation(before) - 1e-9,
+      );
     }
   });
 });
@@ -267,6 +322,7 @@ describe('occurrences on the report', () => {
       nurses: [a, b],
       current: new Map(),
       history: [],
+      scope: SCOPE,
       preferences: [],
       occurrences,
     });

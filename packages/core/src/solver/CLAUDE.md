@@ -70,3 +70,8 @@
   by index, `ensureCharge` takes the first eligible nurse on the roster), so no swap-removes.
   Check a performance change by hashing SA + LNS output on fixed inputs before and after.
   Ids are compared by code unit, never `localeCompare` (host locale).
+- **Fair shares come from `computeBurden`.** `historyFairness` hands both solvers each nurse's
+  `fairWeight` (contracted share × exposure, rounded to hundredths); SA prices
+  `teamTotal × fairWeight / teamFairWeight` and CP-SAT the same in integers (`shareUnit` ≤ 100), so
+  Generate prices the fair share the Fairness page shows. A change to the fairness model is a
+  change to both solvers' objective: re-run `npm run bench:solvers`.

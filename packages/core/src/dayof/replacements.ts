@@ -208,6 +208,11 @@ function burdenIndexByNurse(engine: ConflictEngine, world: SimState): Map<Id, nu
     nurses: engine.activeNurses,
     current: deriveCounters(world.view, { ...engine.counterCtx, timeOff: world.timeOff }),
     history: engine.input.ledgerHistory,
+    scope: {
+      asOf: engine.input.period.startDate,
+      periodDays: engine.dates.length,
+      payPeriodDays: engine.input.unit.payPeriodDays,
+    },
     preferences: engine.input.preferences,
     weights: engine.input.ruleSet.fairnessWeights,
   });

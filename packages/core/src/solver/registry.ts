@@ -35,10 +35,11 @@ export interface SolverSettings {
 export const DEFAULT_SOLVER_SETTINGS: SolverSettings = { solverId: DEFAULT_SOLVER_ID };
 
 /**
- * Measured by `npm run bench:solvers` (docs/solver-bench.md, 2026-10-17): the hybrid had the best
- * median objective on the demo unit (−2% vs SA + LNS, every floor filled) and a 24-nurse synthetic
- * unit (−6%), and tied on a small tight one. Whole-period CP-SAT lost to SA + LNS on all three —
- * on the demo it left 16–18 floors short (up to 8 on one shift) against 0–1 — so it comes last.
+ * Measured by `npm run bench:solvers` (docs/solver-bench.md, 2026-10-19): the hybrid had the best
+ * median objective on the demo unit (−5% vs SA + LNS, every floor filled) and a 24-nurse synthetic
+ * unit (−6%), and was within 2 points of SA + LNS on a small tight one. Whole-period CP-SAT lost to
+ * SA + LNS on all three — on the demo it left 13–17 floors short (up to 8 on one shift) against
+ * 0–2 — so it comes last.
  */
 export const FALLBACK_ORDER: readonly SolverId[] = ['hybrid', 'sa-lns', 'cp-sat'];
 

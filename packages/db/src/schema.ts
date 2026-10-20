@@ -1371,6 +1371,10 @@ export const fairnessLedger = sqliteTable(
     totalHours: real('total_hours').notNull().default(0),
     overtimeHours: real('overtime_hours').notNull().default(0),
     preferenceHitRate: real('preference_hit_rate').notNull().default(0),
+    // The defaults exist only so SQLite can add NOT NULL columns to an existing file; every
+    // writer sets both (`ledgerValues`), and the migration backfilled the rows before them.
+    periodDays: integer('period_days').notNull().default(0),
+    availableDays: integer('available_days').notNull().default(0),
   },
   (t) => [
     uniqueIndex('fairness_nurse_period_idx').on(t.nurseId, t.periodId),

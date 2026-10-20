@@ -66,6 +66,8 @@ const ledgerRow = (nurseId: string, approved: number, denied: number): FairnessL
   totalHours: 0,
   overtimeHours: 0,
   preferenceHitRate: 1,
+  periodDays: 14,
+  availableDays: 14,
 });
 
 describe('staffing conflicts', () => {

@@ -675,6 +675,8 @@ describe('weekends off per year', () => {
     totalHours: 0,
     overtimeHours: 0,
     preferenceHitRate: 1,
+    periodDays: 14,
+    availableDays: 14,
   });
   const yearAlerts = (
     s: ReturnType<typeof scenario>,

@@ -54,6 +54,12 @@
 - **The ledger's `periodId` has no foreign key on purpose:** imported history uses synthetic
   `import:<start>` ids for pay periods that predate the app. A historical re-import's audit row
   holds the replaced and written rows in full.
+- **Every ledger row says how long its period was and how many days the nurse was there**
+  (`fairness_ledger.period_days` / `available_days`, migration `0046_ledger_exposure`). The
+  backfill took the length from the row's `schedule_period`, or the unit's `pay_period_days` for
+  imported `import:` rows, and the availability from approved leave and the hire date (core's
+  `daysAvailable`). A writer always sets both: `periodDays` is required, `availableDays` defaults
+  to it, and `ledgerValues` refuses a zero-day period or more days there than the period has.
 - **Hours worked are `workedShiftsForNurseInRange`** (`repositories/worked-hours.ts`): published
   or archived periods' shifts on any unit, at each shift type's own `durationHours`, standby
   excluded, and so is a shift whose call-off is open or uncovered (she did not work it). A draft

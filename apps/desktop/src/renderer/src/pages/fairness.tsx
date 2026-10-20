@@ -91,14 +91,7 @@ export default function FairnessPage() {
             />
           ) : (
             <div className="flex flex-col gap-6">
-              <FairnessSummary
-                report={reportQuery.data}
-                contracted={
-                  new Set(
-                    nursesQuery.data.filter((n) => n.contractedHoursPerPeriod > 0).map((n) => n.id),
-                  )
-                }
-              />
+              <FairnessSummary report={reportQuery.data} />
               <ComponentDistributionStrip report={reportQuery.data} />
               <NurseFairnessTable
                 scores={reportQuery.data.scores}
