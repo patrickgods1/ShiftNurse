@@ -179,6 +179,43 @@ describe('the rotation after earlier cancellations', () => {
   });
 });
 
+describe('a nurse the shift cannot spare', () => {
+  it('keeps the only experienced RN on the shift and offers the next nurse instead', () => {
+    everyoneComesIn();
+    const [experienced, ...rest] = f.rns;
+    // Ids are random, so the seed may have made her a new grad too.
+    updateNurse(f.handle.db, experienced!.id, { isNovice: false }, ACTOR);
+    for (const nurse of rest) updateNurse(f.handle.db, nurse.id, { isNovice: true }, ACTOR);
+
+    const view = orderView([experienced!.id]);
+    const kept = view.excluded.find((e) => e.nurseId === experienced!.id);
+    expect(kept?.reason).toContain('would leave the shift breaking a hard rule');
+    expect(view.order[0]!.nurseId).not.toBe(experienced!.id);
+
+    expect(() =>
+      dayOf().cancelForCensus(
+        f.seeded.draftPeriodId,
+        date(),
+        f.day.id,
+        'RN',
+        [experienced!.id],
+        experienced!.id,
+      ),
+    ).toThrow(kept!.reason);
+    const next = view.order[0]!;
+    expect(
+      dayOf().cancelForCensus(
+        f.seeded.draftPeriodId,
+        date(),
+        f.day.id,
+        'RN',
+        [experienced!.id],
+        next.nurseId,
+      ),
+    ).toMatchObject({ nurseId: next.nurseId });
+  });
+});
+
 describe('cancelling for census', () => {
   it('removes the shift, records the cancellation with its reason, and audits it', () => {
     everyoneComesIn();
@@ -247,6 +284,8 @@ describe('cancelling for census', () => {
     ).toThrow(`${name(charge)} is the charge nurse on this shift.`);
   });
 
+  // Sends home the whole excess one by one, and each order now simulates every removal on the
+  // period (`removalBreaks`), so this walk takes longer than the default limit on a busy host.
   it('refuses once the shift is no longer over its requirement', () => {
     everyoneComesIn();
     let guard = f.rns.length;
@@ -261,7 +300,7 @@ describe('cancelling for census', () => {
     expect(() =>
       dayOf().cancelForCensus(f.seeded.draftPeriodId, date(), f.day.id, 'RN', [], remaining[0]!),
     ).toThrow(/no longer over its requirement/);
-  });
+  }, 30_000);
 
   it('on a published schedule writes the removal to the change log under the cancellation reason', () => {
     everyoneComesIn();

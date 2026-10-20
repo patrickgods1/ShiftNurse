@@ -68,6 +68,8 @@ import {
   type JurisdictionChoices,
   type JurisdictionId,
   type LeaveBalanceType,
+  maxDate,
+  minDate,
   type Nurse,
   type NurseRole,
   nursesRequiredForMix,
@@ -2494,12 +2496,13 @@ export function seedFromProfile(
           endDate: addDays(coversStart, w * 7 + 6),
         })),
         ACTOR,
+        maxDate(opensOn, minDate(now, closesOn)),
       );
       bump('leaveBid');
     }
     // Bidding that has ended is closed. The round is never awarded here: awarding is the
     // manager's step (results are due 15 October), and an evaluator should see it undone.
-    if (compareDates(now, closesOn) > 0) closeLeaveBidRound(db, round.id, ACTOR);
+    if (compareDates(now, closesOn) > 0) closeLeaveBidRound(db, round.id, ACTOR, now);
   }
 
   return { unitId: unit.id, draftPeriodId: draft.id, draftStart, draftEnd, counts };

@@ -7,7 +7,7 @@
  * afterwards is what to read to a nurse who asks why.
  */
 
-import type { Id, Nurse } from '@shiftnurse/core';
+import { type Id, type Nurse, today } from '@shiftnurse/core';
 import { useState } from 'react';
 import type { LeaveBidAwardResult, LeaveBidRoundRecord } from '../../../../shared/api.js';
 import {
@@ -31,6 +31,7 @@ import { formatDate, periodRange } from '../../format.js';
 import { BidEntryDialog } from './bid-entry-dialog.js';
 import { BidResult } from './bid-result.js';
 import { BidRoundDialog } from './bid-round-dialog.js';
+import { ReasonDialog } from './reason-dialog.js';
 
 const STATUS_LABEL = { open: 'Open', closed: 'Closed', awarded: 'Awarded' } as const;
 
@@ -143,8 +144,21 @@ function RoundDetail({ unitId, round, nurses, result, onEdit, onAwarded }: Detai
   const award = useAwardLeaveBidRound(unitId);
   const confirm = useConfirm();
   const [entering, setEntering] = useState<'new' | Id | undefined>(undefined);
+  const [closingEarly, setClosingEarly] = useState(false);
   const nameOf = new Map(nurses.map((n) => [n.id, `${n.firstName} ${n.lastName}`]));
   const bidList = bids.data ?? [];
+
+  // Bids are taken only inside the window; outside it the buttons give way to the reason.
+  const now = today();
+  const biddingNow = round.status === 'open' && round.opensOn <= now && now <= round.closesOn;
+  const windowNote =
+    round.status !== 'open'
+      ? undefined
+      : now < round.opensOn
+        ? `Bidding opens ${formatDate(round.opensOn)}`
+        : now > round.closesOn
+          ? `Bidding closed ${formatDate(round.closesOn)}`
+          : undefined;
 
   const places = Object.entries(round.offPerDay)
     .map(([role, n]) => `${n} ${role}${n === 1 ? '' : 's'}`)
@@ -187,33 +201,43 @@ function RoundDetail({ unitId, round, nurses, result, onEdit, onAwarded }: Detai
             </button>
             {round.status === 'open' ? (
               <>
-                <button
-                  type="button"
-                  className={SECONDARY}
-                  data-testid="enter-bid"
-                  onClick={() => setEntering('new')}
-                >
-                  Enter a bid
-                </button>
+                {biddingNow ? (
+                  <button
+                    type="button"
+                    className={SECONDARY}
+                    data-testid="enter-bid"
+                    onClick={() => setEntering('new')}
+                  >
+                    Enter a bid
+                  </button>
+                ) : windowNote ? (
+                  <span className="self-center text-xs text-text-muted">{windowNote}</span>
+                ) : null}
                 <button
                   type="button"
                   className={SECONDARY}
                   disabled={close.isPending}
-                  onClick={() => close.mutate(round.id)}
+                  onClick={() => {
+                    // Closing on or before the last bidding day shuts out nurses yet to bid.
+                    if (now <= round.closesOn) setClosingEarly(true);
+                    else close.mutate({ id: round.id });
+                  }}
                 >
                   Close bidding
                 </button>
               </>
             ) : null}
-            <button
-              type="button"
-              className={PRIMARY}
-              data-testid="award-round"
-              disabled={bidList.length === 0 || award.isPending}
-              onClick={() => void onAward()}
-            >
-              Award in seniority order
-            </button>
+            {round.status === 'closed' ? (
+              <button
+                type="button"
+                className={PRIMARY}
+                data-testid="award-round"
+                disabled={bidList.length === 0 || award.isPending}
+                onClick={() => void onAward()}
+              >
+                Award in seniority order
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -242,7 +266,7 @@ function RoundDetail({ unitId, round, nurses, result, onEdit, onAwarded }: Detai
                   ))}
                 </ol>
               </div>
-              {round.status === 'open' ? (
+              {biddingNow ? (
                 <button type="button" className={SMALL} onClick={() => setEntering(bid.nurseId)}>
                   Change bid
                 </button>
@@ -259,6 +283,19 @@ function RoundDetail({ unitId, round, nurses, result, onEdit, onAwarded }: Detai
       ) : null}
 
       {result ? <BidResult result={result} /> : null}
+
+      <ReasonDialog
+        open={closingEarly}
+        onOpenChange={setClosingEarly}
+        title={`Close bidding for ${round.name} early?`}
+        description={`Bidding runs until ${formatDate(round.closesOn)}. Nurses who have not bid yet will be shut out.`}
+        confirmLabel="Close bidding"
+        pending={close.isPending}
+        error={close.error}
+        onConfirm={(reason) =>
+          close.mutate({ id: round.id, reason }, { onSuccess: () => setClosingEarly(false) })
+        }
+      />
 
       {entering !== undefined ? (
         <BidEntryDialog

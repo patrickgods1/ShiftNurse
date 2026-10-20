@@ -29,8 +29,42 @@ describe('refusing a leave policy a manager could not have meant', () => {
   });
 
   it('accepts a part-time tier earning one hour for every ten worked', () => {
-    const r = rule({ tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 0.1 }] });
+    const r = rule({ tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 10 }] });
     expect(() => validateLeavePolicy(policy({ accrual: [r] }))).not.toThrow();
+  });
+
+  it('refuses a part-time rate that would earn ten hours of leave per hour worked', () => {
+    // The rate is hours worked per hour earned, so 0.1 divides hours worked by 0.1.
+    const r = rule({ tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 0.1 }] });
+    expect(() => validateLeavePolicy(policy({ accrual: [r] }))).toThrow(/1 or more/);
+  });
+
+  it('accepts the federal 10 hours in the last pay period of the year on a pay-period tier', () => {
+    const r = rule({
+      tiers: [
+        { fromYearsOfService: 0, hoursPerPayPeriod: 4 },
+        { fromYearsOfService: 3, hoursPerPayPeriod: 6, lastPayPeriodOfYearHours: 10 },
+      ],
+    });
+    expect(() => validateLeavePolicy(policy({ accrual: [r] }))).not.toThrow();
+  });
+
+  it('refuses a last-pay-period amount on a per-hour tier', () => {
+    const r = rule({
+      tiers: [{ fromYearsOfService: 0, hoursPerAccruedHour: 13, lastPayPeriodOfYearHours: 10 }],
+    });
+    expect(() => validateLeavePolicy(policy({ accrual: [r] }))).toThrow(
+      'The annual accrual rule has a last-pay-period amount on a tier that does not earn by pay period',
+    );
+  });
+
+  it('refuses a last-pay-period amount of zero', () => {
+    const r = rule({
+      tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 6, lastPayPeriodOfYearHours: 0 }],
+    });
+    expect(() => validateLeavePolicy(policy({ accrual: [r] }))).toThrow(
+      /last-pay-period amount that is not a number greater than zero/,
+    );
   });
 
   it('refuses a fixed FMLA year with no start date', () => {
@@ -82,8 +116,10 @@ describe('refusing a leave policy a manager could not have meant', () => {
   });
 
   it('refuses a tier that earns by pay period and by hour worked at once', () => {
+    // A legal per-hour rate (10, not 0.1): with a rate below 1, /not both/ would hold only while
+    // the both-rates check runs before the under-1 check.
     const r = rule({
-      tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 4, hoursPerAccruedHour: 0.1 }],
+      tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 4, hoursPerAccruedHour: 10 }],
     });
     expect(() => validateLeavePolicy(policy({ accrual: [r] }))).toThrow(/not both/i);
   });
@@ -142,6 +178,15 @@ describe('California sick leave: a use cap and a front-loaded year', () => {
   it('refuses a front-loaded year that also earns by the hour worked', () => {
     const p = policy({ accrual: [sick({ frontLoadHours: 40 })] });
     expect(() => validateLeavePolicy(p)).toThrow(/front-load/i);
+  });
+
+  it('refuses a front-loaded year that also lists a pay-period rate', () => {
+    const p = policy({
+      accrual: [
+        sick({ tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 8 }], frontLoadHours: 40 }),
+      ],
+    });
+    expect(() => validateLeavePolicy(p)).toThrow(/front-loaded/);
   });
 
   it('refuses a use cap or a front-loaded amount of zero', () => {

@@ -6,7 +6,7 @@
  */
 
 import { isoDate, type LeavePolicy, type Unit } from '@shiftnurse/core';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
 import { renderWithApp } from '../../test/render.js';
@@ -149,6 +149,36 @@ describe('Settings › Leave', () => {
     expect(rules[1]).toEqual(sick);
   });
 
+  it('keeps the federal 10-hour last pay period when the policy is saved', async () => {
+    const lvn = {
+      balanceType: 'annual' as const,
+      roles: ['LPN' as const],
+      tiers: [
+        { fromYearsOfService: 0, hoursPerPayPeriod: 4 },
+        { fromYearsOfService: 3, hoursPerPayPeriod: 6, lastPayPeriodOfYearHours: 10 },
+        { fromYearsOfService: 15, hoursPerPayPeriod: 8 },
+      ],
+      carryoverCapHours: 240,
+    };
+    const federal: LeavePolicy = { ...policy, accrual: [policy.accrual[0]!, lvn] };
+    renderWithApp(<LeavePanel />, { unit: { ...unit, leavePolicy: federal } });
+    expect(
+      (
+        (await screen.findByLabelText(
+          'Rule 2 tier 2 last pay period of the year (hours)',
+        )) as HTMLInputElement
+      ).value,
+    ).toBe('10');
+    // An edit to the other rule, so Save has something to send; rule 2 must cross untouched.
+    fireEvent.change(screen.getByLabelText('Rule 1 carryover cap (hours)'), {
+      target: { value: '700' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(bridge.callsTo('units', 'update')).toHaveLength(1));
+    const rules = bridge.callsTo('units', 'update')[0]![1].leavePolicy!.accrual;
+    expect(rules[1]).toEqual(lvn);
+  });
+
   it('saves California sick leave capped at 40 hours used a year', async () => {
     renderWithApp(<LeavePanel />, { unit });
     fireEvent.change(await screen.findByLabelText('Rule 2 yearly use cap (hours)'), {
@@ -181,9 +211,48 @@ describe('Settings › Leave', () => {
     });
   });
 
-  it('saves null when the manager goes back to the default', async () => {
+  it('refuses to save 40 hours up front beside a 4-hour-a-period rate, and saves once the rate is cleared', async () => {
+    const sick: LeavePolicy['accrual'][number] = {
+      balanceType: 'sick',
+      tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 4 }],
+    };
+    renderWithApp(<LeavePanel />, {
+      unit: { ...unit, leavePolicy: { ...policy, accrual: [policy.accrual[0]!, sick] } },
+    });
+    fireEvent.change(await screen.findByLabelText('Rule 2 front-loaded each year (hours)'), {
+      target: { value: '40' },
+    });
+    expect(
+      await screen.findByText(
+        'Rule 2: a rule that gives hours up front cannot also earn per period or per hour — remove the earning rates or clear the up-front hours.',
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(bridge.callsTo('units', 'update')).toHaveLength(0);
+
+    // The last tier row cannot be removed, so emptying its rate is how the rate goes.
+    fireEvent.change(screen.getByLabelText('Rule 2 tier 1 hours'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(bridge.callsTo('units', 'update')).toHaveLength(1));
+    const rules = bridge.callsTo('units', 'update')[0]![1].leavePolicy!.accrual;
+    expect(rules[1]).toEqual({ balanceType: 'sick', tiers: [], frontLoadHours: 40 });
+  });
+
+  it('asks before going back to the default leave policy', async () => {
     renderWithApp(<LeavePanel />, { unit });
     fireEvent.click(await screen.findByRole('button', { name: 'Use the default' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('Use the default leave policy?')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(bridge.callsTo('units', 'update')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use the default' }));
+    fireEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: 'Use the default',
+      }),
+    );
     await waitFor(() =>
       expect(bridge.callsTo('units', 'update')).toEqual([['unit-1', { leavePolicy: null }]]),
     );

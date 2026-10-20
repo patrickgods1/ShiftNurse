@@ -4,8 +4,11 @@
  */
 
 import { defaultRuleSet, isoDate } from '@shiftnurse/core';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
+import { assignment } from '../schema.js';
+import { cancelCallOff, markCallOffUncovered, reportCallOff } from './calloffs.js';
 import { createShiftType, createUnit } from './config.js';
 import { publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
@@ -127,5 +130,30 @@ describe('hours a nurse worked', () => {
     expect(
       workedShiftsForNurseInRange(handle.db, nurseId, isoDate('2026-06-28'), isoDate('2026-12-31')),
     ).toEqual([]);
+  });
+
+  describe('a call-off that nobody covered', () => {
+    const publishedAssignmentId = () => {
+      const { period } = unitWithShift('5 West', { durationHours: 12, isOnCall: false });
+      publishSchedule(handle.db, { periodId: period.id }, ACTOR);
+      return handle.db.select().from(assignment).where(eq(assignment.nurseId, nurseId)).get()!.id;
+    };
+
+    it('does not count a published shift the nurse called off from and nobody covered', () => {
+      const callOff = reportCallOff(handle.db, publishedAssignmentId(), ACTOR, 'Sick');
+      markCallOffUncovered(handle.db, callOff.id, ACTOR, 'No one answered');
+      expect(worked()).toEqual([]);
+    });
+
+    it('counts the shift again when the call-off is withdrawn', () => {
+      const callOff = reportCallOff(handle.db, publishedAssignmentId(), ACTOR, 'Sick');
+      cancelCallOff(handle.db, callOff.id, ACTOR, 'Came in after all');
+      expect(worked()).toEqual([{ date: '2026-06-27', hours: 12 }]);
+    });
+
+    it('does not count a call-off still open', () => {
+      reportCallOff(handle.db, publishedAssignmentId(), ACTOR, 'Sick');
+      expect(worked()).toEqual([]);
+    });
   });
 });

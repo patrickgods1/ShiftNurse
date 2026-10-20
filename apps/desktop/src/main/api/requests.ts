@@ -12,6 +12,7 @@ import {
   holidayRequestPriority,
   holidayWorkPriority,
   type Id,
+  NURSE_ROLES,
   previousOccurrence,
   timeOffImpact,
   today,
@@ -66,7 +67,7 @@ function holidayPriority(db: ShiftNurseDb, unitId: Id): HolidayClaim[] {
 /**
  * Who wants to work each holiday from today on, most senior first. Past holidays are left out:
  * a wish to work last Christmas is settled and would only crowd the panel. "Needed" is the date's
- * RN coverage targets summed over the active worked shift types — the floors the manager set,
+ * coverage targets for each role, summed over the active worked shift types — the floors the manager set,
  * not acuity, which a holiday months away has no census for.
  */
 function holidayWorkPriorityFor(db: ShiftNurseDb, unitId: Id): HolidayWorkClaim[] {
@@ -77,9 +78,14 @@ function holidayWorkPriorityFor(db: ShiftNurseDb, unitId: Id): HolidayWorkClaim[
   const needed = new Map(
     holidays.map((h) => [
       h.id,
-      shiftTypes.reduce(
-        (sum, st) => sum + coverageFloorFor(requirements, h.date, st.id, 'RN').target,
-        0,
+      Object.fromEntries(
+        NURSE_ROLES.map((role) => [
+          role,
+          shiftTypes.reduce(
+            (sum, st) => sum + coverageFloorFor(requirements, h.date, st.id, role).target,
+            0,
+          ),
+        ]),
       ),
     ]),
   );

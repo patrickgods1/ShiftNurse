@@ -23,6 +23,14 @@
  * against. It counts leave used since the leave year began, before payroll's date included: the
  * cap is on use, and payroll's balance says nothing about when its hours were drawn.
  *
+ * A new tier applies from the pay period after the one in which the service anniversary falls
+ * (D12; OPM's annual leave fact sheet: "a change in accrual rate takes effect at the beginning of
+ * the pay period after the pay period an employee completes the required period of service").
+ * Reading the tier on the period's last day instead would pay the higher rate one period early.
+ * A tier's `lastPayPeriodOfYearHours` replaces its per-period amount in the leave year's last
+ * pay period: § 6303(a)(2) gives 3–15-year federal staff 1¼ days there, and without it their
+ * year comes to 156 hours instead of the statute's 20 days.
+ *
  * The result is information, not a verdict: a balance may go negative, and the manager decides.
  */
 
@@ -34,7 +42,7 @@ import type {
   LeaveYearStart,
   Nurse,
 } from '../domain/entities.js';
-import { compareDates, dayNumber, type IsoDate, isoDate } from '../domain/time.js';
+import { addDays, compareDates, dayNumber, type IsoDate, isoDate } from '../domain/time.js';
 import { type PayCalendar, payPeriodIndex, payPeriodWindow } from '../rules/hours-rules.js';
 
 /** Whole years from serviceStart to onDate (an anniversary counts on the day). */
@@ -190,10 +198,22 @@ export function projectBalance(input: {
         accrued += rule.frontLoadHours;
       }
     } else if (e.order === 1 && rule) {
-      const tier = tierAt(rule.tiers, yearsOfService(input.serviceStart, e.date));
+      // OPM: a change in accrual rate takes effect at the beginning of the pay period after the
+      // pay period in which the service is completed (D12). The years reached by the day before
+      // this period are the years completed in an earlier one.
+      const years = yearsOfService(input.serviceStart, addDays(e.periodStart, -1));
+      const tier = tierAt(rule.tiers, years);
       let earned = 0;
-      if (tier?.hoursPerPayPeriod !== undefined) earned = tier.hoursPerPayPeriod;
-      else if (tier?.hoursPerAccruedHour !== undefined && tier.hoursPerAccruedHour > 0) {
+      if (tier?.hoursPerPayPeriod !== undefined) {
+        earned = tier.hoursPerPayPeriod;
+        const nextPeriodEnd = addDays(e.date, input.calendar.payPeriodDays);
+        if (
+          tier.lastPayPeriodOfYearHours !== undefined &&
+          leaveYearStarts(input.leaveYearStart, input.calendar, e.date, nextPeriodEnd).length > 0
+        ) {
+          earned = tier.lastPayPeriodOfYearHours;
+        }
+      } else if (tier?.hoursPerAccruedHour !== undefined && tier.hoursPerAccruedHour > 0) {
         earned = (input.hoursByPayPeriodStart?.get(e.periodStart) ?? 0) / tier.hoursPerAccruedHour;
       }
       if (balanceCap !== undefined) {

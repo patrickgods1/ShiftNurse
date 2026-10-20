@@ -70,6 +70,8 @@ export type {
 } from './dayof/index.js';
 // Call-off replacement finder and live staffing check
 export { checkStaffing, findReplacements, shiftsAround } from './dayof/index.js';
+// Who a shift cannot spare: the hard breach sending each nurse home or floating her would leave
+export { CENSUS_JUDGED_CODES, removalBreaks } from './dayof/removal-safety.js';
 export type {
   AccrualRule,
   AccrualTier,
@@ -163,6 +165,8 @@ export {
   isWeekendDate,
   MINUTES_PER_DAY,
   MS_PER_DAY,
+  maxDate,
+  minDate,
   minutesToHours,
   parseTimeOfDay,
   rangesOverlap,
@@ -272,6 +276,8 @@ export {
 export type { RosterCsvError, RosterCsvRow } from './roster/csv.js';
 // The one roster CSV parser and formatter
 export { formatRosterCsv, parseRosterCsv, ROSTER_COLUMNS, serializeCsv } from './roster/csv.js';
+// The one seniority order every seniority-ranked list uses or reverses
+export { compareEmployeeIds, compareSeniority } from './roster/seniority.js';
 export {
   accommodationBlocksRule,
   type BlockOccurrence,

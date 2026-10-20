@@ -6,18 +6,25 @@
 import { addDays, describeDate, paidLeaveCredits } from '@shiftnurse/core';
 import {
   archivePeriod,
+  auditHistoryFor,
   createPeriod,
   createTimeOffRequest,
   denyTimeOff,
+  getAssignment,
   getPeriod,
   getTimeOffRequest,
+  grantCredential,
   listAssignmentsForPeriod,
   listChanges,
+  listCredentials,
+  listNurseCredentials,
   listPeriodsForUnit,
+  listShiftTypesForUnit,
   markFloatedOff,
   publishSchedule,
   recentAudit,
   transact,
+  updateNurse,
   updateUnit,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -131,6 +138,123 @@ describe('approving leave and covering it in one step', () => {
     const changes = listChanges(f.handle.db, f.seeded.draftPeriodId);
     expect(changes.map((c) => c.kind).sort()).toEqual(['added', 'removed']);
     expect(changes.every((c) => c.reason === 'Approved late: family')).toBe(true);
+  });
+});
+
+/** The demo unit's shifts require credentials; the test nurses hold every one, so none decides. */
+function grantAclsToAll() {
+  for (const credential of listCredentials(f.handle.db)) {
+    for (const nurse of f.rns) {
+      const has = listNurseCredentials(f.handle.db, nurse.id).some(
+        (c) => c.credentialId === credential.id,
+      );
+      if (!has) {
+        grantCredential(f.handle.db, { nurseId: nurse.id, credentialId: credential.id }, ACTOR);
+      }
+    }
+  }
+}
+
+describe('covering a charge nurse’s leave', () => {
+  it('keeps a charge nurse on the shift when her approved leave is covered from the dialog', () => {
+    const date = addDays(f.seeded.draftStart, 3);
+    const grid = scheduleApi(f.handle.db);
+    grantAclsToAll();
+    for (const [i, nurse] of f.rns.entries()) {
+      updateNurse(f.handle.db, nurse.id, { isChargeEligible: i < 2 }, ACTOR);
+    }
+    grid.createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: f.rns[0]!.id,
+      shiftTypeId: f.day.id,
+      date,
+      isCharge: true,
+    });
+    const request = createTimeOffRequest(
+      f.handle.db,
+      { nurseId: f.rns[0]!.id, startDate: date, endDate: date, type: 'pto', paidHours: 12 },
+      ACTOR,
+    );
+    const [option] = coverOptions(f.handle.db, f.seeded.draftPeriodId, request.id);
+    const cover = option!.candidates.find((c) => c.nurseId === f.rns[1]!.id)!;
+    expect(cover).toBeDefined();
+    approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, undefined, [
+      { assignmentId: option!.assignment.id, nurseId: cover.nurseId },
+    ]);
+    expect(onDay(date, cover.nurseId).map((a) => a.isCharge)).toEqual([true]);
+  });
+});
+
+describe('covering leave with the extra rows a pickup needs', () => {
+  function annAsksOffOn(shiftTypeId: string, isCharge = false) {
+    const date = addDays(f.seeded.draftStart, 3);
+    scheduleApi(f.handle.db).createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: f.rns[0]!.id,
+      shiftTypeId,
+      date,
+      isCharge,
+    });
+    const request = createTimeOffRequest(
+      f.handle.db,
+      { nurseId: f.rns[0]!.id, startDate: date, endDate: date, type: 'pto', paidHours: 12 },
+      ACTOR,
+    );
+    return { date, request };
+  }
+
+  it('hands charge to the eligible nurse on the shift when the cover cannot take it, on a posted schedule', () => {
+    grantAclsToAll();
+    for (const [i, nurse] of f.rns.entries()) {
+      updateNurse(f.handle.db, nurse.id, { isChargeEligible: i < 2 }, ACTOR);
+    }
+    const { date, request } = annAsksOffOn(f.day.id, true);
+    const beaShift = scheduleApi(f.handle.db).createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: f.rns[1]!.id,
+      shiftTypeId: f.day.id,
+      date,
+    });
+    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    const [option] = coverOptions(f.handle.db, f.seeded.draftPeriodId, request.id);
+    const cal = option!.candidates.find((c) => c.takesChargeName !== undefined)!;
+    expect(cal.takesChargeName).toBe(`${f.rns[1]!.firstName} ${f.rns[1]!.lastName}`);
+    approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, 'Approved late: family', [
+      { assignmentId: option!.assignment.id, nurseId: cal.nurseId },
+    ]);
+
+    expect(getAssignment(f.handle.db, beaShift.id)?.isCharge).toBe(true);
+    const update = auditHistoryFor(f.handle.db, 'assignment', beaShift.id).find(
+      (e) => e.action === 'update',
+    );
+    expect((update?.before as { isCharge?: boolean } | undefined)?.isCharge).toBe(false);
+    const changed = listChanges(f.handle.db, f.seeded.draftPeriodId).filter(
+      (c) => c.kind === 'changed',
+    );
+    expect(changed.map((c) => c.nurseId)).toEqual([f.rns[1]!.id]);
+  });
+
+  it('takes the standby off the nurse on call when she covers the night', () => {
+    grantAclsToAll();
+    const onCall = listShiftTypesForUnit(f.handle.db, f.seeded.unitId).find((s) => s.isOnCall)!;
+    const { date, request } = annAsksOffOn(f.night.id);
+    const standby = scheduleApi(f.handle.db).createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: f.rns[1]!.id,
+      shiftTypeId: onCall.id,
+      date,
+    });
+    const [option] = coverOptions(f.handle.db, f.seeded.draftPeriodId, request.id);
+    expect(option!.candidates.find((c) => c.nurseId === f.rns[1]!.id)?.replacesOnCall).toBe(true);
+    approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, undefined, [
+      { assignmentId: option!.assignment.id, nurseId: f.rns[1]!.id },
+    ]);
+
+    expect(getAssignment(f.handle.db, standby.id)).toBeUndefined();
+    expect(auditHistoryFor(f.handle.db, 'assignment', standby.id).map((e) => e.action)).toContain(
+      'delete',
+    );
+    expect(onDay(date, f.rns[1]!.id).map((a) => a.shiftTypeId)).toEqual([f.night.id]);
   });
 });
 

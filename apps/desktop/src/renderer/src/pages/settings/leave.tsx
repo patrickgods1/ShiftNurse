@@ -26,6 +26,7 @@ import {
 } from '@shiftnurse/core';
 import { useEffect, useState } from 'react';
 import { useUpdateUnit } from '../../api-setup.js';
+import { useConfirm } from '../../components/confirm.js';
 import { EditorShell } from '../../components/editor-shell.js';
 import { CheckField, describedBy, Field } from '../../components/field-help.js';
 import { INPUT, SECONDARY, SMALL, SMALL_DANGER } from '../../components/ui.js';
@@ -44,6 +45,8 @@ interface TierDraft {
   from: string;
   mode: 'period' | 'hour';
   rate: string;
+  /** Hours in the leave year's last pay period; read only in `period` mode. */
+  lastPeriod: string;
 }
 
 interface RuleDraft {
@@ -87,6 +90,8 @@ function draftFrom(policy: LeavePolicy): Draft {
         from: String(t.fromYearsOfService),
         mode: t.hoursPerAccruedHour !== undefined ? 'hour' : 'period',
         rate: String(t.hoursPerAccruedHour ?? t.hoursPerPayPeriod ?? ''),
+        lastPeriod:
+          t.lastPayPeriodOfYearHours === undefined ? '' : String(t.lastPayPeriodOfYearHours),
       })),
       balanceCap: r.balanceCapHours === undefined ? '' : String(r.balanceCapHours),
       balanceCapDays: r.balanceCapDays === undefined ? '' : String(r.balanceCapDays),
@@ -111,6 +116,9 @@ function problemsIn(draft: Draft): string[] {
       if (tier.rate.trim() !== '' && !isNumber(tier.rate)) {
         out.push(`${label}, tier ${n + 1}: the rate must be a number.`);
       }
+      if (tier.mode === 'period' && tier.lastPeriod.trim() !== '' && !isNumber(tier.lastPeriod)) {
+        out.push(`${label}, tier ${n + 1}: the last pay period's hours must be a number.`);
+      }
     }
     for (const [name, value] of [
       ['balance cap', rule.balanceCap],
@@ -122,6 +130,14 @@ function problemsIn(draft: Draft): string[] {
     ] as const) {
       if (value.trim() !== '' && !isNumber(value))
         out.push(`${label}: the ${name} must be a number.`);
+    }
+    // A front-loaded rule earns nothing per period, so a rate beside it would be dropped on save
+    // while still showing on screen. A row with no amounts says nothing and is not sent.
+    const earns = rule.tiers.some((t) => t.rate.trim() !== '' || t.lastPeriod.trim() !== '');
+    if (rule.frontLoad.trim() !== '' && earns) {
+      out.push(
+        `${label}: a rule that gives hours up front cannot also earn per period or per hour — remove the earning rates or clear the up-front hours.`,
+      );
     }
   });
   return out;
@@ -143,18 +159,18 @@ function policyFrom(draft: Draft): LeavePolicy {
       balanceType: r.balanceType,
       ...(r.roles.length > 0 ? { roles: r.roles } : {}),
       ...(r.employmentTypes.length > 0 ? { employmentTypes: r.employmentTypes } : {}),
-      // A front-loaded rule needs no earning rate, so a tier left without one is not sent; the
-      // validator would refuse it as a tier with no rate.
-      tiers: (r.frontLoad.trim() === ''
-        ? r.tiers
-        : r.tiers.filter((t) => t.rate.trim() !== '')
-      ).map((t) => ({
+      // A front-loaded rule earns nothing per pay period, and the validator refuses rates beside
+      // it; `problemsIn` refuses one whose rows still hold amounts, so only empty rows go here.
+      tiers: (r.frontLoad.trim() === '' ? r.tiers : []).map((t) => ({
         fromYearsOfService: Number(t.from),
         ...(t.rate.trim() === ''
           ? {}
           : t.mode === 'hour'
             ? { hoursPerAccruedHour: Number(t.rate) }
             : { hoursPerPayPeriod: Number(t.rate) }),
+        ...(t.mode === 'period' && t.lastPeriod.trim() !== ''
+          ? { lastPayPeriodOfYearHours: Number(t.lastPeriod) }
+          : {}),
       })),
       ...(r.balanceCap.trim() !== '' ? { balanceCapHours: Number(r.balanceCap) } : {}),
       ...(r.balanceCapDays.trim() !== '' ? { balanceCapDays: Number(r.balanceCapDays) } : {}),
@@ -177,7 +193,7 @@ function blankRule(): RuleDraft {
     balanceType: 'annual',
     roles: [],
     employmentTypes: [],
-    tiers: [{ from: '0', mode: 'period', rate: '' }],
+    tiers: [{ from: '0', mode: 'period', rate: '', lastPeriod: '' }],
     balanceCap: '',
     balanceCapDays: '',
     carryoverCap: '',
@@ -195,6 +211,7 @@ function toggle<T>(list: readonly T[], item: T): T[] {
 export default function LeavePanel() {
   const unit = useUnit();
   const update = useUpdateUnit();
+  const confirm = useConfirm();
   const saved = unit.leavePolicy ?? DEFAULT_LEAVE_POLICY;
   const [draft, setDraft] = useState<Draft>(() => draftFrom(saved));
   const savedFingerprint = fingerprint(draftFrom(saved));
@@ -204,6 +221,16 @@ export default function LeavePanel() {
   useEffect(() => {
     setDraft(draftFrom(saved));
   }, [unit.id, savedFingerprint]);
+
+  const onUseDefault = async () => {
+    const ok = await confirm({
+      title: 'Use the default leave policy?',
+      description:
+        "This unit's accrual rules and FMLA settings are removed: FMLA is read as Title I with a rolling 12 months back, and balances are not carried forward.",
+      confirmLabel: 'Use the default',
+    });
+    if (ok) update.mutate({ id: unit.id, patch: { leavePolicy: null } });
+  };
 
   const problems = problemsIn(draft);
   const dirty = fingerprint(draft) !== savedFingerprint;
@@ -403,7 +430,7 @@ export default function LeavePanel() {
           type="button"
           className={SECONDARY}
           disabled={unit.leavePolicy === undefined || update.isPending}
-          onClick={() => update.mutate({ id: unit.id, patch: { leavePolicy: null } })}
+          onClick={() => void onUseDefault()}
         >
           Use the default
         </button>
@@ -568,6 +595,25 @@ function RuleEditor({
                     onChange={(e) => patchTier(k, { rate: e.target.value })}
                   />
                 </Field>
+                {tier.mode === 'period' ? (
+                  // A compact row shows no hint line, so the hint rides in the tip.
+                  <Field
+                    id={`${id}-tier-${k}-last`}
+                    label={`${label} last pay period of the year (hours)`}
+                    tip="Leave blank unless the year's last pay period earns a different amount (federal 3–15 years: 10)."
+                    compact
+                  >
+                    <input
+                      id={`${id}-tier-${k}-last`}
+                      type="number"
+                      min={0}
+                      step="any"
+                      className={`${INPUT} w-24`}
+                      value={tier.lastPeriod}
+                      onChange={(e) => patchTier(k, { lastPeriod: e.target.value })}
+                    />
+                  </Field>
+                ) : null}
                 <button
                   type="button"
                   className={SMALL_DANGER}
@@ -594,6 +640,7 @@ function RuleEditor({
                       from: String(Number.isFinite(years) ? years + 1 : 1),
                       mode: 'period',
                       rate: '',
+                      lastPeriod: '',
                     },
                   ],
                 });
@@ -690,7 +737,7 @@ function RuleEditor({
             id={`${id}-front-load`}
             label={`Rule ${n} front-loaded each year (hours)`}
             hint="Set the balance to this at each leave-year start instead of accruing per pay period. Blank: accrue."
-            tip="Lab. Code § 246(d) lets an employer give the year's sick leave up front. The balance held before is not carried, and per-hour tiers cannot be used beside it."
+            tip="Lab. Code § 246(d) lets an employer give the year's sick leave up front. The balance held before is not carried, and no earning rate, per pay period or per hour, can be used beside it."
           >
             <input
               id={`${id}-front-load`}

@@ -532,6 +532,143 @@ describe('cost configuration', () => {
     });
   });
 
+  describe('a differential the cost engine can price', () => {
+    const differentialAudits = () =>
+      handle.db
+        .select()
+        .from(s.auditLog)
+        .all()
+        .filter((e) => e.entityType === 'differential').length;
+    const night = (amount: number, active = true) => ({
+      unitId,
+      kind: 'night' as const,
+      mode: 'flat' as const,
+      amount,
+      active,
+    });
+
+    it('refuses a holiday multiplier of 0.5', () => {
+      const before = differentialAudits();
+      expect(() =>
+        createDifferential(
+          handle.db,
+          { unitId, kind: 'holiday', mode: 'multiplier', amount: 0.5, active: true },
+          ACTOR,
+        ),
+      ).toThrow(/multiplier must be 1 or more/);
+      expect(differentialAudits()).toBe(before);
+      expect(listDifferentialsForUnit(handle.db, unitId)).toEqual([]);
+    });
+
+    it('accepts a multiplier of exactly 1', () => {
+      const created = createDifferential(
+        handle.db,
+        { unitId, kind: 'agency', mode: 'multiplier', amount: 1, active: true },
+        ACTOR,
+      );
+      expect(listDifferentialsForUnit(handle.db, unitId)).toEqual([created]);
+    });
+
+    it('accepts on-call standby at 15% of basic pay, as the VA pays it', () => {
+      const standby = { unitId, kind: 'on_call' as const, mode: 'multiplier' as const };
+      const created = createDifferential(
+        handle.db,
+        { ...standby, amount: 0.15, active: true },
+        ACTOR,
+      );
+      expect(listDifferentialsForUnit(handle.db, unitId)).toEqual([created]);
+      expect(() => updateDifferential(handle.db, created.id, { amount: -0.15 }, ACTOR)).toThrow(
+        /on-call multiplier cannot be negative/,
+      );
+    });
+
+    it('refuses a negative flat differential', () => {
+      expect(() => createDifferential(handle.db, night(-2), ACTOR)).toThrow(/cannot be negative/);
+    });
+
+    it('refuses clearing a 1.5x holiday premium to zero', () => {
+      const holiday = createDifferential(
+        handle.db,
+        { unitId, kind: 'holiday', mode: 'multiplier', amount: 1.5, active: true },
+        ACTOR,
+      );
+      const before = differentialAudits();
+      expect(() => updateDifferential(handle.db, holiday.id, { amount: 0 }, ACTOR)).toThrow(
+        /multiplier must be 1 or more/,
+      );
+      expect(listDifferentialsForUnit(handle.db, unitId)[0]?.amount).toBe(1.5);
+      expect(differentialAudits()).toBe(before);
+    });
+
+    it('refuses switching a $0.50 flat differential to a multiplier without a new amount', () => {
+      const flat = createDifferential(handle.db, night(0.5), ACTOR);
+      expect(() => updateDifferential(handle.db, flat.id, { mode: 'multiplier' }, ACTOR)).toThrow(
+        /multiplier must be 1 or more/,
+      );
+    });
+
+    it('refuses a second active night differential', () => {
+      createDifferential(handle.db, night(2), ACTOR);
+      const before = differentialAudits();
+      expect(() => createDifferential(handle.db, night(4), ACTOR)).toThrow(
+        /already has an active night differential/,
+      );
+      expect(differentialAudits()).toBe(before);
+      expect(listDifferentialsForUnit(handle.db, unitId)).toHaveLength(1);
+    });
+
+    it('lets a new night rate wait inactive, and take over once the old one is off', () => {
+      const old = createDifferential(handle.db, night(2), ACTOR);
+      const next = createDifferential(handle.db, night(4, false), ACTOR);
+      expect(() => updateDifferential(handle.db, next.id, { active: true }, ACTOR)).toThrow(
+        /already has an active night differential/,
+      );
+      updateDifferential(handle.db, old.id, { active: false }, ACTOR);
+      updateDifferential(handle.db, next.id, { active: true }, ACTOR);
+      expect(listActiveDifferentials(handle.db, unitId).map((d) => d.amount)).toEqual([4]);
+    });
+
+    it('lets the one active night differential be re-saved active', () => {
+      const only = createDifferential(handle.db, night(2), ACTOR);
+      expect(
+        updateDifferential(handle.db, only.id, { active: true, amount: 3 }, ACTOR).amount,
+      ).toBe(3);
+    });
+
+    it('does not count another unit’s night differential', () => {
+      const other = createUnit(
+        handle.db,
+        {
+          name: 'ICU',
+          unitType: 'ICU',
+          payPeriodDays: 14,
+          payPeriodAnchor: isoDate('2026-01-04'),
+        },
+        ACTOR,
+      );
+      createDifferential(handle.db, { ...night(9), unitId: other.id }, ACTOR);
+      expect(createDifferential(handle.db, night(2), ACTOR).active).toBe(true);
+    });
+
+    it('refuses turning a weekend differential into a second night one', () => {
+      createDifferential(handle.db, night(2), ACTOR);
+      const weekend = createDifferential(handle.db, { ...night(3), kind: 'weekend' }, ACTOR);
+      expect(() => updateDifferential(handle.db, weekend.id, { kind: 'night' }, ACTOR)).toThrow(
+        /already has an active night differential/,
+      );
+    });
+
+    it('names the holiday premium when refusing a second one', () => {
+      const holiday = { unitId, kind: 'holiday' as const, mode: 'multiplier' as const };
+      createDifferential(handle.db, { ...holiday, amount: 1.5, active: true }, ACTOR);
+      expect(() =>
+        createDifferential(handle.db, { ...holiday, amount: 2, active: true }, ACTOR),
+      ).toThrow(
+        'This unit already has an active holiday premium, and only one of each kind is paid. Change its amount, or turn it off first.',
+      );
+    });
+  });
+
   it('lists every differential for the unit but only active ones for pricing', () => {
     const night = createDifferential(
       handle.db,

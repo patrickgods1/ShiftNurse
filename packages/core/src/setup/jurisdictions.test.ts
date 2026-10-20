@@ -339,14 +339,15 @@ describe('what the VA and California presets say about leave', () => {
 
   // 5 U.S.C. § 6303(a): "one-half day" (under 3 years), "three-fourths day" (3 to under 15),
   // "1 day" (15 and over) each full biweekly pay period; for an 8-hour day that is 4, 6, 8.
-  // § 6303(a)(2)'s 1 1/4 days in the last full pay period of the year (10 h) is not modelled;
-  // see phase 14.
+  // § 6303(a)(2): "three-fourths day for each full biweekly pay period, except that the accrual
+  // for the last full biweekly pay period in the year is 1 1/4 days" — 10 h of an 8-hour day.
   it('earns full-time federal LPNs and aides 4, 6 and 8 hours of annual leave a pay period by service', () => {
     expect(vaRule('annual', 'full_time', 'LPN').tiers).toEqual([
       { fromYearsOfService: 0, hoursPerPayPeriod: 4 },
-      { fromYearsOfService: 3, hoursPerPayPeriod: 6 },
+      { fromYearsOfService: 3, hoursPerPayPeriod: 6, lastPayPeriodOfYearHours: 10 },
       { fromYearsOfService: 15, hoursPerPayPeriod: 8 },
     ]);
+    expect(vaRule('annual', 'full_time', 'LPN').tiers[1]!.lastPayPeriodOfYearHours).toBe(10);
     expect(vaRule('annual', 'full_time', 'LPN').roles).toContain('CNA');
   });
 

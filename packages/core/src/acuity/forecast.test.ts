@@ -82,7 +82,7 @@ describe('census proposal', () => {
     expect(p!.projectedCensus).toBe(10);
   });
 
-  it("scales by last year's seasonal index: the same weeks a year ago ran above their annual mean", () => {
+  it("scales by how the weeks around last year's anniversary ran against the same lookback a year earlier", () => {
     // Recent weeks: flat 20. Last year, going back weekly from the anniversary of the target
     // date: 24 for the anniversary and the two weeks before it, 20 for every other week.
     const recent = weeklyHistory(SUNDAY, [20, 20, 20, 20]);
@@ -107,10 +107,43 @@ describe('census proposal', () => {
         seasonal: true,
       },
     );
-    // Near window (anniversary ±2 weeks): 3 rows at 24 → 24. Annual window (anniversary
-    // ±26 weeks): those 3 plus 24 rows at 20 → 552/27 = 20.444. Index = 24/20.444 = 1.174.
-    expect(p!.basis.seasonalIndex).toBeCloseTo(1.174, 3);
-    expect(p!.projectedCensus).toBe(23); // round(20 × 1.174) = round(23.48)
+    // Lookback 4 weeks, so the base is last year's rows 1–4 weeks before the anniversary:
+    // 24, 24, 20, 20 → 88/4 = 22. Near (anniversary ±2 weeks; no rows after it): weeks 0, 1, 2,
+    // all 24 → 24. Index = 24/22 = 1.0909; 20 × 1.0909 = 21.8 → 22.
+    expect(p!.basis.seasonalIndex).toBeCloseTo(24 / 22, 3);
+    expect(p!.projectedCensus).toBe(22);
+  });
+
+  it('does not count the season twice when the recent weeks are already in it', () => {
+    // Target Sunday 2027-01-10. Last year ran 30 within ±8 weeks of the anniversary
+    // (2026-01-11) and 20 out to ±26 weeks; the last 8 Sundays ran 30.
+    const target = isoDate('2027-01-10');
+    const recent = weeklyHistory(target, [30, 30, 30, 30, 30, 30, 30, 30]);
+    const lastYear: ReturnType<typeof census>[] = [];
+    for (let w = -26; w <= 26; w++) {
+      const n = Math.abs(w) <= 8 ? 30 : 20;
+      const date = addDays(target, -364 + 7 * w);
+      lastYear.push(census(date, DAY_12, { [TIER_ROUTINE.id]: n }, { actualCensus: n }));
+    }
+    const [p] = proposeCensus([...recent, ...lastYear], [{ date: target, shiftTypeId: DAY_12.id }]);
+    // Base = last year's Sundays from target − 56 − 364 up to target − 364 (exclusive): weeks
+    // −8..−1 around the anniversary, all 30. Near (±2 weeks) is all 30. Index 30/30 = 1, and the
+    // recent average 30 × 1 = 30 — not 39, which dividing by the whole-year mean gave.
+    expect(p!.basis.seasonalIndex).toBe(1);
+    expect(p!.projectedCensus).toBe(30);
+  });
+
+  it('says how many of its samples were earlier forecasts rather than actual census', () => {
+    const withActual = weeklyHistory(SUNDAY, [30]);
+    const noActual = census(addDays(SUNDAY, -14), DAY_12, { [TIER_ROUTINE.id]: 10 });
+    const [p] = proposeCensus(
+      [...withActual, noActual],
+      [{ date: SUNDAY, shiftTypeId: DAY_12.id }],
+      { lookbackWeeks: 8, seasonal: false },
+    );
+    // Two Sundays sampled; the one two weeks back has no actual, so its projection stood in.
+    expect(p!.basis.samples).toBe(2);
+    expect(p!.basis.projectedSamples).toBe(1);
   });
 
   it('distributes the acuity mix by historical proportion so it sums to the census', () => {
@@ -209,6 +242,47 @@ describe('forecast back-test', () => {
     // Errors: 2nd Sunday sees [20] → 20 vs 20 = 0; 3rd sees [20,20] → 0; 4th sees [20,20,20] → 20 vs 26 = −6.
     expect(result.model.meanAbsoluteError).toBeCloseTo(2, 6);
     expect(result.model.bias).toBeCloseTo(-2, 6);
+  });
+
+  it("back-tests to the same numbers as proposing from each day's prior history", () => {
+    // 30 rows: day shifts on ten Sundays and on the same ten Sundays a year later (so the
+    // seasonal index has a last year to read), plus night shifts sharing the later dates. Some
+    // days have no actual, so the model also sees projections. The hand loop proposes from the
+    // strict prefix of earlier dates, which is what the back-test promises.
+    const rows: ReturnType<typeof census>[] = [];
+    for (let i = 0; i < 10; i++) {
+      const lastYear = addDays(SUNDAY, -364 + 7 * i);
+      const thisYear = addDays(SUNDAY, 7 * i);
+      rows.push(
+        census(lastYear, DAY_12, { [TIER_ROUTINE.id]: 20 }, { actualCensus: 16 + ((i * 7) % 9) }),
+      );
+      rows.push(
+        census(
+          thisYear,
+          DAY_12,
+          { [TIER_ROUTINE.id]: 21 },
+          i % 4 === 3 ? {} : { actualCensus: 18 + ((i * 5) % 8) },
+        ),
+      );
+      rows.push(
+        census(thisYear, NIGHT_12, { [TIER_ROUTINE.id]: 16 }, { actualCensus: 14 + ((i * 3) % 7) }),
+      );
+    }
+    const options = { lookbackWeeks: 4, seasonal: true };
+    const errors: { forecast: number; actual: number }[] = [];
+    for (const row of rows) {
+      if (row.actualCensus === undefined) continue;
+      const prior = rows.filter((h) => h.date < row.date);
+      const [p] = proposeCensus(prior, [{ date: row.date, shiftTypeId: row.shiftTypeId }], options);
+      if (p) errors.push({ forecast: p.projectedCensus, actual: row.actualCensus });
+    }
+    const result = backtest([...rows].reverse(), options);
+    expect(result.model.samples).toBe(errors.length);
+    const mae = errors.reduce((s, e) => s + Math.abs(e.forecast - e.actual), 0) / errors.length;
+    const bias = errors.reduce((s, e) => s + (e.forecast - e.actual), 0) / errors.length;
+    expect(result.model.meanAbsoluteError).toBeCloseTo(mae, 9);
+    expect(result.model.bias).toBeCloseTo(bias, 9);
+    expect(result.model.samples).toBeGreaterThan(20);
   });
 
   it('breaks the scores down per shift type', () => {

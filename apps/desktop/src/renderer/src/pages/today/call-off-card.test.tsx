@@ -129,6 +129,27 @@ describe('working the call list for a call-off', () => {
     expect(screen.queryByText(/0 nurse-slot/)).toBeNull();
   });
 
+  it('shows that the on-call nurse is first and who takes charge', async () => {
+    bridge.respond('dayOf', 'replacements', {
+      ...report,
+      candidates: [
+        {
+          ...candidate('n-ana', 'Ana Martinez (RN)', 1),
+          replacesOnCall: { assignmentId: 'oc-1' },
+          chargeMovedTo: { assignmentId: 'a-eli', nurseId: 'n-eli', label: 'Eli Moss (RN)' },
+        },
+      ],
+    } as unknown as ReplacementReport);
+    bridge.respond('nurses', 'list', [
+      { id: 'n-ana', firstName: 'Ana', lastName: 'Martinez' },
+      { id: 'n-eli', firstName: 'Eli', lastName: 'Moss' },
+    ] as Nurse[]);
+    renderWithApp(<CallOffCard unitId="unit-1" callOff={callOffView} />);
+    const row = within((await screen.findByText('Ana Martinez (RN)')).closest('li')!);
+    expect(row.getByText('On call')).toBeTruthy();
+    expect(row.getByText('Eli Moss takes charge')).toBeTruthy();
+  });
+
   it('lists the same rule twice when it fires on two different days', async () => {
     const soft = (date: string) => ({
       ruleId: 'min-rest',

@@ -51,7 +51,8 @@
   holds the replaced and written rows in full.
 - **Hours worked are `workedShiftsForNurseInRange`** (`repositories/worked-hours.ts`): published
   or archived periods' shifts on any unit, at each shift type's own `durationHours`, standby
-  excluded. A draft is a proposal, not work. `listAssignmentsForNurseInRange` returns drafts too,
+  excluded, and so is a shift whose call-off is open or uncovered (she did not work it). A draft
+  is a proposal, not work. `listAssignmentsForNurseInRange` returns drafts too,
   for approve-and-lift; never sum hours worked from it.
 - **The lookback tail is published and archived periods only** (`PRIOR_ASSIGNMENT_LOOKBACK_DAYS`).
   `historyFromFor` says how far that tail is complete; the contracted-hours rule judges a pay

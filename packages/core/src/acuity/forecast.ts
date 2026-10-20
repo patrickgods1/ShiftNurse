@@ -13,6 +13,12 @@
  * the history available at the time, so the two can be compared: if the model beats the
  * recorded forecasts, the manager is over-editing; if it loses, the model needs work.
  *
+ * The proposal staffs to the rounded mean, because that is the number a manager can explain.
+ * The manager confirms every figure, and day-of re-judges against the actual census (Today). A
+ * row with no actual census uses its recorded projection, so a run of confirmed proposals can
+ * feed itself; `basis.projectedSamples` says how much of the history was projections, and the
+ * dialog shows it.
+ *
  * Pure data-in, data-out; no clock reads. The caller decides what "today" is.
  */
 
@@ -36,6 +42,8 @@ export interface ForecastTarget {
 export interface ProposalBasis {
   /** Same-weekday rows that fed the average. */
   samples: number;
+  /** How many of `samples` had no actual census and used the recorded projection. */
+  projectedSamples: number;
   weekdayAverage: number;
   /** 1 when seasonality is off or last year has no data. */
   seasonalIndex: number;
@@ -55,6 +63,8 @@ interface Observation {
   weekday: number;
   shiftTypeId: Id;
   census: number;
+  /** No actual census was recorded, so `census` is the projection. */
+  projected: boolean;
   mix: Record<Id, number>;
 }
 
@@ -66,6 +76,7 @@ function observe(f: CensusForecast): Observation {
     weekday: weekdayOf(f.date),
     shiftTypeId: f.shiftTypeId,
     census: f.actualCensus ?? f.projectedCensus,
+    projected: f.actualCensus === undefined,
     mix: f.actualAcuityMix ?? f.acuityMix,
   };
 }
@@ -109,63 +120,79 @@ export function proposeCensus(
   targets: readonly ForecastTarget[],
   options: ForecastOptions = {},
 ): CensusProposal[] {
+  const observations = history.map(observe);
+  const proposals: CensusProposal[] = [];
+  for (const target of targets) {
+    const proposal = proposeFrom(observations, target, options);
+    if (proposal) proposals.push(proposal);
+  }
+  return proposals;
+}
+
+/**
+ * One target from already-observed history. Split out so the back-test can observe its history
+ * once and hand each row a prefix, instead of re-observing everything per row.
+ */
+function proposeFrom(
+  observations: readonly Observation[],
+  target: ForecastTarget,
+  options: ForecastOptions,
+): CensusProposal | undefined {
   const lookbackWeeks = options.lookbackWeeks ?? 8;
   const seasonal = options.seasonal ?? true;
   const windowDays = (options.seasonalWindowWeeks ?? 2) * 7;
 
-  const observations = history.map(observe);
-  const proposals: CensusProposal[] = [];
+  const targetDay = dayNumber(target.date);
+  const weekday = weekdayOf(target.date);
+  const earliest = targetDay - lookbackWeeks * 7;
+  const sameSlot = (o: Observation) =>
+    o.shiftTypeId === target.shiftTypeId && o.weekday === weekday;
 
-  for (const target of targets) {
-    const targetDay = dayNumber(target.date);
-    const weekday = weekdayOf(target.date);
-    const earliest = targetDay - lookbackWeeks * 7;
+  const recent = observations.filter((o) => sameSlot(o) && o.day < targetDay && o.day >= earliest);
+  if (recent.length === 0) return undefined;
 
-    const recent = observations.filter(
-      (o) =>
-        o.shiftTypeId === target.shiftTypeId &&
-        o.weekday === weekday &&
-        o.day < targetDay &&
-        o.day >= earliest,
+  const weekdayAverage = mean(recent.map((o) => o.census));
+
+  let seasonalIndex = 1;
+  let seasonalSamples = 0;
+  if (seasonal) {
+    // The recent average already carries this year's season up to the target; the index
+    // carries only the change from that stretch of last year to the anniversary. Dividing by
+    // last year's whole-year mean counted the season twice (M-16).
+    const anniversary = dayNumber(addDays(target.date, -364));
+    const near = observations.filter(
+      (o) => sameSlot(o) && Math.abs(o.day - anniversary) <= windowDays,
     );
-    if (recent.length === 0) continue;
-
-    const weekdayAverage = mean(recent.map((o) => o.census));
-
-    let seasonalIndex = 1;
-    let seasonalSamples = 0;
-    if (seasonal) {
-      const anniversary = dayNumber(addDays(target.date, -364));
-      const lastYear = observations.filter(
-        (o) =>
-          o.shiftTypeId === target.shiftTypeId &&
-          o.weekday === weekday &&
-          Math.abs(o.day - anniversary) <= 26 * 7,
-      );
-      const near = lastYear.filter((o) => Math.abs(o.day - anniversary) <= windowDays);
-      const annual = mean(lastYear.map((o) => o.census));
-      if (near.length > 0 && lastYear.length > near.length && annual > 0) {
-        seasonalIndex = mean(near.map((o) => o.census)) / annual;
-        seasonalSamples = near.length;
-      }
+    const base = observations.filter(
+      (o) => sameSlot(o) && o.day >= earliest - 364 && o.day < targetDay - 364,
+    );
+    const baseMean = base.length > 0 ? mean(base.map((o) => o.census)) : 0;
+    if (near.length > 0 && base.length > 0 && baseMean > 0) {
+      seasonalIndex = mean(near.map((o) => o.census)) / baseMean;
+      seasonalSamples = near.length;
     }
-
-    const projectedCensus = Math.round(weekdayAverage * seasonalIndex);
-
-    const weights: Record<Id, number> = {};
-    for (const o of recent) {
-      for (const [tierId, n] of Object.entries(o.mix)) weights[tierId] = (weights[tierId] ?? 0) + n;
-    }
-
-    proposals.push({
-      date: target.date,
-      shiftTypeId: target.shiftTypeId,
-      projectedCensus,
-      acuityMix: apportionMix(projectedCensus, weights),
-      basis: { samples: recent.length, weekdayAverage, seasonalIndex, seasonalSamples },
-    });
   }
-  return proposals;
+
+  const projectedCensus = Math.round(weekdayAverage * seasonalIndex);
+
+  const weights: Record<Id, number> = {};
+  for (const o of recent) {
+    for (const [tierId, n] of Object.entries(o.mix)) weights[tierId] = (weights[tierId] ?? 0) + n;
+  }
+
+  return {
+    date: target.date,
+    shiftTypeId: target.shiftTypeId,
+    projectedCensus,
+    acuityMix: apportionMix(projectedCensus, weights),
+    basis: {
+      samples: recent.length,
+      projectedSamples: recent.filter((o) => o.projected).length,
+      weekdayAverage,
+      seasonalIndex,
+      seasonalSamples,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -280,10 +307,17 @@ export function backtest(
   options: ForecastOptions = {},
 ): BacktestResult {
   const sorted = [...forecasts].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  // Observed once; each row is proposed from the prefix of strictly earlier dates. `firstOfDate`
+  // only moves forward, so rows sharing a date share a prefix and the whole pass stays linear
+  // in the observing (N-13).
+  const observations = sorted.map(observe);
   const recorded: { shiftTypeId: Id; forecast: number; actual: number }[] = [];
   const model: { shiftTypeId: Id; forecast: number; actual: number }[] = [];
 
-  for (const row of sorted) {
+  let firstOfDate = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    const row = sorted[i]!;
+    if (row.date !== sorted[firstOfDate]!.date) firstOfDate = i;
     if (row.actualCensus === undefined) continue;
     recorded.push({
       shiftTypeId: row.shiftTypeId,
@@ -291,10 +325,9 @@ export function backtest(
       actual: row.actualCensus,
     });
 
-    const prior = sorted.filter((h) => h.date < row.date);
-    const [proposal] = proposeCensus(
-      prior,
-      [{ date: row.date, shiftTypeId: row.shiftTypeId }],
+    const proposal = proposeFrom(
+      observations.slice(0, firstOfDate),
+      { date: row.date, shiftTypeId: row.shiftTypeId },
       options,
     );
     if (proposal) {

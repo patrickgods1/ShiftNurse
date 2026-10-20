@@ -24,12 +24,23 @@
  * Art. 10 § 4.D.6); without a written order the surplus volunteer is picked from memory.
  * `holidayWorkPriority` gives that order. A Baylor-plan nurse has no holiday entitlement, so
  * their volunteering earns no claim. The solver reads the same preference as a reward scaled by
- * seniority, so its pick agrees with this advice when it can.
+ * seniority, so its pick agrees with this advice when it can. Volunteers are ranked and measured
+ * per role — an LVN volunteering does not take an RN's place, and three RNs cannot "fill" a shift
+ * that needs an LVN.
  */
 
+import { NURSE_ROLES } from '../acuity/demand.js';
 import { isBaylorPlan } from '../cost/cost.js';
-import type { Holiday, Id, Nurse, Preference, TimeOffRequest } from '../domain/entities.js';
+import type {
+  Holiday,
+  Id,
+  Nurse,
+  NurseRole,
+  Preference,
+  TimeOffRequest,
+} from '../domain/entities.js';
 import { compareDates, dateInRange, type IsoDate } from '../domain/time.js';
+import { compareSeniority } from '../roster/seniority.js';
 import { previousOccurrence } from '../rules/holiday-rotation.js';
 import type { HolidayWorkRecord } from '../rules/types.js';
 
@@ -96,7 +107,7 @@ export function holidayRequestPriority(input: HolidayPriorityInput): HolidayClai
       if (byPlan !== 0) return byPlan;
       const byWorked = Number(b.worked === true) - Number(a.worked === true);
       if (byWorked !== 0) return byWorked;
-      return bySeniority(a.nurse, b.nurse);
+      return compareSeniority(a.nurse, b.nurse);
     });
 
     const alreadyOff = [
@@ -138,21 +149,25 @@ export interface HolidayWorkInput {
   nurses: readonly Nurse[];
   /** Every kind may be passed; only `holiday_appetite` is read. */
   preferences: readonly Preference[];
-  /** RNs the holiday's date needs, by holiday id; absent means no volunteer is marked surplus. */
-  needed?: ReadonlyMap<Id, number>;
+  /**
+   * Nurses each role needs on the holiday's date, by holiday id; a role absent from the record
+   * means no volunteer of that role is marked surplus.
+   */
+  needed?: ReadonlyMap<Id, Partial<Record<NurseRole, number>>>;
 }
 
 export interface HolidayWorkClaim {
   holidayId: Id;
   nurseId: Id;
-  /** 1 = first in line to work it. */
+  role: NurseRole;
+  /** 1 = first in line to work it, among volunteers of the same role. */
   rank: number;
   reason: string;
   /** Ranked past the number the date needs: the volunteer seniority leaves out. */
   beyondNeed: boolean;
 }
 
-/** Volunteers per holiday in seniority order, holidays by date. */
+/** Volunteers per holiday and role in seniority order, holidays by date, roles RN, LPN, CNA. */
 export function holidayWorkPriority(input: HolidayWorkInput): HolidayWorkClaim[] {
   const nursesById = new Map(input.nurses.map((n) => [n.id, n]));
   const volunteers = new Map<Id, Nurse[]>();
@@ -173,22 +188,23 @@ export function holidayWorkPriority(input: HolidayWorkInput): HolidayWorkClaim[]
     const list = volunteers.get(holiday.id);
     if (!list) continue;
     const needed = input.needed?.get(holiday.id);
-    [...list].sort(bySeniority).forEach((nurse, i) => {
-      claims.push({
-        holidayId: holiday.id,
-        nurseId: nurse.id,
-        rank: i + 1,
-        reason: i === 0 ? 'most senior volunteer' : `volunteer, ${i} more senior`,
-        beyondNeed: needed !== undefined && i >= needed,
-      });
-    });
+    for (const role of NURSE_ROLES) {
+      const limit = needed?.[role];
+      [...list]
+        .filter((n) => n.role === role)
+        .sort(compareSeniority)
+        .forEach((nurse, i) => {
+          claims.push({
+            holidayId: holiday.id,
+            nurseId: nurse.id,
+            role,
+            rank: i + 1,
+            reason:
+              i === 0 ? `most senior ${role} volunteer` : `${role} volunteer, ${i} more senior`,
+            beyondNeed: limit !== undefined && i >= limit,
+          });
+        });
+    }
   }
   return claims;
-}
-
-/** Most senior first; the employee id breaks a shared start date so the order is stable. */
-function bySeniority(a: Nurse, b: Nurse): number {
-  const byDate = compareDates(a.seniorityDate, b.seniorityDate);
-  if (byDate !== 0) return byDate;
-  return a.employeeId < b.employeeId ? -1 : a.employeeId > b.employeeId ? 1 : 0;
 }

@@ -41,6 +41,7 @@ describe('the exchange evaluation', () => {
       verdict: 'warn',
       blockers: [],
       warnings: ['Rest under 10 hours', 'Rest under 10 hours'],
+      notes: [],
       requesting: side,
       counterparty: { ...side, nurseId: 'n-2' },
       fairness: { unitScoreBefore: 80, unitScoreAfter: 80 },
@@ -51,5 +52,24 @@ describe('the exchange evaluation', () => {
     const duplicateKey = spy.mock.calls.some((c) => c.map(String).join(' ').includes('same key'));
     spy.mockRestore();
     expect(duplicateKey).toBe(false);
+  });
+
+  it('lists who takes charge under the verdict', () => {
+    const evaluation = {
+      verdict: 'ok',
+      blockers: [],
+      warnings: [],
+      notes: ['Eli Moss takes charge of Tue Jan 6 D12, since Wes Tran cannot take charge.'],
+      requesting: side,
+      counterparty: { ...side, nurseId: 'n-2' },
+      fairness: { unitScoreBefore: 80, unitScoreAfter: 80 },
+      cost: { dollarsBefore: 0, dollarsAfter: 0, delta: 0 },
+    } as unknown as ExchangeEvaluation;
+    render(<EvaluationPanel evaluation={evaluation} nursesById={new Map()} />);
+    expect(screen.getByText('Also changes')).toBeTruthy();
+    const note = screen.getByText(
+      'Eli Moss takes charge of Tue Jan 6 D12, since Wes Tran cannot take charge.',
+    );
+    expect(note.closest('ul')?.className).not.toMatch(/text-warn|text-danger/);
   });
 });

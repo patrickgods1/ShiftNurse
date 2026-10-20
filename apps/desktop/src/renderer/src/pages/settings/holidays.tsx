@@ -29,6 +29,7 @@ import { useConfirm } from '../../components/confirm.js';
 import { DateField } from '../../components/date-field.js';
 import { CheckField, Field, InfoTip } from '../../components/field-help.js';
 import { errorMessage, INPUT, PRIMARY, SMALL, SMALL_DANGER } from '../../components/ui.js';
+import { useUnsavedChanges } from '../../components/unsaved-changes.js';
 import { formatDateWithWeekday } from '../../format.js';
 import { useUnitId } from '../../unit-context.js';
 import {
@@ -184,6 +185,7 @@ function AddHolidayForm({
           pairedHolidayId: null,
         };
   const candidates = draft && !isMajor && pairing ? pairCandidates(draft, holidays) : [];
+  useUnsavedChanges('New holiday', date !== '' || name !== '');
 
   return (
     <form
@@ -348,6 +350,7 @@ function HolidayRow({
   const past = holiday.date <= today();
   const status = lastYearStatus(holiday, all);
   const [renaming, setRenaming] = useState<string | undefined>(undefined);
+  useUnsavedChanges('Holiday name', renaming !== undefined && renaming.trim() !== holiday.name);
 
   const move = async () => {
     const toMajor = !holiday.isMajor;

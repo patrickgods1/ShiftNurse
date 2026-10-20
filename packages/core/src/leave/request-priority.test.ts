@@ -131,6 +131,34 @@ describe('who should get a contested day off first', () => {
     expect(flipped.map((c) => c.nurseId)).toEqual(['twin', 'ana']);
   });
 
+  it('ranks employee E9 ahead of E10 when everything else is equal, asked at the same moment', () => {
+    // Same start date, no record, same submission time: 9 < 10, so E9 is first. A string
+    // compare would put "E10" first.
+    const e9 = makeNurse({ id: 'e9', employeeId: 'E9', seniorityDate: isoDate('2015-01-01') });
+    const e10 = makeNurse({ id: 'e10', employeeId: 'E10', seniorityDate: isoDate('2015-01-01') });
+    const out = competingRequestPriority({
+      ...base,
+      requests: [ask('e10', 1000), ask('e9', 1000)],
+      nurses: [e10, e9],
+      ledger: [],
+    });
+    expect(out.map((c) => c.nurseId)).toEqual(['e9', 'e10']);
+  });
+
+  it('ranks a nurse never denied level with one always approved, so seniority decides', () => {
+    // Dee: 4 of 4 approved = 1. Cho: nothing decided, so never denied either = 1. No holiday,
+    // so seniority decides: Cho's 2010 is senior to Dee's 2020.
+    const dee = makeNurse({ id: 'dee', employeeId: 'E4', seniorityDate: isoDate('2020-01-01') });
+    const out = competingRequestPriority({
+      ...base,
+      requests: [ask('dee'), ask('cho')],
+      nurses: [dee, cho],
+      ledger: [row('dee', 4, 0)],
+    });
+    expect(out.map((c) => c.nurseId)).toEqual(['cho', 'dee']);
+    expect(out.map((c) => c.approvalRate)).toEqual([null, 1]);
+  });
+
   it('refuses a request from a nurse the unit does not have', () => {
     expect(() =>
       competingRequestPriority({ ...base, requests: [ask('ghost')], nurses: [ana], ledger: [] }),

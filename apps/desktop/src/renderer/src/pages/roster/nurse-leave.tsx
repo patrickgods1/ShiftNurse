@@ -29,6 +29,7 @@ import { AsyncState } from '../../components/async-state.js';
 import { useConfirm } from '../../components/confirm.js';
 import { DateField } from '../../components/date-field.js';
 import { errorMessage, INPUT, PRIMARY, SECONDARY, SMALL } from '../../components/ui.js';
+import { useUnsavedChanges } from '../../components/unsaved-changes.js';
 import { formatDate } from '../../format.js';
 
 export function LeaveSection({ nurseId }: { nurseId: Id }) {
@@ -103,6 +104,8 @@ function BalanceRow({
   const amount = Number(hours);
   const valid = hours.trim() !== '' && Number.isFinite(amount) && amount >= 0 && asOf !== '';
   const dirty = saved === undefined || amount !== saved.balanceHours || asOf !== saved.asOf;
+  // A row with nothing saved and nothing typed is an offer, not an edit.
+  useUnsavedChanges(`${label} balance`, saved === undefined ? hours !== '' || asOf !== '' : dirty);
 
   return (
     <div className="flex flex-col gap-1 rounded-md border border-border p-2">
@@ -230,6 +233,13 @@ function CertificationForm({
   const [intermittent, setIntermittent] = useState(record?.intermittent ?? false);
   const [note, setNote] = useState(record?.note ?? '');
   const noteId = useId();
+  useUnsavedChanges(
+    'FMLA certification',
+    startDate !== (record?.startDate ?? '') ||
+      endDate !== (record?.endDate ?? '') ||
+      intermittent !== (record?.intermittent ?? false) ||
+      note !== (record?.note ?? ''),
+  );
 
   const problem =
     !startDate || !endDate

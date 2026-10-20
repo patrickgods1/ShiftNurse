@@ -4,7 +4,7 @@
  * denial's sentence, ready to put on screen.
  */
 
-import { isoDate, seniorityOrder } from '@shiftnurse/core';
+import { addDays, isoDate, seniorityOrder, today } from '@shiftnurse/core';
 import { auditHistoryFor, listTimeOffForUnit } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { leaveBiddingApi } from './leave-bidding.js';
@@ -27,8 +27,9 @@ const round = () => ({
   name: 'Summer 2027',
   coversStart: isoDate('2027-07-01'),
   coversEnd: isoDate('2027-08-31'),
-  opensOn: isoDate('2027-03-01'),
-  closesOn: isoDate('2027-03-31'),
+  // The handlers stamp bids and closes with today(), so the window is built around it.
+  opensOn: addDays(today(), -10),
+  closesOn: addDays(today(), 20),
   offPerDay: { RN: 1 },
 });
 
@@ -49,6 +50,7 @@ describe('running a bidding round from the Requests page', () => {
         .sort(),
     ).toEqual([junior!.id, senior!.id].sort());
 
+    api().closeRound(created.id, 'Results due early');
     const result = api().award(created.id);
 
     expect(result.round.status).toBe('awarded');
@@ -85,13 +87,16 @@ describe('running a bidding round from the Requests page', () => {
       ]),
     ).toThrow(/outside Summer 2027/);
     api().submitBid(created.id, f.rns[0]!.id, [week]);
+    expect(() => api().award(created.id)).toThrow(/Close bidding for Summer 2027 before awarding/);
+    api().closeRound(created.id, 'Results due early');
     api().award(created.id);
     expect(() => api().award(created.id)).toThrow(/already been awarded/);
   });
 
   it('closes a round so it takes no more bids', () => {
     const created = api().createRound(round());
-    expect(api().closeRound(created.id).status).toBe('closed');
+    expect(() => api().closeRound(created.id)).toThrow(/give a reason/);
+    expect(api().closeRound(created.id, 'Results due early').status).toBe('closed');
     expect(() => api().submitBid(created.id, f.rns[0]!.id, [week])).toThrow(/no longer takes bids/);
   });
 });

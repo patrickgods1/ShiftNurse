@@ -16,6 +16,7 @@ import { AsyncState } from '../../../components/async-state.js';
 import { useConfirm } from '../../../components/confirm.js';
 import { describedBy, Field } from '../../../components/field-help.js';
 import { INPUT, LABEL, PRIMARY, SMALL_DANGER, TD, TH } from '../../../components/ui.js';
+import { useUnsavedChanges } from '../../../components/unsaved-changes.js';
 
 const BASIS_SPAN: Record<OvertimeRule['basis'], string> = {
   daily: 'a workday',
@@ -75,6 +76,16 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
   const [kinds, setKinds] = useState<ReadonlySet<ScheduleKind>>(new Set());
   const [tourDays, setTourDays] = useState<'' | 'only' | 'except'>('');
   const [error, setError] = useState<string | undefined>(undefined);
+  useUnsavedChanges(
+    'New overtime rule',
+    basis !== 'weekly' ||
+      threshold !== '40' ||
+      multiplier !== '1.5' ||
+      minimumMinutes !== '' ||
+      noPyramiding ||
+      kinds.size > 0 ||
+      tourDays !== '',
+  );
 
   if (query.isPending) return <AsyncState status="loading" label="Loading overtime rules" />;
   if (query.isError) {
@@ -130,7 +141,20 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
               // The repository refuses tour days on a non-daily rule, so a stale pick is dropped.
               ...(basis === 'daily' && tourDays !== '' ? { tourDays } : {}),
             },
-            { onError: (e) => setError(e.message) },
+            {
+              // Back to the initial values, or the unsaved-changes guard would call the rule
+              // just added an unsaved edit.
+              onSuccess: () => {
+                setBasis('weekly');
+                setThreshold('40');
+                setMultiplier('1.5');
+                setMinimumMinutes('');
+                setNoPyramiding(false);
+                setKinds(new Set());
+                setTourDays('');
+              },
+              onError: (e) => setError(e.message),
+            },
           );
         }}
       >

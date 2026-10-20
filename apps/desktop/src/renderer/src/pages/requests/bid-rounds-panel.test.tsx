@@ -7,7 +7,7 @@
 
 import type { LeaveBidRound, Nurse } from '@shiftnurse/core';
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   LeaveBidAwardResult,
   LeaveBidRecord,
@@ -62,6 +62,7 @@ const result: LeaveBidAwardResult = {
       startDate: date('2027-07-05'),
       endDate: date('2027-07-09'),
       pass: 1,
+      alreadyOnLeave: [],
       requestId: 'to-1',
       liftedShifts: 2,
       stillRostered: 0,
@@ -83,8 +84,13 @@ const result: LeaveBidAwardResult = {
   ],
 };
 
+const closedRound: LeaveBidRoundRecord = { ...openRound, status: 'closed' };
+
 let bridge: FakeBridge;
 beforeEach(() => {
+  // Inside the bidding window (2027-03-01 to 2027-03-31); only the date is faked so queries run.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2027, 2, 10, 12));
   bridge = installFakeBridge();
   bridge.respond('leaveBidding', 'rounds', [openRound]);
   bridge.respond('leaveBidding', 'bids', [anaBid]);
@@ -94,6 +100,7 @@ beforeEach(() => {
   bridge.respond('leaveBidding', 'award', result);
 });
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   bridge.uninstall();
 });
@@ -188,7 +195,38 @@ describe('bidding for summer leave on the Requests page', () => {
     );
   });
 
+  it('offers no award while bidding is open', async () => {
+    renderPanel();
+    await screen.findByText('Ana Martinez');
+    expect(screen.queryByTestId('award-round')).toBeNull();
+  });
+
+  it('asks why when bidding is closed before its last day', async () => {
+    renderPanel();
+    await screen.findByText('Ana Martinez');
+    fireEvent.click(screen.getByRole('button', { name: 'Close bidding' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(bridge.callsTo('leaveBidding', 'closeRound')).toEqual([]);
+    const confirm = dialog.getByRole('button', { name: 'Close bidding' }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.change(dialog.getByLabelText('Reason'), { target: { value: 'Results due early' } });
+    expect(confirm.disabled).toBe(false);
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(bridge.callsTo('leaveBidding', 'closeRound')).toEqual([['r-1', 'Results due early']]),
+    );
+  });
+
+  it('shows no bid entry once the bidding window has passed', async () => {
+    vi.setSystemTime(new Date(2027, 3, 5, 12));
+    renderPanel();
+    await screen.findByText('Ana Martinez');
+    expect(screen.queryByTestId('enter-bid')).toBeNull();
+    expect(screen.getByText(/Bidding closed/)).toBeTruthy();
+  });
+
   it('awards only after the manager confirms, then shows each denial’s reason verbatim', async () => {
+    bridge.respond('leaveBidding', 'rounds', [closedRound]);
     renderPanel();
     await screen.findByText('Ana Martinez');
     fireEvent.click(screen.getByTestId('award-round'));

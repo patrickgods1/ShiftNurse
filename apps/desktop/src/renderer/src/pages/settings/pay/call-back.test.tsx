@@ -71,7 +71,7 @@ describe('the call-back minimum in Settings › Pay', () => {
       target: { value: '30' },
     });
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText('Enter a number of hours from 0 to 24.')).toBeTruthy();
+    expect(screen.getByText('Must be at most 24.')).toBeTruthy();
   });
 
   it('saves a four-hour reporting-pay notice with the rest of the settings', async () => {
@@ -108,6 +108,74 @@ describe('the call-back minimum in Settings › Pay', () => {
       target: { value: '30' },
     });
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText('Enter a number of hours from 0 to 24.')).toBeTruthy();
+    expect(screen.getByText('Must be at most 24.')).toBeTruthy();
+  });
+
+  it('treats 2.0 as the saved 2, with nothing to discard', async () => {
+    renderWithApp(<CallBackSection unitId="u-1" />);
+    fireEvent.change(await screen.findByLabelText('Call-back minimum hours'), {
+      target: { value: '2.0' },
+    });
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Discard' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it('puts back the saved minimum on Discard', async () => {
+    renderWithApp(<CallBackSection unitId="u-1" />);
+    const minimum = (await screen.findByLabelText('Call-back minimum hours')) as HTMLInputElement;
+    fireEvent.change(minimum, { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(minimum.value).toBe('2');
+    expect(bridge.callsTo('cost', 'savePaySettings')).toEqual([]);
+  });
+
+  it('lets the manager discard a cleared minimum but not save it', async () => {
+    renderWithApp(<CallBackSection unitId="u-1" />);
+    fireEvent.change(await screen.findByLabelText('Call-back minimum hours'), {
+      target: { value: '' },
+    });
+    expect((screen.getByRole('button', { name: 'Discard' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('saves a changed notice alone, with the minimum as it was', async () => {
+    renderWithApp(<CallBackSection unitId="u-1" />);
+    fireEvent.change(await screen.findByLabelText('Reporting-pay notice (hours)'), {
+      target: { value: '6' },
+    });
+    expect((screen.getByRole('button', { name: 'Discard' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('cost', 'savePaySettings')).toEqual([
+        [
+          'u-1',
+          {
+            callBackMinimumHours: 2,
+            premiumStacking: 'additive',
+            holidayPayCoversOvertime: true,
+            reportingPayNoticeHours: 6,
+          },
+        ],
+      ]),
+    );
+  });
+
+  it('says why a save was refused', async () => {
+    bridge.fail('cost', 'savePaySettings', new Error('Pay settings are locked'));
+    renderWithApp(<CallBackSection unitId="u-1" />);
+    fireEvent.change(await screen.findByLabelText('Call-back minimum hours'), {
+      target: { value: '4' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Pay settings are locked');
   });
 });

@@ -71,6 +71,21 @@ const differentialInput = object({
   consecutive: differentialConsecutive.optional(),
 });
 
+/**
+ * A multiplier below 1 prices a negative line (`base * (amount - 1)`), so a cleared 1.5x premium
+ * would take a shift's base pay away. On-call standby is paid instead of base at `base * amount`,
+ * so its 0.15 is real. Judged only when the payload says kind, mode and amount; an update that
+ * leaves one out is judged by the repository against the stored row.
+ */
+function multiplierAtLeastOne(
+  value: { kind?: string | undefined; mode?: string | undefined; amount?: number | undefined },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.kind === undefined || value.kind === 'on_call') return;
+  if (value.mode !== 'multiplier' || value.amount === undefined || value.amount >= 1) return;
+  ctx.addIssue({ code: 'custom', path: ['amount'], message: 'must be 1 or more for a multiplier' });
+}
+
 const overtimeRuleInput = object({
   unitId: id,
   basis: overtimeBasis,
@@ -97,7 +112,8 @@ export const costSchemas = {
   ]),
   deletePayRate: z.tuple([id]),
   differentials: z.tuple([id]),
-  createDifferential: z.tuple([differentialInput]),
+  // `differentialInput` stays a plain object because the update below picks from it.
+  createDifferential: z.tuple([differentialInput.superRefine(multiplierAtLeastOne)]),
   updateDifferential: z.tuple([
     id,
     differentialInput
@@ -107,7 +123,8 @@ export const costSchemas = {
       .extend({
         window: differentialWindow.nullable().optional(),
         consecutive: differentialConsecutive.nullable().optional(),
-      }),
+      })
+      .superRefine(multiplierAtLeastOne),
   ]),
   deleteDifferential: z.tuple([id]),
   overtimeRules: z.tuple([id]),

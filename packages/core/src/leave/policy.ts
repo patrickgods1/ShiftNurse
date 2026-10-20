@@ -43,10 +43,10 @@ function validateRule(rule: AccrualRule): void {
     throw new Error(`${label} has a front-loaded amount that is not a number greater than zero`);
   }
   // A front-loaded balance is set at each leave-year start and earns nothing per pay period, so
-  // an hours-worked rate beside it would read as accrual the projection never applies.
-  if (frontLoaded && rule.tiers.some((t) => t.hoursPerAccruedHour !== undefined)) {
+  // any rate beside it would read as accrual the projection never applies.
+  if (frontLoaded && rule.tiers.length > 0) {
     throw new Error(
-      `${label} is front-loaded and also earns by the hour worked; choose one, not both`,
+      `${label} is front-loaded and also has earning rates; a front-loaded balance earns nothing per pay period, so remove the rates`,
     );
   }
   if (rule.useCapHoursPerYear !== undefined && !positive(rule.useCapHoursPerYear)) {
@@ -79,6 +79,25 @@ function validateRule(rule: AccrualRule): void {
     }
     if (!positive(tier.hoursPerPayPeriod ?? tier.hoursPerAccruedHour)) {
       throw new Error(`${label} has an earning rate that is not a number greater than zero`);
+    }
+    // The rate divides hours worked, so below 1 it earns more leave than the hours worked; 0.1
+    // meant as "one per ten" would bank ten hours for every hour on the floor.
+    if (tier.hoursPerAccruedHour !== undefined && tier.hoursPerAccruedHour < 1) {
+      throw new Error(
+        `${label} earns more than an hour of leave for each hour worked; the hours worked per hour earned must be 1 or more (federal part-time leave: 20, 13 or 10)`,
+      );
+    }
+    if (tier.lastPayPeriodOfYearHours !== undefined) {
+      if (!byPeriod) {
+        throw new Error(
+          `${label} has a last-pay-period amount on a tier that does not earn by pay period`,
+        );
+      }
+      if (!positive(tier.lastPayPeriodOfYearHours)) {
+        throw new Error(
+          `${label} has a last-pay-period amount that is not a number greater than zero`,
+        );
+      }
     }
   }
   if (rule.balanceCapHours !== undefined && !positive(rule.balanceCapHours)) {

@@ -1,7 +1,7 @@
 /** Argument schemas for `leaveBidding`. */
 
 import { z } from 'zod';
-import { count, id, isoDate, name, object, type ResourceSchemas } from './primitives.js';
+import { count, id, isoDate, name, object, type ResourceSchemas, text } from './primitives.js';
 
 /** Places off a day per role. Whole numbers: a place is a person. */
 const offPerDay = object({
@@ -40,11 +40,13 @@ const choice = object({
   endDate: isoDate,
 });
 
+const reason = text.optional();
+
 export const leaveBiddingSchemas = {
   rounds: z.tuple([id]),
   createRound: z.tuple([roundInput]),
-  updateRound: z.tuple([id, roundPatch]),
-  closeRound: z.tuple([id]),
+  updateRound: z.tuple([id, roundPatch, reason]),
+  closeRound: z.tuple([id, reason]),
   bids: z.tuple([id]),
   submitBid: z.tuple([id, id, z.array(choice)]),
   award: z.tuple([id]),

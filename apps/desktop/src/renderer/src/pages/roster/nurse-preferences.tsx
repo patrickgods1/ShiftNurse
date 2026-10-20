@@ -11,6 +11,7 @@ import { useNursePreferences, useReplacePreferences, useShiftTypes } from '../..
 import { useHolidays } from '../../api-config.js';
 import { AsyncState } from '../../components/async-state.js';
 import { errorMessage, PRIMARY } from '../../components/ui.js';
+import { useUnsavedChanges } from '../../components/unsaved-changes.js';
 import { formatDate } from '../../format.js';
 import { strengthLabel } from '../../preferences.js';
 
@@ -77,6 +78,13 @@ export function PreferencesSection({ nurseId, unitId }: { nurseId: Id; unitId: I
     if (preferencesQuery.data) setRows(toRows(preferencesQuery.data));
   }, [preferencesQuery.data]);
 
+  // Nothing is "unsaved" until the saved list has loaded to compare against.
+  const dirty =
+    preferencesQuery.data !== undefined &&
+    JSON.stringify(rows.map((r) => r.value)) !==
+      JSON.stringify(toRows(preferencesQuery.data).map((r) => r.value));
+  useUnsavedChanges('Preferences', dirty);
+
   function addRow() {
     setRows((prev) => [
       ...prev,
@@ -134,7 +142,11 @@ export function PreferencesSection({ nurseId, unitId }: { nurseId: Id; unitId: I
             >
               {replace.isPending ? 'Saving…' : 'Save preferences'}
             </button>
-            {replace.isSuccess ? <span className="text-xs text-success">Saved</span> : null}
+            {replace.isSuccess && !dirty ? (
+              <span role="status" className="text-xs text-success">
+                Saved
+              </span>
+            ) : null}
             {replace.isError ? (
               <span className="text-xs text-danger">
                 Could not save: {errorMessage(replace.error)}

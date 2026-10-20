@@ -32,6 +32,7 @@ import {
   getAssignment,
   getPeriod,
   holdoverRefusal,
+  updateAssignment,
 } from './schedule.js';
 
 export function listSwapsForPeriod(
@@ -213,6 +214,15 @@ export function approveSwap(
     }
     removing.push(existing);
   }
+  // A charge move is checked here, beside the removals, so a stale approval writes nothing.
+  const chargeMoves: Id[] = application.chargeTo ?? [];
+  for (const assignmentId of chargeMoves) {
+    if (!getAssignment(db, assignmentId)) {
+      throw new Error(
+        `Assignment ${assignmentId} no longer exists; the exchange is stale — re-evaluate it`,
+      );
+    }
+  }
   const held = removing.find((r) => (r.holdoverMinutes ?? 0) > 0);
   if (held) throw new Error(`One of these shifts: ${holdoverRefusal(held)}`);
   // The evaluator refuses these too, but this is the function that deletes: a floated shift is
@@ -314,5 +324,36 @@ export function approveSwap(
     },
     { requireReason: opts.overrode },
   );
+  // The recipient cannot take charge, so a nurse already on the shift does. An update, never a
+  // delete and recreate: her row may carry a holdover. Without it the shift reads as having no
+  // charge nurse the moment the approval lands.
+  for (const assignmentId of chargeMoves) {
+    const beforeMove = getAssignment(db, assignmentId)!;
+    const moved = updateAssignment(
+      db,
+      assignmentId,
+      { isCharge: true },
+      actor,
+      reason ?? `Shift exchange ${id}`,
+    );
+    if (changeReason !== undefined) {
+      recordScheduleChange(
+        db,
+        {
+          periodId: moved.periodId,
+          kind: 'changed',
+          source: 'exchange',
+          assignmentId: moved.id,
+          nurseId: moved.nurseId,
+          date: moved.date,
+          shiftTypeId: moved.shiftTypeId,
+          before: beforeMove,
+          after: moved,
+          reason: changeReason,
+        },
+        actor,
+      );
+    }
+  }
   return after;
 }

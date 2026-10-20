@@ -69,9 +69,10 @@ describe('pay rates', () => {
 
 describe('differentials and overtime rules', () => {
   it('adds a weekend premium, changes it and removes it', () => {
+    // The seeded unit already has an active agency premium, and a second of a kind is refused.
     const d = api().createDifferential({
       unitId: f.seeded.unitId,
-      kind: 'agency',
+      kind: 'call_back',
       mode: 'flat',
       amount: 12,
       active: true,

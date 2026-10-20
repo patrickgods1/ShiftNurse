@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FloatRecord, Preceptorship } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
+import type { Violation } from '../rules/types.js';
 import { makeNurse } from '../testing/fixtures.js';
 import { type FloatOrderInput, floatOrder } from './float-order.js';
 
@@ -21,7 +22,11 @@ const bo = makeNurse({ id: 'bo', employeeId: 'E2', seniorityDate: isoDate('2012-
 const cy = makeNurse({ id: 'cy', employeeId: 'E3', seniorityDate: isoDate('2019-09-01') });
 const di = makeNurse({ id: 'di', employeeId: 'E4', seniorityDate: isoDate('2021-01-10') });
 
-const on = (nurse: typeof ana, isCharge = false) => ({ nurse, isCharge });
+const on = (nurse: typeof ana, isCharge = false) => ({
+  nurse,
+  assignmentId: `a-${nurse.id}`,
+  isCharge,
+});
 
 function floated(nurseId: string, date: string, volunteered = false): FloatRecord {
   return {
@@ -135,9 +140,17 @@ describe('floatOrder', () => {
     expect(r.order[0]!.reason).toBe('Rotation: not floated in the last year; most junior');
   });
 
-  it('breaks a tie of seniority by employee id', () => {
+  it('floats the higher employee number first when seniority dates tie', () => {
+    // Junior first: same date, and 4 > 0, so Di (E4) is the junior one.
     const twin = makeNurse({ id: 'twin', employeeId: 'E0', seniorityDate: di.seniorityDate });
-    expect(ids(floatOrder(input({ onShift: [on(di), on(twin)] })))).toEqual(['twin', 'di']);
+    expect(ids(floatOrder(input({ onShift: [on(di), on(twin)] })))).toEqual(['di', 'twin']);
+  });
+
+  it('floats employee E10 before E9 when they started the same day', () => {
+    // Junior first: same date, and 10 > 9 as numbers, so E10 is the junior one.
+    const e9 = makeNurse({ id: 'e9', employeeId: 'E9', seniorityDate: isoDate('2015-01-01') });
+    const e10 = makeNurse({ id: 'e10', employeeId: 'E10', seniorityDate: isoDate('2015-01-01') });
+    expect(ids(floatOrder(input({ onShift: [on(e9), on(e10)] })))).toEqual(['e10', 'e9']);
   });
 
   it('does not count a volunteered float against the rotation', () => {
@@ -158,5 +171,41 @@ describe('floatOrder', () => {
       { nurseId: 'ana', reason: 'Charge nurse for the shift' },
       { nurseId: 'fx', reason: 'Not float-eligible' },
     ]);
+  });
+
+  it('never floats an orientee’s preceptor, and says why', () => {
+    const preceptorship: Preceptorship = {
+      id: 'pc-2',
+      unitId: 'unit-1',
+      orienteeId: 'di',
+      preceptorId: 'bo',
+      startDate: isoDate('2026-09-01'),
+      endDate: isoDate('2026-12-01'),
+    };
+    const breach: Violation = {
+      ruleId: 'orientee-with-preceptor',
+      ruleName: 'Orientees work with their preceptor',
+      severity: 'hard',
+      code: 'orientee_without_preceptor',
+      message: 'Di Test is in orientation with Bo Test, who is not on the Day 12 on Tue Oct 6.',
+      nurseIds: ['di'],
+      dates: [DATE],
+      assignmentIds: ['a-di'],
+      amount: 1,
+    };
+    const r = floatOrder(
+      input({
+        preceptorships: [preceptorship],
+        volunteers: [bo.id],
+        removalBreaks: new Map([['a-bo', breach]]),
+      }),
+    );
+    expect(ids(r)).toEqual(['cy']);
+    expect(r.excluded).toContainEqual({
+      nurseId: 'bo',
+      reason:
+        'Needed on this shift — floating them would break Orientees work with their preceptor: ' +
+        'Di Test is in orientation with Bo Test, who is not on the Day 12 on Tue Oct 6',
+    });
   });
 });

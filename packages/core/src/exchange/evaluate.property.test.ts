@@ -1,6 +1,6 @@
 /**
- * Invariant: an exchange the preview calls `ok` introduces no hard violation anywhere on the
- * full schedule, and one it calls `blocked` really does introduce one.
+ * Invariant: an exchange the preview calls `ok` introduces or worsens no hard violation anywhere
+ * on the full schedule, and one it calls `blocked` really does introduce or worsen one.
  *
  * Why it matters: the exchange evaluator judges only the two nurses and the shifts it touches,
  * for speed. If that shortcut ever missed a breach, a manager would approve a "clean" trade and
@@ -12,7 +12,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { Assignment, Nurse } from '../domain/entities.js';
 import { addDays, isoDate } from '../domain/time.js';
 import { evaluateSchedule } from '../rules/registry.js';
-import { violationKey } from '../rules/violation-diff.js';
+import type { Violation } from '../rules/types.js';
+import { diffViolations, violationKey } from '../rules/violation-diff.js';
 import { Rng } from '../solver/rng.js';
 import {
   assign,
@@ -101,10 +102,10 @@ function randomProposal(rng: Rng, opts: ScenarioOptions): ExchangeProposal | und
   };
 }
 
-function hardKeys(opts: ScenarioOptions, assignments: Assignment[]): Set<string> {
+function hardViolations(opts: ScenarioOptions, assignments: Assignment[]): Violation[] {
   const s = scenario({ ...opts, assignments });
   const { violations } = evaluateSchedule(s.schedule, s.ruleSet, s.ctx);
-  return new Set(violations.filter((v) => v.severity === 'hard').map(violationKey));
+  return violations.filter((v) => v.severity === 'hard');
 }
 
 describe('judging a shift exchange against the whole schedule', () => {
@@ -122,12 +123,24 @@ describe('judging a shift exchange against the whole schedule', () => {
 
       const plan = planExchange(input);
       const removed = new Set(plan.remove);
+      // An approval also flags charge on the rows `chargeTo` names; without them the rebuilt
+      // schedule would lack a charge nurse the plan provided.
+      const chargeTo = new Set(plan.chargeTo ?? []);
       const after: Assignment[] = [
-        ...(opts.assignments ?? []).filter((a) => !removed.has(a.id)),
+        ...(opts.assignments ?? [])
+          .filter((a) => !removed.has(a.id))
+          .map((a) => (chargeTo.has(a.id) ? { ...a, isCharge: true } : a)),
         ...plan.create.map((row, k) => ({ id: `new-${k}`, ...row })),
       ];
-      const was = hardKeys(opts, opts.assignments ?? []);
-      const introduced = [...hardKeys(opts, after)].filter((k) => !was.has(k));
+      // Worsened counts: deepening a breach already there (more hours over a cap) keeps its key
+      // but is as much a new harm as a fresh one, and the evaluator blocks on it.
+      const diff = diffViolations(
+        hardViolations(opts, opts.assignments ?? []),
+        hardViolations(opts, after),
+      );
+      const introduced = [...diff.introduced, ...diff.worsened.map((w) => w.after)].map(
+        violationKey,
+      );
 
       const msg = `seed ${SEED} case ${i} verdict ${verdict} proposal ${JSON.stringify(proposal)} introduced ${JSON.stringify(introduced)}`;
       if (verdict === 'ok') expect(introduced, msg).toEqual([]);

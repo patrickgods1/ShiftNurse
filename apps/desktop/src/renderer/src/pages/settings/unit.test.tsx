@@ -6,7 +6,7 @@
  */
 
 import { isoDate, type Unit } from '@shiftnurse/core';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
 import { renderWithApp } from '../../test/render.js';
@@ -236,5 +236,48 @@ describe('the unit policies form on its own', () => {
     await waitFor(() => expect(bridge.callsTo('units', 'update')).toHaveLength(1));
     expect(bridge.callsTo('units', 'update')[0]![1].postingLeadDays).toBe(14);
     expect(screen.queryByTestId('state-law')).toBeNull();
+  });
+});
+
+describe('Settings › Unit start over', () => {
+  it('needs the unit name typed before starting over', async () => {
+    renderWithApp(<UnitPanel />, { unit: { ...unit, name: '4 West' } });
+    fireEvent.click(await screen.findByTestId('start-over'));
+    const dialog = await screen.findByRole('alertdialog');
+    const go = within(dialog).getByRole('button', {
+      name: 'Delete everything and restart',
+    }) as HTMLButtonElement;
+    expect(go.disabled).toBe(true);
+
+    fireEvent.change(within(dialog).getByLabelText(/Type the unit name, 4 West, to confirm/), {
+      target: { value: ' 4 west ' },
+    });
+    expect(go.disabled).toBe(false);
+    fireEvent.click(go);
+    await waitFor(() => expect(bridge.callsTo('setup', 'startOver')).toEqual([[]]));
+  });
+
+  it('does not start over when the manager cancels', async () => {
+    renderWithApp(<UnitPanel />, { unit: { ...unit, name: '4 West' } });
+    fireEvent.click(await screen.findByTestId('start-over'));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.change(within(dialog).getByLabelText(/Type the unit name/), {
+      target: { value: '4 West' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(bridge.callsTo('setup', 'startOver')).toHaveLength(0);
+  });
+
+  it('shows why starting over failed inside the dialog', async () => {
+    bridge.fail('setup', 'startOver', new Error('The backup could not be written'));
+    renderWithApp(<UnitPanel />, { unit: { ...unit, name: '4 West' } });
+    fireEvent.click(await screen.findByTestId('start-over'));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.change(within(dialog).getByLabelText(/Type the unit name/), {
+      target: { value: '4 West' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete everything and restart' }));
+    expect(await within(dialog).findByText('The backup could not be written')).toBeTruthy();
   });
 });

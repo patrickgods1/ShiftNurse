@@ -177,6 +177,24 @@ describe('approving a time-off request from the review dialog', () => {
     );
   });
 
+  it('says who takes charge and who is on call beside a cover option', async () => {
+    bridge.respond('timeOff', 'coverOptions', [
+      {
+        ...options[0]!,
+        candidates: [
+          {
+            ...candidate('nurse-2', 'Ada Park'),
+            takesChargeName: 'Eli Moss',
+            replacesOnCall: true,
+          },
+        ],
+      },
+    ]);
+    renderDialog();
+    await screen.findByRole('button', { name: 'Approve and cover' });
+    expect(await screen.findByText(/Ada Park — on call — Eli Moss takes charge/)).toBeTruthy();
+  });
+
   it('wants a reason before taking shifts off a schedule staff already hold', async () => {
     bridge.respond('timeOff', 'coverOptions', options);
     renderDialog({ ...period, status: 'published' });

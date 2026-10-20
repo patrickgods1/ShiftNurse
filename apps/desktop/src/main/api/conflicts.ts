@@ -26,7 +26,7 @@ import type { AutoResolveResult } from '../../shared/api.js';
 
 import { userFacingMessage } from '../ipc-errors.js';
 import { ACTOR, buildConflictInput, periodOrThrow } from './context.js';
-import { requireOnRoster } from './schedule.js';
+import { requireActiveRecipient, requireOnRoster } from './schedule.js';
 
 export function analyse(db: DbLike, periodId: Id): ConflictReport {
   return analyseConflicts(buildConflictInput(db, periodId));
@@ -123,6 +123,10 @@ export function approveExchange(db: ShiftNurseDb, id: Id, reason?: string) {
     // Both nurses must be on the period's roster before the exchange can even be judged.
     requireOnRoster(tx, swap.periodId, swap.requestingNurseId);
     if (swap.counterpartyNurseId) requireOnRoster(tx, swap.periodId, swap.counterpartyNurseId);
+    // Each nurse receiving a shift must still be on staff: the counterparty always, and in a
+    // trade the requester too, since she takes the counterparty's shift in return.
+    requireActiveRecipient(tx, swap.counterpartyNurseId);
+    if (swap.kind === 'trade') requireActiveRecipient(tx, swap.requestingNurseId);
     const exchangeInput = { ...buildConflictInput(tx, swap.periodId), proposal };
     const evaluation: ExchangeEvaluation = evaluateExchange(exchangeInput);
     if (evaluation.verdict === 'blocked') {

@@ -11,50 +11,53 @@ import { AsyncState } from '../../components/async-state.js';
 import { EditorShell } from '../../components/editor-shell.js';
 import { describedBy, Field } from '../../components/field-help.js';
 import { INPUT } from '../../components/ui.js';
+import { numberFieldProblem, numberFieldText, parseNumberField } from '../../field-values.js';
 import { useUnitId } from '../../unit-context.js';
 
 export default function ConflictsPanel() {
   const unitId = useUnitId();
   const policyQuery = useConflictPolicy(unitId);
+  // Lifted above the form's key so "Saved." outlives the refetch that remounts the form.
+  const save = useSaveConflictPolicy(unitId);
   if (policyQuery.isPending) return <AsyncState status="loading" label="Loading policy" />;
   if (policyQuery.isError) {
     return <AsyncState status="error" label="Could not load policy" error={policyQuery.error} />;
   }
-  return <PolicyForm key={JSON.stringify(policyQuery.data)} saved={policyQuery.data} />;
+  return <PolicyForm key={JSON.stringify(policyQuery.data)} saved={policyQuery.data} save={save} />;
 }
 
-function PolicyForm({ saved }: { saved: AutoResolvePolicy }) {
-  const unitId = useUnitId();
-  const save = useSaveConflictPolicy(unitId);
+function PolicyForm({
+  saved,
+  save,
+}: {
+  saved: AutoResolvePolicy;
+  save: ReturnType<typeof useSaveConflictPolicy>;
+}) {
   const [enabled, setEnabled] = useState(saved.enabled);
-  const [maxCost, setMaxCost] = useState(String(saved.maxCostDelta));
-  const [maxDrop, setMaxDrop] = useState(String(saved.maxFairnessDrop));
-  const [message, setMessage] = useState<string | undefined>(undefined);
+  const [maxCost, setMaxCost] = useState(numberFieldText(saved.maxCostDelta));
+  const [maxDrop, setMaxDrop] = useState(numberFieldText(saved.maxFairnessDrop));
 
-  const costNumber = Number(maxCost);
-  const dropNumber = Number(maxDrop);
-  const valid =
-    Number.isFinite(costNumber) &&
-    costNumber >= 0 &&
-    Number.isFinite(dropNumber) &&
-    dropNumber >= 0;
+  const costProblem = numberFieldProblem(maxCost, { min: 0 });
+  const dropProblem = numberFieldProblem(maxDrop, { min: 0 });
+  const costNumber = parseNumberField(maxCost);
+  const dropNumber = parseNumberField(maxDrop);
+  const valid = costProblem === undefined && dropProblem === undefined;
+  // A field with a problem is an edit too, or Discard would not offer to take it back.
   const dirty =
     enabled !== saved.enabled ||
+    costProblem !== undefined ||
+    dropProblem !== undefined ||
     costNumber !== saved.maxCostDelta ||
     dropNumber !== saved.maxFairnessDrop;
 
   function submit() {
-    if (!valid) return;
-    save.mutate(
-      { enabled, maxCostDelta: costNumber, maxFairnessDrop: dropNumber },
-      { onSuccess: () => setMessage('Saved.') },
-    );
+    if (costNumber === undefined || dropNumber === undefined || !valid) return;
+    save.mutate({ enabled, maxCostDelta: costNumber, maxFairnessDrop: dropNumber });
   }
   function discard() {
     setEnabled(saved.enabled);
-    setMaxCost(String(saved.maxCostDelta));
-    setMaxDrop(String(saved.maxFairnessDrop));
-    setMessage(undefined);
+    setMaxCost(numberFieldText(saved.maxCostDelta));
+    setMaxDrop(numberFieldText(saved.maxFairnessDrop));
     save.reset();
   }
 
@@ -111,6 +114,7 @@ function PolicyForm({ saved }: { saved: AutoResolvePolicy }) {
               'nothing extra; a few hundred dollars lets it apply a fix such as one overtime shift.'
             }
             disabled={!enabled}
+            error={costProblem}
           >
             <input
               id="policy-max-cost"
@@ -120,7 +124,10 @@ function PolicyForm({ saved }: { saved: AutoResolvePolicy }) {
               className={INPUT}
               value={maxCost}
               disabled={!enabled}
-              aria-describedby={describedBy('policy-max-cost', { hint: true })}
+              aria-describedby={describedBy('policy-max-cost', {
+                hint: true,
+                error: costProblem !== undefined,
+              })}
               onChange={(e) => setMaxCost(e.target.value)}
             />
           </Field>
@@ -133,6 +140,7 @@ function PolicyForm({ saved }: { saved: AutoResolvePolicy }) {
               'onto someone. 0 allows only fixes that leave the team at least as fair as before.'
             }
             disabled={!enabled}
+            error={dropProblem}
           >
             <input
               id="policy-max-drop"
@@ -142,13 +150,16 @@ function PolicyForm({ saved }: { saved: AutoResolvePolicy }) {
               className={INPUT}
               value={maxDrop}
               disabled={!enabled}
-              aria-describedby={describedBy('policy-max-drop', { hint: true })}
+              aria-describedby={describedBy('policy-max-drop', {
+                hint: true,
+                error: dropProblem !== undefined,
+              })}
               onChange={(e) => setMaxDrop(e.target.value)}
             />
           </Field>
-          {save.error === null && message !== undefined && !dirty ? (
+          {save.isSuccess && !dirty ? (
             <p role="status" className="text-sm text-success">
-              {message}
+              Saved.
             </p>
           ) : null}
         </form>

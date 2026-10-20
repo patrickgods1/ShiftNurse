@@ -456,11 +456,49 @@ describe('nurses who want to work a holiday', () => {
     }
 
     const claims = api().timeOff.holidayWorkPriority(unitId);
-    expect(claims.map((c) => [c.holidayId, c.nurseId, c.rank])).toEqual([
-      [coming.id, second.id, 1],
-      [coming.id, first.id, 2],
+    expect(claims.map((c) => [c.holidayId, c.nurseId, c.role, c.rank])).toEqual([
+      [coming.id, second.id, 'RN', 1],
+      [coming.id, first.id, 'RN', 2],
     ]);
     // The unit staffs more than two RNs a day, so neither volunteer is surplus.
     expect(claims.map((c) => c.beyondNeed)).toEqual([false, false]);
+  });
+
+  it('measures LPN volunteers against the LPN floor, not the RN one', () => {
+    const { db } = f.handle;
+    const unitId = f.seeded.unitId;
+    const holiday = createHoliday(
+      db,
+      { unitId, date: isoDate('2032-05-10'), name: 'Founders Day', isMajor: true },
+      'test',
+    );
+    // The scenario unit's LPN floor is a target of 2 on its day shift plus 1 on its night shift,
+    // every weekday: 3 LPNs needed, so of four LPN volunteers only the fourth is surplus.
+    const lpns = [2008, 2012, 2016, 2020].map((year, i) =>
+      createNurse(
+        db,
+        {
+          ...f.rns[0]!,
+          id: undefined,
+          role: 'LPN',
+          employeeId: `L-900${i}`,
+          seniorityDate: isoDate(`${year}-01-15`),
+        } as never,
+        ACTOR,
+      ),
+    );
+    for (const lpn of lpns) {
+      rosterApi(db).preferences.replace(lpn.id, [
+        { kind: 'holiday_appetite', holidayId: holiday.id, weight: 3 },
+      ]);
+    }
+
+    const claims = api().timeOff.holidayWorkPriority(unitId);
+    expect(claims.map((c) => [c.nurseId, c.role, c.rank, c.beyondNeed])).toEqual([
+      [lpns[0]!.id, 'LPN', 1, false],
+      [lpns[1]!.id, 'LPN', 2, false],
+      [lpns[2]!.id, 'LPN', 3, false],
+      [lpns[3]!.id, 'LPN', 4, true],
+    ]);
   });
 });

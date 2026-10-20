@@ -90,3 +90,6 @@
   every later shift of the run earn it, even if the count falls back. The run breaks on any
   calendar date with no worked shift (dated by start day); an 8 continues it without counting;
   lookback counts, standby and leave do not. Not § 7453, so a Baylor tour keeps it.
+- **Only one active differential per kind: the repository refuses a second (M-84), because
+  `differentialOf` pays the first. A multiplier is at least 1** — except on-call standby, paid
+  instead of base at `base × amount`, where only a negative multiplier is refused (the VA's 0.15).

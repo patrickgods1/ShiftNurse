@@ -451,6 +451,12 @@ export interface AccrualTier {
   hoursPerPayPeriod?: number;
   /** Or one hour earned for this many hours worked or in pay status (part-time: 1 per 10). */
   hoursPerAccruedHour?: number;
+  /**
+   * Earned instead of `hoursPerPayPeriod` in the last pay period of the leave year — the one
+   * after which the next leave year starts within one pay period (5 U.S.C. § 6303(a)(2): 1¼
+   * days, 10 h, for 3–15 years).
+   */
+  lastPayPeriodOfYearHours?: number;
 }
 
 /**

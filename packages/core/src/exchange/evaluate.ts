@@ -15,16 +15,17 @@
  * `max-hours-per-week` raises `unauthorised_overtime` — a hard violation — for a work week past
  * the overtime threshold with no assignment flagged `isOvertime`. A giveaway that hands someone
  * their fourth 12 of the week would fail that check by construction unless the created row is
- * flagged, so `planSide` tries the pickup at straight time first and only sets `isOvertime: true`
- * when that is what stands between the plan and a legal schedule — the same "straight time, else
- * authorised overtime" shape `resolve.ts` uses for a resolution candidate. `evaluateExchange` and
- * `planExchange` share this logic (`planSide`) so the plan an approval writes is exactly the plan
- * the preview was judged against.
+ * flagged. The recipient always starts at straight time — the giver's overtime flag described the
+ * giver's week, not hers — and is flagged authorised only when that is what stands between the
+ * plan and a legal schedule. `conflicts/pickup.ts`'s `planPickup` is that shared planner (it also
+ * decides who carries charge), used by `evaluateExchange` and `planExchange` alike so the plan an
+ * approval writes is exactly the plan the preview was judged against.
  */
 
 import { ConflictEngine, type SimState } from '../conflicts/engine.js';
 import { costImpact, fairnessImpact, sumCost } from '../conflicts/impact.js';
-import { dollars, nurseName, plural, signed } from '../conflicts/text.js';
+import { planPickup } from '../conflicts/pickup.js';
+import { dayLabel, dollars, nurseName, plural, signed } from '../conflicts/text.js';
 import type { Assignment, Id } from '../domain/entities.js';
 import type { IsoDate } from '../domain/time.js';
 import { overtimeHoursAround } from '../rules/hours-rules.js';
@@ -55,7 +56,7 @@ export function evaluateExchange(input: ExchangeInput): ExchangeEvaluation {
 
   const sides = sidesFor(input.proposal, offered, requested);
   const remaining = removeAssignments(input.assignments, offered, requested);
-  const { assignments: after, forced } = applySides(engine, before, remaining, sides);
+  const { assignments: after, forced, notes } = applySides(engine, before, remaining, sides);
   const afterState = engine.state(after, input.timeOff);
 
   const requestingSide = sideImpact(input.proposal.requestingNurseId, before, afterState);
@@ -68,7 +69,7 @@ export function evaluateExchange(input: ExchangeInput): ExchangeEvaluation {
       before.shiftViolationsAround(ref.date, ref.shiftTypeId),
       afterState.shiftViolationsAround(ref.date, ref.shiftTypeId),
     );
-    shiftIntroduced.push(...diff.introduced);
+    shiftIntroduced.push(...diff.introduced, ...diff.worsened.map((w) => w.after));
   }
   const shiftHard = shiftIntroduced.filter((v) => v.severity === 'hard');
   const shiftSoft = shiftIntroduced.filter((v) => v.severity === 'soft');
@@ -108,9 +109,12 @@ export function evaluateExchange(input: ExchangeInput): ExchangeEvaluation {
   if (blockers.length === 0) {
     for (const side of forced) {
       const otHours = overtimeHoursFor(engine, afterState, side.recipient, side.source.date);
+      // The pickup's own price: the exchange's net would show a trade forcing overtime on both
+      // sides as the same dollars twice, and a giveaway as its cost less the giver's saved shift.
+      const pickupCost = costImpact(engine, before, afterState, [side.recipient]).delta;
       warnings.push(
         `Creates ${plural(Math.round(otHours), 'hour')} of overtime for ` +
-          `${nurseName(engine.nurse(side.recipient))}, ${signedDollars(cost.delta)}.`,
+          `${nurseName(engine.nurse(side.recipient))}, ${signedDollars(pickupCost)}.`,
       );
     }
   }
@@ -127,6 +131,7 @@ export function evaluateExchange(input: ExchangeInput): ExchangeEvaluation {
     fairness,
     cost,
     shiftViolationsIntroduced: shiftHard,
+    notes,
     after: afterState.view.toAssignments(),
   };
 }
@@ -139,10 +144,10 @@ export function planExchange(input: ExchangeInput): ExchangeApplication {
 
   const sides = sidesFor(input.proposal, offered, requested);
   const remaining = removeAssignments(input.assignments, offered, requested);
-  const { rows } = applySides(engine, before, remaining, sides);
+  const { rows, chargeTo } = applySides(engine, before, remaining, sides);
 
   const remove = requested ? [offered.id, requested.id] : [offered.id];
-  return { remove, create: rows };
+  return { remove, create: rows, ...(chargeTo.length > 0 ? { chargeTo } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -258,65 +263,46 @@ function applySides(
   before: SimState,
   remaining: readonly Assignment[],
   sides: readonly Side[],
-): { assignments: Assignment[]; rows: Omit<Assignment, 'id'>[]; forced: Side[] } {
-  const working: Assignment[] = [...remaining];
+): {
+  assignments: Assignment[];
+  rows: Omit<Assignment, 'id'>[];
+  forced: Side[];
+  chargeTo: Id[];
+  notes: string[];
+} {
+  let working: Assignment[] = [...remaining];
   const rows: Omit<Assignment, 'id'>[] = [];
   const forced: Side[] = [];
+  const chargeTo: Id[] = [];
+  const notes: string[] = [];
 
   sides.forEach((side, index) => {
-    const { row, forcedOvertime } = planSide(engine, before, working, side);
-    rows.push(row);
-    working.push({ id: `exchange:${index}:${side.recipient}:${side.source.id}`, ...row });
-    if (forcedOvertime) forced.push(side);
+    const recipient = engine.nurse(side.recipient);
+    const plan = planPickup(engine, before, working, engine.input.timeOff, {
+      recipient,
+      date: side.source.date,
+      shiftTypeId: side.source.shiftTypeId,
+      periodId: side.source.periodId,
+      source: 'manual',
+      needsCharge: side.source.isCharge,
+      ...(side.source.notes !== undefined ? { notes: side.source.notes } : {}),
+      trialId: `exchange:${index}:${side.recipient}:${side.source.id}`,
+    });
+    working = plan.assignments;
+    rows.push(plan.row);
+    if (plan.forcedOvertime) forced.push(side);
+    if (plan.chargeMovedTo) {
+      const mover = engine.nurse(plan.chargeMovedTo.nurseId);
+      chargeTo.push(plan.chargeMovedTo.id);
+      notes.push(
+        `${nurseName(mover)} takes charge of ${dayLabel(side.source.date)} ` +
+          `${engine.shiftType(side.source.shiftTypeId).abbreviation}, since ` +
+          `${nurseName(recipient)} cannot take charge.`,
+      );
+    }
   });
 
-  return { assignments: working, rows, forced };
-}
-
-/**
- * Straight time carried across from the original row, unless that would leave the pickup nurse
- * in unauthorised overtime for the week — then, and only then, the new row is flagged authorised.
- */
-function planSide(
-  engine: ConflictEngine,
-  before: SimState,
-  working: readonly Assignment[],
-  side: Side,
-): { row: Omit<Assignment, 'id'>; forcedOvertime: boolean } {
-  const base: Omit<Assignment, 'id'> = {
-    periodId: side.source.periodId,
-    nurseId: side.recipient,
-    shiftTypeId: side.source.shiftTypeId,
-    date: side.source.date,
-    source: 'manual',
-    isLocked: false,
-    isCharge: side.source.isCharge,
-    isOvertime: side.source.isOvertime,
-    ...(side.source.notes !== undefined ? { notes: side.source.notes } : {}),
-  };
-  if (base.isOvertime) return { row: base, forcedOvertime: false };
-
-  const trial: Assignment = { id: `exchange-trial:${side.recipient}:${side.source.id}`, ...base };
-  const trialState = engine.state([...working, trial], engine.input.timeOff);
-  const priorHard = new Set(
-    before
-      .nurseViolations(side.recipient)
-      .filter((v) => v.severity === 'hard' && v.code === 'unauthorised_overtime')
-      .map((v) => v.dates.join(',')),
-  );
-  const introducesUnauthorisedOt = trialState
-    .nurseViolations(side.recipient)
-    .some(
-      (v) =>
-        v.code === 'unauthorised_overtime' &&
-        v.severity === 'hard' &&
-        !priorHard.has(v.dates.join(',')),
-    );
-
-  return {
-    row: { ...base, isOvertime: introducesUnauthorisedOt },
-    forcedOvertime: introducesUnauthorisedOt,
-  };
+  return { assignments: working, rows, forced, chargeTo, notes };
 }
 
 function overtimeHoursFor(
@@ -337,6 +323,9 @@ function overtimeHoursFor(
 
 function sideImpact(nurseId: Id, before: SimState, after: SimState): NurseSideImpact {
   const diff = diffViolations(before.nurseViolations(nurseId), after.nurseViolations(nurseId));
+  // A breach the exchange deepens (more hours over a cap already exceeded) keeps its key, so
+  // `introduced` alone would wave it through.
+  const changed = [...diff.introduced, ...diff.worsened.map((w) => w.after)];
   return {
     nurseId,
     hoursBefore: sumHours(before.view.assignmentsFor(nurseId)),
@@ -345,8 +334,8 @@ function sideImpact(nurseId: Id, before: SimState, after: SimState): NurseSideIm
     fairnessAfter: after.fairness().byNurse.get(nurseId) ?? 0,
     dollarsBefore: sumCost(before.nurseCost(nurseId)),
     dollarsAfter: sumCost(after.nurseCost(nurseId)),
-    hardViolations: diff.introduced.filter((v) => v.severity === 'hard'),
-    softViolationsIntroduced: diff.introduced.filter((v) => v.severity === 'soft'),
+    hardViolations: changed.filter((v) => v.severity === 'hard'),
+    softViolationsIntroduced: changed.filter((v) => v.severity === 'soft'),
     softViolationsCleared: diff.cleared.filter((v) => v.severity === 'soft'),
   };
 }

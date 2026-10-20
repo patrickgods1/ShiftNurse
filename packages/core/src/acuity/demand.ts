@@ -161,9 +161,10 @@ function key(date: IsoDate, shiftTypeId: Id): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Pick the binding ratio for a role at an acuity tier: a tier-specific rule if one exists,
- * otherwise the catch-all rule. Where several apply, the most restrictive (lowest patients
- * per nurse) wins — safety rules stack conservatively.
+ * The binding ratio for a role at an acuity tier: the most restrictive (lowest patients per
+ * nurse) of every active rule for the role that applies to the tier — tier-specific or
+ * catch-all. Safety rules stack conservatively, so a looser tier rule never relaxes a stricter
+ * catch-all.
  */
 export function bindingRatio(
   rules: readonly RatioRule[],
@@ -186,8 +187,12 @@ export function bindingRatio(
  * Each tier contributes a fractional nurse-load (`patients / maxPatientsPerNurse`); the
  * loads are summed and rounded up once. Summing fractions before rounding — rather than
  * rounding each tier — reflects that one nurse can carry a mixed assignment, which is how
- * charge nurses actually distribute patients. This is the standard relaxation used for
- * ratio compliance and never under-staffs relative to the per-tier ceilings in aggregate.
+ * charge nurses actually distribute patients (pooled load). This never under-staffs **in
+ * aggregate load**. Read per assignment — the strictest patient governs a nurse's whole
+ * assignment — a mix can need more: 3 patients at 1:2 and 2 at 1:5 pool to 1.5 + 0.4 = 1.9 → 2
+ * nurses, while any two-nurse split gives someone a 1:2 patient with three others, so the
+ * per-assignment reading needs 3. The app applies the pooled reading (D11); a unit whose
+ * regulator reads ratios per assignment sets a floor.
  */
 export function nursesRequiredForMix(
   acuityMix: Record<Id, number>,

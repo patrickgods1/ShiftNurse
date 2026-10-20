@@ -81,4 +81,32 @@ describe('premium stacking in Settings › Pay', () => {
       ]),
     );
   });
+
+  it('keeps pay settings it does not show when it saves', async () => {
+    // Stands in for a field a later release adds to the settings row.
+    bridge.respond('cost', 'paySettings', {
+      callBackMinimumHours: 4,
+      premiumStacking: 'compound',
+      holidayPayCoversOvertime: false,
+      extraField: 7,
+    } as never);
+    renderWithApp(<StackingSection unitId="u-1" />);
+    fireEvent.change(await screen.findByLabelText('Premium stacking'), {
+      target: { value: 'additive' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('cost', 'savePaySettings')).toEqual([
+        [
+          'u-1',
+          {
+            callBackMinimumHours: 4,
+            premiumStacking: 'additive',
+            holidayPayCoversOvertime: false,
+            extraField: 7,
+          },
+        ],
+      ]),
+    );
+  });
 });

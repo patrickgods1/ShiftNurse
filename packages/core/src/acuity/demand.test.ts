@@ -14,11 +14,19 @@ import {
   DAY_8,
   DAY_12,
   MID_8,
+  TIER_HIGH,
   TIER_ROUTINE,
   testAcuityTiers,
+  testRatioRules,
   UNIT_ID,
 } from '../testing/fixtures.js';
-import { type DemandInputs, deriveDemand, type RatioStaffing, type RoleDemand } from './demand.js';
+import {
+  type DemandInputs,
+  deriveDemand,
+  nursesRequiredForMix,
+  type RatioStaffing,
+  type RoleDemand,
+} from './demand.js';
 
 const DATE = isoDate('2026-01-06');
 
@@ -245,5 +253,15 @@ describe('a licensed-nurse ratio that pools RNs and LVNs', () => {
       censusForecasts: [census(DATE, DAY_12, { [TIER_ROUTINE.id]: 20 })],
     }).get(DATE, DAY_12.id)!;
     expect(row.licensed).toBeUndefined();
+  });
+});
+
+describe('a mixed-acuity assignment', () => {
+  it('pools a mixed assignment: 3 patients at 1:2 and 2 at 1:5 need 2 nurses (the per-assignment reading would need 3)', () => {
+    // Pooled load: 3 high-acuity patients at 1:2 = 1.5 nurses, 2 routine at 1:5 = 0.4 nurses;
+    // 1.5 + 0.4 = 1.9, rounded up once → 2. Read per assignment, any two-nurse split leaves
+    // someone with a 1:2 patient and three others, so that reading would need 3 (D11: not applied).
+    const mix = { [TIER_HIGH.id]: 3, [TIER_ROUTINE.id]: 2 };
+    expect(nursesRequiredForMix(mix, 'RN', testRatioRules)).toBe(2);
   });
 });

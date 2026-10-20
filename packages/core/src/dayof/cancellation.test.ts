@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Assignment, Nurse } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
+import type { Violation } from '../rules/types.js';
 import { assign, DAY_12, makeNurse, UNIT_ID } from '../testing/fixtures.js';
 import {
   type CancellationHistory,
@@ -149,6 +150,13 @@ describe('who goes home first when the census drops', () => {
       'bo:rotation',
     ]);
   });
+
+  it('sends employee E10 home before E9 when they started the same day', () => {
+    // Neither has a cancellation yet; same date, and 10 > 9 as numbers, so E10 is junior.
+    const e9 = makeNurse({ id: 'e9', employeeId: 'E9', seniorityDate: isoDate('2015-01-01') });
+    const e10 = makeNurse({ id: 'e10', employeeId: 'E10', seniorityDate: isoDate('2015-01-01') });
+    expect(order([e9, e10]).order.map((o) => o.nurseId)).toEqual(['e10', 'e9']);
+  });
 });
 
 /**
@@ -259,5 +267,43 @@ describe('a nurse floated in from another unit when the census drops', () => {
     expect(result.excluded).toEqual([
       { nurseId: 'fran', reason: 'Fran Hale is the charge nurse on this shift.' },
     ]);
+  });
+});
+
+describe('a nurse the shift cannot spare', () => {
+  it('never sends home the only experienced RN, and says why', () => {
+    const exp = makeNurse({ id: 'exp', firstName: 'Exp', lastName: 'Erience' });
+    const nov1 = makeNurse({ id: 'nov1', firstName: 'Nia', lastName: 'Vo', isNovice: true });
+    const nov2 = makeNurse({ id: 'nov2', firstName: 'Ned', lastName: 'Wu', isNovice: true });
+    const rows = onShift([exp, nov1, nov2]);
+    const breach: Violation = {
+      ruleId: 'coverage-minimums',
+      ruleName: 'Coverage minimums',
+      severity: 'hard',
+      code: 'all_novice_shift',
+      message: 'Day 12 on Tue Jan 6 has a new grad with 0 experienced RNs on the unit; 1 required.',
+      nurseIds: ['nov1', 'nov2'],
+      dates: [DATE],
+      assignmentIds: ['a-nov1', 'a-nov2'],
+      amount: 1,
+    };
+    const result = cancellationOrder({
+      unitId: UNIT_ID,
+      onShift: rows,
+      tiers: DEFAULT_CANCELLATION_TIERS,
+      // She offered first, and is still kept.
+      volunteers: ['exp'],
+      history: new Map(),
+      removalBreaks: new Map([['a-exp', breach]]),
+    });
+    expect(result.excluded).toEqual([
+      {
+        nurseId: 'exp',
+        reason:
+          'Sending Exp Erience home would leave the shift breaking a hard rule — Coverage ' +
+          'minimums: Day 12 on Tue Jan 6 has a new grad with 0 experienced RNs on the unit; 1 required.',
+      },
+    ]);
+    expect(result.order.map((p) => p.nurseId).sort()).toEqual(['nov1', 'nov2']);
   });
 });

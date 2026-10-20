@@ -181,7 +181,16 @@ export interface LeaveCoverOption {
   assignment: Assignment;
   /** Nurse-slots the shift is short of its minimum without the requester. */
   shortfall: number;
-  candidates: { nurseId: Id; label: string; payTier: string; overtime: boolean }[];
+  candidates: {
+    nurseId: Id;
+    label: string;
+    payTier: string;
+    overtime: boolean;
+    /** Who takes charge because this nurse cannot ("Eli Moss"), when charge moves. */
+    takesChargeName?: string;
+    /** She is on call for that shift, and the cover replaces her standby. */
+    replacesOnCall?: true;
+  }[];
 }
 
 /** The manager's pick for one freed shift. */
@@ -524,6 +533,15 @@ export type PreferenceInput = Preference extends infer P
   : never;
 
 export type CoverageRequirementInput = Omit<CoverageRequirement, 'id'> & { id?: Id };
+
+/** One shift type and role, to be set to the same floor on every weekday. */
+export interface CoverageWeekInput {
+  unitId: Id;
+  shiftTypeId: Id;
+  role: NurseRole;
+  minCount: number;
+  targetCount: number;
+}
 
 /** A new holiday; unpaired unless `pairedHolidayId` names the major holiday it goes with. */
 export type HolidayInput = Omit<Holiday, 'id' | 'pairedHolidayId'> &
@@ -1313,8 +1331,10 @@ export interface ShiftNurseApi {
   leaveBidding: {
     rounds(unitId: Id): LeaveBidRoundRecord[];
     createRound(input: LeaveBidRoundInput): LeaveBidRoundRecord;
-    updateRound(id: Id, patch: LeaveBidRoundPatch): LeaveBidRoundRecord;
-    closeRound(id: Id): LeaveBidRoundRecord;
+    /** A reason is required once bids are in and the dates or places change. */
+    updateRound(id: Id, patch: LeaveBidRoundPatch, reason?: string): LeaveBidRoundRecord;
+    /** A reason is required to close on or before the last bidding day. */
+    closeRound(id: Id, reason?: string): LeaveBidRoundRecord;
     bids(roundId: Id): LeaveBidRecord[];
     /** Enter or replace a nurse's ranked choices; v1 is the manager entering them. */
     submitBid(roundId: Id, nurseId: Id, choices: LeaveBidChoice[]): LeaveBidRecord;
@@ -1382,6 +1402,11 @@ export interface ShiftNurseApi {
     list(unitId: Id): CoverageRequirement[];
     upsert(input: CoverageRequirementInput): CoverageRequirement;
     delete(id: Id): void;
+    /**
+     * Sets one shift type and role to the same minimum and target on every weekday, in one
+     * transaction; unchanged days are not rewritten.
+     */
+    fillWeek(input: CoverageWeekInput): CoverageRequirement[];
   };
   holidays: {
     list(unitId: Id): Holiday[];
@@ -1409,7 +1434,8 @@ export interface ShiftNurseApi {
     createRatioRule(input: RatioRuleInput): RatioRule;
     updateRatioRule(id: Id, patch: RatioRulePatch): RatioRule;
     deactivateRatioRule(id: Id): RatioRule;
-    hppd(unitId: Id): HppdTarget | undefined;
+    /** `null` when the unit has never set a target. */
+    hppd(unitId: Id): HppdTarget | null;
     setHppd(unitId: Id, targetHours: number): HppdTarget;
   };
   census: {
@@ -1619,8 +1645,8 @@ export interface ShiftNurseApi {
      */
     holidayPriority(unitId: Id): HolidayClaim[];
     /**
-     * Nurses who want to work each holiday from today on, most senior first; `beyondNeed` marks
-     * the volunteers past the date's RN coverage targets. Advice only.
+     * Nurses who want to work each holiday from today on, most senior first within each role;
+     * `beyondNeed` marks the volunteers past that role's coverage targets. Advice only.
      */
     holidayWorkPriority(unitId: Id): HolidayWorkClaim[];
     /** Every request touching the inclusive range, whatever its status — the heatmap's feed. */
@@ -1830,7 +1856,7 @@ export const API_CHANNELS = {
     'award',
   ],
   shiftTypes: ['list', 'create', 'update', 'deactivate'],
-  coverage: ['list', 'upsert', 'delete'],
+  coverage: ['list', 'upsert', 'delete', 'fillWeek'],
   holidays: [
     'list',
     'create',

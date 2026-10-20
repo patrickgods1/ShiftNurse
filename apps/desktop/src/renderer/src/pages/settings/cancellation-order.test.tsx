@@ -117,4 +117,19 @@ describe('Settings › the low-census cancellation order', () => {
       expect(bridge.callsTo('units', 'update')).toEqual([['unit-1', { overtimeOrder: 'roster' }]]),
     );
   });
+
+  it('puts back the saved order on Discard', async () => {
+    renderWithApp(<CancellationOrderPanel />, { unit });
+    fireEvent.click(await screen.findByLabelText('Move Per diem staff up'));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Discard' })[0]!);
+    expect(screen.getAllByRole('checkbox').map((box) => box.id)).toEqual([
+      'tier-volunteer',
+      'tier-agency',
+      'tier-overtime',
+      'tier-per_diem',
+      'tier-rotation',
+      'tier-float',
+    ]);
+    expect(bridge.callsTo('dayOf', 'saveCancellationPolicy')).toEqual([]);
+  });
 });

@@ -29,4 +29,7 @@ export const coverageSchemas = {
   list: z.tuple([id]),
   upsert: z.tuple([coverageInput]),
   delete: z.tuple([id]),
+  fillWeek: z.tuple([
+    object({ unitId: id, shiftTypeId: id, role: nurseRole, minCount: count, targetCount: count }),
+  ]),
 } satisfies ResourceSchemas<'coverage'>;

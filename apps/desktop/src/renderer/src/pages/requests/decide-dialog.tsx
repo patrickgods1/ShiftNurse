@@ -396,6 +396,8 @@ function ImpactView({
                       <option key={c.nurseId} value={c.nurseId}>
                         {c.label}
                         {c.overtime ? ' — overtime' : c.payTier === 'agency' ? ' — agency' : ''}
+                        {c.replacesOnCall ? ' — on call' : ''}
+                        {c.takesChargeName ? ` — ${c.takesChargeName} takes charge` : ''}
                       </option>
                     ))}
                     <option value="">Leave it open for now</option>

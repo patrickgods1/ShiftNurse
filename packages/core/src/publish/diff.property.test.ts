@@ -60,6 +60,12 @@ describe('the republish diff', () => {
 
       const msg = `seed ${SEED} case ${i}`;
       expect([...applied.keys()].sort(), msg).toEqual(b.map(keyOf).sort());
+      // Keys alone would pass with the `changed` branch deleted: values must match too.
+      const pick = (r: Assignment | undefined) =>
+        r && { isCharge: r.isCharge, isOvertime: r.isOvertime, notes: r.notes ?? undefined };
+      for (const row of b) {
+        expect(pick(applied.get(keyOf(row))), `${msg} ${keyOf(row)}`).toEqual(pick(row));
+      }
       expect(diff.added + diff.removed + diff.changed, msg).toBe(diff.changes.length);
     }
   });

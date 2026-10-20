@@ -114,6 +114,10 @@ export function alertsForView(
       : {}),
     paidLeaveByNurse,
     paidLeaveCountsTowardHours: fte.paidLeaveCountsTowardHours,
+    contractedHours: {
+      exemptEmploymentTypes: fte.exemptEmploymentTypes,
+      onCallCountsTowardHours: fte.onCallCountsTowardHours,
+    },
     paidLeaveCountsTowardOvertime: params.paidLeaveCountsTowardOvertime,
     schedule,
     cost: costContext(db, period.unitId, ruleSet, period),

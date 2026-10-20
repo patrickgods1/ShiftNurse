@@ -109,6 +109,14 @@ export interface ComplianceInput {
   paidLeaveByNurse?: ReadonlyMap<Id, readonly PaidLeaveCredit[]>;
   /** The contracted-hours rule's setting; paid leave counts toward the contract unless false. */
   paidLeaveCountsTowardHours?: boolean;
+  /**
+   * The contracted-hours rule's exemptions and standby setting, so drift is judged as the rule
+   * judges hours. Absent: per-diem exempt, standby not counted.
+   */
+  contractedHours?: {
+    exemptEmploymentTypes: readonly string[];
+    onCallCountsTowardHours: boolean;
+  };
   /** The max-hours rule's setting; paid leave counts toward overtime only when true. */
   paidLeaveCountsTowardOvertime?: boolean;
   /**
@@ -126,8 +134,9 @@ export interface ComplianceInput {
   holidays?: readonly Holiday[];
   holidayWorkedBy?: ReadonlyMap<Id, ReadonlySet<Id>>;
   /**
-   * The unit's promise of weekends off in a year, and the fairness ledger to count the year's
-   * earlier weekends from. Absent means no check. Uses `weekendDefinition` above.
+   * The unit's promise of weekends off in a year — the 52 weeks ending on the period's last day —
+   * and the fairness ledger to count that year's earlier weekends from. Absent means no check.
+   * Uses `weekendDefinition` above.
    */
   weekendsOffPerYear?: { minimum: number; ledger: readonly FairnessLedgerEntry[] };
 }
@@ -187,13 +196,24 @@ function credentialExpiry(input: ComplianceInput): ComplianceAlert[] {
   return alerts;
 }
 
+const oneDecimal = (n: number) => Math.round(n * 10) / 10;
+
+const DEFAULT_CONTRACTED_HOURS: NonNullable<ComplianceInput['contractedHours']> = {
+  exemptEmploymentTypes: ['per_diem'],
+  onCallCountsTowardHours: false,
+};
+
 function hoursDrift(input: ComplianceInput): ComplianceAlert[] {
   const { schedule } = input;
+  const contract = input.contractedHours ?? DEFAULT_CONTRACTED_HOURS;
   const alerts: ComplianceAlert[] = [];
   for (const [nurseId, nurse] of schedule.nursesById) {
-    if (!nurse.active || nurse.employmentType === 'per_diem') continue;
+    // An exempt type has no contracted minimum to drift from, as the contracted-hours rule reads it.
+    if (!nurse.active || contract.exemptEmploymentTypes.includes(nurse.employmentType)) continue;
     if (nurse.contractedHoursPerPeriod <= 0) continue;
-    const views = schedule.assignmentsFor(nurseId).filter((v) => !v.shiftType.isOnCall);
+    const views = schedule
+      .assignmentsFor(nurseId)
+      .filter((v) => contract.onCallCountsTowardHours || !v.shiftType.isOnCall);
     // Drift is measured against the contract, so scheduled hours: a holdover is overtime, not a
     // roster that ran over the nurse's FTE (as `fte-target-hours` reads it).
     const worked = views.reduce((sum, v) => sum + v.scheduledHours, 0);
@@ -218,13 +238,11 @@ function hoursDrift(input: ComplianceInput): ComplianceAlert[] {
       hours,
       expectedHours: contracted,
       assignmentIds: views.map((v) => v.assignment.id),
-      message: `${nurseName(nurse)} is scheduled ${worked}h${leave > 0 ? ` plus ${Math.round(leave * 10) / 10}h paid leave` : ''} against ${contracted}h contracted (${pct >= 0 ? '+' : ''}${pct}%)`,
+      message: `${nurseName(nurse)} is scheduled ${oneDecimal(worked)}h${leave > 0 ? ` plus ${oneDecimal(leave)}h paid leave` : ''} against ${oneDecimal(contracted)}h contracted (${pct >= 0 ? '+' : ''}${pct}%)`,
     });
   }
   return alerts;
 }
-
-const oneDecimal = (n: number) => Math.round(n * 10) / 10;
 
 function pricedOvertime(input: ComplianceInput, cost: CostContext): ComplianceAlert[] {
   const { schedule } = input;
@@ -295,6 +313,9 @@ function overtime(input: ComplianceInput): ComplianceAlert[] {
             compareDates(v.assignment.date, week.start) >= 0 &&
             compareDates(v.assignment.date, week.end) <= 0,
         );
+      // A week this period holds none of the nurse's shifts in was judged with the last schedule,
+      // and an alert here would name nothing the manager could move.
+      if (!inWeek.some((v) => v.inPeriod)) continue;
       const leave = input.paidLeaveCountsTowardOvertime
         ? leaveHoursBetween(input.paidLeaveByNurse?.get(nurseId), week.start, week.end)
         : 0;
@@ -321,29 +342,55 @@ function ratioRisk(input: ComplianceInput): ComplianceAlert[] {
   for (const d of input.demand) {
     if (compareDates(d.date, schedule.period.startDate) < 0) continue;
     if (compareDates(d.date, schedule.period.endDate) > 0) continue;
-    const atRatio: { role: NurseRole; nurses: number; patients: number }[] = [];
+    const patients = d.projectedCensus;
+    const details: string[] = [];
+    const roles = new Set<NurseRole>();
     for (const role of NURSE_ROLES) {
       const demand = d.byRole[role];
       // Only where a patient ratio sets the minimum. A coverage floor is the unit's own
       // staffing target — the solver fills to it on purpose — and calling every such shift a
       // risk would bury the ones where a call-off makes the shift *illegal*.
-      if (demand.bindingConstraint === 'coverage_floor' || demand.ratioDerived <= 0) continue;
+      if (demand.bindingConstraint === 'coverage_floor') continue;
       const staffed = schedule.countOnShift(d.date, d.shiftTypeId, role);
       // Below the minimum is a violation the rule engine already reports; exactly at it is
       // the fragile case nothing else names.
-      if (staffed === demand.minCount) {
-        atRatio.push({ role, nurses: staffed, patients: d.projectedCensus });
+      if (staffed !== demand.minCount || demand.minCount <= 0) continue;
+      roles.add(role);
+      // An RN minimum raised by a pooled rule's share is not a patients-per-RN ratio, and printing
+      // it as one ("RN 2 for 20 patients, 1:10") reads as a breach that is not there.
+      if (
+        d.licensed &&
+        demand.minCount === d.licensed.minRn &&
+        d.licensed.minRn > demand.ratioDerived
+      ) {
+        details.push(`RN share ${staffed} of ${d.licensed.ratioDerived} licensed`);
+      } else if (demand.ratioBedside > 0) {
+        // The ratio is patients per bedside nurse: a charge nurse without patients and break
+        // relief are in the minimum but carry no assignment of their own.
+        details.push(
+          `${role} ${staffed} for ${patients} patients, 1:${Math.ceil(patients / demand.ratioBedside)}`,
+        );
+      } else {
+        details.push(`${role} ${staffed}, the ratio minimum`);
       }
     }
-    if (atRatio.length === 0) continue;
+    if (d.licensed) {
+      // A shift governed only by a pooled rule is fragile at the pool's count, which no role's
+      // own minimum shows.
+      const pool =
+        schedule.countOnShift(d.date, d.shiftTypeId, 'RN') +
+        schedule.countOnShift(d.date, d.shiftTypeId, 'LPN');
+      if (pool === d.licensed.ratioDerived) {
+        roles.add('RN');
+        roles.add('LPN');
+        details.push(
+          `licensed (RN + LPN) ${pool} for ${patients} patients, 1:${Math.ceil(patients / d.licensed.ratioBedside)}`,
+        );
+      }
+    }
+    if (details.length === 0) continue;
     const shiftType = schedule.shiftTypesById.get(d.shiftTypeId);
     const label = shiftType?.abbreviation ?? d.shiftTypeId;
-    const detail = atRatio
-      .map(
-        (r) =>
-          `${r.role} ${r.nurses} for ${r.patients} patients, 1:${Math.ceil(r.patients / r.nurses)}`,
-      )
-      .join('; ');
     alerts.push({
       kind: 'ratio_risk',
       severity: 'warning',
@@ -351,9 +398,9 @@ function ratioRisk(input: ComplianceInput): ComplianceAlert[] {
       shiftTypeId: d.shiftTypeId,
       assignmentIds: schedule
         .onShift(d.date, d.shiftTypeId)
-        .filter((v) => atRatio.some((r) => r.role === v.nurse.role))
+        .filter((v) => roles.has(v.nurse.role))
         .map((v) => v.assignment.id),
-      message: `${describeDate(d.date)} ${label} is staffed exactly at the patient ratio (${detail}): one call-off breaches it`,
+      message: `${describeDate(d.date)} ${label} is staffed exactly at the patient ratio (${details.join('; ')}): one call-off breaches it`,
     });
   }
   return alerts;
@@ -450,10 +497,11 @@ function perDiemCommitment(input: ComplianceInput): ComplianceAlert[] {
 }
 
 /**
- * A yearly promise of weekends off, judged over the 364 days before the period plus the period
- * itself. `weekend-pattern` sees one schedule; only the ledger knows the rest of the year. History
- * is whatever the ledger holds, so a new unit with a short one under-counts weekends worked and
- * never raises a false alert.
+ * A yearly promise of weekends off, judged over the 52 weeks ending on the period's last day: the
+ * ledger's periods that began within them, plus this period. `weekend-pattern` sees one schedule;
+ * only the ledger knows the rest of the year. The ledger has no period end, so a period that began
+ * before the 52 weeks and straddles their start is left out. That, and a new unit's short history,
+ * under-count weekends worked, which never raises a false alert.
  */
 function weekendsOffPerYear(input: ComplianceInput): ComplianceAlert[] {
   const promise = input.weekendsOffPerYear;
@@ -461,7 +509,8 @@ function weekendsOffPerYear(input: ComplianceInput): ComplianceAlert[] {
   const { schedule } = input;
   const weekendDefinition = input.weekendDefinition ?? DEFAULT_WEEKEND;
   const { startDate, endDate } = schedule.period;
-  const from = addDays(startDate, -364);
+  // 364 days ending on the last day: a year of 52 whole weeks, however long the period.
+  const from = addDays(endDate, -363);
   const alerts: ComplianceAlert[] = [];
   for (const [nurseId, nurse] of schedule.nursesById) {
     // A Baylor nurse (38 U.S.C. § 7456) works every weekend by contract; the promise is not theirs.

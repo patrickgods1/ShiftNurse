@@ -7,7 +7,10 @@
  * someone must run the shift. A manager choosing by memory floats whoever is quiet about it;
  * this ranks from the record instead, and each place carries its reason so "why me?" has an
  * answer. A nurse's objection (not competent on the receiving unit) is recorded elsewhere and
- * never changes this order.
+ * never changes this order. A nurse whose removal would leave the shift breaking a hard rule (the
+ * only experienced RN beside a new grad, the only holder of a required credential, an orientee's
+ * preceptor) is never in the order, with the rule's own words as the reason — the caller passes
+ * `removalBreaks`.
  *
  * Only mandated floats count against the rotation: a nurse who volunteered did the unit a favour
  * and must not be passed over next time because of it.
@@ -15,16 +18,23 @@
 
 import type { FloatRecord, Id, Nurse, Preceptorship } from '../domain/entities.js';
 import { compareDates, describeDate, type IsoDate } from '../domain/time.js';
+import { compareSeniority } from '../roster/seniority.js';
+import type { Violation } from '../rules/types.js';
 
 export interface FloatOrderInput {
   date: IsoDate;
   /** Nurses on the shift, of the role being floated, with whether each is the shift's charge nurse. */
-  onShift: readonly { nurse: Nurse; isCharge: boolean }[];
+  onShift: readonly { nurse: Nurse; assignmentId: Id; isCharge: boolean }[];
   /** Nurses who offered to float, in the order they offered. */
   volunteers: readonly Id[];
   preceptorships: readonly Preceptorship[];
   /** The unit's float history (main passes the last 365 days). */
   history: readonly FloatRecord[];
+  /**
+   * Keyed by assignment id: the hard breach floating that nurse off would leave (`removalBreaks`).
+   * Absent: nobody is kept for that reason.
+   */
+  removalBreaks?: ReadonlyMap<Id, Violation>;
 }
 
 export interface FloatPlace {
@@ -41,10 +51,13 @@ export interface FloatOrder {
   excluded: { nurseId: Id; reason: string }[];
 }
 
+/** Main wraps the reason as `${name}: ${reason}.`, so a message's own full stop would double. */
+const withoutFinalPeriod = (text: string) => text.replace(/\.$/, '');
+
 export function floatOrder(input: FloatOrderInput): FloatOrder {
   const excluded: FloatOrder['excluded'] = [];
   const pool: Nurse[] = [];
-  for (const { nurse, isCharge } of input.onShift) {
+  for (const { nurse, assignmentId, isCharge } of input.onShift) {
     const inOrientation = input.preceptorships.some(
       (p) =>
         p.orienteeId === nurse.id &&
@@ -56,7 +69,15 @@ export function floatOrder(input: FloatOrderInput): FloatOrder {
       excluded.push({ nurseId: nurse.id, reason: 'Not float-eligible' });
     else if (inOrientation) {
       excluded.push({ nurseId: nurse.id, reason: 'In orientation; orientees are not floated' });
-    } else pool.push(nurse);
+    } else {
+      const breach = input.removalBreaks?.get(assignmentId);
+      if (breach) {
+        excluded.push({
+          nurseId: nurse.id,
+          reason: `Needed on this shift — floating them would break ${breach.ruleName}: ${withoutFinalPeriod(breach.message)}`,
+        });
+      } else pool.push(nurse);
+    }
   }
 
   const order: FloatPlace[] = [];
@@ -86,14 +107,8 @@ export function floatOrder(input: FloatOrderInput): FloatOrder {
         if (b.lastOn === undefined) return 1;
         return compareDates(a.lastOn, b.lastOn);
       }
-      // Most junior: the later seniority date.
-      const bySeniority = compareDates(b.nurse.seniorityDate, a.nurse.seniorityDate);
-      if (bySeniority !== 0) return bySeniority;
-      return a.nurse.employeeId < b.nurse.employeeId
-        ? -1
-        : a.nurse.employeeId > b.nurse.employeeId
-          ? 1
-          : 0;
+      // Most junior: the later seniority date, then the higher employee number.
+      return compareSeniority(b.nurse, a.nurse);
     });
   for (const [i, e] of rest.entries()) {
     const next = rest[i + 1];

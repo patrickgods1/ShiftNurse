@@ -4,43 +4,67 @@
  * version claimed it steered the solver.
  */
 
-import { useEffect, useState } from 'react';
 import { useHppdTarget, useSetHppdTarget } from '../../../api-config.js';
+import { AsyncState } from '../../../components/async-state.js';
 import { EditorShell } from '../../../components/editor-shell.js';
 import { describedBy, Field } from '../../../components/field-help.js';
 import { INPUT } from '../../../components/ui.js';
+import {
+  numberFieldProblem,
+  numberFieldText,
+  parseNumberField,
+  useFieldDraft,
+} from '../../../field-values.js';
 
 export function HppdSection({ unitId }: { unitId: string }) {
   const hppdQuery = useHppdTarget(unitId);
+  if (hppdQuery.isError) {
+    return (
+      <AsyncState status="error" label="Could not load the HPPD target" error={hppdQuery.error} />
+    );
+  }
+  if (!hppdQuery.isSuccess) {
+    return <AsyncState status="loading" label="Loading the HPPD target" />;
+  }
+  return <HppdForm unitId={unitId} saved={hppdQuery.data?.targetHours} />;
+}
+
+/** `saved` is undefined while the unit has never set a target. */
+function HppdForm({ unitId, saved }: { unitId: string; saved: number | undefined }) {
   const setHppd = useSetHppdTarget();
-  const [value, setValue] = useState('');
+  // The draft follows the saved target until the manager types, so a refetch never eats typing.
+  const draft = useFieldDraft(numberFieldText(saved));
+  const value = draft.text;
 
-  // Sync the input from the loaded target once, and again whenever a fresh save comes back —
-  // but never overwrite what the manager is mid-typing.
-  useEffect(() => {
-    if (hppdQuery.data !== undefined) {
-      setValue(String(hppdQuery.data.targetHours));
-    }
-  }, [hppdQuery.data]);
-
-  const parsed = Number(value);
-  const valid = value !== '' && Number.isFinite(parsed) && parsed > 0;
-  const dirty = hppdQuery.data === undefined || parsed !== hppdQuery.data.targetHours;
-  const error = value !== '' && !valid ? 'Enter a number above 0.' : undefined;
+  const parsed = parseNumberField(value);
+  const problem = numberFieldProblem(value, { min: 0.01 });
+  const valid = problem === undefined && parsed !== undefined;
+  const dirty = parsed !== undefined && parsed !== saved;
+  // Blank is not an error to nag about; zero and below keep the wording that says why.
+  const error =
+    value.trim() === ''
+      ? undefined
+      : parsed !== undefined && parsed <= 0
+        ? 'Enter a number above 0.'
+        : problem;
 
   function submit() {
-    if (!valid) return;
-    setHppd.mutate({ unitId, targetHours: parsed });
+    if (!valid || parsed === undefined) return;
+    // Back to following the saved value once it lands, so a later restore shows in the field.
+    setHppd.mutate(
+      { unitId, targetHours: parsed },
+      { onSuccess: (saved) => draft.reset(numberFieldText(saved.targetHours)) },
+    );
   }
   function discard() {
-    if (hppdQuery.data !== undefined) setValue(String(hppdQuery.data.targetHours));
+    draft.reset();
     setHppd.reset();
   }
 
   return (
     <EditorShell
       label="HPPD target"
-      dirty={hppdQuery.isSuccess && value !== '' && dirty}
+      dirty={dirty}
       saving={setHppd.isPending}
       error={setHppd.error}
       canSave={valid}
@@ -84,11 +108,15 @@ export function HppdSection({ unitId }: { unitId: string }) {
               })}
               onChange={(event) => {
                 setHppd.reset();
-                setValue(event.target.value);
+                draft.setText(event.target.value);
               }}
               className={INPUT}
+              {...draft.bind}
             />
           </Field>
+          {saved === undefined ? (
+            <p className="text-sm text-text-muted">No target set yet.</p>
+          ) : null}
           {setHppd.isSuccess && !dirty ? (
             <p role="status" className="text-sm text-success">
               Saved.

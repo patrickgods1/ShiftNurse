@@ -10,9 +10,9 @@ import { useState } from 'react';
 import { useCancellationPolicy, useSaveCancellationPolicy } from '../../api-dayof.js';
 import { useUpdateUnit } from '../../api-setup.js';
 import { AsyncState } from '../../components/async-state.js';
+import { EditorShell } from '../../components/editor-shell.js';
 import { LabelWithTip } from '../../components/field-help.js';
-import { errorMessage, PRIMARY, SECONDARY, SMALL } from '../../components/ui.js';
-import { useUnsavedChanges } from '../../components/unsaved-changes.js';
+import { SMALL } from '../../components/ui.js';
 import { useUnit, useUnitId } from '../../unit-context.js';
 
 const ALL_TIERS: readonly CancellationTier[] = [
@@ -98,73 +98,61 @@ function OvertimeOrderForm() {
   const saved: OvertimeOrder = unit.overtimeOrder ?? 'cost';
   const [choice, setChoice] = useState<OvertimeOrder>(saved);
   const dirty = choice !== saved;
-  useUnsavedChanges('Overtime call order', dirty);
+
+  function discard() {
+    setChoice(saved);
+    update.reset();
+  }
 
   return (
-    <section
-      className="rounded-md border border-border bg-surface p-4"
-      data-testid="overtime-order"
+    <EditorShell
+      label="Overtime call order"
+      dirty={dirty}
+      saving={update.isPending}
+      error={update.error}
+      onSave={() => update.mutate({ id: unit.id, patch: { overtimeOrder: choice } })}
+      onDiscard={discard}
+      saveLabel="Save overtime order"
     >
-      <h2 className="text-sm font-semibold text-text">
-        <LabelWithTip
-          label="Overtime call order"
-          tip={
-            'Contracts such as the VA–NNU agreement offer overtime to volunteers in turn, so the ' +
-            'same few do not take it all, and mandate it from the most junior nurse only when ' +
-            'nobody volunteers. Straight time still comes before overtime, and agency after.'
-          }
-        />
-      </h2>
-      <p className="mt-1 max-w-prose text-sm text-text-muted">
-        How Today ranks nurses who can only take a call-off shift as overtime.
-      </p>
-      <div className="mt-3 flex max-w-xl flex-col gap-2">
-        {OVERTIME_OPTIONS.map((o) => (
-          <label
-            key={o.value}
-            className="flex items-start gap-3 rounded-md border border-border bg-bg px-3 py-2 text-sm text-text"
-          >
-            <input
-              type="radio"
-              name="overtime-order"
-              className="mt-1"
-              checked={choice === o.value}
-              onChange={() => setChoice(o.value)}
-            />
-            <span className="flex flex-col">
-              {o.label}
-              <span className="text-xs text-text-muted">{o.hint}</span>
-            </span>
-          </label>
-        ))}
-      </div>
-      {errorMessage(update.error) !== undefined ? (
-        <p role="alert" className="mt-2 text-sm text-danger">
-          {errorMessage(update.error)}
+      <section
+        className="rounded-md border border-border bg-surface p-4"
+        data-testid="overtime-order"
+      >
+        <h2 className="text-sm font-semibold text-text">
+          <LabelWithTip
+            label="Overtime call order"
+            tip={
+              'Contracts such as the VA–NNU agreement offer overtime to volunteers in turn, so the ' +
+              'same few do not take it all, and mandate it from the most junior nurse only when ' +
+              'nobody volunteers. Straight time still comes before overtime, and agency after.'
+            }
+          />
+        </h2>
+        <p className="mt-1 max-w-prose text-sm text-text-muted">
+          How Today ranks nurses who can only take a call-off shift as overtime.
         </p>
-      ) : null}
-      <div className="mt-3 flex gap-2">
-        <button
-          type="button"
-          className={PRIMARY}
-          disabled={!dirty || update.isPending}
-          onClick={() => update.mutate({ id: unit.id, patch: { overtimeOrder: choice } })}
-        >
-          Save overtime order
-        </button>
-        <button
-          type="button"
-          className={SECONDARY}
-          disabled={!dirty || update.isPending}
-          onClick={() => {
-            setChoice(saved);
-            update.reset();
-          }}
-        >
-          Discard
-        </button>
-      </div>
-    </section>
+        <div className="mt-3 flex max-w-xl flex-col gap-2">
+          {OVERTIME_OPTIONS.map((o) => (
+            <label
+              key={o.value}
+              className="flex items-start gap-3 rounded-md border border-border bg-bg px-3 py-2 text-sm text-text"
+            >
+              <input
+                type="radio"
+                name="overtime-order"
+                className="mt-1"
+                checked={choice === o.value}
+                onChange={() => setChoice(o.value)}
+              />
+              <span className="flex flex-col">
+                {o.label}
+                <span className="text-xs text-text-muted">{o.hint}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </section>
+    </EditorShell>
   );
 }
 
@@ -175,7 +163,6 @@ function OrderForm({ saved }: { saved: CancellationTier[] }) {
 
   const chosen = rows.filter((r) => r.included).map((r) => r.tier);
   const dirty = chosen.join(',') !== saved.join(',');
-  useUnsavedChanges('Cancellation order', dirty);
 
   function move(index: number, by: -1 | 1) {
     const target = index + by;
@@ -185,95 +172,88 @@ function OrderForm({ saved }: { saved: CancellationTier[] }) {
     setRows(next);
   }
 
+  function discard() {
+    setRows(rowsFor(saved));
+    save.reset();
+  }
+
   return (
-    <section
-      className="rounded-md border border-border bg-surface p-4"
-      data-testid="cancellation-order"
+    <EditorShell
+      label="Cancellation order"
+      dirty={dirty}
+      saving={save.isPending}
+      error={save.error}
+      canSave={chosen.length > 0}
+      onSave={() => save.mutate(chosen)}
+      onDiscard={discard}
+      saveLabel="Save order"
     >
-      <h2 className="text-sm font-semibold text-text">
-        <LabelWithTip
-          label="Low-census cancellation order"
-          tip={
-            'Most contracts fix who is sent home first when there are more nurses on a shift than ' +
-            'its patients need. Match yours here; the Today screen then ranks the shift’s nurses ' +
-            'by it and gives each place its reason. The charge nurse is never cancelled.'
-          }
-        />
-      </h2>
-      <p className="mt-1 max-w-prose text-sm text-text-muted">
-        When a shift has more nurses than it needs, Today lists who goes home first, top to bottom.
-        Untick a tier to leave those nurses out of the list.
-      </p>
-      <ol className="mt-3 flex max-w-xl flex-col gap-2">
-        {rows.map((row, index) => (
-          <li
-            key={row.tier}
-            className="flex items-center gap-3 rounded-md border border-border bg-bg px-3 py-2"
-          >
-            <input
-              type="checkbox"
-              id={`tier-${row.tier}`}
-              checked={row.included}
-              onChange={(e) =>
-                setRows(rows.map((r) => (r === row ? { ...r, included: e.target.checked } : r)))
-              }
-            />
-            <label htmlFor={`tier-${row.tier}`} className="flex flex-1 flex-col text-sm text-text">
-              {TIER_TEXT[row.tier].label}
-              <span className="text-xs text-text-muted">{TIER_TEXT[row.tier].hint}</span>
-            </label>
-            <button
-              type="button"
-              className={SMALL}
-              aria-label={`Move ${TIER_TEXT[row.tier].label} up`}
-              disabled={index === 0}
-              onClick={() => move(index, -1)}
-            >
-              Up
-            </button>
-            <button
-              type="button"
-              className={SMALL}
-              aria-label={`Move ${TIER_TEXT[row.tier].label} down`}
-              disabled={index === rows.length - 1}
-              onClick={() => move(index, 1)}
-            >
-              Down
-            </button>
-          </li>
-        ))}
-      </ol>
-      {chosen.length === 0 ? (
-        <p role="alert" className="mt-2 text-sm text-danger">
-          Keep at least one tier, or nobody can be ranked for cancellation.
+      <section
+        className="rounded-md border border-border bg-surface p-4"
+        data-testid="cancellation-order"
+      >
+        <h2 className="text-sm font-semibold text-text">
+          <LabelWithTip
+            label="Low-census cancellation order"
+            tip={
+              'Most contracts fix who is sent home first when there are more nurses on a shift than ' +
+              'its patients need. Match yours here; the Today screen then ranks the shift’s nurses ' +
+              'by it and gives each place its reason. The charge nurse is never cancelled.'
+            }
+          />
+        </h2>
+        <p className="mt-1 max-w-prose text-sm text-text-muted">
+          When a shift has more nurses than it needs, Today lists who goes home first, top to
+          bottom. Untick a tier to leave those nurses out of the list.
         </p>
-      ) : null}
-      {errorMessage(save.error) !== undefined ? (
-        <p role="alert" className="mt-2 text-sm text-danger">
-          {errorMessage(save.error)}
-        </p>
-      ) : null}
-      <div className="mt-3 flex gap-2">
-        <button
-          type="button"
-          className={PRIMARY}
-          disabled={!dirty || chosen.length === 0 || save.isPending}
-          onClick={() => save.mutate(chosen)}
-        >
-          Save order
-        </button>
-        <button
-          type="button"
-          className={SECONDARY}
-          disabled={!dirty || save.isPending}
-          onClick={() => {
-            setRows(rowsFor(saved));
-            save.reset();
-          }}
-        >
-          Discard
-        </button>
-      </div>
-    </section>
+        <ol className="mt-3 flex max-w-xl flex-col gap-2">
+          {rows.map((row, index) => (
+            <li
+              key={row.tier}
+              className="flex items-center gap-3 rounded-md border border-border bg-bg px-3 py-2"
+            >
+              <input
+                type="checkbox"
+                id={`tier-${row.tier}`}
+                checked={row.included}
+                onChange={(e) =>
+                  setRows(rows.map((r) => (r === row ? { ...r, included: e.target.checked } : r)))
+                }
+              />
+              <label
+                htmlFor={`tier-${row.tier}`}
+                className="flex flex-1 flex-col text-sm text-text"
+              >
+                {TIER_TEXT[row.tier].label}
+                <span className="text-xs text-text-muted">{TIER_TEXT[row.tier].hint}</span>
+              </label>
+              <button
+                type="button"
+                className={SMALL}
+                aria-label={`Move ${TIER_TEXT[row.tier].label} up`}
+                disabled={index === 0}
+                onClick={() => move(index, -1)}
+              >
+                Up
+              </button>
+              <button
+                type="button"
+                className={SMALL}
+                aria-label={`Move ${TIER_TEXT[row.tier].label} down`}
+                disabled={index === rows.length - 1}
+                onClick={() => move(index, 1)}
+              >
+                Down
+              </button>
+            </li>
+          ))}
+        </ol>
+        {chosen.length === 0 ? (
+          <p role="alert" className="mt-2 text-sm text-danger">
+            Keep at least one tier, or nobody can be ranked for cancellation.
+          </p>
+        ) : null}
+      </section>
+    </EditorShell>
   );
 }

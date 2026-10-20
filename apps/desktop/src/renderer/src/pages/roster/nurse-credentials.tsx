@@ -13,6 +13,7 @@ import {
 import { AsyncState } from '../../components/async-state.js';
 import { DateField } from '../../components/date-field.js';
 import { PRIMARY_SMALL } from '../../components/ui.js';
+import { useUnsavedChanges } from '../../components/unsaved-changes.js';
 import { daysFromToday } from '../../format.js';
 import { CredentialBadge, standingOf } from './credential-badge.js';
 
@@ -102,6 +103,7 @@ function CredentialRow({
 }) {
   const [expiry, setExpiry] = useState(nurseCredential.expiresOn ?? '');
   const inputId = useId();
+  useUnsavedChanges('Credential expiry', expiry !== (nurseCredential.expiresOn ?? ''));
   const standing = standingOf(nurseCredential.expiresOn);
 
   return (
