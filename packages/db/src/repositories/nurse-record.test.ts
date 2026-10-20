@@ -11,6 +11,7 @@ import { recordAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { createShiftType, createUnit } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
+import { recordHoldover } from './holdovers.js';
 import { createIncompatibilityGroup } from './incompatibility.js';
 import { nurseRecord } from './nurse-record.js';
 import { publishSchedule, recordScheduleChange } from './publish.js';
@@ -271,6 +272,111 @@ describe('a nurse’s changes to published shifts', () => {
       reason: 'Cover for Ana',
       actor: 'manager',
     });
+  });
+});
+
+describe('entries recorded against something else', () => {
+  it('finds a required holdover in the nurse’s record, with the shift’s date', () => {
+    const day = createShiftType(
+      handle.db,
+      {
+        unitId,
+        name: 'Day 12',
+        abbreviation: 'D12',
+        startTime: '07:00',
+        durationHours: 12,
+        isNight: false,
+        isOnCall: false,
+        color: '#000',
+        sortOrder: 1,
+        active: true,
+      },
+      ACTOR,
+    );
+    const rules = transact(handle.db, (tx) => saveRuleSet(tx, defaultRuleSet(unitId), ACTOR));
+    const period = createPeriod(
+      handle.db,
+      {
+        unitId,
+        name: 'Winter',
+        startDate: isoDate('2026-01-15'),
+        endDate: isoDate('2026-01-28'),
+        ruleSetId: rules.id,
+        ruleSetVersion: rules.version,
+      },
+      ACTOR,
+    );
+    const a = createAssignment(
+      handle.db,
+      { periodId: period.id, nurseId: ana.id, shiftTypeId: day.id, date: isoDate('2026-01-16') },
+      ACTOR,
+    );
+    publishSchedule(handle.db, { periodId: period.id, ledger: [] }, ACTOR);
+    recordHoldover(
+      handle.db,
+      { assignmentId: a.id, minutes: 180, mandated: true, reason: 'Relief never arrived' },
+      ACTOR,
+    );
+    const now = today();
+    const anas = nurseRecord(handle.db, ana.id, now, now).audit;
+    expect(anas).toContainEqual(
+      expect.objectContaining({
+        entityType: 'assignment',
+        reason: 'Relief never arrived',
+        concerns: '2026-01-16',
+      }),
+    );
+    const beas = nurseRecord(handle.db, bea.id, now, now).audit;
+    expect(beas.filter((r) => r.entityType === 'assignment')).toHaveLength(0);
+  });
+
+  it('finds an orientation in both the orientee’s and the preceptor’s record', () => {
+    log(noon(10), 'preceptorship', 'p-1', {
+      orienteeId: bea.id,
+      preceptorId: ana.id,
+      startDate: '2020-10-05',
+      endDate: '2020-11-01',
+    });
+    const anas = record().audit.filter((r) => r.entityType === 'preceptorship');
+    expect(anas).toHaveLength(1);
+    expect(anas[0]!.concerns).toBe('2020-10-05 to 2020-11-01');
+    const beas = nurseRecord(handle.db, bea.id, isoDate('2020-10-01'), isoDate('2020-10-31')).audit;
+    expect(beas.map((r) => r.id)).toContain(anas[0]!.id);
+  });
+
+  it('finds holiday work that lists the nurse among others, and not a nurse left off the list', () => {
+    log(noon(26), 'holiday_work', 'h-1', {
+      holidayId: 'h-1',
+      recorded: true,
+      nurseIds: [bea.id, `${ana.id}x`],
+      fromSchedules: [],
+    });
+    const beas = nurseRecord(handle.db, bea.id, isoDate('2020-10-01'), isoDate('2020-10-31')).audit;
+    expect(beas.filter((r) => r.entityType === 'holiday_work')).toHaveLength(1);
+    expect(record().audit.filter((r) => r.entityType === 'holiday_work')).toHaveLength(0);
+  });
+
+  it('does not mistake a nurse whose id is a prefix of a listed id, or the other way round', () => {
+    log(noon(26), 'holiday_work', 'h-2', {
+      holidayId: 'h-2',
+      recorded: true,
+      nurseIds: [`${ana.id}0`, ana.id.slice(0, -1)],
+      fromSchedules: [],
+    });
+    expect(record().audit.filter((r) => r.entityType === 'holiday_work')).toHaveLength(0);
+  });
+
+  it('skips an audit row whose snapshot is not JSON, without failing the record', () => {
+    handle.sqlite
+      .prepare(
+        `insert into audit_log (id, entity_type, entity_id, action, actor, at, before)
+         values ('raw-1', 'holiday_work', 'h-3', 'update', 'manager', ?, 'not json at all')`,
+      )
+      .run(noon(12));
+    log(noon(13), 'assignment', 'a-9', { nurseId: ana.id, date: '2020-10-13' });
+    const rows = record().audit;
+    expect(rows.map((r) => r.id)).not.toContain('raw-1');
+    expect(rows.some((r) => r.entityType === 'assignment')).toBe(true);
   });
 });
 

@@ -145,7 +145,8 @@
   (`npm run build:packages`) after touching core before trusting a smoke result. Restore and
   start over swap the file through `replaceDatabaseFile` (staged copy, then rename), so a failed
   copy leaves the live database alone. The daily copy is due by the *local* date and re-checked
-  hourly while the app runs.
+  hourly while the app runs. Daily copies beyond the newest 14 are removed for good, each with an
+  audit row (`pruned: true`); publish and manual copies are never pruned.
 - **An update never migrates the only copy.** `openAppDatabase` opens without migrating, reads
   `migrationStatus`, and when migrations are pending on a non-empty file takes a `pre-migrate`
   backup first (audited once the schema is current). A database migrated by a newer release is

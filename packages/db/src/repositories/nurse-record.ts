@@ -7,7 +7,11 @@
  * an exchange — whose snapshot carries the nurse's id under a key. The audit table has no nurse
  * column, so the match is on the snapshot text: SQLite's `instr` over the JSON for the exact
  * `"nurseId":"<id>"` pair (JSON.stringify writes no spaces, and `instr`, unlike LIKE, has no
- * wildcards for an id to trip over). That is a scan of the rows in the date window, which the
+ * wildcards for an id to trip over). The keys are `RECORD_NURSE_KEYS` (a shift's nurse, both
+ * parties to an exchange, the orientee and the preceptor) and, for entries about several nurses
+ * at once, a top-level `nurseIds` array matched element by element. `heldBy` (a bid denial's
+ * "who holds those places") is deliberately not a key: that entry is about the denied nurse, not
+ * about the colleagues who were awarded. That is a scan of the rows in the date window, which the
  * `audit_at_idx` index bounds; a per-nurse index would need a column on every audit write.
  *
  * What it leaves out, on purpose: the incompatibility group's entries. Their reason is HR
@@ -49,7 +53,16 @@ export const RECORD_EXCLUDED_ENTITIES = [
 ] as const;
 
 /** Snapshot keys that name a nurse as a party to the entry. */
-const NURSE_KEYS = ['nurseId', 'requestingNurseId', 'counterpartyNurseId'] as const;
+export const RECORD_NURSE_KEYS = [
+  'nurseId',
+  'requestingNurseId',
+  'counterpartyNurseId',
+  'orienteeId',
+  'preceptorId',
+] as const;
+
+/** Top-level snapshot arrays of nurse ids, such as the nurses recorded as working a holiday. */
+export const RECORD_NURSE_ARRAY_KEYS = ['nurseIds'] as const;
 
 const PAD_MS = 36 * 3_600_000;
 
@@ -113,13 +126,20 @@ export function nurseRecord(db: DbLike, nurseId: Id, start: IsoDate, end: IsoDat
 
   const about = or(
     and(eq(auditLog.entityType, 'nurse'), eq(auditLog.entityId, nurseId)),
-    ...NURSE_KEYS.flatMap((key) => {
+    ...RECORD_NURSE_KEYS.flatMap((key) => {
       const pair = `"${key}":${JSON.stringify(nurseId)}`;
       return [
         sql`instr(${auditLog.before}, ${pair}) > 0`,
         sql`instr(${auditLog.after}, ${pair}) > 0`,
       ];
     }),
+    // An exact element match: `instr` on a bare id would also hit it under unrelated keys.
+    ...RECORD_NURSE_ARRAY_KEYS.flatMap((key) =>
+      [auditLog.before, auditLog.after].map(
+        (column) =>
+          sql`(json_valid(${column}) and exists (select 1 from json_each(${column}, ${`$.${key}`}) where value = ${nurseId}))`,
+      ),
+    ),
   );
   const audit = db
     .select()

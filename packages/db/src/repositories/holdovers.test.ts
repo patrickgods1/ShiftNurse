@@ -143,8 +143,45 @@ describe('recording a holdover', () => {
 
     const entry = auditHistoryFor(handle.db, 'assignment', a.id)[0]!;
     expect(entry.action).toBe('update');
-    expect(entry.before).toEqual({ holdoverMinutes: 0, holdoverMandated: null });
-    expect(entry.after).toEqual({ holdoverMinutes: 90, holdoverMandated: false });
+    expect(entry.before).toEqual({
+      nurseId,
+      date: '2026-01-16',
+      shiftTypeId: dayId,
+      holdoverMinutes: 0,
+      holdoverMandated: null,
+    });
+    expect(entry.after).toEqual({
+      nurseId,
+      date: '2026-01-16',
+      shiftTypeId: dayId,
+      holdoverMinutes: 90,
+      holdoverMandated: false,
+    });
+  });
+
+  it('names the nurse, the day and the shift in a holdover entry, so her record can find it', () => {
+    const a = shift();
+    publish();
+    recordHoldover(
+      handle.db,
+      { assignmentId: a.id, minutes: 180, mandated: true, reason: 'Relief never arrived' },
+      ACTOR,
+    );
+    const entry = auditHistoryFor(handle.db, 'assignment', a.id)[0]!;
+    expect(entry.before).toEqual({
+      nurseId,
+      date: '2026-01-16',
+      shiftTypeId: dayId,
+      holdoverMinutes: 0,
+      holdoverMandated: null,
+    });
+    expect(entry.after).toEqual({
+      nurseId,
+      date: '2026-01-16',
+      shiftTypeId: dayId,
+      holdoverMinutes: 180,
+      holdoverMandated: true,
+    });
   });
 
   it('records a required holdover with the reason the manager gave', () => {
@@ -177,6 +214,9 @@ describe('recording a holdover', () => {
     const row = handle.db.select().from(s.assignment).get()!;
     expect(row.holdoverMandated).toBeNull();
     expect(auditHistoryFor(handle.db, 'assignment', a.id)[0]!.before).toEqual({
+      nurseId,
+      date: '2026-01-16',
+      shiftTypeId: dayId,
       holdoverMinutes: 60,
       holdoverMandated: false,
     });
@@ -197,7 +237,13 @@ describe('recording a holdover', () => {
     );
     expect(cleared).not.toHaveProperty('holdoverMinutes');
     const entry = auditHistoryFor(handle.db, 'assignment', a.id)[0]!;
-    expect(entry.before).toEqual({ holdoverMinutes: 60, holdoverMandated: true });
+    expect(entry.before).toEqual({
+      nurseId,
+      date: '2026-01-16',
+      shiftTypeId: dayId,
+      holdoverMinutes: 60,
+      holdoverMandated: true,
+    });
     expect(entry.reason).toBeUndefined();
   });
 

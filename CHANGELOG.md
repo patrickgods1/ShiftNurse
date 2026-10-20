@@ -31,6 +31,13 @@ tags. Each release's notes link here.
   night too.
 - Republishing a schedule no longer leaves a nurse's old nights or weekends in the fairness
   history after their shifts moved to someone else.
+- A nurse's exported record now includes required holdovers, orientation pairings, hand-recorded
+  holiday work and history re-imports that concern her.
+- Deleting an acuity tier that ratio rules or census days use is refused (it used to remove those
+  rules silently); rename it instead.
+- A holiday whose "who worked" list was recorded by hand can no longer be deleted until that list
+  is cleared, and only nurses on the unit can be recorded as having worked it.
+- Daily backups removed after 14 days are now listed in the activity log.
 
 ### Changed
 

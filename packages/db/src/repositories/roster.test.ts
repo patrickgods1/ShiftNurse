@@ -225,6 +225,15 @@ describe('nurses', () => {
     expect(listActiveNursesForUnit(handle.db, unitId)).toHaveLength(0);
   });
 
+  it('records a deactivation as an update, the same as switching the nurse off by hand', () => {
+    const nurse = createNurse(handle.db, baseNurse(), ACTOR);
+    deactivateNurse(handle.db, nurse.id, ACTOR);
+    const entry = auditHistoryFor(handle.db, 'nurse', nurse.id)[0]!;
+    expect(entry.action).toBe('update');
+    expect(entry.before).toMatchObject({ active: true });
+    expect(entry.after).toMatchObject({ active: false });
+  });
+
   it('orders by seniority with the longest-serving nurse first', () => {
     createNurse(
       handle.db,

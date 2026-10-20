@@ -148,6 +148,17 @@ describe('holidays', () => {
     expect(auditsOf('holiday', h.id).map((a) => a.action)).toEqual(['delete', 'update', 'create']);
   });
 
+  it('refuses to delete a holiday whose who-worked list was recorded by hand', () => {
+    const h = api().holidays.create(christmas());
+    api().holidays.recordWork(h.id, [f.rns[0]!.id]);
+    expect(() => api().holidays.delete(h.id)).toThrow(/recorded by hand/);
+    expect(
+      api()
+        .holidays.list(unitId())
+        .some((x) => x.id === h.id),
+    ).toBe(true);
+  });
+
   it('refuses a holiday with a blank name', () => {
     const h = api().holidays.create(christmas());
     expect(() => api().holidays.update(h.id, { name: '' })).toThrow(/needs a name/i);
@@ -199,6 +210,28 @@ describe('acuity tiers, ratios and the HPPD target', () => {
       'update',
       'create',
     ]);
+  });
+
+  it('refuses to delete a tier that a ratio rule cites', () => {
+    const tier = api().acuity.createTier({
+      unitId: unitId(),
+      name: 'Tier 8',
+      level: 8,
+      careHoursPerPatientDay: 8,
+    });
+    api().acuity.createRatioRule({
+      unitId: unitId(),
+      role: 'RN',
+      acuityTierId: tier.id,
+      maxPatientsPerNurse: 3,
+      active: true,
+    });
+    expect(() => api().acuity.deleteTier(tier.id)).toThrow(/Rename it instead/);
+    expect(
+      api()
+        .acuity.tiers(unitId())
+        .some((t) => t.id === tier.id),
+    ).toBe(true);
   });
 
   it('says so when deleting a tier that does not exist', () => {

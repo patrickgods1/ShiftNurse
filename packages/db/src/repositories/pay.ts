@@ -32,10 +32,9 @@ import { auditedUpdate, type PatchKeys } from './patch.js';
  * Every rate relevant to a unit: this unit's per-nurse overrides, plus every role-default row.
  * `pay_rate` has no unit column of its own — a per-nurse rate is scoped by joining through
  * `nurse`, and a role default has no owning unit at all (it is `nurseId: null`, the role's
- * base rate wherever it applies), so it is always included.
+ * base rate wherever it applies), so it is always included. In insertion order:
+ * `resolvePayRate` keeps the first of two rates with the same effective date.
  */
-/** Role defaults (shared by every unit) plus this unit's per-nurse rates. In insertion order:
- * `resolvePayRate` keeps the first of two rates with the same effective date. */
 export function listPayRatesForUnit(db: DbLike, unitId: Id): PayRate[] {
   const unitNurses = db.select({ id: nurse.id }).from(nurse).where(eq(nurse.unitId, unitId));
   return db
@@ -555,7 +554,10 @@ export function savePaySettings(
   if (stacking !== 'compound' && stacking !== 'additive') {
     throw new Error('Premium stacking must be compound or additive');
   }
-  const before = getPaySettings(db, unitId);
+  // A unit with no row has no stored settings: reading defaults as "before" would audit state
+  // that never existed.
+  const saved = paySettingsSaved(db, unitId);
+  const before = saved ? getPaySettings(db, unitId) : undefined;
   const covers = settings.holidayPayCoversOvertime === true;
   const after: PaySettings = {
     callBackMinimumHours: hours,
@@ -583,9 +585,9 @@ export function savePaySettings(
   recordAudit(db, {
     entityType: 'pay_settings',
     entityId: unitId,
-    action: 'update',
+    action: saved ? 'update' : 'create',
     actor,
-    before,
+    ...(before ? { before } : {}),
     after,
   });
   return after;

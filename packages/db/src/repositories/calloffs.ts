@@ -149,15 +149,20 @@ export function markCallOffUncovered(db: DbLike, id: Id, actor: string, reason: 
   const before = getCallOff(db, id);
   if (!before) throw new Error(`Call-off ${id} not found`);
   if (before.status !== 'open') throw new Error(`Call-off ${id} is ${before.status}, not open`);
-  const after: CallOff = { ...before, status: 'uncovered' };
-  // Audited before the write: a blank reason must not flip the status and leave no record —
+  // Checked before the write: a blank reason must not flip the status and leave no record —
   // a retry with a real reason would then find the call-off already uncovered.
+  if (!reason?.trim()) {
+    throw new Error(
+      'Marking a call-off uncovered requires a reason. This text is what gets quoted if the decision is challenged.',
+    );
+  }
+  const after: CallOff = { ...before, status: 'uncovered' };
+  db.update(callOff).set({ status: 'uncovered' }).where(eq(callOff.id, id)).run();
   recordAuditStrict(
     db,
     { entityType: 'call_off', entityId: id, action: 'update', actor, before, after, reason },
     { requireReason: true },
   );
-  db.update(callOff).set({ status: 'uncovered' }).where(eq(callOff.id, id)).run();
   return after;
 }
 
@@ -166,14 +171,19 @@ export function cancelCallOff(db: DbLike, id: Id, actor: string, reason: string)
   const before = getCallOff(db, id);
   if (!before) throw new Error(`Call-off ${id} not found`);
   if (before.status !== 'open') throw new Error(`Call-off ${id} is ${before.status}, not open`);
+  // Checked before the write, same reasoning as `markCallOffUncovered` above.
+  if (!reason?.trim()) {
+    throw new Error(
+      'Cancelling a call-off requires a reason. This text is what gets quoted if the decision is challenged.',
+    );
+  }
   const after: CallOff = { ...before, status: 'cancelled' };
-  // Audited before the write, same reasoning as `markCallOffUncovered` above.
+  db.update(callOff).set({ status: 'cancelled' }).where(eq(callOff.id, id)).run();
   recordAuditStrict(
     db,
     { entityType: 'call_off', entityId: id, action: 'update', actor, before, after, reason },
     { requireReason: true },
   );
-  db.update(callOff).set({ status: 'cancelled' }).where(eq(callOff.id, id)).run();
   return after;
 }
 

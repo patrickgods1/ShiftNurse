@@ -70,7 +70,7 @@ describe('adding and changing nurses', () => {
     const ann = f.rns[0]!;
     expect(api().nurses.deactivate(ann.id).active).toBe(false);
     expect(api().nurses.get(ann.id)?.active).toBe(false);
-    expect(auditsOf('nurse', ann.id)[0]!.action).toBe('delete');
+    expect(auditsOf('nurse', ann.id)[0]!.action).toBe('update');
   });
 
   it('says so when asked to deactivate a nurse who is not on the roster', () => {

@@ -96,6 +96,20 @@ describe('recording an accommodation', () => {
     });
   });
 
+  it('leaves no audit entry for an accommodation that could not be stored', () => {
+    handle.sqlite.exec(
+      "CREATE TEMP TRIGGER fail_block BEFORE INSERT ON availability_block BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+    );
+    expect(() => sabbath(vera)).toThrow(/disk full/);
+    expect(
+      (
+        handle.sqlite
+          .prepare("SELECT COUNT(*) AS n FROM audit_log WHERE entity_type = 'availability_block'")
+          .get() as { n: number }
+      ).n,
+    ).toBe(0);
+  });
+
   it('refuses a blank reason and writes nothing', () => {
     expect(() => sabbath(vera, { reason: '  ' })).toThrow(/Give a reason/);
     expect(listAvailabilityBlocks(handle.db, unitId)).toEqual([]);
@@ -171,6 +185,30 @@ describe('changing an accommodation', () => {
       ),
     ).toThrow(/cannot change 'nurseId'/);
     expect(listAvailabilityBlocks(handle.db, unitId)).toEqual([block]);
+  });
+});
+
+describe('a change that fails', () => {
+  it('leaves no audit entry for an accommodation change that could not be saved', () => {
+    const block = sabbath(vera);
+    handle.sqlite.exec(
+      "CREATE TEMP TRIGGER fail_update BEFORE UPDATE ON availability_block BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+    );
+    expect(() =>
+      updateAvailabilityBlock(handle.db, block.id, { endTime: '19:00', reason: 'Sunset' }, ACTOR),
+    ).toThrow(/disk full/);
+    expect(auditHistoryFor(handle.db, 'availability_block', block.id)).toHaveLength(1);
+  });
+
+  it('leaves no removal on the record when the accommodation could not be removed', () => {
+    const block = sabbath(vera);
+    handle.sqlite.exec(
+      "CREATE TEMP TRIGGER fail_delete BEFORE DELETE ON availability_block BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+    );
+    expect(() => deleteAvailabilityBlock(handle.db, block.id, 'No longer needed', ACTOR)).toThrow(
+      /disk full/,
+    );
+    expect(auditHistoryFor(handle.db, 'availability_block', block.id)).toHaveLength(1);
   });
 });
 

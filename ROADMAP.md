@@ -751,6 +751,10 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
       with reason, placeable shifts, overlap-aware tail, time-off transition table, D31
       night-before lift, republish ledger reconciliation, holdover-safe moves (verify: npm run
       check; smoke)
+- [x] Phase 6 — Audit identity and referenced-config deletes: holdover/orientation/holiday-work
+      entries reach the nurse record, tier and recorded-holiday deletes refused, ledger re-import
+      keeps replaced rows, audit-after-write, audited backup pruning, record completeness test
+      (verify: npm run check; smoke)
 
 ---
 

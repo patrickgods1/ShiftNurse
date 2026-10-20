@@ -9,6 +9,12 @@
  * Writing an audit entry is never optional and never conditional on success elsewhere: audit
  * writes happen inside the same transaction as the change they describe, so a rolled-back
  * change leaves no misleading audit entry and a committed change can never lack one.
+ *
+ * Write the change, then its audit row. A reason that guards a change is checked before the
+ * first write, explicitly, not by auditing first: a function that may run on a bare handle
+ * would otherwise leave an audit row for a change that then failed. Auditing before the
+ * writes is acceptable only in a function that takes `ShiftNurseTx`, where the whole call
+ * rolls back together.
  */
 
 import type { AuditAction, AuditLogEntry, Id } from '@shiftnurse/core';

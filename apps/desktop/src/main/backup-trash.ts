@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { auditHistoryFor, recordAudit, type ShiftNurseDb, transact } from '@shiftnurse/db';
 import type { BackupInfo, DeletedBackupInfo } from '../shared/api.js';
 import {
+  listBackupFiles,
   listTrash,
   moveToTrash,
   PURGING_SUFFIX,
@@ -117,6 +118,24 @@ export function purgeExpiredBackupsIn(
     removeAudited(b.path, () => auditDelete(db, b, { permanent: true, expired: true }));
   }
   return expired;
+}
+
+/**
+ * Retention for the daily copies: everything beyond the newest `keep` goes, one audit row each
+ * (`pruned: true`). Pruned copies are removed for good, not trashed: the policy has already
+ * decided to drop them, and a trash would keep up to 30 more beside the live ones. Publish and
+ * manual backups are never touched.
+ */
+export function pruneDailyBackupsIn(db: ShiftNurseDb, dir: string, keep: number): BackupInfo[] {
+  const stale = listBackupFiles(dir)
+    .filter((b) => b.kind === 'daily')
+    .slice(keep);
+  // One at a time, like the launch sweep: a failed audit leaves that file and rethrows, and the
+  // ones already removed keep their rows.
+  for (const b of stale) {
+    removeAudited(b.path, () => auditDelete(db, b, { permanent: true, pruned: true }));
+  }
+  return stale;
 }
 
 function auditDelete(db: ShiftNurseDb, backup: BackupInfo, after: Record<string, unknown>): void {
