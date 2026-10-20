@@ -807,6 +807,9 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
 - [x] Phase 22 — configuration versioning: shift-type lock and duplicate, ratio reasons, pay
       snapshots, holiday re-dating, draft rule versions, history triggers (M-37 M-38 M-34 L-48
       P2-10; verify: npm run check; smoke)
+- [x] Phase 23 — seeds through app paths: demo ledger via publish, dated history, SB 525 CNA
+      floor, scenario audited (M-49 M-50 M-51 L-70…L-75 L-77 N-39 N-40 T-15; verify: npm run
+      check; smoke)
 
 ---
 

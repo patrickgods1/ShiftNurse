@@ -116,6 +116,14 @@ tags. Each release's notes link here.
 - Changing a differential, overtime rule, pay setting or holiday no longer changes the cost of
   schedules already published. Each published schedule keeps the pay settings it went out under;
   the cost detail says which, and "Reprice with today's settings" asks for a reason.
+- Demo units: the fairness history now counts denied requests and covered call-outs, and the
+  VA Baylor nurse's weekends are exempt, as the app records them.
+- Demo and test data: past call-offs, calls and leave decisions are dated when they happened,
+  not when the data was loaded, so replacement suggestions spread calls correctly.
+- California demo units: nursing-assistant pay meets the state health-care minimum wage; RN pay
+  scales are marked illustrative; the welcome screen says the community unit is in California.
+- Demo units no longer phone a nurse back onto a shift the day she called off sick, approve two
+  vacations over the same days, or roster a nurse inside a block of FMLA leave.
 
 ### Changed
 

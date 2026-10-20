@@ -7,8 +7,10 @@
 
 import {
   buildRuleContext,
+  compareDates,
   costSchedule,
   datesInRange,
+  today as dayOf,
   deriveDemand,
   evaluateSchedule,
   type IsoDate,
@@ -160,9 +162,20 @@ export function realisticDemoChecks(f: DemoFixture, demo: DemoId, today: IsoDate
     ]) {
       expect(violations.get(code) ?? 0, code).toBe(0);
     }
+    // Cannot go red with today's data (no bridge falls inside the history); guards a future one.
     expect(
       f.count(`SELECT COUNT(*) n FROM assignment a JOIN nurse n ON n.id = a.nurse_id
-                 WHERE a.date < n.seniority_date`),
+                 WHERE a.date < COALESCE(n.hire_date, n.seniority_date)`),
+    ).toBe(0);
+  });
+
+  it('never approves two requests for the same nurse on the same day', () => {
+    // Two date ranges overlap when each starts on or before the other ends.
+    expect(
+      f.count(`SELECT COUNT(*) n FROM time_off_request a JOIN time_off_request b
+                 ON a.nurse_id = b.nurse_id AND a.id < b.id
+                 WHERE a.status = 'approved' AND b.status = 'approved'
+                   AND a.start_date <= b.end_date AND b.start_date <= a.end_date`),
     ).toBe(0);
   });
 
@@ -179,6 +192,15 @@ export function realisticDemoChecks(f: DemoFixture, demo: DemoId, today: IsoDate
     const callOffs = f.count('SELECT COUNT(*) n FROM call_off');
     expect(callOffs).toBeGreaterThan(35);
     expect(callOffs).toBeLessThan(75);
+  });
+
+  it('never phones a nurse back onto a shift the same day she called off', () => {
+    // A manager would not call back someone who just called in sick; the sick credit and the
+    // replacement tour would also double-count her hours.
+    expect(
+      f.count(`SELECT COUNT(*) n FROM call_off c JOIN assignment a
+                 ON a.nurse_id = c.nurse_id AND a.date = c.date AND a.source = 'callout'`),
+    ).toBe(0);
   });
 
   it('credits paid leave and sick calls, so a nurse rarely reads short of contract', () => {
@@ -244,6 +266,40 @@ export function realisticDemoChecks(f: DemoFixture, demo: DemoId, today: IsoDate
     }
   });
 
+  it('dates every past call-off and call to the day of the shift, not the day the demo was seeded', () => {
+    // A D12 07:00 call-off is reported at 05:00 that morning and the first call is at 05:10.
+    const rows = f.rows<{ id: string; date: IsoDate; r: number; t: number }>(
+      `SELECT c.id, c.date, c.reported_at r, a.attempted_at t FROM call_attempt a
+         JOIN call_off c ON c.id = a.call_off_id ORDER BY c.id, a.attempted_at`,
+    );
+    expect(rows.length).toBeGreaterThan(35);
+    let k = 0;
+    let previous = '';
+    for (const row of rows) {
+      k = row.id === previous ? k + 1 : 0;
+      previous = row.id;
+      expect(dayOf(new Date(row.r))).toBe(row.date);
+      expect(dayOf(new Date(row.t))).toBe(row.date);
+      // Ten minutes apart, the first at ten past the report.
+      expect(row.t).toBe(row.r + (k + 1) * 600_000);
+    }
+  });
+
+  it('dates past requests and their decisions before the leave they were for', () => {
+    // Submitted four weeks ahead and decided two hours later, the same morning.
+    const rows = f.rows<{ start_date: IsoDate; submitted_at: number; decided_at: number }>(
+      `SELECT start_date, submitted_at, decided_at FROM time_off_request
+         WHERE status IN ('approved', 'denied') AND start_date < '${f.result.draftStart}'`,
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.decided_at - row.submitted_at).toBe(7_200_000);
+      const submitted = new Date(row.submitted_at);
+      expect(submitted.getHours() === 9 && submitted.getMinutes() === 0).toBe(true);
+      expect(compareDates(dayOf(new Date(row.decided_at)), row.start_date)).toBeLessThanOrEqual(0);
+    }
+  });
+
   it('has requests waiting on the manager for the next schedule', () => {
     expect(
       f.count(
@@ -297,6 +353,48 @@ export function realisticDemoChecks(f: DemoFixture, demo: DemoId, today: IsoDate
         "SELECT COUNT(*) n FROM audit_log WHERE entity_type = 'schedule_period' AND action = 'publish'",
       ),
     ).toBe(13);
+    // The ledger is booked at publish, as the app books it, not imported after the fact.
+    expect(
+      f.count(
+        "SELECT COUNT(*) n FROM audit_log WHERE entity_type = 'fairness_ledger' AND action = 'import'",
+      ),
+    ).toBe(0);
+  });
+
+  it('books a ledger row for every nurse who worked a published period, and none for anyone who did not', () => {
+    const booked = f.count(`SELECT COUNT(*) n FROM fairness_ledger l
+      JOIN schedule_period p ON p.id = l.period_id WHERE p.status = 'published'`);
+    const worked = f.count(`SELECT COUNT(*) n FROM (SELECT DISTINCT a.nurse_id, a.period_id
+      FROM assignment a JOIN schedule_period p ON p.id = a.period_id WHERE p.status = 'published')`);
+    expect(booked).toBe(worked);
+  });
+
+  it('counts denials and covered call-outs in the ledger, as the app does', () => {
+    const published = "JOIN schedule_period p ON p.id = l.period_id WHERE p.status = 'published'";
+    // A denial counts in the period its leave starts in, for a nurse with a row there.
+    const denials = f.count(`SELECT COUNT(*) n FROM time_off_request r JOIN schedule_period p
+        ON r.start_date BETWEEN p.start_date AND p.end_date AND p.status = 'published'
+        AND p.unit_id = '${f.result.unitId}'
+      WHERE r.status = 'denied' AND EXISTS (SELECT 1 FROM assignment a
+        WHERE a.nurse_id = r.nurse_id AND a.period_id = p.id)`);
+    expect(denials).toBeGreaterThan(0);
+    expect(
+      f.count(`SELECT COALESCE(SUM(l.requests_denied), 0) n FROM fairness_ledger l ${published}`),
+    ).toBe(denials);
+    // A covered call-out is a shift that came in by phone.
+    const covers = f.count(`SELECT COUNT(*) n FROM assignment a JOIN schedule_period p
+      ON p.id = a.period_id WHERE p.status = 'published' AND a.source = 'callout'`);
+    expect(covers).toBeGreaterThan(20);
+    expect(
+      f.count(`SELECT COALESCE(SUM(l.call_outs_covered), 0) n FROM fairness_ledger l ${published}`),
+    ).toBe(covers);
+  });
+
+  it('charges no overtime to per-diem staff, who have no contract to be over', () => {
+    expect(
+      f.count(`SELECT COALESCE(SUM(l.overtime_hours), 0) n FROM fairness_ledger l
+        JOIN nurse n ON n.id = l.nurse_id WHERE n.contracted_hours_per_period = 0`),
+    ).toBe(0);
   });
 
   it('gives every published period a version, so a manager can edit it', () => {

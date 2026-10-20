@@ -8,7 +8,14 @@
  * then settles the edges with core's `today(date)`, the same conversion the daily backup uses.
  */
 
-import { compareDates, dayNumber, type IsoDate, MS_PER_DAY, today } from '@shiftnurse/core';
+import {
+  compareDates,
+  dayNumber,
+  type IsoDate,
+  isIsoDate,
+  MS_PER_DAY,
+  today,
+} from '@shiftnurse/core';
 
 /** A day and a half: covers every UTC offset, so the SQL window never cuts a local day. */
 export const LOCAL_DAY_PAD_MS = 36 * 3_600_000;
@@ -31,4 +38,25 @@ export function instantWindow(
 export function onLocalDays(at: number, start: IsoDate, end?: IsoDate): boolean {
   const day = today(new Date(at));
   return compareDates(day, start) >= 0 && (end === undefined || compareDates(day, end) <= 0);
+}
+
+/**
+ * The epoch ms of wall-clock `time` (`HH:MM`) on `date` in the host's zone. A local `Date` is
+ * right here, unlike in schedule maths: this is an event instant (when a call was made), not
+ * schedule geometry, and events are displayed in the host's zone, so 05:00 on the shift's date
+ * must read 05:00 on the manager's clock. A time inside a spring-forward gap resolves forward.
+ */
+export function localInstant(date: IsoDate, time: string): number {
+  if (!isIsoDate(date)) throw new Error(`"${date}" is not a date.`);
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time);
+  if (!m) throw new Error(`"${time}" is not a time of day.`);
+  const [y, mo, d] = date.split('-').map(Number);
+  return new Date(y!, mo! - 1, d!, Number(m[1]), Number(m[2])).getTime();
+}
+
+/** A recorded event time is a real instant in whole milliseconds; NaN or 1.5 is a caller bug. */
+export function requireWholeMillis(at: number): void {
+  if (!Number.isSafeInteger(at)) {
+    throw new Error('A recorded time must be a whole number of milliseconds.');
+  }
 }

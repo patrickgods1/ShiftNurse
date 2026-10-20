@@ -16,9 +16,26 @@
  * - six pending PTO requests for the same weekend of the upcoming period,
  * - exactly three ACLS certifications expiring inside that period,
  * - census actuals that diverge from forecasts, so the back-test has something to show,
- * - junior nurses denied time off more often, a bias the equity scoring should surface,
+ * - junior nurses denied time off more often (in the request records; the equity scoring reads
+ *   it from there),
  * - a mixed 8/12-hour unit with an on-call shift, LPNs, PALS and a preceptor requirement on
  *   every 12-hour shift, so every configuration path has data behind it.
+ *
+ * ## Known imperfections that are not planted
+ *
+ * The history also holds problems nobody planted, and a test must not treat them as signal:
+ *
+ * - night-12 shifts followed the next day by a D12 or D8: 0 h rest, because the history is
+ *   staffed without a rest check;
+ * - worked shifts inside approved leave, because leave is approved after the history is staffed;
+ * - a hand-built fairness ledger that deviates from core's `deriveCounters`: request and
+ *   call-out counters are 0, weekends are keyed on the calendar Saturday, a per-diem nurse's
+ *   "overtime" is `hours - 1`, undesirable shifts and hit rate are heuristics, every nurse has a
+ *   row (zero rows included), and it is imported before the call-offs, so a few rows still count
+ *   a shift its nurse called off.
+ *
+ * They stay because the data is frozen. A new scenario or a re-pin may derive its ledger through
+ * `periodLedgerRows` instead.
  *
  * ## Do not change what it produces
  *
@@ -49,6 +66,7 @@ import {
   type IsoDate,
   isoDate,
   isWeekendDate,
+  minDate,
   type Nurse,
   type NurseRole,
   type Preference,
@@ -56,13 +74,16 @@ import {
   ScheduleView,
   type ShiftType,
   today,
+  usFederalHolidays,
   type Weekday,
   weekdayOf,
 } from '@shiftnurse/core';
 import type { ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
+import { localInstant } from '../local-days.js';
 import { createAcuityTier, createRatioRule, upsertHppdTarget } from '../repositories/acuity.js';
 import { logCallAttempt, markCallOffCovered, reportCallOff } from '../repositories/calloffs.js';
+import { recordActualCensus, upsertCensusForecast } from '../repositories/census.js';
 import {
   createShiftCredentialRequirement,
   createShiftType,
@@ -75,6 +96,9 @@ import {
   type UpsertFairnessLedgerInput,
 } from '../repositories/ledger.js';
 import {
+  createDifferential,
+  createOvertimeRule,
+  createPayRate,
   getPaySettings,
   listActiveDifferentials,
   listActiveOvertimeRules,
@@ -83,6 +107,7 @@ import {
 } from '../repositories/pay.js';
 import { publishSchedule } from '../repositories/publish.js';
 import { createNurse, grantCredential, replaceNursePreferences } from '../repositories/roster.js';
+import { createCredential } from '../repositories/roster-io.js';
 import { saveRuleSet } from '../repositories/rulesets.js';
 import { createAssignment, createPeriod, deleteAssignment } from '../repositories/schedule.js';
 import { approveTimeOff, createTimeOffRequest, denyTimeOff } from '../repositories/timeoff.js';
@@ -259,10 +284,9 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
   const ONCALL = st('On call', 'OC', '19:00', 12, { isOnCall: true, color: '#94a3b8' }, 6);
   bump('shiftType', 6);
 
-  // --- Credentials (no repository yet; direct insert) -----------------------
+  // --- Credentials ----------------------------------------------------------
   const cred = (code: string, name: string, tracksExpiry = true): Id => {
-    const id = ids.credential();
-    db.insert(s.credential).values({ id, code, name, tracksExpiry }).run();
+    const id = createCredential(db, { code, name, tracksExpiry }, ACTOR).id;
     bump('credential');
     return id;
   };
@@ -365,19 +389,35 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
   }
 
   // --- Holidays -------------------------------------------------------------
-  const year = Number(draftStart.slice(0, 4));
-  for (const [date, name, isMajor] of [
-    [`${year}-01-01`, "New Year's Day", true],
-    [`${year}-05-25`, 'Memorial Day', false],
-    [`${year}-07-04`, 'Independence Day', true],
-    [`${year}-09-07`, 'Labor Day', false],
-    [`${year}-11-26`, 'Thanksgiving', true],
-    [`${year}-12-25`, 'Christmas Day', true],
-    [`${year + 1}-01-01`, "New Year's Day", true],
-  ] as const) {
-    createHoliday(db, { unitId: unit.id, date: isoDate(date), name, isMajor }, ACTOR);
-    bump('holiday');
+  // Floating holidays are looked up per year, so a seeding outside 2026 gets the right
+  // weekdays and a history reaching into the previous year gets that year's holidays too.
+  const draftYear = Number(draftStart.slice(0, 4));
+  for (let y = Number(historyStart.slice(0, 4)); y <= draftYear; y++) {
+    const federal = usFederalHolidays(y);
+    const dateOf = (name: string) => federal.find((h) => h.name === name)!.date;
+    for (const [date, name, isMajor] of [
+      [`${y}-01-01`, "New Year's Day", true],
+      [dateOf('Memorial Day'), 'Memorial Day', false],
+      [`${y}-07-04`, 'Independence Day', true],
+      [dateOf('Labor Day'), 'Labor Day', false],
+      [dateOf('Thanksgiving Day'), 'Thanksgiving', true],
+      [`${y}-12-25`, 'Christmas Day', true],
+    ] as const) {
+      createHoliday(db, { unitId: unit.id, date: isoDate(date), name, isMajor }, ACTOR);
+      bump('holiday');
+    }
   }
+  createHoliday(
+    db,
+    {
+      unitId: unit.id,
+      date: isoDate(`${draftYear + 1}-01-01`),
+      name: "New Year's Day",
+      isMajor: true,
+    },
+    ACTOR,
+  );
+  bump('holiday');
 
   // --- Rule set -------------------------------------------------------------
   const base = defaultRuleSet(unit.id);
@@ -549,47 +589,36 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
     bump('preference', prefs.length);
   }
 
-  // --- Pay (no repositories yet; direct insert) -----------------------------
+  // --- Pay ------------------------------------------------------------------
   const rateStart = addDays(historyStart, -30);
   for (const [role, rate] of [
     ['RN', 48],
     ['LPN', 31],
     ['CNA', 22],
   ] as const) {
-    db.insert(s.payRate)
-      .values({
-        id: ids.payRate(),
-        nurseId: null,
-        role,
-        hourlyRate: rate,
-        effectiveFrom: rateStart,
-      })
-      .run();
+    createPayRate(db, { nurseId: null, role, hourlyRate: rate, effectiveFrom: rateStart }, ACTOR);
     bump('payRate');
   }
   for (const t of traits) {
     if (t.nurse.employmentType === 'agency') {
-      db.insert(s.payRate)
-        .values({
-          id: ids.payRate(),
-          nurseId: t.nurse.id,
-          role: null,
-          hourlyRate: 95,
-          effectiveFrom: rateStart,
-        })
-        .run();
+      createPayRate(
+        db,
+        { nurseId: t.nurse.id, role: null, hourlyRate: 95, effectiveFrom: rateStart },
+        ACTOR,
+      );
       bump('payRate');
     } else if (rng.chance(0.25)) {
       const base = t.nurse.role === 'RN' ? 48 : t.nurse.role === 'LPN' ? 31 : 22;
-      db.insert(s.payRate)
-        .values({
-          id: ids.payRate(),
+      createPayRate(
+        db,
+        {
           nurseId: t.nurse.id,
           role: null,
           hourlyRate: base + rng.nextInt(2, 12),
           effectiveFrom: rateStart,
-        })
-        .run();
+        },
+        ACTOR,
+      );
       bump('payRate');
     }
   }
@@ -601,24 +630,17 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
     ['on_call', 'flat', 6],
     ['agency', 'multiplier', 1.0],
   ] as const) {
-    db.insert(s.differential)
-      .values({ id: ids.differential(), unitId: unit.id, kind, mode, amount, active: true })
-      .run();
+    createDifferential(db, { unitId: unit.id, kind, mode, amount, active: true }, ACTOR);
     bump('differential');
   }
-  db.insert(s.overtimeRule)
-    .values({
-      id: ids.overtimeRule(),
-      unitId: unit.id,
-      basis: 'weekly',
-      thresholdHours: 40,
-      multiplier: 1.5,
-      active: true,
-    })
-    .run();
+  createOvertimeRule(
+    db,
+    { unitId: unit.id, basis: 'weekly', thresholdHours: 40, multiplier: 1.5, active: true },
+    ACTOR,
+  );
   bump('overtimeRule');
 
-  // --- Census forecasts (no repository yet; direct insert) ------------------
+  // --- Census forecasts -----------------------------------------------------
   const forecastFor = (date: IsoDate, shiftType: ShiftType, withActual: boolean) => {
     const dayIndex = datesInRange(historyStart, date).length;
     // Weekday/weekend rhythm plus a slow seasonal drift.
@@ -640,25 +662,29 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
       actualCensus = Math.max(10, projected + delta);
       const aHigh = Math.max(0, high + rng.nextInt(-1, 2));
       const aMod = Math.max(0, moderate + rng.nextInt(-2, 2));
+      // The drawn moderate count is trimmed when the high and moderate draws exceed the census,
+      // so the mix adds up, as the app requires.
+      const aModFit = Math.min(aMod, actualCensus - aHigh);
       actual = {
-        [ROUTINE.id]: Math.max(0, actualCensus - aHigh - aMod),
-        [MODERATE.id]: aMod,
+        [ROUTINE.id]: Math.max(0, actualCensus - aHigh - aModFit),
+        [MODERATE.id]: aModFit,
         [HIGH.id]: aHigh,
       };
     }
-    db.insert(s.censusForecast)
-      .values({
-        id: ids.census(),
+    const row = upsertCensusForecast(
+      db,
+      {
         unitId: unit.id,
         date,
         shiftTypeId: shiftType.id,
         projectedCensus: projected,
         acuityMix: mix,
-        actualCensus,
-        actualAcuityMix: actual,
         source: 'forecast',
-      })
-      .run();
+      },
+      ACTOR,
+    );
+    if (actual && actualCensus !== null)
+      recordActualCensus(db, row.id, actualCensus, actual, ACTOR);
     bump('censusForecast');
   };
 
@@ -824,7 +850,9 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
     );
     bump('budget');
 
-    // Ledger derived from what was actually generated, so history and scoring agree.
+    // Hand-built in the scenario's first version and frozen with it. It is not core's
+    // `deriveCounters` (see the header's known imperfections). The demos and the app book
+    // theirs through `periodLedgerRows`.
     for (const t of traits) {
       const mine = periodAssignments.filter((a) => a.nurseId === t.nurse.id);
       const byType = (id: Id) => mine.filter((a) => a.shiftTypeId === id).length;
@@ -865,6 +893,14 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
   importFairnessLedgerEntries(db, ledgerInputs, ACTOR);
   bump('fairnessLedger', ledgerInputs.length);
 
+  // Past events carry the time they happened, not the time the scenario was seeded: a decided
+  // request was submitted four weeks before its leave (or yesterday, if sooner) and decided two
+  // hours later; a call-off is reported two hours before its shift and calls follow ten minutes
+  // apart. These columns are not solver input.
+  const submittedAtFor = (startDate: IsoDate) =>
+    localInstant(minDate(addDays(startDate, -28), addDays(now, -1)), '09:00');
+  const callAt = (reportedAt: number, k: number) => reportedAt + (k + 1) * 10 * 60_000;
+
   // --- Historical time off with a realistic approve/deny record -------------
   let approvedCount = 0;
   let deniedCount = 0;
@@ -873,6 +909,7 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
     for (let r = 0; r < requests; r++) {
       const startOffset = rng.nextInt(0, 14 * historyPeriods - 7);
       const startDate = addDays(historyStart, startOffset);
+      const submittedAt = submittedAtFor(startDate);
       const req = createTimeOffRequest(
         db,
         {
@@ -886,12 +923,14 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
           ]),
         },
         ACTOR,
+        'manager',
+        { at: submittedAt },
       );
       bump('timeOffRequest');
       // Junior nurses get denied a little more often — a bias the equity scoring should surface.
       const seniorityYears = datesInRange(t.nurse.seniorityDate, now).length / 365;
       if (rng.chance(seniorityYears < 3 ? 0.7 : 0.9)) {
-        approveTimeOff(db, req.id, ACTOR);
+        approveTimeOff(db, req.id, ACTOR, undefined, { at: submittedAt + 2 * 3_600_000 });
         approvedCount++;
       } else {
         denyTimeOff(
@@ -899,6 +938,7 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
           req.id,
           ACTOR,
           'Would have left the unit below minimum staffing that weekend',
+          { at: submittedAt + 2 * 3_600_000 },
         );
         deniedCount++;
       }
@@ -912,7 +952,10 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
     .shuffle(historicalAssignments.filter((a) => a.shiftTypeId === DAY12.id))
     .slice(0, 4);
   for (const a of callOffCandidates) {
-    const co = reportCallOff(db, a.id, ACTOR, rng.pick(['Sick', 'Child care', 'Car trouble']));
+    const reportedAt = localInstant(a.date, DAY12.startTime) - 2 * 3_600_000;
+    const co = reportCallOff(db, a.id, ACTOR, rng.pick(['Sick', 'Child care', 'Car trouble']), {
+      at: reportedAt,
+    });
     bump('callOff');
     // Only nurses NOT already working that day can be phoned — otherwise the backfill
     // would collide with their existing assignment on the (nurse, date, shift) unique index.
@@ -923,19 +966,22 @@ export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): S
       .shuffle(traits.filter((t) => t.nurse.role === 'RN' && !workingThatDay.has(t.nurse.id)))
       .slice(0, rng.nextInt(2, 4));
     let coveredBy: Trait | undefined;
-    for (const t of pool) {
+    for (const [k, t] of pool.entries()) {
       const outcome =
         t === pool[pool.length - 1]
           ? 'accepted'
           : rng.pick(['no_answer', 'declined', 'left_message'] as const);
-      logCallAttempt(db, co.id, t.nurse.id, outcome, ACTOR);
+      logCallAttempt(db, co.id, t.nurse.id, outcome, ACTOR, undefined, {
+        at: callAt(reportedAt, k),
+      });
       bump('callAttempt');
       if (outcome === 'accepted') coveredBy = t;
     }
     if (coveredBy) {
       // The absent nurse's row must go before the replacement lands, exactly as a live
-      // backfill does — otherwise the fairness ledger and every downstream count still see
-      // the shift as worked by someone who called off it.
+      // backfill does: the unique (nurse, date, shift) index and every later count see the
+      // final roster. The ledger above was imported before these call-offs and still counts
+      // the absent nurse's shift (a known imperfection).
       deleteAssignment(db, a.id, ACTOR, 'Called off');
       const removedIndex = historicalAssignments.findIndex((x) => x.id === a.id);
       if (removedIndex !== -1) historicalAssignments.splice(removedIndex, 1);

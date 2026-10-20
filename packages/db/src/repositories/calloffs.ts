@@ -17,7 +17,7 @@ import { and, desc, eq, gte, inArray, lt, lte, ne, sql } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
-import { instantWindow, onLocalDays } from '../local-days.js';
+import { instantWindow, onLocalDays, requireWholeMillis } from '../local-days.js';
 import { toCallAttempt, toCallOff } from '../mappers.js';
 import { assignment, callAttempt, callOff, nurse, schedulePeriod } from '../schema.js';
 import { getAssignment } from './schedule.js';
@@ -70,14 +70,15 @@ export function openCallOffForAssignment(db: DbLike, assignmentId: Id): CallOff 
 /**
  * Report a call-off against an existing assignment. The assignment itself is untouched here —
  * it leaves the grid only when a backfill replaces it — but its shift is copied onto the
- * call-off so the record outlives the row.
+ * call-off so the record outlives the row. `at` records a past event (seeding, imports); live
+ * calls omit it.
  */
 export function reportCallOff(
   db: DbLike,
   assignmentId: Id,
   actor: string,
   reason?: string,
-  options: { paidSickHours?: number } = {},
+  options: { paidSickHours?: number; at?: number } = {},
 ): CallOff {
   const absent = getAssignment(db, assignmentId);
   if (!absent) throw new Error(`Assignment ${assignmentId} not found`);
@@ -85,6 +86,8 @@ export function reportCallOff(
   if (paid !== undefined && (!Number.isFinite(paid) || paid < 0 || paid > 24)) {
     throw new Error(`Paid sick hours must be between 0 and 24, got ${paid}`);
   }
+  const reportedAt = options.at ?? Date.now();
+  if (options.at !== undefined) requireWholeMillis(options.at);
   const id = ids.callOff();
   const row = {
     id,
@@ -93,7 +96,7 @@ export function reportCallOff(
     nurseId: absent.nurseId,
     shiftTypeId: absent.shiftTypeId,
     date: absent.date,
-    reportedAt: Date.now(),
+    reportedAt,
     reason: reason ?? null,
     status: 'open' as CallOffStatus,
     replacementAssignmentId: null,
@@ -108,6 +111,7 @@ export function reportCallOff(
     actor,
     after: created,
     reason,
+    at: reportedAt,
   });
   return created;
 }
@@ -197,6 +201,7 @@ export function cancelCallOff(db: DbLike, id: Id, actor: string, reason: string)
 // Call attempts
 // ---------------------------------------------------------------------------
 
+/** `at` records a past event (seeding, imports); live calls omit it. */
 export function logCallAttempt(
   db: DbLike,
   callOffId: Id,
@@ -204,18 +209,27 @@ export function logCallAttempt(
   outcome: CallOutcome,
   actor: string,
   notes?: string,
+  options: { at?: number } = {},
 ): CallAttempt {
   const against = getCallOff(db, callOffId);
   if (!against) throw new Error(`Call-off ${callOffId} not found`);
   if (against.status !== 'open') {
     throw new Error(`Call-off ${callOffId} is ${against.status}, not open`);
   }
+  // Checked only for a recorded time: a live call must not fail because the clock stepped back.
+  if (options.at !== undefined) {
+    requireWholeMillis(options.at);
+    if (options.at < against.reportedAt) {
+      throw new Error('A call cannot be logged before the call-off was reported.');
+    }
+  }
+  const attemptedAt = options.at ?? Date.now();
   const id = ids.callAttempt();
   const row = {
     id,
     callOffId,
     nurseId,
-    attemptedAt: Date.now(),
+    attemptedAt,
     outcome,
     notes: notes ?? null,
   };
@@ -227,6 +241,7 @@ export function logCallAttempt(
     action: 'create',
     actor,
     after: created,
+    at: attemptedAt,
   });
   return created;
 }

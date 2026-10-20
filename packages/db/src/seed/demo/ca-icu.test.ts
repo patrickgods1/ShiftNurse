@@ -85,5 +85,15 @@ describe('the California ICU demo', () => {
     });
   });
 
+  it("pays every nursing assistant at least California's health-care minimum wage", () => {
+    // SB 525 (Lab. Code § 1182.14): $23.00 from 1 July 2026 for this tier of facility. The
+    // pre-raise rate still pays 1 July until the first July pay period, so no CNA rate on file
+    // may be below it.
+    expect(
+      f.count(`SELECT MIN(r.hourly_rate) n FROM pay_rate r LEFT JOIN nurse n ON n.id = r.nurse_id
+                WHERE r.role = 'CNA' OR n.role = 'CNA'`),
+    ).toBeGreaterThanOrEqual(23);
+  });
+
   realisticDemoChecks(f, 'ca-icu', TODAY);
 });

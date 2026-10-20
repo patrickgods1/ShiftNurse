@@ -4,7 +4,7 @@
  * it to validation and alerts, which used to load and index the same rows twice per call.
  */
 
-import { deriveCounters, type Id } from '@shiftnurse/core';
+import type { Id } from '@shiftnurse/core';
 import {
   changesSinceLastPublish,
   type DbLike,
@@ -12,10 +12,10 @@ import {
   listChanges,
   listVersions,
   pendingDiff,
+  periodLedgerRows,
   publishSchedule,
   type ShiftNurseDb,
   transact,
-  type UpsertFairnessLedgerInput,
 } from '@shiftnurse/db';
 import type { PublishOutcome, PublishPreview, ShiftNurseApi } from '../../shared/api.js';
 import { createBackup } from '../backups.js';
@@ -91,17 +91,9 @@ export async function publish(
     const ruleSet = ruleSetFor(tx, period);
     // No lookback: the ledger records what this period scheduled.
     const schedule = scheduleViewFor(tx, period, { lookback: false, floated: 'worked' });
-    // The ledger takes what was actually scheduled, derived by the same `deriveCounters`
-    // that scores fairness and imports history, so all three agree on what a weekend is.
-    const present = new Set(schedule.assignments().map((v) => v.nurse.id));
-    const ledger: UpsertFairnessLedgerInput[] = [];
-    for (const [nurseId, counters] of deriveCounters(
-      schedule,
-      counterContext(tx, period.unitId, ruleSet, period),
-    )) {
-      if (!present.has(nurseId)) continue;
-      ledger.push({ nurseId, periodId, periodStart: period.startDate, ...counters });
-    }
+    // The ledger is core's counters for what was actually scheduled: the same `periodLedgerRows`
+    // the history importer and the seeds book through, so all of them agree on a weekend.
+    const ledger = periodLedgerRows(schedule, counterContext(tx, period.unitId, ruleSet, period));
     return publishSchedule(
       tx,
       { periodId, reason, ledger, hardViolations: { count, codes } },

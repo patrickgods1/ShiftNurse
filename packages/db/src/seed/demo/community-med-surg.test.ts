@@ -6,6 +6,7 @@
 import { isoDate } from '@shiftnurse/core';
 import { describe, expect, it } from 'vitest';
 import { listHolidaysForUnit } from '../../repositories/config.js';
+import { DEMO_SUMMARIES } from '../demo.js';
 import { realisticDemoChecks, useDemo } from './checks.test-support.js';
 
 const TODAY = isoDate('2026-09-17');
@@ -78,6 +79,39 @@ describe('the community med-surg demo', () => {
       "SELECT AVG(r.hourly_rate) n FROM pay_rate r JOIN nurse n ON n.id = r.nurse_id WHERE n.role = 'RN' AND n.is_charge_eligible = 1",
     ].map(f.count);
     expect(senior!).toBeGreaterThan(junior! + 5);
+  });
+
+  it("pays every nursing assistant at least California's health-care minimum wage", () => {
+    // SB 525 (Lab. Code § 1182.14): $23.00 from 1 July 2026 for this tier of facility. The
+    // pre-raise rate still pays 1 July until the first July pay period, so no CNA rate on file
+    // may be below it.
+    expect(
+      f.count(`SELECT MIN(r.hourly_rate) n FROM pay_rate r LEFT JOIN nurse n ON n.id = r.nurse_id
+                WHERE r.role = 'CNA' OR n.role = 'CNA'`),
+    ).toBeGreaterThanOrEqual(23);
+  });
+
+  it('tells the manager it is a California unit and how its overtime is paid', () => {
+    const summary = DEMO_SUMMARIES.find((d) => d.id === 'community-med-surg')!;
+    expect(summary.setting).toContain('California');
+    expect(summary.highlights.some((h) => /past 12 hours a day/.test(h))).toBe(true);
+    expect(summary.highlights.some((h) => /40 a week/.test(h))).toBe(true);
+    expect(summary.highlights.some((h) => /Overtime after 40/.test(h))).toBe(false);
+    // The text matches the data: the rules the summary describes are the ones on file.
+    const rules = f.rows(
+      `SELECT basis, threshold_hours, multiplier FROM overtime_rule
+         WHERE unit_id = '${f.result.unitId}' AND active = 1`,
+    );
+    expect(rules).toContainEqual({ basis: 'daily', threshold_hours: 12, multiplier: 2 });
+    expect(rules).toContainEqual({ basis: 'weekly', threshold_hours: 40, multiplier: 1.5 });
+  });
+
+  it('cites Title 22 for the 1:5 routine ratio', () => {
+    const rows = f.rows(
+      `SELECT r.citation c FROM ratio_rule r JOIN acuity_tier t ON t.id = r.acuity_tier_id
+         WHERE t.level = 1 AND r.role = 'RN'`,
+    );
+    expect((rows[0] as { c: string }).c).toMatch(/^Cal\. Code Regs\. tit\. 22/);
   });
 
   realisticDemoChecks(f, 'community-med-surg', TODAY);

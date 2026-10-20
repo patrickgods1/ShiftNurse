@@ -25,6 +25,7 @@ import {
   type Unit,
 } from '@shiftnurse/core';
 import {
+  counterContextFor,
   type DbLike,
   getAssignment,
   getBudget,
@@ -33,19 +34,14 @@ import {
   getRuleSet,
   getUnit,
   listAssignmentsForPeriod,
-  listHolidaysForUnit,
   listPeriodsForUnit,
-  listPreferencesForUnit,
   listShiftTypesForUnit,
-  listTimeOffForUnit,
   loadPeriodInput,
   PRIOR_ASSIGNMENT_LOOKBACK_DAYS,
   periodTailFor,
   rosterForPeriod,
   splitFloatedOff,
-  timeOffForPeriod,
   uniqueById,
-  unitForPeriod,
 } from '@shiftnurse/db';
 
 /**
@@ -182,17 +178,7 @@ export function counterContext(
   // The period being counted; history import counts many periods, so it passes none and reads all.
   period?: SchedulePeriod,
 ): CounterContext {
-  // A republish re-derives counters under the holiday attribution the period went out under.
-  const unit = period ? unitForPeriod(db, period) : unitOrThrow(db, unitId);
-  const holidays = listHolidaysForUnit(db, unitId);
-  return {
-    unit,
-    holidayDates: new Set<IsoDate>(holidays.map((h) => h.date)),
-    holidayDateById: new Map(holidays.map((h) => [h.id, h.date])),
-    weekendDefinition: ruleSet.weekendDefinition,
-    preferences: listPreferencesForUnit(db, unitId),
-    timeOff: period ? timeOffForPeriod(db, unit, period) : listTimeOffForUnit(db, unitId),
-  };
+  return counterContextFor(db, unitId, ruleSet.weekendDefinition, period);
 }
 
 /**

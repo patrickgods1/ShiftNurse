@@ -61,6 +61,7 @@ export * from './repositories/nurse-units.js';
 export * from './repositories/overtime-volunteers.js';
 export * from './repositories/pay.js';
 export * from './repositories/pay-snapshot.js';
+export * from './repositories/period-ledger.js';
 export * from './repositories/preceptorships.js';
 export * from './repositories/publish.js';
 export * from './repositories/rest-waivers.js';

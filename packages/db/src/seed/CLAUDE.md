@@ -7,15 +7,23 @@
   California ICU) run through one engine (`seed/demo/engine.ts`); `seed/demo.ts` holds
   `seedDemoUnit(db, { demo })` and the `DEMO_SUMMARIES` the welcome screen lists through
   `setup.demos`. Each profile's numbers come from real practice for that setting, stated in its
-  comment, and nothing is planted. A new demo is a profile, a summary and a test file in
+  comment, and nothing is planted. Pay is illustrative except where a law sets a floor
+  (the California demos' nursing assistants are at or above SB 525's health-care minimum wage, $23
+  from 1 July 2026). A new demo is a profile, a summary and a test file in
   `seed/demo/` that runs `realisticDemoChecks` (`checks.test-support.ts`, excluded from the
-  package build) plus the facts particular to that unit. `seed/scenarios.ts` (`seedScenarioUnit`) is the
+  package build) plus the facts particular to that unit. Each history period is published with
+  its ledger through `publishSchedule` and `periodLedgerRows`, the same counters the app books
+  (core's `deriveCounters`), so the demos' fairness history is what the app would have recorded.
+  `seed/scenarios.ts` (`seedScenarioUnit`) is the
   test-scenario database with known, asserted problems; the main-process fixture, repository
   tests and the solver benchmark are built on it, and `npm run dev` offers it on the welcome
   screen. **Tests never use the demo as a fixture** — its data should be free to become more
   realistic — and **the scenario data must not change**: test expectations are pinned to it
   (even an extra inactive nurse changes a generated schedule, since the solver sees every nurse
-  in roster order). A new scenario is appended from its own `Rng` together with re-pinned tests
+  in roster order). It writes through the repositories, so every row is audited and validated.
+  Its hand-built ledger, 0 h night-to-day turnarounds and shifts inside approved leave are known,
+  unplanted imperfections (listed in its header) kept because the data is frozen. Do not test
+  against them. A new scenario is appended from its own `Rng` together with re-pinned tests
   and a re-run `npm run bench:solvers`. The benchmark's scenario row is *not* reproducible run
   to run — ids are random UUIDs, so each seeding solves differently (three seedings gave
   objectives of 76,760–79,497) — so compare its medians and rankings, not exact numbers; the
@@ -68,7 +76,9 @@
   both California demos).
 - **A profile can seed the federal and HR features too, each behind its own optional field.**
   The VA demo sets `leaveBalances` (VA accrual by role and years of service, the 240-hour
-  carry-over; part-time pro rata), `fmla` (three certifications: intermittent, ended, current),
+  carry-over; part-time pro rata), `fmla` (three certifications: intermittent (current),
+  one block that ended before the history and one starting after the next schedule: a block is
+  never placed where its nurse is rostered),
   `preceptorships` (two new-grad orientations of 12 weeks from the hire date, which the field
   sets; `canWork` places an orientee only on a shift, or the one it runs inside, their preceptor
   already works, and the balancing and call-off passes never take a preceptor off a shift an
@@ -95,4 +105,8 @@
   weekday leave pays nothing), so a request over two pay periods credits what the rule does. The
   Baylor nurse always volunteers for overtime; a plan nurse is asked past their own hours only to
   cover a call-off, and that tour is marked overtime. Tests that assumed every full-time RN works 80 hours are scoped to standard nurses.
+  A second approved request over days already on leave is skipped, never paid twice.
+- **Past events carry their own time.** A call-off is reported two hours before its shift, calls
+  follow ten minutes apart, and a decided request was submitted four weeks before its leave and
+  decided that morning (through the repositories' `at`). Pending requests are stamped when seeded.
 - **`seed/load.ts` is setup's entry point for loading a demo or the scenarios;** repositories never import seed code. The demo engine imports `repositories/setup.js`, so putting the loaders back in `setup.ts` recreates an import cycle.
