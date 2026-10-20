@@ -25,8 +25,10 @@ say what you assumed.
      where the index is provably safe.
    - `packages/db` is synchronous — no `async`/`await`/`Promise`. Repository functions take
      `DbLike` first. Every mutation writes an audit entry in the same call.
-   - Adding an IPC method means `ShiftNurseApi` + `API_CHANNELS` in `shared/api.ts`, then
-     `main/api.ts`. The renderer never re-derives time maths.
+   - Adding an IPC method means `ShiftNurseApi` + `API_CHANNELS` in `shared/api.ts`, its
+     argument schema in `shared/schemas/<resource>.ts` (`API_SCHEMAS`), then `main/api.ts` with
+     the logic in its `main/api/` module, and every write in one `transact`. A missing piece is
+     a type error. The renderer never re-derives time maths.
    - Comments explain WHY, not WHAT. Match the density and idiom of the surrounding file.
 2. Read every file the brief names, and the module header of anything you will import from.
 3. If the change is domain logic in `packages/core` (rules, solver, fairness, acuity, cost,

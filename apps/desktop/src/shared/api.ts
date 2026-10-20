@@ -1132,11 +1132,6 @@ export interface CandidateComparison {
   candidates: ComparisonColumn[];
 }
 
-/**
- * Every operation the renderer can perform, grouped by resource. Implementations in the
- * main process are synchronous (better-sqlite3 is synchronous); the renderer sees the
- * `Promise`-returning shape in {@link RendererApi} because IPC is asynchronous.
- */
 // ---------------------------------------------------------------------------
 // Day-of console (M13)
 // ---------------------------------------------------------------------------
@@ -1303,6 +1298,11 @@ export interface BackfillResult {
   assignment: Assignment;
 }
 
+/**
+ * Every operation the renderer can perform, grouped by resource. Implementations in the
+ * main process are synchronous (better-sqlite3 is synchronous); the renderer sees the
+ * `Promise`-returning shape in {@link RendererApi} because IPC is asynchronous.
+ */
 export interface ShiftNurseApi {
   app: {
     info(): AppInfo;
@@ -1864,8 +1864,10 @@ export interface ShiftNurseApi {
     today(unitId: Id, date?: IsoDate): DayOfSummary;
     /** Call-offs whose shift falls in the inclusive range, any status, soonest first. */
     callOffs(unitId: Id, start: IsoDate, end: IsoDate): CallOffView[];
-    /** Records the call-off; the assignment stays on the grid until a backfill replaces it. */
-    /** `paidSickHours`: hours paid from sick leave, credited toward contract once backfilled. */
+    /**
+     * Records the call-off; the assignment stays on the grid until a backfill replaces it.
+     * `paidSickHours`: hours paid from sick leave, credited toward contract once backfilled.
+     */
     reportCallOff(assignmentId: Id, reason?: string, paidSickHours?: number): CallOff;
     /** Ranked, eligible-only replacements, simulated on the period's own rule-set snapshot. */
     replacements(callOffId: Id): ReplacementReport;

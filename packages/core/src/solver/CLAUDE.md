@@ -63,6 +63,13 @@
   locked or in the lookback tail and the locked shifts alone already had the same breach at least
   as big (`solver/gate.ts`); a pinned problem never freezes a nurse out, and Generate never deepens,
   merges or trades it.
+- **What Generate does not steer by (stated limits).** Some soft rules are judged on the grid but
+  carry no price in either solver while soft, so Generate neither seeks nor avoids them:
+  `max-hours-in-24`, `long-stretch`, `tour-rotation` and `days-off-together`. Make one hard to
+  have Generate keep to it. INRC-II's pattern terms (minimum consecutive days worked, complete
+  weekends, per-shift-type consecutive limits) are not modelled. Both are deferred: adding a
+  price changes the objective of SA + LNS and CP-SAT alike, which needs a bench study and a
+  determinism re-pin.
 - **Solver speed-ups must not change a schedule.** `SolverModel` caches fairness (cleared in
   `count`), staffing per shift and role, prepared rules (`prepareRules`/`evaluatePrepared`) and
   per-nurse rule contexts. `solver/model.test.ts` checks every cached term against a fresh

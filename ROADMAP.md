@@ -35,7 +35,7 @@ surface rather than a new data model. See **Future: nurse self-service** below.
 | Cost | Pay rates, differentials, OT and agency premiums; dollar impact on every decision. |
 | Data intake | Manual in-app entry **and** CSV import from day one. Historical seeding, demo dataset. |
 | Output | Print/PDF grid, per-nurse sheets, CSV/Excel export, draft→publish lifecycle. |
-| UI | React 18 + TypeScript + Vite, Radix primitives + Tailwind (shadcn approach), TanStack Router/Query. |
+| UI | React 19 + TypeScript + Vite, Radix primitives + Tailwind (shadcn approach), TanStack Router/Query (decided on 18; upgraded to 19 with the 2026-09 dependency bumps). |
 | Intent | Real use on a real unit, architected to become a product. |
 
 ### Stated assumptions
@@ -81,9 +81,10 @@ shiftnurse/
 
 ## Current state
 
-`packages/core`, `packages/db` and `apps/desktop` through M16 are green: lint, typecheck and the
-full test suite pass in CI on Linux, macOS and Windows (`npm run check`; no count kept here — it
-went stale within a milestone the last time).
+`packages/core`, `packages/db` and `apps/desktop` through M43 are green (M17 deferred,
+M18's last follow-up open): lint, typecheck and the full test suite pass in CI on Linux, macOS
+and Windows (`npm run check`; no count kept here — it went stale within a milestone the last
+time).
 
 - [x] Monorepo scaffold (npm workspaces, TS project references, vitest)
 - [x] `domain/time.ts` — DST-safe wall-clock timeline, shift windows, configurable weekend definitions
@@ -330,12 +331,16 @@ Not built in v1, but the seams are preserved now so the later phase is additive:
       devDependencies so the asar carries only `better-sqlite3-electron`, `drizzle-orm` and
       `@electron-toolkit/utils` — 23 MB → 8 MB. Since PR #6 `drizzle-orm` is bundled into the
       main process instead, so the `better-sqlite3` alias applies to it; the asar's runtime
-      dependencies are `better-sqlite3-electron` and `@electron-toolkit/utils`)
+      dependencies are `better-sqlite3-electron` and `@electron-toolkit/utils`) *Superseded:
+      better-sqlite3 13 is Node-API, so the Electron copy, the postinstall swap, the alias and the
+      host-binary restore are gone; see ARCHITECTURE › Packaging trade-offs.*
 - [x] Native module rebuild for better-sqlite3 against the Electron ABI
       (`npmRebuild: false` — electron-builder's own rebuild recompiled the *hoisted* copy and broke
       `npm test`; `scripts/before-pack.mjs` fetches the prebuild for each *target* platform/arch
       through the same `rebuild-sqlite-for-electron.mjs` postinstall uses, and `scripts/dist.mjs`
-      restores the host binary in a `finally` so `npm run dev` survives a dist run)
+      restores the host binary in a `finally` so `npm run dev` survives a dist run) *Superseded:
+      better-sqlite3 13 is Node-API, so the Electron copy, the postinstall swap, the alias and the
+      host-binary restore are gone; see ARCHITECTURE › Packaging trade-offs.*
 - [x] Verify: install and launch the built artifact on macOS
       (both dmgs mounted, `ShiftNurse.app` copied out and booted via `npm run smoke:packaged` —
       arm64 passes the full smoke natively: migrations from `resources/`, native module, solver,
@@ -383,7 +388,7 @@ installers natively on GitHub and attaches them to a **draft** release. Unsigned
 - [x] Verify: CI green on branch, PR and `main`; a failing PR is blocked; the `v0.1.0` draft carries
       three installers whose `SHA256SUMS` verify, and one installs and runs locally
 
-### First-run setup ✅
+### First-run setup
 A fresh install used to seed a fictional 42-nurse unit into every real database. It now opens a
 welcome screen: explore the demo, set up a bare unit manually, or follow the guided setup, whose
 every step offers one-click starting points and can be skipped. Settings › Unit reopens the guide
@@ -463,9 +468,11 @@ problem is often a group of three or more, not a pair.
 
 ### M17 — Signed installers and updates (deferred)
 Deferred by decision (2026-10-03): 1.0 ships unsigned with install instructions (M18 › Phase 8);
-the icon moves to M18. v0.1.0 ships unsigned: macOS users are told to run `xattr` and Windows users to click past
-SmartScreen, and an installed copy has no way to learn that a fix exists — the crash-on-launch
-fix in PR #6 reached nobody who had already installed the first draft. Nothing here is started.
+the icon moves to M18. v0.1.0 ships unsigned: macOS users are told to run `xattr` and Windows
+users to click past SmartScreen, and an installed copy has no way to learn that a fix exists — the
+crash-on-launch fix in PR #6 reached nobody who had already installed the first draft. Signing and
+self-update are not started. The icon landed with M18 › Phase 8, and the "new version available"
+banner ships (`main/updates.ts`); its box waits for a packaged build to show it for a real release.
 - [ ] Apple Developer ID signing with hardened runtime and entitlements, and notarisation
       (`notarize: true`), wired to repository secrets in `release.yml`
 - [ ] Windows Authenticode signing (e.g. Azure Trusted Signing) for the NSIS installer
@@ -579,6 +586,8 @@ manager's experience and the contract rules a real hospital would check first. O
       became "volunteers first within the overtime tier": a phoned nurse who says yes is not
       mandated. Found on the way: `weekendKey` filed an 'overlaps' Friday night under the
       weekend before.)
+
+*(There is no Phase 7; the numbering is kept so references to "M18 › Phase 8" stay valid.)*
 
 **Phase 8 — Distribution without signing**
 - [x] App icon in the dmg and installer
@@ -735,9 +744,10 @@ and the summary.
 - [ ] Verify: the hand check under First-run setup above (fresh `userData` → state → Summary →
       reopen on 'State and contract law')
 
-### M43 — 2026-10-16 in-depth review fixes (in progress)
+### M43 — 2026-10-16 in-depth review fixes ✅
 
-The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR each.
+The 2026-10-16 in-depth code review (`reports/ShiftNurse in depth code review.md`): 383 findings in
+24 phases, one PR per phase; plan of record outside the repo.
 
 - [x] Phase 1 — Test and boundary guardrails: TZ-pinned DST tests, core purity lint,
       IPC table exhaustiveness, hook fixes, solver test hang guards (verify: npm run check; smoke)
@@ -810,6 +820,19 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
 - [x] Phase 23 — seeds through app paths: demo ledger via publish, dated history, SB 525 CNA
       floor, scenario audited (M-49 M-50 M-51 L-70…L-75 L-77 N-39 N-40 T-15; verify: npm run
       check; smoke)
+- [x] Phase 24 — Docs sweep and CHANGELOG: docs match the code, CHANGELOG back-filled from v0.1.0
+      and the review's changes written for managers (verify: npm run check; milestone line; link
+      check)
+
+Deferred by owner decision (not boxes):
+
+- On-call caps and call-back rest: a new rule after 1.0, once the contracts to model are chosen
+  (research: `research_notes/ShiftNurse audit and best practices/law_contracts_holidays.md`).
+- INRC-II pattern terms (minimum consecutive days, complete weekends, per-type consecutive
+  limits) and pricing the soft rules Generate ignores while soft: an objective change that needs
+  a bench study.
+- Signed installers and self-update: M17.
+- Encryption at rest for HR text: after M17 (see README › What data ShiftNurse stores).
 
 ---
 

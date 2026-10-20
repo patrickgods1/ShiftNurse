@@ -108,7 +108,7 @@ process to manage, back up, or fail independently.
   promises and rollback bookkeeping for no benefit, since nothing in this app is waiting on
   network I/O at the database layer.
 - **Drizzle** gives a typed schema and query builder without an ORM's runtime magic or a
-  separate migration DSL to learn — the 30-table schema, migrations, and repositories are all
+  separate migration DSL to learn — the schema, migrations, and repositories are all
   plain TypeScript, and `drizzle-kit generate` produces the SQL migrations that ship with the
   installer.
 - **Trade-off accepted:** SQLite means no built-in replication or concurrent multi-writer
@@ -166,14 +166,15 @@ in [README.md › Credits and references](README.md#credits-and-references):
 - **SA + LNS** (pure TS): annealing with ruin-and-recreate and the two-nurse block swaps from
   Ceschia, Guido & Schaerf (2020). Fast, always available, no optimality bound.
 - **CP-SAT** over the whole period: correct, and it reports a bound — but its linear relaxation
-  is weak for this objective, and on the demo unit it left 16–18 floors short (up to 8 on one
-  shift) where the annealer left 0–1 (2026-10-17 bench). Its fast parallel portfolio is not deterministic; the deterministic
-  interleaved mode is slower still. Kept for small units and for a proven bound.
+  is weak for this objective, and on the demo unit it left 13–17 floors short (up to 8 on one
+  shift) where the annealer left 0–2 (2026-10-19 bench). Its fast parallel portfolio is not
+  deterministic; the deterministic interleaved mode is slower still. Kept for small units and for
+  a proven bound.
 - **Hybrid** (default): anneal in eight chunks, and between them hand the worst three days to
   CP-SAT with every other shift fixed. A window is a few hundred variables, solved to
   optimality in well under a second, and it is exactly where annealing is weakest — a knot of
   rest rules across adjacent days that no single move can untie. Best median objective on the
-  demo (−2%) and a 24-nurse unit (−6%); about 3× the annealer's run time on the demo, 8× on the
+  demo (−5%) and a 24-nurse unit (−6%); about 3× the annealer's run time on the demo, 8× on the
   24-nurse unit.
 
 Two properties hold for every backend. **One judge**: CP-SAT's model is a second statement of
@@ -200,7 +201,7 @@ starts no processes) and never on the main thread (encoding a large unit takes l
 stall IPC). Core provides the pure halves — build the model, read the answer — and the desktop
 runs the one impure step in between.
 
-## Why React 18 + TanStack Router/Query + Radix + Tailwind
+## Why React 19 + TanStack Router/Query + Radix + Tailwind
 
 The renderer is a fairly ordinary modern React SPA: TanStack Router for code-based, hash-history
 routing (no server to serve arbitrary paths from, since this is a `file://`-adjacent Electron
@@ -232,18 +233,20 @@ general — just not worth introducing a second package manager's lockfile for t
 ## Packaging trade-offs
 
 `electron-builder` produces the installers (`dmg` for macOS x64+arm64, `nsis` for Windows
-x64), but its default behavior of rebuilding native modules for Electron's ABI as part of
-packaging is disabled (`npmRebuild: false`) because that rebuild targets the *hoisted*
-`better-sqlite3` — the one `npm test` and the seeder depend on being built for system Node.
-Instead, `before-pack.mjs` fetches the correct prebuilt binary per **target** platform/arch
-(so a Windows installer built on a Mac doesn't accidentally carry a macOS binary), and
-`dist.mjs` restores the host binary afterward regardless of outcome. Electron is pinned to an
-exact version rather than a range because electron-builder requires that. The same hook
-fetches the CP-SAT runner for each target from its pinned GitHub release — the installer
-carries a native binary it did not compile, which is why the fetch checks a SHA-256 pinned in
-the repo. Installers are
-unsigned for now — accepted as a v1 trade-off (Gatekeeper/SmartScreen warnings) with signing
-deferred rather than blocking the first real-world usage on it.
+x64) and never rebuilds native modules (`npmRebuild: false`). better-sqlite3 13 is a Node-API
+module whose package ships a prebuilt binary per platform, valid for system Node and Electron
+alike (see *One native module for Node and Electron* above), so a rebuild would only recompile
+it for the build machine; `electron-builder.yml` keeps just the target OS's prebuilds.
+`before-pack.mjs` fetches the CP-SAT runner for each **target** platform/arch from its pinned
+GitHub release (so a Windows installer built on a Mac doesn't carry a macOS binary) and checks
+it against a SHA-256 pinned in the repo, since the installer carries a native binary it did not
+compile. `dist.mjs` only runs electron-builder with `ELECTRON_RUN_AS_NODE` removed, because VS
+Code's terminal sets it. Electron is pinned to an exact version because electron-builder
+requires that. Installers are unsigned for now — accepted as a v1 trade-off
+(Gatekeeper/SmartScreen warnings) with signing deferred rather than blocking the first real-world
+usage on it. The packaged binary is fused (`electronFuses` in `electron-builder.yml`): it cannot
+be run as plain Node, ignores `NODE_OPTIONS` and `--inspect`, and loads only its own
+integrity-checked asar.
 
 ### Release builds are made natively, per platform, in CI
 
