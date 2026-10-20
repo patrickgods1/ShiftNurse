@@ -285,11 +285,18 @@ export { holidayRotationRule, previousOccurrence } from './rules/holiday-rotatio
 export type { MaxHoursIn24Params } from './rules/hours-in-24.js';
 // Hours in any 24: the fatigue cap, holdovers included
 export { maxHoursIn24Rule } from './rules/hours-in-24.js';
-export type { ContractedHoursParams, MaxHoursParams } from './rules/hours-rules.js';
-// Overtime and hours rule parameters
+export type {
+  ContractedHoursParams,
+  JudgedPayPeriod,
+  MaxHoursParams,
+  PayPeriodHours,
+} from './rules/hours-rules.js';
+// Overtime and hours rule parameters; which pay periods are judged and the hours counted in them
 export {
   contractedHoursRule,
+  judgedPayPeriods,
   maxHoursRule,
+  payPeriodHoursFor,
   payPeriodIndex,
   payPeriodWindow,
 } from './rules/hours-rules.js';
@@ -340,6 +347,9 @@ export type {
 } from './rules/types.js';
 // A nurse's name as rule messages and solver reasons print it
 export { nurseName } from './rules/types.js';
+export type { ViolationDiff, WorsenedViolation } from './rules/violation-diff.js';
+// The one identity of a finding, and what changed between two schedules' findings
+export { AMOUNT_EPSILON, diffViolations, violationKey } from './rules/violation-diff.js';
 export {
   type NurseWeekends,
   type WeekendPatternParams,
@@ -350,6 +360,8 @@ export { containingDate, coveringShift, withinShiftProblem } from './schedule/co
 export type { BusyElsewhere } from './schedule/elsewhere.js';
 // Another unit's shifts as busy time on this one (float and multi-unit staff)
 export { busyElsewhere, isElsewhere } from './schedule/elsewhere.js';
+// How far back the published schedules are complete
+export { historyCompleteFrom } from './schedule/history.js';
 // What a shift follows: rest and tour changes are measured from the shift that ends last
 export { latestEndingBefore } from './schedule/preceding.js';
 // The schedule read model
@@ -401,6 +413,7 @@ export {
   CpsatInfeasibleError,
   DEFAULT_DETERMINISTIC_TIME,
   decisionsFor,
+  EncodingDisagreementError,
   finishCpsat,
   lockedHardViolations,
   prepareCpsat,

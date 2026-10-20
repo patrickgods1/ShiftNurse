@@ -6,9 +6,15 @@
  * over the correct pay period. Part-time nurses being quietly over-scheduled and full-time
  * nurses being quietly under-scheduled are both contract problems, so the FTE rule reports
  * in both directions.
+ *
+ * A pay period is judged by the schedule that holds its end (`judgedPayPeriods`). One the schedule
+ * opens in the middle of reads its earlier days from the published lookback tail; skipping it, as
+ * every pay period cut by a schedule's edge once was, left it judged by neither schedule — 11 of a
+ * year's 27 biweekly pay periods under calendar-month schedules. Where that tail is not known to be
+ * complete, only hours past the contract are judged: history can only add hours, never remove them.
  */
 
-import type { Id, Unit } from '../domain/entities.js';
+import type { Assignment, Id, Unit } from '../domain/entities.js';
 import {
   addDays,
   compareDates,
@@ -16,21 +22,25 @@ import {
   daysBetween,
   describeDate,
   describeDateRange,
-  fromDayNumber,
   type IsoDate,
   type Weekday,
   weekdayOf,
 } from '../domain/time.js';
+import { isElsewhere } from '../schedule/elsewhere.js';
+import { holdoverHours } from '../schedule/holdover.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
-import { leaveHoursBetween } from './paid-leave.js';
-import { isWorked, nurseName, type Rule, type Violation, violation } from './types.js';
+import { hoursText } from './format.js';
+import { leaveHoursBetween, type PaidLeaveCredit } from './paid-leave.js';
+import {
+  isWorked,
+  nurseName,
+  type Rule,
+  type RuleContext,
+  type Violation,
+  violation,
+} from './types.js';
 
 /** " plus 12h paid leave", for violation messages; empty when there is none. */
-/** Hours to one decimal place, with no trailing `.0`: "48h", "6.5h". */
-function hoursText(hours: number): string {
-  return `${Math.round(hours * 10) / 10}h`;
-}
-
 function leaveNote(hours: number): string {
   return hours > 0 ? ` plus ${hoursText(hours)} paid leave` : '';
 }
@@ -62,7 +72,8 @@ export function payPeriodWindow(index: number, unit: PayCalendar): DateWindow {
  *
  * `onlyComplete` matters: a six-week schedule that ends mid-pay-period would otherwise
  * report every nurse as drastically under-hours for that final partial period, burying the
- * real violations in noise.
+ * real violations in noise. The contracted-hours rule selects with `judgedPayPeriods`, which
+ * also judges a pay period the schedule opens in from the published history.
  */
 export function payPeriodsIn(
   window: DateWindow,
@@ -84,16 +95,63 @@ export function payPeriodsIn(
   return out;
 }
 
-/** Fixed work weeks covering a window, aligned to the contract's week start. */
-export function workWeeksIn(window: DateWindow, startsOn: Weekday): DateWindow[] {
-  const firstDay = dayNumber(window.start);
-  const shift = (weekdayOf(window.start) - startsOn + 7) % 7;
-  const out: DateWindow[] = [];
-  for (let day = firstDay - shift; day <= dayNumber(window.end); day += 7) {
-    const start = fromDayNumber(day);
-    out.push({ start, end: addDays(start, 6) });
+/** A pay period the contracted-hours rule judges. */
+export interface JudgedPayPeriod extends DateWindow {
+  /** False when the days before the schedule are not known to be complete: only "over" is judged. */
+  underJudged: boolean;
+}
+
+/**
+ * The pay periods a schedule judges contracted hours over: those wholly inside it, and one it
+ * opens in the middle of, its earlier days read from the published tail. One running past the
+ * schedule's end is left to the next schedule, which holds its end, unless `onlyComplete` is off.
+ *
+ * `historyFrom` (`historyCompleteFrom`) says how far that tail is complete. From the pay period's
+ * first day, it is judged whole. From later, its first days are not on record, so a shortfall
+ * cannot be told from a gap in the record, but hours past the contract can: history only adds
+ * hours. Undefined, the caller has not said, and the pay period is judged as before — skipped, or
+ * with `onlyComplete` off judged on this schedule's own shifts.
+ */
+export function judgedPayPeriods(
+  window: DateWindow,
+  unit: PayCalendar,
+  onlyComplete: boolean,
+  historyFrom: IsoDate | undefined,
+): JudgedPayPeriod[] {
+  const out: JudgedPayPeriod[] = [];
+  for (const p of payPeriodsIn(window, unit, false)) {
+    if (compareDates(p.end, window.end) > 0) {
+      if (!onlyComplete) out.push({ ...p, underJudged: true });
+    } else if (compareDates(p.start, window.start) < 0) {
+      if (historyFrom === undefined) {
+        if (!onlyComplete) out.push({ ...p, underJudged: true });
+      } else {
+        out.push({ ...p, underJudged: compareDates(historyFrom, p.start) <= 0 });
+      }
+    } else {
+      out.push({ ...p, underJudged: true });
+    }
   }
   return out;
+}
+
+/** Fixed work weeks covering a window, aligned to the contract's week start. */
+export function workWeeksIn(window: DateWindow, startsOn: Weekday): DateWindow[] {
+  const out: DateWindow[] = [];
+  for (
+    let week = workWeekOf(window.start, startsOn);
+    dayNumber(week.start) <= dayNumber(window.end);
+    week = workWeekOf(addDays(week.start, 7), startsOn)
+  ) {
+    out.push(week);
+  }
+  return out;
+}
+
+/** The work week containing `date`, from the contract's week-start weekday. */
+export function workWeekOf(date: IsoDate, startsOn: Weekday): DateWindow {
+  const start = addDays(date, -((weekdayOf(date) - startsOn + 7) % 7));
+  return { start, end: addDays(start, 6) };
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +163,10 @@ export interface ContractedHoursParams {
   underToleranceHours: number;
   /** Hours a nurse may exceed it by. */
   overToleranceHours: number;
-  /** Skip pay periods only partly covered by this schedule. Almost always correct. */
+  /**
+   * Skip pay periods only partly covered by this schedule — unless the earlier part is already
+   * published (`judgedPayPeriods`). Almost always correct.
+   */
   onlyCompletePayPeriods: boolean;
   /** Per-diem nurses have no contracted minimum, so under-hours is not a violation for them. */
   exemptEmploymentTypes: string[];
@@ -154,10 +215,11 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
     },
     onlyCompletePayPeriods: {
       label: 'Only judge whole pay periods',
-      hint: 'Skip pay periods the schedule only partly covers.',
+      hint: 'Skip pay periods this schedule only partly covers, unless the earlier part is already published.',
       why:
-        'Leave this on. A schedule that ends mid pay period would otherwise flag everyone as ' +
-        'short for the half it does not cover.',
+        'Leave this on. A pay period that began before this schedule is judged with the published ' +
+        "schedule before it; one that runs past this schedule's end is left to the next one. Off, " +
+        'every pay period touching the schedule is judged with only what is on record.',
     },
     exemptEmploymentTypes: {
       label: 'No minimum for',
@@ -183,42 +245,43 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
 
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];
-    const periods = payPeriodsIn(
+    const periods = judgedPayPeriods(
       { start: schedule.period.startDate, end: schedule.period.endDate },
       ctx.unit,
       params.onlyCompletePayPeriods,
+      ctx.historyFrom,
     );
     if (periods.length === 0) return violations;
+    // Without `historyFrom` nobody has said the tail is whole, so a pay period is judged on this
+    // schedule's shifts alone, as it always was.
+    const withHistory = ctx.historyFrom !== undefined;
 
     for (const nurse of ctx.nurses) {
       if (!nurse.active) continue;
       const exempt = params.exemptEmploymentTypes.includes(nurse.employmentType);
-      const timeline = schedule
-        .assignmentsFor(nurse.id)
-        .filter((v) => params.onCallCountsTowardHours || isWorked(v));
 
       for (const period of periods) {
-        let hours = 0;
-        const assignmentIds: Id[] = [];
-        for (const view of timeline) {
-          if (compareDates(view.assignment.date, period.start) < 0) continue;
-          if (compareDates(view.assignment.date, period.end) > 0) continue;
-          // Scheduled, not worked: the contract is what the manager rostered, and a holdover
-          // is priced as overtime rather than refused as hours past the FTE.
-          hours += view.scheduledHours;
-          assignmentIds.push(view.assignment.id);
-        }
-
         const target = nurse.contractedHoursPerPeriod;
         // No contracted total (per-diem, agency) means nothing to be over or under: every shift
         // such a nurse picks up would otherwise read as "over" a contract that was never made.
         if (target <= 0) continue;
-        const paidLeaveHours = params.paidLeaveCountsTowardHours
-          ? leaveHoursBetween(ctx.paidLeaveByNurse.get(nurse.id), period.start, period.end)
-          : 0;
+        const found = hoursInPayPeriod(schedule, nurse.id, period, params, ctx, withHistory);
+        const { scheduledHours: hours, priorHours, paidLeaveHours, assignmentIds } = found;
         const delta = hours + paidLeaveHours - target;
+        const figure =
+          `${hoursText(hours)}` +
+          (priorHours > 0 ? ` (${hoursText(priorHours)} of it before this schedule)` : '') +
+          leaveNote(paidLeaveHours);
+        const details = {
+          scheduledHours: hours,
+          ...(priorHours > 0 ? { priorHours } : {}),
+          paidLeaveHours,
+          targetHours: target,
+          deltaHours: delta,
+          payPeriod: { start: period.start, end: period.end },
+        };
 
-        if (!exempt && delta < -params.underToleranceHours) {
+        if (!exempt && period.underJudged && delta < -params.underToleranceHours) {
           violations.push(
             violation(
               contractedHoursRule,
@@ -226,44 +289,36 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
               // shifts, a unit over-staffed that week). A rule set can make it hard.
               'soft',
               'under_contracted_hours',
-              `${nurseName(nurse)} is scheduled ${hoursText(hours)}${leaveNote(paidLeaveHours)} ` +
+              `${nurseName(nurse)} is scheduled ${figure} ` +
                 `in the pay period ${describeDateRange(period.start, period.end)}, ` +
                 `${hoursText(Math.abs(delta))} short of their contracted ${hoursText(target)} ` +
                 `(${nurse.fte} FTE).`,
               {
+                amount: -delta,
                 nurseIds: [nurse.id],
                 dates: [period.start, period.end],
                 assignmentIds,
-                details: {
-                  scheduledHours: hours,
-                  paidLeaveHours,
-                  targetHours: target,
-                  deltaHours: delta,
-                  payPeriod: period,
-                },
+                details,
               },
             ),
           );
-        } else if (delta > params.overToleranceHours) {
+        } else if (delta > params.overToleranceHours && assignmentIds.length > 0) {
+          // Only with a shift of this schedule in it: history (or leave) alone over the contract
+          // is nothing this schedule can fix, and a hard finding must name what to move.
           violations.push(
             violation(
               contractedHoursRule,
               'hard',
               'over_contracted_hours',
-              `${nurseName(nurse)} is scheduled ${hoursText(hours)}${leaveNote(paidLeaveHours)} ` +
+              `${nurseName(nurse)} is scheduled ${figure} ` +
                 `in the pay period ${describeDateRange(period.start, period.end)}, ` +
                 `${hoursText(delta)} over their contracted ${hoursText(target)} (${nurse.fte} FTE).`,
               {
+                amount: delta,
                 nurseIds: [nurse.id],
                 dates: [period.start, period.end],
                 assignmentIds,
-                details: {
-                  scheduledHours: hours,
-                  paidLeaveHours,
-                  targetHours: target,
-                  deltaHours: delta,
-                  payPeriod: period,
-                },
+                details,
               },
             ),
           );
@@ -274,6 +329,68 @@ export const contractedHoursRule: Rule<ContractedHoursParams> = {
     return violations;
   },
 };
+
+/** A nurse's hours in one pay period, as the contracted-hours rule counts them. */
+export interface PayPeriodHours {
+  /** This unit's scheduled hours dated in the pay period, history included. */
+  scheduledHours: number;
+  /** The part dated before the schedule. */
+  priorHours: number;
+  /** 0 when `paidLeaveCountsTowardHours` is off. */
+  paidLeaveHours: number;
+  /** In-period contributors only: the lookback is published and not this schedule's to move. */
+  assignmentIds: Id[];
+}
+
+/**
+ * A nurse's hours in a pay period, as `fte-target-hours` counts them: scheduled (not worked)
+ * hours, standby only when the rule counts it, the published tail included, and never another
+ * unit's shifts — those are that unit's contract, not this one's.
+ *
+ * The published tail is always included here. The rule itself drops lookback rows when
+ * `RuleContext.historyFrom` is absent (nobody has said the tail is whole), so a caller that must
+ * match the rule's figure does the same: use `scheduledHours − priorHours` in that case.
+ */
+export function payPeriodHoursFor(
+  schedule: ScheduleView,
+  nurseId: Id,
+  payPeriod: DateWindow,
+  params: ContractedHoursParams,
+  ctx: Pick<RuleContext, 'paidLeaveByNurse'>,
+): PayPeriodHours {
+  return hoursInPayPeriod(schedule, nurseId, payPeriod, params, ctx, true);
+}
+
+function hoursInPayPeriod(
+  schedule: ScheduleView,
+  nurseId: Id,
+  payPeriod: DateWindow,
+  params: ContractedHoursParams,
+  ctx: Pick<RuleContext, 'paidLeaveByNurse'>,
+  withHistory: boolean,
+): PayPeriodHours {
+  const out: PayPeriodHours = {
+    scheduledHours: 0,
+    priorHours: 0,
+    paidLeaveHours: params.paidLeaveCountsTowardHours
+      ? leaveHoursBetween(ctx.paidLeaveByNurse.get(nurseId), payPeriod.start, payPeriod.end)
+      : 0,
+    assignmentIds: [],
+  };
+  for (const view of schedule.timelineFor(nurseId)) {
+    if (!view.inPeriod && !withHistory) continue;
+    if (!params.onCallCountsTowardHours && !isWorked(view)) continue;
+    if (isElsewhere(view.shiftType)) continue;
+    if (compareDates(view.assignment.date, payPeriod.start) < 0) continue;
+    if (compareDates(view.assignment.date, payPeriod.end) > 0) continue;
+    // Scheduled, not worked: the contract is what the manager rostered, and a holdover
+    // is priced as overtime rather than refused as hours past the FTE.
+    out.scheduledHours += view.scheduledHours;
+    if (view.inPeriod) out.assignmentIds.push(view.assignment.id);
+    else out.priorHours += view.scheduledHours;
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // Weekly hour caps and overtime authorisation
@@ -287,9 +404,10 @@ export interface MaxHoursParams {
   /** The contract's work-week start. 0 = Sunday. */
   workWeekStartsOn: Weekday;
   /**
-   * When true, a week over the overtime threshold must contain at least one assignment
-   * explicitly marked as authorised overtime. Unauthorised overtime is a budget and contract
-   * problem, so it is caught rather than silently costed.
+   * When true, hours past the overtime threshold must be covered: by a shift marked as
+   * authorised overtime, which authorises its whole week (or pay period), or by recorded holdover
+   * time, which authorises only its own hours (`authorisedOvertimeHours`). Unauthorised overtime
+   * is a budget and contract problem, so it is caught rather than silently costed.
    */
   requireOvertimeAuthorisation: boolean;
   onCallCountsTowardHours: boolean;
@@ -320,8 +438,7 @@ export function overtimeWindowOf(
   calendar: PayCalendar,
 ): DateWindow {
   if (params.overtimeByPayPeriod) return payPeriodWindow(payPeriodIndex(date, calendar), calendar);
-  const start = addDays(date, -((weekdayOf(date) - params.workWeekStartsOn + 7) % 7));
-  return { start, end: addDays(start, 6) };
+  return workWeekOf(date, params.workWeekStartsOn);
 }
 
 /** Hours past which one overtime window is overtime. */
@@ -338,29 +455,51 @@ function windowName(window: DateWindow, params: MaxHoursParams): string {
     : `the week of ${describeDate(window.start)}`;
 }
 
+/**
+ * Overtime hours a window's own records authorise: all of it when a shift in the window is
+ * marked authorised overtime, otherwise the hours recorded holdovers add — recording a holdover
+ * authorises the time it adds, nothing more. The rule and the CP-SAT cap both ask this.
+ */
+export function authorisedOvertimeHours(
+  rows: Iterable<Pick<Assignment, 'isOvertime' | 'holdoverMinutes'>>,
+): number {
+  let hours = 0;
+  for (const row of rows) {
+    if (row.isOvertime) return Number.POSITIVE_INFINITY;
+    hours += holdoverHours(row);
+  }
+  return hours;
+}
+
 interface WindowHours {
   hours: number;
-  authorised: boolean;
+  /** What the window's own records authorise past the threshold (`authorisedOvertimeHours`). */
+  authorisedHours: number;
   touchesPeriod: boolean;
   assignmentIds: Id[];
 }
 
 function hoursIn(timeline: readonly AssignmentView[], window: DateWindow): WindowHours {
-  const out: WindowHours = { hours: 0, authorised: false, touchesPeriod: false, assignmentIds: [] };
+  const out: WindowHours = {
+    hours: 0,
+    authorisedHours: 0,
+    touchesPeriod: false,
+    assignmentIds: [],
+  };
+  const rows: Assignment[] = [];
   for (const view of timeline) {
     if (compareDates(view.assignment.date, window.start) < 0) continue;
     if (compareDates(view.assignment.date, window.end) > 0) continue;
+    // `paidHours` is worked time, so the absolute cap counts a holdover whatever it authorises.
     out.hours += view.paidHours;
-    // Recording a holdover is the manager authorising the hours it adds; it need not also be
-    // flagged as overtime. The absolute cap still counts those hours (`hours` is `paidHours`).
-    if (view.assignment.isOvertime || (view.assignment.holdoverMinutes ?? 0) > 0) {
-      out.authorised = true;
-    }
+    rows.push(view.assignment);
     if (view.inPeriod) {
       out.touchesPeriod = true;
       out.assignmentIds.push(view.assignment.id);
     }
   }
+  // Lookback rows count: a holdover last period recorded in this week authorised its hours.
+  out.authorisedHours = authorisedOvertimeHours(rows);
   return out;
 }
 
@@ -408,7 +547,9 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
     },
     requireOvertimeAuthorisation: {
       label: 'Overtime must be authorised',
-      hint: 'A week or pay period over the threshold needs a shift marked as authorised overtime.',
+      hint:
+        'Hours past the threshold need a shift marked as authorised overtime (covers the whole ' +
+        'week or pay period) or recorded holdover time (covers only its own hours).',
       why:
         'Leave this on to stop overtime appearing by accident. Mark the shift as overtime on the ' +
         'grid when you mean it. Turn it off if overtime needs no sign-off on your unit.',
@@ -455,12 +596,12 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
         .filter((v) => params.onCallCountsTowardHours || isWorked(v));
 
       const unauthorised = (span: DateWindow, found: WindowHours) => {
-        if (!params.requireOvertimeAuthorisation || found.authorised) return;
+        if (!params.requireOvertimeAuthorisation) return;
         const paidLeaveHours = params.paidLeaveCountsTowardOvertime
           ? leaveHoursBetween(ctx.paidLeaveByNurse.get(nurse.id), span.start, span.end)
           : 0;
         const threshold = overtimeThreshold(params);
-        const overtimeHours = found.hours + paidLeaveHours - threshold;
+        const overtimeHours = found.hours + paidLeaveHours - threshold - found.authorisedHours;
         if (overtimeHours <= 0) return;
         const unit = params.overtimeByPayPeriod ? 'pay period' : 'week';
         violations.push(
@@ -468,10 +609,14 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
             maxHoursRule,
             'hard',
             'unauthorised_overtime',
-            `${nurseName(nurse)} is scheduled ${found.hours}h${leaveNote(paidLeaveHours)} in ` +
-              `${windowName(span, params)}, which is ${overtimeHours}h of overtime, but no shift ` +
-              `that ${unit} is marked as authorised overtime.`,
+            `${nurseName(nurse)} is scheduled ${hoursText(found.hours)}${leaveNote(paidLeaveHours)} ` +
+              `in ${windowName(span, params)}, which is ${hoursText(overtimeHours)} of overtime` +
+              (found.authorisedHours > 0
+                ? ` beyond the ${hoursText(found.authorisedHours)} held over`
+                : '') +
+              `, but no shift that ${unit} is marked as authorised overtime.`,
             {
+              amount: overtimeHours,
               nurseIds: [nurse.id],
               dates: [span.start, span.end],
               assignmentIds: found.assignmentIds,
@@ -479,6 +624,7 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
                 scheduledHours: found.hours,
                 paidLeaveHours,
                 overtimeHours,
+                authorisedHours: found.authorisedHours,
                 threshold,
                 ...(params.overtimeByPayPeriod ? { payPeriod: span } : { week: span }),
               },
@@ -497,9 +643,10 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
               maxHoursRule,
               'hard',
               'over_max_hours',
-              `${nurseName(nurse)} is scheduled ${found.hours}h in the week of ${describeDate(week.start)}, ` +
-                `over the ${params.maxHoursPerWeek}h cap.`,
+              `${nurseName(nurse)} is scheduled ${hoursText(found.hours)} in the week of ` +
+                `${describeDate(week.start)}, over the ${hoursText(params.maxHoursPerWeek)} cap.`,
               {
+                amount: found.hours - params.maxHoursPerWeek,
                 nurseIds: [nurse.id],
                 dates: [week.start, week.end],
                 assignmentIds: found.assignmentIds,
@@ -528,7 +675,9 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
 
 /**
  * Hours past the overtime threshold in the overtime window (work week or pay period) containing
- * `date`. Used by the exchange evaluator to show what a trade does to each side's overtime.
+ * `date`, counted as `max-hours-per-week` counts them: standby only when the rule counts it, paid
+ * leave only when it counts toward overtime. Authorised or not — it is what the window adds to
+ * payroll. Used by the exchange evaluator to show what a trade does to each side's overtime.
  */
 export function overtimeHoursAround(
   schedule: ScheduleView,
@@ -536,8 +685,15 @@ export function overtimeHoursAround(
   date: IsoDate,
   params: MaxHoursParams,
   calendar: PayCalendar,
+  paidLeave: readonly PaidLeaveCredit[] | undefined,
 ): number {
   const window = overtimeWindowOf(date, params, calendar);
-  const hours = schedule.hoursBetween(nurseId, window.start, window.end);
-  return Math.max(0, hours - overtimeThreshold(params));
+  const timeline = schedule
+    .timelineFor(nurseId)
+    .filter((v) => params.onCallCountsTowardHours || isWorked(v));
+  const found = hoursIn(timeline, window);
+  const leave = params.paidLeaveCountsTowardOvertime
+    ? leaveHoursBetween(paidLeave, window.start, window.end)
+    : 0;
+  return Math.max(0, found.hours + leave - overtimeThreshold(params));
 }

@@ -37,6 +37,7 @@ import {
   EVENING_8,
   MID_8,
   makeNurse,
+  NIGHT_8,
   NIGHT_12,
   nurseCredential,
   ON_CALL,
@@ -52,8 +53,11 @@ import { SolverModel } from '../model.js';
 import { Rng } from '../rng.js';
 import { solve } from '../solver.js';
 import type { SolveInput } from '../types.js';
-import { decodeCpsat } from './decode.js';
+import { CpBuilder, expr } from './builder.js';
+import { OBJECTIVE_SCALE } from './context.js';
+import { decodeCpsat, EncodingDisagreementError } from './decode.js';
 import { CPSAT_ENCODERS, type CpsatEncoding, decisionsFor, encodeCpsat } from './encode.js';
+import { lockedHardViolations } from './index.js';
 
 beforeEach(() => {
   resetFixtureCounters();
@@ -141,6 +145,35 @@ describe('variables', () => {
     expect(hasVariable(encoding, 'ada', '2026-01-06', DAY_12.id)).toBe(false);
     expect(hasVariable(encoding, 'ada', '2026-01-06', NIGHT_12.id)).toBe(false);
     expect(hasVariable(encoding, 'ada', '2026-01-07', DAY_12.id)).toBe(true);
+  });
+
+  it('charges the k-th missing nurse k times the weight', () => {
+    const b = new CpBuilder();
+    const [x, y, z] = ['x', 'y', 'z'].map((name) => b.decision(name)) as [number, number, number];
+    b.minimiseTriangular(
+      expr([
+        [x, 1],
+        [y, 1],
+        [z, 1],
+      ]),
+      10,
+      't',
+    );
+    // 10 for the first, 20 for the second, 30 for the third: 0, 10, 30, 60.
+    const expected = [0, 10, 30, 60];
+    for (let k = 0; k <= 3; k++) {
+      const decisions = new Map([x, y, z].slice(0, k).map((v) => [v, 1] as const));
+      const evaluation = b.evaluate(decisions, OBJECTIVE_SCALE);
+      expect(evaluation.violated).toEqual([]);
+      expect(evaluation.objective).toBeCloseTo(expected[k]!, 6);
+    }
+  });
+
+  it('builds nothing for a shortage the unit has chosen not to price', () => {
+    const b = new CpBuilder();
+    const x = b.decision('x');
+    b.minimiseTriangular(expr([[x, 1]]), 0, 't');
+    expect(b.variableCount).toBe(1);
   });
 });
 
@@ -314,6 +347,79 @@ describe('tour rotation made hard', () => {
       /tours per schedule/,
     );
     expect(evaluate(encoding, [locked, evening]).violated).toEqual([]);
+  });
+
+  it('lets a career nurse work the night she asked for when tour rotation is hard', () => {
+    // Hired 1 Jan 2010: sixteen years at Sun 4 Jan 2026, exempt at ten, so held to one tour.
+    // Day 07:00–19:00 Mon 5 Jan, night 19:00 Thu 8 Jan: 72 hours apart, so only the tour count
+    // can object, and nights are hers by asking.
+    const career = makeNurse({ id: 'ada', firstName: 'Ada', hireDate: isoDate('2010-01-01') });
+    const wantsNights: Preference = {
+      id: 'pref-ada-nights',
+      nurseId: 'ada',
+      kind: 'prefer_shift_type',
+      shiftTypeId: NIGHT_12.id,
+      weight: 1,
+    };
+    const judge = (preferences: Preference[]) => {
+      const encoding = encodeCpsat(
+        unit([career], {
+          preferences,
+          ruleSet: hardTours({ maxToursPerPeriod: 2, exemptAfterYearsOfService: 10 }),
+        }),
+      );
+      const model = encoding.solverModel;
+      model.add(model.make(0, model.shiftAt(1, DAY_12)));
+      const sa = model.canAdd(0, model.make(0, model.shiftAt(4, NIGHT_12)));
+      const cpsat = evaluate(encoding, [
+        assign('ada', DAY_12, '2026-01-05'),
+        assign('ada', NIGHT_12, '2026-01-08'),
+      ]).violated;
+      return { sa, cpsat };
+    };
+    const asked = judge([wantsNights]);
+    expect(asked.sa).toBe(true);
+    expect(asked.cpsat).toEqual([]);
+    const forced = judge([]);
+    expect(forced.sa).toBe(false);
+    expect(forced.cpsat.join('\n')).toMatch(/tours per schedule: Ada/);
+  });
+
+  it('lets a career nurse on permanent days work the night she asked for when tour rotation is hard', () => {
+    // Hired 1 Jan 2010: sixteen years at Sun 4 Jan 2026, exempt at ten, so kept on her permanent
+    // day tour. A lone night on Thu 8 Jan: only the permanent tour can object, and nights are
+    // hers by asking.
+    const career = makeNurse({
+      id: 'ada',
+      firstName: 'Ada',
+      hireDate: isoDate('2010-01-01'),
+      permanentTour: 'day',
+    });
+    const wantsNights: Preference = {
+      id: 'pref-ada-nights',
+      nurseId: 'ada',
+      kind: 'prefer_shift_type',
+      shiftTypeId: NIGHT_12.id,
+      weight: 1,
+    };
+    const judge = (preferences: Preference[]) => {
+      const encoding = encodeCpsat(
+        unit([career], {
+          preferences,
+          ruleSet: hardTours({ exemptAfterYearsOfService: 10 }),
+        }),
+      );
+      const model = encoding.solverModel;
+      const sa = model.canAdd(0, model.make(0, model.shiftAt(4, NIGHT_12)));
+      const cpsat = evaluate(encoding, [assign('ada', NIGHT_12, '2026-01-08')]).violated;
+      return { sa, cpsat };
+    };
+    const asked = judge([wantsNights]);
+    expect(asked.sa).toBe(true);
+    expect(asked.cpsat).toEqual([]);
+    const forced = judge([]);
+    expect(forced.sa).toBe(false);
+    expect(forced.cpsat.join('\n')).toMatch(/permanent tour: Ada/);
   });
 });
 
@@ -1138,6 +1244,76 @@ describe('hours', () => {
     expect(evaluate(encoding, seven).violated.join('\n')).toMatch(/pay period/);
   });
 
+  it('caps a schedule’s first days at the contract less the hours already published', () => {
+    // Schedule Sun 11 – Sat 24 Jan; pay period Sun 4 – Sat 17 began before it. Last schedule
+    // worked D12 Sun 4 – Thu 8: 60h. Room left: 72 + 4 tolerance − 60 = 16h, one 12 and no more.
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-11'),
+      endDate: isoDate('2026-01-24'),
+      historyFrom: isoDate('2025-12-14'),
+      nurses: [makeNurse({ id: 'ana', firstName: 'Ana', contractedHoursPerPeriod: 72 })],
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
+      priorAssignments: assignRun('ana', DAY_12, '2026-01-04', 5, { periodId: 'prev' }),
+    });
+    const encoding = encodeCpsat(input);
+    const monday = assign('ana', DAY_12, '2026-01-12');
+    expect(evaluate(encoding, [monday]).violated).toEqual([]);
+    const both = [monday, assign('ana', DAY_12, '2026-01-13')];
+    expect(evaluate(encoding, both).violated.join('\n')).toMatch(/contracted hours/);
+  });
+
+  describe('which published hours count toward the cap', () => {
+    // Schedule Sun 11 – Sat 24 Jan, history whole from 14 Dec; pay period Sun 4 – Sat 17 judged.
+    // Published: D12 Sun 4, D12 Mon 5 held over 6h, a day on 5 West Wed 7, D12 Thu 8, standby
+    // Fri 9. The contract counts 36h of it, leaving 72 + 4 − 36 = 40h: three 12s fit, four do
+    // not. Counting the holdover (42h, room 34), 5 West's day or the standby (48h, room 28) would
+    // refuse the third.
+    const WEST_DAY = { ...DAY_12, id: 'west-d12', unitId: 'unit-west' };
+    const west = busyElsewhere(
+      [assign('ana', WEST_DAY, '2026-01-07', { periodId: 'west' })],
+      [WEST_DAY],
+      '5 West',
+    );
+    const encodingFor = (ruleSet: RuleSet) =>
+      encodeCpsat(
+        solveInputFrom({
+          startDate: isoDate('2026-01-11'),
+          endDate: isoDate('2026-01-24'),
+          historyFrom: isoDate('2025-12-14'),
+          nurses: [makeNurse({ id: 'ana', firstName: 'Ana', contractedHoursPerPeriod: 72 })],
+          shiftTypes: [DAY_12, NIGHT_12, ON_CALL, ...west.shiftTypes],
+          coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
+          priorAssignments: [
+            assign('ana', DAY_12, '2026-01-04', { periodId: 'prev' }),
+            assign('ana', DAY_12, '2026-01-05', { periodId: 'prev', holdoverMinutes: 360 }),
+            ...west.assignments,
+            assign('ana', DAY_12, '2026-01-08', { periodId: 'prev' }),
+            assign('ana', ON_CALL, '2026-01-09', { periodId: 'prev' }),
+          ],
+          ruleSet,
+        }),
+      );
+    const days = (dates: string[]) => dates.map((d) => assign('ana', DAY_12, d));
+    const three = days(['2026-01-12', '2026-01-14', '2026-01-16']);
+
+    it('counts a held-over shift by its scheduled hours and leaves out other units and standby', () => {
+      const encoding = encodingFor(NO_WEEKLY_CAP);
+      expect(evaluate(encoding, three).violated).toEqual([]);
+      const four = [...three, ...days(['2026-01-17'])];
+      expect(evaluate(encoding, four).violated.join('\n')).toMatch(/contracted hours/);
+    });
+
+    it('counts the standby too when the contract credits time on call', () => {
+      // 48h published: room 28h, two 12s and not three.
+      const encoding = encodingFor(
+        withParams('fte-target-hours', { onCallCountsTowardHours: true }, NO_WEEKLY_CAP),
+      );
+      expect(evaluate(encoding, three.slice(0, 2)).violated).toEqual([]);
+      expect(evaluate(encoding, three).violated.join('\n')).toMatch(/contracted hours/);
+    });
+  });
+
   describe('overtime judged over the pay period', () => {
     // A 120h contract so only overtime can trip. Three 12s and an 8 in week one is 44h.
     const bigContract = () => makeNurse({ id: 'ada', contractedHoursPerPeriod: 120 });
@@ -1180,6 +1356,85 @@ describe('hours', () => {
   });
 });
 
+describe('a holdover in the lookback and the weekly overtime cap', () => {
+  it("lets a day 8 in beside a shift held over two hours: the holdover's hours are authorised", () => {
+    // Wednesday work week, Wed 31 Dec – Tue 6 Jan. Scheduled 12 + 8 + 12 + 8 = 40h; worked 42h
+    // with Thursday's 2h holdover. The cap is 40 + the 2h the holdover authorises = 42.
+    const ruleSet = withParams('max-hours-per-week', { workWeekStartsOn: 3 });
+    const prior = [
+      assign('ada', DAY_12, '2025-12-31', { periodId: 'prev', isLocked: true }),
+      assign('ada', DAY_8, '2026-01-01', {
+        periodId: 'prev',
+        isLocked: true,
+        holdoverMinutes: 120,
+        holdoverMandated: true,
+      }),
+    ];
+    const input = unit(
+      [makeNurse({ id: 'ada', firstName: 'Ada', contractedHoursPerPeriod: 120 })],
+      {
+        ruleSet,
+        priorAssignments: prior,
+        shiftTypes: [DAY_12, NIGHT_12, DAY_8],
+        coverageRequirements: [
+          ...coverageAllWeek(DAY_12, 'RN', 1),
+          ...coverageAllWeek(NIGHT_12, 'RN', 1),
+          ...coverageAllWeek(DAY_8, 'RN', 1),
+        ],
+      },
+    );
+    const encoding = encodeCpsat(input);
+    const week = [assign('ada', DAY_12, '2026-01-04'), assign('ada', DAY_8, '2026-01-05')];
+    expect(evaluate(encoding, week).violated).toEqual([]);
+
+    const model = encoding.solverModel;
+    const view = new ScheduleView({
+      period: input.period,
+      assignments: week,
+      priorAssignments: input.priorAssignments,
+      nurses: model.nurses,
+      shiftTypes: model.shiftTypes,
+    });
+    const rules = evaluateSchedule(view, input.ruleSet, model.ctx).hardViolations;
+    expect(rules.filter((v) => v.code === 'unauthorised_overtime')).toEqual([]);
+  });
+});
+
+describe('who runs the shift', () => {
+  it('counts a shift run by an LPN as missing its charge nurse, as the rules do', () => {
+    // Monday's day 12: Lena, a charge-eligible LPN, and Ana, an RN who is not charge-eligible.
+    // Under the default only an RN may run the shift, so nobody on it can take charge.
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-05'),
+      endDate: isoDate('2026-01-05'),
+      nurses: [
+        makeNurse({ id: 'lena', role: 'LPN', isChargeEligible: true }),
+        makeNurse({ id: 'ana' }),
+      ],
+      shiftTypes: [DAY_12],
+      coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
+    });
+    const roster = [assign('lena', DAY_12, '2026-01-05'), assign('ana', DAY_12, '2026-01-05')];
+    const encoding = encodeCpsat(input);
+    const { values } = evaluate(encoding, roster);
+    const missing = values.findIndex(
+      (_, v) => encoding.builder.label(v) === 'missing charge: D12 2026-01-05',
+    );
+    expect(missing).toBeGreaterThanOrEqual(0);
+    expect(values[missing]).toBe(1);
+
+    const model = new SolverModel(input);
+    const view = new ScheduleView({
+      period: input.period,
+      assignments: roster,
+      nurses: model.nurses,
+      shiftTypes: model.shiftTypes,
+    });
+    const codes = evaluateSchedule(view, input.ruleSet, model.ctx).violations.map((v) => v.code);
+    expect(codes).toContain('missing_charge_nurse');
+  });
+});
+
 describe('agreement with the rule engine', () => {
   /** Mixed 8/12-hour shifts, on-call and a lookback tail, for two nurses. */
   const parityInput = (options: Partial<SolveScenarioOptions> = {}) =>
@@ -1199,23 +1454,59 @@ describe('agreement with the rule engine', () => {
       ...options,
     });
 
-  /** Hundreds of random rosters, each judged twice: by the encoding and by the real rules. */
-  function expectParity(input: SolveInput): void {
-    const encoding = encodeCpsat(input);
-    const model = encoding.solverModel;
-    const rng = new Rng(7);
+  /**
+   * A roster drawn over the encoding's variables: each nurse-day worked with chance `density`,
+   * on one of that day's variables. Locked rows are constants, so they are never drawn.
+   */
+  function rosterDrawer(encoding: CpsatEncoding) {
     const byNurseDay = new Map<string, typeof encoding.shiftVars>();
     for (const sv of encoding.shiftVars) {
       const key = `${sv.nurseId}|${sv.shift.dateIdx}`;
       byNurseDay.set(key, [...(byNurseDay.get(key) ?? []), sv]);
     }
-    let illegal = 0;
-    for (let trial = 0; trial < 400; trial++) {
+    return (rng: Rng): Assignment[] => {
       const density = 0.2 + 0.6 * rng.nextFloat();
       const chosen = [...byNurseDay.values()].flatMap((options) =>
         rng.chance(density) ? [options[rng.nextInt(0, options.length - 1)]!] : [],
       );
-      const assignments = chosen.map((sv) => assign(sv.nurseId, sv.shift.shiftType, sv.shift.date));
+      return chosen.map((sv) => assign(sv.nurseId, sv.shift.shiftType, sv.shift.date));
+    };
+  }
+
+  /**
+   * Decode the values that describe `roster` and expect the schedule to be the roster plus the
+   * locked rows, whatever order the shifts were judged in. Decode judges the finished roster
+   * through the gate, so a legal roster it refuses is an order or gate defect.
+   */
+  function expectDecodes(
+    input: SolveInput,
+    encoding: CpsatEncoding,
+    roster: readonly Assignment[],
+    verdict: string,
+  ): void {
+    const values = new Array<number>(encoding.builder.variableCount).fill(0);
+    for (const [variable, value] of decisionsFor(encoding, roster)) values[variable] = value;
+    const keys = (rows: readonly Assignment[]) =>
+      rows.map((a) => `${a.nurseId}|${a.date}|${a.shiftTypeId}`).sort();
+    let decoded: string[];
+    try {
+      decoded = keys(decodeCpsat(input, encoding, values).assignments());
+    } catch (err) {
+      throw new Error(`${verdict}; decode refused it: ${(err as Error).message}`);
+    }
+    const locked = input.assignments.filter((a) => a.isLocked);
+    expect(decoded, verdict).toEqual(keys([...roster, ...locked]));
+  }
+
+  /** Hundreds of random rosters, each judged twice: by the encoding and by the real rules. */
+  function expectParity(input: SolveInput): void {
+    const encoding = encodeCpsat(input);
+    const model = encoding.solverModel;
+    const rng = new Rng(7);
+    const draw = rosterDrawer(encoding);
+    let illegal = 0;
+    for (let trial = 0; trial < 400; trial++) {
+      const assignments = draw(rng);
       const view = new ScheduleView({
         period: input.period,
         assignments,
@@ -1230,14 +1521,131 @@ describe('agreement with the rule engine', () => {
       if (ruleViolations.length > 0) illegal++;
       const verdict = `trial ${trial}: rules say ${ruleViolations.map((v) => v.message).join(' | ') || 'legal'}; encoding says ${encoded.join(' | ') || 'legal'}`;
       expect(encoded.length === 0, verdict).toBe(ruleViolations.length === 0);
+      if (ruleViolations.length === 0) expectDecodes(input, encoding, assignments, verdict);
     }
     // The generator must produce both kinds, or the agreement proves nothing.
     expect(illegal).toBeGreaterThan(50);
     expect(illegal).toBeLessThan(390);
   }
 
+  /**
+   * 1–3 locked shifts for about half the team, on distinct dates of a random type. Some of them
+   * break a hard rule on their own (a locked night before a locked day), as a manager's can.
+   */
+  function withRandomLocks(input: SolveInput, rng: Rng): SolveInput {
+    const dates: string[] = [];
+    for (let d = input.period.startDate; d <= input.period.endDate; d = addDays(d, 1)) {
+      dates.push(d);
+    }
+    const locks: Assignment[] = [];
+    for (const nurse of input.nurses) {
+      if (!rng.chance(0.5)) continue;
+      const count = rng.nextInt(1, 3);
+      const picked = new Set<string>();
+      while (picked.size < count) picked.add(dates[rng.nextInt(0, dates.length - 1)]!);
+      for (const date of picked) {
+        const type = input.shiftTypes[rng.nextInt(0, input.shiftTypes.length - 1)]!;
+        locks.push(
+          assign(nurse.id, type, date, { id: `lock-${nurse.id}-${date}`, isLocked: true }),
+        );
+      }
+    }
+    return { ...input, assignments: [...input.assignments, ...locks] };
+  }
+
+  /**
+   * Random rosters around random locked shifts. One-directional: CP-SAT forbids anything that
+   * adds to a breach the locks already carry, which is stricter than the gate (it tolerates a
+   * pinned breach that does not grow), so an encoding-illegal roster may be gate-legal. The
+   * other way round is a bug: a roster the encoding accepts must pass the gate and decode.
+   */
+  function expectLockedParity(input: SolveInput): void {
+    const encoding = encodeCpsat(input);
+    const rng = new Rng(7);
+    const draw = rosterDrawer(encoding);
+    let encodingLegal = 0;
+    let gateIllegal = 0;
+    for (let trial = 0; trial < 400; trial++) {
+      const roster = draw(rng);
+      const model = new SolverModel(input);
+      for (const a of roster) model.add({ ...a });
+      const breaches = model.nurses.flatMap((_, n) => model.gateBreaches(n));
+      if (breaches.length > 0) gateIllegal++;
+      const encoded = evaluate(encoding, roster).violated;
+      if (encoded.length > 0) continue;
+      encodingLegal++;
+      const verdict = `trial ${trial}: encoding says legal; gate says ${breaches.map((v) => v.message).join(' | ') || 'legal'}`;
+      expect(breaches, verdict).toEqual([]);
+      expectDecodes(input, encoding, roster, verdict);
+    }
+    // Both kinds, or the check proves nothing.
+    expect(encodingLegal).toBeGreaterThanOrEqual(20);
+    expect(gateIllegal).toBeGreaterThanOrEqual(20);
+  }
+
   it('calls a random schedule illegal exactly when the rule engine does', () => {
     expectParity(parityInput());
+  });
+
+  it('never calls a roster with random locked shifts legal when the rule engine does not', () => {
+    expectLockedParity(withRandomLocks(parityInput(), new Rng(31)));
+  });
+
+  describe('can always leave every shift unassigned, whatever is locked', () => {
+    /**
+     * Dana's locked night Mon 5 Jan ends 07:00 Tue, when her locked day starts: 0 hours' rest.
+     * Her locked night Fri 9 Jan starts 19:00, inside her Friday 18:00 → Saturday 18:00 block.
+     */
+    const lockedBreaches = () =>
+      solveInputFrom({
+        startDate: isoDate('2026-01-04'),
+        endDate: isoDate('2026-01-17'),
+        nurses: [
+          makeNurse({ id: 'dana', firstName: 'Dana' }),
+          makeNurse({ id: 'eve', firstName: 'Eve', isChargeEligible: true }),
+        ],
+        shiftTypes: [DAY_12, NIGHT_12],
+        coverageRequirements: [
+          ...coverageAllWeek(DAY_12, 'RN', 1),
+          ...coverageAllWeek(NIGHT_12, 'RN', 1),
+        ],
+        assignments: [
+          assign('dana', NIGHT_12, '2026-01-05', { id: 'mon-night', isLocked: true }),
+          assign('dana', DAY_12, '2026-01-06', { id: 'tue-day', isLocked: true }),
+          assign('dana', NIGHT_12, '2026-01-09', { id: 'fri-night', isLocked: true }),
+        ],
+        availabilityBlocks: [
+          {
+            id: 'sabbath',
+            unitId: UNIT_ID,
+            nurseId: 'dana',
+            weekdays: [5],
+            startTime: '18:00',
+            endTime: '18:00',
+            reason: 'Sabbath',
+          },
+        ],
+      });
+
+    const allOff = (input: SolveInput) => {
+      const encoding = encodeCpsat(input);
+      return encoding.builder.evaluate(new Map(), encoding.objectiveScale).violated;
+    };
+
+    it('with nothing locked', () => {
+      expect(allOff(parityInput())).toEqual([]);
+    });
+
+    it('with random locked shifts', () => {
+      expect(allOff(withRandomLocks(parityInput(), new Rng(31)))).toEqual([]);
+    });
+
+    it('with locked shifts that already break the rest and availability rules', () => {
+      const input = lockedBreaches();
+      // The pins really do breach, so a model that refused them would be INFEASIBLE.
+      expect(lockedHardViolations(input).map((v) => v.code)).toContain('insufficient_rest');
+      expect(allOff(input)).toEqual([]);
+    });
   });
 
   it('agrees with the rules when a waived turnaround and a longer rest after nights meet', () => {
@@ -1249,16 +1657,63 @@ describe('agreement with the rule engine', () => {
       reason: 'Signed waiver',
       createdAt: 0,
     });
+    const waived = parityInput({
+      ruleSet: withParams('min-rest-between-shifts', { minRestHoursAfterNight: 36 }),
+      restWaivers: [
+        waiver('ada', '2026-01-06'),
+        waiver('ada', '2026-01-09'),
+        waiver('bo', '2026-01-12'),
+      ],
+    });
+    expectParity(waived);
+    // And with random locked shifts around the waivers: one-directional, as locks make it.
+    expectLockedParity(withRandomLocks(waived, new Rng(31)));
+  });
+
+  it('agrees with the rule engine when a held-over lookback shift authorises overtime', () => {
+    // Ada's lookback night on Sat 3 Jan was held over an hour: 13 worked hours in the week the
+    // schedule opens, one of them overtime the holdover itself authorised.
     expectParity(
       parityInput({
-        ruleSet: withParams('min-rest-between-shifts', { minRestHoursAfterNight: 36 }),
-        restWaivers: [
-          waiver('ada', '2026-01-06'),
-          waiver('ada', '2026-01-09'),
-          waiver('bo', '2026-01-12'),
+        ruleSet: withParams('max-hours-per-week', { requireOvertimeAuthorisation: true }),
+        priorAssignments: [
+          assign('ada', NIGHT_12, '2026-01-03', { periodId: 'prev', holdoverMinutes: 60 }),
         ],
       }),
     );
+  });
+
+  it('agrees with the rule engine when the nurse also works on another unit', () => {
+    // Ada works 5 West's day 8 on Wed 7 Jan and its night 12 on Sat 10 Jan. She keeps her home
+    // variables on those days, so Wednesday's home night is a night date beside a constant day.
+    // Four hours' rest lets that night follow the day 8 (out 15:00, back 19:00), and one night in
+    // a row makes it count: a home night Wed then Thu is two, wherever the day 8 sits. Weekly
+    // caps are lifted, or the 44 hours that week would hide the nights.
+    const west = busyElsewhere(
+      [assign('ada', DAY_8, '2026-01-07'), assign('ada', NIGHT_12, '2026-01-10')],
+      [DAY_8, NIGHT_12],
+      '5 West',
+    );
+    const base = parityInput({
+      ruleSet: withParams(
+        'max-consecutive-shifts',
+        { maxConsecutiveNights: 1 },
+        withParams('min-rest-between-shifts', { minRestHours: 4 }, NO_WEEKLY_CAP),
+      ),
+    });
+    const input: SolveInput = {
+      ...base,
+      shiftTypes: [...base.shiftTypes, ...west.shiftTypes],
+      priorAssignments: [...base.priorAssignments, ...west.assignments],
+    };
+    const encoding = encodeCpsat(input);
+    expect(hasVariable(encoding, 'ada', '2026-01-07', NIGHT_12.id)).toBe(true);
+    // Random rosters seldom hold exactly this pair with nothing else wrong, so it is pinned too.
+    const nights = [assign('ada', NIGHT_12, '2026-01-07'), assign('ada', NIGHT_12, '2026-01-08')];
+    expect(evaluate(encoding, nights).violated).toEqual([
+      'consecutive nights: Ada Test 2 nights from 2026-01-07',
+    ]);
+    expectParity(input);
   });
 
   /** A paid vacation for Ada and a paid sick call for Bo, both inside the first pay period. */
@@ -1627,6 +2082,33 @@ describe('agreement with the rule engine', () => {
     );
   });
 
+  it('agrees with the rules on two days off in a pay period the schedule opens in', () => {
+    // Schedule Wed 7 – Sat 17 Jan, history complete from 10 Dec, so the pay period Sun 4 – Sat 17
+    // is judged whole. Both worked its first weekend on the published Sun 4. Ada's Mon 5 leaves
+    // Tue 6 a day off whose pair turns on Wed 7; Bo's Tue 6 leaves Mon 5 a day off with no pair.
+    // Both sides must read those days from the lookback alike.
+    const relaxed = withParams(
+      'max-consecutive-shifts',
+      { maxConsecutiveShifts: 14, minDaysOffAfterMaxStretch: 0 },
+      withParams('fte-target-hours', { overToleranceHours: 200 }, NO_WEEKLY_CAP),
+    );
+    expectParity(
+      parityInput({
+        startDate: isoDate('2026-01-07'),
+        historyFrom: isoDate('2025-12-10'),
+        shiftTypes: [DAY_12],
+        coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
+        priorAssignments: [
+          assign('ada', DAY_12, '2026-01-04', { periodId: 'prev' }),
+          assign('ada', DAY_12, '2026-01-05', { periodId: 'prev' }),
+          assign('bo', DAY_12, '2026-01-04', { periodId: 'prev' }),
+          assign('bo', DAY_12, '2026-01-06', { periodId: 'prev' }),
+        ],
+        ruleSet: hardDaysOff(relaxed),
+      }),
+    );
+  });
+
   it('agrees with the rules when nurses are on the 72/80 and Baylor plans', () => {
     // Bo is on leave Monday to Thursday, so his random shifts fall mostly on days his plan can
     // use; a Friday day or a Day 8 is still off it, as a Day 8 is for Ada. One 8-hour type, not
@@ -1670,6 +2152,23 @@ describe('agreement with the rule engine', () => {
       paidLeaveCountsTowardOvertime: true,
     });
     expectParity(parityInput({ ...paidLeave, ruleSet }));
+  });
+
+  it('agrees with the rules on a pay period the schedule opens in, judged with its history', () => {
+    // Schedule Wed 7 – Sat 17 Jan, inside the pay period Sun 4 – Sat 17; history is complete from
+    // 10 Dec, so the whole pay period is judged. Bo worked D12 Sun 4 and Mon 5 (24h), leaving
+    // 48 + 4 − 24 = 28h of his contract for the schedule's eleven days.
+    expectParity(
+      parityInput({
+        startDate: isoDate('2026-01-07'),
+        historyFrom: isoDate('2025-12-10'),
+        priorAssignments: [
+          assign('ada', NIGHT_12, '2026-01-03', { periodId: 'prev' }),
+          assign('bo', DAY_12, '2026-01-04', { periodId: 'prev' }),
+          assign('bo', DAY_12, '2026-01-05', { periodId: 'prev' }),
+        ],
+      }),
+    );
   });
 });
 
@@ -1844,6 +2343,62 @@ describe('parity with the annealer', () => {
     };
     expect(fairnessOf(team())).toBeGreaterThan(0);
     expect(fairnessOf(team('va_baylor'))).toBe(0);
+  });
+
+  describe('a shortage on one shift', () => {
+    // Per-diem nurses (no hours pressure) and floors only on Mon 5 Jan.
+    function mondayOnly(day: number, night: number, chargeEligible = true): SolveInput {
+      return solveInputFrom({
+        startDate: isoDate('2026-01-04'),
+        endDate: isoDate('2026-01-17'),
+        nurses: ['ada', 'bo'].map((id) =>
+          makeNurse({
+            id,
+            isChargeEligible: chargeEligible,
+            employmentType: 'per_diem',
+            contractedHoursPerPeriod: 0,
+          }),
+        ),
+        shiftTypes: [DAY_12, NIGHT_12],
+        coverageRequirements: [
+          ...(day > 0 ? [coverage(DAY_12, 'RN', day, day, null, isoDate('2026-01-05'))] : []),
+          ...(night > 0
+            ? [coverage(NIGHT_12, 'RN', night, night, null, isoDate('2026-01-05'))]
+            : []),
+        ],
+      });
+    }
+
+    it('prices a concentrated shortage the same as the annealer', () => {
+      const input = mondayOnly(2, 2);
+      const stripped = both(input, [
+        assign('ada', DAY_12, '2026-01-05'),
+        assign('bo', DAY_12, '2026-01-05'),
+      ]);
+      const spread = both(input, [
+        assign('ada', DAY_12, '2026-01-05'),
+        assign('bo', NIGHT_12, '2026-01-05'),
+      ]);
+      for (const { evaluation, expected } of [stripped, spread]) {
+        expect(evaluation.violated).toEqual([]);
+        expect(evaluation.objective).toBeCloseTo(expected, 0);
+      }
+      // The night two short (3,000 + 6,000) against each shift one short (3,000 twice).
+      expect(stripped.evaluation.objective - spread.evaluation.objective).toBeCloseTo(3000, 0);
+    });
+
+    it('prices a shortage two ways in one shift the same as the annealer', () => {
+      // Two RNs who cannot take charge on a day 12 with a floor of 3: one slot short and no
+      // charge nurse, two units on one shift — 3,000 + 6,000 — and one below target at 60.
+      const input = mondayOnly(3, 0, false);
+      const roster = [assign('ada', DAY_12, '2026-01-05'), assign('bo', DAY_12, '2026-01-05')];
+      const { evaluation, expected } = both(input, roster);
+      expect(evaluation.violated).toEqual([]);
+      expect(evaluation.objective).toBeCloseTo(expected, 0);
+      const model = new SolverModel(input);
+      for (const a of roster) model.add(a);
+      expect(model.breakdown().coverage).toBe(9_060);
+    });
   });
 
   describe('a mid 8 covered by the day 12', () => {
@@ -2156,6 +2711,38 @@ describe('parity with the annealer', () => {
     });
   });
 
+  describe('two charge nurses on one shift', () => {
+    it('prices a locked double charge as the annealer does', () => {
+      // Ana and Bo are locked onto Monday's day 12, both marked charge; Cy is free, so the
+      // shift is CP-SAT's to move. One shift-scope finding is one `hardShortfall` (3000).
+      const charged = (boCharge: boolean) =>
+        solveInputFrom({
+          startDate: isoDate('2026-01-05'),
+          endDate: isoDate('2026-01-05'),
+          nurses: [
+            makeNurse({ id: 'ana', isChargeEligible: true, contractedHoursPerPeriod: 0 }),
+            makeNurse({ id: 'bo', isChargeEligible: true, contractedHoursPerPeriod: 0 }),
+            makeNurse({ id: 'cy', contractedHoursPerPeriod: 0 }),
+          ],
+          shiftTypes: [DAY_12],
+          coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1, 2),
+          assignments: [
+            assign('ana', DAY_12, '2026-01-05', { isLocked: true, isCharge: true }),
+            assign('bo', DAY_12, '2026-01-05', { isLocked: true, isCharge: boCharge }),
+          ],
+        });
+      const double = charged(true);
+      const single = charged(false);
+      const twice = both(double, double.assignments);
+      const once = both(single, single.assignments);
+      for (const { evaluation, expected } of [twice, once]) {
+        expect(evaluation.violated).toEqual([]);
+        expect(evaluation.objective).toBeCloseTo(expected, 0);
+      }
+      expect(twice.expected - once.expected).toBeCloseTo(3000, 6);
+    });
+  });
+
   describe('a licensed-nurse ratio pooling RNs and LVNs', () => {
     it('prices random rosters the same as the annealer', () => {
       const nurses = [
@@ -2439,6 +3026,19 @@ describe('two nurses who want to work the holiday', () => {
     // Ana nets 3 points to Bo's 11.2 (see above): 8.2 in Ana's favour.
     expect(priced('bo') - priced('ana')).toBeCloseTo(8.2, 1);
   });
+
+  it('prices a second volunteer on a staffed holiday the same as the annealer', () => {
+    // One of them is over MLK Day's target, which costs overTarget plus the larger reward (Ana's
+    // 30) in both solvers, so neither pays the other to come in.
+    const input = volunteers();
+    const encoding = encodeCpsat(input);
+    const assignments = [assign('bo', DAY_12, '2026-01-12'), assign('ana', DAY_12, '2026-01-12')];
+    const evaluation = evaluate(encoding, assignments);
+    const model = new SolverModel(input);
+    for (const a of assignments) model.add({ ...a, isCharge: false });
+    expect(evaluation.violated).toEqual([]);
+    expect(evaluation.objective).toBeCloseTo(model.breakdown().total, 0);
+  });
 });
 
 describe('decoding', () => {
@@ -2452,6 +3052,64 @@ describe('decoding', () => {
       if (night || day) values[sv.variable] = 1;
     }
     expect(() => decodeCpsat(input, encoding, values)).toThrow(/ada.*2026-01-06|2026-01-06.*ada/i);
+    let thrown: unknown;
+    try {
+      decodeCpsat(input, encoding, values);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(EncodingDisagreementError);
+    const error = thrown as EncodingDisagreementError;
+    expect(error.nurseId).toBe('ada');
+    expect(error.breaches.map((v) => v.code)).toEqual(['insufficient_rest']);
+  });
+
+  it('judges the answer as one roster, so the order its shifts are listed in cannot matter', () => {
+    // Long stretches owe 9 hours off after 8 straight; min-rest is off so back-to-back shifts
+    // are allowed. Ada works Wed 7 Jan Day 8 (07–15), Evening 8 (15–23) and Night 8 (23–07):
+    // one unbroken 24-hour stretch with nothing after it, which is legal. The evening sorts
+    // last, so read row by row the night comes straight after the day's 8 hours with only 8
+    // off — a breach the finished roster does not have.
+    const BRIDGE = { ...EVENING_8, id: 'st-bridge', sortOrder: 99 };
+    const base = defaultRuleSet(UNIT_ID);
+    const input = unit([ada()], {
+      shiftTypes: [DAY_8, NIGHT_8, BRIDGE],
+      coverageRequirements: [
+        ...coverageAllWeek(DAY_8, 'RN', 1),
+        ...coverageAllWeek(NIGHT_8, 'RN', 1),
+        ...coverageAllWeek(BRIDGE, 'RN', 1),
+      ],
+      ruleSet: {
+        ...base,
+        configs: base.configs.map((c) =>
+          c.ruleId === 'long-stretch'
+            ? {
+                ...c,
+                enabled: true,
+                severityOverride: 'hard' as const,
+                params: {
+                  ...c.params,
+                  restAfterHours: 8,
+                  restOnlyPastThreshold: false,
+                  restHours: 9,
+                },
+              }
+            : c.ruleId === 'min-rest-between-shifts'
+              ? { ...c, enabled: false }
+              : c,
+        ),
+      },
+    });
+    const encoding = encodeCpsat(input);
+    const values = new Array<number>(encoding.builder.variableCount).fill(0);
+    for (const sv of encoding.shiftVars)
+      if (sv.shift.date === '2026-01-07') values[sv.variable] = 1;
+    const model = decodeCpsat(input, encoding, values);
+    expect(model.assignments().map((a) => `${a.date} ${a.shiftTypeId}`)).toEqual([
+      `2026-01-07 ${DAY_8.id}`,
+      `2026-01-07 ${NIGHT_8.id}`,
+      `2026-01-07 ${BRIDGE.id}`,
+    ]);
   });
 
   it('turns a solution into the same schedule the values describe', () => {

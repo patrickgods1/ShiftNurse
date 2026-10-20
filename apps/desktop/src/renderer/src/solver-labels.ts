@@ -36,3 +36,16 @@ export const SOLVER_LABELS: Record<SolverId, { name: string; summary: string; te
 
 /** The display order: the recommended default first. */
 export const SOLVER_ORDER: readonly SolverId[] = ['hybrid', 'sa-lns', 'cp-sat'];
+
+/** One line for a fallback: a substitution, or a hybrid whose CP-SAT windows stopped early. */
+export function fallbackNote(
+  solver: SolverId,
+  fellBackFrom: { solver: SolverId; reason: string },
+  tense: 'running' | 'ran',
+): string {
+  if (solver === fellBackFrom.solver) {
+    return `Hybrid stopped its CP-SAT windows early: ${fellBackFrom.reason}.`;
+  }
+  const verb = tense === 'running' ? 'Running' : 'Ran';
+  return `${verb} ${SOLVER_LABELS[solver].name} instead of ${SOLVER_LABELS[fellBackFrom.solver].name}: ${fellBackFrom.reason}.`;
+}

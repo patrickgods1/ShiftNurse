@@ -39,6 +39,9 @@
   cascades into its children.
 - **The ledger's `periodId` has no foreign key on purpose:** imported history uses synthetic
   `import:<start>` ids for pay periods that predate the app.
+- **The lookback tail is published periods only** (`PRIOR_ASSIGNMENT_LOOKBACK_DAYS`).
+  `historyFromFor` says how far that tail is complete; the contracted-hours rule judges a pay
+  period that began before the period only from there.
 - **A published period is editable, with a reason.** Only `archived` is read-only. Every
   schedule mutation takes an optional `reason`; `requireChangeReason` throws on a published
   period without one and `editSchedule` in main writes each touched shift to `schedule_change`.

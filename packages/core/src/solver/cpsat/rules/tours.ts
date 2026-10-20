@@ -13,12 +13,18 @@
  * with one Boolean per tour ("any shift of this tour is worked") summed against the cap; a locked
  * shift makes its tour's Boolean a constant. The cap and the permanent-tour switch are per nurse,
  * from `effectiveTourLimits`, so a career nurse exempt from rotation is held to one tour here
- * exactly as the rule holds them.
+ * exactly as the rule holds them — and, as there, a tour she asked for (`requestedTours`) is left
+ * out of both the count and the permanent-tour forbids.
  */
 
 import { TOURS } from '../../../domain/entities.js';
 import { asParams } from '../../../rules/registry.js';
-import { effectiveTourLimits, tourOf, tourRotationRule } from '../../../rules/tour-rotation.js';
+import {
+  effectiveTourLimits,
+  requestedTours,
+  tourOf,
+  tourRotationRule,
+} from '../../../rules/tour-rotation.js';
 import { type Expr, expr, sum } from '../builder.js';
 import { describe, type EncodeContext, forbidPair } from '../context.js';
 
@@ -28,12 +34,23 @@ export function encodeTourRotation(ctx: EncodeContext, raw: Record<string, unkno
     if (vars.length === 0) continue;
     const nurse = ctx.model.nurses[n]!;
     const timeline = ctx.timeline(n).filter((e) => !e.shiftType.isOnCall);
-    const limits = effectiveTourLimits(nurse, params, ctx.input.period.startDate);
+    const limits = effectiveTourLimits(
+      nurse,
+      params,
+      ctx.input.period.startDate,
+      requestedTours(nurse.id, ctx.model.ctx),
+    );
 
     if (nurse.permanentTour && limits.permanentTourEnforced) {
       for (const e of timeline) {
         // A constant off its tour is a standing breach the manager pinned; leave it be.
-        if (!e.inPeriod || e.literal === null || tourOf(e.shiftType) === nurse.permanentTour) {
+        const tour = tourOf(e.shiftType);
+        if (
+          !e.inPeriod ||
+          e.literal === null ||
+          tour === nurse.permanentTour ||
+          limits.requested.has(tour)
+        ) {
           continue;
         }
         ctx.b.linear(
@@ -67,6 +84,7 @@ export function encodeTourRotation(ctx: EncodeContext, raw: Record<string, unkno
 
     const used: Expr[] = [];
     for (const tour of TOURS) {
+      if (limits.requested.has(tour)) continue;
       const entries = timeline.filter((e) => e.inPeriod && tourOf(e.shiftType) === tour);
       if (entries.length === 0) continue;
       if (entries.some((e) => e.literal === null)) used.push(expr([], 1));

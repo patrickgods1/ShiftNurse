@@ -28,7 +28,13 @@ import { createPreceptorship } from './preceptorships.js';
 import { createNurse, listNursesForUnit } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
 import { createAssignment, createPeriod, getPeriod, updatePeriodStatus } from './schedule.js';
-import { costContext, loadPeriodInput, timeOffForPeriod, timeOffWindow } from './solve-input.js';
+import {
+  costContext,
+  historyFromFor,
+  loadPeriodInput,
+  timeOffForPeriod,
+  timeOffWindow,
+} from './solve-input.js';
 import { createTimeOffRequest, listTimeOffForUnit } from './timeoff.js';
 
 const ACTOR = 'manager';
@@ -612,5 +618,50 @@ describe('nurses who work on two units', () => {
     expect(input.priorAssignments!.every((a) => !a.shiftTypeId.startsWith('elsewhere:'))).toBe(
       true,
     );
+  });
+
+  describe('how far published history reaches', () => {
+    function twoPeriods(earlier: 'published' | 'draft') {
+      const unit = createUnit(
+        handle.db,
+        {
+          name: '6 North',
+          unitType: 'ICU',
+          payPeriodDays: 14,
+          payPeriodAnchor: isoDate('2026-01-04'),
+        },
+        ACTOR,
+      );
+      const rules = transact(handle.db, (tx) => saveRuleSet(tx, defaultRuleSet(unit.id), ACTOR));
+      const mk = (name: string, startDate: string, endDate: string) =>
+        createPeriod(
+          handle.db,
+          {
+            unitId: unit.id,
+            name,
+            startDate: isoDate(startDate),
+            endDate: isoDate(endDate),
+            ruleSetId: rules.id,
+            ruleSetVersion: rules.version,
+          },
+          ACTOR,
+        );
+      const before = mk('Before', '2026-01-04', '2026-01-17');
+      if (earlier === 'published') updatePeriodStatus(handle.db, before.id, 'published', ACTOR);
+      return mk('Now', '2026-01-18', '2026-01-31');
+    }
+
+    it('says the history reaches back through the published schedule before this one', () => {
+      expect(historyFromFor(handle.db, twoPeriods('published'))).toBe('2026-01-04');
+    });
+
+    it('says there is no history when the schedule before is still a draft', () => {
+      expect(historyFromFor(handle.db, twoPeriods('draft'))).toBe('2026-01-18');
+    });
+
+    it('hands the solver the same date', () => {
+      const draft = twoPeriods('published');
+      expect(loadPeriodInput(handle.db, draft).historyFrom).toBe(historyFromFor(handle.db, draft));
+    });
   });
 });

@@ -77,6 +77,7 @@ export const preceptorRule: Rule<PreceptorParams> = {
               `${nurseName(view.nurse)} is in orientation with ${who} on the ${shiftType.name} on ` +
                 `${describeDate(date)}.`,
               {
+                amount: 1,
                 dates: [date],
                 nurseIds: [view.nurse.id],
                 assignmentIds: [view.assignment.id],

@@ -166,19 +166,20 @@ in [README.md › Credits and references](README.md#credits-and-references):
 - **SA + LNS** (pure TS): annealing with ruin-and-recreate and the two-nurse block swaps from
   Ceschia, Guido & Schaerf (2020). Fast, always available, no optimality bound.
 - **CP-SAT** over the whole period: correct, and it reports a bound — but its linear relaxation
-  is weak for this objective, and on the demo unit it left 14–17 floors short where the
-  annealer left 0–1. Its fast parallel portfolio is not deterministic; the deterministic
+  is weak for this objective, and on the demo unit it left 16–18 floors short (up to 8 on one
+  shift) where the annealer left 0–1 (2026-10-17 bench). Its fast parallel portfolio is not deterministic; the deterministic
   interleaved mode is slower still. Kept for small units and for a proven bound.
 - **Hybrid** (default): anneal in eight chunks, and between them hand the worst three days to
   CP-SAT with every other shift fixed. A window is a few hundred variables, solved to
   optimality in well under a second, and it is exactly where annealing is weakest — a knot of
   rest rules across adjacent days that no single move can untie. Best median objective on the
-  demo and a 24-nurse unit; about 3× the annealer's run time.
+  demo (−2%) and a 24-nurse unit (−6%); about 3× the annealer's run time on the demo, 8× on the
+  24-nurse unit.
 
 Two properties hold for every backend. **One judge**: CP-SAT's model is a second statement of
-the rules, so its answers go back through `SolverModel.canAdd` — the same gate every annealer
-move passes — and the report comes from the same `evaluateSchedule`/`scoreFairness`/
-`costSchedule`; a disagreement fails loudly instead of reaching the grid. A guard test fails if
+the rules, so its answers go back through the same gate every annealer move passes, judged on the roster
+they produce, and the report comes from the same `evaluateSchedule`/`scoreFairness`/
+`costSchedule`; a disagreement fails the Generate loudly instead of reaching the grid. A guard test fails if
 any registered rule has no CP-SAT encoding. **Determinism**: CP-SAT is seeded from the period,
 bounded by deterministic time and run in `interleave_search` mode, so every backend regenerates
 the identical schedule from unchanged inputs.

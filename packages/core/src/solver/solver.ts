@@ -1,10 +1,7 @@
 /**
  * The shipped solver: greedy seed, then simulated annealing, then a full-engine report.
  *
- * The report is produced by the same `evaluateSchedule` / `scoreFairness` / `costSchedule`
- * the grid, the Fairness screen and the Cost strip use — never by the solver's own internal
- * tallies. If the two ever disagreed, the manager would see a Generate summary that the
- * schedule page then contradicted; deriving both from one engine makes that impossible.
+ * The report comes from `buildReport` (`report.ts`), shared by every backend.
  */
 
 import { anneal } from './anneal.js';

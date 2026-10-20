@@ -33,6 +33,14 @@
  * Ceschia, Guido & Schaerf used for INRC-II, 2020). They are costlier than a single-shift move —
  * up to fourteen gate checks — so they take a small, fixed share of the draws.
  *
+ * ## Why a same-day retype
+ *
+ * A day at its floor beside a night two short costs more than both one short (a shift's hard
+ * shortfall is priced convexly), and a manager fixes it by asking a day nurse to work the night.
+ * No other move reaches that roster: `relocate` needs another day, `convert` another length, and
+ * drop-then-add climbs further than the temperature ever accepts. `retype` is the "change the
+ * shift type of an assignment" neighbourhood of nurse-rostering local search (INRC-II).
+ *
  * ## Every state the annealer visits is legal per nurse
  *
  * A move is applied only if each nurse it touches passes the rule gate with their new
@@ -144,7 +152,10 @@ export function anneal(
     }
   }
 
-  // Drift guard: the incremental delta bookkeeping and the model's own sums must agree.
+  // Undo guard: the running sum of accepted deltas must equal the model's objective, which proves
+  // every rejected move was undone exactly. It does not prove the caches equal a fresh rebuild —
+  // model.test.ts's walk test and 'the annealer's caches still match a fresh model after a long
+  // run' check that.
   if (Math.abs(model.objective() - current) > 1e-3) {
     throw new Error(
       `Solver objective drifted: tracked ${current}, model ${model.objective()}. ` +
@@ -163,7 +174,8 @@ export function anneal(
 /** Cumulative draw shares; the block moves take the last tenth (see "Why block moves"). */
 function randomMove(model: SolverModel, rng: Rng): Move | null {
   const roll = rng.nextFloat();
-  if (roll < 0.27) return reassign(model, rng);
+  if (roll < 0.21) return reassign(model, rng);
+  if (roll < 0.27) return retype(model, rng);
   if (roll < 0.45) return swap(model, rng);
   if (roll < 0.54) return addShift(model, rng);
   if (roll < 0.63) return removeShift(model, rng);
@@ -314,6 +326,69 @@ function relocate(model: SolverModel, rng: Rng): Move | null {
   to ??= model.solvableShifts[rng.nextInt(0, model.solvableShifts.length - 1)];
   if (!to || to.dateIdx === from.dateIdx) return null;
 
+  const before = model.objective();
+  const removed = model.remove(a);
+  const moved = model.make(n, to);
+  if (!model.eligible(n, to, null) || !model.canAdd(n, moved)) {
+    model.undoRemove(a, removed);
+    return null;
+  }
+  const added = model.add(moved);
+  return {
+    delta: model.objective() - before,
+    undo: () => {
+      model.undoAdd(moved, added);
+      model.undoRemove(a, removed);
+    },
+  };
+}
+
+/**
+ * Trade one of a nurse's shifts for another type of the same length on the same day — a day 12
+ * for that day's night 12. Aimed, most of the time, at a shift short of a role, taking a nurse
+ * of that role from a sibling shift that is not short of it too.
+ */
+function retype(model: SolverModel, rng: Rng): Move | null {
+  let a: Assignment | null = null;
+  let to: Shift | undefined;
+  if (rng.chance(TARGETED)) {
+    const short = model.shortShifts();
+    const target = short[rng.nextInt(0, Math.max(0, short.length - 1))];
+    if (target) {
+      const roles = model.shortRoles(target);
+      // A short shift has at least one short role, by `shortShifts`' own definition.
+      const role = roles[rng.nextInt(0, roles.length - 1)]!;
+      const pool = model.unlocked.filter((x) => {
+        const s = model.shiftOf(x);
+        return (
+          s.dateIdx === target.dateIdx &&
+          s !== target &&
+          s.shiftType.durationHours === target.shiftType.durationHours &&
+          model.nurses[model.nurseOf(x)]!.role === role &&
+          !model.shortRoles(s).includes(role)
+        );
+      });
+      a = pool[rng.nextInt(0, Math.max(0, pool.length - 1))] ?? null;
+      if (a) to = target;
+    }
+  }
+  if (!a) {
+    a = pickUnlocked(model, rng);
+    if (!a) return null;
+    const from = model.shiftOf(a);
+    const alternatives = model.solvableShifts.filter(
+      (s) =>
+        s.dateIdx === from.dateIdx &&
+        s !== from &&
+        s.shiftType.durationHours === from.shiftType.durationHours,
+    );
+    to = alternatives[rng.nextInt(0, Math.max(0, alternatives.length - 1))];
+  }
+  if (!to) return null;
+  const n = model.nurseOf(a);
+
+  // As in `relocate`: the candidate is gated against the nurse's whole timeline with the old
+  // shift already gone, so that one check covers the removal too.
   const before = model.objective();
   const removed = model.remove(a);
   const moved = model.make(n, to);

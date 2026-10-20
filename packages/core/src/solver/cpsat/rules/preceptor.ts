@@ -1,8 +1,9 @@
 /**
  * `orientee-with-preceptor` for CP-SAT. A shift-scope hard rule, so — like the coverage floor —
  * it is priced, not forbidden: each orientee on a shift with none of their preceptors on it, or
- * on the shift it runs inside, costs `hardShortfall`, exactly as `SolverModel.coveragePenalty`
- * counts the rule's violations. Only shifts CP-SAT can change are priced here; the rest are
+ * on the shift it runs inside, is a unit on the orientee's shift, priced with the shift's other
+ * units convexly (`coverageTerms`), exactly as `SolverModel.coveragePenalty` counts the rule's
+ * violations. Only shifts CP-SAT can change are priced here; the rest are
  * constants the annealer's model already priced (`coverageTerms`), and only shifts with demand,
  * which are the shifts the model judges.
  */
@@ -15,7 +16,6 @@ import { coverExpr, isMovable, staffedExpr } from './coverage.js';
 export function encodePreceptor(ctx: EncodeContext): void {
   const { model } = ctx;
   if (model.ctx.preceptorshipsByOrientee.size === 0) return;
-  const cost = ctx.weights.hardShortfall;
   for (const shift of model.shifts) {
     // Standby is not worked time, so the rule does not judge it (`isWorked`).
     if (!shift.demand || shift.shiftType.isOnCall || !isMovable(ctx, shift)) continue;
@@ -32,7 +32,10 @@ export function encodePreceptor(ctx: EncodeContext): void {
       const label = `orientee without preceptor: ${ctx.name(n)} ${shift.shiftType.abbreviation} ${shift.date}`;
       // The orientee is on the shift at most once, so here − present, floored at 0, is 1 exactly
       // when they work it and no preceptor does, however many preceptors are there.
-      ctx.b.minimise(expr([[ctx.b.positivePart(sum(here, scale(present, -1)), label), 1]]), cost);
+      ctx.addHardUnits(
+        shift,
+        expr([[ctx.b.positivePart(sum(here, scale(present, -1)), label), 1]]),
+      );
     }
   }
 }

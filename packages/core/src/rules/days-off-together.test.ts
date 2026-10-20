@@ -262,3 +262,49 @@ describe('two days off together for a nurse who works every weekend', () => {
     expect(evaluate(shifts, { startDate: isoDate('2026-01-10') })).toEqual([]);
   });
 });
+
+describe('a pay period the schedule opens in', () => {
+  // Schedule Sun 11 Jan – Sat 7 Feb opens in the pay period of 4–17 Jan. Last schedule had Ana on
+  // Sun 4, Tue 6, Thu 8, Sat 10; this one on Sun 11, Tue 13, Thu 15, Sat 17. Every weekend of the
+  // pay period is worked (Sun 4 for Sat 3's, Sat 10 and Sun 11, Sat 17) and her days off are 5, 7,
+  // 9, 12, 14 and 16: no two together. Jan 18–31 asks nothing (no weekend worked); Feb 1–14 runs
+  // past the schedule.
+  const prior = ['2026-01-04', '2026-01-06', '2026-01-08', '2026-01-10'].map((date) =>
+    assign('ana', DAY_12, date, { periodId: 'prev' }),
+  );
+  const shifts = () =>
+    [
+      ['a', '2026-01-11'],
+      ['b', '2026-01-13'],
+      ['c', '2026-01-15'],
+      ['d', '2026-01-17'],
+    ].map(([id, date]) => assign('ana', DAY_12, date!, { id: id! }));
+  const window = { startDate: isoDate('2026-01-11'), endDate: isoDate('2026-02-07') };
+
+  it('wants two days off together in the pay period this schedule finishes', () => {
+    const found = evaluate(shifts(), {
+      ...window,
+      priorAssignments: prior,
+      historyFrom: isoDate('2025-12-14'),
+    });
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      code: 'no_days_off_together',
+      assignmentIds: ['a', 'b', 'c', 'd'],
+      details: { payPeriodStart: '2026-01-04' },
+    });
+  });
+
+  it('does not judge it without published history', () => {
+    expect(evaluate(shifts(), { ...window, priorAssignments: prior })).toEqual([]);
+  });
+
+  it("counts last schedule's shift as a day worked, not a day off", () => {
+    // Without the Tue 6 Jan shift from last schedule, Mon 5 and Tue 6 are off together: nothing
+    // owed. With it, the days off are 5, 7, 9, 12, 14, 16 and the pair is gone.
+    const withoutTuesday = prior.filter((a) => a.date !== '2026-01-06');
+    const history = { ...window, historyFrom: isoDate('2025-12-14') };
+    expect(evaluate(shifts(), { ...history, priorAssignments: withoutTuesday })).toEqual([]);
+    expect(evaluate(shifts(), { ...history, priorAssignments: prior })).toHaveLength(1);
+  });
+});

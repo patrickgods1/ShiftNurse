@@ -106,8 +106,7 @@ export function exchangeBlock(
 export function blockSwap(model: SolverModel, rng: Rng): Move | null {
   const block = pickBlock(model, rng);
   if (!block) return null;
-  // Only a nurse who may receive new shifts can take the other half of a trade.
-  if (!model.candidates.includes(block.from)) return null;
+  // No candidate check: the anchor is unlocked, so its holder is a candidate.
   return exchangeBlock(model, block.from, block.to, block.first, block.last, 'swap');
 }
 

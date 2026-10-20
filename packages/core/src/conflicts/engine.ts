@@ -20,7 +20,7 @@
  * touches, on partial views, exactly as the solver's gate does — the real rules with the real
  * parameters, so a rule added to the registry with a truthful scope is honoured here for free.
  * The staffing measure (`hardShortfall`) is read straight off derived demand, which is what the
- * solver's progress reports and `shortfallsForShift` already do.
+ * solver's progress reports already do.
  *
  * ## Determinism
  *
@@ -216,6 +216,8 @@ export class ConflictEngine {
       ...(this.input.availabilityBlocks
         ? { availabilityBlocks: this.input.availabilityBlocks }
         : {}),
+      ...(this.input.historyFrom ? { historyFrom: this.input.historyFrom } : {}),
+      preferences: this.input.preferences,
     });
   }
 

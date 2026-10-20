@@ -39,15 +39,10 @@
  * the period, a rest breach only if one in either stretch is.
  */
 
-import {
-  describeDate,
-  formatTimeOfDay,
-  fromDayNumber,
-  MINUTES_PER_DAY,
-  MINUTES_PER_HOUR,
-} from '../domain/time.js';
+import { MINUTES_PER_HOUR } from '../domain/time.js';
 import { type WorkedStretch, workedStretches } from '../schedule/holdover.js';
 import type { AssignmentView } from '../schedule/view.js';
+import { describeMinute, hoursText } from './format.js';
 import { isEmergency, volunteeredOn } from './mandatory-overtime.js';
 import { restWaivedOn } from './rest-rules.js';
 import { nurseName, type Rule, type RuleContext, type Violation, violation } from './types.js';
@@ -73,15 +68,6 @@ export interface LongStretchParams {
    * here would silently tighten every state that already has this rule on.
    */
   maxBreakMinutesInStretch?: number;
-}
-
-/** "Mon Jan 5 07:00": a minute on the wall-clock timeline, for rule messages. */
-function describeMinute(minute: number): string {
-  return `${describeDate(fromDayNumber(Math.floor(minute / MINUTES_PER_DAY)))} ${formatTimeOfDay(minute)}`;
-}
-
-function hoursText(hours: number): string {
-  return `${Math.round(hours * 10) / 10}h`;
 }
 
 function isRequired(view: AssignmentView, ctx: RuleContext): boolean {
@@ -191,10 +177,12 @@ export const longStretchRule: Rule<LongStretchParams> = {
         if (params.requiredOnly && !stretch.views.some((v) => isRequired(v, ctx))) continue;
         const inPeriod = stretch.views.some((v) => v.inPeriod);
         const span = `${describeMinute(stretch.window.startMinute)} to ${describeMinute(stretch.window.endMinute)}`;
+        // Lookback rows count toward the hours but are history, so they are never named.
+        const contributors = stretch.views.filter((v) => v.inPeriod);
         const parts = {
           nurseIds: [nurse.id],
-          dates: stretch.views.map((v) => v.assignment.date),
-          assignmentIds: stretch.views.map((v) => v.assignment.id),
+          dates: contributors.map((v) => v.assignment.date),
+          assignmentIds: contributors.map((v) => v.assignment.id),
         };
 
         if (
@@ -213,6 +201,7 @@ export const longStretchRule: Rule<LongStretchParams> = {
           violations.push(
             violation(longStretchRule, 'hard', 'long_stretch', message, {
               ...parts,
+              amount: stretch.hours - cap,
               details: {
                 stretchHours: stretch.hours,
                 maxConsecutiveHours: cap,
@@ -230,7 +219,8 @@ export const longStretchRule: Rule<LongStretchParams> = {
         const offMinutes = next.window.startMinute - stretch.window.endMinute;
         if (offMinutes >= params.restHours * MINUTES_PER_HOUR) continue;
         if (!inPeriod && !next.views.some((v) => v.inPeriod)) continue;
-        const later = next.views[0]!.assignment;
+        const laterView = next.views[0]!;
+        const later = laterView.assignment;
         if (params.honorsRestWaiver && restWaivedOn(ctx, nurse.id, later.date)) continue;
         const hoursOff = offMinutes / MINUTES_PER_HOUR;
         violations.push(
@@ -247,8 +237,11 @@ export const longStretchRule: Rule<LongStretchParams> = {
               `${hoursText(params.restHours)} required.`,
             {
               ...parts,
-              dates: [...parts.dates, later.date],
-              assignmentIds: [...parts.assignmentIds, later.id],
+              amount: params.restHours - hoursOff,
+              dates: laterView.inPeriod ? [...parts.dates, later.date] : parts.dates,
+              assignmentIds: laterView.inPeriod
+                ? [...parts.assignmentIds, later.id]
+                : parts.assignmentIds,
               details: { stretchHours: stretch.hours, restHours: params.restHours, hoursOff },
             },
           ),

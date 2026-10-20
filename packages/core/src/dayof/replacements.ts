@@ -31,7 +31,6 @@
 import { ConflictEngine, type SimState } from '../conflicts/engine.js';
 import { costImpact } from '../conflicts/impact.js';
 import { nurseName } from '../conflicts/text.js';
-import { diffViolations } from '../conflicts/violation-diff.js';
 import type { Assignment, Id, Nurse } from '../domain/entities.js';
 import { compareDates, describeDate, type IsoDate } from '../domain/time.js';
 import { deriveCounters } from '../fairness/ledger.js';
@@ -39,6 +38,7 @@ import { scoreFairness } from '../fairness/score.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import { volunteeredOn } from '../rules/mandatory-overtime.js';
 import type { Violation } from '../rules/types.js';
+import { diffViolations } from '../rules/violation-diff.js';
 import {
   type ExcludedNurse,
   PAY_TIER_ORDER,

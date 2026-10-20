@@ -153,7 +153,9 @@ describe('no mandatory overtime', () => {
         {
           nurses: [ana()],
           assignments: [
-            ...threeTwelves(),
+            assign('ana', DAY_12, '2026-01-04', { id: 't4' }),
+            assign('ana', DAY_12, '2026-01-05', { id: 't5' }),
+            assign('ana', DAY_12, '2026-01-06', { id: 't6' }),
             assign('ana', DAY_8, '2026-01-08', { id: 'ordered', isOvertime: true }),
           ],
         },
@@ -162,8 +164,8 @@ describe('no mandatory overtime', () => {
       expect(violations).toHaveLength(1);
       expect(violations[0]).toMatchObject({
         code: 'mandatory_overtime',
-        assignmentIds: ['ordered'],
-        details: { weekHours: 44, maxMandatedWeeklyHours: 40 },
+        assignmentIds: ['t4', 't5', 't6', 'ordered'],
+        details: { weekHours: 44, volunteeredHours: 0, maxMandatedWeeklyHours: 40 },
       });
       expect(violations[0]!.message).toContain('44h');
     });
@@ -210,11 +212,99 @@ describe('no mandatory overtime', () => {
             assign('ana', DAY_12, '2026-01-06'),
             assign('ana', DAY_8, '2026-01-08', { isOvertime: true }),
           ],
-          priorAssignments: [assign('ana', DAY_12, '2026-01-04')],
+          priorAssignments: [assign('ana', DAY_12, '2026-01-04', { id: 'before' })],
         },
         vaCap,
       );
       expect(violations.map((v) => v.details?.weekHours)).toEqual([44]);
+      // The period before is counted but never named: a finding names this period's shifts only.
+      expect(violations[0]!.assignmentIds).not.toContain('before');
+      expect(violations[0]!.assignmentIds).toHaveLength(3);
+    });
+
+    it('does not count the 12 she volunteered for toward the 40 she can be required to work', () => {
+      // Required: 12 + 12 + 8 = 32, under 40. Counting the volunteered 12 too would make 44.
+      expect(
+        judge(
+          {
+            nurses: [ana()],
+            assignments: [
+              assign('ana', DAY_12, '2026-01-04'),
+              assign('ana', DAY_12, '2026-01-05'),
+              assign('ana', DAY_12, '2026-01-06', { isOvertime: true }),
+              assign('ana', DAY_8, '2026-01-08', { isOvertime: true }),
+            ],
+            overtimeVolunteers: [volunteer('ana', '2026-01-06', '2026-01-06')],
+          },
+          vaCap,
+        ),
+      ).toEqual([]);
+    });
+
+    it('counts only required hours and says how many were volunteered', () => {
+      // Required: 12 × 3 + 8 = 44, 4 over 40; the volunteered 12 on Jan 7 is left out.
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [
+            assign('ana', DAY_12, '2026-01-04', { id: 'a' }),
+            assign('ana', DAY_12, '2026-01-05', { id: 'b' }),
+            assign('ana', DAY_12, '2026-01-06', { id: 'c' }),
+            assign('ana', DAY_12, '2026-01-07', { id: 'vol', isOvertime: true }),
+            assign('ana', DAY_8, '2026-01-08', { id: 'ordered', isOvertime: true }),
+          ],
+          overtimeVolunteers: [volunteer('ana', '2026-01-07', '2026-01-07')],
+        },
+        vaCap,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toMatchObject({
+        assignmentIds: ['a', 'b', 'c', 'ordered'],
+        amount: 4,
+        details: { weekHours: 44, volunteeredHours: 12 },
+      });
+      expect(violations[0]!.message).toContain('44h');
+      expect(violations[0]!.message).toContain('12h they volunteered for');
+    });
+
+    it('does not count a volunteered holdover toward the weekly cap', () => {
+      // Required: 12 + 12 + 12 + 8 = 44; the 5h she chose to stay past the third 12 is not
+      // counted (counting it would make 49).
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [
+            assign('ana', DAY_12, '2026-01-04'),
+            assign('ana', DAY_12, '2026-01-05'),
+            assign('ana', DAY_12, '2026-01-06', { holdoverMinutes: 300, holdoverMandated: false }),
+            assign('ana', DAY_8, '2026-01-08', { isOvertime: true }),
+          ],
+        },
+        vaCap,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toMatchObject({ amount: 4, details: { weekHours: 44 } });
+      // The held-over 12 still adds its 12 scheduled hours, so it is named.
+      expect(violations[0]!.assignmentIds).toHaveLength(4);
+    });
+
+    it('reports one breach for a week with two ordered shifts', () => {
+      // Required: 36 + 8 + 8 = 52, 12 over 40, one finding naming all five shifts.
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [
+            ...threeTwelves(),
+            assign('ana', DAY_8, '2026-01-08', { id: 'o1', isOvertime: true }),
+            assign('ana', DAY_8, '2026-01-09', { id: 'o2', isOvertime: true }),
+          ],
+        },
+        vaCap,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toMatchObject({ amount: 12, details: { weekHours: 52 } });
+      expect(violations[0]!.assignmentIds).toHaveLength(5);
+      expect(violations[0]!.assignmentIds).toEqual(expect.arrayContaining(['o1', 'o2']));
     });
 
     it('holds a weekend-plan nurse to 24 required hours', () => {
@@ -327,18 +417,42 @@ describe('no mandatory overtime', () => {
         nurseIds: ['ana'],
         assignmentIds: ['held'],
         details: { stretchHours: 9, consecutiveLimit: 8 },
+        amount: 1, // 9 − 8
       });
       expect(violations[0]!.message).toContain('9h');
       expect(violations[0]!.message).toContain('8h');
     });
 
-    it('allows exactly 8 hours straight for the same required 8-hour tour', () => {
+    it('allows exactly 8 hours straight for a required 8-hour tour', () => {
+      // Ordered overtime nobody volunteered for, so it is judged: 8h straight is not over 8.
       expect(
         judge(
-          { nurses: [ana()], assignments: [assign('ana', DAY_8, '2026-01-08')] },
+          {
+            nurses: [ana()],
+            assignments: [assign('ana', DAY_8, '2026-01-08', { isOvertime: true })],
+          },
           { ...base, maxRequiredConsecutiveHours: 8 },
         ),
       ).toEqual([]);
+    });
+
+    it('refuses the same required tour held a minute past: 8h01 is over 8', () => {
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [
+            assign('ana', DAY_8, '2026-01-08', {
+              isOvertime: true,
+              holdoverMinutes: 1,
+              holdoverMandated: true,
+            }),
+          ],
+        },
+        { ...base, maxRequiredConsecutiveHours: 8 },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]!.details?.stretchHours).toBeCloseTo(8 + 1 / 60, 10);
+      expect(violations[0]!.amount).toBeCloseTo(1 / 60, 10);
     });
 
     it('refuses a 12-hour tour held 60 minutes on a compressed schedule: 13 is over 12', () => {
@@ -353,13 +467,32 @@ describe('no mandatory overtime', () => {
       expect(violations[0]!.details).toMatchObject({ stretchHours: 13, consecutiveLimit: 12 });
     });
 
-    it('lets a 12-hour tour run its 12 hours when nobody is held over', () => {
+    it('lets a required 12-hour tour run its 12 hours on a compressed schedule', () => {
+      // Scheduled 12 > 8, so the compressed 12 applies: 12 is not over 12, and 12 ≤ 40 a week.
       expect(
         judge(
-          { nurses: [ana()], assignments: [assign('ana', DAY_12, '2026-01-08')] },
+          {
+            nurses: [ana()],
+            assignments: [assign('ana', DAY_12, '2026-01-08', { isOvertime: true })],
+          },
           vaConsecutive,
         ),
       ).toEqual([]);
+    });
+
+    it('refuses that required 12-hour tour where no compressed limit is set: 12 is over 8', () => {
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [assign('ana', DAY_12, '2026-01-08', { isOvertime: true })],
+        },
+        { ...base, maxRequiredConsecutiveHours: 8 },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toMatchObject({
+        amount: 4,
+        details: { stretchHours: 12, consecutiveLimit: 8 },
+      });
     });
 
     it('does not judge a holdover the nurse volunteered for', () => {
@@ -414,6 +547,8 @@ describe('no mandatory overtime', () => {
         { ...base, maxRequiredConsecutiveHours: 8 },
       );
       expect(violations.map((v) => v.details?.stretchHours)).toEqual([16]);
+      // The evening is not required, but it is half of what makes the stretch too long.
+      expect(violations[0]!.assignmentIds).toEqual(['held', 'evening']);
     });
 
     it('reports one breach for a stretch with two required holdovers, naming both shifts', () => {
@@ -489,7 +624,7 @@ describe('no mandatory overtime', () => {
         vaConsecutive,
       );
       expect(violations.map((v) => Object.keys(v.details ?? {}).sort())).toEqual([
-        ['maxMandatedWeeklyHours', 'weekHours'],
+        ['maxMandatedWeeklyHours', 'volunteeredHours', 'week', 'weekHours'],
         ['consecutiveLimit', 'stretchHours'],
       ]);
     });
@@ -595,6 +730,32 @@ describe('no mandatory overtime', () => {
       expect(violations).toHaveLength(1);
     });
 
+    it('still holds an emergency holdover to the 4-hour limit when it is named in a weekly breach', () => {
+      // Week of Sun Jan 4: 12 + 12 + (12 held 5h) + ordered 8 = 49 required hours, over 40, and the
+      // held-over 12 is named in that finding as a contributor. The emergency excuses it from the
+      // weekly judgement, not from Illinois's 4 hours past the shift: 5 is over 4.
+      const violations = judge(
+        {
+          nurses: [ana()],
+          assignments: [
+            assign('ana', DAY_12, '2026-01-04'),
+            assign('ana', DAY_12, '2026-01-05'),
+            assign('ana', DAY_12, '2026-01-06', stayed(300, true, surge)),
+            assign('ana', DAY_8, '2026-01-08', { id: 'ordered', isOvertime: true }),
+          ],
+        },
+        { ...illinois, maxMandatedWeeklyHours: 40 },
+      );
+      expect(violations).toHaveLength(2);
+      expect(violations[0]).toMatchObject({ amount: 9, details: { weekHours: 49 } });
+      expect(violations[0]!.assignmentIds).toContain('held');
+      expect(violations[1]).toMatchObject({
+        assignmentIds: ['held'],
+        amount: 1,
+        details: { hoursPastShift: 5, emergencyMaxHoursPastShift: 4 },
+      });
+    });
+
     it('reports an emergency stretch once when two required holdovers make it too long', () => {
       // Day 8 held 60 to 16:00 joins Evening 8 from 15:00 held 60 to 24:00: one 17h stretch.
       const violations = judge(
@@ -609,6 +770,7 @@ describe('no mandatory overtime', () => {
       );
       expect(violations).toHaveLength(1);
       expect(violations[0]!.details).toMatchObject({ stretchHours: 17 });
+      expect(violations[0]!.assignmentIds).toEqual(['first', 'second']);
     });
 
     it('reports a stretch once under VA limits when a required and an emergency holdover share it', () => {
@@ -653,7 +815,7 @@ describe('no mandatory overtime', () => {
 describe('required hours on the Baylor weekend plan', () => {
   // Week of Sun 4 Jan: a day 12 on Sunday and one on Saturday, held two hours past it — 26 hours.
   const week = (nurseId: string) => [
-    assign(nurseId, DAY_12, '2026-01-04'),
+    assign(nurseId, DAY_12, '2026-01-04', { id: `sun-${nurseId}` }),
     assign(nurseId, DAY_12, '2026-01-10', {
       id: `held-${nurseId}`,
       holdoverMinutes: 120,
@@ -677,7 +839,7 @@ describe('required hours on the Baylor weekend plan', () => {
     expect(violations).toHaveLength(1);
     expect(violations[0]).toMatchObject({
       code: 'mandatory_overtime',
-      assignmentIds: ['held-bay'],
+      assignmentIds: ['sun-bay', 'held-bay'],
       details: { weekHours: 26, maxMandatedWeeklyHours: 24 },
     });
   });
@@ -778,8 +940,9 @@ describe("California's 12-hour alternative workweek (Wage Order 5 § 3(B)(9)–(
       );
     const plain = night(EARLY_4);
     expect(plain).toHaveLength(1);
+    // 07:00 to 07:00 holds the whole day 12 as well as the call-back: both make the 16.
     expect(plain[0]).toMatchObject({
-      assignmentIds: ['early'],
+      assignmentIds: ['day', 'early'],
       details: { hoursIn24: 16, maxRequiredHoursIn24: 12 },
     });
     // A declared emergency may run to exactly 16 in 24.
@@ -790,8 +953,30 @@ describe("California's 12-hour alternative workweek (Wage Order 5 § 3(B)(9)–(
     const longer = night(EARLY_5, cno);
     expect(longer).toHaveLength(1);
     expect(longer[0]).toMatchObject({
-      assignmentIds: ['early'],
+      assignmentIds: ['day', 'early'],
       details: { hoursIn24: 17, emergencyMaxHoursIn24: 16 },
+    });
+  });
+
+  it('still holds a required call-back to the 24-hour limit when the stretch is under the consecutive limit', () => {
+    // Day 12 07:00-19:00 Thu, then an ordered Early 4 03:00-07:00 Fri: 8 hours off between, so
+    // the call-back's stretch is 4h, under 8. But 07:00 Thu to 07:00 Fri holds 12 + 4 = 16, over 12.
+    const violations = judge(
+      {
+        nurses: [ana()],
+        shiftTypes,
+        assignments: [
+          assign('ana', DAY_12, '2026-01-08', { id: 'day' }),
+          assign('ana', EARLY_4, '2026-01-09', { id: 'early', isOvertime: true }),
+        ],
+      },
+      { ...CA, maxRequiredConsecutiveHours: 8 },
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatchObject({
+      assignmentIds: ['day', 'early'],
+      amount: 4,
+      details: { hoursIn24: 16, maxRequiredHoursIn24: 12 },
     });
   });
 

@@ -48,6 +48,7 @@ describe('the violation pill', () => {
     nurseIds: [],
     dates: [],
     assignmentIds: [],
+    amount: 1,
   } as unknown as Violation;
   const result: EvaluationResult = {
     violations: [soft],

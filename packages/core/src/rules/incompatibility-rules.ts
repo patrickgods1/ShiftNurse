@@ -140,6 +140,8 @@ export const incompatibleTogetherRule: Rule<Record<string, never>> = {
             `at most ${f.group.maxTogether} of this group should work at once.`,
           {
             ...parts(f),
+            // Person-hours over the cap: the same breach priced the same however it is cut.
+            amount: (f.excess * (f.endMinute - f.startMinute)) / MINUTES_PER_HOUR,
             details: {
               ...common(f),
               onTogether: f.members.length,
@@ -185,6 +187,7 @@ export const incompatibleBufferRule: Rule<IncompatibleBufferParams> = {
             `other staff on the floor; ${params.minOutsideStaff} required.`,
           {
             ...parts(f),
+            amount: (f.shortfall * (f.endMinute - f.startMinute)) / MINUTES_PER_HOUR,
             details: {
               ...common(f),
               outside: f.outside,

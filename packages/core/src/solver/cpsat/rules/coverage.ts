@@ -1,16 +1,18 @@
 /**
  * `coverage-minimums` and `patient-ratio-compliance`, priced rather than enforced.
  *
- * Like the annealer, CP-SAT treats a shift-scope hard violation as a cost of `hardShortfall`
- * points per unit — a nurse short of a floor or a ratio is one unit per missing nurse; a missing
- * charge nurse, an all-novice roster or a missing credential is one unit each — because a unit
- * with too few eligible nurses must still get the best legal-per-nurse schedule, with every
- * shortfall named, rather than no schedule at all.
+ * Like the annealer, CP-SAT treats a shift-scope hard violation as a unit on its shift, priced
+ * with the shift's other units convexly (`coverageTerms`) — a nurse short of a floor or a ratio
+ * is one unit per missing nurse; a missing charge nurse, an all-novice roster or a missing
+ * credential is one unit each — because a unit with too few eligible nurses must still get the
+ * best legal-per-nurse schedule, with every shortfall named, rather than no schedule at all.
  */
 
 import { NURSE_ROLES } from '../../../acuity/demand.js';
 import type { Assignment, NurseRole } from '../../../domain/entities.js';
 import {
+  type CoverageParams,
+  canTakeCharge,
   coverageRule,
   hasValidCredential,
   ratioComplianceRule,
@@ -73,7 +75,6 @@ function variableShifts(ctx: EncodeContext): Shift[] {
 
 export function encodeCoverage(ctx: EncodeContext, raw: Record<string, unknown>): void {
   const params = asParams(coverageRule, raw);
-  const cost = ctx.weights.hardShortfall;
   for (const shift of variableShifts(ctx)) {
     const demand = shift.demand;
     if (!shift.shiftType.active || !demand) continue;
@@ -85,7 +86,7 @@ export function encodeCoverage(ctx: EncodeContext, raw: Record<string, unknown>)
         sum(expr([], floor), scale(roleExpr(ctx, shift, role), -1)),
         `understaffed: ${label(shift)} ${role}`,
       );
-      ctx.b.minimise(expr([[short, 1]]), cost);
+      ctx.addHardUnits(shift, expr([[short, 1]]));
     }
 
     const requiresStaff = NURSE_ROLES.some((r) => (demand.byRole[r]?.minCount ?? 0) > 0);
@@ -94,7 +95,10 @@ export function encodeCoverage(ctx: EncodeContext, raw: Record<string, unknown>)
     const locked = ctx.lockedByShift[shift.idx]!;
 
     if (params.requireChargeNurse && shift.shiftType.withinShiftTypeId === null) {
-      missingCharge(ctx, shift, vars, locked, cost);
+      missingCharge(ctx, shift, vars, locked, params);
+      // The annealer never flags a second nurse, so only locked rows can carry two flags: a
+      // constant, priced as SA prices the rule's finding (one unit, whatever the count).
+      if (locked.filter((a) => a.isCharge).length > 1) ctx.addHardUnits(shift, expr([], 1));
     }
 
     if (params.minExperiencedPerShift > 0) {
@@ -106,11 +110,11 @@ export function encodeCoverage(ctx: EncodeContext, raw: Record<string, unknown>)
       };
       shortOfAtLeast(
         ctx,
+        shift,
         vars.filter((sv) => isNovice(sv.n)),
         locked.some((a) => isNovice(ctx.model.nurseOf(a))),
         sum(staffedExpr(ctx, shift, experiencedRn), coverExpr(ctx, shift, experiencedRn)),
         params.minExperiencedPerShift,
-        cost,
         `all novice: ${label(shift)}`,
       );
     }
@@ -127,11 +131,11 @@ export function encodeCoverage(ctx: EncodeContext, raw: Record<string, unknown>)
         const holders = sum(staffedExpr(ctx, shift, holds), coverExpr(ctx, shift, holds));
         shortOfAtLeast(
           ctx,
+          shift,
           vars,
           locked.length > 0,
           holders,
           req.minCount,
-          cost,
           `credential ${req.credentialId}: ${label(shift)}`,
         );
       }
@@ -140,22 +144,23 @@ export function encodeCoverage(ctx: EncodeContext, raw: Record<string, unknown>)
 }
 
 /**
- * The annealer gives the charge role to the first charge-eligible *unlocked* nurse on a shift
+ * The annealer gives the charge role to the first *unlocked* nurse on a shift who `canTakeCharge`
  * (`SolverModel.ensureCharge`), unless a locked row already carries the flag. So a shift has a
- * valid charge nurse when a locked row is flagged and eligible, or — no locked row being flagged
- * at all — when some eligible nurse is among the variables that are on.
+ * valid charge nurse when a flagged locked row can take charge, or — no locked row being flagged
+ * at all — when someone who can is among the variables that are on. A locked row keeps the
+ * flag the manager left on it, because saving a Generate never rewrites a locked row.
  */
 function missingCharge(
   ctx: EncodeContext,
   shift: Shift,
   vars: readonly ShiftVar[],
   locked: readonly Assignment[],
-  cost: number,
+  params: CoverageParams,
 ): void {
   const flagged = locked.filter((a) => a.isCharge);
-  if (flagged.some((a) => ctx.model.nurses[ctx.model.nurseOf(a)]!.isChargeEligible)) return;
+  if (flagged.some((a) => canTakeCharge(ctx.model.nurses[ctx.model.nurseOf(a)]!, params))) return;
   const eligible =
-    flagged.length > 0 ? [] : vars.filter((sv) => ctx.model.nurses[sv.n]!.isChargeEligible);
+    flagged.length > 0 ? [] : vars.filter((sv) => canTakeCharge(ctx.model.nurses[sv.n]!, params));
   const b = ctx.b;
   const covered =
     eligible.length === 0
@@ -199,7 +204,7 @@ function missingCharge(
       `missing charge: ${label(shift)}`,
     );
   }
-  b.minimise(expr([[missing, 1]]), cost);
+  ctx.addHardUnits(shift, expr([[missing, 1]]));
 }
 
 /**
@@ -209,11 +214,11 @@ function missingCharge(
  */
 function shortOfAtLeast(
   ctx: EncodeContext,
+  shift: Shift,
   vars: readonly ShiftVar[],
   lockedTrigger: boolean,
   qualified: Expr,
   min: number,
-  cost: number,
   name: string,
 ): void {
   if (vars.length === 0 && !lockedTrigger) return; // Nobody who needs it can be on.
@@ -241,7 +246,7 @@ function shortOfAtLeast(
   if (lockedTrigger) {
     b.linear(sum(expr([[flag, min]], -min), qualified), 0, Number.POSITIVE_INFINITY, name);
   }
-  b.minimise(expr([[flag, 1]]), cost);
+  ctx.addHardUnits(shift, expr([[flag, 1]]));
 }
 
 export function encodeRatio(ctx: EncodeContext, raw: Record<string, unknown>): void {
@@ -257,12 +262,14 @@ export function encodeRatio(ctx: EncodeContext, raw: Record<string, unknown>): v
         sum(expr([], required), scale(roleExpr(ctx, shift, role), -1)),
         `ratio: ${label(shift)} ${role}`,
       );
-      ctx.b.minimise(expr([[short, 1]]), ctx.weights.hardShortfall);
+      ctx.addHardUnits(shift, expr([[short, 1]]));
     }
     // A `licensed` rule: RNs and LPNs together against the pooled count, and RNs alone against
     // the share — the ratio rule's two breaches, each priced by its shortfall.
     // The pool is priced only beyond the RNs the share needs, as the rule reports it, so the
-    // total is the fewest nurses that fix both.
+    // total is the fewest nurses that fix both. `rnShort` lowers `poolExtra`, so it is pinned
+    // exactly: inflating it would be neutral at best in the shift's unit sum, and the evaluator
+    // and the solver must agree on its value.
     const licensed = demand.licensed;
     if (licensed) {
       const rns = roleExpr(ctx, shift, 'RN');
@@ -271,7 +278,7 @@ export function encodeRatio(ctx: EncodeContext, raw: Record<string, unknown>): v
         licensed.minRn > 0
           ? expr([
               [
-                ctx.b.positivePart(
+                ctx.b.exactPositivePart(
                   sum(expr([], licensed.minRn), scale(rns, -1)),
                   `RN share: ${label(shift)}`,
                 ),
@@ -279,12 +286,12 @@ export function encodeRatio(ctx: EncodeContext, raw: Record<string, unknown>): v
               ],
             ])
           : expr();
-      if (licensed.minRn > 0) ctx.b.minimise(rnShort, ctx.weights.hardShortfall);
+      if (licensed.minRn > 0) ctx.addHardUnits(shift, rnShort);
       const poolExtra = ctx.b.positivePart(
         sum(expr([], licensed.ratioDerived), scale(pooled, -1), scale(rnShort, -1)),
         `licensed ratio: ${label(shift)}`,
       );
-      ctx.b.minimise(expr([[poolExtra, 1]]), ctx.weights.hardShortfall);
+      ctx.addHardUnits(shift, expr([[poolExtra, 1]]));
     }
   }
 }

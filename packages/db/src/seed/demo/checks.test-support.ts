@@ -32,6 +32,7 @@ import {
   listCredentials,
   listNurseCredentialsForUnit,
   listNursesForUnit,
+  listPreferencesForUnit,
 } from '../../repositories/roster.js';
 import { getRuleSet } from '../../repositories/rulesets.js';
 import {
@@ -43,6 +44,7 @@ import {
 import {
   costContext,
   demandInputs,
+  historyFromFor,
   loadPeriodInput,
   PRIOR_ASSIGNMENT_LOOKBACK_DAYS,
 } from '../../repositories/solve-input.js';
@@ -127,6 +129,8 @@ export function historyViolationList(f: DemoFixture, severity: 'hard' | 'soft' =
       incompatibilityGroups: listIncompatibilityGroups(db, unit.id),
       overtimeVolunteers: listOvertimeVolunteers(db, unit.id),
       preceptorships: listPreceptorships(db, unit.id),
+      historyFrom: historyFromFor(db, period),
+      preferences: listPreferencesForUnit(db, unit.id),
     });
     const result = evaluateSchedule(view, ruleSet, ctx);
     all.push(...(severity === 'hard' ? result.hardViolations : result.softViolations));
@@ -149,6 +153,7 @@ export function realisticDemoChecks(f: DemoFixture, demo: DemoId, today: IsoDate
       'over_max_hours',
       'unauthorised_overtime',
       'missing_charge_nurse',
+      'multiple_charge_nurses',
       'missing_credential',
       'all_novice_shift',
       'incompatible_staff_unbuffered',

@@ -273,6 +273,10 @@ export interface ScenarioOptions {
   holidayWork?: HolidayWorkRecord[];
   /** Parameter overrides by rule id, merged over the defaults. */
   ruleParams?: Record<string, Record<string, unknown>>;
+  /** The first date from which `priorAssignments` is complete. Absent: the caller has not said. */
+  historyFrom?: IsoDate;
+  /** Nurses' stated preferences; a career nurse's asked-for tours read them. */
+  preferences?: Preference[];
 }
 
 export interface Scenario {
@@ -340,6 +344,8 @@ export function scenario(options: ScenarioOptions = {}): Scenario {
     ...(options.preceptorships ? { preceptorships: options.preceptorships } : {}),
     ...(options.restWaivers ? { restWaivers: options.restWaivers } : {}),
     ...(options.availabilityBlocks ? { availabilityBlocks: options.availabilityBlocks } : {}),
+    ...(options.historyFrom ? { historyFrom: options.historyFrom } : {}),
+    ...(options.preferences ? { preferences: options.preferences } : {}),
   });
 
   const schedule = new ScheduleView({
@@ -381,7 +387,6 @@ export function withRuleParams(
 // ---------------------------------------------------------------------------
 
 export interface SolveScenarioOptions extends ScenarioOptions {
-  preferences?: Preference[];
   ledgerHistory?: FairnessLedgerEntry[];
   cost?: SolveCostInput;
   ruleSet?: RuleSet;
@@ -402,6 +407,7 @@ export function solveInputFrom(options: SolveScenarioOptions = {}): SolveInput {
     demand: s.ctx.demand.all(),
     assignments: options.assignments ?? [],
     priorAssignments: options.priorAssignments ?? [],
+    ...(options.historyFrom ? { historyFrom: options.historyFrom } : {}),
     timeOff: options.timeOff ?? [],
     ...(options.paidSickCalls ? { paidSickCalls: options.paidSickCalls } : {}),
     credentials: testCredentials,

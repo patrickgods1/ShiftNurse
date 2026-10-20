@@ -155,7 +155,7 @@ export const weekendPatternRule: Rule<WeekendPatternParams> = {
 
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];
-    for (const nurse of schedule.nursesById.values()) {
+    for (const nurse of ctx.nurses) {
       if (!judgesWeekends(nurse)) continue;
       const weekends = nurseWeekends(schedule, nurse.id, ctx);
       if (weekends.inPeriod.size === 0) continue;
@@ -169,7 +169,11 @@ export const weekendPatternRule: Rule<WeekendPatternParams> = {
               v.inPeriod && isWorked(v) && weekendKey(v.window, ctx.weekendDefinition) === weekend,
           );
       for (const { weekend, length } of runs) {
-        const shifts = shiftsOn(weekend);
+        // Every weekend of the run contributes: taking away any one clears or shortens it.
+        // Lookback weekends have no in-period shifts, so `shiftsOn` names nothing for them.
+        const shifts = Array.from({ length }, (_, k) => length - 1 - k).flatMap((back) =>
+          shiftsOn(addDays(weekend, -7 * back)),
+        );
         violations.push(
           violation(
             weekendPatternRule,
@@ -178,6 +182,7 @@ export const weekendPatternRule: Rule<WeekendPatternParams> = {
             `${nurseName(nurse)} works ${length} weekends in a row, to the weekend of ` +
               `${describeDate(weekend)}; the contract allows ${params.maxConsecutiveWeekends}.`,
             {
+              amount: length - params.maxConsecutiveWeekends,
               nurseIds: [nurse.id],
               dates: shifts.map((v) => v.assignment.date),
               assignmentIds: shifts.map((v) => v.assignment.id),
@@ -196,6 +201,7 @@ export const weekendPatternRule: Rule<WeekendPatternParams> = {
             `${nurseName(nurse)} works ${worked} of the 4 weekends to the weekend of ` +
               `${describeDate(weekend)}; the contract allows ${params.maxWeekendsPer4Weeks}.`,
             {
+              amount: over,
               nurseIds: [nurse.id],
               dates: shifts.map((v) => v.assignment.date),
               assignmentIds: shifts.map((v) => v.assignment.id),
@@ -214,6 +220,7 @@ export const weekendPatternRule: Rule<WeekendPatternParams> = {
             `${nurseName(nurse)} works ${weekends.inPeriod.size} weekends in this schedule, ` +
               `${excess} more than the ${params.maxWeekendsPerPeriod} the contract allows.`,
             {
+              amount: excess,
               nurseIds: [nurse.id],
               dates: shifts.map((v) => v.assignment.date),
               assignmentIds: shifts.map((v) => v.assignment.id),

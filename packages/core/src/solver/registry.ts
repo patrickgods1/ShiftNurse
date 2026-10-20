@@ -11,10 +11,9 @@
  * is pure TypeScript and is always available, so resolution only fails if the caller claims
  * nothing at all can run.
  *
- * The same holds when CP-SAT runs but finds the model INFEASIBLE. That can only be the locked
- * shifts — a correct encoding is satisfiable with every variable off, but a lock is a constant —
- * so the desktop's `solveCpsat` catches `CpsatInfeasibleError`, runs SA + LNS (which schedules
- * around a lock that already breaks a rule) and names the breaching locks in `fellBackFrom`.
+ * The same holds when CP-SAT runs but finds the model INFEASIBLE. A correct encoding is never
+ * infeasible (every variable off satisfies it), so that is an encoding bug; the desktop's
+ * `solveCpsat` still runs SA + LNS so the manager gets a schedule, and says it is a bug.
  *
  * Only the pure backends are registered here. The OR-Tools ones talk to a subprocess, which
  * core may not do; the desktop main process registers them next to the runner.
@@ -36,10 +35,10 @@ export interface SolverSettings {
 export const DEFAULT_SOLVER_SETTINGS: SolverSettings = { solverId: DEFAULT_SOLVER_ID };
 
 /**
- * Measured by `npm run bench:solvers` (docs/solver-bench.md, 2026-10-03): the hybrid had the best
- * median objective on the demo unit (−3% vs SA + LNS, every floor filled) and a 24-nurse synthetic
- * unit (−7%), and tied on a small tight one. Whole-period CP-SAT lost to SA + LNS on all three —
- * on the demo it left 14–16 floors short against 0–1 — so it comes last.
+ * Measured by `npm run bench:solvers` (docs/solver-bench.md, 2026-10-17): the hybrid had the best
+ * median objective on the demo unit (−2% vs SA + LNS, every floor filled) and a 24-nurse synthetic
+ * unit (−6%), and tied on a small tight one. Whole-period CP-SAT lost to SA + LNS on all three —
+ * on the demo it left 16–18 floors short (up to 8 on one shift) against 0–1 — so it comes last.
  */
 export const FALLBACK_ORDER: readonly SolverId[] = ['hybrid', 'sa-lns', 'cp-sat'];
 

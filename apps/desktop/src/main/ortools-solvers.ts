@@ -7,16 +7,18 @@
  * - Hybrid: core's `LocalSearch` anneals in chunks; between chunks the worst few days go to
  *   CP-SAT and come back through the rule gate, kept only if the whole schedule improves.
  *
- * A hybrid whose runner fails part-way (crashed, missing, or an answer the rule engine refuses)
- * does not fail the Generate: it finishes the remaining chunks as plain SA + LNS and reports
- * `fellBackFrom: hybrid` with the reason, which the dialog shows and the audit entry records.
+ * A hybrid whose runner fails part-way (crashed or missing) does not fail the Generate: it
+ * finishes the remaining chunks as plain SA + LNS and reports `fellBackFrom: hybrid` with the
+ * reason, which the dialog shows and the audit entry records. Only the runner's own calls are
+ * caught: an answer the rule engine refuses (`EncodingDisagreementError`) is an encoding bug, not
+ * an outage, and fails the run so it gets reported instead of hiding behind a fallback label.
  *
- * Whole-period CP-SAT that finds the model INFEASIBLE does not fail the Generate either. A correct
- * encoding is satisfiable with every variable off, so only a locked shift — a constant there —
- * can make it contradictory: a turnaround with no waiver, an accommodation added after the lock.
- * SA + LNS measures every nurse against what their locks already break and schedules around them,
- * so `solveCpsat` runs it on the same input and seed and reports `fellBackFrom: cp-sat`, naming
- * the locked shifts the manager has to look at.
+ * Whole-period CP-SAT that finds the model INFEASIBLE still gets the manager a schedule, but it
+ * is not blamed on the pins. A correct encoding is satisfiable with every variable off, so
+ * INFEASIBLE is a bug in the encoding; locked shifts that already break a rule are listed as
+ * context only. SA + LNS measures every nurse against what their locks already break and
+ * schedules around them, so `solveCpsat` runs it on the same input and seed and reports
+ * `fellBackFrom: cp-sat`.
  */
 
 import {
@@ -175,7 +177,7 @@ function infeasibleReason(input: SolveInput, infeasible: CpsatInfeasibleError): 
   if (codesByShift.size === 0) {
     return (
       `CP-SAT reported the model ${infeasible.status}; ran SA + LNS instead. ` +
-      'This is likely a bug in the CP-SAT encoding — please report it.'
+      'This is a bug in the CP-SAT encoding — please report it.'
     );
   }
   const named = [...codesByShift].map(([id, codes]) => {
@@ -189,8 +191,9 @@ function infeasibleReason(input: SolveInput, infeasible: CpsatInfeasibleError): 
   });
   const more = named.length - REASON_SHIFTS;
   return (
-    'CP-SAT found no schedule that keeps every hard rule around the locked shifts; ran SA + LNS, ' +
-    'which keeps them as they are. Locked shifts already breaching a rule: ' +
+    `CP-SAT reported the model ${infeasible.status}, which is a bug in the CP-SAT encoding — ` +
+    'please report it. Ran SA + LNS instead, which keeps the locked shifts as they are. ' +
+    'Locked shifts already breaching a rule (context, not the cause): ' +
     named.slice(0, REASON_SHIFTS).join('; ') +
     (more > 0 ? `; … and ${more} more` : '')
   );
@@ -251,16 +254,34 @@ export async function solveHybrid(
 
       const watch = watchCancel(runner, hooks);
       try {
-        await runner.start();
-        if (windows.tried === 0 && runner.pid !== undefined) hooks.onRunner?.(runner.pid);
-        const job = search.encodeWindow(search.pickWindow(HYBRID_WINDOW_DAYS), HYBRID_WINDOW_TIME);
-        const result = await runner.solve(job.model, job.params);
-        windows.tried++;
-        if (result.values.length > 0 && search.applyWindow(job, result.values).improved) {
-          windows.improved++;
+        // Only the runner's own calls are an "outage"; the core calls between them are not, so an
+        // EncodingDisagreementError from applyWindow propagates and fails the run.
+        let started = false;
+        try {
+          await runner.start();
+          started = true;
+          if (windows.tried === 0 && runner.pid !== undefined) hooks.onRunner?.(runner.pid);
+        } catch (err) {
+          runnerFailure = err instanceof Error ? err.message : String(err);
         }
-      } catch (err) {
-        runnerFailure = err instanceof Error ? err.message : String(err);
+        if (started) {
+          const job = search.encodeWindow(
+            search.pickWindow(HYBRID_WINDOW_DAYS),
+            HYBRID_WINDOW_TIME,
+          );
+          let result: Awaited<ReturnType<CpsatRunner['solve']>> | undefined;
+          try {
+            result = await runner.solve(job.model, job.params);
+          } catch (err) {
+            runnerFailure = err instanceof Error ? err.message : String(err);
+          }
+          if (result) {
+            windows.tried++;
+            if (result.values.length > 0 && search.applyWindow(job, result.values).improved) {
+              windows.improved++;
+            }
+          }
+        }
       } finally {
         watch.stop();
       }
@@ -292,15 +313,26 @@ export async function solveHybrid(
     hardShortfall: search.model.hardShortfall(),
   });
   return search.report({
-    ...(runnerFailure !== undefined
-      ? {
-          solver: 'sa-lns' as const,
-          fellBackFrom: {
+    ...(runnerFailure === undefined
+      ? { solver: 'hybrid' as const }
+      : windows.tried === 0
+        ? {
+            solver: 'sa-lns' as const,
+            fellBackFrom: {
+              solver: 'hybrid' as const,
+              reason: `CP-SAT windows stopped: ${runnerFailure}`,
+            },
+          }
+        : {
+            // Windows were applied, so the schedule is part hybrid: say when it stopped.
             solver: 'hybrid' as const,
-            reason: `CP-SAT windows stopped: ${runnerFailure}`,
-          },
-        }
-      : { solver: 'hybrid' as const }),
+            fellBackFrom: {
+              solver: 'hybrid' as const,
+              reason:
+                `CP-SAT windows stopped after ${windows.tried} of ${HYBRID_ROUNDS}: ` +
+                `${runnerFailure}; the rest of the run was SA + LNS`,
+            },
+          }),
     windows,
     seed: options.seed,
     iterations,

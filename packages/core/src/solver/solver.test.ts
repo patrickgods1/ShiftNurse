@@ -1,14 +1,29 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { DemandTable } from '../acuity/demand.js';
-import type { Assignment, FairnessLedgerEntry, Nurse, Preference } from '../domain/entities.js';
-import { addDays, dateInRange, isoDate } from '../domain/time.js';
-import { ALL_RULES, buildRuleContext, evaluateSchedule } from '../rules/registry.js';
+import type {
+  Assignment,
+  CoverageRequirement,
+  FairnessLedgerEntry,
+  Nurse,
+  Preference,
+  ShiftType,
+} from '../domain/entities.js';
+import { addDays, dateInRange, datesInRange, isoDate } from '../domain/time.js';
+import {
+  ALL_RULES,
+  buildRuleContext,
+  defaultRuleSet,
+  evaluateSchedule,
+  hardRuleIdsByScope,
+} from '../rules/registry.js';
 import type { Violation } from '../rules/types.js';
+import { AMOUNT_EPSILON, violationKey } from '../rules/violation-diff.js';
 import { ScheduleView } from '../schedule/view.js';
 import {
   assign,
   census,
+  coverage,
   coverageAllWeek,
   DAY_8,
   DAY_12,
@@ -22,6 +37,8 @@ import {
   TIER_ROUTINE,
   testUnit,
   timeOff,
+  UNIT_ID,
+  withRuleParams,
 } from '../testing/fixtures.js';
 import { Rng } from './rng.js';
 import { solve } from './solver.js';
@@ -65,9 +82,44 @@ function nurseScopeHard(report: SolveReport): Violation[] {
   );
 }
 
-/** Re-judge a report with the full engine, independently of what the solver claims. */
-function rejudge(input: SolveInput, report: SolveReport): Violation[] {
-  const ctx = buildRuleContext({
+/**
+ * A per-diem nurse alone on a two-week unit, with only the consecutive-days rule able to bind:
+ * no contract to run past, and a weekly cap above seven 12s.
+ */
+function adaAlone(
+  shiftTypes: ShiftType[],
+  locked: Assignment[],
+  coverageRequirements: CoverageRequirement[],
+): SolveInput {
+  return solveInputFrom({
+    nurses: [
+      makeNurse({
+        id: 'ada',
+        employmentType: 'per_diem',
+        fte: 0,
+        contractedHoursPerPeriod: 0,
+        isChargeEligible: true,
+      }),
+    ],
+    shiftTypes,
+    coverageRequirements,
+    ruleSet: withRuleParams(defaultRuleSet(UNIT_ID), {
+      'max-hours-per-week': { maxHoursPerWeek: 84, overtimeThresholdHours: 84 },
+    }),
+    assignments: locked,
+  });
+}
+
+/** Ada's locked run, ids `${prefix}0`, `${prefix}1`, … */
+function lockedAda(type: ShiftType, start: string, days: number, prefix: string): Assignment[] {
+  return Array.from({ length: days }, (_, i) =>
+    assign('ada', type, addDays(isoDate(start), i), { id: `${prefix}${i}`, isLocked: true }),
+  );
+}
+
+/** The engine's rule context for an input, as the grid builds it. */
+function contextOf(input: SolveInput) {
+  return buildRuleContext({
     unit: input.unit,
     demand: new DemandTable(input.demand),
     nurses: input.nurses,
@@ -79,6 +131,11 @@ function rejudge(input: SolveInput, report: SolveReport): Violation[] {
     holidays: input.holidays,
     weekendDefinition: input.ruleSet.weekendDefinition,
   });
+}
+
+/** Re-judge a report with the full engine, independently of what the solver claims. */
+function rejudge(input: SolveInput, report: SolveReport): Violation[] {
+  const ctx = contextOf(input);
   const view = new ScheduleView({
     period: input.period,
     assignments: report.assignments,
@@ -251,6 +308,112 @@ describe('a short-staffed unit', () => {
     const understaffed = rejudge(input, report).filter((v) => v.code === 'understaffed');
     expect(report.unfilled).toHaveLength(understaffed.length);
   });
+
+  it('spreads a shortage it cannot avoid rather than stripping one shift', () => {
+    // Two nurses, two day 12s with floors of two (Mon 5 and Wed 7 Jan), and a 12-hour week, so
+    // each nurse works one of them. Both on Monday leaves Wednesday two short (3,000 + 6,000);
+    // one each leaves both one short (3,000 twice), so Generate puts one nurse on each.
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: ['ada', 'bo'].map((id) =>
+        makeNurse({
+          id,
+          isChargeEligible: true,
+          employmentType: 'per_diem',
+          contractedHoursPerPeriod: 0,
+        }),
+      ),
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: [
+        coverage(DAY_12, 'RN', 2, 2, null, isoDate('2026-01-05')),
+        coverage(DAY_12, 'RN', 2, 2, null, isoDate('2026-01-07')),
+      ],
+      ruleSet: withRuleParams(defaultRuleSet(UNIT_ID), {
+        'max-hours-per-week': { maxHoursPerWeek: 12, overtimeThresholdHours: 12 },
+      }),
+    });
+    const report = solve(input, { seed: 1, maxIterations: 1500 });
+    const on = (date: string) =>
+      report.assignments.filter((a) => a.date === date).map((a) => a.nurseId);
+    expect(on('2026-01-05')).toHaveLength(1);
+    expect(on('2026-01-07')).toHaveLength(1);
+    expect([...on('2026-01-05'), ...on('2026-01-07')].sort()).toEqual(['ada', 'bo']);
+  });
+
+  it('moves a day nurse onto the night when the night is further short', () => {
+    // Monday 5 Jan wants two RNs on the day 12 and two on the night, and a 12-hour week lets each
+    // nurse work one shift. Both on the day leaves the night two short (3,000 + 6,000); one on
+    // each leaves both one short (3,000 twice), so Generate sends one of them to the night.
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: ['ada', 'bo'].map((id) =>
+        makeNurse({
+          id,
+          isChargeEligible: true,
+          employmentType: 'per_diem',
+          contractedHoursPerPeriod: 0,
+        }),
+      ),
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: [
+        coverage(DAY_12, 'RN', 2, 2, null, isoDate('2026-01-05')),
+        coverage(NIGHT_12, 'RN', 2, 2, null, isoDate('2026-01-05')),
+      ],
+      ruleSet: withRuleParams(defaultRuleSet(UNIT_ID), {
+        'max-hours-per-week': { maxHoursPerWeek: 12, overtimeThresholdHours: 12 },
+      }),
+    });
+    const report = solve(input, { seed: 1, maxIterations: 1500 });
+    const on = (type: ShiftType) =>
+      report.assignments
+        .filter((a) => a.date === '2026-01-05' && a.shiftTypeId === type.id)
+        .map((a) => a.nurseId);
+    expect(on(DAY_12)).toHaveLength(1);
+    expect(on(NIGHT_12)).toHaveLength(1);
+    expect([...on(DAY_12), ...on(NIGHT_12)].sort()).toEqual(['ada', 'bo']);
+  });
+
+  it('never moves a nurse onto a night that leaves her no rest before a locked day', () => {
+    // As above, but with a 24-hour week and Ada locked on Tuesday's day 12 (07:00). Monday's night
+    // ends at 07:00 Tuesday — no rest at all against the 10 hours owed — so of the two only Bo
+    // can take the night: Ada on Monday's day and Bo on the night, each shift one short.
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: ['ada', 'bo'].map((id) =>
+        makeNurse({
+          id,
+          isChargeEligible: true,
+          employmentType: 'per_diem',
+          contractedHoursPerPeriod: 0,
+        }),
+      ),
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: [
+        coverage(DAY_12, 'RN', 2, 2, null, isoDate('2026-01-05')),
+        coverage(NIGHT_12, 'RN', 2, 2, null, isoDate('2026-01-05')),
+      ],
+      ruleSet: withRuleParams(defaultRuleSet(UNIT_ID), {
+        'max-hours-per-week': { maxHoursPerWeek: 24, overtimeThresholdHours: 24 },
+      }),
+      assignments: [
+        assign('ada', DAY_12, '2026-01-06', { id: 'tue', isLocked: true, isCharge: true }),
+      ],
+    });
+    for (const seed of [1, 2, 3]) {
+      const report = solve(input, { seed, maxIterations: 1500 });
+      const monday = (type: ShiftType) =>
+        report.assignments
+          .filter((a) => a.date === '2026-01-05' && a.shiftTypeId === type.id)
+          .map((a) => a.nurseId);
+      expect(monday(NIGHT_12)).not.toContain('ada');
+      expect(monday(DAY_12)).toEqual(['ada']);
+      expect(monday(NIGHT_12)).toEqual(['bo']);
+      expect(nurseScopeHard(report)).toEqual([]);
+    }
+  });
 });
 
 describe('locks, leave and the lookback tail', () => {
@@ -324,6 +487,71 @@ describe('locks, leave and the lookback tail', () => {
     expect(firstDay).toBeUndefined();
     expect(nurseScopeHard(report)).toEqual([]);
   });
+
+  it('never adds a day to a locked run that is already too long', () => {
+    // Mon 5 – Sat 10 locked: six days against a cap of five.
+    const locked = lockedAda(DAY_8, '2026-01-05', 6, 'L');
+    const input = adaAlone([DAY_8], locked, [
+      coverage(DAY_8, 'RN', 1, 1, null, isoDate('2026-01-04')),
+      coverage(DAY_8, 'RN', 1, 1, null, isoDate('2026-01-11')),
+      coverage(DAY_8, 'RN', 1, 1, null, isoDate('2026-01-12')),
+    ]);
+    const report = solve(input, { seed: 1, maxIterations: 2000 });
+    const added = report.assignments.filter((a) => !a.isLocked).map((a) => a.date);
+    // Sun 4 and Sun 11 make the run seven days; Mon 12 is only one day off after it, two owed.
+    expect(added).not.toContain('2026-01-04');
+    expect(added).not.toContain('2026-01-11');
+    expect(added).not.toContain('2026-01-12');
+    const runs = report.hardViolations.filter((v) => v.code === 'too_many_consecutive_shifts');
+    expect(runs).not.toEqual([]);
+    for (const v of runs) expect(v.assignmentIds).toEqual(locked.map((a) => a.id));
+  });
+
+  it('keeps the locked run of five nights on the report instead of hiding it behind day shifts', () => {
+    // Tue 6 – Sat 10 locked nights: five against a cap of three.
+    const locked = lockedAda(NIGHT_12, '2026-01-06', 5, 'N');
+    const input = adaAlone([DAY_12, NIGHT_12], locked, [
+      coverage(DAY_12, 'RN', 1, 1, null, isoDate('2026-01-04')),
+      coverage(DAY_12, 'RN', 1, 1, null, isoDate('2026-01-05')),
+    ]);
+    const report = solve(input, { seed: 1, maxIterations: 2000 });
+    // Mon 5 joins the nights into a six-day run. Sun 4 alone, with Mon 5 off, is a legal shift.
+    const added = report.assignments.filter((a) => !a.isLocked).map((a) => a.date);
+    expect(added).not.toContain('2026-01-05');
+    const nights = report.hardViolations.find((v) => v.code === 'too_many_consecutive_nights');
+    expect(nights?.assignmentIds).toEqual(expect.arrayContaining(locked.map((a) => a.id)));
+  });
+
+  it("keeps a locked nurse's charge flag as the manager set it, and adds a charge nurse beside her", () => {
+    // Saving a Generate never rewrites a locked row, so flagging the pin as charge here would
+    // preview a charge nurse the saved grid does not have. The shift gets a second nurse instead.
+    const nurses = Array.from({ length: 6 }, () =>
+      makeNurse({
+        employmentType: 'per_diem',
+        contractedHoursPerPeriod: 0,
+        isChargeEligible: true,
+      }),
+    );
+    const pin = assign(nurses[0]!.id, DAY_12, '2026-01-07', {
+      id: 'pin',
+      isLocked: true,
+      isCharge: false,
+    });
+    const input = solveInputFrom({
+      nurses,
+      shiftTypes: [DAY_12],
+      coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1, 1),
+      assignments: [pin],
+    });
+    const report = solve(input, { seed: 1, maxIterations: 3000 });
+    const wednesday = report.assignments.filter((a) => a.date === '2026-01-07');
+    expect(wednesday).toHaveLength(2);
+    expect(wednesday.find((a) => a.id === 'pin')).toEqual(pin);
+    const other = wednesday.find((a) => a.id !== 'pin')!;
+    expect(other.isLocked).toBe(false);
+    expect(other.isCharge).toBe(true);
+    expect(report.hardViolations).toEqual([]);
+  });
 });
 
 describe('fairness and preferences in the objective', () => {
@@ -358,6 +586,7 @@ describe('fairness and preferences in the objective', () => {
       report.assignments.filter((x) => x.shiftTypeId === NIGHT_12.id),
       (x) => x.nurseId,
     );
+    // Direction only until phase 20 (H-05) pins exposure-normalised counts.
     expect(nights.get(b!.id) ?? 0).toBeGreaterThan(nights.get(a!.id) ?? 0);
   });
 
@@ -547,7 +776,7 @@ describe('determinism, progress and cancellation', () => {
     expect(nurseScopeHard(report)).toEqual([]);
   });
 
-  it('annealing never makes the seed worse', () => {
+  it('hands back the best schedule it found, never a worse one it wandered to', () => {
     const report = solve(twelveHourUnit(fullTimers(10), 2), QUICK);
     expect(report.objective.total).toBeLessThanOrEqual(report.stats.seedObjective);
   });
@@ -677,7 +906,65 @@ describe('property: random units', () => {
     }
   });
 
-  it('is reproducible across seeds of the generator itself', () => {
+  it('never lets Generate grow or trade a breach the locked shifts already carry', () => {
+    const rng = new Rng(4049);
+    let withBreachingPins = 0;
+    for (let trial = 0; trial < 12; trial++) {
+      resetFixtureCounters();
+      const base = randomInput(rng);
+      const dates = datesInRange(base.period.startDate, base.period.endDate);
+      // No legality check: many of these pins break a hard rule on their own. Each nurse's pins
+      // are a run of days, as a manager locks a stretch: scattered single days almost never
+      // make a breach that one more day can grow, and that is the case this guards.
+      const locks: Assignment[] = [];
+      for (const n of base.nurses) {
+        if (!rng.chance(0.35)) continue;
+        const days = rng.nextInt(2, 6);
+        const first = rng.nextInt(0, dates.length - days);
+        for (const date of dates.slice(first, first + days)) {
+          locks.push(
+            assign(n.id, rng.pick(base.shiftTypes), date, {
+              id: `lock-${trial}-${locks.length}`,
+              isLocked: true,
+            }),
+          );
+        }
+      }
+      const input: SolveInput = { ...base, assignments: locks };
+      const report = solve(input, { seed: trial, maxIterations: 400 });
+
+      // What the pins and the lookback tail break with nothing else on the schedule.
+      const pinsAlone = new ScheduleView({
+        period: input.period,
+        assignments: locks,
+        priorAssignments: input.priorAssignments,
+        nurses: input.nurses,
+        shiftTypes: input.shiftTypes,
+      });
+      const baseline = evaluateSchedule(pinsAlone, input.ruleSet, contextOf(input), {
+        only: hardRuleIdsByScope(input.ruleSet, 'nurse'),
+      }).hardViolations.filter((v) => v.code !== 'under_contracted_hours');
+      if (baseline.length > 0) withBreachingPins++;
+
+      const pinned = new Set([...locks, ...input.priorAssignments].map((a) => a.id));
+      for (const v of nurseScopeHard(report)) {
+        const where = `trial ${trial}: ${v.message}`;
+        expect(
+          v.assignmentIds.filter((id) => !pinned.has(id)),
+          where,
+        ).toEqual([]);
+        expect(
+          baseline.some(
+            (b) => violationKey(b) === violationKey(v) && b.amount + AMOUNT_EPSILON >= v.amount,
+          ),
+          where,
+        ).toBe(true);
+      }
+    }
+    expect(withBreachingPins).toBeGreaterThanOrEqual(4);
+  });
+
+  it('builds the same random unit twice and solves it the same', () => {
     const a = solve(randomInput(new Rng(99)), { seed: 5, maxIterations: 300 });
     resetFixtureCounters();
     const b = solve(randomInput(new Rng(99)), { seed: 5, maxIterations: 300 });

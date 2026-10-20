@@ -16,6 +16,7 @@ import {
   type FairnessLedgerEntry,
   groupsForPeriod,
   type HolidayWorkRecord,
+  historyCompleteFrom,
   type Id,
   type IsoDate,
   type MaxHoursParams,
@@ -65,7 +66,11 @@ import {
   listPreferencesForUnit,
 } from './roster.js';
 import { getRuleSet } from './rulesets.js';
-import { listAssignmentsForPeriod, priorAssignmentsBefore } from './schedule.js';
+import {
+  listAssignmentsForPeriod,
+  listPeriodsForUnit,
+  priorAssignmentsBefore,
+} from './schedule.js';
 import {
   listTimeOffForNurse,
   listTimeOffForUnit,
@@ -94,6 +99,23 @@ export const LEDGER_LOOKBACK_DAYS = 400;
  * tail, or what the tail is judged with (leave, sick calls, offers, other units), uses this.
  */
 export const PRIOR_ASSIGNMENT_LOOKBACK_DAYS = 28;
+
+/**
+ * The first date from which the lookback tail is complete: the same published periods
+ * `priorAssignmentsBefore` reads, so the date says exactly how far that tail is complete. The
+ * contracted-hours rule judges a pay period that began before the period only from here; without
+ * it a gap in history would read as a nurse who worked nothing.
+ */
+export function historyFromFor(
+  db: DbLike,
+  period: Pick<SchedulePeriod, 'unitId' | 'startDate'>,
+): IsoDate {
+  return historyCompleteFrom(
+    listPeriodsForUnit(db, period.unitId).filter((p) => p.status === 'published'),
+    period.startDate,
+    PRIOR_ASSIGNMENT_LOOKBACK_DAYS,
+  );
+}
 
 /** The window the loaders read other units over, matching the tail of prior shifts. */
 export function elsewhereWindow(period: { startDate: IsoDate; endDate: IsoDate }): {
@@ -310,6 +332,7 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
       ...priorAssignmentsBefore(db, unitId, period.startDate, PRIOR_ASSIGNMENT_LOOKBACK_DAYS),
       ...elsewhere.assignments,
     ],
+    historyFrom: historyFromFor(db, period),
     timeOff,
     // From the lookback tail on, as far as the weekly rules read.
     paidSickCalls: paidSickCallsForUnit(db, unitId, {

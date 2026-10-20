@@ -30,6 +30,7 @@ import {
   floatExtras,
   getLatestRuleSet,
   getNurse,
+  historyFromFor,
   holidayWorkForPeriod,
   listAssignmentsForPeriod,
   listAvailabilityBlocks,
@@ -83,6 +84,7 @@ export function validateView(
   const shiftTypes = [...schedule.shiftTypesById.values()];
   const unit = unitOrThrow(db, period.unitId);
   const floats = floatExtras(db, unit, period, nurses);
+  const preferences = [...listPreferencesForUnit(db, period.unitId), ...floats.preferences];
   const ctx = buildRuleContext({
     unit,
     demand: deriveDemand(
@@ -118,10 +120,12 @@ export function validateView(
     restWaivers: restWaiversForPeriod(db, period.unitId, period.startDate, period.endDate),
     availabilityBlocks: listAvailabilityBlocks(db, period.unitId),
     holidayWork: holidayWorkForPeriod(db, period),
+    historyFrom: historyFromFor(db, period),
+    // A career nurse's asked-for tours are read from these (`requestedTours`).
+    preferences,
   });
   // Which preferences each worked shift goes against, so the grid can say "avoids nights"
   // rather than leave a broken request invisible until the nurse complains.
-  const preferences = [...listPreferencesForUnit(db, period.unitId), ...floats.preferences];
   const byNurse = new Map<Id, Preference[]>();
   for (const p of preferences) byNurse.set(p.nurseId, [...(byNurse.get(p.nurseId) ?? []), p]);
   const againstPreference: Record<Id, Preference[]> = {};

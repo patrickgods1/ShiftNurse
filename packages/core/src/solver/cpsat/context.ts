@@ -56,6 +56,14 @@ export interface EncodeContext {
   lockedByShift: readonly Assignment[][];
   timeline(n: number): readonly TimelineEntry[];
   name(n: number): string;
+  /**
+   * Shift-scope hard units by `shift.idx`, collected so `coverageTerms` can price each shift's
+   * total convexly, as `SolverModel.coveragePenalty` does (D10) — priced unit by unit, one shift
+   * three short would cost the same as three shifts one short.
+   */
+  hardUnits: readonly Expr[][];
+  /** Register `e` hard units on the shift whose roster the model judges them on. */
+  addHardUnits(shift: Shift, e: Expr): void;
 }
 
 export function hoursOf(shiftType: ShiftType, label: string): number {
@@ -77,6 +85,20 @@ export function hoursExpr(entries: readonly TimelineEntry[]): Expr {
     // variable is a draft shift, which never carries one.
     if (entry.literal === null)
       e.constant += h + Math.round(holdoverHours(entry.assignment ?? {}) * HOURS);
+    else e.terms.push([entry.literal, h]);
+  }
+  return e;
+}
+
+/**
+ * Σ scheduled hours (×HOURS), as `hoursExpr` but with no holdover on a constant: what the contract
+ * counts, since a nurse held over was not scheduled past it.
+ */
+export function scheduledHoursExpr(entries: readonly TimelineEntry[]): Expr {
+  const e = expr();
+  for (const entry of entries) {
+    const h = hoursOf(entry.shiftType, entry.date);
+    if (entry.literal === null) e.constant += h;
     else e.terms.push([entry.literal, h]);
   }
   return e;

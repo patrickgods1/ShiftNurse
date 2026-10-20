@@ -20,6 +20,23 @@ tags. Each release's notes link here.
   limit.
 - A holdover that runs into the nurse's own next shift is refused with the number of minutes that
   would fit.
+- With both a consecutive-hours and a 24-hour limit on required overtime, a required call-back in
+  a short stretch is now checked against the 24-hour limit too.
+- A "weekends in a row" finding now marks every weekend of the run on the grid, not only the last.
+
+### Changed
+
+- Contracted hours are now checked for a pay period that a schedule starts in the middle of,
+  counting the shifts already published for it. If the earlier part of the pay period was never
+  published, only hours over the contract are checked.
+- A recorded holdover no longer counts as authorising a whole week of overtime: it covers only the
+  time it adds.
+- The VA weekly limit on required hours no longer counts overtime the nurse volunteered for.
+- A shift with two nurses marked charge is now flagged, and by default only an RN may be marked
+  charge. Units that let an LPN/LVN take charge can turn off "Charge nurse must be an RN" in
+  Settings › Rules › Coverage minimums.
+- A career nurse exempt from rotation is no longer flagged for working a tour she asked for (a
+  preferred shift type).
 
 ## [0.1.0] - 2026-10-05
 

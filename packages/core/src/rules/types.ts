@@ -71,6 +71,7 @@ export type ViolationCode =
   | 'over_contracted_hours'
   | 'understaffed'
   | 'missing_charge_nurse'
+  | 'multiple_charge_nurses'
   | 'missing_credential'
   | 'expired_credential'
   | 'all_novice_shift'
@@ -114,7 +115,18 @@ export interface Violation {
   message: string;
   nurseIds: Id[];
   dates: IsoDate[];
+  /**
+   * Nurse scope: exactly the in-period assignments whose presence contributes to the finding,
+   * never a row with `inPeriod: false` (the lookback tail, or another unit's shift carried as
+   * busy time). Shift scope: the shift's in-period roster.
+   */
   assignmentIds: Id[];
+  /**
+   * How far past the limit, in the unit the code names (hours over, days in a row, slots short,
+   * 1 for a single shift where it should not be). Always > 0: comparing it is how a standing
+   * breach that grows is told from one that did not.
+   */
+  amount: number;
   /** Structured payload for the UI: thresholds, actual values, the ids involved. */
   details?: Record<string, unknown>;
 }
@@ -134,6 +146,8 @@ export interface RuleContext {
 
   /** Approved time off only, indexed by nurse. Pending requests never block the solver. */
   approvedTimeOffByNurse: ReadonlyMap<Id, readonly TimeOffRequest[]>;
+  /** Pending requests only, indexed by nurse: asked off, not yet decided. */
+  pendingTimeOffByNurse: ReadonlyMap<Id, readonly TimeOffRequest[]>;
   allTimeOff: readonly TimeOffRequest[];
   /** Paid leave hours by nurse and date: approved paid leave and paid sick calls. */
   paidLeaveByNurse: ReadonlyMap<Id, readonly PaidLeaveCredit[]>;
@@ -166,6 +180,18 @@ export interface RuleContext {
   restWaiversByNurse: ReadonlyMap<Id, ReadonlySet<IsoDate>>;
   /** Each nurse's recorded accommodations (recurring windows they cannot work). */
   availabilityBlocksByNurse: ReadonlyMap<Id, readonly AvailabilityBlock[]>;
+  /**
+   * The first date from which the lookback tail is known to be complete (`historyCompleteFrom`).
+   * Undefined: the caller has not said, and a pay period that began before the schedule is judged
+   * as before (`judgedPayPeriods`).
+   */
+  historyFrom: IsoDate | undefined;
+  /**
+   * The shift types each nurse has asked for (`prefer_shift_type` rows only). The one record of a
+   * nurse's wish the rules can read: a career nurse exempt from forced rotation may work a tour
+   * she asked for (`requestedTours`).
+   */
+  preferredShiftTypesByNurse: ReadonlyMap<Id, ReadonlySet<Id>>;
 }
 
 /**
@@ -263,7 +289,6 @@ export function nurseName(nurse: Nurse): string {
   return `${nurse.firstName} ${nurse.lastName}`;
 }
 
-/** Build a violation, defaulting the id/name/severity from the rule that raised it. */
 /**
  * A number a rule put in `details`, for code that computes with it. Throws when it is missing
  * or not a number: these payloads are loosely typed, and reading a renamed key as `?? 0` once
@@ -292,18 +317,26 @@ export function detailOptional<T = unknown>(v: Violation, key: string): T | unde
   return v.details?.[key] as T | undefined;
 }
 
+/** Build a violation, defaulting the id/name/severity from the rule that raised it. */
 export function violation(
   rule: Pick<Rule<never>, 'id' | 'name' | 'severity'>,
   severity: RuleSeverity,
   code: ViolationCode,
   message: string,
   parts: {
+    amount: number;
     nurseIds?: Id[];
     dates?: IsoDate[];
     assignmentIds?: Id[];
     details?: Record<string, unknown>;
-  } = {},
+  },
 ): Violation {
+  const { amount } = parts;
+  if (!(Number.isFinite(amount) && amount > 0)) {
+    throw new Error(
+      `Violation ${code} from ${rule.id} has amount ${amount}; a breach must be a positive, finite number`,
+    );
+  }
   return {
     ruleId: rule.id,
     ruleName: rule.name,
@@ -313,6 +346,7 @@ export function violation(
     nurseIds: parts.nurseIds ?? [],
     dates: parts.dates ?? [],
     assignmentIds: parts.assignmentIds ?? [],
+    amount,
     ...(parts.details ? { details: parts.details } : {}),
   };
 }

@@ -12,10 +12,12 @@ import {
   assign,
   census,
   coverageAllWeek,
+  DAY_8,
   DAY_12,
   differential,
   makeNurse,
   NIGHT_12,
+  ON_CALL,
   overtimeRule,
   payRate,
   resetFixtureCounters,
@@ -148,6 +150,40 @@ describe('evaluateExchange', () => {
     const plan = planExchange(input);
     const created = plan.create.find((a) => a.nurseId === receiver.id);
     expect(created?.isOvertime).toBe(true);
+  });
+
+  it("does not call standby overtime in a trade's warning", () => {
+    resetFixtureCounters();
+    const receiver = makeNurse({ firstName: 'Ronda', lastName: 'Kim' });
+    const giver = makeNurse({ firstName: 'Gus', lastName: 'Farah' });
+
+    // Ronda works Sun/Mon/Tue (36h) and is on call Thursday night (12h standby, not worked).
+    const already = [
+      assign(receiver.id, DAY_12, '2026-01-04'),
+      assign(receiver.id, DAY_12, '2026-01-05'),
+      assign(receiver.id, DAY_12, '2026-01-06'),
+      assign(receiver.id, ON_CALL, '2026-01-08'),
+    ];
+    const wednesday = assign(giver.id, DAY_8, '2026-01-07');
+
+    const input: ExchangeInput = {
+      ...solveInputFrom({
+        startDate: START,
+        endDate: END,
+        nurses: [receiver, giver],
+        assignments: [...already, wednesday],
+        cost: {
+          payRates: [payRate(50, { role: 'RN' })],
+          differentials: [],
+          overtimeRules: [overtimeRule('weekly', 40, 1.5)],
+        },
+      }),
+      proposal: giveaway(wednesday, receiver.id),
+    };
+
+    // Hand: 36 + 8 = 44 worked hours, 4 past 40. Counting the standby would make it 56, so 16.
+    const result = evaluateExchange(input);
+    expect(result.warnings).toContainEqual(expect.stringMatching(/^Creates 4 hours of overtime/));
   });
 
   it('a giveaway that hands a third straight weekend to the same nurse warns on fairness', () => {

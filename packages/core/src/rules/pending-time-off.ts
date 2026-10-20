@@ -22,14 +22,13 @@ export type PendingTimeOffParams = Record<string, never>;
 
 /** The pending request a shift dated `date` falls in, if any. */
 export function pendingRequestOn(
-  ctx: Pick<RuleContext, 'allTimeOff'>,
+  ctx: Pick<RuleContext, 'pendingTimeOffByNurse'>,
   nurseId: Id,
   date: IsoDate,
 ): TimeOffRequest | undefined {
-  return ctx.allTimeOff.find(
-    (r) =>
-      r.nurseId === nurseId && r.status === 'pending' && dateInRange(date, r.startDate, r.endDate),
-  );
+  return ctx.pendingTimeOffByNurse
+    .get(nurseId)
+    ?.find((r) => dateInRange(date, r.startDate, r.endDate));
 }
 
 export const pendingTimeOffRule: Rule<PendingTimeOffParams> = {
@@ -60,6 +59,7 @@ export const pendingTimeOffRule: Rule<PendingTimeOffParams> = {
             `still waiting for a decision (${describeDateRange(request.startDate, request.endDate)}). ` +
             'Decide the request, or move the shift.',
           {
+            amount: 1,
             nurseIds: [view.nurse.id],
             dates: [view.assignment.date],
             assignmentIds: [view.assignment.id],

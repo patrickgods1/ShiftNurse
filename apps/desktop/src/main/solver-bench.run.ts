@@ -151,6 +151,16 @@ const median = (xs: number[]) => {
   const s = [...xs].sort((a, b) => a - b);
   return s.length % 2 ? s[(s.length - 1) / 2]! : (s[s.length / 2 - 1]! + s[s.length / 2]!) / 2;
 };
+// Convex pricing can trade one deep hole for several shallow ones, so the count of short slots
+// alone hides whether the worst shift got better.
+const mostShort = (r: SolveReport) => {
+  const byShift = new Map<string, number>();
+  for (const u of r.unfilled) {
+    const k = `${u.date}|${u.shiftTypeId}`;
+    byShift.set(k, (byShift.get(k) ?? 0) + u.shortfall);
+  }
+  return Math.max(0, ...byShift.values());
+};
 const f0 = (x: number) => Math.round(x).toLocaleString('en-US');
 
 it.skipIf(RUNNER === undefined)(
@@ -188,16 +198,17 @@ it.skipIf(RUNNER === undefined)(
     lines.push(
       `Budgets: SA + LNS and hybrid ${ITERATIONS.toLocaleString('en-US')} annealing iterations ` +
         '(the hybrid adds 8 CP-SAT windows of 3 days × 2 units of deterministic time); CP-SAT 60 units ' +
-        'of deterministic time over the whole period. Objective is in points (lower is better); a ' +
-        'floor short costs 3,000.',
+        'of deterministic time over the whole period. Objective is in points (lower is better); the ' +
+        'first slot short on a shift costs 3,000, the second 6,000 more, the third 9,000 more ' +
+        '(convex, D10).',
     );
     lines.push('');
     lines.push('## Median over seeds 1–3');
     lines.push('');
     lines.push(
-      '| Unit | Solver | Objective | Coverage | Hours | Fairness | Preferences | Cost | Floors short | Time (s) |',
+      '| Unit | Solver | Objective | Coverage | Hours | Fairness | Preferences | Cost | Floors short | Most short on one shift | Time (s) |',
     );
-    lines.push('|---|---|--:|--:|--:|--:|--:|--:|--:|--:|');
+    lines.push('|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|');
     const winners: Record<string, Backend> = {};
     for (const [unit] of UNITS) {
       let best: [Backend, number] | undefined;
@@ -212,7 +223,7 @@ it.skipIf(RUNNER === undefined)(
           `| ${unit} | ${backend} | ${f0(total)} | ${f0(m((r) => r.objective.coverage))} | ` +
             `${f0(m((r) => r.objective.hours))} | ${f0(m((r) => r.objective.fairness))} | ` +
             `${f0(m((r) => r.objective.preferences))} | ${f0(m((r) => r.objective.cost))} | ` +
-            `${m((r) => r.unfilled.length)} | ${(m((r) => r.stats.elapsedMs) / 1000).toFixed(1)} |`,
+            `${m((r) => r.unfilled.length)} | ${m(mostShort)} | ${(m((r) => r.stats.elapsedMs) / 1000).toFixed(1)} |`,
         );
       }
       winners[unit] = best![0];
@@ -221,13 +232,13 @@ it.skipIf(RUNNER === undefined)(
     lines.push('## Every run');
     lines.push('');
     lines.push(
-      '| Unit | Solver | Seed | Objective | Floors short | Gap | Windows improved | Time (s) |',
+      '| Unit | Solver | Seed | Objective | Floors short | Most short on one shift | Gap | Windows improved | Time (s) |',
     );
-    lines.push('|---|---|--:|--:|--:|--:|--:|--:|');
+    lines.push('|---|---|--:|--:|--:|--:|--:|--:|--:|');
     for (const r of rows) {
       const s = r.report.stats;
       lines.push(
-        `| ${r.unit} | ${r.backend} | ${r.seed} | ${f0(r.report.objective.total)} | ${r.report.unfilled.length} | ` +
+        `| ${r.unit} | ${r.backend} | ${r.seed} | ${f0(r.report.objective.total)} | ${r.report.unfilled.length} | ${mostShort(r.report)} | ` +
           `${s.gap === undefined ? '—' : `${(s.gap * 100).toFixed(0)}%`} | ` +
           `${s.windows ? `${s.windows.improved}/${s.windows.tried}` : '—'} | ${(s.elapsedMs / 1000).toFixed(1)} |`,
       );

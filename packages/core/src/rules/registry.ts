@@ -16,6 +16,7 @@ import type {
   NurseCredential,
   OvertimeVolunteer,
   Preceptorship,
+  Preference,
   RestWaiver,
   ShiftCredentialRequirement,
   ShiftType,
@@ -151,13 +152,6 @@ export function defaultRuleSet(
 }
 
 /**
- * Merge a stored rule set with the registry defaults.
- *
- * A rule set persisted before a new rule shipped — or before a new parameter was added to an
- * existing rule — must not silently disable that rule or crash on a missing parameter. Any
- * gap falls back to the registry default.
- */
-/**
  * The parameters `configs` give `rule`, typed by the rule itself. Stored params are a plain
  * record (they come from the database and from IPC), so reading them as a rule's `P` is an
  * assumption; this is the one place it is made, instead of a cast at every reader. Pass
@@ -180,6 +174,13 @@ export function asParams<P>(_rule: Rule<P>, raw: Record<string, unknown>): P {
   return raw as unknown as P;
 }
 
+/**
+ * Merge a stored rule set with the registry defaults.
+ *
+ * A rule set persisted before a new rule shipped — or before a new parameter was added to an
+ * existing rule — must not silently disable that rule or crash on a missing parameter. Any
+ * gap falls back to the registry default.
+ */
 export function resolveConfigs(ruleSet: RuleSet): RuleConfig[] {
   const stored = new Map(ruleSet.configs.map((c) => [c.ruleId, c]));
   return ALL_RULES.map((rule) => {
@@ -227,16 +228,31 @@ export interface RuleContextInput {
   restWaivers?: readonly RestWaiver[];
   /** Recorded accommodations. Absent: nobody has one. */
   availabilityBlocks?: readonly AvailabilityBlock[];
+  /**
+   * The first date from which `priorAssignments` is known to be complete (`historyCompleteFrom`).
+   * Absent: the caller has not said, and a pay period that began before the schedule is judged as
+   * before (not at all, unless `onlyCompletePayPeriods` is off).
+   */
+  historyFrom?: IsoDate;
+  /** Nurses' stated preferences. Absent: nobody has asked for anything. */
+  preferences?: readonly Preference[];
 }
 
 /** Precompute the joins and indexes every rule needs, once per evaluation pass. */
 export function buildRuleContext(input: RuleContextInput): RuleContext {
   const approvedByNurse = new Map<Id, TimeOffRequest[]>();
+  const pendingByNurse = new Map<Id, TimeOffRequest[]>();
   for (const request of input.timeOff) {
-    if (request.status !== 'approved') continue;
-    const existing = approvedByNurse.get(request.nurseId);
+    const index =
+      request.status === 'approved'
+        ? approvedByNurse
+        : request.status === 'pending'
+          ? pendingByNurse
+          : undefined;
+    if (!index) continue;
+    const existing = index.get(request.nurseId);
     if (existing) existing.push(request);
-    else approvedByNurse.set(request.nurseId, [request]);
+    else index.set(request.nurseId, [request]);
   }
 
   const paidLeaveByNurse = new Map<Id, PaidLeaveCredit[]>();
@@ -264,6 +280,7 @@ export function buildRuleContext(input: RuleContextInput): RuleContext {
     holidays: input.holidays,
     weekendDefinition: input.weekendDefinition ?? DEFAULT_WEEKEND,
     approvedTimeOffByNurse: approvedByNurse,
+    pendingTimeOffByNurse: pendingByNurse,
     allTimeOff: input.timeOff,
     paidLeaveByNurse,
     credentials: input.credentials,
@@ -280,7 +297,20 @@ export function buildRuleContext(input: RuleContextInput): RuleContext {
     ),
     restWaiversByNurse: restWaiverDates(input.restWaivers ?? []),
     availabilityBlocksByNurse: groupByNurse(input.availabilityBlocks ?? []),
+    historyFrom: input.historyFrom,
+    preferredShiftTypesByNurse: preferredShiftTypes(input.preferences ?? []),
   };
+}
+
+function preferredShiftTypes(preferences: readonly Preference[]): Map<Id, Set<Id>> {
+  const out = new Map<Id, Set<Id>>();
+  for (const p of preferences) {
+    if (p.kind !== 'prefer_shift_type') continue;
+    const existing = out.get(p.nurseId);
+    if (existing) existing.add(p.shiftTypeId);
+    else out.set(p.nurseId, new Set([p.shiftTypeId]));
+  }
+  return out;
 }
 
 function restWaiverDates(waivers: readonly RestWaiver[]): Map<Id, Set<IsoDate>> {

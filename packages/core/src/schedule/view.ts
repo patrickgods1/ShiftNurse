@@ -11,8 +11,8 @@
  * night shift of the previous period cannot legally start a day shift on the first morning
  * of this one. A view therefore carries a lookback tail of already-published assignments,
  * flagged `inPeriod: false`. They participate fully in rest, consecutive-shift and hours
- * calculations, but never receive violations of their own — they are history, not something
- * this schedule can fix.
+ * calculations, but never receive violations of their own and are never named on one — they
+ * are history, not something this schedule can fix.
  */
 
 import type {
@@ -23,7 +23,7 @@ import type {
   SchedulePeriod,
   ShiftType,
 } from '../domain/entities.js';
-import { datesInRange, dayNumber, type IsoDate, type ShiftWindow } from '../domain/time.js';
+import { datesInRange, type IsoDate, type ShiftWindow } from '../domain/time.js';
 import { workedHours, workedWindow } from './holdover.js';
 
 export interface AssignmentView {
@@ -222,7 +222,10 @@ export class ScheduleView {
     return this.byDateShiftAllCache.get(shiftKey(date, shiftTypeId)) ?? EMPTY;
   }
 
-  /** Staffed count for one role on one shift, excluding on-call standby. */
+  /**
+   * Staffed count for one role on one shift. Standby is not filtered here: callers pass a worked
+   * shift type.
+   */
   countOnShift(date: IsoDate, shiftTypeId: Id, role: NurseRole): number {
     let count = 0;
     for (const view of this.onShift(date, shiftTypeId)) {
@@ -234,18 +237,6 @@ export class ScheduleView {
   /** True when this nurse already has any assignment on this date. */
   isAssignedOn(nurseId: Id, date: IsoDate): boolean {
     return this.timelineFor(nurseId).some((v) => v.assignment.date === date);
-  }
-
-  /** Total scheduled hours for a nurse within an inclusive date window. */
-  hoursBetween(nurseId: Id, start: IsoDate, end: IsoDate): number {
-    const from = dayNumber(start);
-    const to = dayNumber(end);
-    let hours = 0;
-    for (const view of this.timelineFor(nurseId)) {
-      const n = dayNumber(view.assignment.date);
-      if (n >= from && n <= to) hours += view.paidHours;
-    }
-    return hours;
   }
 
   /** A shallow copy of the in-period assignments, for producing a modified schedule. */

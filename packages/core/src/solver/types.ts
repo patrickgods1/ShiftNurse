@@ -3,12 +3,11 @@
  *
  * ## Why an interface
  *
- * The shipped solver is a local-search engine (greedy seed, then simulated annealing with a
- * ruin-and-recreate neighbourhood) written in plain TypeScript so nothing extra has to be
- * bundled with the desktop app. It is not the last word: a unit that outgrows it will want a
- * CP-SAT backend, and that has to be a swap of one implementation behind `Solver`, not a
- * rewrite of the Generate flow, the worker plumbing or the report screen. Everything those
- * touch is defined here in plain data.
+ * Three backends sit behind `Solver` and the desktop's OR-Tools orchestration: `sa-lns` (greedy
+ * seed, then simulated annealing with a ruin-and-recreate neighbourhood) is plain TypeScript so
+ * nothing extra has to be bundled; `cp-sat` and `hybrid` need the runner (`registry.ts`). Swapping
+ * one for another must not be a rewrite of the Generate flow, the worker plumbing or the report
+ * screen. Everything those touch is defined here in plain data.
  *
  * ## Why the input is plain data
  *
@@ -98,6 +97,12 @@ export interface SolveInput {
   assignments: readonly Assignment[];
   /** The published lookback tail, so rest and weekly-hours rules see across the boundary. */
   priorAssignments: readonly Assignment[];
+  /**
+   * The first date from which `priorAssignments` is known to be complete (`historyCompleteFrom`).
+   * Absent: the caller has not said, and a pay period that began before the schedule is judged as
+   * before (not at all, unless `onlyCompletePayPeriods` is off).
+   */
+  historyFrom?: IsoDate;
   timeOff: readonly TimeOffRequest[];
   /**
    * Missed shifts paid from sick leave whose assignment is off the schedule: credited toward
@@ -134,7 +139,8 @@ export interface SolveInput {
  * How much each concern counts, in one common unit of "points". The defaults are ordered so
  * that a genuine staffing gap dominates everything, a nurse's contracted hours come next (both
  * are hard rules, but a shift below its floor is a safety problem while a nurse a shift short
- * of contract is a grievance — 3000 against 480, more than any fairness swing),
+ * of contract is a grievance — 3000 against 480, more than any fairness swing; a shift's
+ * second unit short costs twice its first, so a deep gap on one shift outranks shallow ones),
  * nurses the manager keeps apart come next (a whole shared 12 costs 600, above a nurse's shift
  * of contracted hours, so the solver will rather leave someone a shift short than pair them),
  * an unfilled soft target beats fairness, and fairness beats preference and money — but the
@@ -142,7 +148,11 @@ export interface SolveInput {
  * still move a decision between two otherwise-equal candidates.
  */
 export interface ObjectiveWeights {
-  /** Per nurse short of a shift's hard minimum, or per shift-scope hard violation. */
+  /**
+   * The first hard unit short on a shift (a nurse below a floor or ratio, a missing charge
+   * nurse, …); the k-th unit on the same shift costs k times this (D10), so one shift three
+   * short (6×) is worse than three shifts one short (3×).
+   */
   hardShortfall: number;
   /** Per nurse short of a shift's soft target. */
   targetShortfall: number;
@@ -292,7 +302,10 @@ export type SolverId = 'hybrid' | 'sa-lns' | 'cp-sat';
 export interface SolveStats {
   /** The backend that actually produced this schedule, after any fallback. */
   solver: SolverId;
-  /** Set when the requested backend could not run and another took its place. */
+  /**
+   * Set when the requested backend could not run and another took its place, or — hybrid only,
+   * with `solver: 'hybrid'` — when its CP-SAT windows stopped part-way.
+   */
   fellBackFrom?: { solver: SolverId; reason: string };
   /** Best proven lower bound on the objective, from exact backends. */
   bound?: number;

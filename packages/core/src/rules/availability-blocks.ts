@@ -125,8 +125,6 @@ export const accommodationBlocksRule: Rule<AccommodationBlocksParams> = {
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];
     for (const view of schedule.assignments()) {
-      // History cannot be fixed; only this period's shifts are flagged.
-      if (!view.inPeriod) continue;
       if (!params.onCallCounts && !isWorked(view)) continue;
       const blocks = ctx.availabilityBlocksByNurse.get(view.nurse.id);
       if (!blocks) continue;
@@ -142,6 +140,7 @@ export const accommodationBlocksRule: Rule<AccommodationBlocksParams> = {
               `${describeDate(view.assignment.date)} inside a recorded accommodation ` +
               `(${describeOccurrence(block, occurrence)}).`,
             {
+              amount: 1,
               nurseIds: [view.nurse.id],
               dates: [view.assignment.date],
               assignmentIds: [view.assignment.id],

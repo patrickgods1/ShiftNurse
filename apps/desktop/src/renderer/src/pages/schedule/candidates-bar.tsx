@@ -202,7 +202,9 @@ export function CandidatesBar({
             </span>
           ))}
           {current?.fellBackFrom
-            ? ` · ran ${SOLVER_LABELS[current.solver].name} instead of ${SOLVER_LABELS[current.fellBackFrom.solver].name}`
+            ? current.fellBackFrom.solver === current.solver
+              ? ' · CP-SAT windows stopped early'
+              : ` · ran ${SOLVER_LABELS[current.solver].name} instead of ${SOLVER_LABELS[current.fellBackFrom.solver].name}`
             : ''}
         </p>
       ) : null}

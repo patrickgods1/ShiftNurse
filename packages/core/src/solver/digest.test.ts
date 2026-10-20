@@ -24,6 +24,7 @@ const flag = (code: Violation['code'], nurseId: string): Violation => ({
   nurseIds: [nurseId],
   dates: [],
   assignmentIds: [],
+  amount: 1,
 });
 
 describe('a schedule in the numbers a manager compares', () => {
