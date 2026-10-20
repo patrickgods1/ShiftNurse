@@ -34,7 +34,8 @@
   shift. An unknown key throws. An assignment's date, shift and nurse change only by a move;
   `AssignmentPatch` carries flags and notes, and IPC creates are always `source: 'manual'`.
 - **Moving a shift is delete + create in one `transact`.** `nurseId` is immutable on an
-  assignment; the move carries `isCharge`/`isOvertime`/`notes` across and refuses locked rows
+  assignment; the move carries `isCharge`/`isOvertime`/`notes` across (`target.isCharge` overrides the
+  carried flag; resolutions set it) and refuses locked rows
   and a shift with a recorded holdover (the minutes belong to that nurse and day; `approveSwap`
   refuses the same way).
   Every create (and so every move, cover, backfill, resolution and Generate save) refuses a date

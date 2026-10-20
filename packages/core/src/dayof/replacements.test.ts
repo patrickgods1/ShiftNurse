@@ -325,6 +325,32 @@ describe('findReplacements', () => {
     });
   });
 
+  it('calls a priced nurse before one with no pay rate at the same hours', () => {
+    resetFixtureCounters();
+    const absent = makeNurse({ id: 'z-absent', firstName: 'Priya', lastName: 'Nair' });
+    // The unpriced nurse sorts first by id, so only her cost can put her behind.
+    const unpriced = makeNurse({ id: 'n-a', firstName: 'Una', lastName: 'Priced' });
+    const priced = makeNurse({ id: 'n-b', firstName: 'Paula', lastName: 'Rate' });
+    const absentShift = assign(absent.id, DAY_12, SAT);
+    const report = findReplacements(
+      replacementInput({
+        nurses: [absent, unpriced, priced],
+        assignments: [absentShift],
+        cost: {
+          // n-b at $50 is 12 × 50 = $600; n-a has no rate and is ranked at the $70 LPN
+          // ceiling, 12 × 70 = $840.
+          payRates: [payRate(50, { nurseId: 'n-b' }), payRate(70, { role: 'LPN' })],
+          differentials: [],
+          overtimeRules: [],
+        },
+        absentAssignmentId: absentShift.id,
+      }),
+    );
+    const straight = report.candidates.filter((c) => c.payTier === 'straight');
+    expect(straight.map((c) => c.nurseId)).toEqual(['n-b', 'n-a']);
+    expect(straight[1]!.cost.pessimisticDelta).toBe(840);
+  });
+
   it('within a tier, calls the nurse who has been called least recently first', () => {
     resetFixtureCounters();
     const absent = makeNurse({ firstName: 'Priya', lastName: 'Nair' });

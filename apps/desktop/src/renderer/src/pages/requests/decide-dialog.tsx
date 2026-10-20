@@ -410,7 +410,17 @@ function ImpactView({
         ))
       )}
       <div className="grid grid-cols-2 gap-3">
-        <ConflictList title="New problems if approved" items={impact.introduced} tone="danger" />
+        <ConflictList
+          title="New problems if approved"
+          items={[
+            ...impact.introduced,
+            ...impact.worsened.map((w) => ({
+              ...w.after,
+              message: `Worse than now: ${w.after.message}`,
+            })),
+          ]}
+          tone="danger"
+        />
         <ConflictList title="Problems it settles" items={cleared} tone="success" />
       </div>
       <div className="rounded-md border border-border p-3">

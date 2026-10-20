@@ -1006,6 +1006,37 @@ describe('overtime judged over the pay period', () => {
   });
 });
 
+describe('authorised overtime and the contract ceiling', () => {
+  // Locked D12s on Jan 5, 7, 9, 11, 13 and 17: 72h of a 72h contract. Flagged, Jan 11 is
+  // authorised overtime, leaving 60h straight time; a 12 on Jan 15 makes 72 ≤ 76. Unflagged it
+  // makes 84 > 76. The week of Jan 11 is then 48h, within the cap; the overtime threshold is
+  // switched off so only the contract decides.
+  const input = (flagged: boolean) =>
+    solveInputFrom({
+      nurses: [makeNurse({ id: 'ada', contractedHoursPerPeriod: 72, isChargeEligible: true })],
+      shiftTypes: [DAY_12, NIGHT_12],
+      assignments: [
+        ...['2026-01-05', '2026-01-07', '2026-01-09', '2026-01-13', '2026-01-17'].map((d) =>
+          assign('ada', DAY_12, d, { isLocked: true }),
+        ),
+        assign('ada', DAY_12, '2026-01-11', { isLocked: true, isOvertime: flagged }),
+      ],
+      ruleParams: { 'max-hours-per-week': { requireOvertimeAuthorisation: false } },
+    });
+  const jan15 = (model: SolverModel) =>
+    model.shiftAt(model.dateIdx.get(isoDate('2026-01-15'))!, DAY_12);
+
+  it('does not count a locked overtime shift against the contract ceiling', () => {
+    const model = new SolverModel(input(true));
+    expect(model.eligible(0, jan15(model), 'RN')).toBe(true);
+  });
+
+  it('still counts the same locked shift when it is not marked as overtime', () => {
+    const model = new SolverModel(input(false));
+    expect(model.eligible(0, jan15(model), 'RN')).toBe(false);
+  });
+});
+
 describe('contracted hours across the start of a schedule', () => {
   // Schedule Sun 11 – Sat 24 Jan 2026; the fixture unit's pay periods run Sun 4 – Sat 17 and
   // Sun 18 – Sat 31. Last schedule worked D12 Sun 4 – Thu 8 Jan: 5 × 12 = 60h of a 72h contract.
@@ -1033,6 +1064,41 @@ describe('contracted hours across the start of a schedule', () => {
     const tuesday = model.shiftAt(model.dateIdx.get(isoDate('2026-01-13'))!, DAY_12);
     expect(model.eligible(0, tuesday, 'RN')).toBe(false);
     expect(model.canAdd(0, model.make(0, tuesday))).toBe(false);
+  });
+
+  it('leaves a published overtime shift out of the room the contract allows', () => {
+    // Last schedule worked D12 Sun 4 – Wed 7 Jan: 48h, the Wednesday marked authorised overtime.
+    // Flagged, 36h of it is straight time: room 72 + 4 − 48 + 12 = 40h. Unflagged: 72 + 4 − 48 =
+    // 28h. With 12s on Mon 12 and Wed 14 (24h), a third on Fri 16 makes 36h: within 40, past 28.
+    // The week of Jan 11 is then 36h, under the 40h overtime threshold.
+    const withPrior = (flagged: boolean) => {
+      const model = new SolverModel(
+        solveInputFrom({
+          startDate: isoDate('2026-01-11'),
+          endDate: isoDate('2026-01-24'),
+          historyFrom: isoDate('2025-12-14'),
+          nurses: [makeNurse({ id: 'ana', contractedHoursPerPeriod: 72 })],
+          shiftTypes: [DAY_12, NIGHT_12],
+          priorAssignments: [
+            ...assignRun('ana', DAY_12, '2026-01-04', 3, { periodId: 'prev' }),
+            assign('ana', DAY_12, '2026-01-07', { periodId: 'prev', isOvertime: flagged }),
+          ],
+        }),
+      );
+      model.add(assign('ana', DAY_12, '2026-01-12'));
+      model.add(assign('ana', DAY_12, '2026-01-14'));
+      const b = model.bucketOfDate[model.dateIdx.get(isoDate('2026-01-11'))!]!;
+      const friday = model.shiftAt(model.dateIdx.get(isoDate('2026-01-16'))!, DAY_12);
+      return { model, b, friday };
+    };
+    const flagged = withPrior(true);
+    expect(flagged.model.hoursCap[0]![flagged.b]).toBe(40);
+    expect(flagged.model.eligible(0, flagged.friday, 'RN')).toBe(true);
+    expect(flagged.model.canAdd(0, flagged.model.make(0, flagged.friday))).toBe(true);
+    const plain = withPrior(false);
+    expect(plain.model.hoursCap[0]![plain.b]).toBe(28);
+    expect(plain.model.eligible(0, plain.friday, 'RN')).toBe(false);
+    expect(plain.model.canAdd(0, plain.model.make(0, plain.friday))).toBe(false);
   });
 
   it('keeps every bucket as before when no history is given', () => {

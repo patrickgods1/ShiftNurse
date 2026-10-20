@@ -39,7 +39,16 @@ function resolution(id: string, title: string): Resolution {
     impact: {
       coverage: { hardShortfallBefore: 1, hardShortfallAfter: 0, delta: -1 },
       fairness: { unitScoreBefore: 80, unitScoreAfter: 80, delta: 0, affected: [] },
-      cost: { dollarsBefore: 0, dollarsAfter: 0, delta: 0, unpriced: false },
+      cost: {
+        dollarsBefore: 0,
+        dollarsAfter: 0,
+        delta: 0,
+        unpriced: false,
+        overtimeHoursDelta: 0,
+        pessimisticDelta: 0,
+      },
+      shortfallPriceDelta: -1,
+      targetShortfallDelta: -1,
       softViolationsIntroduced: [],
       softViolationsCleared: [],
     },
@@ -64,6 +73,7 @@ const report = {
   ],
   resolutions: [r1],
   summary: { hard: 1, soft: 0, byKind: {}, hardShortfall: 1 },
+  hasPayData: false,
 } as unknown as ConflictReport;
 
 let bridge: FakeBridge;
@@ -148,5 +158,27 @@ describe('resolving a conflict from the Requests page', () => {
     await screen.findByRole('button', { name: 'Apply' });
     expect(screen.getByText('1 fewer slot short')).toBeTruthy();
     expect(screen.queryByText(/-1/)).toBeNull();
+  });
+
+  it('shows how dear an unpriced option is ranked', async () => {
+    const base = resolution('res-u', 'Assign Una Priced');
+    const unpriced: Resolution = {
+      ...base,
+      impact: {
+        ...base.impact,
+        cost: { ...base.impact.cost, unpriced: true, pessimisticDelta: 840 },
+      },
+    };
+    renderWithApp(
+      <ConflictsPanel
+        unitId="unit-1"
+        period={period}
+        report={{ ...report, resolutions: [unpriced], hasPayData: true }}
+        policy={undefined}
+        nursesById={new Map()}
+      />,
+    );
+    await screen.findByRole('button', { name: 'Apply' });
+    expect(screen.getByText('unpriced · up to +$840')).toBeTruthy();
   });
 });

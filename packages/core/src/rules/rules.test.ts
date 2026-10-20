@@ -384,6 +384,63 @@ describe('contracted hours', () => {
     expect(v?.severity).toBe('hard');
   });
 
+  it('lets a nurse work a shift marked as authorised overtime past her contract', () => {
+    // Seven 12s is 84h; the Jan 11 shift is authorised overtime, so 84 − 12 = 72 straight-time
+    // hours against 72 contracted, within the 4h tolerance.
+    const nurse = makeNurse({ contractedHoursPerPeriod: 72 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-05'),
+        assign(nurse.id, DAY_12, '2026-01-07'),
+        assign(nurse.id, DAY_12, '2026-01-09'),
+        assign(nurse.id, DAY_12, '2026-01-11', { isOvertime: true }),
+        assign(nurse.id, DAY_12, '2026-01-13'),
+        assign(nurse.id, DAY_12, '2026-01-15'),
+        assign(nurse.id, DAY_12, '2026-01-17'),
+      ],
+    });
+    expect(codes(s)).not.toContain('over_contracted_hours');
+  });
+
+  it('still refuses straight-time hours past the contract when one shift is overtime', () => {
+    // Eight 12s is 96h, 12 of it authorised overtime: 84 straight-time hours, 12 over the 72.
+    const nurse = makeNurse({ contractedHoursPerPeriod: 72 });
+    const straight = ['2026-01-04', '2026-01-05', '2026-01-07', '2026-01-09'].map((d) =>
+      assign(nurse.id, DAY_12, d),
+    );
+    const overtime = assign(nurse.id, DAY_12, '2026-01-11', { isOvertime: true });
+    const later = ['2026-01-13', '2026-01-15', '2026-01-17'].map((d) =>
+      assign(nurse.id, DAY_12, d),
+    );
+    const s = scenario({ nurses: [nurse], assignments: [...straight, overtime, ...later] });
+    const over = evaluate(s).violations.filter((x) => x.code === 'over_contracted_hours');
+    expect(over).toHaveLength(1);
+    expect(over[0]!.amount).toBe(12);
+    expect(over[0]!.details).toMatchObject({ authorisedOvertimeHours: 12, deltaHours: 12 });
+    expect([...over[0]!.assignmentIds].sort()).toEqual(
+      [...straight, ...later].map((a) => a.id).sort(),
+    );
+    expect(over[0]!.message).toContain('(12h of it authorised overtime), 12h over');
+  });
+
+  it('does not call a nurse short for hours she worked as overtime', () => {
+    // Five 12s is 60h; the overtime shift on Jan 11 makes 72, on target.
+    const nurse = makeNurse({ contractedHoursPerPeriod: 72 });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-05'),
+        assign(nurse.id, DAY_12, '2026-01-07'),
+        assign(nurse.id, DAY_12, '2026-01-09'),
+        assign(nurse.id, DAY_12, '2026-01-11', { isOvertime: true }),
+        assign(nurse.id, DAY_12, '2026-01-13'),
+        assign(nurse.id, DAY_12, '2026-01-15'),
+      ],
+    });
+    expect(codes(s)).not.toContain('under_contracted_hours');
+  });
+
   it('does not call a nurse over contract for being held over: they were not scheduled past it', () => {
     // Six 12s and a 2h holdover is 74h worked against 72h contracted. With the tolerance at 0,
     // only counting the holdover would breach; the 72 scheduled hours sit exactly on target.

@@ -5,6 +5,8 @@
  * Why it matters: a lock is the manager's promise ("Maria works this one, full stop"). A
  * resolution card that quietly takes it away, or an exchange that moves it, breaks that promise
  * in a place nobody is looking, and the solver, the grid and the exchange screen must all agree.
+ * The counters prove deletes and moves near locked rows were actually generated, so the property
+ * is never vacuous.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -78,15 +80,23 @@ function randomUnit(rng: Rng, approvedLeave: boolean): ScenarioOptions {
 }
 
 describe('the manager’s locks', () => {
-  function lockedRowsTouched(approvedLeave: boolean, seed: number): string[] {
+  function lockedRowsTouched(
+    approvedLeave: boolean,
+    seed: number,
+  ): { touched: string[]; deletes: number; moves: number } {
     const rng = new Rng(seed);
     const touched: string[] = [];
-    let actionsSeen = 0;
+    // Only actions on a date that also holds a locked row could have touched a lock; counting
+    // accept_shortfall (every conflict has one) made the guard impossible to fail.
+    let deletes = 0;
+    let moves = 0;
     for (let i = 0; i < CASES; i++) {
       const opts = randomUnit(rng, approvedLeave);
       const locked = new Map(
         (opts.assignments ?? []).filter((a) => a.isLocked).map((a) => [a.id, a]),
       );
+      const byId = new Map((opts.assignments ?? []).map((a) => [a.id, a]));
+      const lockedDates = new Set([...locked.values()].map((a) => a.date));
       // Approved leave outranks a lock (approval lifts locked draft shifts too), so the one
       // allowed touch is lifting a locked shift off the nurse whose approved leave covers it.
       const onApprovedLeave = (nurseId: string, date: string) =>
@@ -100,8 +110,12 @@ describe('the manager’s locks', () => {
       const report = analyseConflicts(solveInputFrom(opts));
       for (const resolution of report.resolutions) {
         for (const action of resolution.actions) {
-          actionsSeen++;
           if (action.type !== 'delete_assignment' && action.type !== 'move_assignment') continue;
+          const target = byId.get(action.assignmentId);
+          if (target && lockedDates.has(target.date)) {
+            if (action.type === 'delete_assignment') deletes++;
+            else moves++;
+          }
           const row = locked.get(action.assignmentId);
           if (!row) continue;
           const liftForLeave =
@@ -114,16 +128,26 @@ describe('the manager’s locks', () => {
         }
       }
     }
-    expect(actionsSeen, `seed ${seed}: generator produced no resolutions`).toBeGreaterThan(0);
-    return touched;
+    return { touched, deletes, moves };
+  }
+
+  function expectNonVacuous(r: { deletes: number; moves: number }, seed: number) {
+    expect(r.moves, `seed ${seed}: no move near a locked row was ever offered`).toBeGreaterThan(0);
+    expect(r.deletes, `seed ${seed}: no delete near a locked row was ever offered`).toBeGreaterThan(
+      0,
+    );
   }
 
   it('never appear in the deletes or moves of a suggested resolution', () => {
-    expect(lockedRowsTouched(false, SEED)).toEqual([]);
+    const r = lockedRowsTouched(false, SEED);
+    expect(r.touched).toEqual([]);
+    expectNonVacuous(r, SEED);
   });
 
   it('only ever lift a locked shift off the nurse whose approved leave covers it', () => {
-    expect(lockedRowsTouched(true, SEED)).toEqual([]);
+    const r = lockedRowsTouched(true, SEED);
+    expect(r.touched).toEqual([]);
+    expectNonVacuous(r, SEED);
   });
 
   it('are never handed to another nurse by an exchange', () => {

@@ -25,7 +25,7 @@ function candidate(nurseId: string, label: string, rank: number) {
     nurseId,
     label,
     payTier: 'straight',
-    cost: { delta: 0, unpriced: false },
+    cost: { delta: 0, unpriced: false, overtimeHoursDelta: 0, pessimisticDelta: 0 },
     burdenIndex: 0,
     softViolationsIntroduced: [],
     rank,

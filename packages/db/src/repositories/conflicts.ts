@@ -198,7 +198,12 @@ export function applyResolution(
         moveAssignment(
           db,
           action.assignmentId,
-          { nurseId: existing.nurseId, shiftTypeId: action.toShiftTypeId, date: action.toDate },
+          {
+            nurseId: existing.nurseId,
+            shiftTypeId: action.toShiftTypeId,
+            date: action.toDate,
+            isCharge: action.isCharge,
+          },
           actor,
           'resolution',
         );

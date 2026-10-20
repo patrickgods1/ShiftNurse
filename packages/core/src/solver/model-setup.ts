@@ -135,7 +135,10 @@ export interface HoursBuckets {
   bucketCount: number;
   /** What the objective chases per bucket: the contract still unscheduled, leave taken off. */
   hoursTarget: number[][];
-  /** The most a bucket may hold before the rule calls it over the contract (the prefilter's cap). */
+  /**
+   * The most straight time a bucket may hold before the rule calls it over the contract (the
+   * prefilter's cap). Published hours marked authorised overtime are left out, as the rule does.
+   */
   hoursCap: number[][];
   hoursCapped: boolean[];
   contractedProRata: number[];
@@ -179,7 +182,7 @@ export function hoursBuckets(
     fteParams.paidLeaveCountsTowardHours
       ? leaveHoursBetween(ctx.paidLeaveByNurse.get(nurseId), periods[b]!.start, periods[b]!.end)
       : 0;
-  const prior = priorHoursByPayPeriod(input, nurses, periods, fteParams);
+  const { prior, priorOvertime } = priorHoursByPayPeriod(input, nurses, periods, fteParams);
 
   const hoursTarget: number[][] = [];
   const hoursCap: number[][] = [];
@@ -206,7 +209,7 @@ export function hoursBuckets(
         targets.push(
           period.underJudged ? whole : share(bucketDays[b] ?? 0) - leaveOnDatesOf(nurse.id, b),
         );
-        caps.push(whole + fteParams.overToleranceHours);
+        caps.push(whole + priorOvertime[n]![b]! + fteParams.overToleranceHours);
       }
     }
     hoursTarget.push(targets);
@@ -228,17 +231,21 @@ export function hoursBuckets(
 /**
  * Each nurse's published hours in each judged pay period, counted as the rule counts them:
  * scheduled (a holdover was not scheduled past the contract), standby only when the rule says,
- * another unit's shifts never. Zero throughout without `historyFrom`, as the rule then reads only
- * this schedule's shifts.
+ * another unit's shifts never — and, apart, the part of them marked authorised overtime, which
+ * counts toward the contract but not against its ceiling. Zero throughout without `historyFrom`,
+ * as the rule then reads only this schedule's shifts.
  */
 function priorHoursByPayPeriod(
   input: SolveInput,
   nurses: readonly Nurse[],
   periods: readonly DateWindow[],
   fteParams: ContractedHoursParams,
-): number[][] {
+): { prior: number[][]; priorOvertime: number[][] } {
   const out = nurses.map(() => new Array<number>(periods.length).fill(0));
-  if (input.historyFrom === undefined || periods.length === 0) return out;
+  const overtime = nurses.map(() => new Array<number>(periods.length).fill(0));
+  if (input.historyFrom === undefined || periods.length === 0) {
+    return { prior: out, priorOvertime: overtime };
+  }
   const nurseIdx = new Map(nurses.map((nurse, i) => [nurse.id, i]));
   const typeById = new Map(input.shiftTypes.map((t) => [t.id, t]));
   for (const a of input.priorAssignments) {
@@ -250,9 +257,11 @@ function priorHoursByPayPeriod(
     if (isElsewhere(type)) continue;
     if (type.isOnCall && !fteParams.onCallCountsTowardHours) continue;
     const b = periods.findIndex((p) => dateInRange(a.date, p.start, p.end));
-    if (b !== -1) out[n]![b]! += type.durationHours;
+    if (b === -1) continue;
+    out[n]![b]! += type.durationHours;
+    if (a.isOvertime) overtime[n]![b]! += type.durationHours;
   }
-  return out;
+  return { prior: out, priorOvertime: overtime };
 }
 
 /** Historical burden, weighted exactly as computeBurden weights it under a current row. */

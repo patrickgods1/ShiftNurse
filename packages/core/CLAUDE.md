@@ -54,6 +54,9 @@
   (scheduled hours, another unit's shifts out, ids in-period only), and "over" needs an in-period
   shift to name. SA's buckets and CP-SAT's contract cap subtract the published hours of that pay
   period (`hoursBuckets`' `hoursCap`, `scheduledHoursExpr`).
+- **Authorised overtime sits outside the contract ceiling.** `fte-target-hours`'s over-contract
+  check leaves out shifts flagged `isOvertime` (the under check counts them), and SA `eligible`
+  and CP-SAT `encodeContractCap` leave out the same pinned rows. The weekly cap still binds.
 - **Rest and tour changes are measured from the shift that ends last.**
   `schedule/preceding.ts`'s `latestEndingBefore` is the one walk (min-rest, tour change). Overlap
   reports every overlapping pair. CP-SAT's rest pairs drop out when a worked shift between them
@@ -336,7 +339,10 @@
 - **A shift's hard shortfall is priced convexly.** `SolverModel.coveragePenalty` charges
   `hardShortfall × s(s+1)/2` for s hard units on one shift; CP-SAT collects each shift's units
   (`EncodeContext.addHardUnits`) and prices them with `CpBuilder.minimiseTriangular`. Slot counts
-  (`hardShortfall()`, the bench's 'floors short', the conflicts engine) stay linear.
+  stay linear: `SolverModel.hardShortfall()`, the bench's 'floors short' and the conflicts
+  engine's `SimState.hardShortfall()` (what `CoverageImpact` and the cards print). Resolution
+  scoring ranks by the convex `SimState.shortfallPrice()` instead (see "An unpriced option is
+  ranked…" below).
 - **A holiday volunteer never overstaffs.** Over target on a holiday a nurse of that role wants to
   work costs `overTarget` plus the largest volunteer reward on that date
   (`SolverModel.overTargetPrice`, read by CP-SAT's `coverageTerms`), so the reward orders
@@ -459,6 +465,12 @@
   per nurse per work week (or pay period) holding overtime hours, daily, seventh-day, consecutive and
   beyond-tour bases included, with `overtimeHours` set and no `expectedHours`; without one the old
   max-hours threshold runs. Never both. Overtime hours are attributed for an unpriced nurse too.
+- **An unpriced option is ranked at the unit's highest rate and never auto-applied.**
+  `CostImpact.pessimisticDelta` prices unpriced shifts at the highest pay rate on file (overtime at
+  the highest multiplier). The resolution ranking and the day-of list sort by it.
+  `selectAutoResolutions` refuses an unpriced option on any unit with a pay rate. Resolution
+  scoring prices shortfall convexly per shift, like Generate (D10), and charges slots left below
+  target.
 - **A per-diem commitment is an alert, not a rule.** `complianceAlerts`' `per_diem_commitment`:
   weekend shifts per four weeks scaled up to the period (`ceil`), and holidays per calendar year
   judged only by the period holding the year's last holiday, counting earlier ones from history.

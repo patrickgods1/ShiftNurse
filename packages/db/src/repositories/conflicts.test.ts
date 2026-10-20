@@ -57,9 +57,18 @@ function mkNurse(firstName: string): string {
 const NO_IMPACT: ResolutionImpact = {
   coverage: { hardShortfallBefore: 1, hardShortfallAfter: 0, delta: -1 },
   fairness: { unitScoreBefore: 80, unitScoreAfter: 80, delta: 0, affected: [] },
-  cost: { dollarsBefore: 1000, dollarsAfter: 1450, delta: 450, unpriced: false },
+  cost: {
+    dollarsBefore: 1000,
+    dollarsAfter: 1450,
+    delta: 450,
+    unpriced: false,
+    overtimeHoursDelta: 0,
+    pessimisticDelta: 450,
+  },
   softViolationsIntroduced: [],
   softViolationsCleared: [],
+  shortfallPriceDelta: -1,
+  targetShortfallDelta: -1,
 };
 
 function resolution(actions: Resolution['actions'], kind: Resolution['kind']): Resolution {
@@ -327,6 +336,7 @@ describe('applying a resolution', () => {
           assignmentId: moved.id,
           toDate: isoDate('2026-01-17'),
           toShiftTypeId: shiftTypeId,
+          isCharge: true,
         },
         { type: 'deny_time_off', timeOffId: request.id },
       ],
@@ -352,6 +362,7 @@ describe('applying a resolution', () => {
           assignmentId: moved.id,
           toDate: isoDate('2026-01-18'),
           toShiftTypeId: shiftTypeId,
+          isCharge: true,
         },
       ],
       'move_assignment',
@@ -362,6 +373,53 @@ describe('applying a resolution', () => {
       ),
     ).toThrow(/no longer exists/);
     expect(auditHistoryFor(handle.db, 'conflict', 'conf_sat_night')).toHaveLength(1);
+  });
+
+  it('writes the charge flag the resolution was simulated with', () => {
+    const ada = mkNurse('Ada');
+    const moveTo = (assignmentId: string, toDate: string, isCharge: boolean) =>
+      resolution(
+        [
+          {
+            type: 'move_assignment',
+            assignmentId,
+            toDate: isoDate(toDate),
+            toShiftTypeId: shiftTypeId,
+            isCharge,
+          },
+        ],
+        'move_assignment',
+      );
+    const apply = (res: Resolution) =>
+      transact(handle.db, (tx) =>
+        applyResolution(tx, periodId, res, ACTOR, { auto: false, reason: 'Covers the night' }),
+      );
+    // The record must say what was written, or the audit trail contradicts the grid.
+    const createdWith = (assignmentId: string) =>
+      auditHistoryFor(handle.db, 'assignment', assignmentId).find((e) => e.action === 'create')
+        ?.after;
+
+    // Simulated as taking charge of an empty shift: written as charge, or the grid shows the
+    // shift with no charge nurse.
+    const plain = createAssignment(
+      handle.db,
+      { periodId, nurseId: ada, shiftTypeId, date: isoDate('2026-01-16'), isCharge: false },
+      ACTOR,
+    );
+    apply(moveTo(plain.id, '2026-01-17', true));
+    expect(listAssignmentsForPeriod(handle.db, periodId)).toEqual([
+      expect.objectContaining({ nurseId: ada, date: '2026-01-17', isCharge: true }),
+    ]);
+    const [charge] = listAssignmentsForPeriod(handle.db, periodId);
+    expect(createdWith(charge!.id)).toMatchObject({ isCharge: true });
+
+    // And the other way: charge on a shift that already has one is dropped, as simulated.
+    apply(moveTo(charge!.id, '2026-01-18', false));
+    expect(listAssignmentsForPeriod(handle.db, periodId)).toEqual([
+      expect.objectContaining({ nurseId: ada, date: '2026-01-18', isCharge: false }),
+    ]);
+    const [plainAgain] = listAssignmentsForPeriod(handle.db, periodId);
+    expect(createdWith(plainAgain!.id)).toMatchObject({ isCharge: false });
   });
 
   it('accepting a shortfall changes no row but goes on the record', () => {

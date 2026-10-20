@@ -19,7 +19,7 @@
  * the one to fight for — with both required counts in `details`.
  */
 
-import { fillsRatioRole, NURSE_ROLES } from '../acuity/demand.js';
+import { fillsRatioRole } from '../acuity/demand.js';
 import type { Id, Nurse, NurseRole, RatioRole, TimeOffRequest } from '../domain/entities.js';
 import { compareDates, dateInRange, describeDateRange, type IsoDate } from '../domain/time.js';
 import { competingRequestPriority } from '../leave/request-priority.js';
@@ -184,7 +184,9 @@ function pendingCovering(timeOff: readonly TimeOffRequest[], date: IsoDate): Tim
  * assignments inside their requested range are lifted — and any cell that ends up shorter
  * than it is today is a competing-time-off conflict. "Shorter than today" is the test rather
  * than "short": a cell nobody is rostered on yet is an understaffing problem, not evidence that
- * these requests compete, and a conflict must implicate the requests it names.
+ * these requests compete, and a conflict must implicate the requests it names. A cell is a role
+ * or the licensed RN + LVN pool a pooled ratio requires, judged by the same slot shortfall the
+ * solver and the what-if use, so a pool emptied by LVN leave is seen though no LVN floor exists.
  */
 function competingTimeOffConflicts(engine: ConflictEngine, state: SimState): Conflict[] {
   const pending = state.timeOff.filter((r) => r.status === 'pending');
@@ -198,25 +200,33 @@ function competingTimeOffConflicts(engine: ConflictEngine, state: SimState): Con
     const displaced = state.view.onDate(date).filter((v) => nurseIdsOff.has(v.nurse.id));
     if (displaced.length === 0) continue;
 
+    const after = engine.state(
+      state.assignments.filter((a) => !(a.date === date && nurseIdsOff.has(a.nurseId))),
+      state.timeOff,
+      state,
+    );
+
     for (const shiftType of engine.shiftTypes) {
       if (!shiftType.active) continue;
       const roster = state.view.onShift(date, shiftType.id);
-      for (const role of NURSE_ROLES) {
-        const min = engine.demand.minFor(date, shiftType.id, role);
-        if (min <= 0) continue;
-        const staffed = roster.filter((v) => v.nurse.role === role);
-        const remaining = staffed.filter((v) => !nurseIdsOff.has(v.nurse.id));
-        const before = Math.max(0, min - staffed.length);
-        const after = Math.max(0, min - remaining.length);
-        if (after <= before) continue;
+      for (const slot of engine.slotsByCell.get(`${date}|${shiftType.id}`) ?? []) {
+        if (slot.min <= 0) continue;
+        const before = state.slotShortfall(date, shiftType.id, slot.role);
+        const afterShort = after.slotShortfall(date, shiftType.id, slot.role);
+        if (afterShort <= before) continue;
 
-        const leaving = staffed.filter((v) => nurseIdsOff.has(v.nurse.id)).map((v) => v.nurse);
+        const role = slot.role;
+        const staffed = state.staffed(date, shiftType.id, role);
+        const remaining = after.staffed(date, shiftType.id, role);
+        const leaving = roster
+          .filter((v) => nurseIdsOff.has(v.nurse.id) && fillsRatioRole(role, v.nurse.role))
+          .map((v) => v.nurse);
         const leavingIds = new Set(leaving.map((n) => n.id));
         const requests = touching.filter((r) => leavingIds.has(r.nurseId));
         const message =
           `${dayLabel(date)} ${shiftType.abbreviation} ${role}: ` +
           `${plural(requests.length, 'pending request')} (${nameList(leaving)}) overlap — ` +
-          `approving all would leave ${remaining.length} of ${min} required.`;
+          `approving all would leave ${remaining} of ${slot.min} required.`;
         out.push({
           id: `competing_time_off:${date}:${shiftType.id}:${role}`,
           kind: 'competing_time_off',
@@ -227,13 +237,13 @@ function competingTimeOffConflicts(engine: ConflictEngine, state: SimState): Con
           nurseIds: leaving.map((n) => n.id),
           timeOffIds: requests.map((r) => r.id),
           message,
-          magnitude: after,
+          magnitude: afterShort,
           details: {
-            staffed: staffed.length,
-            required: min,
-            staffedIfAllApproved: remaining.length,
+            staffed,
+            required: slot.min,
+            staffedIfAllApproved: remaining,
             shortfallNow: before,
-            shortfallIfAllApproved: after,
+            shortfallIfAllApproved: afterShort,
           },
           advisedOrder: competingRequestPriority({
             requests,
@@ -257,17 +267,11 @@ function competingTimeOffConflicts(engine: ConflictEngine, state: SimState): Con
 function hoursConflicts(violations: readonly Violation[]): Conflict[] {
   const out: Conflict[] = [];
   for (const v of violations) {
-    let magnitude: number;
     switch (v.code) {
       case 'under_contracted_hours':
       case 'over_contracted_hours':
-        magnitude = Math.abs(detailNumber(v, 'deltaHours'));
-        break;
       case 'over_max_hours':
-        magnitude = detailNumber(v, 'scheduledHours') - detailNumber(v, 'maxHours');
-        break;
       case 'unauthorised_overtime':
-        magnitude = detailNumber(v, 'overtimeHours');
         break;
       default:
         continue;
@@ -281,7 +285,7 @@ function hoursConflicts(violations: readonly Violation[]): Conflict[] {
       nurseIds: [...v.nurseIds],
       timeOffIds: [],
       message: v.message,
-      magnitude,
+      magnitude: v.amount,
       details: { code: v.code, ruleId: v.ruleId, assignmentIds: v.assignmentIds, ...v.details },
     });
   }

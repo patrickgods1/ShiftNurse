@@ -229,6 +229,11 @@ export class SolverModel {
   // --- Per-nurse counters feeding fairness and hours ---------------------------
   private readonly workedHours: number[];
   private readonly bucketHours: number[][];
+  /**
+   * The part of `bucketHours` on rows marked authorised overtime, which the contract ceiling
+   * leaves out as the rule does. Only pins carry it: the model never writes an overtime row.
+   */
+  private readonly bucketOvertimeHours: number[][];
   private readonly nights: number[];
   private readonly holidays: number[];
   private readonly onCall: number[];
@@ -554,6 +559,9 @@ export class SolverModel {
     this.prior = prior;
     this.workedHours = new Array<number>(n).fill(0);
     this.bucketHours = Array.from({ length: n }, () => new Array<number>(bucketCount).fill(0));
+    this.bucketOvertimeHours = Array.from({ length: n }, () =>
+      new Array<number>(bucketCount).fill(0),
+    );
     this.nights = new Array<number>(n).fill(0);
     this.holidays = new Array<number>(n).fill(0);
     this.onCall = new Array<number>(n).fill(0);
@@ -809,7 +817,8 @@ export class SolverModel {
     if (this.hoursCapped[nurseIdx]) {
       const b = this.bucketOfDate[shift.dateIdx]!;
       const cap = this.hoursCap[nurseIdx]![b]!;
-      if (this.bucketHours[nurseIdx]![b]! + shift.shiftType.durationHours > cap) return false;
+      const straight = this.bucketHours[nurseIdx]![b]! - this.bucketOvertimeHours[nurseIdx]![b]!;
+      if (straight + shift.shiftType.durationHours > cap) return false;
     }
     // The weekly cap binds on every nurse, and the overtime threshold does too unless the
     // solver could authorise overtime — which it never does. It also ignores a holdover's own
@@ -1059,14 +1068,15 @@ export class SolverModel {
       this.weekHours[n]![this.weekOfDate[shift.dateIdx]!]! += sign * st.durationHours;
       this.overtimeHours[n]![this.overtimeOfDate[shift.dateIdx]!]! += sign * st.durationHours;
     }
+    if (!st.isOnCall || this.fteParams.onCallCountsTowardHours) {
+      const b = this.bucketOfDate[shift.dateIdx]!;
+      this.bucketHours[n]![b]! += sign * st.durationHours;
+      if (a.isOvertime) this.bucketOvertimeHours[n]![b]! += sign * st.durationHours;
+    }
     if (st.isOnCall) {
       this.onCall[n]! += sign;
-      if (this.fteParams.onCallCountsTowardHours) {
-        this.bucketHours[n]![this.bucketOfDate[shift.dateIdx]!]! += sign * st.durationHours;
-      }
     } else {
       this.workedHours[n]! += sign * st.durationHours;
-      this.bucketHours[n]![this.bucketOfDate[shift.dateIdx]!]! += sign * st.durationHours;
       if (this.pendingOn[n]![shift.dateIdx]) this.pendingSum += sign;
       // The fairness night burden reads the pay flag; recovery reads the tour, as the rule does.
       if (st.isNight) this.nights[n]! += sign;

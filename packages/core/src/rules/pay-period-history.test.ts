@@ -239,6 +239,7 @@ describe('a pay period the schedule opens in the middle of', () => {
       scheduledHours: 36,
       priorHours: 24,
       paidLeaveHours: 0,
+      authorisedOvertimeHours: 0,
       assignmentIds: ['j12'],
     });
     // The rule reads the same 36h: 72 − 36 = 36h short (counting 5 West's day would make it 48h,

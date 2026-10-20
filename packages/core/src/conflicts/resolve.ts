@@ -13,11 +13,13 @@
  *
  * ## The gate
  *
- * A candidate that introduces a hard violation is never emitted — the same standard the solver
- * holds itself to. Two hard codes are exempt from that test because they are the thing being
- * measured rather than a side effect: `under_contracted_hours` (a floor every nurse starts
- * below, pushed toward by the objective) and the two coverage codes (`understaffed`,
- * `ratio_breach`), which `CoverageImpact` prices in slots.
+ * A candidate is never emitted if it introduces a hard violation, or makes one already there
+ * worse: the same identity, a larger `amount` (`rules/violation-diff.ts`, the comparison the
+ * solver's own gate uses). Three hard codes are exempt because they are the thing being
+ * measured rather than a side effect: `under_contracted_hours` (a floor every nurse starts below)
+ * and the two coverage codes (`understaffed`, `ratio_breach`), which `CoverageImpact` prices in
+ * slots. For competing time off a breach must be new or worse against both the premise and
+ * today's schedule.
  *
  * ## Overtime
  *
@@ -25,7 +27,23 @@
  * overtime threshold with no assignment flagged as authorised, and `over_max_hours` for a week
  * past the absolute cap regardless of authorisation. So a nurse whose only objection is the
  * former is offered as `authorize_overtime` with `isOvertime: true`, which the rule accepts;
- * one past the cap is dropped, because no flag makes that legal.
+ * one past the cap is dropped — including one already past it, since more hours make that
+ * breach worse — because no flag makes that legal. The same retry applies when the contract
+ * ceiling (`over_contracted_hours`) is the objection, alone or beside the missing
+ * authorisation: authorised overtime sits outside that ceiling, so a nurse at her contracted
+ * hours is still offered the shift as overtime.
+ *
+ * ## Hours and budget
+ *
+ * A nurse past an hours limit (`over_max_hours`, `over_contracted_hours`,
+ * `unauthorised_overtime`, at either severity) is offered `remove_assignment` options, one per
+ * unlocked shift the finding names in its `assignmentIds` — the shifts that put her there, never
+ * a fresh scan — titled "Take Ana Cruz off Sat Jan 17 D12", with no replacement. Being under the
+ * contract gets none: fewer shifts cannot fix it. Auto-resolve never takes such a removal. A
+ * budget overrun gets no candidates. Their record-only card keeps the id and kind
+ * `accept_shortfall`, which audit history quotes, but is worded for what is being kept: "Keep
+ * these hours as they are" for hours, "Accept the overrun" for budget; every other kind still
+ * reads "Accept the shortfall".
  *
  * ## Ranking
  *
@@ -37,9 +55,9 @@
 
 import type { Id } from '../domain/entities.js';
 import { DEFAULT_OBJECTIVE_WEIGHTS, type ObjectiveWeights } from '../solver/types.js';
-import { competingOptions, leaveOptions, slotOptions } from './candidates.js';
+import { competingOptions, fteOptions, leaveOptions, slotOptions } from './candidates.js';
 import { ConflictEngine, type SimState } from './engine.js';
-import { dayLabel, plural } from './text.js';
+import { dayLabel, dollars, nurseName, plural } from './text.js';
 import type { Conflict, ConflictInput, Resolution, ResolutionOptions } from './types.js';
 
 // Re-exported so the barrel keeps `scoreResolution` where callers have always found it.
@@ -92,6 +110,8 @@ export function resolveWith(
         candidates = leaveOptions(engine, baseline, conflict, weights, max);
         break;
       case 'fte':
+        candidates = fteOptions(engine, baseline, conflict, weights);
+        break;
       case 'budget':
         break;
     }
@@ -110,18 +130,13 @@ function acceptShortfall(base: SimState, conflict: Conflict): Resolution {
   const shortfall = base.hardShortfall();
   const fairness = base.fairness();
   const total = base.costTotal();
-  const what =
-    conflict.kind === 'budget'
-      ? 'the budget overrun'
-      : conflict.kind === 'fte'
-        ? 'the hours discrepancy'
-        : `${conflict.dates[0] ? `${dayLabel(conflict.dates[0])} ` : ''}${plural(conflict.magnitude, 'slot')} short`;
+  const { title, description } = acceptWording(base, conflict);
   return {
     id: `${conflict.id}/accept_shortfall`,
     conflictId: conflict.id,
     kind: 'accept_shortfall',
-    title: 'Accept the shortfall',
-    description: `Leaves ${what} as it is, recorded as a deliberate decision with your reason.`,
+    title,
+    description,
     actions: [{ type: 'accept_shortfall', conflictId: conflict.id }],
     impact: {
       coverage: { hardShortfallBefore: shortfall, hardShortfallAfter: shortfall, delta: 0 },
@@ -131,12 +146,49 @@ function acceptShortfall(base: SimState, conflict: Conflict): Resolution {
         delta: 0,
         affected: [],
       },
-      cost: { dollarsBefore: total, dollarsAfter: total, delta: 0, unpriced: !base.engine.costCtx },
+      cost: {
+        dollarsBefore: total,
+        dollarsAfter: total,
+        delta: 0,
+        unpriced: !base.engine.costCtx,
+        overtimeHoursDelta: 0,
+        pessimisticDelta: 0,
+      },
       softViolationsIntroduced: [],
       softViolationsCleared: [],
+      shortfallPriceDelta: 0,
+      targetShortfallDelta: 0,
     },
     score: 0,
     nurseIds: [],
     closesConflict: false,
+  };
+}
+
+/**
+ * Only the words change by kind. The id and kind stay `accept_shortfall` because audit history
+ * quotes them; a card telling a manager to "accept the shortfall" on a nurse with too many hours
+ * names the wrong problem.
+ */
+function acceptWording(base: SimState, conflict: Conflict): { title: string; description: string } {
+  const decided = 'recorded as a deliberate decision with your reason.';
+  const nurseId = conflict.nurseIds[0];
+  if (conflict.kind === 'fte') {
+    const whose = nurseId ? `${nurseName(base.engine.nurse(nurseId))}'s` : 'the';
+    return {
+      title: 'Keep these hours as they are',
+      description: `Leaves ${whose} hours as they are, ${decided}`,
+    };
+  }
+  if (conflict.kind === 'budget') {
+    return {
+      title: 'Accept the overrun',
+      description: `Leaves the schedule ${dollars(conflict.magnitude)} over budget, ${decided}`,
+    };
+  }
+  const date = conflict.dates[0];
+  return {
+    title: 'Accept the shortfall',
+    description: `Leaves ${date ? `${dayLabel(date)} ` : ''}${plural(conflict.magnitude, 'slot')} short as it is, ${decided}`,
   };
 }

@@ -2,16 +2,17 @@
  * Simulating and scoring one candidate change.
  *
  * Every resolution option is a hypothetical change applied to a copy of the schedule; this is
- * the half of resolution that measures it — violations introduced and cleared, slots closed,
- * fairness, dollars — and turns that into a ranked `Resolution`. It lives apart from candidate
- * generation so the gate and the score formula (see `scoreResolution`) have one home: a change
- * to how options are judged must not be made in the code that merely proposes them.
+ * the half of resolution that measures it — violations introduced, made worse and cleared,
+ * slots closed, fairness, dollars — and turns that into a ranked `Resolution`. It lives apart
+ * from candidate generation so the gate and the score formula (see `scoreResolution`) have one
+ * home: a change to how options are judged must not be made in the code that merely proposes
+ * them.
  */
 
 import type { Assignment, Id, TimeOffRequest } from '../domain/entities.js';
 import type { IsoDate } from '../domain/time.js';
 import type { Violation } from '../rules/types.js';
-import { diffViolations, violationKey } from '../rules/violation-diff.js';
+import { diffViolations, type ViolationDiff, violationKey } from '../rules/violation-diff.js';
 import type { ObjectiveWeights } from '../solver/types.js';
 import type { ConflictEngine, SimState } from './engine.js';
 import { costImpact, fairnessImpact } from './impact.js';
@@ -33,21 +34,31 @@ const MEASURED_HARD_CODES = new Set(['under_contracted_hours', 'understaffed', '
 /**
  * Higher is better:
  *
- *     score = hardShortfall  × (−coverage.delta)            slots closed, period-wide
- *           + fairness       × fairness.delta                unit mean composite, in points
- *           − cost           × cost.delta                    dollars added
- *           − targetShortfall × softViolationsIntroduced     each advisory warning raised
+ *     score = hardShortfall   × (−shortfallPriceDelta)      convex in slots short per shift (D10)
+ *           − targetShortfall × targetShortfallDelta        slots left below target
+ *           + fairness        × fairness.delta              unit mean composite, in points
+ *           − cost            × cost.pessimisticDelta       dollars added, unpriced at the ceiling
+ *           − targetShortfall × softViolationsIntroduced    each advisory warning raised
  *
- * With the default weights a closed slot is worth 3000, one fairness point 30, one dollar 0.05
- * and one new warning 60 — so covering the shift always beats not covering it, and among the
- * nurses who can, a $600 saving and a one-point fairness swing weigh the same, as they do in
- * the solver's objective. `accept_shortfall` changes nothing and scores 0.
+ * The shortfall term is Generate's: the k-th slot short on one shift costs k × hardShortfall, so
+ * a nurse on a shift three short is worth three slots and one on a shift one short is worth one.
+ * A linear term would rank the two alike, which is the disagreement D10 removed from the solver.
+ * The target term is the solver's too: a cell left below its soft target is a cost there, so it
+ * must be one here, or a move off a cell at target would look free.
+ * Cost reads `pessimisticDelta`, which equals `delta` when everything is priced and prices an
+ * unpriced shift at the unit's highest rate, so a nurse with no rate on file never ranks as free.
+ *
+ * With the default weights closing a lone short slot is worth 3000, one fairness point 30, one
+ * dollar 0.05 and one new warning 60 — so covering the shift always beats not covering it, and
+ * among the nurses who can, a $600 saving and a one-point fairness swing weigh the same, as they
+ * do in the solver's objective. `accept_shortfall` changes nothing and scores 0.
  */
 export function scoreResolution(impact: ResolutionImpact, weights: ObjectiveWeights): number {
   return (
-    weights.hardShortfall * -impact.coverage.delta +
+    weights.hardShortfall * -impact.shortfallPriceDelta -
+    weights.targetShortfall * impact.targetShortfallDelta +
     weights.fairness * impact.fairness.delta -
-    weights.cost * impact.cost.delta -
+    weights.cost * impact.cost.pessimisticDelta -
     weights.targetShortfall * impact.softViolationsIntroduced.length
   );
 }
@@ -72,7 +83,11 @@ export interface Change {
   touchedShifts: readonly ShiftRef[];
   /** Nurses the card and the audit entry name. */
   nurseIds: Id[];
-  title: string;
+  /**
+   * A function when the wording depends on the outcome: whether a shift is paid at overtime
+   * is only known once the nurse's week has been priced.
+   */
+  title: string | ((impact: ResolutionImpact) => string);
   /** Builds the description once the impact is known. */
   describe: (impact: ResolutionImpact) => string;
 }
@@ -95,19 +110,30 @@ export function simulate(
 ): Simulated {
   const after = engine.state(change.assignments, change.timeOff, before);
 
-  const wasThere = collectViolations(before, change);
-  if (known !== before) {
-    for (const [key, v] of collectViolations(known, change)) {
-      if (!wasThere.has(key)) wasThere.set(key, v);
-    }
-  }
-  const isThere = collectViolations(after, change);
-  const { introduced, cleared } = diffViolations([...wasThere.values()], [...isThere.values()]);
+  // Judged by identity and amount: a weekly-hours breach keeps its key however far past the cap
+  // the week goes, so a key-only diff would let an option push a nurse from 60 h to 72 h.
+  const afterList = collectViolations(after, change);
+  const vsBefore = diffViolations(collectViolations(before, change), afterList);
+  const vsKnown =
+    known === before ? vsBefore : diffViolations(collectViolations(known, change), afterList);
+  // `diffViolations` returns the very objects it was given, so membership is by reference.
+  const raisedBy = (d: ViolationDiff) =>
+    new Set<Violation>([...d.introduced, ...d.worsened.map((w) => w.after)]);
+  const raisedVsBefore = raisedBy(vsBefore);
+  const raisedVsKnown = raisedBy(vsKnown);
+  const raised = afterList.filter((v) => raisedVsBefore.has(v) && raisedVsKnown.has(v));
 
-  const hardCodes = introduced
+  const hardCodes = raised
     .filter((v) => v.severity === 'hard' && !MEASURED_HARD_CODES.has(v.code))
     .map((v) => v.code);
   if (hardCodes.length > 0) return { ok: false, hardCodes };
+
+  // Cleared against either schedule, as long as it is not counted twice.
+  const cleared = [...vsBefore.cleared];
+  if (vsKnown !== vsBefore) {
+    const clearedKeys = new Set(vsBefore.cleared.map(violationKey));
+    cleared.push(...vsKnown.cleared.filter((v) => !clearedKeys.has(violationKey(v))));
+  }
 
   const shortfallBefore = before.hardShortfall();
   const shortfallAfter = after.hardShortfall();
@@ -119,8 +145,10 @@ export function simulate(
     },
     fairness: fairnessImpact(before, after),
     cost: costImpact(engine, before, after, change.touchedNurses),
-    softViolationsIntroduced: introduced.filter((v) => v.severity === 'soft'),
+    softViolationsIntroduced: raised.filter((v) => v.severity === 'soft'),
     softViolationsCleared: cleared.filter((v) => v.severity === 'soft'),
+    shortfallPriceDelta: after.shortfallPrice() - before.shortfallPrice(),
+    targetShortfallDelta: after.targetShortfall() - before.targetShortfall(),
   };
 
   return {
@@ -129,7 +157,7 @@ export function simulate(
       id: `${conflict.id}/${change.kind}:${change.idSuffix}`,
       conflictId: conflict.id,
       kind: change.kind,
-      title: change.title,
+      title: typeof change.title === 'function' ? change.title(impact) : change.title,
       description: change.describe(impact),
       actions: change.actions,
       impact,
@@ -140,14 +168,22 @@ export function simulate(
   };
 }
 
-/** Violations of the touched nurses and shifts, keyed for a before/after diff. */
-function collectViolations(state: SimState, change: Change): Map<string, Violation> {
-  const out = new Map<string, Violation>();
-  for (const nurseId of change.touchedNurses) {
-    for (const v of state.nurseViolations(nurseId)) out.set(violationKey(v), v);
-  }
+/**
+ * Violations of the touched nurses and shifts, each nurse and each cell judged once. A list, not
+ * a map: two breaches sharing a key stay two entries for `diffViolations` to pair, and a cell
+ * reached from two touched shifts is not judged twice into a phantom second breach.
+ */
+export function collectViolations(state: SimState, change: Change): Violation[] {
+  const out: Violation[] = [];
+  for (const nurseId of new Set(change.touchedNurses)) out.push(...state.nurseViolations(nurseId));
+  const cells = new Set<string>();
   for (const { date, shiftTypeId } of change.touchedShifts) {
-    for (const v of state.shiftViolationsAround(date, shiftTypeId)) out.set(violationKey(v), v);
+    for (const cell of state.shiftCellsAround(date, shiftTypeId)) {
+      const key = `${cell.date}::${cell.shiftTypeId}`;
+      if (cells.has(key)) continue;
+      cells.add(key);
+      out.push(...state.shiftViolations(cell.date, cell.shiftTypeId));
+    }
   }
   return out;
 }
@@ -164,6 +200,16 @@ function closes(after: SimState, conflict: Conflict): boolean {
         (v) =>
           v.code === 'works_during_approved_time_off' && v.details?.timeOffRequestId === timeOffId,
       );
+  }
+  if (conflict.kind === 'fte') {
+    // An hours finding has no cell; it is gone when the nurse has no finding of that code
+    // over the same dates (the pay period or work week it was raised for).
+    const nurseId = conflict.nurseIds[0];
+    if (!nurseId) return false;
+    const dates = conflict.dates.join(',');
+    return !after
+      .nurseViolations(nurseId)
+      .some((v) => v.code === conflict.details.code && v.dates.join(',') === dates);
   }
   const date = conflict.dates[0];
   if (!date || !conflict.shiftTypeId) return false;

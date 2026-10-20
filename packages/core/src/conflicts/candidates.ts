@@ -1,21 +1,24 @@
 /**
  * Candidate generation — the concrete options offered for each kind of conflict.
  *
- * Builds the hypothetical changes (assign a free nurse, authorise overtime, move a same-day
- * shift, lift a shift from someone on leave, deny one of several competing requests) and their
- * card text, and hands each to `simulate` to be judged. Kept apart from the judging so that
- * adding an option is a change here and never touches the gate or the score.
+ * Builds the hypothetical changes (assign a free nurse, authorise overtime, move a shift
+ * elsewhere in the work week that keeps its minimum, lift a shift from someone on leave, deny one
+ * of several competing requests, take a nurse past an hours limit off one of the shifts that put
+ * them there) and their card text, and hands each to `simulate` to be judged.
+ * Kept apart from the judging so that adding an option is a change here and never touches the
+ * gate or the score.
  */
 
 import { fillsRatioRole } from '../acuity/demand.js';
 import type { Assignment, Id, RatioRole, TimeOffRequest } from '../domain/entities.js';
-import { describeDateRange, type IsoDate } from '../domain/time.js';
+import { dateInRange, describeDateRange, type IsoDate } from '../domain/time.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import { hasValidCredential } from '../rules/coverage-rules.js';
+import { workWeeksIn } from '../rules/hours-rules.js';
 import type { ObjectiveWeights } from '../solver/types.js';
 import type { ConflictEngine, SimState } from './engine.js';
 import { type Change, type ShiftRef, type Simulated, simulate } from './resolution-score.js';
-import { dayLabel, dollars, leaveLabel, nurseName, plural, signed } from './text.js';
+import { dayLabel, dollars, hoursLabel, leaveLabel, nurseName, plural, signed } from './text.js';
 import type { Conflict, Resolution, ResolutionAction, ResolutionImpact } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -43,7 +46,7 @@ interface Prelude {
   idPrefix: string;
   titlePrefix: string;
   leadIn: string;
-  /** Same-day moves make no sense when the point is to take someone off, so the caller opts in. */
+  /** Moves make no sense when the point is to take someone off, so the caller opts in. */
   moves: boolean;
 }
 
@@ -69,6 +72,23 @@ export function slotOptions(
     leadIn: '',
     moves: true,
   });
+}
+
+/**
+ * How the shift is paid, decided after pricing: an unflagged shift can still cross the pay
+ * overtime line, and a flagged one may never reach it. Calling either "straight time" or
+ * "overtime" from the flag alone would put a false sentence in front of the manager.
+ */
+function payPhrase(engine: ConflictEngine, isOvertime: boolean, impact: ResolutionImpact): string {
+  const overtimeHours = engine.costCtx ? impact.cost.overtimeHoursDelta : undefined;
+  if (!isOvertime) {
+    return overtimeHours !== undefined && overtimeHours > 0
+      ? `${hoursLabel(overtimeHours)} at overtime pay`
+      : 'straight time';
+  }
+  return overtimeHours !== undefined && overtimeHours <= 0
+    ? 'authorised extra hours at straight pay'
+    : 'authorised overtime';
 }
 
 function staffingOptions(
@@ -126,7 +146,6 @@ function staffingOptions(
         isCharge: created.isCharge,
         isOvertime,
       };
-      const pay = isOvertime ? 'authorised overtime' : 'straight time';
       const denying = pending.length > 0;
       const change: Change = {
         kind: denying ? 'deny_time_off' : isOvertime ? 'authorize_overtime' : 'assign_available',
@@ -145,18 +164,19 @@ function staffingOptions(
         touchedNurses: [nurse.id, ...prelude.touchedNurses],
         touchedShifts: [here],
         nurseIds: [nurse.id, ...prelude.touchedNurses],
-        title:
+        title: (impact) =>
           prelude.titlePrefix +
           (denying
-            ? `Deny ${nurseName(nurse)}'s ${describeRequests(pending)} and assign them — ${pay}`
-            : `Assign ${who} — ${pay}`),
+            ? `Deny ${nurseName(nurse)}'s ${describeRequests(pending)} and assign them — ` +
+              payPhrase(engine, isOvertime, impact)
+            : `Assign ${who} — ${payPhrase(engine, isOvertime, impact)}`),
         describe: (impact) =>
           [
             prelude.leadIn,
             denying
               ? `Denies ${plural(pending.length, 'pending request')} so ${nurseName(nurse)} can ` +
-                `take ${slotLabel} at ${pay}.`
-              : `Puts ${who} on ${slotLabel} at ${pay}.`,
+                `take ${slotLabel} at ${payPhrase(engine, isOvertime, impact)}.`
+              : `Puts ${who} on ${slotLabel} at ${payPhrase(engine, isOvertime, impact)}.`,
             coverageSentence(impact, conflict),
             costSentence(impact, nurse.id, engine),
             fairnessSentence(impact, engine),
@@ -171,51 +191,95 @@ function staffingOptions(
       out.push(straight.resolution);
       continue;
     }
-    // Only the missing authorisation stood in the way: offer the same shift as overtime.
-    if (straight.hardCodes.every((c) => c === 'unauthorised_overtime')) {
+    // Only the missing authorisation stood in the way, or the contract ceiling that authorised
+    // overtime sits outside: offer the same shift as overtime. The weekly cap still refuses it.
+    if (
+      straight.hardCodes.every(
+        (c) => c === 'unauthorised_overtime' || c === 'over_contracted_hours',
+      )
+    ) {
       const overtime = attempt(true);
       if (overtime.ok) out.push(overtime.resolution);
     }
   }
 
-  // --- Moves off a same-day shift that is above its target for this role.
-  for (const view of prelude.moves ? world.view.onDate(date) : []) {
-    const a = view.assignment;
-    if (a.shiftTypeId === shiftType.id || a.isLocked) continue;
-    if (!fits(a.nurseId)) continue;
-    const nurse = view.nurse;
-    const sourceTarget = engine.demand.targetFor(date, a.shiftTypeId, nurse.role);
-    if (world.staffed(date, a.shiftTypeId, nurse.role) <= sourceTarget) continue;
-    const moved: Assignment = {
-      ...a,
-      shiftTypeId: shiftType.id,
-      isCharge: !hasCharge && nurse.isChargeEligible,
-    };
-    const from = view.shiftType.abbreviation;
-    const change: Change = {
-      kind: 'move_assignment',
-      idSuffix: a.id,
-      actions: [
-        { type: 'move_assignment', assignmentId: a.id, toDate: date, toShiftTypeId: shiftType.id },
-      ],
-      assignments: world.assignments.map((x) => (x.id === a.id ? moved : x)),
-      timeOff: world.timeOff,
-      touchedNurses: [nurse.id],
-      touchedShifts: [here, { date, shiftTypeId: a.shiftTypeId }],
-      nurseIds: [nurse.id],
-      title: `Move ${nurseName(nurse)} (${nurse.role}) from ${from} to ${shiftType.abbreviation}`,
-      describe: (impact) =>
-        [
-          `Moves ${nurseName(nurse)} off ${dayLabel(date)} ${from}, which is above its ` +
-            `${nurse.role} target, onto ${shiftType.abbreviation}.`,
-          coverageSentence(impact, conflict),
-          costSentence(impact, nurse.id, engine),
-          fairnessSentence(impact, engine),
-          warningsSentence(impact),
-        ].join(' '),
-    };
-    const result = simulate(engine, before, conflict, change, weights);
-    if (result.ok) out.push(result.resolution);
+  // --- Moves: hours-neutral within the work week, so the nurse's week and pay period stay
+  // where they were. A source qualifies by its hard minimum, not its target: a shift at target
+  // but above its minimum can spare someone, and the soft loss below target is priced by
+  // `targetShortfallDelta` rather than ruled out here.
+  const week = workWeeksIn({ start: date, end: date }, engine.maxHoursParams.workWeekStartsOn)[0]!;
+  const moveDates = prelude.moves
+    ? engine.dates.filter((d) => dateInRange(d, week.start, week.end))
+    : [];
+  for (const d of moveDates) {
+    for (const view of world.view.onDate(d)) {
+      const a = view.assignment;
+      if (!view.inPeriod || (d === date && a.shiftTypeId === shiftType.id)) continue;
+      if (a.isLocked) continue;
+      // `moveAssignment` refuses a held-over row: the minutes belong to the day that worked them.
+      if ((a.holdoverMinutes ?? 0) > 0) continue;
+      if (!fits(a.nurseId)) continue;
+      const nurse = view.nurse;
+      if (d !== date && world.view.isAssignedOn(nurse.id, date)) continue;
+      // Denying a pending request is its own option; a move never decides one silently.
+      if (approvedLeaveOn(world.ctx, nurse.id, date)) continue;
+      if (world.pendingOn(nurse.id, date).length > 0) continue;
+      const atMinimum = (engine.slotsByCell.get(`${d}|${a.shiftTypeId}`) ?? []).some(
+        (slot) =>
+          slot.min > 0 &&
+          fillsRatioRole(slot.role, nurse.role) &&
+          world.staffed(d, a.shiftTypeId, slot.role) <= slot.min,
+      );
+      if (atMinimum) continue;
+      const { holdoverMinutes: _minutes, holdoverMandated: _mandated, ...rest } = a;
+      const moved: Assignment = {
+        ...rest,
+        date,
+        shiftTypeId: shiftType.id,
+        isCharge: !hasCharge && nurse.isChargeEligible,
+      };
+      const sameDay = d === date;
+      const from = sameDay
+        ? view.shiftType.abbreviation
+        : `${dayLabel(d)} ${view.shiftType.abbreviation}`;
+      const to = sameDay ? shiftType.abbreviation : `${dayLabel(date)} ${shiftType.abbreviation}`;
+      const hoursChange = shiftType.durationHours - view.shiftType.durationHours;
+      const change: Change = {
+        kind: 'move_assignment',
+        idSuffix: a.id,
+        actions: [
+          {
+            type: 'move_assignment',
+            assignmentId: a.id,
+            toDate: date,
+            toShiftTypeId: shiftType.id,
+            isCharge: moved.isCharge,
+          },
+        ],
+        assignments: world.assignments.map((x) => (x.id === a.id ? moved : x)),
+        timeOff: world.timeOff,
+        touchedNurses: [nurse.id],
+        touchedShifts: [here, { date: d, shiftTypeId: a.shiftTypeId }],
+        nurseIds: [nurse.id],
+        title: `Move ${nurseName(nurse)} (${nurse.role}) from ${from} to ${to}`,
+        describe: (impact) =>
+          [
+            `Moves ${nurseName(nurse)} off ${dayLabel(d)} ${view.shiftType.abbreviation}, which ` +
+              `keeps its ${nurse.role} minimum without them, onto ${to}` +
+              (sameDay
+                ? '.'
+                : hoursChange === 0
+                  ? '; their hours are unchanged.'
+                  : `; their hours change by ${hoursChange > 0 ? '+' : '−'}${hoursLabel(Math.abs(hoursChange))}.`),
+            coverageSentence(impact, conflict),
+            costSentence(impact, nurse.id, engine),
+            fairnessSentence(impact, engine),
+            warningsSentence(impact),
+          ].join(' '),
+      };
+      const result = simulate(engine, before, conflict, change, weights);
+      if (result.ok) out.push(result.resolution);
+    }
   }
 
   return out;
@@ -313,6 +377,65 @@ export function leaveOptions(
   replacements.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
   // The lift-only option and the shortfall option always survive the cap.
   out.push(...replacements.slice(0, Math.max(0, max - 2)));
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled past an hours limit: take them off one of the shifts that put them there
+// ---------------------------------------------------------------------------
+
+/** The hours findings a removal can fix; being under the contract is never fixed by fewer shifts. */
+const OVER_HOURS_CODES = new Set([
+  'over_max_hours',
+  'over_contracted_hours',
+  'unauthorised_overtime',
+]);
+
+/**
+ * One removal per shift the finding names (`assignmentIds`, exactly its in-period contributors),
+ * never a fresh scan: a shift from another week cannot bring this week's hours down, and offering
+ * it would read as a fix that is not one. A locked row was pinned by the manager, so it is not
+ * offered. No replacement is proposed — the hours are the problem, not the cover.
+ */
+export function fteOptions(
+  engine: ConflictEngine,
+  base: SimState,
+  conflict: Conflict,
+  weights: ObjectiveWeights,
+): Resolution[] {
+  if (!OVER_HOURS_CODES.has(String(conflict.details.code))) return [];
+  const nurseId = conflict.nurseIds[0];
+  if (!nurseId) return [];
+  const nurse = engine.nurse(nurseId);
+  const ids = new Set((conflict.details.assignmentIds as Id[] | undefined) ?? []);
+  const out: Resolution[] = [];
+  for (const a of base.assignments) {
+    if (!ids.has(a.id) || a.isLocked) continue;
+    const label = `${dayLabel(a.date)} ${engine.shiftType(a.shiftTypeId).abbreviation}`;
+    const change: Change = {
+      kind: 'remove_assignment',
+      idSuffix: a.id,
+      actions: [{ type: 'delete_assignment', assignmentId: a.id }],
+      assignments: base.assignments.filter((x) => x.id !== a.id),
+      timeOff: base.timeOff,
+      touchedNurses: [nurseId],
+      touchedShifts: [{ date: a.date, shiftTypeId: a.shiftTypeId }],
+      nurseIds: [nurseId],
+      title: `Take ${nurseName(nurse)} off ${label}`,
+      describe: (impact) =>
+        [
+          `Lifts ${nurseName(nurse)}'s ${label} to bring their hours back within the limit.`,
+          impact.coverage.delta > 0
+            ? `Leaves ${plural(impact.coverage.delta, 'slot')} more short across the period.`
+            : 'Leaves no shift short.',
+          costSentence(impact, nurseId, engine),
+          fairnessSentence(impact, engine),
+          warningsSentence(impact),
+        ].join(' '),
+    };
+    const result = simulate(engine, base, conflict, change, weights);
+    if (result.ok) out.push(result.resolution);
+  }
   return out;
 }
 
@@ -437,7 +560,11 @@ function coverageSentence(impact: ResolutionImpact, conflict: Conflict): string 
 function costSentence(impact: ResolutionImpact, nurseId: Id, engine: ConflictEngine): string {
   if (!engine.costCtx) return 'No pay data, so the cost is not priced.';
   if (impact.cost.unpriced) {
-    return `Cost unknown: no pay rate on file for ${nurseName(engine.nurse(nurseId))}.`;
+    const name = nurseName(engine.nurse(nurseId));
+    if (engine.unpricedRateCeiling > 0) {
+      return `Cost unknown: no pay rate on file for ${name}; ranked as up to ${dollars(impact.cost.pessimisticDelta)} at the unit's highest rate.`;
+    }
+    return `Cost unknown: no pay rate on file for ${name}.`;
   }
   if (impact.cost.delta === 0) return 'Costs nothing extra.';
   return impact.cost.delta > 0

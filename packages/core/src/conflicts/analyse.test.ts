@@ -170,6 +170,57 @@ describe('auto-resolve', () => {
     expect(chosen).toHaveLength(1);
   });
 
+  it('never takes a shift away from a nurse on its own to fix her hours', () => {
+    // Ana at 84 h on one complete pay period (Jan 4 – 17): 12 over her 72, and 48 h in the week
+    // of Jan 11 with nothing authorised. Nothing needs staffing, so a removal opens no hole.
+    const ana = named('Ana', 'Cruz', { id: 'ana' });
+    const report = analyseConflicts(
+      solveInputFrom({
+        nurses: [ana],
+        shiftTypes: [DAY_12, NIGHT_12],
+        coverageRequirements: [],
+        assignments: [
+          assign('ana', DAY_12, '2026-01-04', { id: 'ana-sun', isLocked: true }),
+          ...[
+            '2026-01-06',
+            '2026-01-08',
+            '2026-01-11',
+            '2026-01-13',
+            '2026-01-15',
+            '2026-01-17',
+          ].map((d) => assign('ana', DAY_12, d, { id: `ana-${d.slice(-2)}` })),
+        ],
+      }),
+    );
+    const contract = report.resolutions.filter(
+      (r) => r.conflictId === 'fte:over_contracted_hours:ana:2026-01-04',
+    );
+    expect(contract[0]).toMatchObject({ kind: 'remove_assignment', closesConflict: true });
+    expect(
+      selectAutoResolutions(report, {
+        enabled: true,
+        maxCostDelta: 1_000_000,
+        maxFairnessDrop: 100,
+      }),
+    ).toEqual([]);
+  });
+
+  it('never lets auto-resolve hand a shift to a nurse with no pay rate, however generous the ceiling', () => {
+    const unpriced = makeNurse({ id: 'z-unpriced', firstName: 'Unpriced', isChargeEligible: true });
+    const report = analyseConflicts(
+      weekendUnit([unpriced], 1, {
+        cost: { payRates: [payRate(70, { role: 'LPN' })], differentials: [], overtimeRules: [] },
+      }),
+    );
+    expect(report.hasPayData).toBe(true);
+    const chosen = selectAutoResolutions(report, {
+      enabled: true,
+      maxCostDelta: 1_000_000,
+      maxFairnessDrop: 100,
+    });
+    expect(chosen).toEqual([]);
+  });
+
   it('auto-resolve never accepts a shortfall or denies leave on its own', () => {
     const priya = named('Priya', 'Nair');
     const report = analyseConflicts(
@@ -256,6 +307,7 @@ describe('auto-resolve applying several fixes from one analysis', () => {
             assignmentId: 'cy-15th',
             toDate: isoDate('2026-01-07'),
             toShiftTypeId: NIGHT_12.id,
+            isCharge: false,
           },
         ],
       ),
@@ -281,6 +333,7 @@ describe('auto-resolve applying several fixes from one analysis', () => {
             assignmentId: 'ben-7th',
             toDate: isoDate('2026-01-20'),
             toShiftTypeId: NIGHT_12.id,
+            isCharge: false,
           },
         ],
       ),
@@ -355,6 +408,24 @@ describe('time-off what-if', () => {
     // Capacity is read for each day asked for that has a floor, whatever the draft holds:
     // this unit only staffs Saturday's night, so Sunday needs nobody.
     expect(impact.capacity.map((d) => d.date)).toEqual([SAT]);
+  });
+
+  it('approving a request that leaves an already-short night two short says it is worse', () => {
+    const priya = named('Priya', 'Nair');
+    const ana = named('Ana', 'Cruz');
+    const input = weekendUnit([priya, ana], 2, {
+      assignments: [assign(priya.id, NIGHT_12, SAT)],
+      timeOff: [timeOff(priya.id, SAT, SAT, { status: 'pending' })],
+    });
+
+    const impact = timeOffImpact(input, `to-${priya.id}-${SAT}`, 'approved');
+
+    // The night was already one short, so it is not a new problem, but it gets deeper.
+    expect(impact.introduced.map((c) => c.id)).not.toContain(NIGHT_ID);
+    expect(impact.worsened).toHaveLength(1);
+    expect(impact.worsened[0]!.before.id).toBe(NIGHT_ID);
+    expect(impact.worsened[0]!.before.magnitude).toBe(1);
+    expect(impact.worsened[0]!.after.magnitude).toBe(2);
   });
 
   it('denying the request orphans nothing and clears the competing warning', () => {

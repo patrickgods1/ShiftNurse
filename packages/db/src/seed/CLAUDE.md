@@ -30,10 +30,11 @@
   off, and to the *forecast* census the rule engine judges by. Every demo's test runs Generate
   on its draft at the app's default budget and requires every floor filled, and requires fewer
   than 5% of nurse-pay-periods to read "under contract" (paid leave and sick calls are credited).
-  A nurse at contract who picks up a call-off still reads "over contract": the rule counts any
-  hours past it. The contracted hours are 72h a pay period for full-time 12-hour
-  staff (three 12s under a 40h overtime threshold). Changing floors, census or the roster mix
-  means re-running the demo tests in `seed/demo/`. The VA demo is a compressed biweekly
+  A nurse at contract who picks up a call-off still reads "over contract" unless the pick-up is
+  marked authorised overtime, which the contract ceiling leaves out. The contracted hours are
+  72h a pay period for full-time 12-hour staff (three 12s under a 40h overtime threshold).
+  Changing floors, census or the roster mix means re-running the demo tests in `seed/demo/`.
+  The VA demo is a compressed biweekly
   schedule: full-time rows carry a `shortShift` (one D8 a pay period on top of six 12s, 80h),
   which the engine holds hours back for and places in a pass of its own, and its rule set judges
   overtime by pay period. The D8 runs inside the day 12 (`within: 'D12'`), which covers it, and

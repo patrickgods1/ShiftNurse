@@ -775,6 +775,8 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
       at save and at judging, presets tighten booleans, loosening a law's figure needs a reason,
       CA sick caps in hours or days, OR/AK preset corrections, nested 8s in the "both" pattern
       (verify: npm run check; smoke; seed:demo and seed:scenarios succeed)
+- [x] Phase 13 — Conflicts engine: worsened breaches, cross-day moves, authorised OT outside the
+      FTE ceiling, unpriced ranked pessimistically (verify: npm run check; smoke)
 
 ---
 
