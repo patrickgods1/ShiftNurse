@@ -11,7 +11,7 @@
   `pay` (rates, differentials, overtime, budget), `ledger`, `incompatibility` (groups of nurses
   kept apart, migration 0011), shared `patch` (`patchOf`) and `bulk`
   (`insertRows`), `publish` (M12:
-  `publishSchedule` writes a `schedule_version` + status + ledger; `requireChangeReason` /
+  `publishSchedule` (takes `ShiftNurseTx`) writes a `schedule_version` + status + ledger; `requireChangeReason` /
   `recordScheduleChange` are the post-publish change log; M15: `solver` (the per-unit
   `solver_settings`) and `solve-input` (`loadPeriodInput`, the one definition of a period's
   `SolveInput`, shared by Generate, conflicts, cost, grid validation and the solver benchmark)).
@@ -33,6 +33,7 @@
   into a row once let `{ unitId }` move a nurse between units and `{ date }` move a locked
   shift. An unknown key throws. An assignment's date, shift and nurse change only by a move;
   `AssignmentPatch` carries flags and notes, and IPC creates are always `source: 'manual'`.
+  `auditedUpdate` writes nothing for an empty patch and still audits it (the manager pressed Save).
 - **Moving a shift is delete + create in one `transact`.** `nurseId` is immutable on an
   assignment; the move carries `isCharge`/`isOvertime`/`notes` across (`target.isCharge` overrides the
   carried flag; resolutions set it) and refuses locked rows
@@ -45,7 +46,11 @@
   its call log must outlive the id they point at — the same reason `shift_swap` has no assignment
   FK. Migration 0005 rebuilds `call_attempt` before dropping `call_off`: the drizzle migrator runs a
   file inside one transaction, where `PRAGMA foreign_keys=OFF` is a no-op and a parent drop
-  cascades into its children.
+  cascades into its children. Sick hours are credited only once the shift is off the schedule and
+  not back on it, and never for a cancelled call-off.
+- **Mappers omit absent keys (`optKey`) and throw on a damaged JSON version or change-log row.**
+- **Real instants against local days go through `local-days.ts`** (`instantWindow` +
+  `onLocalDays`), never `dayNumber × MS_PER_DAY` alone.
 - **The ledger's `periodId` has no foreign key on purpose:** imported history uses synthetic
   `import:<start>` ids for pay periods that predate the app. A historical re-import's audit row
   holds the replaced and written rows in full.
@@ -118,3 +123,20 @@
 - **Approve-and-lift reads from the day before the leave** and lifts (draft) or reports (published)
   the night dated then only if that period's own rule set has the time-off rule on with
   `nightShiftEndingOnLeaveCounts`, judged by core's `overlappingLeaveDate` (window, not `isNight`).
+- **A coverage floor is unique per (unit, shift type, role, weekday) or per (..., date), with exactly
+  one of weekday/date and min ≤ target.** The repository refuses in words; migration
+  `0041_coverage_floor_keys` repaired older files, keeping the row core was reading (the highest
+  rowid), and audited each change as actor `'upgrade'`.
+- **A pay rate is unique per (nurse, start date) or per (role default, start date).** The
+  repository refuses a second one in words; migration `0042_pay_rate_keys` kept the rate that was
+  already pricing shifts (the lowest rowid). Every cost writer checks its numbers itself, because
+  seeds and presets bypass IPC.
+- **Validation triggers (migration `0043_validation_triggers`) backstop nurse
+  role/employment/FTE/contract/dates, unit pay period, and period status/dates.**
+  `nurse_keeps_history` refuses deleting a nurse with assignments, change-log or ledger rows. These
+  are triggers because a CHECK needs a table rebuild; the update triggers fire only on the guarded
+  columns (`BEFORE UPDATE OF`). `float_record.shift_type_id` no longer cascades (migration 0044).
+- **Employee ids match case-insensitively (core `sameEmployeeId`).** A roster import updates the
+  stored nurse whose id differs only by case (the stored spelling is kept), a case-twin is refused
+  at create and update, and an import whose id matches two stored nurses is refused before any
+  write. No `lower()` unique index: an existing file may already hold twins.

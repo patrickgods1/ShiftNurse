@@ -786,6 +786,10 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
 - [x] Phase 16 — Renderer: Roster editors and import (drawer keyed by nurse, preferences load
       guard, one-transaction new credential, confirmed revoke, accommodation basis kept, preceptor
       eligibility, CSV import plan with opt-in reactivation) (verify: npm run check; smoke)
+- [x] Phase 17 — Database validation sweep: cancelled call-offs credit no sick pay, natural keys
+      for coverage floors and pay rates (repairing migrations), cost/census/leave/day-of-pay writers
+      validate, validation triggers and nurse-history delete guard, absent-key mappers, multi-write
+      functions take ShiftNurseTx, DB tests that can fail (verify: npm run check)
 
 ---
 

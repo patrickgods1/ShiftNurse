@@ -25,9 +25,10 @@ import {
 } from './calloffs.js';
 import { createShiftType, createUnit } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
+import { publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
-import { createAssignment, createPeriod } from './schedule.js';
+import { createAssignment, createPeriod, deleteAssignment } from './schedule.js';
 
 const ACTOR = 'manager';
 let handle: OpenedDatabase;
@@ -92,6 +93,9 @@ describe('last overtime dates', () => {
     overtime(ada, '2026-01-16');
     const quiet = mkNurse('Quiet');
     mkAssignment(quiet, isoDate('2026-01-08'));
+    // Only published history counts as overtime worked; a draft is still a plan.
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: earlierPeriodId }, ACTOR));
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
 
     const last = lastOvertimeDates(handle.db, unitId, isoDate('2026-01-15'));
     expect(last.get(ada)).toBe('2026-01-09');
@@ -129,11 +133,46 @@ describe('last overtime dates', () => {
       ACTOR,
     ).id;
     overtime(visitor, '2026-01-05');
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: earlierPeriodId }, ACTOR));
 
     expect(lastOvertimeDates(handle.db, unitId, isoDate('2026-01-15')).has(visitor)).toBe(false);
     expect(lastOvertimeDates(handle.db, other.id, isoDate('2026-01-15')).get(visitor)).toBe(
       '2026-01-05',
     );
+  });
+
+  it('ignores overtime that only ever existed in an abandoned draft', () => {
+    const history = periodFor('2026-01-02');
+    const abandoned = createPeriod(
+      handle.db,
+      {
+        unitId,
+        name: 'Abandoned',
+        startDate: isoDate('2026-01-08'),
+        endDate: isoDate('2026-01-14'),
+        ruleSetId: handle.db.select().from(s.schedulePeriod).all()[0]!.ruleSetId,
+        ruleSetVersion: handle.db.select().from(s.schedulePeriod).all()[0]!.ruleSetVersion,
+      },
+      ACTOR,
+    ).id;
+    const ada = mkNurse('Ada');
+    const drafter = mkNurse('Drafter');
+    overtime(ada, '2026-01-02');
+    for (const [who, date] of [
+      [ada, '2026-01-09'],
+      [drafter, '2026-01-10'],
+    ] as const) {
+      createAssignment(
+        handle.db,
+        { periodId: abandoned, nurseId: who, shiftTypeId, date: isoDate(date), isOvertime: true },
+        ACTOR,
+      );
+    }
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: history }, ACTOR));
+
+    const last = lastOvertimeDates(handle.db, unitId, isoDate('2026-01-15'));
+    expect(last.get(ada)).toBe('2026-01-02');
+    expect(last.has(drafter)).toBe(false);
   });
 });
 
@@ -155,6 +194,37 @@ describe('paid sick leave', () => {
     const absent = mkAssignment(nurseId, isoDate('2026-01-07'));
     reportCallOff(handle.db, absent.id, ACTOR, 'Car trouble');
     handle.db.delete(s.assignment).run();
+    expect(paidSickCallsForUnit(handle.db, unitId)).toEqual([]);
+  });
+
+  it('credits nothing for a call-off cancelled because the nurse came in, even once the shift is removed', () => {
+    const nurseId = mkNurse('Ada');
+    const absent = mkAssignment(nurseId, isoDate('2026-01-16'));
+    const callOff = reportCallOff(handle.db, absent.id, ACTOR, 'Sick', { paidSickHours: 12 });
+    cancelCallOff(handle.db, callOff.id, ACTOR, 'Came in after all');
+    deleteAssignment(handle.db, absent.id, ACTOR, 'Low census');
+    expect(paidSickCallsForUnit(handle.db, unitId)).toEqual([]);
+  });
+
+  it('credits a covered call-off: the shift went to someone else', () => {
+    const ada = mkNurse('Ada');
+    const bea = mkNurse('Bea');
+    const absent = mkAssignment(ada, isoDate('2026-01-16'));
+    const callOff = reportCallOff(handle.db, absent.id, ACTOR, 'Sick', { paidSickHours: 12 });
+    deleteAssignment(handle.db, absent.id, ACTOR, 'Replaced');
+    const replacement = mkAssignment(bea, isoDate('2026-01-16'));
+    markCallOffCovered(handle.db, callOff.id, replacement.id, ACTOR);
+    expect(paidSickCallsForUnit(handle.db, unitId)).toEqual([
+      { nurseId: ada, date: '2026-01-16', hours: 12 },
+    ]);
+  });
+
+  it('credits nothing when the nurse is back on that same shift, so her hours are not counted twice', () => {
+    const ada = mkNurse('Ada');
+    const absent = mkAssignment(ada, isoDate('2026-01-16'));
+    reportCallOff(handle.db, absent.id, ACTOR, 'Sick', { paidSickHours: 12 });
+    deleteAssignment(handle.db, absent.id, ACTOR, 'Moved');
+    mkAssignment(ada, isoDate('2026-01-16'));
     expect(paidSickCallsForUnit(handle.db, unitId)).toEqual([]);
   });
 
@@ -433,6 +503,17 @@ describe('call-offs', () => {
   });
 });
 
+describe('marking a call-off covered (replacement must exist)', () => {
+  it('refuses a replacement shift that does not exist', () => {
+    const absent = mkAssignment(mkNurse('Ada'), isoDate('2026-01-16'));
+    const callOff = reportCallOff(handle.db, absent.id, ACTOR, 'Sick');
+    expect(() => markCallOffCovered(handle.db, callOff.id, 'asg_missing', ACTOR)).toThrow(
+      'The replacement shift was not found; it may have been removed. Refresh Today and try again.',
+    );
+    expect(getCallOff(handle.db, callOff.id)!.status).toBe('open');
+  });
+});
+
 describe('call attempts', () => {
   function insertAttempt(callOffId: string, nurseId: string, attemptedAt: number): void {
     // Inserted directly so the timestamps are controlled; `logCallAttempt` stamps Date.now().
@@ -493,5 +574,19 @@ describe('call attempts', () => {
     insertAttempt(callOff.id, phoned, Date.parse('2025-06-01T08:00:00Z'));
 
     expect(lastCalledAt(handle.db, unitId, isoDate('2026-01-01')).has(phoned)).toBe(false);
+  });
+
+  it('counts a call from the evening before as before the lookback, in the unit’s own time zone', () => {
+    const phoned = mkNurse('Phoned');
+    const late = mkNurse('Late');
+    const assignment = mkAssignment(mkNurse('Sick'), isoDate('2026-01-16'));
+    const callOff = reportCallOff(handle.db, assignment.id, ACTOR);
+    // New York is UTC-5 in January: 03:00Z is Dec 31 22:00 local, 05:00Z is Jan 1 00:00 local.
+    insertAttempt(callOff.id, phoned, Date.parse('2026-01-01T03:00:00Z'));
+    insertAttempt(callOff.id, late, Date.parse('2026-01-01T05:00:00Z'));
+
+    const last = lastCalledAt(handle.db, unitId, isoDate('2026-01-01'));
+    expect(last.has(late)).toBe(true);
+    expect(last.has(phoned)).toBe(false);
   });
 });

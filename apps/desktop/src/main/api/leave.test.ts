@@ -107,7 +107,9 @@ describe('approving leave and covering it in one step', () => {
 
   it('approves leave on a posted schedule without asking consent, even where the unit requires it', () => {
     const { request } = annAsksOff();
-    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) =>
+      publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+    );
     updateUnit(f.handle.db, f.seeded.unitId, { requireConsentForPostedChanges: true }, ACTOR);
     const [option] = coverOptions(f.handle.db, f.seeded.draftPeriodId, request.id);
     const cover = option!.candidates[0]!.nurseId;
@@ -119,7 +121,9 @@ describe('approving leave and covering it in one step', () => {
 
   it('takes Ann off a published schedule too, under a reason in the change log', () => {
     const { date, request } = annAsksOff();
-    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) =>
+      publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+    );
     const [option] = coverOptions(f.handle.db, f.seeded.draftPeriodId, request.id);
     const cover = option!.candidates[0]!.nurseId;
     const covers = [{ assignmentId: option!.assignment.id, nurseId: cover }];
@@ -155,14 +159,25 @@ function grantAclsToAll() {
   }
 }
 
+/**
+ * The seeded roster's order follows random ids, so rns[1] is sometimes a novice, and a novice
+ * cannot take charge: with only two nurses charge-eligible, the cover then has nobody to hand
+ * charge to and drops out of the candidates. Experienced RNs go first so rns[0] and rns[1] are
+ * the two who can.
+ */
+function makeFirstTwoChargeEligible() {
+  f.rns = [...f.rns.filter((n) => !n.isNovice), ...f.rns.filter((n) => n.isNovice)];
+  for (const [i, nurse] of f.rns.entries()) {
+    updateNurse(f.handle.db, nurse.id, { isChargeEligible: i < 2 }, ACTOR);
+  }
+}
+
 describe('covering a charge nurse’s leave', () => {
   it('keeps a charge nurse on the shift when her approved leave is covered from the dialog', () => {
     const date = addDays(f.seeded.draftStart, 3);
     const grid = scheduleApi(f.handle.db);
     grantAclsToAll();
-    for (const [i, nurse] of f.rns.entries()) {
-      updateNurse(f.handle.db, nurse.id, { isChargeEligible: i < 2 }, ACTOR);
-    }
+    makeFirstTwoChargeEligible();
     grid.createAssignment({
       periodId: f.seeded.draftPeriodId,
       nurseId: f.rns[0]!.id,
@@ -205,9 +220,7 @@ describe('covering leave with the extra rows a pickup needs', () => {
 
   it('hands charge to the eligible nurse on the shift when the cover cannot take it, on a posted schedule', () => {
     grantAclsToAll();
-    for (const [i, nurse] of f.rns.entries()) {
-      updateNurse(f.handle.db, nurse.id, { isChargeEligible: i < 2 }, ACTOR);
-    }
+    makeFirstTwoChargeEligible();
     const { date, request } = annAsksOffOn(f.day.id, true);
     const beaShift = scheduleApi(f.handle.db).createAssignment({
       periodId: f.seeded.draftPeriodId,
@@ -215,7 +228,9 @@ describe('covering leave with the extra rows a pickup needs', () => {
       shiftTypeId: f.day.id,
       date,
     });
-    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) =>
+      publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+    );
     const [option] = coverOptions(f.handle.db, f.seeded.draftPeriodId, request.id);
     const cal = option!.candidates.find((c) => c.takesChargeName !== undefined)!;
     expect(cal.takesChargeName).toBe(`${f.rns[1]!.firstName} ${f.rns[1]!.lastName}`);
@@ -474,7 +489,9 @@ describe('covering several freed shifts at once', () => {
       shiftTypeId: f.day.id,
       date,
     });
-    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) =>
+      publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+    );
     const other = periodsApi(f.handle.db).create({
       unitId: f.seeded.unitId,
       name: 'Overlapping draft',
@@ -504,7 +521,9 @@ describe('covering several freed shifts at once', () => {
 describe('leave over a day she was floated off', () => {
   it('neither offers her floated shift for cover nor takes it off when the leave is approved', () => {
     const { date, shift, request } = annAsksOff();
-    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) =>
+      publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+    );
     transact(f.handle.db, (tx) => markFloatedOff(tx, shift.id, '5 East', ACTOR));
     expect(coverOptions(f.handle.db, f.seeded.draftPeriodId, request.id)).toEqual([]);
     approveAndCover(f.handle.db, f.seeded.draftPeriodId, request.id, 'Approved late: family', []);
@@ -550,7 +569,7 @@ describe('a request that spans a posted period and the draft after it', () => {
         date,
       }),
     );
-    publishSchedule(db, { periodId: P, ledger: [] }, ACTOR);
+    transact(db, (tx) => publishSchedule(tx, { periodId: P, ledger: [] }, ACTOR));
     const request = createTimeOffRequest(
       db,
       {
@@ -687,7 +706,7 @@ describe('a request that spans a posted period and the draft after it', () => {
       shiftTypeId: f.night.id,
       date: f.seeded.draftEnd,
     });
-    publishSchedule(db, { periodId: P, ledger: [] }, ACTOR);
+    transact(db, (tx) => publishSchedule(tx, { periodId: P, ledger: [] }, ACTOR));
     scheduleApi(db).createAssignment({
       periodId: Q,
       nurseId: ann.id,

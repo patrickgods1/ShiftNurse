@@ -13,11 +13,11 @@ import type {
   IsoDate,
   PaidSickCall,
 } from '@shiftnurse/core';
-import { dayNumber, MS_PER_DAY } from '@shiftnurse/core';
 import { and, desc, eq, gte, inArray, lt, lte, ne, sql } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
+import { instantWindow, onLocalDays } from '../local-days.js';
 import { toCallAttempt, toCallOff } from '../mappers.js';
 import { assignment, callAttempt, callOff, nurse, schedulePeriod } from '../schema.js';
 import { getAssignment } from './schedule.js';
@@ -122,6 +122,12 @@ export function markCallOffCovered(
   const before = getCallOff(db, id);
   if (!before) throw new Error(`Call-off ${id} not found`);
   if (before.status !== 'open') throw new Error(`Call-off ${id} is ${before.status}, not open`);
+  // Checked before the write: a covered call-off pointing at nothing would read as filled.
+  if (getAssignment(db, replacementAssignmentId) === undefined) {
+    throw new Error(
+      'The replacement shift was not found; it may have been removed. Refresh Today and try again.',
+    );
+  }
   db.update(callOff)
     .set({ status: 'covered', replacementAssignmentId })
     .where(eq(callOff.id, id))
@@ -246,15 +252,20 @@ export function listCallAttempts(db: DbLike, callOffId: Id): CallAttempt[] {
  *
  * Scoped by `unitId` via a join through `nurse`, the same pattern `timeoff.ts` uses, since
  * `call_attempt` — like `time_off_request` — has no unit column of its own.
+ *
+ * `sinceDate` is a local calendar day: the 36 h SQL pad is only a pre-filter, and `onLocalDays`
+ * decides which attempts count.
  */
 export function lastCalledAt(db: DbLike, unitId: Id, sinceDate: IsoDate): Map<Id, number> {
-  const sinceMillis = dayNumber(sinceDate) * MS_PER_DAY;
+  const { from } = instantWindow(sinceDate);
   const rows = db
     .select({ nurseId: callAttempt.nurseId, attemptedAt: callAttempt.attemptedAt })
     .from(callAttempt)
     .innerJoin(nurse, eq(callAttempt.nurseId, nurse.id))
-    .where(and(eq(nurse.unitId, unitId), gte(callAttempt.attemptedAt, sinceMillis)))
-    .all();
+    .where(and(eq(nurse.unitId, unitId), gte(callAttempt.attemptedAt, from)))
+    .all()
+    // The window is padded; the local-day test settles the edge.
+    .filter((r) => onLocalDays(r.attemptedAt, sinceDate));
   const result = new Map<Id, number>();
   for (const row of rows) {
     const current = result.get(row.nurseId);
@@ -268,15 +279,23 @@ export function lastCalledAt(db: DbLike, unitId: Id, sinceDate: IsoDate): Map<Id
  * Each nurse's last overtime shift dated before `before`, across all of the unit's periods.
  * Contract overtime rosters offer overtime to whoever has gone longest without it, and that
  * history outlives any one schedule period, so it is read from every period rather than the
- * one being repaired. Nurses with no overtime row are absent, which reads as "never".
+ * one being repaired. Only published or archived periods count. Nurses with no overtime row are
+ * absent, which reads as "never".
  */
 export function lastOvertimeDates(db: DbLike, unitId: Id, before: IsoDate): Map<Id, IsoDate> {
   const rows = db
     .select({ nurseId: assignment.nurseId, last: sql<IsoDate>`max(${assignment.date})` })
     .from(assignment)
     .innerJoin(nurse, eq(assignment.nurseId, nurse.id))
+    .innerJoin(schedulePeriod, eq(assignment.periodId, schedulePeriod.id))
     .where(
-      and(eq(nurse.unitId, unitId), eq(assignment.isOvertime, true), lt(assignment.date, before)),
+      and(
+        eq(nurse.unitId, unitId),
+        eq(assignment.isOvertime, true),
+        lt(assignment.date, before),
+        // A draft is a plan, not history: overtime in an abandoned one was never worked.
+        inArray(schedulePeriod.status, ['published', 'archived']),
+      ),
     )
     .groupBy(assignment.nurseId)
     .all();
@@ -322,9 +341,30 @@ export function paidSickCallsElsewhere(
   return creditedSickCalls(db, rows);
 }
 
-/** The one definition of which call-offs credit sick pay, so both readers change together. */
+/**
+ * The one definition of which call-offs credit sick pay, so both readers change together.
+ * Credited once the shift is off the schedule and not back on it; a cancelled call-off (the nurse
+ * came in, or it was logged in error) credits nothing. Back on the same (nurse, date, shift) under
+ * a new id means its hours already count as scheduled.
+ */
 function creditedSickCalls(db: DbLike, callOffs: readonly CallOff[]): PaidSickCall[] {
   return callOffs
-    .filter((c) => (c.paidSickHours ?? 0) > 0 && getAssignment(db, c.assignmentId) === undefined)
+    .filter(
+      (c) =>
+        (c.paidSickHours ?? 0) > 0 &&
+        c.status !== 'cancelled' &&
+        getAssignment(db, c.assignmentId) === undefined &&
+        db
+          .select({ id: assignment.id })
+          .from(assignment)
+          .where(
+            and(
+              eq(assignment.nurseId, c.nurseId),
+              eq(assignment.date, c.date),
+              eq(assignment.shiftTypeId, c.shiftTypeId),
+            ),
+          )
+          .get() === undefined,
+    )
     .map((c) => ({ nurseId: c.nurseId, date: c.date, hours: c.paidSickHours! }));
 }

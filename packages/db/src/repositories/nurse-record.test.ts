@@ -147,17 +147,9 @@ describe('what a nurse’s record holds', () => {
       ),
     );
     // A snapshot that does name the nurse by `nurseId` is still kept out by its entity type.
-    log(
-      Date.now(),
-      'incompatibility_group',
-      group.id,
-      { nurseId: ana.id },
-      { reason: 'HR case 41' },
-    );
-    const now = new Date();
-    const day = isoDate(
-      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
-    );
+    const at = Date.now();
+    log(at, 'incompatibility_group', group.id, { nurseId: ana.id }, { reason: 'HR case 41' });
+    const day = today(new Date(at));
     const rows = nurseRecord(handle.db, ana.id, day, day).audit;
     expect(rows.some((r) => r.entityType === 'incompatibility_group')).toBe(false);
     expect(JSON.stringify(rows)).not.toContain('HR case 41');
@@ -166,17 +158,15 @@ describe('what a nurse’s record holds', () => {
 
 describe('medical leave in a nurse’s record', () => {
   it('leaves out FMLA certifications, which concern a medical condition', () => {
+    const at = Date.now();
     log(
-      Date.now(),
+      at,
       'fmla_certification',
       'cert-1',
       { nurseId: ana.id, note: 'Intermittent: cardiology follow-up' },
       { reason: 'Certified by Dr Lee' },
     );
-    const now = new Date();
-    const day = isoDate(
-      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
-    );
+    const day = today(new Date(at));
     const rows = nurseRecord(handle.db, ana.id, day, day).audit;
     expect(rows.some((r) => r.entityType === 'fmla_certification')).toBe(false);
     expect(JSON.stringify(rows)).not.toContain('cardiology');
@@ -185,14 +175,15 @@ describe('medical leave in a nurse’s record', () => {
 
 describe('accommodations in a nurse’s record', () => {
   it('leaves out an accommodation and its reason, which can name a disability or a faith', () => {
+    const at = Date.now();
     log(
-      Date.now(),
+      at,
       'availability_block',
       'ablk-1',
       { nurseId: ana.id, weekdays: [5] },
       { reason: 'Observes the Sabbath' },
     );
-    const day = today();
+    const day = today(new Date(at));
     const rows = nurseRecord(handle.db, ana.id, day, day).audit;
     expect(rows.some((r) => r.entityType === 'availability_block')).toBe(false);
     expect(JSON.stringify(rows)).not.toContain('Sabbath');
@@ -230,7 +221,7 @@ describe('a nurse’s changes to published shifts', () => {
       },
       ACTOR,
     );
-    publishSchedule(handle.db, { periodId: period.id, ledger: [] }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: period.id, ledger: [] }, ACTOR));
     const place = (nurse: Nurse) =>
       createAssignment(
         handle.db,
@@ -242,6 +233,7 @@ describe('a nurse’s changes to published shifts', () => {
         },
         ACTOR,
       );
+    const at = Date.now();
     for (const nurse of [ana, bea]) {
       const a = place(nurse);
       recordScheduleChange(
@@ -259,11 +251,10 @@ describe('a nurse’s changes to published shifts', () => {
         ACTOR,
       );
     }
-    const now = new Date();
-    const day = isoDate(
-      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
-    );
-    const changes = nurseRecord(handle.db, ana.id, day, day).scheduleChanges;
+    // recordScheduleChange stamps its own instant, so span from before the writes to after them.
+    const from = today(new Date(at));
+    const to = today();
+    const changes = nurseRecord(handle.db, ana.id, from, to).scheduleChanges;
     expect(changes).toHaveLength(1);
     expect(changes[0]).toMatchObject({
       periodName: 'Fall',
@@ -311,14 +302,17 @@ describe('entries recorded against something else', () => {
       { periodId: period.id, nurseId: ana.id, shiftTypeId: day.id, date: isoDate('2026-01-16') },
       ACTOR,
     );
-    publishSchedule(handle.db, { periodId: period.id, ledger: [] }, ACTOR);
+    const at = Date.now();
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: period.id, ledger: [] }, ACTOR));
     recordHoldover(
       handle.db,
       { assignmentId: a.id, minutes: 180, mandated: true, reason: 'Relief never arrived' },
       ACTOR,
     );
-    const now = today();
-    const anas = nurseRecord(handle.db, ana.id, now, now).audit;
+    // The holdover stamps its own instant, so span from before the writes to after them.
+    const from = today(new Date(at));
+    const to = today();
+    const anas = nurseRecord(handle.db, ana.id, from, to).audit;
     expect(anas).toContainEqual(
       expect.objectContaining({
         entityType: 'assignment',
@@ -326,7 +320,7 @@ describe('entries recorded against something else', () => {
         concerns: '2026-01-16',
       }),
     );
-    const beas = nurseRecord(handle.db, bea.id, now, now).audit;
+    const beas = nurseRecord(handle.db, bea.id, from, to).audit;
     expect(beas.filter((r) => r.entityType === 'assignment')).toHaveLength(0);
   });
 

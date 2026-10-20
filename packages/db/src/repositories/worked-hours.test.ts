@@ -102,7 +102,7 @@ afterEach(() => handle.close());
 describe('hours a nurse worked', () => {
   it('counts a 12-hour night worked on another unit at its own length', () => {
     const { period } = unitWithShift('5 West', { durationHours: 12, isOnCall: false });
-    publishSchedule(handle.db, { periodId: period.id }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: period.id }, ACTOR));
     expect(worked()).toEqual([{ date: '2026-06-27', hours: 12 }]);
   });
 
@@ -113,20 +113,20 @@ describe('hours a nurse worked', () => {
 
   it('does not count on-call standby as worked', () => {
     const { period } = unitWithShift('5 West', { durationHours: 12, isOnCall: true });
-    publishSchedule(handle.db, { periodId: period.id }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: period.id }, ACTOR));
     expect(worked()).toEqual([]);
   });
 
   it('counts an archived period’s shifts as worked', () => {
     const { period } = unitWithShift('5 West', { durationHours: 12, isOnCall: false });
-    publishSchedule(handle.db, { periodId: period.id }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: period.id }, ACTOR));
     archivePeriod(handle.db, period.id, ACTOR, 'Closed pay period');
     expect(worked()).toEqual([{ date: '2026-06-27', hours: 12 }]);
   });
 
   it('leaves out shifts outside the dates asked about', () => {
     const { period } = unitWithShift('5 West', { durationHours: 12, isOnCall: false });
-    publishSchedule(handle.db, { periodId: period.id }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: period.id }, ACTOR));
     expect(
       workedShiftsForNurseInRange(handle.db, nurseId, isoDate('2026-06-28'), isoDate('2026-12-31')),
     ).toEqual([]);
@@ -135,7 +135,7 @@ describe('hours a nurse worked', () => {
   describe('a call-off that nobody covered', () => {
     const publishedAssignmentId = () => {
       const { period } = unitWithShift('5 West', { durationHours: 12, isOnCall: false });
-      publishSchedule(handle.db, { periodId: period.id }, ACTOR);
+      transact(handle.db, (tx) => publishSchedule(tx, { periodId: period.id }, ACTOR));
       return handle.db.select().from(assignment).where(eq(assignment.nurseId, nurseId)).get()!.id;
     };
 

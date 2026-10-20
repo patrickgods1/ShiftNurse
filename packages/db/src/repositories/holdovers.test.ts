@@ -59,7 +59,7 @@ function shift(shiftTypeId = dayId) {
 }
 
 function publish() {
-  publishSchedule(handle.db, { periodId, ledger: [] }, ACTOR);
+  transact(handle.db, (tx) => publishSchedule(tx, { periodId, ledger: [] }, ACTOR));
 }
 
 beforeEach(() => {

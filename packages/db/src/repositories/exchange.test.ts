@@ -4,8 +4,8 @@
  *
  * What is easy to get quietly wrong here: a denial or an overriding approval with no reason
  * must touch nothing; approval must refuse a stale `remove` id (the assignment already gone)
- * rather than silently skip it; and approval must refuse outside a draft period, the same rule
- * `applyResolution` follows for resolutions.
+ * rather than silently skip it; and approval on a published period needs a stated reason, like
+ * any change to a posted schedule (an archived one is refused).
  */
 
 import { DEFAULT_FAIRNESS_WEIGHTS, isoDate } from '@shiftnurse/core';
@@ -388,7 +388,7 @@ describe('approveSwap', () => {
 
   it('refuses an exchange that would drop a recorded holdover', () => {
     const { offered, swap } = proposeGiveaway();
-    publishSchedule(handle.db, { periodId }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
     recordHoldover(handle.db, { assignmentId: offered.id, minutes: 60, mandated: false }, ACTOR);
 
     expect(() =>
@@ -504,7 +504,7 @@ describe('approveSwap', () => {
 
   it('needs a reason on a published period and writes the moved shifts to the change log', () => {
     const { offered, swap } = proposeGiveaway();
-    publishSchedule(handle.db, { periodId }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
     const application = {
       remove: [offered.id],
       create: [
@@ -550,7 +550,7 @@ describe('approveSwap', () => {
       { periodId, nurseId: mkNurse('Eli'), shiftTypeId, date: isoDate('2026-01-16') },
       ACTOR,
     );
-    publishSchedule(handle.db, { periodId }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
 
     transact(handle.db, (tx) =>
       approveSwap(
@@ -629,7 +629,7 @@ describe('approveSwap', () => {
 
   it('refuses to approve on an archived period', () => {
     const { offered, swap } = proposeGiveaway();
-    publishSchedule(handle.db, { periodId }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
     archivePeriod(handle.db, periodId, ACTOR, 'Closed pay period');
 
     expect(() =>

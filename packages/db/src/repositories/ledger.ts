@@ -61,7 +61,9 @@ function ledgerRow(input: UpsertFairnessLedgerInput) {
  * Fairness scoring reads this to compare a nurse's recent burden against the team's.
  *
  * Scoped through `nurse`, same reasoning as `timeoff.ts` and `lastCalledAt`: the ledger
- * itself has no unit column.
+ * itself has no unit column. Scoped by the nurse's current home unit: a nurse who transfers
+ * brings her history with her (the burden is hers, not the unit's), and it leaves the old unit's
+ * comparisons. Floats are not included; their history stays with their home unit.
  */
 export function ledgerSince(db: DbLike, unitId: Id, sinceDate: IsoDate): FairnessLedgerEntry[] {
   const rows = db
@@ -176,7 +178,8 @@ export function upsertFairnessLedgerEntry(
  * on this date") under N indistinguishable `'create'` entries.
  */
 export function importFairnessLedgerEntries(
-  db: DbLike,
+  // A transaction, not any handle: these writes are only correct all-or-nothing.
+  db: ShiftNurseTx,
   entries: readonly UpsertFairnessLedgerInput[],
   actor: string,
 ): FairnessLedgerEntry[] {

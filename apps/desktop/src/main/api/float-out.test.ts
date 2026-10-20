@@ -16,6 +16,7 @@ import {
   listChanges,
   listFloatRecords,
   publishSchedule,
+  transact,
   updateNurse,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -205,7 +206,9 @@ describe('floating a nurse off a shift', () => {
 
   it('on a published schedule writes the float to the change log under the float reason', () => {
     everyoneComesIn();
-    publishSchedule(f.handle.db, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR);
+    transact(f.handle.db, (tx) =>
+      publishSchedule(tx, { periodId: f.seeded.draftPeriodId, ledger: [] }, ACTOR),
+    );
     const first = api().order(request()).order[0]!;
     send(first.nurseId);
     const changes = listChanges(f.handle.db, f.seeded.draftPeriodId);

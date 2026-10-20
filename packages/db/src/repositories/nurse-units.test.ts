@@ -22,6 +22,7 @@ import {
   requireWorksOnUnit,
   updateNurseUnit,
 } from './nurse-units.js';
+import { publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
 import { createAssignment, createPeriod } from './schedule.js';
@@ -219,6 +220,74 @@ describe('who floats into a unit for a period', () => {
     expect(
       busyElsewhereFor(handle.db, home, [nurse.id], isoDate('2026-10-04'), isoDate('2026-11-14')),
     ).toEqual({ shiftTypes: [], assignments: [] });
+  });
+
+  it("shows a nurse's published shift on another unit as busy time here", () => {
+    add();
+    const shift = createShiftType(
+      handle.db,
+      {
+        unitId: west,
+        name: 'Day 12',
+        abbreviation: 'D12',
+        startTime: '07:00',
+        durationHours: 12,
+        isNight: false,
+        isOnCall: false,
+        color: '#000',
+        sortOrder: 1,
+        active: true,
+      },
+      ACTOR,
+    );
+    const rules = transact(handle.db, (tx) => saveRuleSet(tx, defaultRuleSet(west), ACTOR));
+    const period = (name: string, startDate: string, endDate: string) =>
+      createPeriod(
+        handle.db,
+        {
+          unitId: west,
+          name,
+          startDate: isoDate(startDate),
+          endDate: isoDate(endDate),
+          ruleSetId: rules.id,
+          ruleSetVersion: rules.version,
+        },
+        ACTOR,
+      );
+    const shiftOn = (periodId: string, date: string) =>
+      createAssignment(
+        handle.db,
+        { periodId, nurseId: nurse.id, shiftTypeId: shift.id, date: isoDate(date) },
+        ACTOR,
+      );
+    const published = period('Early', '2026-10-04', '2026-10-11');
+    const tenth = shiftOn(published.id, '2026-10-10');
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: published.id }, ACTOR));
+    // A draft blocks the nurse here too: its manager is still planning her.
+    const draft = period('Late', '2026-10-12', '2026-11-14');
+    const twelfth = shiftOn(draft.id, '2026-10-12');
+
+    const busy = busyElsewhereFor(
+      handle.db,
+      home,
+      [nurse.id],
+      isoDate('2026-10-04'),
+      isoDate('2026-11-14'),
+    );
+    expect(busy.assignments.map((a) => [a.id, a.nurseId, a.date])).toEqual([
+      [tenth.id, nurse.id, '2026-10-10'],
+      [twelfth.id, nurse.id, '2026-10-12'],
+    ]);
+    for (const a of busy.assignments) {
+      expect(a).toMatchObject({ isLocked: true, shiftTypeId: `elsewhere:${shift.id}` });
+    }
+    expect(busy.shiftTypes).toHaveLength(1);
+    expect(busy.shiftTypes[0]).toMatchObject({
+      id: `elsewhere:${shift.id}`,
+      name: 'Day 12 on 5 West',
+      active: false,
+      elsewhere: true,
+    });
   });
 });
 

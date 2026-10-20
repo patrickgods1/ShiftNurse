@@ -6,15 +6,17 @@
  * already exists. Validation runs here, not only in the UI, so a proposal accepted in bulk
  * cannot slip in a mix that does not add up. The mix is judged against the unit's own tiers,
  * so messages name tiers rather than ids and a unit with no tiers saves a census with no mix.
+ * The mix may name only this unit's tiers (core's `validateAcuityMix` refuses a stranger), and the
+ * shift type must be the unit's.
  */
 
 import { type CensusForecast, type Id, type IsoDate, validateAcuityMix } from '@shiftnurse/core';
 import { and, asc, eq, gte, lte } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
-import type { DbLike } from '../client.js';
+import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
 import { toCensusForecast } from '../mappers.js';
-import { censusForecast as table } from '../schema.js';
+import { shiftType, censusForecast as table, unit as unitTable } from '../schema.js';
 import { listAcuityTiersForUnit } from './acuity.js';
 
 export function listCensusForecastsInRange(
@@ -43,6 +45,28 @@ export function listCensusHistory(db: DbLike, unitId: Id): CensusForecast[] {
     .map(toCensusForecast);
 }
 
+function unitName(db: DbLike, unitId: Id): string {
+  return (
+    db.select({ name: unitTable.name }).from(unitTable).where(eq(unitTable.id, unitId)).get()
+      ?.name ?? 'that unit'
+  );
+}
+
+/** Refuse a shift type that is missing or belongs to another unit, before anything is written. */
+function requireShiftOnUnit(db: DbLike, shiftTypeId: Id, unitId: Id): void {
+  const shift = db
+    .select({ name: shiftType.name, unitId: shiftType.unitId })
+    .from(shiftType)
+    .where(eq(shiftType.id, shiftTypeId))
+    .get();
+  if (!shift) throw new Error('That shift type was not found. Reload the page.');
+  if (shift.unitId !== unitId) {
+    throw new Error(
+      `${shift.name} is a shift on ${unitName(db, shift.unitId)}, not on ${unitName(db, unitId)}.`,
+    );
+  }
+}
+
 export interface CensusForecastInput {
   unitId: Id;
   date: IsoDate;
@@ -65,6 +89,7 @@ export function upsertCensusForecast(
   if (problems.length > 0) {
     throw new Error(`Invalid census for ${input.date}: ${problems.join('; ')}`);
   }
+  requireShiftOnUnit(db, input.shiftTypeId, input.unitId);
   const existing = db
     .select()
     .from(table)
@@ -100,9 +125,13 @@ export function upsertCensusForecast(
   return after;
 }
 
-/** Accepting a batch of proposals is one decision; it is audited as one and applied as one. */
+/**
+ * Accepting a batch of proposals is one decision: it runs in one transaction, with one audit row
+ * per day changed.
+ */
 export function upsertCensusForecasts(
-  db: DbLike,
+  // A transaction, not any handle: these writes are only correct all-or-nothing.
+  db: ShiftNurseTx,
   inputs: readonly CensusForecastInput[],
   actor: string,
 ): CensusForecast[] {
@@ -119,7 +148,7 @@ export function recordActualCensus(
 ): CensusForecast {
   // The row first: its unit's tiers are what the mix is judged against.
   const row = db.select().from(table).where(eq(table.id, id)).get();
-  if (!row) throw new Error(`Census forecast ${id} not found`);
+  if (!row) throw new Error('That census day was not found. Reload the page.');
   const problems = validateAcuityMix(
     actualCensus,
     actualAcuityMix,
@@ -143,7 +172,7 @@ export function recordActualCensus(
 
 export function deleteCensusForecast(db: DbLike, id: Id, actor: string): void {
   const row = db.select().from(table).where(eq(table.id, id)).get();
-  if (!row) return;
+  if (!row) throw new Error('That census day was not found. Reload the page.');
   db.delete(table).where(eq(table.id, id)).run();
   recordAudit(db, {
     entityType: 'census_forecast',

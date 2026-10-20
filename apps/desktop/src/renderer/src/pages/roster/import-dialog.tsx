@@ -83,6 +83,7 @@ export function ImportDialog({ open, onOpenChange, unitId }: ImportDialogProps) 
   const updated = plan.filter((r) => r.action === 'update').length;
   const unchanged = plan.filter((r) => r.action === 'unchanged').length;
   const changed = plan.filter((r) => r.action === 'update');
+  const ambiguous = plan.filter((r) => r.action === 'ambiguous');
   const inactive = plan.filter((r) => r.inactive);
   const clears = plan.filter((r) => r.changes.some((c) => c.to === undefined)).length;
   const absent = OPTIONAL_ROSTER_COLUMNS.filter(
@@ -150,6 +151,13 @@ export function ImportDialog({ open, onOpenChange, unitId }: ImportDialogProps) 
             <p className="mb-3 text-sm text-text">
               {created} new, {updated} with changes, {unchanged} unchanged.
             </p>
+            {ambiguous.length > 0 ? (
+              <p role="alert" className="mb-3 text-sm text-danger">
+                {ambiguous.map((r) => `Employee id "${r.employeeId}" (${r.name})`).join('; ')}{' '}
+                {ambiguous.length === 1 ? 'matches' : 'match'} two nurses on this unit. Give one of
+                them a different employee id under Roster, then import again.
+              </p>
+            ) : null}
             {absent.length > 0 ? (
               <p className="mb-3 text-sm text-text-muted">
                 This file has no {absent.join(', ')} column{absent.length === 1 ? '' : 's'}; those
@@ -249,7 +257,10 @@ export function ImportDialog({ open, onOpenChange, unitId }: ImportDialogProps) 
                 type="button"
                 onClick={handleImport}
                 disabled={
-                  preview.errors.length > 0 || preview.rows.length === 0 || importRows.isPending
+                  preview.errors.length > 0 ||
+                  preview.rows.length === 0 ||
+                  ambiguous.length > 0 ||
+                  importRows.isPending
                 }
                 className={PRIMARY}
               >

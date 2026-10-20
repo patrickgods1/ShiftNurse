@@ -94,6 +94,20 @@ describe('importing a roster file', () => {
     });
   });
 
+  it('stops the import and says why when an employee id matches two nurses', async () => {
+    await pick(
+      preview({
+        plan: [{ ...cruz, action: 'ambiguous' as const, inactive: false }],
+      }),
+    );
+    expect(
+      screen.getByRole('alert').textContent?.startsWith('Employee id "E1" (Cruz, Ana) matches two'),
+    ).toBe(true);
+    expect(
+      (screen.getByRole('button', { name: 'Import 1 nurse' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
   it('lists a schedule plan the import would clear', async () => {
     await pick(
       preview({

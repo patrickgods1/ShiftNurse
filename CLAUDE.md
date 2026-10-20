@@ -139,9 +139,11 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
   `addHolidayYear`), `applyJurisdiction`, `deactivateNurseLiftingDrafts` (a leaver's draft
   shifts and her status), `awardRound` (a bid round's awards, approvals, denials and status),
   `markFloatedOff` (a row marked and locked plus its audit), `grantNewCredential` (a credential
-  type and its first grant) and `fillCoverageWeek` (seven weekday
-  floors set together) — takes `ShiftNurseTx`, so calling it outside a transaction is a type
-  error rather than a docstring nobody read.
+  type and its first grant), `fillCoverageWeek` (seven weekday floors set together),
+  `publishSchedule` (version, status, ledger), `replaceAssignments` (delete and insert),
+  `replaceNursePreferences`, `importFairnessLedgerEntries` and `upsertCensusForecasts` (a batch of
+  days accepted as one decision) — takes `ShiftNurseTx`, so calling it outside a transaction is a
+  type error rather than a docstring nobody read.
 - **Every IPC write runs in one `transact`**, in the `main/api/` module that builds its resource
   (`api.ts` is only the wiring table): a repository function given the bare `db` commits its
   change and its audit row as two statements, and a crash or failed audit insert between them
@@ -155,7 +157,8 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
   period snapshots the version it was solved under, so editing rules must never rewrite the
   rules an existing schedule was judged by.
 - Bad data throws loudly (`ScheduleView` throws on an unknown nurse id). Silently dropping a
-  row hides corruption; in scheduling that becomes a grievance.
+  row hides corruption; in scheduling that becomes a grievance; the file itself refuses impossible
+  roles, FTEs, dates and statuses (validation triggers).
 - **Credit and licences travel with the code that needs them.** OR-Tools/CP-SAT and every library
   the runner bundles are listed in `native/cpsat-runner/THIRD_PARTY_NOTICES.md`, with full texts
   in `native/cpsat-runner/licenses/` that the CMake install copies into every bundle; research a

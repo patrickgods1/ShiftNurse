@@ -559,7 +559,8 @@ export function moveAssignment(
  * Floated-off rows are locked, so Generate keeps them too.
  */
 export function replaceAssignments(
-  db: DbLike,
+  // A transaction, not any handle: these writes are only correct all-or-nothing.
+  db: ShiftNurseTx,
   periodId: Id,
   assignments: readonly CreateAssignmentInput[],
   actor: string,

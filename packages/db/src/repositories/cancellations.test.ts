@@ -231,6 +231,21 @@ describe('who has been cancelled in the last year', () => {
     expect(cancellationHistory(handle.db, unitId, isoDate('2027-01-17')).get(ada)).toBeUndefined();
   });
 
+  it('leaves out a cancellation dated after the day being decided', () => {
+    const ada = mkNurse(unitId, 'Ada');
+    cancel(ada, '2026-01-16');
+    cancel(ada, '2026-01-22');
+    expect(cancellationHistory(handle.db, unitId, isoDate('2026-01-20')).get(ada)).toEqual({
+      count: 1,
+      lastOn: '2026-01-16',
+    });
+    // A nurse already sent home today is part of today's rotation.
+    expect(cancellationHistory(handle.db, unitId, isoDate('2026-01-22')).get(ada)).toEqual({
+      count: 2,
+      lastOn: '2026-01-22',
+    });
+  });
+
   it('does not count another unit’s cancellations', () => {
     const ada = mkNurse(unitId, 'Ada');
     cancel(ada, '2026-01-16');

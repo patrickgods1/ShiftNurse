@@ -95,3 +95,4 @@
   weekday leave pays nothing), so a request over two pay periods credits what the rule does. The
   Baylor nurse always volunteers for overtime; a plan nurse is asked past their own hours only to
   cover a call-off, and that tour is marked overtime. Tests that assumed every full-time RN works 80 hours are scoped to standard nurses.
+- **`seed/load.ts` is setup's entry point for loading a demo or the scenarios;** repositories never import seed code. The demo engine imports `repositories/setup.js`, so putting the loaders back in `setup.ts` recreates an import cycle.

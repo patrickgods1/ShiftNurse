@@ -142,14 +142,16 @@ describe('fairness ledger', () => {
 
   it('returns only entries from periods starting on or after the lookback date', () => {
     const nurseId = mkNurse('History');
-    importFairnessLedgerEntries(
-      handle.db,
-      [
-        { nurseId, periodId: 'old', periodStart: isoDate('2025-06-01'), nightShifts: 9 },
-        { nurseId, periodId: 'recent', periodStart: isoDate('2025-12-01'), nightShifts: 2 },
-        { nurseId, periodId: 'boundary', periodStart: isoDate('2025-10-01'), nightShifts: 4 },
-      ],
-      ACTOR,
+    transact(handle.db, (tx) =>
+      importFairnessLedgerEntries(
+        tx,
+        [
+          { nurseId, periodId: 'old', periodStart: isoDate('2025-06-01'), nightShifts: 9 },
+          { nurseId, periodId: 'recent', periodStart: isoDate('2025-12-01'), nightShifts: 2 },
+          { nurseId, periodId: 'boundary', periodStart: isoDate('2025-10-01'), nightShifts: 4 },
+        ],
+        ACTOR,
+      ),
     );
 
     const window = ledgerSince(handle.db, unitId, isoDate('2025-10-01'));
@@ -158,13 +160,15 @@ describe('fairness ledger', () => {
 
   it('records historical seeding as an import in the audit log', () => {
     const nurseId = mkNurse('Imported');
-    importFairnessLedgerEntries(
-      handle.db,
-      [
-        { nurseId, periodId: 'p0', periodStart: isoDate('2025-06-01'), weekendsWorked: 4 },
-        { nurseId, periodId: 'p1', periodStart: isoDate('2025-06-15'), weekendsWorked: 2 },
-      ],
-      ACTOR,
+    transact(handle.db, (tx) =>
+      importFairnessLedgerEntries(
+        tx,
+        [
+          { nurseId, periodId: 'p0', periodStart: isoDate('2025-06-01'), weekendsWorked: 4 },
+          { nurseId, periodId: 'p1', periodStart: isoDate('2025-06-15'), weekendsWorked: 2 },
+        ],
+        ACTOR,
+      ),
     );
 
     // One batch entry rather than one per row: a six-month seed for 42 nurses would

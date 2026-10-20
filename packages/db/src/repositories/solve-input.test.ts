@@ -625,7 +625,7 @@ describe('nurses who work on two units', () => {
       );
     const planned = place(draft.id, period.startDate);
     const archivedRow = place(old.id, addDays(period.startDate, 1));
-    publishSchedule(handle.db, { periodId: old.id }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: old.id }, ACTOR));
     archivePeriod(handle.db, old.id, ACTOR, 'Closed pay period');
     const busy = loadPeriodInput(handle.db, period).priorAssignments!.filter((a) =>
       a.shiftTypeId.startsWith('elsewhere:'),
@@ -692,11 +692,13 @@ describe('nurses who work on two units', () => {
       { nurseId: fran.id, credentialId: listCredentials(handle.db)[0]!.id },
       ACTOR,
     );
-    replaceNursePreferences(
-      handle.db,
-      fran.id,
-      [{ id: 'pref-fran', nurseId: fran.id, kind: 'avoid_weekday', weekday: 0, weight: 1 }],
-      ACTOR,
+    transact(handle.db, (tx) =>
+      replaceNursePreferences(
+        tx,
+        fran.id,
+        [{ id: 'pref-fran', nurseId: fran.id, kind: 'avoid_weekday', weekday: 0, weight: 1 }],
+        ACTOR,
+      ),
     );
     const leaveDay = addDays(period.startDate, 4);
     const leave = createTimeOffRequest(
@@ -869,7 +871,8 @@ describe('nurses who work on two units', () => {
           ACTOR,
         );
       const before = mk('Before', '2026-01-04', '2026-01-17');
-      if (earlier !== 'draft') publishSchedule(handle.db, { periodId: before.id }, ACTOR);
+      if (earlier !== 'draft')
+        transact(handle.db, (tx) => publishSchedule(tx, { periodId: before.id }, ACTOR));
       if (earlier === 'archived') archivePeriod(handle.db, before.id, ACTOR, 'Pay period closed');
       return mk('Now', '2026-01-18', '2026-01-31');
     }
@@ -923,7 +926,7 @@ describe('a draft laid over another schedule of the same unit', () => {
 
   it('carries a shift on an overlapping published schedule as locked busy time', () => {
     const { draft, day, a, shift } = overlapping();
-    publishSchedule(handle.db, { periodId: a.id }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: a.id }, ACTOR));
     const input = loadPeriodInput(handle.db, draft);
     const carried = input.priorAssignments!.filter((r) => r.id === shift.id);
     expect(carried).toHaveLength(1);
@@ -941,7 +944,7 @@ describe('a draft laid over another schedule of the same unit', () => {
 
   it('keeps a shift on an overlapping schedule as busy time once that schedule is archived', () => {
     const { draft, day, a, shift } = overlapping();
-    publishSchedule(handle.db, { periodId: a.id }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: a.id }, ACTOR));
     archivePeriod(handle.db, a.id, ACTOR, 'Pay period closed');
     const carried = loadPeriodInput(handle.db, draft).priorAssignments!.filter(
       (r) => r.id === shift.id,

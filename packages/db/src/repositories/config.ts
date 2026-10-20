@@ -25,8 +25,15 @@ import type {
   ShiftType,
   Unit,
 } from '@shiftnurse/core';
-import { JURISDICTION_PRESETS, validateLeavePolicy, withinShiftProblem } from '@shiftnurse/core';
-import { and, asc, eq, gte, lte } from 'drizzle-orm';
+import {
+  describeDate,
+  isIsoDate,
+  JURISDICTION_PRESETS,
+  validateLeavePolicy,
+  WEEKDAY_NAMES,
+  withinShiftProblem,
+} from '@shiftnurse/core';
+import { and, asc, eq, gte, lte, ne, sql } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike, ShiftNurseTx } from '../client.js';
 import { ids } from '../ids.js';
@@ -160,11 +167,10 @@ export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string):
       const row = db.select().from(unitTable).where(eq(unitTable.id, rowId)).get();
       return row ? toUnit(row) : undefined;
     },
-    // The id rides along so an empty patch still writes, as the full-row update always did.
     write: (rowId, { ratioStaffing, ...values }) =>
       db
         .update(unitTable)
-        .set({ ...values, ...ratioStaffingColumns(ratioStaffing), id: rowId })
+        .set({ ...values, ...ratioStaffingColumns(ratioStaffing) })
         .where(eq(unitTable.id, rowId))
         .run(),
     notFound: `Unit ${id} not found`,
@@ -285,13 +291,8 @@ export function updateShiftType(
       const row = db.select().from(shiftTypeTable).where(eq(shiftTypeTable.id, rowId)).get();
       return row ? toShiftType(row) : undefined;
     },
-    // The id rides along so an empty patch still writes, as the full-row update always did.
     write: (rowId, values) =>
-      db
-        .update(shiftTypeTable)
-        .set({ ...values, id: rowId })
-        .where(eq(shiftTypeTable.id, rowId))
-        .run(),
+      db.update(shiftTypeTable).set(values).where(eq(shiftTypeTable.id, rowId)).run(),
     notFound: `Shift type ${id} not found`,
     // A new time or length can stop it fitting inside its shift, or stop another fitting inside it.
     validate: (values, before) => assertCoverFits(db, { ...before, ...values }),
@@ -327,12 +328,92 @@ export function deactivateShiftType(db: DbLike, id: Id, actor: string): ShiftTyp
 // ---------------------------------------------------------------------------
 
 export function listCoverageRequirementsForUnit(db: DbLike, unitId: Id): CoverageRequirement[] {
-  return db
+  return (
+    db
+      .select()
+      .from(coverageRequirementTable)
+      .where(eq(coverageRequirementTable.unitId, unitId))
+      // Core keeps the last matching floor it is handed, so the order it sees must be defined.
+      .orderBy(sql`rowid`)
+      .all()
+      .map(toCoverageRequirement)
+  );
+}
+
+/** "on Mondays" or "for Fri Dec 25, 2026": the day a floor applies to, in a manager's words. */
+function describeFloorDay(weekday: number | null, date: IsoDate | null): string {
+  if (date !== null) return `for ${describeDate(date, { year: true })}`;
+  return `on ${WEEKDAY_NAMES[weekday!]}s`;
+}
+
+/**
+ * Everything a floor must satisfy before it is stored, in the order a manager would hit it. The
+ * repository is the single gate: seeds and presets bypass the IPC schema, and a floor that core
+ * silently reads differently (both day fields, min above target, a second row for the same day)
+ * changes staffing with no error anywhere.
+ */
+function assertCoverageFloor(
+  db: DbLike,
+  input: Omit<CoverageRequirement, 'id'> & { id?: Id },
+): void {
+  const { weekday, date } = input;
+  if (weekday === null && date === null)
+    throw new Error('Choose a weekday or a date for this floor.');
+  if (weekday !== null && date !== null) {
+    throw new Error('A floor is for a weekday or for one date, not both.');
+  }
+  if (weekday !== null && !(Number.isInteger(weekday) && weekday >= 0 && weekday <= 6)) {
+    throw new Error('A weekday is 0 (Sunday) to 6 (Saturday).');
+  }
+  if (date !== null && !isIsoDate(date)) throw new Error("The floor's date is not a date.");
+  const whole = (n: number) => Number.isInteger(n) && n >= 0;
+  if (!whole(input.minCount) || !whole(input.targetCount)) {
+    throw new Error("A floor's minimum and target are whole numbers of nurses, zero or more.");
+  }
+  const shift = db
     .select()
+    .from(shiftTypeTable)
+    .where(eq(shiftTypeTable.id, input.shiftTypeId))
+    .get();
+  const name = shift?.name ?? '';
+  if (input.minCount > input.targetCount) {
+    // Name the shift only once we know it; an unknown one is refused just below.
+    if (shift) {
+      throw new Error(
+        `The ${input.role} floor for ${name} ${describeFloorDay(weekday, date)} has a minimum of ${input.minCount} above its target of ${input.targetCount}; raise the target or lower the minimum.`,
+      );
+    }
+  }
+  if (!shift) throw new Error('That shift type was not found. Reload the page.');
+  if (shift.unitId !== input.unitId) {
+    const unitName = (id: Id) => getUnit(db, id)?.name ?? 'another unit';
+    throw new Error(
+      `${name} is a shift on ${unitName(shift.unitId)}, not on ${unitName(input.unitId)}.`,
+    );
+  }
+  const clash = db
+    .select({ id: coverageRequirementTable.id })
     .from(coverageRequirementTable)
-    .where(eq(coverageRequirementTable.unitId, unitId))
-    .all()
-    .map(toCoverageRequirement);
+    .where(
+      and(
+        eq(coverageRequirementTable.unitId, input.unitId),
+        eq(coverageRequirementTable.shiftTypeId, input.shiftTypeId),
+        eq(coverageRequirementTable.role, input.role),
+        date !== null
+          ? eq(coverageRequirementTable.date, date)
+          : and(
+              sql`${coverageRequirementTable.date} is null`,
+              eq(coverageRequirementTable.weekday, weekday!),
+            ),
+        input.id !== undefined ? ne(coverageRequirementTable.id, input.id) : undefined,
+      ),
+    )
+    .get();
+  if (clash) {
+    throw new Error(
+      `${name} already has ${input.role === 'CNA' ? 'a' : 'an'} ${input.role} floor ${describeFloorDay(weekday, date).replace(/^on /, 'for ')}; change that one instead.`,
+    );
+  }
 }
 
 /**
@@ -385,6 +466,9 @@ export function upsertCoverageRequirement(
       .where(eq(coverageRequirementTable.id, input.id))
       .get();
     if (!row) throw new Error(`Coverage requirement ${input.id} not found`);
+    if (input.unitId !== row.unitId)
+      throw new Error('A coverage floor cannot move to another unit.');
+    assertCoverageFloor(db, input);
     const before = toCoverageRequirement(row);
     // A cell left as it was is not an event: an audited no-op would bury the real edits.
     if (
@@ -421,6 +505,7 @@ export function upsertCoverageRequirement(
     });
     return after;
   }
+  assertCoverageFloor(db, input);
   const id = ids.coverage();
   const row: typeof coverageRequirementTable.$inferInsert = {
     id,

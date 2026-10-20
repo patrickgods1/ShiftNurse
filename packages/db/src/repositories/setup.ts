@@ -41,8 +41,6 @@ import { eq } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike, ShiftNurseTx } from '../client.js';
 import { setupState } from '../schema.js';
-import { type DemoId, isDemoId, seedDemoUnit } from '../seed/demo.js';
-import { seedScenarioUnit } from '../seed/scenarios.js';
 import {
   createAcuityTier,
   createRatioRule,
@@ -179,41 +177,10 @@ export function completeSetup(db: DbLike, actor: string): SetupState {
   );
 }
 
-function refuseIfConfigured(db: DbLike): void {
+export function refuseIfConfigured(db: DbLike): void {
   if (listUnits(db).length > 0) {
     throw new Error('This database already has a unit; setup only runs on an empty install');
   }
-}
-
-/**
- * Seed one of the realistic demo units (the community med-surg unit unless another is named)
- * and mark setup done. Only on an empty install: never seed twice.
- */
-export function loadDemo(tx: ShiftNurseTx, actor: string, demo?: DemoId): Unit {
-  if (demo !== undefined && !isDemoId(demo)) throw new Error(`Unknown demo unit "${demo}"`);
-  return loadSeeded(tx, 'demo', () => seedDemoUnit(tx, { demo }).unitId, actor);
-}
-
-/**
- * Seed the test-scenario unit, the dataset the automated tests are built on, for trying a change
- * by hand against the same planted problems. Developer-only: the caller decides who may.
- */
-export function loadScenarios(tx: ShiftNurseTx, actor: string): Unit {
-  return loadSeeded(tx, 'scenarios', () => seedScenarioUnit(tx).unitId, actor);
-}
-
-function loadSeeded(
-  tx: ShiftNurseTx,
-  mode: 'demo' | 'scenarios',
-  seed: () => Id,
-  actor: string,
-): Unit {
-  refuseIfConfigured(tx);
-  const unitId = seed();
-  startSetup(tx, mode, actor);
-  const unit = getUnit(tx, unitId);
-  if (!unit) throw new Error(`Seeded unit ${unitId} not found`);
-  return unit;
 }
 
 /** Create the unit a manual or assisted setup starts from. */

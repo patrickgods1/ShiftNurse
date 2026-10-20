@@ -537,11 +537,15 @@ describe('the VA San Francisco med-surg demo', () => {
     // The same history seeded without the holdovers has exactly these violations (counted by
     // hand from that run): holdovers add none, hard or soft. The four understaffed shifts are
     // the four call-offs nobody could legally cover (an RN's day 12 on Sunday 31 May, an LVN's on
-    // Saturday 16 May, a nursing assistant's on Thursday 14 May and Saturday 22 August). The 23
+    // Saturday 16 May, a nursing assistant's on Thursday 14 May and Saturday 22 August). The 22
     // over-contract readings are all in pay periods with no tour marked authorised overtime; the
     // six that cleared (29 before the contract ceiling left such tours out) were in ones that had.
+    // It was 23 until sick pay stopped double-counting: on 7 April one nurse calls off sick on a
+    // day 12 and is later phoned back onto that same tour (the engine's phone list excludes only
+    // plan nurses who called off), so her 12 sick hours no longer add to the hours she worked.
+    // The seed fix is tracked for phase 23.
     expect([...historyViolations(f)].sort()).toEqual([
-      ['over_contracted_hours', 23],
+      ['over_contracted_hours', 22],
       ['understaffed', 4],
     ]);
     expect([...historyViolations(f, 'soft')].sort()).toEqual([

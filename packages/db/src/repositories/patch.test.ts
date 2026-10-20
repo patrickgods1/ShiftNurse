@@ -83,6 +83,33 @@ describe('auditedUpdate', () => {
     ).toEqual([]);
   });
 
+  it('writes nothing for an empty patch but still records the save', () => {
+    const { db } = handle;
+    let writes = 0;
+    auditedUpdate<PayRate, Patch>(db, {
+      id: rateId,
+      entityType: 'pay_rate',
+      entityLabel: 'pay rate',
+      allowed,
+      patch: {},
+      read: (rowId) => {
+        const row = db.select().from(payRate).where(eq(payRate.id, rowId)).get();
+        return row ? toPayRate(row) : undefined;
+      },
+      write: () => {
+        writes += 1;
+      },
+      notFound: 'Pay rate not found',
+      actor: 'manager',
+    });
+    expect(writes).toBe(0);
+    const updates = auditHistoryFor(handle.db, 'pay_rate', rateId).filter(
+      (e) => e.action === 'update',
+    );
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.before).toEqual(updates[0]?.after);
+  });
+
   it('says the rate is missing when the id is unknown', () => {
     expect(() => update('nope', { hourlyRate: 45 })).toThrow('Pay rate nope not found');
   });

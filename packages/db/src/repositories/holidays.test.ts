@@ -120,7 +120,8 @@ function schedule(
       ACTOR,
     );
   }
-  if (status === 'published') publishSchedule(handle.db, { periodId: period.id }, ACTOR);
+  if (status === 'published')
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: period.id }, ACTOR));
 }
 
 beforeEach(() => {
@@ -335,7 +336,9 @@ describe('adding a year of holidays', () => {
       ...plan,
       holidays: plan.holidays.map((h) => ({ ...h, date: isoDate('2027-07-04') })),
     };
-    expect(() => transact(handle.db, (tx) => addHolidayYear(tx, unitId, edited, ACTOR))).toThrow();
+    expect(() => transact(handle.db, (tx) => addHolidayYear(tx, unitId, edited, ACTOR))).toThrow(
+      /UNIQUE constraint failed: holiday.unit_id, holiday.date/,
+    );
     expect(
       listHolidaysForUnit(handle.db, unitId)
         .map((h) => h.name)
@@ -466,8 +469,10 @@ describe('who can be recorded as working a holiday, and deleting one', () => {
         holidayId: xmas.id,
         weight: 1,
       }) as const;
-    replaceNursePreferences(handle.db, ana.id, [weekend(ana.id), wish(ana.id)], ACTOR);
-    replaceNursePreferences(handle.db, ben.id, [wish(ben.id)], ACTOR);
+    transact(handle.db, (tx) =>
+      replaceNursePreferences(tx, ana.id, [weekend(ana.id), wish(ana.id)], ACTOR),
+    );
+    transact(handle.db, (tx) => replaceNursePreferences(tx, ben.id, [wish(ben.id)], ACTOR));
     const prefAudits = (id: string) => auditHistoryFor(handle.db, 'preference', id);
     const anaBefore = prefAudits(ana.id).length;
     const benBefore = prefAudits(ben.id).length;

@@ -283,9 +283,11 @@ export type {
 } from './roster/import-plan.js';
 // What a roster import changes, shared by the preview and the import
 export {
+  matchStoredNurse,
   OPTIONAL_ROSTER_COLUMNS,
   planRosterImport,
   rosterChangesFor,
+  sameEmployeeId,
 } from './roster/import-plan.js';
 // The one seniority order every seniority-ranked list uses or reverses
 export { compareEmployeeIds, compareSeniority } from './roster/seniority.js';

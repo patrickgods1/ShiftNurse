@@ -74,5 +74,6 @@ export * from './repositories/worked-hours.js';
 export * as schema from './schema.js';
 export type { DemoId, DemoSummary } from './seed/demo.js';
 export { DEFAULT_DEMO_ID, DEMO_SUMMARIES, isDemoId, seedDemoUnit } from './seed/demo.js';
+export { loadDemo, loadScenarios } from './seed/load.js';
 export { seedScenarioUnit } from './seed/scenarios.js';
 export type { SeedOptions, SeedResult } from './seed/types.js';

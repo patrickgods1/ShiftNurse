@@ -9,7 +9,7 @@
  */
 
 import type { Id, IsoDate, LeaveBalanceType } from '@shiftnurse/core';
-import { compareDates, LEAVE_BALANCE_TYPES } from '@shiftnurse/core';
+import { compareDates, describeDate, LEAVE_BALANCE_TYPES } from '@shiftnurse/core';
 import { and, asc, eq } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
@@ -111,6 +111,13 @@ export function getLeaveBalance(
   return row ? toBalance(row) : undefined;
 }
 
+const BALANCE_LABEL: Record<LeaveBalanceType, string> = {
+  pto: 'PTO balance',
+  annual: 'annual leave balance',
+  sick: 'sick leave balance',
+  comp: 'comp time balance',
+};
+
 export function setLeaveBalance(
   db: DbLike,
   input: Omit<LeaveBalance, 'id'>,
@@ -125,6 +132,12 @@ export function setLeaveBalance(
   requireNurse(db, input.nurseId);
   const before = getLeaveBalance(db, input.nurseId, input.type);
   if (before) {
+    if (compareDates(input.asOf, before.asOf) < 0) {
+      const n = db.select().from(nurse).where(eq(nurse.id, input.nurseId)).get()!;
+      throw new Error(
+        `${n.firstName} ${n.lastName}'s ${BALANCE_LABEL[input.type]} is already recorded as of ${describeDate(before.asOf, { year: true })}; a figure as of ${describeDate(input.asOf, { year: true })} is older. Enter the latest payroll figure.`,
+      );
+    }
     const after: LeaveBalance = { ...before, balanceHours: input.balanceHours, asOf: input.asOf };
     db.update(balanceTable)
       .set({ balanceHours: after.balanceHours, asOf: after.asOf, updatedAt: Date.now() })

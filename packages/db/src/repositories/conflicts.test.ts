@@ -311,7 +311,7 @@ describe('applying a resolution', () => {
     expect(auditHistoryFor(handle.db, 'conflict', 'conf_sat_night')).toHaveLength(0);
   });
 
-  it('moves a shift and denies a request in one go, rolling both back if either fails', () => {
+  it('moves a shift and denies a request in one go', () => {
     const ada = mkNurse('Ada');
     const bea = mkNurse('Bea');
     const moved = createAssignment(
@@ -373,6 +373,41 @@ describe('applying a resolution', () => {
       ),
     ).toThrow(/no longer exists/);
     expect(auditHistoryFor(handle.db, 'conflict', 'conf_sat_night')).toHaveLength(1);
+  });
+
+  it('lands neither half when the second action of a resolution fails', () => {
+    const ada = mkNurse('Ada');
+    const moved = createAssignment(
+      handle.db,
+      { periodId, nurseId: ada, shiftTypeId, date: isoDate('2026-01-16'), isCharge: true },
+      ACTOR,
+    );
+    const res = resolution(
+      [
+        {
+          type: 'move_assignment',
+          assignmentId: moved.id,
+          toDate: isoDate('2026-01-17'),
+          toShiftTypeId: shiftTypeId,
+          isCharge: true,
+        },
+        { type: 'deny_time_off', timeOffId: 'to_missing' },
+      ],
+      'deny_time_off',
+    );
+    expect(() =>
+      transact(handle.db, (tx) =>
+        applyResolution(tx, periodId, res, ACTOR, { auto: false, reason: 'Only legal cover' }),
+      ),
+    ).toThrow(/not found/);
+    // The move ran first; the rollback must put Ada's shift back under the same id.
+    const rows = listAssignmentsForPeriod(handle.db, periodId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: moved.id, nurseId: ada, date: '2026-01-16' });
+    expect(auditHistoryFor(handle.db, 'assignment', moved.id).map((e) => e.action)).toEqual([
+      'create',
+    ]);
+    expect(auditHistoryFor(handle.db, 'conflict', 'conf_sat_night')).toHaveLength(0);
   });
 
   it('writes the charge flag the resolution was simulated with', () => {
@@ -437,7 +472,7 @@ describe('applying a resolution', () => {
   });
 
   it('refuses to touch a published period', () => {
-    publishSchedule(handle.db, { periodId }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
     const res = resolution(
       [{ type: 'accept_shortfall', conflictId: 'conf_sat_night' }],
       'accept_shortfall',

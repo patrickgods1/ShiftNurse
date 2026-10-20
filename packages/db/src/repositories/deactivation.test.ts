@@ -125,7 +125,7 @@ afterEach(() => handle.close());
 function publishedAndDraft(): { published: string; draft: string } {
   const published = mkPeriod('Feb B', '2026-02-15', '2026-02-28');
   shift(published, '2026-02-21');
-  publishSchedule(handle.db, { periodId: published, ledger: [] }, ACTOR);
+  transact(handle.db, (tx) => publishSchedule(tx, { periodId: published, ledger: [] }, ACTOR));
   const draft = mkPeriod('Mar A', '2026-03-01', '2026-03-14');
   shift(draft, '2026-03-05');
   return { published, draft };
@@ -177,7 +177,7 @@ describe('a nurse who leaves the unit', () => {
   it('leaves shifts on an archived schedule alone', () => {
     const archived = mkPeriod('Feb B', '2026-02-15', '2026-02-28');
     shift(archived, '2026-02-21');
-    publishSchedule(handle.db, { periodId: archived, ledger: [] }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId: archived, ledger: [] }, ACTOR));
     transact(handle.db, (tx) => archivePeriod(tx, archived, ACTOR, 'Pay period closed'));
 
     const { lifted } = deactivate('2026-02-20');

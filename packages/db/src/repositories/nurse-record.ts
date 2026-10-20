@@ -26,17 +26,10 @@
  * (every timezone) and the day test settles the edges.
  */
 
-import {
-  compareDates,
-  dayNumber,
-  type Id,
-  type IsoDate,
-  MS_PER_DAY,
-  type Nurse,
-  today,
-} from '@shiftnurse/core';
+import { compareDates, type Id, type IsoDate, type Nurse } from '@shiftnurse/core';
 import { and, asc, eq, gte, lt, notInArray, or, sql } from 'drizzle-orm';
 import type { DbLike } from '../client.js';
+import { instantWindow, onLocalDays } from '../local-days.js';
 import { toNurse } from '../mappers.js';
 import { auditLog, nurse as nurseTable, scheduleChange, schedulePeriod } from '../schema.js';
 
@@ -64,8 +57,6 @@ export const RECORD_NURSE_KEYS = [
 
 /** Top-level snapshot arrays of nurse ids, such as the nurses recorded as working a holiday. */
 export const RECORD_NURSE_ARRAY_KEYS = ['nurseIds'] as const;
-
-const PAD_MS = 36 * 3_600_000;
 
 export interface RecordAuditEntry {
   id: Id;
@@ -118,12 +109,10 @@ export function nurseRecord(db: DbLike, nurseId: Id, start: IsoDate, end: IsoDat
   const row = db.select().from(nurseTable).where(eq(nurseTable.id, nurseId)).get();
   if (!row) throw new Error('That nurse is not on the roster');
   if (compareDates(end, start) < 0) throw new Error('The record ends before it starts');
-  const from = dayNumber(start) * MS_PER_DAY - PAD_MS;
-  const to = (dayNumber(end) + 1) * MS_PER_DAY + PAD_MS;
-  const inRange = (at: number) => {
-    const day = today(new Date(at));
-    return compareDates(day, start) >= 0 && compareDates(day, end) <= 0;
-  };
+  const window = instantWindow(start, end);
+  const from = window.from;
+  const to = window.to!; // `end` is given, so the window is closed
+  const inRange = (at: number) => onLocalDays(at, start, end);
 
   const about = or(
     and(eq(auditLog.entityType, 'nurse'), eq(auditLog.entityId, nurseId)),

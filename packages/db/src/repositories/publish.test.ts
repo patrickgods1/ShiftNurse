@@ -6,9 +6,11 @@
  */
 
 import { DEFAULT_FAIRNESS_WEIGHTS, isoDate } from '@shiftnurse/core';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor, recentAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
+import { scheduleChange } from '../schema.js';
 import { createShiftType, createUnit } from './config.js';
 import { getFairnessLedgerEntry, upsertFairnessLedgerEntry } from './ledger.js';
 import {
@@ -128,14 +130,24 @@ beforeEach(() => {
 });
 
 describe('publishSchedule', () => {
+  it('can only be called inside a transaction, so a publish is never half-written', () => {
+    // Never invoked: the point is that the compiler refuses a bare handle.
+    const bare = () =>
+      // @ts-expect-error a bare handle is not a ShiftNurseTx
+      publishSchedule(handle.db, { periodId }, ACTOR);
+    expect(bare).toBeDefined();
+  });
+
   it('freezes the assignments as version 1 and books the fairness ledger', () => {
-    const result = publishSchedule(
-      handle.db,
-      {
-        periodId,
-        ledger: [{ nurseId: ann, periodId, periodStart: isoDate('2026-01-04'), totalHours: 12 }],
-      },
-      ACTOR,
+    const result = transact(handle.db, (tx) =>
+      publishSchedule(
+        tx,
+        {
+          periodId,
+          ledger: [{ nurseId: ann, periodId, periodStart: isoDate('2026-01-04'), totalHours: 12 }],
+        },
+        ACTOR,
+      ),
     );
     expect(result.period.status).toBe('published');
     expect(result.period.publishedAt).toBeTypeOf('number');
@@ -150,23 +162,27 @@ describe('publishSchedule', () => {
   it("drops Ann's night from the ledger when a republish gives it to Bea", () => {
     const db = handle.db;
     const periodStart = isoDate('2026-01-04');
-    publishSchedule(
-      db,
-      { periodId, ledger: [{ nurseId: ann, periodId, periodStart, nightShifts: 1 }] },
-      ACTOR,
+    transact(db, (tx) =>
+      publishSchedule(
+        tx,
+        { periodId, ledger: [{ nurseId: ann, periodId, periodStart, nightShifts: 1 }] },
+        ACTOR,
+      ),
     );
     const annsShift = listAssignmentsForPeriod(db, periodId).find((a) => a.nurseId === ann)!;
     transact(db, (tx) =>
       moveAssignment(tx, annsShift.id, { nurseId: bo, shiftTypeId, date: annsShift.date }, ACTOR),
     );
-    const result = publishSchedule(
-      db,
-      {
-        periodId,
-        reason: 'Ann on leave',
-        ledger: [{ nurseId: bo, periodId, periodStart, nightShifts: 1 }],
-      },
-      ACTOR,
+    const result = transact(db, (tx) =>
+      publishSchedule(
+        tx,
+        {
+          periodId,
+          reason: 'Ann on leave',
+          ledger: [{ nurseId: bo, periodId, periodStart, nightShifts: 1 }],
+        },
+        ACTOR,
+      ),
     );
     expect(result.ledgerRemoved).toBe(1);
     expect(getFairnessLedgerEntry(db, ann, periodId)).toBeUndefined();
@@ -186,37 +202,41 @@ describe('publishSchedule', () => {
       { nurseId: ann, periodId, periodStart: isoDate('2026-01-04'), nightShifts: 1 },
       ACTOR,
     );
-    const result = publishSchedule(db, { periodId }, ACTOR);
+    const result = transact(db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
     expect(result.ledgerRemoved).toBe(0);
     expect(getFairnessLedgerEntry(db, ann, periodId)?.nightShifts).toBe(1);
   });
 
   it('refuses to republish without a reason, and refuses when nothing changed', () => {
-    publishSchedule(handle.db, { periodId }, ACTOR);
-    expect(() => publishSchedule(handle.db, { periodId }, ACTOR)).toThrow(/requires a reason/);
-    expect(() => publishSchedule(handle.db, { periodId, reason: 'no-op' }, ACTOR)).toThrow(
-      /Nothing has changed since version 1/,
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
+    expect(() => transact(handle.db, (tx) => publishSchedule(tx, { periodId }, ACTOR))).toThrow(
+      /requires a reason/,
     );
+    expect(() =>
+      transact(handle.db, (tx) => publishSchedule(tx, { periodId, reason: 'no-op' }, ACTOR)),
+    ).toThrow(/Nothing has changed since version 1/);
   });
 
   it('still wants a reason to republish a schedule that breaks nothing', () => {
-    publishSchedule(handle.db, { periodId, hardViolations: { count: 0, codes: [] } }, ACTOR);
+    transact(handle.db, (tx) =>
+      publishSchedule(tx, { periodId, hardViolations: { count: 0, codes: [] } }, ACTOR),
+    );
     createAssignment(
       handle.db,
       { periodId, nurseId: ann, shiftTypeId, date: isoDate('2026-01-08') },
       ACTOR,
     );
     expect(() =>
-      publishSchedule(handle.db, { periodId, hardViolations: { count: 0, codes: [] } }, ACTOR),
+      transact(handle.db, (tx) =>
+        publishSchedule(tx, { periodId, hardViolations: { count: 0, codes: [] } }, ACTOR),
+      ),
     ).toThrow(/Republishing a schedule requires a reason/);
     expect(listVersions(handle.db, periodId)).toHaveLength(1);
   });
 
   it('records a clean schedule as zero rule breaks', () => {
-    const result = publishSchedule(
-      handle.db,
-      { periodId, hardViolations: { count: 0, codes: [] } },
-      ACTOR,
+    const result = transact(handle.db, (tx) =>
+      publishSchedule(tx, { periodId, hardViolations: { count: 0, codes: [] } }, ACTOR),
     );
     const entry = auditHistoryFor(handle.db, 'schedule_version', result.version.id)[0]!;
     expect((entry.after as { hardViolations: unknown }).hardViolations).toEqual({
@@ -228,14 +248,16 @@ describe('publishSchedule', () => {
   it('refuses a first publish over rule breaks without a reason, and writes nothing', () => {
     const auditsBefore = recentAudit(handle.db, 1000).length;
     expect(() =>
-      publishSchedule(
-        handle.db,
-        {
-          periodId,
-          ledger: [],
-          hardViolations: { count: 2, codes: ['insufficient_rest', 'understaffed'] },
-        },
-        ACTOR,
+      transact(handle.db, (tx) =>
+        publishSchedule(
+          tx,
+          {
+            periodId,
+            ledger: [],
+            hardViolations: { count: 2, codes: ['insufficient_rest', 'understaffed'] },
+          },
+          ACTOR,
+        ),
       ),
     ).toThrow(/2 rule breaks needs a reason/);
     expect(latestVersion(handle.db, periodId)).toBeUndefined();
@@ -243,14 +265,16 @@ describe('publishSchedule', () => {
   });
 
   it('records the rule breaks a schedule went out over, with the reason', () => {
-    const result = publishSchedule(
-      handle.db,
-      {
-        periodId,
-        reason: 'Agency confirmed for the short nights',
-        hardViolations: { count: 2, codes: ['insufficient_rest', 'understaffed'] },
-      },
-      ACTOR,
+    const result = transact(handle.db, (tx) =>
+      publishSchedule(
+        tx,
+        {
+          periodId,
+          reason: 'Agency confirmed for the short nights',
+          hardViolations: { count: 2, codes: ['insufficient_rest', 'understaffed'] },
+        },
+        ACTOR,
+      ),
     );
     const entry = auditHistoryFor(handle.db, 'schedule_version', result.version.id)[0]!;
     expect(entry.reason).toBe('Agency confirmed for the short nights');
@@ -261,17 +285,15 @@ describe('publishSchedule', () => {
   });
 
   it('needs no reason for a first publish that breaks nothing', () => {
-    const result = publishSchedule(
-      handle.db,
-      { periodId, hardViolations: { count: 0, codes: [] } },
-      ACTOR,
+    const result = transact(handle.db, (tx) =>
+      publishSchedule(tx, { periodId, hardViolations: { count: 0, codes: [] } }, ACTOR),
     );
     expect(result.version.version).toBe(1);
   });
 
   it('carries a post-publish move into version 2 as one removal and one addition', () => {
     const db = handle.db;
-    publishSchedule(db, { periodId }, ACTOR);
+    transact(db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
     const period = getPeriod(db, periodId)!;
     const reason = requireChangeReason(period, "Ann's sick note for the 5th");
     const before = listAssignmentsForPeriod(db, periodId).find((a) => a.nurseId === ann)!;
@@ -313,7 +335,9 @@ describe('publishSchedule', () => {
     expect(changesSinceLastPublish(db, periodId).map((c) => c.kind)).toEqual(['added', 'removed']);
     expect(pendingDiff(db, periodId)).toMatchObject({ added: 1, removed: 1, changed: 0 });
 
-    const v2 = publishSchedule(db, { periodId, reason: 'Cover for Ann' }, ACTOR);
+    const v2 = transact(db, (tx) =>
+      publishSchedule(tx, { periodId, reason: 'Cover for Ann' }, ACTOR),
+    );
     expect(v2.version.version).toBe(2);
     expect(v2.diff.affectedNurseIds.sort()).toEqual([ann, bo].sort());
     expect(listVersions(db, periodId).map((v) => v.version)).toEqual([1, 2]);
@@ -323,13 +347,46 @@ describe('publishSchedule', () => {
     expect(listChanges(db, periodId)).toHaveLength(2);
     expect(listChanges(db, periodId).every((c) => c.version === 1)).toBe(true);
   });
+
+  it('lists only the changes made since the last publish, whatever the clock said', () => {
+    const db = handle.db;
+    const day = isoDate('2026-01-05');
+    const note = (kind: 'added' | 'removed', reason: string) =>
+      recordScheduleChange(
+        db,
+        { periodId, kind, assignmentId: 'a-1', nurseId: ann, date: day, shiftTypeId, reason },
+        ACTOR,
+      );
+    transact(db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
+    createAssignment(db, { periodId, nurseId: bo, shiftTypeId, date: day }, ACTOR);
+    note('removed', 'Ann is sick');
+    transact(db, (tx) => publishSchedule(tx, { periodId, reason: 'Cover for Ann' }, ACTOR));
+    const last = note('added', 'Bo picks up the 5th');
+    expect(changesSinceLastPublish(db, periodId).map((c) => c.reason)).toEqual([
+      'Bo picks up the 5th',
+    ]);
+
+    // The clock stepped backwards: this v2 edit is stamped before v2 went out. Version 2 is
+    // still its definition, so it is still pending.
+    const publishedAt = latestVersion(db, periodId)!.publishedAt;
+    const early = note('added', 'Stamped before the publish');
+    db.update(scheduleChange)
+      .set({ at: publishedAt - 1 })
+      .where(eq(scheduleChange.id, early.id))
+      .run();
+    expect(
+      changesSinceLastPublish(db, periodId)
+        .map((c) => c.id)
+        .sort(),
+    ).toEqual([last.id, early.id].sort());
+  });
 });
 
 describe('the change log', () => {
   it('needs no reason on a draft but refuses a blank one once published', () => {
     const draft = getPeriod(handle.db, periodId)!;
     expect(requireChangeReason(draft)).toBeUndefined();
-    publishSchedule(handle.db, { periodId }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
     const published = getPeriod(handle.db, periodId)!;
     expect(() => requireChangeReason(published, '   ')).toThrow(/requires a reason/);
     expect(requireChangeReason(published, '  swap for clinic  ')).toBe('swap for clinic');
@@ -337,7 +394,7 @@ describe('the change log', () => {
 
   it("asks the nurse's consent only for the manager's own changes to a posted schedule", () => {
     const draft = getPeriod(handle.db, periodId)!;
-    publishSchedule(handle.db, { periodId }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
     const published = getPeriod(handle.db, periodId)!;
     const opted = { requireConsentForPostedChanges: true };
     const refusal =
@@ -361,7 +418,7 @@ describe('the change log', () => {
     // Locking a shift needs no reason, but it is still an edit: an archived period is the
     // record of what was worked and must not change, whatever the edit.
     expect(() => requirePeriodEditable(getPeriod(handle.db, periodId)!)).not.toThrow();
-    publishSchedule(handle.db, { periodId }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
     expect(() => requirePeriodEditable(getPeriod(handle.db, periodId)!)).not.toThrow();
     const archived = { ...getPeriod(handle.db, periodId)!, status: 'archived' as const };
     expect(() => requirePeriodEditable(archived)).toThrow(/archived/);
@@ -369,7 +426,7 @@ describe('the change log', () => {
 
   it('keeps how the nurse agreed to a change, and nothing when none was given', () => {
     const db = handle.db;
-    publishSchedule(db, { periodId }, ACTOR);
+    transact(db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
     const a = listAssignmentsForPeriod(db, periodId).find((x) => x.nurseId === ann)!;
     const base = {
       periodId,
@@ -414,7 +471,7 @@ describe('the change log', () => {
   });
 
   it('writes a strict audit entry quoting the reason next to the change row', () => {
-    publishSchedule(handle.db, { periodId }, ACTOR);
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId }, ACTOR));
     const change = recordScheduleChange(
       handle.db,
       {
