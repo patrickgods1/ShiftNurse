@@ -4,31 +4,43 @@
  * card can refetch its own state (a new call attempt, an accepted backfill) without refetching
  * every other open call-off on the unit.
  *
- * A backfill moves an assignment the same way a resolution or exchange approval does, so on
- * top of the `dayOf`/dashboard invalidation every other mutation does, it also invalidates the
- * period family for the assignment it just wrote — copied from `useInvalidateExchanges`.
+ * A backfill, a census cancellation and a holdover change assignments, so they refresh through
+ * `afterAssignmentsChange` (which covers `dayOf` and the dashboard too). A call-off, a logged call
+ * or an uncovered mark changes no assignment until it is backfilled, so those refresh only the
+ * console and the dashboard's call-off count.
  */
 
 import type { RecordHoldoverInput } from '@shared/api.js';
 import type { CallOutcome, CancellationTier, Id, IsoDate, NurseRole } from '@shiftnurse/core';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, queryKeys } from './api.js';
-import { invalidatePeriod } from './period-cache.js';
+import { afterAssignmentsChange, afterConfigChange } from './period-cache.js';
+import { queryRoots } from './query-roots.js';
 
 export const dayOfKeys = {
-  today: (unitId: Id, date?: IsoDate) => ['dayOf', 'today', unitId, date ?? 'now'] as const,
+  today: (unitId: Id, date?: IsoDate) =>
+    [...queryRoots.dayOf, 'today', unitId, date ?? 'now'] as const,
   callOffs: (unitId: Id, start: IsoDate, end: IsoDate) =>
-    ['dayOf', 'callOffs', unitId, start, end] as const,
-  replacements: (callOffId: Id) => ['dayOf', 'replacements', callOffId] as const,
-  callLog: (callOffId: Id) => ['dayOf', 'callLog', callOffId] as const,
-  cancellationPolicy: (unitId: Id) => ['dayOf', 'cancellationPolicy', unitId] as const,
+    [...queryRoots.dayOf, 'callOffs', unitId, start, end] as const,
+  replacements: (callOffId: Id) => [...queryRoots.dayOf, 'replacements', callOffId] as const,
+  callLog: (callOffId: Id) => [...queryRoots.dayOf, 'callLog', callOffId] as const,
+  cancellationPolicy: (unitId: Id) => [...queryRoots.dayOf, 'cancellationPolicy', unitId] as const,
   cancellationOrder: (
     periodId: Id,
     date: IsoDate,
     shiftTypeId: Id,
     role: NurseRole,
     volunteers: readonly Id[],
-  ) => ['dayOf', 'cancellationOrder', periodId, date, shiftTypeId, role, [...volunteers]] as const,
+  ) =>
+    [
+      ...queryRoots.dayOf,
+      'cancellationOrder',
+      periodId,
+      date,
+      shiftTypeId,
+      role,
+      [...volunteers],
+    ] as const,
 };
 
 export function useToday(unitId: Id | undefined, date?: IsoDate) {
@@ -67,7 +79,7 @@ export function useCallLog(callOffId: Id | undefined) {
 function useInvalidateDayOf(unitId: Id | undefined) {
   const queryClient = useQueryClient();
   return () => {
-    void queryClient.invalidateQueries({ queryKey: ['dayOf'] });
+    void queryClient.invalidateQueries({ queryKey: queryRoots.dayOf });
     if (unitId !== undefined) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });
     }
@@ -109,16 +121,12 @@ export function useLogCall(unitId: Id | undefined) {
   });
 }
 
-export function useBackfill(unitId: Id | undefined) {
-  const invalidate = useInvalidateDayOf(unitId);
+export function useBackfill(_unitId: Id | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ callOffId, nurseId, notes }: { callOffId: Id; nurseId: Id; notes?: string }) =>
       api.dayOf.backfill(callOffId, nurseId, notes),
-    onSuccess: (result) => {
-      invalidatePeriod(queryClient, result.assignment.periodId);
-    },
-    onSettled: invalidate,
+    onSettled: () => afterAssignmentsChange(queryClient),
   });
 }
 
@@ -157,7 +165,7 @@ export function useSaveCancellationPolicy(unitId: Id | undefined) {
     mutationFn: (tiers: CancellationTier[]) =>
       api.dayOf.saveCancellationPolicy(unitId as Id, tiers),
     // The order is what every open "who goes home" list is ranked by.
-    onSettled: () => void queryClient.invalidateQueries({ queryKey: ['dayOf'] }),
+    onSettled: () => afterConfigChange(queryClient),
   });
 }
 
@@ -172,14 +180,14 @@ export function useCancellationOrder(
   return useQuery({
     queryKey: dayOfKeys.cancellationOrder(periodId, date, shiftTypeId, role, volunteers),
     queryFn: () => api.dayOf.cancellationOrder(periodId, date, shiftTypeId, role, [...volunteers]),
-    // Ticking a volunteer re-ranks the list; keep the old one up rather than flashing a spinner.
+    // Always enabled, so keepPreviousData is safe here (see placeholderWhileEnabled elsewhere):
+    // ticking a volunteer re-ranks the list; keep the old one up rather than flashing a spinner.
     placeholderData: keepPreviousData,
   });
 }
 
 /** Removes a shift like a backfill does, so the grid, cost and conflicts refresh with Today. */
-export function useCancelForCensus(unitId: Id | undefined) {
-  const invalidate = useInvalidateDayOf(unitId);
+export function useCancelForCensus(_unitId: Id | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
@@ -199,19 +207,16 @@ export function useCancelForCensus(unitId: Id | undefined) {
         [...args.volunteers],
         args.nurseId,
       ),
-    onSuccess: (result) => invalidatePeriod(queryClient, result.periodId),
-    onSettled: invalidate,
+    onSettled: () => afterAssignmentsChange(queryClient),
   });
 }
 
-/** A holdover changes the assignment itself, so the grid's period family refreshes too. */
-export function useRecordHoldover(unitId: Id | undefined) {
-  const invalidate = useInvalidateDayOf(unitId);
+/** A holdover changes the assignment itself, so every read of the schedule refreshes. */
+export function useRecordHoldover(_unitId: Id | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: (input: RecordHoldoverInput) => api.dayOf.recordHoldover(input),
-    onSuccess: (assignment) => invalidatePeriod(queryClient, assignment.periodId),
-    onSettled: invalidate,
+    onSettled: () => afterAssignmentsChange(queryClient),
   });
 }

@@ -1,7 +1,7 @@
 /**
  * Route tree and the shell every route renders inside. Code-based routing (no file-based
  * routing plugin is installed) keeps the route table explicit and small while there are only
- * seven destinations.
+ * a handful of destinations.
  */
 
 import {
@@ -89,7 +89,7 @@ function AppShell() {
               <Link
                 to={item.to}
                 className="block rounded-md px-3 py-2 text-sm text-text hover:bg-bg
-                  [&.active]:bg-accent [&.active]:text-white"
+                  [&.active]:bg-accent-fill [&.active]:text-on-accent"
                 activeProps={{ className: 'active' }}
                 activeOptions={{ exact: item.to === '/' }}
                 aria-label={item.to === '/requests' ? requestsLabel(waiting) : undefined}

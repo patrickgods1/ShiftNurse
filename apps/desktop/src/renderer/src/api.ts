@@ -28,33 +28,41 @@ import type {
   PreferenceInput,
   RestWaiverInput,
 } from '../../shared/api.js';
-import { invalidateUnitDerived, invalidateUnitDerivedAnyUnit } from './period-cache.js';
+import { afterConfigChange } from './period-cache.js';
+import { queryRoots } from './query-roots.js';
 
 export const api = window.shiftnurse;
 
 export const queryKeys = {
-  units: () => ['units'] as const,
-  dashboard: (unitId: Id) => ['dashboard', unitId] as const,
-  nurses: (unitId: Id) => ['nurses', unitId] as const,
-  nurse: (id: Id) => ['nurse', id] as const,
-  shiftTypes: (unitId: Id) => ['shiftTypes', unitId] as const,
-  periods: (unitId: Id) => ['periods', unitId] as const,
-  assignments: (periodId: Id) => ['assignments', periodId] as const,
-  timeOff: (unitId: Id, status?: TimeOffStatus) => ['timeOff', unitId, status ?? 'all'] as const,
-  appInfo: () => ['appInfo'] as const,
-  update: () => ['update'] as const,
-  credentials: () => ['credentials'] as const,
-  nurseCredentials: (nurseId: Id) => ['nurseCredentials', nurseId] as const,
-  preferences: (nurseId: Id) => ['preferences', nurseId] as const,
-  incompatibility: (unitId: Id) => ['incompatibility', unitId] as const,
-  overtimeVolunteers: (unitId: Id) => ['overtimeVolunteers', unitId] as const,
-  preceptorships: (unitId: Id) => ['preceptorships', unitId] as const,
-  restWaivers: (unitId: Id) => ['restWaivers', unitId] as const,
-  availabilityBlocks: (unitId: Id) => ['availabilityBlocks', unitId] as const,
+  units: () => [...queryRoots.units] as const,
+  homeUnit: () => [...queryRoots.units, 'home'] as const,
+  dashboard: (unitId: Id) => [...queryRoots.dashboard, unitId] as const,
+  nurses: (unitId: Id) => [...queryRoots.nurses, unitId] as const,
+  nurse: (id: Id) => [...queryRoots.nurse, id] as const,
+  shiftTypes: (unitId: Id) => [...queryRoots.shiftTypes, unitId] as const,
+  periods: (unitId: Id) => [...queryRoots.periods, unitId] as const,
+  assignments: (periodId: Id) => [...queryRoots.assignments, periodId] as const,
+  timeOff: (unitId: Id, status?: TimeOffStatus) =>
+    [...queryRoots.timeOff, unitId, status ?? 'all'] as const,
+  appInfo: () => [...queryRoots.appInfo] as const,
+  update: () => [...queryRoots.update] as const,
+  credentials: () => [...queryRoots.credentials] as const,
+  nurseCredentials: (nurseId: Id) => [...queryRoots.nurseCredentials, nurseId] as const,
+  preferences: (nurseId: Id) => [...queryRoots.preferences, nurseId] as const,
+  incompatibility: (unitId: Id) => [...queryRoots.incompatibility, unitId] as const,
+  overtimeVolunteers: (unitId: Id) => [...queryRoots.overtimeVolunteers, unitId] as const,
+  preceptorships: (unitId: Id) => [...queryRoots.preceptorships, unitId] as const,
+  restWaivers: (unitId: Id) => [...queryRoots.restWaivers, unitId] as const,
+  availabilityBlocks: (unitId: Id) => [...queryRoots.availabilityBlocks, unitId] as const,
 };
 
 export function useUnits() {
   return useQuery({ queryKey: queryKeys.units(), queryFn: () => api.units.list() });
+}
+
+/** The unit the app opens, by id; `useUnits` is alphabetical and only for pickers. */
+export function useHomeUnit() {
+  return useQuery({ queryKey: queryKeys.homeUnit(), queryFn: () => api.units.home() });
 }
 
 export function useDashboard(unitId: Id | undefined) {
@@ -146,12 +154,11 @@ function useInvalidateRoster(unitId: Id | undefined) {
     if (unitId !== undefined) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.nurses(unitId) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });
-      // Who is on the roster, and with what contract, feeds every schedule check.
-      invalidateUnitDerived(queryClient, unitId);
     } else {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.nurses('').slice(0, 1) });
-      invalidateUnitDerivedAnyUnit(queryClient);
+      void queryClient.invalidateQueries({ queryKey: queryRoots.nurses });
     }
+    // Who is on the roster, and with what contract, feeds every schedule check.
+    afterConfigChange(queryClient);
   };
 }
 
@@ -211,7 +218,7 @@ export function useCreateCredential() {
     mutationFn: (input: Omit<Credential, 'id'>) => api.credentials.create(input),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.credentials() });
-      invalidateUnitDerivedAnyUnit(queryClient);
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -222,7 +229,7 @@ function useInvalidateNurseCredentials(nurseId: Id | undefined) {
     if (nurseId !== undefined) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.nurseCredentials(nurseId) });
       // A credential decides who may fill a requirement, in every period.
-      invalidateUnitDerivedAnyUnit(queryClient);
+      afterConfigChange(queryClient);
     }
   };
 }
@@ -274,7 +281,7 @@ export function useReplacePreferences(nurseId: Id | undefined) {
       if (nurseId !== undefined) {
         void queryClient.invalidateQueries({ queryKey: queryKeys.preferences(nurseId) });
         // Preferences are what "against preference" and fairness are judged by.
-        invalidateUnitDerivedAnyUnit(queryClient);
+        afterConfigChange(queryClient);
       }
     },
   });
@@ -301,10 +308,8 @@ function useInvalidateIncompatibility(unitId: Id | undefined) {
   return () => {
     if (unitId !== undefined) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.incompatibility(unitId) });
-      invalidateUnitDerived(queryClient, unitId);
-    } else {
-      invalidateUnitDerivedAnyUnit(queryClient);
     }
+    afterConfigChange(queryClient);
   };
 }
 
@@ -365,7 +370,7 @@ function useInvalidateOvertimeVolunteers(unitId: Id) {
   const queryClient = useQueryClient();
   return () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.overtimeVolunteers(unitId) });
-    invalidateUnitDerived(queryClient, unitId);
+    afterConfigChange(queryClient);
   };
 }
 
@@ -414,7 +419,7 @@ function useInvalidatePreceptorships(unitId: Id) {
   const queryClient = useQueryClient();
   return () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.preceptorships(unitId) });
-    invalidateUnitDerived(queryClient, unitId);
+    afterConfigChange(queryClient);
   };
 }
 
@@ -463,7 +468,7 @@ function useInvalidateRestWaivers(unitId: Id) {
   const queryClient = useQueryClient();
   return () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.restWaivers(unitId) });
-    invalidateUnitDerived(queryClient, unitId);
+    afterConfigChange(queryClient);
   };
 }
 
@@ -502,7 +507,7 @@ function useInvalidateAvailabilityBlocks(unitId: Id) {
   const queryClient = useQueryClient();
   return () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.availabilityBlocks(unitId) });
-    invalidateUnitDerived(queryClient, unitId);
+    afterConfigChange(queryClient);
   };
 }
 

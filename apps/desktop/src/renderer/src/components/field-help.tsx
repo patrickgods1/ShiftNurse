@@ -52,9 +52,15 @@ export function InfoTip({ label, children }: { label: string; children: ReactNod
         <button
           type="button"
           aria-label={`About ${label}`}
-          className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border text-[10px] font-semibold leading-none text-text-muted hover:border-accent hover:text-accent"
+          className="group inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-text-muted"
         >
-          i
+          {/* 16px circle inside a 24px target (WCAG 2.2 SC 2.5.8). */}
+          <span
+            aria-hidden="true"
+            className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-[10px] font-semibold leading-none group-hover:border-accent group-hover:text-accent"
+          >
+            i
+          </span>
         </button>
       </Tooltip.Trigger>
       <Tooltip.Portal>

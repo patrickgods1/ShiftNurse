@@ -78,38 +78,49 @@ const bool = (name: string) => integer(name, { mode: 'boolean' });
 // Unit & shift types
 // ---------------------------------------------------------------------------
 
-export const unit = sqliteTable('unit', {
-  id: text('id').primaryKey().$type<Id>(),
-  name: text('name').notNull(),
-  unitType: text('unit_type').notNull(),
-  payPeriodDays: integer('pay_period_days').notNull(),
-  payPeriodAnchor: isoDate('pay_period_anchor').notNull(),
-  // How the unit keeps its ratios (core's RatioStaffing). The defaults are the reading before
-  // these columns existed: the charge nurse counts at the bedside and nobody's break is covered.
-  chargeNurseTakesPatients: integer('charge_nurse_takes_patients', { mode: 'boolean' })
-    .notNull()
-    .default(true),
-  breakMinutesPerNurse: integer('break_minutes_per_nurse').notNull().default(0),
-  chargeCoversBreaks: integer('charge_covers_breaks', { mode: 'boolean' }).notNull().default(false),
-  // Days of notice the unit owes staff before a schedule starts; null means no rule.
-  postingLeadDays: integer('posting_lead_days'),
-  // The state preset last applied (core's JurisdictionId); null until one is.
-  jurisdiction: text('jurisdiction'),
-  // The answers to that preset's apply-time questions (core's JurisdictionChoices); null until a
-  // preset is applied, read as every question answered no.
-  jurisdictionChoices: text('jurisdiction_choices', { mode: 'json' }).$type<JurisdictionChoices>(),
-  // How the employer runs FMLA, the leave year and accrual (core's LeavePolicy); null means the
-  // pre-policy reading, so every existing unit behaves as it did.
-  leavePolicy: text('leave_policy', { mode: 'json' }).$type<LeavePolicy>(),
-  // How day-of ranks the overtime tier; null is the cost-first order every unit used before.
-  overtimeOrder: text('overtime_order').$type<OvertimeOrder>(),
-  // Weekend/holiday shifts each per-diem nurse commits to (core's PerDiemCommitment); null = none.
-  perDiemCommitment: text('per_diem_commitment', { mode: 'json' }).$type<PerDiemCommitment>(),
-  // Whether a change to a posted schedule must record the nurse's consent; null = reason enough.
-  requireConsentForPostedChanges: bool('require_change_consent'),
-  // Weekends off a year promised to each nurse (core's Unit.minWeekendsOffPerYear); null = not checked.
-  minWeekendsOffPerYear: integer('min_weekends_off_per_year'),
-});
+export const unit = sqliteTable(
+  'unit',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    name: text('name').notNull(),
+    unitType: text('unit_type').notNull(),
+    payPeriodDays: integer('pay_period_days').notNull(),
+    payPeriodAnchor: isoDate('pay_period_anchor').notNull(),
+    // How the unit keeps its ratios (core's RatioStaffing). The defaults are the reading before
+    // these columns existed: the charge nurse counts at the bedside and nobody's break is covered.
+    chargeNurseTakesPatients: integer('charge_nurse_takes_patients', { mode: 'boolean' })
+      .notNull()
+      .default(true),
+    breakMinutesPerNurse: integer('break_minutes_per_nurse').notNull().default(0),
+    chargeCoversBreaks: integer('charge_covers_breaks', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    // Days of notice the unit owes staff before a schedule starts; null means no rule.
+    postingLeadDays: integer('posting_lead_days'),
+    // The state preset last applied (core's JurisdictionId); null until one is.
+    jurisdiction: text('jurisdiction'),
+    // The answers to that preset's apply-time questions (core's JurisdictionChoices); null until a
+    // preset is applied, read as every question answered no.
+    jurisdictionChoices: text('jurisdiction_choices', {
+      mode: 'json',
+    }).$type<JurisdictionChoices>(),
+    // How the employer runs FMLA, the leave year and accrual (core's LeavePolicy); null means the
+    // pre-policy reading, so every existing unit behaves as it did.
+    leavePolicy: text('leave_policy', { mode: 'json' }).$type<LeavePolicy>(),
+    // How day-of ranks the overtime tier; null is the cost-first order every unit used before.
+    overtimeOrder: text('overtime_order').$type<OvertimeOrder>(),
+    // Weekend/holiday shifts each per-diem nurse commits to (core's PerDiemCommitment); null = none.
+    perDiemCommitment: text('per_diem_commitment', { mode: 'json' }).$type<PerDiemCommitment>(),
+    // Whether a change to a posted schedule must record the nurse's consent; null = reason enough.
+    requireConsentForPostedChanges: bool('require_change_consent'),
+    // Weekends off a year promised to each nurse (core's Unit.minWeekendsOffPerYear); null = not checked.
+    minWeekendsOffPerYear: integer('min_weekends_off_per_year'),
+    // The unit the app opens (migration 0040). By id, not name: a float sibling that sorts first
+    // once took the app over when the home unit was renamed. The partial index allows one.
+    isHome: integer('is_home', { mode: 'boolean' }).notNull().default(false),
+  },
+  (t) => [uniqueIndex('unit_one_home').on(t.isHome).where(sql`is_home = 1`)],
+);
 
 export const shiftType = sqliteTable(
   'shift_type',

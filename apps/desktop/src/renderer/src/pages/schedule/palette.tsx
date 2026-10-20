@@ -6,7 +6,7 @@
 
 import type { ShiftType } from '@shiftnurse/core';
 import { useMemo } from 'react';
-import { readableTextColor } from './colors.js';
+import { readableTextColor } from '../../contrast.js';
 import { setDragPayload } from './dnd.js';
 
 interface ShiftPaletteProps {

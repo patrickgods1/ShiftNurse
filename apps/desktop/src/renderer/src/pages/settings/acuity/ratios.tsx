@@ -15,7 +15,7 @@ import {
 } from '../../../api-config.js';
 import { describedBy, Field } from '../../../components/field-help.js';
 import { Modal } from '../../../components/modal.js';
-import { INPUT, PRIMARY, SECONDARY } from '../../../components/ui.js';
+import { DANGER_SOLID, INPUT, PRIMARY, SECONDARY } from '../../../components/ui.js';
 
 const ALL_TIERS_VALUE = '__all__';
 
@@ -458,7 +458,7 @@ export function RatioRulesSection({
                   onSuccess: () => setConfirmingDeactivate(undefined),
                 });
               }}
-              className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+              className={DANGER_SOLID}
             >
               Deactivate
             </button>

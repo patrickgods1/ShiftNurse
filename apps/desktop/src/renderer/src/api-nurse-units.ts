@@ -9,10 +9,22 @@ import type { NurseUnitInput, NurseUnitPatch } from '@shared/api.js';
 import type { Id } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, queryKeys } from './api.js';
+import { refreshEverything } from './period-cache.js';
+import { queryRoots } from './query-roots.js';
+
+export const nurseUnitKeys = {
+  forNurse: (nurseId: Id) => [...queryRoots.nurseUnits, 'forNurse', nurseId] as const,
+  floatingIn: (unitId: Id) => [...queryRoots.nurseUnits, 'floatingIn', unitId] as const,
+  // These two sit under the unit's nurse key, so every roster edit that refreshes the nurses
+  // refreshes the grid's rows too.
+  gridNurses: (unitId: Id) => [...queryKeys.nurses(unitId), 'withFloats'] as const,
+  periodRoster: (unitId: Id, periodId: Id) =>
+    [...queryKeys.nurses(unitId), 'roster', periodId] as const,
+};
 
 export function useNurseUnits(nurseId: Id | undefined) {
   return useQuery({
-    queryKey: ['nurseUnits', 'forNurse', nurseId ?? ''] as const,
+    queryKey: nurseUnitKeys.forNurse(nurseId ?? ''),
     queryFn: () => api.nurseUnits.forNurse(nurseId as Id),
     enabled: nurseId !== undefined,
   });
@@ -21,7 +33,7 @@ export function useNurseUnits(nurseId: Id | undefined) {
 /** Nurses from other units who may work on this one: the grid shows them beside the home roster. */
 export function useFloatingIn(unitId: Id | undefined) {
   return useQuery({
-    queryKey: ['nurseUnits', 'floatingIn', unitId ?? ''] as const,
+    queryKey: nurseUnitKeys.floatingIn(unitId ?? ''),
     queryFn: () => api.nurseUnits.floatingIn(unitId as Id),
     enabled: unitId !== undefined,
   });
@@ -34,7 +46,7 @@ export function useFloatingIn(unitId: Id | undefined) {
  */
 export function useGridNurses(unitId: Id | undefined) {
   return useQuery({
-    queryKey: [...queryKeys.nurses(unitId ?? ''), 'withFloats'] as const,
+    queryKey: nurseUnitKeys.gridNurses(unitId ?? ''),
     queryFn: async () => [
       ...(await api.nurses.list(unitId as Id)),
       ...(await api.nurseUnits.floatingIn(unitId as Id)),
@@ -50,42 +62,36 @@ export function useGridNurses(unitId: Id | undefined) {
  */
 export function usePeriodRoster(unitId: Id | undefined, periodId: Id | undefined) {
   return useQuery({
-    // Under the unit's nurse key, so every roster edit that refreshes the nurses refreshes this.
-    queryKey: [...queryKeys.nurses(unitId ?? ''), 'roster', periodId ?? ''] as const,
+    queryKey: nurseUnitKeys.periodRoster(unitId ?? '', periodId ?? ''),
     queryFn: () => api.nurseUnits.roster(periodId as Id),
     enabled: unitId !== undefined && periodId !== undefined,
   });
 }
 
-function useRefreshAll() {
-  const queryClient = useQueryClient();
-  return () => void queryClient.invalidateQueries();
-}
-
 export function useAddNurseUnit() {
-  const refresh = useRefreshAll();
+  const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: (input: NurseUnitInput) => api.nurseUnits.create(input),
-    onSuccess: refresh,
+    onSuccess: () => refreshEverything(queryClient),
   });
 }
 
 export function useUpdateNurseUnit() {
-  const refresh = useRefreshAll();
+  const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ id, patch }: { id: Id; patch: NurseUnitPatch }) =>
       api.nurseUnits.update(id, patch),
-    onSuccess: refresh,
+    onSuccess: () => refreshEverything(queryClient),
   });
 }
 
 export function useRemoveNurseUnit() {
-  const refresh = useRefreshAll();
+  const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: (id: Id) => api.nurseUnits.remove(id),
-    onSuccess: refresh,
+    onSuccess: () => refreshEverything(queryClient),
   });
 }

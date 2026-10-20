@@ -14,6 +14,7 @@ import type { Id, Nurse } from '@shiftnurse/core';
 import { useComparison } from '../../api-solver.js';
 import { AsyncState } from '../../components/async-state.js';
 import { Modal } from '../../components/modal.js';
+import { PRIMARY } from '../../components/ui.js';
 import { formatDollars, formatHours, formatSignedDollars } from '../../money.js';
 import { SOLVER_LABELS } from '../../solver-labels.js';
 import { spread } from './candidates.js';
@@ -289,7 +290,7 @@ export function CompareDialog({
               onPreview(selected);
               onOpenChange(false);
             }}
-            className={primaryButton}
+            className={PRIMARY}
           >
             Preview option {selected === undefined ? '' : offset + selected + 1} on the grid
           </button>
@@ -299,7 +300,5 @@ export function CompareDialog({
   );
 }
 
-const primaryButton =
-  'rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60';
 const secondaryButton =
   'rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg disabled:opacity-60';

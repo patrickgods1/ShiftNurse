@@ -2,13 +2,11 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { useSetBudget } from './api-cost.js';
+import { useSaveConflictPolicy } from './api-requests.js';
 import { ToastProvider } from './components/toast.js';
 import { createQueryClient } from './query-client.js';
 import { type FakeBridge, installFakeBridge } from './test/fake-bridge.js';
-
-// Imported after the bridge module so `api.ts` captures the fake (see fake-bridge.ts).
-const { useSetBudget } = await import('./api-cost.js');
-const { useSaveConflictPolicy } = await import('./api-requests.js');
 
 function Buttons() {
   const budget = useSetBudget('period-1');

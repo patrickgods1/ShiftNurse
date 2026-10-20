@@ -3,14 +3,15 @@
  * props, and both Settings and the assisted setup guide show it with the same loading states.
  */
 
-import { useCoverage, useShiftTypesList } from '../../api-config.js';
+import { useShiftTypes } from '../../api.js';
+import { useCoverage } from '../../api-config.js';
 import { AsyncState } from '../../components/async-state.js';
 import { useUnitId } from '../../unit-context.js';
 import CoverageFloors from './coverage-floors.js';
 
 export function CoverageTab() {
   const unitId = useUnitId();
-  const shiftTypesQuery = useShiftTypesList(unitId);
+  const shiftTypesQuery = useShiftTypes(unitId);
   const coverageQuery = useCoverage(unitId);
 
   if (shiftTypesQuery.isPending || coverageQuery.isPending) {

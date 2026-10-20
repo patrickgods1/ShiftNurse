@@ -59,16 +59,28 @@ export function getUnit(db: DbLike, id: Id): Unit | undefined {
   return row ? toUnit(row) : undefined;
 }
 
+/**
+ * The unit the app opens. `listUnits` is alphabetical for pickers, so its first entry is
+ * whichever name sorts first, and a renamed home unit could lose that place to a float sibling.
+ */
+export function getHomeUnit(db: DbLike): Unit | undefined {
+  const row = db.select().from(unitTable).where(eq(unitTable.isHome, true)).get();
+  return row ? toUnit(row) : undefined;
+}
+
 export function createUnit(db: DbLike, input: Omit<Unit, 'id'>, actor: string): Unit {
   const id = ids.unit();
   const { ratioStaffing, ...fields } = input;
   validateRatioStaffing(ratioStaffing);
   validatePostingLead(fields.postingLeadDays);
   if (fields.leavePolicy) validateLeavePolicy(fields.leavePolicy);
+  // The first unit on a file is the one the manager set up; any later one is a float sibling.
+  const isHome = db.select({ id: unitTable.id }).from(unitTable).limit(1).get() === undefined;
   const row: typeof unitTable.$inferInsert = {
     id,
     ...fields,
     ...ratioStaffingColumns(ratioStaffing),
+    isHome,
   };
   db.insert(unitTable).values(row).run();
   const after = getUnit(db, id)!;

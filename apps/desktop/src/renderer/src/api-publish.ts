@@ -4,27 +4,27 @@
  * Publishing changes more than the period row: the versions list, the change log, the
  * dashboard's "latest published", the fairness ledger (so the Fairness page's history and
  * trend), and the lookback tail every *other* period's validation reads. `usePublish`
- * therefore refreshes the period's whole family plus those named lists — a stale "draft" badge
- * after a publish is exactly the kind of lie this screen must not tell, but refetching every
- * query in the app (the settings tabs, the roster) is noise.
+ * therefore refreshes what any assignment write does (`afterAssignmentsChange`, every period)
+ * plus those named lists — a stale "draft" badge after a publish is exactly the kind of lie this
+ * screen must not tell, but refetching every query in the app (the settings tabs, the roster) is
+ * noise.
  */
 
 import type { Id } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { OutputFormat } from '../../shared/api.js';
-import { api, queryKeys } from './api.js';
-import { fairnessQueryKeys } from './api-fairness.js';
-import { scheduleKeys } from './api-schedule.js';
-import { invalidatePeriod } from './period-cache.js';
+import { api } from './api.js';
+import { afterAssignmentsChange } from './period-cache.js';
+import { queryRoots } from './query-roots.js';
 
 export const publishKeys = {
-  preview: (periodId: Id) => ['publish', 'preview', periodId] as const,
-  versions: (periodId: Id) => ['publish', 'versions', periodId] as const,
-  changes: (periodId: Id) => ['publish', 'changes', periodId] as const,
-  alerts: (periodId: Id) => ['publish', 'alerts', periodId] as const,
-  backups: () => ['backups'] as const,
+  preview: (periodId: Id) => [...queryRoots.publishPreview, periodId] as const,
+  versions: (periodId: Id) => [...queryRoots.publish, 'versions', periodId] as const,
+  changes: (periodId: Id) => [...queryRoots.publishChanges, periodId] as const,
+  alerts: (periodId: Id) => [...queryRoots.publishAlerts, periodId] as const,
+  backups: () => [...queryRoots.backups] as const,
   // Under `backups()` so one prefix invalidation refreshes the list and the trash together.
-  deletedBackups: () => ['backups', 'deleted'] as const,
+  deletedBackups: () => [...queryRoots.backups, 'deleted'] as const,
 };
 
 export function usePublishPreview(periodId: Id | undefined, enabled = true) {
@@ -59,35 +59,22 @@ export function useAlerts(periodId: Id | undefined) {
   });
 }
 
-export function usePublish(periodId: Id | undefined, unitId: Id | undefined) {
+export function usePublish(periodId: Id | undefined, _unitId: Id | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ reason, acknowledged }: { reason?: string; acknowledged: number }) =>
       api.publish.publish(periodId as Id, reason, acknowledged),
     onSettled: () => {
+      // The lookback tail every other period's validation reads, and the dashboard.
+      afterAssignmentsChange(queryClient);
       if (periodId !== undefined) {
-        invalidatePeriod(queryClient, periodId);
         void queryClient.invalidateQueries({ queryKey: publishKeys.versions(periodId) });
       }
-      // Publishing takes a backup, becomes the lookback tail every other period's validation
-      // reads, and writes the ledger every period's fairness report reads.
-      for (const queryKey of [
-        publishKeys.backups(),
-        scheduleKeys.validation('').slice(0, 1),
-        fairnessQueryKeys.report('').slice(0, 2),
-      ]) {
+      // Publishing takes a backup, flips the period's status, and writes the ledger that every
+      // fairness report, the history and the trend read.
+      for (const queryKey of [queryRoots.backups, queryRoots.periods, queryRoots.fairness]) {
         void queryClient.invalidateQueries({ queryKey });
-      }
-      if (unitId !== undefined) {
-        for (const queryKey of [
-          queryKeys.periods(unitId),
-          queryKeys.dashboard(unitId),
-          fairnessQueryKeys.history(unitId),
-          fairnessQueryKeys.trend(unitId),
-        ]) {
-          void queryClient.invalidateQueries({ queryKey });
-        }
       }
     },
   });

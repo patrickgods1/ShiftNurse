@@ -64,7 +64,7 @@ const ToastContext = createContext<ToastApi | undefined>(undefined);
 interface Store {
   toasts: Entry[];
   dismiss: (id: string) => void;
-  /** Outlets currently mounted, oldest first; only the first draws, so two never double-announce. */
+  /** Outlets currently mounted, newest last; only the newest draws, so two never double-announce. */
   outlets: string[];
   setOutlet: (id: string, mounted: boolean) => void;
 }
@@ -164,7 +164,7 @@ function BoundOutlet({ store, className }: { store: Store; className: string }) 
     setOutlet(id, true);
     return () => setOutlet(id, false);
   }, [id, setOutlet]);
-  if (store.outlets[0] !== id) return null;
+  if (store.outlets.at(-1) !== id) return null;
   return <ToastStack toasts={store.toasts} onDismiss={store.dismiss} className={className} />;
 }
 

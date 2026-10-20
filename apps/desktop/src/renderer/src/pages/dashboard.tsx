@@ -5,6 +5,7 @@
  */
 
 import type { DashboardSummary, ExpiringCredentialView } from '@shared/api.js';
+import type { IsoDate } from '@shiftnurse/core';
 import { Link } from '@tanstack/react-router';
 import { useDashboard, useNurses, useShiftTypes } from '../api.js';
 import { useCoverage } from '../api-config.js';
@@ -16,7 +17,7 @@ import { daysFromToday, formatDate, listName, periodLabel } from '../format.js';
 import { useUnitId } from '../unit-context.js';
 import { CostPanel } from './dashboard/cost-panel.js';
 
-function credentialTone(expiresOn: string | undefined): 'neutral' | 'warn' | 'danger' {
+function credentialTone(expiresOn: IsoDate | undefined): 'neutral' | 'warn' | 'danger' {
   if (expiresOn === undefined) return 'neutral';
   const days = daysFromToday(expiresOn);
   if (days <= 30) return 'danger';

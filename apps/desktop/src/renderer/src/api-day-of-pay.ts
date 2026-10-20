@@ -8,10 +8,11 @@ import type { DayOfPayEntry, DayOfPayPatch } from '@shared/api.js';
 import type { Id, IsoDate } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api.js';
+import { queryRoots } from './query-roots.js';
 
 export const dayOfPayKeys = {
   list: (unitId: Id, start: IsoDate, end: IsoDate) =>
-    ['dayOfPay', 'list', unitId, start, end] as const,
+    [...queryRoots.dayOfPay, 'list', unitId, start, end] as const,
 };
 
 export function useDayOfPayEvents(unitId: Id | undefined, start: IsoDate, end: IsoDate) {
@@ -25,8 +26,8 @@ export function useDayOfPayEvents(unitId: Id | undefined, start: IsoDate, end: I
 function useInvalidate() {
   const queryClient = useQueryClient();
   return () => {
-    void queryClient.invalidateQueries({ queryKey: ['dayOfPay'] });
-    void queryClient.invalidateQueries({ queryKey: ['cost', 'report'] });
+    void queryClient.invalidateQueries({ queryKey: queryRoots.dayOfPay });
+    void queryClient.invalidateQueries({ queryKey: queryRoots.costReport });
   };
 }
 

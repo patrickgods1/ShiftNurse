@@ -3,29 +3,33 @@
  *
  * Deciding a request or applying a resolution changes more than the row it touches: an
  * approval removes a nurse from the pool the solver, the grid's validation, the cost report
- * and the fairness score all read, and a resolution writes assignments directly. So every
- * mutation here invalidates the whole period family — assignments, validation, cost,
- * fairness, conflicts — plus the unit's request lists and dashboard, rather than guessing
- * which of them the change happened to move. Invalidation runs in `onSettled` so a refused
- * mutation (a denial with no reason, a stale resolution) still snaps the screen back to what
- * the database holds.
+ * and the fairness score all read, an approval lifts the nurse's shifts from every draft period
+ * it touches (not only the one the dialog was opened from), and a resolution writes assignments
+ * directly. So every mutation here refreshes through `afterLeaveChange` — every period's
+ * schedule reads, the request lists, the leave checks and bids — rather than guessing which of
+ * them the change happened to move. Invalidation runs in `onSettled` so a refused mutation (a
+ * denial with no reason, a stale resolution) still snaps the screen back to what the database
+ * holds.
  */
 
 import type { AutoResolvePolicy, Id, IsoDate } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CreateTimeOffInput, LeaveCover } from '../../shared/api.js';
-import { api, queryKeys } from './api.js';
-import { invalidatePeriod, invalidateUnitDerived } from './period-cache.js';
+import { api } from './api.js';
+import { afterConfigChange, afterLeaveChange } from './period-cache.js';
+import { queryRoots } from './query-roots.js';
 
 export const requestKeys = {
   inRange: (unitId: Id, start: IsoDate, end: IsoDate) =>
-    ['timeOff', 'range', unitId, start, end] as const,
+    [...queryRoots.timeOff, 'range', unitId, start, end] as const,
   impact: (periodId: Id, requestId: Id, decision: 'approved' | 'denied') =>
-    ['timeOff', 'impact', periodId, requestId, decision] as const,
-  conflicts: (periodId: Id) => ['conflicts', periodId] as const,
-  holidayPriority: (unitId: Id) => ['timeOff', 'holidayPriority', unitId] as const,
-  holidayWorkPriority: (unitId: Id) => ['timeOff', 'holidayWorkPriority', unitId] as const,
-  policy: (unitId: Id) => ['conflictPolicy', unitId] as const,
+    [...queryRoots.timeOffImpact, periodId, requestId, decision] as const,
+  conflicts: (periodId: Id) => [...queryRoots.conflicts, periodId] as const,
+  holidayPriority: (unitId: Id) => [...queryRoots.timeOff, 'holidayPriority', unitId] as const,
+  holidayWorkPriority: (unitId: Id) => [...queryRoots.holidayWorkPriority, unitId] as const,
+  policy: (unitId: Id) => [...queryRoots.conflictPolicy, unitId] as const,
+  coverOptions: (periodId: Id, requestId: Id) =>
+    [...queryRoots.coverOptions, periodId, requestId] as const,
 };
 
 export function useTimeOffInRange(unitId: Id | undefined, start: IsoDate, end: IsoDate) {
@@ -47,7 +51,7 @@ export function useHolidayPriority(unitId: Id | undefined) {
 
 /**
  * Who wants to work each coming holiday, most senior first. Fed by preferences, not requests, so
- * a preference save refreshes it through the unit-derived roots in `period-cache.ts`.
+ * a preference save refreshes it through `afterConfigChange` in `period-cache.ts`.
  */
 export function useHolidayWorkPriority(unitId: Id | undefined) {
   return useQuery({
@@ -72,7 +76,7 @@ export function useTimeOffImpact(
 /** For each shift approving the request would free: who could take it, best first. */
 export function useCoverOptions(periodId: Id | undefined, requestId: Id | undefined) {
   return useQuery({
-    queryKey: ['coverOptions', periodId ?? '', requestId ?? ''] as const,
+    queryKey: requestKeys.coverOptions(periodId ?? '', requestId ?? ''),
     queryFn: () => api.timeOff.coverOptions(periodId as Id, requestId as Id),
     enabled: periodId !== undefined && requestId !== undefined,
   });
@@ -103,26 +107,24 @@ export function useSaveConflictPolicy(unitId: Id | undefined) {
       if (unitId !== undefined) {
         void queryClient.invalidateQueries({ queryKey: requestKeys.policy(unitId) });
         // The policy decides what the conflicts list offers to resolve on its own.
-        invalidateUnitDerived(queryClient, unitId);
+        afterConfigChange(queryClient);
       }
     },
   });
 }
 
-/** Everything a time-off decision or a resolution can move, for one unit and (maybe) one period. */
-function useInvalidateRequests(unitId: Id | undefined, periodId: Id | undefined) {
+/**
+ * Everything a time-off decision or a resolution can move, in every period it touched. The hooks
+ * below keep their `(unitId, periodId)` parameters: `approveAndCover`, `resolve` and
+ * `autoResolve` send the period to main, and callers should not change with the refresh scope.
+ */
+function useInvalidateRequests() {
   const queryClient = useQueryClient();
-  return () => {
-    if (unitId !== undefined) {
-      void queryClient.invalidateQueries({ queryKey: ['timeOff'] });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });
-    }
-    if (periodId !== undefined) invalidatePeriod(queryClient, periodId);
-  };
+  return () => afterLeaveChange(queryClient);
 }
 
-export function useCreateTimeOff(unitId: Id | undefined, periodId: Id | undefined) {
-  const invalidate = useInvalidateRequests(unitId, periodId);
+export function useCreateTimeOff(_unitId: Id | undefined, _periodId: Id | undefined) {
+  const invalidate = useInvalidateRequests();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: (input: CreateTimeOffInput) => api.timeOff.create(input),
@@ -130,8 +132,8 @@ export function useCreateTimeOff(unitId: Id | undefined, periodId: Id | undefine
   });
 }
 
-export function useApproveTimeOff(unitId: Id | undefined, periodId: Id | undefined) {
-  const invalidate = useInvalidateRequests(unitId, periodId);
+export function useApproveTimeOff(_unitId: Id | undefined, _periodId: Id | undefined) {
+  const invalidate = useInvalidateRequests();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason?: string }) => api.timeOff.approve(id, reason),
@@ -140,8 +142,8 @@ export function useApproveTimeOff(unitId: Id | undefined, periodId: Id | undefin
 }
 
 /** Approve, take the nurse's shifts off and give each chosen one to its cover, in one step. */
-export function useApproveAndCover(unitId: Id | undefined, periodId: Id | undefined) {
-  const invalidate = useInvalidateRequests(unitId, periodId);
+export function useApproveAndCover(_unitId: Id | undefined, periodId: Id | undefined) {
+  const invalidate = useInvalidateRequests();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ id, reason, covers }: { id: Id; reason?: string; covers: LeaveCover[] }) =>
@@ -150,8 +152,8 @@ export function useApproveAndCover(unitId: Id | undefined, periodId: Id | undefi
   });
 }
 
-export function useDenyTimeOff(unitId: Id | undefined, periodId: Id | undefined) {
-  const invalidate = useInvalidateRequests(unitId, periodId);
+export function useDenyTimeOff(_unitId: Id | undefined, _periodId: Id | undefined) {
+  const invalidate = useInvalidateRequests();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason: string }) => api.timeOff.deny(id, reason),
@@ -159,8 +161,8 @@ export function useDenyTimeOff(unitId: Id | undefined, periodId: Id | undefined)
   });
 }
 
-export function useCancelTimeOff(unitId: Id | undefined, periodId: Id | undefined) {
-  const invalidate = useInvalidateRequests(unitId, periodId);
+export function useCancelTimeOff(_unitId: Id | undefined, _periodId: Id | undefined) {
+  const invalidate = useInvalidateRequests();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason?: string }) => api.timeOff.cancel(id, reason),
@@ -168,8 +170,8 @@ export function useCancelTimeOff(unitId: Id | undefined, periodId: Id | undefine
   });
 }
 
-export function useWithdrawApproval(unitId: Id | undefined, periodId: Id | undefined) {
-  const invalidate = useInvalidateRequests(unitId, periodId);
+export function useWithdrawApproval(_unitId: Id | undefined, _periodId: Id | undefined) {
+  const invalidate = useInvalidateRequests();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason: string }) =>
@@ -178,8 +180,8 @@ export function useWithdrawApproval(unitId: Id | undefined, periodId: Id | undef
   });
 }
 
-export function useResolveConflict(unitId: Id | undefined, periodId: Id | undefined) {
-  const invalidate = useInvalidateRequests(unitId, periodId);
+export function useResolveConflict(_unitId: Id | undefined, periodId: Id | undefined) {
+  const invalidate = useInvalidateRequests();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ resolutionId, reason }: { resolutionId: string; reason: string }) =>
@@ -188,8 +190,8 @@ export function useResolveConflict(unitId: Id | undefined, periodId: Id | undefi
   });
 }
 
-export function useAutoResolve(unitId: Id | undefined, periodId: Id | undefined) {
-  const invalidate = useInvalidateRequests(unitId, periodId);
+export function useAutoResolve(_unitId: Id | undefined, periodId: Id | undefined) {
+  const invalidate = useInvalidateRequests();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: () => api.conflicts.autoResolve(periodId as Id),

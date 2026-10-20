@@ -26,7 +26,7 @@ import { type Column, DataTable } from '../components/data-table.js';
 import { DateField } from '../components/date-field.js';
 import { PageHeader } from '../components/page-header.js';
 import { PeriodOptions } from '../components/period-options.js';
-import { PRIMARY, SMALL } from '../components/ui.js';
+import { PRIMARY, SELECTED, SMALL, UNSELECTED } from '../components/ui.js';
 import { defaultPeriod } from '../default-period.js';
 import { formatDate, formatInstant, periodRange } from '../format.js';
 import { useUnitId } from '../unit-context.js';
@@ -322,7 +322,7 @@ export default function RequestsPage() {
             type="button"
             aria-pressed={tab === option.value}
             className={`rounded-md border border-border px-3 py-1.5 text-sm font-medium ${
-              tab === option.value ? 'bg-accent text-white' : 'bg-surface text-text hover:bg-bg'
+              tab === option.value ? SELECTED : UNSELECTED
             }`}
             onClick={() => setTab(option.value)}
           >
@@ -358,9 +358,7 @@ export default function RequestsPage() {
                       type="button"
                       aria-pressed={filter === option.value}
                       className={`rounded-md border border-border px-3 py-1 text-sm ${
-                        filter === option.value
-                          ? 'bg-accent text-white'
-                          : 'bg-surface text-text hover:bg-bg'
+                        filter === option.value ? SELECTED : UNSELECTED
                       }`}
                       onClick={() => setFilter(option.value)}
                     >

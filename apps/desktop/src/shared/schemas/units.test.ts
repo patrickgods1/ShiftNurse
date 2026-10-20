@@ -61,3 +61,10 @@ describe('a unit’s pay calendar arriving over IPC', () => {
     expect(unitInput.safeParse(unit(14)).success).toBe(true);
   });
 });
+
+describe('asking which unit the app opens', () => {
+  it('takes no arguments, and refuses one', () => {
+    expect(API_SCHEMAS.units.home.safeParse([]).success).toBe(true);
+    expect(API_SCHEMAS.units.home.safeParse(['x']).success).toBe(false);
+  });
+});

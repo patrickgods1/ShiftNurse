@@ -15,7 +15,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAdvanceSetup, useCompleteSetup } from '../api-setup.js';
 import { ThemeToggle } from '../components/theme-toggle.js';
-import { errorMessage, PRIMARY, SECONDARY } from '../components/ui.js';
+import { errorMessage, PRIMARY, SECONDARY, SELECTED } from '../components/ui.js';
 import { useUnit } from '../unit-context.js';
 import { StepBody, useSetupCounts } from './assisted-steps.js';
 import { PresetRegistry, type RegisteredPreset } from './preset-registry.js';
@@ -86,9 +86,7 @@ export function AssistedSetup({ state }: { state: SetupState }) {
             <li
               key={s}
               aria-current={s === step ? 'step' : undefined}
-              className={`rounded-md px-3 py-2 text-sm ${
-                s === step ? 'bg-accent text-white' : 'text-text'
-              }`}
+              className={`rounded-md px-3 py-2 text-sm ${s === step ? SELECTED : 'text-text'}`}
             >
               {index + 1}. {STEP_TITLES[s]}
               {state.skippedSteps.includes(s) && s !== step ? (

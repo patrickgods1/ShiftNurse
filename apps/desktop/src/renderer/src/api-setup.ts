@@ -17,19 +17,16 @@ import type {
 } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api.js';
+import { refreshEverything } from './period-cache.js';
+import { queryRoots } from './query-roots.js';
 
 export const setupKeys = {
-  status: () => ['setup', 'status'] as const,
-  demos: () => ['setup', 'demos'] as const,
+  status: () => [...queryRoots.setup, 'status'] as const,
+  demos: () => [...queryRoots.setup, 'demos'] as const,
 };
 
 export function useSetupStatus() {
   return useQuery({ queryKey: setupKeys.status(), queryFn: () => api.setup.status() });
-}
-
-function useInvalidateAll() {
-  const queryClient = useQueryClient();
-  return () => void queryClient.invalidateQueries();
 }
 
 export function useDemos() {
@@ -41,30 +38,30 @@ export function useDemos() {
 }
 
 export function useLoadDemo() {
-  const invalidate = useInvalidateAll();
+  const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: (demoId: string) => api.setup.loadDemo(demoId),
-    onSuccess: invalidate,
+    onSuccess: () => refreshEverything(queryClient),
   });
 }
 
 export function useLoadScenarios() {
-  const invalidate = useInvalidateAll();
+  const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: () => api.setup.loadScenarios(),
-    onSuccess: invalidate,
+    onSuccess: () => refreshEverything(queryClient),
   });
 }
 
 export function useCreateSetupUnit() {
-  const invalidate = useInvalidateAll();
+  const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: (vars: { input: UnitInput; mode: UnitSetupMode }) =>
       api.setup.createUnit(vars.input, vars.mode),
-    onSuccess: invalidate,
+    onSuccess: () => refreshEverything(queryClient),
   });
 }
 
@@ -79,35 +76,35 @@ export function useAdvanceSetup() {
 }
 
 export function useCompleteSetup() {
-  const invalidate = useInvalidateAll();
+  const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: () => api.setup.complete(),
-    onSuccess: invalidate,
+    onSuccess: () => refreshEverything(queryClient),
   });
 }
 
 export function useResumeSetup() {
-  const invalidate = useInvalidateAll();
+  const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: () => api.setup.resume(),
-    onSuccess: invalidate,
+    onSuccess: () => refreshEverything(queryClient),
   });
 }
 
 export function useApplyPreset(unitId: Id) {
-  const invalidate = useInvalidateAll();
+  const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: (preset: SetupPreset) => api.setup.applyPreset(unitId, preset),
-    onSuccess: invalidate,
+    onSuccess: () => refreshEverything(queryClient),
   });
 }
 
 /** Writes ratio rules, overtime rules and rule versions, so everything is refetched. */
 export function useApplyJurisdiction(unitId: Id) {
-  const invalidate = useInvalidateAll();
+  const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({
@@ -117,7 +114,7 @@ export function useApplyJurisdiction(unitId: Id) {
       jurisdiction: JurisdictionId;
       choices?: JurisdictionChoices;
     }) => api.setup.applyJurisdiction(unitId, jurisdiction, choices),
-    onSuccess: invalidate,
+    onSuccess: () => refreshEverything(queryClient),
   });
 }
 
@@ -127,10 +124,10 @@ export function useStartOver() {
 }
 
 export function useUpdateUnit() {
-  const invalidate = useInvalidateAll();
+  const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: (vars: { id: Id; patch: UnitPatch }) => api.units.update(vars.id, vars.patch),
-    onSuccess: invalidate,
+    onSuccess: () => refreshEverything(queryClient),
   });
 }

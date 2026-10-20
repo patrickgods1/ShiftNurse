@@ -8,8 +8,8 @@
 
 import type { Assignment, ShiftType, Violation } from '@shiftnurse/core';
 import { memo } from 'react';
+import { readableTextColor } from '../../contrast.js';
 import { formatHoldover } from '../../format.js';
-import { readableTextColor } from './colors.js';
 import { setDragPayload } from './dnd.js';
 import { chipHeightClass, chipWidthClass, isPendingId } from './grid-utils.js';
 

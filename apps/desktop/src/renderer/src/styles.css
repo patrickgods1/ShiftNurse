@@ -1,11 +1,16 @@
 /*
  * Design tokens as CSS variables, not Tailwind config — Tailwind v4 is CSS-first, and there is
- * no tailwind.config.js in this repo. Tokens live on `:root`/`.dark` so a runtime theme toggle
- * (see theme-toggle.tsx) can flip them without a rebuild, and `@theme inline` re-exposes them
- * as Tailwind utilities so `bg-surface`, `text-muted`, etc. stay usable in JSX.
+ * no tailwind.config.js in this repo. Tokens live on `:root`/`:root[data-theme]` so a runtime
+ * theme toggle (see theme-toggle.tsx) can flip them without a rebuild, and `@theme inline`
+ * re-exposes them as Tailwind utilities so `bg-surface`, `text-muted`, etc. stay usable in JSX.
  *
  * Palette is deliberately a calm, clinical neutral-plus-blue, not a SaaS purple gradient: this
  * is software a nurse manager reads for a full shift, not a marketing page.
+ *
+ * `accent`, `danger`, `warn` and `success` are text and ring colours. A solid fill uses its
+ * `*-fill` token with the matching `on-*` text: the text colours are tuned to read on the page
+ * background, so white on them fails AA in dark mode. `theme-contrast.test.ts` reads this file
+ * and holds every pair to 4.5:1.
  */
 
 @import "tailwindcss";
@@ -25,8 +30,14 @@
   --color-text-muted: #5b6472;
   --color-accent: #1f6f8b;
   --color-danger: #b3261e;
-  --color-warn: #a5680a;
+  --color-warn: #946009;
   --color-success: #29774c;
+  --color-accent-fill: #1f6f8b;
+  --color-accent-fill-hover: #195d75;
+  --color-on-accent: #ffffff;
+  --color-danger-fill: #b3261e;
+  --color-danger-fill-hover: #97201a;
+  --color-on-danger: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -40,6 +51,12 @@
     --color-danger: #e0665e;
     --color-warn: #d3a13c;
     --color-success: #5cb583;
+    --color-accent-fill: #256d86;
+    --color-accent-fill-hover: #1e5d73;
+    --color-on-accent: #ffffff;
+    --color-danger-fill: #b3392f;
+    --color-danger-fill-hover: #9e3129;
+    --color-on-danger: #ffffff;
   }
 }
 
@@ -53,6 +70,12 @@
   --color-danger: #e0665e;
   --color-warn: #d3a13c;
   --color-success: #5cb583;
+  --color-accent-fill: #256d86;
+  --color-accent-fill-hover: #1e5d73;
+  --color-on-accent: #ffffff;
+  --color-danger-fill: #b3392f;
+  --color-danger-fill-hover: #9e3129;
+  --color-on-danger: #ffffff;
 }
 
 @theme inline {
@@ -65,6 +88,12 @@
   --color-danger: var(--color-danger);
   --color-warn: var(--color-warn);
   --color-success: var(--color-success);
+  --color-accent-fill: var(--color-accent-fill);
+  --color-accent-fill-hover: var(--color-accent-fill-hover);
+  --color-on-accent: var(--color-on-accent);
+  --color-danger-fill: var(--color-danger-fill);
+  --color-danger-fill-hover: var(--color-danger-fill-hover);
+  --color-on-danger: var(--color-on-danger);
 }
 
 body {

@@ -6,6 +6,7 @@ import {
   isoDate,
   leavePolicy,
   name,
+  none,
   object,
   payPeriodDays,
   postingLeadDays,
@@ -34,6 +35,7 @@ const perDiemCommitment = z.strictObject({
 
 export const unitsSchemas = {
   list: z.tuple([]),
+  home: none,
   // The pay-period calendar is fixed once hours have been counted, so a patch is name, type and how ratios are kept.
   update: z.tuple([
     id,

@@ -1,87 +1,94 @@
 /**
- * Everything derived from one period's assignments, refreshed together.
+ * What each kind of write refreshes. There are three kinds:
  *
- * Five mutation families write assignments — grid edits, saving a Generate variation, call-off backfill, exchange
- * decisions and time-off/conflict decisions — and each used to keep its own list of what to
- * refresh. The lists drifted: after a Generate or a backfill the compliance alerts and publish
- * preview kept showing the old schedule, while grid edits never refreshed fairness. One list,
- * used by all five, is the fix; a new read model derived from assignments belongs here.
+ * - **Assignments** — a grid edit, saving a Generate variation, a backfill, an exchange, a float,
+ *   a holdover, a census cancellation, a resolution. Everything read from a schedule changes.
+ * - **Leave** — a time-off or leave-bid decision. The request lists and leave checks change, and
+ *   an approval lifts the nurse's shifts from every draft period it touches, so it is also an
+ *   assignment write.
+ * - **Configuration** — rules, coverage, shift types, tiers, ratios, the HPPD target, the roster,
+ *   pay, policies. Every period's verdicts and prices change, though no assignment did.
  *
- * The imports below are cyclic with the hook modules (they import this back), which is safe:
- * the key functions are only read when a mutation settles, long after every module loaded.
+ * Each helper refreshes by root, across every period, rather than the one period a hook was told
+ * about. Invalidation refetches only mounted queries, so marking every period stale costs no more
+ * refetches than one period, and a write never has to know which periods it touched — an
+ * approval straddling two drafts, or a published edit that is the next draft's lookback tail,
+ * used to leave the other period on its old answer until the app was restarted.
+ *
+ * A new read model joins every root set below whose writes change its answer.
  */
 
-import type { Id, IsoDate } from '@shiftnurse/core';
 import type { QueryClient } from '@tanstack/react-query';
-import { queryKeys } from './api.js';
-import { costKeys } from './api-cost.js';
-import { dayOfKeys } from './api-dayof.js';
-import { demandQueryKeys } from './api-demand.js';
-import { exchangeKeys } from './api-exchange.js';
-import { fairnessQueryKeys } from './api-fairness.js';
-import { publishKeys } from './api-publish.js';
-import { requestKeys } from './api-requests.js';
-import { scheduleKeys } from './api-schedule.js';
-import { solverKeys } from './api-solver.js';
+import { queryRoots } from './query-roots.js';
 
-export function invalidatePeriod(queryClient: QueryClient, periodId: Id): void {
-  for (const queryKey of [
-    queryKeys.assignments(periodId),
-    scheduleKeys.validation(periodId),
-    costKeys.report(periodId),
-    fairnessQueryKeys.report(periodId),
-    requestKeys.conflicts(periodId),
-    publishKeys.preview(periodId),
-    publishKeys.changes(periodId),
-    publishKeys.alerts(periodId),
-    // Generate's candidates are compared with the draft and re-checked against its inputs.
-    solverKeys.current(periodId),
-    solverKeys.againstDraft(periodId),
-    // Scheduled hours per patient day, shown beside the demand target.
-    demandQueryKeys.hppd(periodId),
-  ]) {
-    void queryClient.invalidateQueries({ queryKey });
-  }
+const ASSIGNMENT_ROOTS = [
+  queryRoots.assignments,
+  queryRoots.validation,
+  queryRoots.conflicts,
+  queryRoots.coverOptions,
+  queryRoots.timeOffImpact,
+  queryRoots.costReport,
+  queryRoots.fairnessReport,
+  queryRoots.publishPreview,
+  queryRoots.publishChanges,
+  queryRoots.publishAlerts,
+  queryRoots.solverCurrent,
+  queryRoots.solverDraft,
+  queryRoots.scheduledHppd,
+  queryRoots.dayOf,
+  queryRoots.exchange,
+  queryRoots.floatOut,
+  queryRoots.dashboard,
+] as const;
+
+const LEAVE_ROOTS = [
+  ...ASSIGNMENT_ROOTS,
+  queryRoots.timeOff,
+  queryRoots.leaveBalances,
+  queryRoots.leaveBidRounds,
+  queryRoots.leaveBids,
+] as const;
+
+const CONFIG_ROOTS = [
+  queryRoots.validation,
+  queryRoots.conflicts,
+  queryRoots.coverOptions,
+  queryRoots.timeOffImpact,
+  queryRoots.holidayWorkPriority,
+  queryRoots.demand,
+  queryRoots.scheduledHppd,
+  queryRoots.costReport,
+  queryRoots.fairnessReport,
+  queryRoots.publishPreview,
+  queryRoots.publishAlerts,
+  queryRoots.solverCurrent,
+  queryRoots.solverDraft,
+  queryRoots.dayOf,
+  queryRoots.exchange,
+  queryRoots.floatOut,
+  queryRoots.dashboard,
+] as const;
+
+function invalidateRoots(queryClient: QueryClient, roots: readonly (readonly string[])[]): void {
+  for (const queryKey of roots) void queryClient.invalidateQueries({ queryKey });
 }
 
-/**
- * Configuration (rules, coverage, shift types, roster, pay) feeds every period's derived views,
- * and the mounted grid shows only one of them: a rule edit that left the grid's validation, the
- * conflicts list, alerts and Generate's staleness check on the old answer would read "no
- * violations" for a schedule the new rules reject. So it invalidates by root prefix — every
- * period, cached or not — rather than guessing which periods the screen has open.
- */
-export function invalidateUnitDerived(queryClient: QueryClient, unitId: Id): void {
-  invalidateDerivedRoots(queryClient);
-  void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });
+/** A write that adds, moves, edits or removes assignments in ANY period (grid edit, Generate save, backfill, exchange, float, holdover, census cancel, resolution). */
+export function afterAssignmentsChange(queryClient: QueryClient): void {
+  invalidateRoots(queryClient, ASSIGNMENT_ROOTS);
 }
 
-/**
- * For a write whose hook is not told its unit (a credential grant, a holiday's recorded work —
- * the payload names a nurse or holiday, not the unit). The app shows one unit at a time, so
- * refreshing every dashboard costs one refetch of what is on screen.
- */
-export function invalidateUnitDerivedAnyUnit(queryClient: QueryClient): void {
-  invalidateDerivedRoots(queryClient);
-  void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard('').slice(0, 1) });
+/** A time-off or leave-bid decision: request lists, leave checks, bids, plus everything afterAssignmentsChange refreshes (approvals lift shifts from every draft period). */
+export function afterLeaveChange(queryClient: QueryClient): void {
+  invalidateRoots(queryClient, LEAVE_ROOTS);
 }
 
-function invalidateDerivedRoots(queryClient: QueryClient): void {
-  for (const queryKey of [
-    scheduleKeys.validation('').slice(0, 1),
-    requestKeys.conflicts('').slice(0, 1),
-    requestKeys.holidayWorkPriority('').slice(0, 2),
-    demandQueryKeys.demand('', '' as IsoDate, '' as IsoDate).slice(0, 1),
-    demandQueryKeys.hppd('').slice(0, 1),
-    costKeys.report('').slice(0, 2),
-    fairnessQueryKeys.report('').slice(0, 2),
-    publishKeys.alerts('').slice(0, 2),
-    publishKeys.preview('').slice(0, 2),
-    solverKeys.current('').slice(0, 2),
-    solverKeys.againstDraft('').slice(0, 2),
-    dayOfKeys.today('').slice(0, 1),
-    exchangeKeys.forUnit('').slice(0, 1),
-  ]) {
-    void queryClient.invalidateQueries({ queryKey });
-  }
+/** Configuration that judges or prices schedules (rules, coverage, shift types, tiers, ratios, HPPD target, roster, pay, policies). */
+export function afterConfigChange(queryClient: QueryClient): void {
+  invalidateRoots(queryClient, CONFIG_ROOTS);
+}
+
+/** Everything, for writes that replace the database's contents (demo load, start over, float memberships). */
+export function refreshEverything(queryClient: QueryClient): void {
+  void queryClient.invalidateQueries();
 }

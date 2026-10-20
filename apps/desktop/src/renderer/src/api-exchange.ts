@@ -1,9 +1,9 @@
 /**
  * Shift-exchange hooks, split out like `api-requests.ts`.
  *
- * An approved exchange moves assignment rows the same way a resolution does, so it invalidates
- * the same period family — assignments, validation, cost, fairness, conflicts — plus the unit's
- * exchange lists and dashboard. `evaluate` is a plain query keyed by the whole proposal so the
+ * A decision on an exchange can move assignment rows the same way a resolution does, so it
+ * refreshes through `afterAssignmentsChange` (which covers the exchange lists and the dashboard);
+ * a proposal moves nothing yet, so it refreshes only those two. `evaluate` is a plain query keyed by the whole proposal so the
  * dialog's live verdict panel refetches on every field change without the caller managing that
  * by hand, and its result is never cached across proposals — approving always re-evaluates on
  * the server from the stored swap regardless of what this query last returned.
@@ -12,15 +12,16 @@
 import type { ExchangeProposal, Id, ShiftSwapStatus } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, queryKeys } from './api.js';
-import { invalidatePeriod } from './period-cache.js';
+import { afterAssignmentsChange } from './period-cache.js';
+import { queryRoots } from './query-roots.js';
 
 export const exchangeKeys = {
   forUnit: (unitId: Id, status?: ShiftSwapStatus) =>
-    ['exchange', 'unit', unitId, status ?? 'all'] as const,
+    [...queryRoots.exchange, 'unit', unitId, status ?? 'all'] as const,
   forPeriod: (periodId: Id, status?: ShiftSwapStatus) =>
-    ['exchange', 'period', periodId, status ?? 'all'] as const,
+    [...queryRoots.exchange, 'period', periodId, status ?? 'all'] as const,
   evaluate: (periodId: Id, proposal: ExchangeProposal) =>
-    ['exchange', 'evaluate', periodId, proposal] as const,
+    [...queryRoots.exchange, 'evaluate', periodId, proposal] as const,
 };
 
 export function useExchangesForUnit(unitId: Id | undefined, status?: ShiftSwapStatus) {
@@ -52,21 +53,20 @@ export function useEvaluateExchange(
   });
 }
 
-/** Everything an exchange decision can move, for one unit and (maybe) one period — the same
- * shape as `useInvalidateRequests` in `api-requests.ts`. */
-function useInvalidateExchanges(unitId: Id | undefined, periodId: Id | undefined) {
+/** Everything an exchange decision can move: assignments in whichever period it touched. */
+function useInvalidateExchanges() {
   const queryClient = useQueryClient();
-  return () => {
-    if (unitId !== undefined) {
-      void queryClient.invalidateQueries({ queryKey: ['exchange'] });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });
-    }
-    if (periodId !== undefined) invalidatePeriod(queryClient, periodId);
-  };
+  return () => afterAssignmentsChange(queryClient);
 }
 
 export function useProposeExchange(unitId: Id | undefined, periodId: Id | undefined) {
-  const invalidate = useInvalidateExchanges(unitId, periodId);
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: queryRoots.exchange });
+    if (unitId !== undefined) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });
+    }
+  };
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ proposal, reason }: { proposal: ExchangeProposal; reason?: string }) =>
@@ -75,8 +75,8 @@ export function useProposeExchange(unitId: Id | undefined, periodId: Id | undefi
   });
 }
 
-export function useApproveExchange(unitId: Id | undefined, periodId: Id | undefined) {
-  const invalidate = useInvalidateExchanges(unitId, periodId);
+export function useApproveExchange(_unitId: Id | undefined, _periodId: Id | undefined) {
+  const invalidate = useInvalidateExchanges();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason?: string }) => api.exchange.approve(id, reason),
@@ -84,8 +84,8 @@ export function useApproveExchange(unitId: Id | undefined, periodId: Id | undefi
   });
 }
 
-export function useDenyExchange(unitId: Id | undefined, periodId: Id | undefined) {
-  const invalidate = useInvalidateExchanges(unitId, periodId);
+export function useDenyExchange(_unitId: Id | undefined, _periodId: Id | undefined) {
+  const invalidate = useInvalidateExchanges();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason: string }) => api.exchange.deny(id, reason),
@@ -93,8 +93,8 @@ export function useDenyExchange(unitId: Id | undefined, periodId: Id | undefined
   });
 }
 
-export function useCancelExchange(unitId: Id | undefined, periodId: Id | undefined) {
-  const invalidate = useInvalidateExchanges(unitId, periodId);
+export function useCancelExchange(_unitId: Id | undefined, _periodId: Id | undefined) {
+  const invalidate = useInvalidateExchanges();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ id, reason }: { id: Id; reason?: string }) => api.exchange.cancel(id, reason),

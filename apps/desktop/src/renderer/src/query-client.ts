@@ -9,7 +9,7 @@
  * flag only if all of them show the error: a duplicate is better than silence.
  */
 
-import { MutationCache, QueryClient } from '@tanstack/react-query';
+import { keepPreviousData, MutationCache, QueryClient } from '@tanstack/react-query';
 import { toastBus } from './components/toast.js';
 import { errorMessage } from './components/ui.js';
 
@@ -36,4 +36,14 @@ export function createQueryClient(): QueryClient {
       },
     },
   });
+}
+
+/**
+ * `keepPreviousData` while the query is enabled, nothing while it is disabled. On a disabled query
+ * TanStack serves the previous key's answer as placeholder, so a form that clears a field would
+ * keep rendering the last nurse's data for a request that no longer exists. The only way
+ * `keepPreviousData` is used outside an always-enabled query.
+ */
+export function placeholderWhileEnabled(enabled: boolean): typeof keepPreviousData | undefined {
+  return enabled ? keepPreviousData : undefined;
 }

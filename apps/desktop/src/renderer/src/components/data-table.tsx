@@ -2,9 +2,21 @@
  * A generic typed table so each page declares columns as data instead of hand-writing a
  * <table> and re-solving "what if the list is empty" every time. Sorting is opt-in per column
  * (roster asks for name sorting; requests doesn't need it) rather than forced on every table.
+ *
+ * Rows open through a button in the first cell, so the table keeps its row/column semantics:
+ * a role on the <tr> would make a screen reader announce the whole row as one button.
  */
 
 import { type ReactNode, useMemo, useState } from 'react';
+
+// Numeric collation so "E9" sorts before "E10"; base sensitivity so case and accents don't
+// reorder a surname list ("Ödegaard" sits with the O's, not after "z").
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+function compareValues(a: string | number, b: string | number): number {
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  return collator.compare(String(a), String(b));
+}
 
 export interface Column<T> {
   key: string;
@@ -19,8 +31,10 @@ interface DataTableProps<T> {
   rows: T[];
   rowKey: (row: T) => string;
   emptyLabel?: string;
-  /** When present, rows are clickable (e.g. to open a detail view) and keyboard-activatable. */
+  /** When present, rows open a detail view: a click anywhere, or the button in the first cell. */
   onRowClick?: (row: T) => void;
+  /** The first-cell button's accessible name, e.g. "Open Adams, Alice". */
+  rowLabel?: (row: T) => string;
   /** The column the table opens sorted by, ascending (e.g. a roster by surname). */
   initialSortKey?: string;
 }
@@ -31,6 +45,7 @@ export function DataTable<T>({
   rowKey,
   emptyLabel,
   onRowClick,
+  rowLabel,
   initialSortKey,
 }: DataTableProps<T>) {
   const [sort, setSort] = useState<{ key: string; direction: 1 | -1 } | undefined>(
@@ -43,11 +58,7 @@ export function DataTable<T>({
     if (column?.sortValue === undefined) return rows;
     const getValue = column.sortValue;
     return [...rows].sort((a, b) => {
-      const av = getValue(a);
-      const bv = getValue(b);
-      if (av < bv) return -1 * sort.direction;
-      if (av > bv) return 1 * sort.direction;
-      return 0;
+      return compareValues(getValue(a), getValue(b)) * sort.direction;
     });
   }, [rows, sort, columns]);
 
@@ -65,7 +76,20 @@ export function DataTable<T>({
         <thead>
           <tr className="border-b border-border text-left text-text-muted">
             {columns.map((column) => (
-              <th key={column.key} scope="col" className="px-3 py-2 font-medium">
+              <th
+                key={column.key}
+                scope="col"
+                className="px-3 py-2 font-medium"
+                aria-sort={
+                  column.sortValue === undefined
+                    ? undefined
+                    : sort?.key === column.key
+                      ? sort.direction === 1
+                        ? 'ascending'
+                        : 'descending'
+                      : 'none'
+                }
+              >
                 {column.sortValue !== undefined ? (
                   <button
                     type="button"
@@ -79,7 +103,9 @@ export function DataTable<T>({
                     }
                   >
                     {column.header}
-                    {sort?.key === column.key ? (sort.direction === 1 ? '▲' : '▼') : null}
+                    {sort?.key === column.key ? (
+                      <span aria-hidden="true">{sort.direction === 1 ? '▲' : '▼'}</span>
+                    ) : null}
                   </button>
                 ) : (
                   column.header
@@ -95,23 +121,25 @@ export function DataTable<T>({
               className={`border-b border-border last:border-0 ${
                 onRowClick !== undefined ? 'cursor-pointer hover:bg-bg' : ''
               }`}
-              tabIndex={onRowClick !== undefined ? 0 : undefined}
-              role={onRowClick !== undefined ? 'button' : undefined}
               onClick={onRowClick !== undefined ? () => onRowClick(row) : undefined}
-              onKeyDown={
-                onRowClick !== undefined
-                  ? (e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        onRowClick(row);
-                      }
-                    }
-                  : undefined
-              }
             >
-              {columns.map((column) => (
+              {columns.map((column, index) => (
                 <td key={column.key} className="px-3 py-2 text-text">
-                  {column.render(row)}
+                  {index === 0 && onRowClick !== undefined ? (
+                    <button
+                      type="button"
+                      aria-label={rowLabel?.(row)}
+                      className="text-left font-medium text-text hover:underline focus-visible:underline"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRowClick(row);
+                      }}
+                    >
+                      {column.render(row)}
+                    </button>
+                  ) : (
+                    column.render(row)
+                  )}
                 </td>
               ))}
             </tr>

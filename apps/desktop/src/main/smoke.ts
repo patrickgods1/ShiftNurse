@@ -102,7 +102,7 @@ const WELCOME_SCRIPT = `
       after = await api.setup.status();
     }
     const dashboard = (await waitFor('[data-testid="stat-card"]')).length;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     return { before: before.phase, welcome, choices, demos, dashboard, after: after.phase, mode: after.state?.mode, unit: unit?.name };
   })()`;
 
@@ -143,7 +143,7 @@ const GUIDE_WALK_SCRIPT = `
 const WRITE_SCRIPT = `
   (async () => {
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const before = (await api.nurses.list(unit.id)).length;
     const created = await api.nurses.create({
       unitId: unit.id, employeeId: 'SMOKE-' + Date.now(), firstName: 'Smoke', lastName: 'Test',
@@ -177,7 +177,7 @@ const WRITE_SCRIPT = `
 const REST_SCRIPT = `
   (async () => {
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const draft = (await api.periods.list(unit.id)).find((p) => p.status === 'draft');
     const types = await api.shiftTypes.list(unit.id);
     const night = types.find((t) => t.isNight && t.durationHours === 12);
@@ -203,7 +203,7 @@ const REST_SCRIPT = `
 const FAIRNESS_SCRIPT = `
   (async () => {
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const draft = (await api.periods.list(unit.id)).find((p) => p.status === 'draft');
     const report = await api.fairness.report(draft.id);
     const badScore = report.scores.find((s) => !(s.score >= 0 && s.score <= 100) || s.components.length !== 8);
@@ -254,7 +254,7 @@ const FAIRNESS_SCRIPT = `
 const COST_SCRIPT = `
   (async () => {
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const periods = await api.periods.list(unit.id);
     const published = periods.filter((p) => p.status === 'published').sort((a, b) => a.startDate < b.startDate ? 1 : -1)[0];
     const history = await api.cost.report(published.id);
@@ -299,7 +299,7 @@ const SOLVE_TIMEOUT_MS = Number(process.env.SHIFTNURSE_SMOKE_SOLVE_TIMEOUT_MS ??
 const SOLVER_SCRIPT = `
   (async () => {
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const draft = (await api.periods.list(unit.id)).find((p) => p.status === 'draft');
     const before = await api.periods.assignments(draft.id);
     const pin = before.find((a) => !a.isLocked);
@@ -443,7 +443,7 @@ const GENERATE_UI_STEPS = {
   start: `
   (async () => {
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const settings = await api.solverSettings.get(unit.id);
     await api.solverSettings.save(unit.id, { ...settings, maxIterations: 20000 });
   })().then(() => new Promise((resolve) => {
@@ -673,7 +673,7 @@ const SOLVER_TAB_SCRIPT = `
 const REQUESTS_SCRIPT = `
   (async () => {
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const periods = await api.periods.list(unit.id);
     const draft = periods.find((p) => p.status === 'draft');
     if (!draft) return { error: 'no draft period' };
@@ -718,7 +718,7 @@ const REQUESTS_SCRIPT = `
 const EXCHANGE_SCRIPT = `
   (async () => {
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const periods = await api.periods.list(unit.id);
     const draft = periods.find((p) => p.status === 'draft');
     if (!draft) return { error: 'no draft period' };
@@ -808,7 +808,7 @@ const EXCHANGE_SCRIPT = `
 const PUBLISH_SCRIPT = `
   (async () => {
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const draft = (await api.periods.list(unit.id)).find((p) => p.status === 'draft');
     if (!draft) return { error: 'no draft to publish' };
     const preview = await api.publish.preview(draft.id);
@@ -879,7 +879,7 @@ function dayOfScript(periodId: string): string {
   return `
   (async () => {
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const period = (await api.periods.list(unit.id)).find((p) => p.id === ${JSON.stringify(periodId)});
     if (!period) return { error: 'published period not found' };
     // The demo draft starts next Sunday, so today() is never inside it — always pass a date,
@@ -1038,7 +1038,7 @@ const SAVE_CANDIDATE_SCRIPT = `
   (async () => {
     ${WAIT_FOR}
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const draft = (await api.periods.list(unit.id)).find((p) => p.status === 'draft');
     const key = (a) => a.nurseId + '|' + a.date + '|' + a.shiftTypeId;
     const before = (await api.periods.assignments(draft.id)).map(key).sort();
@@ -1071,7 +1071,7 @@ const UNDO_MOVE_SCRIPT = `
     ${WAIT_FOR}
     location.hash = '#/schedule';
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const draft = (await api.periods.list(unit.id)).find((p) => p.status === 'draft');
     const key = (a) => a.nurseId + '|' + a.date + '|' + a.shiftTypeId;
     const keys = async () => (await api.periods.assignments(draft.id)).map(key).sort();
@@ -1119,7 +1119,7 @@ const UNDO_MOVE_SCRIPT = `
 const LEAVE_PREPARE_SCRIPT = `
   (async () => {
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const draft = (await api.periods.list(unit.id)).find((p) => p.status === 'draft');
     const rows = (await api.periods.assignments(draft.id)).filter((a) => !a.isLocked && !a.isCharge);
     let tried = 0;
@@ -1182,7 +1182,7 @@ function leaveCheckScript(requestId: string, periodId: string, freedIds: string[
   return `
   (async () => {
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const request = (await api.timeOff.list(unit.id)).find((r) => r.id === ${JSON.stringify(requestId)});
     const after = await api.periods.assignments(${JSON.stringify(periodId)});
     const freedIds = ${JSON.stringify(freedIds)};
@@ -1203,7 +1203,7 @@ const CALL_OFF_BUTTON_SCRIPT = `
   (async () => {
     ${WAIT_FOR}
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const until = async (fn, ms = 10000) => {
       const started = Date.now();
       while (Date.now() - started < ms) {
@@ -1244,7 +1244,7 @@ const SETTINGS_GROUPS_SCRIPT = `
   (async () => {
     ${WAIT_FOR}
     const api = window.shiftnurse;
-    const [unit] = await api.units.list();
+    const unit = await api.units.home();
     const until = async (fn, ms = 10000) => {
       const started = Date.now();
       while (Date.now() - started < ms) {

@@ -89,6 +89,75 @@ describe('DateField attributes', () => {
   });
 });
 
+describe('commit on blur', () => {
+  const JAN_1 = isoDate('2026-01-01');
+  const field = (onChange: () => void, value: IsoDate | '' = '') => (
+    <DateField
+      label="Requests close on"
+      value={value}
+      min={JAN_1}
+      commitOnBlur
+      onChange={onChange}
+    />
+  );
+  const input = () => screen.getByLabelText('Requests close on');
+
+  it('typing a date writes once, when the manager leaves the field', () => {
+    const onChange = vi.fn();
+    render(field(onChange));
+    fireEvent.change(input(), { target: { value: '2026-10-14' } });
+    fireEvent.change(input(), { target: { value: '2026-10-15' } });
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.blur(input());
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith('2026-10-15');
+  });
+
+  it('a date in the year 202 is not saved and says why', () => {
+    const onChange = vi.fn();
+    render(field(onChange));
+    fireEvent.change(input(), { target: { value: '0202-10-15' } });
+    fireEvent.blur(input());
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert').textContent).toBe('Pick a date on or after Jan 1, 2026');
+  });
+
+  it('clearing a saved date and leaving writes the clear once', () => {
+    const onChange = vi.fn();
+    render(field(onChange, isoDate('2026-10-15')));
+    fireEvent.change(input(), { target: { value: '' } });
+    fireEvent.blur(input());
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith('');
+  });
+
+  it('Enter writes the date and the box keeps showing it', () => {
+    const onChange = vi.fn();
+    render(field(onChange));
+    fireEvent.focus(input());
+    fireEvent.change(input(), { target: { value: '2026-10-15' } });
+    fireEvent.keyDown(input(), { key: 'Enter' });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith('2026-10-15');
+    expect((input() as HTMLInputElement).value).toBe('2026-10-15');
+  });
+
+  it('leaving a date untouched writes nothing', () => {
+    const onChange = vi.fn();
+    render(field(onChange, isoDate('2026-10-15')));
+    fireEvent.blur(input());
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('without commit on blur, every change is passed on as before', () => {
+    const onChange = vi.fn();
+    render(<DateField label="Day" value="" onChange={onChange} />);
+    fireEvent.change(screen.getByLabelText('Day'), { target: { value: '2026-10-14' } });
+    fireEvent.change(screen.getByLabelText('Day'), { target: { value: '2026-10-15' } });
+    expect(onChange).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('dateProblem', () => {
   it('rejects a calendar date that does not exist', () => {
     expect(dateProblem('2026-02-30', undefined, undefined)).toBe('Enter a valid date.');

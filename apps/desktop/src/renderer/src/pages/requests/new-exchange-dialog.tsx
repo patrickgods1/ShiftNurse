@@ -5,7 +5,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { useEvaluateExchange, useProposeExchange } from '../../api-exchange.js';
 import { AsyncState } from '../../components/async-state.js';
 import { Modal } from '../../components/modal.js';
-import { errorMessage, INPUT, LABEL, PRIMARY, SECONDARY } from '../../components/ui.js';
+import {
+  errorMessage,
+  INPUT,
+  LABEL,
+  PRIMARY,
+  SECONDARY,
+  SELECTED,
+  UNSELECTED,
+} from '../../components/ui.js';
 import { EvaluationPanel } from './exchange-evaluation.js';
 import {
   assignmentOptionLabel,
@@ -87,7 +95,7 @@ export function NewExchangeDialog({
               type="button"
               aria-pressed={form.kind === k}
               className={`rounded-md border border-border px-3 py-1 text-sm ${
-                form.kind === k ? 'bg-accent text-white' : 'bg-surface text-text hover:bg-bg'
+                form.kind === k ? SELECTED : UNSELECTED
               }`}
               onClick={() => setForm((f) => ({ ...f, kind: k, requestedAssignmentId: '' }))}
             >

@@ -16,6 +16,7 @@ import {
   migrationsFolder,
   openDatabase,
 } from './client.js';
+import { getHomeUnit } from './repositories/config.js';
 
 interface Journal {
   entries: { idx: number; tag: string; when: number }[];
@@ -146,6 +147,27 @@ describe('upgrading saved data', () => {
     const sql = readFileSync(join(FULL, '0038_float_cancellation_tier.sql'), 'utf8');
     for (const statement of sql.split('--> statement-breakpoint')) opened.sqlite.exec(statement);
     expect(read()).toEqual(upgraded);
+    opened.close();
+  });
+
+  it('an install from before this release marks its first unit as home', () => {
+    const url = join(dir, 'live.sqlite');
+    const before = openDatabase({ url, migrationsFolder: olderRelease('0040_home_unit') });
+    // Zeta goes in first, so it has rowid 1 even though Alpha sorts ahead of it by name.
+    for (const [id, name] of [
+      ['u-zeta', 'Zeta'],
+      ['u-alpha', 'Alpha'],
+    ] as const) {
+      before.sqlite
+        .prepare(
+          "insert into unit (id, name, unit_type, pay_period_days, pay_period_anchor) values (?, ?, 'Medical-Surgical', 14, '2026-01-04')",
+        )
+        .run(id, name);
+    }
+    before.close();
+
+    const opened = openDatabase({ url, migrationsFolder: FULL });
+    expect(getHomeUnit(opened.db)?.name).toBe('Zeta');
     opened.close();
   });
 });

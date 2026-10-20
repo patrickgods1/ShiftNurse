@@ -37,9 +37,10 @@ export function describePreference(
     case 'prefer_weekday':
       return `prefers ${WEEKDAYS[pref.weekday]}${strength}`;
     case 'weekend_appetite':
-      return `${pref.level < 0 ? 'wants no weekends' : pref.level > 0 ? 'wants weekends' : 'no weekend preference'}${strength}`;
+      if (pref.level === 0) return 'no weekend preference';
+      return `${pref.level < 0 ? 'wants no weekends' : 'wants weekends'}${strength}`;
     case 'preferred_block_length':
-      return `prefers ${pref.shifts} shifts in a row${strength}`;
+      return `prefers ${pref.shifts} ${pref.shifts === 1 ? 'shift' : 'shifts'} in a row${strength}`;
     case 'holiday_appetite':
       return `wants to work ${holidayNames.get(pref.holidayId) ?? 'a holiday'}${strength}`;
   }

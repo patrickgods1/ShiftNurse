@@ -7,11 +7,13 @@
 
 import type { LeaveRequestCheck } from '@shared/api.js';
 import { isoDate, type Nurse, type ShiftType, type TimeOffRequest } from '@shiftnurse/core';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
 import { renderWithApp } from '../../test/render.js';
 import { DecideDialog } from './decide-dialog.js';
+import { LeaveStanding } from './leave-standing.js';
 import { NewRequestDialog } from './new-request-dialog.js';
 
 const ana = {
@@ -395,5 +397,65 @@ describe('deciding a request against the balance on file', () => {
         36,
       ]),
     );
+  });
+});
+
+describe('the leave line while the request form is half filled in', () => {
+  const pto: LeaveRequestCheck = {
+    balance: {
+      type: 'pto',
+      projectedHours: 40,
+      balanceHours: 40,
+      asOf: isoDate('2026-10-01'),
+      accruedHours: 0,
+      usedHours: 0,
+      forfeitedHours: 0,
+      usedThisYearHours: 0,
+      check: { ok: true, remainingHours: 0 },
+    },
+  };
+
+  type Props = Parameters<typeof LeaveStanding>[0];
+  let setProps: (next: Partial<Props>) => void = () => {};
+
+  // renderWithApp mounts `ui` inside the router once, so changing props means owning the state.
+  function Harness() {
+    const [props, set] = useState<Props>({
+      nurseId: 'A',
+      type: 'pto',
+      start: isoDate('2026-11-10'),
+      end: isoDate('2026-11-12'),
+      paidHours: 24,
+    });
+    setProps = (next) => set((p) => ({ ...p, ...next }));
+    // The sibling stands for the rest of the Requests page: a render crash replaces it with the
+    // router's error component, so its survival is what proves the page did not crash.
+    return (
+      <div>
+        <p data-testid="page">New request</p>
+        <LeaveStanding {...props} />
+      </div>
+    );
+  }
+
+  it('clearing the start date hides the balance line instead of crashing the page', async () => {
+    bridge.respond('leaveBalances', 'checkRequest', pto);
+    renderWithApp(<Harness />);
+    expect(await screen.findByText('PTO: 40 h projected on Nov 10, 2026.')).toBeTruthy();
+
+    act(() => setProps({ start: undefined }));
+
+    expect(screen.getByTestId('page')).toBeTruthy();
+    expect(screen.queryByTestId('leave-standing')).toBeNull();
+  });
+
+  it('switching to no nurse does not show the previous nurse’s balance', async () => {
+    bridge.respond('leaveBalances', 'checkRequest', pto);
+    renderWithApp(<Harness />);
+    await screen.findByTestId('leave-standing');
+
+    act(() => setProps({ nurseId: undefined }));
+
+    expect(screen.queryByTestId('leave-standing')).toBeNull();
   });
 });

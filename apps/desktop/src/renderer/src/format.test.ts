@@ -1,6 +1,8 @@
+import { isoDate } from '@shiftnurse/core';
 import { makeNurse } from '@shiftnurse/core/testing';
 import { describe, expect, it } from 'vitest';
 import {
+  daysFromToday,
   formatDate,
   formatDateWithWeekday,
   formatHoldover,
@@ -82,5 +84,22 @@ describe('holdover length', () => {
     expect(formatHoldover(45)).toBe('45m');
     expect(formatHoldover(120)).toBe('2h');
     expect(formatHoldover(720)).toBe('12h');
+  });
+});
+
+describe('day distance from today', () => {
+  it('a credential expiring tomorrow is 1 day away, across the spring-forward night', () => {
+    // 8 March 2026 is the US spring-forward Sunday; a local-midnight subtraction gives 0.958.
+    expect(daysFromToday(isoDate('2026-03-09'), new Date(2026, 2, 8, 23, 30))).toBe(1);
+  });
+
+  it('a credential that expired last week is -7', () => {
+    expect(daysFromToday(isoDate('2026-10-10'), new Date(2026, 9, 17, 9, 0))).toBe(-7);
+  });
+
+  it('prints a malformed period end as typed rather than "undefined NaN"', () => {
+    const text = periodRange({ startDate: 'garbage', endDate: 'garbage' });
+    expect(text).not.toContain('undefined');
+    expect(text).not.toContain('NaN');
   });
 });

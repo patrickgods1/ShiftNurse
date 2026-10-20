@@ -6,10 +6,11 @@
  * exists to draw that line: it only ever splits the string or uses `Date.UTC`, so it can never
  * accidentally introduce a timezone-dependent off-by-one into a rest or consecutive-hours
  * calculation elsewhere. Anything beyond splitting the string — weekday, day distance — is
- * delegated to `@shiftnurse/core`'s time helpers rather than re-derived.
+ * delegated to `@shiftnurse/core`'s time helpers rather than re-derived: day distance goes
+ * through core's `today`/`dayNumber`.
  */
 
-import { type IsoDate, isIsoDate, type Nurse, weekdayOf } from '@shiftnurse/core';
+import { dayNumber, type IsoDate, isIsoDate, type Nurse, today, weekdayOf } from '@shiftnurse/core';
 
 const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = [
@@ -73,16 +74,9 @@ export function formatDateWithWeekday(date: IsoDate | string): string {
   return `${weekday}, ${name} ${day}`;
 }
 
-/** Whole-day distance from today (UTC-based, matching the ISO-date-as-calendar-day model). */
-export function daysFromToday(date: IsoDate | string): number {
-  const parts = date.split('-');
-  const year = Number(parts[0]);
-  const month = Number(parts[1]);
-  const day = Number(parts[2]);
-  const target = Date.UTC(year, month - 1, day);
-  const now = new Date();
-  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
-  return Math.round((target - today) / 86_400_000);
+/** Whole calendar days from today; `now` exists only so tests can pin the clock. */
+export function daysFromToday(date: IsoDate, now: Date = new Date()): number {
+  return dayNumber(date) - dayNumber(today(now));
 }
 
 /** "Campbell, Grace": every list and table, sorted and read the way the unit calls the roster. */
@@ -98,6 +92,7 @@ export function fteLabel(nurse: Pick<Nurse, 'employmentType' | 'fte'>): string {
 }
 
 function monthDay(date: IsoDate | string): string {
+  if (!isIsoDate(date)) return date;
   const [, m, d] = date.split('-');
   return `${MONTH_NAMES[Number(m) - 1]} ${Number(d)}`;
 }

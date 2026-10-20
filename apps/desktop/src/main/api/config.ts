@@ -18,6 +18,7 @@ import {
   deleteAcuityTier,
   deleteCoverageRequirement,
   deleteHoliday,
+  getHomeUnit,
   getHppdTarget,
   getSolverSettings,
   holidayWorkSummary,
@@ -52,6 +53,7 @@ export function configApi(
   return {
     units: {
       list: () => listUnits(db),
+      home: () => getHomeUnit(db),
       update: (id, patch) => transact(db, (tx) => updateUnit(tx, id, patch, ACTOR)),
     },
     shiftTypes: {

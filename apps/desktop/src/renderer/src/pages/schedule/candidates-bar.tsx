@@ -7,6 +7,7 @@
 
 import type { SolveBatchStatus } from '@shared/api.js';
 import type { ReactNode } from 'react';
+import { PRIMARY } from '../../components/ui.js';
 import { SOLVER_LABELS } from '../../solver-labels.js';
 import { bestChoice, digestLine, finishedRuns, variationNumber } from './candidates.js';
 import { UnfilledList } from './unfilled-list.js';
@@ -175,7 +176,7 @@ export function CandidatesBar({
               data-testid="candidate-save"
               disabled={saving || current === undefined}
               onClick={onSave}
-              className={primaryButton}
+              className={PRIMARY}
             >
               {saving ? 'Saving…' : 'Save this schedule'}
             </button>
@@ -238,8 +239,6 @@ function Panel({ children, tone }: { children: ReactNode; tone?: 'warn' | 'dange
   );
 }
 
-const primaryButton =
-  'rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60';
 const secondaryButton =
   'rounded-md border border-border px-3 py-1.5 text-sm text-text hover:bg-bg disabled:opacity-60';
 const pagerButton =

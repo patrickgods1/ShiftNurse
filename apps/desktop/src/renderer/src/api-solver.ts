@@ -10,23 +10,25 @@
  */
 
 import type { Id, SolverSettings } from '@shiftnurse/core';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { SolveBatchOptions, SolveBatchStatus } from '../../shared/api.js';
-import { api, queryKeys } from './api.js';
-import { invalidatePeriod } from './period-cache.js';
+import { api } from './api.js';
+import { afterAssignmentsChange } from './period-cache.js';
+import { placeholderWhileEnabled } from './query-client.js';
+import { queryRoots } from './query-roots.js';
 
 export const solverKeys = {
-  current: (periodId: Id) => ['solver', 'current', periodId] as const,
+  current: (periodId: Id) => [...queryRoots.solverCurrent, periodId] as const,
   /** Everything scored against the period's draft: refreshed whenever the draft changes. */
-  againstDraft: (periodId: Id) => ['solver', 'draft', periodId] as const,
+  againstDraft: (periodId: Id) => [...queryRoots.solverDraft, periodId] as const,
   candidate: (periodId: Id, batchId: Id, index: number) =>
-    ['solver', 'draft', periodId, 'candidate', batchId, index] as const,
+    [...queryRoots.solverDraft, periodId, 'candidate', batchId, index] as const,
   compare: (periodId: Id, batchId: Id) =>
-    ['solver', 'draft', periodId, 'compare', batchId] as const,
+    [...queryRoots.solverDraft, periodId, 'compare', batchId] as const,
   estimate: (periodId: Id, options: SolveBatchOptions) =>
-    ['solver', 'estimate', periodId, options] as const,
-  settings: (unitId: Id) => ['solver', 'settings', unitId] as const,
-  availability: () => ['solver', 'availability'] as const,
+    [...queryRoots.solver, 'estimate', periodId, options] as const,
+  settings: (unitId: Id) => [...queryRoots.solver, 'settings', unitId] as const,
+  availability: () => [...queryRoots.solver, 'availability'] as const,
 };
 
 /** The unit's saved solver; hybrid when it never saved one. */
@@ -116,16 +118,13 @@ export function useDiscardBatch(periodId: Id) {
 }
 
 /** Write one variation to the draft; every read of the period changes with it. */
-export function useSaveCandidate(periodId: Id, unitId: Id) {
+export function useSaveCandidate(_periodId: Id, _unitId: Id) {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { inlineError: true },
     mutationFn: ({ batchId, index }: { batchId: Id; index: number }) =>
       api.solver.save(batchId, index),
-    onSettled: () => {
-      invalidatePeriod(queryClient, periodId);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(unitId) });
-    },
+    onSettled: () => afterAssignmentsChange(queryClient),
   });
 }
 
@@ -134,7 +133,7 @@ export function useBatchEstimate(periodId: Id, options: SolveBatchOptions, enabl
     queryKey: solverKeys.estimate(periodId, options),
     queryFn: () => api.solver.estimate(periodId, options),
     enabled,
-    placeholderData: keepPreviousData,
+    placeholderData: placeholderWhileEnabled(enabled),
   });
 }
 
@@ -147,7 +146,7 @@ export function useCandidatePreview(
     queryKey: solverKeys.candidate(periodId, batchId ?? '', index ?? -1),
     queryFn: () => api.solver.candidate(batchId as Id, index as number),
     enabled: batchId !== undefined && index !== undefined,
-    placeholderData: keepPreviousData,
+    placeholderData: placeholderWhileEnabled(batchId !== undefined && index !== undefined),
     retry: false,
   });
 }

@@ -1,10 +1,9 @@
 /**
- * Query keys, queries and mutations for the unit-configuration screens (shift types, coverage
- * floors, holidays). Kept separate from `api.ts` — which another change is actively
- * extending for roster/nurse concerns — so the two files don't collide on the same lines.
- * Mutations here invalidate both their own list and `['dashboard', unitId]`, because the
- * dashboard summary reads today's on-shift roster and coverage-derived counts that shift-type
- * and coverage edits can change.
+ * Query keys, queries and mutations for the unit-configuration screens (shift-type writes,
+ * coverage floors, holidays, acuity, rules). Split from `api.ts` by screen so each page's data
+ * layer reads in one file. This module owns every configuration key; other modules import from
+ * it. Each write refreshes its own list, then `afterConfigChange` reaches everything those
+ * settings judge or price (the dashboard included).
  */
 
 import type { Id, RuleSet } from '@shiftnurse/core';
@@ -22,36 +21,24 @@ import type {
   ShiftTypePatch,
 } from '../../shared/api.js';
 import { api, queryKeys } from './api.js';
-import { invalidateUnitDerived, invalidateUnitDerivedAnyUnit } from './period-cache.js';
+import { afterConfigChange } from './period-cache.js';
+import { queryRoots } from './query-roots.js';
 
 export const configKeys = {
-  // Same spelling as `queryKeys.shiftTypes` in api.ts, so a mutation here and the existing
-  // `useShiftTypes` list hook share one cache entry instead of drifting into two.
-  shiftTypes: (unitId: Id) => queryKeys.shiftTypes(unitId),
-  coverage: (unitId: Id) => ['coverage', unitId] as const,
-  holidays: (unitId: Id) => ['holidays', unitId] as const,
-  holidayWork: (holidayId: Id) => ['holiday-work', holidayId] as const,
-  acuityTiers: (unitId: Id) => ['acuityTiers', unitId] as const,
-  ratioRules: (unitId: Id) => ['ratioRules', unitId] as const,
-  hppd: (unitId: Id) => ['hppd', unitId] as const,
-  rules: (unitId: Id) => ['rules', unitId] as const,
+  coverage: (unitId: Id) => [...queryRoots.coverage, unitId] as const,
+  holidays: (unitId: Id) => [...queryRoots.holidays, unitId] as const,
+  holidayWork: (holidayId: Id) => [...queryRoots.holidayWork, holidayId] as const,
+  holidayYearPlan: (unitId: Id, year: number) =>
+    [...queryRoots.holidayYearPlan, unitId, year] as const,
+  acuityTiers: (unitId: Id) => [...queryRoots.acuityTiers, unitId] as const,
+  ratioRules: (unitId: Id) => [...queryRoots.ratioRules, unitId] as const,
+  hppdTarget: (unitId: Id) => [...queryRoots.hppdTarget, unitId] as const,
+  rules: (unitId: Id) => [...queryRoots.rules, unitId] as const,
 };
-
-function dashboardKey(unitId: Id) {
-  return ['dashboard', unitId] as const;
-}
 
 // ---------------------------------------------------------------------------
 // Shift types
 // ---------------------------------------------------------------------------
-
-export function useShiftTypesList(unitId: Id | undefined) {
-  return useQuery({
-    queryKey: configKeys.shiftTypes(unitId ?? ''),
-    queryFn: () => api.shiftTypes.list(unitId as Id),
-    enabled: unitId !== undefined,
-  });
-}
 
 export function useCreateShiftType() {
   const queryClient = useQueryClient();
@@ -59,9 +46,8 @@ export function useCreateShiftType() {
     meta: { inlineError: true },
     mutationFn: (input: ShiftTypeInput) => api.shiftTypes.create(input),
     onSuccess: (created) => {
-      queryClient.invalidateQueries({ queryKey: configKeys.shiftTypes(created.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(created.unitId) });
-      invalidateUnitDerived(queryClient, created.unitId);
+      queryClient.invalidateQueries({ queryKey: queryKeys.shiftTypes(created.unitId) });
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -73,9 +59,8 @@ export function useUpdateShiftType() {
     mutationFn: ({ id, patch }: { id: Id; patch: ShiftTypePatch }) =>
       api.shiftTypes.update(id, patch),
     onSuccess: (updated) => {
-      queryClient.invalidateQueries({ queryKey: configKeys.shiftTypes(updated.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(updated.unitId) });
-      invalidateUnitDerived(queryClient, updated.unitId);
+      queryClient.invalidateQueries({ queryKey: queryKeys.shiftTypes(updated.unitId) });
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -85,9 +70,8 @@ export function useDeactivateShiftType() {
   return useMutation({
     mutationFn: (id: Id) => api.shiftTypes.deactivate(id),
     onSuccess: (deactivated) => {
-      queryClient.invalidateQueries({ queryKey: configKeys.shiftTypes(deactivated.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(deactivated.unitId) });
-      invalidateUnitDerived(queryClient, deactivated.unitId);
+      queryClient.invalidateQueries({ queryKey: queryKeys.shiftTypes(deactivated.unitId) });
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -110,8 +94,7 @@ export function useUpsertCoverage() {
     mutationFn: (input: CoverageRequirementInput) => api.coverage.upsert(input),
     onSuccess: (saved) => {
       queryClient.invalidateQueries({ queryKey: configKeys.coverage(saved.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(saved.unitId) });
-      invalidateUnitDerived(queryClient, saved.unitId);
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -125,8 +108,7 @@ export function useDeleteCoverage() {
     mutationFn: ({ id }: { id: Id; unitId: Id }) => api.coverage.delete(id),
     onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: configKeys.coverage(variables.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(variables.unitId) });
-      invalidateUnitDerived(queryClient, variables.unitId);
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -150,8 +132,7 @@ export function useCreateHoliday() {
     mutationFn: (input: HolidayInput) => api.holidays.create(input),
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: configKeys.holidays(created.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(created.unitId) });
-      invalidateUnitDerived(queryClient, created.unitId);
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -165,8 +146,7 @@ export function useUpdateHoliday() {
       api.holidays.update(id, patch),
     onSuccess: (_updated, variables) => {
       queryClient.invalidateQueries({ queryKey: configKeys.holidays(variables.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(variables.unitId) });
-      invalidateUnitDerived(queryClient, variables.unitId);
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -189,7 +169,7 @@ export function useRecordHolidayWork() {
       api.holidays.recordWork(holidayId, nurseIds),
     onSuccess: (summary) => {
       queryClient.setQueryData(configKeys.holidayWork(summary.holidayId), summary);
-      invalidateUnitDerivedAnyUnit(queryClient);
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -201,7 +181,7 @@ export function useClearHolidayWork() {
     mutationFn: (holidayId: Id) => api.holidays.clearWork(holidayId),
     onSuccess: (summary) => {
       queryClient.setQueryData(configKeys.holidayWork(summary.holidayId), summary);
-      invalidateUnitDerivedAnyUnit(queryClient);
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -209,7 +189,7 @@ export function useClearHolidayWork() {
 /** A proposal for a year of holidays; nothing is saved by asking. */
 export function useHolidayYearPlan(unitId: Id | undefined, year: number | undefined) {
   return useQuery({
-    queryKey: ['holiday-year-plan', unitId ?? '', year ?? 0],
+    queryKey: configKeys.holidayYearPlan(unitId ?? '', year ?? 0),
     queryFn: () => api.holidays.planYear(unitId as Id, year as number),
     enabled: unitId !== undefined && year !== undefined,
     staleTime: 0,
@@ -224,8 +204,7 @@ export function useAddHolidayYear() {
       api.holidays.addYear(unitId, input),
     onSuccess: (_added, variables) => {
       queryClient.invalidateQueries({ queryKey: configKeys.holidays(variables.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(variables.unitId) });
-      invalidateUnitDerived(queryClient, variables.unitId);
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -237,8 +216,7 @@ export function useDeleteHoliday() {
     mutationFn: ({ id }: { id: Id; unitId: Id }) => api.holidays.delete(id),
     onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: configKeys.holidays(variables.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(variables.unitId) });
-      invalidateUnitDerived(queryClient, variables.unitId);
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -248,7 +226,8 @@ export function useDeleteHoliday() {
 //
 // All three feed `acuity/demand.ts`'s derivation of per-shift staffing minimums, so any
 // edit here can change what the dashboard and solver think a shift needs — hence every
-// mutation also invalidates the dashboard summary, same as shift types and coverage above.
+// mutation refreshes the dashboard summary through `afterConfigChange`, same as shift types
+// and coverage above.
 // ---------------------------------------------------------------------------
 
 export function useAcuityTiers(unitId: Id | undefined) {
@@ -265,8 +244,7 @@ export function useCreateAcuityTier() {
     mutationFn: (input: AcuityTierInput) => api.acuity.createTier(input),
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: configKeys.acuityTiers(created.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(created.unitId) });
-      invalidateUnitDerived(queryClient, created.unitId);
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -278,8 +256,7 @@ export function useUpdateAcuityTier() {
       api.acuity.updateTier(id, patch),
     onSuccess: (updated) => {
       queryClient.invalidateQueries({ queryKey: configKeys.acuityTiers(updated.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(updated.unitId) });
-      invalidateUnitDerived(queryClient, updated.unitId);
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -292,8 +269,7 @@ export function useDeleteAcuityTier() {
     mutationFn: ({ id }: { id: Id; unitId: Id }) => api.acuity.deleteTier(id),
     onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: configKeys.acuityTiers(variables.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(variables.unitId) });
-      invalidateUnitDerived(queryClient, variables.unitId);
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -312,8 +288,7 @@ export function useCreateRatioRule() {
     mutationFn: (input: RatioRuleInput) => api.acuity.createRatioRule(input),
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: configKeys.ratioRules(created.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(created.unitId) });
-      invalidateUnitDerived(queryClient, created.unitId);
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -325,8 +300,7 @@ export function useUpdateRatioRule() {
       api.acuity.updateRatioRule(id, patch),
     onSuccess: (updated) => {
       queryClient.invalidateQueries({ queryKey: configKeys.ratioRules(updated.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(updated.unitId) });
-      invalidateUnitDerived(queryClient, updated.unitId);
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -337,15 +311,14 @@ export function useDeactivateRatioRule() {
     mutationFn: (id: Id) => api.acuity.deactivateRatioRule(id),
     onSuccess: (deactivated) => {
       queryClient.invalidateQueries({ queryKey: configKeys.ratioRules(deactivated.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(deactivated.unitId) });
-      invalidateUnitDerived(queryClient, deactivated.unitId);
+      afterConfigChange(queryClient);
     },
   });
 }
 
 export function useHppdTarget(unitId: Id | undefined) {
   return useQuery({
-    queryKey: configKeys.hppd(unitId ?? ''),
+    queryKey: configKeys.hppdTarget(unitId ?? ''),
     queryFn: () => api.acuity.hppd(unitId as Id),
     enabled: unitId !== undefined,
   });
@@ -358,9 +331,8 @@ export function useSetHppdTarget() {
     mutationFn: ({ unitId, targetHours }: { unitId: Id; targetHours: number }) =>
       api.acuity.setHppd(unitId, targetHours),
     onSuccess: (saved) => {
-      queryClient.invalidateQueries({ queryKey: configKeys.hppd(saved.unitId) });
-      queryClient.invalidateQueries({ queryKey: dashboardKey(saved.unitId) });
-      invalidateUnitDerived(queryClient, saved.unitId);
+      queryClient.invalidateQueries({ queryKey: configKeys.hppdTarget(saved.unitId) });
+      afterConfigChange(queryClient);
     },
   });
 }
@@ -403,7 +375,7 @@ export function useSaveRuleSet() {
     }) => api.rules.save(unitId, name, configs, weekendDefinition, fairnessWeights, reason),
     onSuccess: (saved) => {
       queryClient.invalidateQueries({ queryKey: configKeys.rules(saved.unitId) });
-      invalidateUnitDerived(queryClient, saved.unitId);
+      afterConfigChange(queryClient);
     },
   });
 }

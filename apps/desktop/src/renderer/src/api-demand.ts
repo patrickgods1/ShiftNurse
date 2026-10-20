@@ -1,31 +1,25 @@
 /**
- * Census/demand query keys and hooks, split out from `api.ts` so this page's data layer can be
- * built without touching the file another agent is editing concurrently. Follows the same
- * pattern: `api` is the single IPC surface, hooks own their query keys, mutations invalidate the
- * census/demand caches for the affected unit+range rather than the whole app.
+ * Census/demand query keys and hooks, split out from `api.ts` by screen so the Demand page's
+ * data layer reads in one file. Follows the same pattern: `api` is the single IPC surface,
+ * hooks own their query keys, mutations invalidate the census/demand caches for the affected
+ * unit+range rather than the whole app.
  */
 
 import type { AcuityTier, CensusForecast, ForecastOptions, Id, IsoDate } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CensusForecastInput } from '../../shared/api.js';
 import { api } from './api.js';
+import { queryRoots } from './query-roots.js';
 
 export const demandQueryKeys = {
-  acuityTiers: (unitId: Id) => ['acuity', 'tiers', unitId] as const,
-  census: (unitId: Id, start: IsoDate, end: IsoDate) => ['census', unitId, start, end] as const,
-  demand: (unitId: Id, start: IsoDate, end: IsoDate) => ['demand', unitId, start, end] as const,
+  census: (unitId: Id, start: IsoDate, end: IsoDate) =>
+    [...queryRoots.census, unitId, start, end] as const,
+  demand: (unitId: Id, start: IsoDate, end: IsoDate) =>
+    [...queryRoots.demand, unitId, start, end] as const,
   backtest: (unitId: Id, options: ForecastOptions | undefined) =>
-    ['backtest', unitId, options ?? {}] as const,
-  hppd: (periodId: Id) => ['hppd', periodId] as const,
+    [...queryRoots.backtest, unitId, options ?? {}] as const,
+  hppd: (periodId: Id) => [...queryRoots.scheduledHppd, periodId] as const,
 };
-
-export function useAcuityTiers(unitId: Id | undefined) {
-  return useQuery({
-    queryKey: demandQueryKeys.acuityTiers(unitId ?? ''),
-    queryFn: () => api.acuity.tiers(unitId as Id),
-    enabled: unitId !== undefined,
-  });
-}
 
 export function useCensus(unitId: Id | undefined, start: IsoDate, end: IsoDate) {
   return useQuery({
@@ -76,7 +70,7 @@ function useInvalidateCensus(unitId: Id | undefined, start: IsoDate, end: IsoDat
     if (unitId !== undefined) {
       void queryClient.invalidateQueries({ queryKey: demandQueryKeys.census(unitId, start, end) });
       void queryClient.invalidateQueries({ queryKey: demandQueryKeys.demand(unitId, start, end) });
-      void queryClient.invalidateQueries({ queryKey: ['hppd'] });
+      void queryClient.invalidateQueries({ queryKey: queryRoots.scheduledHppd });
     }
   };
 }

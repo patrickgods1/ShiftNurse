@@ -9,16 +9,16 @@
 import type { Id, ShiftType } from '@shiftnurse/core';
 import { useState } from 'react';
 import type { ShiftTypeInput, ShiftTypePatch } from '../../../../shared/api.js';
+import { useShiftTypes } from '../../api.js';
 import {
   useCreateShiftType,
   useDeactivateShiftType,
-  useShiftTypesList,
   useUpdateShiftType,
 } from '../../api-config.js';
 import { AsyncState } from '../../components/async-state.js';
 import { CheckField, describedBy, Field } from '../../components/field-help.js';
 import { Modal } from '../../components/modal.js';
-import { INPUT, PRIMARY, SECONDARY } from '../../components/ui.js';
+import { DANGER_SOLID, INPUT, PRIMARY, SECONDARY } from '../../components/ui.js';
 import { useUnitId } from '../../unit-context.js';
 
 interface FormState {
@@ -302,7 +302,7 @@ function ShiftTypeDialog({
 
 export default function ShiftTypesPanel() {
   const unitId = useUnitId();
-  const shiftTypesQuery = useShiftTypesList(unitId);
+  const shiftTypesQuery = useShiftTypes(unitId);
   const createMutation = useCreateShiftType();
   const updateMutation = useUpdateShiftType();
   const deactivateMutation = useDeactivateShiftType();
@@ -542,7 +542,7 @@ export default function ShiftTypesPanel() {
                   onSuccess: () => setConfirmingDeactivate(undefined),
                 });
               }}
-              className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+              className={DANGER_SOLID}
             >
               Deactivate
             </button>

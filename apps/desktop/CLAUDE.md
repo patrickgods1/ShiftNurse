@@ -10,7 +10,7 @@
   modules in `api/` (`context` holds the shared loaders and `scheduleViewFor`; `schedule` holds
   `editSchedule`), registers it in `ipc.ts`;
   `src/preload/` builds `window.shiftnurse` from the same channel table; `src/renderer/` is
-  React 18 + TanStack Router (hash history, code-based routes) + TanStack Query + Tailwind v4
+  React 19 + TanStack Router (hash history, code-based routes) + TanStack Query + Tailwind v4
   tokens. Dashboard, Roster (CRUD, credentials, preferences, CSV import/export via native
   dialogs in main), Settings (shift types, coverage floors, acuity tiers/ratios/HPPD,
   holidays) and Demand (census grid, forecaster proposals, derived demand with binding
@@ -45,9 +45,13 @@
   ranks same-role nurses simulated on the conflicts engine, `checkStaffing`/`shiftsAround` for the
   live census re-check; `dayOf` IPC in `main/api/dayof.ts`, `backfill` goes through `editSchedule` as
   `'backfill'`; `pages/today.tsx` + `api-dayof.ts`) are real.
-  Renderer hooks: `api.ts` (roster), `api-config.ts` (configuration + rules), `api-demand.ts`
+  Renderer hooks: `api.ts` (roster), `api-config.ts` (configuration + rules; owns every configuration key, other modules import from it), `api-demand.ts`
   (census/demand), `api-schedule.ts` (grid mutations + validation), `api-fairness.ts`
   (report/trend/import), `api-cost.ts` (pay config, cost report, budget).
+  Placeholder data only through `placeholderWhileEnabled`: a disabled query must never show another
+  key's answer (it once crashed Requests).
+  Cache keys start with a root from `query-roots.ts`; a write refreshes through `period-cache.ts`'s
+  `afterAssignmentsChange` / `afterLeaveChange` / `afterConfigChange`.
 - Packaging (M14, complete): `apps/desktop/electron-builder.yml` + `scripts/{before-pack,dist}.mjs`
   produce mac dmgs (x64 + arm64) and a Windows NSIS installer. Both are verified: the mac build
   via `smoke:packaged`, the Windows installer by installing and launching it on native Windows
@@ -72,6 +76,10 @@
 
 ## Conventions
 
+- **Colour pairs are tested.** `theme-contrast.test.ts` reads `styles.css` and requires 4.5:1 for
+  every text-on-surface and on-fill pair; add a pair there when you add a token. A solid fill uses
+  a `*-fill` token with its `on-*` text (`PRIMARY`, `DANGER_SOLID`, `SELECTED` in `ui.ts`), never
+  `bg-accent`/`bg-danger` with white.
 - **One better-sqlite3, for Node and Electron alike.** Since 13 it is a Node-API module: the
   package ships one prebuilt binary per platform (`prebuilds/<os>-<arch>.node`) that loads under
   the system Node (tests, seeder) and Electron's embedded Node unchanged, with no install-time
@@ -147,9 +155,15 @@
   add what is missing (coverage quick-fill sets the floors it names) — so pressing one twice, or
   revisiting a step, never duplicates rows. The smoke run starts empty and clicks "Explore the
   demo" before any other check, then walks the guide once on the demo unit.
+- **Number and date inputs go through `field-values.ts` / `NumberField` / `DateField commitOnBlur`.**
+  A cleared number is `undefined`, never 0; a field that writes to the database commits on blur,
+  and only when the value changed, so typing never writes one audit row per keystroke.
 - **Forms that hold edits until Save register with `useUnsavedChanges`.** Settings tab switches
   await `useConfirmDiscard`, `NavigationGuard` guards routes and window unload, and main answers
   Electron's `will-prevent-unload` with a native dialog (skipped in a smoke run).
+- **Dialogs return focus.** `Modal` captures the opener and restores it on close
+  (`components/focus.ts`); a dialog whose opener can disappear passes `returnFocus`. Every dialog
+  uses `Modal` or `useConfirm`; never compose Radix `Dialog.Root` by hand.
 - **Backups use SQLite's online backup API**, never a file copy — a WAL database copied by
   hand loses un-checkpointed pages. The smoke run builds core/db from `dist`, so rebuild packages
   (`npm run build:packages`) after touching core before trusting a smoke result. Restore and

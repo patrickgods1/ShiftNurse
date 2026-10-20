@@ -763,6 +763,8 @@ The 2026-10-16 file-by-file review's 383 findings, fixed in 24 phases, one PR ea
 - [x] Phase 8 — Float seam: one membership predicate (`nurseWorksOnUnit`), floats' own records
       reach Generate/grid/cost/alerts (`perNurseRecordsFor`), floated shifts kept and off the floor
       (D20), floats go home first on low census (D21) (verify: npm run check; smoke)
+- [x] Phase 9 — Renderer foundations: dialog focus return, cache roots and refresh helpers,
+      field helpers, AA contrast tokens, home unit by id (verify: npm run check; smoke)
 
 ---
 

@@ -12,6 +12,7 @@ import type { Nurse, SchedulePeriod } from '@shiftnurse/core';
 import { useState } from 'react';
 import { useCostReport, useSetBudget } from '../../api-cost.js';
 import { AsyncState } from '../../components/async-state.js';
+import { PRIMARY_SMALL } from '../../components/ui.js';
 import { periodLabel } from '../../format.js';
 import { formatDollars, formatHours, formatSignedDollars } from '../../money.js';
 
@@ -69,11 +70,7 @@ function BudgetEditor({
         onChange={(event) => setValue(event.target.value)}
         className="w-32 rounded-md border border-border bg-bg px-2 py-1 text-sm text-text"
       />
-      <button
-        type="submit"
-        disabled={setBudget.isPending}
-        className="rounded-md bg-accent px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
-      >
+      <button type="submit" disabled={setBudget.isPending} className={PRIMARY_SMALL}>
         Save
       </button>
       <button
