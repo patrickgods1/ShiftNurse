@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import type { Preference } from '../domain/entities.js';
 import { addDays, DEFAULT_WEEKEND, isoDate, type WeekendDefinition } from '../domain/time.js';
 import {
   assign,
@@ -96,6 +97,66 @@ describe('holidays worked', () => {
       baseCtx({ holidayDates: new Set([isoDate('2026-01-06')]) }),
     );
     expect(counters.get(nurse.id)?.holidaysWorked).toBe(1);
+  });
+});
+
+describe('holidays worked by the unit’s attribution', () => {
+  // Christmas 2026-12-25 is the only holiday. Ana works the 12-24 night (19:00 Thu – 07:00 Fri):
+  // 5 h on Christmas Eve, 7 h on Christmas. Bo works the 12-25 night: 5 h on Christmas, 7 h on
+  // the 26th.
+  const XMAS = isoDate('2026-12-25');
+  const counted = (attribution?: 'start' | 'clock' | 'majority', prefs: Preference[] = []) => {
+    const ana = makeNurse({ id: 'ana' });
+    const bo = makeNurse({ id: 'bo' });
+    const unit =
+      attribution === undefined ? testUnit : { ...testUnit, holidayAttribution: attribution };
+    const s = scenario({
+      unit,
+      startDate: isoDate('2026-12-20'),
+      endDate: isoDate('2027-01-02'),
+      nurses: [ana, bo],
+      assignments: [assign('ana', NIGHT_12, '2026-12-24'), assign('bo', NIGHT_12, '2026-12-25')],
+    });
+    const ctx = baseCtx({
+      unit,
+      holidayDates: new Set([XMAS]),
+      holidayDateById: new Map([['xmas', XMAS]]),
+      preferences: prefs,
+    });
+    return {
+      counters: deriveCounters(s.schedule, ctx),
+      occurrences: deriveOccurrences(s.schedule, ctx),
+    };
+  };
+
+  it('counts the Christmas Eve night as Christmas worked by the clock and by majority, not by start', () => {
+    const worked = (attribution?: 'start' | 'clock' | 'majority') => {
+      const { counters } = counted(attribution);
+      return [counters.get('ana')!.holidaysWorked, counters.get('bo')!.holidaysWorked];
+    };
+    // Start: only Bo's night starts on Christmas. Clock: both nights touch Christmas. Majority:
+    // Ana's has 7 of 12 hours on Christmas, Bo's only 5.
+    expect(worked()).toEqual([0, 1]);
+    expect(worked('start')).toEqual([0, 1]);
+    expect(worked('clock')).toEqual([1, 1]);
+    expect(worked('majority')).toEqual([1, 0]);
+  });
+
+  it('lists Christmas, not Christmas Eve, as the holiday the night into Christmas morning worked', () => {
+    expect(counted('clock').occurrences.get('ana')!.holidays).toEqual(['2026-12-25']);
+    expect(counted('start').occurrences.get('ana')!.holidays).toEqual([]);
+  });
+
+  it('meets a wish to work Christmas with the night into Christmas morning by the clock', () => {
+    const wish: Preference = {
+      id: 'p-ana-xmas',
+      nurseId: 'ana',
+      kind: 'holiday_appetite',
+      holidayId: 'xmas',
+      weight: 2,
+    };
+    expect(counted('clock', [wish]).counters.get('ana')!.preferenceHitRate).toBe(1);
+    expect(counted('start', [wish]).counters.get('ana')!.preferenceHitRate).toBe(0);
   });
 });
 

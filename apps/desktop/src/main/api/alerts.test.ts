@@ -91,6 +91,50 @@ describe('per-diem commitment alerts', () => {
   });
 });
 
+describe('per-diem holiday commitment under the unit’s holiday attribution', () => {
+  // The year's only holiday is on the draft's sixth day, and Dalia works the night before it:
+  // 19:00 on day 5 to 07:00 on day 6, so 7 of its 12 hours (07:00 less 00:00 is 7) fall on the holiday.
+  function dalia(attribution?: 'clock' | 'majority'): boolean {
+    const { db } = f.handle;
+    const unitId = f.seeded.unitId;
+    transact(db, (tx) => {
+      for (const h of listHolidaysForUnit(db, unitId)) deleteHoliday(tx, h.id, ACTOR);
+    });
+    const holidayDate = addDays(f.seeded.draftStart, 5);
+    createHoliday(db, { unitId, date: holidayDate, name: 'Unit holiday', isMajor: false }, ACTOR);
+    const nurse = listNursesForUnit(db, unitId).find((n) => n.firstName === 'Dalia')!;
+    scheduleApi(db).createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: nurse.id,
+      shiftTypeId: f.night.id,
+      date: addDays(f.seeded.draftStart, 4),
+    });
+    updateUnit(
+      db,
+      unitId,
+      {
+        perDiemCommitment: { weekendShiftsPer4Weeks: 0, holidayShiftsPerYear: 1 },
+        ...(attribution ? { holidayAttribution: attribution } : {}),
+      },
+      ACTOR,
+    );
+    return commitmentAlerts().some((a) => a.nurseId === nurse.id);
+  }
+
+  it('does not count the night before the holiday when shifts count for the day they start', () => {
+    expect(dalia()).toBe(true);
+  });
+
+  it('counts the night before the holiday when each hour counts for the day it is worked', () => {
+    expect(dalia('clock')).toBe(false);
+  });
+
+  it('counts the night before the holiday when the day holding most of it is the holiday', () => {
+    // 5 hours on the 5th (19:00 to 24:00) against 7 on the 6th: the holiday holds most.
+    expect(dalia('majority')).toBe(false);
+  });
+});
+
 describe('overtime alerts', () => {
   const overtimeAlerts = () =>
     alertsFor(f.handle.db, f.seeded.draftPeriodId).filter((a) => a.kind === 'overtime');

@@ -20,7 +20,10 @@
 
 - **`PublishInput.hardViolations` is the caller's in-transaction count of hard rule breaks.** Above zero `publishSchedule` refuses without a reason and records `{ count, codes }` in the strict `schedule_version` audit; omitted (seeds, repo callers) records nothing new.
 - **Pay settings carry `holidayPayCoversOvertime` (migration 0036, nullable, null reads false)
-  and `reportingPayNoticeHours` (migration 0037, nullable, null reads 2; saves refuse outside 0–24).**
+  and `reportingPayNoticeHours` (migration 0037, nullable, null reads 2; saves refuse outside 0–24)
+  and `overtimeWindowAttribution` (migration 0047, nullable, null reads `'clock'`; saves refuse
+  other values). `unit.holiday_attribution` (same migration, null reads `'start'`) decides who
+  `workedFromSchedules` lists as working a holiday.**
   `paySettingsSaved` says whether a unit has a row at all: `applyJurisdiction` offers the preset's
   pay settings (and a wider weekend) only to a unit that saved none, since a saved row may follow a
   contract the preset cannot see.
@@ -60,6 +63,9 @@
   imported `import:` rows, and the availability from approved leave and the hire date (core's
   `daysAvailable`). A writer always sets both: `periodDays` is required, `availableDays` defaults
   to it, and `ledgerValues` refuses a zero-day period or more days there than the period has.
+- **The host's clock changes come from `host-dst.ts`** (`dstTransitionsForPeriod`), the one
+  local-`Date` use besides `today()`. `costContext` and `loadPeriodInput` attach them, so pay and
+  the statutory hour caps count real minutes on DST nights (D19).
 - **Hours worked are `workedShiftsForNurseInRange`** (`repositories/worked-hours.ts`): published
   or archived periods' shifts on any unit, at each shift type's own `durationHours`, standby
   excluded, and so is a shift whose call-off is open or uncovered (she did not work it). A draft

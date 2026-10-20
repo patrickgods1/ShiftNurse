@@ -324,6 +324,42 @@ describe('one coverage floor per shift, role and day', () => {
   });
 });
 
+describe('holiday attribution', () => {
+  it('saves the unit’s holiday attribution and audits the change', () => {
+    const unit = addUnit('4A Medicine-Surgery');
+    transact(handle.db, (tx) => updateUnit(tx, unit.id, { holidayAttribution: 'clock' }, ACTOR));
+    expect(getHomeUnit(handle.db)!.holidayAttribution).toBe('clock');
+    const row = recentAudit(handle.db, 20).find((a) => a.entityType === 'unit');
+    expect((row!.after as { holidayAttribution?: string }).holidayAttribution).toBe('clock');
+    expect(
+      (row!.before as { holidayAttribution?: string } | null)?.holidayAttribution,
+    ).toBeUndefined();
+  });
+
+  it('clears the holiday attribution back to the start-date reading', () => {
+    const unit = addUnit('4A Medicine-Surgery');
+    transact(handle.db, (tx) => updateUnit(tx, unit.id, { holidayAttribution: 'majority' }, ACTOR));
+    transact(handle.db, (tx) => updateUnit(tx, unit.id, { holidayAttribution: null }, ACTOR));
+    expect(getHomeUnit(handle.db)!.holidayAttribution).toBeUndefined();
+    const cleared = recentAudit(handle.db, 20).find((a) => a.entityType === 'unit');
+    expect((cleared!.before as { holidayAttribution?: string }).holidayAttribution).toBe(
+      'majority',
+    );
+  });
+
+  it('refuses a holiday attribution it does not know', () => {
+    const unit = addUnit('4A Medicine-Surgery');
+    expect(() =>
+      transact(handle.db, (tx) =>
+        updateUnit(tx, unit.id, { holidayAttribution: 'weekly' as never }, ACTOR),
+      ),
+    ).toThrow(
+      'Choose how a shift that crosses midnight counts toward a holiday: by the day it starts, by its hours on the holiday, or by the day holding most of it.',
+    );
+    expect(getHomeUnit(handle.db)!.holidayAttribution).toBeUndefined();
+  });
+});
+
 describe('paper size', () => {
   it('remembers that the unit prints on A4, and can go back to following the computer', () => {
     const unit = addUnit('4A Medicine-Surgery');

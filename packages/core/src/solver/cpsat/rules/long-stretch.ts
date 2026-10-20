@@ -40,6 +40,10 @@
  * touches its span or sits within the bridge of it, as the rule would join it; one joined to it only
  * through other shifts is not seen, which is stricter, never illegal.
  *
+ * Hours are hours worked: on the DST nights the real minutes (`schedule/real-minutes.ts`, D19),
+ * the window itself on the wall clock. A chain's worked minutes are the real minutes of its parts,
+ * as `workedStretches` counts them for the rule; its end, the bridge and the rest gap stay wall.
+ *
  * Not monotone under removal (dropping the middle of a stretch can leave a long first part
  * followed too soon by the last); `SolverModel.isLegal` re-checks every enabled nurse-scope hard
  * rule for a nurse who lost a shift, which covers this one, and CP-SAT's answers go back through
@@ -51,6 +55,7 @@ import { longStretchRule } from '../../../rules/long-stretch.js';
 import { isEmergency } from '../../../rules/mandatory-overtime.js';
 import { asParams } from '../../../rules/registry.js';
 import { restWaivedOn } from '../../../rules/rest-rules.js';
+import { realMinutesIn } from '../../../schedule/real-minutes.js';
 import { expr } from '../builder.js';
 import { describe, type EncodeContext, type TimelineEntry } from '../context.js';
 
@@ -68,6 +73,7 @@ export function encodeLongStretch(ctx: EncodeContext, raw: Record<string, unknow
   if (capMinutes === undefined && thresholdMinutes === undefined) return;
   const restMinutes = Math.round(params.restHours * MINUTES_PER_HOUR);
   const bridge = params.maxBreakMinutesInStretch ?? 0;
+  const tz = ctx.model.ctx.dstTransitions;
 
   for (const [n, vars] of ctx.byNurse.entries()) {
     if (vars.length === 0) continue;
@@ -96,7 +102,13 @@ export function encodeLongStretch(ctx: EncodeContext, raw: Record<string, unknow
         // ends (or it adds nothing).
         if (p === first || p.window.endMinute + bridge < first.window.startMinute) continue;
         if (p.window.endMinute >= first.window.endMinute) continue;
-        const added = Math.min(p.window.endMinute, first.window.startMinute) - p.window.startMinute;
+        const added = realMinutesIn(
+          {
+            startMinute: p.window.startMinute,
+            endMinute: Math.min(p.window.endMinute, first.window.startMinute),
+          },
+          tz,
+        );
         grow([p, ...chain], end, worked + added, reached, report);
       }
     };
@@ -156,7 +168,7 @@ export function encodeLongStretch(ctx: EncodeContext, raw: Record<string, unknow
 
     for (const last of entries) {
       const end = last.window.endMinute;
-      const own = end - last.window.startMinute;
+      const own = realMinutesIn(last.window, tz);
       if (capMinutes !== undefined) {
         grow([last], end, own, (worked) => worked > capMinutes, forbidChain);
       }

@@ -13,6 +13,7 @@
 
 import {
   ACUITY_PRESETS,
+  type HolidayAttribution,
   type PaperSize,
   type PerDiemCommitment,
   type RatioStaffing,
@@ -67,6 +68,9 @@ export function UnitPoliciesForm() {
   const [requireConsent, setRequireConsent] = useState(savedConsent);
   const savedPaper = unit.paperSize ?? '';
   const [paper, setPaper] = useState<PaperSize | ''>(savedPaper);
+  const savedHolidayAttribution = unit.holidayAttribution ?? 'start';
+  const [holidayAttribution, setHolidayAttribution] =
+    useState<HolidayAttribution>(savedHolidayAttribution);
   const detected = useAppInfo().data?.defaultPaperSize;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the form when the saved unit changes.
@@ -83,6 +87,7 @@ export function UnitPoliciesForm() {
     setHolidayShifts(String(shownCommitment.holidayShiftsPerYear));
     setRequireConsent(savedConsent);
     setPaper(savedPaper);
+    setHolidayAttribution(savedHolidayAttribution);
   }, [
     unit.id,
     unit.name,
@@ -93,6 +98,7 @@ export function UnitPoliciesForm() {
     unit.perDiemCommitment,
     unit.requireConsentForPostedChanges,
     unit.paperSize,
+    unit.holidayAttribution,
   ]);
 
   // A charge nurse who takes patients has none to spare for breaks, so the box only counts
@@ -125,6 +131,7 @@ export function UnitPoliciesForm() {
     commitmentOn !== (savedCommitment !== undefined) ||
     requireConsent !== savedConsent ||
     paper !== savedPaper ||
+    holidayAttribution !== savedHolidayAttribution ||
     (commitmentOn &&
       (weekendShifts !== String(shownCommitment.weekendShiftsPer4Weeks) ||
         holidayShifts !== String(shownCommitment.holidayShiftsPerYear)));
@@ -147,6 +154,7 @@ export function UnitPoliciesForm() {
         // False is stored as null: the unset reading is the same as off.
         requireConsentForPostedChanges: requireConsent ? true : null,
         paperSize: paper === '' ? null : paper,
+        holidayAttribution: holidayAttribution === 'start' ? null : holidayAttribution,
       },
     });
   };
@@ -163,6 +171,7 @@ export function UnitPoliciesForm() {
     setHolidayShifts(String(shownCommitment.holidayShiftsPerYear));
     setRequireConsent(savedConsent);
     setPaper(savedPaper);
+    setHolidayAttribution(savedHolidayAttribution);
     update.reset();
   };
 
@@ -417,6 +426,24 @@ export function UnitPoliciesForm() {
                 </option>
                 <option value="letter">Letter (8.5 × 11 in)</option>
                 <option value="a4">A4 (210 × 297 mm)</option>
+              </select>
+            </Field>
+            <Field
+              id="unit-holiday-attribution"
+              className="max-w-xl"
+              label="Holiday shifts"
+              hint="Decides the holiday premium, the fairness count of holidays worked and the holiday rotation for a night that runs into or out of a holiday."
+            >
+              <select
+                id="unit-holiday-attribution"
+                className={INPUT}
+                value={holidayAttribution}
+                aria-describedby={describedBy('unit-holiday-attribution', { hint: true })}
+                onChange={(e) => setHolidayAttribution(e.target.value as HolidayAttribution)}
+              >
+                <option value="start">A shift counts for the day it starts (default)</option>
+                <option value="clock">Each hour counts for the day it is worked on</option>
+                <option value="majority">A shift counts for the day holding most of it</option>
               </select>
             </Field>
             <fieldset className="flex max-w-xl flex-col gap-3 border-t border-border pt-3">

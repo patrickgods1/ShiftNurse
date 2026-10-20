@@ -99,6 +99,7 @@ export function alertsForView(
           perDiemCommitment: unit.perDiemCommitment,
           holidays,
           holidayWorkedBy: holidayWorkedBy(db, period, holidays),
+          ...(unit.holidayAttribution ? { holidayAttribution: unit.holidayAttribution } : {}),
         }
       : {}),
     ...(unit.minWeekendsOffPerYear !== undefined

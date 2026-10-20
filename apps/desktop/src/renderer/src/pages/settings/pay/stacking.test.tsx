@@ -18,12 +18,14 @@ beforeEach(() => {
     premiumStacking: 'compound',
     holidayPayCoversOvertime: false,
     reportingPayNoticeHours: 2,
+    overtimeWindowAttribution: 'clock' as const,
   });
   bridge.respond('cost', 'savePaySettings', {
     callBackMinimumHours: 2,
     premiumStacking: 'additive',
     holidayPayCoversOvertime: false,
     reportingPayNoticeHours: 2,
+    overtimeWindowAttribution: 'clock' as const,
   });
 });
 afterEach(() => {
@@ -55,6 +57,7 @@ describe('premium stacking in Settings › Pay', () => {
             premiumStacking: 'additive',
             holidayPayCoversOvertime: false,
             reportingPayNoticeHours: 2,
+            overtimeWindowAttribution: 'clock' as const,
           },
         ],
       ]),
@@ -76,6 +79,7 @@ describe('premium stacking in Settings › Pay', () => {
             premiumStacking: 'compound',
             holidayPayCoversOvertime: true,
             reportingPayNoticeHours: 2,
+            overtimeWindowAttribution: 'clock' as const,
           },
         ],
       ]),
@@ -104,6 +108,33 @@ describe('premium stacking in Settings › Pay', () => {
             premiumStacking: 'additive',
             holidayPayCoversOvertime: false,
             extraField: 7,
+          },
+        ],
+      ]),
+    );
+  });
+});
+
+describe('week attribution in Settings › Pay', () => {
+  it('saves the week attribution with the rest of the pay settings', async () => {
+    renderWithApp(<StackingSection unitId="u-1" />);
+    fireEvent.change(
+      await screen.findByLabelText('Shifts that cross into a new work week or pay period'),
+      {
+        target: { value: 'start' },
+      },
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('cost', 'savePaySettings')).toEqual([
+        [
+          'u-1',
+          {
+            callBackMinimumHours: 2,
+            premiumStacking: 'compound',
+            holidayPayCoversOvertime: false,
+            reportingPayNoticeHours: 2,
+            overtimeWindowAttribution: 'start',
           },
         ],
       ]),

@@ -36,6 +36,7 @@ export {
   openTestDatabase,
   transact,
 } from './client.js';
+export { dstTransitionsForPeriod, hostDstTransitions } from './host-dst.js';
 export { ids, newId } from './ids.js';
 export * as mappers from './mappers.js';
 export * from './repositories/acuity.js';

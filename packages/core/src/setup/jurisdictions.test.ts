@@ -1078,6 +1078,7 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
       premiumStacking: 'additive',
       holidayPayCoversOvertime: true,
       reportingPayNoticeHours: 2,
+      overtimeWindowAttribution: 'clock',
     });
   });
 
@@ -1090,6 +1091,7 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
           premiumStacking: 'compound',
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 2,
+          overtimeWindowAttribution: 'clock',
         },
       }),
     );

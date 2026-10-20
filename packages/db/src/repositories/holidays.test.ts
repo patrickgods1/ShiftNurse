@@ -17,7 +17,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
-import { createShiftType, createUnit, listHolidaysForUnit } from './config.js';
+import { createShiftType, createUnit, listHolidaysForUnit, updateUnit } from './config.js';
 import {
   addHolidayYear,
   clearHolidayWork,
@@ -245,6 +245,35 @@ describe('who worked a holiday', () => {
     ]);
     schedule('2025-12-21', '2026-01-03', 'draft', [[ben, dayId, '2025-12-25']]);
     expect(holidayWorkIn(handle.db, unitId, ...window('2025-01-01', '2025-12-31'))).toEqual([
+      { holidayId: xmas.id, nurseId: ana.id },
+    ]);
+  });
+
+  it('lists the Christmas Eve night nurse as working Christmas when the unit counts by the clock', () => {
+    const xmas = holiday('2025-12-25', 'Christmas Day', true);
+    // 19:00 on the 24th to 07:00 on the 25th: seven hours of it are Christmas morning.
+    const nightId = createShiftType(
+      handle.db,
+      {
+        unitId,
+        name: 'Night 12',
+        abbreviation: 'N12',
+        startTime: '19:00',
+        durationHours: 12,
+        isNight: true,
+        isOnCall: false,
+        color: '#1e3a8a',
+        sortOrder: 2,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+    schedule('2025-12-21', '2026-01-03', 'published', [[ana, nightId, '2025-12-24']]);
+    const range = window('2025-01-01', '2025-12-31');
+    expect(holidayWorkIn(handle.db, unitId, ...range)).toEqual([]);
+
+    transact(handle.db, (tx) => updateUnit(tx, unitId, { holidayAttribution: 'clock' }, ACTOR));
+    expect(holidayWorkIn(handle.db, unitId, ...range)).toEqual([
       { holidayId: xmas.id, nurseId: ana.id },
     ]);
   });

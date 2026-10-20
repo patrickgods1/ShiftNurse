@@ -9,11 +9,14 @@ import { addDays, isoDate } from '@shiftnurse/core';
 import {
   createNurse,
   createPayRate,
+  createUnit,
   deletePayRate,
   listDayOfPayEvents,
   listPayRatesForUnit,
+  schema,
   transact,
 } from '@shiftnurse/db';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { costApi } from './cost.js';
 import { dayOfPayApi } from './day-of-pay.js';
@@ -96,6 +99,7 @@ describe('the cost report’s day-of pay', () => {
       premiumStacking: 'compound',
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
+      overtimeWindowAttribution: 'clock' as const,
     });
     record({
       kind: 'call_back',
@@ -112,6 +116,7 @@ describe('the cost report’s day-of pay', () => {
       premiumStacking: 'compound',
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
+      overtimeWindowAttribution: 'clock' as const,
     });
   });
 
@@ -128,6 +133,36 @@ describe('the cost report’s day-of pay', () => {
       break: 'meal',
     });
     expect(report().dayOf).toMatchObject({ lines: [], total: 0, unpriced: 1 });
+  });
+
+  it('prices a missed break for a nurse who has since moved to another unit', () => {
+    const pat = nurseAtFifty();
+    record({
+      kind: 'missed_break',
+      unitId: f.seeded.unitId,
+      nurseId: pat.id,
+      date: date(),
+      break: 'meal',
+    });
+    const west = createUnit(
+      f.handle.db,
+      {
+        name: '5 West',
+        unitType: 'ICU',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      'manager',
+    );
+    // The event row still points at her, but she is in neither the unit's roster nor a float.
+    f.handle.db
+      .update(schema.nurse)
+      .set({ unitId: west.id })
+      .where(eq(schema.nurse.id, pat.id))
+      .run();
+    const dayOf = report().dayOf;
+    expect(dayOf.lines).toHaveLength(1);
+    expect(dayOf.unpriced).toBe(0);
   });
 
   it('leaves out an event dated outside the period', () => {

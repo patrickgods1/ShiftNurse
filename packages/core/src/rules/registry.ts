@@ -30,6 +30,7 @@ import type {
 } from '../domain/entities.js';
 import { DEFAULT_WEEKEND, type IsoDate, type WeekendDefinition } from '../domain/time.js';
 import { DEFAULT_FAIRNESS_WEIGHTS } from '../fairness/types.js';
+import type { DstTransition } from '../schedule/real-minutes.js';
 import type { ScheduleView } from '../schedule/view.js';
 
 import { accommodationBlocksRule } from './availability-blocks.js';
@@ -273,6 +274,8 @@ export interface RuleContextInput {
    * before (not at all, unless `onlyCompletePayPeriods` is off).
    */
   historyFrom?: IsoDate;
+  /** The host's clock changes (D19). Absent: none, every day is 1440 minutes. */
+  dstTransitions?: readonly DstTransition[];
   /** Nurses' stated preferences. Absent: nobody has asked for anything. */
   preferences?: readonly Preference[];
 }
@@ -337,6 +340,7 @@ export function buildRuleContext(input: RuleContextInput): RuleContext {
     restWaiversByNurse: restWaiverDates(input.restWaivers ?? []),
     availabilityBlocksByNurse: groupByNurse(input.availabilityBlocks ?? []),
     historyFrom: input.historyFrom,
+    dstTransitions: input.dstTransitions ?? [],
     preferredShiftTypesByNurse: preferredShiftTypes(input.preferences ?? []),
   };
 }

@@ -73,6 +73,8 @@ describe('worked stretches', () => {
     ['OC', { startTime: '15:00', durationHours: 8, isOnCall: true }],
     ['L9', { startTime: '15:30', durationHours: 9, isOnCall: false }],
     ['L8', { startTime: '16:01', durationHours: 8, isOnCall: false }],
+    ['N6', { startTime: '19:00', durationHours: 6, isOnCall: false }],
+    ['M6', { startTime: '02:00', durationHours: 6, isOnCall: false }],
   ]);
   const view = (a: Assignment) => {
     const st = types.get(a.shiftTypeId)!;
@@ -152,5 +154,20 @@ describe('worked stretches', () => {
     ]);
     expect(stretches.map((s) => s.hours)).toEqual([8, 9]);
     expect(stretches.map((s) => s.breakMinutes)).toEqual([0, 0]);
+  });
+
+  it('does not count the repeated hour of a fall-back break as worked', () => {
+    // 19:00 Sat 31 Oct – 01:00, a break, then 02:00 – 08:00 Sun. The clocks go back at 02:00
+    // (day 20758 × 1440 + 120), so 01:00–02:00 happens twice: the break is 1 h on the clock and
+    // 2 h real, the span 13 h on the clock and 14 h real. Worked: 6 + 6 = 12 h (14 − 2), not the
+    // 13 h that 14 real less a 1 h wall break would give.
+    const fallBack = { atMinute: 29_891_640, deltaMinutes: -60 };
+    const stretches = workedStretches(
+      [view(row('2026-10-31', 'N6')), view(row('2026-11-01', 'M6', { id: 'm' }))],
+      { bridgeMinutes: 60, transitions: [fallBack] },
+    );
+    expect(stretches).toHaveLength(1);
+    expect(stretches[0]!.hours).toBe(12);
+    expect(stretches[0]!.breakMinutes).toBe(60);
   });
 });

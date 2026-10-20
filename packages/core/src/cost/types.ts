@@ -24,8 +24,8 @@
  * - **Night and evening by the clock.** A `night` or `evening` differential with a `window` is
  *   earned by the shift's hours inside that daily window, not by `ShiftType.isNight`. Reaching
  *   `wholeShiftAtHours` in the window makes it a whole-shift differential like any other; short
- *   of it, only the in-window hours earn it, priced on the *base* rate and kept out of the running
- *   rate, so it neither compounds nor raises overtime.
+ *   of it, only the in-window hours earn it, on the base rate; under compound stacking those
+ *   dollars are in the week's regular rate (778.207(b)); under additive they are not.
  * - **Consecutive shifts** (`consecutive_shift`, UC–CNA Art. 14 § I.3) are a whole-shift
  *   differential earned by the run, not the shift: once a run of consecutive worked days (shifts
  *   dated on each, lookback included, standby not) holds more than `afterShifts` full shifts dated
@@ -33,23 +33,31 @@
  *   run earn it until a day off. The contract speaks of 12-hour nurses, so only a shift scheduled
  *   for 12 hours or more counts as full.
  * - **Overtime** is itemised the way a payslip itemises it: every hour is paid at its straight
- *   rate (above), and hours past an {@link OvertimeRule} threshold earn an additional
- *   *premium* of `(multiplier − 1) × straight rate`. So an overtime hour on a holiday night
- *   earns the holiday and night premiums *and* half of that rate again — the multipliers
- *   compound, which is what "time-and-a-half on the holiday rate" means in a contract.
+ *   rate (above), and hours past an {@link OvertimeRule} threshold earn an additional premium of
+ *   `(multiplier − 1) ×` the **regular rate** of the work week (or of the pay period under an
+ *   8/80 rule): all straight-time dollars of the window ÷ its hours worked (29 CFR 778.109,
+ *   778.115, 778.601(e)). Under compound stacking the holiday and other multipliers are in that
+ *   rate, so a holiday overtime hour still earns half of a rate that includes the holiday
+ *   premium. The lookback tail's straight time counts toward the rate but is never priced; leave
+ *   and standby are not hours worked and count toward neither sum. Because the rate is the
+ *   window's, the premium does not depend on which shift carries the band.
  * - **Overtime rules do not stack; they band.** An hour is overtime once, at the highest
- *   multiplier any active rule gives it. Every rule makes the *end* of a shift overtime from
- *   some hour on, so a shift's overtime is a run of bands: under California's 1.5× past 8 hours
- *   a day and 2× past 12, a 13-hour shift is 4 hours at 1.5× and 1 at 2× (two `overtime` lines),
- *   not 5 hours at whichever one rule pays more.
+ *   multiplier any active rule gives it. Each rule makes spans of a shift overtime: usually its
+ *   end from some hour on, but a shift split at a week or pay-period edge can have overtime
+ *   before the edge and straight time after it. A shift's overtime is bands, each with its own
+ *   start: under California's 1.5× past 8 hours a day and 2× past 12, a 13-hour shift is 4 hours
+ *   at 1.5× and 1 at 2× (two `overtime` lines), not 5 hours at whichever one rule pays more.
  * - **Daily overtime is judged per workday**: the shifts that start on a date, summed in order,
  *   so the second shift of a double is overtime from the first hour past the threshold. A night
  *   that runs past midnight belongs to the workday it started on.
- * - **Weekly overtime falls on the later shifts of the week**, and pay-period overtime on the
- *   later shifts of the pay period. The first `threshold` hours of the window are straight
+ * - **Weekly overtime falls on the later hours of the week**, and pay-period overtime on the
+ *   later hours of the pay period. The first `threshold` hours of the window are straight
  *   time, in chronological order, including hours carried in from the previous period's
  *   lookback tail; only shifts that push past the threshold carry overtime, and only the hours
- *   past it.
+ *   past it. Each hour counts in the window it was worked (29 CFR 778.104, D17): a Saturday
+ *   night's hours before midnight are the old week's and its Sunday hours the new week's, so
+ *   its overtime can be its evening hours alone. `CostContext.overtimeWindowAttribution:
+ *   'start'` puts the whole shift in the window it starts in instead.
  * - **Seventh-day overtime** (`basis: 'seventh_day'`) applies to a shift on the last day of a
  *   work week when every day of that week was worked (lookback shifts count): California pays
  *   its first 8 hours at 1.5× (threshold 0) and the rest at 2× (threshold 8).
@@ -72,14 +80,16 @@
  * - **Daily premiums need not pyramid into weekly overtime.** A weekly or pay-period rule with
  *   `pyramiding: 'none'` counts only each shift's straight hours, lookback shifts included: those
  *   before any other basis makes it overtime (Cal. Lab. Code § 510; UC–CNA Art. 14 §M). Its
- *   overtime falls on the last straight hours, just before the daily premium ones. Absent,
- *   every worked hour counts.
+ *   overtime falls on the last straight hours, just before the daily premium ones. Absent is
+ *   `'none'` when any daily-style rule (a non-window basis) applies to the nurse, else `'stack'`
+ *   (D16; 29 CFR 778.202(c)); an explicit `'stack'` counts every worked hour.
  * - **Overtime too short to pay** (`minimumMinutes`) is dropped per rule per shift: under VA's 15
  *   minutes, that rule prices the shift as straight time. Another rule may still reach the hours.
  * - **Premiums add instead of compounding** under `CostContext.premiumStacking: 'additive'`: each
  *   multiplier adds `base × (multiplier − 1)` an hour and each overtime band's premium is
- *   `base × (multiplier − 1)`. So the straight rate is `base + Σflat + base × Σ(multiplier − 1)`
- *   (UC–CNA Art. 14 §N; Title 38 percentages of basic pay). Absent, `'compound'` as above.
+ *   `base × (multiplier − 1)`, never the week's regular rate. So the straight rate is
+ *   `base + Σflat + base × Σ(multiplier − 1)` (UC–CNA Art. 14 §N; Title 38 percentages of basic
+ *   pay). Absent, `'compound'` as above.
  * - **Holiday pay covers holiday overtime** under `CostContext.holidayPayCoversOvertime`: an
  *   overtime hour that is paid the holiday or major-holiday premium gets no overtime premium,
  *   though it still counts in `overtimeHours` for alerts and the ledger (38 U.S.C. § 7453(g): no
@@ -100,6 +110,11 @@
  *   base rate and out of the running rate, as partial clock differentials are.
  * - **A holdover is worked time on every basis.** It lengthens the shift's paid hours, so daily,
  *   weekly and pay-period overtime count it like any other hour.
+ * - **The DST nights are paid as worked.** `CostContext.dstTransitions` (host-supplied) makes the
+ *   fall-back night 13 hours and the spring one 11 for every hour count in pay (29 CFR part 785,
+ *   D19): base, differentials, clock windows, the weekend and consecutive bases and overtime. Tour,
+ *   full-shift and Baylor classification still read declared hours: a 12 is a tour because it is
+ *   declared 12.
  * - **On-call standby** is not worked time: it earns the `on_call` differential alone (a flat
  *   amount per standby hour, or a multiplier on the base rate), never base pay, never other
  *   differentials, and never overtime. `call_back` — being called in while on standby — is
@@ -108,8 +123,11 @@
  *   worked shift. An agency's all-in bill rate is best entered as that nurse's per-nurse pay
  *   rate with the agency differential at `multiplier 1.0`; the differential exists for units
  *   whose contracts express the premium as a percentage instead.
- * - **Holiday** follows the fairness convention: a shift is a holiday shift when its *start*
- *   date is a holiday. The night shift into a holiday morning is not one.
+ * - **Holiday** follows the unit's `holidayAttribution` (absent: the start date, the fairness
+ *   convention; `'clock'` pays the hours on the holiday; `'majority'` the whole shift by where
+ *   most of it falls), the same definition the ledger, the rotation and both solvers use
+ *   (`schedule/holiday-attribution.ts`). By the clock the premium is a line on the holiday's
+ *   minutes alone, and holiday pay covers only those minutes' overtime.
  *
  * An assignment whose nurse has no resolvable rate is **unpriced**: it contributes $0 and is
  * counted in `unpricedAssignments`. A cost report must display that count prominently — a
@@ -127,6 +145,7 @@ import type {
 } from '../domain/entities.js';
 import type { IsoDate, Weekday, WeekendDefinition } from '../domain/time.js';
 import type { PaidLeaveCredit } from '../rules/paid-leave.js';
+import type { DstTransition } from '../schedule/real-minutes.js';
 
 // ---------------------------------------------------------------------------
 // Context
@@ -173,6 +192,17 @@ export interface CostContext {
    * overtime is paid on holiday hours as well, which is the FLSA regular rate.
    */
   holidayPayCoversOvertime?: boolean;
+  /**
+   * The host's clock changes over the priced dates (T05). Pay counts real elapsed minutes on those
+   * nights (D19, 29 CFR part 785); absent, every day is 1440 minutes.
+   */
+  dstTransitions?: readonly DstTransition[];
+  /**
+   * How a shift crossing into a new work week or pay period counts toward weekly or pay-period
+   * overtime: `'clock'` puts each hour in the window it was worked (29 CFR 778.104); `'start'` puts
+   * the whole shift in the window it starts in, as some contracts do. Absent: `'clock'` (D17).
+   */
+  overtimeWindowAttribution?: 'clock' | 'start';
 }
 
 /** A unit's pay settings that are not rates, differentials or overtime rules. */
@@ -192,6 +222,12 @@ export interface PaySettings {
    * reporting-time pay (D13). Default 2.
    */
   reportingPayNoticeHours: number;
+  /**
+   * How a shift crossing into a new work week or pay period counts toward weekly or pay-period
+   * overtime: `'clock'` puts each hour in the window it was worked (29 CFR 778.104); `'start'` puts
+   * the whole shift in the window it starts in, as some contracts do. Absent: `'clock'` (D17).
+   */
+  overtimeWindowAttribution: 'clock' | 'start';
 }
 
 /** What a unit that has never saved pay settings runs: no call-back minimum, FLSA stacking. */
@@ -200,6 +236,7 @@ export const DEFAULT_PAY_SETTINGS: PaySettings = {
   premiumStacking: 'compound',
   holidayPayCoversOvertime: false,
   reportingPayNoticeHours: 2,
+  overtimeWindowAttribution: 'clock',
 };
 
 // ---------------------------------------------------------------------------
@@ -247,6 +284,7 @@ export interface CostLine {
   hours: number;
   /** Dollars per hour for this line alone. */
   rate: number;
+  /** `hours × rate`, rounded to the cent as payroll pays it; `rate` is not rounded. */
   amount: number;
 }
 
@@ -258,17 +296,23 @@ export interface AssignmentCost {
   nurseId: Id;
   shiftTypeId: Id;
   date: IsoDate;
+  /** Paid hours, counted in whole minutes. */
   hours: number;
   baseRate: number;
   rateSource: RateSource;
   /**
-   * Dollars per hour before overtime: `(base + Σflat) × Πmultiplier`, or under additive stacking
-   * `base + Σflat + base × Σ(multiplier − 1)`.
+   * This shift's own dollars per hour before overtime: `(base + Σflat) × Πmultiplier`, or under
+   * additive stacking `base + Σflat + base × Σ(multiplier − 1)`. Not the rate its overtime is paid
+   * on, which under compound stacking is the week's (or pay period's) regular rate.
    */
   straightRate: number;
-  /** Attributed even when the assignment is unpriced (`rateSource: 'none'`); only the dollars are 0. */
+  /**
+   * Attributed in whole minutes, even when the assignment is unpriced (`rateSource: 'none'`);
+   * only the dollars are 0.
+   */
   overtimeHours: number;
   lines: CostLine[];
+  /** The sum of the lines' amounts, exact to the cent. */
   total: number;
 }
 
@@ -276,6 +320,10 @@ export interface AssignmentCost {
 // Aggregates
 // ---------------------------------------------------------------------------
 
+/**
+ * Hours summed in whole minutes and dollars in whole cents, so every figure is exactly the sum of
+ * the assignments' own: a unit total equals its shift totals added up, to the cent.
+ */
 export interface CostTotals {
   hours: number;
   overtimeHours: number;
@@ -344,7 +392,8 @@ export interface MarginalCost {
   /**
    * Change in the nurse's period total. Can exceed `cost.total`: a shift that pushes the
    * week past the threshold can also turn an *earlier* shift's hours into overtime under a
-   * weekly rule when it lands before them chronologically.
+   * weekly rule when it lands before them chronologically, and a shift with a higher straight
+   * rate raises the week's regular rate, so the premium on every overtime band of that week.
    */
   delta: number;
 }

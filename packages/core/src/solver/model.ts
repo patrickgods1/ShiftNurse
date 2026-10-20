@@ -68,6 +68,7 @@ import {
   type HolidayRotationFacts,
   holidayRotationFacts,
   holidayRotationRule,
+  holidaysWorkedBy,
   inHolidayRotation,
   workedInHistory,
 } from '../rules/holiday-rotation.js';
@@ -344,8 +345,13 @@ export class SolverModel {
   readonly holidayPrice: number;
   /** Holiday id → date, so a `holiday_appetite` is matched to a shift without a search. */
   private readonly holidayDateById: ReadonlyMap<Id, IsoDate>;
-  /** Per date × role: the largest holiday-volunteer reward on that date (`overTargetPrice`). */
+  /** Per shift × role: the largest holiday-volunteer reward on that shift (`overTargetPrice`). */
   private readonly volunteerReward: number[];
+  /**
+   * Per shift: the holidays it works by the unit's attribution (`holidaysWorkedBy`), the ledger's
+   * and the rule's test. Built once here; the move loop only reads it.
+   */
+  private readonly holidaysOfShift: readonly (readonly IsoDate[])[];
   /** Whole days off owed after a night before a day-side shift; 0 while the rule is off. */
   readonly recoveryDays: number;
   /** Points per day-side shift too soon after nights; 0 unless the rule is soft. */
@@ -369,8 +375,13 @@ export class SolverModel {
   private readonly owedOffDates: (ReadonlySet<IsoDate> | undefined)[];
   /** date → the pair sides that fall on it (pair index, 0 minor / 1 major). */
   private readonly pairSidesOn = new Map<IsoDate, { pair: number; side: 0 | 1 }[]>();
-  /** nurse × (pair · 2 + side) → worked shifts on that date, lookback tail included. */
+  /** nurse × (pair · 2 + side) → worked shifts on that holiday, lookback tail included. */
   private readonly pairWork: number[][];
+  /**
+   * nurse × pair → in-period shifts working either half. The rule judges a pair only where this
+   * schedule works one half; by the clock a lookback night can work both halves on its own.
+   */
+  private readonly pairLive: number[][];
   private readonly prefCache = new Map<number, number>();
   private readonly undesirableCache = new Map<number, boolean>();
   private readonly costCache = new Map<number, number>();
@@ -397,6 +408,7 @@ export class SolverModel {
     const shifts = buildShifts(this.dates, this.shiftTypes, demand);
     this.shifts = shifts;
     this.solvableShifts = shifts.filter((s) => s.solvable);
+    this.holidaysOfShift = shifts.map((s) => holidaysWorkedBy(this.ctx, s.date, s.shiftType));
 
     // A shift inside another is judged with the containing shift's roster as cover, so a change
     // to the containing shift re-prices the ones inside it (`refresh`).
@@ -540,18 +552,21 @@ export class SolverModel {
 
     const multipliers = seniorityMultipliers(activeNurses);
     this.seniority = this.nurses.map((nurse) => multipliers.get(nurse.id) ?? 1);
-    // The largest reward `preferencePenalty` could pay a nurse of each role on each date.
-    this.volunteerReward = new Array<number>(this.dates.length * NURSE_ROLES.length).fill(0);
+    // The largest reward `preferencePenalty` could pay a nurse of each role on each shift.
+    this.volunteerReward = new Array<number>(shifts.length * NURSE_ROLES.length).fill(0);
     for (const pref of input.preferences) {
       if (pref.kind !== 'holiday_appetite') continue;
       const nurse = this.nurseIdx.get(pref.nurseId);
       const holiday = this.holidayDateById.get(pref.holidayId);
-      const d = holiday === undefined ? undefined : this.dateIdx.get(holiday);
       // A nurse who has left can never be the surplus volunteer, so her wish prices nothing.
-      if (nurse === undefined || d === undefined || !this.nurses[nurse]!.active) continue;
-      const slot = d * NURSE_ROLES.length + ROLE_INDEX[this.nurses[nurse]!.role];
+      if (nurse === undefined || holiday === undefined || !this.nurses[nurse]!.active) continue;
+      if (!this.dateIdx.has(holiday)) continue;
       const reward = (pref.weight / 2) * this.seniority[nurse]! * this.weights.preference;
-      this.volunteerReward[slot] = Math.max(this.volunteerReward[slot]!, reward);
+      for (const shift of shifts) {
+        if (!this.holidaysOfShift[shift.idx]!.includes(holiday)) continue;
+        const slot = shift.idx * NURSE_ROLES.length + ROLE_INDEX[this.nurses[nurse]!.role];
+        this.volunteerReward[slot] = Math.max(this.volunteerReward[slot]!, reward);
+      }
     }
 
     // --- State ---
@@ -618,11 +633,14 @@ export class SolverModel {
       for (const a of list) {
         const st = this.shiftTypeById.get(a.shiftTypeId);
         if (!st || st.isOnCall) continue;
-        for (const { pair, side } of this.pairSidesOn.get(a.date) ?? []) {
-          this.pairWork[i]![pair * 2 + side]! += 1;
+        for (const date of this.holidaysWorked(a.date, st)) {
+          for (const { pair, side } of this.pairSidesOn.get(date) ?? []) {
+            this.pairWork[i]![pair * 2 + side]! += 1;
+          }
         }
       }
     }
+    this.pairLive = this.nurses.map(() => this.holidayFacts.pairs.map(() => 0));
     this.nightsOn = Array.from({ length: n }, () => new Array<number>(this.dates.length).fill(0));
     this.daySideOn = Array.from({ length: n }, () => new Array<number>(this.dates.length).fill(0));
     const periodFirstDay = dayNumber(input.period.startDate);
@@ -1093,9 +1111,11 @@ export class SolverModel {
         this.nights[n]! += sign;
         this.nightsOn[n]![shift.dateIdx]! += sign;
       } else this.daySideOn[n]![shift.dateIdx]! += sign;
-      if (this.ctx.holidayDates.has(shift.date)) this.holidays[n]! += sign;
+      // One per shift, as the ledger counts it, however many holidays a night touches.
+      const holidays = this.holidaysOfShift[shift.idx]!;
+      if (holidays.length > 0) this.holidays[n]! += sign;
       if (this.isUndesirable(n, shift)) this.undesirable[n]! += sign;
-      if (this.ctx.holidayDates.has(shift.date)) this.countHolidayRotation(n, shift.date, sign);
+      for (const date of holidays) this.countHolidayRotation(n, date, sign);
       const key = weekendKey(shiftWindow(shift.date, st), this.ctx.weekendDefinition);
       if (key !== null) {
         const keys = this.weekendKeys[n]!;
@@ -1108,18 +1128,33 @@ export class SolverModel {
     this.costSum += sign * this.shiftCost(n, shift, a);
   }
 
-  /** A worked shift on a holiday date: an owed-off breach, and the pair it may complete. */
+  /** An in-period shift working a holiday: an owed-off breach, and the pair it may complete. */
   private countHolidayRotation(n: number, date: IsoDate, sign: 1 | -1): void {
     if (this.owedOffDates[n]?.has(date)) this.holidaySum += sign;
     const sides = this.pairSidesOn.get(date);
     if (!sides || !inHolidayRotation(this.nurses[n]!)) return;
     const work = this.pairWork[n]!;
+    const live = this.pairLive[n]!;
     for (const { pair, side } of sides) {
-      const both = () => (work[pair * 2]! > 0 && work[pair * 2 + 1]! > 0 ? 1 : 0);
+      const both = () =>
+        work[pair * 2]! > 0 && work[pair * 2 + 1]! > 0 && live[pair]! > 0 ? 1 : 0;
       const before = both();
       work[pair * 2 + side]! += sign;
+      live[pair]! += sign;
       this.holidaySum += both() - before;
     }
+  }
+
+  /**
+   * The holidays a shift on `date` works, by the unit's attribution: the ledger's, the rule's and
+   * CP-SAT's test. A period shift reads the table built at construction; a lookback row is worked
+   * out afresh, which only construction and the CP-SAT encoding ask for.
+   */
+  holidaysWorked(date: IsoDate, shiftType: ShiftType): readonly IsoDate[] {
+    const d = this.dateIdx.get(date);
+    const t = this.shiftTypes.indexOf(shiftType);
+    if (d !== undefined && t >= 0) return this.holidaysOfShift[d * this.shiftTypes.length + t]!;
+    return holidaysWorkedBy(this.ctx, date, shiftType);
   }
 
   /** Holiday-rotation breaches as the schedule stands. */
@@ -1515,7 +1550,7 @@ export class SolverModel {
           case 'holiday_appetite':
             // Half the weight, like a `prefer_*`. Its size orders volunteers; a surplus volunteer
             // is kept off by `overTargetPrice`, which adds the date's largest reward.
-            if (this.holidayDateById.get(pref.holidayId) === shift.date) penalty -= pref.weight / 2;
+            if (this.wantsHoliday(pref.holidayId, shift)) penalty -= pref.weight / 2;
             break;
           case 'preferred_block_length':
             break;
@@ -1530,14 +1565,24 @@ export class SolverModel {
   }
 
   /**
-   * Points per nurse of `role` over this shift's target. On a date with a holiday some nurse of
-   * that role wants to work it is `overTarget` plus the largest such reward, so a volunteer added
+   * Whether this shift works the holiday a `holiday_appetite` names, as the ledger scores the wish:
+   * a holiday outside the period offers no chance either way.
+   */
+  private wantsHoliday(holidayId: Id, shift: Shift): boolean {
+    const holiday = this.holidayDateById.get(holidayId);
+    if (holiday === undefined || !this.dateIdx.has(holiday)) return false;
+    return this.holidaysOfShift[shift.idx]!.includes(holiday);
+  }
+
+  /**
+   * Points per nurse of `role` over this shift's target. On a shift working a holiday some nurse
+   * of that role wants to work it is `overTarget` plus the largest such reward, so a volunteer added
    * over target nets at least `overTarget`, with or without pay data, and the reward still orders
    * volunteers for the places the shift does need. On-call shifts pay no reward, so carry none.
    */
   overTargetPrice(shift: Shift, role: NurseRole): number {
     if (shift.shiftType.isOnCall) return this.weights.overTarget;
-    const extra = this.volunteerReward[shift.dateIdx * NURSE_ROLES.length + ROLE_INDEX[role]]!;
+    const extra = this.volunteerReward[shift.idx * NURSE_ROLES.length + ROLE_INDEX[role]]!;
     return this.weights.overTarget + extra;
   }
 

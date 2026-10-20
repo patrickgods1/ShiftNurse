@@ -982,6 +982,7 @@ describe('cost configuration', () => {
           premiumStacking: 'maybe' as never,
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 2,
+          overtimeWindowAttribution: 'clock' as const,
         },
         ACTOR,
       ),
@@ -996,6 +997,7 @@ describe('cost configuration', () => {
       premiumStacking: 'additive' as const,
       holidayPayCoversOvertime: true,
       reportingPayNoticeHours: 2,
+      overtimeWindowAttribution: 'clock' as const,
     };
     savePaySettings(handle.db, unitId, settings, ACTOR);
     expect(paySettingsSaved(handle.db, unitId)).toBe(true);
@@ -1016,6 +1018,7 @@ describe('cost configuration', () => {
           premiumStacking: 'compound',
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 2,
+          overtimeWindowAttribution: 'clock' as const,
         },
         ACTOR,
       );
@@ -1050,6 +1053,7 @@ describe('cost configuration', () => {
         premiumStacking: 'compound',
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 4,
+        overtimeWindowAttribution: 'clock' as const,
       },
       ACTOR,
     );
@@ -1059,6 +1063,61 @@ describe('cost configuration', () => {
       before: { reportingPayNoticeHours: 2 },
       after: { reportingPayNoticeHours: 4 },
     });
+  });
+
+  it('reads a unit that never chose as counting each hour in the week it is worked', () => {
+    expect(getPaySettings(handle.db, unitId).overtimeWindowAttribution).toBe('clock');
+    // A row saved before migration 0047: the column is null.
+    handle.db
+      .insert(s.paySettings)
+      .values({ unitId, callBackMinimumHours: 1, updatedAt: Date.now() })
+      .run();
+    expect(getPaySettings(handle.db, unitId).overtimeWindowAttribution).toBe('clock');
+  });
+
+  it('saves start-of-shift attribution and audits what it was', () => {
+    handle.db
+      .insert(s.paySettings)
+      .values({ unitId, callBackMinimumHours: 1, updatedAt: Date.now() })
+      .run();
+    savePaySettings(
+      handle.db,
+      unitId,
+      {
+        callBackMinimumHours: 1,
+        premiumStacking: 'compound',
+        holidayPayCoversOvertime: false,
+        reportingPayNoticeHours: 2,
+        overtimeWindowAttribution: 'start',
+      },
+      ACTOR,
+    );
+    expect(getPaySettings(handle.db, unitId).overtimeWindowAttribution).toBe('start');
+    expect(auditHistoryFor(handle.db, 'pay_settings', unitId)[0]).toMatchObject({
+      action: 'update',
+      before: { overtimeWindowAttribution: 'clock' },
+      after: { overtimeWindowAttribution: 'start' },
+    });
+  });
+
+  it('refuses an attribution it does not know', () => {
+    expect(() =>
+      savePaySettings(
+        handle.db,
+        unitId,
+        {
+          callBackMinimumHours: 1,
+          premiumStacking: 'compound',
+          holidayPayCoversOvertime: false,
+          reportingPayNoticeHours: 2,
+          overtimeWindowAttribution: 'weekly' as never,
+        },
+        ACTOR,
+      ),
+    ).toThrow(
+      'Choose whether a shift that crosses into a new work week counts each hour in the week it is worked or the whole shift in the week it starts.',
+    );
+    expect(paySettingsSaved(handle.db, unitId)).toBe(false);
   });
 
   it('refuses a notice of 25 hours', () => {
@@ -1071,6 +1130,7 @@ describe('cost configuration', () => {
           premiumStacking: 'compound',
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 25,
+          overtimeWindowAttribution: 'clock' as const,
         },
         ACTOR,
       ),

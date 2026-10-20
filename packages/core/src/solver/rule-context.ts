@@ -45,6 +45,7 @@ export function ruleContextForInput(
     ...(input.restWaivers ? { restWaivers: input.restWaivers } : {}),
     ...(input.availabilityBlocks ? { availabilityBlocks: input.availabilityBlocks } : {}),
     ...(input.historyFrom ? { historyFrom: input.historyFrom } : {}),
+    ...(input.dstTransitions ? { dstTransitions: input.dstTransitions } : {}),
     preferences: input.preferences,
   });
 }

@@ -26,6 +26,7 @@ import type {
   Credential,
   FairnessLedgerEntry,
   Holiday,
+  HolidayAttribution,
   Id,
   NurseCredential,
   NurseRole,
@@ -48,6 +49,7 @@ import { payPeriodsIn, workWeeksIn } from '../rules/hours-rules.js';
 import { leaveHoursBetween, type PaidLeaveCredit } from '../rules/paid-leave.js';
 import { isWorked, nurseName } from '../rules/types.js';
 import { nurseWeekends } from '../rules/weekend-pattern.js';
+import { attributedHolidayDates } from '../schedule/holiday-attribution.js';
 import type { ScheduleView } from '../schedule/view.js';
 
 export type ComplianceAlertKind =
@@ -133,6 +135,11 @@ export interface ComplianceInput {
   weekendDefinition?: WeekendDefinition;
   holidays?: readonly Holiday[];
   holidayWorkedBy?: ReadonlyMap<Id, ReadonlySet<Id>>;
+  /**
+   * `Unit.holidayAttribution`: which holiday a night crossing midnight works, so the commitment
+   * counts the holidays pay and the ledger count (D18). Absent: the day the shift starts.
+   */
+  holidayAttribution?: HolidayAttribution;
   /**
    * The unit's promise of weekends off in a year — the 52 weeks ending on the period's last day —
    * and the fairness ledger to count that year's earlier weekends from. Absent means no check.
@@ -228,7 +235,14 @@ function hoursDrift(input: ComplianceInput): ComplianceAlert[] {
     const hours = worked + leave;
     const contracted =
       (nurse.contractedHoursPerPeriod * schedule.dates.length) / input.payPeriodDays;
-    const drift = (hours - contracted) / contracted;
+    // As `contracted-hours` reads it: authorised overtime is a deliberate excess, so it is left
+    // out of the over side, but a nurse who worked it is not short of those hours.
+    const overtime = views.reduce(
+      (sum, v) => sum + (v.assignment.isOvertime ? v.scheduledHours : 0),
+      0,
+    );
+    const judged = hours > contracted ? hours - overtime : hours;
+    const drift = (judged - contracted) / contracted;
     if (Math.abs(drift) <= input.hoursDriftTolerance) continue;
     const pct = Math.round(drift * 100);
     alerts.push({
@@ -238,7 +252,7 @@ function hoursDrift(input: ComplianceInput): ComplianceAlert[] {
       hours,
       expectedHours: contracted,
       assignmentIds: views.map((v) => v.assignment.id),
-      message: `${nurseName(nurse)} is scheduled ${oneDecimal(worked)}h${leave > 0 ? ` plus ${oneDecimal(leave)}h paid leave` : ''} against ${oneDecimal(contracted)}h contracted (${pct >= 0 ? '+' : ''}${pct}%)`,
+      message: `${nurseName(nurse)} is scheduled ${oneDecimal(worked)}h${leave > 0 ? ` plus ${oneDecimal(leave)}h paid leave` : ''}${overtime > 0 ? ` (${oneDecimal(overtime)}h of it authorised overtime)` : ''} against ${oneDecimal(contracted)}h contracted (${pct >= 0 ? '+' : ''}${pct}%)`,
     });
   }
   return alerts;
@@ -440,6 +454,7 @@ function perDiemCommitment(input: ComplianceInput): ComplianceAlert[] {
     (commitment.weekendShiftsPer4Weeks * schedule.dates.length) / 28,
   );
   const holidays = input.holidays ?? [];
+  const attribution = input.holidayAttribution ?? 'start';
   // A year's holiday commitment is judged once, by the period holding that year's last holiday,
   // so every earlier period reads as complete-so-far and none is nagged for a half-finished year.
   const lastOfYear = new Map<string, Holiday>();
@@ -480,7 +495,13 @@ function perDiemCommitment(input: ComplianceInput): ComplianceAlert[] {
           if (input.holidayWorkedBy?.get(h.id)?.has(nurseId)) done.add(h.id);
         }
         for (const h of ofYear) {
-          if (worked.some((v) => v.assignment.date === h.date)) done.add(h.id);
+          const isThis = (d: IsoDate) => d === h.date;
+          const onIt = worked.some((v) =>
+            attributedHolidayDates(v.assignment.date, v.shiftType, attribution, isThis).includes(
+              h.date,
+            ),
+          );
+          if (onIt) done.add(h.id);
         }
         if (done.size >= commitment.holidayShiftsPerYear) continue;
         alerts.push({

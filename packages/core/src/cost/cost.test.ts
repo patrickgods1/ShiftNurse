@@ -7,7 +7,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import type { Assignment, Differential, OvertimeRule, PayRate } from '../domain/entities.js';
+import type { Assignment, Differential, OvertimeRule, PayRate, Unit } from '../domain/entities.js';
 import { DEFAULT_WEEKEND, isoDate } from '../domain/time.js';
 import {
   assign,
@@ -16,6 +16,7 @@ import {
   differential,
   EVENING_8,
   makeNurse,
+  NIGHT_8,
   NIGHT_12,
   ON_CALL,
   overtimeRule,
@@ -25,7 +26,13 @@ import {
   testUnit,
   UNIT_ID,
 } from '../testing/fixtures.js';
-import { compareToBudget, costSchedule, hoursInDailyWindow, marginalCost } from './cost.js';
+import {
+  compareToBudget,
+  costSchedule,
+  hoursInDailyWindow,
+  marginalCost,
+  regularRateFrom,
+} from './cost.js';
 import type { CostContext, CostLine } from './types.js';
 
 beforeEach(() => {
@@ -311,10 +318,12 @@ describe('overtime', () => {
       s.schedule,
       ctx({ overtimeRules: [WEEKLY_40], workWeekStartsOn: 4 }),
     );
-    // Only this period's shift is priced; the tail is context, not a cost.
+    // Only this period's shift is priced; the tail is context, not a cost. The week's regular rate
+    // includes the tail: Saturday's twelve earns the $3 weekend differential, so 3 × 576 + 612 =
+    // $2340 over 48h = $48.75 (29 CFR 778.115). Monday: 576 + 8 × 0.5 × 48.75 = 576 + 195 = 771.
     expect(report.assignments).toHaveLength(1);
     expect(report.assignments[0]?.overtimeHours).toBe(8);
-    expect(report.totals.total).toBe(768);
+    expect(report.totals.total).toBe(771);
   });
 
   it('weekly: shifts in a new week start again from zero', () => {
@@ -345,7 +354,7 @@ describe('overtime', () => {
     expect(report.assignments[1]?.total).toBe(384);
   });
 
-  it('an hour is overtime once: the larger of the daily and weekly premium wins per shift', () => {
+  it('credits daily overtime toward the weekly forty by default: four twelves are sixteen overtime hours, not twenty', () => {
     const nurse = makeNurse();
     const s = scenario({
       nurses: [nurse],
@@ -355,9 +364,44 @@ describe('overtime', () => {
     });
 
     const report = costSchedule(s.schedule, ctx({ overtimeRules: [WEEKLY_40, DAILY_8] }));
-    // Shifts 1–3: daily gives 4h ($96) each; shift 4: weekly's 8h ($192) beats daily's 4h.
+    // A daily rule applies, so the weekly 40 counts straight hours only (29 CFR 778.202(c)):
+    // 8 a shift, 32 for the week, under 40, so weekly adds nothing. Daily gives 4 a shift:
+    // 16h × $24 (half of $48) = $384.
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([4, 4, 4, 4]);
+    expect(report.totals.overtimePremium).toBe(384);
+  });
+
+  it('stacks daily overtime into the weekly forty only when the rule says so', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08'].map((d) =>
+        assign(nurse.id, DAY_12, d),
+      ),
+    });
+
+    const report = costSchedule(
+      s.schedule,
+      ctx({ overtimeRules: [{ ...WEEKLY_40, pyramiding: 'stack' }, DAILY_8] }),
+    );
+    // Every one of the 48 hours counts toward 40: the fourth shift crosses at 36 + 4, so its
+    // last 8 hours are weekly overtime. 3 × 4 + 8 = 20h × $24 = $480.
     expect(report.assignments.map((a) => a.overtimeHours)).toEqual([4, 4, 4, 8]);
     expect(report.totals.overtimePremium).toBe(480);
+  });
+
+  it('keeps stacking a weekly rule that has no daily rule beside it', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08'].map((d) =>
+        assign(nurse.id, DAY_12, d),
+      ),
+    });
+
+    const report = costSchedule(s.schedule, ctx({ overtimeRules: [WEEKLY_40] }));
+    // 12, 24, 36, 48: the fourth twelve's last 8 hours are past 40.
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 8]);
   });
 
   it('the overtime premium compounds on the night rate, not the bare base', () => {
@@ -409,6 +453,54 @@ describe('overtime', () => {
     const report = costSchedule(s.schedule, ctx({ overtimeRules: [WEEKLY_40], overtimeLeave }));
     // 12h leave, then 24, 36, 48: the Wednesday is the shift that crosses forty.
     expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 8]);
+  });
+
+  it('finds no overtime in a week of exactly forty hours made of odd holdovers', () => {
+    const nurse = makeNurse();
+    const D695 = { ...DAY_8, id: 'st-d695', abbreviation: 'D695', durationHours: 6.95 };
+    // Minutes: 720 + 1, 720 + 4, 480 + 58, then 6.95 × 60 = 417: 721 + 724 + 538 + 417 = 2400,
+    // exactly 40 hours, so the weekly 40 is reached and never passed.
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [DAY_12, DAY_8, D695],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-05', { holdoverMinutes: 1 }),
+        assign(nurse.id, DAY_12, '2026-01-06', { holdoverMinutes: 4 }),
+        assign(nurse.id, DAY_8, '2026-01-07', { holdoverMinutes: 58 }),
+        assign(nurse.id, D695, '2026-01-08'),
+      ],
+    });
+
+    const report = costSchedule(
+      s.schedule,
+      ctx({ payRates: [payRate(50)], differentials: [], overtimeRules: [WEEKLY_40] }),
+    );
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 0]);
+    expect(report.totals.overtimeHours).toBe(0);
+    expect(report.assignments.flatMap((a) => a.lines).filter((l) => l.kind === 'overtime')).toEqual(
+      [],
+    );
+  });
+
+  it('keeps the unit total equal to the sum of the shift totals to the cent', () => {
+    const nurses = [1, 2, 3].map(() => makeNurse({ employmentType: 'agency' }));
+    const s = scenario({
+      nurses,
+      assignments: nurses.map((n) => assign(n.id, NIGHT_12, '2026-01-05')),
+    });
+
+    const report = costSchedule(
+      s.schedule,
+      ctx({ payRates: [payRate(48.33)], differentials: [NIGHT, AGENCY] }),
+    );
+    // Straight rate (48.33 + 4.50) × 1.25 = 66.0375. Base 12 × 48.33 = 579.96; night
+    // 12 × 4.50 = 54.00; agency increment 52.83 × 0.25 = 13.2075 an hour, 12 × 13.2075 = 158.49.
+    // Shift 579.96 + 54 + 158.49 = 792.45; unit 3 × 792.45 = 2377.35.
+    for (const cost of report.assignments) {
+      expect(lineAmounts(cost)).toEqual({ base: 579.96, night: 54, agency: 158.49 });
+      expect(cost.total).toBe(792.45);
+    }
+    expect(report.totals.total).toBe(2377.35);
   });
 });
 
@@ -510,9 +602,10 @@ describe('California overtime: by workday, banded, and the seventh day', () => {
     });
     const report = costSchedule(s.schedule, ctx({ overtimeRules: [SEVENTH_HALF, SEVENTH_DOUBLE] }));
     expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 0, 0, 0, 12]);
-    // Saturday earns the $3 weekend differential, so the straight rate is $51: 8 × $25.50 at
-    // time and a half, then 4 × $51 at double time.
-    expect(report.totals.overtimePremium).toBe(8 * 25.5 + 4 * 51);
+    // The premium is on the week's regular rate. Sunday's and Saturday's shifts earn the $3
+    // weekend differential: 8 × 51 + 5 × 8 × 48 + 12 × 51 = 408 + 1920 + 612 = $2940 over 60h =
+    // $49. Saturday: 8 × 0.5 × 49 = 196 at time and a half, then 4 × 1 × 49 = 196 at double time.
+    expect(report.totals.overtimePremium).toBe(392);
   });
 
   it('does not treat a seventh shift as the seventh day when the week had a day off', () => {
@@ -536,9 +629,9 @@ describe('California overtime: by workday, banded, and the seventh day', () => {
 
   it('pays each hour once, at the highest rate any rule gives it', () => {
     const nurse = makeNurse();
-    // Mon–Wed twelves, Thu a thirteen: weekly 40 makes the Thursday's last 9 hours overtime at
-    // 1.5×; the daily rules make hours 8–12 1.5× and hour 13 2×. Per hour, the highest wins:
-    // hours 4–12 at 1.5× (8 hours) and hour 13 at 2×.
+    // Mon–Wed twelves, Thu a thirteen: a weekly 40 that stacks makes the Thursday's last 9 hours
+    // overtime at 1.5×; the daily rules make hours 8–12 1.5× and hour 13 2×. Per hour, the
+    // highest wins: hours 4–12 at 1.5× (8 hours) and hour 13 at 2×.
     const s = scenario({
       nurses: [nurse],
       shiftTypes: [DAY_12, DAY_13],
@@ -547,7 +640,10 @@ describe('California overtime: by workday, banded, and the seventh day', () => {
         assign(nurse.id, DAY_13, '2026-01-08'),
       ],
     });
-    const report = costSchedule(s.schedule, ctx({ overtimeRules: [WEEKLY_40, ...CA_DAILY] }));
+    const report = costSchedule(
+      s.schedule,
+      ctx({ overtimeRules: [{ ...WEEKLY_40, pyramiding: 'stack' }, ...CA_DAILY] }),
+    );
     // Mon–Wed: 4 hours past eight each at 1.5×.
     expect(report.assignments.map((a) => a.overtimeHours)).toEqual([4, 4, 4, 9]);
     expect(report.assignments[3]?.lines.filter((l) => l.kind === 'overtime')).toEqual([
@@ -724,6 +820,25 @@ describe('pricing a candidate assignment', () => {
     expect(result.delta).toBe(768);
   });
 
+  it('adds the candidate’s own price to the nurse’s total, to the cent', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: ['2026-01-05', '2026-01-06'].map((d) => assign(nurse.id, DAY_12, d)),
+    });
+
+    // $40.01 an hour, no differentials, no overtime: each twelve is 12 × 40.01 = $480.12. Before,
+    // 2 × 480.12 = 960.24; after, 1,440.36; the difference is $480.12, where float subtraction
+    // gives 480.1199999999999.
+    const result = marginalCost(
+      s.schedule,
+      ctx({ payRates: [payRate(40.01)], differentials: [] }),
+      candidate(nurse.id, '2026-01-07'),
+    );
+    expect(result.cost.total).toBe(480.12);
+    expect(result.delta).toBe(480.12);
+  });
+
   it('prices a shift in a fresh week at straight time', () => {
     const nurse = makeNurse();
     const s = scenario({
@@ -785,6 +900,11 @@ describe('budget', () => {
   it('has no ratio against a zero budget', () => {
     expect(compareToBudget(1_000, 0).ratio).toBeNull();
   });
+
+  it('reports twenty cents over, not a float shy of it', () => {
+    // $1,000.30 against $1,000.10 is 20 cents over; float subtraction gives 0.1999999999999318.
+    expect(compareToBudget(1000.3, 1000.1).variance).toBe(0.2);
+  });
 });
 
 describe('night and evening differentials by the clock', () => {
@@ -817,6 +937,7 @@ describe('night and evening differentials by the clock', () => {
     shiftType: typeof DAY_12,
     differentials: Differential[],
     overtimeRules: OvertimeRule[] = [],
+    overrides: Partial<CostContext> = {},
   ) {
     const nurse = makeNurse();
     const s = scenario({
@@ -826,7 +947,7 @@ describe('night and evening differentials by the clock', () => {
     });
     const costs = costSchedule(
       s.schedule,
-      ctx({ payRates: [payRate(50)], differentials, overtimeRules }),
+      ctx({ payRates: [payRate(50)], differentials, overtimeRules, ...overrides }),
     );
     return costs.assignments.find((c) => c.date === isoDate('2026-01-05'))!;
   }
@@ -880,14 +1001,19 @@ describe('night and evening differentials by the clock', () => {
     expect(priced(EVENING_8, [evening]).lines.map((l) => l.kind)).toEqual(['base']);
   });
 
-  it('does not let the one evening hour of a day shift raise its overtime rate', () => {
-    // 07:00-19:00 with daily overtime past 8h: 4 overtime hours at half of the $50 base.
-    const withPartial = priced(DAY_12, [night10], [DAILY_8]);
-    const without = priced(DAY_12, [], [DAILY_8]);
-    const ot = (c: typeof withPartial) => c.lines.find((l) => l.kind === 'overtime')!;
-    expect(ot(without).rate).toBe(25);
-    expect(ot(withPartial).rate).toBe(25);
-    expect(withPartial.total).toBeCloseTo(705); // 600 base + 5 night + 4 x 25 overtime
+  it('keeps the one evening hour of a day shift out of the overtime rate under additive stacking, and in it under compound', () => {
+    // 07:00-19:00 with daily overtime past 8h; its 18:00-19:00 hour earns 10% night, $5.
+    const ot = (c: ReturnType<typeof priced>) => c.lines.find((l) => l.kind === 'overtime')!;
+    // Additive (38 U.S.C. § 7453): 4 overtime hours at half of the $50 base.
+    const additive = priced(DAY_12, [night10], [DAILY_8], { premiumStacking: 'additive' });
+    expect(ot(additive).rate).toBe(25);
+    expect(additive.total).toBe(705); // 600 base + 5 night + 4 × 25 overtime
+    // Compound (29 CFR 778.207(b)): the $5 is straight pay, so the regular rate is
+    // 605 / 12 = 50.41666…; 4 × 0.5 × 50.41666… = 100.8333… → $100.83; 600 + 5 + 100.83.
+    const compound = priced(DAY_12, [night10], [DAILY_8]);
+    expect(ot(compound).amount).toBe(100.83);
+    expect(compound.total).toBe(705.83);
+    expect(ot(priced(DAY_12, [], [DAILY_8])).rate).toBe(25);
   });
 
   it('gives a night that starts as the evening window closes no evening hours', () => {
@@ -938,6 +1064,19 @@ describe('overtime beyond the scheduled tour and past consecutive hours', () => 
     ...beyondTour(thresholdHours),
     id: 'ot-consecutive',
     basis: 'consecutive',
+  });
+
+  it('counts a twelve held seven minutes past eight consecutive hours as four hours seven minutes', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, DAY_12, '2026-01-05', { holdoverMinutes: 7 })],
+    });
+    const report = costSchedule(s.schedule, ctx({ ...rn50, overtimeRules: [consecutive(8)] }));
+    // 720 + 7 = 727 minutes on the clock; past 480 that is 247 minutes. Premium 247/60 × $25 =
+    // $102.9166… → $102.92.
+    expect(report.assignments[0]?.overtimeHours).toBe(247 / 60);
+    expect(report.assignments[0]?.lines.find((l) => l.kind === 'overtime')?.amount).toBe(102.92);
   });
 
   it('pays the hour a nurse is held past her 8-hour tour at time and a half', () => {
@@ -1121,7 +1260,10 @@ describe('California and UC overtime: daily premium hours do not pyramid into we
     expect(none.assignments.map((a) => a.overtimeHours)).toEqual([4, 4, 4, 4]);
     expect(none.totals.overtimePremium).toBe(384); // 16h × $24
 
-    const stacked = costSchedule(s.schedule, ctx({ overtimeRules: [WEEKLY_40, DAILY_8] }));
+    const stacked = costSchedule(
+      s.schedule,
+      ctx({ overtimeRules: [{ ...WEEKLY_40, pyramiding: 'stack' }, DAILY_8] }),
+    );
     expect(stacked.assignments.map((a) => a.overtimeHours)).toEqual([4, 4, 4, 8]);
   });
 
@@ -1202,13 +1344,10 @@ describe('California and UC overtime: daily premium hours do not pyramid into we
     expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 0, 0, 8]);
   });
 
-  it('a UC eight-hour nurse’s daily overtime counts toward the eighty', () => {
+  it('credits a UC eight-hour nurse’s daily overtime toward the eighty, so one long day is not paid twice', () => {
     const nurse = makeNurse();
-    const PAY_PERIOD_80_NO_PYRAMID = overtimeRule('pay_period', 80, 1.5, { pyramiding: 'none' });
-    // Ten eights (80 straight hours) in the Sun 4 – Sat 17 Jan pay period, then a nine on Fri 16:
-    // its ninth hour is daily overtime, and its first eight are past the 80.
+    // Pay period Sun 4 – Sat 17 Jan: a nine on Sun 4, then nine eights (81 hours in all).
     const eights = [
-      '2026-01-04',
       '2026-01-05',
       '2026-01-06',
       '2026-01-07',
@@ -1223,18 +1362,25 @@ describe('California and UC overtime: daily premium hours do not pyramid into we
       nurses: [nurse],
       shiftTypes: [DAY_8, DAY_9],
       assignments: [
+        assign(nurse.id, DAY_9, '2026-01-04'),
         ...eights.map((d) => assign(nurse.id, DAY_8, d)),
-        assign(nurse.id, DAY_9, '2026-01-16'),
       ],
     });
-    const report = costSchedule(
-      s.schedule,
-      ctx({ overtimeRules: [PAY_PERIOD_80_NO_PYRAMID, DAILY_8] }),
-    );
-    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9,
+    const priced = (payPeriod: OvertimeRule) =>
+      costSchedule(s.schedule, ctx({ overtimeRules: [payPeriod, DAILY_8] }));
+
+    // Absent pyramiding beside a daily rule credits: straight hours are 8 × 10 = 80, not past
+    // 80, so the only overtime is the nine's ninth hour, daily.
+    const credited = priced(overtimeRule('pay_period', 80));
+    expect(credited.assignments.map((a) => a.overtimeHours)).toEqual([
+      1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ]);
-    expect(report.nurses[0]?.overtimeHours).toBe(9);
+    expect(credited.nurses[0]?.overtimeHours).toBe(1);
+
+    // Stacked, all 81 hours count: the last eight (Thu 15) crosses 80 by 1.
+    const stacked = priced(overtimeRule('pay_period', 80, 1.5, { pyramiding: 'stack' }));
+    expect(stacked.assignments.map((a) => a.overtimeHours)).toEqual([1, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    expect(stacked.nurses[0]?.overtimeHours).toBe(2);
   });
 });
 
@@ -1356,8 +1502,10 @@ describe('double time on a day beyond the regularly scheduled workdays', () => {
       ctx({ overtimeRules: [EXTRA_DAY_8_DOUBLE], workWeekStartsOn: 4 }),
     );
     expect(report.assignments).toHaveLength(1);
+    // Premium on the week's regular rate, tail included: Saturday earns the $3 weekend
+    // differential, 3 × 576 + 612 = $2340 over 48h = $48.75; 4h at 2× is 4 × 1 × 48.75 = 195.
     expect(report.assignments[0]?.lines.filter((l) => l.kind === 'overtime')).toEqual([
-      { kind: 'overtime', hours: 4, rate: 48, amount: 192 },
+      { kind: 'overtime', hours: 4, rate: 48.75, amount: 195 },
     ]);
   });
 });
@@ -1809,8 +1957,10 @@ describe('VA 72/80 and Baylor nurses on a unit with standard nurses', () => {
         }),
       ).assignments;
       // 13h × $50 = $650 base. The held-over hour earns night ($5) and weekend ($12.50) on the
-      // base rate: they are kept out of the running rate, so the overtime premium is half of the
-      // bare $50 ($25), not half of a night-and-weekend rate. 650 + 5 + 12.5 + 25 = 692.5.
+      // base rate, out of the shift's own straight rate. Under compound stacking those dollars
+      // are straight pay in the week's regular rate (29 CFR 778.207(b)): 667.50 / 13h =
+      // 51.3461…, the same either side of Sunday midnight since this is the only shift; the held
+      // hour's premium is 0.5 × 51.3461… = 25.673… → $25.67. 650 + 5 + 12.5 + 25.67 = 693.17.
       expect(cost?.lines.map((l) => [l.kind, l.hours])).toEqual([
         ['base', 13],
         ['night', 1],
@@ -1819,10 +1969,33 @@ describe('VA 72/80 and Baylor nurses on a unit with standard nurses', () => {
       ]);
       const amounts = lineAmounts(cost!);
       expect(amounts.base).toBe(650);
-      expect(amounts.night).toBeCloseTo(5);
-      expect(amounts.weekend).toBeCloseTo(12.5);
-      expect(amounts.overtime).toBe(25);
-      expect(cost?.total).toBeCloseTo(692.5);
+      expect(amounts.night).toBe(5);
+      expect(amounts.weekend).toBe(12.5);
+      expect(amounts.overtime).toBe(25.67);
+      expect(cost?.total).toBe(693.17);
+    });
+
+    it('pays the held hour’s overtime on the bare base under additive stacking (Title 38)', () => {
+      const baylor = makeNurse({ scheduleKind: 'va_baylor' });
+      const s = scenario({
+        nurses: [baylor],
+        assignments: [assign(baylor.id, NIGHT_12, '2026-01-10', { holdoverMinutes: 60 })],
+      });
+      const [cost] = costSchedule(
+        s.schedule,
+        ctx({
+          payRates: [payRate(50)],
+          differentials: [night, weekend],
+          premiumStacking: 'additive',
+          overtimeRules: [
+            overtimeRule('beyond_scheduled_tour', 0, 1.5, { scheduleKinds: ['va_baylor'] }),
+          ],
+        }),
+      ).assignments;
+      // § 7453 makes night pay and overtime both percentages of basic pay: half of $50 = $25.
+      // 650 + 5 + 12.5 + 25 = 692.5.
+      expect(lineAmounts(cost!).overtime).toBe(25);
+      expect(cost?.total).toBe(692.5);
     });
 
     it('counts a Friday night running into Saturday as a Baylor tour, but not a Friday day', () => {
@@ -2369,13 +2542,30 @@ describe('overtime past hours in the weekend window', () => {
       assign(id, DAY_12, '2026-01-11'),
     ];
     const daily12 = overtimeRule('daily', 12, 1.5);
-    const stack = overtimeOf(shifts, [daily12, overtimeRule('weekend', 24, 1.5)]);
+    const stack = overtimeOf(shifts, [
+      daily12,
+      overtimeRule('weekend', 24, 1.5, { pyramiding: 'stack' }),
+    ]);
     expect(stack.map((a) => a.overtimeHours)).toEqual([2, 2]);
     const none = overtimeOf(shifts, [
       daily12,
       overtimeRule('weekend', 24, 1.5, { pyramiding: 'none' }),
     ]);
     expect(none.map((a) => a.overtimeHours)).toEqual([2, 0]);
+  });
+
+  it('counts seven minutes held over on Sunday as seven minutes past the weekend’s 24', () => {
+    // Saturday's day 12 (720 minutes) and Sunday's held over 7 (727): 1,447 minutes, 7 past 1,440.
+    // Premium 7/60 × $25 = $2.9166… → $2.92.
+    const costs = overtimeOf(
+      (id) => [
+        assign(id, DAY_12, '2026-01-10'),
+        assign(id, DAY_12, '2026-01-11', { holdoverMinutes: 7 }),
+      ],
+      [WEEKEND_24],
+    );
+    expect(costs.map((a) => a.overtimeHours)).toEqual([0, 7 / 60]);
+    expect(costs[1]?.lines.find((l) => l.kind === 'overtime')?.amount).toBe(2.92);
   });
 
   it('does not pay ten minutes past the weekend’s 24 under a 15-minute minimum', () => {
@@ -2408,5 +2598,604 @@ describe('overtime past hours in the weekend window', () => {
       ],
     );
     expect(costs.map((a) => [a.date, a.overtimeHours])).toEqual([['2026-01-04', 12]]);
+  });
+});
+
+describe('a shift that crosses into a new work week or pay period', () => {
+  // $50 base, no differentials, weeks from Sunday: a 1.5× premium hour is $25. 2026-01-10 is a
+  // Saturday; a 19:00–07:00 night that day works 5 hours before Sunday midnight and 7 after.
+  const plain = { payRates: [payRate(50)], differentials: [] };
+  const r2 = () => {
+    const nurse = makeNurse();
+    return scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, NIGHT_12, '2026-01-10'),
+        ...['2026-01-12', '2026-01-13', '2026-01-14'].map((d) => assign(nurse.id, DAY_12, d)),
+      ],
+    });
+  };
+  const mirror = () => {
+    const nurse = makeNurse();
+    return scenario({
+      nurses: [nurse],
+      assignments: [
+        ...['2026-01-07', '2026-01-08', '2026-01-09'].map((d) => assign(nurse.id, DAY_12, d)),
+        assign(nurse.id, NIGHT_12, '2026-01-10'),
+      ],
+    });
+  };
+
+  it('counts the Sunday-morning hours of a Saturday night in the new week', () => {
+    const report = costSchedule(r2().schedule, ctx({ ...plain, overtimeRules: [WEEKLY_40] }));
+    // The night gives 5h to the week of 01-04 and 7h to the week of 01-11, which then holds
+    // 7 + 36 = 43: 3h past 40, on the last twelve. 600 + 3 × 25 = 675.
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 3]);
+    expect(report.assignments.map((a) => a.total)).toEqual([600, 600, 600, 675]);
+  });
+
+  it('pays only the Saturday-evening hour past forty when the rest of the night falls in the next week', () => {
+    const report = costSchedule(mirror().schedule, ctx({ ...plain, overtimeRules: [WEEKLY_40] }));
+    // The week of 01-04 holds 36 + 5 = 41: 1h over, the night's 23:00–24:00 hour; its 7 Sunday
+    // hours open the next week. 600 + 1 × 25 = 625.
+    const night = report.assignments[3]!;
+    expect(night.overtimeHours).toBe(1);
+    expect(night.lines.filter((l) => l.kind === 'overtime')).toEqual([
+      { kind: 'overtime', hours: 1, rate: 25, amount: 25 },
+    ]);
+    expect(night.total).toBe(625);
+
+    // Counted by its start, the whole night is the first week's: 36 + 12 = 48, its last 8 hours
+    // over. 600 + 8 × 25 = 800.
+    const byStart = costSchedule(
+      mirror().schedule,
+      ctx({ ...plain, overtimeRules: [WEEKLY_40], overtimeWindowAttribution: 'start' }),
+    );
+    expect(byStart.assignments[3]?.overtimeHours).toBe(8);
+    expect(byStart.assignments[3]?.total).toBe(800);
+  });
+
+  it('keeps the whole night in the week it starts when the unit counts shifts by their start', () => {
+    const report = costSchedule(
+      r2().schedule,
+      ctx({ ...plain, overtimeRules: [WEEKLY_40], overtimeWindowAttribution: 'start' }),
+    );
+    // The night is all the week of 01-04's; the week of 01-11 holds 36.
+    expect(report.assignments.map((a) => a.overtimeHours)).toEqual([0, 0, 0, 0]);
+  });
+
+  it('puts the Sunday-morning hours of a Saturday night in the next pay period under 8/80', () => {
+    // Pay periods Jan 4–17 and Jan 18–31 (the fixture anchors them on Sunday 4 Jan).
+    const nurse = makeNurse();
+    const s = scenario({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-31'),
+      nurses: [nurse],
+      assignments: [
+        ...['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-12', '2026-01-13', '2026-01-14'].map(
+          (d) => assign(nurse.id, DAY_12, d),
+        ),
+        assign(nurse.id, NIGHT_12, '2026-01-17'),
+        ...['2026-01-19', '2026-01-20', '2026-01-21', '2026-01-26', '2026-01-27', '2026-01-28'].map(
+          (d) => assign(nurse.id, DAY_12, d),
+        ),
+      ],
+    });
+    const eighty = overtimeRule('pay_period', 80);
+    // By the clock: the first pay period holds 72 + 5 = 77, the second 7 + 72 = 79. Neither
+    // passes 80.
+    const clock = costSchedule(s.schedule, ctx({ ...plain, overtimeRules: [eighty] }));
+    expect(clock.totals.overtimeHours).toBe(0);
+    // By the start: the first holds 72 + 12 = 84, 4h past 80 on the night.
+    const start = costSchedule(
+      s.schedule,
+      ctx({ ...plain, overtimeRules: [eighty], overtimeWindowAttribution: 'start' }),
+    );
+    expect(start.totals.overtimeHours).toBe(4);
+  });
+
+  it('lets holiday pay cover only the overtime hours worked on the holiday when a night is split at the week boundary', () => {
+    const report = costSchedule(
+      mirror().schedule,
+      ctx({
+        payRates: [payRate(50)],
+        differentials: [HOLIDAY],
+        holidayDates: new Set([isoDate('2026-01-10')]),
+        holidayPayCoversOvertime: true,
+        overtimeRules: [WEEKLY_40],
+      }),
+    );
+    // The night is dated on the holiday, so all 12h earn ×1.5; its one overtime hour (minutes
+    // 240–300) is holiday pay already and gets no premium, though it still counts.
+    // 12 × 50 × 1.5 = 900.
+    const night = report.assignments[3]!;
+    expect(night.overtimeHours).toBe(1);
+    expect(night.lines.some((l) => l.kind === 'overtime')).toBe(false);
+    expect(night.total).toBe(900);
+  });
+});
+
+describe('the overtime premium on the week’s regular rate (29 CFR 778.115)', () => {
+  const nightTenPercent = differential('night', 'multiplier', 1.1);
+  const pricedWith = (differentials: Differential[], overrides: Partial<CostContext> = {}) =>
+    ctx({ payRates: [payRate(50)], differentials, overtimeRules: [WEEKLY_40], ...overrides });
+
+  it('charges the same premium whichever day the night shift falls on', () => {
+    const week = (night: string) => {
+      const nurse = makeNurse();
+      return scenario({
+        nurses: [nurse],
+        assignments: ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08'].map((d) =>
+          assign(nurse.id, d === night ? NIGHT_12 : DAY_12, d),
+        ),
+      });
+    };
+    // RR = (36 × 50 + 12 × 55) / 48 = 2460 / 48 = 51.25; premium 8 × 0.5 × 51.25 = 205;
+    // nurse total 2460 + 205 = 2665, night last or first.
+    for (const night of ['2026-01-08', '2026-01-05']) {
+      const report = costSchedule(week(night).schedule, pricedWith([nightTenPercent]));
+      expect(report.totals.overtimePremium).toBe(205);
+      expect(report.totals.total).toBe(2665);
+    }
+  });
+
+  it('puts a clock-window night differential into the overtime rate', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08'].map((d) =>
+        assign(nurse.id, NIGHT_12, d),
+      ),
+    });
+    const windowed: Differential = {
+      ...differential('night', 'flat', 5),
+      window: { startTime: '23:00', endTime: '07:00', wholeShiftAtHours: null },
+    };
+    // 8 in-window hours a night, $40, $160 a week. RR = (48 × 50 + 160) / 48 = 53.333…;
+    // premium 8 × 0.5 × 53.333… = 213.333… → $213.33 (778.207(b)).
+    expect(costSchedule(s.schedule, pricedWith([windowed])).totals.overtimePremium).toBe(213.33);
+  });
+
+  it('keeps the clock-window night differential out of the overtime rate under additive stacking', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08'].map((d) =>
+        assign(nurse.id, NIGHT_12, d),
+      ),
+    });
+    const windowed: Differential = {
+      ...differential('night', 'flat', 5),
+      window: { startTime: '23:00', endTime: '07:00', wholeShiftAtHours: null },
+    };
+    // 8 × 0.5 × 50 = 200.
+    const report = costSchedule(
+      s.schedule,
+      pricedWith([windowed], { premiumStacking: 'additive' }),
+    );
+    expect(report.totals.overtimePremium).toBe(200);
+  });
+
+  it('prices 8/80 overtime on the fortnight’s regular rate, not the week’s (29 CFR 778.601(e))', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        ...['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08', '2026-01-09'].map((d) =>
+          assign(nurse.id, DAY_8, d),
+        ),
+        // Each N8 ends at 07:00 next morning; the 01-16 D8 starts then (half-open, no overlap).
+        ...['2026-01-12', '2026-01-13', '2026-01-14', '2026-01-15'].map((d) =>
+          assign(nurse.id, NIGHT_8, d),
+        ),
+        ...['2026-01-16', '2026-01-17'].map((d) => assign(nurse.id, DAY_8, d)),
+      ],
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({
+        payRates: [payRate(50)],
+        differentials: [differential('night', 'flat', 5)],
+        overtimeRules: [overtimeRule('pay_period', 80)],
+      }),
+    );
+    // 7 × 8 = 56h at $50 = 2800 and 4 × 8 = 32h at $55 = 1760: 88h, $4560, RR 51.8181…. The
+    // 01-17 D8 is the 8h past 80: 8 × 0.5 × 51.8181… = 207.2727… → $207.27. (The week of 01-11
+    // alone would give (1760 + 800) / 48 = 53.333… → $213.33.)
+    expect(report.assignments.map((a) => a.overtimeHours).at(-1)).toBe(8);
+    expect(report.totals.overtimePremium).toBe(207.27);
+  });
+
+  it('uses last period’s straight time in the week’s regular rate without pricing it', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      priorAssignments: [
+        assign(nurse.id, NIGHT_12, '2026-01-01', { periodId: 'period-0' }),
+        assign(nurse.id, NIGHT_12, '2026-01-02', { periodId: 'period-0' }),
+        assign(nurse.id, DAY_12, '2026-01-03', { periodId: 'period-0' }),
+      ],
+      assignments: [assign(nurse.id, DAY_12, '2026-01-05')],
+    });
+    const report = costSchedule(s.schedule, pricedWith([nightTenPercent], { workWeekStartsOn: 4 }));
+    // Thursday-to-Wednesday week: 48h, 2 × 660 + 2 × 600 = $2520, RR 52.5. Monday carries the
+    // 8h past 40: 8 × 0.5 × 52.5 = 210; Monday 600 + 210 = 810.
+    expect(report.assignments).toHaveLength(1);
+    expect(report.assignments[0]?.total).toBe(810);
+  });
+});
+
+describe('the pieces of a shift split at the window edge', () => {
+  // $50 base, weeks from Sunday. Sat 01-10's 19:00 night works 300 minutes before Sunday midnight
+  // and the rest after; Mon 01-12 is in the week of 01-11.
+  const plain = { payRates: [payRate(50)], differentials: [] };
+  const leaveIn = (nurseId: string, hours: number) =>
+    new Map([[nurseId, [{ nurseId, date: isoDate('2026-01-12'), hours }]]]);
+
+  it('pays a Baylor nurse’s Saturday-evening overtime hour although holiday pay covers her held hour', () => {
+    const nurse = makeNurse({ scheduleKind: 'va_baylor' });
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        ...['2026-01-07', '2026-01-08', '2026-01-09'].map((d) => assign(nurse.id, DAY_12, d)),
+        assign(nurse.id, NIGHT_12, '2026-01-10', { holdoverMinutes: 60 }),
+      ],
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({
+        payRates: [payRate(50)],
+        differentials: [HOLIDAY],
+        holidayDates: new Set([isoDate('2026-01-10')]),
+        holidayPayCoversOvertime: true,
+        premiumStacking: 'additive',
+        overtimeRules: [WEEKLY_40],
+      }),
+    );
+    // Week of 01-04: 36 + 5 = 41h, so the night's minutes 240–300 are overtime. Holiday pay covers
+    // only the held hour, minutes 720–780 (§ 7456(d), § 7453(g)), so that band keeps its premium:
+    // 1 × 0.5 × 50 = 25. The held hour's holiday pay is 1 × 50 × 0.5 = 25. 13 × 50 + 25 + 25 = 700.
+    const night = report.assignments[3]!;
+    expect(night.overtimeHours).toBe(1);
+    expect(night.lines.filter((l) => l.kind === 'overtime')).toEqual([
+      { kind: 'overtime', hours: 1, rate: 25, amount: 25 },
+    ]);
+    expect(night.total).toBe(700);
+  });
+
+  it('pays a 30-minute minimum on the overtime of both weeks together', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-07'),
+        assign(nurse.id, DAY_12, '2026-01-08'),
+        assign(nurse.id, DAY_8, '2026-01-09', { holdoverMinutes: 190 }),
+        assign(nurse.id, NIGHT_12, '2026-01-10'),
+      ],
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({
+        ...plain,
+        overtimeRules: [{ ...WEEKLY_40, minimumMinutes: 30 }],
+        overtimeLeave: leaveIn(nurse.id, 33.5),
+      }),
+    );
+    // Week of 01-04: 720 + 720 + (480 + 190) = 2110 minutes, then the night's 300: 2410,
+    // 10 past 2400, minutes 290–300. Week of 01-11: 33.5h of counted leave (2010), then the night's
+    // 420: 2430, 30 past, minutes 690–720. Under the 30-minute minimum on its own the first piece
+    // would go; together they are 40 minutes, so both are paid: 10/60 × 25 = 4.1666… → $4.17 and
+    // 30/60 × 25 = $12.50.
+    const night = report.assignments[3]!;
+    expect(night.overtimeHours).toBe(40 / 60);
+    expect(night.lines.filter((l) => l.kind === 'overtime').map((l) => l.amount)).toEqual([
+      4.17, 12.5,
+    ]);
+  });
+
+  it('runs a Saturday night’s Sunday overtime under its daily premium hours when the week does not pyramid', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [assign(nurse.id, NIGHT_12, '2026-01-10')],
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({
+        ...plain,
+        overtimeRules: [
+          overtimeRule('weekly', 40, 2, { pyramiding: 'none' }),
+          overtimeRule('daily', 8),
+        ],
+        overtimeLeave: leaveIn(nurse.id, 40),
+      }),
+    );
+    // Straight minutes are the first 480 (daily 8). The week of 01-04 gets 300 of them, nowhere
+    // near 40. The week of 01-11 already holds 40h of leave, so the night's other 180 straight
+    // minutes are all over, and that overtime runs to the shift's end: minutes 300–720 at 2×,
+    // above the daily 1.5× on 480–720. 7h × 1 × 50 = $350.
+    const night = report.assignments[0]!;
+    expect(night.overtimeHours).toBe(7);
+    expect(night.lines.filter((l) => l.kind === 'overtime')).toEqual([
+      { kind: 'overtime', hours: 7, rate: 50, amount: 350 },
+    ]);
+  });
+
+  it('pays the Saturday-evening hour past eighty when a night runs into the next pay period', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        ...['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-12', '2026-01-13'].map((d) =>
+          assign(nurse.id, DAY_12, d),
+        ),
+        ...['2026-01-08', '2026-01-14'].map((d) => assign(nurse.id, DAY_8, d)),
+        assign(nurse.id, NIGHT_12, '2026-01-17'),
+      ],
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({ ...plain, overtimeRules: [overtimeRule('pay_period', 80)] }),
+    );
+    // Pay period Jan 4–17: 5 × 12 + 2 × 8 = 76h, then the night's 19:00–24:00: 81, 1h past 80
+    // (its 23:00 hour). Its 7 Sunday hours open the next pay period. 1 × 0.5 × 50 = 25.
+    const night = report.assignments.at(-1)!;
+    expect(night.overtimeHours).toBe(1);
+    expect(night.total).toBe(625);
+  });
+});
+
+describe('holiday premium by the unit’s attribution', () => {
+  // $50, Christmas ×1.5 only. The 12-24 night works 5h on Christmas Eve and 7h on Christmas; the
+  // 12-25 night 5h on Christmas and 7h on the 26th.
+  const twoNights = () => {
+    const nurse = makeNurse();
+    return scenario({
+      startDate: isoDate('2026-12-20'),
+      endDate: isoDate('2027-01-02'),
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, NIGHT_12, '2026-12-24'),
+        assign(nurse.id, NIGHT_12, '2026-12-25'),
+      ],
+    });
+  };
+  const christmas = (
+    holidayAttribution: Unit['holidayAttribution'],
+    overrides: Partial<CostContext> = {},
+  ) =>
+    ctx({
+      unit: { ...testUnit, ...(holidayAttribution ? { holidayAttribution } : {}) },
+      payRates: [payRate(50)],
+      differentials: [HOLIDAY],
+      holidayDates: new Set([isoDate('2026-12-25')]),
+      ...overrides,
+    });
+  const totals = (c: CostContext) =>
+    costSchedule(twoNights().schedule, c).assignments.map((a) => a.total);
+
+  it('pays the Christmas night, not the Christmas Eve night, by start date', () => {
+    // 12 × 50 = 600; 12 × 50 × 1.5 = 900.
+    expect(totals(christmas('start'))).toEqual([600, 900]);
+    expect(totals(christmas(undefined))).toEqual([600, 900]);
+  });
+
+  it('pays the holiday premium on the hours worked on Christmas by the clock', () => {
+    // Eve night: 600 + 7 × 50 × 0.5 = 775; Christmas night: 600 + 5 × 25 = 725.
+    expect(totals(christmas('clock'))).toEqual([775, 725]);
+  });
+
+  it('pays the whole night that is mostly on Christmas by majority', () => {
+    // The Eve night is 7 of 12 hours on Christmas: 900. The Christmas night is 5 of 12: 600.
+    expect(totals(christmas('majority'))).toEqual([900, 600]);
+  });
+
+  it('pays a Baylor nurse holiday premium by the clock only on the held hour that falls on the holiday', () => {
+    // Saturday 2026-12-26 declared a holiday. A Friday night into Saturday is a Baylor tour, whose
+    // scheduled hours earn no holiday pay (§ 7456(d)) whatever the attribution; held to 08:00, its
+    // held hour 07:00–08:00 is on the holiday and earns it on base: 1 × 50 × 0.5 = 25.
+    // 13 × 50 + 25 = 675. A standard nurse earns it on all 8 hours on the 26th: 650 + 8 × 25 = 850.
+    const cost = (scheduleKind: 'va_baylor' | 'standard') => {
+      const nurse = makeNurse({ scheduleKind });
+      const s = scenario({
+        startDate: isoDate('2026-12-20'),
+        endDate: isoDate('2027-01-02'),
+        nurses: [nurse],
+        assignments: [assign(nurse.id, NIGHT_12, '2026-12-25', { holdoverMinutes: 60 })],
+      });
+      return costSchedule(
+        s.schedule,
+        christmas('clock', { holidayDates: new Set([isoDate('2026-12-26')]) }),
+      ).assignments[0]!;
+    };
+    expect(cost('va_baylor').lines.find((l) => l.kind === 'holiday')).toMatchObject({
+      hours: 1,
+      amount: 25,
+    });
+    expect(cost('va_baylor').total).toBe(675);
+    expect(cost('standard').total).toBe(850);
+  });
+
+  const MAJOR_DOUBLE = diff('major_holiday', 'multiplier', 2);
+  const eveNight = () => {
+    const nurse = makeNurse();
+    return scenario({
+      startDate: isoDate('2026-12-20'),
+      endDate: isoDate('2027-01-02'),
+      nurses: [nurse],
+      assignments: [assign(nurse.id, NIGHT_12, '2026-12-24')],
+    });
+  };
+
+  it('pays each date’s own holiday premium by the clock: ordinary Christmas Eve, major Christmas', () => {
+    const [cost] = costSchedule(
+      eveNight().schedule,
+      christmas('clock', {
+        differentials: [HOLIDAY, MAJOR_DOUBLE],
+        holidayDates: new Set([isoDate('2026-12-24'), isoDate('2026-12-25')]),
+        majorHolidayDates: new Set([isoDate('2026-12-25')]),
+      }),
+    ).assignments;
+    // 5h on Christmas Eve at ×1.5: 5 × 25 = 125. 7h on Christmas, major, ×2: 7 × 50 = 350.
+    // 600 + 125 + 350 = 1075.
+    expect(lineAmounts(cost!)).toMatchObject({ holiday: 125, major_holiday: 350 });
+    expect(cost?.total).toBe(1075);
+  });
+
+  it('pays the clock holiday premium on base under additive stacking', () => {
+    const priced = (premiumStacking: 'compound' | 'additive') =>
+      costSchedule(
+        eveNight().schedule,
+        christmas('clock', { differentials: [NIGHT, HOLIDAY], premiumStacking }),
+      ).assignments[0]!;
+    // Night $4.50 flat: 12 × 4.5 = 54. The 7h on Christmas at ×1.5: additive on the $50 base,
+    // 7 × 25 = 175 → 600 + 54 + 175 = 829; compound on the $54.50 night rate, 7 × 27.25 =
+    // 190.75 → 844.75.
+    expect(priced('additive').total).toBe(829);
+    expect(priced('compound').total).toBe(844.75);
+  });
+
+  it('puts the clock holiday premium in the week’s regular rate for its overtime', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      startDate: isoDate('2026-12-20'),
+      endDate: isoDate('2027-01-02'),
+      nurses: [nurse],
+      assignments: [
+        ...['2026-12-21', '2026-12-22', '2026-12-23'].map((d) => assign(nurse.id, DAY_12, d)),
+        assign(nurse.id, NIGHT_12, '2026-12-24'),
+      ],
+    });
+    const night = costSchedule(s.schedule, christmas('clock', { overtimeRules: [WEEKLY_40] }))
+      .assignments[3]!;
+    // Week of 12-20: 48h. Straight dollars 4 × 600 + the night's 7h on Christmas × 25 = 175:
+    // 2575, rate 2575 / 48 = 53.6458…. The night's last 8h are past 40:
+    // 8 × 0.5 × 53.6458… = 214.583… → 214.58. Night 600 + 175 + 214.58 = 989.58.
+    expect(night.overtimeHours).toBe(8);
+    expect(night.total).toBe(989.58);
+  });
+
+  it('lets holiday pay cover only a Baylor nurse’s held minutes on the holiday by the clock', () => {
+    // Saturday 12-26 a holiday. The Friday night into Saturday is a Baylor tour held to 08:00.
+    // Daily overtime runs from minute 480 to 780. Holiday pay is the held hour's only (§ 7456(d)),
+    // minutes 720–780, so only that hour is covered, though 300–780 is on the holiday. Additive:
+    // premium 4 × 25 = 100 on minutes 480–720; held holiday 1 × 25. 650 + 25 + 100 = 775.
+    const nurse = makeNurse({ scheduleKind: 'va_baylor' });
+    const s = scenario({
+      startDate: isoDate('2026-12-20'),
+      endDate: isoDate('2027-01-02'),
+      nurses: [nurse],
+      assignments: [assign(nurse.id, NIGHT_12, '2026-12-25', { holdoverMinutes: 60 })],
+    });
+    const [cost] = costSchedule(
+      s.schedule,
+      christmas('clock', {
+        holidayDates: new Set([isoDate('2026-12-26')]),
+        holidayPayCoversOvertime: true,
+        premiumStacking: 'additive',
+        overtimeRules: [overtimeRule('daily', 8)],
+      }),
+    ).assignments;
+    expect(cost?.overtimeHours).toBe(5);
+    expect(cost?.lines.find((l) => l.kind === 'overtime')).toMatchObject({ hours: 4, amount: 100 });
+    expect(cost?.total).toBe(775);
+  });
+
+  it('lets holiday pay cover only the overtime minutes worked on Christmas by the clock', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      startDate: isoDate('2026-12-20'),
+      endDate: isoDate('2027-01-02'),
+      nurses: [nurse],
+      assignments: [assign(nurse.id, NIGHT_12, '2026-12-24')],
+    });
+    const [cost] = costSchedule(
+      s.schedule,
+      christmas('clock', {
+        holidayPayCoversOvertime: true,
+        overtimeRules: [overtimeRule('daily', 8)],
+      }),
+    ).assignments;
+    // Daily overtime is minutes 480–720 (03:00–07:00 on the 25th), all inside the holiday minutes
+    // 300–720, so it earns no premium but still counts. 600 + 7 × 25 = 775.
+    expect(cost?.overtimeHours).toBe(4);
+    expect(cost?.lines.some((l) => l.kind === 'overtime')).toBe(false);
+    expect(cost?.total).toBe(775);
+  });
+});
+
+describe('the regular rate of each window a shift is split across', () => {
+  const nightTenPercent = differential('night', 'multiplier', 1.1);
+  const leaveIn = (nurseId: string, hours: number) =>
+    new Map([[nurseId, [{ nurseId, date: isoDate('2026-01-12'), hours }]]]);
+
+  it('pays a Saturday night’s Sunday overtime on the new week’s regular rate', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-07'),
+        assign(nurse.id, NIGHT_12, '2026-01-10'),
+      ],
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({
+        payRates: [payRate(50)],
+        differentials: [nightTenPercent],
+        overtimeRules: [WEEKLY_40],
+        overtimeLeave: leaveIn(nurse.id, 40),
+      }),
+    );
+    // The night is 12 × 55 = $660: 5h ($275) in the week of 01-04, 7h ($385) in the week of 01-11.
+    // Week of 01-04: (600 + 275) / 17h = 51.47…, 17h, no overtime. Week of 01-11: 40h of leave
+    // (not hours worked, so not in the rate), then the night's 7h, all over: rate 385 / 7 = 55.
+    // Premium 7 × 0.5 × 55 = 192.50; night 660 + 192.50 = 852.50.
+    const night = report.assignments[1]!;
+    expect(night.overtimeHours).toBe(7);
+    expect(night.lines.filter((l) => l.kind === 'overtime')).toEqual([
+      { kind: 'overtime', hours: 7, rate: 27.5, amount: 192.5 },
+    ]);
+    expect(night.total).toBe(852.5);
+  });
+
+  it('puts the whole Saturday night’s pay in the week it starts when the unit counts by start', () => {
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, NIGHT_12, '2026-01-10'),
+        assign(nurse.id, DAY_12, '2026-01-11', { isCharge: true }),
+      ],
+    });
+    const report = costSchedule(
+      s.schedule,
+      ctx({
+        payRates: [payRate(50)],
+        differentials: [nightTenPercent, CHARGE],
+        overtimeRules: [WEEKLY_40],
+        overtimeLeave: leaveIn(nurse.id, 40),
+        overtimeWindowAttribution: 'start',
+      }),
+    );
+    // By start, the whole night and its $660 are the week of 01-04's. The week of 01-11 holds 40h
+    // of leave and Sunday's charge twelve, 12 × 52.50 = $630, all over: rate 630 / 12 = 52.50,
+    // premium 12 × 0.5 × 52.50 = 315. (By the clock its rate would take in the night's Sunday
+    // $385: (385 + 630) / 19 = 53.42….)
+    const [night, sunday] = report.assignments;
+    expect(night?.overtimeHours).toBe(0);
+    expect(sunday?.lines.filter((l) => l.kind === 'overtime')).toEqual([
+      { kind: 'overtime', hours: 12, rate: 26.25, amount: 315 },
+    ]);
+  });
+
+  it('refuses to price overtime in a window that has no hours worked', () => {
+    // An overtime band always lies in a window holding its own shift's minutes; an empty window
+    // means the attribution and the rate disagree, and $0 would hide it.
+    expect(() => regularRateFrom(undefined)).toThrow(/no hours worked/);
+    expect(() => regularRateFrom({ dollars: 0, minutes: 0 })).toThrow(/no hours worked/);
+    // $2460 over 48h (2880 minutes) is $51.25.
+    expect(regularRateFrom({ dollars: 2460, minutes: 2880 })).toBe(51.25);
   });
 });

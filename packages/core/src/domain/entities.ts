@@ -38,6 +38,9 @@ export type JurisdictionId =
 /** The manager's answers to a preset's options, by option id; an unanswered one is no. */
 export type JurisdictionChoices = Readonly<Record<string, boolean>>;
 
+/** See `Unit.holidayAttribution`; the one definition is `schedule/holiday-attribution.ts`. */
+export type HolidayAttribution = 'start' | 'clock' | 'majority';
+
 export interface Unit {
   id: Id;
   name: string;
@@ -74,6 +77,14 @@ export interface Unit {
    * reverse seniority (VA–NNU Art. 14).
    */
   overtimeOrder?: OvertimeOrder;
+  /**
+   * Which calendar day a shift crossing midnight works for holiday purposes: `'start'` the day it
+   * starts (the fairness convention); `'clock'` each day by the hours worked on it; `'majority'`
+   * the day holding most of the shift, the start day on a tie. Used alike by holiday premium, the
+   * fairness ledger, the holiday rotation, the per-diem holiday commitment and both solvers (D18).
+   * Absent: `'start'`.
+   */
+  holidayAttribution?: HolidayAttribution;
   /** Absent = no commitment checked. */
   perDiemCommitment?: PerDiemCommitment;
   /** Weekends off each nurse is promised in a year, e.g. UC–CNA's 26. Absent: not checked. */
@@ -985,7 +996,9 @@ export interface OvertimeRule {
    * Honoured only by 'weekly', 'pay_period' and 'weekend'. Under 'none' a shift adds only its straight hours
    * (those before any other basis's overtime starts): Cal. Lab. Code § 510 as the DLSE reads it
    * does not count hours paid at a daily premium toward the weekly 40, and UC–CNA Art. 14 §M
-   * credits daily overtime toward the 80. Absent: 'stack', every worked hour counts.
+   * credits daily overtime toward the 80. Absent: 'none' when any daily-style rule (a non-window
+   * basis) applies to the nurse, else 'stack' (D16; 29 CFR 778.202(c)); an explicit 'stack' counts
+   * every worked hour regardless.
    */
   pyramiding?: 'stack' | 'none';
   /**

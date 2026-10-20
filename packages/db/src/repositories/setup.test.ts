@@ -440,6 +440,7 @@ describe('applying a state preset', () => {
       premiumStacking: 'additive',
       holidayPayCoversOvertime: true,
       reportingPayNoticeHours: 2,
+      overtimeWindowAttribution: 'clock' as const,
     });
     expect(getLatestRuleSet(handle.db, unit.id)?.weekendDefinition.mode).toBe('overlaps');
   });
@@ -451,6 +452,7 @@ describe('applying a state preset', () => {
       premiumStacking: 'compound' as const,
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
+      overtimeWindowAttribution: 'clock' as const,
     };
     transact(handle.db, (tx) => savePaySettings(tx, unit.id, own, ACTOR));
     applyState(unit.id, 'US-VA');

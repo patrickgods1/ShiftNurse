@@ -74,7 +74,9 @@ coordinate system — which is precisely how the contract language treats it.
 Rules that follow:
 
 - **Duration comes from `durationHours`.** Never derive a shift's length by subtracting
-  timestamps. The declared paid length is the truth.
+  timestamps. The declared paid length is the truth. The exception is pay and the statutory hour
+  caps, which count real elapsed minutes on the two DST nights through
+  `schedule/real-minutes.ts` (D19).
 - **Calendar maths goes through `Date.UTC`** (via `dayNumber` / `fromDayNumber` /
   `addDays`). Never construct a local-timezone `Date` for scheduling arithmetic. The one
   intentional exception is `today()`, which reads the host clock.

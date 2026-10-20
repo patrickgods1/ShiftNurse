@@ -15,6 +15,10 @@
  * timestamps. DST simply does not exist in this coordinate system, which is precisely how
  * the contract language treats it.
  *
+ * Pay and the statutory hour caps are the one exception (D19): they count hours actually
+ * worked, so `schedule/real-minutes.ts` adds or removes the hour the clock skipped or repeated,
+ * from a list of clock changes the host supplies. Nothing else does.
+ *
  * Calendar arithmetic (adding days, finding weekdays) is done through `Date.UTC`, which is
  * also DST-free. We never construct a local-timezone `Date` for scheduling maths.
  *

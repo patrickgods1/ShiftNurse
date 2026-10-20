@@ -27,17 +27,26 @@ function StackingForm({ unitId, saved }: { unitId: Id; saved: PaySettings }) {
   const save = useSavePaySettings(unitId);
   const [value, setValue] = useState<PaySettings['premiumStacking']>(saved.premiumStacking);
   const [coversOvertime, setCoversOvertime] = useState(saved.holidayPayCoversOvertime);
+  const [attribution, setAttribution] = useState(saved.overtimeWindowAttribution);
   const dirty =
-    value !== saved.premiumStacking || coversOvertime !== saved.holidayPayCoversOvertime;
+    value !== saved.premiumStacking ||
+    coversOvertime !== saved.holidayPayCoversOvertime ||
+    attribution !== saved.overtimeWindowAttribution;
 
   function submit() {
     // Spread the saved row: the save replaces the unit's whole settings row, so a field this form
     // does not show must travel unchanged.
-    save.mutate({ ...saved, premiumStacking: value, holidayPayCoversOvertime: coversOvertime });
+    save.mutate({
+      ...saved,
+      premiumStacking: value,
+      holidayPayCoversOvertime: coversOvertime,
+      overtimeWindowAttribution: attribution,
+    });
   }
   function discard() {
     setValue(saved.premiumStacking);
     setCoversOvertime(saved.holidayPayCoversOvertime);
+    setAttribution(saved.overtimeWindowAttribution);
     save.reset();
   }
 
@@ -91,6 +100,28 @@ function StackingForm({ unitId, saved }: { unitId: Id; saved: PaySettings }) {
               onChange={(e) => setCoversOvertime(e.target.checked)}
             />
           </CheckField>
+          <Field
+            id="overtime-window-attribution"
+            label="Shifts that cross into a new work week or pay period"
+            hint="Matters for weekly and 80-hour overtime when a night runs past midnight at the end of the week."
+          >
+            <select
+              id="overtime-window-attribution"
+              className={INPUT}
+              value={attribution}
+              aria-describedby={describedBy('overtime-window-attribution', { hint: true })}
+              onChange={(e) =>
+                setAttribution(e.target.value as PaySettings['overtimeWindowAttribution'])
+              }
+            >
+              <option value="clock">
+                Count each hour in the week it is worked (29 CFR 778.104)
+              </option>
+              <option value="start">
+                Count the whole shift in the week it starts (some contracts)
+              </option>
+            </select>
+          </Field>
         </form>
       </EditorShell>
     </section>

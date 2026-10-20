@@ -135,6 +135,41 @@ describe('pay for what happened on the day', () => {
     expect(result.lines[0]).toMatchObject({ hours: 4, rate: 58, amount: 232 });
   });
 
+  it('refuses to price a missed break for a nurse the caller did not pass', () => {
+    expect(() =>
+      priceDayOfEvents(
+        [{ kind: 'missed_break', nurseId: 'n-ghost', date: DATE, break: 'meal' }],
+        ctx(),
+        [],
+        { callBackMinimumHours: 0 },
+      ),
+    ).toThrow(/n-ghost/);
+  });
+
+  it('still counts a nurse with no pay rate as unpriced, not $0', () => {
+    const result = priceDayOfEvents(
+      [{ kind: 'missed_break', nurseId: 'ana', date: DATE, break: 'meal' }],
+      { ...ctx(), payRates: [] },
+      [ana],
+      { callBackMinimumHours: 0 },
+    );
+    expect(result.lines).toEqual([]);
+    expect(result.unpriced).toBe(1);
+  });
+
+  it('rounds a sent-home line to the cent', () => {
+    const rate: PayRate = { ...RN_RATE, hourlyRate: 48.33 };
+    const result = priceDayOfEvents(
+      [{ kind: 'sent_home', nurseId: 'ana', date: DATE, scheduledHours: 7, hoursWorked: 0 }],
+      { ...ctx(), payRates: [rate] },
+      [ana],
+      { callBackMinimumHours: 0 },
+    );
+    // Half of 7 is 3.5 h (inside the 2-4 h band); 3.5 x 48.33 = 169.155, which pays as 169.16.
+    expect(result.lines[0]?.amount).toBe(169.16);
+    expect(result.total).toBe(169.16);
+  });
+
   it('counts an event for a nurse with no pay rate as unpriced, never as $0 silently', () => {
     const agency = makeNurse({ id: 'ag', role: 'LPN' });
     const result = priceDayOfEvents(

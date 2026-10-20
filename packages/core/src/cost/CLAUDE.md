@@ -14,16 +14,18 @@
   *unpriced* (`rateSource: 'none'`, counted in `unpricedAssignments`) and every cost surface
   shows that count next to the total. Overtime is priced per nurse-week over the full timeline
   including the lookback tail, using the work-week start from the `max-hours-per-week` rule
-  params, so a shift can never be flagged as overtime by the rules and priced as straight time.
+  params, so a shift is not flagged as overtime by the rules and priced as straight time, except
+  on a night that crosses into a new week or pay period (see the window-edge bullet below).
   A `pay_period` overtime rule (8/80-style) prices per nurse-pay-period instead; the max-hours
   rule's `overtimeByPayPeriod` is its rule-engine twin, honoured by `SolverModel.eligible`, the
   CP-SAT encoder, compliance alerts and the exchange evaluator alike. The weekly cap
   (`maxHoursPerWeek`) binds every week either way. The DB's `effectiveRateForNurse` delegates to core's `resolvePayRate`; do not add a second
   definition of "the rate in force".
 - **Overtime is paid by the hour, at the highest multiplier any rule gives it.** Every rule makes
-  the end of a shift overtime from some hour on (`attributeOvertime` in `cost/cost.ts`); a shift's
-  overtime is bands, one `overtime` line each. Daily rules count the workday (shifts by start
-  date), `seventh_day` the last day of a work week worked every day. With equal multipliers this
+  spans of a shift overtime, usually its end from some hour on (`attributeOvertime` in
+  `cost/cost.ts`); a shift's overtime is bands, each with its own `from`, one `overtime` line
+  each. Daily rules count the workday (shifts by start date), `seventh_day` the last day of a work
+  week worked every day. With equal multipliers this
   is the old "larger premium per shift", so existing units price unchanged.
 - **A holdover is worked time, and two bases price it by the clock.** `view.paidHours` includes
   `holdoverMinutes`, so daily, weekly and pay-period overtime count it already. `beyond_scheduled_tour`
@@ -32,7 +34,8 @@
   stretch, lookback included but never priced. `overtimeStarts` switches exhaustively on `basis` —
   add a basis there, never let it fall through to weekly.
 - **Daily premium hours need not count toward weekly overtime.** `OvertimeRule.pyramiding: 'none'`
-  (weekly and pay-period rules only; absent is `'stack'`) makes them accrue each shift's straight
+  (window rules only; absent is `'none'` when any daily-style rule (a non-window basis) applies to
+  the nurse, else `'stack'` (D16; 29 CFR 778.202(c))) makes them accrue each shift's straight
   hours — before any non-window basis's overtime starts, lookback shifts' included — because Cal. Lab. Code § 510 and UC–CNA
   Art. 14 §M do not pay an hour twice. `attributeOvertime` therefore prices non-window bases first.
 - **A day past the scheduled days is its own basis.** `beyond_scheduled_days` reads
@@ -40,15 +43,39 @@
   (n+1)th and later worked dates of a work week, lookback counted, never priced (`extraDayTest`):
   a 3×12 nurse's fourth day is double time past 8 (IWC Wage Order 5 § 3(B)(8)).
 - **Premiums compound or add, by unit.** `CostContext.premiumStacking: 'additive'` (absent:
-  `'compound'`) puts every multiplier and overtime premium on the base rate in `priceView`
-  (UC–CNA Art. 14 §N, Title 38); compound is the FLSA regular rate and stays the default.
+  `'compound'`) puts every multiplier and overtime premium on the base rate (UC–CNA Art. 14 §N,
+  Title 38); compound is the FLSA regular rate and stays the default. Under compound the overtime
+  premium is `(multiplier − 1) ×` the regular rate of the work week, or of the pay period for a
+  nurse whose rules hold a `pay_period` rule and no `weekly` one (D16; 29 CFR 778.109, 778.115,
+  778.601(e)): every straight dollar of the window, lookback tail included, over its hours worked,
+  a week-crossing shift apportioned by T06's split point. `costTimeline` prices straight time
+  first (`priceStraight`), then the bands (`addOvertime`).
+- **The premium is order-invariant** (`overtime.property.test.ts`): it depends on the window's
+  regular rate, not on which shift carries the band.
 - **Holiday pay can cover holiday overtime.** `CostContext.holidayPayCoversOvertime` (absent:
   false) withholds the overtime premium from exactly the hours paid holiday pay (38 U.S.C.
   § 7453(g): no overtime "in addition to" (d) pay): every hour of a shift that earns `holiday` or
   `major_holiday`, but on a Baylor tour only its held hours, since § 7456(d) pays the tour itself
-  none — `priceView` walks the bands back from `paidHours` and splits one at `scheduledHours`.
+  none — `addOvertime` compares each band's `[from, from + minutes)` with the scheduled minutes.
   `overtimeHours` still counts every hour for alerts and the ledger.
   `PaySettings`/`DEFAULT_PAY_SETTINGS` in `types.ts` are the shape presets propose.
+- **Holiday follows the unit's `holidayAttribution`** (D18; absent: the start date, the fairness
+  convention; `'clock'` pays the hours on the holiday; `'majority'` the whole shift by where most
+  of it falls), the same definition the ledger, the rotation and both solvers use
+  (`schedule/holiday-attribution.ts`). By the clock the premium is a partial line per holiday
+  date (`clockHolidayMinutes`), major or ordinary per date, and `holidayPayCoversOvertime` covers
+  only the band minutes on the holiday (`StraightPay.covered`).
+- **Weekly and pay-period overtime split a shift at the window edge by the clock** (D17, 29 CFR
+  778.104), unless `PaySettings.overtimeWindowAttribution` is `'start'`. So the first hours of a
+  Saturday night can be overtime and its Sunday hours straight; bands carry their own start. The
+  `max-hours-per-week` rule and both solvers still count a shift in the week it starts in, so on a
+  week-crossing night the rule and pay can disagree by the hours past midnight.
+- **The DST nights are paid as worked.** `CostContext.dstTransitions` (host-supplied) makes the
+  fall-back night 13 hours and the spring one 11 for every hour count in pay; tour, full-shift and
+  Baylor classification still read declared hours.
+- **Minutes and cents.** Overtime is attributed in whole minutes; every line amount is rounded to
+  the cent (`cost/money.ts`) and totals add cents, so an exactly-40-hour week has no overtime line
+  and a total is the sum of its lines.
 - **Overtime under a rule's `minimumMinutes` is not paid**, judged per rule per shift in
   `overtimeStarts` (VA: under 15 minutes), never per workday.
 - **Day-of pay sits beside the schedule's cost, never in it.** `cost/events.ts`'s
@@ -57,12 +84,15 @@
   Events are `day_of_pay_event` rows (migration 0025); the call-back minimum is `pay_settings`.
   Reporting-time pay is booked only for a cancellation recorded after the start or within
   `reportingPayNoticeHours` of it (default 2, D13): `reportingPayOwed` decides, main asks.
+  A nurse the caller did not pass is an error, never "unpriced"; main passes every nurse an event names.
 - **A night or evening differential can be earned by the clock.** With a `window` it ignores
   `ShiftType.isNight`: `hoursInDailyWindow` counts the shift's hours inside the daily window (end
   ≤ start wraps midnight). At `wholeShiftAtHours` it is a whole-shift differential like any other;
-  below it, only the in-window hours earn it, priced on the base rate and kept out of the running
-  rate — 38 U.S.C. §7453 makes night pay and overtime percentages of basic pay, so they never
-  stack. An `evening` differential with no window applies to nothing.
+  below it, only the in-window hours earn it, priced on the base rate and kept out of the shift's
+  running rate. Under compound stacking those dollars are in the week's regular rate, so they
+  raise the overtime premium (29 CFR 778.207(b)); under additive they do not, since 38 U.S.C.
+  § 7453 makes night pay and overtime percentages of basic pay. An `evening` differential with
+  no window applies to nothing.
 - **Overtime rules are scoped by schedule kind.** `OvertimeRule.scheduleKinds` (absent: every
   nurse) is filtered in `attributeOvertime` by `Nurse.scheduleKind ?? 'standard'`, so a VA unit's
   72/80 and Baylor rules sit beside the standard 40-hour week rather than replacing it.
@@ -80,7 +110,7 @@
   not count.
 - **A Baylor tour earns no night, evening, weekend or holiday pay.** `isBaylorTour` (exported; the
   tour-plan rule imports it) and § 7456(d): those differentials are withheld from the tour's
-  scheduled hours in `priceView`; charge and agency still apply. Only a *regularly scheduled* tour
+  scheduled hours in `priceStraight`; charge and agency still apply. Only a *regularly scheduled* tour
   (§ 7456(b)(3)(B)): an `isOvertime` pickup is no tour and earns them all. A holdover earns them on its own
   hours, on base and out of `running`; overtime bands are unchanged.
 - **A consecutive-shift premium is earned by the run.** `consecutive_shift` with

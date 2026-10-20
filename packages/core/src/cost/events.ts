@@ -21,10 +21,13 @@
  * rate", which includes non-discretionary pay such as differentials (Ferra v. Loews Hollywood
  * Hotel, 2021); a unit paying large differentials will see this undercount, and README › What
  * ShiftNurse does not enforce yet says so. A nurse with no rate is counted as unpriced, never $0.
+ * A nurse the caller did not pass is an error, never "unpriced"; main passes every nurse an
+ * event names. Every line is rounded to the cent and the total adds cents (`money.ts`).
  */
 
 import type { Id, Nurse } from '../domain/entities.js';
 import { describeDate, type IsoDate } from '../domain/time.js';
+import { roundCents, sumCents } from './money.js';
 import { resolvePayRate } from './rates.js';
 import type { CostContext } from './types.js';
 
@@ -88,7 +91,10 @@ export function priceDayOfEvents(
 
   for (const event of events) {
     const nurse = byId.get(event.nurseId);
-    const resolved = nurse ? resolvePayRate(ctx.payRates, nurse, event.date) : undefined;
+    if (!nurse) {
+      throw new Error(`A day-of pay event names a nurse who was not passed in: ${event.nurseId}`);
+    }
+    const resolved = resolvePayRate(ctx.payRates, nurse, event.date);
     if (!resolved) {
       unpriced++;
       continue;
@@ -123,7 +129,7 @@ export function priceDayOfEvents(
           kind: 'reporting_pay',
           hours,
           rate: base,
-          amount: hours * base,
+          amount: roundCents(hours * base),
           note: `Sent home on ${on} after ${event.hoursWorked}h of a ${event.scheduledHours}h shift`,
         });
         break;
@@ -142,12 +148,12 @@ export function priceDayOfEvents(
           kind: 'call_back',
           hours,
           rate,
-          amount: hours * rate,
+          amount: roundCents(hours * rate),
           note: `Called back on ${on} for ${event.hoursWorked}h`,
         });
         break;
       }
     }
   }
-  return { lines, total: lines.reduce((t, l) => t + l.amount, 0), unpriced };
+  return { lines, total: sumCents(lines.map((l) => l.amount)), unpriced };
 }

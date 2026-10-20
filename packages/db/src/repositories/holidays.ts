@@ -12,13 +12,15 @@
  * and the foreign keys would cascade it away without a trace.
  */
 
-import type {
-  Holiday,
-  HolidayWorkRecord,
-  Id,
-  IsoDate,
-  PairTarget,
-  PlannedHoliday,
+import {
+  addDays,
+  attributedHolidayDates,
+  type Holiday,
+  type HolidayWorkRecord,
+  type Id,
+  type IsoDate,
+  type PairTarget,
+  type PlannedHoliday,
 } from '@shiftnurse/core';
 import { and, eq, gte, inArray, lte } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
@@ -197,10 +199,24 @@ export function deleteHoliday(tx: ShiftNurseTx, id: Id, actor: string): void {
   recordAudit(tx, { entityType: 'holiday', entityId: id, action: 'delete', actor, before });
 }
 
-/** Nurses with a worked (not standby) shift on `date` in a published or archived schedule. */
+/**
+ * Nurses with a worked (not standby) shift that counts for `date` in a published or archived
+ * schedule, by the unit's holiday attribution (D18): a shift dated the day before can run into it.
+ */
 function workedFromSchedules(db: DbLike, unitId: Id, date: IsoDate): Id[] {
+  const attribution =
+    db
+      .select({ holidayAttribution: unitTable.holidayAttribution })
+      .from(unitTable)
+      .where(eq(unitTable.id, unitId))
+      .get()?.holidayAttribution ?? 'start';
   const rows = db
-    .selectDistinct({ nurseId: assignment.nurseId })
+    .select({
+      nurseId: assignment.nurseId,
+      date: assignment.date,
+      startTime: shiftType.startTime,
+      durationHours: shiftType.durationHours,
+    })
     .from(assignment)
     .innerJoin(schedulePeriod, eq(assignment.periodId, schedulePeriod.id))
     .innerJoin(shiftType, eq(assignment.shiftTypeId, shiftType.id))
@@ -208,12 +224,18 @@ function workedFromSchedules(db: DbLike, unitId: Id, date: IsoDate): Id[] {
       and(
         eq(schedulePeriod.unitId, unitId),
         inArray(schedulePeriod.status, ['published', 'archived']),
-        eq(assignment.date, date),
+        // The day before only matters when a shift can run into `date`.
+        inArray(assignment.date, attribution === 'start' ? [date] : [addDays(date, -1), date]),
         eq(shiftType.isOnCall, false),
       ),
     )
     .all();
-  return rows.map((r) => r.nurseId).sort();
+  const nurseIds = new Set<Id>();
+  for (const r of rows) {
+    const counts = attributedHolidayDates(r.date as IsoDate, r, attribution, (d) => d === date);
+    if (counts.includes(date)) nurseIds.add(r.nurseId);
+  }
+  return [...nurseIds].sort();
 }
 
 function recordedWork(db: DbLike, holidayId: Id): Id[] {

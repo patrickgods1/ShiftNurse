@@ -10,18 +10,22 @@
  * included, since `TimelineEntry.window` is the worked window); an anchor with no variable in it
  * is left alone, as `forbidPair` leaves two constants alone, so a locked or historical breach
  * cannot make the model infeasible. An anchor whose every entry together stays under the cap
- * can never bind and writes nothing.
+ * can never bind and writes nothing. Hours are hours worked: on the DST nights the real minutes
+ * (`schedule/real-minutes.ts`, D19), the window itself on the wall clock, so each coefficient is
+ * the minutes the rule counts for that entry and the two cannot disagree on a fall-back night.
  */
 
 import { MINUTES_PER_DAY, MINUTES_PER_HOUR } from '../../../domain/time.js';
 import { maxHoursIn24Rule } from '../../../rules/hours-in-24.js';
 import { asParams } from '../../../rules/registry.js';
+import { type DstTransition, realMinutesIn } from '../../../schedule/real-minutes.js';
 import { type Expr, expr } from '../builder.js';
 import type { EncodeContext, TimelineEntry } from '../context.js';
 
 export function encodeHoursIn24(ctx: EncodeContext, raw: Record<string, unknown>): void {
   const params = asParams(maxHoursIn24Rule, raw);
   const limit = Math.floor(params.maxHours * MINUTES_PER_HOUR + 1e-6);
+  const tz = ctx.model.ctx.dstTransitions;
 
   for (const [n, vars] of ctx.byNurse.entries()) {
     if (vars.length === 0) continue;
@@ -38,8 +42,8 @@ export function encodeHoursIn24(ctx: EncodeContext, raw: Record<string, unknown>
       let total = 0;
       for (const entry of timeline) {
         if (entry.window.startMinute >= from + MINUTES_PER_DAY) break;
-        const minutes = overlapMinutes(entry, from);
-        if (minutes === 0) continue;
+        const minutes = overlapMinutes(entry, from, tz);
+        if (minutes === null) continue;
         total += minutes;
         if (entry.literal === null) e.constant += minutes;
         else e.terms.push([entry.literal, minutes]);
@@ -54,8 +58,14 @@ export function encodeHoursIn24(ctx: EncodeContext, raw: Record<string, unknown>
   }
 }
 
-function overlapMinutes(entry: TimelineEntry, from: number): number {
+/** Real minutes of an entry inside the wall window `[from, from + 1440)`; null when outside it. */
+function overlapMinutes(
+  entry: TimelineEntry,
+  from: number,
+  tz: readonly DstTransition[],
+): number | null {
   const lo = Math.max(entry.window.startMinute, from);
   const hi = Math.min(entry.window.endMinute, from + MINUTES_PER_DAY);
-  return Math.max(0, hi - lo);
+  if (hi <= lo) return null;
+  return realMinutesIn({ startMinute: lo, endMinute: hi }, tz);
 }

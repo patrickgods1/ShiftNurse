@@ -17,12 +17,16 @@
  * Overlapping worked windows (a holdover into the next shift) are summed as the overlap rule
  * would flag them anyway, which keeps this the same linear sum the CP-SAT encoder writes.
  *
+ * Hours are hours worked: on the DST nights the real minutes (`schedule/real-minutes.ts`, D19),
+ * the window itself on the wall clock.
+ *
  * Monotone under removal: dropping a shift can only lower every window's hours, which is what
  * `SolverModel.isLegal` relies on when it re-checks a removal. History is never flagged: a
  * breach is reported only if some shift in it is in the period.
  */
 
 import { MINUTES_PER_DAY, MINUTES_PER_HOUR } from '../domain/time.js';
+import { type DstTransition, realMinutesIn } from '../schedule/real-minutes.js';
 import type { AssignmentView } from '../schedule/view.js';
 import { describeMinute, hoursText } from './format.js';
 import { isWorked, nurseName, type Rule, type Violation, violation } from './types.js';
@@ -32,11 +36,19 @@ export interface MaxHoursIn24Params {
   maxHours: number;
 }
 
-/** Minutes of a worked window inside `[from, from + 1440)`. */
-function overlapMinutes(view: AssignmentView, from: number): number {
+/**
+ * Real minutes worked of a window inside the wall window `[from, from + 1440)`; null when the two
+ * do not overlap on the clock (whether a shift is in the window is geometry, not a count).
+ */
+function overlapMinutes(
+  view: AssignmentView,
+  from: number,
+  transitions: readonly DstTransition[],
+): number | null {
   const lo = Math.max(view.window.startMinute, from);
   const hi = Math.min(view.window.endMinute, from + MINUTES_PER_DAY);
-  return Math.max(0, hi - lo);
+  if (hi <= lo) return null;
+  return realMinutesIn({ startMinute: lo, endMinute: hi }, transitions);
 }
 
 /**
@@ -45,12 +57,13 @@ function overlapMinutes(view: AssignmentView, from: number): number {
  * start and end − 1440), in that first-seen order — which window a tie reports is part of the
  * message, so callers that need time order sort themselves. This rule and the mandatory-overtime
  * caps both need the same scan, and two copies of the anchor argument are two chances to get it
- * wrong.
+ * wrong. The windows sit on the wall clock; the minutes are real ones under `transitions`.
  * `worked` must be sorted by start.
  */
 export function* windowsIn24(
   worked: readonly AssignmentView[],
   extraAnchors: readonly number[] = [],
+  transitions: readonly DstTransition[] = [],
 ): Iterable<{ from: number; minutes: number; views: AssignmentView[] }> {
   const anchors = new Set<number>(extraAnchors);
   for (const v of worked) {
@@ -62,8 +75,8 @@ export function* windowsIn24(
     const views: AssignmentView[] = [];
     for (const v of worked) {
       if (v.window.startMinute >= from + MINUTES_PER_DAY) break;
-      const m = overlapMinutes(v, from);
-      if (m === 0) continue;
+      const m = overlapMinutes(v, from, transitions);
+      if (m === null) continue;
       minutes += m;
       views.push(v);
     }
@@ -107,7 +120,11 @@ export const maxHoursIn24Rule: Rule<MaxHoursIn24Params> = {
 
       // One finding per distinct set of shifts, at that set's worst window.
       const worst = new Map<string, { minutes: number; from: number; views: AssignmentView[] }>();
-      for (const { from, minutes, views: touching } of windowsIn24(worked)) {
+      for (const { from, minutes, views: touching } of windowsIn24(
+        worked,
+        [],
+        ctx.dstTransitions,
+      )) {
         if (minutes <= limit) continue;
         const inPeriod = touching.filter((v) => v.inPeriod);
         if (inPeriod.length === 0) continue;

@@ -12,8 +12,12 @@
  * comes from `HolidayWorkRecord`s the caller loads — published schedules, or a list recorded by
  * hand for a year before the app. A nurse with no record (a new hire) is owed nothing.
  *
- * A worked shift is dated by the day it starts, as everywhere else: the night of the 24th is
- * not a Christmas shift. Standby is not working the holiday.
+ * A worked shift is dated by the unit's holiday attribution (`schedule/holiday-attribution.ts`;
+ * absent, the day it starts, so the night of the 24th is not a Christmas shift), the same test pay,
+ * the ledger and both solvers use. Standby is not working the holiday. A holiday after the
+ * schedule's last day is left to the schedule that holds it, even when a night attributed to it
+ * starts in this one: `holidayRotationFacts`, which the solvers price, stops at the last day, and
+ * a breach the grid shows but Generate never weighed would be one it could not have avoided.
  *
  * The rule is soft, like the rest of fairness: it never blocks a schedule, it tells the
  * manager and the solver prices it (`holidayRotationFacts` is what both solvers read). Each
@@ -28,7 +32,14 @@
 
 import { isBaylorPlan } from '../cost/cost.js';
 import type { Holiday, Id, Nurse } from '../domain/entities.js';
-import { addDays, compareDates, describeDate, type IsoDate } from '../domain/time.js';
+import {
+  addDays,
+  compareDates,
+  describeDate,
+  type IsoDate,
+  type ShiftTiming,
+} from '../domain/time.js';
+import { attributedHolidayDates } from '../schedule/holiday-attribution.js';
 import type { HolidayWorkRecord, Rule, RuleContext, Violation } from './types.js';
 import { isWorked, nurseName, violation } from './types.js';
 
@@ -70,6 +81,20 @@ export function previousOccurrence(
     if (best === undefined || compareDates(h.date, best.date) > 0) best = h;
   }
   return best;
+}
+
+/**
+ * The holidays a shift works, by the unit's attribution: the one call per shift the rule and
+ * both solvers make, so they match shifts to holidays alike.
+ */
+export function holidaysWorkedBy(
+  ctx: Pick<RuleContext, 'unit' | 'holidaysByDate'>,
+  date: IsoDate,
+  shiftType: ShiftTiming,
+): IsoDate[] {
+  return attributedHolidayDates(date, shiftType, ctx.unit.holidayAttribution ?? 'start', (d) =>
+    ctx.holidaysByDate.has(d),
+  );
 }
 
 /** Whether the rotation judges this nurse; shared by the rule and both solvers. */
@@ -242,42 +267,50 @@ export const holidayRotationRule: Rule<HolidayRotationParams> = {
     const violations: Violation[] = [];
     if (ctx.holidaysById.size === 0) return violations;
 
+    const end = schedule.period.endDate;
+    const judged = (h: Holiday) => compareDates(h.date, end) <= 0;
     for (const nurse of ctx.nurses) {
       if (!inHolidayRotation(nurse)) continue;
       const timeline = schedule.timelineFor(nurse.id).filter(isWorked);
+      const worksOf = new Map(
+        timeline.map((v) => [v, holidaysWorkedBy(ctx, v.assignment.date, v.shiftType)]),
+      );
+      const on = (date: IsoDate) => timeline.filter((v) => worksOf.get(v)!.includes(date));
 
       for (const view of timeline) {
         if (!view.inPeriod) continue;
-        const holiday = ctx.holidaysByDate.get(view.assignment.date);
-        if (!holiday || !rotates(holiday, params, ctx)) continue;
-        const previous = owedOff(nurse.id, holiday, ctx);
-        if (!previous) continue;
-        violations.push(
-          violation(
-            holidayRotationRule,
-            'soft',
-            'holiday_rotation',
-            `${nurseName(nurse)} worked ${previous.name} last year (${describeDate(previous.date, { year: true })}) and is ` +
-              `scheduled on it again on ${describeDate(holiday.date)}. The rotation gives it to someone who ` +
-              'had it off.',
-            {
-              amount: 1,
-              nurseIds: [nurse.id],
-              dates: [holiday.date],
-              assignmentIds: [view.assignment.id],
-              details: { holidayId: holiday.id, previousHolidayId: previous.id },
-            },
-          ),
-        );
+        for (const date of worksOf.get(view)!) {
+          const holiday = ctx.holidaysByDate.get(date)!;
+          if (!judged(holiday) || !rotates(holiday, params, ctx)) continue;
+          const previous = owedOff(nurse.id, holiday, ctx);
+          if (!previous) continue;
+          violations.push(
+            violation(
+              holidayRotationRule,
+              'soft',
+              'holiday_rotation',
+              `${nurseName(nurse)} worked ${previous.name} last year (${describeDate(previous.date, { year: true })}) and is ` +
+                `scheduled on it again on ${describeDate(holiday.date)}. The rotation gives it to someone who ` +
+                'had it off.',
+              {
+                amount: 1,
+                nurseIds: [nurse.id],
+                dates: [holiday.date],
+                assignmentIds: [view.assignment.id],
+                details: { holidayId: holiday.id, previousHolidayId: previous.id },
+              },
+            ),
+          );
+        }
       }
 
       if (!params.pairMinorWithMajor) continue;
       const start = schedule.period.startDate;
       for (const minor of ctx.holidaysById.values()) {
         const major = pairedMajor(minor, params, ctx);
-        if (!major) continue;
-        const onMinor = timeline.filter((v) => v.assignment.date === minor.date);
-        const onMajor = timeline.filter((v) => v.assignment.date === major.date);
+        if (!major || !judged(minor) || !judged(major)) continue;
+        const onMinor = on(minor.date);
+        const onMajor = on(major.date);
         // Judged only where this schedule works one half; the other may be any time before.
         if (![...onMinor, ...onMajor].some((v) => v.inPeriod)) continue;
         const workedMinor = onMinor.length > 0 || workedInHistory(ctx, nurse.id, minor, start);
@@ -298,7 +331,9 @@ export const holidayRotationRule: Rule<HolidayRotationParams> = {
               dates: [first.date, second.date],
               assignmentIds: [...onMinor, ...onMajor]
                 .filter((v) => v.inPeriod)
-                .map((v) => v.assignment.id),
+                .map((v) => v.assignment.id)
+                // One night can work both halves by the clock.
+                .filter((id, i, ids) => ids.indexOf(id) === i),
               details: { minorHolidayId: minor.id, majorHolidayId: major.id },
             },
           ),

@@ -70,12 +70,21 @@ describe('overtime bases in Settings › Pay', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
     await waitFor(() =>
       expect(bridge.callsTo('cost', 'createOvertimeRule')).toEqual([
-        [{ unitId: 'u-1', basis: 'weekend', thresholdHours: 24, multiplier: 1.5, active: true }],
+        [
+          {
+            unitId: 'u-1',
+            basis: 'weekend',
+            thresholdHours: 24,
+            multiplier: 1.5,
+            active: true,
+            pyramiding: 'none',
+          },
+        ],
       ]),
     );
   });
 
-  it('sends pyramiding none for a weekly rule when the box is ticked, and omits it otherwise', async () => {
+  it('sends pyramiding none for a weekly rule by default, and stack when the box is unticked', async () => {
     renderWithApp(<OvertimeSection unitId="u-1" />);
     await screen.findByLabelText('Basis');
     fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
@@ -83,9 +92,35 @@ describe('overtime bases in Settings › Pay', () => {
     fireEvent.click(screen.getByLabelText("Don't count daily overtime toward this threshold"));
     fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
     await waitFor(() => expect(bridge.callsTo('cost', 'createOvertimeRule')).toHaveLength(2));
-    const [plain, ticked] = bridge.callsTo('cost', 'createOvertimeRule').map((c) => c[0]);
-    expect('pyramiding' in plain!).toBe(false);
-    expect(ticked).toMatchObject({ basis: 'weekly', pyramiding: 'none' });
+    fireEvent.change(screen.getByLabelText('Basis'), { target: { value: 'daily' } });
+    fireEvent.change(screen.getByLabelText('Threshold (hours)'), { target: { value: '8' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+    await waitFor(() => expect(bridge.callsTo('cost', 'createOvertimeRule')).toHaveLength(3));
+    const [byDefault, unticked, daily] = bridge
+      .callsTo('cost', 'createOvertimeRule')
+      .map((c) => c[0]);
+    expect(byDefault).toMatchObject({ basis: 'weekly', pyramiding: 'none' });
+    expect(unticked).toMatchObject({ basis: 'weekly', pyramiding: 'stack' });
+    expect(daily).toMatchObject({ basis: 'daily' });
+    expect('pyramiding' in daily!).toBe(false);
+  });
+
+  it('says when a rule counts daily overtime again', async () => {
+    bridge.respond('cost', 'overtimeRules', [
+      {
+        id: 'o1',
+        unitId: 'u-1',
+        basis: 'weekly',
+        thresholdHours: 40,
+        multiplier: 1.5,
+        active: true,
+        pyramiding: 'stack',
+      },
+    ]);
+    renderWithApp(<OvertimeSection unitId="u-1" />);
+    expect(
+      await screen.findByText('Over 40h in a work week, daily overtime counted again'),
+    ).toBeTruthy();
   });
 
   it('sends the minimum minutes only when one is entered', async () => {
@@ -102,6 +137,7 @@ describe('overtime bases in Settings › Pay', () => {
             multiplier: 1.5,
             active: true,
             minimumMinutes: 15,
+            pyramiding: 'none',
           },
         ],
       ]),

@@ -301,3 +301,27 @@ describe('Settings › Unit paper size', () => {
     expect(bridge.callsTo('units', 'update')[0]![1].paperSize).toBe('a4');
   });
 });
+
+describe('Settings › Unit holiday shifts', () => {
+  it('saves the holiday attribution as part of the unit’s policies', async () => {
+    renderWithApp(<UnitPanel />, { unit });
+    const select = (await screen.findByLabelText('Holiday shifts')) as HTMLSelectElement;
+    expect(select.value).toBe('start');
+    fireEvent.change(select, { target: { value: 'clock' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(bridge.callsTo('units', 'update')).toHaveLength(1));
+    expect(bridge.callsTo('units', 'update')[0]![1].holidayAttribution).toBe('clock');
+  });
+
+  it('sends null when the unit goes back to counting by the start day', async () => {
+    renderWithApp(<UnitPanel />, { unit: { ...unit, holidayAttribution: 'majority' } });
+    const select = (await screen.findByLabelText('Holiday shifts')) as HTMLSelectElement;
+    expect(select.value).toBe('majority');
+    fireEvent.change(select, { target: { value: 'start' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(bridge.callsTo('units', 'update')).toHaveLength(1));
+    expect(bridge.callsTo('units', 'update')[0]![1].holidayAttribution).toBeNull();
+  });
+});

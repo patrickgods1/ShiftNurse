@@ -19,12 +19,14 @@ beforeEach(() => {
     premiumStacking: 'additive',
     holidayPayCoversOvertime: true,
     reportingPayNoticeHours: 2,
+    overtimeWindowAttribution: 'clock' as const,
   });
   bridge.respond('cost', 'savePaySettings', {
     callBackMinimumHours: 4,
     premiumStacking: 'additive',
     holidayPayCoversOvertime: true,
     reportingPayNoticeHours: 2,
+    overtimeWindowAttribution: 'clock' as const,
   });
 });
 afterEach(() => {
@@ -59,10 +61,30 @@ describe('the call-back minimum in Settings › Pay', () => {
             premiumStacking: 'additive',
             holidayPayCoversOvertime: true,
             reportingPayNoticeHours: 2,
+            overtimeWindowAttribution: 'clock' as const,
           },
         ],
       ]),
     );
+  });
+
+  it('keeps the week attribution it does not show when the call-back minimum is saved', async () => {
+    bridge.respond('cost', 'paySettings', {
+      callBackMinimumHours: 2,
+      premiumStacking: 'additive',
+      holidayPayCoversOvertime: true,
+      reportingPayNoticeHours: 2,
+      overtimeWindowAttribution: 'start' as const,
+    });
+    renderWithApp(<CallBackSection unitId="u-1" />);
+    fireEvent.change(await screen.findByLabelText('Call-back minimum hours'), {
+      target: { value: '4' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(bridge.callsTo('cost', 'savePaySettings')).toHaveLength(1));
+    expect(bridge.callsTo('cost', 'savePaySettings')[0]![1]).toMatchObject({
+      overtimeWindowAttribution: 'start',
+    });
   });
 
   it('will not save a minimum longer than a day', async () => {
@@ -96,6 +118,7 @@ describe('the call-back minimum in Settings › Pay', () => {
             premiumStacking: 'additive',
             holidayPayCoversOvertime: true,
             reportingPayNoticeHours: 4,
+            overtimeWindowAttribution: 'clock' as const,
           },
         ],
       ]),
@@ -163,6 +186,7 @@ describe('the call-back minimum in Settings › Pay', () => {
             premiumStacking: 'additive',
             holidayPayCoversOvertime: true,
             reportingPayNoticeHours: 6,
+            overtimeWindowAttribution: 'clock' as const,
           },
         ],
       ]),

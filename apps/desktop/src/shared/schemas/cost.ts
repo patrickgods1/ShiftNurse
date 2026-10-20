@@ -159,6 +159,7 @@ export const costSchemas = {
       holidayPayCoversOvertime: z.boolean(),
       // Required: the renderer always sends the whole PaySettings, so a missing one is a bug.
       reportingPayNoticeHours: z.number().min(0).max(24),
+      overtimeWindowAttribution: z.enum(['clock', 'start']),
     }),
   ]),
 } satisfies ResourceSchemas<'cost'>;

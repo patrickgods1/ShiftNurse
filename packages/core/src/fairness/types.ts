@@ -287,9 +287,12 @@ export interface ComponentScore {
 }
 
 /**
- * The dates behind a nurse's burden counters for the period scored. `nights` and `holidays`
- * are per shift's start date and equal `nightShifts` / `holidaysWorked`; `weekends` is per
- * weekend *day* worked, whereas `weekendsWorked` counts distinct weekends (Sat + Sun = 1).
+ * The dates behind a nurse's burden counters for the period scored. `nights` is per shift's
+ * start date, matching `nightShifts`. `holidays` lists the holiday dates the shifts worked under
+ * the unit's `holidayAttribution` (D18), not their start dates: by the clock the Christmas Eve
+ * night lists Christmas, and a night spanning two holidays lists both while `holidaysWorked`
+ * counts it once. `weekends` is per weekend *day* worked, whereas `weekendsWorked` counts
+ * distinct weekends (Sat + Sun = 1).
  */
 export interface NurseOccurrences {
   nights: IsoDate[];

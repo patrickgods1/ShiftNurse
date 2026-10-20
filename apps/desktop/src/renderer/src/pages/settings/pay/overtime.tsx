@@ -51,7 +51,11 @@ function describeRule(rule: OvertimeRule): string {
       ? `Every hour on ${BASIS_SPAN[rule.basis]}`
       : `Over ${rule.thresholdHours}h in ${BASIS_SPAN[rule.basis]}`;
   const notes = [
-    rule.pyramiding === 'none' ? ', daily overtime not counted' : '',
+    rule.pyramiding === 'none'
+      ? ', daily overtime not counted'
+      : rule.pyramiding === 'stack'
+        ? ', daily overtime counted again'
+        : '',
     rule.minimumMinutes ? `, under ${rule.minimumMinutes} min unpaid` : '',
     rule.scheduleKinds?.length
       ? `, ${rule.scheduleKinds.map((k) => KIND_SCOPE[k]).join(' and ')}`
@@ -72,7 +76,9 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
   const [threshold, setThreshold] = useState('40');
   const [multiplier, setMultiplier] = useState('1.5');
   const [minimumMinutes, setMinimumMinutes] = useState('');
-  const [noPyramiding, setNoPyramiding] = useState(false);
+  // Ticked by default: the FLSA credits daily overtime toward the weekly threshold (29 CFR
+  // 778.202(c)), so counting it again is the contract's exception, chosen by unticking.
+  const [noPyramiding, setNoPyramiding] = useState(true);
   const [kinds, setKinds] = useState<ReadonlySet<ScheduleKind>>(new Set());
   const [tourDays, setTourDays] = useState<'' | 'only' | 'except'>('');
   const [error, setError] = useState<string | undefined>(undefined);
@@ -82,7 +88,7 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
       threshold !== '40' ||
       multiplier !== '1.5' ||
       minimumMinutes !== '' ||
-      noPyramiding ||
+      !noPyramiding ||
       kinds.size > 0 ||
       tourDays !== '',
   );
@@ -103,8 +109,9 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
         tab; a pay-period rule (such as 80 hours in 14 days) counts over the unit's pay period
         instead. A seventh-day rule applies on the seventh day in a row worked in one work week
         (California: threshold 0 at 1.5×, and 8 at 2×). A minimum of minutes pays overtime shorter
-        than that on a shift as straight time. A weekly or pay-period rule can leave out hours
-        already paid as daily overtime, so they do not count toward its threshold.
+        than that on a shift as straight time. A weekly or pay-period rule leaves out hours already
+        paid as daily overtime, as the FLSA credits them (29 CFR 778.202(c)); untick the box only
+        where the contract pays them again.
       </p>
 
       <form
@@ -131,9 +138,8 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
               multiplier: parsedMultiplier,
               active: true,
               ...(minimumMinutes.trim() !== '' ? { minimumMinutes: minutes } : {}),
-              ...(noPyramiding &&
-              (basis === 'weekly' || basis === 'pay_period' || basis === 'weekend')
-                ? { pyramiding: 'none' as const }
+              ...(basis === 'weekly' || basis === 'pay_period' || basis === 'weekend'
+                ? { pyramiding: noPyramiding ? ('none' as const) : ('stack' as const) }
                 : {}),
               ...(kinds.size > 0
                 ? { scheduleKinds: SCHEDULE_KINDS.filter((k) => kinds.has(k)) }
@@ -149,7 +155,7 @@ export function OvertimeSection({ unitId }: { unitId: Id }) {
                 setThreshold('40');
                 setMultiplier('1.5');
                 setMinimumMinutes('');
-                setNoPyramiding(false);
+                setNoPyramiding(true);
                 setKinds(new Set());
                 setTourDays('');
               },

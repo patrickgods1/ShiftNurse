@@ -17,7 +17,7 @@
  */
 
 import { isBaylorPlan } from '../cost/cost.js';
-import type { Id, Nurse, Preference } from '../domain/entities.js';
+import type { HolidayAttribution, Id, Nurse, Preference } from '../domain/entities.js';
 import {
   dateInRange,
   type IsoDate,
@@ -30,6 +30,7 @@ import {
 import { isWorkedNight } from '../rules/night-recovery.js';
 import { buildStretches } from '../rules/rest-rules.js';
 import { isWorked } from '../rules/types.js';
+import { attributedHolidayDates } from '../schedule/holiday-attribution.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
 import { daysAvailable } from './exposure.js';
 import type { BurdenCounters, CounterContext, NurseOccurrences } from './types.js';
@@ -125,6 +126,7 @@ export function preferenceSatisfaction(
   dates: readonly IsoDate[],
   weekendDefinition: WeekendDefinition,
   holidayDateById?: ReadonlyMap<Id, IsoDate>,
+  holidayAttribution: HolidayAttribution = 'start',
 ): number {
   const workedViews = views.filter(isWorked);
   if (workedViews.length === 0) return 1;
@@ -177,7 +179,10 @@ export function preferenceSatisfaction(
       // period does not hold offered no chance either way.
       const date = holidayDateById?.get(pref.holidayId);
       if (date === undefined || !dates.includes(date)) return 1;
-      return workedViews.some((v) => v.assignment.date === date) ? 1 : 0;
+      const onHoliday = (d: IsoDate) => d === date;
+      return workedViews.some((v) => worksHoliday(v, holidayAttribution, onHoliday).includes(date))
+        ? 1
+        : 0;
     }
     case 'preferred_block_length': {
       // Stretches are built from the full timeline, not just worked shifts: an on-call day
@@ -206,6 +211,7 @@ function weightedPreferenceHitRate(
   dates: readonly IsoDate[],
   weekendDefinition: WeekendDefinition,
   holidayDateById: ReadonlyMap<Id, IsoDate> | undefined,
+  holidayAttribution: HolidayAttribution,
 ): number {
   let weightSum = 0;
   let scoreSum = 0;
@@ -220,7 +226,14 @@ function weightedPreferenceHitRate(
       if (date === undefined || !dates.includes(date)) continue;
     }
     scoreSum +=
-      preferenceSatisfaction(pref, views, dates, weekendDefinition, holidayDateById) * pref.weight;
+      preferenceSatisfaction(
+        pref,
+        views,
+        dates,
+        weekendDefinition,
+        holidayDateById,
+        holidayAttribution,
+      ) * pref.weight;
     weightSum += pref.weight;
   }
   return weightSum === 0 ? 1 : scoreSum / weightSum;
@@ -234,10 +247,21 @@ function weightedPreferenceHitRate(
 // nights as the tour they work. Both solvers' night counters use the same test.
 const countsAsNight = (view: AssignmentView): boolean => isWorkedNight(view);
 
-// Shifts are dated by their start day, so a night shift running into a holiday morning
-// is not "worked on" the holiday — the nurse clocked in the day before.
-const countsAsHoliday = (view: AssignmentView, ctx: CounterContext): boolean =>
-  ctx.holidayDates.has(view.assignment.date);
+// A worked shift is dated by the unit's holiday attribution (`schedule/holiday-attribution.ts`;
+// absent, the day it starts, so a night running into a holiday morning is not "worked on" the
+// holiday). Pay, the rotation and both solvers ask the same helper, so the Christmas Eve night a
+// unit pays as Christmas is the one the ledger counts as Christmas worked. Judged on the
+// scheduled window: a holdover never changes who worked a holiday.
+function worksHoliday(
+  view: AssignmentView,
+  attribution: HolidayAttribution,
+  isHoliday: (d: IsoDate) => boolean,
+): IsoDate[] {
+  return attributedHolidayDates(view.assignment.date, view.shiftType, attribution, isHoliday);
+}
+
+const holidaysOf = (view: AssignmentView, ctx: CounterContext): IsoDate[] =>
+  worksHoliday(view, ctx.unit.holidayAttribution ?? 'start', (d) => ctx.holidayDates.has(d));
 
 // A nurse on the Baylor plan (38 U.S.C. § 7456) works every weekend by contract and has no holiday
 // entitlement; counting either as burden would make their score a complaint about their own plan,
@@ -305,7 +329,8 @@ export function deriveCounters(
     const burdened = !isBaylorPlan(nurse);
     for (const view of workedViews) {
       if (countsAsNight(view)) nightShifts++;
-      if (burdened && countsAsHoliday(view, ctx)) holidaysWorked++;
+      // One per shift, as a night touching two holidays is still one shift worked.
+      if (burdened && holidaysOf(view, ctx).length > 0) holidaysWorked++;
       if (isUndesirable(view, nursePrefs, ctx.weekendDefinition)) undesirableShifts++;
       totalHours += view.paidHours;
       const key = weekendKey(view.window, ctx.weekendDefinition);
@@ -337,6 +362,7 @@ export function deriveCounters(
       schedule.dates,
       ctx.weekendDefinition,
       ctx.holidayDateById,
+      ctx.unit.holidayAttribution ?? 'start',
     );
 
     result.set(nurseId, {
@@ -386,7 +412,7 @@ export function deriveOccurrences(
       if (burdened && weekendKey(view.window, ctx.weekendDefinition) !== null) {
         weekends.add(date);
       }
-      if (burdened && countsAsHoliday(view, ctx)) holidays.add(date);
+      if (burdened) for (const holiday of holidaysOf(view, ctx)) holidays.add(holiday);
     }
     // ISO dates sort in calendar order as strings.
     const sorted = (set: Set<IsoDate>): IsoDate[] => [...set].sort();

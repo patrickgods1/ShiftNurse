@@ -27,6 +27,7 @@ import type {
   CancellationTier,
   DifferentialKind,
   EmploymentType,
+  HolidayAttribution,
   Id,
   IsoDate,
   JurisdictionChoices,
@@ -111,6 +112,8 @@ export const unit = sqliteTable(
     leavePolicy: text('leave_policy', { mode: 'json' }).$type<LeavePolicy>(),
     // How day-of ranks the overtime tier; null is the cost-first order every unit used before.
     overtimeOrder: text('overtime_order').$type<OvertimeOrder>(),
+    // Which day a shift that crosses midnight counts toward a holiday; null reads 'start' (D18).
+    holidayAttribution: text('holiday_attribution').$type<HolidayAttribution>(),
     // Weekend/holiday shifts each per-diem nurse commits to (core's PerDiemCommitment); null = none.
     perDiemCommitment: text('per_diem_commitment', { mode: 'json' }).$type<PerDiemCommitment>(),
     // Whether a change to a posted schedule must record the nurse's consent; null = reason enough.
@@ -1231,6 +1234,9 @@ export const paySettings = sqliteTable('pay_settings', {
   // Null means 2 hours (D13): a low-census cancellation recorded less than this before the
   // shift's start, or after it, still owes reporting-time pay.
   reportingPayNoticeHours: real('reporting_pay_notice_hours'),
+  // Null means 'clock' (D17): each hour of a shift that crosses into a new work week or pay period
+  // counts in the window it was worked in.
+  overtimeWindowAttribution: text('overtime_window_attribution').$type<'clock' | 'start'>(),
   updatedAt: timestamp('updated_at').notNull(),
 });
 

@@ -311,6 +311,8 @@ describe('the unit’s call-back minimum', () => {
       premiumStacking: 'compound',
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
+      // The default a unit that saved nothing is priced by (D17).
+      overtimeWindowAttribution: 'clock',
     });
     savePaySettings(
       handle.db,
@@ -320,6 +322,7 @@ describe('the unit’s call-back minimum', () => {
         premiumStacking: 'compound',
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 2,
+        overtimeWindowAttribution: 'clock',
       },
       ACTOR,
     );
@@ -331,6 +334,7 @@ describe('the unit’s call-back minimum', () => {
         premiumStacking: 'compound',
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 2,
+        overtimeWindowAttribution: 'clock',
       },
       ACTOR,
     );
@@ -339,6 +343,7 @@ describe('the unit’s call-back minimum', () => {
       premiumStacking: 'compound',
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
+      overtimeWindowAttribution: 'clock',
     });
     expect(auditHistoryFor(handle.db, 'pay_settings', unitId)[0]).toMatchObject({
       before: { callBackMinimumHours: 4 },
@@ -355,6 +360,7 @@ describe('the unit’s call-back minimum', () => {
         premiumStacking: 'additive',
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 2,
+        overtimeWindowAttribution: 'clock',
       },
       ACTOR,
     );
@@ -363,6 +369,7 @@ describe('the unit’s call-back minimum', () => {
       premiumStacking: 'additive',
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
+      overtimeWindowAttribution: 'clock',
     });
     const entry = auditHistoryFor(handle.db, 'pay_settings', unitId)[0];
     expect(entry).toMatchObject({
@@ -382,6 +389,7 @@ describe('the unit’s call-back minimum', () => {
           premiumStacking: 'compound',
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 2,
+          overtimeWindowAttribution: 'clock',
         },
         ACTOR,
       ),
@@ -395,6 +403,7 @@ describe('the unit’s call-back minimum', () => {
           premiumStacking: 'compound',
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 2,
+          overtimeWindowAttribution: 'clock',
         },
         ACTOR,
       ),

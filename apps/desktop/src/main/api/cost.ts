@@ -20,6 +20,7 @@ import {
   deleteOvertimeRule,
   deletePayRate,
   getBudget,
+  getNurse,
   getPaySettings,
   listDayOfPayEvents,
   listDifferentialsForUnit,
@@ -60,12 +61,23 @@ export function costReportForView(
   const cost = costSchedule(schedule, ctx);
   const budget = getBudget(db, period.id);
   // Beside the schedule's cost, never in it. A floated-in nurse's missed break is this unit's pay.
-  const dayOf = priceDayOfEvents(
-    dayOfPayEventsOf(listDayOfPayEvents(db, period.unitId, period.startDate, period.endDate)),
-    ctx,
-    rosterForPeriod(db, period),
-    getPaySettings(db, period.unitId),
+  const events = dayOfPayEventsOf(
+    listDayOfPayEvents(db, period.unitId, period.startDate, period.endDate),
   );
+  // Every nurse an event names, not only this period's roster: one who has since moved to another
+  // unit still has her missed break on this unit's books, and core refuses a nurse it was not given.
+  const nurses = rosterForPeriod(db, period);
+  const known = new Set(nurses.map((n) => n.id));
+  for (const { nurseId } of events) {
+    if (known.has(nurseId)) continue;
+    const nurse = getNurse(db, nurseId);
+    if (!nurse) {
+      throw new Error(`A day-of pay event names a nurse who was not passed in: ${nurseId}`);
+    }
+    known.add(nurseId);
+    nurses.push(nurse);
+  }
+  const dayOf = priceDayOfEvents(events, ctx, nurses, getPaySettings(db, period.unitId));
   return {
     period,
     cost,
