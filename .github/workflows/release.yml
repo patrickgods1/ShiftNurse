@@ -117,7 +117,7 @@ jobs:
           # architectures, and that list overrides a bare --arm64/--x64 — the first dry run built
           # both dmgs in each mac job, so the untested copy could have reached the release.
           # Installers only: the .blockmap files electron-builder also writes are read solely by
-          # electron-updater's differential download, which the app does not have yet (M17).
+          # electron-updater's differential download, which the app does not have (no self-update, by owner decision).
           - target: mac-arm64
             os: macos-15
             builder: --mac dmg --arm64
@@ -186,6 +186,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       # Only the notes template is read from the tree; the write token stays out of .git/config.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -198,6 +200,13 @@ jobs:
           pattern: installer-*
           path: dist
           merge-multiple: true
+      # Lets hospital IT run `gh attestation verify` on a download. Installers only, never the
+      # .blockmap files, which are not what anyone installs.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/ShiftNurse-*.dmg
+            dist/ShiftNurse-*.exe
       - name: Draft the release
         env:
           GH_TOKEN: ${{ github.token }}

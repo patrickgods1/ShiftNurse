@@ -20,8 +20,8 @@ pickup) is modelled as *a request with a submitter and a decider*, with v1 alway
 surface on the same data model, not a rewrite.
 
 **Status:** pre-1.0. Milestones M1–M16 and M19–M43 are complete, with installers verified on
-macOS and on native Windows. M18 (release hardening) has one follow-up open; signed installers
-and auto-update are M17, deferred.
+macOS and on native Windows. M18 (release hardening) has one follow-up open. Signed installers
+and self-update (M17) will not be done: builds stay unsigned by owner decision (2026-10-19).
 
 See [ROADMAP.md](ROADMAP.md) for the full plan of record (locked-in decisions, milestone
 detail, verification steps) and [CLAUDE.md](CLAUDE.md) for the conventions and invariants
@@ -103,7 +103,7 @@ Download the installer for your computer from the
 with Apple silicon (M1 or later), `…-mac-x64.dmg` for an Intel Mac, `…-win-x64.exe` for 64-bit
 Windows 10 or 11.
 
-The builds are not code-signed yet, so your computer warns that it cannot verify the developer the
+Unsigned by owner decision (2026-10-19): the builds are not code-signed, so your computer warns that it cannot verify the developer the
 first time ShiftNurse opens:
 
 - **macOS**: open the `.dmg` and drag ShiftNurse to Applications, then open it once. macOS says
@@ -120,7 +120,8 @@ Each release lists the SHA-256 of every file in `SHA256SUMS`. To check a downloa
 `shasum -a 256 <file>` (macOS Terminal) or `certutil -hashfile <file> SHA256` (Windows PowerShell)
 and compare the output with the file's line. ShiftNurse keeps its database in your user folder;
 installing a newer version keeps it, and an update that changes the database backs it up first.
-Deploying to many computers? See [For hospital IT](#for-hospital-it).
+To verify where a download came from, run `gh attestation verify <file> -R patrickgods1/ShiftNurse`;
+releases carry build-provenance attestations. Deploying to many computers? See [For hospital IT](#for-hospital-it).
 
 ## For hospital IT
 
@@ -130,11 +131,14 @@ Deploying to many computers? See [For hospital IT](#for-hospital-it).
 script or a user-context deployment, not as SYSTEM. Silent uninstall: `"Uninstall ShiftNurse.exe" /S`
 in that folder. Uninstalling keeps the data folder.
 
-**Per-machine install.** Not available in this build. The installer is electron-builder's one-click
-per-user installer, which ignores `/allusers`. A per-machine installer is planned alongside code
-signing (M17). Ask the project if you need it sooner.
+**Per-machine install.** Not offered, by design. The installer is electron-builder's one-click
+per-user installer, which ignores `/allusers`: it needs no admin rights, and the manager installs
+updates. IT deploys it per user with `/S`, from a logon script or a user-context deployment.
 
-**Allowlisting an unsigned build.** The builds are not code-signed yet. Allowlist by file hash:
+**Verify a download.** `gh attestation verify <file> -R patrickgods1/ShiftNurse` checks a release
+file's build-provenance attestation.
+
+**Allowlisting an unsigned build.** The builds are not code-signed (owner decision, 2026-10-19). Allowlist by file hash:
 every release page lists each installer's SHA-256 in `SHA256SUMS`. AppLocker/WDAC hash rules and
 SmartScreen apply to the installer and to `ShiftNurse.exe`. The CP-SAT solver is a second
 executable at `resources\cpsat\cpsat-runner.exe` inside the install folder; allow it too, or
@@ -184,9 +188,9 @@ that names a medical condition stays in the file and in every backup made afterw
 reasons as you would for a grievance file.
 
 **Nothing is encrypted yet.** The database, its backups and the log are ordinary files, readable
-by anyone who can sign in as you or who has the disk. Encryption waits for signed builds (M17),
-because an unsigned app cannot keep a key in the system keychain without prompting on every
-update. Until then, use full-disk encryption (FileVault on macOS, BitLocker on Windows) and a
+by anyone who can sign in as you or who has the disk. Encryption at rest is deferred with no date:
+an unsigned app cannot keep a key in the system keychain without prompting on every
+update. The protection is full-disk encryption, so use it (FileVault on macOS, BitLocker on Windows) and a
 computer account only you use. Copy a backup off the computer only to storage your hospital
 approves for HR records. The log records the app's own messages (a failed backup, a solver
 crash); it rolls over at 5 MB and keeps three older files.
@@ -407,9 +411,9 @@ To do (repository settings): a tag ruleset for `v*` so only maintainers create t
 moves or deletes them.
 
 A dry run (the same builds and smoke tests, no release) runs on any pull request that touches
-packaging, or by hand: `gh workflow run release.yml`. Builds are **unsigned** for now — the
+packaging, or by hand: `gh workflow run release.yml`. Builds are **unsigned** by owner decision (2026-10-19) — the
 release notes explain macOS Gatekeeper's and Windows SmartScreen's one-time "open anyway" steps,
-and the workflow lists (commented out) the secrets that signing will need.
+and the workflow lists (commented out) the secrets that signing would need.
 
 ## Compiling executables
 
@@ -456,12 +460,12 @@ Notes:
   both let v0.1.0's first draft pass here and crash on every real install.
 - The packaged app is **fused** (`electronFuses` in `electron-builder.yml`): it cannot be run as
   plain Node (`ELECTRON_RUN_AS_NODE`), ignores `NODE_OPTIONS` and `--inspect`, and refuses an
-  `app.asar` changed after packaging. That matters once M17 signs it: a signed app that ran
+  `app.asar` changed after packaging. That would matter if the app were ever signed: a signed app that ran
   anyone's JavaScript would lend them its signature. `smoke:packaged` reads the fuses and fails
   before launching if one is wrong. Cookie encryption (no cookies to protect, and it would ask
   for Keychain access on an unsigned mac build) and file-protocol privileges (the window is a
   local file) stay at Electron's defaults on purpose.
-- Installers are unsigned (code signing, M17, is deferred), so Gatekeeper (macOS) and SmartScreen
+- Installers are unsigned (unsigned by owner decision, 2026-10-19; M17 will not be done), so Gatekeeper (macOS) and SmartScreen
   (Windows) warn on first launch — [Installing](#installing) has the steps users follow. Unsigned builds cannot update themselves; a
   packaged app checks GitHub's latest published release at launch and shows a banner linking
   to it.

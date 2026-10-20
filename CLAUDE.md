@@ -17,8 +17,8 @@ self-service later becomes an intake surface rather than a new data model.
 Milestones M1–M16 and M19–M42 are complete and green, and so is **M43** — the 2026-10-16
 in-depth review's fixes, one PR per phase (`ROADMAP.md`). **M18 — Release hardening** is in
 progress (the 2026-10-03 release audit's fixes): its one open box is the copy-on-write
-`ScheduleView` follow-up. M17 (signing) is deferred, and so are the review items that wait on an
-owner decision (on-call caps, INRC-II pattern terms, encryption at rest; listed under M43).
+`ScheduleView` follow-up. M17 (signing) won't be done (owner decision 2026-10-19), and M44 (deferred decisions and stated
+gaps) is in progress as a 15-phase plan.
 
 Detail lives next to the code, in CLAUDE.md files that load when you work in that folder:
 
