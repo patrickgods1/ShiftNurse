@@ -75,6 +75,11 @@
   lookback nights included. Both solvers price it per such shift at `nightRecovery` (45, in the
   preferences bucket): `SolverModel.recoveryFor` and CP-SAT's `nightRecoveryTerms`; hard, it is
   `encodeNightRecovery`'s forbidden pairs. Rest hours alone allowed Night, Day, Night in four days.
+- **A float works only inside her membership dates** (`rules/membership.ts`,
+  `works-within-membership`, hard, nurse scope, code `outside_membership`): `SolveInput.memberships`
+  (floats only; db's `listFloatMemberships`) is judged by start date, inclusive at both ends, via
+  `outsideMembership`. SA's `eligible` and CP-SAT (no variable) never place one outside; day-of
+  lists her as excluded. Not leave: leave earns credits and takes days out of exposure.
 - **Time off is decided before the schedule, and late requests are covered, not regenerated.**
   `rules/pending-time-off.ts` (soft, nurse scope) flags a shift inside a request still pending;
   both solvers price it per shift at `pendingTimeOff` (80, preferences bucket; `SolverModel.

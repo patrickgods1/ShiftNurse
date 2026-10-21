@@ -6,13 +6,23 @@
  * depends on to never clobber a manager's pinned decision.
  */
 
-import { addDays, DEFAULT_FAIRNESS_WEIGHTS, type IsoDate, isoDate } from '@shiftnurse/core';
+import {
+  addDays,
+  DEFAULT_FAIRNESS_WEIGHTS,
+  evaluateSchedule,
+  type IsoDate,
+  isoDate,
+  ruleContextForInput,
+  ScheduleView,
+} from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor, recentAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
+import { assignment } from '../schema.js';
 import { createShiftType, createUnit } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
 import { recordHoldover } from './holdovers.js';
+import { createNurseUnit, listFloatMemberships } from './nurse-units.js';
 import { publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
@@ -1055,5 +1065,186 @@ describe('floating a nurse off a shift (D20)', () => {
     const { row } = floatable();
     expect('floatedTo' in row).toBe(false);
     expect('floatedTo' in getAssignment(handle.db, row.id)!).toBe(false);
+  });
+});
+
+describe('a float works here only inside her float dates', () => {
+  // Fran is homed on 5 West and floats to 4 West from Mon Mar 2 to Sun Mar 8 only.
+  function franFloatsForAWeek() {
+    const west = createUnit(
+      handle.db,
+      {
+        name: '5 West',
+        unitType: 'Medical-Surgical',
+        payPeriodDays: 14,
+        payPeriodAnchor: isoDate('2026-01-04'),
+      },
+      ACTOR,
+    );
+    const fran = createNurse(
+      handle.db,
+      {
+        unitId: west.id,
+        employeeId: nextEmployeeId(),
+        firstName: 'Fran',
+        lastName: 'Float',
+        role: 'RN',
+        employmentType: 'full_time',
+        fte: 1,
+        contractedHoursPerPeriod: 72,
+        seniorityDate: isoDate('2020-01-01'),
+        isChargeEligible: false,
+        isNovice: false,
+        isFloatEligible: true,
+        active: true,
+      },
+      ACTOR,
+    ).id;
+    createNurseUnit(
+      handle.db,
+      {
+        nurseId: fran,
+        unitId,
+        startDate: isoDate('2026-03-02'),
+        endDate: isoDate('2026-03-08'),
+      },
+      ACTOR,
+    );
+    const period = createPeriod(
+      handle.db,
+      basePeriod({ startDate: isoDate('2026-03-01'), endDate: isoDate('2026-03-14') }),
+      ACTOR,
+    );
+    return { fran, period };
+  }
+
+  const place = (periodId: string, nurseId: string, date: string) =>
+    createAssignment(handle.db, baseAssignment({ periodId, nurseId, date: isoDate(date) }), ACTOR);
+
+  /** A row a file written before this check could hold: straight into the table, no refusal. */
+  const legacyRow = (periodId: string, nurseId: string, date: string, isLocked: boolean) => {
+    const id = `assignment-legacy-${date}`;
+    handle.db
+      .insert(assignment)
+      .values({
+        id,
+        periodId,
+        nurseId,
+        shiftTypeId,
+        date,
+        source: 'manual',
+        isLocked,
+        isCharge: false,
+        isOvertime: false,
+        notes: null,
+        holdoverMinutes: 0,
+        holdoverMandated: null,
+        floatedTo: null,
+      })
+      .run();
+    return id;
+  };
+
+  it('tells Generate and the grid which dates she floats to this unit', () => {
+    const { fran, period } = franFloatsForAWeek();
+    const expected = [{ nurseId: fran, startDate: '2026-03-02', endDate: '2026-03-08' }];
+    expect(listFloatMemberships(handle.db, unitId, period.startDate, period.endDate)).toEqual(
+      expected,
+    );
+    expect(loadPeriodInput(handle.db, period).memberships).toEqual(expected);
+  });
+
+  it('lists no float dates for a unit nobody floats to, and none for its own nurses', () => {
+    mkNurse('Ada');
+    const period = createPeriod(handle.db, basePeriod(), ACTOR);
+    expect(loadPeriodInput(handle.db, period).memberships).toEqual([]);
+  });
+
+  it('refuses her the day before she arrives and the day after she leaves, in words', () => {
+    const { fran, period } = franFloatsForAWeek();
+    expect(() => place(period.id, fran, '2026-03-01')).toThrow(
+      "Fran Float is not on 4 West's roster on Sun Mar 1",
+    );
+    expect(() => place(period.id, fran, '2026-03-09')).toThrow(
+      "Fran Float is not on 4 West's roster on Mon Mar 9",
+    );
+    expect(listAssignmentsForPeriod(handle.db, period.id)).toHaveLength(0);
+  });
+
+  it('lets her work her first and last float days', () => {
+    const { fran, period } = franFloatsForAWeek();
+    place(period.id, fran, '2026-03-02');
+    place(period.id, fran, '2026-03-08');
+    expect(listAssignmentsForPeriod(handle.db, period.id).map((a) => a.date)).toEqual([
+      '2026-03-02',
+      '2026-03-08',
+    ]);
+  });
+
+  it('places a home nurse on any day of the schedule', () => {
+    const { period } = franFloatsForAWeek();
+    const ada = mkNurse('Ada');
+    place(period.id, ada, '2026-03-01');
+    place(period.id, ada, '2026-03-14');
+    expect(listAssignmentsForPeriod(handle.db, period.id)).toHaveLength(2);
+  });
+
+  it('refuses a regenerate that puts her outside her dates and deletes nothing', () => {
+    const { fran, period } = franFloatsForAWeek();
+    const kept = place(period.id, fran, '2026-03-03');
+    expect(() =>
+      transact(handle.db, (tx) =>
+        replaceAssignments(
+          tx,
+          period.id,
+          [
+            baseAssignment({ periodId: period.id, nurseId: fran, date: isoDate('2026-03-04') }),
+            baseAssignment({ periodId: period.id, nurseId: fran, date: isoDate('2026-03-10') }),
+          ],
+          ACTOR,
+        ),
+      ),
+    ).toThrow("Fran Float is not on 4 West's roster on Tue Mar 10");
+    expect(listAssignmentsForPeriod(handle.db, period.id).map((a) => a.id)).toEqual([kept.id]);
+  });
+
+  it('refuses a regenerate echoing a pinned shift outside her dates, so it is fixed by hand', () => {
+    const { fran, period } = franFloatsForAWeek();
+    legacyRow(period.id, fran, '2026-03-12', true);
+    expect(() =>
+      transact(handle.db, (tx) =>
+        replaceAssignments(
+          tx,
+          period.id,
+          [
+            baseAssignment({
+              periodId: period.id,
+              nurseId: fran,
+              date: isoDate('2026-03-12'),
+              isLocked: true,
+            }),
+          ],
+          ACTOR,
+        ),
+      ),
+    ).toThrow('on Thu Mar 12');
+  });
+
+  it('flags a shift an older file holds outside her dates as a hard break on the grid', () => {
+    const { fran, period } = franFloatsForAWeek();
+    place(period.id, fran, '2026-03-05');
+    legacyRow(period.id, fran, '2026-03-11', false);
+    const input = loadPeriodInput(handle.db, period);
+    const view = new ScheduleView({
+      period: input.period,
+      assignments: input.assignments,
+      priorAssignments: input.priorAssignments,
+      nurses: input.nurses,
+      shiftTypes: input.shiftTypes,
+    });
+    const outside = evaluateSchedule(view, input.ruleSet, ruleContextForInput(input))
+      .hardViolations.filter((v) => v.code === 'outside_membership')
+      .flatMap((v) => v.dates);
+    expect(outside).toEqual(['2026-03-11']);
   });
 });

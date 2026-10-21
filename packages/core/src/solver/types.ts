@@ -61,6 +61,7 @@ import type {
   ShiftType,
   TimeOffRequest,
   Unit,
+  UnitMembership,
 } from '../domain/entities.js';
 import type { IsoDate } from '../domain/time.js';
 import type { FairnessReport } from '../fairness/types.js';
@@ -138,6 +139,8 @@ export interface SolveInput {
   restWaivers?: readonly RestWaiver[];
   /** Recurring windows a nurse cannot work (accommodations), hard. Absent: none. */
   availabilityBlocks?: readonly AvailabilityBlock[];
+  /** The floats' membership dates on this unit, one per float. Absent: nobody is limited. */
+  memberships?: readonly UnitMembership[];
   preferences: readonly Preference[];
   /** Ledger rows strictly before this period, for the burden index the seed and objective read. */
   ledgerHistory: readonly FairnessLedgerEntry[];

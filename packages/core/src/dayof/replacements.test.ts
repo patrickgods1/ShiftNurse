@@ -183,6 +183,34 @@ describe('findReplacements', () => {
     expect(excludedOnLeave!.reason).toBe('On approved leave');
   });
 
+  it('lists a float whose dates on the unit do not cover the shift as excluded, and says why', () => {
+    resetFixtureCounters();
+    const absent = makeNurse({ firstName: 'Priya', lastName: 'Nair' });
+    // Fran floats in until Fri 9 Jan; the call-off is Saturday's day shift, the day after.
+    const goneHome = makeNurse({ firstName: 'Fran', lastName: 'Okafor' });
+    const stillHere = makeNurse({ firstName: 'Gus', lastName: 'Moore' });
+    const absentShift = assign(absent.id, DAY_12, SAT);
+
+    const report = findReplacements(
+      replacementInput({
+        nurses: [absent, goneHome, stillHere],
+        assignments: [absentShift],
+        memberships: [
+          { nurseId: goneHome.id, endDate: FRI },
+          { nurseId: stillHere.id, startDate: FRI },
+        ],
+        absentAssignmentId: absentShift.id,
+      }),
+    );
+
+    expect(report.excluded.find((e) => e.nurseId === goneHome.id)).toMatchObject({
+      label: 'Fran Okafor (RN)',
+      reason: 'Outside their float dates on this unit',
+    });
+    expect(report.candidates.some((c) => c.nurseId === goneHome.id)).toBe(false);
+    expect(report.candidates.some((c) => c.nurseId === stillHere.id)).toBe(true);
+  });
+
   it('excludes a nurse whose accommodation covers the shift, without saying why', () => {
     resetFixtureCounters();
     const absent = makeNurse({ firstName: 'Priya', lastName: 'Nair' });

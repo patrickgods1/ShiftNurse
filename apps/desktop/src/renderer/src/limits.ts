@@ -12,7 +12,6 @@ export const NOT_ENFORCED: readonly string[] = [
   'FMLA leave already taken is counted at the nurse’s current contract: if their FTE changed during the year, check the hours used with HR.',
   'Pregnancy disability leave is counted per pregnancy through the certification you record. Without one it is counted over the last 12 months.',
   'Break premiums are priced at the base rate: California pays them at the regular rate, which includes differentials, so add the difference in payroll.',
-  'Float staff: Generate may offer a float nurse on any day of the period, not only the dates of their membership; check the dates yourself.',
   'Tour rotation limits (Settings › Rules) are checked on the grid, but Generate does not steer away from them while the rule is soft: make it hard to have Generate keep to them.',
   'Most hours in any 24, long stretches of work and two days off together are checked on the grid, but Generate does not steer away from them while they are soft: make them hard to have Generate keep to them.',
   'Leave bids and other requests are entered by the manager: nurses do not submit them in the app yet.',

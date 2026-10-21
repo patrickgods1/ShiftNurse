@@ -699,8 +699,9 @@ describe('nurses who work on two units', () => {
     );
 
   it('carries a night worked on 5 West as locked busy time on an inactive shift type', () => {
-    const { night, period, mkPeriod } = westWing();
+    const { west, night, period, mkPeriod } = westWing();
     const [ana] = listNursesForUnit(handle.db, seeded.unitId);
+    createNurseUnit(handle.db, { nurseId: ana!.id, unitId: west.id }, ACTOR);
     const westPeriod = mkPeriod();
     const shift = createAssignment(
       handle.db,
@@ -720,8 +721,9 @@ describe('nurses who work on two units', () => {
   });
 
   it('counts a draft and an archived period on 5 West as busy time', () => {
-    const { night, period, mkPeriod } = westWing();
+    const { west, night, period, mkPeriod } = westWing();
     const [ana] = listNursesForUnit(handle.db, seeded.unitId);
+    createNurseUnit(handle.db, { nurseId: ana!.id, unitId: west.id }, ACTOR);
     const draft = mkPeriod();
     const old = mkPeriod();
     const place = (periodId: string, date: string) =>
@@ -930,6 +932,7 @@ describe('nurses who work on two units', () => {
       preceptorships: 'recordedHere',
       restWaivers: 'person',
       availabilityBlocks: 'person',
+      memberships: 'roster',
       preferences: 'person',
       ledgerHistory: 'unit',
       cost: 'person',

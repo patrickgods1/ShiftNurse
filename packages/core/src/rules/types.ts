@@ -34,6 +34,7 @@ import type {
   ShiftType,
   TimeOffRequest,
   Unit,
+  UnitMembership,
 } from '../domain/entities.js';
 import type { IsoDate, WeekendDefinition } from '../domain/time.js';
 import type { FairnessWeights } from '../fairness/types.js';
@@ -96,7 +97,8 @@ export type ViolationCode =
   | 'long_stretch'
   | 'rest_after_long_stretch'
   | 'no_days_off_together'
-  | 'off_plan_tour';
+  | 'off_plan_tour'
+  | 'outside_membership';
 
 /**
  * One nurse worked one past holiday. Derived from published schedules, or recorded by hand for
@@ -198,6 +200,8 @@ export interface RuleContext {
    * she asked for (`requestedTours`).
    */
   preferredShiftTypesByNurse: ReadonlyMap<Id, ReadonlySet<Id>>;
+  /** Each float's membership dates on this unit (`outsideMembership`). A home nurse has none. */
+  membershipByNurse: ReadonlyMap<Id, UnitMembership>;
 }
 
 /**

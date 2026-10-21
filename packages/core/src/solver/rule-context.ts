@@ -46,6 +46,7 @@ export function ruleContextForInput(
     ...(input.availabilityBlocks ? { availabilityBlocks: input.availabilityBlocks } : {}),
     ...(input.historyFrom ? { historyFrom: input.historyFrom } : {}),
     ...(input.dstTransitions ? { dstTransitions: input.dstTransitions } : {}),
+    ...(input.memberships ? { memberships: input.memberships } : {}),
     preferences: input.preferences,
   });
 }

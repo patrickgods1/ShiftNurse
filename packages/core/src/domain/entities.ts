@@ -730,6 +730,18 @@ export interface Preceptorship {
 }
 
 /**
+ * The dates a float from another unit is on this unit's roster. Without them a float on the
+ * period's roster for one week could be placed on any day of it. Inclusive at both ends and
+ * compared with a shift's start date; an absent end is open. Floats only: a home nurse has none,
+ * and is never judged by one.
+ */
+export interface UnitMembership {
+  nurseId: Id;
+  startDate?: IsoDate;
+  endDate?: IsoDate;
+}
+
+/**
  * A nurse's standing offer to work overtime over some dates. New York (Labor Law § 167),
  * Washington (RCW 49.28.140), Oregon (ORS 441.770) and Massachusetts (c.111 § 226) forbid
  * *requiring* a nurse to work overtime outside an emergency; this record is what makes an

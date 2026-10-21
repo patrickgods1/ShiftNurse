@@ -85,6 +85,7 @@ import {
   judgeFloor,
   type OnFloor,
 } from '../rules/incompatibility-rules.js';
+import { outsideMembership } from '../rules/membership.js';
 import { nightRecoveryRule } from '../rules/night-recovery.js';
 import { pendingRequestOn, pendingTimeOffRule } from '../rules/pending-time-off.js';
 import {
@@ -257,6 +258,8 @@ export class SolverModel {
   private readonly onDate: number[][];
   /** nurse × date → on approved leave. Leave never changes during a solve. */
   private readonly onLeave: boolean[][];
+  /** nurse × date → a float's day outside her membership of this unit; all false for a home nurse. */
+  private readonly outsideMembership: boolean[][];
   /** nurse × work week → hours that count toward the weekly cap, lookback tail included. */
   private readonly weekHours: number[][];
   /**
@@ -594,6 +597,9 @@ export class SolverModel {
     this.onLeave = this.nurses.map((nurse) =>
       this.dates.map((date) => approvedLeaveOn(this.ctx, nurse.id, date) !== undefined),
     );
+    this.outsideMembership = this.nurses.map((nurse) =>
+      this.dates.map((date) => outsideMembership(this.ctx, nurse.id, date)),
+    );
     this.weekHours = Array.from({ length: n }, () => new Array<number>(this.weekCount).fill(0));
     this.overtimeHours = Array.from({ length: n }, () =>
       new Array<number>(this.overtimeCount).fill(0),
@@ -831,7 +837,8 @@ export class SolverModel {
 
   /**
    * The cheap pre-filter before the rule gate: right role for the slot, active, free that day,
-   * not on approved leave, and not already at the top of their hours tolerance. Everything it
+   * not on approved leave, inside a float's dates, and not already at the top of their hours
+   * tolerance. Everything it
    * rejects the gate would reject too; it exists so the gate runs on a shortlist.
    */
   eligible(nurseIdx: number, shift: Shift, role: NurseRole | null): boolean {
@@ -840,6 +847,7 @@ export class SolverModel {
     if (role !== null && nurse.role !== role) return false;
     if (this.isOnDate(nurseIdx, shift.dateIdx)) return false;
     if (this.onLeave[nurseIdx]![shift.dateIdx]) return false;
+    if (this.outsideMembership[nurseIdx]![shift.dateIdx]) return false;
     if (this.hoursCapped[nurseIdx]) {
       const b = this.bucketOfDate[shift.dateIdx]!;
       const cap = this.hoursCap[nurseIdx]![b]!;
