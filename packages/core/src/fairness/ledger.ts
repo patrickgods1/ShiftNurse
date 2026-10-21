@@ -17,7 +17,13 @@
  */
 
 import { isBaylorPlan } from '../cost/cost.js';
-import type { HolidayAttribution, Id, Nurse, Preference } from '../domain/entities.js';
+import type {
+  HolidayAttribution,
+  Id,
+  Nurse,
+  Preference,
+  TimeOffRequest,
+} from '../domain/entities.js';
 import {
   dateInRange,
   type IsoDate,
@@ -293,15 +299,29 @@ export function hoursOverContract(
  * assignments only (`schedule.assignmentsFor`) — see the module header for why the lookback
  * tail is deliberately excluded.
  */
-function groupByNurse<T extends { nurseId: Id }>(rows: readonly T[]): Map<Id, T[]> {
+function groupByNurse<T extends { nurseId: Id }>(
+  rows: readonly T[],
+): ReadonlyMap<Id, readonly T[]> {
+  const cached = GROUPED.get(rows);
+  if (cached) return cached as ReadonlyMap<Id, readonly T[]>;
   const out = new Map<Id, T[]>();
   for (const row of rows) {
     const list = out.get(row.nurseId);
     if (list) list.push(row);
     else out.set(row.nurseId, [row]);
   }
+  GROUPED.set(rows, out);
   return out;
 }
+
+/**
+ * Groupings by the array grouped. The conflicts engine re-derives a few nurses' counters for
+ * every simulated fix against the same preference and request arrays, and regrouping all of
+ * them each time was most of that work. Keyed weakly so a finished analysis frees them; the
+ * arrays are readonly inputs, so a grouping never goes stale.
+ */
+const GROUPED = new WeakMap<readonly object[], ReadonlyMap<Id, readonly unknown[]>>();
+const NO_TIME_OFF: readonly TimeOffRequest[] = [];
 
 export function deriveCounters(
   schedule: ScheduleView,
@@ -313,7 +333,7 @@ export function deriveCounters(
   const periodDays = schedule.dates.length;
   // Grouped once: filtering every preference and request per nurse made this quadratic.
   const prefsByNurse = groupByNurse(ctx.preferences);
-  const timeOffByNurse = groupByNurse(ctx.timeOff ?? []);
+  const timeOffByNurse = groupByNurse(ctx.timeOff ?? NO_TIME_OFF);
 
   for (const [nurseId, nurse] of schedule.nursesById) {
     if (only !== undefined && !only.has(nurseId)) continue;

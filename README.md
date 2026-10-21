@@ -272,6 +272,7 @@ Run from the repo root unless noted.
 | `npm run dist` | Builds, then packages installers with electron-builder (see [Compiling executables](#compiling-executables)). |
 | `npm run smoke -w @shiftnurse/desktop` | Builds and boots the real app headlessly against a temp `userData`, asserts the preload bridge and dashboard rendered. `-- --screenshot <png>` captures the window. Run after touching main/preload/IPC. |
 | `npm run smoke:packaged -w @shiftnurse/desktop` | Same, but boots the packaged `.app`/`.exe` from `release/`. Run after any packaging change. With the CP-SAT runner installed the smoke run generates with every solver twice and takes a few minutes; an emulated x64 run on Apple silicon may need `SHIFTNURSE_SMOKE_TIMEOUT_MS=900000`. |
+| `npm run bench:conflicts` | Times conflict analysis on the scenario period and prints the median and an output hash (the hash must not change in a performance-only change). |
 | `npm run bench:solvers` | Runs every solver on the demo and two fixture units at three seeds and writes [docs/solver-bench.md](docs/solver-bench.md). Needs the CP-SAT runner; takes several minutes. Not part of `npm test`. |
 | `npm run fetch:cpsat -w @shiftnurse/desktop` | Downloads the pinned CP-SAT runner for this machine into `apps/desktop/.cpsat/host` (fails loudly, unlike the `postinstall` step). |
 
