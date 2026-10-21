@@ -17,6 +17,7 @@ import {
   auditHistoryFor,
   createHoliday,
   createNurse,
+  createShiftType,
   createTimeOffRequest,
   deactivateNurse,
   getLatestRuleSet,
@@ -26,10 +27,12 @@ import {
   listPeriodsForUnit,
   listPreferencesForUnit,
   saveRuleSet,
+  schema,
   transact,
   updateUnit,
   upsertFairnessLedgerEntry,
 } from '@shiftnurse/db';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { counterContext, periodOrThrow, ruleSetFor, scheduleViewFor } from './context.js';
 import { fairnessApi } from './fairness.js';
@@ -371,5 +374,41 @@ describe('importing historical shifts', () => {
     ).toThrow(/Unknown shift abbreviation ZZZ/);
     expect(ledgerSince(f.handle.db, f.seeded.unitId, SINCE)).toHaveLength(before);
     expect(importAudits()).toBe(importsBefore);
+  });
+
+  it('reads an abbreviation as the active type, not a retired one that shares it', () => {
+    const api = fairnessApi(f.handle.db);
+    const { id: _id, ...fields } = f.day;
+    createShiftType(
+      f.handle.db,
+      { ...fields, name: 'Old day', active: false, sortOrder: 99 },
+      'test',
+    );
+    const summary = api.importHistory(
+      f.seeded.unitId,
+      rowsFor(f.rns[0]!.employeeId, f.day.abbreviation, [0]),
+    );
+    expect(summary.entriesWritten).toBe(1);
+  });
+
+  it('refuses an abbreviation that two active types share, in words, and writes nothing', () => {
+    const api = fairnessApi(f.handle.db);
+    const { id: _id, ...fields } = f.day;
+    // Written around the repository check: a file from before the check may hold both.
+    const twin = createShiftType(
+      f.handle.db,
+      { ...fields, name: 'Twin day', active: false, sortOrder: 99 },
+      'test',
+    );
+    f.handle.db
+      .update(schema.shiftType)
+      .set({ active: true })
+      .where(eq(schema.shiftType.id, twin.id))
+      .run();
+    const before = ledgerSince(f.handle.db, f.seeded.unitId, SINCE).length;
+    expect(() =>
+      api.importHistory(f.seeded.unitId, rowsFor(f.rns[0]!.employeeId, f.day.abbreviation, [0])),
+    ).toThrow(new RegExp(`${f.day.abbreviation}.*more than one active shift type`, 'i'));
+    expect(ledgerSince(f.handle.db, f.seeded.unitId, SINCE)).toHaveLength(before);
   });
 });

@@ -318,6 +318,20 @@ describe('float records once shift types stopped cascading into them', () => {
 describe('files from before history was append-only', () => {
   it('adds the history triggers to an older file', () => {
     const { opened } = olderFile('_history_is_append_only');
+    const triggerNames = [
+      'rule_set',
+      'rule_config',
+      'schedule_version',
+      'schedule_change',
+      'pay_config_snapshot',
+    ].flatMap((table) => [`${table}_no_update`, `${table}_no_delete`]);
+    // Exact names, not LIKE: `_` is a wildcard there. Proves the migration creates them.
+    const before = opened.sqlite
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN (${triggerNames.map(() => '?').join(', ')})`,
+      )
+      .all(...triggerNames);
+    expect(before).toEqual([]);
     migrateDatabase(opened.db, FULL);
     const names = (
       opened.sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'").all() as {

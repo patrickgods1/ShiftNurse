@@ -506,8 +506,9 @@ export const nurseUnit = sqliteTable(
 
 /**
  * A nurse's paid-leave balance as the manager last entered it from payroll. One row per nurse and
- * type (`pto` or `sick`); `asOf` is the payroll date the figure was true on, so a stale balance
- * reads as stale. The app does not accrue: payroll owns the number, the manager copies it in.
+ * type (`pto`, `annual`, `sick` or `comp`); `asOf` is the payroll date the figure was true on, so
+ * a stale balance reads as stale. Accrual is projected from the leave policy, never stored:
+ * payroll owns the number, the manager copies it in.
  */
 export const leaveBalance = sqliteTable(
   'leave_balance',

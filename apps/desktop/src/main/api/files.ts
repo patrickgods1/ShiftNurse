@@ -77,7 +77,7 @@ export async function pickHistoryImportFile(
   const text = readFileSync(path, 'utf8');
   const { rows, errors } = parseHistoricalScheduleCsv(text, {
     nurses: listNursesForUnit(db, unitId),
-    shiftTypes: listShiftTypesForUnit(db, unitId),
+    shiftTypes: listShiftTypesForUnit(db, unitId).filter((s) => s.active),
   });
   const existing = new Set(ledgerPeriodsForUnit(db, unitId).map((p) => p.periodId));
   const periods = groupIntoPayPeriods(rows, unit).map((p) => ({

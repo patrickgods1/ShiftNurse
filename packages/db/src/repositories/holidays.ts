@@ -43,9 +43,9 @@ import {
 import { listHolidaysForUnit } from './config.js';
 import { nurseWorksOnUnit } from './nurse-units.js';
 import { type PatchKeys, patchOf } from './patch.js';
+import { unitForPeriod } from './period-unit.js';
 import { listPreferencesForNurse } from './roster.js';
 import { listPeriodsForUnit } from './schedule.js';
-import { unitForPeriod } from './solve-input.js';
 
 export interface HolidayPatch {
   /** A different day for the same holiday; `unitId` stays fixed. */

@@ -9,6 +9,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseRosterCsv } from '@shiftnurse/core';
+import { createShiftType, schema } from '@shiftnurse/db';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dialogs = vi.hoisted(() => ({ openFile: vi.fn(), saveFile: vi.fn() }));
@@ -118,5 +120,50 @@ describe('importing historical schedules', () => {
     expect(preview!.errors.map((e) => e.message).join(' ')).toMatch(/GHOST-1/);
     expect(preview!.periods).toHaveLength(1);
     expect(preview!.periods[0]).toMatchObject({ shifts: 3, nurses: 1, replacesExisting: false });
+  });
+
+  function twinOfDay(active: boolean) {
+    const { id: _id, ...fields } = f.day;
+    const twin = createShiftType(
+      f.handle.db,
+      { ...fields, name: 'Twin day', active: false, sortOrder: 99 },
+      'test',
+    );
+    // Written around the repository check: a file from before the check may hold both.
+    if (active) {
+      f.handle.db
+        .update(schema.shiftType)
+        .set({ active: true })
+        .where(eq(schema.shiftType.id, twin.id))
+        .run();
+    }
+  }
+
+  function previewOfOneDayShift() {
+    const source = join(dir, 'history.csv');
+    writeFileSync(
+      source,
+      ['employee_id,date,shift', `${f.rns[0]!.employeeId},2019-03-04,${f.day.abbreviation}`].join(
+        '\n',
+      ),
+    );
+    dialogs.openFile.mockResolvedValue(source);
+    return pickHistoryImportFile(f.handle.db, f.seeded.unitId);
+  }
+
+  it('ignores a retired shift type that shares an abbreviation with an active one', async () => {
+    twinOfDay(false);
+    const preview = await previewOfOneDayShift();
+    expect(preview!.errors).toEqual([]);
+    expect(preview!.rows).toHaveLength(1);
+  });
+
+  it('reports an abbreviation two active shift types share rather than guessing', async () => {
+    twinOfDay(true);
+    const preview = await previewOfOneDayShift();
+    expect(preview!.rows).toEqual([]);
+    expect(preview!.errors.map((e) => e.message).join(' ')).toMatch(
+      /more than one active shift type/,
+    );
   });
 });
