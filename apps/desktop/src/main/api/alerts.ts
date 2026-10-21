@@ -130,6 +130,7 @@ export function alertsForView(
     ).all(),
     overtimeThresholdHours: params.overtimeThresholdHours,
     workWeekStartsOn: params.workWeekStartsOn,
+    workWeekStartMinute: params.workWeekStartMinute ?? 0,
     ...(params.overtimeByPayPeriod
       ? {
           payPeriodOvertime: {

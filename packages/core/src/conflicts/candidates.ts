@@ -11,10 +11,11 @@
 
 import { fillsRatioRole } from '../acuity/demand.js';
 import type { Assignment, Id, RatioRole, TimeOffRequest } from '../domain/entities.js';
-import { dateInRange, describeDateRange, type IsoDate } from '../domain/time.js';
+import { dateInRange, describeDateRange, type IsoDate, shiftWindow } from '../domain/time.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import { hasValidCredential } from '../rules/coverage-rules.js';
-import { workWeeksIn } from '../rules/hours-rules.js';
+import { workWeekOf } from '../rules/hours-rules.js';
+import { windowDayOf } from '../schedule/window-split.js';
 import type { ObjectiveWeights } from '../solver/types.js';
 import type { ConflictEngine, SimState } from './engine.js';
 import { type Change, type ShiftRef, type Simulated, simulate } from './resolution-score.js';
@@ -207,7 +208,13 @@ function staffingOptions(
   // where they were. A source qualifies by its hard minimum, not its target: a shift at target
   // but above its minimum can spare someone, and the soft loss below target is priced by
   // `targetShortfallDelta` rather than ruled out here.
-  const week = workWeeksIn({ start: date, end: date }, engine.maxHoursParams.workWeekStartsOn)[0]!;
+  // The week the shift starts in, which a work week that begins at a time of day reads by the
+  // shift's start rather than its date.
+  const params = engine.maxHoursParams;
+  const week = workWeekOf(
+    windowDayOf(shiftWindow(date, shiftType).startMinute, params.workWeekStartMinute ?? 0),
+    params.workWeekStartsOn,
+  );
   const moveDates = prelude.moves
     ? engine.dates.filter((d) => dateInRange(d, week.start, week.end))
     : [];

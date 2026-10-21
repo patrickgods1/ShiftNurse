@@ -1,12 +1,26 @@
 import type { ParamDoc } from '@shiftnurse/core';
 import { ALL_RULES, defaultRuleSet, resolveConfigs } from '@shiftnurse/core';
 import { describe, expect, it } from 'vitest';
-import { invalidParams, numberFieldValue, paramError, withNumberParam } from './rule-params.js';
+import {
+  invalidParams,
+  numberFieldValue,
+  paramError,
+  timeFieldValue,
+  withNumberParam,
+  withTimeParam,
+} from './rule-params.js';
 
 const hours: ParamDoc = { label: 'Minimum rest (hours)', hint: 'h', why: 'w' };
 const afterNight: ParamDoc = { ...hours, label: 'After a night', optional: true };
 const weekday: ParamDoc = { ...hours, label: 'Week starts', input: 'weekday' };
 const days: ParamDoc = { ...hours, label: 'Most days in a row', min: 1 };
+const startsAt: ParamDoc = {
+  ...hours,
+  label: 'Work week starts at',
+  input: 'time-of-day',
+  integer: true,
+  max: 1439,
+};
 
 describe('editing a rule setting', () => {
   it('does not save a cleared minimum rest as zero hours', () => {
@@ -45,6 +59,22 @@ describe('editing a rule setting', () => {
 
   it('refuses a negative rest', () => {
     expect(paramError(hours, 10, -2)).toBe('Must be at least 0.');
+  });
+
+  it('shows a Saturday 19:00 week start as 19:00 and saves the time picked as minutes', () => {
+    // 19 × 60 = 1140; 07:30 is 7 × 60 + 30 = 450.
+    expect(timeFieldValue(1140)).toBe('19:00');
+    expect(timeFieldValue(0)).toBe('00:00');
+    const params = withTimeParam({ workWeekStartMinute: 1140 }, 'workWeekStartMinute', '07:30');
+    expect(params.workWeekStartMinute).toBe(450);
+    expect(paramError(startsAt, 0, 450)).toBeUndefined();
+  });
+
+  it('does not save a cleared week start time as midnight', () => {
+    const params = withTimeParam({ workWeekStartMinute: 1140 }, 'workWeekStartMinute', '');
+    expect(params.workWeekStartMinute).not.toBe(0);
+    expect(paramError(startsAt, 0, params.workWeekStartMinute)).toBe('Enter a number.');
+    expect(timeFieldValue(params.workWeekStartMinute)).toBe('');
   });
 
   it('only takes Sunday through Saturday as the work week start', () => {

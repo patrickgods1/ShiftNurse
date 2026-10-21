@@ -41,6 +41,7 @@ import { workedStretches } from '../schedule/holdover.js';
 import { attributedHolidayDates, holidayMinutesOn } from '../schedule/holiday-attribution.js';
 import { type DstTransition, realMinutesIn } from '../schedule/real-minutes.js';
 import { type AssignmentView, ScheduleView } from '../schedule/view.js';
+import { minutesBeforeEdge, realOffset, windowDayOf } from '../schedule/window-split.js';
 import { roundCents, sumCents } from './money.js';
 import { resolvePayRate } from './rates.js';
 import {
@@ -96,35 +97,6 @@ function scheduledMinutesOf(view: AssignmentView, tz: readonly DstTransition[]):
   return realMinutesIn(shiftWindow(view.assignment.date, view.shiftType), tz);
 }
 
-/**
- * Real minutes of [from, to) clamped to [start, end): how far into a window starting at `start`
- * the wall minute `to` lies, in minutes actually worked. Lets a wall-clock boundary (a weekend's
- * edge) be compared with a count of real minutes.
- */
-function realOffset(start: number, end: number, to: number, tz: readonly DstTransition[]): number {
-  const clamped = Math.min(Math.max(to, start), end);
-  return realMinutesIn({ startMinute: start, endMinute: clamped }, tz);
-}
-
-/**
- * Paid minutes of a view worked before the wall midnight that opens `edge`, a window's first date.
- * The one split point of a shift across a week or pay-period edge (D17): overtime attribution and
- * the regular rate both read it. Real minutes, so a clock change after the edge (US fall-back is
- * Sunday 02:00) lands in the next window.
- */
-function minutesBeforeEdge(
-  view: AssignmentView,
-  edge: IsoDate,
-  tz: readonly DstTransition[],
-): number {
-  return realOffset(
-    view.window.startMinute,
-    view.window.endMinute,
-    dayNumber(edge) * MINUTES_PER_DAY,
-    tz,
-  );
-}
-
 /** A run of windows (weeks or pay periods): the window a date is in, and the next one's start. */
 interface WindowCalendar {
   windowOf: (date: IsoDate) => IsoDate;
@@ -175,6 +147,10 @@ function workWeekStart(date: IsoDate, startsOn: number): IsoDate {
  * accrual altogether (the seventh-day rule). `minutesOf` is what a view adds to the accrual (its
  * countable minutes): its straight minutes alone, for a weekly rule that does not pyramid.
  *
+ * `startMinute` (weekly and pay-period rules) places windows at the work week's start time: a
+ * view accrues in the window its start falls in (`windowDayOf`), not its date's. Absent (daily
+ * bases), a view's window is its date's.
+ *
  * `split` (weekly and pay-period rules under `'clock'` attribution, D17) names the date the next
  * window starts. A shift whose worked window runs past that midnight gives its minutes before it
  * to its own window and the rest to the next, each judged there (29 CFR 778.104: each workweek
@@ -191,6 +167,7 @@ function windowOvertime(
   minutesOf: (view: AssignmentView) => number,
   tz: readonly DstTransition[],
   split?: (date: IsoDate) => IsoDate,
+  startMinute?: number,
 ): Map<AssignmentView, OvertimeSpan[]> {
   // Counted leave uses up the threshold first: a window's PTO day is not attributable to one
   // shift, and putting it first is what makes the shifts that cross the threshold the overtime
@@ -214,12 +191,17 @@ function windowOvertime(
   const out = new Map<AssignmentView, OvertimeSpan[]>();
   for (const view of timeline) {
     if (!isWorked(view) || (counts !== undefined && !counts(view))) continue;
-    const date = view.assignment.date;
+    const date =
+      startMinute === undefined
+        ? view.assignment.date
+        : windowDayOf(view.window.startMinute, startMinute);
     const countable = minutesOf(view);
     const paid = paidMinutesOf(view, tz);
     const next = split?.(date);
     const a =
-      next === undefined ? countable : Math.min(countable, minutesBeforeEdge(view, next, tz));
+      next === undefined
+        ? countable
+        : Math.min(countable, minutesBeforeEdge(view, next, tz, startMinute));
     const spans: OvertimeSpan[] = [];
     if (a < countable && next !== undefined) {
       const overA = accrue(windowOf(date), a);
@@ -445,6 +427,7 @@ function overtimeStarts(
         minutesOf,
         tz,
         byClock ? weeks.nextStart : undefined,
+        ctx.workWeekStartMinute ?? 0,
       );
       break;
     }
@@ -466,6 +449,7 @@ function overtimeStarts(
         minutesOf,
         tz,
         byClock ? periods.nextStart : undefined,
+        ctx.workWeekStartMinute ?? 0,
       );
       break;
     }
@@ -1120,10 +1104,13 @@ function costTimeline(timeline: readonly AssignmentView[], ctx: CostContext): As
       ? payPeriodCalendar(ctx)
       : weekCalendar(ctx);
   const byClock = (ctx.overtimeWindowAttribution ?? 'clock') === 'clock';
+  const startMinute = ctx.workWeekStartMinute ?? 0;
+  // The window-day a view starts on, which names its window (its date at a midnight start).
+  const dayOf = (view: AssignmentView) => windowDayOf(view.window.startMinute, startMinute);
   // Minutes of a view in its own window; the rest are the next window's (T06's split point).
   const firstPart = (view: AssignmentView, paid: number) =>
     byClock
-      ? Math.min(paid, minutesBeforeEdge(view, calendar.nextStart(view.assignment.date), tz))
+      ? Math.min(paid, minutesBeforeEdge(view, calendar.nextStart(dayOf(view)), tz, startMinute))
       : paid;
   const sums = new Map<IsoDate, { dollars: number; minutes: number }>();
   const add = (window: IsoDate, dollars: number, minutes: number) => {
@@ -1137,10 +1124,10 @@ function costTimeline(timeline: readonly AssignmentView[], ctx: CostContext): As
       if (!pay.regular) continue;
       const { dollars, minutes } = pay.regular;
       const first = firstPart(view, minutes);
-      add(calendar.windowOf(view.assignment.date), (dollars * first) / minutes, first);
+      add(calendar.windowOf(dayOf(view)), (dollars * first) / minutes, first);
       if (first < minutes)
         add(
-          calendar.windowOf(calendar.nextStart(view.assignment.date)),
+          calendar.windowOf(calendar.nextStart(dayOf(view))),
           (dollars * (minutes - first)) / minutes,
           minutes - first,
         );
@@ -1152,7 +1139,7 @@ function costTimeline(timeline: readonly AssignmentView[], ctx: CostContext): As
       const base = pay.cost.baseRate;
       return { edge: Number.POSITIVE_INFINITY, before: base, after: base };
     }
-    const date = view.assignment.date;
+    const date = dayOf(view);
     const first = firstPart(view, pay.regular.minutes);
     const before = regularRate(calendar.windowOf(date));
     // The next window's rate only for a shift that runs into it.

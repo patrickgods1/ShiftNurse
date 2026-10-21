@@ -337,6 +337,7 @@ export {
   payPeriodHoursFor,
   payPeriodIndex,
   payPeriodWindow,
+  workWeekOf,
 } from './rules/hours-rules.js';
 // Kept-apart group rule helpers
 export { groupInForce, groupsForPeriod } from './rules/incompatibility-rules.js';
@@ -428,6 +429,8 @@ export { latestEndingBefore } from './schedule/preceding.js';
 export { type DstTransition, realMinutesIn } from './schedule/real-minutes.js';
 // The schedule read model
 export { ScheduleView } from './schedule/view.js';
+// Where a work week that starts at a time of day files a shift (29 CFR 778.105)
+export { windowBoundaryMinute, windowDayOf } from './schedule/window-split.js';
 export type {
   AcuityPresetId,
   HolidayYearPlan,

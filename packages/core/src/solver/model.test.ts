@@ -1115,6 +1115,164 @@ describe('overtime judged over the pay period', () => {
   });
 });
 
+describe('a night over the week’s edge in Generate (21 Q1)', () => {
+  // Weeks start Sunday; the schedule is Sun 4 – Sat 17 Jan 2026. Overtime past 41h, so the
+  // Saturday night after three 12s (36h) is legal only if the old week gets just its five hours
+  // before midnight (19:00–24:00): 36 + 5 = 41, while the whole night makes 36 + 12 = 48.
+  const SPRING_FORWARD = { atMinute: 29_548_920, deltaMinutes: 60 };
+  const input = (
+    attribution: 'clock' | 'start' | 'no pay settings',
+    extra: Partial<Parameters<typeof solveInputFrom>[0]> = {},
+  ) =>
+    solveInputFrom({
+      nurses: [makeNurse({ id: 'ada', contractedHoursPerPeriod: 120 })],
+      shiftTypes: [DAY_12, NIGHT_12],
+      ruleParams: { 'max-hours-per-week': { overtimeThresholdHours: 41 } },
+      ...(attribution === 'no pay settings'
+        ? {}
+        : {
+            cost: {
+              payRates: [],
+              differentials: [],
+              overtimeRules: [],
+              overtimeWindowAttribution: attribution,
+            },
+          }),
+      ...extra,
+    });
+  const at = (model: SolverModel, date: string, type = NIGHT_12) =>
+    model.shiftAt(model.dateIdx.get(isoDate(date))!, type);
+  const days = (model: SolverModel, dates: string[]) => {
+    for (const date of dates) model.add(assign('ada', DAY_12, date));
+  };
+
+  it('offers the Saturday night when only its evening hours fall in the full week', () => {
+    const model = new SolverModel(input('clock'));
+    days(model, ['2026-01-05', '2026-01-06', '2026-01-07']);
+    const night = at(model, '2026-01-10');
+    expect(model.eligible(0, night, 'RN')).toBe(true);
+    expect(model.canAdd(0, model.make(0, night))).toBe(true);
+  });
+
+  it('turns the night away when its Sunday hours would push the next week past 41', () => {
+    // Week of 11 Jan: 7h of the night + Mon–Wed 12–14 Jan (36h) = 43h.
+    const model = new SolverModel(input('clock'));
+    days(model, ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-12', '2026-01-13']);
+    days(model, ['2026-01-14']);
+    expect(model.eligible(0, at(model, '2026-01-10'), 'RN')).toBe(false);
+  });
+
+  it('turns the night away when pay keeps a shift in its start week', () => {
+    const model = new SolverModel(input('start'));
+    days(model, ['2026-01-05', '2026-01-06', '2026-01-07']);
+    expect(model.eligible(0, at(model, '2026-01-10'), 'RN')).toBe(false);
+  });
+
+  it('turns the night away as before when no pay settings are loaded', () => {
+    const model = new SolverModel(input('no pay settings'));
+    days(model, ['2026-01-05', '2026-01-06', '2026-01-07']);
+    expect(model.eligible(0, at(model, '2026-01-10'), 'RN')).toBe(false);
+  });
+
+  it('counts the Sunday hours of last schedule’s Saturday night in the first week', () => {
+    // Published Sat 3 Jan night: 7h into the week of 4 Jan. 7 + 24 = 31; a third 12 makes 43.
+    const prior = [assign('ada', NIGHT_12, '2026-01-03', { periodId: 'prev' })];
+    const clock = new SolverModel(input('clock', { priorAssignments: prior }));
+    days(clock, ['2026-01-05', '2026-01-06']);
+    expect(clock.eligible(0, at(clock, '2026-01-07', DAY_12), 'RN')).toBe(false);
+    // By start the night stays in the week before: 24 + 12 = 36.
+    const start = new SolverModel(input('start', { priorAssignments: prior }));
+    days(start, ['2026-01-05', '2026-01-06']);
+    expect(start.eligible(0, at(start, '2026-01-07', DAY_12), 'RN')).toBe(true);
+  });
+
+  it('leaves the last night’s Sunday hours to the next schedule', () => {
+    // Sat 17 Jan night: 5h into the week of 11 Jan (36 + 5 = 41); its 7h fall in a week this
+    // schedule does not judge.
+    const model = new SolverModel(input('clock'));
+    days(model, ['2026-01-12', '2026-01-13', '2026-01-14']);
+    expect(model.eligible(0, at(model, '2026-01-17'), 'RN')).toBe(true);
+  });
+
+  it('offers the Saturday night after three 12s when the week starts at Saturday 19:00', () => {
+    // Overtime past 40. From midnight Sunday the night gives the week 36 + 5 = 41h, refused; from
+    // Saturday 19:00 the week from 3 Jan holds the 36h and the night is wholly the next week's.
+    for (const [workWeekStartsOn, workWeekStartMinute, legal] of [
+      [0, 0, false],
+      [6, 1140, true],
+    ] as const) {
+      const model = new SolverModel(
+        input('clock', {
+          ruleParams: { 'max-hours-per-week': { workWeekStartsOn, workWeekStartMinute } },
+        }),
+      );
+      days(model, ['2026-01-05', '2026-01-06', '2026-01-07']);
+      expect(model.eligible(0, at(model, '2026-01-10'), 'RN'), String(workWeekStartMinute)).toBe(
+        legal,
+      );
+    }
+  });
+
+  it('turns away a first-day Saturday 12 that starts in the week the last schedule filled', () => {
+    // Schedule from Sat 10 Jan, week from Saturday 19:00, cap 40. Sat 10 Jan 07:00 starts in the
+    // week from Sat 3 Jan 19:00, which already holds the published Tue–Thu 6–8 Jan (36h):
+    // 36 + 12 = 48 > 40.
+    const model = new SolverModel(
+      input('clock', {
+        startDate: isoDate('2026-01-10'),
+        endDate: isoDate('2026-01-23'),
+        priorAssignments: ['2026-01-06', '2026-01-07', '2026-01-08'].map((d) =>
+          assign('ada', DAY_12, d, { periodId: 'prev' }),
+        ),
+        ruleParams: {
+          'max-hours-per-week': {
+            workWeekStartsOn: 6,
+            workWeekStartMinute: 1140,
+            maxHoursPerWeek: 40,
+          },
+        },
+      }),
+    );
+    expect(model.eligible(0, at(model, '2026-01-10', DAY_12), 'RN')).toBe(false);
+  });
+
+  it('offers the last Saturday night when its Sunday hours fall in the next pay period', () => {
+    // Overtime by the pay period Sun 4 – Sat 17 Jan, past 80h. Mon–Wed of both weeks (72h) and
+    // the Sat 17 Jan night: by the clock 72 + 5 = 77h, legal; by start 72 + 12 = 84h, not. The
+    // second week is 36 + 5 = 41h or 48h, within the 48h cap either way.
+    const byPayPeriod = { 'max-hours-per-week': { overtimeByPayPeriod: true } };
+    for (const [attribution, legal] of [
+      ['clock', true],
+      ['start', false],
+    ] as const) {
+      const model = new SolverModel(input(attribution, { ruleParams: byPayPeriod }));
+      days(model, ['2026-01-05', '2026-01-06', '2026-01-07']);
+      days(model, ['2026-01-12', '2026-01-13', '2026-01-14']);
+      expect(model.eligible(0, at(model, '2026-01-17'), 'RN'), attribution).toBe(legal);
+    }
+  });
+
+  it('counts the spring-forward night as the 11 hours worked', () => {
+    // Schedule Sun 1 – Sat 14 Mar, overtime past 47h. Three 12s and the Sat 7 Mar night: by
+    // start 36 + 11 real hours = 47, legal; at declared hours 36 + 12 = 48, not.
+    const spring = (attribution: 'start' | 'no pay settings') =>
+      input(attribution, {
+        startDate: isoDate('2026-03-01'),
+        endDate: isoDate('2026-03-14'),
+        dstTransitions: [SPRING_FORWARD],
+        ruleParams: { 'max-hours-per-week': { overtimeThresholdHours: 47 } },
+      });
+    for (const [attribution, legal] of [
+      ['start', true],
+      ['no pay settings', false],
+    ] as const) {
+      const model = new SolverModel(spring(attribution));
+      days(model, ['2026-03-02', '2026-03-03', '2026-03-04']);
+      expect(model.eligible(0, at(model, '2026-03-07'), 'RN'), attribution).toBe(legal);
+    }
+  });
+});
+
 describe('authorised overtime and the contract ceiling', () => {
   // Locked D12s on Jan 5, 7, 9, 11, 13 and 17: 72h of a 72h contract. Flagged, Jan 11 is
   // authorised overtime, leaving 60h straight time; a 12 on Jan 15 makes 72 ≤ 76. Unflagged it

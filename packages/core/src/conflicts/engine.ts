@@ -192,6 +192,9 @@ export class ConflictEngine {
           majorHolidayDates: this.baseCtx.majorHolidayDates,
           weekendDefinition: input.ruleSet.weekendDefinition,
           workWeekStartsOn: this.maxHoursParams.workWeekStartsOn,
+          ...(this.maxHoursParams.workWeekStartMinute
+            ? { workWeekStartMinute: this.maxHoursParams.workWeekStartMinute }
+            : {}),
           ...(input.cost.premiumStacking ? { premiumStacking: input.cost.premiumStacking } : {}),
           ...(input.cost.holidayPayCoversOvertime !== undefined
             ? { holidayPayCoversOvertime: input.cost.holidayPayCoversOvertime }

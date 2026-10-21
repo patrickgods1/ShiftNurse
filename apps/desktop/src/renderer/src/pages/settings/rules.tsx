@@ -53,7 +53,14 @@ import { INPUT } from '../../components/ui.js';
 import { numberFieldProblem, parseNumberField } from '../../field-values.js';
 import { formatInstant } from '../../format.js';
 import { useUnit } from '../../unit-context.js';
-import { invalidParams, numberFieldValue, paramError, withNumberParam } from './rule-params.js';
+import {
+  invalidParams,
+  numberFieldValue,
+  paramError,
+  timeFieldValue,
+  withNumberParam,
+  withTimeParam,
+} from './rule-params.js';
 
 type RuleCategory = (typeof ALL_RULES)[number]['category'];
 
@@ -146,6 +153,7 @@ function defaultLabel(doc: ParamDoc, defaultValue: unknown): string {
   if (defaultValue === undefined) return 'not set';
   if (typeof defaultValue === 'boolean') return defaultValue ? 'on' : 'off';
   if (doc.input === 'weekday') return WEEKDAY_NAMES[defaultValue as number] ?? String(defaultValue);
+  if (doc.input === 'time-of-day') return timeFieldValue(defaultValue) || String(defaultValue);
   if (doc.input === 'employment-types' && Array.isArray(defaultValue)) {
     return defaultValue.length === 0
       ? 'none'
@@ -308,6 +316,34 @@ function ParamsForm({
                   </option>
                 ))}
               </select>
+            </Field>
+          );
+        }
+
+        if (doc.input === 'time-of-day') {
+          const error = paramError(doc, defaultValue, value);
+          return (
+            <Field
+              key={key}
+              id={fieldId}
+              label={doc.label}
+              tip={doc.why}
+              hint={gateNote ?? doc.hint}
+              error={error}
+              disabled={inactive}
+              footer={note}
+            >
+              <input
+                id={fieldId}
+                type="time"
+                step={60}
+                value={timeFieldValue(value)}
+                disabled={inactive}
+                aria-invalid={error !== undefined || undefined}
+                aria-describedby={describedBy(fieldId, { hint: true, error: error !== undefined })}
+                onChange={(event) => onChange(withTimeParam(params, key, event.target.value))}
+                className={INPUT}
+              />
             </Field>
           );
         }

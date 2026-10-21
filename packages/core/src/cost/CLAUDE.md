@@ -14,8 +14,7 @@
   *unpriced* (`rateSource: 'none'`, counted in `unpricedAssignments`) and every cost surface
   shows that count next to the total. Overtime is priced per nurse-week over the full timeline
   including the lookback tail, using the work-week start from the `max-hours-per-week` rule
-  params, so a shift is not flagged as overtime by the rules and priced as straight time, except
-  on a night that crosses into a new week or pay period (see the window-edge bullet below).
+  params, so a shift is not flagged as overtime by the rules and priced as straight time.
   A `pay_period` overtime rule (8/80-style) prices per nurse-pay-period instead; the max-hours
   rule's `overtimeByPayPeriod` is its rule-engine twin, honoured by `SolverModel.eligible`, the
   CP-SAT encoder, compliance alerts and the exchange evaluator alike. The weekly cap
@@ -68,8 +67,14 @@
 - **Weekly and pay-period overtime split a shift at the window edge by the clock** (D17, 29 CFR
   778.104), unless `PaySettings.overtimeWindowAttribution` is `'start'`. So the first hours of a
   Saturday night can be overtime and its Sunday hours straight; bands carry their own start. The
-  `max-hours-per-week` rule and both solvers still count a shift in the week it starts in, so on a
-  week-crossing night the rule and pay can disagree by the hours past midnight.
+  split point (`realOffset`, `minutesBeforeEdge`, `splitMinutes`) lives in `schedule/window-split.ts`,
+  which the `max-hours-per-week` rule and both solvers share, so they count the hours pay counts.
+  The edge is `CostContext.workWeekStartMinute` after midnight on the window's first date (absent:
+  0; the rule's `workWeekStartMinute`, 29 CFR 778.105, 778.601(b)): weekly and pay-period
+  windows file a shift by the window-day of its start (`windowDayOf`) and split at that wall
+  minute, as do the regular-rate windows; daily, seventh-day and extra-day bases keep the
+  calendar day: `extraDayTest` and `seventhDayTest` read `workWeekStartsOn` by date and do not
+  follow `workWeekStartMinute`.
 - **The DST nights are paid as worked.** `CostContext.dstTransitions` (host-supplied) makes the
   fall-back night 13 hours and the spring one 11 for every hour count in pay; tour, full-shift and
   Baylor classification still read declared hours.

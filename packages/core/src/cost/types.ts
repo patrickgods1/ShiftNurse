@@ -170,6 +170,13 @@ export interface CostContext {
   /** The contract's work-week start for weekly overtime, matching the max-hours rule. */
   workWeekStartsOn: Weekday;
   /**
+   * The time that day the work week, and a pay period, begins: minutes after midnight, the
+   * max-hours rule's `workWeekStartMinute` (29 CFR 778.105, 778.601(b)). Weekly and pay-period
+   * overtime file a shift by its start against it and split by the clock at it. Absent: midnight.
+   * Daily bases keep the calendar day.
+   */
+  workWeekStartMinute?: number;
+  /**
    * Paid leave that counts toward overtime, by nurse (`RuleContext.paidLeaveByNurse`). Present
    * only when the rule set's max-hours rule says leave counts; absent, leave never moves a shift
    * into overtime. Each weekly or pay-period window starts its running hours with the leave

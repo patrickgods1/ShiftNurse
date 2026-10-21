@@ -251,6 +251,8 @@ export function costContext(
     majorHolidayDates: new Set<IsoDate>(holidays.filter((h) => h.isMajor).map((h) => h.date)),
     weekendDefinition: ruleSet.weekendDefinition,
     workWeekStartsOn: params.workWeekStartsOn ?? maxHoursRule.defaultParams.workWeekStartsOn,
+    // Absent from a rule set saved before the setting existed: midnight.
+    workWeekStartMinute: params.workWeekStartMinute ?? 0,
     premiumStacking: pay.premiumStacking,
     holidayPayCoversOvertime: pay.holidayPayCoversOvertime,
     overtimeWindowAttribution: pay.overtimeWindowAttribution,

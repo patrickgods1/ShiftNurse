@@ -276,6 +276,11 @@ export interface RuleContextInput {
   historyFrom?: IsoDate;
   /** The host's clock changes (D19). Absent: none, every day is 1440 minutes. */
   dstTransitions?: readonly DstTransition[];
+  /**
+   * The unit's weekly-overtime attribution, when its pay settings are loaded
+   * (`RuleContext.overtimeWindowAttribution`). Absent: the start week at declared hours.
+   */
+  overtimeWindowAttribution?: 'clock' | 'start';
   /** Nurses' stated preferences. Absent: nobody has asked for anything. */
   preferences?: readonly Preference[];
 }
@@ -341,6 +346,9 @@ export function buildRuleContext(input: RuleContextInput): RuleContext {
     availabilityBlocksByNurse: groupByNurse(input.availabilityBlocks ?? []),
     historyFrom: input.historyFrom,
     dstTransitions: input.dstTransitions ?? [],
+    ...(input.overtimeWindowAttribution
+      ? { overtimeWindowAttribution: input.overtimeWindowAttribution }
+      : {}),
     preferredShiftTypesByNurse: preferredShiftTypes(input.preferences ?? []),
   };
 }

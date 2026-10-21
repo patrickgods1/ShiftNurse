@@ -193,6 +193,13 @@ export interface RuleContext {
    */
   dstTransitions: readonly DstTransition[];
   /**
+   * Which week a shift crossing a week's (or pay period's) edge counts in for `max-hours-per-week`,
+   * the unit's pay setting (21 Q1): `'clock'` splits it at the midnight in real minutes, as payroll
+   * pays it; `'start'` keeps it whole in its start week, in real minutes. Undefined when no pay
+   * settings were loaded: the start week at declared hours, the reading before pay was consulted.
+   */
+  overtimeWindowAttribution?: 'clock' | 'start';
+  /**
    * The shift types each nurse has asked for (`prefer_shift_type` rows only). The one record of a
    * nurse's wish the rules can read: a career nurse exempt from forced rotation may work a tour
    * she asked for (`requestedTours`).
@@ -209,8 +216,9 @@ export interface ParamDoc {
   hint: string;
   why: string;
   /** An editor other than the one the default's type implies: a number that is a weekday, a
-   * string list drawn from the employment types. */
-  input?: 'weekday' | 'employment-types';
+   * number of minutes after midnight (`time-of-day`, edited as HH:MM), a string list drawn from
+   * the employment types. */
+  input?: 'weekday' | 'time-of-day' | 'employment-types';
   /** The parameter may be absent; the hint says what absence falls back to. */
   optional?: boolean;
   /** The smallest number that makes sense. Absent means 0. */

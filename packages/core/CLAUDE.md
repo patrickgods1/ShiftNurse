@@ -284,6 +284,35 @@
   (`schedule/real-minutes.ts`, D19, from `RuleContext.dstTransitions`), the window itself on the
   wall clock. Window bounds, anchors, rest gaps and classification (a compressed tour) stay wall;
   `encodeHoursIn24`'s coefficients and `encodeLongStretch`'s chain minutes are the same real minutes.
+- **The weekly cap counts the hours payroll counts (21 Q1).** With the unit's pay settings loaded
+  (`SolveInput.cost`, so every real judge: grid, Generate, conflicts, publish),
+  `ruleContextForInput` sets `RuleContext.overtimeWindowAttribution` from
+  `cost.overtimeWindowAttribution ?? 'clock'`, and `max-hours-per-week` (weekly cap, weekly or
+  pay-period overtime, `overtimeHoursAround`) counts real minutes: by `'clock'` a night crossing a
+  week's or pay period's first midnight gives each side the minutes worked there
+  (`schedule/window-split.ts`, shared with pay; 29 CFR 778.104), so a Saturday 19:00 night after
+  36 hours makes the week 41 and starts the next with 7; by `'start'` it stays whole in its start
+  week. A crossing in-period shift is named by the window it adds to; only rows that start in a window
+  authorise its overtime. Absent (core fixtures without `cost`), the old reading: start week,
+  declared `paidHours`. SA keeps whole-minute week counters (`WorkCalendar.partsOf`, thresholds
+  `Math.round(h × 60)`; a part past the last judged week is dropped) and CP-SAT a separate minutes
+  expression for the weekly and pay-period caps only (`minutesExpr`, `atMostMinutes`); the
+  contract cap stays in hundredths. **The week can start at a time of day** (29 CFR 778.105):
+  `workWeekStartMinute` (0–1439, optional, absent = midnight; `ParamDoc.input: 'time-of-day'`)
+  makes a window dated `start..end` run from that wall minute on `start` to the same minute after
+  `end` (`windowBoundaryMinute`), for weeks and 8/80 pay periods alike. A shift belongs, under
+  `'start'`, the old reading and for authorisation, to the window its *start* falls in
+  (`windowDayOf`: a Saturday 07:00 shift is Friday's window-day under a Saturday 19:00 start);
+  under `'clock'` it splits at the boundary minute. Rule, SA (`partsOf`), CP-SAT (`startsWithin`,
+  even on the hundredths path), pay (`CostContext.workWeekStartMinute`), compliance alerts,
+  `overtimeHoursAround` (a shift's start minute) and conflicts' move candidates read it. The
+  community and California ICU demos start the week at Saturday 19:00; the VA demo and the frozen
+  scenarios stay at midnight. Leave credits stay dated (`leaveHoursBetween`, by date). The judged
+  windows run from the one holding the schedule's first instant to the one holding its last
+  (`judgedSpan`; rule, SA `workCalendar`, CP-SAT and alerts): a schedule opening on a Saturday
+  under a Saturday 19:00 start judges the week before too, since that morning is in it. Not
+  following the start time (calendar-date based): pay's `extraDayTest` and `seventhDayTest`, and
+  `no-mandatory-overtime`'s own `workWeekStartsOn` week.
 - **Weekends are filed by `weekendKey`, everywhere.** Fairness, `weekend-pattern` and both
   solvers' prices use it; under `'overlaps'` a Friday night belongs to the weekend it runs into.
   `weekendBreaches` is the one count (`SolverModel.weekendFor`, CP-SAT `weekendBreachExprs`).

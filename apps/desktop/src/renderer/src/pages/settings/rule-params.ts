@@ -36,6 +36,32 @@ export function withNumberParam(
 }
 
 /**
+ * What an `<input type="time">` shows for a time-of-day param held as minutes after midnight:
+ * "19:00" for 1140. A value that is not a whole minute of the day shows blank, and `paramError`
+ * says why.
+ */
+export function timeFieldValue(value: unknown): string {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value >= 1440) {
+    return '';
+  }
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(Math.floor(value / 60))}:${pad(value % 60)}`;
+}
+
+/**
+ * The params after the manager picked `raw` ("HH:MM", or '' when cleared) in a time field. A
+ * cleared field is kept as typed so `paramError` blocks the save, as a cleared number is.
+ */
+export function withTimeParam(
+  params: Record<string, unknown>,
+  key: string,
+  raw: string,
+): Record<string, unknown> {
+  const match = /^(\d{2}):(\d{2})$/.exec(raw);
+  return { ...params, [key]: match ? Number(match[1]) * 60 + Number(match[2]) : raw };
+}
+
+/**
  * Why a param's value cannot be saved, or undefined when it can. Core's definition, so the form
  * is never stricter or looser than the repository and the rule engine.
  */

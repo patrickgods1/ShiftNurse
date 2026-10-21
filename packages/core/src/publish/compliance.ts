@@ -45,12 +45,13 @@ import {
   weekendKey,
 } from '../domain/time.js';
 import { credentialLapsedOn } from '../rules/coverage-rules.js';
-import { payPeriodsIn, workWeeksIn } from '../rules/hours-rules.js';
+import { judgedSpan, payPeriodsIn, workWeeksIn } from '../rules/hours-rules.js';
 import { leaveHoursBetween, type PaidLeaveCredit } from '../rules/paid-leave.js';
 import { isWorked, nurseName } from '../rules/types.js';
 import { nurseWeekends } from '../rules/weekend-pattern.js';
 import { attributedHolidayDates } from '../schedule/holiday-attribution.js';
 import type { ScheduleView } from '../schedule/view.js';
+import { windowDayOf } from '../schedule/window-split.js';
 
 export type ComplianceAlertKind =
   | 'credential_expiry'
@@ -89,6 +90,11 @@ export interface ComplianceInput {
   /** Weekly hours past which the week is overtime, from the max-hours rule params. */
   overtimeThresholdHours: number;
   workWeekStartsOn: Weekday;
+  /**
+   * The time that day the work week (and pay period) begins, minutes after midnight, from the
+   * max-hours rule. A shift is filed in the week its start falls in. Absent: midnight.
+   */
+  workWeekStartMinute?: number;
   /**
    * The unit's pricing. With at least one active overtime rule of multiplier above 1, `overtime`
    * alerts come from `costSchedule` (daily, seventh-day, consecutive and other bases included)
@@ -258,10 +264,23 @@ function hoursDrift(input: ComplianceInput): ComplianceAlert[] {
   return alerts;
 }
 
+/** Each in-period assignment's window-day: the date its start falls on, after the week's start. */
+function startDayIndex(input: ComplianceInput): Map<Id, IsoDate> {
+  const minute = input.workWeekStartMinute ?? 0;
+  return new Map(
+    input.schedule
+      .assignments()
+      .map((v) => [v.assignment.id, windowDayOf(v.window.startMinute, minute)] as const),
+  );
+}
+
 function pricedOvertime(input: ComplianceInput, cost: CostContext): ComplianceAlert[] {
   const { schedule } = input;
   const byPayPeriod = input.payPeriodOvertime;
-  const period = { start: schedule.period.startDate, end: schedule.period.endDate };
+  const period = judgedSpan(
+    { start: schedule.period.startDate, end: schedule.period.endDate },
+    input.workWeekStartMinute ?? 0,
+  );
   const windows = byPayPeriod
     ? payPeriodsIn(
         period,
@@ -272,14 +291,17 @@ function pricedOvertime(input: ComplianceInput, cost: CostContext): ComplianceAl
     : workWeeksIn(period, input.workWeekStartsOn);
   const span = byPayPeriod ? 'the pay period from' : 'the week of';
   const costs = costSchedule(schedule, cost).assignments;
+  // Each shift is filed by the window-day its start falls on, as the cost engine filed it.
+  const dayOf = startDayIndex(input);
   const alerts: ComplianceAlert[] = [];
   for (const [nurseId, nurse] of schedule.nursesById) {
     if (!nurse.active) continue;
     const mine = costs.filter((c) => c.nurseId === nurseId);
     for (const window of windows) {
-      const inWindow = mine.filter(
-        (c) => compareDates(c.date, window.start) >= 0 && compareDates(c.date, window.end) <= 0,
-      );
+      const inWindow = mine.filter((c) => {
+        const day = dayOf.get(c.assignmentId) ?? c.date;
+        return compareDates(day, window.start) >= 0 && compareDates(day, window.end) <= 0;
+      });
       const withOvertime = inWindow.filter((c) => c.overtimeHours > 0);
       if (withOvertime.length === 0) continue;
       const overtimeHours = oneDecimal(inWindow.reduce((n, c) => n + c.overtimeHours, 0));
@@ -305,7 +327,10 @@ function overtime(input: ComplianceInput): ComplianceAlert[] {
   }
   const { schedule } = input;
   const alerts: ComplianceAlert[] = [];
-  const window = { start: schedule.period.startDate, end: schedule.period.endDate };
+  const window = judgedSpan(
+    { start: schedule.period.startDate, end: schedule.period.endDate },
+    input.workWeekStartMinute ?? 0,
+  );
   const byPayPeriod = input.payPeriodOvertime;
   const weeks = byPayPeriod
     ? payPeriodsIn(
@@ -319,14 +344,12 @@ function overtime(input: ComplianceInput): ComplianceAlert[] {
   for (const [nurseId, nurse] of schedule.nursesById) {
     if (!nurse.active) continue;
     for (const week of weeks) {
-      const inWeek = schedule
-        .timelineFor(nurseId)
-        .filter(
-          (v) =>
-            !v.shiftType.isOnCall &&
-            compareDates(v.assignment.date, week.start) >= 0 &&
-            compareDates(v.assignment.date, week.end) <= 0,
-        );
+      const inWeek = schedule.timelineFor(nurseId).filter((v) => {
+        if (v.shiftType.isOnCall) return false;
+        // Filed by its start against the work week's start time (its date at midnight).
+        const day = windowDayOf(v.window.startMinute, input.workWeekStartMinute ?? 0);
+        return compareDates(day, week.start) >= 0 && compareDates(day, week.end) <= 0;
+      });
       // A week this period holds none of the nurse's shifts in was judged with the last schedule,
       // and an alert here would name nothing the manager could move.
       if (!inWeek.some((v) => v.inPeriod)) continue;

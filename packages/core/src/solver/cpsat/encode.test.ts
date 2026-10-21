@@ -14,7 +14,13 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Assignment, FairnessLedgerEntry, Nurse, Preference } from '../../domain/entities.js';
-import { addDays, isoDate } from '../../domain/time.js';
+import { addDays, isoDate, type Weekday } from '../../domain/time.js';
+import {
+  judgedSpan,
+  payPeriodIndex,
+  payPeriodWindow,
+  workWeekOf,
+} from '../../rules/hours-rules.js';
 import {
   ALL_RULES,
   defaultRuleSet,
@@ -1527,6 +1533,194 @@ describe('a holdover in the lookback and the weekly overtime cap', () => {
   });
 });
 
+describe('a night over the week’s edge and the weekly cap (21 Q1)', () => {
+  // Weeks start Sunday; overtime past 41h; a 120h contract so only the week can trip. Three 12s
+  // Mon–Wed 5–7 Jan (36h) and the Saturday 10 Jan night: by the clock the week holds
+  // 36 + 5 (19:00–24:00) = 41h, legal; whole, 36 + 12 = 48h.
+  const SPRING_FORWARD = { atMinute: 29_548_920, deltaMinutes: 60 };
+  const input = (
+    attribution: 'clock' | 'start' | 'no pay settings',
+    options: Partial<SolveScenarioOptions> = {},
+  ) =>
+    unit([makeNurse({ id: 'ada', firstName: 'Ada', contractedHoursPerPeriod: 120 })], {
+      ruleSet: withParams('max-hours-per-week', { overtimeThresholdHours: 41 }),
+      ...(attribution === 'no pay settings'
+        ? {}
+        : {
+            cost: {
+              payRates: [],
+              differentials: [],
+              overtimeRules: [],
+              overtimeWindowAttribution: attribution,
+            },
+          }),
+      ...options,
+    });
+  const week = (dates: string[], night: string) => [
+    ...dates.map((d) => assign('ada', DAY_12, d)),
+    assign('ada', NIGHT_12, night),
+  ];
+  const monToWed = ['2026-01-05', '2026-01-06', '2026-01-07'];
+
+  it('allows the Saturday night when only its evening hours fall in the full week', () => {
+    expect(evaluate(encodeCpsat(input('clock')), week(monToWed, '2026-01-10')).violated).toEqual(
+      [],
+    );
+  });
+
+  it('forbids it when pay keeps a shift in its start week, or no pay settings are loaded', () => {
+    for (const attribution of ['start', 'no pay settings'] as const) {
+      const found = evaluate(encodeCpsat(input(attribution)), week(monToWed, '2026-01-10'));
+      expect(found.violated.join('\n'), attribution).toMatch(/weekly hours: .* week of 2026-01-04/);
+    }
+  });
+
+  it('counts its seven Sunday hours toward the next week', () => {
+    // Week of 11 Jan: 7h + Mon–Wed 12–14 Jan (36h) = 43h, past 41.
+    const found = evaluate(
+      encodeCpsat(input('clock')),
+      week(['2026-01-12', '2026-01-13', '2026-01-14'], '2026-01-10'),
+    );
+    expect(found.violated.join('\n')).toMatch(/weekly hours: .* week of 2026-01-11/);
+  });
+
+  it('counts the Sunday hours of last schedule’s Saturday night in the first week', () => {
+    // Published Sat 3 Jan night: 7h + Mon–Wed 5–7 Jan (36h) = 43h, past 41. By start it stays
+    // in the week before, leaving 36h.
+    const prior = [assign('ada', NIGHT_12, '2026-01-03', { periodId: 'prev' })];
+    const days = monToWed.map((d) => assign('ada', DAY_12, d));
+    const clock = encodeCpsat(input('clock', { priorAssignments: prior }));
+    expect(evaluate(clock, days).violated.join('\n')).toMatch(/weekly hours/);
+    const start = encodeCpsat(input('start', { priorAssignments: prior }));
+    expect(evaluate(start, days).violated).toEqual([]);
+  });
+
+  it('counts the spring-forward night as the 11 hours worked', () => {
+    // Schedule Sun 1 – Sat 14 Mar, overtime past 47h. Three 12s and the Sat 7 Mar night: by
+    // start 36 + 11 real hours = 47, legal; at declared hours 36 + 12 = 48, not.
+    const spring = (attribution: 'start' | 'no pay settings') =>
+      encodeCpsat(
+        input(attribution, {
+          startDate: isoDate('2026-03-01'),
+          endDate: isoDate('2026-03-14'),
+          dstTransitions: [SPRING_FORWARD],
+          ruleSet: withParams('max-hours-per-week', { overtimeThresholdHours: 47 }),
+        }),
+      );
+    const roster = week(['2026-03-02', '2026-03-03', '2026-03-04'], '2026-03-07');
+    expect(evaluate(spring('start'), roster).violated).toEqual([]);
+    expect(evaluate(spring('no pay settings'), roster).violated.join('\n')).toMatch(/weekly hours/);
+  });
+
+  it('caps the week a schedule opens in when its first shift starts before 19:00 Saturday', () => {
+    // Schedule from Sat 10 Jan, week from Saturday 19:00, cap 40. Sat 10 Jan 07:00 starts in the
+    // week from Sat 3 Jan 19:00 with the published Tue–Thu 6–8 Jan (36h): 36 + 12 = 48 > 40.
+    const encoding = encodeCpsat(
+      input('clock', {
+        startDate: isoDate('2026-01-10'),
+        endDate: isoDate('2026-01-23'),
+        priorAssignments: ['2026-01-06', '2026-01-07', '2026-01-08'].map((d) =>
+          assign('ada', DAY_12, d, { periodId: 'prev' }),
+        ),
+        ruleSet: withParams('max-hours-per-week', {
+          workWeekStartsOn: 6,
+          workWeekStartMinute: 1140,
+          maxHoursPerWeek: 40,
+        }),
+      }),
+    );
+    const found = evaluate(encoding, [assign('ada', DAY_12, '2026-01-10')]);
+    expect(found.violated.join('\n')).toMatch(/weekly hours: .* week of 2026-01-03/);
+  });
+
+  describe('with paid leave counted toward overtime', () => {
+    // Mon 5 and Tue 6 Jan on 12s and Wed 7 Jan on an 8 (32h), 8h paid leave on Thu 8 Jan, and
+    // the Sat 10 Jan night's 5h before midnight: 32 + 8 + 5 = 45h toward the threshold.
+    const leaveWeek = (threshold: number, leaveCounts = true) =>
+      unit([makeNurse({ id: 'ada', firstName: 'Ada', contractedHoursPerPeriod: 120 })], {
+        shiftTypes: [DAY_12, NIGHT_12, DAY_8],
+        coverageRequirements: [
+          ...coverageAllWeek(DAY_12, 'RN', 1),
+          ...coverageAllWeek(NIGHT_12, 'RN', 1),
+          ...coverageAllWeek(DAY_8, 'RN', 1),
+        ],
+        timeOff: [timeOff('ada', '2026-01-08', '2026-01-08', { paidHours: 8 })],
+        ruleSet: withParams('max-hours-per-week', {
+          overtimeThresholdHours: threshold,
+          paidLeaveCountsTowardOvertime: leaveCounts,
+        }),
+        cost: {
+          payRates: [],
+          differentials: [],
+          overtimeRules: [],
+          overtimeWindowAttribution: 'clock',
+        },
+      });
+    const roster = () => [
+      assign('ada', DAY_12, '2026-01-05'),
+      assign('ada', DAY_12, '2026-01-06'),
+      assign('ada', DAY_8, '2026-01-07'),
+      assign('ada', NIGHT_12, '2026-01-10'),
+    ];
+    /** The rule's unauthorised hours, SA's verdict on the night, and CP-SAT's violated labels. */
+    function judged(input: SolveInput) {
+      const encoding = encodeCpsat(input);
+      const model = encoding.solverModel;
+      const rows = roster();
+      const view = new ScheduleView({
+        period: input.period,
+        assignments: rows,
+        priorAssignments: input.priorAssignments,
+        nurses: model.nurses,
+        shiftTypes: model.shiftTypes,
+      });
+      const rule = evaluateSchedule(view, input.ruleSet, model.ctx)
+        .violations.filter((v) => v.code === 'unauthorised_overtime')
+        .map((v) => v.amount);
+      const sa = new SolverModel(input);
+      for (const a of rows.slice(0, 3)) sa.add(a);
+      const night = sa.shiftAt(sa.dateIdx.get(isoDate('2026-01-10'))!, NIGHT_12);
+      return {
+        rule,
+        saOffersNight: sa.eligible(0, night, 'RN'),
+        cpsat: evaluate(encoding, rows).violated,
+      };
+    }
+
+    it('allows the week that lands exactly on the threshold', () => {
+      // 45h against 45.
+      expect(judged(leaveWeek(45))).toEqual({ rule: [], saOffersNight: true, cpsat: [] });
+    });
+
+    it('flags the hour the leave and the night’s evening take past the threshold', () => {
+      // 45h against 44: 1h unauthorised.
+      const found = judged(leaveWeek(44));
+      expect(found.rule).toEqual([1]);
+      expect(found.saOffersNight).toBe(false);
+      expect(found.cpsat.join('\n')).toMatch(/weekly hours: .* week of 2026-01-04/);
+    });
+
+    it('leaves the leave out when the contract does not count it', () => {
+      // 32 + 5 = 37h against 44.
+      expect(judged(leaveWeek(44, false))).toEqual({ rule: [], saOffersNight: true, cpsat: [] });
+    });
+  });
+
+  it('leaves the Sunday hours of the last pay period’s night to the next one', () => {
+    // Pay period Sun 4 – Sat 17 Jan, overtime past 80h. Mon–Wed of both weeks (72h) and the
+    // Sat 17 Jan night: by the clock 72 + 5 = 77h; by start 84h.
+    const fortnightly = withParams('max-hours-per-week', {
+      overtimeByPayPeriod: true,
+      payPeriodOvertimeThresholdHours: 80,
+    });
+    const roster = week([...monToWed, '2026-01-12', '2026-01-13', '2026-01-14'], '2026-01-17');
+    const clock = encodeCpsat(input('clock', { ruleSet: fortnightly }));
+    expect(evaluate(clock, roster).violated).toEqual([]);
+    const start = encodeCpsat(input('start', { ruleSet: fortnightly }));
+    expect(evaluate(start, roster).violated.join('\n')).toMatch(/overtime: .* pay period/);
+  });
+});
+
 describe('who runs the shift', () => {
   it('counts a shift run by an LPN as missing its charge nurse, as the rules do', () => {
     // Monday's day 12: Lena, a charge-eligible LPN, and Ana, an RN who is not charge-eligible.
@@ -2322,6 +2516,202 @@ describe('agreement with the rule engine', () => {
       paidLeaveCountsTowardOvertime: true,
     });
     expectParity(parityInput({ ...paidLeave, ruleSet }));
+  });
+
+  describe('week-crossing nights over the clock changes (21 Q1)', () => {
+    const SPRING_FORWARD = { atMinute: 29_548_920, deltaMinutes: 60 };
+    const FALL_BACK = { atMinute: 29_891_640, deltaMinutes: -60 };
+    // Two Sunday-start weeks around each clock change, opened by a published Saturday night:
+    // the spring Saturday 7 Mar night gives the next week 6 real hours, the fall 31 Oct one 8.
+    const crossing = (
+      attribution: 'clock' | 'start',
+      start: string,
+      end: string,
+      prior: string,
+      byPayPeriod = false,
+      [workWeekStartsOn, workWeekStartMinute]: readonly [number, number] = [0, 0],
+    ) =>
+      parityInput({
+        startDate: isoDate(start),
+        endDate: isoDate(end),
+        dstTransitions: [SPRING_FORWARD, FALL_BACK],
+        priorAssignments: [assign('ada', NIGHT_12, prior, { periodId: 'prev' })],
+        cost: {
+          payRates: [],
+          differentials: [],
+          overtimeRules: [],
+          overtimeWindowAttribution: attribution,
+        },
+        ruleSet: withParams('max-hours-per-week', {
+          overtimeByPayPeriod: byPayPeriod,
+          workWeekStartsOn,
+          workWeekStartMinute,
+        }),
+      });
+    // Both schedules are exactly one of the unit's pay periods (anchor Sun 4 Jan, 14 days), so by
+    // pay period the last Saturday night carries its Sunday hours into a pay period not judged.
+    const CASES = [
+      ['clock', '2026-03-01', '2026-03-14', '2026-02-28', false],
+      ['start', '2026-03-01', '2026-03-14', '2026-02-28', false],
+      ['clock', '2026-10-25', '2026-11-07', '2026-10-24', false],
+      ['start', '2026-10-25', '2026-11-07', '2026-10-24', false],
+      ['clock', '2026-03-01', '2026-03-14', '2026-02-28', true],
+      ['start', '2026-03-01', '2026-03-14', '2026-02-28', true],
+      ['clock', '2026-10-25', '2026-11-07', '2026-10-24', true],
+      ['start', '2026-10-25', '2026-11-07', '2026-10-24', true],
+    ] as const;
+    // Work weeks that start at a time of day (29 CFR 778.105): Sunday 07:00, Saturday 19:00 (a
+    // night starts on the boundary), and one drawn at random so no shift change is special.
+    const drawn = new Rng(5);
+    const STARTS = [
+      [0, 420],
+      [6, 1140],
+      [drawn.nextInt(0, 6), drawn.nextInt(1, 1438)],
+    ] as const;
+
+    /**
+     * Each nurse-week (and, by pay period, each nurse-pay-period) judged three ways on random
+     * rosters: the rule's findings (code and hours), the annealer's counters (the default 48h
+     * cap, and the 40h weekly or 80h pay-period threshold, applied to them) and CP-SAT's
+     * constraints. Hours of 8s and 12s that are not a multiple of four hold part of a night,
+     * which is the case under test, so those must turn up.
+     */
+    function expectWeeksAgree(input: SolveInput, byPayPeriod: boolean): void {
+      const encoding = encodeCpsat(input);
+      const draw = rosterDrawer(encoding);
+      const rng = new Rng(11);
+      const params = input.ruleSet.configs.find((c) => c.ruleId === 'max-hours-per-week')!
+        .params as { workWeekStartsOn: Weekday; workWeekStartMinute: number };
+      // Counters are indexed from the window holding the schedule's first instant.
+      const span = judgedSpan(
+        { start: input.period.startDate, end: input.period.endDate },
+        params.workWeekStartMinute,
+      );
+      const firstWeek = workWeekOf(span.start, params.workWeekStartsOn).start;
+      let split = 0;
+      for (let trial = 0; trial < 400; trial++) {
+        const roster = draw(rng);
+        const model = new SolverModel(input);
+        for (const a of roster) model.add({ ...a });
+        const view = new ScheduleView({
+          period: input.period,
+          assignments: roster,
+          priorAssignments: input.priorAssignments,
+          nurses: model.nurses,
+          shiftTypes: model.shiftTypes,
+        });
+        // Keyed by code too: the first week and the pay period start on the same Sunday.
+        const byRule = new Map<string, unknown>();
+        for (const v of evaluateSchedule(view, input.ruleSet, model.ctx, {
+          only: ['max-hours-per-week'],
+        }).violations) {
+          byRule.set(`${v.code}|${v.nurseIds[0]}|${v.dates[0]}`, v.details?.scheduledHours);
+        }
+        const byModel = new Map<string, number>();
+        for (const [n, nurse] of model.nurses.entries()) {
+          for (const [w, hours] of model.weekHoursOf(n).entries()) {
+            const code =
+              hours > 48
+                ? 'over_max_hours'
+                : !byPayPeriod && hours > 40
+                  ? 'unauthorised_overtime'
+                  : '';
+            if (code === '') continue;
+            byModel.set(`${code}|${nurse.id}|${addDays(firstWeek, 7 * w)}`, hours);
+            if (hours % 4 !== 0) split++;
+          }
+          if (!byPayPeriod) continue;
+          for (const [w, hours] of model.overtimeHoursOf(n).entries()) {
+            if (hours <= 80) continue;
+            const first = payPeriodIndex(span.start, input.unit);
+            const payStart = payPeriodWindow(first + w, input.unit).start;
+            byModel.set(`unauthorised_overtime|${nurse.id}|${payStart}`, hours);
+            if (hours % 4 !== 0) split++;
+          }
+        }
+        const idByName = new Map(model.nurses.map((x) => [`${x.firstName} ${x.lastName}`, x.id]));
+        const keyOf = (code: string, name: string, date: string) =>
+          `${code}|${idByName.get(name)}|${date}`;
+        const byEncoding = evaluate(encoding, roster).violated.flatMap((label) => {
+          const week = /^weekly hours: (.*) week of (\S+)/.exec(label);
+          if (week) {
+            // By pay period the weekly constraint is the cap alone; weekly, it carries both.
+            const code = byRule.has(keyOf('over_max_hours', week[1]!, week[2]!))
+              ? 'over_max_hours'
+              : byPayPeriod
+                ? 'over_max_hours'
+                : 'unauthorised_overtime';
+            return [keyOf(code, week[1]!, week[2]!)];
+          }
+          const pay = /^overtime: (.*) pay period from (\S+)/.exec(label);
+          return pay ? [keyOf('unauthorised_overtime', pay[1]!, pay[2]!)] : [];
+        });
+        const verdict = `trial ${trial}`;
+        expect(byModel, verdict).toEqual(byRule);
+        expect(byEncoding.sort(), verdict).toEqual([...byRule.keys()].sort());
+      }
+      expect(split).toBeGreaterThan(20);
+    }
+
+    for (const [day, minute] of STARTS) {
+      for (const attribution of ['clock', 'start'] as const) {
+        for (const byPayPeriod of [false, true]) {
+          const label = `${attribution}, week from day ${day} minute ${minute}${byPayPeriod ? ', by pay period' : ''}`;
+          const input = () =>
+            crossing(attribution, '2026-10-25', '2026-11-07', '2026-10-24', byPayPeriod, [
+              day,
+              minute,
+            ]);
+          it(`judges each window alike in the rules, the annealer and CP-SAT (${label})`, () => {
+            expectWeeksAgree(input(), byPayPeriod);
+          });
+
+          it(`calls a roster illegal exactly when the rules do (${label})`, () => {
+            expectParity(input());
+          });
+        }
+      }
+    }
+
+    // Schedules that open on the week's first weekday with a start time after midnight: the
+    // first day's morning belongs to the week before, which holds published hours. Sat 24 Oct
+    // under Saturday 19:00, and Sun 25 Oct under Sunday 07:00.
+    for (const [day, minute, start, end, prior] of [
+      [6, 1140, '2026-10-24', '2026-11-06', '2026-10-21'],
+      [0, 420, '2026-10-25', '2026-11-07', '2026-10-22'],
+    ] as const) {
+      for (const attribution of ['clock', 'start'] as const) {
+        for (const byPayPeriod of [false, true]) {
+          const label = `${attribution}, opening on day ${day} with the week from minute ${minute}${byPayPeriod ? ', by pay period' : ''}`;
+          const input = () => {
+            const base = crossing(attribution, start, end, prior, byPayPeriod, [day, minute]);
+            // A published week's worth before the schedule, in the window its first morning opens.
+            const tail = [0, 1, 2].map((i) =>
+              assign('bo', DAY_12, addDays(isoDate(prior), i), { periodId: 'prev' }),
+            );
+            return { ...base, priorAssignments: [...base.priorAssignments, ...tail] };
+          };
+          it(`judges each window alike in the rules, the annealer and CP-SAT (${label})`, () => {
+            expectWeeksAgree(input(), byPayPeriod);
+          });
+
+          it(`calls a roster illegal exactly when the rules do (${label})`, () => {
+            expectParity(input());
+          });
+        }
+      }
+    }
+
+    for (const [attribution, start, end, prior, byPayPeriod] of CASES) {
+      const label = `${attribution}, ${start}${byPayPeriod ? ', by pay period' : ''}`;
+      it(`judges each window alike in the rules, the annealer and CP-SAT (${label})`, () => {
+        expectWeeksAgree(crossing(attribution, start, end, prior, byPayPeriod), byPayPeriod);
+      });
+
+      it(`calls a roster illegal exactly when the rules do (${label})`, () => {
+        expectParity(crossing(attribution, start, end, prior, byPayPeriod));
+      });
+    }
   });
 
   it('agrees with the rules on a pay period the schedule opens in, judged with its history', () => {

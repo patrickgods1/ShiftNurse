@@ -27,7 +27,7 @@ import { costImpact, fairnessImpact, sumCost } from '../conflicts/impact.js';
 import { planPickup } from '../conflicts/pickup.js';
 import { dayLabel, dollars, nurseName, plural, signed } from '../conflicts/text.js';
 import type { Assignment, Id } from '../domain/entities.js';
-import type { IsoDate } from '../domain/time.js';
+import { type IsoDate, shiftWindow } from '../domain/time.js';
 import { overtimeHoursAround } from '../rules/hours-rules.js';
 import type { Violation } from '../rules/types.js';
 import { diffViolations } from '../rules/violation-diff.js';
@@ -108,7 +108,13 @@ export function evaluateExchange(input: ExchangeInput): ExchangeEvaluation {
   }
   if (blockers.length === 0) {
     for (const side of forced) {
-      const otHours = overtimeHoursFor(engine, afterState, side.recipient, side.source.date);
+      const otHours = overtimeHoursFor(
+        engine,
+        afterState,
+        side.recipient,
+        // Its start, so a week that begins at a shift change files the shift where the rule does.
+        shiftWindow(side.source.date, engine.shiftType(side.source.shiftTypeId)).startMinute,
+      );
       // The pickup's own price: the exchange's net would show a trade forcing overtime on both
       // sides as the same dollars twice, and a giveaway as its cost less the giver's saved shift.
       const pickupCost = costImpact(engine, before, afterState, [side.recipient]).delta;
@@ -309,15 +315,16 @@ function overtimeHoursFor(
   engine: ConflictEngine,
   state: SimState,
   nurseId: Id,
-  date: IsoDate,
+  startMinute: number,
 ): number {
   return overtimeHoursAround(
     state.view,
     nurseId,
-    date,
+    startMinute,
     engine.maxHoursParams,
     engine.input.unit,
     state.ctx.paidLeaveByNurse.get(nurseId),
+    state.ctx,
   );
 }
 

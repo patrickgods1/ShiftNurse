@@ -54,6 +54,7 @@ import {
   dayNumber,
   type IsoDate,
   isWeekendWindow,
+  MINUTES_PER_HOUR,
   type ShiftWindow,
   shiftWindow,
   weekdayOf,
@@ -107,13 +108,14 @@ import {
 } from '../rules/weekend-pattern.js';
 import { coveringShift } from '../schedule/cover.js';
 import { isElsewhere } from '../schedule/elsewhere.js';
-import { workedHours } from '../schedule/holdover.js';
+import { workedHours, workedWindow } from '../schedule/holdover.js';
 import { floorSegments } from '../schedule/overlap.js';
 import { type AssignmentView, ScheduleView } from '../schedule/view.js';
 import { breachAllowance, isTolerated } from './gate.js';
 import {
   buildShifts,
   costContextFor,
+  type HoursPart,
   historyFairness,
   hoursBuckets,
   workCalendar,
@@ -257,19 +259,26 @@ export class SolverModel {
   private readonly onDate: number[][];
   /** nurse × date → on approved leave. Leave never changes during a solve. */
   private readonly onLeave: boolean[][];
-  /** nurse × work week → hours that count toward the weekly cap, lookback tail included. */
-  private readonly weekHours: number[][];
   /**
-   * nurse × overtime window → hours that count toward the overtime threshold, lookback tail
+   * nurse × work week → whole minutes that count toward the weekly cap, lookback tail included,
+   * a week-crossing night split as the rule splits it (`WorkCalendar.partsOf`). Minutes, because
+   * by the clock a night gives a week 300 of them and real minutes are not whole hundredths.
+   */
+  private readonly weekMinutes: number[][];
+  /**
+   * nurse × overtime window → minutes that count toward the overtime threshold, lookback tail
    * included. The window is the work week, or the pay period when the rule set judges overtime
-   * over the pay period; kept apart from `weekHours` because the weekly cap binds either way.
+   * over the pay period; kept apart from `weekMinutes` because the weekly cap binds either way.
    */
-  private readonly overtimeHours: number[][];
+  private readonly overtimeMinutes: number[][];
   /**
-   * nurse × overtime window → paid leave that counts toward the overtime threshold (never the
-   * cap). All zero unless the rule set counts leave toward overtime.
+   * nurse × overtime window → paid leave minutes that count toward the overtime threshold (never
+   * the cap). All zero unless the rule set counts leave toward overtime.
    */
-  readonly overtimeLeaveHours: number[][];
+  readonly overtimeLeaveMinutes: number[][];
+  /** shift index → its minutes by work week and by overtime window (`WorkCalendar.partsOf`). */
+  private readonly weekParts: readonly HoursPart[][];
+  private readonly overtimeParts: readonly HoursPart[][];
 
   // --- Precomputed inputs ----------------------------------------------------
   // Public and read-only so the CP-SAT encoder (cpsat/) reads the same tables instead of
@@ -322,14 +331,12 @@ export class SolverModel {
   readonly maxHoursParams: MaxHoursParams;
   /** date index → work-week index, counted from the week containing the period's first day. */
   readonly weekOfDate: number[];
-  /** Same for any date, prior or in-period; negative before the first week. */
-  private readonly weekOf: (date: IsoDate) => number;
   private readonly weekCount: number;
-  /** date index → overtime-window index, counted from the window containing the first day. */
-  private readonly overtimeOfDate: number[];
+  /** Any date's overtime-window index, counted from the window containing the first day. */
   private readonly overtimeOf: (date: IsoDate) => number;
   private readonly overtimeCount: number;
-  private readonly overtimeThreshold: number;
+  private readonly maxWeekMinutes: number;
+  private readonly overtimeThresholdMinutes: number;
   readonly histCarried: Record<BurdenComponent, number>[];
   /**
    * Each nurse's contracted share × exposure (decay-weighted pay periods available), rounded to
@@ -513,14 +520,20 @@ export class SolverModel {
     this.fteParams = paramsOf(contractedHoursRule, configs) ?? contractedHoursRule.defaultParams;
     const maxHours = paramsOf(maxHoursRule, configs) ?? maxHoursRule.defaultParams;
     this.maxHoursParams = maxHours;
-    const calendar = workCalendar(input, this.dates, maxHours);
-    this.weekOf = calendar.weekOf;
+    // The rule context carries the unit's attribution, so the counters split a night as the
+    // gate's own rule does.
+    const calendar = workCalendar(input, this.dates, maxHours, this.ctx);
     this.weekOfDate = calendar.weekOfDate;
     this.weekCount = calendar.weekCount;
     this.overtimeOf = calendar.overtimeOf;
-    this.overtimeOfDate = calendar.overtimeOfDate;
     this.overtimeCount = calendar.overtimeCount;
-    this.overtimeThreshold = calendar.overtimeThreshold;
+    this.maxWeekMinutes = calendar.maxWeekMinutes;
+    this.overtimeThresholdMinutes = calendar.overtimeThresholdMinutes;
+    const shiftParts = shifts.map((shift) =>
+      calendar.partsOf(shiftWindow(shift.date, shift.shiftType), shift.shiftType.durationHours),
+    );
+    this.weekParts = shiftParts.map((p) => p.week);
+    this.overtimeParts = shiftParts.map((p) => p.overtime);
 
     this.costCtx = costContextFor(input, this.ctx, maxHours);
 
@@ -594,30 +607,28 @@ export class SolverModel {
     this.onLeave = this.nurses.map((nurse) =>
       this.dates.map((date) => approvedLeaveOn(this.ctx, nurse.id, date) !== undefined),
     );
-    this.weekHours = Array.from({ length: n }, () => new Array<number>(this.weekCount).fill(0));
-    this.overtimeHours = Array.from({ length: n }, () =>
+    this.weekMinutes = Array.from({ length: n }, () => new Array<number>(this.weekCount).fill(0));
+    this.overtimeMinutes = Array.from({ length: n }, () =>
       new Array<number>(this.overtimeCount).fill(0),
     );
-    this.overtimeLeaveHours = this.nurses.map((nurse) => {
+    this.overtimeLeaveMinutes = this.nurses.map((nurse) => {
       const windows = new Array<number>(this.overtimeCount).fill(0);
       if (!maxHours.paidLeaveCountsTowardOvertime) return windows;
       for (const c of this.ctx.paidLeaveByNurse.get(nurse.id) ?? []) {
         const w = this.overtimeOf(c.date);
         if (w >= 0 && w < this.overtimeCount) windows[w]! += c.hours;
       }
-      return windows;
+      return windows.map((hours) => Math.round(hours * MINUTES_PER_HOUR));
     });
     for (const [i, list] of prior.entries()) {
       for (const a of list) {
         const st = this.shiftTypeById.get(a.shiftTypeId);
         if (!st || (st.isOnCall && !maxHours.onCallCountsTowardHours)) continue;
-        const week = this.weekOf(a.date);
         // A lookback shift held over counts what was worked; in-period rows are drafts, which
         // never carry a holdover (only a draft is generated).
-        const hours = workedHours(a, st);
-        if (week >= 0 && week < this.weekCount) this.weekHours[i]![week]! += hours;
-        const w = this.overtimeOf(a.date);
-        if (w >= 0 && w < this.overtimeCount) this.overtimeHours[i]![w]! += hours;
+        const parts = calendar.partsOf(workedWindow(a.date, st, a), workedHours(a, st));
+        for (const [week, minutes] of parts.week) this.weekMinutes[i]![week]! += minutes;
+        for (const [w, minutes] of parts.overtime) this.overtimeMinutes[i]![w]! += minutes;
       }
     }
     // The half of a pair already behind the period: worked in the lookback tail (Christmas Eve
@@ -830,6 +841,24 @@ export class SolverModel {
   }
 
   /**
+   * A nurse's hours in each judged work week, as the weekly cap counts them: what the parity
+   * tests hold against the rule's own count, so the pre-filter cannot drift from the rule.
+   * @internal
+   */
+  weekHoursOf(nurseIdx: number): number[] {
+    return this.weekMinutes[nurseIdx]!.map((minutes) => minutes / MINUTES_PER_HOUR);
+  }
+
+  /**
+   * The same for each overtime window (the work week, or the pay period under
+   * `overtimeByPayPeriod`), paid leave that counts toward overtime left out.
+   * @internal
+   */
+  overtimeHoursOf(nurseIdx: number): number[] {
+    return this.overtimeMinutes[nurseIdx]!.map((minutes) => minutes / MINUTES_PER_HOUR);
+  }
+
+  /**
    * The cheap pre-filter before the rule gate: right role for the slot, active, free that day,
    * not on approved leave, and not already at the top of their hours tolerance. Everything it
    * rejects the gate would reject too; it exists so the gate runs on a shortlist.
@@ -851,18 +880,17 @@ export class SolverModel {
     // authorised hours (`authorisedOvertimeHours`); drafts are generated without overtime, so
     // this only ever leaves a shift to CP-SAT or the manager.
     if (!shift.shiftType.isOnCall || this.maxHoursParams.onCallCountsTowardHours) {
-      const hours = shift.shiftType.durationHours;
-      const week = this.weekOfDate[shift.dateIdx]!;
-      if (this.weekHours[nurseIdx]![week]! + hours > this.maxHoursParams.maxHoursPerWeek) {
-        return false;
+      for (const [week, minutes] of this.weekParts[shift.idx]!) {
+        if (this.weekMinutes[nurseIdx]![week]! + minutes > this.maxWeekMinutes) return false;
       }
-      const w = this.overtimeOfDate[shift.dateIdx]!;
-      if (
-        this.maxHoursParams.requireOvertimeAuthorisation &&
-        this.overtimeHours[nurseIdx]![w]! + hours + this.overtimeLeaveHours[nurseIdx]![w]! >
-          this.overtimeThreshold
-      ) {
-        return false;
+      if (this.maxHoursParams.requireOvertimeAuthorisation) {
+        for (const [w, minutes] of this.overtimeParts[shift.idx]!) {
+          const counted =
+            this.overtimeMinutes[nurseIdx]![w]! +
+            minutes +
+            this.overtimeLeaveMinutes[nurseIdx]![w]!;
+          if (counted > this.overtimeThresholdMinutes) return false;
+        }
       }
     }
     return true;
@@ -1091,8 +1119,12 @@ export class SolverModel {
     this.staffedByRole[shift.idx * NURSE_ROLES.length + ROLE_INDEX[this.nurses[n]!.role]]! += sign;
     this.onDate[n]![shift.dateIdx]! += sign;
     if (!st.isOnCall || this.maxHoursParams.onCallCountsTowardHours) {
-      this.weekHours[n]![this.weekOfDate[shift.dateIdx]!]! += sign * st.durationHours;
-      this.overtimeHours[n]![this.overtimeOfDate[shift.dateIdx]!]! += sign * st.durationHours;
+      for (const [week, minutes] of this.weekParts[shift.idx]!) {
+        this.weekMinutes[n]![week]! += sign * minutes;
+      }
+      for (const [w, minutes] of this.overtimeParts[shift.idx]!) {
+        this.overtimeMinutes[n]![w]! += sign * minutes;
+      }
     }
     if (!st.isOnCall || this.fteParams.onCallCountsTowardHours) {
       const b = this.bucketOfDate[shift.dateIdx]!;

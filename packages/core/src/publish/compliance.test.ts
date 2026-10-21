@@ -942,6 +942,23 @@ describe('overtime alerts priced under the overtime rules', () => {
     expect(ot[0]).toMatchObject({ nurseId: 'n1', overtimeHours: 8, assignmentIds: ['in-period'] });
   });
 
+  it('files a Saturday day shift in the week that ends at Saturday 19:00, priced or not', () => {
+    resetFixtureCounters();
+    // Week from Sat 3 Jan 19:00 to Sat 10 Jan 19:00: Wed–Fri 7–9 Jan and Sat 10 Jan 07:00 are
+    // 4 × 12 = 48h, 8 past 40. From Saturday midnight the Saturday shift opened the next week.
+    const s = scenario({
+      nurses: [makeNurse({ id: 'n1', contractedHoursPerPeriod: 84 })],
+      assignments: assignRun('n1', DAY_12, '2026-01-07', 4),
+    });
+    const sat19 = { workWeekStartsOn: 6, workWeekStartMinute: 1140 } as const;
+    const priced19 = { ...priced(s, [overtimeRule('weekly', 40)]), ...sat19 };
+    expect(overtime(s, sat19).map((a) => [a.date, a.hours])).toEqual([['2026-01-03', 48]]);
+    expect(overtime(s, { ...sat19, cost: priced19 }).map((a) => [a.date, a.overtimeHours])).toEqual(
+      [['2026-01-03', 8]],
+    );
+    expect(overtime(s, { workWeekStartsOn: 6 })).toEqual([]);
+  });
+
   it('stays quiet about overtime that sits wholly in the lookback tail', () => {
     resetFixtureCounters();
     // Four twelves before the period are 48h of overtime already paid for in the last schedule;

@@ -46,6 +46,11 @@ export function ruleContextForInput(
     ...(input.availabilityBlocks ? { availabilityBlocks: input.availabilityBlocks } : {}),
     ...(input.historyFrom ? { historyFrom: input.historyFrom } : {}),
     ...(input.dstTransitions ? { dstTransitions: input.dstTransitions } : {}),
+    // Only with pay settings loaded, defaulting as pay does: a fixture without them keeps the
+    // start-week reading, and a unit's weekly cap counts the hours its payroll counts (21 Q1).
+    ...(input.cost
+      ? { overtimeWindowAttribution: input.cost.overtimeWindowAttribution ?? 'clock' }
+      : {}),
     preferences: input.preferences,
   });
 }
