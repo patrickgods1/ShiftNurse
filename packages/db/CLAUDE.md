@@ -184,4 +184,9 @@
   at create and update, and an import whose id matches two stored nurses is refused before any
   write. No `lower()` unique index: an existing file may already hold twins.
 - **A period's ledger is `periodLedgerRows(view, counterContextFor(...))`** (`period-ledger.ts`):
-  main's publish, the history importer and the demo seeds all book it there.
+  main's publish, the history importer and the demo seeds all book it there. Publish and the
+  demo seeds pass `includeAvailableHomeNurses: true`: a row for every available active home nurse,
+  zero rows included, so a nurse who carried nothing is first in line next period (floats never
+  get one; their home unit books them). `nurse_keeps_history` therefore also keeps a nurse who was
+  on a published roster without shifts, so deactivate rather than delete. The history importer
+  passes `false` and books only the nurses in its file.

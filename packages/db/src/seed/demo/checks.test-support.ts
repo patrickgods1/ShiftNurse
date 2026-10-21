@@ -361,12 +361,33 @@ export function realisticDemoChecks(f: DemoFixture, demo: DemoId, today: IsoDate
     ).toBe(0);
   });
 
-  it('books a ledger row for every nurse who worked a published period, and none for anyone who did not', () => {
+  it('books a ledger row for each nurse who worked a published period and a zero one for each active home nurse who was there and did not', () => {
     const booked = f.count(`SELECT COUNT(*) n FROM fairness_ledger l
       JOIN schedule_period p ON p.id = l.period_id WHERE p.status = 'published'`);
     const worked = f.count(`SELECT COUNT(*) n FROM (SELECT DISTINCT a.nurse_id, a.period_id
       FROM assignment a JOIN schedule_period p ON p.id = a.period_id WHERE p.status = 'published')`);
-    expect(booked).toBe(worked);
+    // Derived from the roster, not from the ledger: active nurses of the period's unit with no
+    // shift in it, hired by its last day and not on approved leave for the whole period.
+    // (No demo deactivates a nurse after publishing, so today's flag is the flag at publish.)
+    const shiftlessAndThere = f.count(`SELECT COUNT(*) n FROM schedule_period p
+      JOIN nurse n ON n.unit_id = p.unit_id AND n.active = 1
+      WHERE p.status = 'published'
+        AND (n.hire_date IS NULL OR n.hire_date <= p.end_date)
+        AND NOT EXISTS (SELECT 1 FROM assignment a
+          WHERE a.nurse_id = n.id AND a.period_id = p.id)
+        AND NOT EXISTS (SELECT 1 FROM time_off_request t
+          WHERE t.nurse_id = n.id AND t.status = 'approved'
+            AND t.start_date <= p.start_date AND t.end_date >= p.end_date)`);
+    expect(shiftlessAndThere).toBeGreaterThan(0);
+    expect(booked).toBe(worked + shiftlessAndThere);
+    const burdenWithoutShifts = f.count(`SELECT COUNT(*) n FROM fairness_ledger l
+      JOIN schedule_period p ON p.id = l.period_id
+      WHERE p.status = 'published'
+        AND NOT EXISTS (SELECT 1 FROM assignment a
+          WHERE a.nurse_id = l.nurse_id AND a.period_id = l.period_id)
+        AND (l.total_hours <> 0 OR l.night_shifts <> 0 OR l.weekends_worked <> 0
+          OR l.holidays_worked <> 0)`);
+    expect(burdenWithoutShifts).toBe(0);
   });
 
   it('counts denials and covered call-outs in the ledger, as the app does', () => {

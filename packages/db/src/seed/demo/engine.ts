@@ -2219,6 +2219,7 @@ export function seedFromProfile(
         ledger: periodLedgerRows(
           counting,
           counterContextFor(db, unit.id, periodRuleSet.weekendDefinition, period),
+          { includeAvailableHomeNurses: true },
         ),
       },
       ACTOR,

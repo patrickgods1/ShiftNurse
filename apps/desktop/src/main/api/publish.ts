@@ -93,7 +93,9 @@ export async function publish(
     const schedule = scheduleViewFor(tx, period, { lookback: false, floated: 'worked' });
     // The ledger is core's counters for what was actually scheduled: the same `periodLedgerRows`
     // the history importer and the seeds book through, so all of them agree on a weekend.
-    const ledger = periodLedgerRows(schedule, counterContext(tx, period.unitId, ruleSet, period));
+    const ledger = periodLedgerRows(schedule, counterContext(tx, period.unitId, ruleSet, period), {
+      includeAvailableHomeNurses: true,
+    });
     return publishSchedule(
       tx,
       { periodId, reason, ledger, hardViolations: { count, codes } },

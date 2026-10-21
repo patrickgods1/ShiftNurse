@@ -55,7 +55,8 @@ this codebase is held to. This document is the practical "how do I build/run/shi
 - **Acuity-driven demand** — coverage floors, acuity tiers/ratios/HPPD, a same-weekday
   moving-average forecaster with seasonal index and back-test, and a census grid.
 - **Fairness scoring** — per-nurse and unit-wide distribution of nights, weekends, holidays,
-  on-call and denied requests, weighted by seniority, with trend history.
+  on-call and denied requests, weighted by seniority, with trend history. A nurse available all period with no
+  shifts is booked as zero burden, so she is first in line next time.
 - **Cost & pricing** — pay rates, shift differentials, overtime rules, budget-vs-actual and
   overtime-concentration reporting, and a running cost strip while editing the grid.
 - **Time off, conflicts & exchanges** — a conflict-detection engine simulates every request

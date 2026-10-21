@@ -6,7 +6,13 @@
  */
 
 import { addDays, isoDate } from '@shiftnurse/core';
-import { auditHistoryFor, getPeriod, ledgerSince, recentAudit } from '@shiftnurse/db';
+import {
+  auditHistoryFor,
+  getPeriod,
+  ledgerSince,
+  listActiveNursesForUnit,
+  recentAudit,
+} from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const createBackup = vi.hoisted(() => vi.fn());
@@ -82,19 +88,29 @@ describe('publishing a schedule', () => {
     expect(outcome.period.status).toBe('published');
     expect(getPeriod(f.handle.db, draft())?.status).toBe('published');
     expect(api().versions(draft())).toHaveLength(1);
-    // Only Ann was scheduled, so only Ann has a ledger row; two nights by hand count.
-    expect(outcome.ledgerEntries).toBe(1);
+    // Only Ann was scheduled: two nights by hand count. Everyone else on the home roster who was
+    // there is booked at zero, so a nurse who carried nothing is not read as "no record".
     const rows = ledgerSince(f.handle.db, f.seeded.unitId, f.seeded.draftStart).filter(
       (l) => l.periodId === draft(),
     );
-    expect(rows.map((r) => [r.nurseId, r.nightShifts])).toEqual([[f.rns[0]!.id, 2]]);
+    expect(outcome.ledgerEntries).toBe(rows.length);
+    // The home roster, one row each: nobody is a float here, and nobody was away.
+    expect(new Set(rows.map((r) => r.nurseId))).toEqual(
+      new Set(listActiveNursesForUnit(f.handle.db, f.seeded.unitId).map((n) => n.id)),
+    );
+    expect(rows.filter((r) => r.nightShifts > 0).map((r) => [r.nurseId, r.nightShifts])).toEqual([
+      [f.rns[0]!.id, 2],
+    ]);
+    expect(rows.filter((r) => r.nurseId !== f.rns[0]!.id).every((r) => r.totalHours === 0)).toBe(
+      true,
+    );
     expect(auditHistoryFor(f.handle.db, 'schedule_version', outcome.version.id)[0]).toMatchObject({
       action: 'publish',
       actor: 'manager',
     });
   });
 
-  it('books only the nurses still on the schedule after a republish', async () => {
+  it('zeroes the nurse who lost her only shift in a republish instead of dropping her row', async () => {
     const [ann, bea] = [f.rns[0]!, f.rns[1]!];
     const shift = placeNight(ann.id, 1);
     await publishAnyway();
@@ -103,11 +119,14 @@ describe('publishing a schedule', () => {
       'Ann on leave',
     );
     const outcome = await publishAnyway('Ann on leave');
-    expect(outcome.ledgerRemoved).toBe(1);
+    expect(outcome.ledgerRemoved).toBe(0);
     const rows = ledgerSince(f.handle.db, f.seeded.unitId, f.seeded.draftStart).filter(
       (l) => l.periodId === draft(),
     );
-    expect(rows.map((r) => [r.nurseId, r.nightShifts])).toEqual([[bea.id, 1]]);
+    expect(rows.find((r) => r.nurseId === ann.id)).toMatchObject({ nightShifts: 0, totalHours: 0 });
+    expect(rows.filter((r) => r.nightShifts > 0).map((r) => [r.nurseId, r.nightShifts])).toEqual([
+      [bea.id, 1],
+    ]);
   });
 
   it('takes the publish backup after the commit, named for the period and version', async () => {

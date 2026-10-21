@@ -46,20 +46,38 @@ export function counterContextFor(
   };
 }
 
+export interface PeriodLedgerOptions {
+  /** Book a zero row for an active home-unit nurse who was available but worked nothing. */
+  includeAvailableHomeNurses: boolean;
+}
+
 /**
- * The ledger rows a publish books for the period `schedule` counts: core's counters, one row per
- * nurse with a shift in it. A nurse who worked nothing gets no row (absence, not zero burden):
- * a zero row would read as "worked no nights" rather than "no record".
+ * The ledger rows a period books, from core's counters. Always a row for each nurse with a shift
+ * in the period. With `includeAvailableHomeNurses` (publish and the demo seeds) also one for each
+ * active nurse whose home is this unit and who was available at least a day: she was there and
+ * carried nothing, and without the row fairness history reads her as "no record", so she is not
+ * first in line next period. Floats never get a zero row: their home unit books them, and
+ * `ledgerSince` joins on home unit, so a second row here would double their exposure. The history
+ * importer passes false, because there is no reliable roster for a period that predates the app:
+ * a nurse missing from its file may simply not have been hired yet.
  */
 export function periodLedgerRows(
   schedule: ScheduleView,
   ctx: CounterContext,
+  options: PeriodLedgerOptions,
 ): UpsertFairnessLedgerInput[] {
   // `assignments()` is in-period only, so lookback shifts never make a nurse "present".
   const present = new Set(schedule.assignments().map((v) => v.nurse.id));
   const rows: UpsertFairnessLedgerInput[] = [];
   for (const [nurseId, counters] of deriveCounters(schedule, ctx)) {
-    if (!present.has(nurseId)) continue;
+    if (!present.has(nurseId)) {
+      if (!options.includeAvailableHomeNurses) continue;
+      const nurse = schedule.nursesById.get(nurseId);
+      if (!nurse) throw new Error(`Counters for unknown nurse ${nurseId}`);
+      const isThere =
+        nurse.unitId === schedule.period.unitId && nurse.active && counters.availableDays > 0;
+      if (!isThere) continue;
+    }
     rows.push({
       nurseId,
       periodId: schedule.period.id,
