@@ -39,6 +39,23 @@ describe('rule settings the scheduler can use', () => {
     expect(problemsOf('max-hours-per-week', { workWeekStartsOn: 6 })).toEqual([]);
   });
 
+  it('takes a night nurses’ work week as a day and a minute of it, or leaves it unset', () => {
+    expect(problemsOf('max-hours-per-week', { nightWorkWeekStartMinute: 1440 })).toEqual([
+      { ruleId: 'max-hours-per-week', key: 'nightWorkWeekStartMinute', message: 'Enter a time.' },
+    ]);
+    expect(problemsOf('max-hours-per-week', { nightWorkWeekStartsOn: 7 })).toEqual([
+      { ruleId: 'max-hours-per-week', key: 'nightWorkWeekStartsOn', message: 'Pick a day.' },
+    ]);
+    // Unset, as every rule set saved before it existed; and Saturday 19:00.
+    expect(problemsOf('max-hours-per-week', {})).toEqual([]);
+    expect(
+      problemsOf('max-hours-per-week', {
+        nightWorkWeekStartsOn: 6,
+        nightWorkWeekStartMinute: 1140,
+      }),
+    ).toEqual([]);
+  });
+
   it('refuses a minimum rest typed as a word', () => {
     expect(problemsOf('min-rest-between-shifts', { minRestHours: 'ten' })).toEqual([
       { ruleId: 'min-rest-between-shifts', key: 'minRestHours', message: 'Enter a number.' },

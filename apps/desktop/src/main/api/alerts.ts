@@ -8,6 +8,7 @@
 import {
   type ComplianceAlert,
   type ContractedHoursParams,
+  compareDates,
   complianceAlerts,
   contractedHoursRule,
   dateInRange,
@@ -24,6 +25,8 @@ import {
   type SchedulePeriod,
   type ScheduleView,
   today,
+  type WorkWeekSettings,
+  workWeekFor,
 } from '@shiftnurse/core';
 import {
   costContext,
@@ -33,6 +36,7 @@ import {
   ledgerHistory,
   listCredentials,
   listHolidaysForUnit,
+  listPeriodsForUnit,
   perNurseRecordsFor,
 } from '@shiftnurse/db';
 import { periodOrThrow, ruleSetFor, scheduleViewFor, unitOrThrow } from './context.js';
@@ -60,6 +64,49 @@ function holidayWorkedBy(
     else workedBy.set(r.holidayId, new Set([r.nurseId]));
   }
   return workedBy;
+}
+
+/** The max-hours rule's work-week settings, night week only where the rule set gives one. */
+function workWeekSettingsOf(params: MaxHoursParams): WorkWeekSettings {
+  return {
+    workWeekStartsOn: params.workWeekStartsOn,
+    workWeekStartMinute: params.workWeekStartMinute ?? 0,
+    ...(params.nightWorkWeekStartsOn !== undefined
+      ? { nightWorkWeekStartsOn: params.nightWorkWeekStartsOn }
+      : {}),
+    ...(params.nightWorkWeekStartMinute !== undefined
+      ? { nightWorkWeekStartMinute: params.nightWorkWeekStartMinute }
+      : {}),
+  };
+}
+
+/**
+ * The work week the previous published schedule (the one whose shifts open this one's weeks) was
+ * published under, when it puts any nurse on this schedule on a different week: the week the
+ * change takes effect overlaps the old one (29 CFR 778.302). Read from that period's own rule-set
+ * snapshot, never "latest".
+ */
+export function previousWorkWeekFor(
+  db: DbLike,
+  period: SchedulePeriod,
+  current: WorkWeekSettings,
+  schedule: ScheduleView,
+): WorkWeekSettings | undefined {
+  // Newest first, so the first match is the latest one ending before this period.
+  const previous = listPeriodsForUnit(db, period.unitId).find(
+    (p) =>
+      p.id !== period.id && p.status !== 'draft' && compareDates(p.endDate, period.startDate) < 0,
+  );
+  if (previous === undefined) return undefined;
+  const params = resolveConfigs(ruleSetFor(db, previous)).find((c) => c.ruleId === maxHoursRule.id)!
+    .params as unknown as MaxHoursParams;
+  const before = workWeekSettingsOf(params);
+  const moved = [...schedule.nursesById.values()].some((nurse) => {
+    const was = workWeekFor(nurse, before);
+    const now = workWeekFor(nurse, current);
+    return was.startsOn !== now.startsOn || was.startMinute !== now.startMinute;
+  });
+  return moved ? before : undefined;
 }
 
 export function alertsForView(
@@ -92,7 +139,9 @@ export function alertsForView(
       ? { leadDays: unit.postingLeadDays, publishDate: today() }
       : undefined;
   const holidays = unit.perDiemCommitment ? listHolidaysForUnit(db, period.unitId) : [];
+  const previousWorkWeek = previousWorkWeekFor(db, period, workWeekSettingsOf(params), schedule);
   return complianceAlerts({
+    ...(previousWorkWeek ? { previousWorkWeek } : {}),
     ...(posting ? { posting } : {}),
     ...(unit.perDiemCommitment
       ? {
@@ -131,6 +180,12 @@ export function alertsForView(
     overtimeThresholdHours: params.overtimeThresholdHours,
     workWeekStartsOn: params.workWeekStartsOn,
     workWeekStartMinute: params.workWeekStartMinute ?? 0,
+    ...(params.nightWorkWeekStartsOn !== undefined
+      ? { nightWorkWeekStartsOn: params.nightWorkWeekStartsOn }
+      : {}),
+    ...(params.nightWorkWeekStartMinute !== undefined
+      ? { nightWorkWeekStartMinute: params.nightWorkWeekStartMinute }
+      : {}),
     ...(params.overtimeByPayPeriod
       ? {
           payPeriodOvertime: {

@@ -14,7 +14,7 @@
  * complete, only hours past the contract are judged: history can only add hours, never remove them.
  */
 
-import type { Assignment, Id, Unit } from '../domain/entities.js';
+import type { Assignment, Id, Nurse, Unit } from '../domain/entities.js';
 import {
   addDays,
   compareDates,
@@ -165,6 +165,44 @@ export function judgedSpan(window: DateWindow, startMinute = 0): DateWindow {
     start: windowDayOf(windowBoundaryMinute(window.start), startMinute),
     end: windowDayOf(windowBoundaryMinute(window.end) + MINUTES_PER_DAY - 1, startMinute),
   };
+}
+
+/**
+ * Where work weeks start, as the rule's params, pay's `CostContext` and the alerts' input all
+ * carry it: the unit's week, and optionally a separate one for nurses on permanent nights.
+ */
+export interface WorkWeekSettings {
+  workWeekStartsOn: Weekday;
+  workWeekStartMinute?: number;
+  nightWorkWeekStartsOn?: Weekday;
+  nightWorkWeekStartMinute?: number;
+}
+
+/** One nurse's work week: the weekday it starts on and the wall minute on that day. */
+export interface WorkWeek {
+  startsOn: Weekday;
+  startMinute: number;
+}
+
+/**
+ * The work week a nurse's weekly cap and overtime are judged on. A workweek belongs to the
+ * employee and may differ between groups (29 CFR 778.105), and contracts give night nurses their
+ * own so their nights are not split (Providence Portland–ONA Art. 7.A). It is chosen by the
+ * nurse's `permanentTour`, never per shift: a week chosen by the shift would let one stretch of
+ * hours be counted in two overlapping weeks, or in neither. A pay period keeps its anchor dates
+ * and takes only `startMinute`. With no night week set, everyone is on the unit's.
+ */
+export function workWeekFor(
+  nurse: Pick<Nurse, 'permanentTour'> | undefined,
+  settings: WorkWeekSettings,
+): WorkWeek {
+  if (settings.nightWorkWeekStartsOn !== undefined && nurse?.permanentTour === 'night') {
+    return {
+      startsOn: settings.nightWorkWeekStartsOn,
+      startMinute: settings.nightWorkWeekStartMinute ?? 0,
+    };
+  }
+  return { startsOn: settings.workWeekStartsOn, startMinute: settings.workWeekStartMinute ?? 0 };
 }
 
 /** The work week containing `date`, from the contract's week-start weekday. */
@@ -466,6 +504,17 @@ export interface MaxHoursParams {
    */
   workWeekStartMinute?: number;
   /**
+   * A separate work week for nurses whose `permanentTour` is nights (`workWeekFor`). Absent, they
+   * share the unit's. It moves only weekly windows: a pay period keeps its anchor dates.
+   */
+  nightWorkWeekStartsOn?: Weekday;
+  /**
+   * The time on `nightWorkWeekStartsOn` the night nurses' week begins (0–1439; absent, midnight),
+   * and the minute their pay periods begin on the usual dates. Read only with
+   * `nightWorkWeekStartsOn` set.
+   */
+  nightWorkWeekStartMinute?: number;
+  /**
    * When true, hours past the overtime threshold must be covered: by a shift marked as
    * authorised overtime, which authorises its whole week (or pay period), or by recorded holdover
    * time, which authorises only its own hours (`authorisedOvertimeHours`). Unauthorised overtime
@@ -495,17 +544,19 @@ export interface MaxHoursParams {
 
 /**
  * The overtime window holding `at`: a shift's start (a wall minute), placed against the work
- * week's start time, or a date, read as its midnight.
+ * week's start time, or a date, read as its midnight. `week` is the nurse's (`workWeekFor`);
+ * absent, the unit's.
  */
 export function overtimeWindowOf(
   at: IsoDate | number,
   params: MaxHoursParams,
   calendar: PayCalendar,
+  week: WorkWeek = workWeekFor(undefined, params),
 ): DateWindow {
   const minute = typeof at === 'number' ? at : windowBoundaryMinute(at);
-  const date = windowDayOf(minute, params.workWeekStartMinute ?? 0);
+  const date = windowDayOf(minute, week.startMinute);
   if (params.overtimeByPayPeriod) return payPeriodWindow(payPeriodIndex(date, calendar), calendar);
-  return workWeekOf(date, params.workWeekStartsOn);
+  return workWeekOf(date, week.startsOn);
 }
 
 /** Hours past which one overtime window is overtime. */
@@ -608,6 +659,20 @@ function hoursIn(
   return out;
 }
 
+/**
+ * A window's hours as `max-hours-per-week` counts them (`hoursIn`), and whether an in-period row
+ * adds to them. For the compliance alerts that weigh one reading of a window against another.
+ */
+export function windowHours(
+  timeline: readonly AssignmentView[],
+  window: DateWindow,
+  reading: WindowReading | undefined,
+  startMinute: number,
+): { hours: number; touchesPeriod: boolean; assignmentIds: Id[] } {
+  const { hours, touchesPeriod, assignmentIds } = hoursIn(timeline, window, reading, startMinute);
+  return { hours, touchesPeriod, assignmentIds };
+}
+
 export const maxHoursRule: Rule<MaxHoursParams> = {
   id: 'max-hours-per-week',
   name: 'Weekly hour cap and overtime authorisation',
@@ -668,6 +733,34 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
         'between two weeks. A change should be permanent; in the week it changes, payroll owes ' +
         'the greater of the two counts (29 CFR 778.302).',
     },
+    nightWorkWeekStartsOn: {
+      label: "Night nurses' work week starts on",
+      input: 'weekday',
+      optional: true,
+      hint: "Only for nurses whose permanent tour is nights. Leave empty to use the unit's work week.",
+      why:
+        'A work week may begin on any day and at any hour, and may differ for different groups ' +
+        'of employees (29 CFR 778.105). Some contracts give night nurses their own so their ' +
+        'nights stay whole: Providence Portland–ONA Art. 7.A starts it at 12:01 a.m. Saturday ' +
+        'or the night shift closest to it; Kaiser NW–OFNHP 10.A.2 sets one for nights on 7/70. ' +
+        'A nurse is on one week, chosen by her permanent tour, never by the shift.',
+    },
+    nightWorkWeekStartMinute: {
+      label: "Night nurses' work week starts at",
+      input: 'time-of-day',
+      optional: true,
+      integer: true,
+      min: 0,
+      max: 1439,
+      hint:
+        "The time on that day the night nurses' week begins; empty is midnight. With overtime " +
+        'by pay period, their pay periods begin at this time on the usual dates.',
+      why:
+        'Match payroll, which sets this per employee (29 CFR 778.105). Providence Portland–ONA ' +
+        'Art. 7.A begins the night week with the night shift closest to 12:01 a.m. Saturday, ' +
+        'such as 19:00 Friday or Saturday. A pay period cannot start on another weekday, so ' +
+        'only the time moves it.',
+    },
     requireOvertimeAuthorisation: {
       label: 'Overtime must be authorised',
       hint:
@@ -709,13 +802,28 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];
     const window = { start: schedule.period.startDate, end: schedule.period.endDate };
-    const startMinute = params.workWeekStartMinute ?? 0;
-    const span = judgedSpan(window, startMinute);
-    const weeks = workWeeksIn(span, params.workWeekStartsOn);
-    // Weekly overtime is judged in the cap's own loop, so a week over the cap reports that alone.
-    const payPeriods = params.overtimeByPayPeriod ? payPeriodsIn(span, ctx.unit, false) : [];
+    // At most two grids, the unit's and the night nurses', built once rather than per nurse:
+    // the solver evaluates this rule on one-nurse views millions of times.
+    const grids = new Map<string, { weeks: DateWindow[]; payPeriods: DateWindow[] }>();
+    const gridFor = (week: WorkWeek) => {
+      const key = `${week.startsOn}:${week.startMinute}`;
+      let grid = grids.get(key);
+      if (grid === undefined) {
+        const span = judgedSpan(window, week.startMinute);
+        grid = {
+          weeks: workWeeksIn(span, week.startsOn),
+          // Weekly overtime is judged in the cap's own loop, so a week over the cap reports that alone.
+          payPeriods: params.overtimeByPayPeriod ? payPeriodsIn(span, ctx.unit, false) : [],
+        };
+        grids.set(key, grid);
+      }
+      return grid;
+    };
 
     for (const nurse of ctx.nurses) {
+      const week = workWeekFor(nurse, params);
+      const startMinute = week.startMinute;
+      const { weeks, payPeriods } = gridFor(week);
       const timeline = schedule
         .timelineFor(nurse.id)
         .filter((v) => params.onCallCountsTowardHours || isWorked(v));
@@ -799,9 +907,9 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
 };
 
 /**
- * Hours past the overtime threshold in the overtime window (work week or pay period) holding
- * `at` (a shift's start minute, or a date's midnight; `overtimeWindowOf`), counted as
- * `max-hours-per-week` counts them: standby only when the rule counts it, paid leave only when it
+ * Hours past the overtime threshold in the nurse's own overtime window (`workWeekFor`; work week
+ * or pay period) holding `at` (a shift's start minute, or a date's midnight; `overtimeWindowOf`),
+ * counted as `max-hours-per-week` counts them: standby only when the rule counts it, paid leave only when it
  * counts toward overtime, a week-crossing night by `reading` (the rule context; absent, the start
  * week at declared hours). Authorised or not — it is what the window adds to
  * payroll. Used by the exchange evaluator to show what a trade does to each side's overtime.
@@ -815,11 +923,12 @@ export function overtimeHoursAround(
   paidLeave: readonly PaidLeaveCredit[] | undefined,
   reading?: WindowReading,
 ): number {
-  const window = overtimeWindowOf(at, params, calendar);
+  const week = workWeekFor(schedule.nursesById.get(nurseId), params);
+  const window = overtimeWindowOf(at, params, calendar, week);
   const timeline = schedule
     .timelineFor(nurseId)
     .filter((v) => params.onCallCountsTowardHours || isWorked(v));
-  const found = hoursIn(timeline, window, reading, params.workWeekStartMinute ?? 0);
+  const found = hoursIn(timeline, window, reading, week.startMinute);
   const leave = params.paidLeaveCountsTowardOvertime
     ? leaveHoursBetween(paidLeave, window.start, window.end)
     : 0;

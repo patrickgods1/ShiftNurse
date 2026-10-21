@@ -3,8 +3,9 @@
  * compliance pass, and a unit with none gets no such alert.
  */
 
-import { addDays, isoDate } from '@shiftnurse/core';
+import { addDays, isoDate, type MaxHoursParams, resolveConfigs } from '@shiftnurse/core';
 import {
+  adoptLatestRules,
   createHoliday,
   createNurse,
   createNurseUnit,
@@ -16,12 +17,13 @@ import {
   listHolidaysForUnit,
   listNursesForUnit,
   recordHolidayWork,
+  saveRuleSet,
   transact,
   updateUnit,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { alertsFor } from './alerts.js';
-import { ACTOR } from './context.js';
+import { alertsFor, previousWorkWeekFor } from './alerts.js';
+import { ACTOR, periodOrThrow, ruleSetFor, scheduleViewFor } from './context.js';
 import { scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
 
@@ -223,5 +225,51 @@ describe('credential alerts for a nurse floated in', () => {
       (a) => a.kind === 'credential_expiry' && a.nurseId === fran.id,
     );
     expect(lapsing).toHaveLength(1);
+  });
+});
+
+describe('the work week the last published schedule was judged under', () => {
+  const previousFor = () => {
+    const { db } = f.handle;
+    const period = periodOrThrow(db, f.seeded.draftPeriodId);
+    const params = resolveConfigs(ruleSetFor(db, period)).find(
+      (c) => c.ruleId === 'max-hours-per-week',
+    )!.params as unknown as MaxHoursParams;
+    const schedule = scheduleViewFor(db, period, { lookback: true, floated: 'worked' });
+    return previousWorkWeekFor(
+      db,
+      period,
+      {
+        workWeekStartsOn: params.workWeekStartsOn,
+        workWeekStartMinute: params.workWeekStartMinute ?? 0,
+      },
+      schedule,
+    );
+  };
+
+  it('is not passed on while the draft keeps the week the history was published under', () => {
+    expect(previousFor()).toBeUndefined();
+  });
+
+  it('is the old week once the draft moves to a Saturday 19:00 week', () => {
+    const { db } = f.handle;
+    const current = ruleSetFor(db, periodOrThrow(db, f.seeded.draftPeriodId));
+    transact(db, (tx) =>
+      saveRuleSet(
+        tx,
+        {
+          ...current,
+          configs: current.configs.map((c) =>
+            c.ruleId === 'max-hours-per-week'
+              ? { ...c, params: { ...c.params, workWeekStartsOn: 6, workWeekStartMinute: 1140 } }
+              : c,
+          ),
+        },
+        ACTOR,
+      ),
+    );
+    adoptLatestRules(db, f.seeded.draftPeriodId, ACTOR);
+    // The frozen scenarios start the week at midnight Sunday.
+    expect(previousFor()).toEqual({ workWeekStartsOn: 0, workWeekStartMinute: 0 });
   });
 });

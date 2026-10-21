@@ -1213,6 +1213,36 @@ describe('a night over the week’s edge in Generate (21 Q1)', () => {
     }
   });
 
+  it('offers a night nurse the Saturday night on her own week, and turns a day nurse away', () => {
+    // Unit week from midnight Sunday, night nurses' from Saturday 19:00, cap 40. Both work Mon–Wed
+    // nights (36h). For Ada, on permanent nights, the week from 3 Jan 19:00 holds them and the
+    // Sat 10 night is wholly the next week's (12h). For Bo, on days, the unit week gets the
+    // night's 19:00–24:00: 36 + 5 = 41h, over.
+    const model = new SolverModel(
+      input('clock', {
+        nurses: [
+          makeNurse({ id: 'ada', contractedHoursPerPeriod: 120, permanentTour: 'night' }),
+          makeNurse({ id: 'bo', contractedHoursPerPeriod: 120, permanentTour: 'day' }),
+        ],
+        ruleParams: {
+          'max-hours-per-week': {
+            maxHoursPerWeek: 40,
+            nightWorkWeekStartsOn: 6,
+            nightWorkWeekStartMinute: 1140,
+          },
+        },
+      }),
+    );
+    for (const id of ['ada', 'bo']) {
+      for (const date of ['2026-01-05', '2026-01-06', '2026-01-07']) {
+        model.add(assign(id, NIGHT_12, date));
+      }
+    }
+    // Nurses are held in id order: Ada 0, Bo 1.
+    expect(model.eligible(0, at(model, '2026-01-10'), 'RN')).toBe(true);
+    expect(model.eligible(1, at(model, '2026-01-10'), 'RN')).toBe(false);
+  });
+
   it('turns away a first-day Saturday 12 that starts in the week the last schedule filled', () => {
     // Schedule from Sat 10 Jan, week from Saturday 19:00, cap 40. Sat 10 Jan 07:00 starts in the
     // week from Sat 3 Jan 19:00, which already holds the published Tue–Thu 6–8 Jan (36h):

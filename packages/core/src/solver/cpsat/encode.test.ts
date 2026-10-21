@@ -14,11 +14,13 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Assignment, FairnessLedgerEntry, Nurse, Preference } from '../../domain/entities.js';
-import { addDays, isoDate, type Weekday } from '../../domain/time.js';
+import { addDays, isoDate } from '../../domain/time.js';
 import {
   judgedSpan,
   payPeriodIndex,
   payPeriodWindow,
+  type WorkWeekSettings,
+  workWeekFor,
   workWeekOf,
 } from '../../rules/hours-rules.js';
 import {
@@ -1612,6 +1614,36 @@ describe('a night over the week’s edge and the weekly cap (21 Q1)', () => {
     expect(evaluate(spring('no pay settings'), roster).violated.join('\n')).toMatch(/weekly hours/);
   });
 
+  it('lets a night nurse take the Saturday night on her own week, and not a day nurse', () => {
+    // Unit week from midnight Sunday, night nurses' from Saturday 19:00, cap 40. Mon–Wed nights
+    // (36h) and the Sat 10 Jan night: on the night week 36 and 12; on the unit week 36 + 5 = 41.
+    const encodingFor = (permanentTour: 'night' | 'day') =>
+      encodeCpsat(
+        input('clock', {
+          nurses: [
+            makeNurse({
+              id: 'ada',
+              firstName: 'Ada',
+              contractedHoursPerPeriod: 120,
+              permanentTour,
+            }),
+          ],
+          ruleSet: withParams('max-hours-per-week', {
+            maxHoursPerWeek: 40,
+            nightWorkWeekStartsOn: 6,
+            nightWorkWeekStartMinute: 1140,
+          }),
+        }),
+      );
+    const roster = ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-10'].map((d) =>
+      assign('ada', NIGHT_12, d),
+    );
+    expect(evaluate(encodingFor('night'), roster).violated).toEqual([]);
+    expect(evaluate(encodingFor('day'), roster).violated.join('\n')).toMatch(
+      /weekly hours: .* week of 2026-01-04 over 40h/,
+    );
+  });
+
   it('caps the week a schedule opens in when its first shift starts before 19:00 Saturday', () => {
     // Schedule from Sat 10 Jan, week from Saturday 19:00, cap 40. Sat 10 Jan 07:00 starts in the
     // week from Sat 3 Jan 19:00 with the published Tue–Thu 6–8 Jan (36h): 36 + 12 = 48 > 40.
@@ -2581,13 +2613,17 @@ describe('agreement with the rule engine', () => {
       const draw = rosterDrawer(encoding);
       const rng = new Rng(11);
       const params = input.ruleSet.configs.find((c) => c.ruleId === 'max-hours-per-week')!
-        .params as { workWeekStartsOn: Weekday; workWeekStartMinute: number };
-      // Counters are indexed from the window holding the schedule's first instant.
-      const span = judgedSpan(
-        { start: input.period.startDate, end: input.period.endDate },
-        params.workWeekStartMinute,
-      );
-      const firstWeek = workWeekOf(span.start, params.workWeekStartsOn).start;
+        .params as unknown as WorkWeekSettings;
+      // Counters are indexed from the window holding the schedule's first instant, on each
+      // nurse's own work week.
+      const gridOf = (nurse: Nurse) => {
+        const week = workWeekFor(nurse, params);
+        const span = judgedSpan(
+          { start: input.period.startDate, end: input.period.endDate },
+          week.startMinute,
+        );
+        return { span, firstWeek: workWeekOf(span.start, week.startsOn).start };
+      };
       let split = 0;
       for (let trial = 0; trial < 400; trial++) {
         const roster = draw(rng);
@@ -2609,6 +2645,7 @@ describe('agreement with the rule engine', () => {
         }
         const byModel = new Map<string, number>();
         for (const [n, nurse] of model.nurses.entries()) {
+          const { span, firstWeek } = gridOf(nurse);
           for (const [w, hours] of model.weekHoursOf(n).entries()) {
             const code =
               hours > 48
@@ -2696,6 +2733,80 @@ describe('agreement with the rule engine', () => {
           });
 
           it(`calls a roster illegal exactly when the rules do (${label})`, () => {
+            expectParity(input());
+          });
+        }
+      }
+    }
+
+    // A separate week for night nurses (29 CFR 778.105; Providence Portland–ONA Art. 7.A): a
+    // random one to three of four nurses on permanent nights, their week from Saturday 19:00 or
+    // a drawn one, the unit's from midnight Sunday or 07:00. Each nurse is judged on her own grid.
+    const tours = new Rng(23);
+    const NIGHT_WEEKS = [
+      [
+        [0, 0],
+        [6, 1140],
+      ],
+      [
+        [0, 420],
+        [tours.nextInt(0, 6), tours.nextInt(1, 1438)],
+      ],
+    ] as const;
+    const nightTeam = (
+      attribution: 'clock' | 'start',
+      byPayPeriod: boolean,
+      [unitDay, unitMinute]: readonly [number, number],
+      [nightDay, nightMinute]: readonly [number, number],
+    ): SolveInput => {
+      const base = crossing(attribution, '2026-10-25', '2026-11-07', '2026-10-24', byPayPeriod, [
+        unitDay,
+        unitMinute,
+      ]);
+      const team = [
+        ...base.nurses,
+        makeNurse({ id: 'cy', firstName: 'Cy', contractedHoursPerPeriod: 72 }),
+        makeNurse({ id: 'di', firstName: 'Di', contractedHoursPerPeriod: 72 }),
+      ];
+      // Fisher–Yates over the ids, then the first one to three are night nurses.
+      const ids = team.map((n) => n.id);
+      for (let i = ids.length - 1; i > 0; i--) {
+        const j = tours.nextInt(0, i);
+        [ids[i], ids[j]] = [ids[j]!, ids[i]!];
+      }
+      const nights = new Set(ids.slice(0, tours.nextInt(1, 3)));
+      const configs = base.ruleSet.configs.map((c) =>
+        c.ruleId === 'max-hours-per-week'
+          ? {
+              ...c,
+              params: {
+                ...c.params,
+                nightWorkWeekStartsOn: nightDay,
+                nightWorkWeekStartMinute: nightMinute,
+              },
+            }
+          : c,
+      );
+      return {
+        ...base,
+        nurses: team.map((n) => (nights.has(n.id) ? { ...n, permanentTour: 'night' as const } : n)),
+        ruleSet: { ...base.ruleSet, configs },
+      };
+    };
+    for (const [unitWeek, nightWeek] of NIGHT_WEEKS) {
+      for (const attribution of ['clock', 'start'] as const) {
+        for (const byPayPeriod of [false, true]) {
+          const label = `${attribution}, unit week from day ${unitWeek[0]} minute ${unitWeek[1]}, night nurses' from day ${nightWeek[0]} minute ${nightWeek[1]}${byPayPeriod ? ', by pay period' : ''}`;
+          const input = () => nightTeam(attribution, byPayPeriod, unitWeek, nightWeek);
+          it(`judges each nurse's own windows alike in the rules, the annealer and CP-SAT (${label})`, () => {
+            const built = input();
+            const nights = built.nurses.filter((n) => n.permanentTour === 'night').length;
+            expect(nights).toBeGreaterThan(0);
+            expect(nights).toBeLessThan(built.nurses.length);
+            expectWeeksAgree(built, byPayPeriod);
+          });
+
+          it(`calls a roster illegal exactly when the rules do, night week and all (${label})`, () => {
             expectParity(input());
           });
         }

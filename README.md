@@ -63,7 +63,10 @@ this codebase is held to. This document is the practical "how do I build/run/shi
   the week's start is split there. Settings › Rules › Weekly hour cap › "Work week starts at"
   sets the time the week begins (29 CFR 778.105); set it to payroll's, often the shift change
   nearest midnight (Saturday 19:00), so no night is split. The same time starts an 8/80 pay
-  period. The rule, Generate, pay and the overtime alerts all read it.
+  period. The rule, Generate, pay and the overtime alerts all read it. "Night nurses' work week
+  starts on/at" gives nurses whose permanent tour is nights a week of their own (Providence
+  Portland–ONA Art. 7.A); each nurse is on one week, chosen by her tour, and left empty everyone
+  is on the unit's.
 - **Time off, conflicts & exchanges** — a conflict-detection engine simulates every request
   against the schedule, ranks resolution options, supports policy-driven auto-resolve with an
   audit trail, and evaluates 1:1 trades and giveaways for hard-rule and fairness impact.

@@ -10,11 +10,11 @@
  */
 
 import { fillsRatioRole } from '../acuity/demand.js';
-import type { Assignment, Id, RatioRole, TimeOffRequest } from '../domain/entities.js';
+import type { Assignment, Id, Nurse, RatioRole, TimeOffRequest } from '../domain/entities.js';
 import { dateInRange, describeDateRange, type IsoDate, shiftWindow } from '../domain/time.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import { hasValidCredential } from '../rules/coverage-rules.js';
-import { workWeekOf } from '../rules/hours-rules.js';
+import { workWeekFor, workWeekOf } from '../rules/hours-rules.js';
 import { windowDayOf } from '../schedule/window-split.js';
 import type { ObjectiveWeights } from '../solver/types.js';
 import type { ConflictEngine, SimState } from './engine.js';
@@ -209,14 +209,22 @@ function staffingOptions(
   // but above its minimum can spare someone, and the soft loss below target is priced by
   // `targetShortfallDelta` rather than ruled out here.
   // The week the shift starts in, which a work week that begins at a time of day reads by the
-  // shift's start rather than its date.
+  // shift's start rather than its date. It is the moved nurse's own week (`workWeekFor`): a night
+  // nurse's when the unit sets one, so the candidate dates are those of either week.
   const params = engine.maxHoursParams;
-  const week = workWeekOf(
-    windowDayOf(shiftWindow(date, shiftType).startMinute, params.workWeekStartMinute ?? 0),
-    params.workWeekStartsOn,
-  );
+  const startMinute = shiftWindow(date, shiftType).startMinute;
+  const weekOf = (nurse: Pick<Nurse, 'permanentTour'> | undefined) => {
+    const own = workWeekFor(nurse, params);
+    return workWeekOf(windowDayOf(startMinute, own.startMinute), own.startsOn);
+  };
+  const unitWeek = weekOf(undefined);
+  const nightWeek = weekOf({ permanentTour: 'night' });
   const moveDates = prelude.moves
-    ? engine.dates.filter((d) => dateInRange(d, week.start, week.end))
+    ? engine.dates.filter(
+        (d) =>
+          dateInRange(d, unitWeek.start, unitWeek.end) ||
+          dateInRange(d, nightWeek.start, nightWeek.end),
+      )
     : [];
   for (const d of moveDates) {
     for (const view of world.view.onDate(d)) {
@@ -227,6 +235,8 @@ function staffingOptions(
       if ((a.holdoverMinutes ?? 0) > 0) continue;
       if (!fits(a.nurseId)) continue;
       const nurse = view.nurse;
+      const week = weekOf(nurse);
+      if (!dateInRange(d, week.start, week.end)) continue;
       if (d !== date && world.view.isAssignedOn(nurse.id, date)) continue;
       // Denying a pending request is its own option; a move never decides one silently.
       if (approvedLeaveOn(world.ctx, nurse.id, date)) continue;

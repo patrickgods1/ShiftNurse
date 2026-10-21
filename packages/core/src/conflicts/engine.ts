@@ -195,6 +195,12 @@ export class ConflictEngine {
           ...(this.maxHoursParams.workWeekStartMinute
             ? { workWeekStartMinute: this.maxHoursParams.workWeekStartMinute }
             : {}),
+          ...(this.maxHoursParams.nightWorkWeekStartsOn !== undefined
+            ? { nightWorkWeekStartsOn: this.maxHoursParams.nightWorkWeekStartsOn }
+            : {}),
+          ...(this.maxHoursParams.nightWorkWeekStartMinute
+            ? { nightWorkWeekStartMinute: this.maxHoursParams.nightWorkWeekStartMinute }
+            : {}),
           ...(input.cost.premiumStacking ? { premiumStacking: input.cost.premiumStacking } : {}),
           ...(input.cost.holidayPayCoversOvertime !== undefined
             ? { holidayPayCoversOvertime: input.cost.holidayPayCoversOvertime }

@@ -328,6 +328,8 @@ export type {
   JudgedPayPeriod,
   MaxHoursParams,
   PayPeriodHours,
+  WorkWeek,
+  WorkWeekSettings,
 } from './rules/hours-rules.js';
 // Overtime and hours rule parameters; which pay periods are judged and the hours counted in them
 export {
@@ -337,6 +339,7 @@ export {
   payPeriodHoursFor,
   payPeriodIndex,
   payPeriodWindow,
+  workWeekFor,
   workWeekOf,
 } from './rules/hours-rules.js';
 // Kept-apart group rule helpers

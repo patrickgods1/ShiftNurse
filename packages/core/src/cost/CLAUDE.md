@@ -74,7 +74,11 @@
   windows file a shift by the window-day of its start (`windowDayOf`) and split at that wall
   minute, as do the regular-rate windows; daily, seventh-day and extra-day bases keep the
   calendar day: `extraDayTest` and `seventhDayTest` read `workWeekStartsOn` by date and do not
-  follow `workWeekStartMinute`.
+  follow `workWeekStartMinute`. The week is the nurse's own (`workWeekFor`): with
+  `CostContext.nightWorkWeekStartsOn` set, a nurse on permanent nights has her weekly overtime and
+  her regular-rate weeks on the night week, and her pay periods start at
+  `nightWorkWeekStartMinute` on the usual dates; `extraDayTest` and `seventhDayTest` stay on the
+  unit's week.
 - **The DST nights are paid as worked.** `CostContext.dstTransitions` (host-supplied) makes the
   fall-back night 13 hours and the spring one 11 for every hour count in pay; tour, full-shift and
   Baylor classification still read declared hours.

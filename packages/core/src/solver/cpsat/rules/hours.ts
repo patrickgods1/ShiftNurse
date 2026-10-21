@@ -13,12 +13,14 @@ import { addDays, compareDates, type IsoDate, MINUTES_PER_HOUR } from '../../../
 import {
   authorisedOvertimeHours,
   contractedHoursRule,
+  type DateWindow,
   judgedPayPeriods,
   judgedSpan,
   maxHoursRule,
   overtimeThreshold,
   payPeriodsIn,
   type WindowReading,
+  workWeekFor,
   workWeeksIn,
 } from '../../../rules/hours-rules.js';
 import { leaveHoursBetween } from '../../../rules/paid-leave.js';
@@ -116,25 +118,37 @@ export function encodeWeeklyHours(ctx: EncodeContext, raw: Record<string, unknow
   const params = asParams(maxHoursRule, raw);
   const { period, unit } = ctx.input;
   const window = { start: period.startDate, end: period.endDate };
-  // The windows holding the schedule's first and last instants, as the rule selects them.
-  const span = judgedSpan(window, params.workWeekStartMinute ?? 0);
-  const weeks = workWeeksIn(span, params.workWeekStartsOn);
-  // Over the pay period, overtime gets its own constraint per pay period and the weeks keep only
-  // the absolute cap; weekly, one constraint per week carries the tighter of the two.
-  const payPeriods = params.overtimeByPayPeriod ? payPeriodsIn(span, unit, false) : [];
   // With the unit's pay attribution the rule counts real minutes, a night split by the clock
   // (21 Q1), so these caps are in minutes; without it, hundredths of declared hours as before.
-  const reading: WeekReading = {
-    overtimeWindowAttribution: ctx.model.ctx.overtimeWindowAttribution,
-    dstTransitions: ctx.model.ctx.dstTransitions,
-    startMinute: params.workWeekStartMinute ?? 0,
-  };
-  const byMinutes = reading.overtimeWindowAttribution !== undefined;
-  const workedIn = (inWindow: TimelineEntry[], start: IsoDate, end: IsoDate) =>
-    byMinutes ? minutesExpr(inWindow, start, end, reading) : hoursExpr(inWindow);
+  const byMinutes = ctx.model.ctx.overtimeWindowAttribution !== undefined;
   const atMost = (hours: number) => (byMinutes ? atMostMinutes(hours) : atMostHours(hours));
+  // Each nurse's windows come from her own work week (`workWeekFor`): the unit's, or the night
+  // nurses' when the rule sets one. At most two grids, built once.
+  const grids = new Map<string, { weeks: DateWindow[]; payPeriods: DateWindow[] }>();
   for (const [n, vars] of ctx.byNurse.entries()) {
     if (vars.length === 0) continue;
+    const week = workWeekFor(ctx.model.nurses[n]!, params);
+    const key = `${week.startsOn}:${week.startMinute}`;
+    let grid = grids.get(key);
+    if (grid === undefined) {
+      // The windows holding the schedule's first and last instants, as the rule selects them.
+      const span = judgedSpan(window, week.startMinute);
+      grid = {
+        weeks: workWeeksIn(span, week.startsOn),
+        // Over the pay period, overtime gets its own constraint per pay period and the weeks keep
+        // only the absolute cap; weekly, one constraint per week carries the tighter of the two.
+        payPeriods: params.overtimeByPayPeriod ? payPeriodsIn(span, unit, false) : [],
+      };
+      grids.set(key, grid);
+    }
+    const { weeks, payPeriods } = grid;
+    const reading: WeekReading = {
+      overtimeWindowAttribution: ctx.model.ctx.overtimeWindowAttribution,
+      dstTransitions: ctx.model.ctx.dstTransitions,
+      startMinute: week.startMinute,
+    };
+    const workedIn = (inWindow: TimelineEntry[], start: IsoDate, end: IsoDate) =>
+      byMinutes ? minutesExpr(inWindow, start, end, reading) : hoursExpr(inWindow);
     const counted = ctx
       .timeline(n)
       .filter((e) => params.onCallCountsTowardHours || !e.shiftType.isOnCall);

@@ -177,6 +177,15 @@ export interface CostContext {
    */
   workWeekStartMinute?: number;
   /**
+   * The night nurses' work week, the max-hours rule's `nightWorkWeekStartsOn` and
+   * `nightWorkWeekStartMinute` (absent: midnight): a nurse whose `permanentTour` is nights has her
+   * weekly overtime, and her regular rate, counted on it (`workWeekFor`). Her pay periods keep
+   * their dates and start at the night minute. Absent, every nurse is on the unit's week.
+   * `extraDayTest` and `seventhDayTest` stay on the unit's calendar week.
+   */
+  nightWorkWeekStartsOn?: Weekday;
+  nightWorkWeekStartMinute?: number;
+  /**
    * Paid leave that counts toward overtime, by nurse (`RuleContext.paidLeaveByNurse`). Present
    * only when the rule set's max-hours rule says leave counts; absent, leave never moves a shift
    * into overtime. Each weekly or pay-period window starts its running hours with the leave

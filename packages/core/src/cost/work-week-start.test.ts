@@ -145,3 +145,57 @@ describe('an 8/80 pay period that starts at Sunday 07:00', () => {
     expect(shifted.totals.overtimeHours).toBe(4);
   });
 });
+
+describe('night nurses on their own work week (29 CFR 778.105)', () => {
+  // The unit's week from midnight Sunday; night nurses' from Saturday 19:00 (Providence
+  // Portland–ONA Art. 7.A). Nia is on permanent nights, Dee on days; both work the same shifts.
+  const team = (dates: readonly string[], night: string, type = NIGHT_12) => {
+    const nia = makeNurse({ id: 'nia', permanentTour: 'night' });
+    const dee = makeNurse({ id: 'dee', permanentTour: 'day' });
+    return scenario({
+      nurses: [nia, dee],
+      assignments: [nia, dee].flatMap((n) => [
+        ...dates.map((d) => assign(n.id, type, d)),
+        assign(n.id, NIGHT_12, night),
+      ]),
+    });
+  };
+  const NIGHT_WEEK = { nightWorkWeekStartsOn: 6, nightWorkWeekStartMinute: 1140 } as const;
+  const of = (report: ReturnType<typeof costSchedule>, nurseId: string) =>
+    report.assignments.filter((a) => a.nurseId === nurseId);
+
+  it('prices a night nurse’s Saturday night with no overtime, and the day nurse’s first hour', () => {
+    // Mon–Wed 5–7 Jan nights (36h) and the Sat 10 Jan night. Nia: 36 in the week from 3 Jan
+    // 19:00, then 12 in the next, none over 40. Dee: the unit week holds 36 + 5 (19:00–24:00) =
+    // 41, 1h over: 600 + 25 = 625.
+    const s = team(['2026-01-05', '2026-01-06', '2026-01-07'], '2026-01-10');
+    const report = costSchedule(s.schedule, ctx(NIGHT_WEEK));
+    expect(of(report, 'nia').map((a) => a.overtimeHours)).toEqual([0, 0, 0, 0]);
+    expect(of(report, 'nia').map((a) => a.total)).toEqual([600, 600, 600, 600]);
+    expect(of(report, 'dee').map((a) => a.overtimeHours)).toEqual([0, 0, 0, 1]);
+    expect(of(report, 'dee').map((a) => a.total)).toEqual([600, 600, 600, 625]);
+  });
+
+  it('starts a night nurse’s pay period at the night time, on the usual dates', () => {
+    // 8/80 over the pay period Sun 4 – Sat 17 Jan. The night weekday (Wednesday) cannot move a pay
+    // period; the 07:00 does: Nia's runs to Sun 18 Jan 07:00, so Mon–Wed of both weeks (72) and
+    // the whole Sat 17 night make 84, 4h over on the night: 600 + 4 × 25 = 700. Dee's ends at
+    // midnight: 72 + 5 = 77, none over.
+    const s = team(
+      ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-12', '2026-01-13', '2026-01-14'],
+      '2026-01-17',
+      DAY_12,
+    );
+    const report = costSchedule(
+      s.schedule,
+      ctx({
+        overtimeRules: [overtimeRule('pay_period', 80)],
+        nightWorkWeekStartsOn: 3,
+        nightWorkWeekStartMinute: 420,
+      }),
+    );
+    expect(of(report, 'nia').map((a) => a.overtimeHours)).toEqual([0, 0, 0, 0, 0, 0, 4]);
+    expect(of(report, 'nia').at(-1)?.total).toBe(700);
+    expect(of(report, 'dee').map((a) => a.overtimeHours)).toEqual([0, 0, 0, 0, 0, 0, 0]);
+  });
+});

@@ -45,6 +45,7 @@ import {
 } from '@shiftnurse/core';
 import { useSearch } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
+import { useShiftTypes } from '../../api.js';
 import { useRuleSet, useSaveRuleSet } from '../../api-config.js';
 import { AsyncState } from '../../components/async-state.js';
 import { EditorShell } from '../../components/editor-shell.js';
@@ -54,12 +55,16 @@ import { numberFieldProblem, parseNumberField } from '../../field-values.js';
 import { formatInstant } from '../../format.js';
 import { useUnit } from '../../unit-context.js';
 import {
+  anchorWeekday,
   invalidParams,
+  nearestMidnightShiftChange,
   numberFieldValue,
   paramError,
   timeFieldValue,
+  weekdayFieldValue,
   withNumberParam,
   withTimeParam,
+  withWeekdayParam,
 } from './rule-params.js';
 
 type RuleCategory = (typeof ALL_RULES)[number]['category'];
@@ -189,6 +194,64 @@ function DefaultNote({
   );
 }
 
+/**
+ * Sets the work week from the unit's shift changes, so the manager need not work out which
+ * weekday and hour keep the night shift whole. It edits the same two params the fields do, so
+ * the normal save and validation path applies.
+ */
+function NearestChangeButton({
+  params,
+  defaults,
+  onChange,
+}: {
+  params: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+  onChange: (nextParams: Record<string, unknown>) => void;
+}) {
+  const unit = useUnit();
+  const shiftTypes = useShiftTypes(unit.id).data;
+  // A shift that runs inside another starts mid-shift, which is not a shift change.
+  const starts = (shiftTypes ?? [])
+    .filter((s) => s.active && !s.isOnCall && s.withinShiftTypeId === null)
+    .map((s) => parseTimeOfDay(s.startTime));
+  const [message, setMessage] = useState<string | undefined>();
+  const disabled = starts.length === 0;
+
+  function apply() {
+    const anchor = anchorWeekday(
+      (params.workWeekStartsOn ?? defaults.workWeekStartsOn) as Weekday,
+      (params.workWeekStartMinute ?? 0) as number,
+    );
+    const pick = nearestMidnightShiftChange(starts, anchor);
+    if (pick === undefined) return;
+    setMessage(
+      `${WEEKDAY_NAMES[pick.weekday]} ${formatTimeOfDay(pick.minute)}, the shift change nearest midnight.`,
+    );
+    onChange({ ...params, workWeekStartsOn: pick.weekday, workWeekStartMinute: pick.minute });
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div>
+        <button
+          type="button"
+          onClick={apply}
+          disabled={disabled}
+          title={disabled ? 'Add shift types first.' : undefined}
+          className="text-xs underline enabled:hover:no-underline disabled:opacity-60"
+        >
+          Use the shift change nearest midnight
+        </button>
+      </div>
+      {message !== undefined ? (
+        <p role="status" className="text-xs text-text-muted">
+          {message}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function ParamsForm({
   rule,
   params,
@@ -228,9 +291,18 @@ function ParamsForm({
           gate !== undefined && inactive
             ? `Used only when “${docs[gate.param]?.label ?? gate.param}” is ${gate.equals ? 'on' : 'off'}.`
             : undefined;
-        const note = (
+        const defaultNote = (
           <DefaultNote doc={doc} defaultValue={defaultValue} changed={changed} onReset={reset} />
         );
+        const note =
+          rule.id === 'max-hours-per-week' && key === 'workWeekStartMinute' ? (
+            <>
+              {defaultNote}
+              <NearestChangeButton params={params} defaults={defaults} onChange={onChange} />
+            </>
+          ) : (
+            defaultNote
+          );
 
         if (typeof defaultValue === 'boolean') {
           return (
@@ -306,10 +378,13 @@ function ParamsForm({
               <select
                 id={fieldId}
                 className={INPUT}
-                value={String(value)}
+                value={weekdayFieldValue(value)}
                 aria-describedby={describedBy(fieldId, { hint: true })}
-                onChange={(event) => onChange({ ...params, [key]: Number(event.target.value) })}
+                onChange={(event) =>
+                  onChange(withWeekdayParam(params, key, event.target.value, doc))
+                }
               >
+                {doc.optional ? <option value="">Not set</option> : null}
                 {WEEKDAY_NAMES.map((name, index) => (
                   <option key={name} value={index}>
                     {name}
@@ -341,7 +416,7 @@ function ParamsForm({
                 disabled={inactive}
                 aria-invalid={error !== undefined || undefined}
                 aria-describedby={describedBy(fieldId, { hint: true, error: error !== undefined })}
-                onChange={(event) => onChange(withTimeParam(params, key, event.target.value))}
+                onChange={(event) => onChange(withTimeParam(params, key, event.target.value, doc))}
                 className={INPUT}
               />
             </Field>

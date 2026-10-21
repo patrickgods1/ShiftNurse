@@ -253,6 +253,13 @@ export function costContext(
     workWeekStartsOn: params.workWeekStartsOn ?? maxHoursRule.defaultParams.workWeekStartsOn,
     // Absent from a rule set saved before the setting existed: midnight.
     workWeekStartMinute: params.workWeekStartMinute ?? 0,
+    // The night nurses' own week, only when the rule set gives one (`workWeekFor`).
+    ...(params.nightWorkWeekStartsOn !== undefined
+      ? { nightWorkWeekStartsOn: params.nightWorkWeekStartsOn }
+      : {}),
+    ...(params.nightWorkWeekStartMinute !== undefined
+      ? { nightWorkWeekStartMinute: params.nightWorkWeekStartMinute }
+      : {}),
     premiumStacking: pay.premiumStacking,
     holidayPayCoversOvertime: pay.holidayPayCoversOvertime,
     overtimeWindowAttribution: pay.overtimeWindowAttribution,

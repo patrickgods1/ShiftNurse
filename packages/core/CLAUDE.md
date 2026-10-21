@@ -312,7 +312,18 @@
   (`judgedSpan`; rule, SA `workCalendar`, CP-SAT and alerts): a schedule opening on a Saturday
   under a Saturday 19:00 start judges the week before too, since that morning is in it. Not
   following the start time (calendar-date based): pay's `extraDayTest` and `seventhDayTest`, and
-  `no-mandatory-overtime`'s own `workWeekStartsOn` week.
+  `no-mandatory-overtime`'s own `workWeekStartsOn` week. **Night nurses may have their own week**
+  (29 CFR 778.105: weeks may differ by group; Providence Portland–ONA Art. 7.A):
+  `nightWorkWeekStartsOn` (optional) with `nightWorkWeekStartMinute` (absent = midnight) is the
+  week of every nurse whose `permanentTour` is `'night'`; everyone else, and everyone when it is
+  absent, is on the unit's. `workWeekFor(nurse, settings)` (`hours-rules.ts`) is the one choice,
+  per nurse and never per shift (a week chosen by the shift would count one stretch twice or not
+  at all). A pay period keeps its anchor dates and takes only the night minute. Every consumer
+  resolves it per nurse: the rule (`gridFor`), SA (`SolverModel.gridOf`: one `workCalendar` per
+  distinct week, each nurse's counters on her own grid), CP-SAT `encodeWeeklyHours`, pay
+  (`CostContext.nightWorkWeekStartsOn`/`…Minute`), alerts (`ComplianceInput`), `overtimeHoursAround`
+  (the nurse from the view) and move candidates. `extraDayTest`, `seventhDayTest`,
+  `no-mandatory-overtime`, the under-hours pay periods and the demo engine stay on the unit week.
 - **Weekends are filed by `weekendKey`, everywhere.** Fairness, `weekend-pattern` and both
   solvers' prices use it; under `'overlaps'` a Friday night belongs to the weekend it runs into.
   `weekendBreaches` is the one count (`SolverModel.weekendFor`, CP-SAT `weekendBreachExprs`).
@@ -550,6 +561,15 @@
   per nurse per work week (or pay period) holding overtime hours, daily, seventh-day, consecutive and
   beyond-tour bases included, with `overtimeHours` set and no `expectedHours`; without one the old
   max-hours threshold runs. Never both. Overtime hours are attributed for an unpriced nurse too.
+- **Two alerts say where the app's week and the law's part; neither changes pay.** Both count a
+  window as `max-hours-per-week` does (`windowHours`, the rule's threshold, leave when it counts).
+  `work_week_changeover` (29 CFR 778.302): with `ComplianceInput.previousWorkWeek` (main's
+  `previousWorkWeekFor`: the max-hours settings of the latest published or archived period ending
+  before this one, passed only when some nurse's `workWeekFor` differs), a nurse whose old-boundary
+  window holding the period's first instant has more overtime than the new one is told both
+  figures. `start_attribution_underpays` (DOL FLSA2005-17): under pay's `'start'`, each judged
+  window touching the period where the clock count has more overtime than the start count; a
+  surplus in another week does not offset it.
 - **An unpriced option is ranked at the unit's highest rate and never auto-applied.**
   `CostImpact.pessimisticDelta` prices unpriced shifts at the highest pay rate on file (overtime at
   the highest multiplier). The resolution ranking and the day-of list sort by it.

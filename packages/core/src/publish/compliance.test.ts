@@ -959,6 +959,36 @@ describe('overtime alerts priced under the overtime rules', () => {
     expect(overtime(s, { workWeekStartsOn: 6 })).toEqual([]);
   });
 
+  it('files a night nurse’s overtime in her own work week, priced or not', () => {
+    resetFixtureCounters();
+    // The unit's week starts at midnight Saturday, the night nurses' at 19:00 Saturday. Both work
+    // Wed–Fri 7–9 Jan and Sat 10 Jan 07:00. n1, on permanent nights: her week from Sat 3 Jan
+    // 19:00 holds all four, 48h, 8 past 40. n2, on days: Sat 10 Jan opens the unit's next week,
+    // so neither week passes 40.
+    const s = scenario({
+      nurses: [
+        makeNurse({ id: 'n1', contractedHoursPerPeriod: 84, permanentTour: 'night' }),
+        makeNurse({ id: 'n2', contractedHoursPerPeriod: 84, permanentTour: 'day' }),
+      ],
+      assignments: [
+        ...assignRun('n1', DAY_12, '2026-01-07', 4),
+        ...assignRun('n2', DAY_12, '2026-01-07', 4),
+      ],
+    });
+    const weeks = {
+      workWeekStartsOn: 6,
+      nightWorkWeekStartsOn: 6,
+      nightWorkWeekStartMinute: 1140,
+    } as const;
+    const cost = { ...priced(s, [overtimeRule('weekly', 40)]), ...weeks };
+    expect(overtime(s, weeks).map((a) => [a.nurseId, a.date, a.hours])).toEqual([
+      ['n1', '2026-01-03', 48],
+    ]);
+    expect(
+      overtime(s, { ...weeks, cost }).map((a) => [a.nurseId, a.date, a.overtimeHours]),
+    ).toEqual([['n1', '2026-01-03', 8]]);
+  });
+
   it('stays quiet about overtime that sits wholly in the lookback tail', () => {
     resetFixtureCounters();
     // Four twelves before the period are 48h of overtime already paid for in the last schedule;

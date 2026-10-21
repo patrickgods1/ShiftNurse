@@ -42,6 +42,7 @@ import {
   payPeriodIndex,
   payPeriodWindow,
   type WindowReading,
+  type WorkWeek,
 } from '../rules/hours-rules.js';
 import { leaveHoursBetween } from '../rules/paid-leave.js';
 import type { RuleContext } from '../rules/types.js';
@@ -96,7 +97,7 @@ export interface WorkCalendar {
   /**
    * A worked window's minutes by work week and by overtime window, counted as
    * `max-hours-per-week` counts them (`RuleContext.overtimeWindowAttribution`), windows opening at
-   * `workWeekStartMinute`: without a pay attribution, whole in the window its start falls in, at
+   * the week's start minute: without a pay attribution, whole in the window its start falls in, at
    * `declaredHours`; by start, the same at real minutes; by the clock, split at the next window's
    * boundary. Parts in a window this schedule does not judge (before the first, or the "after" of
    * the last) are left out.
@@ -107,20 +108,25 @@ export interface WorkCalendar {
   ) => { week: HoursPart[]; overtime: HoursPart[] };
 }
 
+/**
+ * One work-week grid: `week` is a nurse's (`workWeekFor`), so a unit with a night week has two,
+ * and each nurse's counters are indexed by her own grid's weeks.
+ */
 export function workCalendar(
   input: SolveInput,
   dates: readonly IsoDate[],
   maxHours: MaxHoursParams,
   reading: WindowReading,
+  week: WorkWeek,
 ): WorkCalendar {
   // Windows counted from the one holding the schedule's first instant to the one holding its
   // last, as the rule judges them (`judgedSpan`).
   const span = judgedSpan(
     { start: input.period.startDate, end: input.period.endDate },
-    maxHours.workWeekStartMinute ?? 0,
+    week.startMinute,
   );
   const firstDay = dayNumber(span.start);
-  const weekStart = firstDay - ((weekdayOf(span.start) - maxHours.workWeekStartsOn + 7) % 7);
+  const weekStart = firstDay - ((weekdayOf(span.start) - week.startsOn + 7) % 7);
   const weekOf = (date: IsoDate) => Math.floor((dayNumber(date) - weekStart) / 7);
   const weekOfDate = dates.map((date) => weekOf(date));
   const weekCount = weekOf(span.end) + 1;
@@ -133,7 +139,7 @@ export function workCalendar(
 
   const attribution = reading.overtimeWindowAttribution;
   const tz = reading.dstTransitions;
-  const startMinute = maxHours.workWeekStartMinute ?? 0;
+  const startMinute = week.startMinute;
   const nextWeekStart = (date: IsoDate) => fromDayNumber(weekStart + 7 * (weekOf(date) + 1));
   const nextPayPeriodStart = (date: IsoDate) =>
     payPeriodWindow(payPeriodIndex(date, input.unit) + 1, input.unit).start;
@@ -159,11 +165,11 @@ export function workCalendar(
   const partsOf = (window: ShiftWindow, declaredHours: number) => {
     // Filed by the window-day of its start: its date, unless the week starts at a time of day.
     const date = windowDayOf(window.startMinute, startMinute);
-    const week = partsIn(weekOf(date), weekCount, nextWeekStart(date), window, declaredHours);
+    const weekly = partsIn(weekOf(date), weekCount, nextWeekStart(date), window, declaredHours);
     const overtime = maxHours.overtimeByPayPeriod
       ? partsIn(overtimeOf(date), overtimeCount, nextPayPeriodStart(date), window, declaredHours)
-      : week;
-    return { week, overtime };
+      : weekly;
+    return { week: weekly, overtime };
   };
 
   return {
@@ -197,6 +203,12 @@ export function costContextFor(
         workWeekStartsOn: maxHours.workWeekStartsOn,
         ...(maxHours.workWeekStartMinute
           ? { workWeekStartMinute: maxHours.workWeekStartMinute }
+          : {}),
+        ...(maxHours.nightWorkWeekStartsOn !== undefined
+          ? { nightWorkWeekStartsOn: maxHours.nightWorkWeekStartsOn }
+          : {}),
+        ...(maxHours.nightWorkWeekStartMinute
+          ? { nightWorkWeekStartMinute: maxHours.nightWorkWeekStartMinute }
           : {}),
         ...(input.cost.premiumStacking ? { premiumStacking: input.cost.premiumStacking } : {}),
         ...(input.cost.holidayPayCoversOvertime !== undefined

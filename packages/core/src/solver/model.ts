@@ -78,6 +78,7 @@ import {
   contractedHoursRule,
   type MaxHoursParams,
   maxHoursRule,
+  workWeekFor,
 } from '../rules/hours-rules.js';
 import {
   groupsForPeriod,
@@ -118,6 +119,7 @@ import {
   type HoursPart,
   historyFairness,
   hoursBuckets,
+  type WorkCalendar,
   workCalendar,
 } from './model-setup.js';
 import { ruleContextForInput } from './rule-context.js';
@@ -276,9 +278,15 @@ export class SolverModel {
    * the cap). All zero unless the rule set counts leave toward overtime.
    */
   readonly overtimeLeaveMinutes: number[][];
-  /** shift index → its minutes by work week and by overtime window (`WorkCalendar.partsOf`). */
-  private readonly weekParts: readonly HoursPart[][];
-  private readonly overtimeParts: readonly HoursPart[][];
+  /**
+   * Work-week grid → shift index → its minutes by work week and by overtime window
+   * (`WorkCalendar.partsOf`). One grid per distinct `workWeekFor` week: the unit's, and the night
+   * nurses' when the rule sets one.
+   */
+  private readonly weekParts: readonly (readonly HoursPart[][])[];
+  private readonly overtimeParts: readonly (readonly HoursPart[][])[];
+  /** nurse index → her work-week grid, an index into `weekParts` and the per-grid arrays. */
+  private readonly gridOf: readonly number[];
 
   // --- Precomputed inputs ----------------------------------------------------
   // Public and read-only so the CP-SAT encoder (cpsat/) reads the same tables instead of
@@ -329,12 +337,6 @@ export class SolverModel {
   readonly hoursCapped: boolean[];
   readonly contractedProRata: number[];
   readonly maxHoursParams: MaxHoursParams;
-  /** date index → work-week index, counted from the week containing the period's first day. */
-  readonly weekOfDate: number[];
-  private readonly weekCount: number;
-  /** Any date's overtime-window index, counted from the window containing the first day. */
-  private readonly overtimeOf: (date: IsoDate) => number;
-  private readonly overtimeCount: number;
   private readonly maxWeekMinutes: number;
   private readonly overtimeThresholdMinutes: number;
   readonly histCarried: Record<BurdenComponent, number>[];
@@ -522,18 +524,36 @@ export class SolverModel {
     this.maxHoursParams = maxHours;
     // The rule context carries the unit's attribution, so the counters split a night as the
     // gate's own rule does.
-    const calendar = workCalendar(input, this.dates, maxHours, this.ctx);
-    this.weekOfDate = calendar.weekOfDate;
-    this.weekCount = calendar.weekCount;
-    this.overtimeOf = calendar.overtimeOf;
-    this.overtimeCount = calendar.overtimeCount;
-    this.maxWeekMinutes = calendar.maxWeekMinutes;
-    this.overtimeThresholdMinutes = calendar.overtimeThresholdMinutes;
-    const shiftParts = shifts.map((shift) =>
-      calendar.partsOf(shiftWindow(shift.date, shift.shiftType), shift.shiftType.durationHours),
+    // Each nurse is counted on her own work week (`workWeekFor`); nurses sharing a week share a
+    // grid, so without a night week there is exactly one, as before.
+    const gridKeys: string[] = [];
+    const calendars: WorkCalendar[] = [];
+    this.gridOf = this.nurses.map((nurse) => {
+      const week = workWeekFor(nurse, maxHours);
+      const key = `${week.startsOn}:${week.startMinute}`;
+      let g = gridKeys.indexOf(key);
+      if (g === -1) {
+        g = gridKeys.length;
+        gridKeys.push(key);
+        calendars.push(workCalendar(input, this.dates, maxHours, this.ctx, week));
+      }
+      return g;
+    });
+    if (calendars.length === 0) {
+      calendars.push(
+        workCalendar(input, this.dates, maxHours, this.ctx, workWeekFor(undefined, maxHours)),
+      );
+    }
+    // The cap and threshold are the rule's, the same on every grid.
+    this.maxWeekMinutes = calendars[0]!.maxWeekMinutes;
+    this.overtimeThresholdMinutes = calendars[0]!.overtimeThresholdMinutes;
+    const shiftParts = calendars.map((calendar) =>
+      shifts.map((shift) =>
+        calendar.partsOf(shiftWindow(shift.date, shift.shiftType), shift.shiftType.durationHours),
+      ),
     );
-    this.weekParts = shiftParts.map((p) => p.week);
-    this.overtimeParts = shiftParts.map((p) => p.overtime);
+    this.weekParts = shiftParts.map((grid) => grid.map((p) => p.week));
+    this.overtimeParts = shiftParts.map((grid) => grid.map((p) => p.overtime));
 
     this.costCtx = costContextFor(input, this.ctx, maxHours);
 
@@ -607,20 +627,25 @@ export class SolverModel {
     this.onLeave = this.nurses.map((nurse) =>
       this.dates.map((date) => approvedLeaveOn(this.ctx, nurse.id, date) !== undefined),
     );
-    this.weekMinutes = Array.from({ length: n }, () => new Array<number>(this.weekCount).fill(0));
-    this.overtimeMinutes = Array.from({ length: n }, () =>
-      new Array<number>(this.overtimeCount).fill(0),
+    const calendarOf = (i: number) => calendars[this.gridOf[i]!]!;
+    this.weekMinutes = this.nurses.map((_, i) =>
+      new Array<number>(calendarOf(i).weekCount).fill(0),
     );
-    this.overtimeLeaveMinutes = this.nurses.map((nurse) => {
-      const windows = new Array<number>(this.overtimeCount).fill(0);
+    this.overtimeMinutes = this.nurses.map((_, i) =>
+      new Array<number>(calendarOf(i).overtimeCount).fill(0),
+    );
+    this.overtimeLeaveMinutes = this.nurses.map((nurse, i) => {
+      const { overtimeOf, overtimeCount } = calendarOf(i);
+      const windows = new Array<number>(overtimeCount).fill(0);
       if (!maxHours.paidLeaveCountsTowardOvertime) return windows;
       for (const c of this.ctx.paidLeaveByNurse.get(nurse.id) ?? []) {
-        const w = this.overtimeOf(c.date);
-        if (w >= 0 && w < this.overtimeCount) windows[w]! += c.hours;
+        const w = overtimeOf(c.date);
+        if (w >= 0 && w < overtimeCount) windows[w]! += c.hours;
       }
       return windows.map((hours) => Math.round(hours * MINUTES_PER_HOUR));
     });
     for (const [i, list] of prior.entries()) {
+      const calendar = calendarOf(i);
       for (const a of list) {
         const st = this.shiftTypeById.get(a.shiftTypeId);
         if (!st || (st.isOnCall && !maxHours.onCallCountsTowardHours)) continue;
@@ -880,11 +905,12 @@ export class SolverModel {
     // authorised hours (`authorisedOvertimeHours`); drafts are generated without overtime, so
     // this only ever leaves a shift to CP-SAT or the manager.
     if (!shift.shiftType.isOnCall || this.maxHoursParams.onCallCountsTowardHours) {
-      for (const [week, minutes] of this.weekParts[shift.idx]!) {
+      const grid = this.gridOf[nurseIdx]!;
+      for (const [week, minutes] of this.weekParts[grid]![shift.idx]!) {
         if (this.weekMinutes[nurseIdx]![week]! + minutes > this.maxWeekMinutes) return false;
       }
       if (this.maxHoursParams.requireOvertimeAuthorisation) {
-        for (const [w, minutes] of this.overtimeParts[shift.idx]!) {
+        for (const [w, minutes] of this.overtimeParts[grid]![shift.idx]!) {
           const counted =
             this.overtimeMinutes[nurseIdx]![w]! +
             minutes +
@@ -1119,10 +1145,11 @@ export class SolverModel {
     this.staffedByRole[shift.idx * NURSE_ROLES.length + ROLE_INDEX[this.nurses[n]!.role]]! += sign;
     this.onDate[n]![shift.dateIdx]! += sign;
     if (!st.isOnCall || this.maxHoursParams.onCallCountsTowardHours) {
-      for (const [week, minutes] of this.weekParts[shift.idx]!) {
+      const grid = this.gridOf[n]!;
+      for (const [week, minutes] of this.weekParts[grid]![shift.idx]!) {
         this.weekMinutes[n]![week]! += sign * minutes;
       }
-      for (const [w, minutes] of this.overtimeParts[shift.idx]!) {
+      for (const [w, minutes] of this.overtimeParts[grid]![shift.idx]!) {
         this.overtimeMinutes[n]![w]! += sign * minutes;
       }
     }

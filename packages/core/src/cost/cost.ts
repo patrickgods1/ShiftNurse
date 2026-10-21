@@ -30,11 +30,12 @@ import {
   parseTimeOfDay,
   type ShiftWindow,
   shiftWindow,
+  type Weekday,
   type WeekendDefinition,
   weekdayOf,
 } from '../domain/time.js';
 import { gini } from '../fairness/distribution.js';
-import { payPeriodIndex, payPeriodWindow } from '../rules/hours-rules.js';
+import { payPeriodIndex, payPeriodWindow, workWeekFor } from '../rules/hours-rules.js';
 import type { PaidLeaveCredit } from '../rules/paid-leave.js';
 import { isWorked } from '../rules/types.js';
 import { workedStretches } from '../schedule/holdover.js';
@@ -103,8 +104,9 @@ interface WindowCalendar {
   nextStart: (date: IsoDate) => IsoDate;
 }
 
-function weekCalendar(ctx: CostContext): WindowCalendar {
-  const windowOf = (d: IsoDate) => workWeekStart(d, ctx.workWeekStartsOn);
+/** Weeks starting on `startsOn`: the nurse's own (`workWeekFor`). */
+function weekCalendar(startsOn: Weekday): WindowCalendar {
+  const windowOf = (d: IsoDate) => workWeekStart(d, startsOn);
   return { windowOf, nextStart: (d) => addDays(windowOf(d), 7) };
 }
 
@@ -380,6 +382,8 @@ function overtimeStarts(
   // Weekly and pay-period rules put each hour in the window it was worked unless the unit counts
   // shifts by their start (D17).
   const byClock = (ctx.overtimeWindowAttribution ?? 'clock') === 'clock';
+  // Weekly and pay-period windows are the nurse's own: a night nurse's when the unit sets one.
+  const week = workWeekFor(timeline[0]?.nurse, ctx);
   let starts: Map<AssignmentView, OvertimeSpan[]>;
   switch (rule.basis) {
     case 'daily':
@@ -417,7 +421,7 @@ function overtimeStarts(
       );
       break;
     case 'weekly': {
-      const weeks = weekCalendar(ctx);
+      const weeks = weekCalendar(week.startsOn);
       starts = windowOvertime(
         timeline,
         threshold,
@@ -427,7 +431,7 @@ function overtimeStarts(
         minutesOf,
         tz,
         byClock ? weeks.nextStart : undefined,
-        ctx.workWeekStartMinute ?? 0,
+        week.startMinute,
       );
       break;
     }
@@ -449,7 +453,7 @@ function overtimeStarts(
         minutesOf,
         tz,
         byClock ? periods.nextStart : undefined,
-        ctx.workWeekStartMinute ?? 0,
+        week.startMinute,
       );
       break;
     }
@@ -1099,12 +1103,13 @@ function costTimeline(timeline: readonly AssignmentView[], ctx: CostContext): As
   // compound the regular rate of the work week, or of the pay period for a nurse on an 8/80 rule
   // (29 CFR 778.601(e)), so it does not depend on which shift carries the band (D16).
   const active = activeRulesFor(timeline, ctx);
+  const week = workWeekFor(timeline[0]?.nurse, ctx);
   const calendar =
     active.some((r) => r.basis === 'pay_period') && !active.some((r) => r.basis === 'weekly')
       ? payPeriodCalendar(ctx)
-      : weekCalendar(ctx);
+      : weekCalendar(week.startsOn);
   const byClock = (ctx.overtimeWindowAttribution ?? 'clock') === 'clock';
-  const startMinute = ctx.workWeekStartMinute ?? 0;
+  const startMinute = week.startMinute;
   // The window-day a view starts on, which names its window (its date at a midnight start).
   const dayOf = (view: AssignmentView) => windowDayOf(view.window.startMinute, startMinute);
   // Minutes of a view in its own window; the rest are the next window's (T06's split point).
