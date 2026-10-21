@@ -511,11 +511,13 @@ export { Rng } from './solver/rng.js';
 export { ruleContextForInput } from './solver/rule-context.js';
 // Solver entry point
 export { solve } from './solver/solver.js';
-// Solver contract types
 export type {
+  ObjectiveWeights,
   SolveInput,
   SolveOptions,
   SolveProgress,
   SolveReport,
   SolverId,
 } from './solver/types.js';
+// Solver contract types
+export { DEFAULT_OBJECTIVE_WEIGHTS } from './solver/types.js';

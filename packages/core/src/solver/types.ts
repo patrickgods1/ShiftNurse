@@ -201,6 +201,13 @@ export interface ObjectiveWeights {
    */
   nightRecovery: number;
   /**
+   * Per tour-rotation finding while that rule is soft: a nurse over the cap on tours (one finding
+   * however far over), a shift starting too soon after the shift she last stopped on another tour,
+   * or a shift off her permanent tour. Counted with preferences: like recovery after nights, it is
+   * about the nurse's body clock. Level with a recovery breach, below an unfilled target.
+   */
+  tourRotation: number;
+  /**
    * Per worked shift inside a time-off request still waiting for a decision, while that rule is
    * soft. Above any single preference (5 × 10) — the nurse has asked for the day, not merely
    * leaned against it — and far below an hour of contract or a short shift, so a day asked off
@@ -213,6 +220,30 @@ export interface ObjectiveWeights {
    * (5 × 10) and just below a holiday-rotation breach.
    */
   weekendPattern: number;
+  /**
+   * Per pay period, while the two-days-off-together rule is soft, in which a nurse works every
+   * weekend and has no two consecutive days off (one finding per nurse per pay period). Counted
+   * in the fairness bucket beside the weekend pattern: it is relief for the weekend burden.
+   * Below a weekend-pattern breach and an unfilled target, so the pair gives way before anything
+   * goes short.
+   */
+  daysOffTogether: number;
+  /**
+   * Per weekend, while the complete-weekends rule is soft, that a nurse works only in part (one
+   * finding per nurse per weekend, however many of its days are off). Counted in the fairness
+   * bucket beside the weekend pattern: half a weekend costs her the weekend all the same. Level
+   * with a pair of days off, below a weekend-pattern breach and an unfilled target, so a split
+   * weekend gives way before anything goes short.
+   */
+  completeWeekend: number;
+  /**
+   * Per run of days worked in a row shorter than the unit asks for, while the short-work-runs
+   * rule is soft (one finding per run, however short). Counted with preferences: a lone day
+   * between days off is about the nurse's week, like recovery after nights. Below a split weekend,
+   * a pair of days off and an unfilled target, so a lone day gives way before anything goes
+   * short; level with a middling preference (3 × 10), since it is a matter of how the week feels.
+   */
+  shortWorkRun: number;
   /** Per dollar of straight-time cost. */
   cost: number;
 }
@@ -227,8 +258,12 @@ export const DEFAULT_OBJECTIVE_WEIGHTS: ObjectiveWeights = {
   preference: 10,
   holidayRotation: 55,
   nightRecovery: 45,
+  tourRotation: 45,
   pendingTimeOff: 80,
   weekendPattern: 50,
+  daysOffTogether: 40,
+  completeWeekend: 40,
+  shortWorkRun: 30,
   cost: 0.05,
 };
 

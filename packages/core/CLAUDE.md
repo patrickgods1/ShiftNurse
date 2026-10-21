@@ -342,9 +342,23 @@
   worked; a weekend counts only if worked on a day of the pay period (a Saturday in the previous
   pay period does not credit it); a pay period that began before the schedule is judged once the
   published history covers its first day (`RuleContext.historyFrom`); one running past the
-  schedule's end is left to the next; while soft it is not priced, so the grid and alerts flag it
-  but Generate does not steer. Hard, `solver/cpsat/rules/days-off.ts` and
+  schedule's end is left to the next; while soft both solvers price each finding at
+  `daysOffTogether` (fairness; SA `daysOffTogetherBreaches`, CP-SAT `daysOffTogetherTerms`, one
+  `daysOffParts`). Hard, `solver/cpsat/rules/days-off.ts` and
   `SolverModel` forbid it.
+- **A weekend worked is worked whole.** `rules/complete-weekends.ts` (`complete-weekends`, soft,
+  nurse scope, off by default, `split_weekend`, no params): a weekend key worked (lookback
+  included) where not every calendar date of its window carries a shift dated on it; the amount is
+  the unworked dates. A Saturday alone leaves the nurse's weekend half-gone, which she reads as
+  two broken weekends. Not judged past the period's end, for Baylor nurses (the plan is their
+  weekends) or when a pre-period date is before `historyFrom`. While soft both solvers price each
+  finding at `completeWeekend` (fairness); hard, `encodeCompleteWeekends`.
+- **Short work runs.** `rules/short-work-runs.ts` (`short-work-runs`, soft, nurse scope, off by
+  default, `short_work_run`, `minConsecutiveDays` default 2, `exemptEmploymentTypes` default per
+  diem): a run of consecutive dated worked days shorter than the minimum, so a lone shift between
+  days off is not scattered through the grid. Runs touching the period's last day are not judged
+  (the next period may extend them); lookback counts; another unit's shifts count as worked. While
+  soft both solvers price each finding at `shortWorkRun` (preferences); hard, `encodeShortWorkRuns`.
 - **Weekends off per year is an alert.** `complianceAlerts`' `weekends_off_per_year`
   (`publish/compliance.ts`) comes from `Unit.minWeekendsOffPerYear`: the ledger's weekends over the
   periods that began within the 52 weeks ending on the period's last day, plus this period's,
@@ -488,7 +502,8 @@
   permanent tour, except tours she asked for (a preferred shift type on them, `requestedTours`,
   read from `RuleContext.preferredShiftTypesByNurse`). Monotone under removal, so the gate is the
   generic nurse-scope one; `encodeTourRotation` enforces it when hard (locked breaches stand,
-  `atMost` stops them growing). Neither solver prices it while soft — a stated limit.
+  `atMost` stops them growing). While soft both solvers price each finding at `tourRotation`
+  (preferences; SA `tourRotationBreaches`, CP-SAT `tourRotationTerms`, one `tourRotationFindings`).
 - **A plan nurse works the plan's tours.** `rules/schedule-kind-tours.ts` (`schedule-kind-tours`,
   hard, nurse scope, on by default, `off_plan_tour`): a worked in-period shift of a `va_72_80` nurse
   must be 12 hours (38 U.S.C. § 7456A), and of a `va_baylor` nurse a Baylor tour (§ 7456;

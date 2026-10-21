@@ -16,17 +16,33 @@
 import { NURSE_ROLES } from '../../acuity/demand.js';
 import { isBaylorPlan } from '../../cost/cost.js';
 import type { Id } from '../../domain/entities.js';
-import { type IsoDate, weekendKey } from '../../domain/time.js';
+import { type IsoDate, minutesToHours, weekendKey } from '../../domain/time.js';
 import { BURDEN_COMPONENTS, type BurdenComponent } from '../../fairness/types.js';
 import { inHolidayRotation, workedInHistory } from '../../rules/holiday-rotation.js';
 import { groupInForce } from '../../rules/incompatibility-rules.js';
 import { isDaySide, isWorkedNight, tooSoonAfterNight } from '../../rules/night-recovery.js';
-import { isNightTour } from '../../rules/tour-rotation.js';
+import {
+  effectiveTourLimits,
+  isNightTour,
+  requestedTours,
+  tourOf,
+} from '../../rules/tour-rotation.js';
 import { judgesWeekends } from '../../rules/weekend-pattern.js';
 import { compareCodeUnits } from '../model.js';
 import { type Expr, evalExpr, expr, scale, sum } from './builder.js';
-import { countExpr, type EncodeContext, HOURS, hoursExpr, type TimelineEntry } from './context.js';
+import {
+  countExpr,
+  describe,
+  type EncodeContext,
+  HOURS,
+  hoursExpr,
+  type TimelineEntry,
+} from './context.js';
+import { completeWeekendParts } from './rules/complete-weekends.js';
 import { isMovable, roleExpr } from './rules/coverage.js';
+import { daysOffParts } from './rules/days-off.js';
+import { shortWorkRunParts } from './rules/short-work-runs.js';
+import { toursUsed } from './rules/tours.js';
 import { nurseWeekendExprs, weekendBreachExprs } from './rules/weekends.js';
 
 /** Fixed-point scale for fair-share arithmetic: shares are fractions of the team. */
@@ -40,6 +56,10 @@ export function encodeObjective(ctx: EncodeContext): void {
   holidayTerms(ctx);
   weekendPatternTerms(ctx);
   nightRecoveryTerms(ctx);
+  tourRotationTerms(ctx);
+  daysOffTogetherTerms(ctx);
+  completeWeekendTerms(ctx);
+  shortWorkRunTerms(ctx);
   perShiftTerms(ctx);
 }
 
@@ -449,6 +469,228 @@ function nightRecoveryTerms(ctx: EncodeContext): void {
       priced(ctx, sum(worked, anyOf(ctx, before, label), expr([], -1)), price, label);
     }
   }
+}
+
+/**
+ * Tour rotation, finding for finding as `SolverModel.tourRotationFor` counts them with the rule's
+ * `tourRotationFindings`; priced only while the rule is soft (`tourRotationPrice`), a hard rule is
+ * `encodeTourRotation`'s constraints. Per nurse: one Boolean for being over the tour cap (one
+ * finding however far over), one per shift off her permanent tour, and one per shift started too
+ * soon after the shift she last stopped on another tour.
+ *
+ * That last is measured from the shift that ends last before it (`latestEndingBefore`), not from
+ * every earlier shift: pairs on other tours inside the break would count a night after an evening
+ * after a day twice, and would charge a day after a day after a night. So shift C is charged when
+ * some earlier A on another tour, ending inside the break, is worked with no shift that started
+ * before C ending after A — the A's that pass are exactly the latest-ending group. A worked shift
+ * ending after A but overlapping C also rules A out, as the overlap skips it in the rule.
+ */
+function tourRotationTerms(ctx: EncodeContext): void {
+  const { model, input } = ctx;
+  const params = model.tourRotationParams;
+  const price = model.tourRotationPrice;
+  if (!params || price === 0) return;
+  const lit = (e: TimelineEntry): Expr =>
+    e.literal === null ? expr([], 1) : expr([[e.literal, 1]]);
+  for (let n = 0; n < model.nurses.length; n++) {
+    const timeline = ctx.timeline(n).filter((e) => !e.shiftType.isOnCall);
+    if (!timeline.some((e) => e.inPeriod)) continue;
+    const nurse = model.nurses[n]!;
+    const limits = effectiveTourLimits(
+      nurse,
+      params,
+      input.period.startDate,
+      requestedTours(nurse.id, model.ctx),
+    );
+
+    const used = toursUsed(ctx, n, timeline, limits);
+    const cap = limits.maxToursPerPeriod;
+    if (used.length > cap) {
+      const tours = sum(...used);
+      const label = `too many tours: ${ctx.name(n)}`;
+      if (ctx.b.bounds(tours)[0] > cap) ctx.b.minimise(expr([], 1), price);
+      else {
+        const over = ctx.b.auxiliary(label, 0, 1, (value) =>
+          evalExpr(tours, value) > cap ? 1 : 0,
+        );
+        // Σ used ≤ cap + (tours − cap)·over: any tour past the cap forces `over` on.
+        ctx.b.linear(
+          sum(tours, expr([[over, -(used.length - cap)]])),
+          Number.NEGATIVE_INFINITY,
+          cap,
+          label,
+        );
+        ctx.b.minimise(expr([[over, 1]]), price);
+      }
+    }
+
+    if (nurse.permanentTour && limits.permanentTourEnforced) {
+      const off = timeline.filter((e) => {
+        const tour = tourOf(e.shiftType);
+        return e.inPeriod && tour !== nurse.permanentTour && !limits.requested.has(tour);
+      });
+      ctx.b.minimise(countExpr(off), price);
+    }
+
+    for (const c of timeline) {
+      const cTour = tourOf(c.shiftType);
+      // Shifts started before C and ending inside the break (or past C's start). A shift ending
+      // after a candidate A ends closer still, so this holds every B that could rule A out.
+      const recent = timeline.filter(
+        (e) =>
+          e.window.startMinute < c.window.startMinute &&
+          minutesToHours(c.window.startMinute - e.window.endMinute) < params.minHoursBetweenTours,
+      );
+      // One `C ∧ A ∧ ¬(any later-ending B)` per candidate A, as C + A − 1 − ΣB ≥ 1.
+      const parts: Expr[] = [];
+      let certain = false;
+      for (const a of recent) {
+        if (tourOf(a.shiftType) === cTour) continue;
+        if (c.window.startMinute - a.window.endMinute < 0) continue;
+        // History cannot be fixed: the rule flags only a change the schedule has a part in.
+        if (!a.inPeriod && !c.inPeriod) continue;
+        if (!c.inPeriod && laterPrecedes(recent, a, cTour)) continue;
+        const later = recent.filter((b) => b.window.endMinute > a.window.endMinute);
+        if (later.some((b) => b.literal === null)) continue;
+        const e = sum(lit(c), lit(a), expr([], -1), scale(countExpr(later), -1));
+        if (e.terms.length === 0) certain ||= e.constant >= 1;
+        else parts.push(e);
+      }
+      if (certain) {
+        ctx.b.minimise(expr([], 1), price);
+        continue;
+      }
+      if (parts.length === 0) continue;
+      const label = `short tour change: ${ctx.name(n)} ${describe(c)}`;
+      const flagged = ctx.b.auxiliary(label, 0, 1, (value) =>
+        parts.some((e) => evalExpr(e, value) >= 1) ? 1 : 0,
+      );
+      for (const e of parts) {
+        ctx.b.linear(sum(expr([[flagged, 1]]), scale(e, -1)), 0, Number.POSITIVE_INFINITY, label);
+      }
+      ctx.b.minimise(expr([[flagged, 1]]), price);
+    }
+  }
+}
+
+/**
+ * Two days off together, finding for finding as `SolverModel.daysOffTogetherFor` counts them with
+ * the rule's `daysOffTogetherFindings`; priced only while the rule is soft
+ * (`daysOffTogetherPrice`), a hard rule is `encodeDaysOffTogether`'s constraint. Per nurse and
+ * judged pay period, one Boolean `breach ≥ all − Σ pairs` from the hard encoder's own `all` and
+ * `pairs` (`daysOffParts`): minimising pushes `all` down to whether every weekend is worked and
+ * each pair up to whether both its days are free, so the breach is 1 exactly when the rule
+ * finds one. With no pair left to free it is `all` itself, a constant when the weekends are fixed.
+ */
+function daysOffTogetherTerms(ctx: EncodeContext): void {
+  const { model } = ctx;
+  const price = model.daysOffTogetherPrice;
+  if (price === 0) return;
+  for (let n = 0; n < model.nurses.length; n++) {
+    // Every nurse, even one with nothing in the period: another unit's shifts alone can work
+    // every weekend, and the rule still finds her.
+    const timeline = ctx.timeline(n).filter((e) => !e.shiftType.isOnCall);
+    for (const pp of model.daysOffPayPeriods) {
+      const parts = daysOffParts(ctx, n, timeline, pp);
+      if (!parts) continue;
+      const { all, pairs } = parts;
+      if (pairs.length === 0) {
+        ctx.b.minimise(all, price);
+        continue;
+      }
+      const label = `no days off together: ${ctx.name(n)} ${pp.start}`;
+      const breach = ctx.b.auxiliary(label, 0, 1, (value) =>
+        evalExpr(all, value) === 1 && pairs.every((p) => evalExpr(p, value) === 0) ? 1 : 0,
+      );
+      ctx.b.linear(
+        sum(expr([[breach, 1]]), ...pairs, scale(all, -1)),
+        0,
+        Number.POSITIVE_INFINITY,
+        label,
+      );
+      ctx.b.minimise(expr([[breach, 1]]), price);
+    }
+  }
+}
+
+/**
+ * Complete weekends, finding for finding as `SolverModel.completeWeekendFor` counts them with the
+ * rule's `completeWeekendFindings`; priced only while the rule is soft (`completeWeekendPrice`), a
+ * hard rule is `encodeCompleteWeekends`'s constraint. One Boolean per nurse and judged weekend,
+ * `split ≥ part` for each of the encoder's pairs (`completeWeekendParts`): minimising pushes it
+ * down to whether any shift filed under the weekend is worked with one of its days off — one
+ * finding however many days are off. A locked shift with a day nothing could fill is a constant.
+ */
+function completeWeekendTerms(ctx: EncodeContext): void {
+  const price = ctx.model.completeWeekendPrice;
+  if (price === 0) return;
+  for (let n = 0; n < ctx.model.nurses.length; n++) {
+    for (const { weekend, parts } of completeWeekendParts(ctx, n)) {
+      if (parts.some((p) => p.e.terms.length === 0 && p.e.constant >= 1)) {
+        ctx.b.minimise(expr([], 1), price);
+        continue;
+      }
+      const live = parts.filter((p) => p.e.terms.length > 0);
+      if (live.length === 0) continue;
+      const label = `split weekend: ${ctx.name(n)} ${weekend}`;
+      const split = ctx.b.auxiliary(label, 0, 1, (value) =>
+        live.some((p) => evalExpr(p.e, value) >= 1) ? 1 : 0,
+      );
+      for (const p of live) {
+        ctx.b.linear(sum(expr([[split, 1]]), scale(p.e, -1)), 0, Number.POSITIVE_INFINITY, label);
+      }
+      ctx.b.minimise(expr([[split, 1]]), price);
+    }
+  }
+}
+
+/**
+ * Short work runs, finding for finding as `SolverModel.shortWorkRunFor` counts them with the rule's
+ * `shortWorkRunFindings`; priced only while the rule is soft (`shortWorkRunPrice`), a hard rule is
+ * `encodeShortWorkRuns`'s constraint. One Boolean per nurse and candidate run (a start and a short
+ * length), `short ≥ part` for each of the encoder's parts (`shortWorkRunParts`): minimising pushes
+ * it down to whether that exact run holds with an in-period shift in it. A schedule's runs are
+ * disjoint and each has one start and length, so the Booleans count findings one for one. A run
+ * of constants alone is a constant.
+ */
+function shortWorkRunTerms(ctx: EncodeContext): void {
+  const { shortWorkRunParams: params, shortWorkRunPrice: price } = ctx.model;
+  if (!params || price === 0) return;
+  for (let n = 0; n < ctx.model.nurses.length; n++) {
+    for (const { start, length, parts } of shortWorkRunParts(ctx, n, params)) {
+      if (parts.some((p) => p.e.terms.length === 0 && p.e.constant >= 1)) {
+        ctx.b.minimise(expr([], 1), price);
+        continue;
+      }
+      const live = parts.filter((p) => p.e.terms.length > 0);
+      if (live.length === 0) continue;
+      const label = `short work run price: ${ctx.name(n)} ${start} (${length})`;
+      const short = ctx.b.auxiliary(label, 0, 1, (value) =>
+        live.some((p) => evalExpr(p.e, value) >= 1) ? 1 : 0,
+      );
+      for (const p of live) {
+        ctx.b.linear(sum(expr([[short, 1]]), scale(p.e, -1)), 0, Number.POSITIVE_INFINITY, label);
+      }
+      ctx.b.minimise(expr([[short, 1]]), price);
+    }
+  }
+}
+
+/**
+ * For a C outside the period (another unit's busy time dated in it), the rule names the first
+ * shift of the latest-ending group on another tour, and stays quiet when that one is history too.
+ * A history row sorts before an in-period one starting with it, so `a` is never the one named
+ * while such a row ends with it, on another tour, having started no later.
+ */
+function laterPrecedes(recent: readonly TimelineEntry[], a: TimelineEntry, cTour: string): boolean {
+  return recent.some(
+    (h) =>
+      !h.inPeriod &&
+      h !== a &&
+      h.window.endMinute === a.window.endMinute &&
+      h.window.startMinute <= a.window.startMinute &&
+      tourOf(h.shiftType) !== cTour,
+  );
 }
 
 /** 1 when any of these entries is worked: a constant if one is, else their Boolean or. */

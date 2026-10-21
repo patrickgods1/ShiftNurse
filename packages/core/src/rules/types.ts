@@ -96,7 +96,9 @@ export type ViolationCode =
   | 'long_stretch'
   | 'rest_after_long_stretch'
   | 'no_days_off_together'
-  | 'off_plan_tour';
+  | 'off_plan_tour'
+  | 'split_weekend'
+  | 'short_work_run';
 
 /**
  * One nurse worked one past holiday. Derived from published schedules, or recorded by hand for

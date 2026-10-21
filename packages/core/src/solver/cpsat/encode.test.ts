@@ -432,6 +432,269 @@ describe('tour rotation made hard', () => {
   });
 });
 
+describe('tour rotation priced while soft', () => {
+  /** Ada on days, evenings and nights, the rule on and soft with these limits. */
+  function softTours(
+    params: Record<string, unknown>,
+    options: Partial<SolveScenarioOptions> = {},
+    nurse: Nurse = ada(),
+  ): SolveInput {
+    const base = withParams('tour-rotation', params);
+    return unit([nurse], {
+      shiftTypes: [DAY_12, EVENING_8, NIGHT_12],
+      coverageRequirements: [
+        ...coverageAllWeek(DAY_12, 'RN', 1),
+        ...coverageAllWeek(EVENING_8, 'RN', 1),
+        ...coverageAllWeek(NIGHT_12, 'RN', 1),
+      ],
+      ruleSet: {
+        ...base,
+        configs: base.configs.map((c) =>
+          c.ruleId === 'tour-rotation' ? { ...c, enabled: true } : c,
+        ),
+      },
+      ...options,
+    });
+  }
+
+  /** The findings the grid shows, the annealer's count, and both solvers' price of the schedule. */
+  function judge(input: SolveInput, assignments: readonly Assignment[]) {
+    const encoding = encodeCpsat(input);
+    const evaluation = evaluate(encoding, assignments);
+    const model = new SolverModel(input);
+    for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+    const view = new ScheduleView({
+      period: input.period,
+      assignments,
+      priorAssignments: input.priorAssignments,
+      nurses: input.nurses,
+      shiftTypes: input.shiftTypes,
+    });
+    const grid = evaluateSchedule(view, input.ruleSet, model.ctx).violations.filter(
+      (v) => v.ruleId === 'tour-rotation',
+    ).length;
+    return {
+      grid,
+      sa: model.tourRotationBreaches(),
+      saTotal: model.breakdown().total,
+      cpsat: evaluation.objective,
+    };
+  }
+
+  it('charges a day then a night 24 hours later once, with 48 owed', () => {
+    // Day Mon 5 ends 19:00, the night starts 19:00 Tue 6: 24 hours, one short change.
+    const result = judge(softTours({ maxToursPerPeriod: 2, minHoursBetweenTours: 48 }), [
+      assign('ada', DAY_12, '2026-01-05'),
+      assign('ada', NIGHT_12, '2026-01-06'),
+    ]);
+    expect([result.grid, result.sa]).toEqual([1, 1]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('measures a night from the evening before it, not also from the day before that', () => {
+    // 72 hours owed. Day Mon 5 07:00–19:00, evening Tue 6 15:00–23:00, night Wed 7 19:00. The
+    // evening is 20 hours after the day (one finding). The night is 20 hours after the evening,
+    // which ended last (a second); the day, 48 hours before it, is inside the break too but is
+    // not where the nurse last stopped. Two findings, where pairs on other tours would be three.
+    const result = judge(softTours({ maxToursPerPeriod: 3, minHoursBetweenTours: 72 }), [
+      assign('ada', DAY_12, '2026-01-05'),
+      assign('ada', EVENING_8, '2026-01-06'),
+      assign('ada', NIGHT_12, '2026-01-07'),
+    ]);
+    expect([result.grid, result.sa]).toEqual([2, 2]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('measures a day from the day before it when that day ends after the night', () => {
+    // 72 hours owed. Night Mon 5 19:00 to 07:00 Tue, day Wed 7 07:00–19:00, day Thu 8 07:00.
+    // Wednesday is 24 hours after the night: one finding. Thursday is 48 hours after the night,
+    // inside the break, but the nurse last stopped on Wednesday's day, the same tour: none.
+    const result = judge(softTours({ maxToursPerPeriod: 2, minHoursBetweenTours: 72 }), [
+      assign('ada', NIGHT_12, '2026-01-05'),
+      assign('ada', DAY_12, '2026-01-07'),
+      assign('ada', DAY_12, '2026-01-08'),
+    ]);
+    expect([result.grid, result.sa]).toEqual([1, 1]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('charges changes from last schedule’s night and from a locked day', () => {
+    // 72 hours owed. Last schedule's night Sat 3 ends 07:00 Sun 4; the locked day Mon 5 starts
+    // 48 hours later (one finding). The evening Wed 7 starts 15:00, 44 hours after the locked day
+    // ends (a second).
+    const lastNight = assign('ada', NIGHT_12, '2026-01-03', { periodId: 'prev' });
+    const lockedDay = assign('ada', DAY_12, '2026-01-05', { isLocked: true });
+    const input = softTours(
+      { maxToursPerPeriod: 3, minHoursBetweenTours: 72 },
+      { priorAssignments: [lastNight], assignments: [lockedDay] },
+    );
+    const result = judge(input, [lockedDay, assign('ada', EVENING_8, '2026-01-07')]);
+    expect([result.grid, result.sa]).toEqual([2, 2]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('charges three tours over a cap of one once, worked or locked', () => {
+    // Day Mon 5, evening Fri 9, night Wed 14: 92 and 116 hours apart, so only the count objects,
+    // once, though three is two over.
+    const roster = (isLocked: boolean) => [
+      assign('ada', DAY_12, '2026-01-05', { isLocked }),
+      assign('ada', EVENING_8, '2026-01-09', { isLocked }),
+      assign('ada', NIGHT_12, '2026-01-14', { isLocked }),
+    ];
+    const free = judge(
+      softTours({ maxToursPerPeriod: 1, minHoursBetweenTours: 48 }),
+      roster(false),
+    );
+    expect([free.grid, free.sa]).toEqual([1, 1]);
+    expect(free.cpsat).toBeCloseTo(free.saTotal, 0);
+    const pinned = roster(true);
+    const locked = judge(
+      softTours({ maxToursPerPeriod: 1, minHoursBetweenTours: 48 }, { assignments: pinned }),
+      pinned,
+    );
+    expect([locked.grid, locked.sa]).toEqual([1, 1]);
+    expect(locked.cpsat).toBeCloseTo(locked.saTotal, 0);
+  });
+
+  it('charges each day for a nurse on permanent nights, locked or not', () => {
+    // A locked day Mon 5 and a day Thu 8: two shifts off her tour, one tour, no change of tour.
+    const nurse = makeNurse({ id: 'ada', firstName: 'Ada', permanentTour: 'night' });
+    const lockedDay = assign('ada', DAY_12, '2026-01-05', { isLocked: true });
+    const input = softTours(
+      { maxToursPerPeriod: 2, minHoursBetweenTours: 48 },
+      { assignments: [lockedDay] },
+      nurse,
+    );
+    const result = judge(input, [lockedDay, assign('ada', DAY_12, '2026-01-08')]);
+    expect([result.grid, result.sa]).toEqual([2, 2]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('charges a day once after two nights that end at the same minute', () => {
+    // 48 hours owed. A night 12 (19:00) and a night 8 (23:00) on Mon 5 both end 07:00 Tue; the
+    // day Wed 7 starts 24 hours later. Both nights end last, so the day is one finding, not two.
+    // The night 8 starts inside the night 12 (an overlap, the overlap rule's business): none.
+    const result = judge(
+      softTours(
+        { maxToursPerPeriod: 2, minHoursBetweenTours: 48 },
+        {
+          shiftTypes: [DAY_12, NIGHT_12, NIGHT_8],
+          coverageRequirements: [
+            ...coverageAllWeek(DAY_12, 'RN', 1),
+            ...coverageAllWeek(NIGHT_12, 'RN', 1),
+            ...coverageAllWeek(NIGHT_8, 'RN', 1),
+          ],
+        },
+      ),
+      [
+        assign('ada', NIGHT_12, '2026-01-05'),
+        assign('ada', NIGHT_8, '2026-01-05'),
+        assign('ada', DAY_12, '2026-01-07'),
+      ],
+    );
+    expect([result.grid, result.sa]).toEqual([1, 1]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('measures an 11:00 start from the end of the night, not the short shift inside it', () => {
+    // 12 hours owed. Night 19:00 Mon 5 to 07:00 Tue, a 20:00–22:00 short shift inside it, and a
+    // mid 8 at 11:00 Tue. The short shift is the mid's start-order neighbour, 13 hours before it
+    // (enough), but the night ended last, 4 hours before: one finding. The short shift overlaps
+    // the night, so it is no change of tour itself.
+    const SHORT = {
+      ...NIGHT_8,
+      id: 'st-short',
+      name: 'Short 2',
+      abbreviation: 'S2',
+      startTime: '20:00',
+      durationHours: 2,
+    };
+    const result = judge(
+      softTours(
+        { maxToursPerPeriod: 2, minHoursBetweenTours: 12 },
+        {
+          shiftTypes: [MID_8, NIGHT_12, SHORT],
+          coverageRequirements: [
+            ...coverageAllWeek(MID_8, 'RN', 1),
+            ...coverageAllWeek(NIGHT_12, 'RN', 1),
+            ...coverageAllWeek(SHORT, 'RN', 1),
+          ],
+        },
+      ),
+      [
+        assign('ada', NIGHT_12, '2026-01-05'),
+        assign('ada', SHORT, '2026-01-05'),
+        assign('ada', MID_8, '2026-01-06'),
+      ],
+    );
+    expect([result.grid, result.sa]).toEqual([1, 1]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('measures an 11:00 start from the night, not a day-tour short shift inside it', () => {
+    // 12 hours owed. Night 19:00 Mon 5 to 07:00 Tue, a 05:00–06:00 short shift Tue (a day tour,
+    // by its start) inside it, and a mid 8 at 11:00 Tue. The start-order neighbour is the short
+    // shift, on the mid's own tour: no change. But the night ended last, 4 hours before the mid,
+    // on another tour: one finding. The short shift overlaps the night, so it is none itself.
+    const EARLY = {
+      ...DAY_8,
+      id: 'st-early',
+      name: 'Early 1',
+      abbreviation: 'E1',
+      startTime: '05:00',
+      durationHours: 1,
+    };
+    const result = judge(
+      softTours(
+        { maxToursPerPeriod: 2, minHoursBetweenTours: 12 },
+        {
+          shiftTypes: [MID_8, NIGHT_12, EARLY],
+          coverageRequirements: [
+            ...coverageAllWeek(MID_8, 'RN', 1),
+            ...coverageAllWeek(NIGHT_12, 'RN', 1),
+            ...coverageAllWeek(EARLY, 'RN', 1),
+          ],
+        },
+      ),
+      [
+        assign('ada', NIGHT_12, '2026-01-05'),
+        assign('ada', EARLY, '2026-01-06'),
+        assign('ada', MID_8, '2026-01-06'),
+      ],
+    );
+    expect([result.grid, result.sa]).toEqual([1, 1]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('leaves a change from history to history alone, even with an in-period night beside it', () => {
+    // 48 hours owed. Ada works 5 West's day 12 on Wed 7 (busy time, history to this schedule),
+    // 24 hours after a night ending 07:00 Tue. With only this unit's night Mon 5 before it, the
+    // night is in the schedule: one finding. With 5 West's night Mon 5 too, ending at the same
+    // minute and listed first, the rule names that one, history to history: no finding.
+    const WEST_NIGHT = { ...NIGHT_12, id: 'west-n12', unitId: 'unit-west' };
+    const WEST_DAY = { ...DAY_12, id: 'west-d12', unitId: 'unit-west' };
+    const westDay = assign('ada', WEST_DAY, '2026-01-07', { id: 'w-d', periodId: 'west' });
+    const westNight = assign('ada', WEST_NIGHT, '2026-01-05', { id: 'w-n', periodId: 'west' });
+    const priced = (busy: Assignment[], expected: number) => {
+      const west = busyElsewhere(busy, [WEST_NIGHT, WEST_DAY], '5 West');
+      const result = judge(
+        softTours(
+          { maxToursPerPeriod: 2, minHoursBetweenTours: 48 },
+          {
+            shiftTypes: [DAY_12, EVENING_8, NIGHT_12, ...west.shiftTypes],
+            priorAssignments: west.assignments,
+          },
+        ),
+        [assign('ada', NIGHT_12, '2026-01-05')],
+      );
+      expect([result.grid, result.sa]).toEqual([expected, expected]);
+      expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+    };
+    priced([westDay], 1);
+    priced([westNight, westDay], 0);
+  });
+});
+
 describe('tours on a nurse’s plan', () => {
   /** Ada is on the 72/80 plan, Bo on the Baylor weekend plan; Day 8 is never a tour of either. */
   const planUnit = (options: Partial<SolveScenarioOptions> = {}) =>
@@ -745,6 +1008,488 @@ describe('two days off together made hard', () => {
     expect(evaluate(encoding, withSunday).violated).toContain(
       'days off together: Ada Test 2026-01-04',
     );
+  });
+});
+
+describe('two days off together priced while soft', () => {
+  // The same pay period, weekends and contract as above, with the rule on and left soft.
+  const weekends = ['2026-01-04', '2026-01-10', '2026-01-11', '2026-01-17'];
+  const daysOn = (dates: string[], options: Partial<Assignment> = {}) =>
+    dates.map((d) => assign('ada', DAY_12, d, options));
+  const fullTime = () => makeNurse({ id: 'ada', firstName: 'Ada', contractedHoursPerPeriod: 120 });
+  const softDaysOff = (options: Partial<SolveScenarioOptions> = {}) =>
+    unit([fullTime()], {
+      ruleSet: {
+        ...NO_WEEKLY_CAP,
+        configs: NO_WEEKLY_CAP.configs.map((c) =>
+          c.ruleId === 'days-off-together' ? { ...c, enabled: true } : c,
+        ),
+      },
+      ...options,
+    });
+
+  /** The findings the grid shows, the annealer's count, and both solvers' price of the schedule. */
+  function judge(input: SolveInput, assignments: readonly Assignment[]) {
+    const encoding = encodeCpsat(input);
+    const evaluation = evaluate(encoding, assignments);
+    const model = new SolverModel(input);
+    for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+    const view = new ScheduleView({
+      period: input.period,
+      assignments,
+      priorAssignments: input.priorAssignments,
+      nurses: input.nurses,
+      shiftTypes: input.shiftTypes,
+    });
+    const grid = evaluateSchedule(view, input.ruleSet, model.ctx).violations.filter(
+      (v) => v.ruleId === 'days-off-together',
+    ).length;
+    return {
+      grid,
+      sa: model.daysOffTogetherBreaches(),
+      saTotal: model.breakdown().total,
+      cpsat: evaluation.objective,
+      violated: evaluation.violated.filter((v) => v.includes('days off together')),
+    };
+  }
+
+  /** Off 6, 8, 12, 14 and 16 Jan: none adjacent, every weekend worked. */
+  const SCATTERED = ['2026-01-05', '2026-01-07', '2026-01-09', '2026-01-13', '2026-01-15'];
+
+  it('charges every weekend worked with the days off scattered, and forbids nothing', () => {
+    const result = judge(softDaysOff(), daysOn([...weekends, ...SCATTERED]));
+    expect([result.grid, result.sa]).toEqual([1, 1]);
+    expect(result.violated).toEqual([]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('charges nothing with Thursday 15 and Friday 16 off together', () => {
+    const paired = daysOn([
+      ...weekends,
+      '2026-01-05',
+      '2026-01-06',
+      '2026-01-07',
+      '2026-01-09',
+      '2026-01-13',
+      '2026-01-14',
+    ]);
+    const result = judge(softDaysOff(), paired);
+    expect([result.grid, result.sa]).toEqual([0, 0]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('charges the scattered days off around locked weekends, and a schedule that is all locked', () => {
+    const locked = daysOn(weekends, { isLocked: true });
+    const around = judge(softDaysOff({ assignments: locked }), [...locked, ...daysOn(SCATTERED)]);
+    expect([around.grid, around.sa]).toEqual([1, 1]);
+    expect(around.cpsat).toBeCloseTo(around.saTotal, 0);
+
+    // Every shift pinned: nothing the solver could free, a constant finding in both.
+    const pinned = daysOn([...weekends, ...SCATTERED], { isLocked: true });
+    const all = judge(softDaysOff({ assignments: pinned }), pinned);
+    expect([all.grid, all.sa]).toEqual([1, 1]);
+    expect(all.cpsat).toBeCloseTo(all.saTotal, 0);
+  });
+
+  it('owes nothing when leave on 13–14 Jan leaves two days no one can schedule', () => {
+    // No variable on either day, so they are a pair off already, whatever else she works:
+    // every weekend and every other weekday, off only 6, 8, 13, 14, 16.
+    const input = softDaysOff({ timeOff: [timeOff('ada', '2026-01-13', '2026-01-14')] });
+    const result = judge(
+      input,
+      daysOn([...weekends, '2026-01-05', '2026-01-07', '2026-01-09', '2026-01-12', '2026-01-15']),
+    );
+    expect([result.grid, result.sa]).toEqual([0, 0]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('puts no price on two days off together when the rule is hard or off', () => {
+    // The same scattered roster: hard, the constraint forbids it; off, nobody judges it. Either
+    // way the objective is the soft one less its single 40-point finding.
+    const roster = daysOn([...weekends, ...SCATTERED]);
+    const soft = evaluate(encodeCpsat(softDaysOff()), roster).objective;
+    for (const [severity, ruleSet] of [
+      ['hard', hardDaysOff(NO_WEEKLY_CAP)],
+      ['off', NO_WEEKLY_CAP],
+    ] as const) {
+      const input = unit([fullTime()], { ruleSet });
+      const encoding = encodeCpsat(input);
+      expect(encoding.solverModel.daysOffTogetherPrice, severity).toBe(0);
+      expect(evaluate(encoding, roster).objective, severity).toBeCloseTo(soft - 40, 0);
+    }
+  });
+});
+
+/** `complete-weekends` on, soft or hard, under the given weekend definition. */
+function completeWeekends(
+  severity: 'soft' | 'hard',
+  base: RuleSet = defaultRuleSet(UNIT_ID),
+  mode: 'starts_within' | 'overlaps' = 'starts_within',
+): RuleSet {
+  return {
+    ...base,
+    weekendDefinition: { ...base.weekendDefinition, mode },
+    configs: base.configs.map((c) =>
+      c.ruleId === 'complete-weekends'
+        ? {
+            ...c,
+            enabled: true,
+            ...(severity === 'hard' ? { severityOverride: 'hard' as const } : {}),
+          }
+        : c,
+    ),
+  };
+}
+
+describe('complete weekends made hard', () => {
+  // Sun 4 – Sat 17 Jan: weekends Sat 3 – Sun 4, Sat 10 – Sun 11, and Sat 17 – Sun 18, which runs
+  // past the schedule and is left to the next.
+  const on = (shiftType: typeof DAY_12, date: string) => assign('ada', shiftType, date);
+
+  it('forbids the Saturday alone, allows the whole weekend or none of it', () => {
+    const encoding = encodeCpsat(unit([ada()], { ruleSet: completeWeekends('hard') }));
+    expect(evaluate(encoding, [on(DAY_12, '2026-01-10')]).violated.join('\n')).toMatch(
+      /complete weekend: Ada Test 2026-01-10/,
+    );
+    expect(evaluate(encoding, [on(NIGHT_12, '2026-01-11')]).violated.join('\n')).toMatch(
+      /complete weekend/,
+    );
+    expect(
+      evaluate(encoding, [on(DAY_12, '2026-01-10'), on(DAY_12, '2026-01-11')]).violated,
+    ).toEqual([]);
+    expect(evaluate(encoding, [on(DAY_12, '2026-01-07')]).violated).toEqual([]);
+  });
+
+  it('leaves the weekend running past the schedule’s last day to the next one', () => {
+    const encoding = encodeCpsat(unit([ada()], { ruleSet: completeWeekends('hard') }));
+    expect(evaluate(encoding, [on(DAY_12, '2026-01-17')]).violated).toEqual([]);
+  });
+
+  it('reads the Saturday before the schedule from the published tail', () => {
+    // Sat 3 worked last schedule: Sun 4 completes it. Without it, Sun 4 alone is half a weekend.
+    const prior = [assign('ada', DAY_12, '2026-01-03', { periodId: 'prev' })];
+    const withTail = encodeCpsat(
+      unit([ada()], { priorAssignments: prior, ruleSet: completeWeekends('hard') }),
+    );
+    expect(evaluate(withTail, [on(DAY_12, '2026-01-04')]).violated).toEqual([]);
+    const without = encodeCpsat(unit([ada()], { ruleSet: completeWeekends('hard') }));
+    expect(evaluate(without, [on(DAY_12, '2026-01-04')]).violated.join('\n')).toMatch(
+      /complete weekend: Ada Test 2026-01-03/,
+    );
+  });
+
+  it('forbids a Friday night into the weekend alone when the weekend takes it in', () => {
+    // Under 'overlaps' the night of Fri 9 works the weekend of the 10th but neither of its days;
+    // with the Saturday and Sunday nights as well, the weekend is whole.
+    const encoding = encodeCpsat(
+      unit([ada()], { ruleSet: completeWeekends('hard', NO_WEEKLY_CAP, 'overlaps') }),
+    );
+    expect(evaluate(encoding, [on(NIGHT_12, '2026-01-09')]).violated.join('\n')).toMatch(
+      /complete weekend/,
+    );
+    const nights = ['2026-01-09', '2026-01-10', '2026-01-11'].map((d) => on(NIGHT_12, d));
+    expect(evaluate(encoding, nights).violated).toEqual([]);
+  });
+
+  it('lets a locked Saturday stand without making the model infeasible, and allows its Sunday', () => {
+    // Sun 11 on leave as well, so nothing could complete the weekend: all off must still be legal.
+    for (const leave of [[], [timeOff('ada', '2026-01-11', '2026-01-11')]]) {
+      const saturday = assign('ada', DAY_12, '2026-01-10', { isLocked: true });
+      const encoding = encodeCpsat(
+        unit([ada()], {
+          assignments: [saturday],
+          timeOff: leave,
+          ruleSet: completeWeekends('hard'),
+        }),
+      );
+      expect(encoding.builder.evaluate(new Map(), encoding.objectiveScale).violated).toEqual([]);
+      if (leave.length === 0) {
+        expect(evaluate(encoding, [saturday, on(DAY_12, '2026-01-11')]).violated).toEqual([]);
+      }
+    }
+  });
+});
+
+describe('complete weekends priced while soft', () => {
+  /** The findings the grid shows, the annealer's count, and both solvers' price of the schedule. */
+  function judge(input: SolveInput, assignments: readonly Assignment[]) {
+    const encoding = encodeCpsat(input);
+    const evaluation = evaluate(encoding, assignments);
+    const model = new SolverModel(input);
+    for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+    const view = new ScheduleView({
+      period: input.period,
+      assignments,
+      priorAssignments: input.priorAssignments,
+      nurses: input.nurses,
+      shiftTypes: input.shiftTypes,
+    });
+    const grid = evaluateSchedule(view, input.ruleSet, model.ctx).violations.filter(
+      (v) => v.ruleId === 'complete-weekends',
+    ).length;
+    return {
+      grid,
+      sa: model.completeWeekendBreaches(),
+      saTotal: model.breakdown().total,
+      cpsat: evaluation.objective,
+      violated: evaluation.violated.filter((v) => v.includes('complete weekend')),
+    };
+  }
+  const soft = (options: Partial<SolveScenarioOptions> = {}, mode?: 'overlaps') =>
+    unit([ada()], { ruleSet: completeWeekends('soft', NO_WEEKLY_CAP, mode), ...options });
+
+  it('charges a Saturday without its Sunday once, and forbids nothing', () => {
+    const result = judge(soft(), [assign('ada', DAY_12, '2026-01-10')]);
+    expect([result.grid, result.sa]).toEqual([1, 1]);
+    expect(result.violated).toEqual([]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('charges nothing for the whole weekend', () => {
+    const whole = [assign('ada', DAY_12, '2026-01-10'), assign('ada', DAY_12, '2026-01-11')];
+    const result = judge(soft(), whole);
+    expect([result.grid, result.sa]).toEqual([0, 0]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('charges a Friday night into the weekend once, though both its days are off', () => {
+    // Two days unworked, one finding: priced per weekend, not per day.
+    const result = judge(soft({}, 'overlaps'), [assign('ada', NIGHT_12, '2026-01-09')]);
+    expect([result.grid, result.sa]).toEqual([1, 1]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('charges a Sunday alone only when the history covers the Saturday before the schedule', () => {
+    // Sun 4 worked, Sat 3 before the schedule with nothing in the tail. History complete from
+    // Sun 4: Sat 3 is unknown, nothing judged. Complete from Sat 3: it was off, one finding.
+    const sunday = [assign('ada', DAY_12, '2026-01-04')];
+    for (const [from, expected] of [
+      ['2026-01-04', 0],
+      ['2026-01-03', 1],
+    ] as const) {
+      const result = judge(soft({ historyFrom: isoDate(from) }), sunday);
+      expect([result.grid, result.sa], from).toEqual([expected, expected]);
+      expect(result.cpsat, from).toBeCloseTo(result.saTotal, 0);
+    }
+  });
+
+  it('charges a locked Saturday alone, and nothing once its Sunday is worked', () => {
+    const saturday = assign('ada', DAY_12, '2026-01-10', { isLocked: true });
+    const input = soft({ assignments: [saturday] });
+    const alone = judge(input, [saturday]);
+    expect([alone.grid, alone.sa]).toEqual([1, 1]);
+    expect(alone.cpsat).toBeCloseTo(alone.saTotal, 0);
+    const whole = judge(input, [saturday, assign('ada', DAY_12, '2026-01-11')]);
+    expect([whole.grid, whole.sa]).toEqual([0, 0]);
+    expect(whole.cpsat).toBeCloseTo(whole.saTotal, 0);
+  });
+
+  it('puts no price on complete weekends when the rule is hard or off', () => {
+    // A Saturday alone: hard, the constraint forbids it; off, nobody judges it. Either way the
+    // objective is the soft one less its single 40-point finding.
+    const roster = [assign('ada', DAY_12, '2026-01-10')];
+    const priced = evaluate(encodeCpsat(soft()), roster).objective;
+    for (const [severity, ruleSet] of [
+      ['hard', completeWeekends('hard', NO_WEEKLY_CAP)],
+      ['off', NO_WEEKLY_CAP],
+    ] as const) {
+      const encoding = encodeCpsat(unit([ada()], { ruleSet }));
+      expect(encoding.solverModel.completeWeekendPrice, severity).toBe(0);
+      expect(evaluate(encoding, roster).objective, severity).toBeCloseTo(priced - 40, 0);
+    }
+  });
+});
+
+/** `short-work-runs` on, soft or hard, with any params over its defaults (two days in a row). */
+function shortWorkRuns(
+  severity: 'soft' | 'hard',
+  base: RuleSet = defaultRuleSet(UNIT_ID),
+  params: Record<string, unknown> = {},
+): RuleSet {
+  return {
+    ...base,
+    configs: base.configs.map((c) =>
+      c.ruleId === 'short-work-runs'
+        ? {
+            ...c,
+            enabled: true,
+            params: { ...c.params, ...params },
+            ...(severity === 'hard' ? { severityOverride: 'hard' as const } : {}),
+          }
+        : c,
+    ),
+  };
+}
+
+describe('short work runs made hard', () => {
+  // Sun 4 – Sat 17 Jan. Day 12s, weekly caps lifted so runs of three fit.
+  const on = (date: string) => assign('ada', DAY_12, date);
+  const hard = (options: Partial<SolveScenarioOptions> = {}, params = {}) =>
+    encodeCpsat(
+      unit([ada()], { ruleSet: shortWorkRuns('hard', NO_WEEKLY_CAP, params), ...options }),
+    );
+
+  it('forbids a lone Monday, allows Monday and Tuesday together or nothing at all', () => {
+    const encoding = hard();
+    expect(evaluate(encoding, [on('2026-01-05')]).violated.join('\n')).toMatch(
+      /short work run: Ada Test 2026-01-05/,
+    );
+    expect(evaluate(encoding, [on('2026-01-05'), on('2026-01-06')]).violated).toEqual([]);
+    expect(evaluate(encoding, []).violated).toEqual([]);
+  });
+
+  it('forbids two days in a row when the unit asks for three, and allows three', () => {
+    const encoding = hard({}, { minConsecutiveDays: 3 });
+    expect(evaluate(encoding, [on('2026-01-05'), on('2026-01-06')]).violated.join('\n')).toMatch(
+      /short work run: Ada Test 2026-01-05/,
+    );
+    expect(
+      evaluate(encoding, [on('2026-01-05'), on('2026-01-06'), on('2026-01-07')]).violated,
+    ).toEqual([]);
+  });
+
+  it('leaves a lone last day to the next schedule', () => {
+    expect(evaluate(hard(), [on('2026-01-17')]).violated).toEqual([]);
+  });
+
+  it('reads the Saturday before the schedule from the published tail', () => {
+    // Sat 3 worked last schedule: Sun 4 makes a run of two. Without it, Sun 4 is alone.
+    const prior = [assign('ada', DAY_12, '2026-01-03', { periodId: 'prev' })];
+    expect(evaluate(hard({ priorAssignments: prior }), [on('2026-01-04')]).violated).toEqual([]);
+    expect(evaluate(hard(), [on('2026-01-04')]).violated.join('\n')).toMatch(/short work run/);
+  });
+
+  it('counts a day on another unit as a day worked', () => {
+    const WEST_DAY = { ...DAY_12, id: 'west-d12', unitId: 'unit-west' };
+    const west = busyElsewhere(
+      [assign('ada', WEST_DAY, '2026-01-06', { id: 'w-ada', periodId: 'west' })],
+      [WEST_DAY],
+      '5 West',
+    );
+    const encoding = hard({
+      shiftTypes: [DAY_12, NIGHT_12, ...west.shiftTypes],
+      priorAssignments: west.assignments,
+    });
+    expect(evaluate(encoding, [on('2026-01-05')]).violated).toEqual([]);
+    expect(evaluate(encoding, [on('2026-01-08')]).violated.join('\n')).toMatch(/short work run/);
+  });
+
+  it('does not judge a per-diem nurse', () => {
+    const encoding = encodeCpsat(
+      unit([makeNurse({ id: 'ada', firstName: 'Ada', employmentType: 'per_diem' })], {
+        ruleSet: shortWorkRuns('hard', NO_WEEKLY_CAP),
+      }),
+    );
+    expect(evaluate(encoding, [on('2026-01-05')]).violated).toEqual([]);
+  });
+
+  it('lets a locked lone Monday stand without making the model infeasible, and allows its Tuesday', () => {
+    // Sun 4 and Tue 6 on leave as well, so nothing could lengthen it: all off must still be legal.
+    for (const leave of [
+      [],
+      [timeOff('ada', '2026-01-04', '2026-01-04'), timeOff('ada', '2026-01-06', '2026-01-06')],
+    ]) {
+      const monday = assign('ada', DAY_12, '2026-01-05', { isLocked: true });
+      const encoding = hard({ assignments: [monday], timeOff: leave });
+      expect(encoding.builder.evaluate(new Map(), encoding.objectiveScale).violated).toEqual([]);
+      if (leave.length === 0) {
+        expect(evaluate(encoding, [monday, on('2026-01-06')]).violated).toEqual([]);
+        // A lone Wednesday beside nothing is still forbidden.
+        expect(evaluate(encoding, [monday, on('2026-01-07')]).violated.join('\n')).toMatch(
+          /short work run/,
+        );
+      }
+    }
+  });
+});
+
+describe('short work runs priced while soft', () => {
+  /** The findings the grid shows, the annealer's count, and both solvers' price of the schedule. */
+  function judge(input: SolveInput, assignments: readonly Assignment[]) {
+    const encoding = encodeCpsat(input);
+    const evaluation = evaluate(encoding, assignments);
+    const model = new SolverModel(input);
+    for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+    const view = new ScheduleView({
+      period: input.period,
+      assignments,
+      priorAssignments: input.priorAssignments,
+      nurses: input.nurses,
+      shiftTypes: input.shiftTypes,
+    });
+    const grid = evaluateSchedule(view, input.ruleSet, model.ctx).violations.filter(
+      (v) => v.ruleId === 'short-work-runs',
+    ).length;
+    return {
+      grid,
+      sa: model.shortWorkRunBreaches(),
+      saTotal: model.breakdown().total,
+      cpsat: evaluation.objective,
+      violated: evaluation.violated.filter((v) => v.includes('short work run')),
+    };
+  }
+  const soft = (options: Partial<SolveScenarioOptions> = {}, params = {}) =>
+    unit([ada()], { ruleSet: shortWorkRuns('soft', NO_WEEKLY_CAP, params), ...options });
+  const on = (date: string) => assign('ada', DAY_12, date);
+
+  it('charges a lone Monday once, and forbids nothing', () => {
+    const result = judge(soft(), [on('2026-01-05')]);
+    expect([result.grid, result.sa]).toEqual([1, 1]);
+    expect(result.violated).toEqual([]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('charges nothing for Monday and Tuesday together', () => {
+    const result = judge(soft(), [on('2026-01-05'), on('2026-01-06')]);
+    expect([result.grid, result.sa]).toEqual([0, 0]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('charges each short run once: Mon 5, Wed 7 – Thu 8 and Sat 10 at three in a row', () => {
+    // Runs of 1, 2 and 1 against 3: three findings, however short each is.
+    const roster = ['2026-01-05', '2026-01-07', '2026-01-08', '2026-01-10'].map(on);
+    const result = judge(soft({}, { minConsecutiveDays: 3 }), roster);
+    expect([result.grid, result.sa]).toEqual([3, 3]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('charges a lone first day only when the history covers the day before the schedule', () => {
+    // Sun 4 worked; Sat 3 before the schedule with nothing in the tail. History complete from
+    // Sun 4: Sat 3 is unknown, nothing judged. Complete from Sat 3: it was off, one finding.
+    for (const [from, expected] of [
+      ['2026-01-04', 0],
+      ['2026-01-03', 1],
+    ] as const) {
+      const result = judge(soft({ historyFrom: isoDate(from) }), [on('2026-01-04')]);
+      expect([result.grid, result.sa], from).toEqual([expected, expected]);
+      expect(result.cpsat, from).toBeCloseTo(result.saTotal, 0);
+    }
+  });
+
+  it('charges a locked lone Monday, and nothing once its Tuesday is worked', () => {
+    const monday = assign('ada', DAY_12, '2026-01-05', { isLocked: true });
+    const input = soft({ assignments: [monday] });
+    const alone = judge(input, [monday]);
+    expect([alone.grid, alone.sa]).toEqual([1, 1]);
+    expect(alone.cpsat).toBeCloseTo(alone.saTotal, 0);
+    const pair = judge(input, [monday, on('2026-01-06')]);
+    expect([pair.grid, pair.sa]).toEqual([0, 0]);
+    expect(pair.cpsat).toBeCloseTo(pair.saTotal, 0);
+  });
+
+  it('puts no price on short work runs when the rule is hard or off', () => {
+    // A lone Monday: hard, the constraint forbids it; off, nobody judges it. Either way the
+    // objective is the soft one less its single 30-point finding.
+    const roster = [on('2026-01-05')];
+    const priced = evaluate(encodeCpsat(soft()), roster).objective;
+    for (const [severity, ruleSet] of [
+      ['hard', shortWorkRuns('hard', NO_WEEKLY_CAP)],
+      ['off', NO_WEEKLY_CAP],
+    ] as const) {
+      const encoding = encodeCpsat(unit([ada()], { ruleSet }));
+      expect(encoding.solverModel.shortWorkRunPrice, severity).toBe(0);
+      expect(evaluate(encoding, roster).objective, severity).toBeCloseTo(priced - 30, 0);
+    }
   });
 });
 
@@ -2478,6 +3223,87 @@ describe('agreement with the rule engine', () => {
     );
   });
 
+  it('agrees with the rules when complete weekends are hard', () => {
+    // Ada's lookback night on Sat 3 works the first weekend's Saturday; Bo's 5 West day on Sun 11
+    // is that unit's weekend, not this one's, so it neither works the weekend here nor completes it.
+    const WEST_DAY = { ...DAY_12, id: 'west-d12', unitId: 'unit-west' };
+    const west = busyElsewhere(
+      [assign('bo', WEST_DAY, '2026-01-11', { id: 'w-bo', periodId: 'west' })],
+      [WEST_DAY],
+      '5 West',
+    );
+    const input = parityInput({
+      shiftTypes: [DAY_12, NIGHT_12, DAY_8, EVENING_8, ON_CALL, ...west.shiftTypes],
+      priorAssignments: [
+        assign('ada', NIGHT_12, '2026-01-03', { periodId: 'prev' }),
+        ...west.assignments,
+      ],
+      ruleSet: completeWeekends('hard'),
+    });
+    expectParity(input);
+    expectLockedParity(withRandomLocks(input, new Rng(31)));
+    const locked = withRandomLocks(input, new Rng(31));
+    const encoding = encodeCpsat(locked);
+    expect(encoding.builder.evaluate(new Map(), encoding.objectiveScale).violated).toEqual([]);
+  });
+
+  it('agrees with the rules when complete weekends are hard and take in a Friday night', () => {
+    const input = parityInput({ ruleSet: completeWeekends('hard', undefined, 'overlaps') });
+    expectParity(input);
+    expectLockedParity(withRandomLocks(input, new Rng(31)));
+  });
+
+  it('agrees with the rules when short work runs are hard', () => {
+    // Ada's lookback night on Sat 3 starts a run Sun 4 may join; Bo's 5 West day on Thu 8 is a
+    // day worked for her, so a Wed 7 or Fri 9 beside it is no lone day.
+    const WEST_DAY = { ...DAY_12, id: 'west-d12', unitId: 'unit-west' };
+    const west = busyElsewhere(
+      [assign('bo', WEST_DAY, '2026-01-08', { id: 'w-bo', periodId: 'west' })],
+      [WEST_DAY],
+      '5 West',
+    );
+    const input = parityInput({
+      endDate: isoDate('2026-01-10'),
+      shiftTypes: [DAY_12, NIGHT_12, DAY_8, EVENING_8, ON_CALL, ...west.shiftTypes],
+      priorAssignments: [
+        assign('ada', NIGHT_12, '2026-01-03', { periodId: 'prev' }),
+        ...west.assignments,
+      ],
+      ruleSet: shortWorkRuns('hard'),
+    });
+    expectParity(input);
+    const locked = withRandomLocks(input, new Rng(31));
+    expectLockedParity(locked);
+    const encoding = encodeCpsat(locked);
+    expect(encoding.builder.evaluate(new Map(), encoding.objectiveScale).violated).toEqual([]);
+  });
+
+  it('agrees with the rules when short work runs are hard at three days in a row', () => {
+    // Bo is per diem here, so only Ada is judged; history complete from Sat 3, so Ada's runs
+    // beginning Sun 4 are judged against the lookback night.
+    const relaxed = withParams(
+      'max-consecutive-shifts',
+      { maxConsecutiveShifts: 14, minDaysOffAfterMaxStretch: 0 },
+      NO_WEEKLY_CAP,
+    );
+    const input = parityInput({
+      nurses: [
+        ada(),
+        makeNurse({
+          id: 'bo',
+          firstName: 'Bo',
+          contractedHoursPerPeriod: 48,
+          employmentType: 'per_diem',
+        }),
+      ],
+      endDate: isoDate('2026-01-10'),
+      historyFrom: isoDate('2026-01-03'),
+      ruleSet: shortWorkRuns('hard', relaxed, { minConsecutiveDays: 3 }),
+    });
+    expectParity(input);
+    expectLockedParity(withRandomLocks(input, new Rng(31)));
+  });
+
   it('agrees with the rules on two days off in a pay period the schedule opens in', () => {
     // Schedule Wed 7 – Sat 17 Jan, history complete from 10 Dec, so the pay period Sun 4 – Sat 17
     // is judged whole. Both worked its first weekend on the published Sun 4. Ada's Mon 5 leaves
@@ -3870,6 +4696,163 @@ describe('parity with the annealer', () => {
       }
       // Most rosters must actually flip someone from nights to days, or this proves nothing.
       expect(flipped).toBeGreaterThan(40);
+    });
+  });
+
+  describe('tour rotation while soft', () => {
+    it('prices random rosters the same as the annealer', () => {
+      // Nurse 2 is on permanent days; nurse 1 comes off last schedule's night and nurse 0 has a
+      // locked day, so constants meet variables in every code of the rule.
+      const rich = richInput();
+      const base: SolveInput = {
+        ...rich,
+        nurses: rich.nurses.map((n, i) => (i === 2 ? { ...n, permanentTour: 'day' } : n)),
+      };
+      const rules = withParams(
+        'tour-rotation',
+        { maxToursPerPeriod: 2, minHoursBetweenTours: 48 },
+        base.ruleSet,
+      );
+      const input: SolveInput = {
+        ...base,
+        ruleSet: {
+          ...rules,
+          configs: rules.configs.map((c) =>
+            c.ruleId === 'tour-rotation' ? { ...c, enabled: true } : c,
+          ),
+        },
+      };
+      const encoding = encodeCpsat(input);
+      const rng = new Rng(37);
+      let rotated = 0;
+      for (let trial = 0; trial < 60; trial++) {
+        const seen = new Set<string>();
+        const assignments = [...input.assignments];
+        for (const sv of encoding.shiftVars) {
+          const day = `${sv.nurseId}|${sv.shift.date}`;
+          if (seen.has(day) || !rng.chance(0.3)) continue;
+          seen.add(day);
+          assignments.push(assign(sv.nurseId, sv.shift.shiftType, sv.shift.date));
+        }
+        const evaluation = evaluate(encoding, assignments);
+        const model = new SolverModel(input);
+        for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+        if (model.tourRotationBreaches() > 0) rotated++;
+        expect(evaluation.objective, `trial ${trial}`).toBeCloseTo(model.breakdown().total, 0);
+      }
+      // Most rosters must rotate someone too fast or too widely, or this proves nothing.
+      expect(rotated).toBeGreaterThan(40);
+    });
+  });
+
+  describe('two days off together while soft', () => {
+    it('prices random rosters the same as the annealer', () => {
+      // Dense rosters, so weekends are worked and days off fall singly; nurse 4 has every weekend
+      // of the pay period locked, so constants meet variables.
+      const rich = richInput();
+      const lockedWeekends = ['2026-01-04', '2026-01-10', '2026-01-17'].map((date) =>
+        assign(rich.nurses[4]!.id, DAY_12, date, { isLocked: true }),
+      );
+      const input: SolveInput = {
+        ...rich,
+        assignments: [...rich.assignments, ...lockedWeekends],
+        ruleSet: {
+          ...rich.ruleSet,
+          configs: rich.ruleSet.configs.map((c) =>
+            c.ruleId === 'days-off-together' ? { ...c, enabled: true } : c,
+          ),
+        },
+      };
+      const encoding = encodeCpsat(input);
+      const rng = new Rng(41);
+      let breached = 0;
+      for (let trial = 0; trial < 60; trial++) {
+        const seen = new Set<string>(input.assignments.map((a) => `${a.nurseId}|${a.date}`));
+        const assignments = [...input.assignments];
+        for (const sv of encoding.shiftVars) {
+          const day = `${sv.nurseId}|${sv.shift.date}`;
+          if (seen.has(day) || !rng.chance(0.75)) continue;
+          seen.add(day);
+          assignments.push(assign(sv.nurseId, sv.shift.shiftType, sv.shift.date));
+        }
+        const evaluation = evaluate(encoding, assignments);
+        const model = new SolverModel(input);
+        for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+        if (model.daysOffTogetherBreaches() > 0) breached++;
+        expect(evaluation.objective, `trial ${trial}`).toBeCloseTo(model.breakdown().total, 0);
+      }
+      // Some rosters must leave a weekend nurse no pair off, or this proves nothing.
+      expect(breached).toBeGreaterThan(10);
+    });
+  });
+
+  describe('complete weekends while soft', () => {
+    it('prices random rosters the same as the annealer', () => {
+      // Nurse 4 has Sat 10 locked, so constants meet variables; nurse 1's lookback night on Sat 3
+      // works the first weekend's Saturday. The last weekend, Sat 24 – Sun 25, is left alone.
+      const rich = richInput();
+      const lockedSaturday = assign(rich.nurses[4]!.id, DAY_12, '2026-01-10', { isLocked: true });
+      const input: SolveInput = {
+        ...rich,
+        assignments: [...rich.assignments, lockedSaturday],
+        ruleSet: completeWeekends('soft', rich.ruleSet),
+      };
+      const encoding = encodeCpsat(input);
+      const rng = new Rng(43);
+      let split = 0;
+      for (let trial = 0; trial < 60; trial++) {
+        const seen = new Set<string>(input.assignments.map((a) => `${a.nurseId}|${a.date}`));
+        const assignments = [...input.assignments];
+        for (const sv of encoding.shiftVars) {
+          const day = `${sv.nurseId}|${sv.shift.date}`;
+          if (seen.has(day) || !rng.chance(0.4)) continue;
+          seen.add(day);
+          assignments.push(assign(sv.nurseId, sv.shift.shiftType, sv.shift.date));
+        }
+        const evaluation = evaluate(encoding, assignments);
+        const model = new SolverModel(input);
+        for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+        if (model.completeWeekendBreaches() > 0) split++;
+        expect(evaluation.objective, `trial ${trial}`).toBeCloseTo(model.breakdown().total, 0);
+      }
+      // Most rosters must split someone's weekend, or this proves nothing.
+      expect(split).toBeGreaterThan(40);
+    });
+  });
+
+  describe('short work runs while soft', () => {
+    it('prices random rosters the same as the annealer', () => {
+      // Nurse 4 has Wed 14 locked, so constants meet variables; nurse 6 is per diem and not
+      // judged; nurse 1's lookback night on Sat 3 can start a run.
+      const rich = richInput();
+      const lockedWednesday = assign(rich.nurses[4]!.id, DAY_12, '2026-01-14', {
+        isLocked: true,
+      });
+      const input: SolveInput = {
+        ...rich,
+        assignments: [...rich.assignments, lockedWednesday],
+        ruleSet: shortWorkRuns('soft', rich.ruleSet, { minConsecutiveDays: 3 }),
+      };
+      const encoding = encodeCpsat(input);
+      const rng = new Rng(47);
+      let short = 0;
+      for (let trial = 0; trial < 60; trial++) {
+        const seen = new Set<string>(input.assignments.map((a) => `${a.nurseId}|${a.date}`));
+        const assignments = [...input.assignments];
+        for (const sv of encoding.shiftVars) {
+          const day = `${sv.nurseId}|${sv.shift.date}`;
+          if (seen.has(day) || !rng.chance(0.5)) continue;
+          seen.add(day);
+          assignments.push(assign(sv.nurseId, sv.shift.shiftType, sv.shift.date));
+        }
+        const evaluation = evaluate(encoding, assignments);
+        const model = new SolverModel(input);
+        for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+        if (model.shortWorkRunBreaches() > 0) short++;
+        expect(evaluation.objective, `trial ${trial}`).toBeCloseTo(model.breakdown().total, 0);
+      }
+      // Most rosters must leave someone a short run, or this proves nothing.
+      expect(short).toBeGreaterThan(40);
     });
   });
 

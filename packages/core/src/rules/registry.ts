@@ -35,6 +35,7 @@ import type { ScheduleView } from '../schedule/view.js';
 
 import { accommodationBlocksRule } from './availability-blocks.js';
 import { overlapRule, timeOffRule } from './availability-rules.js';
+import { completeWeekendsRule } from './complete-weekends.js';
 import { coverageRule, ratioComplianceRule } from './coverage-rules.js';
 import { daysOffTogetherRule } from './days-off-together.js';
 import { holidayIndexes, holidayRotationRule } from './holiday-rotation.js';
@@ -50,6 +51,7 @@ import { pendingTimeOffRule } from './pending-time-off.js';
 import { preceptorRule } from './preceptor.js';
 import { consecutiveShiftsRule, minRestRule } from './rest-rules.js';
 import { scheduleKindToursRule } from './schedule-kind-tours.js';
+import { shortWorkRunsRule } from './short-work-runs.js';
 import { tourRotationRule } from './tour-rotation.js';
 import type {
   EvaluationResult,
@@ -90,6 +92,8 @@ export const ALL_RULES: readonly Rule<never>[] = [
   mandatoryOvertimeRule,
   weekendPatternRule,
   daysOffTogetherRule,
+  completeWeekendsRule,
+  shortWorkRunsRule,
   preceptorRule,
   tourRotationRule,
   scheduleKindToursRule,

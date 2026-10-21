@@ -12,7 +12,6 @@ export const NOT_ENFORCED: readonly string[] = [
   'FMLA leave already taken is counted at the nurse’s current contract: if their FTE changed during the year, check the hours used with HR.',
   'Break premiums are priced at the base rate: California pays them at the regular rate, which includes differentials, so add the difference in payroll.',
   'Float staff: Generate may offer a float nurse on any day of the period, not only the dates of their membership; check the dates yourself.',
-  'Tour rotation limits (Settings › Rules) are checked on the grid, but Generate does not steer away from them while the rule is soft: make it hard to have Generate keep to them.',
   'Leave bids and other requests are entered by the manager: nurses do not submit them in the app yet.',
   'In-lieu-of holidays (federal, 5 U.S.C. § 6103(b)): when a nurse’s regular day off falls on a holiday, their in-lieu day is not marked and work on it is not paid at the holiday premium here; holiday pay applies only to the calendar holiday.',
   'Compensatory time earned instead of overtime pay: the app prices overtime and holds a comp-leave balance, but does not convert overtime worked into comp time earned; add earned comp time to the nurse’s balance under Leave on their Roster page.',

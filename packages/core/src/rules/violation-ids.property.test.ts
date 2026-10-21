@@ -63,6 +63,8 @@ const MUST_SEE: readonly ViolationCode[] = [
   'excess_weekends',
   'works_during_approved_time_off',
   'short_recovery_after_nights',
+  'split_weekend',
+  'short_work_run',
 ];
 
 beforeEach(() => resetFixtureCounters());
@@ -92,6 +94,8 @@ const RULE_PARAMS: Record<string, Record<string, unknown>> = {
   },
   'weekend-pattern': { maxConsecutiveWeekends: 2 },
   'days-off-together': {},
+  'complete-weekends': {},
+  'short-work-runs': { minConsecutiveDays: 3 },
 };
 
 const VOLUNTEER: OvertimeVolunteer = {

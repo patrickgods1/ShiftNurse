@@ -65,11 +65,12 @@
   merges or trades it.
 - **What Generate does not steer by (stated limits).** Some soft rules are judged on the grid but
   carry no price in either solver while soft, so Generate neither seeks nor avoids them:
-  `max-hours-in-24`, `long-stretch`, `tour-rotation` and `days-off-together`. Make one hard to
-  have Generate keep to it. INRC-II's pattern terms (minimum consecutive days worked, complete
-  weekends, per-shift-type consecutive limits) are not modelled. Both are deferred: adding a
-  price changes the objective of SA + LNS and CP-SAT alike, which needs a bench study and a
-  determinism re-pin.
+  `max-hours-in-24` and `long-stretch`. Make one hard to have Generate keep to it. Neither solver
+  writes holdover or overtime rows, so a price would mostly be about rows Generate never creates.
+  INRC-II's pattern terms are priced when soft and enabled (`tourRotation` 45, `daysOffTogether` 40,
+  `completeWeekend` 40, `shortWorkRun` 30 per finding; SA `*Breaches`, CP-SAT `*Terms`, the
+  findings shared with the rule). Per-shift-type consecutive limits are not added:
+  `max-consecutive-shifts`' `maxConsecutiveNights` is that limit for nights.
 - **Solver speed-ups must not change a schedule.** `SolverModel` caches fairness (cleared in
   `count`), staffing per shift and role, prepared rules (`prepareRules`/`evaluatePrepared`) and
   per-nurse rule contexts. `solver/model.test.ts` checks every cached term against a fresh

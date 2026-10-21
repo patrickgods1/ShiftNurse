@@ -11,14 +11,16 @@
  * Tours are named by when they START, as contracts name them. `isNight` is a pay flag (and is
  * also set on a Title 38 evening tour), so it cannot say which tour a shift belongs to.
  *
- * Known limit: while the rule is soft, Generate does not price it, so it will not steer around a
- * breach; the grid and compliance report flag it. Made hard, every encoder and `SolverModel`
- * forbid the breach. A change of tour is measured from the shift the nurse last stopped working
- * (`latestEndingBefore`), not from the start-order neighbour, which a short shift nested inside a
- * night would be. The rule is monotone under removal on any schedule without overlaps (taking a
- * shift away never adds a distinct tour or an off-tour shift, and if removing B leaves C measured
- * from an A on another tour, B ended after A and started before C, so A → B was already as short
- * a change), which is what `SolverModel.isLegal` relies on when it re-checks a removal.
+ * While the rule is soft, both solvers price each finding (`tourRotation`, counted by
+ * `tourRotationFindings` in `SolverModel` and by `tourRotationTerms` in CP-SAT), so Generate
+ * steers around a breach without being forbidden one; the grid and compliance report flag it.
+ * Made hard, every encoder and `SolverModel` forbid the breach. A change of tour is measured from
+ * the shift the nurse last stopped working (`latestEndingBefore`), not from the start-order
+ * neighbour, which a short shift nested inside a night would be. The rule is monotone under
+ * removal on any schedule without overlaps (taking a shift away never adds a distinct tour or an
+ * off-tour shift, and if removing B leaves C measured from an A on another tour, B ended after A
+ * and started before C, so A → B was already as short a change), which is what
+ * `SolverModel.isLegal` relies on when it re-checks a removal.
  * Overlapping shifts are the overlap rule's business and are skipped here.
  *
  * Career nurses (UC–CNA Art. 14 § P.1.a: ten years) are exempt from forced rotation: tours the
@@ -45,6 +47,7 @@ import {
 } from '../domain/time.js';
 import { yearsOfService } from '../leave/accrual.js';
 import { latestEndingBefore } from '../schedule/preceding.js';
+import type { AssignmentView } from '../schedule/view.js';
 import { hoursWords } from './format.js';
 import {
   isWorked,
@@ -133,14 +136,144 @@ export function isNightTour(shiftType: Pick<ShiftType, 'startTime'>): boolean {
 
 const TOUR_ORDER: readonly Tour[] = ['day', 'evening', 'night'];
 
+/**
+ * One nurse's findings, from her worked timeline (start-sorted, lookback tail included). The rule
+ * reports them, and `SolverModel` counts them while the rule is soft, so the grid and Generate
+ * cannot disagree about how many there are.
+ */
+export function tourRotationFindings(
+  timeline: readonly AssignmentView[],
+  nurse: Nurse,
+  params: TourRotationParams,
+  ctx: Pick<RuleContext, 'preferredShiftTypesByNurse' | 'shiftTypes'>,
+  periodStart: IsoDate,
+): Violation[] {
+  const violations: Violation[] = [];
+  const inPeriod = timeline.filter((v) => v.inPeriod);
+  const limits = effectiveTourLimits(nurse, params, periodStart, requestedTours(nurse.id, ctx));
+  const why = limits.exempt
+    ? ` ${nurseName(nurse)} is exempt from rotation after ` +
+      `${params.exemptAfterYearsOfService} years of service.`
+    : '';
+
+  const tours = TOUR_ORDER.filter((t) => inPeriod.some((v) => tourOf(v.shiftType) === t));
+  // A tour she asked for is hers to work: only the ones the schedule chose count, and only
+  // their shifts are what the finding names.
+  const counted = tours.filter((t) => !limits.requested.has(t));
+  if (counted.length > limits.maxToursPerPeriod) {
+    const named = inPeriod.filter((v) => !limits.requested.has(tourOf(v.shiftType)));
+    const asked = tours.filter((t) => limits.requested.has(t));
+    const askedFor =
+      asked.length > 0
+        ? ` Tours ${nurseName(nurse)} asked for (${asked.join(', ')}) do not count.`
+        : '';
+    violations.push(
+      violation(
+        tourRotationRule,
+        'soft',
+        'too_many_tours',
+        `${nurseName(nurse)} is rotated across ${tours.length} tours this schedule ` +
+          `(${tours.join(', ')}). Maximum is ${limits.maxToursPerPeriod}.${why}${askedFor}`,
+        {
+          amount: counted.length - limits.maxToursPerPeriod,
+          nurseIds: [nurse.id],
+          dates: named.map((v) => v.assignment.date),
+          assignmentIds: named.map((v) => v.assignment.id),
+          details: {
+            tours,
+            ...(limits.exempt
+              ? { requested: TOUR_ORDER.filter((t) => limits.requested.has(t)) }
+              : {}),
+            max: limits.maxToursPerPeriod,
+          },
+        },
+      ),
+    );
+  }
+
+  const preceding = latestEndingBefore(timeline);
+  for (let i = 0; i < timeline.length; i++) {
+    const current = timeline[i]!;
+    // Measured from the shift the nurse last stopped working, so a short day shift nested
+    // inside a night does not hide the night → day change.
+    const before = preceding[i]!;
+    const first = before[0];
+    if (!first) continue;
+    // Overlaps belong to the overlap rule.
+    const restMinutes = restMinutesBetween(first.window, current.window);
+    if (restMinutes < 0) continue;
+    const toTour = tourOf(current.shiftType);
+    const previous = before.find((p) => tourOf(p.shiftType) !== toTour);
+    if (!previous) continue;
+    const fromTour = tourOf(previous.shiftType);
+    const restHours = minutesToHours(restMinutes);
+    if (restHours >= params.minHoursBetweenTours) continue;
+    // History cannot be fixed; only flag when this schedule can do something about it.
+    if (!previous.inPeriod && !current.inPeriod) continue;
+
+    // The lookback row is history: the finding names only what this schedule can change.
+    const inPeriodPair = [previous, current].filter((v) => v.inPeriod);
+    violations.push(
+      violation(
+        tourRotationRule,
+        'soft',
+        'short_tour_change',
+        `${nurseName(nurse)} has only ${hoursWords(restHours)} off between the ` +
+          `${previous.shiftType.name} (${fromTour}) on ${describeDate(previous.assignment.date)} ` +
+          `and the ${current.shiftType.name} (${toTour}) on ` +
+          `${describeDate(current.assignment.date)}. ` +
+          `${hoursWords(params.minHoursBetweenTours)} required when changing tour.`,
+        {
+          amount: params.minHoursBetweenTours - restHours,
+          nurseIds: [nurse.id],
+          dates: inPeriodPair.map((v) => v.assignment.date),
+          assignmentIds: inPeriodPair.map((v) => v.assignment.id),
+          details: {
+            restHours,
+            requiredHours: params.minHoursBetweenTours,
+            fromTour,
+            toTour,
+          },
+        },
+      ),
+    );
+  }
+
+  const permanent = nurse.permanentTour;
+  if (permanent && limits.permanentTourEnforced) {
+    for (const view of inPeriod) {
+      const tour = tourOf(view.shiftType);
+      if (tour === permanent || limits.requested.has(tour)) continue;
+      violations.push(
+        violation(
+          tourRotationRule,
+          'soft',
+          'off_permanent_tour',
+          `${nurseName(nurse)} is on a permanent ${permanent} tour but is scheduled the ` +
+            `${view.shiftType.name} (${tour}) on ${describeDate(view.assignment.date)}.${why}`,
+          {
+            amount: 1,
+            nurseIds: [nurse.id],
+            dates: [view.assignment.date],
+            assignmentIds: [view.assignment.id],
+            details: { tour, permanentTour: permanent },
+          },
+        ),
+      );
+    }
+  }
+
+  return violations;
+}
+
 export const tourRotationRule: Rule<TourRotationParams> = {
   id: 'tour-rotation',
   name: 'Tour rotation limits',
   description:
     'Limits how many tours (day, evening, night) a nurse is rotated across in a schedule, requires ' +
     'a longer break when a nurse changes tour, and keeps a nurse on a permanent tour off the ' +
-    'other tours. A tour is named by when the shift starts. Advisory: the grid flags a breach, ' +
-    'but Generate only avoids it if you make the rule hard.',
+    'other tours. A tour is named by when the shift starts. Advisory: Generate steers away ' +
+    'from a breach, and the grid flags it.',
   severity: 'soft',
   category: 'rest',
   scope: 'nurse',
@@ -191,130 +324,14 @@ export const tourRotationRule: Rule<TourRotationParams> = {
   },
 
   evaluate(schedule, params, ctx): Violation[] {
-    const violations: Violation[] = [];
-
-    for (const nurse of ctx.nurses) {
-      const timeline = schedule.timelineFor(nurse.id).filter(isWorked);
-      const inPeriod = timeline.filter((v) => v.inPeriod);
-      const limits = effectiveTourLimits(
+    return ctx.nurses.flatMap((nurse) =>
+      tourRotationFindings(
+        schedule.timelineFor(nurse.id).filter(isWorked),
         nurse,
         params,
+        ctx,
         schedule.period.startDate,
-        requestedTours(nurse.id, ctx),
-      );
-      const why = limits.exempt
-        ? ` ${nurseName(nurse)} is exempt from rotation after ` +
-          `${params.exemptAfterYearsOfService} years of service.`
-        : '';
-
-      const tours = TOUR_ORDER.filter((t) => inPeriod.some((v) => tourOf(v.shiftType) === t));
-      // A tour she asked for is hers to work: only the ones the schedule chose count, and only
-      // their shifts are what the finding names.
-      const counted = tours.filter((t) => !limits.requested.has(t));
-      if (counted.length > limits.maxToursPerPeriod) {
-        const named = inPeriod.filter((v) => !limits.requested.has(tourOf(v.shiftType)));
-        const asked = tours.filter((t) => limits.requested.has(t));
-        const askedFor =
-          asked.length > 0
-            ? ` Tours ${nurseName(nurse)} asked for (${asked.join(', ')}) do not count.`
-            : '';
-        violations.push(
-          violation(
-            tourRotationRule,
-            'soft',
-            'too_many_tours',
-            `${nurseName(nurse)} is rotated across ${tours.length} tours this schedule ` +
-              `(${tours.join(', ')}). Maximum is ${limits.maxToursPerPeriod}.${why}${askedFor}`,
-            {
-              amount: counted.length - limits.maxToursPerPeriod,
-              nurseIds: [nurse.id],
-              dates: named.map((v) => v.assignment.date),
-              assignmentIds: named.map((v) => v.assignment.id),
-              details: {
-                tours,
-                ...(limits.exempt
-                  ? { requested: TOUR_ORDER.filter((t) => limits.requested.has(t)) }
-                  : {}),
-                max: limits.maxToursPerPeriod,
-              },
-            },
-          ),
-        );
-      }
-
-      const preceding = latestEndingBefore(timeline);
-      for (let i = 0; i < timeline.length; i++) {
-        const current = timeline[i]!;
-        // Measured from the shift the nurse last stopped working, so a short day shift nested
-        // inside a night does not hide the night → day change.
-        const before = preceding[i]!;
-        const first = before[0];
-        if (!first) continue;
-        // Overlaps belong to the overlap rule.
-        const restMinutes = restMinutesBetween(first.window, current.window);
-        if (restMinutes < 0) continue;
-        const toTour = tourOf(current.shiftType);
-        const previous = before.find((p) => tourOf(p.shiftType) !== toTour);
-        if (!previous) continue;
-        const fromTour = tourOf(previous.shiftType);
-        const restHours = minutesToHours(restMinutes);
-        if (restHours >= params.minHoursBetweenTours) continue;
-        // History cannot be fixed; only flag when this schedule can do something about it.
-        if (!previous.inPeriod && !current.inPeriod) continue;
-
-        // The lookback row is history: the finding names only what this schedule can change.
-        const inPeriodPair = [previous, current].filter((v) => v.inPeriod);
-        violations.push(
-          violation(
-            tourRotationRule,
-            'soft',
-            'short_tour_change',
-            `${nurseName(nurse)} has only ${hoursWords(restHours)} off between the ` +
-              `${previous.shiftType.name} (${fromTour}) on ${describeDate(previous.assignment.date)} ` +
-              `and the ${current.shiftType.name} (${toTour}) on ` +
-              `${describeDate(current.assignment.date)}. ` +
-              `${hoursWords(params.minHoursBetweenTours)} required when changing tour.`,
-            {
-              amount: params.minHoursBetweenTours - restHours,
-              nurseIds: [nurse.id],
-              dates: inPeriodPair.map((v) => v.assignment.date),
-              assignmentIds: inPeriodPair.map((v) => v.assignment.id),
-              details: {
-                restHours,
-                requiredHours: params.minHoursBetweenTours,
-                fromTour,
-                toTour,
-              },
-            },
-          ),
-        );
-      }
-
-      const permanent = nurse.permanentTour;
-      if (permanent && limits.permanentTourEnforced) {
-        for (const view of inPeriod) {
-          const tour = tourOf(view.shiftType);
-          if (tour === permanent || limits.requested.has(tour)) continue;
-          violations.push(
-            violation(
-              tourRotationRule,
-              'soft',
-              'off_permanent_tour',
-              `${nurseName(nurse)} is on a permanent ${permanent} tour but is scheduled the ` +
-                `${view.shiftType.name} (${tour}) on ${describeDate(view.assignment.date)}.${why}`,
-              {
-                amount: 1,
-                nurseIds: [nurse.id],
-                dates: [view.assignment.date],
-                assignmentIds: [view.assignment.id],
-                details: { tour, permanentTour: permanent },
-              },
-            ),
-          );
-        }
-      }
-    }
-
-    return violations;
+      ),
+    );
   },
 };

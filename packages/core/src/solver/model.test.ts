@@ -18,6 +18,7 @@ import type {
   Nurse,
   NurseRole,
   Preference,
+  Tour,
 } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
 import { computeBurden } from '../fairness/burden.js';
@@ -46,6 +47,7 @@ import {
   resetFixtureCounters,
   solveInputFrom,
   TIER_ROUTINE,
+  testShiftTypes,
   testUnit,
   timeOff,
   UNIT_ID,
@@ -66,6 +68,10 @@ beforeEach(() => {
  * `mid`: add an 11:00–19:00 mid 8 inside the day 12, with an ACLS requirement on it.
  * `groups`: keep five of the staff apart (one the nurse with the lookback night, one an LPN), and
  * two more from the 8th, so the walk keeps pairing and parting incompatible nurses.
+ * `daysOff`: two days off together on (soft), with four nurses on 5 West every other weekday, so
+ * working the weekends is all it takes to leave them no pair off; one has two weekends pinned.
+ * `completeWeekends`: complete weekends on (soft), so a Saturday or a Sunday alone is a finding.
+ * `shortWorkRuns`: short work runs on (soft), so a lone day between days off is a finding.
  */
 function scenario({
   mid = false,
@@ -73,11 +79,20 @@ function scenario({
   holidays = false,
   pending = false,
   weekends = false,
+  tours = false,
+  daysOff = false,
+  completeWeekends = false,
+  shortWorkRuns = false,
   attribution = undefined as 'clock' | 'majority' | undefined,
 } = {}): SolveInput {
   const nurses: Nurse[] = [
     ...Array.from({ length: 8 }, (_, i) =>
-      makeNurse({ isChargeEligible: i % 3 === 0, contractedHoursPerPeriod: i === 7 ? 0 : 72 }),
+      makeNurse({
+        isChargeEligible: i % 3 === 0,
+        contractedHoursPerPeriod: i === 7 ? 0 : 72,
+        // A nurse on permanent days, so a night for her is off her tour.
+        ...(tours && i === 5 ? { permanentTour: 'day' as const } : {}),
+      }),
     ),
     makeNurse({ role: 'LPN' }),
     makeNurse({ role: 'LPN' }),
@@ -106,14 +121,51 @@ function scenario({
   const prior = assign(nurses[4]!.id, NIGHT_12, '2026-01-03', { periodId: 'prior' });
   // A weekend worked last period, so a run can start in the lookback tail.
   const priorWeekend = assign(nurses[1]!.id, DAY_12, '2025-12-27', { periodId: 'prior' });
+  // A four-hour morning on 5 West, Mon, Wed and Fri of both weeks: the days between are single
+  // days off, so only a weekend left unworked can make a pair. Four hours, so 12 a week of it and
+  // two weekend 12s stay inside 40 hours.
+  const WEST_DAY = { ...DAY_8, id: 'west-d4', unitId: 'unit-west', durationHours: 4 };
+  const west = busyElsewhere(
+    daysOff
+      ? [1, 2, 5, 6].flatMap((i) =>
+          ['2026-01-05', '2026-01-07', '2026-01-09', '2026-01-12', '2026-01-14', '2026-01-16'].map(
+            (date) => assign(nurses[i]!.id, WEST_DAY, date, { periodId: 'west' }),
+          ),
+        )
+      : [],
+    [WEST_DAY],
+    '5 West',
+  );
+  // Sun 4 and Sat 17 pinned for one of them: Sat 10 or Sun 11 completes her weekends.
+  const pinnedWeekends = daysOff
+    ? ['2026-01-04', '2026-01-17'].map((date) =>
+        assign(nurses[6]!.id, DAY_12, date, { isLocked: true }),
+      )
+    : [];
   const base = defaultRuleSet('unit-1');
   // Every other weekend, at most one in the schedule (low, so the excess term fires too).
-  const weekendRules = {
+  // One tour a schedule and two days between tours, so every code of the rule can fire with
+  // only days and nights on the unit.
+  const ruleSet = {
     ...base,
     configs: base.configs.map((c) =>
-      c.ruleId === 'weekend-pattern'
+      weekends && c.ruleId === 'weekend-pattern'
         ? { ...c, enabled: true, params: { maxConsecutiveWeekends: 1, maxWeekendsPerPeriod: 1 } }
-        : c,
+        : (daysOff && c.ruleId === 'days-off-together') ||
+            (completeWeekends && c.ruleId === 'complete-weekends') ||
+            (shortWorkRuns && c.ruleId === 'short-work-runs')
+          ? { ...c, enabled: true }
+          : tours && c.ruleId === 'tour-rotation'
+            ? {
+                ...c,
+                enabled: true,
+                params: {
+                  maxToursPerPeriod: 1,
+                  minHoursBetweenTours: 48,
+                  permanentTourEnforced: true,
+                },
+              }
+            : c,
     ),
   };
   return solveInputFrom({
@@ -133,6 +185,9 @@ function scenario({
           shiftCredentialRequirements: [credentialRequirement(CRED_ACLS, 1, { shiftType: MID_8 })],
           nurseCredentials: [nurseCredential(nurses[0]!.id, CRED_ACLS)],
         }
+      : {}),
+    ...(daysOff
+      ? { shiftTypes: [...(mid ? [DAY_12, NIGHT_12, MID_8] : testShiftTypes), ...west.shiftTypes] }
       : {}),
     preferences,
     ...(groups
@@ -158,9 +213,9 @@ function scenario({
           ],
         }
       : {}),
-    assignments: [pinned],
-    priorAssignments: weekends ? [priorWeekend, prior] : [prior],
-    ...(weekends ? { ruleSet: weekendRules } : {}),
+    assignments: [pinned, ...pinnedWeekends],
+    priorAssignments: [...(weekends ? [priorWeekend, prior] : [prior]), ...west.assignments],
+    ...(weekends || tours || daysOff || completeWeekends || shortWorkRuns ? { ruleSet } : {}),
     ...(pending
       ? {
           timeOff: [
@@ -210,6 +265,140 @@ function rotationHolidays() {
     h('first-26', '2026-01-04', 'First Day', true, null),
   ];
 }
+
+/**
+ * One nurse, Sun 4 – Sat 17 Jan, days, evenings and nights, with tour rotation on (soft unless
+ * `severity` says otherwise).
+ */
+function toursInput(
+  params: Record<string, unknown>,
+  permanentTour?: Tour,
+  severity: 'soft' | 'hard' | 'off' = 'soft',
+): SolveInput {
+  const rules = defaultRuleSet(UNIT_ID);
+  return solveInputFrom({
+    startDate: isoDate('2026-01-04'),
+    endDate: isoDate('2026-01-17'),
+    nurses: [makeNurse({ id: 'tess', ...(permanentTour ? { permanentTour } : {}) })],
+    shiftTypes: [DAY_12, EVENING_8, NIGHT_12],
+    coverageRequirements: [
+      ...coverageAllWeek(DAY_12, 'RN', 1),
+      ...coverageAllWeek(EVENING_8, 'RN', 1),
+      ...coverageAllWeek(NIGHT_12, 'RN', 1),
+    ],
+    ruleSet: {
+      ...rules,
+      configs: rules.configs.map((c) =>
+        c.ruleId === 'tour-rotation'
+          ? {
+              ...c,
+              enabled: severity !== 'off',
+              ...(severity === 'hard' ? { severityOverride: 'hard' as const } : {}),
+              params: { ...c.params, ...params },
+            }
+          : c,
+      ),
+    },
+  });
+}
+
+/**
+ * One nurse on day 12s, Sun 4 – Sat 17 Jan: exactly the fixture unit's pay period, whose weekends
+ * are keyed Sat 3 (by Sun 4), Sat 10 and Sat 17. Two days off together on, soft unless `severity`
+ * says otherwise.
+ */
+function daysOffInput(severity: 'soft' | 'hard' | 'off' = 'soft'): SolveInput {
+  const rules = defaultRuleSet(UNIT_ID);
+  return solveInputFrom({
+    startDate: isoDate('2026-01-04'),
+    endDate: isoDate('2026-01-17'),
+    nurses: [makeNurse({ id: 'dana', contractedHoursPerPeriod: 120 })],
+    shiftTypes: [DAY_12],
+    coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
+    ruleSet: {
+      ...rules,
+      configs: rules.configs.map((c) =>
+        c.ruleId === 'days-off-together'
+          ? {
+              ...c,
+              enabled: severity !== 'off',
+              ...(severity === 'hard' ? { severityOverride: 'hard' as const } : {}),
+            }
+          : c,
+      ),
+    },
+  });
+}
+
+/**
+ * Sun 4, Tue 6, Thu 8, Sat 10, Mon 12, Wed 14, Fri 16 and Sat 17, as days from Sun 4: every
+ * weekend worked, and the days off (5, 7, 9, 11, 13, 15) one at a time.
+ */
+const EVERY_OTHER_DAY = [0, 2, 4, 6, 8, 10, 12, 13];
+
+/**
+ * One nurse on day 12s, Sun 4 – Sat 17 Jan, whose weekends are Sat 3 – Sun 4, Sat 10 – Sun 11 and
+ * Sat 17 – Sun 18 (the last left to the next schedule). Complete weekends on, soft unless
+ * `severity` says otherwise.
+ */
+function completeWeekendsInput(severity: 'soft' | 'hard' | 'off' = 'soft'): SolveInput {
+  const rules = defaultRuleSet(UNIT_ID);
+  return solveInputFrom({
+    startDate: isoDate('2026-01-04'),
+    endDate: isoDate('2026-01-17'),
+    nurses: [makeNurse({ id: 'wren', firstName: 'Wren' })],
+    shiftTypes: [DAY_12],
+    coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
+    ruleSet: {
+      ...rules,
+      configs: rules.configs.map((c) =>
+        c.ruleId === 'complete-weekends'
+          ? {
+              ...c,
+              enabled: severity !== 'off',
+              ...(severity === 'hard' ? { severityOverride: 'hard' as const } : {}),
+            }
+          : c,
+      ),
+    },
+  });
+}
+
+/**
+ * One nurse on day 12s, Sun 4 – Sat 17 Jan, with short work runs on at the default minimum of two
+ * days in a row; soft unless `severity` says otherwise.
+ */
+function shortWorkRunsInput(severity: 'soft' | 'hard' | 'off' = 'soft'): SolveInput {
+  const rules = defaultRuleSet(UNIT_ID);
+  return solveInputFrom({
+    startDate: isoDate('2026-01-04'),
+    endDate: isoDate('2026-01-17'),
+    nurses: [makeNurse({ id: 'wren', firstName: 'Wren' })],
+    shiftTypes: [DAY_12],
+    coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
+    ruleSet: {
+      ...rules,
+      configs: rules.configs.map((c) =>
+        c.ruleId === 'short-work-runs'
+          ? {
+              ...c,
+              enabled: severity !== 'off',
+              ...(severity === 'hard' ? { severityOverride: 'hard' as const } : {}),
+            }
+          : c,
+      ),
+    },
+  });
+}
+
+/** Days from Sun 4 Jan: Mon 5, Tue 6, and Sat 17, the schedule's last day. */
+const MONDAY_5 = 1;
+const TUESDAY_6 = 2;
+const SATURDAY_17 = 13;
+
+/** Days from Sun 4 Jan: Sat 10 and Sun 11. */
+const SATURDAY_10 = 6;
+const SUNDAY_11 = 7;
 
 /** The same schedule, built the slow way: a fresh model, fed each shift's roster in order. */
 function rebuild(input: SolveInput, model: SolverModel): SolverModel {
@@ -416,6 +605,221 @@ describe('SolverModel bookkeeping', () => {
     expect(model.recoveryBreaches()).toBe(1);
   });
 
+  it('keeps tour rotation priced right as nurses are moved between days and nights', () => {
+    const peak = walk(scenario({ tours: true }), 1);
+    expect(peak.preferences).toBeGreaterThan(0);
+  });
+
+  it('prices a day then a night 24 hours later, with 48 owed, once at the tour-rotation weight', () => {
+    // Day Mon 5 ends 19:00; the night starts 19:00 Tue 6: 24 hours off, short of 48. One finding,
+    // against the night; two tours is within the cap of two.
+    const place = (model: SolverModel) => {
+      model.add(model.make(0, model.shiftAt(1, DAY_12)));
+      model.add(model.make(0, model.shiftAt(2, NIGHT_12)));
+      return model;
+    };
+    const input = toursInput({ maxToursPerPeriod: 2, minHoursBetweenTours: 48 });
+    const priced = place(new SolverModel(input));
+    const free = place(new SolverModel(input, { tourRotation: 0 }));
+    expect(priced.tourRotationBreaches()).toBe(1);
+    // One finding at 45 points, counted with preferences.
+    expect(priced.breakdown().preferences - free.breakdown().preferences).toBeCloseTo(45, 6);
+    expect(priced.objective() - free.objective()).toBeCloseTo(45, 6);
+  });
+
+  it('prices three tours over the cap once, however far over', () => {
+    // Day Mon 5 (to 19:00), evening Fri 9 (15:00–23:00), night Wed 14: 92 and 116 hours apart, so
+    // no change of tour is short. Three tours is one finding at a cap of two (one over) and
+    // still one at a cap of one (two over): 45 points either way.
+    for (const cap of [2, 1]) {
+      const place = (model: SolverModel) => {
+        model.add(model.make(0, model.shiftAt(1, DAY_12)));
+        model.add(model.make(0, model.shiftAt(5, EVENING_8)));
+        model.add(model.make(0, model.shiftAt(10, NIGHT_12)));
+        return model;
+      };
+      const input = toursInput({ maxToursPerPeriod: cap, minHoursBetweenTours: 48 });
+      const priced = place(new SolverModel(input));
+      const free = place(new SolverModel(input, { tourRotation: 0 }));
+      expect(priced.tourRotationBreaches(), `cap ${cap}`).toBe(1);
+      expect(priced.objective() - free.objective(), `cap ${cap}`).toBeCloseTo(45, 6);
+    }
+  });
+
+  it('prices every shift off a permanent tour', () => {
+    // On permanent nights, a day on Mon 5 and another on Thu 8: two findings, 90 points. One
+    // tour only, and no change of tour.
+    const place = (model: SolverModel) => {
+      model.add(model.make(0, model.shiftAt(1, DAY_12)));
+      model.add(model.make(0, model.shiftAt(4, DAY_12)));
+      return model;
+    };
+    const input = toursInput({ maxToursPerPeriod: 2, minHoursBetweenTours: 48 }, 'night');
+    const priced = place(new SolverModel(input));
+    const free = place(new SolverModel(input, { tourRotation: 0 }));
+    expect(priced.tourRotationBreaches()).toBe(2);
+    expect(priced.objective() - free.objective()).toBeCloseTo(90, 6);
+  });
+
+  it('puts no price on tour rotation when the rule is hard or off', () => {
+    // The same day-then-night as above: hard, the gate keeps it out; off, nobody judges it.
+    for (const severity of ['hard', 'off'] as const) {
+      const place = (model: SolverModel) => {
+        model.add(model.make(0, model.shiftAt(1, DAY_12)));
+        model.add(model.make(0, model.shiftAt(2, NIGHT_12)));
+        return model;
+      };
+      const input = toursInput(
+        { maxToursPerPeriod: 2, minHoursBetweenTours: 48 },
+        'night',
+        severity,
+      );
+      const model = place(new SolverModel(input));
+      const free = place(new SolverModel(input, { tourRotation: 0 }));
+      expect(model.tourRotationPrice, severity).toBe(0);
+      expect(model.tourRotationBreaches(), severity).toBe(0);
+      expect(model.objective(), severity).toBeCloseTo(free.objective(), 6);
+    }
+  });
+
+  it('keeps two days off together priced right as weekend nurses gain and lose days', () => {
+    walk(scenario({ daysOff: true }), 1);
+  });
+
+  it('prices every weekend worked with the days off scattered once, at the days-off weight', () => {
+    // Off 5, 7, 9, 11, 13 and 15 Jan: no two together, and Sun 4, Sat 10 and Sat 17 are worked.
+    // One finding for the one pay period: 40 points, counted with fairness.
+    const place = (model: SolverModel) => {
+      for (const day of EVERY_OTHER_DAY) model.add(model.make(0, model.shiftAt(day, DAY_12)));
+      return model;
+    };
+    const priced = place(new SolverModel(daysOffInput()));
+    const free = place(new SolverModel(daysOffInput(), { daysOffTogether: 0 }));
+    expect(priced.daysOffTogetherBreaches()).toBe(1);
+    expect(priced.breakdown().fairness - free.breakdown().fairness).toBeCloseTo(40, 6);
+    expect(priced.objective() - free.objective()).toBeCloseTo(40, 6);
+  });
+
+  it('owes nothing once Monday the 12th is off beside Sunday the 11th, and owes it again when she works it', () => {
+    const model = new SolverModel(daysOffInput());
+    const shifts = EVERY_OTHER_DAY.map((day) => model.make(0, model.shiftAt(day, DAY_12)));
+    for (const a of shifts) model.add(a);
+    expect(model.daysOffTogetherBreaches()).toBe(1);
+    // Day 8 is Mon 12: with it gone, Sun 11 and Mon 12 are off together.
+    const monday = shifts[4]!;
+    const token = model.remove(monday);
+    expect(model.daysOffTogetherBreaches()).toBe(0);
+    model.undoRemove(monday, token);
+    expect(model.daysOffTogetherBreaches()).toBe(1);
+  });
+
+  it('puts no price on two days off together when the rule is hard or off', () => {
+    for (const severity of ['hard', 'off'] as const) {
+      const place = (model: SolverModel) => {
+        for (const day of EVERY_OTHER_DAY) model.add(model.make(0, model.shiftAt(day, DAY_12)));
+        return model;
+      };
+      const model = place(new SolverModel(daysOffInput(severity)));
+      const free = place(new SolverModel(daysOffInput(severity), { daysOffTogether: 0 }));
+      expect(model.daysOffTogetherPrice, severity).toBe(0);
+      expect(model.daysOffTogetherBreaches(), severity).toBe(0);
+      expect(model.objective(), severity).toBeCloseTo(free.objective(), 6);
+    }
+  });
+
+  it('keeps complete weekends priced right as weekend days are given and taken', () => {
+    walk(scenario({ completeWeekends: true }), 1);
+  });
+
+  it('prices a Saturday worked without its Sunday once, at the complete-weekend weight', () => {
+    // Sat 10 worked, Sun 11 off: one weekend worked in part, one finding: 40 points, counted
+    // with fairness.
+    const place = (model: SolverModel) => {
+      model.add(model.make(0, model.shiftAt(SATURDAY_10, DAY_12)));
+      return model;
+    };
+    const priced = place(new SolverModel(completeWeekendsInput()));
+    const free = place(new SolverModel(completeWeekendsInput(), { completeWeekend: 0 }));
+    expect(priced.completeWeekendBreaches()).toBe(1);
+    expect(priced.breakdown().fairness - free.breakdown().fairness).toBeCloseTo(40, 6);
+    expect(priced.objective() - free.objective()).toBeCloseTo(40, 6);
+  });
+
+  it('owes nothing once the Sunday is worked too, and owes it again when the Sunday goes', () => {
+    const model = new SolverModel(completeWeekendsInput());
+    model.add(model.make(0, model.shiftAt(SATURDAY_10, DAY_12)));
+    const sunday = model.make(0, model.shiftAt(SUNDAY_11, DAY_12));
+    const added = model.add(sunday);
+    expect(model.completeWeekendBreaches()).toBe(0);
+    model.undoAdd(sunday, added);
+    expect(model.completeWeekendBreaches()).toBe(1);
+    model.add(sunday);
+    const removed = model.remove(sunday);
+    expect(model.completeWeekendBreaches()).toBe(1);
+    model.undoRemove(sunday, removed);
+    expect(model.completeWeekendBreaches()).toBe(0);
+  });
+
+  it('puts no price on complete weekends when the rule is hard or off', () => {
+    for (const severity of ['hard', 'off'] as const) {
+      const place = (model: SolverModel) => {
+        model.add(model.make(0, model.shiftAt(SATURDAY_10, DAY_12)));
+        return model;
+      };
+      const model = place(new SolverModel(completeWeekendsInput(severity)));
+      const free = place(new SolverModel(completeWeekendsInput(severity), { completeWeekend: 0 }));
+      expect(model.completeWeekendPrice, severity).toBe(0);
+      expect(model.completeWeekendBreaches(), severity).toBe(0);
+      expect(model.objective(), severity).toBeCloseTo(free.objective(), 6);
+    }
+  });
+
+  it('keeps short work runs priced right as days are given and taken', () => {
+    walk(scenario({ shortWorkRuns: true }), 1);
+  });
+
+  it('prices a lone Monday once, at the short-work-run weight, with preferences', () => {
+    // Sun 4 off, Mon 5 worked, Tue 6 off: one run of 1 against 2, one finding: 30 points.
+    const place = (model: SolverModel) => {
+      model.add(model.make(0, model.shiftAt(MONDAY_5, DAY_12)));
+      return model;
+    };
+    const priced = place(new SolverModel(shortWorkRunsInput()));
+    const free = place(new SolverModel(shortWorkRunsInput(), { shortWorkRun: 0 }));
+    expect(priced.shortWorkRunBreaches()).toBe(1);
+    expect(priced.breakdown().preferences - free.breakdown().preferences).toBeCloseTo(30, 6);
+    expect(priced.objective() - free.objective()).toBeCloseTo(30, 6);
+  });
+
+  it('owes nothing once Tuesday is worked too, and owes it again when Tuesday goes', () => {
+    const model = new SolverModel(shortWorkRunsInput());
+    model.add(model.make(0, model.shiftAt(MONDAY_5, DAY_12)));
+    const tuesday = model.make(0, model.shiftAt(TUESDAY_6, DAY_12));
+    const added = model.add(tuesday);
+    expect(model.shortWorkRunBreaches()).toBe(0);
+    model.undoAdd(tuesday, added);
+    expect(model.shortWorkRunBreaches()).toBe(1);
+    model.add(tuesday);
+    const removed = model.remove(tuesday);
+    expect(model.shortWorkRunBreaches()).toBe(1);
+    model.undoRemove(tuesday, removed);
+    expect(model.shortWorkRunBreaches()).toBe(0);
+  });
+
+  it('puts no price on short work runs when the rule is hard or off', () => {
+    for (const severity of ['hard', 'off'] as const) {
+      const place = (model: SolverModel) => {
+        model.add(model.make(0, model.shiftAt(MONDAY_5, DAY_12)));
+        return model;
+      };
+      const model = place(new SolverModel(shortWorkRunsInput(severity)));
+      const free = place(new SolverModel(shortWorkRunsInput(severity), { shortWorkRun: 0 }));
+      expect(model.shortWorkRunPrice, severity).toBe(0);
+      expect(model.shortWorkRunBreaches(), severity).toBe(0);
+      expect(model.objective(), severity).toBeCloseTo(free.objective(), 6);
+    }
+  });
+
   it('keeps the price of incompatible nurses right as they are paired and parted', () => {
     // A change to the day 12 re-prices the hours the mid 8 shares with it, and the other way
     // round; checked every step for the same reason as the mid 8 above.
@@ -488,6 +892,10 @@ describe('annealer cache drift', () => {
       holidays: true,
       pending: true,
       weekends: true,
+      tours: true,
+      daysOff: true,
+      completeWeekends: true,
+      shortWorkRuns: true,
     });
     const model = new SolverModel(input);
     greedySeed(model);
@@ -1595,10 +2003,10 @@ describe('soft rules priced the way the grid judges them', () => {
     'weekend-pattern': (m) => m.weekendBreaches(),
     'incompatible-staff-cap':
       'priced per person-hour over floor stretches; checked against the rule in the walk above',
-    'tour-rotation':
-      'not priced while soft (Generate does not avoid it); the hard encoders forbid it outright',
-    'days-off-together':
-      'not priced while soft (Generate does not avoid it); the hard encoders forbid it outright',
+    'tour-rotation': (m) => m.tourRotationBreaches(),
+    'days-off-together': (m) => m.daysOffTogetherBreaches(),
+    'complete-weekends': (m) => m.completeWeekendBreaches(),
+    'short-work-runs': (m) => m.shortWorkRunBreaches(),
   };
 
   it('accounts for every soft rule in the registry', () => {
@@ -1628,6 +2036,10 @@ describe('soft rules priced the way the grid judges them', () => {
       { holidays: true },
       { pending: true, holidays: true },
       { weekends: true },
+      { tours: true },
+      { daysOff: true },
+      { completeWeekends: true },
+      { shortWorkRuns: true },
       // By the clock a night before Winter Day works it, and the Test day night works both halves
       // of that pair; by majority the night goes to the morning it ends on.
       { holidays: true, attribution: 'clock' as const },
@@ -1701,6 +2113,57 @@ describe('tour rotation made hard', () => {
     model.add(night);
     model.add(dayOn(model, '2026-01-08'));
     model.remove(night);
+    expect(model.isLegal(0)).toBe(true);
+  });
+});
+
+describe('complete weekends made hard', () => {
+  const on = (model: SolverModel, day: number) => model.make(0, model.shiftAt(day, DAY_12));
+
+  it('turns away a Saturday on its own', () => {
+    const model = new SolverModel(completeWeekendsInput('hard'));
+    expect(model.canAdd(0, on(model, SATURDAY_10))).toBe(false);
+    // A Tuesday is no weekend at all.
+    expect(model.canAdd(0, on(model, 2))).toBe(true);
+  });
+
+  it('refuses to take the Sunday out of a whole weekend, leaving the Saturday alone', () => {
+    // Removal is not monotone here: Sat 10 and Sun 11 together are legal, Sat 10 alone is not.
+    const model = new SolverModel(completeWeekendsInput('hard'));
+    const saturday = on(model, SATURDAY_10);
+    const sunday = on(model, SUNDAY_11);
+    model.add(saturday);
+    model.add(sunday);
+    expect(model.isLegal(0)).toBe(true);
+    model.remove(sunday);
+    expect(model.isLegal(0)).toBe(false);
+    // Taking the Saturday away too leaves no weekend worked: legal again.
+    model.remove(saturday);
+    expect(model.isLegal(0)).toBe(true);
+  });
+});
+
+describe('short work runs made hard', () => {
+  const on = (model: SolverModel, day: number) => model.make(0, model.shiftAt(day, DAY_12));
+
+  it('turns away a lone Monday, but not a lone last day the next schedule may extend', () => {
+    const model = new SolverModel(shortWorkRunsInput('hard'));
+    expect(model.canAdd(0, on(model, MONDAY_5))).toBe(false);
+    expect(model.canAdd(0, on(model, SATURDAY_17))).toBe(true);
+  });
+
+  it('refuses to take Tuesday out of Monday and Tuesday, leaving Monday alone', () => {
+    // Removal is not monotone here: Mon 5 and Tue 6 together are legal, Mon 5 alone is not.
+    const model = new SolverModel(shortWorkRunsInput('hard'));
+    const monday = on(model, MONDAY_5);
+    const tuesday = on(model, TUESDAY_6);
+    model.add(monday);
+    model.add(tuesday);
+    expect(model.isLegal(0)).toBe(true);
+    model.remove(tuesday);
+    expect(model.isLegal(0)).toBe(false);
+    // Taking Monday away too leaves no run at all: legal again.
+    model.remove(monday);
     expect(model.isLegal(0)).toBe(true);
   });
 });
