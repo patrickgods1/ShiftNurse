@@ -206,8 +206,8 @@ function competingTimeOffConflicts(engine: ConflictEngine, state: SimState): Con
       state,
     );
 
+    // Only types with demand that day have slots, whatever their live `active` flag says.
     for (const shiftType of engine.shiftTypes) {
-      if (!shiftType.active) continue;
       const roster = state.view.onShift(date, shiftType.id);
       for (const slot of engine.slotsByCell.get(`${date}|${shiftType.id}`) ?? []) {
         if (slot.min <= 0) continue;

@@ -190,8 +190,9 @@ describe('coverage floors', () => {
       const stored = listCoverageRequirementsForUnit(handle.db, home.id);
       expect(stored).toHaveLength(7);
       expect(stored.map((r) => `${r.minCount}/${r.targetCount}`)).toEqual(Array(7).fill('4/4'));
-      // Five updates (Mon, Tue, Thu, Fri, Sat) and one create (Wed); Sunday was already 4/4.
-      expect(recentAudit(handle.db, 1000).length - auditBefore).toBe(6);
+      // Five updates (Mon, Tue, Thu, Fri, Sat) and one create (Wed); Sunday was already 4/4. Plus
+      // one new version of the demand rules for the whole week.
+      expect(recentAudit(handle.db, 1000).length - auditBefore).toBe(7);
     });
 
     it('refuses a week whose target is below its minimum, writing nothing', () => {

@@ -151,7 +151,9 @@ export class ConflictEngine {
     const slots: Slot[] = [];
     for (const date of this.dates) {
       for (const shiftType of this.shiftTypes) {
-        if (!shiftType.active) continue;
+        // A demand row, not the live `active` flag, says the type was a shift that day: a past
+        // date of a published period is judged by the rules then, and a type retired since still
+        // has its rows. A type inactive under the judging rules has none.
         const row = this.demand.get(date, shiftType.id);
         if (!row) continue;
         for (const role of NURSE_ROLES) {

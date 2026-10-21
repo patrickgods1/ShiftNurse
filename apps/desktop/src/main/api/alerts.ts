@@ -11,8 +11,6 @@ import {
   complianceAlerts,
   contractedHoursRule,
   dateInRange,
-  datesInRange,
-  deriveDemand,
   type Holiday,
   type Id,
   type MaxHoursParams,
@@ -29,13 +27,15 @@ import {
   costContext,
   type DbLike,
   demandInputs,
+  demandTableFor,
   holidayWorkFor,
   ledgerHistory,
   listCredentials,
   listHolidaysForUnit,
   perNurseRecordsFor,
+  unitForPeriod,
 } from '@shiftnurse/db';
-import { periodOrThrow, ruleSetFor, scheduleViewFor, unitOrThrow } from './context.js';
+import { periodOrThrow, ruleSetFor, scheduleViewFor } from './context.js';
 
 /** How far a nurse may drift from contracted hours before the publish preview flags it. */
 const HOURS_DRIFT_TOLERANCE = 0.1;
@@ -73,7 +73,8 @@ export function alertsForView(
     .params as unknown as MaxHoursParams;
   const fte = configs.find((c) => c.ruleId === contractedHoursRule.id)!
     .params as unknown as ContractedHoursParams;
-  const unit = unitOrThrow(db, period.unitId);
+  // The holiday attribution a published period went out under, as the grid and pricing read it.
+  const unit = unitForPeriod(db, period);
   // Whoever is on this schedule, floats included, with their own credentials and leave.
   const records = perNurseRecordsFor(db, unit, period, [...schedule.nursesById.values()]);
   // Paid leave counts as the hours rules count it, so a nurse back from vacation is not "drift".
@@ -124,10 +125,11 @@ export function alertsForView(
     cost: costContext(db, period.unitId, ruleSet, period),
     credentials: listCredentials(db),
     nurseCredentials: records.nurseCredentials,
-    demand: deriveDemand(
-      datesInRange(period.startDate, period.endDate),
-      demandInputs(db, period.unitId, period.startDate, period.endDate),
-    ).all(),
+    // The same demand the grid judges by: a past date under the rules in force that day.
+    demand: demandTableFor(db, period, {
+      today: today(),
+      live: demandInputs(db, period.unitId, period.startDate, period.endDate),
+    }).all(),
     overtimeThresholdHours: params.overtimeThresholdHours,
     workWeekStartsOn: params.workWeekStartsOn,
     ...(params.overtimeByPayPeriod

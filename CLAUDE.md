@@ -145,7 +145,8 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
   old type's retirement),
   `publishSchedule` (version, status, ledger), `replaceAssignments` (delete and insert),
   `replaceNursePreferences`, `importFairnessLedgerEntries` and `upsertCensusForecasts` (a batch of
-  days accepted as one decision) — takes `ShiftNurseTx`, so calling it outside a transaction is a
+  days accepted as one decision), `backfillDemandConfigVersions` (every missed or first demand
+  version at startup, each with its audit row) — takes `ShiftNurseTx`, so calling it outside a transaction is a
   type error rather than a docstring nobody read.
 - **Every IPC write runs in one `transact`**, in the `main/api/` module that builds its resource
   (`api.ts` is only the wiring table): a repository function given the bare `db` commits its
@@ -160,7 +161,9 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
 - **Rule set versions are immutable.** `saveRuleSet` always inserts a new version; a published
   period snapshots the version it was solved under, so editing rules must never rewrite the
   rules an existing schedule was judged by; likewise a published period keeps the pay
-  configuration it was published under (`pay_config_snapshot`). A draft keeps the version it was created under until
+  configuration it was published under (`pay_config_snapshot`), and every change to a unit's
+  demand rules (ratios, tiers, floors, ratio staffing, active shift types) is recorded as an
+  append-only, effective-dated version (`demand_config_version`). A draft keeps the version it was created under until
   the manager moves it (`periods.adoptLatestRules`, audited); the Schedule page says when a newer
   version exists.
 - Bad data throws loudly (`ScheduleView` throws on an unknown nurse id). Silently dropping a

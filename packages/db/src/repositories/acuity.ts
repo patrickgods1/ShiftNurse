@@ -33,6 +33,7 @@ import {
   hppdTarget as hppdTargetTable,
   ratioRule as ratioRuleTable,
 } from '../schema.js';
+import { recordDemandConfigVersion } from './demand-history.js';
 import { auditedUpdate, type PatchKeys } from './patch.js';
 
 // ---------------------------------------------------------------------------
@@ -59,6 +60,7 @@ export function createAcuityTier(
   db.insert(acuityTierTable).values(row).run();
   const after = toAcuityTier(row as typeof acuityTierTable.$inferSelect);
   recordAudit(db, { entityType: 'acuity_tier', entityId: id, action: 'create', actor, after });
+  recordDemandConfigVersion(db, after.unitId, actor);
   return after;
 }
 
@@ -80,7 +82,7 @@ export function updateAcuityTier(
   patch: AcuityTierPatch,
   actor: string,
 ): AcuityTier {
-  return auditedUpdate<AcuityTier, AcuityTierPatch>(db, {
+  const after = auditedUpdate<AcuityTier, AcuityTierPatch>(db, {
     id,
     entityType: 'acuity_tier',
     entityLabel: 'acuity tier',
@@ -95,6 +97,8 @@ export function updateAcuityTier(
     notFound: `Acuity tier ${id} not found`,
     actor,
   });
+  recordDemandConfigVersion(db, after.unitId, actor);
+  return after;
 }
 
 /** The refusal text: one clause per kind of citation, singular for one. */
@@ -137,6 +141,7 @@ export function deleteAcuityTier(db: DbLike, id: Id, actor: string): void {
   const before = toAcuityTier(row);
   db.delete(acuityTierTable).where(eq(acuityTierTable.id, id)).run();
   recordAudit(db, { entityType: 'acuity_tier', entityId: id, action: 'delete', actor, before });
+  recordDemandConfigVersion(db, before.unitId, actor);
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +187,7 @@ export function createRatioRule(
   db.insert(ratioRuleTable).values(row).run();
   const after = toRatioRule(row as typeof ratioRuleTable.$inferSelect);
   recordAudit(db, { entityType: 'ratio_rule', entityId: id, action: 'create', actor, after });
+  recordDemandConfigVersion(db, after.unitId, actor);
   return after;
 }
 
@@ -244,7 +250,7 @@ export function updateRatioRule(
   actor: string,
   reason?: string,
 ): RatioRule {
-  return auditedUpdate<RatioRule, RatioRulePatch>(db, {
+  const after = auditedUpdate<RatioRule, RatioRulePatch>(db, {
     id,
     entityType: 'ratio_rule',
     entityLabel: 'ratio rule',
@@ -281,6 +287,8 @@ export function updateRatioRule(
     ...(reason === undefined ? {} : { reason }),
     actor,
   });
+  recordDemandConfigVersion(db, after.unitId, actor, reason === undefined ? {} : { reason });
+  return after;
 }
 
 /** Deactivate rather than delete: past periods were solved under this rule, and the reason says why it went. */
@@ -303,6 +311,7 @@ export function deactivateRatioRule(db: DbLike, id: Id, actor: string, reason: s
     { entityType: 'ratio_rule', entityId: id, action: 'delete', actor, before, after, reason },
     { requireReason: true },
   );
+  recordDemandConfigVersion(db, after.unitId, actor, { reason });
   return after;
 }
 

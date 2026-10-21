@@ -90,6 +90,7 @@ import {
   createUnit,
   upsertCoverageRequirement,
 } from '../repositories/config.js';
+import { batchDemandVersions } from '../repositories/demand-history.js';
 import { createHoliday } from '../repositories/holidays.js';
 import {
   importFairnessLedgerEntries,
@@ -222,6 +223,12 @@ const LAST_NAMES = [
  * an empty one.
  */
 export function seedScenarioUnit(db: ShiftNurseTx, options: SeedOptions = {}): SeedResult {
+  // One complete version of the demand rules, not one per shift type and floor: the history
+  // predates it and is judged by the earliest version.
+  return batchDemandVersions(db, () => seedScenarios(db, options));
+}
+
+function seedScenarios(db: ShiftNurseTx, options: SeedOptions): SeedResult {
   const rng = new Rng(options.seed ?? 20260917);
   const now = options.today ?? today();
   const historyPeriods = options.historyPeriods ?? 13; // ~6 months of 14-day periods
