@@ -29,6 +29,28 @@ tags. Each release's notes link here.
   release were deleted and are not restored: record them again if you still need them.
 - **A second coverage floor or pay rate for the same day was tidied on upgrade**, keeping the one
   in use. The activity log lists what was removed; check it against your records.
+- **The weekly hour cap now splits a night that crosses the week's edge by the clock, as pay
+  does.** Under a Sunday-midnight week, a Saturday 19:00–07:00 night puts 5 hours in one week and
+  7 in the next, so Generate may find Saturday nights harder to fill. Starting the work week at a
+  shift change (Settings › Rules › Weekly hour cap, "Work week starts at") keeps every night
+  whole. A unit whose pay counts the whole shift in the week it starts keeps doing so.
+- **Floats are scheduled only inside their dates on this unit.** A new rule, "Float dates on this
+  unit", is on by default: Generate never places a float outside the dates in Roster › nurse ›
+  Also works on, a shift added by hand outside them is refused, and a draft that already has one
+  shows a rule break. Check your floats' dates before you generate.
+- **Staffing on a past date is judged by the ratios, floors and shift types in force that day.**
+  Changing them now no longer changes the verdict on a published schedule's earlier days. The
+  history starts at this upgrade: days before it are judged by the rules as they stand when you
+  upgrade.
+- **Publishing books every active nurse whose home is the unit in the fairness history, even one
+  who worked no shifts**, as long as she was available on at least one day. She reads as having
+  carried nothing, so she comes first for the next nights, weekends and holidays. Fairness scores
+  and the Gini figure move from the next publish.
+- **VA units: Generate now weighs tour rotation limits.** The VA preset switches "Tour rotation
+  limits" on as advisory (unless the unit follows its own contract instead); Generate now steers away from breaking them, and takes longer. If that
+  is not worth the wait, switch the rule off in Settings › Rules.
+- **A call-back recorded on Today now needs its start time, and counts toward the hour limits.**
+  Call-backs recorded before this release have no start time and keep counting for pay only.
 
 ### Added
 
@@ -49,6 +71,11 @@ tags. Each release's notes link here.
   pays 15%, and a call-back is paid at least two hours.
 - The VA San Francisco demo now follows VA practice: the VA preset, clock-time night pay, seeded
   FMLA, volunteers, preceptors, floats, plan nurses, a bid round and volunteered holdovers.
+- **In-lieu holidays** (Settings › Unit › Holidays on a day off): when a holiday falls on a
+  full-time nurse's day off, publishing names the workday that becomes her holiday (the one before
+  it, or after it for a Sunday holiday) so you can give it off or record how it is paid. It is a
+  note and never blocks publishing. Part-time, per-diem, Baylor and 72/80 nurses get none. The VA
+  preset turns it on. The day is named, not paid at the holiday premium.
 
 #### More states and contract rules
 
@@ -67,14 +94,52 @@ tags. Each release's notes link here.
 - Applying a preset can ask about the VA's compressed tour or California's alternative
   workweek, and asks for a reason before you loosen a ratio or a rule the preset switched on.
 - A VA unit can choose to follow its own contract instead of the preset's values.
+- **Ratios by shift** (Settings › Acuity, "Shift"): a ratio can apply to day, evening or night
+  shifts only, read from when the shift starts. Changing a ratio's shift asks for a reason.
+- **Oregon nursing-assistant caps**: applying the Oregon preset asks whether the unit's CNAs
+  together take every patient. If they do, it adds CNA ratios of 1:7 on days and evenings and
+  1:11 on nights (ORS 441.768).
+- **Title 22 staffing record** (Staffing needs › "Staffing record (Title 22)…"): required and
+  actual staff and the difference, by date, shift and role, as a CSV or PDF. It covers published
+  days up to today, each judged by the rules in force that day. Keep the files for at least a
+  year.
+- **Pattern rules**: "Complete weekends" flags a weekend worked only in part, and "Short work
+  runs" a run of workdays shorter than the minimum (two by default). Both are off by default.
+  Switched on as advisory, they, "Tour rotation limits" and "Two days off together" are now
+  weighed by Generate instead of only flagged on the grid.
 
 #### Pay
 
 - **California and UC overtime**: no pyramiding of overtime, double time on days beyond the
   scheduled ones, premiums that add up, and a minimum overtime increment. The California ICU demo
   pays hours past 12 at double.
-- **Consecutive-shift differential**: a premium for shifts worked back to back (Settings › Pay).
+- **Consecutive-shift differential**: a premium for shifts worked back to back (Settings › Pay),
+  with up to three tiers by shift length, such as six 8-hour shifts in six days, five 10s or four
+  12s.
 - The overtime alert is priced by the unit's own overtime rules, not a fixed multiplier.
+- **The work week can start at a time of day** (Settings › Rules › Weekly hour cap, "Work week
+  starts at"), such as Saturday 19:00, so no night is split between two weeks; "Use the shift
+  change nearest midnight" fills it in. Night nurses can have their own week ("Night nurses' work
+  week starts on / at"). The weekly cap, overtime, Generate, pay and alerts all follow it. Two new
+  alerts: when the week's start has changed since the last published schedule, the changeover
+  week's overtime counted both ways (payroll owes the greater), and, when pay credits a night to
+  the week it starts in, any week where that pays less overtime than counting by the clock. The
+  community and California ICU demos start their week at Saturday 19:00.
+- **Spring-forward night paid as scheduled** (Settings › Pay › Stacking, off by default): straight
+  pay counts the declared hours on the night the clocks go forward. Overtime and the hour limits
+  still count the hours actually worked.
+- **Missed meal and rest breaks at the regular rate** (Settings › Pay › Stacking): paid at base
+  pay or at the week's regular rate, differentials included. The California preset proposes the
+  regular rate for a unit with no pay settings saved yet.
+- **Short-rest premium** (Settings › Pay › Differentials): earned by a shift that starts less than
+  a set number of hours after the last one ended, on the whole shift or only on the hours inside
+  the missing rest.
+- **Comp time instead of overtime pay** (Settings › Pay › Stacking, off by default; public
+  employers only): comp hours per overtime hour and a cap on hours held. Record each nurse's
+  election, with its dates, in Roster › nurse › Leave › Comp time instead of overtime. Once a
+  published schedule's last day has passed, "Bank comp time" on the Dashboard's cost panel banks
+  each electing nurse's overtime up to the cap, once per schedule; hours past the cap stay paid
+  overtime. Banked hours count in the comp balance a leave request is checked against.
 
 #### Leave
 
@@ -91,6 +156,12 @@ tags. Each release's notes link here.
   overtime, the VA's consecutive-hours limit.
 - **California alternative workweek**: no nurse required past 12 hours in any 24, 16 in a declared
   emergency, and 8 hours off after 24 straight.
+- **Call-backs at a time**: Today › Called back asks when the nurse came in (now, by default). The
+  hours count toward most hours in any 24, long stretches and the weekly and pay-period caps, and
+  authorise their own overtime. Rest after a call-back is owed only if the minimum-rest rule's "A
+  call-back needs rest after it" is on.
+- **On-call limits** (Settings › Rules, off by default): most times on call in a week and in a
+  schedule, and most days on call in a row. No figures are preset; set your unit's own.
 
 #### Weekends and requests
 
@@ -120,8 +191,8 @@ tags. Each release's notes link here.
   backfill, low-census cancellation…).
 - ShiftNurse now warns when its data folder is on a network drive, where the schedule database
   could be damaged, and tells you to ask IT to keep it on this computer.
-- New README section for hospital IT: silent install, allowlisting, roaming profiles and how to
-  turn off the update check.
+- New README section for hospital IT: silent install, why the installer is per-user,
+  allowlisting, roaming profiles and how to turn off the update check.
 - README explains what personal and HR information ShiftNurse keeps, and how to protect it.
 
 ### Changed
@@ -143,6 +214,9 @@ tags. Each release's notes link here.
 - Floating a nurse out keeps her shift on the schedule, locked and marked with where she went.
   Her hours still count for rest, overtime and pay, but no longer for this unit's staffing, Today,
   census or the grid headcount. Floats made before this release were deleted and are not restored.
+- Generate never places a float outside her dates on the unit, and Today's replacement list shows
+  such a nurse as "Outside their float dates on this unit".
+- Suggested fixes for request conflicts are worked out about twice as fast.
 
 #### Contract and state-law rules
 
@@ -175,6 +249,11 @@ tags. Each release's notes link here.
   Generate or in suggested fixes; it is still counted as overtime.
 - Saved rule versions, published versions, the change log and pay snapshots can no longer be
   edited or deleted in the database file itself.
+- The weekly hour cap counts a night that crosses the week's edge by the clock, as pay does, and
+  Generate builds to that count.
+- UC–CNA citations refer to the 2025–2030 agreement.
+- The list of what ShiftNurse does not enforce yet (Settings › About and the README) drops what
+  this release added.
 
 #### Requests, leave and bidding
 
@@ -227,6 +306,11 @@ tags. Each release's notes link here.
   most of it falls on, or each hour by the clock), and holiday premiums, rotation and the ledger
   all follow it.
 - Hours and money are whole minutes and exact cents, so totals add up to the cent.
+- Every change to a unit's ratios, acuity tiers, coverage floors and active shift types is kept
+  with the date it took effect, and each past day of a published schedule is judged by the rules
+  in force that day.
+- Publishing books a home nurse who worked no shifts in the fairness history as having carried
+  nothing, so she is no longer missing from it.
 - The forecast's seasonal index counts each season once, shows the samples behind it, and the
   weekend alert looks at a real 52 weeks.
 
@@ -296,6 +380,9 @@ tags. Each release's notes link here.
   "never been published".
 - Own leave no longer counts against a nurse's bid or is paid twice, and a departed or moved nurse
   is denied in words.
+- A 72/80 nurse's leave is charged 10 hours for 9 only for annual and sick leave, as the statute
+  says; comp time and other paid leave are charged hour for hour, and the request dialog shows the
+  10-for-9 hint only where it applies.
 
 #### Today
 
@@ -329,6 +416,8 @@ tags. Each release's notes link here.
 - A holiday whose "who worked" list was recorded by hand can no longer be deleted until that list
   is cleared, and only nurses on the unit can be recorded as having worked it.
 - A unit with no acuity tiers can record a census; census messages name tiers, not ids.
+- Two active shift types on a unit can no longer share a name or abbreviation, and the history
+  import refuses an ambiguous abbreviation in words instead of guessing.
 - A unit with no HPPD target can set one.
 - A period budget can be removed. Loading no longer reads as "not set up", "no nurses scored" or
   as ids; failed checks and file imports say what failed.
@@ -371,6 +460,8 @@ tags. Each release's notes link here.
   you had, instead of leaving it unable to load anything.
 - Long nurse records export to PDF, and a PDF that cannot be produced says so in plain words.
 - Someone on a release candidate is told when the final release is out.
+- The "new version available" banner shows again: a release of the CP-SAT runner on the releases
+  page no longer hides the app's newest version.
 - Daily backups no longer leave journal files beside them in the backups folder; existing ones are
   tidied at the next launch.
 - Daily backups removed after 14 days are now listed in the activity log.
@@ -388,6 +479,9 @@ tags. Each release's notes link here.
 
 - The installed app can no longer be run as a plain Node.js runtime, and checks its own files for
   tampering.
+- Each release's installers carry a build-provenance attestation:
+  `gh attestation verify <file> -R patrickgods1/ShiftNurse` checks that a download was built from
+  this repository (README › Installing).
 
 ## [0.1.0] - 2026-10-05
 

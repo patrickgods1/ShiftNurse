@@ -19,7 +19,7 @@ pickup) is modelled as *a request with a submitter and a decider*, with v1 alway
 `enteredBy: 'manager'`. That seam is deliberate: nurse self-service later becomes an intake
 surface on the same data model, not a rewrite.
 
-**Status:** pre-1.0. Milestones M1–M16 and M19–M43 are complete, with installers verified on
+**Status:** pre-1.0. Milestones M1–M16 and M19–M44 are complete, with installers verified on
 macOS and on native Windows. M18 (release hardening) has one follow-up open. Signed installers
 and self-update (M17) will not be done: builds stay unsigned by owner decision (2026-10-19).
 
