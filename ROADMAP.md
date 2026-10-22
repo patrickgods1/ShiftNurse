@@ -81,7 +81,7 @@ shiftnurse/
 
 ## Current state
 
-`packages/core`, `packages/db` and `apps/desktop` through M43 are green (M17 won't do,
+`packages/core`, `packages/db` and `apps/desktop` through M44 are green (M17 won't do,
 M18's last follow-up open): lint, typecheck and the full test suite pass in CI on Linux, macOS
 and Windows (`npm run check`; no count kept here — it went stale within a milestone the last
 time).
@@ -822,16 +822,19 @@ The 2026-10-16 in-depth code review (`reports/ShiftNurse in depth code review.md
       and the review's changes written for managers (verify: npm run check; milestone line; link
       check)
 
-Deferred by owner decision (not boxes):
+Deferred items and owner decisions (not boxes):
 
-- INRC-II pattern terms (minimum consecutive days, complete weekends, per-type consecutive
-  limits) and pricing the soft rules Generate ignores while soft: an objective change that needs
-  a bench study.
+- INRC-II pattern terms and pricing the soft rules Generate ignored while soft: done in M44
+  phase 8 (`complete-weekends` and `short-work-runs` added; the pattern rules priced while soft;
+  everything ships off by default, see `docs/pattern-terms-bench.md`).
+- On-call caps and call-back rest (L-18): done in M44 phase 9 (`on-call-limit`, off by default
+  with no invented numbers; timed call-backs count toward hours, rest optional).
 - Signed installers and self-update: M17, won't do (owner decision 2026-10-19).
-- Encryption at rest for HR text: deferred with no date; full-disk encryption is the protection
-  (see README › What data ShiftNurse stores).
+- Encryption at rest for HR text: deferred with no date, because an unsigned app cannot keep a key
+  in the system keychain without prompting on every update; full-disk encryption is the
+  protection (see README › What data ShiftNurse stores).
 
-### M44 — Deferred decisions and stated gaps (2026-10-19)
+### M44 — Deferred decisions and stated gaps (2026-10-19) ✅
 
 Owner decisions of 2026-10-19: M17 signing and self-update is won't do (builds stay unsigned; the
 "new version available" banner stays and must work); encryption at rest stays deferred with no
@@ -840,20 +843,34 @@ The plan researched and planned every deferred or decision-gated item and every 
 states, in 15 phases, one PR per phase.
 
 - [x] Phase 1 — Release hygiene: update banner, docs, attestations
-- [ ] Phase 2 — Repository tidy-ups + limits tripwire
-- [ ] Phase 3 — Float staff only inside their membership dates
-- [ ] Phase 4 — Demand rules as they were on each past date
-- [ ] Phase 5 — Conflicts analysis speed (copy-on-write ScheduleView)
-- [ ] Phase 6 — A ledger row for every available home nurse
-- [ ] Phase 7 — Weekly hours split by the clock
-- [ ] Phase 8 — Pattern terms and soft-rule prices
-- [ ] Phase 9 — On-call caps and timed call-backs
-- [ ] Phase 10 — Pay: spring-forward, break premium, rest premium, consecutive tiers, UC–CNA re-check
-- [ ] Phase 11 — Comp time earned
-- [ ] Phase 12 — In-lieu-of holidays
-- [ ] Phase 13 — Oregon CNA cap (ratio by tour)
-- [ ] Phase 14 — Title 22 staffing record
-- [ ] Phase 15 — Close-out
+- [x] Phase 2 — Repository tidy-ups + limits tripwire
+- [x] Phase 3 — Float staff only inside their membership dates
+- [x] Phase 4 — Demand rules as they were on each past date
+- [x] Phase 5 — Conflicts analysis speed (copy-on-write ScheduleView)
+- [x] Phase 6 — A ledger row for every available home nurse
+- [x] Phase 7 — Weekly hours split by the clock
+- [x] Phase 8 — Pattern terms and soft-rule prices
+- [x] Phase 9 — On-call caps and timed call-backs
+- [x] Phase 10 — Pay: spring-forward, break premium, rest premium, consecutive tiers, UC–CNA re-check
+- [x] Phase 11 — Comp time earned
+- [x] Phase 12 — In-lieu-of holidays
+- [x] Phase 13 — Oregon CNA cap (ratio by tour)
+- [x] Phase 14 — Title 22 staffing record
+- [x] Phase 15 — Close-out
+
+### Backlog
+
+Open items from the early-October 2026 improvement review (`review-the-project-to-calm-minsky`),
+triaged at M44 close-out, and known gaps M44's phases left; not scheduled.
+
+- Old review (2026-10) P3.3: removing an assignment still finds it with a linear `indexOf` + `splice` in `spliceOut` (`packages/core/src/solver/model.ts`, used on `unlocked`, `byNurse` and `byShift`); use an index map with swap-remove for `unlocked`, measured with `npm run bench:solvers`.
+- Old review (2026-10) P3.6: `resolvePayRate` (`packages/core/src/cost/rates.ts`) filters every pay rate on each call from `cost/cost.ts` and `cost/events.ts`; index the rates by nurse and by role once per cost context.
+- Old review (2026-10) P3.7: `pendingOn` in `packages/core/src/conflicts/engine.ts` scans all time off for every nurse and date; group the pending requests by nurse once in the constructor.
+- Old review (2026-10) P4.3: the date+shift key is still written four separate ways (`acuity/demand.ts`, `schedule/view.ts`, `publish/diff.ts`, `conflicts/engine.ts`); move it into one `packages/core/src/domain/keys.ts` helper.
+- Old review (2026-10) P4.3: `ObjectiveWeights` still lives in `packages/core/src/solver/types.ts`, so `conflicts/types.ts`, `candidates.ts` and `resolution-score.ts` import from the solver; move the weights to a neutral module.
+- Old review (2026-10) P6.4: the repo has no `LICENSE` file (or proprietary notice) and neither the root nor the `apps/desktop` `package.json` declares a `license` field; add both (owner decision on the licence).
+- M44 phase 9 (#122): timed call-backs count in the rules and solvers, but the shift-exchange preview (`overtimeHoursAround` in `packages/core/src/rules/hours-rules.ts`, called from `exchange/evaluate.ts`) and the compliance alerts (`windowHours`, called from `publish/compliance.ts`) are not given the call-backs and ignore them; pass them through the rule context.
+- M44 phase 10 (#123): `SolveCostInput` (`packages/core/src/solver/types.ts`) lacks the spring-forward-as-scheduled and break-premium-rate pay settings, so conflict and resolution cost deltas price the spring-forward night as worked and breaks at base; carry both settings.
 
 ---
 

@@ -14,11 +14,11 @@ self-service later becomes an intake surface rather than a new data model.
 
 ## Where things are
 
-Milestones M1–M16 and M19–M42 are complete and green, and so is **M43** — the 2026-10-16
-in-depth review's fixes, one PR per phase (`ROADMAP.md`). **M18 — Release hardening** is in
-progress (the 2026-10-03 release audit's fixes): its one open box is the copy-on-write
-`ScheduleView` follow-up. M17 (signing) won't be done (owner decision 2026-10-19), and M44 (deferred decisions and stated
-gaps) is in progress as a 15-phase plan.
+Milestones M1–M16 and M19–M44 are complete and green; the latest, **M44**, settled the deferred
+decisions and stated gaps in 15 phases, one PR per phase (`ROADMAP.md`). **M18 — Release
+hardening** is in progress (the 2026-10-03 release audit's fixes): its one open box is the
+copy-on-write `ScheduleView` follow-up (~505 ms median against a < 500 ms target). M17 (signing)
+won't be done (owner decision 2026-10-19).
 
 Detail lives next to the code, in CLAUDE.md files that load when you work in that folder:
 
@@ -232,7 +232,7 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
 
 ## Pointers
 
-- **`ROADMAP.md` is the plan of record** — milestones M1–M43, locked-in decisions, verification
+- **`ROADMAP.md` is the plan of record** — milestones M1–M44, locked-in decisions, verification
   steps. Tick a box when the work lands *and* its verification passes, not when code is written.
 - **`.claude/skills/scheduling-review`** — the domain review checklist for scheduling changes.
 - `.claude/scripts/` — SessionStart roadmap summary and a non-blocking Stop hook that runs the unit tests related to the turn's changes (100 s budget).
