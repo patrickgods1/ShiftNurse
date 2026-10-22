@@ -20,7 +20,7 @@ export const NOT_ENFORCED: readonly string[] = [
   'California’s shortened alternative-workweek day (Wage Order 5 § 3(B)(2)): when you require a 12-hour nurse to work fewer hours than scheduled, that day’s overtime is past 8 hours at 1.5× and past 12 at 2×; the app prices the day by the unit’s usual rules.',
   'UC–CNA Art. 14 § O.1’s premium of 1.5× for a work period not preceded by six hours off is not priced; the minimum-rest rule can refuse the turnaround instead.',
   'UC–CNA values cite the 2022–2025 agreement; a 2025–2030 agreement was ratified on 22 November 2025 and its articles were not yet published when this was written, so check Article 14’s numbers against it.',
-  'Title 22 § 70217(c)–(d): the written staffing plan with required versus actual staffing by shift and its one-year retention is not produced here; the Demand page and published schedules hold the figures.',
+  'Patient-by-patient assignment records (22 CCR § 70217(d)) are not kept here.',
 ];
 
 export const PRESETS_DISCLAIMER =

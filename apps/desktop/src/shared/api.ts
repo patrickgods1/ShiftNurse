@@ -936,6 +936,8 @@ export interface PublishOutcome {
 
 export type NurseRecordFormat = 'csv' | 'pdf';
 
+export type StaffingRecordFormat = 'csv' | 'pdf';
+
 export type OutputFormat = 'pdf-grid' | 'pdf-nurses' | 'csv-grid' | 'csv-long' | 'xlsx';
 
 export interface BackupInfo {
@@ -1656,6 +1658,18 @@ export interface ShiftNurseApi {
   output: {
     /** Opens a native save dialog and writes the period in `format`. Returns the path written. */
     exportToFile(periodId: Id, format: OutputFormat): Promise<string | undefined>;
+    /**
+     * The unit's Title 22 staffing record (22 CCR § 70217(c)) for the inclusive range, through a
+     * native save dialog: required, actual and variance per date, shift and role, over dates a
+     * published or archived period covers up to today. Resolves to the path, or undefined when
+     * the manager cancels.
+     */
+    exportStaffingRecord(
+      unitId: Id,
+      start: IsoDate,
+      end: IsoDate,
+      format: StaffingRecordFormat,
+    ): Promise<string | undefined>;
     /** The CSV text itself, for the clipboard or tests. */
     renderCsv(periodId: Id, format: 'csv-grid' | 'csv-long'): string;
   };
@@ -2035,7 +2049,7 @@ export const API_CHANNELS = {
     'setLocked',
   ],
   publish: ['preview', 'publish', 'versions', 'changes', 'alerts'],
-  output: ['exportToFile', 'renderCsv'],
+  output: ['exportToFile', 'exportStaffingRecord', 'renderCsv'],
   backups: ['list', 'create', 'restore', 'listDeleted', 'remove', 'undelete', 'purge'],
   solver: [
     'start',
