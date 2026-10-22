@@ -3,9 +3,21 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { Differential, PayRate } from '../domain/entities.js';
+import type { Differential, PayRate, ShiftType } from '../domain/entities.js';
 import { DEFAULT_WEEKEND, isoDate } from '../domain/time.js';
-import { makeNurse, testUnit, UNIT_ID } from '../testing/fixtures.js';
+import {
+  assign,
+  DAY_8,
+  DAY_12,
+  differential,
+  makeNurse,
+  NIGHT_12,
+  scenario,
+  testShiftTypes,
+  testUnit,
+  UNIT_ID,
+} from '../testing/fixtures.js';
+import { costSchedule } from './cost.js';
 import { type DayOfPayEvent, priceDayOfEvents, reportingPayOwed } from './events.js';
 import type { CostContext } from './types.js';
 
@@ -180,6 +192,143 @@ describe('pay for what happened on the day', () => {
     );
     expect(result.lines).toEqual([]);
     expect(result.unpriced).toBe(1);
+  });
+});
+
+describe('a missed break paid at the regular rate (Ferra v. Loews Hollywood Hotel)', () => {
+  // A 4-hour day shift, so the week can be exactly 40 hours.
+  const DAY_4: ShiftType = {
+    ...DAY_8,
+    id: 'st-d4',
+    name: 'Day 4',
+    abbreviation: 'D4',
+    durationHours: 4,
+  };
+  const rn50: PayRate = { ...RN_RATE, hourlyRate: 50 };
+  const nightPlus5 = differential('night', 'flat', 5);
+
+  function week(premiumStacking: 'compound' | 'additive' = 'compound') {
+    const nurse = makeNurse({ id: 'bea' });
+    // The week of Sunday 2026-01-04: three 12-hour nights (36 h) and a 4-hour day, 40 h in all.
+    const s = scenario({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-10'),
+      nurses: [nurse],
+      shiftTypes: [...testShiftTypes, DAY_4],
+      assignments: [
+        assign(nurse.id, NIGHT_12, '2026-01-04'),
+        assign(nurse.id, NIGHT_12, '2026-01-05'),
+        assign(nurse.id, NIGHT_12, '2026-01-06'),
+        assign(nurse.id, DAY_4, '2026-01-08'),
+      ],
+    });
+    const c: CostContext = {
+      ...ctx([nightPlus5]),
+      payRates: [rn50],
+      premiumStacking,
+      breakPremiumRate: 'regular',
+    };
+    return { nurse, c, cost: costSchedule(s.schedule, c) };
+  }
+
+  it('works out the week’s regular rate with the night differential in it', () => {
+    // 40 h × $50 = $2,000 base, plus 36 night hours × $5 = $180: $2,180 over 40 h = $54.50.
+    const { cost } = week();
+    expect(cost.nurses[0]?.regularRates).toEqual([
+      { windowStart: isoDate('2026-01-04'), rate: 54.5 },
+    ]);
+    // Additive stacking changes nothing for a flat differential, and the rate is still reported.
+    expect(week('additive').cost.nurses[0]?.regularRates).toEqual([
+      { windowStart: isoDate('2026-01-04'), rate: 54.5 },
+    ]);
+  });
+
+  it('pays a missed meal at $54.50 on the regular rate and $50 on the base rate', () => {
+    const { nurse, c } = week();
+    const meal: DayOfPayEvent = {
+      kind: 'missed_break',
+      nurseId: nurse.id,
+      date: isoDate('2026-01-08'),
+      break: 'meal',
+    };
+    // The week's rate, worked out above by hand.
+    const regularRateFor = (id: string, date: string) =>
+      id === nurse.id && date >= '2026-01-04' && date <= '2026-01-10' ? 54.5 : undefined;
+    const regular = priceDayOfEvents([meal], c, [nurse], {
+      callBackMinimumHours: 0,
+      breakPremiumRate: 'regular',
+      regularRateFor,
+    });
+    expect(regular.lines.map((l) => [l.kind, l.rate, l.amount])).toEqual([
+      ['missed_meal', 54.5, 54.5],
+    ]);
+    const base = priceDayOfEvents([meal], c, [nurse], {
+      callBackMinimumHours: 0,
+      breakPremiumRate: 'base',
+      regularRateFor,
+    });
+    expect(base.lines.map((l) => l.amount)).toEqual([50]);
+  });
+
+  it('pays a missed meal at $54.50 under additive stacking too, since the regular rate holds the differentials however overtime stacks', () => {
+    // Same week: ($2,000 base + 36 × $5 night = $2,180) / 40 h = $54.50 on every shift, though
+    // additive overtime would be paid on the $50 base.
+    const { nurse, c, cost } = week('additive');
+    expect(cost.assignments.map((a) => a.regularRate)).toEqual([54.5, 54.5, 54.5, 54.5]);
+    const regularRateFor = (id: string, date: string) =>
+      cost.assignments.find((a) => a.nurseId === id && a.date === date)?.regularRate;
+    const result = priceDayOfEvents(
+      [{ kind: 'missed_break', nurseId: nurse.id, date: isoDate('2026-01-08'), break: 'meal' }],
+      c,
+      [nurse],
+      { callBackMinimumHours: 0, breakPremiumRate: 'regular', regularRateFor },
+    );
+    expect(result.lines.map((l) => [l.kind, l.rate, l.amount])).toEqual([
+      ['missed_meal', 54.5, 54.5],
+    ]);
+  });
+
+  it('falls back to the base rate when the week has no regular rate on record', () => {
+    const { nurse, c } = week();
+    const result = priceDayOfEvents(
+      [{ kind: 'missed_break', nurseId: nurse.id, date: isoDate('2026-02-01'), break: 'rest' }],
+      c,
+      [nurse],
+      { callBackMinimumHours: 0, breakPremiumRate: 'regular', regularRateFor: () => undefined },
+    );
+    expect(result.lines.map((l) => l.amount)).toEqual([50]);
+  });
+});
+
+describe('the regular rate each shift’s break premium reads', () => {
+  it('gives a Saturday day shift the week that ends at 19:00 that evening, and the night after it the new week', () => {
+    // Work weeks start Saturday 19:00. The week opened Sat 2026-01-03 19:00 holds a Monday 12-hour
+    // day and the Saturday 2026-01-10 07:00–19:00 day: 24 h at $50 = $1,200 / 24 h = $50. The
+    // Saturday 19:00 night opens the next week alone: 12 h × ($50 + $5 night) = $660 / 12 h = $55.
+    const nurse = makeNurse({ id: 'cy' });
+    const s = scenario({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, DAY_12, '2026-01-05'),
+        assign(nurse.id, DAY_12, '2026-01-10'),
+        assign(nurse.id, NIGHT_12, '2026-01-10'),
+      ],
+    });
+    const c: CostContext = {
+      ...ctx([differential('night', 'flat', 5)]),
+      payRates: [{ ...RN_RATE, hourlyRate: 50 }],
+      workWeekStartsOn: 6,
+      workWeekStartMinute: 19 * 60,
+      breakPremiumRate: 'regular',
+    };
+    const cost = costSchedule(s.schedule, c);
+    expect(cost.assignments.map((a) => [a.date, a.shiftTypeId, a.regularRate])).toEqual([
+      [isoDate('2026-01-05'), DAY_12.id, 50],
+      [isoDate('2026-01-10'), DAY_12.id, 50],
+      [isoDate('2026-01-10'), NIGHT_12.id, 55],
+    ]);
   });
 });
 

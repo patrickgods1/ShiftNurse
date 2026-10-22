@@ -8,6 +8,8 @@ export const NURSE_SCOPED = [
   'assignment',
   'call_attempt',
   'call_off',
+  'comp_time_credit',
+  'comp_time_election',
   'conflict',
   'day_of_pay_event',
   'fairness_ledger',

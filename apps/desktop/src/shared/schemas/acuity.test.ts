@@ -18,6 +18,22 @@ describe('acuity settings arriving over IPC', () => {
     expect(acuitySchemas.updateRatioRule.safeParse(['r-1', { citation: null }]).success).toBe(true);
   });
 
+  it('accepts a ratio bound to the night shift, and lets an edit clear it', () => {
+    const input = {
+      unitId: 'u-1',
+      role: 'CNA',
+      acuityTierId: null,
+      maxPatientsPerNurse: 11,
+      tour: 'night',
+      active: true,
+    };
+    expect(acuitySchemas.createRatioRule.safeParse([input]).success).toBe(true);
+    expect(acuitySchemas.updateRatioRule.safeParse(['r-1', { tour: null }]).success).toBe(true);
+    expect(acuitySchemas.createRatioRule.safeParse([{ ...input, tour: 'graveyard' }]).success).toBe(
+      false,
+    );
+  });
+
   it('refuses a ratio of zero patients per nurse', () => {
     expect(
       acuitySchemas.updateRatioRule.safeParse(['r-1', { maxPatientsPerNurse: 0 }]).success,

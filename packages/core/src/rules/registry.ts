@@ -12,6 +12,7 @@
 import type { DemandTable } from '../acuity/demand.js';
 import type {
   AvailabilityBlock,
+  CallBack,
   Credential,
   Holiday,
   Id,
@@ -36,6 +37,7 @@ import type { ScheduleView } from '../schedule/view.js';
 
 import { accommodationBlocksRule } from './availability-blocks.js';
 import { overlapRule, timeOffRule } from './availability-rules.js';
+import { completeWeekendsRule } from './complete-weekends.js';
 import { coverageRule, ratioComplianceRule } from './coverage-rules.js';
 import { daysOffTogetherRule } from './days-off-together.js';
 import { holidayIndexes, holidayRotationRule } from './holiday-rotation.js';
@@ -46,12 +48,14 @@ import { longStretchRule } from './long-stretch.js';
 import { mandatoryOvertimeRule } from './mandatory-overtime.js';
 import { worksWithinMembershipRule } from './membership.js';
 import { nightRecoveryRule } from './night-recovery.js';
+import { onCallLimitRule } from './on-call-limit.js';
 import { type PaidLeaveCredit, type PaidSickCall, paidLeaveCredits } from './paid-leave.js';
 import { describeParamProblems, RuleParamsError, ruleConfigProblems } from './param-validation.js';
 import { pendingTimeOffRule } from './pending-time-off.js';
 import { preceptorRule } from './preceptor.js';
 import { consecutiveShiftsRule, minRestRule } from './rest-rules.js';
 import { scheduleKindToursRule } from './schedule-kind-tours.js';
+import { shortWorkRunsRule } from './short-work-runs.js';
 import { tourRotationRule } from './tour-rotation.js';
 import type {
   EvaluationResult,
@@ -93,6 +97,9 @@ export const ALL_RULES: readonly Rule<never>[] = [
   mandatoryOvertimeRule,
   weekendPatternRule,
   daysOffTogetherRule,
+  completeWeekendsRule,
+  shortWorkRunsRule,
+  onCallLimitRule,
   preceptorRule,
   tourRotationRule,
   scheduleKindToursRule,
@@ -271,6 +278,8 @@ export interface RuleContextInput {
   restWaivers?: readonly RestWaiver[];
   /** Recorded accommodations. Absent: nobody has one. */
   availabilityBlocks?: readonly AvailabilityBlock[];
+  /** Time nurses were called in from standby and worked. Absent: none. */
+  callBacks?: readonly CallBack[];
   /**
    * The first date from which `priorAssignments` is known to be complete (`historyCompleteFrom`).
    * Absent: the caller has not said, and a pay period that began before the schedule is judged as
@@ -279,6 +288,11 @@ export interface RuleContextInput {
   historyFrom?: IsoDate;
   /** The host's clock changes (D19). Absent: none, every day is 1440 minutes. */
   dstTransitions?: readonly DstTransition[];
+  /**
+   * The unit's weekly-overtime attribution, when its pay settings are loaded
+   * (`RuleContext.overtimeWindowAttribution`). Absent: the start week at declared hours.
+   */
+  overtimeWindowAttribution?: 'clock' | 'start';
   /** Nurses' stated preferences. Absent: nobody has asked for anything. */
   preferences?: readonly Preference[];
   /** The floats' membership dates on this unit. Absent: nobody is limited. */
@@ -344,8 +358,12 @@ export function buildRuleContext(input: RuleContextInput): RuleContext {
     ),
     restWaiversByNurse: restWaiverDates(input.restWaivers ?? []),
     availabilityBlocksByNurse: groupByNurse(input.availabilityBlocks ?? []),
+    callBacksByNurse: callBacksByNurse(input.callBacks ?? []),
     historyFrom: input.historyFrom,
     dstTransitions: input.dstTransitions ?? [],
+    ...(input.overtimeWindowAttribution
+      ? { overtimeWindowAttribution: input.overtimeWindowAttribution }
+      : {}),
     preferredShiftTypesByNurse: preferredShiftTypes(input.preferences ?? []),
     membershipByNurse: membershipsByNurse(input.memberships ?? []),
   };
@@ -379,6 +397,13 @@ function restWaiverDates(waivers: readonly RestWaiver[]): Map<Id, Set<IsoDate>> 
     if (existing) existing.add(w.date);
     else out.set(w.nurseId, new Set([w.date]));
   }
+  return out;
+}
+
+/** By nurse, each list in start order: the rules walk it beside the start-sorted timeline. */
+function callBacksByNurse(callBacks: readonly CallBack[]): Map<Id, CallBack[]> {
+  const out = groupByNurse(callBacks);
+  for (const list of out.values()) list.sort((a, b) => a.window.startMinute - b.window.startMinute);
   return out;
 }
 

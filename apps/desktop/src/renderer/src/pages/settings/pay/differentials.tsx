@@ -1,5 +1,5 @@
 /**
- * Shift differentials: nights, weekends, holidays, consecutive shifts, charge — flat or
+ * Shift differentials: nights, weekends, holidays, consecutive shifts, short rest, charge — flat or
  * percentage, switchable.
  */
 
@@ -30,7 +30,9 @@ const DIFFERENTIAL_HELP: Record<DifferentialKind, string> = {
   major_holiday:
     'Shifts starting on a major holiday, in place of the holiday premium. Without it, majors earn the holiday premium',
   consecutive_shift:
-    'Every further shift once a run of days in a row holds more full 12-hour shifts than the contract allows, until a day off',
+    'Every further shift once a run of days in a row holds more full shifts than the contract allows, until a day off',
+  short_rest:
+    'A shift that starts too soon after the last one ended, on the whole shift or only the hours before the rest would have ended',
   charge: 'Shifts where the nurse is the charge nurse',
   on_call: 'Standby hours — paid instead of base pay, not on top of it',
   call_back: 'Being called in while on standby (priced by the day-of console)',
@@ -43,36 +45,73 @@ const EVENING_WHY =
   'Many contracts pay an evening differential for the hours inside a clock window such as 15:00–23:00. Leave the whole-shift hours empty to pay only those hours, or enter a number to pay the whole shift once that many hours fall in the window.';
 
 const CONSECUTIVE_WHY =
-  'UC–CNA Art. 14 § I.3 pays a 12-hour nurse 1.5× once she works more than four full shifts within four days, until she has a day off: enter 4 and 4 with a 1.5 multiplier. Only shifts scheduled for 12 hours or more count toward the run; standby and leave do not.';
+  'UC–CNA 2025–2030 § G.3 pays 1.5× once a nurse works more than six full 8-hour shifts within six days, five 10s within five, or four 12s within four, until she has a day off (a nurse may waive it, § G.2). Without tiers a run counts 12-hour shifts only: enter 4 and 4 with a 1.5 multiplier. Standby and leave never count toward the run.';
 
-interface ConsecutiveForm {
+const TIERS_WHY =
+  'UC–CNA 2025–2030 § G.3 counts 8- and 10-hour runs too: more than six full 8s within six days, five 10s within five, or four 12s within four. Add a tier for each: 8 with 6 and 6, 10 with 5 and 5, 12 with 4 and 4. A shift counts toward every tier whose hours it reaches, and the premium starts as soon as any tier is passed. It is still paid once.';
+
+/** The most tiers a premium holds: § G.3 has three, 8s, 10s and 12s. */
+const MAX_TIERS = 3;
+
+interface TierForm {
+  hours: string;
   after: string;
   within: string;
 }
-const EMPTY_CONSECUTIVE: ConsecutiveForm = { after: '', within: '' };
+interface ConsecutiveForm {
+  tiers: TierForm[];
+}
+const EMPTY_TIER: TierForm = { hours: '12', after: '', within: '' };
+const EMPTY_CONSECUTIVE: ConsecutiveForm = { tiers: [EMPTY_TIER] };
 
 function consecutiveFormOf(consecutive: Differential['consecutive']): ConsecutiveForm {
-  return consecutive === undefined
-    ? EMPTY_CONSECUTIVE
-    : { after: String(consecutive.afterShifts), within: String(consecutive.withinDays) };
+  if (consecutive === undefined) return EMPTY_CONSECUTIVE;
+  // A premium saved without tiers is the 12-hour tier, which is how costing reads it too.
+  const tiers = consecutive.tiers ?? [
+    {
+      fullShiftHours: 12,
+      afterShifts: consecutive.afterShifts,
+      withinDays: consecutive.withinDays,
+    },
+  ];
+  return {
+    tiers: tiers.map((t) => ({
+      hours: String(t.fullShiftHours),
+      after: String(t.afterShifts),
+      within: String(t.withinDays),
+    })),
+  };
 }
 
 /** The trigger the form describes, or the reason it cannot be saved. */
 function consecutiveOf(form: ConsecutiveForm): NonNullable<Differential['consecutive']> | string {
-  if (form.after.trim() === '' || form.within.trim() === '') {
-    return 'Enter both the number of shifts and the number of days';
+  const tiers: { fullShiftHours: number; afterShifts: number; withinDays: number }[] = [];
+  for (const tier of form.tiers) {
+    if (tier.after.trim() === '' || tier.within.trim() === '') {
+      return 'Enter both the number of shifts and the number of days';
+    }
+    if (tier.hours.trim() === '') return 'Enter the hours of a full shift';
+    const fullShiftHours = Number(tier.hours);
+    const afterShifts = Number(tier.after);
+    const withinDays = Number(tier.within);
+    if (![fullShiftHours, afterShifts, withinDays].every((n) => Number.isInteger(n) && n >= 1)) {
+      return 'Hours, shifts and days must be whole numbers of at least 1';
+    }
+    tiers.push({ fullShiftHours, afterShifts, withinDays });
   }
-  const afterShifts = Number(form.after);
-  const withinDays = Number(form.within);
-  if (
-    !Number.isInteger(afterShifts) ||
-    afterShifts < 1 ||
-    !Number.isInteger(withinDays) ||
-    withinDays < 1
-  ) {
-    return 'Shifts and days must be whole numbers of at least 1';
+  if (new Set(tiers.map((t) => t.fullShiftHours)).size !== tiers.length) {
+    return 'Each tier needs its own full-shift hours';
   }
-  return { afterShifts, withinDays };
+  const first = tiers[0];
+  if (first === undefined) return 'Enter both the number of shifts and the number of days';
+  // One 12-hour tier is the reading every premium had before tiers: saved without them, so a
+  // unit that never touches tiers stores exactly what it did.
+  if (tiers.length === 1 && first.fullShiftHours === 12) {
+    return { afterShifts: first.afterShifts, withinDays: first.withinDays };
+  }
+  // With tiers the top-level numbers are not read; they keep the 12-hour tier's, else the first's.
+  const twelve = tiers.find((t) => t.fullShiftHours === 12) ?? first;
+  return { afterShifts: twelve.afterShifts, withinDays: twelve.withinDays, tiers };
 }
 
 function ConsecutiveFields({
@@ -84,38 +123,168 @@ function ConsecutiveFields({
   form: ConsecutiveForm;
   onChange: (next: ConsecutiveForm) => void;
 }) {
-  const afterId = `${idPrefix}-after-shifts`;
+  const several = form.tiers.length > 1;
+  const setTier = (index: number, next: TierForm) =>
+    onChange({ tiers: form.tiers.map((t, i) => (i === index ? next : t)) });
+  return (
+    <div className="flex flex-col gap-2">
+      {form.tiers.map((tier, index) => {
+        // Labels stay plain with one tier; with several each names its tier, so none is ambiguous.
+        const label = (text: string) => (several ? `Tier ${index + 1}: ${text}` : text);
+        const rowId = `${idPrefix}-tier-${index}`;
+        const hoursId = `${rowId}-hours`;
+        const afterId = index === 0 ? `${idPrefix}-after-shifts` : `${rowId}-after-shifts`;
+        return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: tier rows have no identity but position.
+          <div key={index} className="flex flex-wrap items-end gap-2">
+            <Field
+              id={hoursId}
+              label={label('Full shift (hours)')}
+              hint={
+                index === 0
+                  ? 'A shift scheduled for at least this many hours counts toward the run.'
+                  : undefined
+              }
+              tip={index === 0 ? TIERS_WHY : undefined}
+            >
+              <input
+                id={hoursId}
+                type="number"
+                min={1}
+                step={1}
+                required
+                value={tier.hours}
+                onChange={(event) => setTier(index, { ...tier, hours: event.target.value })}
+                className={`${INPUT} w-24`}
+                aria-describedby={describedBy(hoursId, { hint: index === 0 })}
+              />
+            </Field>
+            <Field
+              id={afterId}
+              label={label('More than (full shifts)')}
+              hint={
+                index === 0
+                  ? 'A shift counts the full shifts on its own day and the days before it, so 12, 4 and 4 pays the fifth 12 in a row, and every shift after until a date with no shift.'
+                  : undefined
+              }
+              tip={index === 0 ? CONSECUTIVE_WHY : undefined}
+            >
+              <input
+                id={afterId}
+                type="number"
+                min={1}
+                step={1}
+                required
+                value={tier.after}
+                onChange={(event) => setTier(index, { ...tier, after: event.target.value })}
+                className={`${INPUT} w-24`}
+                aria-describedby={describedBy(afterId, { hint: index === 0 })}
+              />
+            </Field>
+            <Field id={`${rowId}-within-days`} label={label('Within (days)')} compact>
+              <input
+                id={`${rowId}-within-days`}
+                type="number"
+                min={1}
+                step={1}
+                required
+                value={tier.within}
+                onChange={(event) => setTier(index, { ...tier, within: event.target.value })}
+                className={`${INPUT} w-24`}
+              />
+            </Field>
+            {several ? (
+              <button
+                type="button"
+                className={SMALL}
+                onClick={() => onChange({ tiers: form.tiers.filter((_, i) => i !== index) })}
+              >
+                Remove tier {index + 1}
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+      {form.tiers.length < MAX_TIERS ? (
+        <button
+          type="button"
+          className={`${SMALL} self-start`}
+          onClick={() => onChange({ tiers: [...form.tiers, { hours: '', after: '', within: '' }] })}
+        >
+          Add a tier
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+const SHORT_REST_WHY =
+  'UC–CNA 2025–2030 Art. 14 § N.1 pays time and a half for "a work period not preceded by at least six (6) hours off": enter 6, the whole shift, and a 1.5 multiplier. WSNA § 7.10 contracts often pay only the hours worked before the rest would have ended. Rest is counted from the end of the last worked shift, holdover included; standby and call-backs do not count (§ N.3), and a rest waiver does not take the premium away.';
+
+interface ShortRestForm {
+  hours: string;
+  scope: NonNullable<Differential['shortRest']>['scope'];
+}
+const EMPTY_SHORT_REST: ShortRestForm = { hours: '', scope: 'whole_shift' };
+
+function shortRestFormOf(shortRest: Differential['shortRest']): ShortRestForm {
+  return shortRest === undefined
+    ? EMPTY_SHORT_REST
+    : { hours: String(shortRest.minHoursOff), scope: shortRest.scope };
+}
+
+/** The trigger the form describes, or the reason it cannot be saved. */
+function shortRestOf(form: ShortRestForm): NonNullable<Differential['shortRest']> | string {
+  const hours = parseNumberField(form.hours);
+  if (hours === undefined) return 'Enter the hours off the contract asks for';
+  if (!(hours > 0) || hours > 24) return 'Hours off must be more than 0 and at most 24';
+  return { minHoursOff: hours, scope: form.scope };
+}
+
+function ShortRestFields({
+  idPrefix,
+  form,
+  onChange,
+}: {
+  idPrefix: string;
+  form: ShortRestForm;
+  onChange: (next: ShortRestForm) => void;
+}) {
+  const hoursId = `${idPrefix}-hours-off`;
+  const scopeId = `${idPrefix}-short-rest-scope`;
   return (
     <>
       <Field
-        id={afterId}
-        label="More than (full shifts)"
-        hint="A shift counts the 12s on its own day and the days before it, so 4 and 4 pays the fifth 12 in a row, and every shift after until a date with no shift."
-        tip={CONSECUTIVE_WHY}
+        id={hoursId}
+        label="Less than (hours off)"
+        hint="A shift starting sooner than this after the last one ended earns the premium."
+        tip={SHORT_REST_WHY}
       >
         <input
-          id={afterId}
+          id={hoursId}
           type="number"
-          min={1}
-          step={1}
+          min={0.25}
+          max={24}
+          step={0.25}
           required
-          value={form.after}
-          onChange={(event) => onChange({ ...form, after: event.target.value })}
+          value={form.hours}
+          onChange={(event) => onChange({ ...form, hours: event.target.value })}
           className={`${INPUT} w-24`}
-          aria-describedby={describedBy(afterId, { hint: true })}
+          aria-describedby={describedBy(hoursId, { hint: true })}
         />
       </Field>
-      <Field id={`${idPrefix}-within-days`} label="Within (days)" compact>
-        <input
-          id={`${idPrefix}-within-days`}
-          type="number"
-          min={1}
-          step={1}
-          required
-          value={form.within}
-          onChange={(event) => onChange({ ...form, within: event.target.value })}
-          className={`${INPUT} w-24`}
-        />
+      <Field id={scopeId} label="Paid on" compact>
+        <select
+          id={scopeId}
+          value={form.scope}
+          onChange={(event) =>
+            onChange({ ...form, scope: event.target.value as ShortRestForm['scope'] })
+          }
+          className={INPUT}
+        >
+          <option value="whole_shift">The whole shift</option>
+          <option value="within_window">Only the hours before the rest would have ended</option>
+        </select>
       </Field>
     </>
   );
@@ -230,7 +399,19 @@ function amountOf(
 }
 
 function describeConsecutive(consecutive: NonNullable<Differential['consecutive']>): string {
-  return `after more than ${consecutive.afterShifts} full shifts within ${consecutive.withinDays} days, until a day off`;
+  if (consecutive.tiers === undefined) {
+    return `after more than ${consecutive.afterShifts} full shifts within ${consecutive.withinDays} days, until a day off`;
+  }
+  const tiers = consecutive.tiers
+    .map((t) => `${t.afterShifts} ${t.fullShiftHours}-hour shifts within ${t.withinDays} days`)
+    .join(', or ');
+  return `after more than ${tiers}, until a day off`;
+}
+
+function describeShortRest(shortRest: NonNullable<Differential['shortRest']>): string {
+  return shortRest.scope === 'whole_shift'
+    ? `on the whole shift after less than ${shortRest.minHoursOff} hours off`
+    : `on the hours worked within ${shortRest.minHoursOff} hours of the last shift's end`;
 }
 
 function describeAmount(d: Pick<Differential, 'mode' | 'amount'>): string {
@@ -265,26 +446,36 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
   const [editWindow, setEditWindow] = useState<WindowForm>(EMPTY_WINDOW);
   const [consecutiveForm, setConsecutiveForm] = useState<ConsecutiveForm>(EMPTY_CONSECUTIVE);
   const [editConsecutive, setEditConsecutive] = useState<ConsecutiveForm>(EMPTY_CONSECUTIVE);
+  const [shortRestForm, setShortRestForm] = useState<ShortRestForm>(EMPTY_SHORT_REST);
+  const [editShortRest, setEditShortRest] = useState<ShortRestForm>(EMPTY_SHORT_REST);
   const [editError, setEditError] = useState<string | undefined>(undefined);
 
   // Field by field, not by reference: the forms are fresh objects after every keystroke.
   const sameWindow = (a: WindowForm, b: WindowForm) =>
     a.start === b.start && a.end === b.end && a.whole === b.whole;
   const sameConsecutive = (a: ConsecutiveForm, b: ConsecutiveForm) =>
-    a.after === b.after && a.within === b.within;
+    a.tiers.length === b.tiers.length &&
+    a.tiers.every((t, i) => {
+      const u = b.tiers[i];
+      return u !== undefined && t.hours === u.hours && t.after === u.after && t.within === u.within;
+    });
+  const sameShortRest = (a: ShortRestForm, b: ShortRestForm) =>
+    a.hours === b.hours && a.scope === b.scope;
   const editedRow = query.data?.find((d) => d.id === editingId);
   useUnsavedChanges(
     'Differentials',
     editedRow !== undefined &&
       (editAmount !== String(editedRow.amount) ||
         !sameWindow(editWindow, windowFormOf(editedRow.window)) ||
-        !sameConsecutive(editConsecutive, consecutiveFormOf(editedRow.consecutive))),
+        !sameConsecutive(editConsecutive, consecutiveFormOf(editedRow.consecutive)) ||
+        !sameShortRest(editShortRest, shortRestFormOf(editedRow.shortRest))),
   );
   useUnsavedChanges(
     'New differential',
     amount !== '' ||
       !sameWindow(windowForm, EMPTY_WINDOW) ||
-      !sameConsecutive(consecutiveForm, EMPTY_CONSECUTIVE),
+      !sameConsecutive(consecutiveForm, EMPTY_CONSECUTIVE) ||
+      !sameShortRest(shortRestForm, EMPTY_SHORT_REST),
   );
 
   if (query.isPending) return <AsyncState status="loading" label="Loading differentials" />;
@@ -333,6 +524,11 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
             setError(consecutive);
             return;
           }
+          const shortRest = kind === 'short_rest' ? shortRestOf(shortRestForm) : undefined;
+          if (typeof shortRest === 'string') {
+            setError(shortRest);
+            return;
+          }
           setError(undefined);
           create.mutate(
             {
@@ -343,12 +539,14 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
               active: true,
               ...(window ? { window } : {}),
               ...(consecutive ? { consecutive } : {}),
+              ...(shortRest ? { shortRest } : {}),
             },
             {
               onSuccess: () => {
                 setAmount('');
                 setWindowForm(EMPTY_WINDOW);
                 setConsecutiveForm(EMPTY_CONSECUTIVE);
+                setShortRestForm(EMPTY_SHORT_REST);
               },
               onError: (e) => setError(e.message),
             },
@@ -419,6 +617,13 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
             onChange={setConsecutiveForm}
           />
         ) : null}
+        {kind === 'short_rest' ? (
+          <ShortRestFields
+            idPrefix="differential"
+            form={shortRestForm}
+            onChange={setShortRestForm}
+          />
+        ) : null}
         <button type="submit" className={PRIMARY} disabled={create.isPending}>
           Add differential
         </button>
@@ -472,6 +677,11 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
                     {d.consecutive ? (
                       <span className="block text-xs text-text-muted">
                         Paid {describeConsecutive(d.consecutive)}
+                      </span>
+                    ) : null}
+                    {d.shortRest ? (
+                      <span className="block text-xs text-text-muted">
+                        Paid {describeShortRest(d.shortRest)}
                       </span>
                     ) : null}
                     {d.active && (activeOfKind.get(d.kind) ?? 0) > 1 ? (
@@ -530,6 +740,13 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
                             onChange={setEditConsecutive}
                           />
                         ) : null}
+                        {d.kind === 'short_rest' ? (
+                          <ShortRestFields
+                            idPrefix={`differential-${d.id}`}
+                            form={editShortRest}
+                            onChange={setEditShortRest}
+                          />
+                        ) : null}
                         {editError !== undefined ? (
                           <span className="text-xs text-danger">{editError}</span>
                         ) : null}
@@ -581,6 +798,12 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
                                 setEditError(consecutive);
                                 return;
                               }
+                              const shortRest =
+                                d.kind === 'short_rest' ? shortRestOf(editShortRest) : undefined;
+                              if (typeof shortRest === 'string') {
+                                setEditError(shortRest);
+                                return;
+                              }
                               setEditError(undefined);
                               update.mutate(
                                 {
@@ -589,7 +812,9 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
                                     ? { amount: parsed, window }
                                     : consecutive
                                       ? { amount: parsed, consecutive }
-                                      : { amount: parsed },
+                                      : shortRest
+                                        ? { amount: parsed, shortRest }
+                                        : { amount: parsed },
                                 },
                                 {
                                   onSuccess: () => setEditingId(undefined),
@@ -618,6 +843,7 @@ export function DifferentialsSection({ unitId }: { unitId: Id }) {
                               setEditAmount(String(d.amount));
                               setEditWindow(windowFormOf(d.window));
                               setEditConsecutive(consecutiveFormOf(d.consecutive));
+                              setEditShortRest(shortRestFormOf(d.shortRest));
                               setEditError(undefined);
                             }}
                           >

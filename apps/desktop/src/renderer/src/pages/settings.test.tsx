@@ -24,11 +24,11 @@ afterEach(() => {
 });
 
 describe('Settings › About', () => {
-  it('lists the sixteen things a manager still does by hand, and says the presets are not legal advice', async () => {
+  it('lists the eleven things a manager still does by hand, and says the presets are not legal advice', async () => {
     renderWithApp(<SettingsPage />, { route: '/settings?tab=about' });
     const list = await screen.findByTestId('not-enforced');
-    expect(list.querySelectorAll('li')).toHaveLength(16);
-    expect(list.textContent).toContain('ORS 441.768');
+    expect(list.querySelectorAll('li')).toHaveLength(11);
+    expect(list.textContent).toContain('Oregon’s CNA cap limits each aide’s own patients');
     expect(
       screen.getByRole('heading', { name: 'What ShiftNurse does not enforce yet' }),
     ).toBeTruthy();

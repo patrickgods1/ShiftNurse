@@ -21,6 +21,7 @@ const ratioRuleInput = object({
   maxPatientsPerNurse: z.number().min(0.5, 'must be 0.5 or more').max(50, 'must be 50 or fewer'),
   citation: text.optional(),
   minRnShare: rnShare.optional(),
+  tour: z.enum(['day', 'evening', 'night']).optional(),
   active: z.boolean(),
 });
 
@@ -35,9 +36,13 @@ export const acuitySchemas = {
   updateRatioRule: z.tuple([
     id,
     ratioRuleInput
-      .omit({ unitId: true, citation: true, minRnShare: true })
+      .omit({ unitId: true, citation: true, minRnShare: true, tour: true })
       .partial()
-      .extend({ citation: text.nullable().optional(), minRnShare: rnShare.nullable().optional() }),
+      .extend({
+        citation: text.nullable().optional(),
+        minRnShare: rnShare.nullable().optional(),
+        tour: z.enum(['day', 'evening', 'night']).nullable().optional(),
+      }),
     text.optional(),
   ]),
   // A blank reason is refused by the repository, which can name the rule.

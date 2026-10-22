@@ -256,13 +256,14 @@ export function listActiveDifferentials(db: DbLike, unitId: Id): Differential[] 
 export type DifferentialInput = Omit<Differential, 'id'>;
 /**
  * `window: null` clears the clock window, going back to the shift type's flag; `consecutive: null`
- * clears a consecutive-shift trigger.
+ * clears a consecutive-shift trigger, `shortRest: null` a short-rest one.
  */
 export type DifferentialPatch = Partial<
   Pick<Differential, 'kind' | 'mode' | 'amount' | 'active'>
 > & {
   window?: Differential['window'] | null;
   consecutive?: Differential['consecutive'] | null;
+  shortRest?: Differential['shortRest'] | null;
 };
 
 const DIFFERENTIAL_PATCH_KEYS: PatchKeys<DifferentialPatch> = {
@@ -272,6 +273,7 @@ const DIFFERENTIAL_PATCH_KEYS: PatchKeys<DifferentialPatch> = {
   active: true,
   window: true,
   consecutive: true,
+  shortRest: true,
 };
 
 const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -323,6 +325,59 @@ function checkConsecutive(
     if (!Number.isInteger(value) || value < 1) {
       throw new Error(`The consecutive-shift ${label} must be a whole number of at least 1`);
     }
+  }
+  checkConsecutiveTiers(consecutive.tiers);
+}
+
+/**
+ * Refuses tiers pricing cannot read (2025–2030 § G.3 has three: 8s, 10s and 12s). Two tiers for
+ * the same shift length would make one of them dead, and every number is a whole hour, shift or day.
+ */
+function checkConsecutiveTiers(tiers: NonNullable<Differential['consecutive']>['tiers']): void {
+  if (tiers === undefined) return;
+  if (!Array.isArray(tiers) || tiers.length < 1 || tiers.length > 3) {
+    throw new Error('A consecutive-shift premium has one to three tiers');
+  }
+  for (const tier of tiers) {
+    for (const [label, value] of [
+      ['full-shift hours', tier.fullShiftHours],
+      ['shifts', tier.afterShifts],
+      ['days', tier.withinDays],
+    ] as const) {
+      if (!Number.isInteger(value) || value < 1) {
+        throw new Error(`A tier's ${label} must be a whole number of at least 1`);
+      }
+    }
+  }
+  if (new Set(tiers.map((t) => t.fullShiftHours)).size !== tiers.length) {
+    throw new Error('Each tier needs its own full-shift length; two tiers have the same hours');
+  }
+}
+
+const SHORT_REST_SCOPES: readonly string[] = ['whole_shift', 'within_window'];
+
+/**
+ * Refuses a short-rest trigger that cannot be priced, as `checkConsecutive` does: a `short_rest`
+ * differential without one pays nothing, and one on another kind is ignored. More than a day off
+ * is no short turnaround, and a minimum of 0 never pays.
+ */
+function checkShortRest(
+  kind: Differential['kind'],
+  shortRest: Differential['shortRest'] | undefined,
+): void {
+  if (shortRest === undefined) {
+    if (kind === 'short_rest') throw new Error('A short-rest premium needs its hours off');
+    return;
+  }
+  if (kind !== 'short_rest') {
+    throw new Error(`Hours off apply only to a short-rest premium, not ${kind}`);
+  }
+  const hours = shortRest.minHoursOff;
+  if (typeof hours !== 'number' || !Number.isFinite(hours) || hours <= 0 || hours > 24) {
+    throw new Error('The hours off must be more than 0 and at most 24');
+  }
+  if (!SHORT_REST_SCOPES.includes(shortRest.scope)) {
+    throw new Error('A short-rest premium is paid on the whole shift or within the window');
   }
 }
 
@@ -399,6 +454,14 @@ function consecutiveColumns(consecutive: Differential['consecutive'] | undefined
   return {
     consecutiveAfterShifts: consecutive?.afterShifts ?? null,
     consecutiveWithinDays: consecutive?.withinDays ?? null,
+    consecutiveTiers: consecutive?.tiers === undefined ? null : JSON.stringify(consecutive.tiers),
+  };
+}
+
+function shortRestColumns(shortRest: Differential['shortRest'] | undefined) {
+  return {
+    shortRestMinHoursOff: shortRest?.minHoursOff ?? null,
+    shortRestScope: shortRest?.scope ?? null,
   };
 }
 
@@ -418,11 +481,18 @@ export function createDifferential(
   checkDifferentialFields(input);
   checkWindow(input.kind, input.window);
   checkConsecutive(input.kind, input.consecutive);
+  checkShortRest(input.kind, input.shortRest);
   checkAmount(input.kind, input.mode, input.amount);
   if (input.active) checkOneActive(db, input.unitId, input.kind);
   const id = ids.differential();
-  const { window, consecutive, ...rest } = input;
-  const row = { id, ...rest, ...windowColumns(window), ...consecutiveColumns(consecutive) };
+  const { window, consecutive, shortRest, ...rest } = input;
+  const row = {
+    id,
+    ...rest,
+    ...windowColumns(window),
+    ...consecutiveColumns(consecutive),
+    ...shortRestColumns(shortRest),
+  };
   db.insert(differential).values(row).run();
   const created = toDifferential(row);
   recordAudit(db, {
@@ -458,6 +528,9 @@ export function updateDifferential(
       const consecutive =
         values.consecutive === undefined ? before.consecutive : (values.consecutive ?? undefined);
       checkConsecutive(values.kind ?? before.kind, consecutive);
+      const shortRest =
+        values.shortRest === undefined ? before.shortRest : (values.shortRest ?? undefined);
+      checkShortRest(values.kind ?? before.kind, shortRest);
       checkAmount(
         values.kind ?? before.kind,
         values.mode ?? before.mode,
@@ -471,12 +544,13 @@ export function updateDifferential(
       }
     },
     write: (rowId, values) => {
-      const { window, consecutive, ...columns } = values;
+      const { window, consecutive, shortRest, ...columns } = values;
       db.update(differential)
         .set({
           ...columns,
           ...(window === undefined ? {} : windowColumns(window ?? undefined)),
           ...(consecutive === undefined ? {} : consecutiveColumns(consecutive ?? undefined)),
+          ...(shortRest === undefined ? {} : shortRestColumns(shortRest ?? undefined)),
         })
         .where(eq(differential.id, rowId))
         .run();
@@ -730,6 +804,17 @@ export function getPaySettings(db: DbLike, unitId: Id): PaySettings {
         reportingPayNoticeHours: row.reportingPayNoticeHours ?? 2,
         // A row saved before migration 0047 has no attribution; D17's default is the clock.
         overtimeWindowAttribution: row.overtimeWindowAttribution ?? 'clock',
+        // Rows saved before migration 0052 pay the spring night as worked and breaks at base.
+        paySpringForwardAsScheduled: row.paySpringForwardAsScheduled ?? false,
+        breakPremiumRate: row.breakPremiumRate ?? 'base',
+        // Rows saved before migration 0054 have no rate: comp time is off.
+        compTime:
+          row.compTimeHoursPerOvertimeHour === null
+            ? null
+            : {
+                hoursPerOvertimeHour: row.compTimeHoursPerOvertimeHour,
+                capHours: row.compTimeCapHours ?? null,
+              },
       }
     : { ...DEFAULT_PAY_SETTINGS };
 }
@@ -774,6 +859,28 @@ export function savePaySettings(
       'Choose whether a shift that crosses into a new work week counts each hour in the week it is worked or the whole shift in the week it starts.',
     );
   }
+  const breakRate = settings.breakPremiumRate;
+  if (breakRate !== 'base' && breakRate !== 'regular') {
+    throw new Error('Choose whether a missed break is paid at the base rate or the regular rate.');
+  }
+  // IPC input is typed, not checked: a rate under one would bank fewer hours than were worked.
+  const compTime = settings.compTime ?? null;
+  if (compTime) {
+    if (!Number.isFinite(compTime.hoursPerOvertimeHour) || compTime.hoursPerOvertimeHour < 1) {
+      throw new Error('Comp time must bank at least one hour per overtime hour.');
+    }
+    if (
+      compTime.capHours !== null &&
+      !(Number.isFinite(compTime.capHours) && compTime.capHours > 0)
+    ) {
+      throw new Error(
+        'The most comp hours a nurse may hold must be more than zero, or blank for no cap.',
+      );
+    }
+  }
+  const compRate = compTime?.hoursPerOvertimeHour ?? null;
+  const compCap = compTime?.capHours ?? null;
+  const springAsScheduled = settings.paySpringForwardAsScheduled === true;
   // A unit with no row has no stored settings: reading defaults as "before" would audit state
   // that never existed.
   const saved = paySettingsSaved(db, unitId);
@@ -785,6 +892,9 @@ export function savePaySettings(
     holidayPayCoversOvertime: covers,
     reportingPayNoticeHours: notice,
     overtimeWindowAttribution: attribution,
+    paySpringForwardAsScheduled: springAsScheduled,
+    breakPremiumRate: breakRate,
+    compTime: compTime ? { ...compTime } : null,
   };
   db.insert(paySettings)
     .values({
@@ -794,6 +904,10 @@ export function savePaySettings(
       holidayPayCoversOvertime: covers,
       reportingPayNoticeHours: notice,
       overtimeWindowAttribution: attribution,
+      paySpringForwardAsScheduled: springAsScheduled,
+      breakPremiumRate: breakRate,
+      compTimeHoursPerOvertimeHour: compRate,
+      compTimeCapHours: compCap,
       updatedAt: Date.now(),
     })
     .onConflictDoUpdate({
@@ -804,6 +918,10 @@ export function savePaySettings(
         holidayPayCoversOvertime: covers,
         reportingPayNoticeHours: notice,
         overtimeWindowAttribution: attribution,
+        paySpringForwardAsScheduled: springAsScheduled,
+        breakPremiumRate: breakRate,
+        compTimeHoursPerOvertimeHour: compRate,
+        compTimeCapHours: compCap,
         updatedAt: Date.now(),
       },
     })

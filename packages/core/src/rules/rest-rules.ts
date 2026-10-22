@@ -7,7 +7,7 @@
  * four hours.
  */
 
-import type { Id } from '../domain/entities.js';
+import type { CallBack, Id } from '../domain/entities.js';
 import {
   dayNumber,
   describeDate,
@@ -19,7 +19,7 @@ import {
 } from '../domain/time.js';
 import { latestEndingBefore } from '../schedule/preceding.js';
 import type { AssignmentView } from '../schedule/view.js';
-import { hoursWords } from './format.js';
+import { describeMinute, hoursWords } from './format.js';
 import { isNightTour } from './tour-rotation.js';
 import {
   isWorked,
@@ -45,6 +45,25 @@ export interface MinRestParams {
   minRestHoursAfterNight?: number;
   /** Whether being on standby counts as working for rest purposes. Usually it does not. */
   onCallCountsAsWork: boolean;
+  /**
+   * Whether a call-back from standby needs `minRestHours` after it before the next shift. Off in
+   * the contracts that speak to it (UC–CNA Art. 14 § N.3, WSNA § 7.10), so a stored rule set that
+   * predates it reads the default and keeps judging as before.
+   */
+  callBackCountsForRest: boolean;
+}
+
+/**
+ * The call-back a shift starting at `start` follows, when the unit counts call-backs for rest: of
+ * those that started before it, the one that ended last (`callBacks` sorted by start).
+ */
+function latestCallBackBefore(callBacks: readonly CallBack[], start: number): CallBack | undefined {
+  let latest: CallBack | undefined;
+  for (const cb of callBacks) {
+    if (cb.window.startMinute >= start) break;
+    if (!latest || cb.window.endMinute > latest.window.endMinute) latest = cb;
+  }
+  return latest;
 }
 
 /**
@@ -72,7 +91,7 @@ export const minRestRule: Rule<MinRestParams> = {
   severity: 'hard',
   category: 'rest',
   scope: 'nurse',
-  defaultParams: { minRestHours: 10, onCallCountsAsWork: false },
+  defaultParams: { minRestHours: 10, onCallCountsAsWork: false, callBackCountsForRest: false },
   paramDocs: {
     minRestHours: {
       stricter: 'higher',
@@ -98,6 +117,16 @@ export const minRestRule: Rule<MinRestParams> = {
         'Usually off: a nurse on standby is resting unless called in. Turn it on if your contract ' +
         'treats being on call as working time for rest.',
     },
+    callBackCountsForRest: {
+      label: 'A call-back needs rest after it',
+      hint:
+        'Whether the next shift must start at least the minimum rest after a call-back from ' +
+        'standby ends. A call-back is owed the minimum rest above, never the longer rest after a ' +
+        'night.',
+      why:
+        'Usually off: UC–CNA Art. 14 § N.3 and WSNA § 7.10 leave call-back time out of the rest ' +
+        'rule. Some units choose otherwise; turn it on if yours does.',
+    },
   },
 
   evaluate(schedule, params, ctx): Violation[] {
@@ -107,6 +136,10 @@ export const minRestRule: Rule<MinRestParams> = {
       const timeline = schedule
         .timelineFor(nurse.id)
         .filter((v) => params.onCallCountsAsWork || isWorked(v));
+      // Only where the unit counts them (UC–CNA and WSNA do not): off, the timeline is judged alone.
+      const callBacks = params.callBackCountsForRest
+        ? (ctx.callBacksByNurse.get(nurse.id) ?? [])
+        : [];
 
       const preceding = latestEndingBefore(timeline);
       const requiredAfter = (v: AssignmentView) =>
@@ -114,55 +147,104 @@ export const minRestRule: Rule<MinRestParams> = {
           ? params.minRestHoursAfterNight
           : params.minRestHours;
 
-      for (let i = 0; i < timeline.length; i++) {
-        const current = timeline[i]!;
-        // Rest starts when the nurse last stopped working, so a short shift nested inside a night
-        // does not stand in for the night's end.
-        const before = preceding[i]!;
-        const first = before[0];
-        if (!first) continue;
-
+      const shiftRest = (
+        current: AssignmentView,
+        before: readonly AssignmentView[],
+        first: AssignmentView,
+      ): Violation | undefined => {
         // Overlaps are a different violation entirely; let that rule own them.
         const restMinutes = restMinutesBetween(first.window, current.window);
-        if (restMinutes < 0) continue;
+        if (restMinutes < 0) return undefined;
 
         // Several shifts can end at that minute; the longest rest any of them is owed applies.
         let previous = first;
         for (const p of before) if (requiredAfter(p) > requiredAfter(previous)) previous = p;
         const requiredHours = requiredAfter(previous);
 
-        if (minutesToHours(restMinutes) >= requiredHours) continue;
+        if (minutesToHours(restMinutes) >= requiredHours) return undefined;
         // Waived in writing for the shift that follows: the turnaround stands.
-        if (restWaivedOn(ctx, nurse.id, current.assignment.date)) continue;
+        if (restWaivedOn(ctx, nurse.id, current.assignment.date)) return undefined;
         // History cannot be fixed; only flag when this schedule can do something about it.
-        if (!previous.inPeriod && !current.inPeriod) continue;
+        if (!previous.inPeriod && !current.inPeriod) return undefined;
 
         const restHours = minutesToHours(restMinutes);
         // The lookback row is history: the finding names only what this schedule can change.
         const inPeriodPair = [previous, current].filter((v) => v.inPeriod);
-        violations.push(
-          violation(
-            minRestRule,
-            'hard',
-            'insufficient_rest',
-            `${nurseName(nurse)} has only ${hoursWords(restHours)} off between the ` +
-              `${previous.shiftType.name} on ${describeDate(previous.assignment.date)} and the ` +
-              `${current.shiftType.name} on ${describeDate(current.assignment.date)}. ` +
-              `${hoursWords(requiredHours)} required.`,
-            {
-              amount: requiredHours - restHours,
-              nurseIds: [nurse.id],
-              dates: inPeriodPair.map((v) => v.assignment.date),
-              assignmentIds: inPeriodPair.map((v) => v.assignment.id),
-              details: {
-                restHours,
-                requiredHours,
-                shortfallHours: requiredHours - restHours,
-                afterNightShift: isNightTour(previous.shiftType),
-              },
+        return violation(
+          minRestRule,
+          'hard',
+          'insufficient_rest',
+          `${nurseName(nurse)} has only ${hoursWords(restHours)} off between the ` +
+            `${previous.shiftType.name} on ${describeDate(previous.assignment.date)} and the ` +
+            `${current.shiftType.name} on ${describeDate(current.assignment.date)}. ` +
+            `${hoursWords(requiredHours)} required.`,
+          {
+            amount: requiredHours - restHours,
+            nurseIds: [nurse.id],
+            dates: inPeriodPair.map((v) => v.assignment.date),
+            assignmentIds: inPeriodPair.map((v) => v.assignment.id),
+            details: {
+              restHours,
+              requiredHours,
+              shortfallHours: requiredHours - restHours,
+              afterNightShift: isNightTour(previous.shiftType),
             },
-          ),
+          },
         );
+      };
+
+      const callBackRest = (current: AssignmentView, cb: CallBack): Violation | undefined => {
+        const restMinutes = restMinutesBetween(cb.window, current.window);
+        // A call-back running into the shift is double-counted time, refused where it is recorded.
+        if (restMinutes < 0) return undefined;
+        const requiredHours = params.minRestHours;
+        if (minutesToHours(restMinutes) >= requiredHours) return undefined;
+        if (restWaivedOn(ctx, nurse.id, current.assignment.date)) return undefined;
+        // The call-back is history: only the shift after it is this schedule's to change.
+        if (!current.inPeriod) return undefined;
+        const restHours = minutesToHours(restMinutes);
+        return violation(
+          minRestRule,
+          'hard',
+          'insufficient_rest',
+          `${nurseName(nurse)} has only ${hoursWords(restHours)} off between a call-back ending ` +
+            `${describeMinute(cb.window.endMinute)} and the ${current.shiftType.name} on ` +
+            `${describeDate(current.assignment.date)}. ${hoursWords(requiredHours)} required.`,
+          {
+            amount: requiredHours - restHours,
+            nurseIds: [nurse.id],
+            dates: [current.assignment.date],
+            assignmentIds: [current.assignment.id],
+            details: {
+              restHours,
+              requiredHours,
+              shortfallHours: requiredHours - restHours,
+              afterNightShift: false,
+              afterCallBack: true,
+            },
+          },
+        );
+      };
+
+      for (let i = 0; i < timeline.length; i++) {
+        const current = timeline[i]!;
+        // Rest starts when the nurse last stopped working, so a short shift nested inside a night
+        // does not stand in for the night's end.
+        const before = preceding[i]!;
+        const first = before[0];
+        const afterShift = first ? shiftRest(current, before, first) : undefined;
+        // A call-back that ended after every shift before this one is where rest began.
+        const cb = latestCallBackBefore(callBacks, current.window.startMinute);
+        const afterCallBack =
+          cb && (!first || cb.window.endMinute > first.window.endMinute)
+            ? callBackRest(current, cb)
+            : undefined;
+        // One finding per shift: the larger shortfall, so the same turnaround is not counted twice.
+        const found =
+          afterCallBack && (!afterShift || afterCallBack.amount > afterShift.amount)
+            ? afterCallBack
+            : afterShift;
+        if (found) violations.push(found);
       }
     }
 

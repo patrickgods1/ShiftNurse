@@ -29,6 +29,7 @@ import type {
   EmploymentType,
   HolidayAttribution,
   Id,
+  InLieuHolidays,
   IsoDate,
   JurisdictionChoices,
   LeaveBalanceType,
@@ -114,6 +115,8 @@ export const unit = sqliteTable(
     overtimeOrder: text('overtime_order').$type<OvertimeOrder>(),
     // Which day a shift that crosses midnight counts toward a holiday; null reads 'start' (D18).
     holidayAttribution: text('holiday_attribution').$type<HolidayAttribution>(),
+    // Whether a holiday on a full-time nurse's day off moves to a workday (federal); null reads 'none'.
+    inLieuHolidays: text('in_lieu_holidays').$type<InLieuHolidays>(),
     // Weekend/holiday shifts each per-diem nurse commits to (core's PerDiemCommitment); null = none.
     perDiemCommitment: text('per_diem_commitment', { mode: 'json' }).$type<PerDiemCommitment>(),
     // Whether a change to a posted schedule must record the nurse's consent; null = reason enough.
@@ -679,6 +682,8 @@ export const ratioRule = sqliteTable(
     citation: text('citation'),
     /** For a 'licensed' rule: the least share of RNs among the licensed nurses (0–1). */
     minRnShare: real('min_rn_share'),
+    /** Null applies the rule to every tour (read by start time, `tourOf`). */
+    tour: text('tour').$type<Tour>(),
     active: bool('active').notNull().default(true),
   },
   (t) => [index('ratio_rule_unit_idx').on(t.unitId, t.active)],
@@ -1094,6 +1099,11 @@ export const differential = sqliteTable('differential', {
   /** A consecutive-shift premium's trigger (`Differential.consecutive`); both null or both set. */
   consecutiveAfterShifts: integer('consecutive_after_shifts'),
   consecutiveWithinDays: integer('consecutive_within_days'),
+  /** `Differential.consecutive.tiers` as JSON (2025–2030 § G.3); null = the 12-hour reading. */
+  consecutiveTiers: text('consecutive_tiers'),
+  /** A short-rest premium's trigger (`Differential.shortRest`); both null or both set. */
+  shortRestMinHoursOff: real('short_rest_min_hours_off'),
+  shortRestScope: text('short_rest_scope').$type<'whole_shift' | 'within_window'>(),
 });
 
 export const overtimeRule = sqliteTable('overtime_rule', {
@@ -1210,6 +1220,11 @@ export const dayOfPayEvent = sqliteTable(
     scheduledHours: real('scheduled_hours'),
     /** Sent home and call-back: the hours actually worked. */
     hoursWorked: real('hours_worked'),
+    /**
+     * Call-back only: minutes from the start of the standby shift (date, shift type) to when the
+     * nurse started working. Null on rows recorded before call-backs had a time (pay-only rows).
+     */
+    startMinute: integer('start_minute'),
     note: text('note'),
     /** 'manager' in v1; never inferred at read time. */
     enteredBy: text('entered_by').notNull().$type<'manager' | 'nurse'>(),
@@ -1242,8 +1257,67 @@ export const paySettings = sqliteTable('pay_settings', {
   // Null means 'clock' (D17): each hour of a shift that crosses into a new work week or pay period
   // counts in the window it was worked in.
   overtimeWindowAttribution: text('overtime_window_attribution').$type<'clock' | 'start'>(),
+  // Null means false (D19): the spring-forward night's straight time is the 11 hours worked.
+  paySpringForwardAsScheduled: integer('pay_spring_forward_as_scheduled', { mode: 'boolean' }),
+  // Null means 'base': a missed meal or rest break pays an hour at the base rate. California owes
+  // the regular rate (Lab. Code § 226.7; Ferra v. Loews Hollywood Hotel (2021) 11 Cal.5th 858).
+  breakPremiumRate: text('break_premium_rate').$type<'base' | 'regular'>(),
+  // Both null means comp time is off (29 U.S.C. § 207(o)); a rate with a null cap banks without limit.
+  compTimeHoursPerOvertimeHour: real('comp_time_hours_per_overtime_hour'),
+  compTimeCapHours: real('comp_time_cap_hours'),
   updatedAt: timestamp('updated_at').notNull(),
 });
+
+/**
+ * A nurse's written agreement to take comp time instead of overtime pay, made before the work
+ * (29 U.S.C. § 207(o)(2)). `ends_on` null = still in force.
+ */
+export const compTimeElection = sqliteTable(
+  'comp_time_election',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id)
+      .$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id)
+      .$type<Id>(),
+    startsOn: isoDate('starts_on').notNull().$type<IsoDate>(),
+    endsOn: isoDate('ends_on').$type<IsoDate>(),
+    note: text('note'),
+    createdAt: timestamp('created_at').notNull(),
+    enteredBy: text('entered_by').notNull(),
+  },
+  (t) => [index('comp_time_election_nurse_idx').on(t.nurseId)],
+);
+
+/**
+ * Comp hours banked for one nurse from one published period: the overtime she worked, the hours
+ * credited for it and the overtime still paid in cash (the cap). One per (nurse, period).
+ */
+// Append-only in the file: `comp_time_credit_no_update` / `comp_time_credit_no_delete` (migration 0054).
+export const compTimeCredit = sqliteTable(
+  'comp_time_credit',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    nurseId: text('nurse_id')
+      .notNull()
+      .references(() => nurse.id)
+      .$type<Id>(),
+    periodId: text('period_id')
+      .notNull()
+      .references(() => schedulePeriod.id)
+      .$type<Id>(),
+    overtimeHours: real('overtime_hours').notNull(),
+    creditedHours: real('credited_hours').notNull(),
+    paidOvertimeHours: real('paid_overtime_hours').notNull(),
+    createdAt: timestamp('created_at').notNull(),
+    reason: text('reason'),
+  },
+  (t) => [uniqueIndex('comp_time_credit_nurse_period_idx').on(t.nurseId, t.periodId)],
+);
 
 /**
  * The pay configuration a published period is priced under: differentials, overtime rules, pay

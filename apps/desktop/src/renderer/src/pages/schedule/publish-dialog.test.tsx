@@ -110,6 +110,28 @@ describe('publishing a schedule', () => {
     );
   });
 
+  it('publishes with only an in-lieu note, counted apart from the heads-ups', async () => {
+    bridge.respond(
+      'publish',
+      'preview',
+      preview({
+        alerts: [
+          {
+            kind: 'in_lieu_holiday',
+            severity: 'information',
+            message: 'Ada Lovelace’s in-lieu day for Epiphany is Thu Jan 8',
+            assignmentIds: [],
+          },
+        ],
+      }),
+    );
+    renderDialog();
+    const button = await confirm();
+    expect(button.disabled).toBe(false);
+    expect(screen.getByText(/And 1 notes/)).toBeTruthy();
+    expect(screen.queryByText(/heads-ups/)).toBeNull();
+  });
+
   it('asks why before republishing a schedule staff already have', async () => {
     bridge.respond('publish', 'preview', republishPreview());
     renderDialog();

@@ -269,10 +269,17 @@ export function PublishDialog({
                     </li>
                   ))}
               </ul>
-              {preview.alerts.some((a) => a.severity !== 'critical') ? (
+              {preview.alerts.some((a) => a.severity === 'warning') ? (
                 <p className="mt-1 text-xs text-text-muted">
-                  And {preview.alerts.filter((a) => a.severity !== 'critical').length} heads-ups
+                  And {preview.alerts.filter((a) => a.severity === 'warning').length} heads-ups
                   (shifts with no slack on the ratio, hours drifting), listed above the grid.
+                </p>
+              ) : null}
+              {/* Information is a day correct as scheduled (an in-lieu holiday): nothing to fix. */}
+              {preview.alerts.some((a) => a.severity === 'information') ? (
+                <p className="mt-1 text-xs text-text-muted">
+                  And {preview.alerts.filter((a) => a.severity === 'information').length} notes
+                  (such as in-lieu holidays to give off or record), listed above the grid.
                 </p>
               ) : null}
             </section>

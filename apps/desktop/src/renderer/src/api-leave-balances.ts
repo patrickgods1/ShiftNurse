@@ -1,11 +1,13 @@
 /**
- * Leave balances, FMLA certifications and the check a request is shown against them. The check
+ * Leave balances, FMLA certifications, comp-time elections and the check a request is shown against them. The check
  * depends on the balance, the certifications and the nurse's approved leave, so a balance or
  * certification write refreshes every open check; a time-off decision or bid award moves it too,
  * and refreshes it through `afterLeaveChange` in `period-cache.ts`.
  */
 
 import type {
+  CompTimeElectionInput,
+  CompTimeElectionPatch,
   FmlaCertificationInput,
   FmlaCertificationPatch,
   LeaveRequestCheck,
@@ -23,6 +25,14 @@ export const leaveKeys = {
   /** The disabled check's key, before the form has a nurse and a range. */
   noCheck: () => [...queryRoots.leaveBalances, 'check', 'none'] as const,
 };
+
+export function useCompElections(nurseId: Id | undefined) {
+  return useQuery({
+    queryKey: [...queryRoots.leaveBalances, 'comp-elections', nurseId ?? ''] as const,
+    queryFn: () => api.leaveBalances.compElections(nurseId as Id),
+    enabled: nurseId !== undefined,
+  });
+}
 
 export function useLeaveRecords(nurseId: Id | undefined) {
   return useQuery({
@@ -72,6 +82,34 @@ export function useRemoveCertification() {
   return useMutation({
     meta: { inlineError: true },
     mutationFn: (id: Id) => api.leaveBalances.removeCertification(id),
+    onSuccess: invalidate,
+  });
+}
+
+export function useAddCompElection() {
+  const invalidate = useInvalidateLeave();
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (input: CompTimeElectionInput) => api.leaveBalances.addCompElection(input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateCompElection() {
+  const invalidate = useInvalidateLeave();
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: ({ id, patch }: { id: Id; patch: CompTimeElectionPatch }) =>
+      api.leaveBalances.updateCompElection(id, patch),
+    onSuccess: invalidate,
+  });
+}
+
+export function useRemoveCompElection() {
+  const invalidate = useInvalidateLeave();
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (id: Id) => api.leaveBalances.removeCompElection(id),
     onSuccess: invalidate,
   });
 }

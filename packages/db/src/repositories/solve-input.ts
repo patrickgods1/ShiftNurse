@@ -18,6 +18,7 @@ import {
   addDays,
   type BusyElsewhere,
   busyElsewhere,
+  type CallBack,
   type CostContext,
   compareDates,
   dateInRange,
@@ -62,6 +63,7 @@ import {
   listShiftCredentialRequirementsForUnit,
   listShiftTypesForUnit,
 } from './config.js';
+import { callBacksForNurses } from './day-of-pay.js';
 import { demandTableFor } from './demand-history.js';
 import { holidayWorkFor, holidayWorkIn } from './holidays.js';
 import { listIncompatibilityGroups } from './incompatibility.js';
@@ -218,9 +220,20 @@ export function costContext(
     majorHolidayDates: new Set<IsoDate>(holidays.filter((h) => h.isMajor).map((h) => h.date)),
     weekendDefinition: ruleSet.weekendDefinition,
     workWeekStartsOn: params.workWeekStartsOn ?? maxHoursRule.defaultParams.workWeekStartsOn,
+    // Absent from a rule set saved before the setting existed: midnight.
+    workWeekStartMinute: params.workWeekStartMinute ?? 0,
+    // The night nurses' own week, only when the rule set gives one (`workWeekFor`).
+    ...(params.nightWorkWeekStartsOn !== undefined
+      ? { nightWorkWeekStartsOn: params.nightWorkWeekStartsOn }
+      : {}),
+    ...(params.nightWorkWeekStartMinute !== undefined
+      ? { nightWorkWeekStartMinute: params.nightWorkWeekStartMinute }
+      : {}),
     premiumStacking: pay.premiumStacking,
     holidayPayCoversOvertime: pay.holidayPayCoversOvertime,
     overtimeWindowAttribution: pay.overtimeWindowAttribution,
+    paySpringForwardAsScheduled: pay.paySpringForwardAsScheduled,
+    breakPremiumRate: pay.breakPremiumRate,
     ...(period
       ? { dstTransitions: dstTransitionsForPeriod(period, PRIOR_ASSIGNMENT_LOOKBACK_DAYS) }
       : {}),
@@ -289,6 +302,8 @@ export interface PerNurseRecords {
   paidSickCalls: PaidSickCall[];
   restWaivers: RestWaiver[];
   availabilityBlocks: AvailabilityBlock[];
+  /** Timed call-backs from standby over the lookback tail and the period, on any unit. */
+  callBacks: CallBack[];
   payRates: PayRate[];
 }
 
@@ -344,6 +359,8 @@ export function perNurseRecordsFor(
       ...listAvailabilityBlocks(db, unit.id),
       ...availabilityBlocksElsewhere(db, unit.id, ids),
     ],
+    // Worked time wherever it was worked, over the same tail as the prior shifts it sits among.
+    callBacks: callBacksForNurses(db, ids, tail.start, tail.end),
     payRates: [
       ...listPayRatesForUnit(db, unit.id),
       ...listPayRatesForNurses(
@@ -536,6 +553,7 @@ export function loadPeriodInput(
     availabilityBlocks: records.availabilityBlocks,
     // The roster's window, so every float `rosterForPeriod` lists arrives with her dates.
     memberships: floatMembershipsFor(db, period),
+    callBacks: records.callBacks,
     dstTransitions: dstTransitionsForPeriod(period, PRIOR_ASSIGNMENT_LOOKBACK_DAYS),
     cost: {
       payRates: records.payRates,

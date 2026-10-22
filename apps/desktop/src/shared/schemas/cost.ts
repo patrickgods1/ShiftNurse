@@ -21,6 +21,7 @@ const differentialKind = z.enum([
   'holiday',
   'major_holiday',
   'consecutive_shift',
+  'short_rest',
   'charge',
   'on_call',
   'call_back',
@@ -53,13 +54,33 @@ const differentialWindow = object({
   wholeShiftAtHours: z.number().positive('must be more than 0').nullable(),
 });
 
+const wholeAtLeastOne = z.number().int('must be a whole number').min(1, 'must be at least 1');
+
 /**
  * A consecutive-shift premium's trigger (`Differential.consecutive`): both numbers or none, whole
- * shifts and days; the repository refuses it on other kinds.
+ * shifts and days, and up to three tiers by shift length (2025–2030 § G.3); the repository refuses
+ * it on other kinds, and two tiers of the same length.
  */
 const differentialConsecutive = object({
-  afterShifts: z.number().int('must be a whole number').min(1, 'must be at least 1'),
-  withinDays: z.number().int('must be a whole number').min(1, 'must be at least 1'),
+  afterShifts: wholeAtLeastOne,
+  withinDays: wholeAtLeastOne,
+  tiers: z
+    .array(
+      object({
+        fullShiftHours: wholeAtLeastOne,
+        afterShifts: wholeAtLeastOne,
+        withinDays: wholeAtLeastOne,
+      }),
+    )
+    .min(1, 'needs at least one tier')
+    .max(3, 'has at most three tiers')
+    .optional(),
+});
+
+/** A short-rest premium's trigger (`Differential.shortRest`); the repository refuses it elsewhere. */
+const differentialShortRest = object({
+  minHoursOff: z.number().positive('must be more than 0').max(24, 'must be at most 24'),
+  scope: z.enum(['whole_shift', 'within_window']),
 });
 
 const differentialInput = object({
@@ -70,6 +91,7 @@ const differentialInput = object({
   active: z.boolean(),
   window: differentialWindow.optional(),
   consecutive: differentialConsecutive.optional(),
+  shortRest: differentialShortRest.optional(),
 });
 
 /**
@@ -124,6 +146,7 @@ export const costSchemas = {
       .extend({
         window: differentialWindow.nullable().optional(),
         consecutive: differentialConsecutive.nullable().optional(),
+        shortRest: differentialShortRest.nullable().optional(),
       })
       .superRefine(multiplierAtLeastOne),
   ]),
@@ -161,7 +184,16 @@ export const costSchemas = {
       // Required: the renderer always sends the whole PaySettings, so a missing one is a bug.
       reportingPayNoticeHours: z.number().min(0).max(24),
       overtimeWindowAttribution: z.enum(['clock', 'start']),
+      paySpringForwardAsScheduled: z.boolean(),
+      breakPremiumRate: z.enum(['base', 'regular']),
+      compTime: z
+        .object({
+          hoursPerOvertimeHour: z.number().min(1),
+          capHours: z.number().positive().nullable(),
+        })
+        .nullable(),
     }),
   ]),
   reprice: z.tuple([id, text]),
+  bankCompTime: z.tuple([id]),
 } satisfies ResourceSchemas<'cost'>;

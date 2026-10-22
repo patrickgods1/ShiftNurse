@@ -34,6 +34,12 @@
  * every stretch. Generate cannot breach the required kinds (no holdover or overtime row is ever
  * written), so the solvers meet them only through the all-hours reading.
  *
+ * A call-back from standby is worked time in a stretch (ORS 441.770(3): "a shift or call
+ * response"): merged into the timeline by start, it adds its hours and can join, start or end one,
+ * but it is never in the period, so a stretch with no in-period shift is not judged and a finding
+ * names only shifts. A call-back too soon after a long stretch is rest owed and not taken; no
+ * waiver excuses it, since a waiver is keyed on the shift that follows.
+ *
  * Not monotone under removal: taking the middle shift out of a stretch can leave a long first part
  * followed too soon by the last. `SolverModel.isLegal` re-checks every enabled nurse-scope hard
  * rule for a nurse who lost a shift, this one included, so a removal that creates such a breach is
@@ -42,6 +48,7 @@
  */
 
 import { MINUTES_PER_HOUR } from '../domain/time.js';
+import { type CallBackItem, isCallBackItem, withCallBacks } from '../schedule/call-backs.js';
 import { type WorkedStretch, workedStretches } from '../schedule/holdover.js';
 import type { AssignmentView } from '../schedule/view.js';
 import { describeMinute, hoursText } from './format.js';
@@ -70,6 +77,11 @@ export interface LongStretchParams {
    * here would silently tighten every state that already has this rule on.
    */
   maxBreakMinutesInStretch?: number;
+}
+
+/** A shift of the stretch this schedule can change: never a call-back, never the lookback. */
+function isInPeriodShift(item: AssignmentView | CallBackItem): item is AssignmentView {
+  return !isCallBackItem(item) && item.inPeriod;
 }
 
 function isRequired(view: AssignmentView, ctx: RuleContext): boolean {
@@ -180,17 +192,22 @@ export const longStretchRule: Rule<LongStretchParams> = {
     const bridge = params.maxBreakMinutesInStretch ?? 0;
 
     for (const nurse of ctx.nurses) {
-      const stretches: WorkedStretch<AssignmentView>[] = workedStretches(
-        schedule.timelineFor(nurse.id),
+      const stretches: WorkedStretch<AssignmentView | CallBackItem>[] = workedStretches(
+        withCallBacks(schedule.timelineFor(nurse.id), ctx.callBacksByNurse.get(nurse.id) ?? []),
         { bridgeMinutes: bridge, transitions: ctx.dstTransitions },
       );
       for (let i = 0; i < stretches.length; i++) {
         const stretch = stretches[i]!;
-        if (params.requiredOnly && !stretch.views.some((v) => isRequired(v, ctx))) continue;
-        const inPeriod = stretch.views.some((v) => v.inPeriod);
+        if (
+          params.requiredOnly &&
+          !stretch.views.some((v) => !isCallBackItem(v) && isRequired(v, ctx))
+        ) {
+          continue;
+        }
+        // Lookback rows and call-backs count toward the hours but are history, so never named.
+        const contributors = stretch.views.filter(isInPeriodShift);
+        const inPeriod = contributors.length > 0;
         const span = `${describeMinute(stretch.window.startMinute)} to ${describeMinute(stretch.window.endMinute)}`;
-        // Lookback rows count toward the hours but are history, so they are never named.
-        const contributors = stretch.views.filter((v) => v.inPeriod);
         const parts = {
           nurseIds: [nurse.id],
           dates: contributors.map((v) => v.assignment.date),
@@ -201,7 +218,10 @@ export const longStretchRule: Rule<LongStretchParams> = {
           cap !== undefined &&
           inPeriod &&
           stretch.hours > cap &&
-          !(params.emergencyLiftsCap && stretch.views.some((v) => isEmergency(v.assignment)))
+          !(
+            params.emergencyLiftsCap &&
+            stretch.views.some((v) => !isCallBackItem(v) && isEmergency(v.assignment))
+          )
         ) {
           const message =
             stretch.breakMinutes > 0
@@ -230,10 +250,17 @@ export const longStretchRule: Rule<LongStretchParams> = {
         if (!earnsRest || !next) continue;
         const offMinutes = next.window.startMinute - stretch.window.endMinute;
         if (offMinutes >= params.restHours * MINUTES_PER_HOUR) continue;
-        if (!inPeriod && !next.views.some((v) => v.inPeriod)) continue;
         const laterView = next.views[0]!;
-        const later = laterView.assignment;
-        if (params.honorsRestWaiver && restWaivedOn(ctx, nurse.id, later.date)) continue;
+        // Called back too soon: only the stretch before it is this schedule's to change.
+        const later = isCallBackItem(laterView) ? undefined : laterView;
+        if (!inPeriod && !(later && next.views.some(isInPeriodShift))) continue;
+        if (
+          later &&
+          params.honorsRestWaiver &&
+          restWaivedOn(ctx, nurse.id, later.assignment.date)
+        ) {
+          continue;
+        }
         const hoursOff = offMinutes / MINUTES_PER_HOUR;
         violations.push(
           violation(
@@ -245,14 +272,15 @@ export const longStretchRule: Rule<LongStretchParams> = {
                 ? `in one stretch (${span}), counting the shifts either side of breaks of ${bridge} ` +
                   'minutes or less as one, '
                 : `straight (${span}) `) +
-              `before the shift starting ${describeMinute(next.window.startMinute)}. ` +
+              `before ${later ? 'the shift' : 'the call-back'} starting ` +
+              `${describeMinute(next.window.startMinute)}. ` +
               `${hoursText(params.restHours)} required.`,
             {
               ...parts,
               amount: params.restHours - hoursOff,
-              dates: laterView.inPeriod ? [...parts.dates, later.date] : parts.dates,
-              assignmentIds: laterView.inPeriod
-                ? [...parts.assignmentIds, later.id]
+              dates: later?.inPeriod ? [...parts.dates, later.assignment.date] : parts.dates,
+              assignmentIds: later?.inPeriod
+                ? [...parts.assignmentIds, later.assignment.id]
                 : parts.assignmentIds,
               details: { stretchHours: stretch.hours, restHours: params.restHours, hoursOff },
             },

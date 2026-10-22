@@ -14,6 +14,8 @@ import {
   MID_8,
   makeNurse,
   NIGHT_12,
+  overtimeRule,
+  payRate,
   resetFixtureCounters,
   solveInputFrom,
   timeOff,
@@ -108,5 +110,30 @@ describe('pricing a fix against the state it came from', () => {
       expect([...derived.counters()].sort(), `step ${step}`).toEqual([...fresh.counters()].sort());
       expect(derived.fairness().mean, `step ${step}`).toBe(fresh.fairness().mean);
     }
+  });
+});
+
+describe('overtime in the simulation, under a week that starts at Saturday 19:00', () => {
+  it('prices a Saturday day shift as the fourth 12 of the week that ends at 19:00 that evening', () => {
+    // Week from Sat 3 Jan 19:00 to Sat 10 Jan 19:00: Wed–Fri 7–9 Jan and Sat 10 Jan 07:00 are
+    // 4 × 12 = 48h, 8 past 40, all on Saturday's shift. From Saturday midnight the Saturday shift
+    // would open the next week, with no overtime.
+    const nurse = makeNurse({ id: 'ada', contractedHoursPerPeriod: 120 });
+    const input = solveInputFrom({
+      nurses: [nurse],
+      shiftTypes: [DAY_12, NIGHT_12],
+      ruleParams: { 'max-hours-per-week': { workWeekStartsOn: 6, workWeekStartMinute: 1140 } },
+      cost: {
+        payRates: [payRate(50)],
+        differentials: [],
+        overtimeRules: [overtimeRule('weekly', 40)],
+      },
+    });
+    const engine = new ConflictEngine(input);
+    const rows = ['2026-01-07', '2026-01-08', '2026-01-09', '2026-01-10'].map((d) =>
+      assign('ada', DAY_12, d),
+    );
+    const costs = engine.state(rows, []).nurseCost('ada');
+    expect(costs.map((c) => c.overtimeHours)).toEqual([0, 0, 0, 8]);
   });
 });

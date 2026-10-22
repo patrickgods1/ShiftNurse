@@ -144,7 +144,12 @@ describe('deleting an acuity tier', () => {
     expect(() => deleteAcuityTier(handle.db, highId, ACTOR)).toThrow(/Rename it instead/);
     // 6 patients at 1:3 is 2 RNs; the delete used to cascade the rule away and make this 0.
     expect(
-      nursesRequiredForMix(day.acuityMix, 'RN', listActiveRatioRulesForUnit(handle.db, unitId)),
+      nursesRequiredForMix(
+        day.acuityMix,
+        'RN',
+        listActiveRatioRulesForUnit(handle.db, unitId),
+        'day', // the 07:00 shift type above
+      ),
     ).toBe(2);
   });
 });
@@ -247,6 +252,80 @@ describe('editing a ratio ceiling', () => {
     );
     expect(() => deactivateRatioRule(handle.db, rule.id, ACTOR, '')).toThrow(
       'Deactivating the licensed-nurse ratio on every tier (1:5) needs a reason',
+    );
+  });
+});
+
+describe('a ratio that binds one shift', () => {
+  const nightCna = () =>
+    createRatioRule(
+      handle.db,
+      {
+        unitId,
+        role: 'CNA',
+        acuityTierId: null,
+        maxPatientsPerNurse: 11,
+        citation: 'ORS 441.768',
+        tour: 'night',
+        active: true,
+      },
+      ACTOR,
+    );
+  const readRule = (id: string) =>
+    listRatioRulesForUnit(handle.db, unitId).find((r) => r.id === id)!;
+
+  it('keeps a night-only aide cap night-only when read back', () => {
+    const rule = nightCna();
+    expect(readRule(rule.id).tour).toBe('night');
+    expect(auditHistoryFor(handle.db, 'ratio_rule', rule.id)[0]!.after).toMatchObject({
+      tour: 'night',
+    });
+  });
+
+  it('reads a rule with no shift as binding every shift', () => {
+    const rule = createRatioRule(
+      handle.db,
+      { unitId, role: 'RN', acuityTierId: null, maxPatientsPerNurse: 5, active: true },
+      ACTOR,
+    );
+    expect(readRule(rule.id)).not.toHaveProperty('tour');
+  });
+
+  it('refuses to move a cap to another shift without a reason', () => {
+    const rule = nightCna();
+    expect(() => updateRatioRule(handle.db, rule.id, { tour: 'day' }, ACTOR)).toThrow(
+      /needs a reason/,
+    );
+    expect(readRule(rule.id).tour).toBe('night');
+  });
+
+  it('moves a cap to another shift with a reason and audits both shifts', () => {
+    const rule = nightCna();
+    updateRatioRule(handle.db, rule.id, { tour: 'day' }, ACTOR, 'Aides cover days only');
+    expect(readRule(rule.id).tour).toBe('day');
+    const newest = auditHistoryFor(handle.db, 'ratio_rule', rule.id)[0]!;
+    expect((newest.before as { tour?: string }).tour).toBe('night');
+    expect((newest.after as { tour?: string }).tour).toBe('day');
+  });
+
+  it('lets a cap be cleared back to every shift with a reason', () => {
+    const rule = nightCna();
+    updateRatioRule(handle.db, rule.id, { tour: null }, ACTOR, 'Aides cover every shift');
+    expect(readRule(rule.id)).not.toHaveProperty('tour');
+  });
+
+  it('refuses a shift that is not day, evening or night', () => {
+    const bad = { tour: 'graveyard' } as unknown as { tour: 'night' };
+    expect(() =>
+      createRatioRule(
+        handle.db,
+        { unitId, role: 'CNA', acuityTierId: null, maxPatientsPerNurse: 7, active: true, ...bad },
+        ACTOR,
+      ),
+    ).toThrow("A ratio's tour must be day, evening or night");
+    const rule = nightCna();
+    expect(() => updateRatioRule(handle.db, rule.id, bad, ACTOR, 'why')).toThrow(
+      "A ratio's tour must be day, evening or night",
     );
   });
 });

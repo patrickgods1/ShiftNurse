@@ -377,10 +377,30 @@ describe('applying a state preset', () => {
       },
     });
     // Not asked about an alternative workweek: 1 ratio rule + 5 overtime rules (daily 8, daily
-    // 12, weekly 40, both seventh-day) created, and no rule set, since the 12-in-24 cap applies
-    // only on that workweek; ratio staffing, the leave policy (California sick leave) and the
-    // stored choice updated.
-    expect(result).toEqual({ created: 6, updated: 3, unchanged: 0 });
+    // 12, weekly 40, both seventh-day) and the pay settings (breaks at the regular rate) created,
+    // and no rule set, since the 12-in-24 cap applies only on that workweek; ratio staffing, the
+    // leave policy (California sick leave) and the stored choice updated.
+    expect(result).toEqual({ created: 7, updated: 3, unchanged: 0 });
+    expect(getPaySettings(handle.db, unit.id).breakPremiumRate).toBe('regular');
+  });
+
+  it('stores Oregon’s aide caps by shift when CNAs take every patient, and nothing on a second Apply', () => {
+    const unit = newUnit();
+    const apply = () =>
+      transact(handle.db, (tx) =>
+        applyJurisdiction(tx, unit.id, 'OR', ACTOR, { cnasCoverEveryPatient: true }),
+      );
+    apply();
+    const cnas = listActiveRatioRulesForUnit(handle.db, unit.id)
+      .filter((r) => r.role === 'CNA')
+      .map((r) => `${r.tour} 1:${r.maxPatientsPerNurse}`)
+      .sort();
+    expect(cnas).toEqual(['day 1:7', 'evening 1:7', 'night 1:11']);
+
+    const before = auditRows();
+    apply();
+    expect(listActiveRatioRulesForUnit(handle.db, unit.id)).toHaveLength(4);
+    expect(auditRows()).toBe(before);
   });
 
   it('gives a VA unit its Title 5 leave policy once, and leaves it alone on a second Apply', () => {
@@ -441,6 +461,9 @@ describe('applying a state preset', () => {
       holidayPayCoversOvertime: true,
       reportingPayNoticeHours: 2,
       overtimeWindowAttribution: 'clock' as const,
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base' as const,
+      compTime: null,
     });
     expect(getLatestRuleSet(handle.db, unit.id)?.weekendDefinition.mode).toBe('overlaps');
   });
@@ -453,6 +476,9 @@ describe('applying a state preset', () => {
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
       overtimeWindowAttribution: 'clock' as const,
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base' as const,
+      compTime: null,
     };
     transact(handle.db, (tx) => savePaySettings(tx, unit.id, own, ACTOR));
     applyState(unit.id, 'US-VA');

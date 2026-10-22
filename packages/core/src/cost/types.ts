@@ -26,12 +26,20 @@
  *   `wholeShiftAtHours` in the window makes it a whole-shift differential like any other; short
  *   of it, only the in-window hours earn it, on the base rate; under compound stacking those
  *   dollars are in the week's regular rate (778.207(b)); under additive they are not.
- * - **Consecutive shifts** (`consecutive_shift`, UC–CNA Art. 14 § I.3) are a whole-shift
+ * - **Consecutive shifts** (`consecutive_shift`, UC–CNA Art. 14 § G.3) are a whole-shift
  *   differential earned by the run, not the shift: once a run of consecutive worked days (shifts
  *   dated on each, lookback included, standby not) holds more than `afterShifts` full shifts dated
  *   within the shift's own day and the `withinDays` before it, that shift and every later one in the
- *   run earn it until a day off. The contract speaks of 12-hour nurses, so only a shift scheduled
- *   for 12 hours or more counts as full.
+ *   run earn it until a day off. Without `tiers` only a shift scheduled for 12 hours or more
+ *   counts as full; with them (2025–2030 § G.3: six 8s in six days, five 10s in five, four 12s in
+ *   four) each tier counts the shifts scheduled for at least its hours over its own window, and
+ *   the run earns once any tier passes. The one multiplier is paid once either way.
+ * - **Short rest** (`short_rest`, UC–CNA 2025–2030 § N.1, WSNA § 7.10) is earned by a worked
+ *   shift starting less than `minHoursOff` after the latest worked shift before it ended, on the
+ *   wall clock, holdover included and lookback counted; standby and call-backs are not that work
+ *   period (§ N.3), and a rest waiver does not take the premium away. `'whole_shift'` pays it on
+ *   every hour like any whole-shift differential; `'within_window'` only on the minutes before
+ *   the rest would have ended, as a line on its own like a holiday paid by the clock.
  * - **Overtime** is itemised the way a payslip itemises it: every hour is paid at its straight
  *   rate (above), and hours past an {@link OvertimeRule} threshold earn an additional premium of
  *   `(multiplier − 1) ×` the **regular rate** of the work week (or of the pay period under an
@@ -79,7 +87,7 @@
  *   midnight Friday and midnight Sunday). Paid leave does not count; `pyramiding` is honoured.
  * - **Daily premiums need not pyramid into weekly overtime.** A weekly or pay-period rule with
  *   `pyramiding: 'none'` counts only each shift's straight hours, lookback shifts included: those
- *   before any other basis makes it overtime (Cal. Lab. Code § 510; UC–CNA Art. 14 §M). Its
+ *   before any other basis makes it overtime (Cal. Lab. Code § 510; UC–CNA Art. 14 § L.2.c.1). Its
  *   overtime falls on the last straight hours, just before the daily premium ones. Absent is
  *   `'none'` when any daily-style rule (a non-window basis) applies to the nurse, else `'stack'`
  *   (D16; 29 CFR 778.202(c)); an explicit `'stack'` counts every worked hour.
@@ -88,7 +96,7 @@
  * - **Premiums add instead of compounding** under `CostContext.premiumStacking: 'additive'`: each
  *   multiplier adds `base × (multiplier − 1)` an hour and each overtime band's premium is
  *   `base × (multiplier − 1)`, never the week's regular rate. So the straight rate is
- *   `base + Σflat + base × Σ(multiplier − 1)` (UC–CNA Art. 14 §N; Title 38 percentages of basic
+ *   `base + Σflat + base × Σ(multiplier − 1)` (UC–CNA Art. 14 § M; Title 38 percentages of basic
  *   pay). Absent, `'compound'` as above.
  * - **Holiday pay covers holiday overtime** under `CostContext.holidayPayCoversOvertime`: an
  *   overtime hour that is paid the holiday or major-holiday premium gets no overtime premium,
@@ -114,7 +122,9 @@
  *   fall-back night 13 hours and the spring one 11 for every hour count in pay (29 CFR part 785,
  *   D19): base, differentials, clock windows, the weekend and consecutive bases and overtime. Tour,
  *   full-shift and Baylor classification still read declared hours: a 12 is a tour because it is
- *   declared 12.
+ *   declared 12. `CostContext.paySpringForwardAsScheduled` pays the spring night's straight time
+ *   at its scheduled hours instead (holdover included), as some contracts do; its overtime and
+ *   the regular rate's hours stay real.
  * - **On-call standby** is not worked time: it earns the `on_call` differential alone (a flat
  *   amount per standby hour, or a multiplier on the base rate), never base pay, never other
  *   differentials, and never overtime. `call_back` — being called in while on standby — is
@@ -170,6 +180,22 @@ export interface CostContext {
   /** The contract's work-week start for weekly overtime, matching the max-hours rule. */
   workWeekStartsOn: Weekday;
   /**
+   * The time that day the work week, and a pay period, begins: minutes after midnight, the
+   * max-hours rule's `workWeekStartMinute` (29 CFR 778.105, 778.601(b)). Weekly and pay-period
+   * overtime file a shift by its start against it and split by the clock at it. Absent: midnight.
+   * Daily bases keep the calendar day.
+   */
+  workWeekStartMinute?: number;
+  /**
+   * The night nurses' work week, the max-hours rule's `nightWorkWeekStartsOn` and
+   * `nightWorkWeekStartMinute` (absent: midnight): a nurse whose `permanentTour` is nights has her
+   * weekly overtime, and her regular rate, counted on it (`workWeekFor`). Her pay periods keep
+   * their dates and start at the night minute. Absent, every nurse is on the unit's week.
+   * `extraDayTest` and `seventhDayTest` stay on the unit's calendar week.
+   */
+  nightWorkWeekStartsOn?: Weekday;
+  nightWorkWeekStartMinute?: number;
+  /**
    * Paid leave that counts toward overtime, by nurse (`RuleContext.paidLeaveByNurse`). Present
    * only when the rule set's max-hours rule says leave counts; absent, leave never moves a shift
    * into overtime. Each weekly or pay-period window starts its running hours with the leave
@@ -179,7 +205,7 @@ export interface CostContext {
   /**
    * How multiplier differentials and the overtime premium combine. `'compound'` (absent) is the
    * FLSA regular rate: `(base + Σflat) × Πmultiplier`, overtime on that. `'additive'` takes each
-   * multiplier and each overtime premium on the base alone: UC–CNA Art. 14 §N forbids
+   * multiplier and each overtime premium on the base alone: UC–CNA Art. 14 § M forbids
    * duplication, pyramiding or compounding of premiums, and Title 38 pays differentials as
    * percentages of basic pay. Standby and partial clock-window differentials are priced on the
    * base either way.
@@ -203,6 +229,17 @@ export interface CostContext {
    * the whole shift in the window it starts in, as some contracts do. Absent: `'clock'` (D17).
    */
   overtimeWindowAttribution?: 'clock' | 'start';
+  /**
+   * Straight pay on the spring-forward night is the hours scheduled, not the 11 worked, as some
+   * contracts pay it. Only the base and differential lines move: overtime and the regular rate's
+   * hours stay real, so no overtime hour and no statutory cap changes. Absent: false (D19).
+   */
+  paySpringForwardAsScheduled?: boolean;
+  /**
+   * The rate a missed meal or rest break is paid at (`priceDayOfEvents`). `'regular'` needs every
+   * window's regular rate, so it also prices the lookback tail. Absent: `'base'`.
+   */
+  breakPremiumRate?: 'base' | 'regular';
 }
 
 /** A unit's pay settings that are not rates, differentials or overtime rules. */
@@ -228,6 +265,25 @@ export interface PaySettings {
    * the whole shift in the window it starts in, as some contracts do. Absent: `'clock'` (D17).
    */
   overtimeWindowAttribution: 'clock' | 'start';
+  /**
+   * Pay the spring-forward night's straight time as the hours scheduled (12, not 11), as some
+   * contracts do; overtime still counts the hours worked. Default false: paid as worked (D19).
+   */
+  paySpringForwardAsScheduled: boolean;
+  /**
+   * The rate a missed meal or rest break premium is paid at: the base rate, or the regular rate
+   * of the week with differentials in it, which California owes (Lab. Code § 226.7; Ferra v.
+   * Loews Hollywood Hotel (2021) 11 Cal.5th 858). Default `'base'`.
+   */
+  breakPremiumRate: 'base' | 'regular';
+  /**
+   * Comp time banked instead of overtime pay. Only public agencies may (29 U.S.C. § 207(o)): at
+   * not less than 1½ hours per overtime hour, by agreement before the work, held up to 240 hours
+   * (480 for public safety, emergency response and seasonal work). It changes no dollars here: the
+   * hours are banked after a period is published and ends. `capHours` null is no cap; null
+   * `compTime` is off, which is every private hospital. Default null.
+   */
+  compTime: { hoursPerOvertimeHour: number; capHours: number | null } | null;
 }
 
 /** What a unit that has never saved pay settings runs: no call-back minimum, FLSA stacking. */
@@ -237,6 +293,9 @@ export const DEFAULT_PAY_SETTINGS: PaySettings = {
   holidayPayCoversOvertime: false,
   reportingPayNoticeHours: 2,
   overtimeWindowAttribution: 'clock',
+  paySpringForwardAsScheduled: false,
+  breakPremiumRate: 'base',
+  compTime: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -257,6 +316,7 @@ export const DIFFERENTIAL_ORDER: readonly DifferentialKind[] = [
   'holiday',
   'major_holiday',
   'consecutive_shift',
+  'short_rest',
   'charge',
   'on_call',
   'call_back',
@@ -271,6 +331,7 @@ export const COST_LINE_LABELS: Record<CostLineKind, string> = {
   holiday: 'Holiday premium',
   major_holiday: 'Major holiday premium',
   consecutive_shift: 'Consecutive-shift premium',
+  short_rest: 'Short-rest premium',
   charge: 'Charge differential',
   on_call: 'On-call standby',
   call_back: 'Call-back',
@@ -314,6 +375,15 @@ export interface AssignmentCost {
   lines: CostLine[];
   /** The sum of the lines' amounts, exact to the cent. */
   total: number;
+  /**
+   * The regular rate of the window this shift's start lies in: its straight dollars over its hours
+   * worked, under either stacking (additive overtime is paid on base, but the regular rate a
+   * break premium is owed at holds the differentials, Ferra). A missed break on the shift is
+   * priced from it, so the window is resolved here, by the shift's start minute, rather than by a
+   * caller guessing from the date (a Saturday day shift under a Saturday 19:00 week is last
+   * week's). Absent when it adds nothing to a regular rate: standby, or no rate on file.
+   */
+  regularRate?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -340,6 +410,13 @@ export interface NurseCost extends CostTotals {
   assignments: number;
   /** Assignments that could not be priced because the nurse has no rate. */
   unpricedAssignments: number;
+  /**
+   * The regular rate of each work week (or 8/80 pay period) her in-period shifts fall in, by the
+   * window's first date: its straight dollars over its hours worked (29 CFR 778.109). Reported
+   * under either stacking, since a missed-break premium at the regular rate needs it even where
+   * overtime is paid on base. The first window counts the lookback tail only when it was priced.
+   */
+  regularRates: { windowStart: IsoDate; rate: number }[];
 }
 
 export interface NurseOvertime {

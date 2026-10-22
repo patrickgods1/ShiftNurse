@@ -23,6 +23,7 @@ import {
   getUnit,
   listShiftTypesForUnit,
   publishSchedule,
+  recordCompTimeCredits,
   saveRuleSet,
   transact,
   updateUnit,
@@ -226,6 +227,93 @@ describe('a nurse’s leave records', () => {
     expect(records.certifications).toEqual([cert]);
     api().removeCertification(cert.id);
     expect(api().forNurse(nurseId).certifications).toEqual([]);
+  });
+});
+
+describe('a nurse’s comp-time elections', () => {
+  const unitId = () => f.seeded.unitId;
+
+  it('lists, edits and removes an election, each write audited with the nurse named', () => {
+    const made = api().addCompElection({
+      unitId: unitId(),
+      nurseId,
+      startsOn: isoDate('2026-10-01'),
+      note: 'Signed',
+    });
+    expect(api().compElections(nurseId)).toMatchObject([{ id: made.id, startsOn: '2026-10-01' }]);
+    const edited = api().updateCompElection(made.id, { endsOn: isoDate('2026-12-31') });
+    expect(edited.endsOn).toBe('2026-12-31');
+    api().removeCompElection(made.id);
+    expect(api().compElections(nurseId)).toEqual([]);
+    expect(
+      auditHistoryFor(f.handle.db, 'comp_time_election', made.id).map((e) => e.action),
+    ).toEqual(['delete', 'update', 'create']);
+  });
+
+  it('refuses an overlapping election in words and leaves nothing half-written', () => {
+    api().addCompElection({ unitId: unitId(), nurseId, startsOn: isoDate('2026-10-01') });
+    expect(() =>
+      api().addCompElection({ unitId: unitId(), nurseId, startsOn: isoDate('2026-11-01') }),
+    ).toThrow(/Lena Balance already has a comp-time election covering/);
+    expect(api().compElections(nurseId)).toHaveLength(1);
+  });
+});
+
+describe('comp time banked from a finished schedule', () => {
+  /** Banks `hours` of comp for the nurse from a period ending on `endDate`. */
+  function bank(startDate: string, endDate: string, hours: number): void {
+    const { db } = f.handle;
+    const draft = getPeriod(db, f.seeded.draftPeriodId)!;
+    const period = createPeriod(
+      db,
+      {
+        unitId: f.seeded.unitId,
+        name: `Banked ${endDate}`,
+        startDate: isoDate(startDate),
+        endDate: isoDate(endDate),
+        ruleSetId: draft.ruleSetId,
+        ruleSetVersion: draft.ruleSetVersion,
+      },
+      ACTOR,
+    );
+    transact(db, (tx) =>
+      recordCompTimeCredits(
+        tx,
+        period.id,
+        [{ nurseId, overtimeHours: hours / 1.5, creditedHours: hours, paidOvertimeHours: 0 }],
+        ACTOR,
+      ),
+    );
+  }
+
+  it('raises a comp request’s 10-hour balance to 16 with 6 hours banked since payroll’s date', () => {
+    api().setBalance(nurseId, 'comp', 10, isoDate('2026-09-01'));
+    bank('2026-09-06', '2026-09-19', 6);
+    expect(check('comp', 12).balance).toMatchObject({
+      balanceHours: 10,
+      earnedHours: 6,
+      projectedHours: 16,
+      check: { ok: true, remainingHours: 4 },
+    });
+  });
+
+  it('counts a credit from the day after its schedule ends, not on the last day itself', () => {
+    api().setBalance(nurseId, 'comp', 10, isoDate('2026-09-01'));
+    bank('2026-09-22', '2026-10-05', 6);
+    // The request starts 10-05, the banked schedule's last day.
+    expect(check('comp', 12).balance).toMatchObject({ earnedHours: 0, projectedHours: 10 });
+  });
+
+  it('leaves a credit payroll had already counted on its date out of the projection', () => {
+    bank('2026-09-06', '2026-09-19', 6);
+    api().setBalance(nurseId, 'comp', 16, isoDate('2026-09-20'));
+    expect(check('comp', 12).balance).toMatchObject({ earnedHours: 0, projectedHours: 16 });
+  });
+
+  it('banks nothing into a PTO balance', () => {
+    api().setBalance(nurseId, 'pto', 10, isoDate('2026-09-01'));
+    bank('2026-09-06', '2026-09-19', 6);
+    expect(check('pto', 12).balance).toMatchObject({ earnedHours: 0, projectedHours: 10 });
   });
 });
 

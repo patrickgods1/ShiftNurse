@@ -25,7 +25,7 @@ const dayShift = {
 } as TodayShiftView;
 const standby = {
   date: '2026-10-05',
-  shiftType: { id: 'st-oc', isOnCall: true, durationHours: 12 } as ShiftType,
+  shiftType: { id: 'st-oc', isOnCall: true, startTime: '19:00', durationHours: 12 } as ShiftType,
 } as TodayShiftView;
 
 const sentHome: DayOfPayRecord = {
@@ -87,6 +87,7 @@ describe('recording what happened on a shift', () => {
 
     renderWithApp(<NursePayActions unitId="u-1" shift={standby} entry={entry} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Called back: Cruz' }));
+    fireEvent.change(screen.getByLabelText('Started at'), { target: { value: '02:00' } });
     fireEvent.change(screen.getByLabelText('Hours Cruz worked after the call-back'), {
       target: { value: '2.5' },
     });
@@ -101,6 +102,8 @@ describe('recording what happened on a shift', () => {
             date: '2026-10-05',
             shiftTypeId: 'st-oc',
             hoursWorked: 2.5,
+            // 02:00 is seven hours into a 19:00 standby.
+            startMinute: 420,
           },
         ],
       ]),

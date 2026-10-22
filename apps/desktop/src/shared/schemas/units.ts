@@ -46,6 +46,7 @@ export const unitsSchemas = {
         leavePolicy: leavePolicy.nullable().optional(),
         overtimeOrder: z.enum(['cost', 'roster']).nullable().optional(),
         holidayAttribution: z.enum(['start', 'clock', 'majority']).nullable().optional(),
+        inLieuHolidays: z.enum(['none', 'federal']).nullable().optional(),
         perDiemCommitment: perDiemCommitment.nullable().optional(),
         requireConsentForPostedChanges: z.boolean().nullable().optional(),
         minWeekendsOffPerYear: z.number().int().min(0).max(52).nullable().optional(),

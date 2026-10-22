@@ -52,6 +52,7 @@ import type {
   HppdTarget,
   Id,
   IncompatibilityGroup,
+  InLieuHolidays,
   IsoDate,
   JurisdictionChoices,
   JurisdictionId,
@@ -159,6 +160,8 @@ export type UnitPatch = Partial<Pick<Unit, 'name' | 'unitType' | 'ratioStaffing'
   overtimeOrder?: OvertimeOrder | null;
   /** `null` returns holiday dating to the day a shift starts. */
   holidayAttribution?: HolidayAttribution | null;
+  /** `null` leaves a holiday on a day off where it falls. */
+  inLieuHolidays?: InLieuHolidays | null;
   /** `null` stops checking per-diem commitments. */
   perDiemCommitment?: PerDiemCommitment | null;
   /** `null`: a reason is enough for a change to a posted schedule. */
@@ -352,6 +355,41 @@ export interface FmlaCertificationPatch {
   note?: string | null;
 }
 
+/** A nurse's advance agreement to take comp time instead of overtime pay; the dates are inclusive. */
+export interface CompTimeElectionRecord {
+  id: Id;
+  unitId: Id;
+  nurseId: Id;
+  startsOn: IsoDate;
+  /** Absent: open-ended. */
+  endsOn?: IsoDate;
+  note?: string;
+}
+
+/** The unit is the one the renderer is showing; v1 records every election as the manager's. */
+export type CompTimeElectionInput = Omit<CompTimeElectionRecord, 'id'>;
+
+/** Nurse and unit are fixed once recorded. `endsOn: null` reopens the end; `note: null` clears it. */
+export interface CompTimeElectionPatch {
+  startsOn?: IsoDate;
+  endsOn?: IsoDate | null;
+  note?: string | null;
+}
+
+/** Comp hours banked for one nurse from one finished schedule. Final: never edited or removed. */
+export interface CompTimeCreditRecord {
+  id: Id;
+  nurseId: Id;
+  periodId: Id;
+  /** The schedule's last day: the credit counts toward her comp balance from the day after. */
+  periodEndDate: IsoDate;
+  overtimeHours: number;
+  creditedHours: number;
+  /** Overtime past the cap, still paid in cash. */
+  paidOvertimeHours: number;
+  createdAt: number;
+}
+
 /** What the request dialogs show about a nurse's leave before a request is saved or decided. */
 export interface LeaveRequestCheck {
   /**
@@ -370,6 +408,8 @@ export interface LeaveRequestCheck {
     usedHours: number;
     /** Lost to the carryover cap at a leave-year turnover since `asOf`. */
     forfeitedHours: number;
+    /** Comp time banked from finished schedules since `asOf` (0 for any other balance). */
+    earnedHours: number;
     /** Approved leave of this type used since the current leave year began, before `asOf` too. */
     usedThisYearHours: number;
     check: BalanceCheck;
@@ -613,10 +653,11 @@ export type AcuityTierInput = Omit<AcuityTier, 'id'>;
 export type AcuityTierPatch = Partial<Omit<AcuityTier, 'id' | 'unitId'>>;
 export type RatioRuleInput = Omit<RatioRule, 'id'>;
 export type RatioRulePatch = Partial<
-  Omit<RatioRule, 'id' | 'unitId' | 'citation' | 'minRnShare'>
+  Omit<RatioRule, 'id' | 'unitId' | 'citation' | 'minRnShare' | 'tour'>
 > & {
   citation?: string | null;
   minRnShare?: number | null;
+  tour?: Tour | null;
 };
 
 export interface CensusForecastInput {
@@ -741,12 +782,16 @@ export type PayRateInput = Omit<PayRate, 'id'>;
 /** Scope (nurse or role) is fixed once created; re-scoping is a delete and a create. */
 export type PayRatePatch = Partial<Pick<PayRate, 'hourlyRate' | 'effectiveFrom'>>;
 export type DifferentialInput = Omit<Differential, 'id'>;
-/** `window: null` clears the clock window; `consecutive: null` a consecutive-shift trigger. */
+/**
+ * `window: null` clears the clock window; `consecutive: null` a consecutive-shift trigger;
+ * `shortRest: null` a short-rest one.
+ */
 export type DifferentialPatch = Partial<
   Pick<Differential, 'kind' | 'mode' | 'amount' | 'active'>
 > & {
   window?: Differential['window'] | null;
   consecutive?: Differential['consecutive'] | null;
+  shortRest?: Differential['shortRest'] | null;
 };
 export type OvertimeRuleInput = Omit<OvertimeRule, 'id'>;
 export type OvertimeRulePatch = Partial<
@@ -777,6 +822,25 @@ export interface PeriodCostReport {
    * settings, and for a published period with no snapshot yet.
    */
   pricedUnder: { takenAt: number; reason?: string } | undefined;
+  /**
+   * Present when the pay settings the period is priced under have comp time on, or it already
+   * holds credits. The dollars in `cost` do not change: payroll pays banked hours as leave later.
+   */
+  compTime?: {
+    credits: {
+      nurseId: Id;
+      overtimeHours: number;
+      creditedHours: number;
+      paidOvertimeHours: number;
+    }[];
+    /** Overtime hours taken as comp time rather than cash: Σ(overtime − paid overtime). */
+    bankedOvertimeHours: number;
+    /**
+     * Comp time on, the schedule published or archived and over before today, nothing banked
+     * yet, and a nurse's election overlapping it.
+     */
+    canBank: boolean;
+  };
 }
 
 /** Pay settings that are not rates, differentials or overtime rules. */
@@ -798,6 +862,23 @@ export interface PaySettings {
    * in the week it starts (`'start'`, some contracts). A unit that never chose reads `'clock'`.
    */
   overtimeWindowAttribution: 'clock' | 'start';
+  /**
+   * Pay the spring-forward night's straight time as the hours scheduled rather than the 11 worked
+   * (some contracts). Overtime still counts the hours worked. A unit that never chose reads false.
+   */
+  paySpringForwardAsScheduled: boolean;
+  /**
+   * The rate a missed meal or rest break is paid at: base, or the week's regular rate with
+   * differentials in it (Lab. Code § 226.7; Ferra v. Loews Hollywood Hotel (2021) 11 Cal.5th 858).
+   * A unit that never chose reads `'base'`.
+   */
+  breakPremiumRate: 'base' | 'regular';
+  /**
+   * Comp time banked instead of overtime pay (29 U.S.C. § 207(o), public employers only): hours
+   * credited per overtime hour and the most a nurse may hold (null = no cap). Null is off, which
+   * a unit that never chose reads.
+   */
+  compTime: { hoursPerOvertimeHour: number; capHours: number | null } | null;
 }
 
 /** The pay configuration a published period is priced under. Mirrors `PayConfig` in `@shiftnurse/db`. */
@@ -837,6 +918,8 @@ export interface DayOfPayRecord {
   break?: 'meal' | 'rest';
   scheduledHours?: number;
   hoursWorked?: number;
+  /** Call-back: minutes from the start of the standby shift. Absent on an older, pay-only row. */
+  startMinute?: number;
   note?: string;
   enteredBy: 'manager' | 'nurse';
   createdAt: number;
@@ -870,12 +953,15 @@ export type DayOfPayEntry =
       date: IsoDate;
       shiftTypeId?: Id;
       hoursWorked: number;
+      /** Minutes from the start of the standby shift to when the nurse began working. */
+      startMinute: number;
       note?: string;
     };
 
 /** What can be filled in afterwards: a send-home's or call-back's real hours, and the note. */
 export interface DayOfPayPatch {
   hoursWorked?: number;
+  startMinute?: number;
   note?: string | null;
 }
 
@@ -1460,6 +1546,11 @@ export interface ShiftNurseApi {
     addCertification(input: FmlaCertificationInput): FmlaCertificationRecord;
     updateCertification(id: Id, patch: FmlaCertificationPatch): FmlaCertificationRecord;
     removeCertification(id: Id): void;
+    /** The nurse's comp-time elections, earliest first. */
+    compElections(nurseId: Id): CompTimeElectionRecord[];
+    addCompElection(input: CompTimeElectionInput): CompTimeElectionRecord;
+    updateCompElection(id: Id, patch: CompTimeElectionPatch): CompTimeElectionRecord;
+    removeCompElection(id: Id): void;
     /** Warnings only: a short balance or an ineligible nurse never blocks the request. */
     checkRequest(
       nurseId: Id,
@@ -1771,6 +1862,11 @@ export interface ShiftNurseApi {
      * change). The reason is required; drafts and archived periods are refused.
      */
     reprice(periodId: Id, reason: string): PayConfigSnapshot;
+    /**
+     * Banks a finished published schedule's overtime as comp time for the nurses who elected it,
+     * under the pay settings it was published under. Once per period; refused in words otherwise.
+     */
+    bankCompTime(periodId: Id): CompTimeCreditRecord[];
   };
   /** Events paid outside the schedule, recorded from the Today screen. */
   dayOfPay: {
@@ -1989,6 +2085,10 @@ export const API_CHANNELS = {
     'addCertification',
     'updateCertification',
     'removeCertification',
+    'compElections',
+    'addCompElection',
+    'updateCompElection',
+    'removeCompElection',
     'checkRequest',
   ],
   leaveBidding: [
@@ -2085,6 +2185,7 @@ export const API_CHANNELS = {
     'paySettings',
     'savePaySettings',
     'reprice',
+    'bankCompTime',
   ],
   dayOfPay: ['list', 'record', 'update', 'remove'],
   timeOff: [

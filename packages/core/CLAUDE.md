@@ -232,6 +232,11 @@
   `deleteAcuityTier` refuses before writing, since the rule FK cascades and demand would drop to zero.
 - **Mixed acuity is pooled (D11).** `nursesRequiredForMix` sums fractional loads and rounds once;
   the per-assignment reading can need more and is not applied.
+- **A ratio may bind one tour (`RatioRule.tour`, ORS 441.768).** A rule with a tour applies only
+  to shifts whose `tourOf` matches (by start time, never `isNight`); absent, every tour.
+  `bindingRatio` and `nursesRequiredForMix` take the shift's tour, and `deriveDemand` passes it, the
+  licensed pool and its RN share included. Changing a rule's tour is protected in both directions
+  (`RatioChange` `'tour'`), like its tier.
 - **HPPD and acuity care hours are advisory.** `ShiftDemand.careHoursRecommendedNurses` (care hours
   ÷ shift length) and `hppdRecommendedNurses` show on the Demand page; `acuity/hppd.ts`'s
   `scheduledHppd` compares a period's scheduled hours per patient day with the target on the Demand
@@ -270,6 +275,20 @@
   volunteered holdover time are left out), one finding per work week naming every in-period shift
   that adds to it; `max-hours-in-24` (hard, off by default) caps worked hours in any 24, checked at
   each window's start and end − 24h. Pay: `beyond_scheduled_tour` and `consecutive` overtime bases.
+- **A call-back from standby is worked time (ORS 441.770(3): "a shift or call response").**
+  `CallBack` (`nurseId`, wall `window`: the standby's start plus the recorded start minute, for the
+  hours worked; `schedule/call-backs.ts`'s `callBackWindow`) reaches the rules as
+  `RuleContext.callBacksByNurse` (`SolveInput.callBacks`, start-sorted). `max-hours-in-24` counts
+  its minutes and anchors on its start and end − 1440; `long-stretch` merges it into the timeline
+  (`withCallBacks`; guard assignment reads with `isCallBackItem`); `max-hours-per-week` counts it
+  under the rule's reading (whole in its start window at declared hours without pay settings,
+  split by the clock with them) and a call-back starting in a window authorises its own hours
+  there, as a holdover does. Rest counts it only with `min-rest-between-shifts`'
+  `callBackCountsForRest` (off: UC–CNA Art. 14 § N.3, WSNA § 7.10), against `minRestHours`, one
+  finding per shift (the larger shortfall). `no-mandatory-overtime` does not judge it. It is never
+  in the period: a finding needs an in-period shift and names only shifts. Recorded day-of, so the
+  solvers meet it as a constant: SA's gate through the context and its week counters, CP-SAT in
+  `encodeHoursIn24`, `encodeLongStretch`, the weekly caps and (with the param) `encodeRest`.
 - **Long stretches have a cap and a rest, from the state laws.** `long-stretch` (hard, nurse scope,
   off by default, no default numbers) judges each `workedStretches` stretch (holdovers in, standby
   out) against `maxConsecutiveHours` (an `Emergency:` note excuses it when `emergencyLiftsCap`) and,
@@ -289,6 +308,46 @@
   (`schedule/real-minutes.ts`, D19, from `RuleContext.dstTransitions`), the window itself on the
   wall clock. Window bounds, anchors, rest gaps and classification (a compressed tour) stay wall;
   `encodeHoursIn24`'s coefficients and `encodeLongStretch`'s chain minutes are the same real minutes.
+- **The weekly cap counts the hours payroll counts (21 Q1).** With the unit's pay settings loaded
+  (`SolveInput.cost`, so every real judge: grid, Generate, conflicts, publish),
+  `ruleContextForInput` sets `RuleContext.overtimeWindowAttribution` from
+  `cost.overtimeWindowAttribution ?? 'clock'`, and `max-hours-per-week` (weekly cap, weekly or
+  pay-period overtime, `overtimeHoursAround`) counts real minutes: by `'clock'` a night crossing a
+  week's or pay period's first midnight gives each side the minutes worked there
+  (`schedule/window-split.ts`, shared with pay; 29 CFR 778.104), so a Saturday 19:00 night after
+  36 hours makes the week 41 and starts the next with 7; by `'start'` it stays whole in its start
+  week. A crossing in-period shift is named by the window it adds to; only rows that start in a window
+  authorise its overtime. Absent (core fixtures without `cost`), the old reading: start week,
+  declared `paidHours`. SA keeps whole-minute week counters (`WorkCalendar.partsOf`, thresholds
+  `Math.round(h × 60)`; a part past the last judged week is dropped) and CP-SAT a separate minutes
+  expression for the weekly and pay-period caps only (`minutesExpr`, `atMostMinutes`); the
+  contract cap stays in hundredths. **The week can start at a time of day** (29 CFR 778.105):
+  `workWeekStartMinute` (0–1439, optional, absent = midnight; `ParamDoc.input: 'time-of-day'`)
+  makes a window dated `start..end` run from that wall minute on `start` to the same minute after
+  `end` (`windowBoundaryMinute`), for weeks and 8/80 pay periods alike. A shift belongs, under
+  `'start'`, the old reading and for authorisation, to the window its *start* falls in
+  (`windowDayOf`: a Saturday 07:00 shift is Friday's window-day under a Saturday 19:00 start);
+  under `'clock'` it splits at the boundary minute. Rule, SA (`partsOf`), CP-SAT (`startsWithin`,
+  even on the hundredths path), pay (`CostContext.workWeekStartMinute`), compliance alerts,
+  `overtimeHoursAround` (a shift's start minute) and conflicts' move candidates read it. The
+  community and California ICU demos start the week at Saturday 19:00; the VA demo and the frozen
+  scenarios stay at midnight. Leave credits stay dated (`leaveHoursBetween`, by date). The judged
+  windows run from the one holding the schedule's first instant to the one holding its last
+  (`judgedSpan`; rule, SA `workCalendar`, CP-SAT and alerts): a schedule opening on a Saturday
+  under a Saturday 19:00 start judges the week before too, since that morning is in it. Not
+  following the start time (calendar-date based): pay's `extraDayTest` and `seventhDayTest`, and
+  `no-mandatory-overtime`'s own `workWeekStartsOn` week. **Night nurses may have their own week**
+  (29 CFR 778.105: weeks may differ by group; Providence Portland–ONA Art. 7.A):
+  `nightWorkWeekStartsOn` (optional) with `nightWorkWeekStartMinute` (absent = midnight) is the
+  week of every nurse whose `permanentTour` is `'night'`; everyone else, and everyone when it is
+  absent, is on the unit's. `workWeekFor(nurse, settings)` (`hours-rules.ts`) is the one choice,
+  per nurse and never per shift (a week chosen by the shift would count one stretch twice or not
+  at all). A pay period keeps its anchor dates and takes only the night minute. Every consumer
+  resolves it per nurse: the rule (`gridFor`), SA (`SolverModel.gridOf`: one `workCalendar` per
+  distinct week, each nurse's counters on her own grid), CP-SAT `encodeWeeklyHours`, pay
+  (`CostContext.nightWorkWeekStartsOn`/`…Minute`), alerts (`ComplianceInput`), `overtimeHoursAround`
+  (the nurse from the view) and move candidates. `extraDayTest`, `seventhDayTest`,
+  `no-mandatory-overtime`, the under-hours pay periods and the demo engine stay on the unit week.
 - **Weekends are filed by `weekendKey`, everywhere.** Fairness, `weekend-pattern` and both
   solvers' prices use it; under `'overlaps'` a Friday night belongs to the weekend it runs into.
   `weekendBreaches` is the one count (`SolverModel.weekendFor`, CP-SAT `weekendBreachExprs`).
@@ -307,9 +366,34 @@
   worked; a weekend counts only if worked on a day of the pay period (a Saturday in the previous
   pay period does not credit it); a pay period that began before the schedule is judged once the
   published history covers its first day (`RuleContext.historyFrom`); one running past the
-  schedule's end is left to the next; while soft it is not priced, so the grid and alerts flag it
-  but Generate does not steer. Hard, `solver/cpsat/rules/days-off.ts` and
+  schedule's end is left to the next; while soft both solvers price each finding at
+  `daysOffTogether` (fairness; SA `daysOffTogetherBreaches`, CP-SAT `daysOffTogetherTerms`, one
+  `daysOffParts`). Hard, `solver/cpsat/rules/days-off.ts` and
   `SolverModel` forbid it.
+- **A weekend worked is worked whole.** `rules/complete-weekends.ts` (`complete-weekends`, soft,
+  nurse scope, off by default, `split_weekend`, no params): a weekend key worked (lookback
+  included) where not every calendar date of its window carries a shift dated on it; the amount is
+  the unworked dates. A Saturday alone leaves the nurse's weekend half-gone, which she reads as
+  two broken weekends. Not judged past the period's end, for Baylor nurses (the plan is their
+  weekends) or when a pre-period date is before `historyFrom`. While soft both solvers price each
+  finding at `completeWeekend` (fairness); hard, `encodeCompleteWeekends`.
+- **Short work runs.** `rules/short-work-runs.ts` (`short-work-runs`, soft, nurse scope, off by
+  default, `short_work_run`, `minConsecutiveDays` default 2, `exemptEmploymentTypes` default per
+  diem): a run of consecutive dated worked days shorter than the minimum, so a lone shift between
+  days off is not scattered through the grid. Runs touching the period's last day are not judged
+  (the next period may extend them); lookback counts; another unit's shifts count as worked. While
+  soft both solvers price each finding at `shortWorkRun` (preferences); hard, `encodeShortWorkRuns`.
+- **On-call caps are unit policy.** `rules/on-call-limit.ts` (`on-call-limit`, soft, nurse scope,
+  off by default, `too_much_on_call`): `maxOnCallPerWeek`, `maxOnCallPerPeriod` and
+  `maxConsecutiveOnCallDays` are optional and not defaulted (absent = no limit; UC–CNA Art. 14 § K
+  and WSNA only ask for call "distributed equitably", L-18), with its own `workWeekStartsOn`.
+  Call is `isOnCall`, by date; lookback and other units' call count toward a week and a run, a
+  schedule counts the call dated in it; a count is judged only when it holds an in-period turn, and
+  no employment type is exempt. One finding per week or schedule over (amount = how many over);
+  days in a row are judged per window of `max + 1` consecutive call dates (amount 1), so a run two
+  days too long is two findings — what both solvers can price exactly. While soft both solvers
+  price each finding at `onCallLimit` (40, fairness; SA `onCallLimitBreaches`, CP-SAT
+  `onCallLimitTerms`, one `onCallLimitParts`); hard, `encodeOnCallLimit` (`atMost`).
 - **Weekends off per year is an alert.** `complianceAlerts`' `weekends_off_per_year`
   (`publish/compliance.ts`) comes from `Unit.minWeekendsOffPerYear`: the ledger's weekends over the
   periods that began within the 52 weeks ending on the period's last day, plus this period's,
@@ -348,7 +432,12 @@
   on. A preset's `options` are yes/no questions asked at apply time (California's alternative
   workweek, the VA's compressed tour); a rule or overtime rule with `when` applies only when the
   answer meets it; `applyJurisdiction` stores the yes answers on the unit (`Unit.jurisdictionChoices`,
-  migration 0033). Differentials are added only for a kind the
+  migration 0033). A preset's `extraRatios` are tour-bound catch-all ceilings planned whatever
+  the unit kind, a type `unitKindForUnitType` does not know included; "already present" matches
+  role, catch-all and tour, for them and for the kind's RN ceiling (no tour). Oregon's
+  `cnasCoverEveryPatient`, answered yes, adds the ORS 441.768 aide caps (7 day and evening, 11
+  night): the law caps one aide's assignment, so it is a ratio only where the aides take every
+  patient. Differentials are added only for a kind the
   unit pays nothing for, `postingLeadDays` only rises and `overtimeOrder` is set only when unset,
   and an existing overtime rule is never retrofitted with the preset's pyramiding or minimum.
   A preset overtime rule may carry `scheduleKinds` and `tourDays` (the VA's 72/80 and Baylor
@@ -440,7 +529,8 @@
   reason, `recordAuditStrict`) lets `min-rest-between-shifts` pass a short rest only when the shift
   *after* it starts on the waiver's date; `restWaivedOn` is shared by the rule and `encodeRest`,
   which must skip the pair too or CP-SAT would forbid a waived turnaround the rule allows (VA–NNU Art. 13 §2).
-- **Tours are named by when a shift starts.** `rules/tour-rotation.ts`'s `tourOf`: 04:00–11:59 day,
+- **Tours are named by when a shift starts.** `domain/time.ts`'s `tourOf` (re-exported by
+  `rules/tour-rotation.ts`, and read by ratio demand): 04:00–11:59 day,
   12:00–17:59 evening, otherwise night — never `isNight`, a pay flag a Title 38 evening tour also
   carries. `isNightTour` is the night test for min-rest's after-night rest, the night cap (which
   counts runs of night dates wherever they sit, `nightRuns`; a day beside them neither resets nor
@@ -453,7 +543,8 @@
   permanent tour, except tours she asked for (a preferred shift type on them, `requestedTours`,
   read from `RuleContext.preferredShiftTypesByNurse`). Monotone under removal, so the gate is the
   generic nurse-scope one; `encodeTourRotation` enforces it when hard (locked breaches stand,
-  `atMost` stops them growing). Neither solver prices it while soft — a stated limit.
+  `atMost` stops them growing). While soft both solvers price each finding at `tourRotation`
+  (preferences; SA `tourRotationBreaches`, CP-SAT `tourRotationTerms`, one `tourRotationFindings`).
 - **A plan nurse works the plan's tours.** `rules/schedule-kind-tours.ts` (`schedule-kind-tours`,
   hard, nurse scope, on by default, `off_plan_tour`): a worked in-period shift of a `va_72_80` nurse
   must be 12 hours (38 U.S.C. § 7456A), and of a `va_baylor` nurse a Baylor tour (§ 7456;
@@ -482,7 +573,7 @@
 - **Overtime does not pyramid when the rule says so.** `OvertimeRule.pyramiding: 'none'`
   (`cost/cost.ts`) makes `weekly` and `pay_period` rules count only straight-time hours toward
   their threshold, so hours already paid at a daily premium are not paid again (Cal. Lab. Code
-  § 510; UC–CNA Art. 14 § M). Absent, a window rule credits that way whenever a daily-style rule
+  § 510; UC–CNA Art. 14 § L.2.c.1). Absent, a window rule credits that way whenever a daily-style rule
   (a non-window basis) applies to the nurse, and stacks otherwise (D16; 29 CFR 778.202(c)); only an
   explicit `'stack'` counts daily premium hours again. Lookback shifts count their straight hours,
   or a week opened by the last schedule would start from zero. Pinned by hand: four 12s under
@@ -511,7 +602,7 @@
   `'compound'` (default) is the FLSA regular rate, `(base + flats) × Π multipliers`, with overtime
   on the week's (or 8/80 pay period's) weighted regular rate (D16, `cost/CLAUDE.md`); `'additive'`
   takes each multiplier's premium and the overtime premium on base pay alone, so nothing
-  compounds (UC–CNA Art. 14 § N forbids pyramiding of premiums; Title 38 pays differentials in
+  compounds (UC–CNA Art. 14 § M forbids pyramiding of premiums; Title 38 pays differentials in
   addition to overtime on basic pay). The default stays compound so no existing
   unit's payroll estimate moves.
 - **A preset may propose pay settings and a weekend, only where the unit set neither.**
@@ -526,6 +617,21 @@
   per nurse per work week (or pay period) holding overtime hours, daily, seventh-day, consecutive and
   beyond-tour bases included, with `overtimeHours` set and no `expectedHours`; without one the old
   max-hours threshold runs. Never both. Overtime hours are attributed for an unpriced nurse too.
+- **Two alerts say where the app's week and the law's part; neither changes pay.** Both count a
+  window as `max-hours-per-week` does (`windowHours`, the rule's threshold, leave when it counts).
+  `work_week_changeover` (29 CFR 778.302): with `ComplianceInput.previousWorkWeek` (main's
+  `previousWorkWeekFor`: the max-hours settings of the latest published or archived period ending
+  before this one, passed only when some nurse's `workWeekFor` differs), a nurse whose old-boundary
+  window holding the period's first instant has more overtime than the new one is told both
+  figures. `start_attribution_underpays` (DOL FLSA2005-17): under pay's `'start'`, each judged
+  window touching the period where the clock count has more overtime than the start count; a
+  surplus in another week does not offset it.
+- **An in-lieu holiday is information, not a violation.** `Unit.inLieuHolidays: 'federal'` (5 U.S.C.
+  § 6103(b); VA) makes `complianceAlerts` (given `ComplianceInput.inLieuHolidays`) emit `in_lieu_holiday`
+  at the new `'information'` severity, one per full-time nurse per holiday dated in the period that
+  falls on her non-workday. `leave/in-lieu.ts` reads the schedule as the basic workweek: a Sunday
+  holiday moves to the first worked day after it, any other to the last before it, within 6 days; an
+  on-call day is not worked, and part-time, per-diem and Baylor nurses get none. It changes no pay.
 - **An unpriced option is ranked at the unit's highest rate and never auto-applied.**
   `CostImpact.pessimisticDelta` prices unpriced shifts at the highest pay rate on file (overtime at
   the highest multiplier). The resolution ranking and the day-of list sort by it.
@@ -568,9 +674,16 @@
   date a year earlier (366 days when 29 February falls inside). `leave/policy.ts` validates a
   unit's `LeavePolicy`; absent, a unit runs `DEFAULT_LEAVE_POLICY` (Title I, rolling back, no
   accrual).
-- **Leave for a 72/80 nurse is charged 10 hours per 9 of absence.** 38 U.S.C. § 7456A(d):
-  `leave/charge.ts`'s `leaveChargeHours(scheduleKind, hours)` is applied where a leave balance is
+- **Annual and sick leave for a 72/80 nurse is charged 10 hours per 9 of absence.** 38 U.S.C.
+  § 7456A(b)(3) names only "sick leave or annual leave", so comp time and PTO are charged hour for
+  hour, not 10/9: `leave/charge.ts`'s `leaveChargeHours(scheduleKind, type, hours)` is applied where a leave balance is
   debited (`main/api/leave-balances.ts`: approved annual/sick use and the request's check), and the
   request dialog shows the charged figure. FMLA is not charged: its entitlement and use are both
   in worked hours. A request's stored `paidHours` stays the hours worked it covers — it is what
   counts toward the 72 — so charging at both ends would charge twice.
+- **Comp time earned is an `earned` event in `projectBalance`, dated when it is credited.**
+  `leave/comp-time.ts`'s `compTimeCredit` turns a period's overtime inside a nurse's election into
+  comp hours (rate × overtime, up to the cap less the balance projected to the period's last day)
+  and says how much overtime stays paid in cash. Main banks a finished published period
+  (`main/api/comp-time.ts`) and dates each credit on that period's last day, so a comp request
+  sees it from the next day (the projection's window is strict); same-day order is earn before use.

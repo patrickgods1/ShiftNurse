@@ -7,12 +7,18 @@
  * The budget is editable in place because it is a single number per period and sending a
  * manager to a settings tab to change it would guarantee it is never set. Leaving the budget
  * blank removes it: a blank field is not a $0 budget, which would read as every dollar over.
+ *
+ * Where comp time is on, the card says how much of the overtime was banked as comp time rather
+ * than paid, and offers to bank a finished schedule once. The dollars above do not change: payroll
+ * pays banked hours later, as leave taken.
  */
 
+import type { PeriodCostReport } from '@shared/api.js';
 import type { Nurse, SchedulePeriod } from '@shiftnurse/core';
 import { useState } from 'react';
-import { useClearBudget, useCostReport, useSetBudget } from '../../api-cost.js';
+import { useBankCompTime, useClearBudget, useCostReport, useSetBudget } from '../../api-cost.js';
 import { AsyncState } from '../../components/async-state.js';
+import { useConfirm } from '../../components/confirm.js';
 import { PRIMARY_SMALL } from '../../components/ui.js';
 import { numberFieldProblem, parseNumberField } from '../../field-values.js';
 import { listName, periodLabel } from '../../format.js';
@@ -125,6 +131,50 @@ function BudgetEditor({
   );
 }
 
+/** "4.5" rather than "4.50": two decimals, trailing zeros dropped. */
+const trimmedHours = (hours: number) => String(Math.round(hours * 100) / 100);
+
+function CompTimeLine({
+  period,
+  compTime,
+}: {
+  period: SchedulePeriod;
+  compTime: NonNullable<PeriodCostReport['compTime']>;
+}) {
+  const bank = useBankCompTime(period.id);
+  const confirm = useConfirm();
+  const n = trimmedHours(compTime.bankedOvertimeHours);
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
+      <p className="text-text" data-testid="comp-time-banked">
+        {n} overtime hour{n === '1' ? '' : 's'} banked as comp time
+      </p>
+      {compTime.canBank ? (
+        <button
+          type="button"
+          className={PRIMARY_SMALL}
+          disabled={bank.isPending}
+          onClick={async () => {
+            if (
+              await confirm({
+                title: 'Bank comp time for nurses who elected it?',
+                description:
+                  "This cannot be undone; a wrong figure is corrected by entering payroll's comp balance.",
+                confirmLabel: 'Bank comp time',
+                danger: false,
+              })
+            ) {
+              bank.mutate();
+            }
+          }}
+        >
+          Bank comp time
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function CostPanel({ period, nurses }: CostPanelProps) {
   const reportQuery = useCostReport(period.id);
 
@@ -135,7 +185,7 @@ export function CostPanel({ period, nurses }: CostPanelProps) {
     );
   }
 
-  const { cost, budget, variance, dayOf } = reportQuery.data;
+  const { cost, budget, variance, dayOf, compTime } = reportQuery.data;
   const nursesById = new Map((nurses ?? []).map((n) => [n.id, n]));
   const overBudget = variance !== undefined && variance.variance > 0;
   const ranked = cost.overtime.ranked.slice(0, 8);
@@ -181,6 +231,8 @@ export function CostPanel({ period, nurses }: CostPanelProps) {
             {formatDollars(cost.totals.overtimePremium)}
           </dd>
         </dl>
+
+        {compTime ? <CompTimeLine period={period} compTime={compTime} /> : null}
 
         {cost.unpricedAssignments > 0 ? (
           <p className="mt-3 text-sm text-danger" data-testid="cost-unpriced">

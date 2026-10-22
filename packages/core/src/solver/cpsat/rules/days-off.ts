@@ -1,6 +1,6 @@
 /**
- * `days-off-together` for CP-SAT, when a rule set makes it hard (while soft it is not priced, so
- * Generate ignores it and the grid flags it).
+ * `days-off-together` for CP-SAT, when a rule set makes it hard (while soft it is priced instead,
+ * per finding, by `daysOffTogetherTerms` in `objective.ts`, from the same `daysOffParts`).
  *
  * Per nurse and pay period the rule judges (`payPeriodWeekends`, published history included): a
  * Boolean `all` that every weekend of it is worked (`Σ worked − all ≤ |K| − 1` forces it to 1 when
@@ -22,84 +22,118 @@ import {
   type IsoDate,
   weekendKey,
 } from '../../../domain/time.js';
-import { payPeriodWeekends } from '../../../rules/days-off-together.js';
+import { type PayPeriodWeekends, payPeriodWeekends } from '../../../rules/days-off-together.js';
 import { type Expr, evalExpr, expr, scale, sum } from '../builder.js';
-import type { EncodeContext } from '../context.js';
+import type { EncodeContext, TimelineEntry } from '../context.js';
 import { anyWorked } from './weekends.js';
 
 const isConstant = (e: Expr) => e.terms.length === 0;
 
-export function encodeDaysOffTogether(ctx: EncodeContext, _raw: Record<string, unknown>): void {
+/** One nurse's pay period, as both the hard constraint and the soft price read it. */
+export interface DaysOffParts {
+  /**
+   * 1 when every weekend of the pay period is worked: a constant 1 when they are fixed worked,
+   * else a Boolean forced to 1 when they all are and free to be 1 otherwise.
+   */
+  all: Expr;
+  /** One Boolean per adjacent pair of dates that may be 1 only when neither date is worked. */
+  pairs: Expr[];
+}
+
+/** The pay periods the rule judges, from the same calendar as the rule. */
+function daysOffPayPeriods(ctx: EncodeContext): PayPeriodWeekends[] {
   const { period, unit, ruleSet } = ctx.input;
-  const def = ruleSet.weekendDefinition;
-  const payPeriods = payPeriodWeekends(
+  return payPeriodWeekends(
     { start: period.startDate, end: period.endDate },
     unit,
-    def,
+    ruleSet.weekendDefinition,
     ctx.input.historyFrom,
   );
+}
+
+/**
+ * `all` and the `pairs` for nurse `n` in pay period `pp`, or null when the pay period asks
+ * nothing of her: a weekend she has no shift filed under within it, or two days with nothing to
+ * decide that are a pair off already. Shared so the hard encoder and the price cannot disagree on
+ * what a weekend worked or a pair off is.
+ */
+export function daysOffParts(
+  ctx: EncodeContext,
+  n: number,
+  timeline: readonly TimelineEntry[],
+  pp: PayPeriodWeekends,
+): DaysOffParts | null {
+  const def = ctx.input.ruleSet.weekendDefinition;
+  const name = ctx.name(n);
+  const inPayPeriod = timeline.filter((e) => dateInRange(e.date, pp.start, pp.end));
+  const weekends: Expr[] = [];
+  for (const w of pp.weekends) {
+    const entries = inPayPeriod.filter((e) => weekendKey(e.window, def) === w);
+    if (entries.length === 0) break;
+    weekends.push(anyWorked(ctx, entries, `weekend: ${name} ${w} in pay period ${pp.start}`));
+  }
+  if (weekends.length < pp.weekends.length) return null;
+  const label = `days off together: ${name} ${pp.start}`;
+
+  let all: Expr;
+  if (weekends.every(isConstant)) all = expr([], 1);
+  else {
+    // Its value in a finished schedule, for `CpBuilder.evaluate`: the solver is free to set
+    // it higher, never lower, than the constraint below allows.
+    const every = ctx.b.auxiliary(`${label} every weekend`, 0, 1, (value) =>
+      weekends.every((e) => evalExpr(e, value) === 1) ? 1 : 0,
+    );
+    all = expr([[every, 1]]);
+    ctx.b.atMost(sum(...weekends, scale(all, -1)), weekends.length - 1, label);
+  }
+
+  const busy = new Map<IsoDate, Expr>();
+  for (const date of datesInRange(pp.start, pp.end)) {
+    const dated = timeline.filter((e) => e.date === date);
+    busy.set(
+      date,
+      dated.length === 0 ? expr([], 0) : anyWorked(ctx, dated, `busy: ${name} ${date}`),
+    );
+  }
+
+  const pairs: Expr[] = [];
+  for (let d = pp.start; compareDates(d, pp.end) < 0; d = addDays(d, 1)) {
+    const here = busy.get(d)!;
+    const next = busy.get(addDays(d, 1))!;
+    // A locked shift on either day rules the pair out; two days with nothing to decide are a
+    // pair already, and the pay period is satisfied whatever the rest does.
+    if (here.constant > 0 || next.constant > 0) continue;
+    if (isConstant(here) && isConstant(next)) return null;
+    const pair = ctx.b.auxiliary(`${label} off ${d} and the next day`, 0, 1, (value) =>
+      evalExpr(here, value) === 0 && evalExpr(next, value) === 0 ? 1 : 0,
+    );
+    ctx.b.atMost(sum(expr([[pair, 1]]), here), 1, `${label} ${d} worked`);
+    ctx.b.atMost(sum(expr([[pair, 1]]), next), 1, `${label} ${addDays(d, 1)} worked`);
+    pairs.push(expr([[pair, 1]]));
+  }
+  return { all, pairs };
+}
+
+export function encodeDaysOffTogether(ctx: EncodeContext, _raw: Record<string, unknown>): void {
+  const payPeriods = daysOffPayPeriods(ctx);
   if (payPeriods.length === 0) return;
 
   for (const [n, vars] of ctx.byNurse.entries()) {
     if (vars.length === 0) continue;
-    const name = ctx.name(n);
     const timeline = ctx.timeline(n).filter((e) => !e.shiftType.isOnCall);
 
     for (const pp of payPeriods) {
-      const inPayPeriod = timeline.filter((e) => dateInRange(e.date, pp.start, pp.end));
-      const weekends: Expr[] = [];
-      for (const w of pp.weekends) {
-        const entries = inPayPeriod.filter((e) => weekendKey(e.window, def) === w);
-        if (entries.length === 0) break;
-        weekends.push(anyWorked(ctx, entries, `weekend: ${name} ${w} in pay period ${pp.start}`));
-      }
-      if (weekends.length < pp.weekends.length) continue;
-      const label = `days off together: ${name} ${pp.start}`;
-
-      let all: Expr;
-      if (weekends.every(isConstant)) all = expr([], 1);
-      else {
-        // Its value in a finished schedule, for `CpBuilder.evaluate`: the solver is free to set
-        // it higher, never lower, than the constraint below allows.
-        const every = ctx.b.auxiliary(`${label} every weekend`, 0, 1, (value) =>
-          weekends.every((e) => evalExpr(e, value) === 1) ? 1 : 0,
-        );
-        all = expr([[every, 1]]);
-        ctx.b.atMost(sum(...weekends, scale(all, -1)), weekends.length - 1, label);
-      }
-
-      const busy = new Map<IsoDate, Expr>();
-      for (const date of datesInRange(pp.start, pp.end)) {
-        const dated = timeline.filter((e) => e.date === date);
-        busy.set(
-          date,
-          dated.length === 0 ? expr([], 0) : anyWorked(ctx, dated, `busy: ${name} ${date}`),
-        );
-      }
-
-      const pairs: Expr[] = [];
-      let freePair = false;
-      for (let d = pp.start; compareDates(d, pp.end) < 0; d = addDays(d, 1)) {
-        const here = busy.get(d)!;
-        const next = busy.get(addDays(d, 1))!;
-        // A locked shift on either day rules the pair out; two days with nothing to decide are a
-        // pair already, and the pay period is satisfied whatever the rest does.
-        if (here.constant > 0 || next.constant > 0) continue;
-        if (isConstant(here) && isConstant(next)) {
-          freePair = true;
-          break;
-        }
-        const pair = ctx.b.auxiliary(`${label} off ${d} and the next day`, 0, 1, (value) =>
-          evalExpr(here, value) === 0 && evalExpr(next, value) === 0 ? 1 : 0,
-        );
-        ctx.b.atMost(sum(expr([[pair, 1]]), here), 1, `${label} ${d} worked`);
-        ctx.b.atMost(sum(expr([[pair, 1]]), next), 1, `${label} ${addDays(d, 1)} worked`);
-        pairs.push(expr([[pair, 1]]));
-      }
-      if (freePair) continue;
+      const parts = daysOffParts(ctx, n, timeline, pp);
+      if (!parts) continue;
+      const { all, pairs } = parts;
       // Nothing the solver could free, under weekends already fixed: a standing breach.
       if (pairs.length === 0 && isConstant(all)) continue;
-      ctx.b.linear(sum(...pairs, scale(all, -1)), 0, Number.POSITIVE_INFINITY, label);
+      ctx.b.linear(
+        sum(...pairs, scale(all, -1)),
+        0,
+        Number.POSITIVE_INFINITY,
+        `days off together: ${ctx.name(n)} ${pp.start}`,
+      );
     }
   }
 }

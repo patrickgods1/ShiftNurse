@@ -76,6 +76,21 @@ export function useRepricePeriod() {
   });
 }
 
+/**
+ * Banking comp time writes credits the period's cost report lists and every comp balance
+ * projection reads, so both roots refresh.
+ */
+export function useBankCompTime(periodId: Id) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.cost.bankCompTime(periodId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: costKeys.report(periodId) });
+      void queryClient.invalidateQueries({ queryKey: queryRoots.leaveBalances });
+    },
+  });
+}
+
 /** Pay configuration changes re-price every period, and feed publish alerts and Generate's cost. */
 function useInvalidateConfig(unitId: Id, key: (typeof costKeys)[keyof typeof costKeys]) {
   const queryClient = useQueryClient();

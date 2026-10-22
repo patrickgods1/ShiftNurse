@@ -35,43 +35,58 @@ export interface AlertTarget {
   assignmentIds: readonly Id[];
 }
 
-const KINDS: { kind: ComplianceAlertKind; title: string; hint: string }[] = [
-  {
-    kind: 'credential_expiry',
+/**
+ * Every kind's heading, in the order the panel lists them. A `Record` over the kinds, so a new
+ * alert kind fails typecheck until it has a heading here, instead of its alerts vanishing.
+ */
+const KIND_INFO: Record<ComplianceAlertKind, { title: string; hint: string }> = {
+  credential_expiry: {
     title: 'Credentials expiring',
     hint: 'Renew them, or move the shifts after the expiry date.',
   },
-  {
-    kind: 'overtime',
+  overtime: {
     title: 'Overtime',
     hint: 'Weeks where a nurse goes past the overtime threshold.',
   },
-  {
-    kind: 'hours_drift',
+  work_week_changeover: {
+    title: 'Work week changed',
+    hint: 'The week the new work-week start takes effect overlaps the old week. Payroll owes whichever count gives the nurse more overtime (29 CFR 778.302).',
+  },
+  start_attribution_underpays: {
+    title: 'Start-week crediting pays less',
+    hint: 'Weeks where crediting a night to the week it starts in pays less overtime than counting each hour where it was worked. Pay the clock count for those weeks, or count by the clock in Settings › Pay.',
+  },
+  hours_drift: {
     title: 'Hours off contract',
     hint: 'Nurses scheduled noticeably over or under their contracted hours.',
   },
-  {
-    kind: 'late_posting',
+  late_posting: {
     title: 'Late posting',
     hint: "Publishing today would give staff less notice than the unit's posting rule. Publish sooner, or change the rule in Settings › Unit.",
   },
-  {
-    kind: 'per_diem_commitment',
+  per_diem_commitment: {
     title: 'Per-diem commitment',
     hint: 'Per-diem nurses below the weekend or holiday shifts their contract asks for. Add shifts for them, or accept the shortfall.',
   },
-  {
-    kind: 'weekends_off_per_year',
+  weekends_off_per_year: {
     title: 'Weekends off per year',
     hint: 'Nurses whose weekends worked this year, with this schedule, leave fewer weekends off than the unit promises. Move a weekend shift, or accept it knowingly.',
   },
-  {
-    kind: 'ratio_risk',
+  ratio_risk: {
     title: 'No slack on the ratio',
     hint: 'Shifts staffed exactly at the patient ratio: one call-off breaks it. Routine on a tight unit.',
   },
-];
+  in_lieu_holiday: {
+    title: 'In-lieu holidays',
+    hint: "A full-time nurse's holiday fell on her day off, so a nearby workday is her holiday: give it off or record how it is paid.",
+  },
+};
+
+// String keys keep their insertion order, so this is the order above.
+const KINDS = (Object.keys(KIND_INFO) as ComplianceAlertKind[]).map((kind) => ({
+  kind,
+  ...KIND_INFO[kind],
+}));
 
 export function useAlertsPill({
   periodId,
@@ -102,7 +117,13 @@ export function useAlertsPill({
   return {
     id: 'alerts',
     testId: 'alerts-panel',
-    tone: critical > 0 ? 'danger' : 'warn',
+    // Information is a day that is correct as scheduled; it should not colour the strip like a warning.
+    tone:
+      critical > 0
+        ? 'danger'
+        : alerts.every((a) => a.severity === 'information')
+          ? 'muted'
+          : 'warn',
     label: headline || `${alerts.length} alert${alerts.length === 1 ? '' : 's'}`,
     previewTag: <PreviewTag label={preview?.label} />,
     title: summary,

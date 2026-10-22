@@ -577,6 +577,44 @@ describe('evaluateExchange', () => {
     expect(result.warnings).toContain('Creates 8 hours of overtime for Tia Lowe, +$800.');
   });
 
+  it('quotes a picked-up Saturday 19:00 night against the week it opens, not the one before', () => {
+    resetFixtureCounters();
+    // Week from Saturday 19:00. Tia works Wed–Fri 7–9 Jan (36h, the week from Sat 3 Jan) and
+    // Mon–Wed 12–14 Jan (36h, the week from Sat 10 Jan 19:00). Gus's Sat 10 Jan 19:00 night
+    // starts on the boundary, so it is the second week's: 36 + 12 = 48h, 8 past 40. Quoted
+    // against the first week it would read 36 + 0, no overtime.
+    const tia = makeNurse({ firstName: 'Tia', lastName: 'Lowe', contractedHoursPerPeriod: 120 });
+    const gus = makeNurse({ firstName: 'Gus', lastName: 'Farah' });
+    const tiaDays = [
+      '2026-01-07',
+      '2026-01-08',
+      '2026-01-09',
+      '2026-01-12',
+      '2026-01-13',
+      '2026-01-14',
+    ].map((d) => assign(tia.id, DAY_12, d));
+    const gusNight = assign(gus.id, NIGHT_12, '2026-01-10');
+    const input: ExchangeInput = {
+      ...solveInputFrom({
+        startDate: START,
+        endDate: END,
+        nurses: [tia, gus],
+        assignments: [...tiaDays, gusNight],
+        ruleParams: { 'max-hours-per-week': { workWeekStartsOn: 6, workWeekStartMinute: 1140 } },
+        cost: {
+          payRates: [payRate(50)],
+          differentials: [],
+          overtimeRules: [overtimeRule('weekly', 40, 1.5)],
+        },
+      }),
+      proposal: giveaway(gusNight, tia.id),
+    };
+    const result = evaluateExchange(input);
+    expect(result.warnings.find((w) => w.startsWith('Creates'))).toMatch(
+      /^Creates 8 hours of overtime for Tia Lowe/,
+    );
+  });
+
   it("blocks a trade that makes a nurse's existing hours breach worse", () => {
     resetFixtureCounters();
     const ana = makeNurse({ firstName: 'Ana', lastName: 'Cruz' });

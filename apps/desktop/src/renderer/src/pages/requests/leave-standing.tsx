@@ -38,6 +38,7 @@ const BASIS_LABEL: Record<FmlaEntitlementBasis, string> = {
 function payrollLine(balance: NonNullable<LeaveRequestCheck['balance']>): string {
   const parts = [`Payroll: ${balance.balanceHours} h on ${formatDate(balance.asOf)}`];
   if (balance.accruedHours !== 0) parts.push(`+${balance.accruedHours} accrued`);
+  if (balance.earnedHours !== 0) parts.push(`+${balance.earnedHours} banked as comp time`);
   if (balance.usedHours !== 0) parts.push(`−${balance.usedHours} approved since`);
   if (balance.forfeitedHours !== 0) parts.push(`−${balance.forfeitedHours} forfeited at year end`);
   return parts.join(' · ');

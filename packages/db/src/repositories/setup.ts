@@ -489,6 +489,7 @@ function planAndApplyJurisdiction(
       differentials: listActiveDifferentials(tx, unitId),
       postingLeadDays: unit.postingLeadDays,
       overtimeOrder: unit.overtimeOrder,
+      inLieuHolidays: unit.inLieuHolidays,
       paySettings: paySettingsSaved(tx, unitId) ? getPaySettings(tx, unitId) : undefined,
       weekendDefinition: latest?.weekendDefinition ?? DEFAULT_WEEKEND,
     },

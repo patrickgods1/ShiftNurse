@@ -63,9 +63,22 @@ this codebase is held to. This document is the practical "how do I build/run/shi
   counted as worked. The regulation asks for the records to be kept for at least one year: export
   the period when it ends and keep the file. ShiftNurse never deletes published history.
 - **Fairness scoring** — per-nurse and unit-wide distribution of nights, weekends, holidays,
-  on-call and denied requests, weighted by seniority, with trend history.
+  on-call and denied requests, weighted by seniority, with trend history. A nurse available all period with no
+  shifts is booked as zero burden, so she is first in line next time.
 - **Cost & pricing** — pay rates, shift differentials, overtime rules, budget-vs-actual and
-  overtime-concentration reporting, and a running cost strip while editing the grid.
+  overtime-concentration reporting, and a running cost strip while editing the grid. Weekly
+  hours count each hour in the work week it was worked, as payroll pays it: a night that crosses
+  the week's start is split there. Settings › Rules › Weekly hour cap › "Work week starts at"
+  sets the time the week begins (29 CFR 778.105); set it to payroll's, often the shift change
+  nearest midnight (Saturday 19:00), so no night is split. The same time starts an 8/80 pay
+  period. The rule, Generate, pay and the overtime alerts all read it. "Night nurses' work week
+  starts on/at" gives nurses whose permanent tour is nights a week of their own (Providence
+  Portland–ONA Art. 7.A); each nurse is on one week, chosen by her tour, and left empty everyone
+  is on the unit's. Comp time in place of overtime pay is for public employers only (29 U.S.C.
+  § 207(o)): switch it on under Settings › Pay, record each nurse's election under Roster ›
+  nurse › Leave, and once a published schedule is over, bank it from the Dashboard's cost panel,
+  which credits the nurses' comp balances (overtime past the cap stays paid). Banked credits are
+  final; a wrong figure is corrected by entering payroll's comp balance.
 - **Time off, conflicts & exchanges** — a conflict-detection engine simulates every request
   against the schedule, ranks resolution options, supports policy-driven auto-resolve with an
   audit trail, and evaluates 1:1 trades and giveaways for hard-rule and fairness impact.
@@ -84,24 +97,21 @@ this codebase is held to. This document is the practical "how do I build/run/shi
 
 These are yours to do by hand until the app handles them (the same list is in Settings › About):
 
-- Some state limits stay with you: Oregon's cap of 7 patients per nursing assistant on day and evening shifts and 11 at night (ORS 441.768); labor and delivery and postpartum ratios, which turn on the patient (set them as acuity-tier ratios); and the emergencies that lift West Virginia's 16 hours in 24, which here holds until you switch "Most hours in any 24" off.
+- Some state limits stay with you: Oregon's CNA cap limits each aide's own patients; ShiftNurse checks it only when your CNAs together take every patient (Settings › Unit › State law); labor and delivery and postpartum ratios, which turn on the patient (set them as acuity-tier ratios); and the emergencies that lift West Virginia's 16 hours in 24, which here holds until you switch "Most hours in any 24" off.
 - Oregon's staffing-plan deviations: record and justify any departure from the unit's staffing plan yourself.
 - Leave accrual is projected from the last payroll figure under Settings › Leave: part-time accrual counts hours worked, not other paid hours, so re-enter payroll's figures now and then.
 - Military leave (120 hours a fiscal year), court leave and paid parental leave are leave types without entitlements of their own: check the hours available with HR.
 - FMLA leave already taken is counted at the nurse's current contract: if their FTE changed during the year, check the hours used with HR.
 - Pregnancy disability leave is counted per pregnancy through the certification you record. Without one it is counted over the last 12 months.
-- Break premiums are priced at the base rate: California pays them at the regular rate, which includes differentials, so add the difference in payroll.
-- Tour rotation limits (Settings › Rules) are checked on the grid, but Generate does not steer away from them while the rule is soft: make it hard to have Generate keep to them.
-- Most hours in any 24, long stretches of work and two days off together are checked on the grid, but Generate does not steer away from them while they are soft: make them hard to have Generate keep to them.
+- Most hours in any 24 and long stretches of work are checked on the grid, but Generate does not steer away from them while they are soft: make them hard to have Generate keep to them.
 - Leave bids and other requests are entered by the manager: nurses do not submit them in the app yet.
-- In-lieu-of holidays (federal, 5 U.S.C. § 6103(b)): when a nurse's regular day off falls on a holiday, their in-lieu day is not marked and work on it is not paid at the holiday premium here; holiday pay applies only to the calendar holiday.
-- Compensatory time earned instead of overtime pay: the app prices overtime and holds a comp-leave balance, but does not convert overtime worked into comp time earned; add earned comp time to the nurse's balance under Leave on their Roster page.
+- In-lieu-of holidays (federal, 5 U.S.C. § 6103(b)): ShiftNurse names each full-time nurse's in-lieu day when you turn it on in Settings › Unit, but does not pay work on that day at the holiday premium; holiday pay applies only to the calendar holiday.
 - California's shortened alternative-workweek day (Wage Order 5 § 3(B)(2)): when you require a 12-hour nurse to work fewer hours than scheduled, that day's overtime is past 8 hours at 1.5× and past 12 at 2×; the app prices the day by the unit's usual rules.
-- UC–CNA Art. 14 § O.1's premium of 1.5× for a work period not preceded by six hours off is not priced; the minimum-rest rule can refuse the turnaround instead.
-- UC–CNA values cite the 2022–2025 agreement; a 2025–2030 agreement was ratified on 22 November 2025 and its articles were not yet published when this was written, so check Article 14's numbers against it.
 - Patient-by-patient assignment records (22 CCR § 70217(d)) are not kept here.
 
-The state presets in Settings › Unit are a starting point, not legal advice: check them against your contract and your state's law. Presets cover California (the full Title 22 ratio table, with an option for a health-care alternative workweek of 12-hour shifts, under which no nurse may be required past 12 hours in any 24, a declared emergency past 16, and 24 hours straight earns 8 off), Oregon (the ORS 441.765 ratio table), New York, Washington, Massachusetts, Illinois, Connecticut, Minnesota, New Jersey, Maine, Pennsylvania, New Hampshire, Rhode Island, West Virginia, Alaska and Texas, each citing its statute; they switch on the ban on mandatory overtime, the limits on long stretches of work and the rest owed after one, as each law has them. The federal VA preset (Title 38) sets the § 7459 cap on required hours (40 a week, 8 consecutive, or 12 on a compressed tour), 11 hours of rest between shifts, two weekends off in four, at most two tours a schedule, five consecutive shifts, two consecutive days off in any pay period in which every weekend is worked, a 28-day posting lead, overtime offered by roster, the § 7453 night, weekend and holiday premiums and overtime bases (premiums added on basic pay, no overtime premium on holiday hours, the weekend touching Friday night, on-call at 15% and a two-hour call-back minimum), and a leave policy (Title 5 FMLA, RN annual leave at 8 hours a pay period, sick leave at 4); its contract values are read from the VA–NNU 2023 Master Agreement (Arts. 13–14), so a unit under a different local (San Francisco's is NFFE Local 1) should check them against its own agreement; ratios stay with the unit. Mark a nurse 72/80 or Baylor on the roster form (which fills their worked FTE and hours) and the preset's per-plan overtime, the Baylor cap of 24 required hours, the 10-for-9 leave charge and the premium-free Baylor tour follow; the hourly rate is annual ÷ 1,872 for a 72/80 nurse or ÷ 1,248 for a Baylor nurse.
+**Holidays on a day off.** Settings › Unit › Holidays on a day off set to the federal rule makes publishing list, for each full-time nurse whose holiday falls on her day off, the workday that is her holiday (the day before; the day after for a Sunday holiday), as an information note that never blocks publishing. Part-time, per-diem, Baylor and 72/80 nurses have none. It changes no pay.
+
+The state presets in Settings › Unit are a starting point, not legal advice: check them against your contract and your state's law. Presets cover California (the full Title 22 ratio table, with an option for a health-care alternative workweek of 12-hour shifts, under which no nurse may be required past 12 hours in any 24, a declared emergency past 16, and 24 hours straight earns 8 off), Oregon (the ORS 441.765 ratio table and, when your CNAs take every patient, the ORS 441.768 nursing-assistant caps by shift), New York, Washington, Massachusetts, Illinois, Connecticut, Minnesota, New Jersey, Maine, Pennsylvania, New Hampshire, Rhode Island, West Virginia, Alaska and Texas, each citing its statute; they switch on the ban on mandatory overtime, the limits on long stretches of work and the rest owed after one, as each law has them. The federal VA preset (Title 38) sets the § 7459 cap on required hours (40 a week, 8 consecutive, or 12 on a compressed tour), 11 hours of rest between shifts, two weekends off in four, at most two tours a schedule, five consecutive shifts, two consecutive days off in any pay period in which every weekend is worked, a 28-day posting lead, overtime offered by roster, in-lieu holidays (5 U.S.C. § 6103(b)), the § 7453 night, weekend and holiday premiums and overtime bases (premiums added on basic pay, no overtime premium on holiday hours, the weekend touching Friday night, on-call at 15% and a two-hour call-back minimum), and a leave policy (Title 5 FMLA, RN annual leave at 8 hours a pay period, sick leave at 4); its contract values are read from the VA–NNU 2023 Master Agreement (Arts. 13–14), so a unit under a different local (San Francisco's is NFFE Local 1) should check them against its own agreement; ratios stay with the unit. Mark a nurse 72/80 or Baylor on the roster form (which fills their worked FTE and hours) and the preset's per-plan overtime, the Baylor cap of 24 required hours, the 10-for-9 leave charge and the premium-free Baylor tour follow; the hourly rate is annual ÷ 1,872 for a 72/80 nurse or ÷ 1,248 for a Baylor nurse.
 
 ## Installing
 

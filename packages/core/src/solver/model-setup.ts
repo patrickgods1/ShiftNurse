@@ -13,7 +13,16 @@
 import { type DemandTable, NURSE_ROLES } from '../acuity/demand.js';
 import type { CostContext } from '../cost/types.js';
 import type { Id, Nurse, ShiftType } from '../domain/entities.js';
-import { dateInRange, datesInRange, dayNumber, type IsoDate, weekdayOf } from '../domain/time.js';
+import {
+  dateInRange,
+  datesInRange,
+  dayNumber,
+  fromDayNumber,
+  type IsoDate,
+  MINUTES_PER_HOUR,
+  type ShiftWindow,
+  weekdayOf,
+} from '../domain/time.js';
 import { computeBurden } from '../fairness/burden.js';
 import { daysAvailable } from '../fairness/exposure.js';
 import {
@@ -27,13 +36,19 @@ import {
   type ContractedHoursParams,
   type DateWindow,
   judgedPayPeriods,
+  judgedSpan,
   type MaxHoursParams,
   overtimeThreshold,
   payPeriodIndex,
+  payPeriodWindow,
+  type WindowReading,
+  type WorkWeek,
 } from '../rules/hours-rules.js';
 import { leaveHoursBetween } from '../rules/paid-leave.js';
 import type { RuleContext } from '../rules/types.js';
 import { isElsewhere } from '../schedule/elsewhere.js';
+import { realMinutesIn } from '../schedule/real-minutes.js';
+import { splitMinutes, windowDayOf } from '../schedule/window-split.js';
 import type { Shift } from './model.js';
 import type { SolveInput } from './types.js';
 
@@ -65,6 +80,9 @@ export function buildShifts(
   return shifts;
 }
 
+/** Some of a shift's worked minutes, in one work week or overtime window (by index). */
+export type HoursPart = readonly [bucket: number, minutes: number];
+
 /** Which work week, and which overtime window (a week, or an 8/80 pay period), a date is in. */
 export interface WorkCalendar {
   weekOf: (date: IsoDate) => number;
@@ -73,26 +91,87 @@ export interface WorkCalendar {
   overtimeOf: (date: IsoDate) => number;
   overtimeOfDate: number[];
   overtimeCount: number;
-  overtimeThreshold: number;
+  /** The weekly cap and the overtime threshold in whole minutes, as the counters are kept. */
+  maxWeekMinutes: number;
+  overtimeThresholdMinutes: number;
+  /**
+   * A worked window's minutes by work week and by overtime window, counted as
+   * `max-hours-per-week` counts them (`RuleContext.overtimeWindowAttribution`), windows opening at
+   * the week's start minute: without a pay attribution, whole in the window its start falls in, at
+   * `declaredHours`; by start, the same at real minutes; by the clock, split at the next window's
+   * boundary. Parts in a window this schedule does not judge (before the first, or the "after" of
+   * the last) are left out.
+   */
+  partsOf: (
+    window: ShiftWindow,
+    declaredHours: number,
+  ) => { week: HoursPart[]; overtime: HoursPart[] };
 }
 
+/**
+ * One work-week grid: `week` is a nurse's (`workWeekFor`), so a unit with a night week has two,
+ * and each nurse's counters are indexed by her own grid's weeks.
+ */
 export function workCalendar(
   input: SolveInput,
   dates: readonly IsoDate[],
   maxHours: MaxHoursParams,
+  reading: WindowReading,
+  week: WorkWeek,
 ): WorkCalendar {
-  const firstDay = dayNumber(input.period.startDate);
-  const weekStart =
-    firstDay - ((weekdayOf(input.period.startDate) - maxHours.workWeekStartsOn + 7) % 7);
+  // Windows counted from the one holding the schedule's first instant to the one holding its
+  // last, as the rule judges them (`judgedSpan`).
+  const span = judgedSpan(
+    { start: input.period.startDate, end: input.period.endDate },
+    week.startMinute,
+  );
+  const firstDay = dayNumber(span.start);
+  const weekStart = firstDay - ((weekdayOf(span.start) - week.startsOn + 7) % 7);
   const weekOf = (date: IsoDate) => Math.floor((dayNumber(date) - weekStart) / 7);
   const weekOfDate = dates.map((date) => weekOf(date));
-  const weekCount = (weekOfDate[weekOfDate.length - 1] ?? 0) + 1;
-  const firstPayPeriod = payPeriodIndex(input.period.startDate, input.unit);
+  const weekCount = weekOf(span.end) + 1;
+  const firstPayPeriod = payPeriodIndex(span.start, input.unit);
   const overtimeOf = maxHours.overtimeByPayPeriod
     ? (date: IsoDate) => payPeriodIndex(date, input.unit) - firstPayPeriod
     : weekOf;
   const overtimeOfDate = dates.map((date) => overtimeOf(date));
-  const overtimeCount = (overtimeOfDate[overtimeOfDate.length - 1] ?? 0) + 1;
+  const overtimeCount = overtimeOf(span.end) + 1;
+
+  const attribution = reading.overtimeWindowAttribution;
+  const tz = reading.dstTransitions;
+  const startMinute = week.startMinute;
+  const nextWeekStart = (date: IsoDate) => fromDayNumber(weekStart + 7 * (weekOf(date) + 1));
+  const nextPayPeriodStart = (date: IsoDate) =>
+    payPeriodWindow(payPeriodIndex(date, input.unit) + 1, input.unit).start;
+  const partsIn = (
+    bucket: number,
+    count: number,
+    next: IsoDate,
+    window: ShiftWindow,
+    declaredHours: number,
+  ): HoursPart[] => {
+    let raw: HoursPart[];
+    if (attribution === undefined) raw = [[bucket, Math.round(declaredHours * MINUTES_PER_HOUR)]];
+    else if (attribution === 'start') raw = [[bucket, realMinutesIn(window, tz)]];
+    else {
+      const [before, after] = splitMinutes({ window }, next, tz, startMinute);
+      raw = [
+        [bucket, before],
+        [bucket + 1, after],
+      ];
+    }
+    return raw.filter(([b, minutes]) => b >= 0 && b < count && minutes !== 0);
+  };
+  const partsOf = (window: ShiftWindow, declaredHours: number) => {
+    // Filed by the window-day of its start: its date, unless the week starts at a time of day.
+    const date = windowDayOf(window.startMinute, startMinute);
+    const weekly = partsIn(weekOf(date), weekCount, nextWeekStart(date), window, declaredHours);
+    const overtime = maxHours.overtimeByPayPeriod
+      ? partsIn(overtimeOf(date), overtimeCount, nextPayPeriodStart(date), window, declaredHours)
+      : weekly;
+    return { week: weekly, overtime };
+  };
+
   return {
     weekOf,
     weekOfDate,
@@ -100,7 +179,9 @@ export function workCalendar(
     overtimeOf,
     overtimeOfDate,
     overtimeCount,
-    overtimeThreshold: overtimeThreshold(maxHours),
+    maxWeekMinutes: Math.round(maxHours.maxHoursPerWeek * MINUTES_PER_HOUR),
+    overtimeThresholdMinutes: Math.round(overtimeThreshold(maxHours) * MINUTES_PER_HOUR),
+    partsOf,
   };
 }
 
@@ -120,6 +201,15 @@ export function costContextFor(
         majorHolidayDates: ctx.majorHolidayDates,
         weekendDefinition: input.ruleSet.weekendDefinition,
         workWeekStartsOn: maxHours.workWeekStartsOn,
+        ...(maxHours.workWeekStartMinute
+          ? { workWeekStartMinute: maxHours.workWeekStartMinute }
+          : {}),
+        ...(maxHours.nightWorkWeekStartsOn !== undefined
+          ? { nightWorkWeekStartsOn: maxHours.nightWorkWeekStartsOn }
+          : {}),
+        ...(maxHours.nightWorkWeekStartMinute
+          ? { nightWorkWeekStartMinute: maxHours.nightWorkWeekStartMinute }
+          : {}),
         ...(input.cost.premiumStacking ? { premiumStacking: input.cost.premiumStacking } : {}),
         ...(input.cost.holidayPayCoversOvertime !== undefined
           ? { holidayPayCoversOvertime: input.cost.holidayPayCoversOvertime }

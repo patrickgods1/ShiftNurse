@@ -13,6 +13,7 @@ import {
   type SolveInput,
   type SolveReport,
   scoreAssignments,
+  today,
 } from '@shiftnurse/core';
 import {
   type DbLike,
@@ -125,7 +126,7 @@ export function previewCandidate(
     // The grid keeps drawing the floated shifts beside the candidate's own.
     assignments: [...report.assignments, ...floated],
     validation: validateView(db, period, judged),
-    cost: costReportForView(db, period, counted),
+    cost: costReportForView(db, period, counted, today()),
     alerts: alertsForView(db, period, ruleSet, counted),
     changedKeys: diff.changes.filter((c) => c.kind !== 'removed').map((c) => candidateKey(c)),
     diff: { added: diff.added, removed: diff.removed, changed: diff.changed },

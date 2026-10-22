@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { RatioRule } from '../domain/entities.js';
-import { describeRatioChanges, protectedRatioChanges } from './ratio-changes.js';
+import { describeRatioChanges, protectedRatioChanges, ratioRuleSubject } from './ratio-changes.js';
 
 const BASE: RatioRule = {
   id: 'r1',
@@ -100,5 +100,42 @@ describe('which ratio edits need a reason', () => {
         high: 'High',
       }),
     ).toBe('Changing the licensed-nurse ratio on High (RN share 50% → none)');
+  });
+
+  describe('a ceiling that binds one tour', () => {
+    const CNA: RatioRule = { ...BASE, role: 'CNA', acuityTierId: null, maxPatientsPerNurse: 11 };
+    const NIGHT: RatioRule = { ...CNA, tour: 'night' };
+
+    it('needs a reason to move a ceiling onto night shifts only, or off them, or onto days', () => {
+      expect(protectedRatioChanges(CNA, NIGHT)).toEqual(['tour']);
+      expect(protectedRatioChanges(NIGHT, CNA)).toEqual(['tour']);
+      expect(protectedRatioChanges({ ...CNA, tour: 'day' }, NIGHT)).toEqual(['tour']);
+    });
+
+    it('lists a tour change after a tier change', () => {
+      expect(protectedRatioChanges(BASE, { ...BASE, acuityTierId: null, tour: 'night' })).toEqual([
+        'tier',
+        'tour',
+      ]);
+    });
+
+    it('says which shifts the ceiling moved between', () => {
+      expect(describeRatioChanges(CNA, NIGHT, ['tour'], {})).toBe(
+        'Changing the CNA ratio on every tier (tour every shift → night shifts)',
+      );
+      expect(describeRatioChanges(NIGHT, CNA, ['tour'], {})).toBe(
+        'Changing the CNA ratio on every tier on night shifts (tour night shifts → every shift)',
+      );
+      expect(
+        describeRatioChanges({ ...CNA, tour: 'day' }, { ...CNA, tour: 'evening' }, ['tour'], {}),
+      ).toBe(
+        'Changing the CNA ratio on every tier on day shifts (tour day shifts → evening shifts)',
+      );
+    });
+
+    it('names the tour in the rule’s subject', () => {
+      expect(ratioRuleSubject(NIGHT, {})).toBe('CNA ratio on every tier on night shifts');
+      expect(ratioRuleSubject(CNA, {})).toBe('CNA ratio on every tier');
+    });
   });
 });

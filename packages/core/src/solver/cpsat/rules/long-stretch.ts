@@ -44,6 +44,9 @@
  * the window itself on the wall clock. A chain's worked minutes are the real minutes of its parts,
  * as `workedStretches` counts them for the rule; its end, the bridge and the rest gap stay wall.
  *
+ * Call-backs from standby are merged into the timeline as constants (`withCallBacks`), as the
+ * rule merges them: they lengthen a chain, can be a follower, and are never waived or an emergency.
+ *
  * Not monotone under removal (dropping the middle of a stretch can leave a long first part
  * followed too soon by the last); `SolverModel.isLegal` re-checks every enabled nurse-scope hard
  * rule for a nurse who lost a shift, which covers this one, and CP-SAT's answers go back through
@@ -55,9 +58,21 @@ import { longStretchRule } from '../../../rules/long-stretch.js';
 import { isEmergency } from '../../../rules/mandatory-overtime.js';
 import { asParams } from '../../../rules/registry.js';
 import { restWaivedOn } from '../../../rules/rest-rules.js';
+import { type CallBackItem, isCallBackItem, withCallBacks } from '../../../schedule/call-backs.js';
 import { realMinutesIn } from '../../../schedule/real-minutes.js';
 import { expr } from '../builder.js';
 import { describe, type EncodeContext, type TimelineEntry } from '../context.js';
+
+type Entry = TimelineEntry | CallBackItem;
+
+/** A call-back is always a constant: recorded day-of, never a decision. */
+function literalOf(entry: Entry): number | null {
+  return isCallBackItem(entry) ? null : entry.literal;
+}
+
+function describeEntry(entry: Entry): string {
+  return isCallBackItem(entry) ? `call-back @${entry.window.startMinute}` : describe(entry);
+}
 
 export function encodeLongStretch(ctx: EncodeContext, raw: Record<string, unknown>): void {
   const params = asParams(longStretchRule, raw);
@@ -77,19 +92,26 @@ export function encodeLongStretch(ctx: EncodeContext, raw: Record<string, unknow
 
   for (const [n, vars] of ctx.byNurse.entries()) {
     if (vars.length === 0) continue;
-    const entries = ctx.timeline(n).filter((e) => !e.shiftType.isOnCall);
     const nurseId = ctx.model.nurses[n]!.id;
+    const entries: readonly Entry[] = withCallBacks(
+      ctx.timeline(n).filter((e) => !e.shiftType.isOnCall),
+      ctx.model.ctx.callBacksByNurse.get(nurseId) ?? [],
+    );
     const emergencies = entries.filter(
-      (e) => e.literal === null && e.assignment !== null && isEmergency(e.assignment),
+      (e) =>
+        !isCallBackItem(e) &&
+        e.literal === null &&
+        e.assignment !== null &&
+        isEmergency(e.assignment),
     );
 
     // Chains ending at `last`, grown backwards until `reached(worked)`; each is reported once.
     const grow = (
-      chain: TimelineEntry[],
+      chain: Entry[],
       end: number,
       worked: number,
       reached: (worked: number) => boolean,
-      report: (chain: TimelineEntry[], end: number) => void,
+      report: (chain: Entry[], end: number) => void,
     ) => {
       const first = chain[0]!;
       if (reached(worked)) {
@@ -113,7 +135,7 @@ export function encodeLongStretch(ctx: EncodeContext, raw: Record<string, unknow
       }
     };
 
-    const forbidChain = (chain: TimelineEntry[], end: number) => {
+    const forbidChain = (chain: Entry[], end: number) => {
       const start = chain[0]!.window.startMinute;
       if (
         params.emergencyLiftsCap &&
@@ -126,24 +148,32 @@ export function encodeLongStretch(ctx: EncodeContext, raw: Record<string, unknow
       }
       const e = expr();
       for (const entry of chain) {
-        if (entry.literal === null) e.constant += 1;
-        else e.terms.push([entry.literal, 1]);
+        const literal = literalOf(entry);
+        if (literal === null) e.constant += 1;
+        else e.terms.push([literal, 1]);
       }
       ctx.b.atMost(
         e,
         chain.length - 1,
-        `long stretch: ${ctx.name(n)} ${chain.map(describe).join(' + ')}`,
+        `long stretch: ${ctx.name(n)} ${chain.map(describeEntry).join(' + ')}`,
       );
     };
 
-    const forbidEarlyFollowers = (chain: TimelineEntry[], end: number) => {
+    const forbidEarlyFollowers = (chain: Entry[], end: number) => {
       for (const b of entries) {
         const gap = b.window.startMinute - end;
         // Within the bridge it joins the stretch: not a follower.
         if (gap <= bridge) continue;
         // Sorted by start: the gap only grows from here.
         if (gap >= restMinutes) break;
-        if (params.honorsRestWaiver && restWaivedOn(ctx.model.ctx, nurseId, b.date)) continue;
+        // A waiver is keyed on the shift that follows; a call-back is never excused.
+        if (
+          !isCallBackItem(b) &&
+          params.honorsRestWaiver &&
+          restWaivedOn(ctx.model.ctx, nurseId, b.date)
+        ) {
+          continue;
+        }
         const others = entries.filter(
           (o) =>
             !chain.includes(o) &&
@@ -151,17 +181,18 @@ export function encodeLongStretch(ctx: EncodeContext, raw: Record<string, unknow
             o.window.endMinute > end &&
             o.window.startMinute < b.window.startMinute,
         );
-        if (others.some((o) => o.literal === null)) continue;
+        if (others.some((o) => literalOf(o) === null)) continue;
         const e = expr();
         for (const entry of [...chain, b]) {
-          if (entry.literal === null) e.constant += 1;
-          else e.terms.push([entry.literal, 1]);
+          const literal = literalOf(entry);
+          if (literal === null) e.constant += 1;
+          else e.terms.push([literal, 1]);
         }
-        for (const o of others) e.terms.push([o.literal!, -1]);
+        for (const o of others) e.terms.push([literalOf(o)!, -1]);
         ctx.b.atMost(
           e,
           chain.length,
-          `rest after long stretch: ${ctx.name(n)} ${chain.map(describe).join(' + ')} → ${describe(b)} (${gap / 60}h off, ${params.restHours}h required)`,
+          `rest after long stretch: ${ctx.name(n)} ${chain.map(describeEntry).join(' + ')} → ${describeEntry(b)} (${gap / 60}h off, ${params.restHours}h required)`,
         );
       }
     };

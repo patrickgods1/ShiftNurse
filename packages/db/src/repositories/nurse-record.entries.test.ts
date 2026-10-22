@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { logCallAttempt, reportCallOff } from './calloffs.js';
 import { recordShiftCancellation } from './cancellations.js';
+import { createCompTimeElection, recordCompTimeCredits } from './comp-time.js';
 import { createShiftType, createUnit } from './config.js';
 import { applyResolution } from './conflicts.js';
 import { createDayOfPayEvent } from './day-of-pay.js';
@@ -423,6 +424,25 @@ const CASES: Record<NurseScoped, Case> = {
           ],
           ACTOR,
         ),
+      ),
+  },
+  comp_time_credit: {
+    act: (c) =>
+      transact(c.db, (tx) =>
+        recordCompTimeCredits(
+          tx,
+          c.publishedId,
+          [{ nurseId: c.ana.id, overtimeHours: 4, creditedHours: 6, paidOvertimeHours: 0 }],
+          ACTOR,
+        ),
+      ),
+  },
+  comp_time_election: {
+    act: (c) =>
+      createCompTimeElection(
+        c.db,
+        { unitId: c.unitId, nurseId: c.ana.id, startsOn: d('2026-03-02') },
+        ACTOR,
       ),
   },
   rest_waiver: {

@@ -21,6 +21,8 @@ import {
   type RatioRole,
   type RatioRule,
   ratioRuleSubject,
+  TOURS,
+  type Tour,
 } from '@shiftnurse/core';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
@@ -181,9 +183,10 @@ export function createRatioRule(
     maxPatientsPerNurse: input.maxPatientsPerNurse,
     citation: input.citation ?? null,
     minRnShare: input.minRnShare ?? null,
+    tour: input.tour ?? null,
     active: input.active,
   };
-  validateRatioRule(input.role, input.minRnShare);
+  validateRatioRule(input.role, input.minRnShare, input.tour);
   db.insert(ratioRuleTable).values(row).run();
   const after = toRatioRule(row as typeof ratioRuleTable.$inferSelect);
   recordAudit(db, { entityType: 'ratio_rule', entityId: id, action: 'create', actor, after });
@@ -198,6 +201,8 @@ export interface RatioRulePatch {
   citation?: string | null;
   /** null clears it. */
   minRnShare?: number | null;
+  /** null clears it: the rule binds every tour again. */
+  tour?: Tour | null;
   active?: boolean;
 }
 
@@ -207,11 +212,19 @@ const RATIO_RULE_PATCH_KEYS: PatchKeys<RatioRulePatch> = {
   maxPatientsPerNurse: true,
   citation: true,
   minRnShare: true,
+  tour: true,
   active: true,
 };
 
 /** An RN share belongs to a licensed rule only, and is a fraction of the licensed nurses. */
-function validateRatioRule(role: RatioRole, minRnShare: number | null | undefined): void {
+function validateRatioRule(
+  role: RatioRole,
+  minRnShare: number | null | undefined,
+  tour: Tour | null | undefined,
+): void {
+  if (tour !== null && tour !== undefined && !TOURS.includes(tour)) {
+    throw new Error("A ratio's tour must be day, evening or night");
+  }
   if (minRnShare === null || minRnShare === undefined) return;
   if (role !== 'licensed') {
     throw new Error('Only a licensed-nurse ratio can require a share of RNs');
@@ -223,15 +236,17 @@ function validateRatioRule(role: RatioRole, minRnShare: number | null | undefine
 
 /** The rule as it would read after `values`: a `null` clears an optional field. */
 function ratioRuleAfter(before: RatioRule, values: Partial<RatioRulePatch>): RatioRule {
-  const { citation, minRnShare, ...rest } = values;
-  const { citation: oldCitation, minRnShare: oldShare, ...kept } = before;
+  const { citation, minRnShare, tour, ...rest } = values;
+  const { citation: oldCitation, minRnShare: oldShare, tour: oldTour, ...kept } = before;
   const nextCitation = citation === undefined ? oldCitation : (citation ?? undefined);
   const nextShare = minRnShare === undefined ? oldShare : (minRnShare ?? undefined);
+  const nextTour = tour === undefined ? oldTour : (tour ?? undefined);
   return {
     ...kept,
     ...rest,
     ...(nextCitation === undefined ? {} : { citation: nextCitation }),
     ...(nextShare === undefined ? {} : { minRnShare: nextShare }),
+    ...(nextTour === undefined ? {} : { tour: nextTour }),
   };
 }
 
@@ -240,7 +255,7 @@ function tierNamesFor(db: DbLike, unitId: Id): Record<Id, string> {
 }
 
 /**
- * A raised ceiling, a lowered RN share, a moved role or tier, a rewritten citation or a
+ * A raised ceiling, a lowered RN share, a moved role, tier or shift (`tour`), a rewritten citation or a
  * deactivation needs `reason`; it is refused, in words, before anything is written.
  */
 export function updateRatioRule(
@@ -267,6 +282,7 @@ export function updateRatioRule(
       validateRatioRule(
         values.role ?? before.role,
         values.minRnShare === undefined ? before.minRnShare : values.minRnShare,
+        values.tour === undefined ? before.tour : values.tour,
       );
       const after = ratioRuleAfter(before, values);
       const changes = protectedRatioChanges(before, after);

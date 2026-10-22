@@ -44,9 +44,15 @@ export function ruleContextForInput(
     ...(input.preceptorships ? { preceptorships: input.preceptorships } : {}),
     ...(input.restWaivers ? { restWaivers: input.restWaivers } : {}),
     ...(input.availabilityBlocks ? { availabilityBlocks: input.availabilityBlocks } : {}),
+    ...(input.callBacks ? { callBacks: input.callBacks } : {}),
     ...(input.historyFrom ? { historyFrom: input.historyFrom } : {}),
     ...(input.dstTransitions ? { dstTransitions: input.dstTransitions } : {}),
     ...(input.memberships ? { memberships: input.memberships } : {}),
+    // Only with pay settings loaded, defaulting as pay does: a fixture without them keeps the
+    // start-week reading, and a unit's weekly cap counts the hours its payroll counts (21 Q1).
+    ...(input.cost
+      ? { overtimeWindowAttribution: input.cost.overtimeWindowAttribution ?? 'clock' }
+      : {}),
     preferences: input.preferences,
   });
 }

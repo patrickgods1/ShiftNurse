@@ -1602,6 +1602,7 @@ describe('a rule set with an unusable setting', () => {
       minRestHours: 10,
       minRestHoursAfterNight: null,
       onCallCountsAsWork: false,
+      callBackCountsForRest: false,
     });
   });
 });

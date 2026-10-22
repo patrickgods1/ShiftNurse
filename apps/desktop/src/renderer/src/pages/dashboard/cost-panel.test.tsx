@@ -6,7 +6,7 @@
 
 import type { PeriodCostReport } from '@shared/api.js';
 import type { Nurse, SchedulePeriod } from '@shiftnurse/core';
-import { cleanup, fireEvent, screen } from '@testing-library/react';
+import { cleanup, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type FakeBridge, installFakeBridge } from '../../test/fake-bridge.js';
 import { renderWithApp } from '../../test/render.js';
@@ -145,5 +145,72 @@ describe('the budget on the cost card', () => {
     renderWithApp(<CostPanel period={period} nurses={undefined} />);
     expect(await screen.findByLabelText('Loading name')).toBeTruthy();
     expect(document.body.textContent).not.toContain('n-ana');
+  });
+});
+
+describe('comp time on the cost card', () => {
+  const withCompTime = (compTime: PeriodCostReport['compTime']): PeriodCostReport => ({
+    ...report({ lines: [], total: 0, unpriced: 0 }),
+    compTime,
+  });
+
+  it('says how much overtime was banked and offers no second banking', async () => {
+    bridge.respond(
+      'cost',
+      'report',
+      withCompTime({
+        credits: [
+          { nurseId: 'n-ana', overtimeHours: 4.5, creditedHours: 3, paidOvertimeHours: 2.5 },
+        ],
+        bankedOvertimeHours: 2,
+        canBank: false,
+      }),
+    );
+    renderWithApp(<CostPanel period={period} nurses={[ana]} />);
+    expect((await screen.findByTestId('comp-time-banked')).textContent).toBe(
+      '2 overtime hours banked as comp time',
+    );
+    expect(screen.queryByRole('button', { name: 'Bank comp time' })).toBeNull();
+  });
+
+  it('banks a finished schedule only after the manager confirms', async () => {
+    bridge.respond(
+      'cost',
+      'report',
+      withCompTime({ credits: [], bankedOvertimeHours: 0, canBank: true }),
+    );
+    bridge.respond('cost', 'bankCompTime', []);
+    renderWithApp(<CostPanel period={period} nurses={[ana]} />);
+    expect((await screen.findByTestId('comp-time-banked')).textContent).toBe(
+      '0 overtime hours banked as comp time',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Bank comp time' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog.textContent).toContain('Bank comp time for nurses who elected it?');
+    expect(dialog.textContent).toContain(
+      "This cannot be undone; a wrong figure is corrected by entering payroll's comp balance.",
+    );
+    expect(bridge.callsTo('cost', 'bankCompTime')).toEqual([]);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Bank comp time' }));
+    await vi.waitFor(() => expect(bridge.callsTo('cost', 'bankCompTime')).toEqual([['p-1']]));
+  });
+
+  it('shows hours to two decimals with the zeros trimmed', async () => {
+    bridge.respond(
+      'cost',
+      'report',
+      withCompTime({ credits: [], bankedOvertimeHours: 4.256, canBank: false }),
+    );
+    renderWithApp(<CostPanel period={period} nurses={[ana]} />);
+    expect((await screen.findByTestId('comp-time-banked')).textContent).toBe(
+      '4.26 overtime hours banked as comp time',
+    );
+  });
+
+  it('says nothing about comp time where it is off', async () => {
+    bridge.respond('cost', 'report', report({ lines: [], total: 0, unpriced: 0 }));
+    renderWithApp(<CostPanel period={period} nurses={[ana]} />);
+    await screen.findByTestId('cost-total');
+    expect(screen.queryByTestId('comp-time-banked')).toBeNull();
   });
 });

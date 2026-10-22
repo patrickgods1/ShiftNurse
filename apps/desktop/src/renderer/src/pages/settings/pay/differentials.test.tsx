@@ -150,6 +150,125 @@ describe('clock-time differentials in Settings › Pay', () => {
       ).toBeTruthy();
       expect(bridge.callsTo('cost', 'createDifferential')).toEqual([]);
     });
+
+    it('saves the 2025–2030 tiers for runs of 8s, 10s and 12s', async () => {
+      await choosePremium();
+      fireEvent.change(screen.getByLabelText('Full shift (hours)'), { target: { value: '8' } });
+      fireEvent.change(screen.getByLabelText('More than (full shifts)'), {
+        target: { value: '6' },
+      });
+      fireEvent.change(screen.getByLabelText('Within (days)'), { target: { value: '6' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Add a tier' }));
+      fireEvent.change(screen.getByLabelText('Tier 2: Full shift (hours)'), {
+        target: { value: '10' },
+      });
+      fireEvent.change(screen.getByLabelText('Tier 2: More than (full shifts)'), {
+        target: { value: '5' },
+      });
+      fireEvent.change(screen.getByLabelText('Tier 2: Within (days)'), { target: { value: '5' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Add a tier' }));
+      fireEvent.change(screen.getByLabelText('Tier 3: Full shift (hours)'), {
+        target: { value: '12' },
+      });
+      fireEvent.change(screen.getByLabelText('Tier 3: More than (full shifts)'), {
+        target: { value: '4' },
+      });
+      fireEvent.change(screen.getByLabelText('Tier 3: Within (days)'), { target: { value: '4' } });
+      // Three is the most a premium holds.
+      expect(screen.queryByRole('button', { name: 'Add a tier' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Add differential' }));
+      await waitFor(() =>
+        expect(bridge.callsTo('cost', 'createDifferential')).toEqual([
+          [
+            {
+              unitId: 'u-1',
+              kind: 'consecutive_shift',
+              mode: 'multiplier',
+              amount: 1.5,
+              active: true,
+              consecutive: {
+                afterShifts: 4,
+                withinDays: 4,
+                tiers: [
+                  { fullShiftHours: 8, afterShifts: 6, withinDays: 6 },
+                  { fullShiftHours: 10, afterShifts: 5, withinDays: 5 },
+                  { fullShiftHours: 12, afterShifts: 4, withinDays: 4 },
+                ],
+              },
+            },
+          ],
+        ]),
+      );
+    });
+
+    it('will not save two tiers for the same shift length', async () => {
+      await choosePremium();
+      fireEvent.change(screen.getByLabelText('More than (full shifts)'), {
+        target: { value: '4' },
+      });
+      fireEvent.change(screen.getByLabelText('Within (days)'), { target: { value: '4' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Add a tier' }));
+      fireEvent.change(screen.getByLabelText('Tier 2: Full shift (hours)'), {
+        target: { value: '12' },
+      });
+      fireEvent.change(screen.getByLabelText('Tier 2: More than (full shifts)'), {
+        target: { value: '3' },
+      });
+      fireEvent.change(screen.getByLabelText('Tier 2: Within (days)'), { target: { value: '3' } });
+      fireEvent.submit(screen.getByRole('button', { name: 'Add differential' }).closest('form')!);
+      expect(await screen.findByText('Each tier needs its own full-shift hours')).toBeTruthy();
+      expect(bridge.callsTo('cost', 'createDifferential')).toEqual([]);
+    });
+  });
+
+  describe('the UC short-rest premium', () => {
+    async function choosePremium() {
+      await openForm();
+      fireEvent.change(screen.getByTestId('differential-kind'), {
+        target: { value: 'short_rest' },
+      });
+      fireEvent.change(screen.getByLabelText('Mode'), { target: { value: 'multiplier' } });
+      fireEvent.change(screen.getByTestId('differential-amount'), { target: { value: '1.5' } });
+    }
+
+    it('saves time and a half on the whole shift after less than six hours off', async () => {
+      await choosePremium();
+      fireEvent.change(screen.getByLabelText('Less than (hours off)'), { target: { value: '6' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Add differential' }));
+      await waitFor(() =>
+        expect(bridge.callsTo('cost', 'createDifferential')).toEqual([
+          [
+            {
+              unitId: 'u-1',
+              kind: 'short_rest',
+              mode: 'multiplier',
+              amount: 1.5,
+              active: true,
+              shortRest: { minHoursOff: 6, scope: 'whole_shift' },
+            },
+          ],
+        ]),
+      );
+    });
+
+    it('saves a premium on only the hours before twelve hours off would have ended', async () => {
+      await choosePremium();
+      fireEvent.change(screen.getByLabelText('Less than (hours off)'), { target: { value: '12' } });
+      fireEvent.change(screen.getByLabelText('Paid on'), { target: { value: 'within_window' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Add differential' }));
+      await waitFor(() =>
+        expect(bridge.callsTo('cost', 'createDifferential')[0]?.[0]).toMatchObject({
+          shortRest: { minHoursOff: 12, scope: 'within_window' },
+        }),
+      );
+    });
+
+    it('will not save the premium without its hours off', async () => {
+      await choosePremium();
+      fireEvent.submit(screen.getByRole('button', { name: 'Add differential' }).closest('form')!);
+      expect(await screen.findByText('Enter the hours off the contract asks for')).toBeTruthy();
+      expect(bridge.callsTo('cost', 'createDifferential')).toEqual([]);
+    });
   });
 
   describe('editing a saved differential', () => {

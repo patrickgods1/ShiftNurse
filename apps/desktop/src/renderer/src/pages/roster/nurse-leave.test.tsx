@@ -4,7 +4,12 @@
  * button leads to exactly the payload that would cross IPC.
  */
 
-import type { FmlaCertificationRecord, LeaveBalanceRecord } from '@shared/api.js';
+import type {
+  CompTimeElectionRecord,
+  FmlaCertificationRecord,
+  LeaveBalanceRecord,
+  PaySettings,
+} from '@shared/api.js';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { useConfirmDiscard } from '../../components/unsaved-changes.js';
@@ -28,6 +33,15 @@ const cert: FmlaCertificationRecord = {
   note: 'Certified by Dr. Lee',
 };
 
+const election: CompTimeElectionRecord = {
+  id: 'ce-1',
+  unitId: 'u-1',
+  nurseId: 'n-1',
+  startsOn: '2026-10-01' as CompTimeElectionRecord['startsOn'],
+  note: 'Signed 12 Dec',
+};
+const settingsWith = (compTime: PaySettings['compTime']) => ({ compTime }) as PaySettings;
+
 let bridge: FakeBridge;
 beforeEach(() => {
   bridge = installFakeBridge();
@@ -36,6 +50,10 @@ beforeEach(() => {
   bridge.respond('leaveBalances', 'addCertification', cert);
   bridge.respond('leaveBalances', 'updateCertification', cert);
   bridge.respond('leaveBalances', 'removeCertification', undefined);
+  bridge.respond('cost', 'paySettings', settingsWith(null));
+  bridge.respond('leaveBalances', 'compElections', [election]);
+  bridge.respond('leaveBalances', 'addCompElection', election);
+  bridge.respond('leaveBalances', 'removeCompElection', undefined);
 });
 afterEach(() => {
   cleanup();
@@ -44,7 +62,7 @@ afterEach(() => {
 
 describe('a nurse’s leave on the roster', () => {
   it('enters an annual leave balance, a type only some employers use', async () => {
-    renderWithApp(<LeaveSection nurseId="n-1" />);
+    renderWithApp(<LeaveSection nurseId="n-1" unitId="u-1" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add Annual leave balance' }));
     fireEvent.change(await screen.findByLabelText('Annual leave balance (hours)'), {
       target: { value: '100' },
@@ -61,14 +79,14 @@ describe('a nurse’s leave on the roster', () => {
   });
 
   it('shows the balance payroll gave and the certification on file', async () => {
-    renderWithApp(<LeaveSection nurseId="n-1" />);
+    renderWithApp(<LeaveSection nurseId="n-1" unitId="u-1" />);
     expect((await screen.findByLabelText('PTO balance (hours)')) as HTMLInputElement).toBeTruthy();
     expect((screen.getByLabelText('PTO balance (hours)') as HTMLInputElement).value).toBe('40');
     expect(screen.getByText('Certified by Dr. Lee')).toBeTruthy();
   });
 
   it('saves a new PTO balance with the date it was true on', async () => {
-    renderWithApp(<LeaveSection nurseId="n-1" />);
+    renderWithApp(<LeaveSection nurseId="n-1" unitId="u-1" />);
     fireEvent.change(await screen.findByLabelText('PTO balance (hours)'), {
       target: { value: '28' },
     });
@@ -84,7 +102,7 @@ describe('a nurse’s leave on the roster', () => {
   });
 
   it('enters a first sick balance', async () => {
-    renderWithApp(<LeaveSection nurseId="n-1" />);
+    renderWithApp(<LeaveSection nurseId="n-1" unitId="u-1" />);
     expect(screen.queryByLabelText('Sick balance (hours)')).toBeNull();
     fireEvent.click(await screen.findByRole('button', { name: 'Add Sick balance' }));
     fireEvent.change(await screen.findByLabelText('Sick balance (hours)'), {
@@ -112,7 +130,7 @@ describe('a nurse’s leave on the roster', () => {
       balances: [pto],
       certifications: [cert, second],
     });
-    renderWithApp(<LeaveSection nurseId="n-1" />);
+    renderWithApp(<LeaveSection nurseId="n-1" unitId="u-1" />);
     expect(
       await screen.findByRole('button', { name: 'Edit certification Oct 1, 2026 to Mar 31, 2027' }),
     ).toBeTruthy();
@@ -122,7 +140,7 @@ describe('a nurse’s leave on the roster', () => {
   });
 
   it('adds a certification that allows intermittent leave', async () => {
-    renderWithApp(<LeaveSection nurseId="n-1" />);
+    renderWithApp(<LeaveSection nurseId="n-1" unitId="u-1" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add certification' }));
     fireEvent.change(screen.getByLabelText('Certified from'), { target: { value: '2027-04-01' } });
     fireEvent.change(screen.getByLabelText('Certified through'), {
@@ -145,7 +163,7 @@ describe('a nurse’s leave on the roster', () => {
   });
 
   it('clears a certification’s note with null when it is edited away', async () => {
-    renderWithApp(<LeaveSection nurseId="n-1" />);
+    renderWithApp(<LeaveSection nurseId="n-1" unitId="u-1" />);
     fireEvent.click(
       await screen.findByRole('button', { name: 'Edit certification Oct 1, 2026 to Mar 31, 2027' }),
     );
@@ -162,7 +180,7 @@ describe('a nurse’s leave on the roster', () => {
   });
 
   it('removes a certification only after the manager confirms', async () => {
-    renderWithApp(<LeaveSection nurseId="n-1" />);
+    renderWithApp(<LeaveSection nurseId="n-1" unitId="u-1" />);
     fireEvent.click(
       await screen.findByRole('button', {
         name: 'Remove certification Oct 1, 2026 to Mar 31, 2027',
@@ -184,7 +202,7 @@ describe('a nurse’s leave on the roster', () => {
     renderWithApp(
       <>
         <Probe />
-        <LeaveSection nurseId="n-1" />
+        <LeaveSection nurseId="n-1" unitId="u-1" />
       </>,
     );
     // Nothing typed yet: leaving asks nothing.
@@ -206,5 +224,84 @@ describe('a nurse’s leave on the roster', () => {
     await screen.findByText('Discard unsaved changes to FMLA certification and PTO balance?');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(await both).toBe(false);
+  });
+});
+
+describe('a nurse’s comp-time elections on the roster', () => {
+  it('shows nothing about comp time on a unit that does not give it', async () => {
+    renderWithApp(<LeaveSection nurseId="n-1" unitId="u-1" />);
+    await screen.findByLabelText('PTO balance (hours)');
+    await waitFor(() => expect(bridge.callsTo('cost', 'paySettings')).toHaveLength(1));
+    expect(screen.queryByText('Comp time instead of overtime')).toBeNull();
+    expect(bridge.callsTo('leaveBalances', 'compElections')).toEqual([]);
+  });
+
+  describe('on a unit that gives comp time', () => {
+    beforeEach(() => {
+      bridge.respond(
+        'cost',
+        'paySettings',
+        settingsWith({ hoursPerOvertimeHour: 1.5, capHours: 240 }),
+      );
+    });
+
+    it('lists an open-ended election with its note and the hint', async () => {
+      renderWithApp(<LeaveSection nurseId="n-1" unitId="u-1" />);
+      expect(await screen.findByText('Comp time instead of overtime')).toBeTruthy();
+      expect(await screen.findByText('from Oct 1, 2026, open-ended')).toBeTruthy();
+      expect(screen.getByText('Signed 12 Dec')).toBeTruthy();
+      expect(
+        screen.getByText(/29 U\.S\.C\. § 207\(o\) needs the agreement before the work/),
+      ).toBeTruthy();
+    });
+
+    it('adds an election for the unit being shown', async () => {
+      renderWithApp(<LeaveSection nurseId="n-1" unitId="u-1" />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Add election' }));
+      fireEvent.change(screen.getByLabelText('Agreed from'), { target: { value: '2026-11-01' } });
+      fireEvent.change(screen.getByLabelText('Agreed through (blank: open-ended)'), {
+        target: { value: '2027-01-31' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save election' }));
+      await waitFor(() =>
+        expect(bridge.callsTo('leaveBalances', 'addCompElection')).toEqual([
+          [{ unitId: 'u-1', nurseId: 'n-1', startsOn: '2026-11-01', endsOn: '2027-01-31' }],
+        ]),
+      );
+    });
+
+    it('reopens the end when the through date is cleared on edit', async () => {
+      bridge.respond('leaveBalances', 'compElections', [
+        { ...election, endsOn: '2026-12-31' as never },
+      ]);
+      bridge.respond('leaveBalances', 'updateCompElection', election);
+      renderWithApp(<LeaveSection nurseId="n-1" unitId="u-1" />);
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Edit election Oct 1, 2026 to Dec 31, 2026' }),
+      );
+      fireEvent.change(screen.getByLabelText('Agreed through (blank: open-ended)'), {
+        target: { value: '' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save election' }));
+      await waitFor(() =>
+        expect(bridge.callsTo('leaveBalances', 'updateCompElection')).toEqual([
+          ['ce-1', { startsOn: '2026-10-01', endsOn: null, note: 'Signed 12 Dec' }],
+        ]),
+      );
+    });
+
+    it('removes an election only after the manager confirms', async () => {
+      renderWithApp(<LeaveSection nurseId="n-1" unitId="u-1" />);
+      fireEvent.click(
+        await screen.findByRole('button', {
+          name: 'Remove election from Oct 1, 2026, open-ended',
+        }),
+      );
+      expect(bridge.callsTo('leaveBalances', 'removeCompElection')).toEqual([]);
+      fireEvent.click(await screen.findByTestId('confirm-accept'));
+      await waitFor(() =>
+        expect(bridge.callsTo('leaveBalances', 'removeCompElection')).toEqual([['ce-1']]),
+      );
+    });
   });
 });

@@ -190,10 +190,9 @@ export function importHistory(
         };
       });
       const schedule = new ScheduleView({ period, assignments, nurses, shiftTypes });
-      // Only nurses who appear in this period's file: a nurse absent from a period may not
-      // have been on the unit yet, and a zero row would read as "worked no nights" rather
-      // than "no record".
-      entries.push(...periodLedgerRows(schedule, ctx));
+      // Only nurses who appear in this period's file: there is no reliable roster for a period
+      // that predates the app, and a nurse missing from it may not have been hired yet.
+      entries.push(...periodLedgerRows(schedule, ctx, { includeAvailableHomeNurses: false }));
     }
     const result = importHistoricalLedger(tx, unitId, entries, ACTOR);
     return {

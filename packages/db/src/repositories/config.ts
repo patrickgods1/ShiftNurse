@@ -18,6 +18,7 @@ import type {
   Holiday,
   HolidayAttribution,
   Id,
+  InLieuHolidays,
   IsoDate,
   JurisdictionChoices,
   JurisdictionId,
@@ -130,6 +131,8 @@ export interface UnitPatch {
   overtimeOrder?: OvertimeOrder | null;
   /** Null returns holiday dating to the day a shift starts. */
   holidayAttribution?: HolidayAttribution | null;
+  /** Null reads 'none': a holiday on a day off stays where it falls. */
+  inLieuHolidays?: InLieuHolidays | null;
   /** Null stops checking per-diem commitments. */
   perDiemCommitment?: PerDiemCommitment | null;
   /** Null: a reason is enough for a change to a posted schedule. */
@@ -152,6 +155,7 @@ const UNIT_PATCH_KEYS: PatchKeys<UnitPatch> = {
   leavePolicy: true,
   overtimeOrder: true,
   holidayAttribution: true,
+  inLieuHolidays: true,
   perDiemCommitment: true,
   requireConsentForPostedChanges: true,
   minWeekendsOffPerYear: true,
@@ -211,6 +215,12 @@ export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string):
         throw new Error(
           'Choose how a shift that crosses midnight counts toward a holiday: by the day it starts, by its hours on the holiday, or by the day holding most of it.',
         );
+      if (
+        values.inLieuHolidays != null &&
+        values.inLieuHolidays !== 'none' &&
+        values.inLieuHolidays !== 'federal'
+      )
+        throw new Error('In-lieu holidays must be “none” or “federal”.');
       if (values.leavePolicy) validateLeavePolicy(values.leavePolicy);
       if (
         values.jurisdiction !== undefined &&

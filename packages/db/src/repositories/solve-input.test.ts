@@ -8,6 +8,7 @@
 
 import {
   addDays,
+  dayNumber,
   defaultRuleSet,
   isoDate,
   type SchedulePeriod,
@@ -16,6 +17,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
+import { dayOfPayEvent } from '../schema.js';
 import { seedScenarioUnit } from '../seed/scenarios.js';
 import type { SeedResult } from '../seed/types.js';
 import { createRatioRule, listActiveRatioRulesForUnit, updateRatioRule } from './acuity.js';
@@ -28,6 +30,7 @@ import {
   listShiftTypesForUnit,
   updateUnit,
 } from './config.js';
+import { createDayOfPayEvent } from './day-of-pay.js';
 import { createIncompatibilityGroup } from './incompatibility.js';
 import { createNurseUnit } from './nurse-units.js';
 import { createOvertimeVolunteer } from './overtime-volunteers.js';
@@ -256,6 +259,9 @@ describe('the pay a period is costed under', () => {
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 2,
         overtimeWindowAttribution: 'clock',
+        paySpringForwardAsScheduled: false,
+        breakPremiumRate: 'base',
+        compTime: null,
       },
       ACTOR,
     );
@@ -273,6 +279,9 @@ describe('the pay a period is costed under', () => {
         holidayPayCoversOvertime: true,
         reportingPayNoticeHours: 2,
         overtimeWindowAttribution: 'start',
+        paySpringForwardAsScheduled: false,
+        breakPremiumRate: 'base',
+        compTime: null,
       },
       ACTOR,
     );
@@ -285,6 +294,30 @@ describe('the pay a period is costed under', () => {
     expect(costContext(handle.db, unitId, defaultRuleSet(unitId)).overtimeWindowAttribution).toBe(
       'start',
     );
+  });
+
+  it('prices the spring night as scheduled and breaks at the regular rate once the unit says so', () => {
+    const unitId = seeded.unitId;
+    const ruleSet = defaultRuleSet(unitId);
+    expect(costContext(handle.db, unitId, ruleSet)).toMatchObject({
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
+    });
+    savePaySettings(
+      handle.db,
+      unitId,
+      {
+        ...getPaySettings(handle.db, unitId),
+        paySpringForwardAsScheduled: true,
+        breakPremiumRate: 'regular',
+        compTime: null,
+      },
+      ACTOR,
+    );
+    expect(costContext(handle.db, unitId, ruleSet)).toMatchObject({
+      paySpringForwardAsScheduled: true,
+      breakPremiumRate: 'regular',
+    });
   });
 
   // Skipped off the pinned zone (phase 1's sentinel): the clock change is a host fact.
@@ -876,7 +909,38 @@ describe('nurses who work on two units', () => {
       },
       ACTOR,
     );
-    return { fran, period };
+    // On call on 5 West the second night, from 19:00; called in at 21:00 for three hours.
+    const standby = createShiftType(
+      handle.db,
+      {
+        unitId: west.id,
+        name: 'On call',
+        abbreviation: 'OC',
+        startTime: '19:00',
+        durationHours: 12,
+        isNight: false,
+        isOnCall: true,
+        color: '#000',
+        sortOrder: 2,
+        active: true,
+      },
+      ACTOR,
+    );
+    const calledIn = addDays(period.startDate, 1);
+    createDayOfPayEvent(
+      handle.db,
+      {
+        kind: 'call_back',
+        unitId: west.id,
+        nurseId: fran.id,
+        date: calledIn,
+        shiftTypeId: standby.id,
+        startMinute: 120,
+        hoursWorked: 3,
+      },
+      ACTOR,
+    );
+    return { fran, period, west, standby, calledIn };
   }
 
   it('brings everything a floated-in nurse carries: credentials, preferences, leave, sick pay, waivers, accommodations and her own pay rate', () => {
@@ -894,6 +958,52 @@ describe('nurses who work on two units', () => {
     expect(hers(input.cost!.payRates)).toHaveLength(1);
     expect(hers(input.cost!.payRates)[0]).toMatchObject({ hourlyRate: 77 });
     expect(input.preceptorships!.filter((p) => p.orienteeId === fran.id)).toHaveLength(1);
+    expect(hers(input.callBacks)).toHaveLength(1);
+  });
+
+  it('places a timed call-back where it was worked and leaves out one with no time or no hours', () => {
+    const { fran, period, west, standby, calledIn } = franCarriesEverything();
+    // Recorded before call-backs had a time: pay-only, so it cannot be put on the clock.
+    handle.db
+      .insert(dayOfPayEvent)
+      .values({
+        id: 'dope-old',
+        unitId: west.id,
+        nurseId: fran.id,
+        kind: 'call_back',
+        date: addDays(period.startDate, 3),
+        shiftTypeId: standby.id,
+        hoursWorked: 2,
+        startMinute: null,
+        enteredBy: 'manager',
+        createdAt: Date.now(),
+      })
+      .run();
+    // Timed, but of no hours: it covers no time on the clock.
+    handle.db
+      .insert(dayOfPayEvent)
+      .values({
+        id: 'dope-zero',
+        unitId: west.id,
+        nurseId: fran.id,
+        kind: 'call_back',
+        date: addDays(period.startDate, 5),
+        shiftTypeId: standby.id,
+        hoursWorked: 0,
+        startMinute: 60,
+        enteredBy: 'manager',
+        createdAt: Date.now(),
+      })
+      .run();
+    const hers = loadPeriodInput(handle.db, period).callBacks!.filter((c) => c.nurseId === fran.id);
+    // Standby from 19:00 on the second day, in at 21:00 (120 minutes), out at midnight.
+    const midnight = dayNumber(calledIn) * 1440;
+    expect(hers).toEqual([
+      {
+        nurseId: fran.id,
+        window: { startMinute: midnight + 21 * 60, endMinute: midnight + 24 * 60 },
+      },
+    ]);
   });
 
   it('classifies every field of the solve input as the person’s, the unit’s or the roster’s', () => {
@@ -933,6 +1043,7 @@ describe('nurses who work on two units', () => {
       restWaivers: 'person',
       availabilityBlocks: 'person',
       memberships: 'roster',
+      callBacks: 'person',
       preferences: 'person',
       ledgerHistory: 'unit',
       cost: 'person',

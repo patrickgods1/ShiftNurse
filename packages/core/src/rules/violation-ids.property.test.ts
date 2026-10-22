@@ -63,6 +63,9 @@ const MUST_SEE: readonly ViolationCode[] = [
   'excess_weekends',
   'works_during_approved_time_off',
   'short_recovery_after_nights',
+  'split_weekend',
+  'short_work_run',
+  'too_much_on_call',
 ];
 
 beforeEach(() => resetFixtureCounters());
@@ -92,6 +95,9 @@ const RULE_PARAMS: Record<string, Record<string, unknown>> = {
   },
   'weekend-pattern': { maxConsecutiveWeekends: 2 },
   'days-off-together': {},
+  'complete-weekends': {},
+  'short-work-runs': { minConsecutiveDays: 3 },
+  'on-call-limit': { maxOnCallPerWeek: 1, maxOnCallPerPeriod: 3, maxConsecutiveOnCallDays: 1 },
 };
 
 const VOLUNTEER: OvertimeVolunteer = {

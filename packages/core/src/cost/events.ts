@@ -17,10 +17,12 @@
  * - **Call-back**: the hours worked, or the contract's minimum if more, at the call-back
  *   differential (a multiplier on base, or dollars added to it); base pay with none configured.
  *
- * The rate is the nurse's base rate. California measures the break premium at the "regular
- * rate", which includes non-discretionary pay such as differentials (Ferra v. Loews Hollywood
- * Hotel, 2021); a unit paying large differentials will see this undercount, and README › What
- * ShiftNurse does not enforce yet says so. A nurse with no rate is counted as unpriced, never $0.
+ * The rate is the nurse's base rate, except a break premium under `breakPremiumRate: 'regular'`:
+ * California measures it at the "regular rate", which includes non-discretionary pay such as
+ * differentials (Lab. Code § 226.7; Ferra v. Loews Hollywood Hotel (2021) 11 Cal.5th 858), so it
+ * takes the rate from the schedule's cost: the caller's `regularRateFor` reads the
+ * `AssignmentCost.regularRate` of her shift dated that day (the window its start lies in). A day
+ * with no shift of hers in the cost falls back to the base rate rather than to nothing. A nurse with no rate is counted as unpriced, never $0.
  * A nurse the caller did not pass is an error, never "unpriced"; main passes every nurse an
  * event names. Every line is rounded to the cent and the total adds cents (`money.ts`).
  */
@@ -39,6 +41,10 @@ export type DayOfPayEvent =
 export interface DayOfPayPolicy {
   /** The fewest hours a call-back pays, from the contract. 0 pays the hours worked. */
   callBackMinimumHours: number;
+  /** What a missed meal or rest break is paid at. Absent: `'base'`. */
+  breakPremiumRate?: 'base' | 'regular';
+  /** The regular rate of the window holding `date`, when the schedule's cost has one. */
+  regularRateFor?: (nurseId: Id, date: IsoDate) => number | undefined;
 }
 
 export interface DayOfPayLine {
@@ -106,13 +112,17 @@ export function priceDayOfEvents(
         const key = `${event.nurseId}|${event.date}|${event.break}`;
         if (seenBreaks.has(key)) break;
         seenBreaks.add(key);
+        const rate =
+          policy.breakPremiumRate === 'regular'
+            ? (policy.regularRateFor?.(event.nurseId, event.date) ?? base)
+            : base;
         lines.push({
           nurseId: event.nurseId,
           date: event.date,
           kind: event.break === 'meal' ? 'missed_meal' : 'missed_rest',
           hours: 1,
-          rate: base,
-          amount: base,
+          rate,
+          amount: roundCents(rate),
           note: `Missed ${event.break} break on ${on}`,
         });
         break;
