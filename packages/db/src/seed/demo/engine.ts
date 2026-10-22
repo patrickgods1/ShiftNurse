@@ -89,6 +89,7 @@ import {
   shiftWindow,
   suggestedPaidLeaveHours,
   today,
+  tourOf,
   usFederalHolidays,
   type Weekday,
   type WeekendDefinition,
@@ -1956,7 +1957,10 @@ export function seedFromProfile(
           const r = role as NurseRole;
           // Scheduled to the forecast (which the period is judged by), and up again when the day
           // turned out busier.
-          const bedside = Math.max(0, ...mixes.map((m) => nursesRequiredForMix(m, r, ratioRules)));
+          const bedside = Math.max(
+            0,
+            ...mixes.map((m) => nursesRequiredForMix(m, r, ratioRules, tourOf(shift))),
+          );
           // A charge nurse kept free of patients is not one of the nurses the ratio counts, so a
           // standalone shift needs one more RN (as `deriveDemand` reads it). Break relief is not
           // modelled: the CA preset's hour of breaks, covered by that charge nurse, needs none up

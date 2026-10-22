@@ -653,10 +653,11 @@ export type AcuityTierInput = Omit<AcuityTier, 'id'>;
 export type AcuityTierPatch = Partial<Omit<AcuityTier, 'id' | 'unitId'>>;
 export type RatioRuleInput = Omit<RatioRule, 'id'>;
 export type RatioRulePatch = Partial<
-  Omit<RatioRule, 'id' | 'unitId' | 'citation' | 'minRnShare'>
+  Omit<RatioRule, 'id' | 'unitId' | 'citation' | 'minRnShare' | 'tour'>
 > & {
   citation?: string | null;
   minRnShare?: number | null;
+  tour?: Tour | null;
 };
 
 export interface CensusForecastInput {

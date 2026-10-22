@@ -12,7 +12,7 @@
  * words the editor shows before Save, and the two cannot drift.
  */
 
-import type { Id, RatioRole, RatioRule } from '../domain/entities.js';
+import type { Id, RatioRole, RatioRule, Tour } from '../domain/entities.js';
 
 /** One kind of protected edit; `protectedRatioChanges` lists them in this order, each once. */
 export type RatioChange =
@@ -20,6 +20,7 @@ export type RatioChange =
   | 'rn-share-lowered'
   | 'role'
   | 'tier'
+  | 'tour'
   | 're-cited'
   | 'deactivated';
 
@@ -28,9 +29,9 @@ function hasCitation(rule: RatioRule): rule is RatioRule & { citation: string } 
 }
 
 /**
- * The edits from `before` to `after` that loosen, move or retire the ceiling. A role or tier
- * change is protected in both directions: it moves the ceiling onto different staff or patients,
- * and judging whether that is looser would need the unit's whole rule table.
+ * The edits from `before` to `after` that loosen, move or retire the ceiling. A role, tier or tour
+ * change is protected in both directions: it moves the ceiling onto different staff, patients or
+ * shifts, and judging whether that is looser would need the unit's whole rule table.
  */
 export function protectedRatioChanges(before: RatioRule, after: RatioRule): RatioChange[] {
   const changes: RatioChange[] = [];
@@ -43,6 +44,7 @@ export function protectedRatioChanges(before: RatioRule, after: RatioRule): Rati
   }
   if (after.role !== before.role) changes.push('role');
   if (after.acuityTierId !== before.acuityTierId) changes.push('tier');
+  if (after.tour !== before.tour) changes.push('tour');
   if (hasCitation(before) && after.citation !== before.citation) changes.push('re-cited');
   if (before.active && !after.active) changes.push('deactivated');
   return changes;
@@ -65,12 +67,17 @@ function tierLabel(tierId: Id | null, tierNames: Readonly<Record<Id, string>>): 
   return tierNames[tierId] ?? 'an unknown tier';
 }
 
+function tourLabel(tour: Tour | undefined): string {
+  return tour === undefined ? 'every shift' : `${tour} shifts`;
+}
+
 /**
- * "RN ratio on High", "licensed-nurse ratio on every tier": how a refusal names a ratio rule,
+ * "RN ratio on High", "CNA ratio on every tier on night shifts": how a refusal names a ratio rule,
  * shared with the repository's deactivation refusal so both read the same.
  */
 export function ratioRuleSubject(rule: RatioRule, tierNames: Readonly<Record<Id, string>>): string {
-  return `${ratioRoleLabel(rule.role)} ratio on ${tierLabel(rule.acuityTierId, tierNames)}`;
+  const subject = `${ratioRoleLabel(rule.role)} ratio on ${tierLabel(rule.acuityTierId, tierNames)}`;
+  return rule.tour === undefined ? subject : `${subject} on ${tourLabel(rule.tour)}`;
 }
 
 function pct(share: number): string {
@@ -110,6 +117,9 @@ export function describeRatioChanges(
         parts.push(
           `tier ${tierLabel(before.acuityTierId, tierNames)} → ${tierLabel(after.acuityTierId, tierNames)}`,
         );
+        break;
+      case 'tour':
+        parts.push(`tour ${tourLabel(before.tour)} → ${tourLabel(after.tour)}`);
         break;
       case 're-cited':
         parts.push(hasCitation(after) ? 'citation changed' : 'citation removed');

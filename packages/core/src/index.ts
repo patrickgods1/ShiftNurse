@@ -455,6 +455,7 @@ export type {
   PlannedHoliday,
   PresetCondition,
   PresetDifferential,
+  PresetExtraRatio,
   PresetOvertimeRule,
   ProtectedRuleChange,
   SetupMode,

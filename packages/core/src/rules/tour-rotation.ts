@@ -42,8 +42,8 @@ import {
   describeDate,
   type IsoDate,
   minutesToHours,
-  parseTimeOfDay,
   restMinutesBetween,
+  tourOf,
 } from '../domain/time.js';
 import { yearsOfService } from '../leave/accrual.js';
 import { latestEndingBefore } from '../schedule/preceding.js';
@@ -116,13 +116,9 @@ export function effectiveTourLimits(
       };
 }
 
-/** Day starts 04:00–11:59, evening 12:00–17:59, night 18:00–03:59, by local start time. */
-export function tourOf(shiftType: Pick<ShiftType, 'startTime'>): Tour {
-  const start = parseTimeOfDay(shiftType.startTime);
-  if (start >= 4 * 60 && start < 12 * 60) return 'day';
-  if (start >= 12 * 60 && start < 18 * 60) return 'evening';
-  return 'night';
-}
+// The one tour classifier lives in `domain/` (ratio demand reads it too); re-exported for the
+// rule's existing importers.
+export { tourOf } from '../domain/time.js';
 
 /**
  * The one night test for rest after a night, the night cap and recovery after nights. A night is

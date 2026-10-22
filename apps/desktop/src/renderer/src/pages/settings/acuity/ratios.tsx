@@ -6,7 +6,7 @@
  * test), so the manager is asked up front rather than shown a refusal.
  */
 
-import type { AcuityTier, RatioRole, RatioRule } from '@shiftnurse/core';
+import type { AcuityTier, RatioRole, RatioRule, Tour } from '@shiftnurse/core';
 import { describeRatioChanges, NURSE_ROLES, protectedRatioChanges } from '@shiftnurse/core';
 import { useState } from 'react';
 import type { RatioRuleInput, RatioRulePatch } from '../../../../../shared/api.js';
@@ -21,6 +21,9 @@ import { INPUT, PRIMARY, SECONDARY } from '../../../components/ui.js';
 import { ReasonDialog } from '../../requests/reason-dialog.js';
 
 const ALL_TIERS_VALUE = '__all__';
+const EVERY_SHIFT_VALUE = '__every__';
+
+const TOUR_LABELS: Record<Tour, string> = { day: 'Day', evening: 'Evening', night: 'Night' };
 
 interface RatioFormState {
   role: RatioRole;
@@ -29,6 +32,8 @@ interface RatioFormState {
   citation: string;
   /** For a licensed rule: the least share of RNs, in percent; '' for none. */
   rnSharePercent: string;
+  /** A tour, or EVERY_SHIFT_VALUE for a rule that binds every shift. */
+  tour: string;
 }
 
 /** A licensed rule counts RNs and LVNs together; every other role counts itself. */
@@ -43,6 +48,7 @@ function emptyRatioForm(): RatioFormState {
     maxPatientsPerNurse: '',
     citation: '',
     rnSharePercent: '',
+    tour: EVERY_SHIFT_VALUE,
   };
 }
 
@@ -54,6 +60,7 @@ function ratioToFormState(rule: RatioRule): RatioFormState {
     citation: rule.citation ?? '',
     // Rounding to a whole percent would turn a stored 0.333 into 33 and save 0.33 back.
     rnSharePercent: rule.minRnShare === undefined ? '' : sharePercentText(rule.minRnShare),
+    tour: rule.tour ?? EVERY_SHIFT_VALUE,
   };
 }
 
@@ -66,6 +73,10 @@ function sharePercentText(share: number): string {
 function rnShareOf(form: RatioFormState): number | undefined {
   if (form.role !== 'licensed' || form.rnSharePercent.trim() === '') return undefined;
   return Number(form.rnSharePercent) / 100;
+}
+
+function tourOfForm(form: RatioFormState): Tour | null {
+  return form.tour === EVERY_SHIFT_VALUE ? null : (form.tour as Tour);
 }
 
 function diffRatioPatch(original: RatioRule, form: RatioFormState): RatioRulePatch {
@@ -89,12 +100,15 @@ function diffRatioPatch(original: RatioRule, form: RatioFormState): RatioRulePat
     const share = rnShareOf(form);
     if (share !== original.minRnShare) patch.minRnShare = share ?? null;
   }
+  if (form.tour !== (original.tour ?? EVERY_SHIFT_VALUE)) {
+    patch.tour = tourOfForm(form);
+  }
   return patch;
 }
 
 /** The rule as the patch would leave it, for core to judge and word before anything is sent. */
 function applyRatioPatch(original: RatioRule, patch: RatioRulePatch): RatioRule {
-  const { citation, minRnShare, ...rest } = patch;
+  const { citation, minRnShare, tour, ...rest } = patch;
   const merged: RatioRule = { ...original, ...rest };
   if (citation !== undefined) {
     if (citation === null) delete merged.citation;
@@ -103,6 +117,10 @@ function applyRatioPatch(original: RatioRule, patch: RatioRulePatch): RatioRule 
   if (minRnShare !== undefined) {
     if (minRnShare === null) delete merged.minRnShare;
     else merged.minRnShare = minRnShare;
+  }
+  if (tour !== undefined) {
+    if (tour === null) delete merged.tour;
+    else merged.tour = tour;
   }
   return merged;
 }
@@ -197,6 +215,30 @@ function RatioForm({
           {sortedTiers.map((tier) => (
             <option key={tier.id} value={tier.id}>
               {tier.name}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field
+        id="ratio-tour"
+        label="Shift"
+        hint="Read from the shift's start time: day 04:00–11:59, evening 12:00–17:59, night otherwise."
+        tip={
+          "For a limit that differs by shift, such as Oregon's 7 patients per nursing assistant " +
+          'by day and 11 at night (ORS 441.768).'
+        }
+      >
+        <select
+          id="ratio-tour"
+          value={form.tour}
+          aria-describedby={describedBy('ratio-tour', { hint: true })}
+          onChange={(event) => setForm({ ...form, tour: event.target.value })}
+          className={INPUT}
+        >
+          <option value={EVERY_SHIFT_VALUE}>Every shift</option>
+          {(Object.keys(TOUR_LABELS) as Tour[]).map((tour) => (
+            <option key={tour} value={tour}>
+              {TOUR_LABELS[tour]}
             </option>
           ))}
         </select>
@@ -325,6 +367,7 @@ export function RatioRulesSection({
       maxPatientsPerNurse: Number(form.maxPatientsPerNurse),
       citation: form.citation === '' ? undefined : form.citation,
       ...(rnShareOf(form) !== undefined ? { minRnShare: rnShareOf(form)! } : {}),
+      ...(form.tour !== EVERY_SHIFT_VALUE ? { tour: form.tour as Tour } : {}),
       active: true,
     };
     createMutation.mutate(input, { onSuccess: () => setCreating(false) });
@@ -391,6 +434,9 @@ export function RatioRulesSection({
                 Tier
               </th>
               <th scope="col" className="px-3 py-2 font-medium">
+                Shift
+              </th>
+              <th scope="col" className="px-3 py-2 font-medium">
                 Max patients / nurse
               </th>
               <th scope="col" className="px-3 py-2 font-medium">
@@ -407,7 +453,7 @@ export function RatioRulesSection({
           <tbody>
             {visibleRules.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-text-muted">
+                <td colSpan={7} className="px-3 py-6 text-center text-text-muted">
                   No ratio rules yet.
                 </td>
               </tr>
@@ -429,6 +475,9 @@ export function RatioRulesSection({
                     {rule.acuityTierId !== null
                       ? (tierById.get(rule.acuityTierId)?.name ?? 'Unknown tier')
                       : 'All tiers'}
+                  </td>
+                  <td className="px-3 py-2 text-text">
+                    {rule.tour !== undefined ? TOUR_LABELS[rule.tour] : 'Every shift'}
                   </td>
                   <td className="px-3 py-2 text-text">{rule.maxPatientsPerNurse}</td>
                   <td className="px-3 py-2 text-text">{rule.citation ?? '—'}</td>

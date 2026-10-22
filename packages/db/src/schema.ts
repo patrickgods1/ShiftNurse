@@ -681,6 +681,8 @@ export const ratioRule = sqliteTable(
     citation: text('citation'),
     /** For a 'licensed' rule: the least share of RNs among the licensed nurses (0–1). */
     minRnShare: real('min_rn_share'),
+    /** Null applies the rule to every tour (read by start time, `tourOf`). */
+    tour: text('tour').$type<Tour>(),
     active: bool('active').notNull().default(true),
   },
   (t) => [index('ratio_rule_unit_idx').on(t.unitId, t.active)],

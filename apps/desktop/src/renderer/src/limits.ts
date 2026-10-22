@@ -5,7 +5,7 @@
  */
 
 export const NOT_ENFORCED: readonly string[] = [
-  'Some state limits stay with you: Oregon’s cap of 7 patients per nursing assistant on day and evening shifts and 11 at night (ORS 441.768); labor and delivery and postpartum ratios, which turn on the patient (set them as acuity-tier ratios); and the emergencies that lift West Virginia’s 16 hours in 24, which here holds until you switch “Most hours in any 24” off.',
+  'Some state limits stay with you: Oregon’s CNA cap limits each aide’s own patients; ShiftNurse checks it only when your CNAs together take every patient (Settings › Unit › State law); labor and delivery and postpartum ratios, which turn on the patient (set them as acuity-tier ratios); and the emergencies that lift West Virginia’s 16 hours in 24, which here holds until you switch “Most hours in any 24” off.',
   'Oregon’s staffing-plan deviations: record and justify any departure from the unit’s staffing plan yourself.',
   'Leave accrual is projected from the last payroll figure under Settings › Leave: part-time accrual counts hours worked, not other paid hours, so re-enter payroll’s figures now and then.',
   'Military leave (120 hours a fiscal year), court leave and paid parental leave are leave types without entitlements of their own: check the hours available with HR.',

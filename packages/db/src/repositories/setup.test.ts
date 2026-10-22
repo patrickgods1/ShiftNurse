@@ -384,6 +384,25 @@ describe('applying a state preset', () => {
     expect(getPaySettings(handle.db, unit.id).breakPremiumRate).toBe('regular');
   });
 
+  it('stores Oregon’s aide caps by shift when CNAs take every patient, and nothing on a second Apply', () => {
+    const unit = newUnit();
+    const apply = () =>
+      transact(handle.db, (tx) =>
+        applyJurisdiction(tx, unit.id, 'OR', ACTOR, { cnasCoverEveryPatient: true }),
+      );
+    apply();
+    const cnas = listActiveRatioRulesForUnit(handle.db, unit.id)
+      .filter((r) => r.role === 'CNA')
+      .map((r) => `${r.tour} 1:${r.maxPatientsPerNurse}`)
+      .sort();
+    expect(cnas).toEqual(['day 1:7', 'evening 1:7', 'night 1:11']);
+
+    const before = auditRows();
+    apply();
+    expect(listActiveRatioRulesForUnit(handle.db, unit.id)).toHaveLength(4);
+    expect(auditRows()).toBe(before);
+  });
+
   it('gives a VA unit its Title 5 leave policy once, and leaves it alone on a second Apply', () => {
     const unit = newUnit();
     expect(getUnit(handle.db, unit.id)?.leavePolicy).toBeUndefined();

@@ -49,9 +49,9 @@
  * catch-all at the strictest figure would overstate the law for every other patient.
  *
  * Not legal advice, and not complete: a unit's contract usually goes further, and some of each
- * law (Oregon's staffing-plan deviations, its CNA limits, emergency-only exceptions) is stated in
- * the summary rather than enforced. (The VA's 24-hour cap for the § 7456 Baylor plan is enforced:
- * `no-mandatory-overtime`'s `baylorMaxMandatedWeeklyHours`, § 7459(a), for nurses marked Baylor.)
+ * law (Oregon's staffing-plan deviations, its CNA limits on a unit where some patients have no
+ * aide, emergency-only exceptions) is stated in the summary rather than enforced. (The VA's
+ * 24-hour cap for the § 7456 Baylor plan is enforced: `no-mandatory-overtime`'s `baylorMaxMandatedWeeklyHours`, § 7459(a), for nurses marked Baylor.)
  */
 
 import { DEFAULT_PAY_SETTINGS, type PaySettings } from '../cost/types.js';
@@ -70,7 +70,12 @@ import {
   type ScheduleKind,
   type Unit,
 } from '../domain/entities.js';
-import { DEFAULT_WEEKEND, MINUTES_PER_DAY, type WeekendDefinition } from '../domain/time.js';
+import {
+  DEFAULT_WEEKEND,
+  MINUTES_PER_DAY,
+  type Tour,
+  type WeekendDefinition,
+} from '../domain/time.js';
 import { ALL_RULES, getRule, resolveConfigs } from '../rules/registry.js';
 import type { ParamDoc, RuleConfig, RuleSet } from '../rules/types.js';
 import { type AcuityPresetId, acuityPresetForUnitType } from './presets.js';
@@ -146,6 +151,20 @@ export interface PresetCondition {
   is: boolean;
 }
 
+/**
+ * A ceiling the law sets whatever the unit kind, bound to one tour: Oregon's cap on an aide's
+ * patients (ORS 441.768) is hospital-wide. Planned as a catch-all rule (`acuityTierId: null`) even
+ * for a unit type `unitKindForUnitType` does not recognise.
+ */
+export interface PresetExtraRatio {
+  role: NurseRole;
+  maxPatientsPerNurse: number;
+  tour: Tour;
+  citation: string;
+  /** Planned only when the manager's answer meets this; absent, always. */
+  when?: PresetCondition;
+}
+
 export type PresetOvertimeRule = Pick<OvertimeRule, 'basis' | 'thresholdHours' | 'multiplier'> &
   Partial<Pick<OvertimeRule, 'pyramiding' | 'minimumMinutes' | 'scheduleKinds' | 'tourDays'>> & {
     when?: PresetCondition;
@@ -168,6 +187,8 @@ export interface JurisdictionPreset {
   ratioStaffing?: RatioStaffing;
   /** Ceilings by the unit kinds the law names; other unit types get none. */
   ratios: Partial<Record<JurisdictionUnitKind, JurisdictionRatio>>;
+  /** Tour-bound ceilings for every unit, whatever its kind: see {@link PresetExtraRatio}. */
+  extraRatios?: readonly PresetExtraRatio[];
   overtimeRules: readonly PresetOvertimeRule[];
   /** Rule ids switched on (with these parameters, if any): see {@link PresetRule}. */
   enableRules: readonly PresetRule[];
@@ -218,6 +239,7 @@ export interface PresetRule {
 
 const TITLE_22 = 'Cal. Code Regs. tit. 22 § 70217(a)';
 const ORS_441_765 = 'ORS 441.765 (HB 2697, 2023)';
+const ORS_441_768 = 'ORS 441.768 (HB 2697 § 8)';
 
 function rn(maxPatientsPerNurse: number, citation: string): JurisdictionRatio {
   return { role: 'RN', maxPatientsPerNurse, citation };
@@ -236,6 +258,11 @@ const COMPRESSED_TOUR = 'compressedTour';
 const ON_COMPRESSED: PresetCondition = { option: COMPRESSED_TOUR, is: true };
 const OFF_COMPRESSED: PresetCondition = { option: COMPRESSED_TOUR, is: false };
 const TITLE_38_PAY = '38 U.S.C. § 7453';
+
+// ORS 441.768 caps one aide's assignment; it does not require aides, so it is a ratio only where
+// the aides between them take every patient, which the unit's data cannot say.
+const CNAS_COVER_EVERY_PATIENT = 'cnasCoverEveryPatient';
+const ON_CNAS_COVER: PresetCondition = { option: CNAS_COVER_EVERY_PATIENT, is: true };
 
 /** Whether a `when` holds under the manager's answers; an unanswered option reads as no. */
 function conditionMet(when: PresetCondition | undefined, choices: JurisdictionChoices): boolean {
@@ -401,8 +428,10 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'no patients on a unit of 11 beds or more without the staffing committee’s approval ' +
       '(§ 441.765(8)): a unit of 10 or fewer should tick that back on under Settings › Unit. A ' +
       'certified nursing assistant may have no more than 7 patients on a day or evening shift ' +
-      'and 11 at night (ORS 441.768); that limits one aide’s assignment rather than requiring ' +
-      'aides, so it is not set as a ratio. No mandatory overtime (ORS 441.770): a hospital may ' +
+      'and 11 at night (ORS 441.768); that limits each aide’s own assignment and does not ' +
+      'require aides. Answered yes, it is set as CNA ratios by tour (7 day and evening, 11 ' +
+      'night), because the CNAs between them take every patient; answered no, it is not ' +
+      'checked. No mandatory overtime (ORS 441.770): a hospital may ' +
       'not require work beyond the agreed shift, past 48 hours in its work week or 12 in 24, or ' +
       'in the 10 hours after the 12th; all four limit required hours only, which the ban ' +
       'already refuses. Record an emergency, or the one extra hour § 441.770(4) allows when the ' +
@@ -430,6 +459,42 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       pacu: rn(2, `${ORS_441_765}(2)(h): post-anesthesia care 1:2`),
       pediatrics: rn(4, `${ORS_441_765}(2)(L): pediatric 1:4`),
     },
+    options: [
+      {
+        id: CNAS_COVER_EVERY_PATIENT,
+        label: 'Do the CNAs on this unit together take every patient?',
+        hint:
+          'ORS 441.768 caps each aide’s own assignment at 7 patients on a day or evening shift ' +
+          'and 11 at night; the app can hold the unit to it only when the aides between them ' +
+          'take every patient, so answer no if some patients have no aide.',
+      },
+    ],
+    // HB 2697 § 8: "A hospital may not assign a certified nursing assistant to more than seven
+    // patients at a time during a day or evening shift or to more than 11 patients at a time
+    // during a night shift."
+    extraRatios: [
+      {
+        role: 'CNA',
+        maxPatientsPerNurse: 7,
+        tour: 'day',
+        citation: ORS_441_768,
+        when: ON_CNAS_COVER,
+      },
+      {
+        role: 'CNA',
+        maxPatientsPerNurse: 7,
+        tour: 'evening',
+        citation: ORS_441_768,
+        when: ON_CNAS_COVER,
+      },
+      {
+        role: 'CNA',
+        maxPatientsPerNurse: 11,
+        tour: 'night',
+        citation: ORS_441_768,
+        when: ON_CNAS_COVER,
+      },
+    ],
     overtimeRules: [],
     enableRules: [NO_MANDATORY_OVERTIME],
   },
@@ -1037,7 +1102,10 @@ export interface JurisdictionPlanInput {
 
 /** The changes a preset makes, each list empty and each field absent when there is nothing to do. */
 export interface JurisdictionPlan {
-  /** Catch-all RN rules at the legal ceiling, for a unit without one as strict. */
+  /**
+   * Catch-all rules at the legal ceiling, for a unit without one for the same role and tour: the
+   * unit kind's RN ceiling (no tour) and the preset's tour-bound extras.
+   */
   addRatioRules: Omit<RatioRule, 'id' | 'unitId'>[];
   /** Catch-all rules looser than the ceiling, lowered to it. */
   tightenRatioRules: { id: string; maxPatientsPerNurse: number }[];
@@ -1113,26 +1181,37 @@ export function planPreset(
   const applies = (when: PresetCondition | undefined) => conditionMet(when, choices);
   const enableRules = preset.enableRules.filter((r) => applies(r.when));
 
-  const kind = unitKindForUnitType(current.unitType);
-  const ceiling = kind === undefined ? undefined : preset.ratios[kind];
-  if (ceiling) {
+  // Matched on role, catch-all and tour: a night-only RN rule is not the unit's RN ceiling, and a
+  // CNA rule for every tour does not stand in for the night CNA cap. A looser match is lowered;
+  // no match means the ceiling is added.
+  const planCeiling = (role: NurseRole, max: number, citation: string, tour?: Tour) => {
     const catchAll = current.ratioRules.filter(
-      (r) => r.active && r.role === ceiling.role && r.acuityTierId === null,
+      (r) => r.active && r.role === role && r.acuityTierId === null && r.tour === tour,
     );
     for (const r of catchAll) {
-      if (r.maxPatientsPerNurse > ceiling.maxPatientsPerNurse) {
-        plan.tightenRatioRules.push({ id: r.id, maxPatientsPerNurse: ceiling.maxPatientsPerNurse });
+      if (r.maxPatientsPerNurse > max) {
+        plan.tightenRatioRules.push({ id: r.id, maxPatientsPerNurse: max });
       }
     }
     if (catchAll.length === 0) {
       plan.addRatioRules.push({
-        role: ceiling.role,
+        role,
         acuityTierId: null,
-        maxPatientsPerNurse: ceiling.maxPatientsPerNurse,
-        citation: ceiling.citation,
+        maxPatientsPerNurse: max,
+        citation,
+        ...(tour === undefined ? {} : { tour }),
         active: true,
       });
     }
+  };
+
+  const kind = unitKindForUnitType(current.unitType);
+  const ceiling = kind === undefined ? undefined : preset.ratios[kind];
+  if (ceiling) planCeiling(ceiling.role, ceiling.maxPatientsPerNurse, ceiling.citation);
+  // Whatever the unit kind, recognised or not: the law sets these hospital-wide.
+  for (const extra of preset.extraRatios ?? []) {
+    if (!applies(extra.when)) continue;
+    planCeiling(extra.role, extra.maxPatientsPerNurse, extra.citation, extra.tour);
   }
 
   for (const { when, ...rule } of preset.overtimeRules) {

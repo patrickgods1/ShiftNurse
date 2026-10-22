@@ -1404,3 +1404,94 @@ describe('comp time in the state presets', () => {
     }
   });
 });
+
+describe('Oregon’s cap on a nursing assistant’s patients (ORS 441.768)', () => {
+  const YES: JurisdictionChoices = { cnasCoverEveryPatient: true };
+  const cna = (id: string, max: number, tour?: RatioRule['tour']): RatioRule => ({
+    ...ratio(id, max),
+    role: 'CNA',
+    ...(tour ? { tour } : {}),
+  });
+  const summarise = (rules: readonly Omit<RatioRule, 'id' | 'unitId'>[]) =>
+    rules.map((r) => `${r.role} ${r.tour ?? 'every'} 1:${r.maxPatientsPerNurse}`);
+
+  it('caps aides at 7 by day and evening and 11 at night where they take every patient', () => {
+    const plan = planJurisdiction('OR', input(), YES);
+    // The med-surg RN 1:4 first, then the aide caps by tour: 7, 7, 11.
+    expect(summarise(plan.addRatioRules)).toEqual([
+      'RN every 1:4',
+      'CNA day 1:7',
+      'CNA evening 1:7',
+      'CNA night 1:11',
+    ]);
+    for (const r of plan.addRatioRules.slice(1)) {
+      expect(r).toMatchObject({ acuityTierId: null, active: true });
+      expect(r.citation).toBe('ORS 441.768 (HB 2697 § 8)');
+    }
+    expect(JURISDICTION_PRESETS.OR.options?.map((o) => o.id)).toEqual(['cnasCoverEveryPatient']);
+  });
+
+  it('sets no aide cap where some patients have no aide, or the question is unanswered', () => {
+    for (const choices of [{ cnasCoverEveryPatient: false }, {}] as JurisdictionChoices[]) {
+      const plan = planJurisdiction('OR', input(), choices);
+      expect(summarise(plan.addRatioRules)).toEqual(['RN every 1:4']);
+    }
+  });
+
+  it('plans no ratio the second time, with the same answer', () => {
+    const first = planJurisdiction('OR', input(), YES);
+    const second = planJurisdiction(
+      'OR',
+      input({
+        ratioRules: first.addRatioRules.map((r, i) => ({ ...r, id: `r${i}`, unitId: UNIT })),
+      }),
+      YES,
+    );
+    expect(second.addRatioRules).toEqual([]);
+    expect(second.tightenRatioRules).toEqual([]);
+  });
+
+  it('lowers a night aide cap of 12 to 11, and adds the day and evening caps beside it', () => {
+    const plan = planJurisdiction('OR', input({ ratioRules: [cna('cna-n', 12, 'night')] }), YES);
+    expect(plan.tightenRatioRules).toEqual([{ id: 'cna-n', maxPatientsPerNurse: 11 }]);
+    expect(summarise(plan.addRatioRules)).toEqual([
+      'RN every 1:4',
+      'CNA day 1:7',
+      'CNA evening 1:7',
+    ]);
+  });
+
+  it('does not take an aide cap for every shift as the night cap, nor tighten it', () => {
+    // A unit-wide 1:12 for aides is not Oregon's night 1:11, and is not a day rule to lower to 7.
+    const plan = planJurisdiction('OR', input({ ratioRules: [cna('cna-all', 12)] }), YES);
+    expect(plan.tightenRatioRules).toEqual([]);
+    expect(summarise(plan.addRatioRules)).toEqual([
+      'RN every 1:4',
+      'CNA day 1:7',
+      'CNA evening 1:7',
+      'CNA night 1:11',
+    ]);
+  });
+
+  it('does not read a night-only RN 1:6 as the unit’s RN ceiling', () => {
+    const nightRn: RatioRule = { ...ratio('rn-n', 6), tour: 'night' };
+    const plan = planJurisdiction('OR', input({ ratioRules: [nightRn] }));
+    expect(plan.tightenRatioRules).toEqual([]);
+    expect(summarise(plan.addRatioRules)).toEqual(['RN every 1:4']);
+  });
+
+  it('caps aides on a unit whose type no ratio table names, since the cap is hospital-wide', () => {
+    const plan = planJurisdiction('OR', input({ unitType: 'Wound care' }), YES);
+    expect(summarise(plan.addRatioRules)).toEqual([
+      'CNA day 1:7',
+      'CNA evening 1:7',
+      'CNA night 1:11',
+    ]);
+  });
+
+  it('says in the summary that the cap limits each aide and is set only on a yes', () => {
+    const summary = JURISDICTION_PRESETS.OR.summary;
+    expect(summary).toContain('ORS 441.768');
+    expect(summary).not.toContain('so it is not set as a ratio');
+  });
+});

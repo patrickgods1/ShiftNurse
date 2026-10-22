@@ -60,6 +60,33 @@ describe('a licensed-nurse ratio in Settings', () => {
   });
 });
 
+describe('a ratio bound to one shift in Settings', () => {
+  it('sends the chosen shift, and nothing for every shift', async () => {
+    renderWithApp(<RatioRulesSection unitId="unit-1" tiers={[]} rules={[]} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Add ratio rule' }));
+    fireEvent.change(field('ratio-max'), { target: { value: '11' } });
+    fireEvent.change(field('ratio-tour'), { target: { value: 'night' } });
+    const create = screen.getByRole('button', { name: 'Create' }) as HTMLButtonElement;
+    fireEvent.submit(create.form!);
+    await waitFor(() => expect(bridge.callsTo('acuity', 'createRatioRule')).toHaveLength(1));
+    expect(bridge.callsTo('acuity', 'createRatioRule')[0]![0]).toMatchObject({ tour: 'night' });
+  });
+
+  it('shows the shift in the list', async () => {
+    const rule: RatioRule = {
+      id: 'r-1',
+      unitId: 'unit-1',
+      role: 'CNA',
+      acuityTierId: null,
+      maxPatientsPerNurse: 11,
+      tour: 'night',
+      active: true,
+    };
+    renderWithApp(<RatioRulesSection unitId="unit-1" tiers={[]} rules={[rule]} />);
+    expect((await screen.findAllByText('Night')).length).toBeGreaterThan(0);
+  });
+});
+
 describe('a ratio rule in Settings', () => {
   it('makes one ratio rule when Create is double-clicked', async () => {
     let release: (value: RatioRule) => void = () => {};
@@ -189,6 +216,26 @@ describe('changing a ratio ceiling', () => {
       'r1',
       { maxPatientsPerNurse: 6 },
       'MOU 2026-3',
+    ]);
+  });
+
+  it('asks why before binding a saved ceiling to the night shift, and sends the reason', async () => {
+    bridge.respond('acuity', 'updateRatioRule', (() => ({})) as never);
+    renderWithApp(<RatioRulesSection unitId="unit-1" tiers={tiers} rules={[rule]} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    fireEvent.change(field('ratio-tour'), { target: { value: 'night' } });
+    fireEvent.submit((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).form!);
+    expect(await screen.findByText('Why change this ratio?')).toBeTruthy();
+    expect(bridge.callsTo('acuity', 'updateRatioRule')).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: 'ORS 441.768' } });
+    fireEvent.submit(
+      (screen.getByRole('button', { name: 'Save change' }) as HTMLButtonElement).form!,
+    );
+    await waitFor(() => expect(bridge.callsTo('acuity', 'updateRatioRule')).toHaveLength(1));
+    expect(bridge.callsTo('acuity', 'updateRatioRule')[0]).toEqual([
+      'r1',
+      { tour: 'night' },
+      'ORS 441.768',
     ]);
   });
 

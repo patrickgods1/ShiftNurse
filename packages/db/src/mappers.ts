@@ -363,6 +363,7 @@ export function toRatioRule(r: typeof s.ratioRule.$inferSelect): RatioRule {
     maxPatientsPerNurse: r.maxPatientsPerNurse,
     ...optKey('citation', r.citation),
     ...optKey('minRnShare', r.minRnShare),
+    ...optKey('tour', r.tour),
     active: r.active,
   };
 }

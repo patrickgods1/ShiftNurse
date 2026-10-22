@@ -227,6 +227,11 @@
   `deleteAcuityTier` refuses before writing, since the rule FK cascades and demand would drop to zero.
 - **Mixed acuity is pooled (D11).** `nursesRequiredForMix` sums fractional loads and rounds once;
   the per-assignment reading can need more and is not applied.
+- **A ratio may bind one tour (`RatioRule.tour`, ORS 441.768).** A rule with a tour applies only
+  to shifts whose `tourOf` matches (by start time, never `isNight`); absent, every tour.
+  `bindingRatio` and `nursesRequiredForMix` take the shift's tour, and `deriveDemand` passes it, the
+  licensed pool and its RN share included. Changing a rule's tour is protected in both directions
+  (`RatioChange` `'tour'`), like its tier.
 - **HPPD and acuity care hours are advisory.** `ShiftDemand.careHoursRecommendedNurses` (care hours
   ÷ shift length) and `hppdRecommendedNurses` show on the Demand page; `acuity/hppd.ts`'s
   `scheduledHppd` compares a period's scheduled hours per patient day with the target on the Demand
@@ -422,7 +427,12 @@
   on. A preset's `options` are yes/no questions asked at apply time (California's alternative
   workweek, the VA's compressed tour); a rule or overtime rule with `when` applies only when the
   answer meets it; `applyJurisdiction` stores the yes answers on the unit (`Unit.jurisdictionChoices`,
-  migration 0033). Differentials are added only for a kind the
+  migration 0033). A preset's `extraRatios` are tour-bound catch-all ceilings planned whatever
+  the unit kind, a type `unitKindForUnitType` does not know included; "already present" matches
+  role, catch-all and tour, for them and for the kind's RN ceiling (no tour). Oregon's
+  `cnasCoverEveryPatient`, answered yes, adds the ORS 441.768 aide caps (7 day and evening, 11
+  night): the law caps one aide's assignment, so it is a ratio only where the aides take every
+  patient. Differentials are added only for a kind the
   unit pays nothing for, `postingLeadDays` only rises and `overtimeOrder` is set only when unset,
   and an existing overtime rule is never retrofitted with the preset's pyramiding or minimum.
   A preset overtime rule may carry `scheduleKinds` and `tourDays` (the VA's 72/80 and Baylor
@@ -514,7 +524,8 @@
   reason, `recordAuditStrict`) lets `min-rest-between-shifts` pass a short rest only when the shift
   *after* it starts on the waiver's date; `restWaivedOn` is shared by the rule and `encodeRest`,
   which must skip the pair too or CP-SAT would forbid a waived turnaround the rule allows (VA–NNU Art. 13 §2).
-- **Tours are named by when a shift starts.** `rules/tour-rotation.ts`'s `tourOf`: 04:00–11:59 day,
+- **Tours are named by when a shift starts.** `domain/time.ts`'s `tourOf` (re-exported by
+  `rules/tour-rotation.ts`, and read by ratio demand): 04:00–11:59 day,
   12:00–17:59 evening, otherwise night — never `isNight`, a pay flag a Title 38 evening tour also
   carries. `isNightTour` is the night test for min-rest's after-night rest, the night cap (which
   counts runs of night dates wherever they sit, `nightRuns`; a day beside them neither resets nor

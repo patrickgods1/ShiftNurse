@@ -33,7 +33,7 @@ import type {
   RatioStaffing,
   ShiftType,
 } from '../domain/entities.js';
-import { type IsoDate, type Weekday, weekdayOf } from '../domain/time.js';
+import { type IsoDate, type Tour, tourOf, type Weekday, weekdayOf } from '../domain/time.js';
 
 export type { RatioStaffing };
 
@@ -160,21 +160,30 @@ function key(date: IsoDate, shiftTypeId: Id): string {
 // Ratio maths
 // ---------------------------------------------------------------------------
 
+/** Whether a rule binds a shift on `tour`: a rule with no tour binds every one. */
+function appliesToTour(rule: RatioRule, tour: Tour): boolean {
+  return rule.tour === undefined || rule.tour === tour;
+}
+
 /**
- * The binding ratio for a role at an acuity tier: the most restrictive (lowest patients per
- * nurse) of every active rule for the role that applies to the tier — tier-specific or
- * catch-all. Safety rules stack conservatively, so a looser tier rule never relaxes a stricter
- * catch-all.
+ * The binding ratio for a role at an acuity tier on a shift of `tour`: the most restrictive
+ * (lowest patients per nurse) of every active rule for the role that applies to the tier —
+ * tier-specific or catch-all — and to the tour (a rule with no tour applies to every tour).
+ * Safety rules stack conservatively, so a looser tier rule never relaxes a stricter catch-all.
+ * The tour comes from the shift's start time (`tourOf`), so a 19:00 shift not flagged for night
+ * pay is still held to a night-only ceiling.
  */
 export function bindingRatio(
   rules: readonly RatioRule[],
   role: RatioRole,
   acuityTierId: Id,
+  tour: Tour,
 ): number | null {
   let best: number | null = null;
   for (const rule of rules) {
     if (!rule.active || rule.role !== role) continue;
     if (rule.acuityTierId !== null && rule.acuityTierId !== acuityTierId) continue;
+    if (!appliesToTour(rule, tour)) continue;
     if (rule.maxPatientsPerNurse <= 0) continue;
     if (best === null || rule.maxPatientsPerNurse < best) best = rule.maxPatientsPerNurse;
   }
@@ -192,18 +201,20 @@ export function bindingRatio(
  * assignment — a mix can need more: 3 patients at 1:2 and 2 at 1:5 pool to 1.5 + 0.4 = 1.9 → 2
  * nurses, while any two-nurse split gives someone a 1:2 patient with three others, so the
  * per-assignment reading needs 3. The app applies the pooled reading (D11); a unit whose
- * regulator reads ratios per assignment sets a floor.
+ * regulator reads ratios per assignment sets a floor. `tour` is the shift's (`tourOf`), so a
+ * tour-specific rule counts only on its own tour.
  */
 export function nursesRequiredForMix(
   acuityMix: Record<Id, number>,
   role: RatioRole,
   ratioRules: readonly RatioRule[],
+  tour: Tour,
 ): number {
   let load = 0;
   let sawAnyRule = false;
   for (const [tierId, patients] of Object.entries(acuityMix)) {
     if (!patients || patients <= 0) continue;
-    const ratio = bindingRatio(ratioRules, role, tierId);
+    const ratio = bindingRatio(ratioRules, role, tierId, tour);
     if (ratio === null) continue; // This role is not ratio-governed for this tier.
     sawAnyRule = true;
     load += patients / ratio;
@@ -300,6 +311,7 @@ export function deriveDemand(dates: readonly IsoDate[], inputs: DemandInputs): D
           ? (hppdTarget.targetHours * projectedCensus * shiftShareOfDay) / shiftType.durationHours
           : 0;
 
+      const tour = tourOf(shiftType);
       const byRole = {} as Record<NurseRole, RoleDemand>;
       for (const role of NURSE_ROLES) {
         const floor = coverageFloorFor(coverageRequirements, date, shiftType.id, role);
@@ -307,7 +319,7 @@ export function deriveDemand(dates: readonly IsoDate[], inputs: DemandInputs): D
         // bedside coverage, so only the explicit coverage floor applies.
         const ratioBedside = shiftType.isOnCall
           ? 0
-          : nursesRequiredForMix(acuityMix, role, ratioRules);
+          : nursesRequiredForMix(acuityMix, role, ratioRules, tour);
         const { chargeWithoutPatients, breakRelief } = ratioSupport(
           role,
           shiftType,
@@ -405,7 +417,8 @@ function ratioSupport(
 /**
  * The pooled requirement of `licensed` rules: bedside licensed nurses from the ceilings, the
  * charge nurse and break relief as for RNs (the charge nurse is an RN, counted once), and the RNs
- * the strictest `minRnShare` among the rules that apply needs. Undefined with no such rule.
+ * the strictest `minRnShare` among the rules that apply (to the tier and the shift's tour) needs.
+ * Undefined with no such rule on this tour.
  */
 function licensedDemand(
   acuityMix: Record<Id, number>,
@@ -413,9 +426,12 @@ function licensedDemand(
   rules: readonly RatioRule[],
   staffing: RatioStaffing | undefined,
 ): LicensedDemand | undefined {
-  const pooled = rules.filter((r) => r.active && r.role === 'licensed');
+  const tour = tourOf(shiftType);
+  // Only this tour's rules decide whether the shift has a pool and what RN share it needs: a
+  // night-only licensed rule must not impose its share on a day shift.
+  const pooled = rules.filter((r) => r.active && r.role === 'licensed' && appliesToTour(r, tour));
   if (pooled.length === 0) return undefined;
-  const ratioBedside = nursesRequiredForMix(acuityMix, 'licensed', rules);
+  const ratioBedside = nursesRequiredForMix(acuityMix, 'licensed', rules, tour);
   if (ratioBedside <= 0) return undefined;
   const { chargeWithoutPatients, breakRelief } = ratioSupport(
     'RN',

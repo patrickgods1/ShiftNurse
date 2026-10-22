@@ -28,7 +28,7 @@ describe('Settings › About', () => {
     renderWithApp(<SettingsPage />, { route: '/settings?tab=about' });
     const list = await screen.findByTestId('not-enforced');
     expect(list.querySelectorAll('li')).toHaveLength(10);
-    expect(list.textContent).toContain('ORS 441.768');
+    expect(list.textContent).toContain('Oregon’s CNA cap limits each aide’s own patients');
     expect(
       screen.getByRole('heading', { name: 'What ShiftNurse does not enforce yet' }),
     ).toBeTruthy();

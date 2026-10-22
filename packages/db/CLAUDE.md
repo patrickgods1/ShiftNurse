@@ -42,6 +42,7 @@
   contract the preset cannot see.
 
 - **Units carry `in_lieu_holidays`** (migration `0054_in_lieu_holidays`, nullable, null reads `'none'`; saves refuse other than `'none'` or `'federal'`; the VA preset proposes `'federal'` to a unit with none). Main passes it to the publish alerts with premium pay off; no cost code reads it.
+- **`ratio_rule.tour`** (migration `0055_ratio_tour`, nullable): null = the ratio binds every tour; otherwise `day`, `evening` or `night`, read from the shift's start (`tourOf`). Changing it needs a reason.
 - **A published period is priced under the pay configuration it was first published with
   (`pay_config_snapshot`, migration `0048_pay_config_snapshot`):** differentials, overtime rules,
   pay settings, the unit's holiday attribution and nearby holiday dates. Drafts are priced live.

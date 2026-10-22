@@ -4,7 +4,7 @@
  * this becomes a web app.
  */
 
-import type { IsoDate, ShiftWindow, Weekday } from './time.js';
+import type { IsoDate, ShiftWindow, Tour, Weekday } from './time.js';
 
 export type Id = string;
 
@@ -123,8 +123,7 @@ export interface PerDiemCommitment {
   holidayShiftsPerYear: number;
 }
 
-/** A nurse's tour: the part of the day their shifts fall in. Classified from a shift's start time. */
-export type Tour = 'day' | 'evening' | 'night';
+export type { Tour };
 export const TOURS: readonly Tour[] = ['day', 'evening', 'night'];
 
 /**
@@ -632,6 +631,11 @@ export interface RatioRule {
    * LVNs may be up to half). Absent: none.
    */
   minRnShare?: number;
+  /**
+   * The one tour the ceiling binds (ORS 441.768 caps an aide at 7 by day and evening, 11 at
+   * night). Absent: every tour. Read from the shift's start time (`tourOf`), never `isNight`.
+   */
+  tour?: Tour;
   active: boolean;
 }
 
