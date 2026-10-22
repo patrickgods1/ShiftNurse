@@ -12,11 +12,11 @@
 
 import type { UpdateInfo } from '../shared/api.js';
 
-const LATEST_RELEASE = 'https://api.github.com/repos/patrickgods1/ShiftNurse/releases/latest';
+const RELEASE_LIST = 'https://api.github.com/repos/patrickgods1/ShiftNurse/releases?per_page=30';
 const RELEASES_PAGE = 'https://github.com/patrickgods1/ShiftNurse/releases/';
 const TIMEOUT_MS = 10_000;
 
-interface GitHubRelease {
+export interface GitHubRelease {
   tag_name?: unknown;
   html_url?: unknown;
   draft?: unknown;
@@ -70,17 +70,38 @@ export function newerRelease(release: GitHubRelease, current: string): UpdateInf
   return { version: tag.replace(/^v/, ''), url };
 }
 
+/**
+ * The newest app release in GitHub's list. `/releases/latest` is whichever release was
+ * published last, and the CP-SAT runner is released from the same repo (`cpsat-runner-v2`):
+ * that tag reads as 0.0.0, so the banner could never show, and every future runner release
+ * would hide app releases again. Only plain `vX.Y.Z` tags are app releases.
+ */
+export function latestAppRelease(releases: unknown): GitHubRelease | undefined {
+  if (!Array.isArray(releases)) return undefined;
+  let best: GitHubRelease | undefined;
+  for (const entry of releases as GitHubRelease[]) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const { tag_name: tag, html_url: url } = entry;
+    if (typeof tag !== 'string' || !/^v\d+\.\d+\.\d+$/.test(tag)) continue;
+    if (entry.draft === true || entry.prerelease === true) continue;
+    if (typeof url !== 'string' || !url.startsWith(RELEASES_PAGE)) continue;
+    if (best === undefined || compareVersions(tag, best.tag_name as string) > 0) best = entry;
+  }
+  return best;
+}
+
 export async function checkForUpdate(
   current: string,
   fetchLatest: (url: string, init: RequestInit) => Promise<Response> = fetch,
 ): Promise<UpdateInfo | undefined> {
   try {
-    const response = await fetchLatest(LATEST_RELEASE, {
+    const response = await fetchLatest(RELEASE_LIST, {
       headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ShiftNurse' },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     if (!response.ok) return undefined;
-    return newerRelease((await response.json()) as GitHubRelease, current);
+    const latest = latestAppRelease(await response.json());
+    return latest && newerRelease(latest, current);
   } catch {
     return undefined;
   }

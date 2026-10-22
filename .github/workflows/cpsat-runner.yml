@@ -132,6 +132,8 @@ jobs:
           cd bundles
           sha256sum cpsat-runner-*.tar.gz > SHA256SUMS
           cat SHA256SUMS
-          gh release create "$TAG" -R "$REPO" --title "$TAG" \
+          # --latest=false: a runner release must never take "latest" from the app release the
+          # in-app update banner looks for.
+          gh release create "$TAG" -R "$REPO" --title "$TAG" --latest=false \
             --notes "CP-SAT runner for ShiftNurse, built against OR-Tools $ORTOOLS_BUILD." \
             cpsat-runner-*.tar.gz SHA256SUMS
