@@ -38,6 +38,7 @@ import { CensusGrid } from './demand/census-grid.js';
 import { rangeProblem } from './demand/demand-range.js';
 import { DemandTable } from './demand/demand-table.js';
 import { ProposeDialog } from './demand/propose-dialog.js';
+import { StaffingRecordButton } from './demand/staffing-record-dialog.js';
 
 const LOOKBACK_OPTIONS = [4, 8, 12] as const;
 
@@ -63,6 +64,7 @@ function shiftTypesById(shiftTypes: ShiftType[] | undefined): Map<Id, ShiftType>
 export default function DemandPage() {
   const unitId = useUnitId();
   const defaultRange = useDefaultRange(unitId);
+  const periodsQuery = usePeriods(unitId);
   const [start, setStart] = useState<IsoDate | undefined>(undefined);
   const [end, setEnd] = useState<IsoDate | undefined>(undefined);
   const typedStart = start ?? defaultRange.start;
@@ -111,19 +113,22 @@ export default function DemandPage() {
         title="Staffing needs"
         description="Census forecasts, the staffing demand they imply, and how well the forecast holds up"
         actions={
-          <button
-            type="button"
-            className={PRIMARY}
-            disabled={proposeMutation.isPending}
-            onClick={() => {
-              proposeMutation.mutate(
-                { start: rangeStart, end: rangeEnd, options: { lookbackWeeks, seasonal } },
-                { onSuccess: () => setProposeOpen(true) },
-              );
-            }}
-          >
-            {proposeMutation.isPending ? 'Proposing…' : 'Propose from history'}
-          </button>
+          <>
+            <StaffingRecordButton unitId={unitId} periods={periodsQuery.data ?? []} />
+            <button
+              type="button"
+              className={PRIMARY}
+              disabled={proposeMutation.isPending}
+              onClick={() => {
+                proposeMutation.mutate(
+                  { start: rangeStart, end: rangeEnd, options: { lookbackWeeks, seasonal } },
+                  { onSuccess: () => setProposeOpen(true) },
+                );
+              }}
+            >
+              {proposeMutation.isPending ? 'Proposing…' : 'Propose from history'}
+            </button>
+          </>
         }
       />
 

@@ -281,11 +281,15 @@ export type {
   GridSheet,
   NurseSheet,
   ScheduleDiff,
+  StaffingRecordDay,
+  StaffingRecordRole,
+  StaffingRecordRow,
 } from './publish/index.js';
 // Publish diff, compliance alerts and printable projections
 export {
   buildGridSheet,
   buildNurseSheets,
+  buildStaffingRecord,
   complianceAlerts,
   diffAssignments,
   formatAssignmentsCsv,

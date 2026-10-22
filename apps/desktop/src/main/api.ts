@@ -27,6 +27,7 @@ import { fairnessApi } from './api/fairness.js';
 import {
   exportNurseRecordToFile,
   exportRosterToFile,
+  exportStaffingRecordToFile,
   pickHistoryImportFile,
   pickRosterImportFile,
 } from './api/files.js';
@@ -125,6 +126,8 @@ export function createApi(db: ShiftNurseDb, solverJobs: SolverJobs, host: AppHos
     publish: publishApi(db),
     output: {
       exportToFile: (periodId, format) => exportPeriodToFile(outputInput(db, periodId), format),
+      exportStaffingRecord: (unitId, start, end, format) =>
+        exportStaffingRecordToFile(db, unitId, start, end, format),
       renderCsv: (periodId, format) => renderCsv(outputInput(db, periodId).schedule, format),
     },
     backups: {

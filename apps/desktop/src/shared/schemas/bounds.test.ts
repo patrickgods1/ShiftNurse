@@ -36,6 +36,13 @@ const READS = [
     over: '2027-02-06',
   },
   {
+    method: 'output.exportStaffingRecord',
+    schema: API_SCHEMAS.output.exportStaffingRecord,
+    call: (a: string, b: string) => ['u-1', a, b, 'csv'],
+    max: '2036-01-09',
+    over: '2036-01-10',
+  },
+  {
     method: 'nurseRecord.exportToFile',
     schema: API_SCHEMAS.nurseRecord.exportToFile,
     call: (a: string, b: string) => ['n-1', a, b, 'csv'],
