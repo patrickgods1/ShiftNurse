@@ -267,7 +267,41 @@ function assertCoverFits(db: DbLike, shiftType: ShiftType): void {
   }
 }
 
-export function createShiftType(db: DbLike, input: NewShiftType, actor: string): ShiftType {
+/**
+ * Two active types with one name or abbreviation make the history importer and the grid guess
+ * which was meant, and a guess there becomes a shift booked under the wrong type. Retired types
+ * are exempt: they stay on old schedules and may share a name with their successor.
+ */
+export function assertShiftTypeNameFree(
+  db: DbLike,
+  unitId: Id,
+  name: string,
+  abbreviation: string,
+  exceptIds: Id[],
+): void {
+  const key = (text: string) => text.trim().toLowerCase();
+  const others = listShiftTypesForUnit(db, unitId).filter(
+    (t) => t.active && !exceptIds.includes(t.id),
+  );
+  if (others.some((t) => key(t.name) === key(name))) {
+    throw new Error(`“${name.trim()}” is already the name of another shift type on this unit.`);
+  }
+  if (others.some((t) => key(t.abbreviation) === key(abbreviation))) {
+    throw new Error(
+      `“${abbreviation.trim()}” is already the abbreviation of another shift type on this unit.`,
+    );
+  }
+}
+
+export function createShiftType(
+  db: DbLike,
+  input: NewShiftType,
+  actor: string,
+  exceptIds: Id[] = [],
+): ShiftType {
+  if (input.active) {
+    assertShiftTypeNameFree(db, input.unitId, input.name, input.abbreviation, exceptIds);
+  }
   const id = ids.shiftType();
   const row: typeof shiftTypeTable.$inferInsert = {
     id,
@@ -422,6 +456,11 @@ export function updateShiftType(
     // A new time or length can stop it fitting inside its shift, or stop another fitting inside it.
     validate: (values, before) => {
       assertTimingNotLocked(db, values, before);
+      const after = { ...before, ...values };
+      const renamed = after.name !== before.name || after.abbreviation !== before.abbreviation;
+      if (after.active && (renamed || !before.active)) {
+        assertShiftTypeNameFree(db, after.unitId, after.name, after.abbreviation, [before.id]);
+      }
       assertCoverFits(db, { ...before, ...values });
     },
     actor,
@@ -517,7 +556,8 @@ export function duplicateShiftType(
   }
 
   const { id: _oldId, elsewhere: _elsewhere, ...fields } = old;
-  const created = createShiftType(tx, { ...fields, ...wanted, active: true }, actor);
+  // The copy is made before the old type retires, so the old type's own name must not count.
+  const created = createShiftType(tx, { ...fields, ...wanted, active: true }, actor, [old.id]);
 
   for (const floor of listCoverageRequirementsForUnit(tx, old.unitId)) {
     if (floor.shiftTypeId !== old.id) continue;

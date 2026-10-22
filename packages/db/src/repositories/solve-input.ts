@@ -77,6 +77,8 @@ import {
   listPayRatesForUnit,
 } from './pay.js';
 import { type PayConfig, payConfigFor } from './pay-snapshot.js';
+import { unitOrThrow, unitUnder } from './period-unit.js';
+import { PRIOR_ASSIGNMENT_LOOKBACK_DAYS, timeOffWindow } from './period-window.js';
 import { listPreceptorshipsOverlapping } from './preceptorships.js';
 import { restWaiversElsewhere, restWaiversForPeriod } from './rest-waivers.js';
 import {
@@ -99,46 +101,12 @@ import {
   listTimeOffOverlappingForUnit,
 } from './timeoff.js';
 
-function unitOrThrow(db: DbLike, unitId: Id) {
-  const unit = getUnit(db, unitId);
-  if (!unit) throw new Error(`Unknown unit ${unitId}`);
-  return unit;
-}
-
-/** The live unit with the holiday attribution `config` was kept under; live when there is none. */
-function unitUnder(unit: Unit, config: PayConfig | undefined): Unit {
-  if (!config) return unit;
-  const { holidayAttribution: _live, ...rest } = unit;
-  return config.holidayAttribution === undefined
-    ? rest
-    : { ...rest, holidayAttribution: config.holidayAttribution };
-}
-
-/**
- * The unit as a period is judged and priced with: a published or archived period keeps the
- * holiday attribution it went out under, so switching the unit to the clock reading does not
- * change what last Christmas's schedule paid or who it counted as working the holiday.
- */
-export function unitForPeriod(db: DbLike, period: SchedulePeriod): Unit {
-  return unitUnder(unitOrThrow(db, period.unitId), payConfigFor(db, period));
-}
-
 /**
  * How far back the ledger is read. The burden window is 13 periods (~6 months of two-week
  * periods) with decay, so a year of rows is more than enough and keeps the query bounded on
  * a unit that has imported years of history.
  */
 export const LEDGER_LOOKBACK_DAYS = 400;
-
-/**
- * Days of earlier published shifts a period is judged with (`priorAssignments`, flagged out of
- * period). Rest and stretch rules need only the night before, but a rolling four-weekend quota
- * (`weekend-pattern`'s `maxWeekendsPer4Weeks`) reads the three weekends before the period's first
- * one, which reach up to 22 days back; a 14-day tail let a third weekend in four through unseen.
- * 28 is a whole number of weeks, so it covers that for any start day. Every loader that reads the
- * tail, or what the tail is judged with (leave, sick calls, offers, other units), uses this.
- */
-export const PRIOR_ASSIGNMENT_LOOKBACK_DAYS = 28;
 
 /**
  * The first date from which the lookback tail is complete: the same published and archived
@@ -277,26 +245,6 @@ function overtimeLeave(timeOff: readonly TimeOffRequest[], paidSickCalls: readon
     else byNurse.set(c.nurseId, [c]);
   }
   return byNurse;
-}
-
-/**
- * The dates a period's leave is read over: the lookback tail (as the prior assignments)
- * plus the pay periods and work weeks that touch the period. Contracted-hours and pay-period
- * overtime credit paid leave over a whole pay period, which starts up to payPeriodDays-1 before
- * the period and ends as far after it, and cost prices overtime over the tail's own weeks and
- * pay periods; one pay period (at least a week) either side of the tail covers every one of
- * them. Nothing else (ledger, pending-leave, capacity, conflicts) looks at a request outside
- * the period itself. One definition, so validation, alerts, cost and Generate read the same rows.
- */
-export function timeOffWindow(
-  unit: Pick<Unit, 'payPeriodDays'>,
-  period: Pick<SchedulePeriod, 'startDate' | 'endDate'>,
-): { start: IsoDate; end: IsoDate } {
-  const slack = Math.max(7, unit.payPeriodDays);
-  return {
-    start: addDays(period.startDate, -(PRIOR_ASSIGNMENT_LOOKBACK_DAYS + slack)),
-    end: addDays(period.endDate, slack),
-  };
 }
 
 /** Requests overlapping `timeOffWindow`, whole: a straddling request keeps its full paid-hours spread. */

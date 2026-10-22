@@ -37,7 +37,7 @@ function mkShiftType(
     {
       unitId: forUnit,
       name,
-      abbreviation: name.slice(0, 3),
+      abbreviation: name.replaceAll(' ', ''),
       startTime,
       durationHours,
       isNight: false,

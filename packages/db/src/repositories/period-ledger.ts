@@ -20,8 +20,9 @@ import {
 import type { DbLike } from '../client.js';
 import { getUnit, listHolidaysForUnit } from './config.js';
 import type { UpsertFairnessLedgerInput } from './ledger.js';
+import { unitForPeriod } from './period-unit.js';
 import { listPreferencesForUnit } from './roster.js';
-import { timeOffForPeriod, unitForPeriod } from './solve-input.js';
+import { timeOffForPeriod } from './solve-input.js';
 import { listTimeOffForUnit } from './timeoff.js';
 
 /** Everything `deriveCounters` needs for a unit, loaded once. A period narrows the time off read. */

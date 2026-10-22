@@ -179,7 +179,7 @@
   them to the overtime threshold only when `paidLeaveCountsTowardOvertime` is on (off: federal
   wage-and-hour law does not treat leave as hours worked) and never to the absolute weekly cap.
   Every consumer reads the same credit: `SolverModel` takes it off `hoursTarget` and adds it to
-  `weekLeaveHours`, the CP-SAT caps subtract it (rounded down to integer hundredths), the cost
+  `overtimeLeaveHours`, the CP-SAT caps subtract it (rounded down to integer hundredths), the cost
   engine starts a week's overtime count with it via `CostContext.overtimeLeave` (paid-leave credits by nurse), and
   compliance alerts count it. `SolveInput.paidSickCalls` comes from `loadPeriodInput`.
 - **Every rule parameter is documented on the rule, and checked by it.** `Rule.paramDocs` (label,

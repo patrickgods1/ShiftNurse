@@ -964,3 +964,114 @@ describe('duplicating a shift type as a new one', () => {
     expect(() => duplicate(night.id, { name: 'Night 8' })).toThrow(/already retired/);
   });
 });
+
+describe('one active shift type per name and abbreviation on a unit', () => {
+  let unitId: Id;
+
+  const base = (name: string, abbreviation: string, active = true) => ({
+    unitId,
+    name,
+    abbreviation,
+    startTime: '19:00',
+    durationHours: 12,
+    isNight: true,
+    isOnCall: false,
+    color: '#ffffff',
+    sortOrder: 1,
+    active,
+  });
+  const add = (name: string, abbreviation: string, active = true) =>
+    createShiftType(handle.db, base(name, abbreviation, active), ACTOR);
+
+  beforeEach(() => {
+    unitId = addUnit('4 West').id;
+  });
+
+  it('refuses a second active type with the same name', () => {
+    add('Night 12', 'N12');
+    expect(() => add('Night 12', 'NX')).toThrow(
+      '“Night 12” is already the name of another shift type on this unit.',
+    );
+  });
+
+  it('refuses the same name in another case or with stray spaces', () => {
+    add('Night 12', 'N12');
+    expect(() => add('  night 12 ', 'NX')).toThrow(/already the name of another shift type/);
+  });
+
+  it('refuses a second active type with the same abbreviation, ignoring case and spaces', () => {
+    add('Night 12', 'N12');
+    expect(() => add('Night Twelve', ' n12 ')).toThrow(
+      '“n12” is already the abbreviation of another shift type on this unit.',
+    );
+  });
+
+  it('lets another unit use the same name and abbreviation', () => {
+    add('Night 12', 'N12');
+    const other = addUnit('5 East').id;
+    expect(() =>
+      createShiftType(handle.db, { ...base('Night 12', 'N12'), unitId: other }, ACTOR),
+    ).not.toThrow();
+  });
+
+  it('lets a retired type keep a name an active one uses', () => {
+    const old = add('Night 12', 'N12');
+    deactivateShiftType(handle.db, old.id, ACTOR);
+    expect(() => add('Night 12', 'N12')).not.toThrow();
+    expect(() => add('Night 12', 'N12', false)).not.toThrow();
+  });
+
+  it('refuses renaming a type onto another active type', () => {
+    add('Night 12', 'N12');
+    const day = add('Day 12', 'D12');
+    expect(() => updateShiftType(handle.db, day.id, { name: 'NIGHT 12' }, ACTOR)).toThrow(
+      /already the name of another shift type/,
+    );
+    expect(() => updateShiftType(handle.db, day.id, { abbreviation: 'n12' }, ACTOR)).toThrow(
+      /already the abbreviation of another shift type/,
+    );
+  });
+
+  it('lets a type keep its own name when something else changes, or change its own case', () => {
+    const night = add('Night 12', 'N12');
+    expect(() => updateShiftType(handle.db, night.id, { color: '#000000' }, ACTOR)).not.toThrow();
+    expect(() => updateShiftType(handle.db, night.id, { name: 'NIGHT 12' }, ACTOR)).not.toThrow();
+  });
+
+  it('refuses reactivating a type whose name an active one now uses', () => {
+    const old = add('Night 12', 'N12');
+    deactivateShiftType(handle.db, old.id, ACTOR);
+    add('Night 12', 'N12');
+    expect(() => updateShiftType(handle.db, old.id, { active: true }, ACTOR)).toThrow(
+      /already the name of another shift type/,
+    );
+  });
+
+  it('reactivates a retired type when nothing clashes', () => {
+    const old = add('Night 12', 'N12');
+    deactivateShiftType(handle.db, old.id, ACTOR);
+    expect(updateShiftType(handle.db, old.id, { active: true }, ACTOR).active).toBe(true);
+  });
+
+  it('duplicates a type under a new name while keeping its abbreviation, since the old one retires', () => {
+    const old = add('Night 12', 'N12');
+    const result = transact(handle.db, (tx) =>
+      duplicateShiftType(tx, old.id, { name: 'Night 12 v2' }, ACTOR),
+    );
+    expect(result.shiftType.abbreviation).toBe('N12');
+    expect(result.retired.active).toBe(false);
+  });
+
+  it('refuses a duplicate whose new name another active type already uses', () => {
+    const old = add('Night 12', 'N12');
+    add('Night B', 'NB');
+    expect(() =>
+      transact(handle.db, (tx) => duplicateShiftType(tx, old.id, { name: ' night b' }, ACTOR)),
+    ).toThrow(/already the name of another shift type/);
+    expect(getShiftTypeActive(old.id)).toBe(true);
+  });
+
+  function getShiftTypeActive(id: Id) {
+    return listShiftTypesForUnit(handle.db, unitId).find((t) => t.id === id)?.active;
+  }
+});

@@ -124,7 +124,7 @@ describe('the unit and its shift types', () => {
 
   it('duplicates a locked shift through the app in one step', () => {
     publishWithDayShift();
-    const result = api().shiftTypes.duplicate(f.day.id, { name: 'Day 8', durationHours: 8 });
+    const result = api().shiftTypes.duplicate(f.day.id, { name: 'Day 8 relief', durationHours: 8 });
     expect(result.shiftType.durationHours).toBe(8);
     expect(result.retired.active).toBe(false);
   });

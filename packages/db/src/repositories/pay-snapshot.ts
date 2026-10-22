@@ -30,8 +30,8 @@ import { ids } from '../ids.js';
 import { payConfigSnapshot, schedulePeriod } from '../schema.js';
 import { getUnit, listHolidaysInRange } from './config.js';
 import { getPaySettings, listActiveDifferentials, listActiveOvertimeRules } from './pay.js';
+import { timeOffWindow } from './period-window.js';
 import { getPeriod } from './schedule.js';
-import { timeOffWindow } from './solve-input.js';
 
 export interface PayConfig {
   /** Active differentials when taken. */

@@ -39,6 +39,7 @@ import {
   savePaySettings,
   updateOvertimeRule,
 } from './pay.js';
+import { timeOffWindow } from './period-window.js';
 import { createPreceptorship } from './preceptorships.js';
 import { publishSchedule } from './publish.js';
 import { createRestWaiver, restWaiversForPeriod } from './rest-waivers.js';
@@ -62,13 +63,7 @@ import {
   listPeriodsForUnit,
   markFloatedOff,
 } from './schedule.js';
-import {
-  costContext,
-  historyFromFor,
-  loadPeriodInput,
-  timeOffForPeriod,
-  timeOffWindow,
-} from './solve-input.js';
+import { costContext, historyFromFor, loadPeriodInput, timeOffForPeriod } from './solve-input.js';
 import { approveTimeOff, createTimeOffRequest, listTimeOffForUnit } from './timeoff.js';
 
 const ACTOR = 'manager';

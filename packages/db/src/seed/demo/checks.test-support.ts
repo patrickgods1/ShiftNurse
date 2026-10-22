@@ -29,6 +29,7 @@ import {
 } from '../../repositories/config.js';
 import { listIncompatibilityGroups } from '../../repositories/incompatibility.js';
 import { listOvertimeVolunteers } from '../../repositories/overtime-volunteers.js';
+import { PRIOR_ASSIGNMENT_LOOKBACK_DAYS } from '../../repositories/period-window.js';
 import { listPreceptorships } from '../../repositories/preceptorships.js';
 import {
   listCredentials,
@@ -48,7 +49,6 @@ import {
   demandInputs,
   historyFromFor,
   loadPeriodInput,
-  PRIOR_ASSIGNMENT_LOOKBACK_DAYS,
 } from '../../repositories/solve-input.js';
 import { listTimeOffForUnit } from '../../repositories/timeoff.js';
 import { type DemoId, seedDemoUnit } from '../demo.js';
