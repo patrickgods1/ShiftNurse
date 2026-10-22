@@ -34,6 +34,7 @@ const short: LeaveRequestCheck = {
     accruedHours: 0,
     usedHours: 0,
     forfeitedHours: 0,
+    earnedHours: 0,
     usedThisYearHours: 0,
     check: {
       ok: false,
@@ -104,7 +105,7 @@ describe('writing a request against the balance on file', () => {
     ).toBe(false);
   });
 
-  it('tells the manager a 72/80 nurse is charged 40 hours of leave for a 36-hour week off', async () => {
+  it('tells the manager a 72/80 nurse is charged 40 hours of annual leave for a 36-hour week off', async () => {
     renderWithApp(
       <NewRequestDialog
         open
@@ -116,9 +117,26 @@ describe('writing a request against the balance on file', () => {
       { unit },
     );
     await fillRequest();
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'annual' } });
     expect(
       await screen.findByText(/Charged as 40\.00 h of leave: 10 hours for each 9 of absence/),
     ).toBeTruthy();
+  });
+
+  it('says nothing of a leave charge for a 72/80 nurse taking PTO, which is charged hour for hour', async () => {
+    renderWithApp(
+      <NewRequestDialog
+        open
+        onOpenChange={() => {}}
+        unitId="unit-1"
+        periodId={undefined}
+        nurses={[{ ...ana, scheduleKind: 'va_72_80' }]}
+      />,
+      { unit },
+    );
+    await fillRequest();
+    await screen.findByText(/PTO: 20 h projected on/);
+    expect(screen.queryByText(/Charged as/)).toBeNull();
   });
 
   it('says nothing of a leave charge for a standard nurse', async () => {
@@ -197,6 +215,7 @@ describe('a California nurse’s leave', () => {
         accruedHours: 0,
         usedHours: 8,
         forfeitedHours: 0,
+        earnedHours: 0,
         usedThisYearHours: 32,
         check: { ok: true, remainingHours: 36 },
         useCap: { capHours: 40, overBy: 8 },
@@ -303,6 +322,7 @@ describe('a VA nurse’s leave', () => {
         accruedHours: 24,
         usedHours: 8,
         forfeitedHours: 0,
+        earnedHours: 0,
         usedThisYearHours: 8,
         check: { ok: true, remainingHours: 80 },
       },
@@ -323,6 +343,38 @@ describe('a VA nurse’s leave', () => {
     // Zero parts (nothing forfeited) are left out of the payroll line.
     expect(screen.getByText(/^Payroll: 100 h on/).textContent).toMatch(
       /^Payroll: 100 h on .+ · \+24 accrued · −8 approved since$/,
+    );
+  });
+
+  it('shows comp time banked from a finished schedule in the payroll line', async () => {
+    bridge.respond('leaveBalances', 'checkRequest', {
+      balance: {
+        type: 'comp',
+        balanceHours: 10,
+        asOf: isoDate('2026-09-01'),
+        projectedHours: 16,
+        accruedHours: 0,
+        usedHours: 0,
+        forfeitedHours: 0,
+        earnedHours: 6,
+        usedThisYearHours: 0,
+        check: { ok: true, remainingHours: 4 },
+      },
+    });
+    renderWithApp(
+      <NewRequestDialog
+        open
+        onOpenChange={() => {}}
+        unitId="unit-1"
+        periodId={undefined}
+        nurses={[ana]}
+      />,
+      { unit },
+    );
+    await fillRequest();
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'comp' } });
+    expect((await screen.findByText(/^Payroll: 10 h on/)).textContent).toMatch(
+      /^Payroll: 10 h on .+ · \+6 banked as comp time$/,
     );
   });
 
@@ -411,6 +463,7 @@ describe('the leave line while the request form is half filled in', () => {
       accruedHours: 0,
       usedHours: 0,
       forfeitedHours: 0,
+      earnedHours: 0,
       usedThisYearHours: 0,
       check: { ok: true, remainingHours: 0 },
     },

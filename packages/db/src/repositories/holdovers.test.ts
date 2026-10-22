@@ -11,6 +11,7 @@ import * as s from '../schema.js';
 import { createShiftType, createUnit } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
 import { recordHoldover } from './holdovers.js';
+import { createNurseUnit } from './nurse-units.js';
 import { publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
@@ -37,7 +38,7 @@ function mkShiftType(
     {
       unitId: forUnit,
       name,
-      abbreviation: name.slice(0, 3),
+      abbreviation: name.replaceAll(' ', ''),
       startTime,
       durationHours,
       isNight: false,
@@ -393,6 +394,7 @@ describe('a holdover that runs into the nurse’s next shift', () => {
       },
       ACTOR,
     ).id;
+    createNurseUnit(handle.db, { nurseId, unitId: other }, ACTOR);
     later(mkShiftType('Float 4', false, 1, '15:30', 4, other), otherPeriod);
     publish();
     // Scheduled end 15:00; the other unit's shift starts 15:30, inside 45 minutes.

@@ -6,7 +6,8 @@
  *
  * One Boolean per (active nurse, staffable shift), created only where the annealer's eligibility
  * filter would also allow it: not on approved leave (nor, when the time-off rule is hard, the
- * night that runs into it), and not on a day the nurse already holds a locked shift. A nurse starts
+ * night that runs into it), not on a day outside a float's membership dates, and not on a day
+ * the nurse already holds a locked shift. A nurse starts
  * at most one shift per day, as in the annealer. Locked shifts and the published lookback tail
  * are constants that every rule still sees.
  *
@@ -24,6 +25,7 @@ import {
   overlappingLeaveDate,
   type TimeOffParams,
 } from '../../rules/availability-rules.js';
+import { outsideMembership } from '../../rules/membership.js';
 import { ALL_RULES, resolveConfigs } from '../../rules/registry.js';
 import type { RuleConfig } from '../../rules/types.js';
 import { SolverModel } from '../model.js';
@@ -39,6 +41,7 @@ import {
 import { encodeObjective } from './objective.js';
 import type { CpModel } from './proto.js';
 import { encodeAccommodationBlocks } from './rules/accommodation.js';
+import { encodeCompleteWeekends } from './rules/complete-weekends.js';
 import { encodeConsecutive } from './rules/consecutive.js';
 import { encodeCoverage, encodeRatio } from './rules/coverage.js';
 import { encodeDaysOffTogether } from './rules/days-off.js';
@@ -46,11 +49,13 @@ import { encodeHolidayRotation } from './rules/holidays.js';
 import { encodeContractCap, encodeWeeklyHours } from './rules/hours.js';
 import { encodeHoursIn24 } from './rules/hours-in-24.js';
 import { encodeLongStretch } from './rules/long-stretch.js';
+import { encodeOnCallLimit } from './rules/on-call-limit.js';
 import { encodePendingTimeOff } from './rules/pending.js';
 import { encodePreceptor } from './rules/preceptor.js';
 import { encodeNightRecovery } from './rules/recovery.js';
 import { encodeOverlap, encodeRest } from './rules/rest.js';
 import { encodeScheduleKindTours } from './rules/schedule-kind-tours.js';
+import { encodeShortWorkRuns } from './rules/short-work-runs.js';
 import { encodeTourRotation } from './rules/tours.js';
 import { encodeWeekendPattern } from './rules/weekends.js';
 
@@ -60,6 +65,8 @@ export type Encoder = (ctx: EncodeContext, params: Record<string, unknown>) => v
 
 export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'>> = {
   'approved-time-off-is-absolute': 'by-construction',
+  // Like leave: a float has no variable on a day outside her membership dates.
+  'works-within-membership': 'by-construction',
   // A hard promise like leave: every variable whose shift overlaps a block is fixed to 0.
   'accommodation-blocks': encodeAccommodationBlocks,
   'no-overlapping-assignments': encodeOverlap,
@@ -94,10 +101,21 @@ export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'
   // Shift scope: a unit on the orientee's shift, priced with the shift's other units convexly
   // (`coverageTerms`).
   'orientee-with-preceptor': encodePreceptor,
-  // Not priced while soft; forbidden shifts, pairs and a tour count when hard.
+  // Priced in the objective while soft (`tourRotationTerms`); forbidden shifts, pairs and a tour
+  // count when hard.
   'tour-rotation': encodeTourRotation,
-  // Not priced while soft; a free pair of days forced in each pay period worked every weekend.
+  // Priced in the objective while soft (`daysOffTogetherTerms`); a free pair of days forced in
+  // each pay period worked every weekend when hard.
   'days-off-together': encodeDaysOffTogether,
+  // Priced in the objective while soft (`completeWeekendTerms`); a shift filed under a weekend
+  // brings every day of it when hard.
+  'complete-weekends': encodeCompleteWeekends,
+  // Priced in the objective while soft (`shortWorkRunTerms`); every short run a variable would
+  // start or join is forbidden when hard.
+  'short-work-runs': encodeShortWorkRuns,
+  // Priced in the objective while soft (`onCallLimitTerms`); each week's, the schedule's and each
+  // window of days in a row's count of call capped when hard.
+  'on-call-limit': encodeOnCallLimit,
   // Every variable off a 72/80 or Baylor nurse's plan fixed to 0; a variable is never overtime.
   'schedule-kind-tours': encodeScheduleKindTours,
 };
@@ -163,6 +181,7 @@ export function encodeCpsat(input: SolveInput, options: EncodeOptions = {}): Cps
       if (options.window && !options.window.has(shift.dateIdx)) continue;
       if (lockedDays.has(shift.dateIdx)) continue;
       if (approvedLeaveOn(model.ctx, nurse.id, shift.date)) continue;
+      if (outsideMembership(model.ctx, nurse.id, shift.date)) continue;
       if (
         timeOff &&
         approved.some((r) => overlappingLeaveDate(shift.date, shift.shiftType, r, timeOff))

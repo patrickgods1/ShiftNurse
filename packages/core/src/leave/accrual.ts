@@ -125,6 +125,8 @@ export interface BalanceProjection {
   accruedHours: number;
   usedHours: number;
   forfeitedHours: number;
+  /** Comp time credited from overtime between payroll's date and `onDate`. */
+  earnedHours: number;
   /** Leave used from the start of the leave year `onDate` falls in up to the day before it. */
   usedThisYearHours: number;
 }
@@ -138,7 +140,8 @@ function tierAt(tiers: readonly AccrualTier[], years: number): AccrualTier | und
 type Event =
   | { date: IsoDate; order: 0 }
   | { date: IsoDate; order: 1; periodStart: IsoDate }
-  | { date: IsoDate; order: 2; hours: number };
+  | { date: IsoDate; order: 2; hours: number }
+  | { date: IsoDate; order: 3; hours: number };
 
 export function projectBalance(input: {
   balanceHours: number;
@@ -152,6 +155,8 @@ export function projectBalance(input: {
   hoursByPayPeriodStart?: ReadonlyMap<IsoDate, number>;
   /** Approved paid leave drawn on this balance. */
   used: readonly { date: IsoDate; hours: number }[];
+  /** Comp time credited from overtime worked, dated when it is credited. */
+  earned?: readonly { date: IsoDate; hours: number }[];
   /** The unit's usual shift length, which a cap in days is counted in. Needed only then. */
   shiftHours?: number;
 }): BalanceProjection {
@@ -173,14 +178,18 @@ export function projectBalance(input: {
       }
     }
   }
+  for (const e of input.earned ?? []) {
+    if (inside(e.date)) events.push({ date: e.date, order: 2, hours: e.hours });
+  }
   for (const u of input.used) {
-    if (inside(u.date)) events.push({ date: u.date, order: 2, hours: u.hours });
+    if (inside(u.date)) events.push({ date: u.date, order: 3, hours: u.hours });
   }
   events.sort((a, b) => dayNumber(a.date) - dayNumber(b.date) || a.order - b.order);
 
   let hours = input.balanceHours;
   let accrued = 0;
   let used = 0;
+  let earnedComp = 0;
   let forfeited = 0;
   for (const e of events) {
     if (e.order === 0) {
@@ -222,6 +231,12 @@ export function projectBalance(input: {
       hours += earned;
       accrued += earned;
     } else if (e.order === 2) {
+      // Not through `balanceCap`: that caps what the accrual rule banks, and comp time has its
+      // own cap (240 h), applied by `compTimeCredit` when it is credited. Earned before used on a
+      // day, so a use the credit covers never dips below zero midway.
+      hours += e.hours;
+      earnedComp += e.hours;
+    } else if (e.order === 3) {
       hours -= e.hours;
       used += e.hours;
     }
@@ -231,6 +246,7 @@ export function projectBalance(input: {
     accruedHours: accrued,
     usedHours: used,
     forfeitedHours: forfeited,
+    earnedHours: earnedComp,
     usedThisYearHours: usedThisYear(input.used, input.leaveYearStart, input.calendar, onDate),
   };
 }

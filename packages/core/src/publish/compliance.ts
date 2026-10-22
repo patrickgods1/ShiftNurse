@@ -28,6 +28,7 @@ import type {
   Holiday,
   HolidayAttribution,
   Id,
+  Nurse,
   NurseCredential,
   NurseRole,
   PerDiemCommitment,
@@ -39,18 +40,36 @@ import {
   dateInRange,
   daysBetween,
   describeDate,
+  formatTimeOfDay,
   type IsoDate,
+  WEEKDAY_NAMES,
   type Weekday,
   type WeekendDefinition,
   weekendKey,
 } from '../domain/time.js';
+import { inLieuHolidayDates } from '../leave/in-lieu.js';
 import { credentialLapsedOn } from '../rules/coverage-rules.js';
-import { payPeriodsIn, workWeeksIn } from '../rules/hours-rules.js';
+import {
+  type DateWindow,
+  judgedSpan,
+  type PayCalendar,
+  payPeriodIndex,
+  payPeriodsIn,
+  payPeriodWindow,
+  type WindowReading,
+  type WorkWeek,
+  type WorkWeekSettings,
+  windowHours,
+  workWeekFor,
+  workWeekOf,
+  workWeeksIn,
+} from '../rules/hours-rules.js';
 import { leaveHoursBetween, type PaidLeaveCredit } from '../rules/paid-leave.js';
 import { isWorked, nurseName } from '../rules/types.js';
 import { nurseWeekends } from '../rules/weekend-pattern.js';
 import { attributedHolidayDates } from '../schedule/holiday-attribution.js';
 import type { ScheduleView } from '../schedule/view.js';
+import { windowBoundaryMinute, windowDayOf } from '../schedule/window-split.js';
 
 export type ComplianceAlertKind =
   | 'credential_expiry'
@@ -59,8 +78,12 @@ export type ComplianceAlertKind =
   | 'ratio_risk'
   | 'late_posting'
   | 'per_diem_commitment'
-  | 'weekends_off_per_year';
-export type ComplianceSeverity = 'warning' | 'critical';
+  | 'weekends_off_per_year'
+  | 'work_week_changeover'
+  | 'start_attribution_underpays'
+  | 'in_lieu_holiday';
+/** `information` is for things to act on, not to fix: a day that is correct as scheduled. */
+export type ComplianceSeverity = 'information' | 'warning' | 'critical';
 
 export interface ComplianceAlert {
   kind: ComplianceAlertKind;
@@ -89,6 +112,22 @@ export interface ComplianceInput {
   /** Weekly hours past which the week is overtime, from the max-hours rule params. */
   overtimeThresholdHours: number;
   workWeekStartsOn: Weekday;
+  /**
+   * The time that day the work week (and pay period) begins, minutes after midnight, from the
+   * max-hours rule. A shift is filed in the week its start falls in. Absent: midnight.
+   */
+  workWeekStartMinute?: number;
+  /**
+   * The night nurses' work week, from the max-hours rule (`workWeekFor`): a nurse on permanent
+   * nights is alerted on it, and her pay periods start at its minute. Absent: the unit's week.
+   */
+  nightWorkWeekStartsOn?: Weekday;
+  nightWorkWeekStartMinute?: number;
+  /**
+   * The work-week settings the previous published period was published under, when they put at
+   * least one nurse on a different week from these (`work_week_changeover`). Absent: no change.
+   */
+  previousWorkWeek?: WorkWeekSettings;
   /**
    * The unit's pricing. With at least one active overtime rule of multiplier above 1, `overtime`
    * alerts come from `costSchedule` (daily, seventh-day, consecutive and other bases included)
@@ -146,17 +185,30 @@ export interface ComplianceInput {
    * Uses `weekendDefinition` above.
    */
   weekendsOffPerYear?: { minimum: number; ledger: readonly FairnessLedgerEntry[] };
+  /**
+   * The unit's federal in-lieu-of holidays (`Unit.inLieuHolidays` 'federal'): the holidays to judge,
+   * and whether the unit pays holiday premium, which decides what the alert tells the manager the
+   * choice is. Absent means no check.
+   */
+  inLieuHolidays?: { holidays: readonly Holiday[]; premiumPay: boolean };
 }
 
-const SEVERITY_ORDER: Record<ComplianceSeverity, number> = { critical: 0, warning: 1 };
+const SEVERITY_ORDER: Record<ComplianceSeverity, number> = {
+  critical: 0,
+  warning: 1,
+  information: 2,
+};
 const KIND_ORDER: Record<ComplianceAlertKind, number> = {
   credential_expiry: 0,
   ratio_risk: 1,
   overtime: 2,
-  hours_drift: 3,
-  late_posting: 4,
-  per_diem_commitment: 5,
-  weekends_off_per_year: 6,
+  work_week_changeover: 3,
+  start_attribution_underpays: 4,
+  hours_drift: 5,
+  late_posting: 6,
+  per_diem_commitment: 7,
+  weekends_off_per_year: 8,
+  in_lieu_holiday: 9,
 };
 
 /** How far past the period's end a lapsing credential is still worth a warning. */
@@ -258,28 +310,58 @@ function hoursDrift(input: ComplianceInput): ComplianceAlert[] {
   return alerts;
 }
 
+/**
+ * Each in-period assignment's window-day: the date its start falls on, after the start of its
+ * nurse's own week (`workWeekFor`).
+ */
+function startDayIndex(input: ComplianceInput): Map<Id, IsoDate> {
+  return new Map(
+    input.schedule.assignments().map((v) => {
+      const minute = workWeekFor(v.nurse, input).startMinute;
+      return [v.assignment.id, windowDayOf(v.window.startMinute, minute)] as const;
+    }),
+  );
+}
+
+/**
+ * The overtime windows a nurse is alerted on: her own work weeks, or the pay periods (the given
+ * calendar's dates, her week's start minute), from the one holding the schedule's first instant.
+ */
+function windowsFor(
+  input: ComplianceInput,
+  nurse: Nurse,
+  payCalendar: PayCalendar | undefined,
+): DateWindow[] {
+  const { schedule } = input;
+  const week = workWeekFor(nurse, input);
+  const span = judgedSpan(
+    { start: schedule.period.startDate, end: schedule.period.endDate },
+    week.startMinute,
+  );
+  return payCalendar ? payPeriodsIn(span, payCalendar, false) : workWeeksIn(span, week.startsOn);
+}
+
 function pricedOvertime(input: ComplianceInput, cost: CostContext): ComplianceAlert[] {
   const { schedule } = input;
   const byPayPeriod = input.payPeriodOvertime;
-  const period = { start: schedule.period.startDate, end: schedule.period.endDate };
-  const windows = byPayPeriod
-    ? payPeriodsIn(
-        period,
-        // The windows must be the ones `costSchedule` priced over, and that is the cost unit's.
-        { payPeriodAnchor: byPayPeriod.payPeriodAnchor, payPeriodDays: cost.unit.payPeriodDays },
-        false,
-      )
-    : workWeeksIn(period, input.workWeekStartsOn);
+  // The windows must be the ones `costSchedule` priced over, and that is the cost unit's.
+  const payCalendar = byPayPeriod
+    ? { payPeriodAnchor: byPayPeriod.payPeriodAnchor, payPeriodDays: cost.unit.payPeriodDays }
+    : undefined;
   const span = byPayPeriod ? 'the pay period from' : 'the week of';
   const costs = costSchedule(schedule, cost).assignments;
+  // Each shift is filed by the window-day its start falls on, as the cost engine filed it.
+  const dayOf = startDayIndex(input);
   const alerts: ComplianceAlert[] = [];
   for (const [nurseId, nurse] of schedule.nursesById) {
     if (!nurse.active) continue;
+    const windows = windowsFor(input, nurse, payCalendar);
     const mine = costs.filter((c) => c.nurseId === nurseId);
     for (const window of windows) {
-      const inWindow = mine.filter(
-        (c) => compareDates(c.date, window.start) >= 0 && compareDates(c.date, window.end) <= 0,
-      );
+      const inWindow = mine.filter((c) => {
+        const day = dayOf.get(c.assignmentId) ?? c.date;
+        return compareDates(day, window.start) >= 0 && compareDates(day, window.end) <= 0;
+      });
       const withOvertime = inWindow.filter((c) => c.overtimeHours > 0);
       if (withOvertime.length === 0) continue;
       const overtimeHours = oneDecimal(inWindow.reduce((n, c) => n + c.overtimeHours, 0));
@@ -299,34 +381,165 @@ function pricedOvertime(input: ComplianceInput, cost: CostContext): ComplianceAl
   return alerts;
 }
 
+/**
+ * How the alerts below read a window's hours: as `max-hours-per-week` reads them under the unit's
+ * pay attribution (none without pay settings), against the rule's threshold and paid leave.
+ */
+function overtimeReader(input: ComplianceInput) {
+  const byPayPeriod = input.payPeriodOvertime;
+  const payCalendar: PayCalendar | undefined = byPayPeriod
+    ? { payPeriodAnchor: byPayPeriod.payPeriodAnchor, payPeriodDays: input.payPeriodDays }
+    : undefined;
+  const threshold = byPayPeriod ? byPayPeriod.thresholdHours : input.overtimeThresholdHours;
+  const tz = input.cost?.dstTransitions ?? [];
+  const reading = (attribution: 'clock' | 'start' | undefined): WindowReading => ({
+    ...(attribution ? { overtimeWindowAttribution: attribution } : {}),
+    dstTransitions: tz,
+  });
+  const unitAttribution = input.cost
+    ? (input.cost.overtimeWindowAttribution ?? 'clock')
+    : undefined;
+  const timelineOf = (nurseId: Id) =>
+    input.schedule.timelineFor(nurseId).filter((v) => !v.shiftType.isOnCall);
+  const overtimeIn = (
+    nurseId: Id,
+    window: DateWindow,
+    startMinute: number,
+    attribution: 'clock' | 'start' | undefined,
+  ) => {
+    const found = windowHours(timelineOf(nurseId), window, reading(attribution), startMinute);
+    const leave = input.paidLeaveCountsTowardOvertime
+      ? leaveHoursBetween(input.paidLeaveByNurse?.get(nurseId), window.start, window.end)
+      : 0;
+    return { ...found, overtime: Math.max(0, found.hours + leave - threshold) };
+  };
+  /** The window (week, or pay period on the unit's dates) of `week` holding a date's midnight. */
+  const windowAt = (date: IsoDate, week: WorkWeek): DateWindow => {
+    const day = windowDayOf(windowBoundaryMinute(date), week.startMinute);
+    return payCalendar
+      ? payPeriodWindow(payPeriodIndex(day, payCalendar), payCalendar)
+      : workWeekOf(day, week.startsOn);
+  };
+  const span = byPayPeriod ? 'the pay period from' : 'the week of';
+  return { payCalendar, unitAttribution, overtimeIn, windowAt, span };
+}
+
+/** "Saturday 19:00". */
+const weekStartText = (week: WorkWeek) =>
+  `${WEEKDAY_NAMES[week.startsOn]} ${formatTimeOfDay(week.startMinute)}`;
+
+/**
+ * The week a work-week start changes overlaps the old week, and 29 CFR 778.302 counts the
+ * overlapping hours toward whichever week pays the employee more. The app judges every week by the
+ * current boundary, so where the old boundary would have found more overtime in the week the
+ * change takes effect, payroll is told; the pay estimate itself is not changed.
+ */
+function workWeekChangeover(input: ComplianceInput): ComplianceAlert[] {
+  const previous = input.previousWorkWeek;
+  if (previous === undefined) return [];
+  const { schedule } = input;
+  const reader = overtimeReader(input);
+  const first = schedule.period.startDate;
+  const alerts: ComplianceAlert[] = [];
+  for (const [nurseId, nurse] of schedule.nursesById) {
+    if (!nurse.active) continue;
+    const oldWeek = workWeekFor(nurse, previous);
+    const newWeek = workWeekFor(nurse, input);
+    if (oldWeek.startsOn === newWeek.startsOn && oldWeek.startMinute === newWeek.startMinute) {
+      continue;
+    }
+    // A pay period keeps its dates and moves only by the minute.
+    if (reader.payCalendar && oldWeek.startMinute === newWeek.startMinute) continue;
+    const newWindow = reader.windowAt(first, newWeek);
+    const oldWindow = reader.windowAt(first, oldWeek);
+    const now = reader.overtimeIn(nurseId, newWindow, newWeek.startMinute, reader.unitAttribution);
+    const before = reader.overtimeIn(
+      nurseId,
+      oldWindow,
+      oldWeek.startMinute,
+      reader.unitAttribution,
+    );
+    if (before.overtime <= now.overtime) continue;
+    alerts.push({
+      kind: 'work_week_changeover',
+      severity: 'warning',
+      nurseId,
+      date: newWindow.start,
+      overtimeHours: oneDecimal(before.overtime),
+      assignmentIds: before.assignmentIds,
+      message:
+        `The work week changed from ${weekStartText(oldWeek)} to ${weekStartText(newWeek)}. ` +
+        `For ${reader.span} ${describeDate(newWindow.start)}, ${nurseName(nurse)} has ` +
+        `${oneDecimal(before.overtime)}h of overtime counted the old way and ` +
+        `${oneDecimal(now.overtime)}h the new way; payroll owes the greater (29 CFR 778.302).`,
+    });
+  }
+  return alerts;
+}
+
+/**
+ * Crediting a whole shift to the week it starts in is lawful only as a prepayment that never pays
+ * less than counting each hour where it was worked: employees "must always be paid time and
+ * one-half … for each hour actually worked over 40 hours in the workweek" (DOL opinion letter
+ * FLSA2005-17). Under `'start'`, every judged window where the clock finds more overtime than pay
+ * credits is flagged; a surplus in another window does not excuse it, since each week stands alone.
+ */
+function startAttributionUnderpays(input: ComplianceInput): ComplianceAlert[] {
+  if (input.cost?.overtimeWindowAttribution !== 'start') return [];
+  const { schedule } = input;
+  const reader = overtimeReader(input);
+  const alerts: ComplianceAlert[] = [];
+  for (const [nurseId, nurse] of schedule.nursesById) {
+    if (!nurse.active) continue;
+    const startMinute = workWeekFor(nurse, input).startMinute;
+    for (const window of windowsFor(input, nurse, reader.payCalendar)) {
+      const clock = reader.overtimeIn(nurseId, window, startMinute, 'clock');
+      if (!clock.touchesPeriod) continue;
+      const credited = reader.overtimeIn(nurseId, window, startMinute, 'start');
+      const short = clock.overtime - credited.overtime;
+      if (short <= 0) continue;
+      alerts.push({
+        kind: 'start_attribution_underpays',
+        severity: 'warning',
+        nurseId,
+        date: window.start,
+        overtimeHours: oneDecimal(clock.overtime),
+        assignmentIds: clock.assignmentIds,
+        message:
+          `Pay credits a night to the week it starts in. Counted by the clock, ${nurseName(nurse)} ` +
+          `works ${oneDecimal(clock.overtime)}h of overtime in ${reader.span} ` +
+          `${describeDate(window.start)}, ${oneDecimal(short)}h more than pay credits. The Labor ` +
+          'Department allows start-week crediting only if it never pays less (opinion letter ' +
+          'FLSA2005-17).',
+      });
+    }
+  }
+  return alerts;
+}
+
 function overtime(input: ComplianceInput): ComplianceAlert[] {
   if (input.cost?.overtimeRules.some((r) => r.active && r.multiplier > 1)) {
     return pricedOvertime(input, input.cost);
   }
   const { schedule } = input;
   const alerts: ComplianceAlert[] = [];
-  const window = { start: schedule.period.startDate, end: schedule.period.endDate };
   const byPayPeriod = input.payPeriodOvertime;
-  const weeks = byPayPeriod
-    ? payPeriodsIn(
-        window,
-        { payPeriodAnchor: byPayPeriod.payPeriodAnchor, payPeriodDays: input.payPeriodDays },
-        false,
-      )
-    : workWeeksIn(window, input.workWeekStartsOn);
+  const payCalendar = byPayPeriod
+    ? { payPeriodAnchor: byPayPeriod.payPeriodAnchor, payPeriodDays: input.payPeriodDays }
+    : undefined;
   const threshold = byPayPeriod ? byPayPeriod.thresholdHours : input.overtimeThresholdHours;
   const span = byPayPeriod ? 'the pay period from' : 'the week of';
   for (const [nurseId, nurse] of schedule.nursesById) {
     if (!nurse.active) continue;
+    const weeks = windowsFor(input, nurse, payCalendar);
+    const startMinute = workWeekFor(nurse, input).startMinute;
     for (const week of weeks) {
-      const inWeek = schedule
-        .timelineFor(nurseId)
-        .filter(
-          (v) =>
-            !v.shiftType.isOnCall &&
-            compareDates(v.assignment.date, week.start) >= 0 &&
-            compareDates(v.assignment.date, week.end) <= 0,
-        );
+      const inWeek = schedule.timelineFor(nurseId).filter((v) => {
+        if (v.shiftType.isOnCall) return false;
+        // Filed by its start against the work week's start time (its date at midnight).
+        const day = windowDayOf(v.window.startMinute, startMinute);
+        return compareDates(day, week.start) >= 0 && compareDates(day, week.end) <= 0;
+      });
       // A week this period holds none of the nurse's shifts in was judged with the last schedule,
       // and an alert here would name nothing the manager could move.
       if (!inWeek.some((v) => v.inPeriod)) continue;
@@ -561,16 +774,55 @@ function weekendsOffPerYear(input: ComplianceInput): ComplianceAlert[] {
   return alerts;
 }
 
+/**
+ * A full-time federal nurse's holiday on her day off moves to a day she is scheduled (5 U.S.C.
+ * § 6103(b)). That day is correct as scheduled, so this is information: the manager decides
+ * whether to give it off or pay or record it.
+ */
+function inLieuHoliday(input: ComplianceInput): ComplianceAlert[] {
+  const { schedule, inLieuHolidays } = input;
+  if (!inLieuHolidays) return [];
+  const { startDate, endDate } = schedule.period;
+  const judged = inLieuHolidays.holidays.filter((h) => dateInRange(h.date, startDate, endDate));
+  const alerts: ComplianceAlert[] = [];
+  for (const [nurseId, nurse] of schedule.nursesById) {
+    if (!nurse.active) continue;
+    const timeline = schedule.timelineFor(nurseId);
+    const dates = inLieuHolidayDates(nurse, timeline, judged);
+    for (const holiday of judged) {
+      const date = dates.get(holiday.id);
+      if (!date) continue;
+      const outcome = inLieuHolidays.premiumPay
+        ? 'it is paid at the holiday rate'
+        : 'record how it is compensated';
+      alerts.push({
+        kind: 'in_lieu_holiday',
+        severity: 'information',
+        nurseId,
+        date,
+        assignmentIds: timeline
+          .filter((v) => isWorked(v) && v.assignment.date === date)
+          .map((v) => v.assignment.id),
+        message: `${nurseName(nurse)}'s in-lieu day for ${holiday.name} is ${describeDate(date)}: give it off, or ${outcome}.`,
+      });
+    }
+  }
+  return alerts;
+}
+
 /** Every alert for the period, critical first, then by kind, then by date and nurse. */
 export function complianceAlerts(input: ComplianceInput): ComplianceAlert[] {
   const alerts = [
     ...credentialExpiry(input),
     ...hoursDrift(input),
     ...overtime(input),
+    ...workWeekChangeover(input),
+    ...startAttributionUnderpays(input),
     ...ratioRisk(input),
     ...latePosting(input),
     ...perDiemCommitment(input),
     ...weekendsOffPerYear(input),
+    ...inLieuHoliday(input),
   ];
   return alerts.sort(
     (a, b) =>

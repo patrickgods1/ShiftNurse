@@ -323,3 +323,68 @@ describe('rostered during approved leave', () => {
     expect(conflicts.some((k) => k.kind === 'understaffing')).toBe(false);
   });
 });
+
+describe('a published schedule judged by the rules of its own days', () => {
+  // Main hands the engine the live shift types, so a night shift retired since Saturday reads
+  // inactive, while the demand rows are those of the rules in force that Saturday.
+  const nightRetiredSince = (input: ConflictInput): ConflictInput => ({
+    ...input,
+    shiftTypes: input.shiftTypes.map((t) => (t.id === NIGHT_12.id ? { ...t, active: false } : t)),
+  });
+
+  it('flags Saturday night RN short by two on a night shift retired since', () => {
+    const priya = named('Priya', 'Nair');
+    const ana = named('Ana', 'Cruz');
+    const tom = named('Tom', 'Reed');
+    const input = nightRetiredSince(
+      weekendUnit([priya, ana, tom], {
+        assignments: [assign(tom.id, DAY_12, SAT)],
+        timeOff: [timeOff(priya.id, SAT, '2026-01-11'), timeOff(ana.id, SAT, '2026-01-11')],
+      }),
+    );
+    const night = detectConflicts(input).find(
+      (c) => c.id === `understaffing:${SAT}:${NIGHT_12.id}:RN`,
+    );
+    // Two RNs required, none on: two short.
+    expect(night?.magnitude).toBe(2);
+  });
+
+  it('shows a pending pair on a night shift retired since as competing time off', () => {
+    const priya = named('Priya', 'Nair');
+    const ana = named('Ana', 'Cruz');
+    const tom = named('Tom', 'Reed');
+    const input = nightRetiredSince(
+      weekendUnit([priya, ana, tom], {
+        assignments: [
+          assign(priya.id, NIGHT_12, SAT),
+          assign(ana.id, NIGHT_12, SAT),
+          assign(tom.id, DAY_12, SAT),
+        ],
+        timeOff: [
+          timeOff(priya.id, SAT, '2026-01-11', { status: 'pending' }),
+          timeOff(ana.id, SAT, '2026-01-11', { status: 'pending' }),
+        ],
+      }),
+    );
+    const competing = detectConflicts(input).filter((c) => c.kind === 'competing_time_off');
+    expect(competing.map((c) => c.id)).toEqual([`competing_time_off:${SAT}:${NIGHT_12.id}:RN`]);
+  });
+
+  it('says nothing about a night shift inactive under the rules it is judged by', () => {
+    const priya = named('Priya', 'Nair');
+    const tom = named('Tom', 'Reed');
+    // Inactive when demand is derived: no night row, so no night slot to be short on.
+    const input = weekendUnit([priya, tom], {
+      shiftTypes: [DAY_12, { ...NIGHT_12, active: false }],
+      assignments: [assign(tom.id, DAY_12, SAT)],
+      timeOff: [timeOff(priya.id, SAT, '2026-01-11')],
+    });
+    expect(
+      detectConflicts(input).filter(
+        (c) =>
+          c.shiftTypeId === NIGHT_12.id &&
+          (c.kind === 'understaffing' || c.kind === 'ratio_breach'),
+      ),
+    ).toEqual([]);
+  });
+});

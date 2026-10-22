@@ -111,6 +111,33 @@ describe('pay across a clock change', () => {
     expect(cost?.total).toBe(599.5); // 11 × (50 + 4.50)
   });
 
+  it('pays the spring-forward night as the twelve hours scheduled when the contract says so, with the same overtime hours', () => {
+    // 19:00–07:00 across the skipped 02:00 hour: 11 hours worked, 12 scheduled. Under a daily 8
+    // the overtime is the 3 worked hours past 8 either way; only straight pay moves to 12 h.
+    const daily8 = [overtimeRule('daily', 8, 1.5)];
+    const [asWorked] = costSchedule(
+      springNight().schedule,
+      ctx({ overtimeRules: daily8, dstTransitions: [SPRING] }),
+    ).assignments;
+    const [asScheduled] = costSchedule(
+      springNight().schedule,
+      ctx({ overtimeRules: daily8, dstTransitions: [SPRING], paySpringForwardAsScheduled: true }),
+    ).assignments;
+    expect(asWorked?.lines.find((l) => l.kind === 'base')?.hours).toBe(11);
+    expect(asScheduled?.lines.find((l) => l.kind === 'base')?.hours).toBe(12);
+    expect(asScheduled?.hours).toBe(12);
+    expect(asWorked?.overtimeHours).toBe(3);
+    expect(asScheduled?.overtimeHours).toBe(3);
+    // The unworked hour is pay for time not worked (29 U.S.C. § 207(e)(2)), so the regular rate is
+    // $550 / 11 h = $50 either way, not $600 / 11 h = $54.55, and the overtime is 3 h × $25 = $75.
+    const overtime = (c: typeof asWorked) =>
+      c?.lines.filter((l) => l.kind === 'overtime').map((l) => [l.hours, l.rate, l.amount]);
+    expect(overtime(asWorked)).toEqual([[3, 25, 75]]);
+    expect(overtime(asScheduled)).toEqual([[3, 25, 75]]);
+    expect(asWorked?.regularRate).toBe(50);
+    expect(asScheduled?.regularRate).toBe(50);
+  });
+
   it('pays the fall-back night as the thirteen hours worked', () => {
     const [cost] = costSchedule(fallNight().schedule, ctx({ dstTransitions: [FALL] })).assignments;
     expect(cost?.hours).toBe(13);
@@ -272,5 +299,36 @@ describe('the hours a clock change adds, on every basis that counts them', () =>
       amount: 129.46,
     });
     expect(cost?.total).toBe(854.46);
+  });
+});
+
+describe('a short-rest premium across the spring-forward night', () => {
+  it('pays the early hours of the spring-forward night as the seven real hours they were', () => {
+    // Day 8 ends 15:00 on Saturday 2026-03-07; the night 12 starts 19:00, 4 hours later. Under a
+    // 12-hour minimum the rest would have ended at 03:00 Sunday on the wall clock, so 19:00–03:00
+    // earns it: 8 wall hours, but the clocks skip 02:00–03:00, so 7 real hours. 7 × $25 = $175.
+    // The night itself is 11 real hours: 11 × $50 + $175 = $725.
+    const nurse = makeNurse();
+    const s = scenario({
+      startDate: isoDate('2026-03-01'),
+      endDate: isoDate('2026-03-14'),
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, DAY_8, '2026-03-07'),
+        assign(nurse.id, NIGHT_12, '2026-03-07'),
+      ],
+    });
+    const shortRest: Differential = {
+      ...differential('short_rest', 'multiplier', 1.5),
+      shortRest: { minHoursOff: 12, scope: 'within_window' },
+    };
+    const night = costSchedule(
+      s.schedule,
+      ctx({ differentials: [shortRest], dstTransitions: [SPRING] }),
+    ).assignments[1];
+    expect(night?.lines.filter((l) => l.kind === 'short_rest')).toEqual([
+      { kind: 'short_rest', hours: 7, rate: 25, amount: 175 },
+    ]);
+    expect(night?.total).toBe(725);
   });
 });

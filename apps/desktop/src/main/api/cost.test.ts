@@ -281,7 +281,12 @@ describe('a published schedule keeps its price', () => {
     );
   });
 
-  function shiftType(abbreviation: string, startTime: string, isNight: boolean): Id {
+  function shiftType(
+    abbreviation: string,
+    startTime: string,
+    isNight: boolean,
+    isOnCall = false,
+  ): Id {
     return createShiftType(
       f.handle.db,
       {
@@ -291,7 +296,7 @@ describe('a published schedule keeps its price', () => {
         startTime,
         durationHours: 12,
         isNight,
-        isOnCall: false,
+        isOnCall,
         color: '#333',
         sortOrder: 1,
         active: true,
@@ -434,13 +439,25 @@ describe('a published schedule keeps its price', () => {
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 2,
           overtimeWindowAttribution: 'clock',
+          paySpringForwardAsScheduled: false,
+          breakPremiumRate: 'base',
+          compTime: null,
         },
         ACTOR,
       );
+    const standby = shiftType('SB', '19:00', true, true);
     const callBack = (date: string) =>
       createDayOfPayEvent(
         f.handle.db,
-        { unitId, nurseId: ana, kind: 'call_back', date: isoDate(date), hoursWorked: 1 },
+        {
+          unitId,
+          nurseId: ana,
+          kind: 'call_back',
+          date: isoDate(date),
+          shiftTypeId: standby,
+          startMinute: 120,
+          hoursWorked: 1,
+        },
         ACTOR,
       );
     settings(4);

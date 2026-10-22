@@ -3,8 +3,9 @@
  * compliance pass, and a unit with none gets no such alert.
  */
 
-import { addDays, isoDate } from '@shiftnurse/core';
+import { addDays, isoDate, type MaxHoursParams, resolveConfigs, weekdayOf } from '@shiftnurse/core';
 import {
+  adoptLatestRules,
   createHoliday,
   createNurse,
   createNurseUnit,
@@ -16,12 +17,13 @@ import {
   listHolidaysForUnit,
   listNursesForUnit,
   recordHolidayWork,
+  saveRuleSet,
   transact,
   updateUnit,
 } from '@shiftnurse/db';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { alertsFor } from './alerts.js';
-import { ACTOR } from './context.js';
+import { alertsFor, previousWorkWeekFor } from './alerts.js';
+import { ACTOR, periodOrThrow, ruleSetFor, scheduleViewFor } from './context.js';
 import { scheduleApi } from './schedule.js';
 import { type Fixture, openFixture } from './test-fixture.js';
 
@@ -135,6 +137,52 @@ describe('per-diem holiday commitment under the unit’s holiday attribution', (
   });
 });
 
+describe('in-lieu holiday alerts', () => {
+  const inLieuAlerts = () =>
+    alertsFor(f.handle.db, f.seeded.draftPeriodId).filter((a) => a.kind === 'in_lieu_holiday');
+
+  // A full-time nurse working Monday to Thursday around a Friday holiday: Thursday is her holiday.
+  function workMondayToThursdayAroundFridayHoliday() {
+    const { db } = f.handle;
+    const unitId = f.seeded.unitId;
+    transact(db, (tx) => {
+      for (const h of listHolidaysForUnit(db, unitId)) deleteHoliday(tx, h.id, ACTOR);
+    });
+    const monday = addDays(f.seeded.draftStart, (1 - weekdayOf(f.seeded.draftStart) + 7) % 7);
+    const friday = addDays(monday, 4);
+    createHoliday(db, { unitId, date: friday, name: 'Unit holiday', isMajor: false }, ACTOR);
+    const nurse = f.rns.find((n) => n.employmentType === 'full_time')!;
+    for (let i = 0; i < 4; i++) {
+      scheduleApi(db).createAssignment({
+        periodId: f.seeded.draftPeriodId,
+        nurseId: nurse.id,
+        shiftTypeId: f.day.id,
+        date: addDays(monday, i),
+      });
+    }
+    return { nurse, thursday: addDays(monday, 3) };
+  }
+
+  it('names the Thursday as the nurse’s holiday once the unit moves holidays federally', () => {
+    const { nurse, thursday } = workMondayToThursdayAroundFridayHoliday();
+    updateUnit(f.handle.db, f.seeded.unitId, { inLieuHolidays: 'federal' }, ACTOR);
+    // The scenario's draft already holds other nurses' shifts, so judge only this nurse's.
+    const found = inLieuAlerts().filter((a) => a.nurseId === nurse.id);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      severity: 'information',
+      date: thursday,
+    });
+    // Premium on the in-lieu day is unconfirmed, so the message asks how it is compensated.
+    expect(found[0]!.message).toContain('record how it is compensated');
+  });
+
+  it('says nothing about in-lieu days while the unit leaves holidays where they fall', () => {
+    workMondayToThursdayAroundFridayHoliday();
+    expect(inLieuAlerts()).toEqual([]);
+  });
+});
+
 describe('overtime alerts', () => {
   const overtimeAlerts = () =>
     alertsFor(f.handle.db, f.seeded.draftPeriodId).filter((a) => a.kind === 'overtime');
@@ -223,5 +271,51 @@ describe('credential alerts for a nurse floated in', () => {
       (a) => a.kind === 'credential_expiry' && a.nurseId === fran.id,
     );
     expect(lapsing).toHaveLength(1);
+  });
+});
+
+describe('the work week the last published schedule was judged under', () => {
+  const previousFor = () => {
+    const { db } = f.handle;
+    const period = periodOrThrow(db, f.seeded.draftPeriodId);
+    const params = resolveConfigs(ruleSetFor(db, period)).find(
+      (c) => c.ruleId === 'max-hours-per-week',
+    )!.params as unknown as MaxHoursParams;
+    const schedule = scheduleViewFor(db, period, { lookback: true, floated: 'worked' });
+    return previousWorkWeekFor(
+      db,
+      period,
+      {
+        workWeekStartsOn: params.workWeekStartsOn,
+        workWeekStartMinute: params.workWeekStartMinute ?? 0,
+      },
+      schedule,
+    );
+  };
+
+  it('is not passed on while the draft keeps the week the history was published under', () => {
+    expect(previousFor()).toBeUndefined();
+  });
+
+  it('is the old week once the draft moves to a Saturday 19:00 week', () => {
+    const { db } = f.handle;
+    const current = ruleSetFor(db, periodOrThrow(db, f.seeded.draftPeriodId));
+    transact(db, (tx) =>
+      saveRuleSet(
+        tx,
+        {
+          ...current,
+          configs: current.configs.map((c) =>
+            c.ruleId === 'max-hours-per-week'
+              ? { ...c, params: { ...c.params, workWeekStartsOn: 6, workWeekStartMinute: 1140 } }
+              : c,
+          ),
+        },
+        ACTOR,
+      ),
+    );
+    adoptLatestRules(db, f.seeded.draftPeriodId, ACTOR);
+    // The frozen scenarios start the week at midnight Sunday.
+    expect(previousFor()).toEqual({ workWeekStartsOn: 0, workWeekStartMinute: 0 });
   });
 });

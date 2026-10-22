@@ -469,6 +469,9 @@ describe('reporting-time pay for a nurse sent home', () => {
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 0,
         overtimeWindowAttribution: 'clock' as const,
+        paySpringForwardAsScheduled: false,
+        breakPremiumRate: 'base' as const,
+        compTime: null,
       },
       ACTOR,
     );

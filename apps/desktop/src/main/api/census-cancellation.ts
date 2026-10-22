@@ -14,6 +14,7 @@ import {
   type Assignment,
   cancellationOrder,
   checkStaffing,
+  describeDate,
   type Id,
   type IsoDate,
   isFloatedOff,
@@ -24,6 +25,7 @@ import {
   reportingPayOwed,
   type ShiftStaffingCheck,
   shiftWindow,
+  today,
 } from '@shiftnurse/core';
 import {
   cancellationHistory,
@@ -31,11 +33,11 @@ import {
   type DbLike,
   deleteAssignment,
   demandInputs,
+  demandInputsForDate,
   getCancellationPolicy,
   getPaySettings,
   getShiftType,
   listAssignmentsForPeriodOnDate,
-  listShiftTypesForUnit,
   recordShiftCancellation,
   rosterForPeriod,
   type ShiftNurseDb,
@@ -97,14 +99,28 @@ export function cancellationOrderFor(
   const nurses = rosterForPeriod(db, period);
   const nurseById = new Map(nurses.map((n) => [n.id, n]));
   const onDate: Assignment[] = listAssignmentsForPeriodOnDate(db, periodId, date);
+  // What the shift needed under the demand rules in force that day, as the grid judges it.
+  const demand = demandInputsForDate(db, period, date, {
+    today: today(),
+    live: demandInputs(db, period.unitId, date, date),
+  });
   const check = checkStaffing({
     date,
-    shiftTypes: listShiftTypesForUnit(db, period.unitId),
+    shiftTypes: demand.shiftTypes,
     nurses,
     assignments: onDate,
-    demand: demandInputs(db, period.unitId, date, date),
+    demand,
   }).find((c) => c.shiftTypeId === shiftTypeId);
-  if (!check) throw new Error('That shift is not one of this unit’s active shifts');
+  if (!check) {
+    const type = demand.shiftTypes.find((t) => t.id === shiftTypeId);
+    // A type retired since, or created after the date, was no shift that day: there was nothing
+    // to staff, so nothing to cancel.
+    throw new Error(
+      type
+        ? `${type.name} was not an active shift on ${describeDate(date)}.`
+        : 'That shift is not one of this unit’s shifts.',
+    );
+  }
   const { required, staffed } = check.byRole[role];
 
   const onShift = onDate

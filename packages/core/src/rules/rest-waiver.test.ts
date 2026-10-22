@@ -35,7 +35,11 @@ function restFindings(restWaivers: RestWaiver[]) {
     assignments: [assign('ann', NIGHT_12, '2026-01-05'), assign('ann', EVENING_8, '2026-01-06')],
     restWaivers,
   });
-  return minRestRule.evaluate(s.schedule, { minRestHours: 11, onCallCountsAsWork: false }, s.ctx);
+  return minRestRule.evaluate(
+    s.schedule,
+    { minRestHours: 11, onCallCountsAsWork: false, callBackCountsForRest: false },
+    s.ctx,
+  );
 }
 
 describe('a nurse who waived rest in writing', () => {

@@ -207,12 +207,16 @@ export function NewRequestDialog({
               : 'The shifts this nurse would have worked. Counts toward contracted hours once approved.'}
           </span>
           {nurse?.scheduleKind === 'va_72_80' &&
-            type !== 'unpaid' &&
+            (type === 'annual' || type === 'sick') &&
             (parseNumberField(paidValue) ?? 0) > 0 && (
               <span>
                 Charged as{' '}
-                {leaveChargeHours(nurse.scheduleKind, parseNumberField(paidValue) ?? 0).toFixed(2)}{' '}
-                h of leave: 10 hours for each 9 of absence (38 U.S.C. § 7456A(d))
+                {leaveChargeHours(
+                  nurse.scheduleKind,
+                  type,
+                  parseNumberField(paidValue) ?? 0,
+                ).toFixed(2)}{' '}
+                h of leave: 10 hours for each 9 of absence (38 U.S.C. § 7456A(b)(3))
               </span>
             )}
         </label>

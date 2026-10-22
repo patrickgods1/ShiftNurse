@@ -25,6 +25,7 @@ import {
 } from './calloffs.js';
 import { createShiftType, createUnit } from './config.js';
 import { nextEmployeeId } from './employee-ids.test-support.js';
+import { createNurseUnit } from './nurse-units.js';
 import { publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
@@ -132,6 +133,8 @@ describe('last overtime dates', () => {
       },
       ACTOR,
     ).id;
+    // She floats here, or the shift could not be placed; her overtime is still 5 East's business.
+    createNurseUnit(handle.db, { nurseId: visitor, unitId }, ACTOR);
     overtime(visitor, '2026-01-05');
     transact(handle.db, (tx) => publishSchedule(tx, { periodId: earlierPeriodId }, ACTOR));
 

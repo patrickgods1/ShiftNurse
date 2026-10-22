@@ -15,8 +15,14 @@
  * pair outright, which is the same clause with B fixed to 1. The between set is strict on both
  * ends, so how the sort breaks ties cannot change it. This is the same argument as
  * `long-stretch`'s follower clause.
+ *
+ * With `callBackCountsForRest`, a call-back is a constant preceding shift whose end is the
+ * call-back's: for C, the rule takes the call-back that started before C and ended last, and
+ * measures from it only when no worked shift starting before C ends at or after it. So C is
+ * forbidden while every such shift is off: `x_C − Σ x_B ≤ 0`, and a constant B skips it.
  */
 
+import type { CallBack } from '../../../domain/entities.js';
 import { overlapRule } from '../../../rules/availability-rules.js';
 import { asParams } from '../../../rules/registry.js';
 import { minRestRule, restWaivedOn } from '../../../rules/rest-rules.js';
@@ -88,6 +94,38 @@ export function encodeRest(ctx: EncodeContext, raw: Record<string, unknown>): vo
           `rest: ${ctx.name(n)} ${describe(a)} → ${describe(c)} (${gap / 60}h, ${requiredHours}h required)`,
         );
       }
+    }
+    if (!params.callBackCountsForRest) continue;
+    const nurseId = ctx.model.nurses[n]!.id;
+    const callBacks = ctx.model.ctx.callBacksByNurse.get(nurseId) ?? [];
+    if (callBacks.length === 0) continue;
+    const required = params.minRestHours * 60;
+    for (const c of timeline) {
+      // The call-back C follows, as the rule picks it: started before C, ended last.
+      let cb: CallBack | undefined;
+      for (const x of callBacks) {
+        if (x.window.startMinute >= c.window.startMinute) break;
+        if (!cb || x.window.endMinute > cb.window.endMinute) cb = x;
+      }
+      if (!cb) continue;
+      const gap = c.window.startMinute - cb.window.endMinute;
+      if (gap < 0 || gap >= required) continue;
+      if (restWaivedOn(ctx.model.ctx, nurseId, c.date)) continue;
+      const end = cb.window.endMinute;
+      // A worked shift that started before C and ended no earlier: the rule measures from it.
+      const between = timeline.filter(
+        (b) => b !== c && b.window.startMinute < c.window.startMinute && b.window.endMinute >= end,
+      );
+      if (between.some((b) => b.literal === null)) continue;
+      const e = expr();
+      if (c.literal === null) e.constant += 1;
+      else e.terms.push([c.literal, 1]);
+      for (const b of between) e.terms.push([b.literal!, -1]);
+      ctx.b.atMost(
+        e,
+        0,
+        `rest: ${ctx.name(n)} call-back to minute ${end} → ${describe(c)} (${gap / 60}h, ${params.minRestHours}h required)`,
+      );
     }
   }
 }

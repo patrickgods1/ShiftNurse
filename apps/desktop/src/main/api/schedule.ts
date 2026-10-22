@@ -25,6 +25,7 @@ import {
   type SchedulePeriod,
   type ScheduleView,
   type SolveInput,
+  today,
 } from '@shiftnurse/core';
 import {
   adoptLatestRules,
@@ -69,13 +70,15 @@ import {
  * same mapping (`ruleContextForInput`), and by the period's own rule-set snapshot: a context
  * assembled here by hand once missed floats' leave and credentials, and any input added to
  * `loadPeriodInput` only would have been honoured by Generate and silently ignored on screen.
- * Callers that already loaded the input pass it, so one call reads the tables once.
+ * Callers that already loaded the input pass it, so one call reads the tables once. Given today, a
+ * published period's past dates are judged by the demand rules in force on each, so loosening a
+ * ratio now does not rewrite whether last month's shifts were short.
  */
 export function validateView(
   db: DbLike,
   period: SchedulePeriod,
   schedule: ScheduleView,
-  input: SolveInput = loadPeriodInput(db, period),
+  input: SolveInput = loadPeriodInput(db, period, { today: today() }),
 ): ScheduleValidation {
   const { ruleSet } = input;
   const ctx = ruleContextForInput(input);
@@ -117,7 +120,7 @@ export function nurseHoursReadout(
   date: IsoDate,
 ): NurseHoursReadout {
   const period = periodOrThrow(db, periodId);
-  const input = loadPeriodInput(db, period);
+  const input = loadPeriodInput(db, period, { today: today() });
   const schedule = scheduleViewFor(db, period, { lookback: true, floated: 'busy' });
   const nurse = schedule.nursesById.get(nurseId);
   if (!nurse) throw new Error(`That nurse is not on ${period.name}'s roster.`);

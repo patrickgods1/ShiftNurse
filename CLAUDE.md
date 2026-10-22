@@ -17,8 +17,8 @@ self-service later becomes an intake surface rather than a new data model.
 Milestones M1–M16 and M19–M42 are complete and green, and so is **M43** — the 2026-10-16
 in-depth review's fixes, one PR per phase (`ROADMAP.md`). **M18 — Release hardening** is in
 progress (the 2026-10-03 release audit's fixes): its one open box is the copy-on-write
-`ScheduleView` follow-up. M17 (signing) is deferred, and so are the review items that wait on an
-owner decision (on-call caps, INRC-II pattern terms, encryption at rest; listed under M43).
+`ScheduleView` follow-up. M17 (signing) won't be done (owner decision 2026-10-19), and M44 (deferred decisions and stated
+gaps) is in progress as a 15-phase plan.
 
 Detail lives next to the code, in CLAUDE.md files that load when you work in that folder:
 
@@ -143,9 +143,11 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
   type and its first grant), `fillCoverageWeek` (seven weekday floors set together),
   `duplicateShiftType` (a new type, its copied floors, credentials, forecasts and wishes, and the
   old type's retirement),
-  `publishSchedule` (version, status, ledger), `replaceAssignments` (delete and insert),
+  `publishSchedule` (version, status, ledger), `recordCompTimeCredits` (a period's comp credits
+  and their audit rows, banked once and final), `replaceAssignments` (delete and insert),
   `replaceNursePreferences`, `importFairnessLedgerEntries` and `upsertCensusForecasts` (a batch of
-  days accepted as one decision) — takes `ShiftNurseTx`, so calling it outside a transaction is a
+  days accepted as one decision), `backfillDemandConfigVersions` (every missed or first demand
+  version at startup, each with its audit row) — takes `ShiftNurseTx`, so calling it outside a transaction is a
   type error rather than a docstring nobody read.
 - **Every IPC write runs in one `transact`**, in the `main/api/` module that builds its resource
   (`api.ts` is only the wiring table): a repository function given the bare `db` commits its
@@ -160,7 +162,9 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
 - **Rule set versions are immutable.** `saveRuleSet` always inserts a new version; a published
   period snapshots the version it was solved under, so editing rules must never rewrite the
   rules an existing schedule was judged by; likewise a published period keeps the pay
-  configuration it was published under (`pay_config_snapshot`). A draft keeps the version it was created under until
+  configuration it was published under (`pay_config_snapshot`), and every change to a unit's
+  demand rules (ratios, tiers, floors, ratio staffing, active shift types) is recorded as an
+  append-only, effective-dated version (`demand_config_version`). A draft keeps the version it was created under until
   the manager moves it (`periods.adoptLatestRules`, audited); the Schedule page says when a newer
   version exists.
 - Bad data throws loudly (`ScheduleView` throws on an unknown nurse id). Silently dropping a

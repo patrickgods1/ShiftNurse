@@ -61,6 +61,7 @@ import {
   updateUnit,
   upsertCoverageRequirement,
 } from './config.js';
+import { batchDemandVersions } from './demand-history.js';
 import { createHoliday } from './holidays.js';
 import {
   createDifferential,
@@ -414,6 +415,17 @@ export function applySetupPreset(
 ): SetupPresetResult {
   const unit = getUnit(tx, unitId);
   if (!unit) throw new Error(`Unit ${unitId} not found`);
+  // One version for the whole step: never a pattern's first shift alone or tiers without ratios.
+  return batchDemandVersions(tx, () => applyPreset(tx, unit, preset, actor));
+}
+
+function applyPreset(
+  tx: ShiftNurseTx,
+  unit: Unit,
+  preset: SetupPreset,
+  actor: string,
+): SetupPresetResult {
+  const unitId = unit.id;
   switch (preset.kind) {
     case 'shift-pattern':
       return applyShiftPattern(tx, unitId, preset.pattern, actor);
@@ -449,6 +461,17 @@ export function applyJurisdiction(
   actor: string,
   choices: JurisdictionChoices = {},
 ): SetupPresetResult {
+  // One version for the whole plan: never the new ceiling without the unit's ratio staffing.
+  return batchDemandVersions(tx, () => planAndApplyJurisdiction(tx, unitId, id, actor, choices));
+}
+
+function planAndApplyJurisdiction(
+  tx: ShiftNurseTx,
+  unitId: Id,
+  id: JurisdictionId,
+  actor: string,
+  choices: JurisdictionChoices,
+): SetupPresetResult {
   if (!Object.hasOwn(JURISDICTION_PRESETS, id)) throw new Error(`Unknown state preset "${id}"`);
   const unit = getUnit(tx, unitId);
   if (!unit) throw new Error(`Unit ${unitId} not found`);
@@ -466,6 +489,7 @@ export function applyJurisdiction(
       differentials: listActiveDifferentials(tx, unitId),
       postingLeadDays: unit.postingLeadDays,
       overtimeOrder: unit.overtimeOrder,
+      inLieuHolidays: unit.inLieuHolidays,
       paySettings: paySettingsSaved(tx, unitId) ? getPaySettings(tx, unitId) : undefined,
       weekendDefinition: latest?.weekendDefinition ?? DEFAULT_WEEKEND,
     },

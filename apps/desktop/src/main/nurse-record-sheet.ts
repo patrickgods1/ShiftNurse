@@ -70,6 +70,8 @@ const ENTITY_WORDS: Record<string, string> = {
   leave_bid: 'Leave bid',
   leave_balance: 'Leave balance',
   fmla_certification: 'FMLA certification',
+  comp_time_election: 'Comp-time election',
+  comp_time_credit: 'Comp time banked',
   nurse: 'Nurse record',
   nurse_credential: 'Credential',
   nurse_unit: 'Float assignment',

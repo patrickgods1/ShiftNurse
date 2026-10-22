@@ -242,9 +242,8 @@ GitHub release (so a Windows installer built on a Mac doesn't carry a macOS bina
 it against a SHA-256 pinned in the repo, since the installer carries a native binary it did not
 compile. `dist.mjs` only runs electron-builder with `ELECTRON_RUN_AS_NODE` removed, because VS
 Code's terminal sets it. Electron is pinned to an exact version because electron-builder
-requires that. Installers are unsigned for now — accepted as a v1 trade-off
-(Gatekeeper/SmartScreen warnings) with signing deferred rather than blocking the first real-world
-usage on it. The packaged binary is fused (`electronFuses` in `electron-builder.yml`): it cannot
+requires that. Installers are unsigned by owner decision (2026-10-19) — accepted
+(Gatekeeper/SmartScreen warnings); signing and self-update (M17) will not be done. The packaged binary is fused (`electronFuses` in `electron-builder.yml`): it cannot
 be run as plain Node, ignores `NODE_OPTIONS` and `--inspect`, and loads only its own
 integrity-checked asar.
 
@@ -278,8 +277,7 @@ every real install, because Node resolved a module the app had not shipped from 
   cost is a native runner per platform (and ~20 MB compressed per installer), a second
   statement of every rule in the CP-SAT encoding (guarded by tests against the rule engine),
   and a hybrid Generate that takes ~3× as long as the annealer's.
-- Code-signed installers — acceptable to defer past first real usage; revisit before wider
-  distribution.
+- Code-signed installers — unsigned by owner decision (2026-10-19); not planned.
 
 ## Further reading
 

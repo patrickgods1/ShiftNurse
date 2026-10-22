@@ -458,6 +458,25 @@ describe('locks, leave and the lookback tail', () => {
     expect(during).toEqual([]);
   });
 
+  it('schedules a float only within her float dates, even on a unit short of nurses', () => {
+    // 14 days × 2 shifts × 2 RNs = 56 nurse-shifts against six full-timers' 36, so Generate
+    // wants every shift it can get from everyone. The float is here Thu 8 – Tue 13 Jan.
+    const nurses = fullTimers(6);
+    const float = nurses[5]!;
+    const input = twelveHourUnit(nurses, 2, {
+      memberships: [
+        { nurseId: float.id, startDate: isoDate('2026-01-08'), endDate: isoDate('2026-01-13') },
+      ],
+    });
+    const report = solve(input, QUICK);
+    const hers = report.assignments.filter((a) => a.nurseId === float.id);
+    expect(hers.length).toBeGreaterThan(0);
+    expect(
+      hers.filter((a) => !dateInRange(a.date, isoDate('2026-01-08'), isoDate('2026-01-13'))),
+    ).toEqual([]);
+    expect(report.hardViolations.filter((v) => v.code === 'outside_membership')).toEqual([]);
+  });
+
   it('does not schedule a nurse back from a paid vacation up to a full pay period of work', () => {
     // A unit that needs more hours than its staff have: the solver fills everyone to the top
     // of their contract. Paid leave counts toward it, so the vacationer's ceiling is

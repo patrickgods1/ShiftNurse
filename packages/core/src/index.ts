@@ -1,10 +1,17 @@
 // The public API: exactly what packages/db, the desktop app and the web client consume.
 // Everything else stays exported from its own module for core's internal use.
 
-export type { BindingConstraint, RatioStaffing, RoleDemand, ShiftDemand } from './acuity/demand.js';
+export type {
+  BindingConstraint,
+  DemandInputs,
+  RatioStaffing,
+  RoleDemand,
+  ShiftDemand,
+} from './acuity/demand.js';
 // Census and ratios to the staffing each shift needs
 export {
   coverageFloorFor,
+  DemandTable,
   deriveDemand,
   NURSE_ROLES,
   nursesRequiredForMix,
@@ -90,10 +97,12 @@ export type {
   AvailabilityBlock,
   Budget,
   CallAttempt,
+  CallBack,
   CallOff,
   CallOffStatus,
   CallOutcome,
   CensusForecast,
+  CompTimeElection,
   CoverageRequirement,
   Credential,
   Differential,
@@ -108,6 +117,7 @@ export type {
   HppdTarget,
   Id,
   IncompatibilityGroup,
+  InLieuHolidays,
   LeaveBalanceType,
   LeavePolicy,
   LeaveYearStart,
@@ -247,6 +257,7 @@ export type {
 // Seniority leave bidding: awards in seniority order, every denial reasoned
 export { awardBids, seniorityOrder } from './leave/bidding.js';
 export { leaveChargeHours } from './leave/charge.js';
+export { compTimeCredit } from './leave/comp-time.js';
 export type { FmlaEntitlementBasis, FmlaPeriod } from './leave/fmla.js';
 export {
   fmlaEligibility,
@@ -264,6 +275,7 @@ export type {
 } from './leave/holiday-priority.js';
 // Contested holiday requests ranked by the contract's order; holiday volunteers by seniority
 export { holidayRequestPriority, holidayWorkPriority } from './leave/holiday-priority.js';
+export { inLieuHolidayDates } from './leave/in-lieu.js';
 export { validateLeavePolicy } from './leave/policy.js';
 export type { RequestClaimant, RequestPriorityInput } from './leave/request-priority.js';
 // Competing time-off requests ranked by equity (advice, never applied)
@@ -271,14 +283,19 @@ export { competingRequestPriority } from './leave/request-priority.js';
 export type {
   ComplianceAlert,
   ComplianceAlertKind,
+  ComplianceSeverity,
   GridSheet,
   NurseSheet,
   ScheduleDiff,
+  StaffingRecordDay,
+  StaffingRecordRole,
+  StaffingRecordRow,
 } from './publish/index.js';
 // Publish diff, compliance alerts and printable projections
 export {
   buildGridSheet,
   buildNurseSheets,
+  buildStaffingRecord,
   complianceAlerts,
   diffAssignments,
   formatAssignmentsCsv,
@@ -328,6 +345,8 @@ export type {
   JudgedPayPeriod,
   MaxHoursParams,
   PayPeriodHours,
+  WorkWeek,
+  WorkWeekSettings,
 } from './rules/hours-rules.js';
 // Overtime and hours rule parameters; which pay periods are judged and the hours counted in them
 export {
@@ -337,6 +356,8 @@ export {
   payPeriodHoursFor,
   payPeriodIndex,
   payPeriodWindow,
+  workWeekFor,
+  workWeekOf,
 } from './rules/hours-rules.js';
 // Kept-apart group rule helpers
 export { groupInForce, groupsForPeriod } from './rules/incompatibility-rules.js';
@@ -404,6 +425,8 @@ export {
   type WeekendPatternParams,
   weekendBreaches,
 } from './rules/weekend-pattern.js';
+// Where a call-back from standby sits on the timeline (ORS 441.770(3): a call response counts)
+export { callBackWindow } from './schedule/call-backs.js';
 // Which dated shift covers which
 export { containingDate, coveringShift, withinShiftProblem } from './schedule/cover.js';
 export type { BusyElsewhere } from './schedule/elsewhere.js';
@@ -428,6 +451,8 @@ export { latestEndingBefore } from './schedule/preceding.js';
 export { type DstTransition, realMinutesIn } from './schedule/real-minutes.js';
 // The schedule read model
 export { ScheduleView } from './schedule/view.js';
+// Where a work week that starts at a time of day files a shift (29 CFR 778.105)
+export { windowBoundaryMinute, windowDayOf } from './schedule/window-split.js';
 export type {
   AcuityPresetId,
   HolidayYearPlan,
@@ -441,6 +466,7 @@ export type {
   PlannedHoliday,
   PresetCondition,
   PresetDifferential,
+  PresetExtraRatio,
   PresetOvertimeRule,
   ProtectedRuleChange,
   SetupMode,
@@ -505,11 +531,13 @@ export { Rng } from './solver/rng.js';
 export { ruleContextForInput } from './solver/rule-context.js';
 // Solver entry point
 export { solve } from './solver/solver.js';
-// Solver contract types
 export type {
+  ObjectiveWeights,
   SolveInput,
   SolveOptions,
   SolveProgress,
   SolveReport,
   SolverId,
 } from './solver/types.js';
+// Solver contract types
+export { DEFAULT_OBJECTIVE_WEIGHTS } from './solver/types.js';

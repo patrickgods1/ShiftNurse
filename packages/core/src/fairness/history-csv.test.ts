@@ -151,4 +151,18 @@ describe('bucketing historical shifts into pay periods', () => {
       ['2026-01-05:E0001:D12', '2026-01-05:E0001:N12', '2026-01-06:E0002:N8'],
     );
   });
+
+  it('names the line whose abbreviation two shift types share, instead of picking one', () => {
+    const twin = { ...testShiftTypes[0]!, id: 'st-twin', name: 'Day twelve' };
+    const { rows, errors } = parseHistoricalScheduleCsv(
+      csv('E0001,2026-01-05,D12', 'E0001,2026-01-06,N12'),
+      { ...options, shiftTypes: [...testShiftTypes, twin] },
+    );
+    expect(rows).toEqual([
+      { employeeId: 'E0001', date: isoDate('2026-01-06'), shiftAbbreviation: 'N12' },
+    ]);
+    expect(errors).toEqual([
+      { line: 2, message: expect.stringMatching(/"D12".*more than one active shift type/) },
+    ]);
+  });
 });

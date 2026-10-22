@@ -351,6 +351,62 @@
       "when": 1792449437011,
       "tag": "0049_history_is_append_only",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1792562800571,
+      "tag": "0050_demand_config_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "6",
+      "when": 1792625207510,
+      "tag": "0051_call_back_start",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "6",
+      "when": 1792631846806,
+      "tag": "0052_pay_spring_and_break_rate",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "6",
+      "when": 1792634647454,
+      "tag": "0053_pay_short_rest_and_tiers",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "6",
+      "when": 1792640433231,
+      "tag": "0054_comp_time",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "6",
+      "when": 1792649772246,
+      "tag": "0055_in_lieu_holidays",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "6",
+      "when": 1792653290509,
+      "tag": "0056_ratio_tour",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "6",
+      "when": 1792685666746,
+      "tag": "0057_ratio_tour_marks_demand",
+      "breakpoints": true
     }
   ]
 }

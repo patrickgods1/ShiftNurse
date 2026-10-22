@@ -25,6 +25,7 @@ import {
 import { useGridNurses } from '../../api-nurse-units.js';
 import { errorMessage, INPUT, SMALL } from '../../components/ui.js';
 import { formatHours } from '../../money.js';
+import { callBackStartMinute, nearestQuarterHour } from './call-back-time.js';
 
 // The label is short now that the name is on the row; it must never wrap inside its border.
 const NOWRAP = `${SMALL} whitespace-nowrap`;
@@ -63,6 +64,7 @@ export function NursePayActions({
   const record = useRecordDayOfPay();
   const [open, setOpen] = useState<'break' | 'call-back' | undefined>(undefined);
   const [hours, setHours] = useState('');
+  const [startedAt, setStartedAt] = useState('');
   const who = entry.nurse.lastName;
   const where = {
     unitId,
@@ -95,7 +97,10 @@ export function NursePayActions({
               type="button"
               className={NOWRAP}
               aria-label={`Called back: ${who}`}
-              onClick={() => setOpen('call-back')}
+              onClick={() => {
+                setStartedAt(nearestQuarterHour(new Date()));
+                setOpen('call-back');
+              }}
             >
               Called back
             </button>
@@ -133,9 +138,27 @@ export function NursePayActions({
           onSubmit={(e) => {
             e.preventDefault();
             const worked = Number(hours);
-            if (worked > 0) submit({ kind: 'call_back', ...where, hoursWorked: worked });
+            if (worked > 0 && startedAt !== '') {
+              submit({
+                kind: 'call_back',
+                ...where,
+                hoursWorked: worked,
+                startMinute: callBackStartMinute(shift.shiftType.startTime, startedAt),
+              });
+            }
           }}
         >
+          <label className="text-xs text-text-muted" htmlFor={`cbt-${entry.assignment.id}`}>
+            Started at
+          </label>
+          <input
+            id={`cbt-${entry.assignment.id}`}
+            type="time"
+            step={900}
+            className={`${INPUT} w-28`}
+            value={startedAt}
+            onChange={(e) => setStartedAt(e.target.value)}
+          />
           <label className="sr-only" htmlFor={`cb-${entry.assignment.id}`}>
             {`Hours ${who} worked after the call-back`}
           </label>
@@ -154,7 +177,7 @@ export function NursePayActions({
             type="submit"
             className={NOWRAP}
             aria-label={`Record call-back for ${who}`}
-            disabled={record.isPending || !(Number(hours) > 0)}
+            disabled={record.isPending || !(Number(hours) > 0) || startedAt === ''}
           >
             Record call-back
           </button>

@@ -8,11 +8,10 @@
 import {
   type ComplianceAlert,
   type ContractedHoursParams,
+  compareDates,
   complianceAlerts,
   contractedHoursRule,
   dateInRange,
-  datesInRange,
-  deriveDemand,
   type Holiday,
   type Id,
   type MaxHoursParams,
@@ -24,18 +23,23 @@ import {
   type SchedulePeriod,
   type ScheduleView,
   today,
+  type WorkWeekSettings,
+  workWeekFor,
 } from '@shiftnurse/core';
 import {
   costContext,
   type DbLike,
   demandInputs,
+  demandTableFor,
   holidayWorkFor,
   ledgerHistory,
   listCredentials,
   listHolidaysForUnit,
+  listPeriodsForUnit,
   perNurseRecordsFor,
+  unitForPeriod,
 } from '@shiftnurse/db';
-import { periodOrThrow, ruleSetFor, scheduleViewFor, unitOrThrow } from './context.js';
+import { periodOrThrow, ruleSetFor, scheduleViewFor } from './context.js';
 
 /** How far a nurse may drift from contracted hours before the publish preview flags it. */
 const HOURS_DRIFT_TOLERANCE = 0.1;
@@ -62,6 +66,49 @@ function holidayWorkedBy(
   return workedBy;
 }
 
+/** The max-hours rule's work-week settings, night week only where the rule set gives one. */
+function workWeekSettingsOf(params: MaxHoursParams): WorkWeekSettings {
+  return {
+    workWeekStartsOn: params.workWeekStartsOn,
+    workWeekStartMinute: params.workWeekStartMinute ?? 0,
+    ...(params.nightWorkWeekStartsOn !== undefined
+      ? { nightWorkWeekStartsOn: params.nightWorkWeekStartsOn }
+      : {}),
+    ...(params.nightWorkWeekStartMinute !== undefined
+      ? { nightWorkWeekStartMinute: params.nightWorkWeekStartMinute }
+      : {}),
+  };
+}
+
+/**
+ * The work week the previous published schedule (the one whose shifts open this one's weeks) was
+ * published under, when it puts any nurse on this schedule on a different week: the week the
+ * change takes effect overlaps the old one (29 CFR 778.302). Read from that period's own rule-set
+ * snapshot, never "latest".
+ */
+export function previousWorkWeekFor(
+  db: DbLike,
+  period: SchedulePeriod,
+  current: WorkWeekSettings,
+  schedule: ScheduleView,
+): WorkWeekSettings | undefined {
+  // Newest first, so the first match is the latest one ending before this period.
+  const previous = listPeriodsForUnit(db, period.unitId).find(
+    (p) =>
+      p.id !== period.id && p.status !== 'draft' && compareDates(p.endDate, period.startDate) < 0,
+  );
+  if (previous === undefined) return undefined;
+  const params = resolveConfigs(ruleSetFor(db, previous)).find((c) => c.ruleId === maxHoursRule.id)!
+    .params as unknown as MaxHoursParams;
+  const before = workWeekSettingsOf(params);
+  const moved = [...schedule.nursesById.values()].some((nurse) => {
+    const was = workWeekFor(nurse, before);
+    const now = workWeekFor(nurse, current);
+    return was.startsOn !== now.startsOn || was.startMinute !== now.startMinute;
+  });
+  return moved ? before : undefined;
+}
+
 export function alertsForView(
   db: DbLike,
   period: SchedulePeriod,
@@ -73,7 +120,8 @@ export function alertsForView(
     .params as unknown as MaxHoursParams;
   const fte = configs.find((c) => c.ruleId === contractedHoursRule.id)!
     .params as unknown as ContractedHoursParams;
-  const unit = unitOrThrow(db, period.unitId);
+  // The holiday attribution a published period went out under, as the grid and pricing read it.
+  const unit = unitForPeriod(db, period);
   // Whoever is on this schedule, floats included, with their own credentials and leave.
   const records = perNurseRecordsFor(db, unit, period, [...schedule.nursesById.values()]);
   // Paid leave counts as the hours rules count it, so a nurse back from vacation is not "drift".
@@ -91,8 +139,11 @@ export function alertsForView(
     unit.postingLeadDays !== undefined && period.status === 'draft'
       ? { leadDays: unit.postingLeadDays, publishDate: today() }
       : undefined;
-  const holidays = unit.perDiemCommitment ? listHolidaysForUnit(db, period.unitId) : [];
+  const inLieu = unit.inLieuHolidays === 'federal';
+  const holidays = unit.perDiemCommitment || inLieu ? listHolidaysForUnit(db, period.unitId) : [];
+  const previousWorkWeek = previousWorkWeekFor(db, period, workWeekSettingsOf(params), schedule);
   return complianceAlerts({
+    ...(previousWorkWeek ? { previousWorkWeek } : {}),
     ...(posting ? { posting } : {}),
     ...(unit.perDiemCommitment
       ? {
@@ -102,6 +153,10 @@ export function alertsForView(
           ...(unit.holidayAttribution ? { holidayAttribution: unit.holidayAttribution } : {}),
         }
       : {}),
+    // premiumPay is always off: no VA text confirms holiday premium on the in-lieu day itself
+    // (VA Handbook 5007 Part V Ch. 6 para 1c(1) pays on "a holiday designated by Federal statute
+    // or Executive order"), so the alert names the day and pay stays on the calendar holiday.
+    ...(inLieu ? { inLieuHolidays: { holidays, premiumPay: false } } : {}),
     ...(unit.minWeekendsOffPerYear !== undefined
       ? {
           weekendsOffPerYear: {
@@ -124,12 +179,20 @@ export function alertsForView(
     cost: costContext(db, period.unitId, ruleSet, period),
     credentials: listCredentials(db),
     nurseCredentials: records.nurseCredentials,
-    demand: deriveDemand(
-      datesInRange(period.startDate, period.endDate),
-      demandInputs(db, period.unitId, period.startDate, period.endDate),
-    ).all(),
+    // The same demand the grid judges by: a past date under the rules in force that day.
+    demand: demandTableFor(db, period, {
+      today: today(),
+      live: demandInputs(db, period.unitId, period.startDate, period.endDate),
+    }).all(),
     overtimeThresholdHours: params.overtimeThresholdHours,
     workWeekStartsOn: params.workWeekStartsOn,
+    workWeekStartMinute: params.workWeekStartMinute ?? 0,
+    ...(params.nightWorkWeekStartsOn !== undefined
+      ? { nightWorkWeekStartsOn: params.nightWorkWeekStartsOn }
+      : {}),
+    ...(params.nightWorkWeekStartMinute !== undefined
+      ? { nightWorkWeekStartMinute: params.nightWorkWeekStartMinute }
+      : {}),
     ...(params.overtimeByPayPeriod
       ? {
           payPeriodOvertime: {

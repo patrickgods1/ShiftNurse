@@ -30,6 +30,7 @@ const NOT_ABOUT_A_NURSE = [
   'conflict_policy',
   'coverage_requirement',
   'credential',
+  'demand_config_version',
   'differential',
   'holiday',
   'hppd_target',

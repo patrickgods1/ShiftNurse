@@ -4,7 +4,7 @@
 
 ## What is here
 
-- `packages/db` (M2, complete): 50-table Drizzle schema, generated migrations, `client.ts`
+- `packages/db` (M2, complete): 52-table Drizzle schema, generated migrations, `client.ts`
   (WAL, foreign keys ON, `transact`), `audit.ts`, `mappers.ts`, and repositories under
   `repositories/` — `roster`, `config` (unit, shift types, coverage, holidays, credential
   requirements), `acuity` (tiers, ratios, HPPD), `rulesets`, `schedule`, `timeoff`, `calloffs`,
@@ -22,22 +22,71 @@
 - **Pay settings carry `holidayPayCoversOvertime` (migration 0036, nullable, null reads false)
   and `reportingPayNoticeHours` (migration 0037, nullable, null reads 2; saves refuse outside 0–24)
   and `overtimeWindowAttribution` (migration 0047, nullable, null reads `'clock'`; saves refuse
-  other values). `unit.holiday_attribution` (same migration, null reads `'start'`) decides who
-  `workedFromSchedules` lists as working a holiday.**
+  other values; `unit.holiday_attribution`, same migration, null reads `'start'`, decides who
+  `workedFromSchedules` lists as working a holiday) and `paySpringForwardAsScheduled` /
+  `breakPremiumRate` (migration `0052_pay_spring_and_break_rate`, nullable, null reads false /
+  `'base'`; saves refuse a rate other than `'base'` or `'regular'`; the California preset proposes
+  `'regular'`) and `compTime` (migration `0054_comp_time`: `comp_time_hours_per_overtime_hour` /
+  `comp_time_cap_hours`, both null = off; saves refuse a rate under 1 and a cap of 0 or less; it
+  changes no dollars, and no preset enables it).** The same migration adds `comp_time_election`
+  (a nurse's agreement, `ends_on` null = in force) and `comp_time_credit` (one per nurse and
+  period, append-only by trigger like 0049): a credit is final, and a wrong one is corrected by
+  entering payroll's comp balance.
+- **Comp time is banked once per period, whole** (`recordCompTimeCredits`, takes `ShiftNurseTx`):
+  every nurse's credit and its audit row (`comp_time_credit`, `nurseId` in the snapshot) in one
+  call, refused in words when the period already holds any credit. Main decides who is credited
+  and how much; `listCompTimeCreditsForPeriod` / `ForNurse` carry the period's end date, the day a
+  credit is earned on.
   `paySettingsSaved` says whether a unit has a row at all: `applyJurisdiction` offers the preset's
   pay settings (and a wider weekend) only to a unit that saved none, since a saved row may follow a
   contract the preset cannot see.
 
+- **Units carry `in_lieu_holidays`** (migration `0055_in_lieu_holidays`, nullable, null reads `'none'`; saves refuse other than `'none'` or `'federal'`; the VA preset proposes `'federal'` to a unit with none). Main passes it to the publish alerts with premium pay off; no cost code reads it.
+- **`ratio_rule.tour`** (migration `0056_ratio_tour`, nullable; migration `0057_ratio_tour_marks_demand` adds it to the demand-dirty trigger): null = the ratio binds every tour; otherwise `day`, `evening` or `night`, read from the shift's start (`tourOf`). Changing it needs a reason.
 - **A published period is priced under the pay configuration it was first published with
   (`pay_config_snapshot`, migration `0048_pay_config_snapshot`):** differentials, overtime rules,
   pay settings, the unit's holiday attribution and nearby holiday dates. Drafts are priced live.
   `repricePeriod` takes a new snapshot with a strict reason. Pay rates are not snapshotted (they
   carry `effectiveFrom`). `backfillPayConfigSnapshots` covers periods published before the table
   existed.
+- **Demand rules are kept as they were on each date (`demand_config_version`, migration
+  `0050_demand_config_history`, append-only by trigger).** A version is the unit's active shift-type
+  ids, acuity tiers, active ratio rules, coverage floors and ratio staffing, as canonical JSON
+  (arrays by id); census and the HPPD target stay live. Every writer of those tables (`acuity.ts`,
+  `config.ts`, so the presets, `applyJurisdiction` and the seeds too) calls
+  `recordDemandConfigVersion` (`repositories/demand-history.ts`) after its write: it inserts only
+  when the canonical JSON differs from the last version, audits it, and clears the unit's
+  `demand_config_dirty` row. Triggers on those tables' demand columns fill that row, so a writer
+  that forgets fails the table-driven tripwire in `demand-history.test.ts`, and
+  `backfillDemandConfigVersions` (main's startup) records the missed version and a first version
+  for a unit with none. A step of many writes (`applySetupPreset`, `applyJurisdiction`,
+  `duplicateShiftType`, `fillCoverageWeek`, the demo and scenario seeds) runs in
+  `batchDemandVersions`, which holds the calls back and records one version per touched unit when
+  the outermost scope ends (nothing if it throws), so no partial version exists for a date before
+  the first to fall back on. `demandConfigOn` reads the version in force at the end of a date (the
+  earliest one before any). `demand-history.ts` imports no repository: `config.ts` and `acuity.ts`
+  call it.
 - **History is append-only in the file (migration `0049_history_is_append_only`):** `rule_set`,
   `rule_config`, `schedule_version`, `schedule_change` and `pay_config_snapshot` refuse UPDATE and
   DELETE, like `audit_log` (0013). They also abort FK cascades, so no unit or published period can
   be deleted. A migration that rebuilds or backfills one of them drops and re-creates its trigger.
+- **A call-back has a time (migration `0051_call_back_start`, `day_of_pay_event.start_minute`, nullable):**
+  minutes from the start of the standby shift the row's (nurse, date, shift type) names, so it can
+  count toward hours-in-24, long stretches and weekly hours. A new call-back requires it and the
+  repository refuses a start outside the standby's declared length or a window that overlaps the
+  nurse's own worked shift on any unit (published or archived, half-open); older rows stay valid as
+  pay-only (null). No `assignment_id`: ids change on backfill and moves.
+- **Differentials carry consecutive-shift tiers and a short-rest trigger (migration
+  `0053_pay_short_rest_and_tiers`, plain ADD COLUMN, all nullable):** `consecutive_tiers` is JSON
+  (null = the 12-hour reading; saves refuse other than 1–3 tiers, a repeated `fullShiftHours` or a
+  number that is not a whole 1 or more; the mapper throws on damaged JSON);
+  `short_rest_min_hours_off` / `short_rest_scope` are both null or both set, required on
+  `short_rest` and refused elsewhere (hours more than 0 and at most 24). Pay snapshots taken
+  before it read the absent fields as absent, which is how they were priced.
+- **`loadPeriodInput` reads timed call-backs as `SolveInput.callBacks`** (`callBacksForNurses` in
+  `day-of-pay.ts`, through `perNurseRecordsFor`): the roster's `call_back` rows with a
+  `start_minute`, on any unit, dated over the lookback tail and the period, each window placed by
+  core's `callBackWindow` from the standby's shift type. Pay-only rows (null start) are skipped.
 - **Event writers (`reportCallOff`, `logCallAttempt`, `createTimeOffRequest`, `approveTimeOff`,
   `denyTimeOff`) take an optional `at` for past events: seeds and imports pass it, live paths never
   do. The audit row carries the same time. `localInstant` (`local-days.ts`) turns a local date and
@@ -140,6 +189,12 @@
 - **One membership predicate.** `nurseWorksOnUnit`/`requireWorksOnUnit` (`nurse-units.ts`): home
   unit, or a float membership covering the dates. Every validator that asks 'does this nurse work
   here' uses it. Accommodations stay on the home unit and apply everywhere.
+- **A float works here only inside her membership dates.** `loadPeriodInput` fills
+  `SolveInput.memberships` from `listFloatMemberships` (the same filter, window and order as
+  `listFloatNurses`), which core's `works-within-membership` rule and both solvers read. Manual
+  placement asks `requireWorksOnUnit` for the shift's start date in `placeableOrThrow`, so every
+  `createAssignment` and `replaceAssignments` (echoed locked rows included: one outside the dates is
+  fixed by hand) refuses a day outside them.
 - **A floated shift stays (migration 0039, `assignment.floated_to`).** `markFloatedOff` locks and
   marks it, `updateAssignment` refuses to unlock it, and loaders turn it into busy time for
   judging (`splitFloatedOff`, `periodTailFor`): it never reaches `SolveInput.assignments`, and
@@ -184,4 +239,9 @@
   at create and update, and an import whose id matches two stored nurses is refused before any
   write. No `lower()` unique index: an existing file may already hold twins.
 - **A period's ledger is `periodLedgerRows(view, counterContextFor(...))`** (`period-ledger.ts`):
-  main's publish, the history importer and the demo seeds all book it there.
+  main's publish, the history importer and the demo seeds all book it there. Publish and the
+  demo seeds pass `includeAvailableHomeNurses: true`: a row for every available active home nurse,
+  zero rows included, so a nurse who carried nothing is first in line next period (floats never
+  get one; their home unit books them). `nurse_keeps_history` therefore also keeps a nurse who was
+  on a published roster without shifts, so deactivate rather than delete. The history importer
+  passes `false` and books only the nurses in its file.

@@ -26,6 +26,7 @@ import { isWeekendDate, WEEKDAY_NAMES, weekdayOf } from '@shiftnurse/core';
 import type { RecordSheet } from './nurse-record-sheet.js';
 import { KEPT_APART_NOTE } from './nurse-record-sheet.js';
 import { cssPageSize } from './paper.js';
+import { STAFFING_RECORD_CITATION, type StaffingRecordSheet } from './staffing-record-sheet.js';
 
 export interface PrintContext {
   unit: Unit;
@@ -195,5 +196,35 @@ export function recordHtml(sheet: RecordSheet, paper: PaperSize = 'letter'): str
 <table><thead><tr><th>When</th><th>Change</th><th>How</th><th class="name">Shift</th><th>Schedule</th><th>By</th><th class="name">Reason</th></tr></thead>
 <tbody>${changes || none(7)}</tbody></table>
 <p class="note">Times are UTC. ${esc(KEPT_APART_NOTE)}</p>
+</body></html>`;
+}
+
+/**
+ * The Title 22 staffing record: one table, a row per date, shift and role. Portrait; the
+ * variance column is the figure an inspector reads, so a shortfall is bold.
+ */
+export function staffingRecordHtml(
+  sheet: StaffingRecordSheet,
+  paper: PaperSize = 'letter',
+): string {
+  const body = sheet.rows
+    .map(
+      (r) =>
+        `<tr><td>${esc(r.date)}</td><td class="name">${esc(r.shift)}</td><td>${esc(r.role)}</td><td>${esc(
+          r.census,
+        )}</td><td>${esc(r.basis)}</td><td>${esc(r.required)}</td><td>${esc(r.actual)}</td><td${
+          Number(r.variance) < 0 ? ' class="charge"' : ''
+        }>${esc(r.variance)}</td></tr>`,
+    )
+    .join('');
+  const none = `<tr><td colspan="8" class="name">No published schedule covers these dates up to today.</td></tr>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Staffing record, ${esc(sheet.unitName)}</title>
+<style>@page { size: ${cssPageSize(paper)} portrait; margin: 14mm; } ${BASE_CSS} td, th { font-size: 8.5pt; } thead { display: table-header-group; } tr { break-inside: avoid; } .note { margin-top: 12pt; font-size: 8.5pt; color: #333; }</style></head>
+<body>
+<h1>Staffing record: ${esc(sheet.unitName)}</h1>
+<div class="meta">${esc(STAFFING_RECORD_CITATION)} · ${esc(sheet.start)} to ${esc(sheet.end)}<br>Exported ${esc(sheet.generatedAt)} by ShiftNurse</div>
+<table><thead><tr><th>Date</th><th class="name">Shift</th><th>Role</th><th>Census</th><th>Basis</th><th>Required</th><th>Actual</th><th>Variance</th></tr></thead>
+<tbody>${body || none}</tbody></table>
+<p class="note">Variance is actual minus required; negative is short. Basis says which census the requirement was worked from: the actual census entered, the forecast, or the coverage floor alone.</p>
 </body></html>`;
 }

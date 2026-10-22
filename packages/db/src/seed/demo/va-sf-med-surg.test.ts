@@ -346,8 +346,10 @@ describe('the VA San Francisco med-surg demo', () => {
     });
     // Art. 13 posts the schedule four weeks ahead; Art. 14 offers overtime by the rosters.
     expect(
-      f.rows(`SELECT posting_lead_days, overtime_order FROM unit WHERE id = '${f.result.unitId}'`),
-    ).toEqual([{ posting_lead_days: 28, overtime_order: 'roster' }]);
+      f.rows(
+        `SELECT posting_lead_days, overtime_order, in_lieu_holidays FROM unit WHERE id = '${f.result.unitId}'`,
+      ),
+    ).toEqual([{ posting_lead_days: 28, overtime_order: 'roster', in_lieu_holidays: 'federal' }]);
     expect(
       f.rows(
         `SELECT kind, mode, amount, window_start, window_end, window_whole_shift_at_hours FROM

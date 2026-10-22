@@ -59,4 +59,28 @@ describe('compliance alerts', () => {
     expect(screen.getAllByText(/is staffed exactly at the ratio/)).toHaveLength(3);
     expect(screen.getByRole('button', { name: 'Fold' })).toBeTruthy();
   });
+
+  it('shows a lone in-lieu holiday as a quiet note, not a warning', async () => {
+    renderWithApp(
+      <Harness
+        alerts={[
+          {
+            kind: 'in_lieu_holiday',
+            severity: 'information',
+            message: 'Ada Lovelace’s in-lieu day for Epiphany is Thu Jan 8',
+            nurseId: 'n1',
+            date: isoDate('2026-01-08'),
+            assignmentIds: ['a1'],
+          },
+        ]}
+      />,
+    );
+
+    const pill = await screen.findByTestId('alerts-panel');
+    expect(pill.textContent).toContain('1 alert');
+    expect(pill.className).toContain('text-text-muted');
+    expect(pill.className).not.toContain('text-warn');
+    fireEvent.click(pill);
+    expect(screen.getByText('In-lieu holidays (1)')).toBeTruthy();
+  });
 });

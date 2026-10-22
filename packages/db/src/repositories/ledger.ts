@@ -99,8 +99,10 @@ export function ledgerSince(db: DbLike, unitId: Id, sinceDate: IsoDate): Fairnes
 /**
  * Delete this period's ledger rows for nurses not in `keepNurseIds`. A republish that moves a
  * nurse's last shift away would otherwise leave their old burden on the books, and every later
- * fairness score would balance against a night they no longer work. Deleted, not zeroed: a nurse
- * absent from a period has no row on first publish either, and `ledgerHistory` must see both alike.
+ * fairness score would balance against a night they no longer work. The keep-set is the publish's
+ * own row set, which holds a zero row for every available active home nurse, so one who loses her
+ * last shift is zeroed by the upsert; only nurses no longer eligible (deactivated, transferred,
+ * unavailable all period, or floats) are deleted.
  * Imported history uses synthetic `import:` period ids, so it can never match a real period.
  */
 export function removeLedgerEntriesExcept(

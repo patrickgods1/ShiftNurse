@@ -135,3 +135,38 @@ describe('whether the unit can spare a nurse on the days asked for', () => {
     expect(leaveCapacity(input, 'ask').map((d) => d.date)).toEqual(['2026-01-16', '2026-01-17']);
   });
 });
+
+describe('leave on a past day judged by the rules of that day', () => {
+  it('counts a night shift retired since in what that day needed', () => {
+    const { rns } = unit();
+    const judged = base(rns, [
+      ['rn0', '2026-01-05', '2026-01-05', { id: 'ask', status: 'pending' }],
+    ]);
+    // The live types, Night 12 retired since; the demand rows are that Monday's.
+    const input = {
+      ...judged,
+      shiftTypes: judged.shiftTypes.map((t) =>
+        t.id === NIGHT_12.id ? { ...t, active: false } : t,
+      ),
+    };
+    // One RN on days and one on nights, as the floors were then.
+    expect(leaveCapacity(input, 'ask')[0]!.needed).toBe(2);
+  });
+
+  it('counts only the shifts active under the rules it is judged by', () => {
+    const { rns } = unit();
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: rns,
+      shiftTypes: [DAY_12, { ...NIGHT_12, active: false }],
+      coverageRequirements: [
+        ...coverageAllWeek(DAY_12, 'RN', 1),
+        ...coverageAllWeek(NIGHT_12, 'RN', 1),
+      ],
+      timeOff: [timeOff('rn0', '2026-01-05', '2026-01-05', { id: 'ask', status: 'pending' })],
+    });
+    // Night 12 inactive: no night row, so the day shift's one RN alone.
+    expect(leaveCapacity(input, 'ask')[0]!.needed).toBe(1);
+  });
+});

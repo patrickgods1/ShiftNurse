@@ -89,6 +89,7 @@ import {
   shiftWindow,
   suggestedPaidLeaveHours,
   today,
+  tourOf,
   usFederalHolidays,
   type Weekday,
   type WeekendDefinition,
@@ -96,8 +97,10 @@ import {
   weekdayOf,
   weekendBreaches,
   weekendKey,
+  windowDayOf,
   windowEndDate,
   windowsOverlap,
+  workWeekOf,
 } from '@shiftnurse/core';
 import type { ShiftNurseTx } from '../../client.js';
 import { ids } from '../../ids.js';
@@ -118,6 +121,7 @@ import {
   listShiftTypesForUnit,
   upsertCoverageRequirement,
 } from '../../repositories/config.js';
+import { batchDemandVersions } from '../../repositories/demand-history.js';
 import { recordHoldover } from '../../repositories/holdovers.js';
 import { createHoliday } from '../../repositories/holidays.js';
 import { createIncompatibilityGroup } from '../../repositories/incompatibility.js';
@@ -530,7 +534,7 @@ const OFFICE_HOLIDAYS = new Set([
 // Scheduling state
 // ---------------------------------------------------------------------------
 
-interface Staff {
+export interface Staff {
   nurse: Nurse;
   position: string;
   /** Which alternate weekend this nurse works. */
@@ -585,7 +589,7 @@ interface PlannedShift {
 }
 
 /** What each person works on each date. */
-type Worked = Map<Id, Map<IsoDate, ShiftType>>;
+export type Worked = Map<Id, Map<IsoDate, ShiftType>>;
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 type PreferenceDraft = DistributiveOmit<Preference, 'id' | 'nurseId'>;
@@ -637,7 +641,8 @@ function canWork(
       return false;
     }
     // Three tours a Sunday-to-Saturday week keep a 72/80 nurse at the plan's weekly 36.
-    if (kind === 'va_72_80' && hoursInWeek(worked, staff, date) + 12 > 36) return false;
+    if (kind === 'va_72_80' && hoursInWeek(worked, staff, date, shift, SUNDAY_MIDNIGHT) + 12 > 36)
+      return false;
   }
   const mine = worked.get(id)!;
   if (mine.has(date) || leave.has(`${id}|${date}`)) return false;
@@ -844,11 +849,63 @@ function hoursBetween(worked: Worked, staff: Staff, start: IsoDate, end: IsoDate
   return hours;
 }
 
-function hoursInWeek(worked: Worked, staff: Staff, date: IsoDate): number {
-  const weekStart = addDays(date, -weekdayOf(date));
+/** Payroll's work week: the weekday and minute after midnight it starts (the max-hours rule's). */
+export interface WorkWeek {
+  startsOn: Weekday;
+  startMinute: number;
+}
+
+/** Title 38's Sunday-to-Saturday week, and every rule set's before the start time existed. */
+export const SUNDAY_MIDNIGHT: WorkWeek = { startsOn: 0, startMinute: 0 };
+
+/** The first date of the work week a `shift` on `date` starts in, as the max-hours rule has it. */
+export function weekOfShift(date: IsoDate, shift: ShiftType, week: WorkWeek): IsoDate {
+  const day = windowDayOf(shiftWindow(date, shift).startMinute, week.startMinute);
+  return workWeekOf(day, week.startsOn).start;
+}
+
+/** Of `hoursInWeek`, the hours dated before `before`: an earlier period's part of the week. */
+export function hoursBefore(
+  worked: Worked,
+  staff: Staff,
+  date: IsoDate,
+  shift: ShiftType,
+  week: WorkWeek,
+  before: IsoDate,
+): number {
+  const weekStart = weekOfShift(date, shift, week);
   const mine = worked.get(staff.nurse.id)!;
   let hours = 0;
-  for (let i = 0; i < 7; i++) hours += mine.get(addDays(weekStart, i))?.durationHours ?? 0;
+  for (let i = -1; i <= 7; i++) {
+    const d = addDays(weekStart, i);
+    const held = mine.get(d);
+    if (held && compareDates(d, before) < 0 && weekOfShift(d, held, week) === weekStart) {
+      hours += held.durationHours;
+    }
+  }
+  return hours;
+}
+
+/**
+ * Hours a nurse already works in the week a `shift` on `date` would start in. A week that begins
+ * at a time of day (Saturday 19:00) holds the shifts that start in it, so the day before its first
+ * date and its eighth date are looked at too.
+ */
+export function hoursInWeek(
+  worked: Worked,
+  staff: Staff,
+  date: IsoDate,
+  shift: ShiftType,
+  week: WorkWeek,
+): number {
+  const weekStart = weekOfShift(date, shift, week);
+  const mine = worked.get(staff.nurse.id)!;
+  let hours = 0;
+  for (let i = -1; i <= 7; i++) {
+    const d = addDays(weekStart, i);
+    const held = mine.get(d);
+    if (held && weekOfShift(d, held, week) === weekStart) hours += held.durationHours;
+  }
   return hours;
 }
 
@@ -865,6 +922,12 @@ export function seedFromProfile(
   profile: DemoProfile,
   options: SeedOptions = {},
 ): SeedResult {
+  // Each unit (the demo and any float sibling) gets one complete version of its demand rules, not
+  // one per shift type and floor: the history predates it and is judged by the earliest version.
+  return batchDemandVersions(db, () => seedProfile(db, profile, options));
+}
+
+function seedProfile(db: ShiftNurseTx, profile: DemoProfile, options: SeedOptions): SeedResult {
   const rng = new Rng(options.seed ?? 20260926);
   const now = options.today ?? today();
   const historyPeriods = options.historyPeriods ?? 13; // six months of two-week pay periods
@@ -1105,6 +1168,11 @@ export function seedFromProfile(
   const overtimeThreshold = overtimeByPayPeriod
     ? numberParam(configs, 'max-hours-per-week', 'payPeriodOvertimeThresholdHours', 80)
     : 40;
+  // The rule set's work week, so history's weekly hours are counted where the rule judges them.
+  const week: WorkWeek = {
+    startsOn: numberParam(configs, 'max-hours-per-week', 'workWeekStartsOn', 0) as Weekday,
+    startMinute: numberParam(configs, 'max-hours-per-week', 'workWeekStartMinute', 0),
+  };
 
   // --- Staff ----------------------------------------------------------------------------------
   // Planned in full before anyone is created: who is charge-eligible depends on the seniority
@@ -1638,7 +1706,9 @@ export function seedFromProfile(
     overtimeRules: listActiveOvertimeRules(db, unit.id),
     holidayDates,
     weekendDefinition: ruleSet.weekendDefinition,
-    workWeekStartsOn: 0,
+    // The rule set's work week, as `costContext` reads it for the app's own pricing.
+    workWeekStartsOn: week.startsOn,
+    workWeekStartMinute: week.startMinute,
     premiumStacking: pay.premiumStacking,
     holidayPayCoversOvertime: pay.holidayPayCoversOvertime,
   };
@@ -1792,7 +1862,9 @@ export function seedFromProfile(
     const needsVolunteer = (s: Staff, date: IsoDate, shift: ShiftType) =>
       noMandatoryOvertime?.enabled === true &&
       !volunteers.has(s.nurse.id) &&
-      ((overtimeByPayPeriod ? hoursBetween(worked, s, start, end) : hoursInWeek(worked, s, date)) +
+      ((overtimeByPayPeriod
+        ? hoursBetween(worked, s, start, end)
+        : hoursInWeek(worked, s, date, shift, week)) +
         shift.durationHours >
         overtimeThreshold ||
         // A plan nurse's overtime starts at their own contracted hours, not the unit's 80.
@@ -1813,21 +1885,21 @@ export function seedFromProfile(
           legal(s, date, shift, lend) &&
           noviceSafe(s, date, shift),
       );
-      const week = (s: Staff) => hoursInWeek(worked, s, date) + shift.durationHours;
+      const inWeek = (s: Staff) => hoursInWeek(worked, s, date, shift, week) + shift.durationHours;
       const short = (s: Staff) =>
         fits(s, shift) &&
         (shift === s.shortShift?.shift ||
           hours(s) + shift.durationHours + reserved(s) + weekendHold(s, date, shift) <=
             periodTarget(s));
       return [
-        free.filter((s) => contracted(s) && short(s) && week(s) <= s.weeklyHours),
-        free.filter((s) => !contracted(s) && short(s) && week(s) <= 36),
-        free.filter((s) => contracted(s) && short(s) && week(s) <= 48),
+        free.filter((s) => contracted(s) && short(s) && inWeek(s) <= s.weeklyHours),
+        free.filter((s) => !contracted(s) && short(s) && inWeek(s) <= 36),
+        free.filter((s) => contracted(s) && short(s) && inWeek(s) <= 48),
         free.filter(
           (s) =>
             contracted(s) &&
             s.nurse.employmentType !== 'agency' &&
-            week(s) <= 48 &&
+            inWeek(s) <= 48 &&
             // The plans' tours are fixed, so only a call-off's cover is asked of a plan nurse
             // past their hours, never a floor's routine overtime.
             (s.nurse.scheduleKind === undefined || pickup),
@@ -1892,7 +1964,10 @@ export function seedFromProfile(
           const r = role as NurseRole;
           // Scheduled to the forecast (which the period is judged by), and up again when the day
           // turned out busier.
-          const bedside = Math.max(0, ...mixes.map((m) => nursesRequiredForMix(m, r, ratioRules)));
+          const bedside = Math.max(
+            0,
+            ...mixes.map((m) => nursesRequiredForMix(m, r, ratioRules, tourOf(shift))),
+          );
           // A charge nurse kept free of patients is not one of the nurses the ratio counts, so a
           // standalone shift needs one more RN (as `deriveDemand` reads it). Break relief is not
           // modelled: the CA preset's hour of breaks, covered by that charge nurse, needs none up
@@ -1957,7 +2032,7 @@ export function seedFromProfile(
         const days = datesInRange(start, end).filter(
           (d) =>
             fits(s, shift) &&
-            hoursInWeek(worked, s, d) + shift.durationHours <= 48 &&
+            hoursInWeek(worked, s, d, shift, week) + shift.durationHours <= 48 &&
             legal(s, d, shift) &&
             noviceSafe(s, d, shift),
         );
@@ -1991,7 +2066,7 @@ export function seedFromProfile(
         while (fits(s, home)) {
           const days = datesInRange(start, end).filter(
             (d) =>
-              hoursInWeek(worked, s, d) + home.durationHours <= 48 &&
+              hoursInWeek(worked, s, d, home, week) + home.durationHours <= 48 &&
               legal(s, d, home) &&
               noviceSafe(s, d, home),
           );
@@ -2024,7 +2099,7 @@ export function seedFromProfile(
           contracted(u) &&
           fits(u, entry.shift) &&
           (!entry.isCharge || u.nurse.isChargeEligible) &&
-          hoursInWeek(worked, u, entry.date) + entry.shift.durationHours <= 48 &&
+          hoursInWeek(worked, u, entry.date, entry.shift, week) + entry.shift.durationHours <= 48 &&
           legal(u, entry.date, entry.shift) &&
           noviceSafe(u, entry.date, entry.shift) &&
           (!needsCover || !u.nurse.isNovice),
@@ -2057,8 +2132,14 @@ export function seedFromProfile(
     for (const entry of plan) {
       const windowKey = overtimeByPayPeriod
         ? entry.staff.nurse.id
-        : `${entry.staff.nurse.id}|${addDays(entry.date, -weekdayOf(entry.date))}`;
-      const windowTotal = (windowHours.get(windowKey) ?? 0) + entry.shift.durationHours;
+        : `${entry.staff.nurse.id}|${weekOfShift(entry.date, entry.shift, week)}`;
+      // A week that starts on a Saturday straddles two history periods: it opens with what the
+      // nurse already works in it before this period.
+      const opening = () =>
+        overtimeByPayPeriod
+          ? 0
+          : hoursBefore(worked, entry.staff, entry.date, entry.shift, week, start);
+      const windowTotal = (windowHours.get(windowKey) ?? opening()) + entry.shift.durationHours;
       windowHours.set(windowKey, windowTotal);
       const row = createAssignment(
         db,
@@ -2163,7 +2244,7 @@ export function seedFromProfile(
           bump('callAttempt');
           const before = overtimeByPayPeriod
             ? hoursBetween(worked, s, start, end)
-            : hoursInWeek(worked, s, absent.date);
+            : hoursInWeek(worked, s, absent.date, shift, week);
           const replacement = createAssignment(
             db,
             {
@@ -2219,6 +2300,7 @@ export function seedFromProfile(
         ledger: periodLedgerRows(
           counting,
           counterContextFor(db, unit.id, periodRuleSet.weekendDefinition, period),
+          { includeAvailableHomeNurses: true },
         ),
       },
       ACTOR,
@@ -2266,17 +2348,17 @@ export function seedFromProfile(
         // theirs alone (a 72/80 tour's overtime is daily, a standard one's is by pay period).
         if (s.nurse.scheduleKind !== spec.scheduleKind) return false;
         const mine = worked.get(a.nurseId)!;
-        if (hoursInWeek(worked, s, a.date) + spec.minutes / 60 > 48) return false;
+        if (hoursInWeek(worked, s, a.date, shift, week) + spec.minutes / 60 > 48) return false;
         // Under the overtime threshold even with it, so the holdover is the only overtime on the
         // row and its price is the minutes alone.
         const windowStart = overtimeByPayPeriod
           ? addDays(historyStart, Math.floor(daysBetween(historyStart, a.date) / 14) * 14)
-          : addDays(a.date, -weekdayOf(a.date));
+          : weekOfShift(a.date, shift, week);
         const windowEnd = addDays(windowStart, overtimeByPayPeriod ? 13 : 6);
-        if (
-          hoursBetween(worked, s, windowStart, windowEnd) + spec.minutes / 60 >
-          overtimeThreshold
-        ) {
+        const windowHours = overtimeByPayPeriod
+          ? hoursBetween(worked, s, windowStart, windowEnd)
+          : hoursInWeek(worked, s, a.date, shift, week);
+        if (windowHours + spec.minutes / 60 > overtimeThreshold) {
           return false;
         }
         const endMinute = shiftWindow(a.date, shift).endMinute + spec.minutes;

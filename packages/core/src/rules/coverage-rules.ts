@@ -133,7 +133,8 @@ export const coverageRule: Rule<CoverageParams> = {
 
     for (const date of schedule.dates) {
       for (const shiftType of ctx.shiftTypes) {
-        if (!shiftType.active) continue;
+        // No `active` check: the demand table has rows only for types active under the rules that
+        // judged the date, so a type retired since is still judged on the days it was in use.
         const demand = ctx.demand.get(date, shiftType.id);
         if (!demand) continue;
 
@@ -349,7 +350,8 @@ export const ratioComplianceRule: Rule<RatioParams> = {
 
     for (const date of schedule.dates) {
       for (const shiftType of ctx.shiftTypes) {
-        if (!shiftType.active || shiftType.isOnCall) continue;
+        // Activity is the demand table's to say, as in the coverage rule above.
+        if (shiftType.isOnCall) continue;
         const demand = ctx.demand.get(date, shiftType.id);
         if (!demand) continue;
         if (params.skipShiftsWithoutForecast && demand.fromCoverageFloorOnly) continue;

@@ -4,7 +4,7 @@
  * this becomes a web app.
  */
 
-import type { IsoDate, Weekday } from './time.js';
+import type { IsoDate, ShiftWindow, Tour, Weekday } from './time.js';
 
 export type Id = string;
 
@@ -94,6 +94,8 @@ export interface Unit {
    * nurse's consent (VA, UC and Oregon contracts). Absent/false: a reason is enough.
    */
   requireConsentForPostedChanges?: boolean;
+  /** Holidays that fall on a full-time nurse's day off move to a workday. Absent: 'none'. */
+  inLieuHolidays?: InLieuHolidays;
   /**
    * Paper the unit's printouts use. Absent: whatever this computer's region uses (Letter in the
    * US, Canada, Mexico, the Philippines and parts of Latin America; A4 elsewhere). Not read by
@@ -106,6 +108,14 @@ export type PaperSize = 'letter' | 'a4';
 
 export type OvertimeOrder = 'cost' | 'roster';
 
+/**
+ * Whether a holiday on a full-time nurse's non-workday moves to a nearby workday. 'federal' is the
+ * rule for VA and other federal employers (5 U.S.C. § 6103(b)): the day she would otherwise have
+ * worked becomes her holiday "in lieu of" the one she was off. Without it that day goes unmarked and
+ * is paid as an ordinary shift. Absent reads as 'none'.
+ */
+export type InLieuHolidays = 'none' | 'federal';
+
 export interface PerDiemCommitment {
   /** Weekend shifts each per-diem nurse commits to per four weeks (WSNA contracts: 2). */
   weekendShiftsPer4Weeks: number;
@@ -113,8 +123,7 @@ export interface PerDiemCommitment {
   holidayShiftsPerYear: number;
 }
 
-/** A nurse's tour: the part of the day their shifts fall in. Classified from a shift's start time. */
-export type Tour = 'day' | 'evening' | 'night';
+export type { Tour };
 export const TOURS: readonly Tour[] = ['day', 'evening', 'night'];
 
 /**
@@ -622,6 +631,11 @@ export interface RatioRule {
    * LVNs may be up to half). Absent: none.
    */
   minRnShare?: number;
+  /**
+   * The one tour the ceiling binds (ORS 441.768 caps an aide at 7 by day and evening, 11 at
+   * night). Absent: every tour. Read from the shift's start time (`tourOf`), never `isNight`.
+   */
+  tour?: Tour;
   active: boolean;
 }
 
@@ -730,6 +744,18 @@ export interface Preceptorship {
 }
 
 /**
+ * The dates a float from another unit is on this unit's roster. Without them a float on the
+ * period's roster for one week could be placed on any day of it. Inclusive at both ends and
+ * compared with a shift's start date; an absent end is open. Floats only: a home nurse has none,
+ * and is never judged by one.
+ */
+export interface UnitMembership {
+  nurseId: Id;
+  startDate?: IsoDate;
+  endDate?: IsoDate;
+}
+
+/**
  * A nurse's standing offer to work overtime over some dates. New York (Labor Law § 167),
  * Washington (RCW 49.28.140), Oregon (ORS 441.770) and Massachusetts (c.111 § 226) forbid
  * *requiring* a nurse to work overtime outside an emergency; this record is what makes an
@@ -821,6 +847,36 @@ export interface RestWaiver {
   date: IsoDate;
   reason: string;
   createdAt: Timestamp;
+}
+
+/**
+ * The dates over which a nurse has agreed, in advance, to take comp time instead of overtime pay
+ * on this unit. 29 U.S.C. § 207(o) (and 38 U.S.C. § 7453(e)(3) for the VA, "voluntarily requested
+ * in writing by the nurse") require the agreement before the work, so a credit is banked only for
+ * overtime dated inside an election; an open `endsOn` runs until the manager closes it.
+ */
+export interface CompTimeElection {
+  id: Id;
+  unitId: Id;
+  nurseId: Id;
+  /** Inclusive on both ends. */
+  startsOn: IsoDate;
+  endsOn?: IsoDate;
+  note?: string;
+  /** Always `'manager'` in v1. See {@link RequestOrigin}. */
+  enteredBy: RequestOrigin;
+}
+
+/**
+ * Time a nurse on standby was called in and worked, on the wall-clock timeline. ORS 441.770(3)
+ * starts the 12-in-24 count at "a shift or call response", so the hour caps, long stretches and
+ * the weekly cap count it; it is not a shift (recorded day-of against the standby it interrupted,
+ * never scheduled or moved), so it never carries a finding of its own. `window` is the standby's
+ * start plus the recorded start minute, ending after the hours worked.
+ */
+export interface CallBack {
+  nurseId: Id;
+  window: ShiftWindow;
 }
 
 /**
@@ -932,6 +988,8 @@ export type DifferentialKind =
   | 'major_holiday'
   /** Only ever earned through `consecutive`; without it applies to nothing. */
   | 'consecutive_shift'
+  /** Only ever earned through `shortRest`; without it applies to nothing. */
+  | 'short_rest'
   | 'charge'
   | 'on_call'
   | 'call_back'
@@ -953,11 +1011,29 @@ export interface Differential {
    */
   window?: { startTime: string; endTime: string; wholeShiftAtHours: number | null };
   /**
-   * A `consecutive_shift` premium's trigger (UC–CNA Art. 14 § I.3): once a run of consecutive
+   * A `consecutive_shift` premium's trigger (UC–CNA Art. 14 § G.3): once a run of consecutive
    * worked days holds more than `afterShifts` full (12-hour) shifts within `withinDays` days, every
    * further shift of the run earns it until a day off. Only `consecutive_shift` uses it.
+   *
+   * `tiers` (2025–2030 § G.3: six full 8s in six days, five 10s in five, four 12s in four) replace
+   * that single reading: a shift scheduled for at least a tier's `fullShiftHours` counts toward it,
+   * and the run earns once any tier passes its `afterShifts`. Absent, the one tier is
+   * `{ fullShiftHours: 12, afterShifts, withinDays }`; present, the top-level numbers are not read.
    */
-  consecutive?: { afterShifts: number; withinDays: number };
+  consecutive?: {
+    afterShifts: number;
+    withinDays: number;
+    tiers?: { fullShiftHours: number; afterShifts: number; withinDays: number }[];
+  };
+  /**
+   * A `short_rest` premium's trigger (UC–CNA 2025–2030 § N.1: "A work period not preceded by at
+   * least six (6) hours off will be paid at time and one-half"; WSNA § 7.10): a worked shift that
+   * starts less than `minHoursOff` after the latest worked shift before it ended (holdover
+   * included; standby and call-backs are not that work period, § N.3) earns it on every paid hour
+   * (`'whole_shift'`) or only on its minutes before the rest would have ended (`'within_window'`).
+   * Only `short_rest` uses it.
+   */
+  shortRest?: { minHoursOff: number; scope: 'whole_shift' | 'within_window' };
 }
 
 export interface OvertimeRule {
@@ -995,7 +1071,7 @@ export interface OvertimeRule {
    * Whether hours another rule already pays as overtime still count toward this one's threshold.
    * Honoured only by 'weekly', 'pay_period' and 'weekend'. Under 'none' a shift adds only its straight hours
    * (those before any other basis's overtime starts): Cal. Lab. Code § 510 as the DLSE reads it
-   * does not count hours paid at a daily premium toward the weekly 40, and UC–CNA Art. 14 §M
+   * does not count hours paid at a daily premium toward the weekly 40, and UC–CNA Art. 14 § L.2.c.1
    * credits daily overtime toward the 80. Absent: 'none' when any daily-style rule (a non-window
    * basis) applies to the nurse, else 'stack' (D16; 29 CFR 778.202(c)); an explicit 'stack' counts
    * every worked hour regardless.

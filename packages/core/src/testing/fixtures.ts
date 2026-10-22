@@ -10,6 +10,7 @@ import type {
   AcuityTier,
   Assignment,
   AvailabilityBlock,
+  CallBack,
   CensusForecast,
   CoverageRequirement,
   Credential,
@@ -35,6 +36,7 @@ import type {
   ShiftType,
   TimeOffRequest,
   Unit,
+  UnitMembership,
 } from '../domain/entities.js';
 import { addDays, datesInRange, type IsoDate, isoDate, type Weekday } from '../domain/time.js';
 import type { PaidSickCall } from '../rules/paid-leave.js';
@@ -262,6 +264,8 @@ export interface ScenarioOptions {
   restWaivers?: RestWaiver[];
   /** Recurring windows a nurse cannot work. */
   availabilityBlocks?: AvailabilityBlock[];
+  /** Time nurses were called in from standby and worked. */
+  callBacks?: CallBack[];
   /** How the unit keeps its ratios: a charge nurse without patients, break relief. */
   ratioStaffing?: RatioStaffing;
   acuityTiers?: AcuityTier[];
@@ -281,6 +285,8 @@ export interface ScenarioOptions {
   preferences?: Preference[];
   /** The host's clock changes (D19). Absent: none, every day is 1440 minutes. */
   dstTransitions?: readonly DstTransition[];
+  /** Floats' membership dates on the unit. */
+  memberships?: UnitMembership[];
 }
 
 export interface Scenario {
@@ -348,9 +354,11 @@ export function scenario(options: ScenarioOptions = {}): Scenario {
     ...(options.preceptorships ? { preceptorships: options.preceptorships } : {}),
     ...(options.restWaivers ? { restWaivers: options.restWaivers } : {}),
     ...(options.availabilityBlocks ? { availabilityBlocks: options.availabilityBlocks } : {}),
+    ...(options.callBacks ? { callBacks: options.callBacks } : {}),
     ...(options.historyFrom ? { historyFrom: options.historyFrom } : {}),
     ...(options.preferences ? { preferences: options.preferences } : {}),
     ...(options.dstTransitions ? { dstTransitions: options.dstTransitions } : {}),
+    ...(options.memberships ? { memberships: options.memberships } : {}),
   });
 
   const schedule = new ScheduleView({
@@ -430,6 +438,8 @@ export function solveInputFrom(options: SolveScenarioOptions = {}): SolveInput {
     ...(options.preceptorships ? { preceptorships: options.preceptorships } : {}),
     ...(options.restWaivers ? { restWaivers: options.restWaivers } : {}),
     ...(options.availabilityBlocks ? { availabilityBlocks: options.availabilityBlocks } : {}),
+    ...(options.memberships ? { memberships: options.memberships } : {}),
+    ...(options.callBacks ? { callBacks: options.callBacks } : {}),
     ...(options.cost ? { cost: options.cost } : {}),
   };
 }

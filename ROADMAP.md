@@ -81,7 +81,7 @@ shiftnurse/
 
 ## Current state
 
-`packages/core`, `packages/db` and `apps/desktop` through M43 are green (M17 deferred,
+`packages/core`, `packages/db` and `apps/desktop` through M43 are green (M17 won't do,
 M18's last follow-up open): lint, typecheck and the full test suite pass in CI on Linux, macOS
 and Windows (`npm run check`; no count kept here — it went stale within a milestone the last
 time).
@@ -405,7 +405,7 @@ and can start over (after a `pre-reset` backup).
 - [ ] Verify by hand: a guided setup on a fresh `userData` applying every preset, quit and resume
       mid-guide, Generate fills the floors of a new period; Start over returns to the welcome
       screen and its `pre-reset` backup restores
-- [ ] Hand check: fresh userData → Guided setup → step 1 pick a state → Continue applies it with no
+- [x] Hand check: fresh userData → Guided setup → step 1 pick a state → Continue applies it with no
       dialog and 'Last applied' shows → walk to Summary → Open ShiftNurse; Settings › Unit › 'Open
       the setup guide' reopens on 'State and contract law'
 - [x] Realistic demo (`seed/demo.ts`): a 28-bed med-surg unit sized from real staffing practice;
@@ -466,29 +466,25 @@ problem is often a group of three or more, not a pair.
       mutation-checked; `npm run check`; `npm run smoke`. `bench:solvers` not re-run: with no
       groups every new term is zero and no rule list changes, so its inputs price identically
 
-### M17 — Signed installers and updates (deferred)
-Deferred by decision (2026-10-03): 1.0 ships unsigned with install instructions (M18 › Phase 8);
+### M17 — Signed installers and updates (won't do, owner decision 2026-10-19)
+Won't do, by owner decision (2026-10-19): builds stay unsigned and there is no self-update; the
+"new version available" banner stays and must work. History: deferred 2026-10-03, when 1.0 shipped unsigned with install instructions (M18 › Phase 8);
 the icon moves to M18. v0.1.0 ships unsigned: macOS users are told to run `xattr` and Windows
 users to click past SmartScreen, and an installed copy has no way to learn that a fix exists — the
 crash-on-launch fix in PR #6 reached nobody who had already installed the first draft. Signing and
-self-update are not started. The icon landed with M18 › Phase 8, and the "new version available"
+self-update will not be started. The icon landed with M18 › Phase 8, and the "new version available"
 banner ships (`main/updates.ts`); its box waits for a packaged build to show it for a real release.
-- [ ] Apple Developer ID signing with hardened runtime and entitlements, and notarisation
-      (`notarize: true`), wired to repository secrets in `release.yml`
-- [ ] Windows Authenticode signing (e.g. Azure Trusted Signing) for the NSIS installer
-- [ ] `electron-updater` with `publish: github`: `latest*.yml` and blockmaps in the release,
-      a "restart to update" prompt, never an unattended restart mid-shift
+- Not doing: Apple Developer ID signing and notarisation, Windows Authenticode signing, and
+  `electron-updater` (a "restart to update" prompt).
 - [x] An app icon (`apps/desktop/build/icon.{icns,ico,png}`) — installers use Electron's default
       (drawn: `build/icon.png` from `scripts/make-icon.mjs`; tick once a packaged build shows it)
       (M18 Phase 8: all three committed; both mac apps carry the .icns, the Windows exe all seven
       .ico images)
-- [ ] An in-app "new version available" banner from GitHub's latest release (`main/updates.ts`;
+- [ ] An in-app "new version available" banner from GitHub's release list, newest vX.Y.Z app release (`main/updates.ts`;
       tick once a packaged v0.1.x has shown it for a published v0.1.y)
-- [ ] Verify: a signed dmg opens without a Gatekeeper prompt on a clean Mac; the signed installer
-      passes SmartScreen on real Windows 11; v0.1.x updates itself to v0.1.y from a draft release
 
-Fuses and the release gate landed first (review-fix phase 19); signing needs no fuse change, only
-the CSC secrets.
+Fuses and the release gate landed first (review-fix phase 19). The banner box is verified by hand
+once v0.1.0 is installed and a later release is published.
 
 ### M18 — Release hardening (in progress)
 The 2026-10-03 release audit: data safety, renderer correctness, maintainability, tests, the
@@ -554,7 +550,9 @@ manager's experience and the contract rules a real hospital would check first. O
       in loops — 2.5 s → ~640 ms on the scenario period; auto-resolve applies independent fixes
       per analysis (minutes → seconds). Target was < 500 ms: the rest is one full `ScheduleView`
       per simulated fix, which needs a copy-on-write view (follow-up below)
-- [ ] Follow-up: copy-on-write `ScheduleView` for simulated fixes, to reach < 500 ms
+- [ ] Follow-up: copy-on-write `ScheduleView` for simulated fixes, to reach < 500 ms (M44 phase 5:
+      `ScheduleView.derive` landed, 1.17 s → ~505 ms median, output hash unchanged; the rest is
+      fairness scoring in `burden.ts`, shared with `scoreFairness`; box stays open until < 500 ms)
 - [x] Named core exports (243, from ~470); conflicts engine indexes and `resolve.ts` split into
       candidates and scoring; shared audited update in `packages/db`
 - [x] Verify: SA + LNS output hashes unchanged on fixed inputs after every solver-touching change;
@@ -684,8 +682,8 @@ Art. 14). One PR per milestone; the documentation update that records them has n
       stale solver comments are corrected (verified 2026-10-06: `npm run check` 2,587 passed, 4
       tests that timed out under full-suite load pass alone; smoke PASS)
 - [x] M34 Pay model for California and UC: no pyramiding of overtime (Lab. Code § 510; UC–CNA
-      Art. 14 § M), `beyond_scheduled_days` overtime at 2× (Wage Order 5 § 3(B)(8)), additive
-      premium stacking (UC–CNA Art. 14 § N) and a minimum overtime increment (38 U.S.C.
+      Art. 14 § M; 2025–2030: § L.2.c.1), `beyond_scheduled_days` overtime at 2× (Wage Order 5 § 3(B)(8)), additive
+      premium stacking (UC–CNA Art. 14 § N; 2025–2030: § M) and a minimum overtime increment (38 U.S.C.
       § 7453(e)(2)); migration 0030 (verified 2026-10-06: `npm run check` 2,627 passed; smoke PASS)
 - [x] M35 Presets apply what the app can do: apply-time options (the VA's compressed tour,
       California's alternative workweek), the VA contract's rules and § 7453 premiums, and
@@ -714,8 +712,8 @@ Art. 14). One PR per milestone; the documentation update that records them has n
       the `holiday_appetite` preference with `holidayWorkPriority` (VA–NNU Art. 10 § 4.D.6;
       migration 0035), the VA preset's contract provenance and `ownContract` option
       (`Unit.jurisdictionChoices`, migration 0033), the `consecutive_shift` differential (UC–CNA
-      Art. 14 § I.3; migration 0034), California sick-leave use cap, front-loading and PDL,
-      `tour-rotation`'s `exemptAfterYearsOfService` (UC–CNA Art. 14 § P.1.a), the roster CSV's
+      Art. 14 § I.3; 2025–2030: § G.3; migration 0034), California sick-leave use cap, front-loading and PDL,
+      `tour-rotation`'s `exemptAfterYearsOfService` (UC–CNA Art. 14 § P.1.a; 2025–2030: § O.1.a), the roster CSV's
       `scheduled_days_per_week`, and the vitest `unit` / `solver-heavy` projects (verified
       2026-10-07: `npm run check` 2,920 passed, 2 skipped, 264 files; smoke PASS)
 - [x] M40 VA pay by statute (38 U.S.C. § 7453): `PaySettings.holidayPayCoversOvertime` (migration
@@ -739,9 +737,9 @@ and now first; manual setup still starts as an empty unit), shift types, coverag
 holidays, rules, pay, unit policies, leave, requests and generation (including the solver), roster
 and the summary.
 
-- [ ] Guide: the twelve steps in that order, the state-law preset applied by Continue through the
+- [x] Guide: the twelve steps in that order, the state-law preset applied by Continue through the
       preset registry, `UnitPoliciesForm` shared with Settings › Unit
-- [ ] Verify: the hand check under First-run setup above (fresh `userData` → state → Summary →
+- [x] Verify: the hand check under First-run setup above (fresh `userData` → state → Summary →
       reopen on 'State and contract law')
 
 ### M43 — 2026-10-16 in-depth review fixes ✅
@@ -826,13 +824,36 @@ The 2026-10-16 in-depth code review (`reports/ShiftNurse in depth code review.md
 
 Deferred by owner decision (not boxes):
 
-- On-call caps and call-back rest: a new rule after 1.0, once the contracts to model are chosen
-  (research: `research_notes/ShiftNurse audit and best practices/law_contracts_holidays.md`).
 - INRC-II pattern terms (minimum consecutive days, complete weekends, per-type consecutive
   limits) and pricing the soft rules Generate ignores while soft: an objective change that needs
   a bench study.
-- Signed installers and self-update: M17.
-- Encryption at rest for HR text: after M17 (see README › What data ShiftNurse stores).
+- Signed installers and self-update: M17, won't do (owner decision 2026-10-19).
+- Encryption at rest for HR text: deferred with no date; full-disk encryption is the protection
+  (see README › What data ShiftNurse stores).
+
+### M44 — Deferred decisions and stated gaps (2026-10-19)
+
+Owner decisions of 2026-10-19: M17 signing and self-update is won't do (builds stay unsigned; the
+"new version available" banner stays and must work); encryption at rest stays deferred with no
+date, with full-disk encryption as the protection; the Windows installer stays per-user by design.
+The plan researched and planned every deferred or decision-gated item and every gap the README
+states, in 15 phases, one PR per phase.
+
+- [x] Phase 1 — Release hygiene: update banner, docs, attestations
+- [ ] Phase 2 — Repository tidy-ups + limits tripwire
+- [ ] Phase 3 — Float staff only inside their membership dates
+- [ ] Phase 4 — Demand rules as they were on each past date
+- [ ] Phase 5 — Conflicts analysis speed (copy-on-write ScheduleView)
+- [ ] Phase 6 — A ledger row for every available home nurse
+- [ ] Phase 7 — Weekly hours split by the clock
+- [ ] Phase 8 — Pattern terms and soft-rule prices
+- [ ] Phase 9 — On-call caps and timed call-backs
+- [ ] Phase 10 — Pay: spring-forward, break premium, rest premium, consecutive tiers, UC–CNA re-check
+- [ ] Phase 11 — Comp time earned
+- [ ] Phase 12 — In-lieu-of holidays
+- [ ] Phase 13 — Oregon CNA cap (ratio by tour)
+- [ ] Phase 14 — Title 22 staffing record
+- [ ] Phase 15 — Close-out
 
 ---
 

@@ -1,6 +1,6 @@
 /**
- * `tour-rotation` for CP-SAT, when a rule set makes it hard (while soft it is not priced, so
- * Generate ignores it and the grid flags it).
+ * `tour-rotation` for CP-SAT, when a rule set makes it hard (while soft it is priced instead, per
+ * finding, by `tourRotationTerms` in `objective.ts`).
  *
  * Three constraints, one per violation code. A shift off the nurse's permanent tour is forbidden
  * outright. Two worked shifts on different tours closer than the break are a forbidden pair. The
@@ -20,13 +20,14 @@
 import { TOURS } from '../../../domain/entities.js';
 import { asParams } from '../../../rules/registry.js';
 import {
+  type EffectiveTourLimits,
   effectiveTourLimits,
   requestedTours,
   tourOf,
   tourRotationRule,
 } from '../../../rules/tour-rotation.js';
 import { type Expr, expr, sum } from '../builder.js';
-import { describe, type EncodeContext, forbidPair } from '../context.js';
+import { describe, type EncodeContext, forbidPair, type TimelineEntry } from '../context.js';
 
 export function encodeTourRotation(ctx: EncodeContext, raw: Record<string, unknown>): void {
   const params = asParams(tourRotationRule, raw);
@@ -82,31 +83,47 @@ export function encodeTourRotation(ctx: EncodeContext, raw: Record<string, unkno
       }
     }
 
-    const used: Expr[] = [];
-    for (const tour of TOURS) {
-      if (limits.requested.has(tour)) continue;
-      const entries = timeline.filter((e) => e.inPeriod && tourOf(e.shiftType) === tour);
-      if (entries.length === 0) continue;
-      if (entries.some((e) => e.literal === null)) used.push(expr([], 1));
-      else {
-        const label = `tour used: ${ctx.name(n)} ${tour}`;
-        used.push(
-          entries.length === 1
-            ? expr([[entries[0]!.literal!, 1]])
-            : expr([
-                [
-                  ctx.b.exactOr(
-                    entries.map((e) => e.literal!),
-                    label,
-                  ),
-                  1,
-                ],
-              ]),
-        );
-      }
-    }
+    const used = toursUsed(ctx, n, timeline, limits);
     if (used.length > limits.maxToursPerPeriod) {
       ctx.b.atMost(sum(...used), limits.maxToursPerPeriod, `tours per schedule: ${ctx.name(n)}`);
     }
   }
+}
+
+/**
+ * One expression per tour the schedule chose for this nurse in the period — 1 when any of its
+ * shifts is worked: a constant when one is locked, else a shift's own variable or their Boolean
+ * or. Tours she asked for are left out, as the rule leaves them out of the count. Shared by the
+ * hard cap here and the soft price in `objective.ts`, so both count tours the same way.
+ */
+export function toursUsed(
+  ctx: EncodeContext,
+  n: number,
+  timeline: readonly TimelineEntry[],
+  limits: EffectiveTourLimits,
+): Expr[] {
+  const used: Expr[] = [];
+  for (const tour of TOURS) {
+    if (limits.requested.has(tour)) continue;
+    const entries = timeline.filter((e) => e.inPeriod && tourOf(e.shiftType) === tour);
+    if (entries.length === 0) continue;
+    if (entries.some((e) => e.literal === null)) used.push(expr([], 1));
+    else {
+      const label = `tour used: ${ctx.name(n)} ${tour}`;
+      used.push(
+        entries.length === 1
+          ? expr([[entries[0]!.literal!, 1]])
+          : expr([
+              [
+                ctx.b.exactOr(
+                  entries.map((e) => e.literal!),
+                  label,
+                ),
+                1,
+              ],
+            ]),
+      );
+    }
+  }
+  return used;
 }

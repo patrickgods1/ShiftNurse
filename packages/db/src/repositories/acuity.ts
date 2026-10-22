@@ -21,6 +21,8 @@ import {
   type RatioRole,
   type RatioRule,
   ratioRuleSubject,
+  TOURS,
+  type Tour,
 } from '@shiftnurse/core';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { recordAudit, recordAuditStrict } from '../audit.js';
@@ -33,6 +35,7 @@ import {
   hppdTarget as hppdTargetTable,
   ratioRule as ratioRuleTable,
 } from '../schema.js';
+import { recordDemandConfigVersion } from './demand-history.js';
 import { auditedUpdate, type PatchKeys } from './patch.js';
 
 // ---------------------------------------------------------------------------
@@ -59,6 +62,7 @@ export function createAcuityTier(
   db.insert(acuityTierTable).values(row).run();
   const after = toAcuityTier(row as typeof acuityTierTable.$inferSelect);
   recordAudit(db, { entityType: 'acuity_tier', entityId: id, action: 'create', actor, after });
+  recordDemandConfigVersion(db, after.unitId, actor);
   return after;
 }
 
@@ -80,7 +84,7 @@ export function updateAcuityTier(
   patch: AcuityTierPatch,
   actor: string,
 ): AcuityTier {
-  return auditedUpdate<AcuityTier, AcuityTierPatch>(db, {
+  const after = auditedUpdate<AcuityTier, AcuityTierPatch>(db, {
     id,
     entityType: 'acuity_tier',
     entityLabel: 'acuity tier',
@@ -95,6 +99,8 @@ export function updateAcuityTier(
     notFound: `Acuity tier ${id} not found`,
     actor,
   });
+  recordDemandConfigVersion(db, after.unitId, actor);
+  return after;
 }
 
 /** The refusal text: one clause per kind of citation, singular for one. */
@@ -137,6 +143,7 @@ export function deleteAcuityTier(db: DbLike, id: Id, actor: string): void {
   const before = toAcuityTier(row);
   db.delete(acuityTierTable).where(eq(acuityTierTable.id, id)).run();
   recordAudit(db, { entityType: 'acuity_tier', entityId: id, action: 'delete', actor, before });
+  recordDemandConfigVersion(db, before.unitId, actor);
 }
 
 // ---------------------------------------------------------------------------
@@ -176,12 +183,14 @@ export function createRatioRule(
     maxPatientsPerNurse: input.maxPatientsPerNurse,
     citation: input.citation ?? null,
     minRnShare: input.minRnShare ?? null,
+    tour: input.tour ?? null,
     active: input.active,
   };
-  validateRatioRule(input.role, input.minRnShare);
+  validateRatioRule(input.role, input.minRnShare, input.tour);
   db.insert(ratioRuleTable).values(row).run();
   const after = toRatioRule(row as typeof ratioRuleTable.$inferSelect);
   recordAudit(db, { entityType: 'ratio_rule', entityId: id, action: 'create', actor, after });
+  recordDemandConfigVersion(db, after.unitId, actor);
   return after;
 }
 
@@ -192,6 +201,8 @@ export interface RatioRulePatch {
   citation?: string | null;
   /** null clears it. */
   minRnShare?: number | null;
+  /** null clears it: the rule binds every tour again. */
+  tour?: Tour | null;
   active?: boolean;
 }
 
@@ -201,11 +212,19 @@ const RATIO_RULE_PATCH_KEYS: PatchKeys<RatioRulePatch> = {
   maxPatientsPerNurse: true,
   citation: true,
   minRnShare: true,
+  tour: true,
   active: true,
 };
 
 /** An RN share belongs to a licensed rule only, and is a fraction of the licensed nurses. */
-function validateRatioRule(role: RatioRole, minRnShare: number | null | undefined): void {
+function validateRatioRule(
+  role: RatioRole,
+  minRnShare: number | null | undefined,
+  tour: Tour | null | undefined,
+): void {
+  if (tour !== null && tour !== undefined && !TOURS.includes(tour)) {
+    throw new Error("A ratio's tour must be day, evening or night");
+  }
   if (minRnShare === null || minRnShare === undefined) return;
   if (role !== 'licensed') {
     throw new Error('Only a licensed-nurse ratio can require a share of RNs');
@@ -217,15 +236,17 @@ function validateRatioRule(role: RatioRole, minRnShare: number | null | undefine
 
 /** The rule as it would read after `values`: a `null` clears an optional field. */
 function ratioRuleAfter(before: RatioRule, values: Partial<RatioRulePatch>): RatioRule {
-  const { citation, minRnShare, ...rest } = values;
-  const { citation: oldCitation, minRnShare: oldShare, ...kept } = before;
+  const { citation, minRnShare, tour, ...rest } = values;
+  const { citation: oldCitation, minRnShare: oldShare, tour: oldTour, ...kept } = before;
   const nextCitation = citation === undefined ? oldCitation : (citation ?? undefined);
   const nextShare = minRnShare === undefined ? oldShare : (minRnShare ?? undefined);
+  const nextTour = tour === undefined ? oldTour : (tour ?? undefined);
   return {
     ...kept,
     ...rest,
     ...(nextCitation === undefined ? {} : { citation: nextCitation }),
     ...(nextShare === undefined ? {} : { minRnShare: nextShare }),
+    ...(nextTour === undefined ? {} : { tour: nextTour }),
   };
 }
 
@@ -234,7 +255,7 @@ function tierNamesFor(db: DbLike, unitId: Id): Record<Id, string> {
 }
 
 /**
- * A raised ceiling, a lowered RN share, a moved role or tier, a rewritten citation or a
+ * A raised ceiling, a lowered RN share, a moved role, tier or shift (`tour`), a rewritten citation or a
  * deactivation needs `reason`; it is refused, in words, before anything is written.
  */
 export function updateRatioRule(
@@ -244,7 +265,7 @@ export function updateRatioRule(
   actor: string,
   reason?: string,
 ): RatioRule {
-  return auditedUpdate<RatioRule, RatioRulePatch>(db, {
+  const after = auditedUpdate<RatioRule, RatioRulePatch>(db, {
     id,
     entityType: 'ratio_rule',
     entityLabel: 'ratio rule',
@@ -261,6 +282,7 @@ export function updateRatioRule(
       validateRatioRule(
         values.role ?? before.role,
         values.minRnShare === undefined ? before.minRnShare : values.minRnShare,
+        values.tour === undefined ? before.tour : values.tour,
       );
       const after = ratioRuleAfter(before, values);
       const changes = protectedRatioChanges(before, after);
@@ -281,6 +303,8 @@ export function updateRatioRule(
     ...(reason === undefined ? {} : { reason }),
     actor,
   });
+  recordDemandConfigVersion(db, after.unitId, actor, reason === undefined ? {} : { reason });
+  return after;
 }
 
 /** Deactivate rather than delete: past periods were solved under this rule, and the reason says why it went. */
@@ -303,6 +327,7 @@ export function deactivateRatioRule(db: DbLike, id: Id, actor: string, reason: s
     { entityType: 'ratio_rule', entityId: id, action: 'delete', actor, before, after, reason },
     { requireReason: true },
   );
+  recordDemandConfigVersion(db, after.unitId, actor, { reason });
   return after;
 }
 

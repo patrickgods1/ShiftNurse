@@ -28,6 +28,9 @@ export function paramProblem(
     if (doc.input === 'weekday') {
       return Number.isInteger(value) && value >= 0 && value <= 6 ? undefined : 'Pick a day.';
     }
+    if (doc.input === 'time-of-day') {
+      return Number.isInteger(value) && value >= 0 && value < 1440 ? undefined : 'Enter a time.';
+    }
     if (doc.integer && !Number.isInteger(value)) return 'Must be a whole number.';
     const min = doc.min ?? 0;
     if (value < min) return `Must be at least ${min}.`;

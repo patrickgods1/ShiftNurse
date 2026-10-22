@@ -11,12 +11,29 @@
  * Budgets are the app's own defaults: 200k annealing iterations for SA + LNS and the hybrid
  * (which also spends 8 × 2 units of deterministic time on CP-SAT windows), and 60 units of
  * deterministic time for whole-period CP-SAT.
+ *
+ * For a one-off study of a soft rule's price before it ships on, `BENCH_ENABLE_RULES` (comma-separated
+ * rule ids) switches those rules on as soft with their default params in every unit, and `BENCH_OUT`
+ * writes the report to that path (relative to the repo root) instead of docs/solver-bench.md, so a
+ * study never overwrites the committed results. `BENCH_WEIGHTS` (a JSON object of objective
+ * weights, e.g. `{"tourRotation":22.5}`) is passed to every backend run to price such a rule. With
+ * none of them set the run is unchanged.
  */
 
 import { writeFileSync } from 'node:fs';
 import { cpus, platform, release } from 'node:os';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isoDate, type SolveInput, type SolveReport, solve } from '@shiftnurse/core';
+import {
+  ALL_RULES,
+  DEFAULT_OBJECTIVE_WEIGHTS,
+  isoDate,
+  type ObjectiveWeights,
+  type RuleConfig,
+  type SolveInput,
+  type SolveReport,
+  solve,
+} from '@shiftnurse/core';
 import {
   coverageAllWeek,
   DAY_8,
@@ -42,7 +59,52 @@ import { solveCpsat, solveHybrid } from './ortools-solvers.js';
 
 const ITERATIONS = 200_000;
 const SEEDS = [1, 2, 3];
-const OUT = fileURLToPath(new URL('../../../../docs/solver-bench.md', import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
+const OUT = process.env.BENCH_OUT
+  ? resolve(REPO_ROOT, process.env.BENCH_OUT)
+  : fileURLToPath(new URL('../../../../docs/solver-bench.md', import.meta.url));
+const ENABLED_RULES = (process.env.BENCH_ENABLE_RULES ?? '')
+  .split(',')
+  .map((id) => id.trim())
+  .filter((id) => id !== '');
+for (const id of ENABLED_RULES) {
+  if (!ALL_RULES.some((r) => r.id === id))
+    throw new Error(`BENCH_ENABLE_RULES: unknown rule id "${id}"`);
+}
+
+function parseWeights(raw: string | undefined): Partial<ObjectiveWeights> | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const parsed: unknown = JSON.parse(raw);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('BENCH_WEIGHTS: expected a JSON object');
+  }
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!(key in DEFAULT_OBJECTIVE_WEIGHTS))
+      throw new Error(`BENCH_WEIGHTS: unknown weight "${key}"`);
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new Error(`BENCH_WEIGHTS: "${key}" must be a number`);
+    }
+  }
+  return parsed as Partial<ObjectiveWeights>;
+}
+const WEIGHTS = parseWeights(process.env.BENCH_WEIGHTS);
+const WEIGHT_OPTIONS = WEIGHTS ? { weights: WEIGHTS } : {};
+
+/** Switches the study's rules on as soft, replacing whatever the unit's rule set had for them. */
+function withEnabledRules(input: SolveInput): SolveInput {
+  if (ENABLED_RULES.length === 0) return input;
+  const configs = input.ruleSet.configs.filter((c) => !ENABLED_RULES.includes(c.ruleId));
+  for (const id of ENABLED_RULES) {
+    const rule = ALL_RULES.find((r) => r.id === id)!;
+    configs.push({
+      ruleId: id,
+      enabled: true,
+      severityOverride: 'soft',
+      params: rule.defaultParams as Record<string, unknown>,
+    } satisfies RuleConfig);
+  }
+  return { ...input, ruleSet: { ...input.ruleSet, configs } };
+}
 const RUNNER = resolveRunnerPath({
   packaged: false,
   resourcesPath: '',
@@ -132,11 +194,11 @@ async function run(backend: Backend, input: SolveInput, seed: number): Promise<S
   const runnerPath = RUNNER!;
   switch (backend) {
     case 'sa-lns':
-      return solve(input, { seed, maxIterations: ITERATIONS });
+      return solve(input, { seed, maxIterations: ITERATIONS, ...WEIGHT_OPTIONS });
     case 'hybrid':
-      return solveHybrid(input, { seed, maxIterations: ITERATIONS, runnerPath });
+      return solveHybrid(input, { seed, maxIterations: ITERATIONS, runnerPath, ...WEIGHT_OPTIONS });
     case 'cp-sat':
-      return solveCpsat(input, { seed, maxIterations: ITERATIONS, runnerPath });
+      return solveCpsat(input, { seed, maxIterations: ITERATIONS, runnerPath, ...WEIGHT_OPTIONS });
   }
 }
 
@@ -180,7 +242,7 @@ it.skipIf(RUNNER === undefined)(
     for (const [unit, make] of UNITS) {
       for (const backend of BACKENDS) {
         for (const seed of SEEDS) {
-          const report = await run(backend, make(), seed);
+          const report = await run(backend, withEnabledRules(make()), seed);
           rows.push({ unit, backend, seed, report });
           console.log(
             unit,
@@ -200,6 +262,14 @@ it.skipIf(RUNNER === undefined)(
       `Generated ${new Date().toISOString().slice(0, 10)} by \`npm run bench:solvers\` on ${platform()} ${release()}, ` +
         `${cpus()[0]?.model ?? 'unknown CPU'} × ${cpus().length}; OR-Tools ${version}.`,
     );
+    if (ENABLED_RULES.length > 0) {
+      lines.push('');
+      lines.push(`Rules switched on (soft) for this run: ${ENABLED_RULES.join(', ')}.`);
+    }
+    if (WEIGHTS) {
+      lines.push('');
+      lines.push(`Weights overridden for this run: ${JSON.stringify(WEIGHTS)}.`);
+    }
     lines.push('');
     lines.push(
       `Budgets: SA + LNS and hybrid ${ITERATIONS.toLocaleString('en-US')} annealing iterations ` +

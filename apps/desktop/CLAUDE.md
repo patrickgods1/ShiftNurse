@@ -219,7 +219,7 @@
   own messages unchanged); the preload strips Electron's `Error invoking remote method …`
   wrapper (`shared/ipc-error.ts`). Write refusals for people, since they reach the UI verbatim.
 - **The app says when a release is out, but cannot update itself** (builds are unsigned).
-  `main/updates.ts` asks GitHub's latest-release API once at launch in a packaged, non-smoke run;
+  `main/updates.ts` asks GitHub's release list once at launch in a packaged, non-smoke run and picks the newest `vX.Y.Z` non-draft, non-prerelease app release (`/releases/latest` can be a `cpsat-runner-v*` release, which would hide every app release);
   any failure is silence, and only a link to the project's own releases page is ever shown. A release candidate hears about its final release. IT can turn the check off (`SHIFTNURSE_UPDATE_CHECK=off`, or the macOS managed
   preference `DisableUpdateCheck`; `updateCheckSkipReason` in `updates.ts`).
 - **A redirected data folder is named, not moved** (D24): `main/data-location.ts` classifies

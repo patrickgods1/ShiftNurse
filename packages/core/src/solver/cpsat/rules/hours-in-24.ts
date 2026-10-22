@@ -13,14 +13,15 @@
  * can never bind and writes nothing. Hours are hours worked: on the DST nights the real minutes
  * (`schedule/real-minutes.ts`, D19), the window itself on the wall clock, so each coefficient is
  * the minutes the rule counts for that entry and the two cannot disagree on a fall-back night.
+ * Call-backs from standby are constants too, with their own anchors, as the rule counts them.
  */
 
-import { MINUTES_PER_DAY, MINUTES_PER_HOUR } from '../../../domain/time.js';
+import { MINUTES_PER_DAY, MINUTES_PER_HOUR, type ShiftWindow } from '../../../domain/time.js';
 import { maxHoursIn24Rule } from '../../../rules/hours-in-24.js';
 import { asParams } from '../../../rules/registry.js';
 import { type DstTransition, realMinutesIn } from '../../../schedule/real-minutes.js';
 import { type Expr, expr } from '../builder.js';
-import type { EncodeContext, TimelineEntry } from '../context.js';
+import type { EncodeContext } from '../context.js';
 
 export function encodeHoursIn24(ctx: EncodeContext, raw: Record<string, unknown>): void {
   const params = asParams(maxHoursIn24Rule, raw);
@@ -30,9 +31,11 @@ export function encodeHoursIn24(ctx: EncodeContext, raw: Record<string, unknown>
   for (const [n, vars] of ctx.byNurse.entries()) {
     if (vars.length === 0) continue;
     const timeline = ctx.timeline(n).filter((e) => !e.shiftType.isOnCall);
+    const callBacks = ctx.model.ctx.callBacksByNurse.get(ctx.model.nurses[n]!.id) ?? [];
 
+    // In the rule's order: the shifts' anchors, then the call-backs'.
     const anchors = new Set<number>();
-    for (const e of timeline) {
+    for (const e of [...timeline, ...callBacks]) {
       anchors.add(e.window.startMinute);
       anchors.add(e.window.endMinute - MINUTES_PER_DAY);
     }
@@ -42,11 +45,16 @@ export function encodeHoursIn24(ctx: EncodeContext, raw: Record<string, unknown>
       let total = 0;
       for (const entry of timeline) {
         if (entry.window.startMinute >= from + MINUTES_PER_DAY) break;
-        const minutes = overlapMinutes(entry, from, tz);
+        const minutes = overlapMinutes(entry.window, from, tz);
         if (minutes === null) continue;
         total += minutes;
         if (entry.literal === null) e.constant += minutes;
         else e.terms.push([entry.literal, minutes]);
+      }
+      for (const cb of callBacks) {
+        const minutes = overlapMinutes(cb.window, from, tz) ?? 0;
+        total += minutes;
+        e.constant += minutes;
       }
       if (e.terms.length === 0 || total <= limit) continue;
       ctx.b.atMost(
@@ -58,14 +66,14 @@ export function encodeHoursIn24(ctx: EncodeContext, raw: Record<string, unknown>
   }
 }
 
-/** Real minutes of an entry inside the wall window `[from, from + 1440)`; null when outside it. */
+/** Real minutes of a window inside the wall window `[from, from + 1440)`; null when outside it. */
 function overlapMinutes(
-  entry: TimelineEntry,
+  window: ShiftWindow,
   from: number,
   tz: readonly DstTransition[],
 ): number | null {
-  const lo = Math.max(entry.window.startMinute, from);
-  const hi = Math.min(entry.window.endMinute, from + MINUTES_PER_DAY);
+  const lo = Math.max(window.startMinute, from);
+  const hi = Math.min(window.endMinute, from + MINUTES_PER_DAY);
   if (hi <= lo) return null;
   return realMinutesIn({ startMinute: lo, endMinute: hi }, tz);
 }

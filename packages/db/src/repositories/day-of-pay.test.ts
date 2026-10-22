@@ -4,11 +4,11 @@
  * change is audited with its `before`, and the pricing events core reads come out as recorded.
  */
 
-import { isoDate, type Nurse } from '@shiftnurse/core';
+import { DEFAULT_FAIRNESS_WEIGHTS, isoDate, type Nurse } from '@shiftnurse/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { auditHistoryFor } from '../audit.js';
-import { type OpenedDatabase, openTestDatabase } from '../client.js';
-import { createUnit } from './config.js';
+import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
+import { createShiftType, createUnit } from './config.js';
 import {
   createDayOfPayEvent,
   dayOfPayEventsForNurseOn,
@@ -20,12 +20,25 @@ import {
 import { nextEmployeeId } from './employee-ids.test-support.js';
 import { createNurseUnit } from './nurse-units.js';
 import { getPaySettings, savePaySettings } from './pay.js';
+import { publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
+import { saveRuleSet } from './rulesets.js';
+import { createAssignment, createPeriod } from './schedule.js';
 
 const ACTOR = 'manager';
 let handle: OpenedDatabase;
 let unitId: string;
 let ana: Nurse;
+let standbyId: string;
+// Standby 19:00-07:00 on `day`, called back at 22:00 (180 minutes in).
+let callBack: {
+  kind: 'call_back';
+  unitId: string;
+  nurseId: string;
+  date: ReturnType<typeof isoDate>;
+  shiftTypeId: string;
+  startMinute: number;
+};
 
 const mkUnit = (name: string) =>
   createUnit(
@@ -38,6 +51,24 @@ const mkUnit = (name: string) =>
     },
     ACTOR,
   );
+
+const mkShiftType = (name: string, isOnCall: boolean, startTime: string): string =>
+  createShiftType(
+    handle.db,
+    {
+      unitId,
+      name,
+      abbreviation: name.slice(0, 3),
+      startTime,
+      durationHours: 12,
+      isNight: false,
+      isOnCall,
+      color: '#f59e0b',
+      sortOrder: 1,
+      active: true,
+    },
+    ACTOR,
+  ).id;
 
 const mkNurse = (forUnit: string, firstName: string): Nurse =>
   createNurse(
@@ -64,6 +95,15 @@ beforeEach(() => {
   handle = openTestDatabase();
   unitId = mkUnit('4 West').id;
   ana = mkNurse(unitId, 'Ana');
+  standbyId = mkShiftType('Standby', true, '19:00');
+  callBack = {
+    kind: 'call_back',
+    unitId,
+    nurseId: ana.id,
+    date: day,
+    shiftTypeId: standbyId,
+    startMinute: 180,
+  };
 });
 afterEach(() => handle.close());
 
@@ -174,13 +214,9 @@ describe('recording a send-home and a call-back', () => {
     expect(() =>
       createDayOfPayEvent(handle.db, { ...sent, scheduledHours: 12, hoursWorked: 80 }, ACTOR),
     ).toThrow('Hours worked must be between 0 and 24');
-    expect(() =>
-      createDayOfPayEvent(
-        handle.db,
-        { kind: 'call_back', unitId, nurseId: ana.id, date: day, hoursWorked: 0 },
-        ACTOR,
-      ),
-    ).toThrow('Enter the hours the call-back worked');
+    expect(() => createDayOfPayEvent(handle.db, { ...callBack, hoursWorked: 0 }, ACTOR)).toThrow(
+      'Enter the hours the call-back worked',
+    );
   });
 
   it('refuses sending the same nurse home twice from one shift', () => {
@@ -232,11 +268,7 @@ describe('recording a send-home and a call-back', () => {
   });
 
   it('will not let a call-back be changed to no hours', () => {
-    const e = createDayOfPayEvent(
-      handle.db,
-      { kind: 'call_back', unitId, nurseId: ana.id, date: day, hoursWorked: 3 },
-      ACTOR,
-    );
+    const e = createDayOfPayEvent(handle.db, { ...callBack, hoursWorked: 3 }, ACTOR);
     expect(() => updateDayOfPayEvent(handle.db, e.id, { hoursWorked: 0 }, ACTOR)).toThrow(
       'Enter the hours the call-back worked',
     );
@@ -262,11 +294,7 @@ describe('recording a send-home and a call-back', () => {
   });
 
   it('removes an event and audits the delete with its before', () => {
-    const e = createDayOfPayEvent(
-      handle.db,
-      { kind: 'call_back', unitId, nurseId: ana.id, date: day, hoursWorked: 2 },
-      ACTOR,
-    );
+    const e = createDayOfPayEvent(handle.db, { ...callBack, hoursWorked: 2 }, ACTOR);
     deleteDayOfPayEvent(handle.db, e.id, ACTOR);
     expect(listDayOfPayEvents(handle.db, unitId, day, day)).toEqual([]);
     expect(auditHistoryFor(handle.db, 'day_of_pay_event', e.id)[0]).toMatchObject({
@@ -276,11 +304,137 @@ describe('recording a send-home and a call-back', () => {
   });
 });
 
+describe('a call-back has a time', () => {
+  // Ana works the 07:00-19:00 Day 12 the morning after the 2026-10-06 standby, published.
+  const publishDayShift = () => {
+    const dayId = mkShiftType('Day 12', false, '07:00');
+    const ruleSet = transact(handle.db, (tx) =>
+      saveRuleSet(
+        tx,
+        {
+          unitId,
+          name: 'Default',
+          weekendDefinition: {
+            startWeekday: 6,
+            startMinute: 0,
+            durationMinutes: 2880,
+            mode: 'starts_within',
+          },
+          fairnessWeights: DEFAULT_FAIRNESS_WEIGHTS,
+          configs: [],
+        },
+        ACTOR,
+      ),
+    );
+    const periodId = createPeriod(
+      handle.db,
+      {
+        unitId,
+        name: 'October',
+        startDate: isoDate('2026-10-04'),
+        endDate: isoDate('2026-10-17'),
+        ruleSetId: ruleSet.id,
+        ruleSetVersion: ruleSet.version,
+      },
+      ACTOR,
+    ).id;
+    createAssignment(
+      handle.db,
+      { periodId, nurseId: ana.id, shiftTypeId: dayId, date: isoDate('2026-10-07') },
+      ACTOR,
+    );
+    transact(handle.db, (tx) => publishSchedule(tx, { periodId, ledger: [] }, ACTOR));
+  };
+
+  it('asks for the time the call-back started', () => {
+    const { startMinute: _, ...noTime } = callBack;
+    expect(() => createDayOfPayEvent(handle.db, { ...noTime, hoursWorked: 2 }, ACTOR)).toThrow(
+      'Enter the time the call-back started.',
+    );
+  });
+
+  it('keeps the time and audits it', () => {
+    const e = createDayOfPayEvent(
+      handle.db,
+      { ...callBack, hoursWorked: 3, startMinute: 420 },
+      ACTOR,
+    );
+    expect(e.startMinute).toBe(420);
+    expect(listDayOfPayEvents(handle.db, unitId, day, day)[0]?.startMinute).toBe(420);
+    expect(auditHistoryFor(handle.db, 'day_of_pay_event', e.id)[0]).toMatchObject({
+      action: 'create',
+      after: { startMinute: 420 },
+    });
+  });
+
+  it('refuses a start after the 12-hour on-call shift has ended', () => {
+    const message = 'The call-back must start during the on-call shift (19:00–07:00).';
+    expect(() =>
+      createDayOfPayEvent(handle.db, { ...callBack, hoursWorked: 1, startMinute: 720 }, ACTOR),
+    ).toThrow(message);
+    expect(() =>
+      createDayOfPayEvent(handle.db, { ...callBack, hoursWorked: 1, startMinute: -1 }, ACTOR),
+    ).toThrow(message);
+    expect(
+      createDayOfPayEvent(handle.db, { ...callBack, hoursWorked: 1, startMinute: 719 }, ACTOR)
+        .startMinute,
+    ).toBe(719);
+  });
+
+  it('refuses a call-back that runs into the day shift she works next morning', () => {
+    publishDayShift();
+    // 06:00 for two hours runs to 08:00; the Day 12 starts at 07:00.
+    expect(() =>
+      createDayOfPayEvent(handle.db, { ...callBack, hoursWorked: 2, startMinute: 660 }, ACTOR),
+    ).toThrow("The call-back overlaps Ana's Day 12 on");
+  });
+
+  it('accepts a call-back that is over before the day shift starts', () => {
+    publishDayShift();
+    // 02:00 for three hours is 05:00; and 06:00 for one hour ends exactly at 07:00 (half-open).
+    expect(
+      createDayOfPayEvent(handle.db, { ...callBack, hoursWorked: 3, startMinute: 420 }, ACTOR)
+        .startMinute,
+    ).toBe(420);
+    expect(
+      createDayOfPayEvent(handle.db, { ...callBack, hoursWorked: 1, startMinute: 660 }, ACTOR)
+        .startMinute,
+    ).toBe(660);
+  });
+
+  it('lets a note be fixed after a day shift is published over the call-back, but not the hours', () => {
+    const e = createDayOfPayEvent(
+      handle.db,
+      { ...callBack, hoursWorked: 2, startMinute: 660 },
+      ACTOR,
+    );
+    publishDayShift();
+    expect(updateDayOfPayEvent(handle.db, e.id, { note: 'paged by charge' }, ACTOR).note).toBe(
+      'paged by charge',
+    );
+    expect(() => updateDayOfPayEvent(handle.db, e.id, { hoursWorked: 3 }, ACTOR)).toThrow(
+      "The call-back overlaps Ana's Day 12 on",
+    );
+  });
+
+  it('lets an old call-back with no time have its note changed', () => {
+    const e = createDayOfPayEvent(handle.db, { ...callBack, hoursWorked: 2 }, ACTOR);
+    handle.sqlite.prepare('UPDATE day_of_pay_event SET start_minute = NULL WHERE id = ?').run(e.id);
+    const after = updateDayOfPayEvent(handle.db, e.id, { note: 'paged at night' }, ACTOR);
+    expect(after).toMatchObject({ note: 'paged at night' });
+    expect(after.startMinute).toBeUndefined();
+    expect(() => updateDayOfPayEvent(handle.db, e.id, { startMinute: 900 }, ACTOR)).toThrow(
+      'must start during the on-call shift',
+    );
+    expect(updateDayOfPayEvent(handle.db, e.id, { startMinute: 60 }, ACTOR).startMinute).toBe(60);
+  });
+});
+
 describe('the events core prices', () => {
   it('hands over each event as recorded, in date order, within the range asked for', () => {
     createDayOfPayEvent(
       handle.db,
-      { kind: 'call_back', unitId, nurseId: ana.id, date: isoDate('2026-10-07'), hoursWorked: 2 },
+      { ...callBack, date: isoDate('2026-10-07'), hoursWorked: 2 },
       ACTOR,
     );
     createDayOfPayEvent(
@@ -313,6 +467,9 @@ describe('the unit’s call-back minimum', () => {
       reportingPayNoticeHours: 2,
       // The default a unit that saved nothing is priced by (D17).
       overtimeWindowAttribution: 'clock',
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
+      compTime: null,
     });
     savePaySettings(
       handle.db,
@@ -323,6 +480,9 @@ describe('the unit’s call-back minimum', () => {
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 2,
         overtimeWindowAttribution: 'clock',
+        paySpringForwardAsScheduled: false,
+        breakPremiumRate: 'base',
+        compTime: null,
       },
       ACTOR,
     );
@@ -335,6 +495,9 @@ describe('the unit’s call-back minimum', () => {
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 2,
         overtimeWindowAttribution: 'clock',
+        paySpringForwardAsScheduled: false,
+        breakPremiumRate: 'base',
+        compTime: null,
       },
       ACTOR,
     );
@@ -344,6 +507,9 @@ describe('the unit’s call-back minimum', () => {
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
       overtimeWindowAttribution: 'clock',
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
+      compTime: null,
     });
     expect(auditHistoryFor(handle.db, 'pay_settings', unitId)[0]).toMatchObject({
       before: { callBackMinimumHours: 4 },
@@ -361,6 +527,9 @@ describe('the unit’s call-back minimum', () => {
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 2,
         overtimeWindowAttribution: 'clock',
+        paySpringForwardAsScheduled: false,
+        breakPremiumRate: 'base',
+        compTime: null,
       },
       ACTOR,
     );
@@ -370,6 +539,9 @@ describe('the unit’s call-back minimum', () => {
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
       overtimeWindowAttribution: 'clock',
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
+      compTime: null,
     });
     const entry = auditHistoryFor(handle.db, 'pay_settings', unitId)[0];
     expect(entry).toMatchObject({
@@ -390,6 +562,9 @@ describe('the unit’s call-back minimum', () => {
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 2,
           overtimeWindowAttribution: 'clock',
+          paySpringForwardAsScheduled: false,
+          breakPremiumRate: 'base',
+          compTime: null,
         },
         ACTOR,
       ),
@@ -404,6 +579,9 @@ describe('the unit’s call-back minimum', () => {
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 2,
           overtimeWindowAttribution: 'clock',
+          paySpringForwardAsScheduled: false,
+          breakPremiumRate: 'base',
+          compTime: null,
         },
         ACTOR,
       ),

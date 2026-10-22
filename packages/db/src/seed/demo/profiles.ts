@@ -161,7 +161,12 @@ export const COMMUNITY_MED_SURG: DemoProfile = {
   // The CA preset sets the weekly 40 (without pyramiding) and the daily and seventh-day rules.
   overtime: [],
   holidays: 'hospital-six',
-  rules: { weekend: DEFAULT_WEEKEND },
+  rules: {
+    weekend: DEFAULT_WEEKEND,
+    // Payroll's week starts at the Saturday 19:00 shift change (29 CFR 778.105), as UMass
+    // Memorial's does for 12-hour staff: a Saturday night is never split between two weeks.
+    params: { 'max-hours-per-week': { workWeekStartsOn: 6, workWeekStartMinute: 1140 } },
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -622,7 +627,12 @@ export const CA_ICU: DemoProfile = {
   // and the weekly 40 without pyramiding, with the seventh-day and extra-day rules.
   overtime: [],
   holidays: 'hospital-six',
-  rules: { weekend: DEFAULT_WEEKEND },
+  rules: {
+    weekend: DEFAULT_WEEKEND,
+    // Payroll's week starts at the Saturday 19:00 shift change (29 CFR 778.105), as UMass
+    // Memorial's does for 12-hour staff: a Saturday night is never split between two weeks.
+    params: { 'max-hours-per-week': { workWeekStartsOn: 6, workWeekStartMinute: 1140 } },
+  },
 };
 
 export const DEMO_PROFILES = [COMMUNITY_MED_SURG, VA_SF_MED_SURG, CA_ICU] as const;

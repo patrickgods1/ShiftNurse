@@ -10,6 +10,7 @@ import {
   auditHistoryFor,
   createAssignment,
   createNurse,
+  createNurseUnit,
   createPeriod,
   createShiftType,
   createUnit,
@@ -118,8 +119,9 @@ describe('recording where a nurse floats', () => {
 
 describe('the grid with a nurse who works two units', () => {
   it('flags a day shift here that follows a night on 5 West with no rest between', () => {
-    const { night, period } = westWing();
+    const { west, night, period } = westWing();
     const date = addDays(f.seeded.draftStart, 3);
+    createNurseUnit(f.handle.db, { nurseId: f.rns[0]!.id, unitId: west.id }, 'manager');
     createAssignment(
       f.handle.db,
       { periodId: period.id, nurseId: f.rns[0]!.id, shiftTypeId: night.id, date },

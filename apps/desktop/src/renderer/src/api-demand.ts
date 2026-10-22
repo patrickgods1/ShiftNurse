@@ -7,7 +7,7 @@
 
 import type { AcuityTier, CensusForecast, ForecastOptions, Id, IsoDate } from '@shiftnurse/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { CensusForecastInput } from '../../shared/api.js';
+import type { CensusForecastInput, StaffingRecordFormat } from '../../shared/api.js';
 import { api } from './api.js';
 import { queryRoots } from './query-roots.js';
 
@@ -137,4 +137,13 @@ export function sumMix(mix: Record<Id, number>): number {
 
 export function tierNameLookup(tiers: readonly AcuityTier[] | undefined): Map<Id, string> {
   return new Map((tiers ?? []).map((t) => [t.id, t.name]));
+}
+
+/** The Title 22 staffing record export. Nothing is cached: the file is written, not read back. */
+export function useExportStaffingRecord(unitId: Id | undefined) {
+  return useMutation({
+    meta: { inlineError: true },
+    mutationFn: (v: { start: IsoDate; end: IsoDate; format: StaffingRecordFormat }) =>
+      api.output.exportStaffingRecord(unitId as Id, v.start, v.end, v.format),
+  });
 }

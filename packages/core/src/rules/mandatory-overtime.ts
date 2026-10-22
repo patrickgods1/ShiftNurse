@@ -296,7 +296,9 @@ export const mandatoryOvertimeRule: Rule<MandatoryOvertimeParams> = {
     maxMandatedWeeklyHours: {
       stricter: 'lower',
       label: 'Most hours a nurse can be required to work in a week',
-      hint: 'Leave blank to refuse all overtime the nurse did not volunteer for.',
+      hint:
+        'Leave blank to refuse all overtime the nurse did not volunteer for. Call-backs from ' +
+        'standby are not judged by this rule.',
       why:
         'Federal VA law (38 U.S.C. § 7459) caps required hours at 40 a week, 24 for nurses on the ' +
         'weekend plan, rather than banning them. Hours the nurse offered do not count against it.',

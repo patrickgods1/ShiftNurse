@@ -1,5 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { checkForUpdate, compareVersions, newerRelease, updateCheckSkipReason } from './updates.js';
+import {
+  checkForUpdate,
+  compareVersions,
+  latestAppRelease,
+  newerRelease,
+  updateCheckSkipReason,
+} from './updates.js';
+
+const tagged = (tag: string, extra: Record<string, unknown> = {}) => ({
+  tag_name: tag,
+  html_url: `https://github.com/patrickgods1/ShiftNurse/releases/tag/${tag}`,
+  draft: false,
+  prerelease: false,
+  ...extra,
+});
+
+// Newest first, as GitHub lists them: a runner release, a pre-release, the real one, a draft.
+const LIST = [
+  tagged('cpsat-runner-v3'),
+  tagged('v0.1.2-rc.1', { prerelease: true }),
+  tagged('v0.1.1'),
+  tagged('v0.1.0', { draft: true }),
+];
 
 const RELEASE = {
   tag_name: 'v0.2.0',
@@ -61,12 +83,37 @@ describe('telling a manager a fix is out', () => {
     await expect(checkForUpdate('0.1.0', outage)).resolves.toBeUndefined();
   });
 
-  it('reads the latest release from the GitHub API', async () => {
-    const fetchLatest = () => Promise.resolve(Response.json(RELEASE));
-    await expect(checkForUpdate('0.1.0', fetchLatest)).resolves.toEqual({
-      version: '0.2.0',
-      url: RELEASE.html_url,
+  it('reads the newest app release from the GitHub release list', async () => {
+    const urls: string[] = [];
+    const fetchList = (url: string) => {
+      urls.push(url);
+      return Promise.resolve(Response.json(LIST));
+    };
+    await expect(checkForUpdate('0.1.0', fetchList)).resolves.toEqual({
+      version: '0.1.1',
+      url: tagged('v0.1.1').html_url,
     });
+    expect(urls[0]).toContain('/releases?per_page=30');
+  });
+
+  it('is not hidden by a CP-SAT runner release being GitHub’s "latest"', () => {
+    expect(latestAppRelease(LIST)?.tag_name).toBe('v0.1.1');
+  });
+
+  it('stays quiet once the newest app release is the installed one', async () => {
+    const fetchList = () => Promise.resolve(Response.json(LIST));
+    await expect(checkForUpdate('0.1.1', fetchList)).resolves.toBeUndefined();
+  });
+
+  it('says nothing when GitHub answers with something other than a list', async () => {
+    expect(latestAppRelease({ message: 'Not Found' })).toBeUndefined();
+    const fetchObject = () => Promise.resolve(Response.json(RELEASE));
+    await expect(checkForUpdate('0.1.0', fetchObject)).resolves.toBeUndefined();
+  });
+
+  it('skips a release whose page is not the project’s own', () => {
+    const foreign = { ...tagged('v9.9.9'), html_url: 'https://evil.example/v9.9.9' };
+    expect(latestAppRelease([foreign, tagged('v0.1.1')])?.tag_name).toBe('v0.1.1');
   });
 });
 

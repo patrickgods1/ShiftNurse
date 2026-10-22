@@ -13,7 +13,9 @@ import {
   coverage,
   DAY_8,
   DAY_12,
+  EVENING_8,
   MID_8,
+  NIGHT_12,
   TIER_HIGH,
   TIER_ROUTINE,
   testAcuityTiers,
@@ -262,6 +264,54 @@ describe('a mixed-acuity assignment', () => {
     // 1.5 + 0.4 = 1.9, rounded up once → 2. Read per assignment, any two-nurse split leaves
     // someone with a 1:2 patient and three others, so that reading would need 3 (D11: not applied).
     const mix = { [TIER_HIGH.id]: 3, [TIER_ROUTINE.id]: 2 };
-    expect(nursesRequiredForMix(mix, 'RN', testRatioRules)).toBe(2);
+    expect(nursesRequiredForMix(mix, 'RN', testRatioRules, 'day')).toBe(2);
+  });
+});
+
+describe('a ratio that binds one tour only (ORS 441.768)', () => {
+  // Oregon caps an aide at 7 patients on a day or evening shift and 11 at night.
+  const CNA_DAY_7: RatioRule = {
+    ...CNA_1_TO_10,
+    id: 'cna-day',
+    maxPatientsPerNurse: 7,
+    tour: 'day',
+  };
+  const CNA_NIGHT_11: RatioRule = {
+    ...CNA_1_TO_10,
+    id: 'cna-night',
+    maxPatientsPerNurse: 11,
+    tour: 'night',
+  };
+  const BY_TOUR = { ratioRules: [RN_1_TO_5, CNA_DAY_7, CNA_NIGHT_11] };
+
+  it('asks for four aides for 22 patients on the 07:00 day shift', () => {
+    // 22 / 7 = 3.14…, rounded up → 4; the night 1:11 does not apply by day.
+    expect(demandFor(DAY_12, 22, undefined, BY_TOUR).CNA.ratioDerived).toBe(4);
+  });
+
+  it('asks for two aides for the same 22 patients on the 19:00 night shift', () => {
+    // 22 / 11 = 2 exactly; the day 1:7 does not apply at night.
+    expect(demandFor(NIGHT_12, 22, undefined, BY_TOUR).CNA.ratioDerived).toBe(2);
+  });
+
+  it('holds an RN ratio with no tour on the day, evening and night shifts alike', () => {
+    // 22 / 5 = 4.4, rounded up → 5 RNs on every shift.
+    expect(demandFor(DAY_12, 22, undefined, BY_TOUR).RN.ratioDerived).toBe(5);
+    expect(demandFor(EVENING_8, 22, undefined, BY_TOUR).RN.ratioDerived).toBe(5);
+    expect(demandFor(NIGHT_12, 22, undefined, BY_TOUR).RN.ratioDerived).toBe(5);
+  });
+
+  it('reads the tour from when the shift starts, not from its night-pay flag', () => {
+    // A 19:00 shift not flagged for night pay is still a night shift: 22 / 11 = 2.
+    const unflaggedNight: ShiftType = { ...NIGHT_12, id: 'st-n12-unflagged', isNight: false };
+    expect(demandFor(unflaggedNight, 22, undefined, BY_TOUR).CNA.ratioDerived).toBe(2);
+    // A 15:00 Title 38 evening tour carries night pay but is an evening shift: the evening 1:7
+    // applies (22 / 7 → 4) and the night 1:11 (which would ask for 2) does not.
+    const paidAsNight: ShiftType = { ...EVENING_8, id: 'st-e8-night-pay', isNight: true };
+    const CNA_EVENING_7: RatioRule = { ...CNA_DAY_7, id: 'cna-evening', tour: 'evening' };
+    const rules = { ratioRules: [RN_1_TO_5, CNA_DAY_7, CNA_EVENING_7, CNA_NIGHT_11] };
+    expect(demandFor(paidAsNight, 22, undefined, rules).CNA.ratioDerived).toBe(4);
+    // With no evening rule at all, neither the day nor the night cap reaches it.
+    expect(demandFor(paidAsNight, 22, undefined, BY_TOUR).CNA.ratioDerived).toBe(0);
   });
 });

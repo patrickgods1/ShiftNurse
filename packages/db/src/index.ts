@@ -44,10 +44,24 @@ export * from './repositories/availability-blocks.js';
 export * from './repositories/calloffs.js';
 export * from './repositories/cancellations.js';
 export * from './repositories/census.js';
+export * from './repositories/comp-time.js';
 export * from './repositories/config.js';
 export * from './repositories/conflicts.js';
 export * from './repositories/day-of-pay.js';
 export * from './repositories/deactivation.js';
+export {
+  backfillDemandConfigVersions,
+  batchDemandVersions,
+  currentDemandConfig,
+  type DemandConfig,
+  type DemandConfigVersion,
+  type DemandJudging,
+  demandConfigOn,
+  demandInputsForDate,
+  demandTableFor,
+  latestDemandConfigVersion,
+  recordDemandConfigVersion,
+} from './repositories/demand-history.js';
 export * from './repositories/exchange.js';
 export * from './repositories/float-records.js';
 export * from './repositories/holdovers.js';
@@ -62,6 +76,8 @@ export * from './repositories/overtime-volunteers.js';
 export * from './repositories/pay.js';
 export * from './repositories/pay-snapshot.js';
 export * from './repositories/period-ledger.js';
+export { unitForPeriod } from './repositories/period-unit.js';
+export { PRIOR_ASSIGNMENT_LOOKBACK_DAYS, timeOffWindow } from './repositories/period-window.js';
 export * from './repositories/preceptorships.js';
 export * from './repositories/publish.js';
 export * from './repositories/rest-waivers.js';

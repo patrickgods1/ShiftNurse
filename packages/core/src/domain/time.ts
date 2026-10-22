@@ -247,6 +247,21 @@ function parseTimeOfDayUncached(value: string): number {
   return hours * MINUTES_PER_HOUR + minutes;
 }
 
+/** A nurse's tour: the part of the day their shifts fall in. Classified from a shift's start time. */
+export type Tour = 'day' | 'evening' | 'night';
+
+/**
+ * Day starts 04:00–11:59, evening 12:00–17:59, night 18:00–03:59, by local start time. Here in
+ * `domain/` because ratio demand reads it too (a ratio may bind one tour only, ORS 441.768), and
+ * `acuity/` may not import from `rules/`.
+ */
+export function tourOf(shiftType: { readonly startTime: string }): Tour {
+  const start = parseTimeOfDay(shiftType.startTime);
+  if (start >= 4 * 60 && start < 12 * 60) return 'day';
+  if (start >= 12 * 60 && start < 18 * 60) return 'evening';
+  return 'night';
+}
+
 /** `1140` → `"19:00"`. Accepts values past midnight and wraps them. */
 export function formatTimeOfDay(minutes: number): string {
   const wrapped = ((minutes % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;

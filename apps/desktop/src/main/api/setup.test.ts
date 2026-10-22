@@ -127,8 +127,9 @@ describe('applying a state preset', () => {
   it("sets a telemetry unit to California's 1:4 and remembers the state on the unit", () => {
     const unit = setup.createUnit(unitInput, 'manual');
     // No alternative-workweek answer: 1 ratio rule + 5 overtime rules (daily 8, daily 12, weekly
-    // 40, both seventh-day); the 12-in-24 cap is not switched on, so no rule set.
-    expect(setup.applyJurisdiction(unit.id, 'CA')).toMatchObject({ created: 6 });
+    // 40, both seventh-day) and the pay settings (breaks at the regular rate); the 12-in-24 cap
+    // is not switched on, so no rule set.
+    expect(setup.applyJurisdiction(unit.id, 'CA')).toMatchObject({ created: 7 });
     expect(listActiveRatioRulesForUnit(handle.db, unit.id)).toEqual([
       expect.objectContaining({ role: 'RN', maxPatientsPerNurse: 4 }),
     ]);

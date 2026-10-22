@@ -10,9 +10,10 @@
  *
  * A balance is payroll's figure carried forward to the request's first day (`projectBalance`):
  * the manager approving leave three pay periods after payroll's date would otherwise be checking
- * against a stale number. Leave already approved on the same balance counts as used.
+ * against a stale number. Leave already approved on the same balance counts as used, and comp
+ * time banked from a finished schedule (`comp_time_credit`) counts as earned.
  *
- * A 72/80 nurse is charged 10 hours of leave for each 9 of absence (`leaveChargeHours`): the
+ * A 72/80 nurse is charged 10 hours of annual or sick leave for each 9 of absence (`leaveChargeHours`): the
  * request keeps its worked hours, and the debit — balance projection and check — is charged. FMLA is not: its entitlement and use are
  * both in worked hours.
  *
@@ -44,6 +45,7 @@
 import {
   accrualRuleFor,
   addDays,
+  type BalanceProjection,
   checkLeaveBalance,
   checkUseCap,
   compareDates,
@@ -58,20 +60,26 @@ import {
   type LeaveBalanceType,
   leaveCapsFor,
   leaveChargeHours,
+  type Nurse,
   payPeriodIndex,
   payPeriodWindow,
   pdlEntitlementHours,
   projectBalance,
   type TimeOffType,
   typicalShiftHours,
+  type Unit,
 } from '@shiftnurse/core';
 import {
+  createCompTimeElection,
   createFmlaCertification,
   type DbLike,
+  deleteCompTimeElection,
   deleteFmlaCertification,
   getLeaveBalance,
   getNurse,
   getUnit,
+  listCompTimeCreditsForNurse,
+  listCompTimeElectionsForNurse,
   listFmlaCertifications,
   listLeaveBalancesForNurse,
   listShiftTypesForUnit,
@@ -79,6 +87,7 @@ import {
   type ShiftNurseDb,
   setLeaveBalance,
   transact,
+  updateCompTimeElection,
   updateFmlaCertification,
   workedShiftsForNurseInRange,
 } from '@shiftnurse/db';
@@ -89,6 +98,85 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 const isBalanceType = (type: TimeOffType): type is LeaveBalanceType =>
   (LEAVE_BALANCE_TYPES as readonly TimeOffType[]).includes(type);
+
+/**
+ * Payroll's figure for one balance carried forward to `onDate`, or undefined when payroll's figure
+ * was never entered. The request check and comp-time banking both read it here, so the balance a
+ * credit is capped against is the one a later request is checked against. `start` stands in for a
+ * missing row (banking starts a nurse with none at 0).
+ *
+ * Comp credits earn on their period's last day, so they count from the day after: the projection's
+ * window is strict at both ends.
+ */
+export function projectedLeaveBalance(
+  db: DbLike,
+  nurseId: Id,
+  type: LeaveBalanceType,
+  onDate: IsoDate,
+  start?: { balanceHours: number; asOf: IsoDate },
+): BalanceProjection | undefined {
+  const nurse = getNurse(db, nurseId);
+  if (!nurse) throw new Error('That nurse was not found. Reload the page.');
+  const unit = getUnit(db, nurse.unitId);
+  if (!unit) throw new Error("That nurse's unit was not found. Reload the app.");
+  return balanceProjectionFor(db, nurse, unit, type, onDate, start)?.projection;
+}
+
+function balanceProjectionFor(
+  db: DbLike,
+  nurse: Nurse,
+  unit: Unit,
+  type: LeaveBalanceType,
+  onDate: IsoDate,
+  start?: { balanceHours: number; asOf: IsoDate },
+) {
+  const nurseId = nurse.id;
+  const balance = getLeaveBalance(db, nurseId, type) ?? start;
+  if (!balance) return undefined;
+  const policy = unit.leavePolicy ?? DEFAULT_LEAVE_POLICY;
+  const rule = accrualRuleFor(policy, nurse, type);
+  const used = listTimeOffForNurse(db, nurseId)
+    .filter((r) => r.type === type && r.status === 'approved' && (r.paidHours ?? 0) > 0)
+    .map((r) => ({
+      date: r.startDate,
+      hours: leaveChargeHours(nurse.scheduleKind, type, r.paidHours ?? 0),
+    }));
+  const earned =
+    type === 'comp'
+      ? listCompTimeCreditsForNurse(db, nurseId).map((c) => ({
+          date: c.periodEndDate,
+          hours: c.creditedHours,
+        }))
+      : [];
+  // Only a per-hour tier reads worked hours, and only for the pay periods that close
+  // between payroll's date and the request.
+  const hoursByPayPeriodStart = new Map<IsoDate, number>();
+  if (rule?.tiers.some((t) => t.hoursPerAccruedHour !== undefined)) {
+    const from = payPeriodWindow(payPeriodIndex(balance.asOf, unit), unit).start;
+    const through = addDays(onDate, -1);
+    for (const shift of workedShiftsForNurseInRange(db, nurseId, from, through)) {
+      const key = payPeriodWindow(payPeriodIndex(shift.date, unit), unit).start;
+      hoursByPayPeriodStart.set(key, (hoursByPayPeriodStart.get(key) ?? 0) + shift.hours);
+    }
+  }
+  // A cap in days (California: 80 hours or 10 days) is counted in the unit's usual shift,
+  // the same length a request's paid hours default to.
+  const shiftHours = typicalShiftHours(listShiftTypesForUnit(db, unit.id));
+  const projection = projectBalance({
+    balanceHours: balance.balanceHours,
+    asOf: balance.asOf,
+    onDate,
+    ...(rule ? { rule } : {}),
+    serviceStart: nurse.hireDate ?? nurse.seniorityDate,
+    calendar: unit,
+    leaveYearStart: policy.leaveYearStart,
+    hoursByPayPeriodStart,
+    used,
+    earned,
+    shiftHours,
+  });
+  return { balance, rule, shiftHours, projection };
+}
 
 export function checkLeaveRequest(
   db: DbLike,
@@ -111,42 +199,10 @@ export function checkLeaveRequest(
   const serviceStart = nurse.hireDate ?? nurse.seniorityDate;
 
   if (isBalanceType(type)) {
-    const balance = getLeaveBalance(db, nurseId, type);
-    if (balance) {
-      const rule = accrualRuleFor(policy, nurse, type);
-      const used = listTimeOffForNurse(db, nurseId)
-        .filter((r) => r.type === type && r.status === 'approved' && (r.paidHours ?? 0) > 0)
-        .map((r) => ({
-          date: r.startDate,
-          hours: leaveChargeHours(nurse.scheduleKind, r.paidHours ?? 0),
-        }));
-      // Only a per-hour tier reads worked hours, and only for the pay periods that close
-      // between payroll's date and the request.
-      const hoursByPayPeriodStart = new Map<IsoDate, number>();
-      if (rule?.tiers.some((t) => t.hoursPerAccruedHour !== undefined)) {
-        const from = payPeriodWindow(payPeriodIndex(balance.asOf, unit), unit).start;
-        const through = addDays(startDate, -1);
-        for (const shift of workedShiftsForNurseInRange(db, nurseId, from, through)) {
-          const key = payPeriodWindow(payPeriodIndex(shift.date, unit), unit).start;
-          hoursByPayPeriodStart.set(key, (hoursByPayPeriodStart.get(key) ?? 0) + shift.hours);
-        }
-      }
-      // A cap in days (California: 80 hours or 10 days) is counted in the unit's usual shift,
-      // the same length a request's paid hours default to.
-      const shiftHours = typicalShiftHours(listShiftTypesForUnit(db, unit.id));
-      const projection = projectBalance({
-        balanceHours: balance.balanceHours,
-        asOf: balance.asOf,
-        onDate: startDate,
-        ...(rule ? { rule } : {}),
-        serviceStart,
-        calendar: unit,
-        leaveYearStart: policy.leaveYearStart,
-        hoursByPayPeriodStart,
-        used,
-        shiftHours,
-      });
-      const requestHours = leaveChargeHours(nurse.scheduleKind, paidHours);
+    const projected = balanceProjectionFor(db, nurse, unit, type, startDate);
+    if (projected) {
+      const { balance, rule, shiftHours, projection } = projected;
+      const requestHours = leaveChargeHours(nurse.scheduleKind, type, paidHours);
       const caps = rule ? leaveCapsFor(rule, shiftHours) : {};
       const capHours = caps.useCapHoursPerYear;
       const useCap =
@@ -165,6 +221,7 @@ export function checkLeaveRequest(
         accruedHours: round2(projection.accruedHours),
         usedHours: round2(projection.usedHours),
         forfeitedHours: round2(projection.forfeitedHours),
+        earnedHours: round2(projection.earnedHours),
         usedThisYearHours: round2(projection.usedThisYearHours),
         check: checkLeaveBalance({ balanceHours: projection.hours, requestHours }),
         ...(capHours !== undefined && useCap && !useCap.ok
@@ -210,7 +267,8 @@ export function checkLeaveRequest(
 
   if (type === 'fmla') {
     const weeklyHours = (nurse.contractedHoursPerPeriod * 7) / unit.payPeriodDays;
-    // Not charged 10/9 for a 72/80 nurse: § 7456A(d) charges leave *balances*, but the FMLA
+    // Not charged 10/9 for a 72/80 nurse: § 7456A(b)(3) charges annual and sick leave *balances*
+    // (comp time and PTO are charged hour for hour), but the FMLA
     // entitlement (6 × the biweekly tour, 12 × the usual week) and these used hours are both
     // counted in worked hours, so charging one side only would run the 12 weeks out in about 10.8.
     const perDay = weeklyHours / 7;
@@ -288,6 +346,11 @@ export function leaveBalancesApi(db: ShiftNurseDb): ShiftNurseApi['leaveBalances
     updateCertification: (id, patch) =>
       transact(db, (tx) => updateFmlaCertification(tx, id, patch, ACTOR)),
     removeCertification: (id) => transact(db, (tx) => deleteFmlaCertification(tx, id, ACTOR)),
+    compElections: (nurseId) => listCompTimeElectionsForNurse(db, nurseId),
+    addCompElection: (input) => transact(db, (tx) => createCompTimeElection(tx, input, ACTOR)),
+    updateCompElection: (id, patch) =>
+      transact(db, (tx) => updateCompTimeElection(tx, id, patch, ACTOR)),
+    removeCompElection: (id) => transact(db, (tx) => deleteCompTimeElection(tx, id, ACTOR)),
     checkRequest: (nurseId, type, startDate, endDate, paidHours) =>
       checkLeaveRequest(db, nurseId, type, startDate, endDate, paidHours),
   };

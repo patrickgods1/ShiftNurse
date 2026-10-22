@@ -26,12 +26,14 @@ import type {
   HistoryImportPreview,
   NurseRecordFormat,
   RosterImportPreview,
+  StaffingRecordFormat,
 } from '../../shared/api.js';
 import { openFile, saveFile } from '../native-dialogs.js';
 import { htmlToPdf, osPaperSize } from '../output.js';
 
 import { unitOrThrow } from './context.js';
 import { nurseRecordDocument } from './nurse-record.js';
+import { staffingRecordDocument } from './staffing-record.js';
 
 export async function pickRosterImportFile(
   db: DbLike,
@@ -77,7 +79,7 @@ export async function pickHistoryImportFile(
   const text = readFileSync(path, 'utf8');
   const { rows, errors } = parseHistoricalScheduleCsv(text, {
     nurses: listNursesForUnit(db, unitId),
-    shiftTypes: listShiftTypesForUnit(db, unitId),
+    shiftTypes: listShiftTypesForUnit(db, unitId).filter((s) => s.active),
   });
   const existing = new Set(ledgerPeriodsForUnit(db, unitId).map((p) => p.periodId));
   const periods = groupIntoPayPeriods(rows, unit).map((p) => ({
@@ -104,6 +106,27 @@ export async function exportNurseRecordToFile(
   const extension = format === 'pdf' ? 'pdf' : 'csv';
   const path = await saveFile({
     title: `Export nurse record (${extension.toUpperCase()})`,
+    defaultPath: `${doc.baseName}.${extension}`,
+    filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
+  });
+  if (!path) return undefined;
+  if (format === 'pdf') writeFileSync(path, await htmlToPdf(doc.html, false, doc.paper));
+  else writeFileSync(path, doc.csv, 'utf8');
+  return path;
+}
+
+/** The unit's Title 22 staffing record in the range, to a file the manager picks. */
+export async function exportStaffingRecordToFile(
+  db: DbLike,
+  unitId: Id,
+  start: IsoDate,
+  end: IsoDate,
+  format: StaffingRecordFormat,
+): Promise<string | undefined> {
+  const doc = staffingRecordDocument(db, unitId, start, end, today(), Date.now(), osPaperSize());
+  const extension = format === 'pdf' ? 'pdf' : 'csv';
+  const path = await saveFile({
+    title: `Export staffing record (${extension.toUpperCase()})`,
     defaultPath: `${doc.baseName}.${extension}`,
     filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
   });

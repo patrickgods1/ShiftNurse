@@ -5,12 +5,13 @@
  * entries tell the full story", at the repository layer.
  */
 
-import { DEFAULT_FAIRNESS_WEIGHTS, isoDate } from '@shiftnurse/core';
+import { DEFAULT_FAIRNESS_WEIGHTS, DEFAULT_WEEKEND, isoDate, ScheduleView } from '@shiftnurse/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { auditHistoryFor, recentAudit } from '../audit.js';
 import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
-import { createShiftType, createUnit } from './config.js';
+import { createShiftType, createUnit, listShiftTypesForUnit } from './config.js';
 import { getFairnessLedgerEntry, upsertFairnessLedgerEntry } from './ledger.js';
+import { counterContextFor, periodLedgerRows } from './period-ledger.js';
 import {
   changesSinceLastPublish,
   latestVersion,
@@ -23,7 +24,7 @@ import {
   requireChangeReason,
   requirePeriodEditable,
 } from './publish.js';
-import { createNurse } from './roster.js';
+import { createNurse, listNursesForUnit } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
 import {
   createAssignment,
@@ -202,6 +203,40 @@ describe('publishSchedule', () => {
     expect(annRow).toHaveLength(1);
     expect(annRow[0]!.before).toMatchObject({ nurseId: ann, nightShifts: 1 });
     expect(annRow[0]!.reason).toContain('version 2');
+  });
+
+  it("zeroes Ann's row, rather than deleting it, when a republish gives her only shift to Bo", () => {
+    const db = handle.db;
+    // Booked as main's publish books it: a row for every available home nurse.
+    const publish = (reason?: string) =>
+      transact(db, (tx) => {
+        const period = getPeriod(tx, periodId)!;
+        const view = new ScheduleView({
+          period,
+          assignments: listAssignmentsForPeriod(tx, periodId),
+          nurses: listNursesForUnit(tx, unitId),
+          shiftTypes: listShiftTypesForUnit(tx, unitId),
+        });
+        const ledger = periodLedgerRows(
+          view,
+          counterContextFor(tx, unitId, { ...DEFAULT_WEEKEND, mode: 'overlaps' }, period),
+          { includeAvailableHomeNurses: true },
+        );
+        return publishSchedule(tx, { periodId, ledger, ...(reason ? { reason } : {}) }, ACTOR);
+      });
+    publish();
+    expect(getFairnessLedgerEntry(db, ann, periodId)?.totalHours).toBe(12);
+    const annsShift = listAssignmentsForPeriod(db, periodId).find((a) => a.nurseId === ann)!;
+    transact(db, (tx) =>
+      moveAssignment(tx, annsShift.id, { nurseId: bo, shiftTypeId, date: annsShift.date }, ACTOR),
+    );
+    const result = publish('Ann on leave');
+    expect(result.ledgerRemoved).toBe(0);
+    expect(getFairnessLedgerEntry(db, ann, periodId)).toMatchObject({
+      totalHours: 0,
+      nightShifts: 0,
+      availableDays: 14,
+    });
   });
 
   it('leaves the ledger alone when a publish books none', () => {

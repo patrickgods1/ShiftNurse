@@ -30,17 +30,20 @@ import {
   parseTimeOfDay,
   type ShiftWindow,
   shiftWindow,
+  type Weekday,
   type WeekendDefinition,
   weekdayOf,
 } from '../domain/time.js';
 import { gini } from '../fairness/distribution.js';
-import { payPeriodIndex, payPeriodWindow } from '../rules/hours-rules.js';
+import { payPeriodIndex, payPeriodWindow, workWeekFor } from '../rules/hours-rules.js';
 import type { PaidLeaveCredit } from '../rules/paid-leave.js';
 import { isWorked } from '../rules/types.js';
-import { workedStretches } from '../schedule/holdover.js';
+import { workedHours, workedStretches } from '../schedule/holdover.js';
 import { attributedHolidayDates, holidayMinutesOn } from '../schedule/holiday-attribution.js';
+import { latestEndingBefore } from '../schedule/preceding.js';
 import { type DstTransition, realMinutesIn } from '../schedule/real-minutes.js';
 import { type AssignmentView, ScheduleView } from '../schedule/view.js';
+import { minutesBeforeEdge, realOffset, windowDayOf } from '../schedule/window-split.js';
 import { roundCents, sumCents } from './money.js';
 import { resolvePayRate } from './rates.js';
 import {
@@ -96,43 +99,15 @@ function scheduledMinutesOf(view: AssignmentView, tz: readonly DstTransition[]):
   return realMinutesIn(shiftWindow(view.assignment.date, view.shiftType), tz);
 }
 
-/**
- * Real minutes of [from, to) clamped to [start, end): how far into a window starting at `start`
- * the wall minute `to` lies, in minutes actually worked. Lets a wall-clock boundary (a weekend's
- * edge) be compared with a count of real minutes.
- */
-function realOffset(start: number, end: number, to: number, tz: readonly DstTransition[]): number {
-  const clamped = Math.min(Math.max(to, start), end);
-  return realMinutesIn({ startMinute: start, endMinute: clamped }, tz);
-}
-
-/**
- * Paid minutes of a view worked before the wall midnight that opens `edge`, a window's first date.
- * The one split point of a shift across a week or pay-period edge (D17): overtime attribution and
- * the regular rate both read it. Real minutes, so a clock change after the edge (US fall-back is
- * Sunday 02:00) lands in the next window.
- */
-function minutesBeforeEdge(
-  view: AssignmentView,
-  edge: IsoDate,
-  tz: readonly DstTransition[],
-): number {
-  return realOffset(
-    view.window.startMinute,
-    view.window.endMinute,
-    dayNumber(edge) * MINUTES_PER_DAY,
-    tz,
-  );
-}
-
 /** A run of windows (weeks or pay periods): the window a date is in, and the next one's start. */
 interface WindowCalendar {
   windowOf: (date: IsoDate) => IsoDate;
   nextStart: (date: IsoDate) => IsoDate;
 }
 
-function weekCalendar(ctx: CostContext): WindowCalendar {
-  const windowOf = (d: IsoDate) => workWeekStart(d, ctx.workWeekStartsOn);
+/** Weeks starting on `startsOn`: the nurse's own (`workWeekFor`). */
+function weekCalendar(startsOn: Weekday): WindowCalendar {
+  const windowOf = (d: IsoDate) => workWeekStart(d, startsOn);
   return { windowOf, nextStart: (d) => addDays(windowOf(d), 7) };
 }
 
@@ -175,6 +150,10 @@ function workWeekStart(date: IsoDate, startsOn: number): IsoDate {
  * accrual altogether (the seventh-day rule). `minutesOf` is what a view adds to the accrual (its
  * countable minutes): its straight minutes alone, for a weekly rule that does not pyramid.
  *
+ * `startMinute` (weekly and pay-period rules) places windows at the work week's start time: a
+ * view accrues in the window its start falls in (`windowDayOf`), not its date's. Absent (daily
+ * bases), a view's window is its date's.
+ *
  * `split` (weekly and pay-period rules under `'clock'` attribution, D17) names the date the next
  * window starts. A shift whose worked window runs past that midnight gives its minutes before it
  * to its own window and the rest to the next, each judged there (29 CFR 778.104: each workweek
@@ -191,6 +170,7 @@ function windowOvertime(
   minutesOf: (view: AssignmentView) => number,
   tz: readonly DstTransition[],
   split?: (date: IsoDate) => IsoDate,
+  startMinute?: number,
 ): Map<AssignmentView, OvertimeSpan[]> {
   // Counted leave uses up the threshold first: a window's PTO day is not attributable to one
   // shift, and putting it first is what makes the shifts that cross the threshold the overtime
@@ -214,12 +194,17 @@ function windowOvertime(
   const out = new Map<AssignmentView, OvertimeSpan[]>();
   for (const view of timeline) {
     if (!isWorked(view) || (counts !== undefined && !counts(view))) continue;
-    const date = view.assignment.date;
+    const date =
+      startMinute === undefined
+        ? view.assignment.date
+        : windowDayOf(view.window.startMinute, startMinute);
     const countable = minutesOf(view);
     const paid = paidMinutesOf(view, tz);
     const next = split?.(date);
     const a =
-      next === undefined ? countable : Math.min(countable, minutesBeforeEdge(view, next, tz));
+      next === undefined
+        ? countable
+        : Math.min(countable, minutesBeforeEdge(view, next, tz, startMinute));
     const spans: OvertimeSpan[] = [];
     if (a < countable && next !== undefined) {
       const overA = accrue(windowOf(date), a);
@@ -398,6 +383,8 @@ function overtimeStarts(
   // Weekly and pay-period rules put each hour in the window it was worked unless the unit counts
   // shifts by their start (D17).
   const byClock = (ctx.overtimeWindowAttribution ?? 'clock') === 'clock';
+  // Weekly and pay-period windows are the nurse's own: a night nurse's when the unit sets one.
+  const week = workWeekFor(timeline[0]?.nurse, ctx);
   let starts: Map<AssignmentView, OvertimeSpan[]>;
   switch (rule.basis) {
     case 'daily':
@@ -435,7 +422,7 @@ function overtimeStarts(
       );
       break;
     case 'weekly': {
-      const weeks = weekCalendar(ctx);
+      const weeks = weekCalendar(week.startsOn);
       starts = windowOvertime(
         timeline,
         threshold,
@@ -445,6 +432,7 @@ function overtimeStarts(
         minutesOf,
         tz,
         byClock ? weeks.nextStart : undefined,
+        week.startMinute,
       );
       break;
     }
@@ -466,6 +454,7 @@ function overtimeStarts(
         minutesOf,
         tz,
         byClock ? periods.nextStart : undefined,
+        week.startMinute,
       );
       break;
     }
@@ -673,13 +662,15 @@ function clockDifferentials(
 }
 
 /**
- * The worked views that earn the `consecutive_shift` premium (UC–CNA Art. 14 § I.3). A run is
+ * The worked views that earn the `consecutive_shift` premium (UC–CNA Art. 14 § G.3). A run is
  * consecutive dates each holding a worked shift, lookback included; standby is not work and leave
  * leaves a date empty, so both are days off. A shift crosses the threshold when the run's full
  * shifts dated on its own day and the `withinDays` before it number more than `afterShifts`; from
  * then every shift of the run earns it until a day off, even if a short shift lets the window's
- * count fall back. The contract's text is about nurses on 12-hour shifts, so a shift is "full"
- * when scheduled for 12 hours or more — the declared length, never a holdover making one.
+ * count fall back. Each tier (2025–2030 § G.3) counts the shifts scheduled for at least its
+ * `fullShiftHours` over its own window, and the run crosses once any tier does; without tiers a
+ * shift is "full" when scheduled for 12 hours or more. Always the declared length, never a
+ * holdover making one.
  */
 function consecutiveShiftEarners(
   timeline: readonly AssignmentView[],
@@ -688,25 +679,62 @@ function consecutiveShiftEarners(
   const earners = new Set<AssignmentView>();
   const trigger = differentialOf(ctx, 'consecutive_shift')?.consecutive;
   if (!trigger) return earners;
+  // 2025–2030 § G.3 counts 8s, 10s and 12s each against their own limit; a premium saved before
+  // tiers existed is the 12-hour reading alone.
+  const tiers = trigger.tiers ?? [
+    { fullShiftHours: 12, afterShifts: trigger.afterShifts, withinDays: trigger.withinDays },
+  ];
   let lastDate: IsoDate | undefined;
-  let fullDates: IsoDate[] = [];
+  let fullDates: IsoDate[][] = tiers.map(() => []);
   let crossed = false;
   // The timeline is sorted by start, so dates only move forward.
   for (const view of timeline) {
     if (!isWorked(view)) continue;
     const date = view.assignment.date;
     if (lastDate !== undefined && date !== lastDate && date !== addDays(lastDate, 1)) {
-      fullDates = [];
+      fullDates = tiers.map(() => []);
       crossed = false;
     }
     lastDate = date;
-    if (view.scheduledHours >= 12) fullDates.push(date);
-    const from = addDays(date, -trigger.withinDays);
-    const inWindow = fullDates.filter((d) => compareDates(d, from) >= 0).length;
-    if (inWindow > trigger.afterShifts) crossed = true;
+    tiers.forEach((tier, i) => {
+      const dates = fullDates[i]!;
+      if (view.scheduledHours >= tier.fullShiftHours) dates.push(date);
+      const from = addDays(date, -tier.withinDays);
+      const inWindow = dates.filter((d) => compareDates(d, from) >= 0).length;
+      if (inWindow > tier.afterShifts) crossed = true;
+    });
     if (crossed) earners.add(view);
   }
   return earners;
+}
+
+/**
+ * The worked views that earn the `short_rest` premium (UC–CNA 2025–2030 § N.1; WSNA § 7.10), each
+ * with the wall minute its rest would have ended: the end of the latest worked shift that started
+ * before it, plus `minHoursOff`. Rest is measured as the rest rule measures it
+ * (`latestEndingBefore`): from when the nurse last stopped working, holdover included (the view's
+ * window already ends there), lookback included. Standby is not work and a call-back is not in the
+ * timeline at all, so neither moves where rest began (§ N.3). A recorded rest waiver excuses the
+ * rule, not the pay: the contract pays the short turnaround however it was agreed.
+ */
+function shortRestCutoffs(
+  timeline: readonly AssignmentView[],
+  ctx: CostContext,
+): ReadonlyMap<AssignmentView, number> {
+  const cutoffs = new Map<AssignmentView, number>();
+  const trigger = differentialOf(ctx, 'short_rest')?.shortRest;
+  if (!trigger) return cutoffs;
+  const minimum = Math.round(trigger.minHoursOff * MINUTES_PER_HOUR);
+  const worked = timeline.filter(isWorked);
+  const preceding = latestEndingBefore(worked);
+  worked.forEach((view, i) => {
+    const previous = preceding[i]![0];
+    if (previous === undefined) return;
+    const cutoff = previous.window.endMinute + minimum;
+    // Exactly the minimum off is enough: "at least six hours".
+    if (view.window.startMinute < cutoff) cutoffs.set(view, cutoff);
+  });
+  return cutoffs;
 }
 
 /** Which differentials a *worked* shift earns on every hour, in itemisation order. */
@@ -714,6 +742,7 @@ function applicableDifferentials(
   view: AssignmentView,
   ctx: CostContext,
   consecutive: boolean,
+  shortRestWhole: boolean,
   tz: readonly DstTransition[],
 ): Differential[] {
   // The whole-shift holiday premium goes to the date the unit's attribution gives the shift
@@ -741,6 +770,7 @@ function applicableDifferentials(
     holiday: holiday !== undefined && !major,
     major_holiday: major,
     consecutive_shift: consecutive,
+    short_rest: shortRestWhole,
     charge: view.assignment.isCharge,
     agency: view.nurse.employmentType === 'agency',
     // Standby is priced separately; call-back is a day-of event with no assignment to hang on.
@@ -865,14 +895,28 @@ interface StraightPay {
   covered: readonly OvertimeSpan[];
 }
 
+/**
+ * Pricing one shift. `shortRestUntil` is the wall minute its rest would have ended when it starts
+ * too soon after the last shift (`shortRestCutoffs`), absent otherwise.
+ */
 function priceStraight(
   view: AssignmentView,
   ctx: CostContext,
   consecutive: boolean,
+  shortRestUntil: number | undefined,
   tz: readonly DstTransition[],
 ): StraightPay {
   const paidMinutes = paidMinutesOf(view, tz);
-  const hours = paidMinutes / MINUTES_PER_HOUR;
+  // A contract that pays the spring-forward night as scheduled pays its straight time on the
+  // declared hours (holdover included), never on a window subtraction. Only these lines: the
+  // regular rate below and overtime attribution keep the real minutes, so no overtime hour moves.
+  const straightMinutes = ctx.paySpringForwardAsScheduled
+    ? Math.max(
+        paidMinutes,
+        Math.round(workedHours(view.assignment, view.shiftType) * MINUTES_PER_HOUR),
+      )
+    : paidMinutes;
+  const hours = straightMinutes / MINUTES_PER_HOUR;
   const identity = {
     assignmentId: view.assignment.id,
     nurseId: view.assignment.nurseId,
@@ -919,18 +963,24 @@ function priceStraight(
   }
 
   const lines: CostLine[] = [line('base', hours, base)];
+  // The lines priced on the whole shift's `hours`, the only ones the spring-forward option moves.
+  const whole = new Set<CostLine>(lines);
   let running = base;
   const baylorTour = isBaylorTour(view);
-  const earned = applicableDifferentials(view, ctx, consecutive, tz);
+  const shortRest = shortRestUntil === undefined ? undefined : differentialOf(ctx, 'short_rest');
+  const shortRestWhole = shortRest?.shortRest?.scope === 'whole_shift';
+  const earned = applicableDifferentials(view, ctx, consecutive, shortRestWhole, tz);
   // A Baylor tour's scheduled hours earn only the hospital's own premiums (§ 7456(d)). The
   // consecutive-shift premium is a contract's, not § 7453's, so it is not withheld here.
   const applicable = baylorTour ? earned.filter((d) => !SECTION_7453_KINDS.has(d.kind)) : earned;
   for (const d of applicable) {
     if (d.mode !== 'flat') continue;
-    lines.push(line(d.kind, hours, d.amount));
+    const flat = line(d.kind, hours, d.amount);
+    lines.push(flat);
+    whole.add(flat);
     running += d.amount;
   }
-  // Additive stacking (UC–CNA Art. 14 §N, Title 38) takes every multiplier on the base rate alone;
+  // Additive stacking (UC–CNA Art. 14 § M, Title 38) takes every multiplier on the base rate alone;
   // compound is the FLSA regular rate, each on the running rate.
   const additive = ctx.premiumStacking === 'additive';
   for (const d of applicable) {
@@ -938,7 +988,9 @@ function priceStraight(
     // Itemised as the increment this multiplier adds to the running rate, so the lines sum
     // to the total and a 1.0× multiplier shows as a $0 line rather than disappearing.
     const increment = (additive ? base : running) * (d.amount - 1);
-    lines.push(line(d.kind, hours, increment));
+    const multiplied = line(d.kind, hours, increment);
+    lines.push(multiplied);
+    whole.add(multiplied);
     running = additive ? running + increment : running * d.amount;
   }
   // Partial clock differentials are paid on the base rate and kept out of `running`, the shift's
@@ -985,6 +1037,24 @@ function priceStraight(
     const rate = d.mode === 'flat' ? d.amount : onRate * (d.amount - 1);
     insertInOrder(lines, line(d.kind, minutes / MINUTES_PER_HOUR, rate));
   }
+  // A short-rest premium within the window is paid only on the minutes worked before the rest
+  // would have ended, priced like a holiday by the clock: on the shift's straight rate so far
+  // under compound, on base under additive, out of `running`. Not § 7453 pay, so a Baylor tour
+  // keeps it.
+  if (shortRest !== undefined && shortRestUntil !== undefined && !shortRestWhole) {
+    const early: ShiftWindow = {
+      startMinute: view.window.startMinute,
+      endMinute: Math.min(view.window.endMinute, shortRestUntil),
+    };
+    const minutes = realMinutesIn(early, tz);
+    if (minutes > 0) {
+      const rate =
+        shortRest.mode === 'flat'
+          ? shortRest.amount
+          : (additive ? base : running) * (shortRest.amount - 1);
+      insertInOrder(lines, line('short_rest', minutes / MINUTES_PER_HOUR, rate));
+    }
+  }
 
   // 38 U.S.C. § 7453(g): "no overtime pay … shall be payable for overtime service performed on a
   // holiday … in addition to pay received under subsection (d) for such service". So coverage
@@ -1004,6 +1074,18 @@ function priceStraight(
         ? [{ from, to: Number.POSITIVE_INFINITY }]
         : [];
   const total = sumCents(lines.map((l) => l.amount));
+  // The spring-forward hour paid as scheduled is pay for time not worked, which 29 U.S.C.
+  // § 207(e)(2) leaves out of the regular rate; counted in, $600 over 11 hours would raise the
+  // week's overtime premium and the break premium. So the rate's dollars are the whole-shift lines
+  // re-priced on the real hours, each rounded as the flag-off pricing rounds it, plus the clock and
+  // partial lines, which already count real minutes: exactly the flag-off total.
+  const realHours = paidMinutes / MINUTES_PER_HOUR;
+  const regularDollars =
+    straightMinutes === paidMinutes
+      ? total
+      : sumCents(
+          lines.map((l) => (whole.has(l) ? line(l.kind, realHours, l.rate).amount : l.amount)),
+        );
   return {
     cost: {
       ...identity,
@@ -1014,7 +1096,7 @@ function priceStraight(
       lines,
       total,
     },
-    regular: { dollars: total, minutes: paidMinutes },
+    regular: { dollars: regularDollars, minutes: paidMinutes },
     covered,
   };
 }
@@ -1096,34 +1178,52 @@ export function regularRateFrom(sum: { dollars: number; minutes: number } | unde
   return (sum.dollars / sum.minutes) * MINUTES_PER_HOUR;
 }
 
+/** One nurse's priced shifts and the regular rate of each window they fall in. */
+interface PricedTimeline {
+  costs: AssignmentCost[];
+  regularRates: NurseCost['regularRates'];
+}
+
 /** Every in-period assignment of one nurse, priced with overtime attributed across their week. */
 function costTimeline(timeline: readonly AssignmentView[], ctx: CostContext): AssignmentCost[] {
+  return priceTimeline(timeline, ctx).costs;
+}
+
+function priceTimeline(timeline: readonly AssignmentView[], ctx: CostContext): PricedTimeline {
   // The host's clock changes: every hour pay counts is a real one (D19). Classification (a tour, a
   // full 12, a Baylor tour) still reads declared hours.
   const tz = ctx.dstTransitions ?? [];
   const overtime = attributeOvertime(timeline, ctx, tz);
   const consecutive = consecutiveShiftEarners(timeline, ctx);
+  const shortRest = shortRestCutoffs(timeline, ctx);
   const additive = ctx.premiumStacking === 'additive';
-  // Every in-period shift, and the lookback tail too when it can feed a regular rate.
-  const needsTail = !additive && [...overtime.values()].some((bands) => bands.length > 0);
+  // Every in-period shift, and the lookback tail too when it can feed a regular rate: overtime's
+  // under compound stacking, or a break premium's at the regular rate under either.
+  const needsTail =
+    (!additive && [...overtime.values()].some((bands) => bands.length > 0)) ||
+    ctx.breakPremiumRate === 'regular';
   const straight = new Map<AssignmentView, StraightPay>();
   for (const view of timeline)
     if (view.inPeriod || needsTail)
-      straight.set(view, priceStraight(view, ctx, consecutive.has(view), tz));
+      straight.set(view, priceStraight(view, ctx, consecutive.has(view), shortRest.get(view), tz));
 
-  // The premium's rate: under additive stacking the base (UC–CNA Art. 14 §N, Title 38); under
+  // The premium's rate: under additive stacking the base (UC–CNA Art. 14 § M, Title 38); under
   // compound the regular rate of the work week, or of the pay period for a nurse on an 8/80 rule
   // (29 CFR 778.601(e)), so it does not depend on which shift carries the band (D16).
   const active = activeRulesFor(timeline, ctx);
+  const week = workWeekFor(timeline[0]?.nurse, ctx);
   const calendar =
     active.some((r) => r.basis === 'pay_period') && !active.some((r) => r.basis === 'weekly')
       ? payPeriodCalendar(ctx)
-      : weekCalendar(ctx);
+      : weekCalendar(week.startsOn);
   const byClock = (ctx.overtimeWindowAttribution ?? 'clock') === 'clock';
+  const startMinute = week.startMinute;
+  // The window-day a view starts on, which names its window (its date at a midnight start).
+  const dayOf = (view: AssignmentView) => windowDayOf(view.window.startMinute, startMinute);
   // Minutes of a view in its own window; the rest are the next window's (T06's split point).
   const firstPart = (view: AssignmentView, paid: number) =>
     byClock
-      ? Math.min(paid, minutesBeforeEdge(view, calendar.nextStart(view.assignment.date), tz))
+      ? Math.min(paid, minutesBeforeEdge(view, calendar.nextStart(dayOf(view)), tz, startMinute))
       : paid;
   const sums = new Map<IsoDate, { dollars: number; minutes: number }>();
   const add = (window: IsoDate, dollars: number, minutes: number) => {
@@ -1132,19 +1232,22 @@ function costTimeline(timeline: readonly AssignmentView[], ctx: CostContext): As
     sum.minutes += minutes;
     sums.set(window, sum);
   };
-  if (!additive)
-    for (const [view, pay] of straight) {
-      if (!pay.regular) continue;
-      const { dollars, minutes } = pay.regular;
-      const first = firstPart(view, minutes);
-      add(calendar.windowOf(view.assignment.date), (dollars * first) / minutes, first);
-      if (first < minutes)
-        add(
-          calendar.windowOf(calendar.nextStart(view.assignment.date)),
-          (dollars * (minutes - first)) / minutes,
-          minutes - first,
-        );
+  // Summed under additive stacking too: overtime does not read them there, but a missed-break
+  // premium at the regular rate does (`NurseCost.regularRates`).
+  const reported = new Set<IsoDate>();
+  for (const [view, pay] of straight) {
+    if (!pay.regular) continue;
+    const { dollars, minutes } = pay.regular;
+    const first = firstPart(view, minutes);
+    const own = calendar.windowOf(dayOf(view));
+    add(own, (dollars * first) / minutes, first);
+    if (view.inPeriod) reported.add(own);
+    if (first < minutes) {
+      const next = calendar.windowOf(calendar.nextStart(dayOf(view)));
+      add(next, (dollars * (minutes - first)) / minutes, minutes - first);
+      if (view.inPeriod) reported.add(next);
     }
+  }
   const regularRate = (window: IsoDate) => regularRateFrom(sums.get(window));
   const ratesFor = (view: AssignmentView, pay: StraightPay): OvertimeRates | undefined => {
     if (!pay.regular) return undefined;
@@ -1152,7 +1255,7 @@ function costTimeline(timeline: readonly AssignmentView[], ctx: CostContext): As
       const base = pay.cost.baseRate;
       return { edge: Number.POSITIVE_INFINITY, before: base, after: base };
     }
-    const date = view.assignment.date;
+    const date = dayOf(view);
     const first = firstPart(view, pay.regular.minutes);
     const before = regularRate(calendar.windowOf(date));
     // The next window's rate only for a shift that runs into it.
@@ -1161,13 +1264,22 @@ function costTimeline(timeline: readonly AssignmentView[], ctx: CostContext): As
     return { edge: first, before, after: regularRate(calendar.windowOf(calendar.nextStart(date))) };
   };
 
-  const out: AssignmentCost[] = [];
+  const costs: AssignmentCost[] = [];
   for (const view of timeline) {
     if (!view.inPeriod) continue;
     const pay = straight.get(view)!;
-    out.push(addOvertime(pay, overtime.get(view), ratesFor(view, pay)));
+    const cost = addOvertime(pay, overtime.get(view), ratesFor(view, pay));
+    // From the sums under either stacking: the regular rate a break premium is owed at holds the
+    // differentials however overtime stacks (Lab. Code § 226.7; Ferra), unlike additive overtime.
+    costs.push(
+      pay.regular ? { ...cost, regularRate: regularRate(calendar.windowOf(dayOf(view))) } : cost,
+    );
   }
-  return out;
+  const regularRates = [...reported].sort(compareDates).flatMap((windowStart) => {
+    const sum = sums.get(windowStart);
+    return sum && sum.minutes > 0 ? [{ windowStart, rate: regularRateFrom(sum) }] : [];
+  });
+  return { costs, regularRates };
 }
 
 /** One nurse's in-period assignments, priced. Chronological. */
@@ -1274,7 +1386,7 @@ export function costSchedule(schedule: ScheduleView, ctx: CostContext): Schedule
   const unpricedNurseIds: Id[] = [];
 
   for (const nurseId of schedule.nursesById.keys()) {
-    const costs = costNurse(schedule, ctx, nurseId);
+    const { costs, regularRates } = priceTimeline(schedule.timelineFor(nurseId), ctx);
     if (costs.length === 0) continue;
     const tally = emptyTally();
     let unpricedAssignments = 0;
@@ -1285,7 +1397,13 @@ export function costSchedule(schedule: ScheduleView, ctx: CostContext): Schedule
       assignments.push(cost);
     }
     if (unpricedAssignments > 0) unpricedNurseIds.push(nurseId);
-    nurses.push({ ...totalsOf(tally), nurseId, assignments: costs.length, unpricedAssignments });
+    nurses.push({
+      ...totalsOf(tally),
+      nurseId,
+      assignments: costs.length,
+      unpricedAssignments,
+      regularRates,
+    });
   }
 
   nurses.sort((a, b) => b.total - a.total || (a.nurseId < b.nurseId ? -1 : 1));

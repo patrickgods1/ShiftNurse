@@ -88,6 +88,12 @@ function periodDates(start: IsoDate, end: IsoDate): readonly IsoDate[] {
   return dates;
 }
 
+/**
+ * Set by `ScheduleView.derive` for the one constructor call it makes, so a derived view can
+ * fill its readonly fields from its base without a second public constructor.
+ */
+let derivingFrom: ScheduleView | undefined;
+
 export class ScheduleView {
   readonly period: SchedulePeriod;
   readonly nursesById: ReadonlyMap<Id, Nurse>;
@@ -95,9 +101,13 @@ export class ScheduleView {
   /** Every date in the period, in order. */
   readonly dates: readonly IsoDate[];
 
-  /** All views including the lookback tail, sorted by start. */
-  private readonly allViews: readonly AssignmentView[];
+  /** In-period views in input order: what `derive` compares and what `allViews` is merged from. */
+  private readonly inputViews: readonly AssignmentView[];
   private readonly timelineByNurse: ReadonlyMap<Id, readonly AssignmentView[]>;
+  /** All views including the lookback tail, sorted by start. Eager when built, lazy when derived. */
+  private allViewsCache?: readonly AssignmentView[];
+  private priorViewsCache?: readonly AssignmentView[];
+  private inputByNurseCache?: ReadonlyMap<Id, readonly AssignmentView[]>;
   // Built on first use. The solver's one-nurse and one-shift views are evaluated by rules that
   // each read one or two of these, and building all of them eagerly was a third of a view.
   private periodViewsCache?: readonly AssignmentView[];
@@ -107,50 +117,148 @@ export class ScheduleView {
   private byIdCache?: ReadonlyMap<Id, AssignmentView>;
 
   constructor(input: ScheduleViewInput) {
+    const base = derivingFrom;
+    derivingFrom = undefined;
     this.period = input.period;
+    if (base) {
+      this.nursesById = base.nursesById;
+      this.shiftTypesById = base.shiftTypesById;
+      this.dates = base.dates;
+      const derived = ScheduleView.derivedParts(base, input.assignments);
+      this.inputViews = derived.inputViews;
+      this.timelineByNurse = derived.timeline;
+      this.priorViewsCache = base.priorViews;
+      return;
+    }
     this.nursesById = new Map(input.nurses.map((n) => [n.id, n]));
     this.shiftTypesById = new Map(input.shiftTypes.map((s) => [s.id, s]));
     this.dates = periodDates(input.period.startDate, input.period.endDate);
 
     const views: AssignmentView[] = [];
-    const build = (assignment: Assignment, inPeriod: boolean): void => {
-      const nurse = this.nursesById.get(assignment.nurseId);
-      const shiftType = this.shiftTypesById.get(assignment.shiftTypeId);
-      // Silently dropping would hide data corruption; scheduling errors must be loud.
-      if (!nurse) {
-        throw new Error(
-          `Assignment ${assignment.id} references unknown nurse ${assignment.nurseId}`,
-        );
-      }
-      if (!shiftType) {
-        throw new Error(
-          `Assignment ${assignment.id} references unknown shift type ${assignment.shiftTypeId}`,
-        );
-      }
-      views.push({
-        assignment,
-        nurse,
-        shiftType,
-        window: workedWindow(assignment.date, shiftType, assignment),
-        paidHours: workedHours(assignment, shiftType),
-        scheduledHours: shiftType.durationHours,
-        inPeriod,
-      });
-    };
-
-    for (const a of input.priorAssignments ?? []) build(a, false);
-    for (const a of input.assignments) build(a, true);
-    views.sort((a, b) => a.window.startMinute - b.window.startMinute);
+    for (const a of input.priorAssignments ?? []) views.push(this.build(a, false));
+    const priorCount = views.length;
+    for (const a of input.assignments) views.push(this.build(a, true));
+    this.inputViews = views.slice(priorCount);
+    views.sort(byStart);
 
     const timeline = new Map<Id, AssignmentView[]>();
     for (const view of views) push(timeline, view.assignment.nurseId, view);
 
-    this.allViews = views;
+    this.allViewsCache = views;
     this.timelineByNurse = timeline;
   }
 
+  /**
+   * The same period, roster, shift types and lookback tail as `base`, with `assignments` as the
+   * in-period rows — answering every question exactly as a view built from scratch would. The
+   * conflicts engine simulates hundreds of fixes that each change a nurse or two; rebuilding and
+   * re-sorting the whole period, tail included, for each was most of an analysis. So the tail
+   * and every nurse whose rows are the very same objects in the same order are shared with the
+   * base, and only the nurses a fix touched are rebuilt.
+   */
+  static derive(base: ScheduleView, assignments: readonly Assignment[]): ScheduleView {
+    derivingFrom = base;
+    return new ScheduleView({ period: base.period, assignments, nurses: [], shiftTypes: [] });
+  }
+
+  private static derivedParts(
+    base: ScheduleView,
+    assignments: readonly Assignment[],
+  ): { inputViews: AssignmentView[]; timeline: Map<Id, readonly AssignmentView[]> } {
+    const byNurse = new Map<Id, Assignment[]>();
+    for (const a of assignments) push(byNurse, a.nurseId, a);
+    const baseByNurse = base.inputByNurse;
+
+    // A nurse is shared only when her rows are the base's rows, one for one: same objects, same
+    // order. Anything else — a row added, dropped, replaced or reordered — rebuilds her.
+    const shared = new Map<Id, { views: readonly AssignmentView[]; next: number }>();
+    for (const [nurseId, rows] of byNurse) {
+      const old = baseByNurse.get(nurseId);
+      if (old && old.length === rows.length && old.every((v, i) => v.assignment === rows[i])) {
+        shared.set(nurseId, { views: old, next: 0 });
+      }
+    }
+
+    // Built in input order so the first bad row throws exactly as the constructor would.
+    const inputViews: AssignmentView[] = [];
+    const rebuilt = new Map<Id, AssignmentView[]>();
+    for (const a of assignments) {
+      const reuse = shared.get(a.nurseId);
+      if (reuse) {
+        inputViews.push(reuse.views[reuse.next++]!);
+        continue;
+      }
+      const view = base.build(a, true);
+      inputViews.push(view);
+      push(rebuilt, a.nurseId, view);
+    }
+
+    const timeline = new Map<Id, readonly AssignmentView[]>(base.timelineByNurse);
+    const rebuild = (nurseId: Id, rows: readonly AssignmentView[]): void => {
+      const tail = (base.timelineByNurse.get(nurseId) ?? EMPTY).filter((v) => !v.inPeriod);
+      const merged = mergeByStart(tail, rows.slice().sort(byStart));
+      if (merged.length > 0) timeline.set(nurseId, merged);
+      else timeline.delete(nurseId);
+    };
+    for (const [nurseId, rows] of rebuilt) rebuild(nurseId, rows);
+    // A nurse whose every row went is rebuilt too: her timeline is now the tail alone.
+    for (const nurseId of baseByNurse.keys()) {
+      if (!byNurse.has(nurseId)) rebuild(nurseId, EMPTY);
+    }
+    return { inputViews, timeline };
+  }
+
+  private build(assignment: Assignment, inPeriod: boolean): AssignmentView {
+    const nurse = this.nursesById.get(assignment.nurseId);
+    const shiftType = this.shiftTypesById.get(assignment.shiftTypeId);
+    // Silently dropping would hide data corruption; scheduling errors must be loud.
+    if (!nurse) {
+      throw new Error(`Assignment ${assignment.id} references unknown nurse ${assignment.nurseId}`);
+    }
+    if (!shiftType) {
+      throw new Error(
+        `Assignment ${assignment.id} references unknown shift type ${assignment.shiftTypeId}`,
+      );
+    }
+    return {
+      assignment,
+      nurse,
+      shiftType,
+      window: workedWindow(assignment.date, shiftType, assignment),
+      paidHours: workedHours(assignment, shiftType),
+      scheduledHours: shiftType.durationHours,
+      inPeriod,
+    };
+  }
+
+  /**
+   * Merging the sorted tail with the sorted in-period rows, tail first on a tie, is the stable
+   * sort of tail-then-rows the constructor does.
+   */
+  private get allViews(): readonly AssignmentView[] {
+    this.allViewsCache ??= mergeByStart(this.priorViews, this.periodViews);
+    return this.allViewsCache;
+  }
+
+  private get priorViews(): readonly AssignmentView[] {
+    this.priorViewsCache ??= this.allViews.filter((v) => !v.inPeriod);
+    return this.priorViewsCache;
+  }
+
+  private get inputByNurse(): ReadonlyMap<Id, readonly AssignmentView[]> {
+    if (!this.inputByNurseCache) {
+      const byNurse = new Map<Id, AssignmentView[]>();
+      for (const view of this.inputViews) push(byNurse, view.assignment.nurseId, view);
+      this.inputByNurseCache = byNurse;
+    }
+    return this.inputByNurseCache;
+  }
+
   private get periodViews(): readonly AssignmentView[] {
-    this.periodViewsCache ??= this.allViews.filter((v) => v.inPeriod);
+    // A derived view sorts its own rows rather than build the merged list to filter it.
+    this.periodViewsCache ??= this.allViewsCache
+      ? this.allViewsCache.filter((v) => v.inPeriod)
+      : this.inputViews.slice().sort(byStart);
     return this.periodViewsCache;
   }
 
@@ -259,6 +367,27 @@ export class ScheduleView {
 }
 
 const EMPTY: readonly AssignmentView[] = Object.freeze([]);
+
+function byStart(a: AssignmentView, b: AssignmentView): number {
+  return a.window.startMinute - b.window.startMinute;
+}
+
+/** Two lists each sorted by start, merged; `first` wins ties, as a stable sort of first-then-second. */
+function mergeByStart(
+  first: readonly AssignmentView[],
+  second: readonly AssignmentView[],
+): AssignmentView[] {
+  const out: AssignmentView[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < first.length && j < second.length) {
+    if (second[j]!.window.startMinute < first[i]!.window.startMinute) out.push(second[j++]!);
+    else out.push(first[i++]!);
+  }
+  while (i < first.length) out.push(first[i++]!);
+  while (j < second.length) out.push(second[j++]!);
+  return out;
+}
 
 function push<K, V>(map: Map<K, V[]>, key: K, value: V): void {
   const existing = map.get(key);

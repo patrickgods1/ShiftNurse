@@ -9,12 +9,32 @@
  * rows carry the nurse's id as `nurseId`, which is how a grievance export finds them.
  */
 
-import type { DayOfPayEvent, Id, IsoDate } from '@shiftnurse/core';
-import { and, asc, eq, gte, lte, sql } from 'drizzle-orm';
+import {
+  addDays,
+  type CallBack,
+  callBackWindow,
+  type DayOfPayEvent,
+  describeDate,
+  formatTimeOfDay,
+  hoursToMinutes,
+  type Id,
+  type IsoDate,
+  shiftWindow,
+  windowsOverlap,
+} from '@shiftnurse/core';
+import { and, asc, eq, gte, inArray, isNotNull, lte, notExists, sql } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
 import type { DbLike } from '../client.js';
 import { ids } from '../ids.js';
-import { nurse as nurseTable, dayOfPayEvent as table, unit as unitTable } from '../schema.js';
+import {
+  assignment,
+  callOff,
+  nurse as nurseTable,
+  schedulePeriod,
+  shiftType,
+  dayOfPayEvent as table,
+  unit as unitTable,
+} from '../schema.js';
 import { requireWorksOnUnit } from './nurse-units.js';
 import { type PatchKeys, patchOf } from './patch.js';
 
@@ -35,6 +55,11 @@ export interface DayOfPayRecord {
   scheduledHours?: number;
   /** Sent home and call-back: the hours actually worked. */
   hoursWorked?: number;
+  /**
+   * Call-back only: minutes from the start of the standby shift (`date`, `shiftTypeId`) to when
+   * the nurse started working. Required on a new call-back; an older row without it is pay-only.
+   */
+  startMinute?: number;
   note?: string;
   /** 'manager' in v1; 'nurse' once self-service ships. Never inferred at read time. */
   enteredBy: 'manager' | 'nurse';
@@ -48,10 +73,11 @@ export type DayOfPayInput = Omit<DayOfPayRecord, 'id' | 'createdAt' | 'enteredBy
 /** What is known only later: the hours a nurse actually worked, and the note. */
 export interface DayOfPayPatch {
   hoursWorked?: number;
+  startMinute?: number;
   note?: string | null;
 }
 
-const PATCH_KEYS: PatchKeys<DayOfPayPatch> = { hoursWorked: true, note: true };
+const PATCH_KEYS: PatchKeys<DayOfPayPatch> = { hoursWorked: true, startMinute: true, note: true };
 
 function toRecord(r: typeof table.$inferSelect): DayOfPayRecord {
   return {
@@ -64,6 +90,7 @@ function toRecord(r: typeof table.$inferSelect): DayOfPayRecord {
     ...(r.breakKind ? { break: r.breakKind } : {}),
     ...(r.scheduledHours !== null ? { scheduledHours: r.scheduledHours } : {}),
     ...(r.hoursWorked !== null ? { hoursWorked: r.hoursWorked } : {}),
+    ...(r.startMinute !== null ? { startMinute: r.startMinute } : {}),
     ...(r.note ? { note: r.note } : {}),
     enteredBy: r.enteredBy,
     createdAt: r.createdAt,
@@ -152,6 +179,9 @@ export function createDayOfPayEvent(
     ...(input.kind === 'missed_break' && input.break ? { break: input.break } : {}),
     ...(input.kind === 'sent_home' ? { scheduledHours: input.scheduledHours } : {}),
     ...(input.kind !== 'missed_break' ? { hoursWorked: input.hoursWorked ?? 0 } : {}),
+    ...(input.kind === 'call_back' && input.startMinute !== undefined
+      ? { startMinute: input.startMinute }
+      : {}),
     ...(note ? { note } : {}),
     enteredBy: input.enteredBy ?? 'manager',
     createdAt: Date.now(),
@@ -167,6 +197,7 @@ export function createDayOfPayEvent(
       breakKind: record.break ?? null,
       scheduledHours: record.scheduledHours ?? null,
       hoursWorked: record.hoursWorked ?? null,
+      startMinute: record.startMinute ?? null,
       note: record.note ?? null,
       enteredBy: record.enteredBy,
       createdAt: record.createdAt,
@@ -203,13 +234,28 @@ export function updateDayOfPayEvent(
     if (before.kind === 'sent_home') checkWithinShift(changes.hoursWorked, before.scheduledHours);
     after.hoursWorked = changes.hoursWorked;
   }
+  if (changes.startMinute !== undefined) {
+    if (before.kind !== 'call_back') throw new Error('Only a call-back has a start time');
+    after.startMinute = changes.startMinute;
+  }
+  // An old pay-only call-back stays valid while its time is left alone; once it has a time, a new
+  // length must still fit between the nurse's worked shifts.
+  // A note-only edit must not re-judge a call-back against shifts published after it was recorded.
+  const timingChanged = changes.startMinute !== undefined || changes.hoursWorked !== undefined;
+  if (timingChanged && after.kind === 'call_back' && after.startMinute !== undefined) {
+    checkCallBackTime(db, after);
+  }
   if ('note' in changes) {
     const note = changes.note?.trim();
     if (note) after.note = note;
     else delete after.note;
   }
   db.update(table)
-    .set({ hoursWorked: after.hoursWorked ?? null, note: after.note ?? null })
+    .set({
+      hoursWorked: after.hoursWorked ?? null,
+      startMinute: after.startMinute ?? null,
+      note: after.note ?? null,
+    })
     .where(eq(table.id, id))
     .run();
   recordAudit(db, { entityType: ENTITY, entityId: id, action: 'update', actor, before, after });
@@ -283,7 +329,110 @@ function validate(db: DbLike, input: DayOfPayInput): void {
       throw new Error('Enter the hours the call-back worked');
     }
     checkHours(worked, 'Hours worked');
+    if (input.startMinute === undefined) throw new Error('Enter the time the call-back started.');
+    checkCallBackTime(db, input);
     return;
   }
   throw new Error(`Unknown day-of pay event kind ${String(input.kind)}`);
+}
+
+/**
+ * A call-back starts inside its standby shift and does not run over a shift the nurse works. The
+ * standby's declared length bounds the start; its window is placed by core, never by subtracting
+ * timestamps. A worked shift that she called off from and nobody covered is not work, as in
+ * `workedShiftsForNurseInRange`.
+ */
+function checkCallBackTime(
+  db: DbLike,
+  cb: Pick<DayOfPayInput, 'nurseId' | 'date' | 'shiftTypeId' | 'startMinute' | 'hoursWorked'>,
+): void {
+  if (!cb.shiftTypeId) throw new Error('Say which on-call shift the nurse was called back from');
+  const standby = db.select().from(shiftType).where(eq(shiftType.id, cb.shiftTypeId)).get();
+  if (!standby) throw new Error('That on-call shift does not exist');
+  if (!standby.isOnCall) throw new Error(`${standby.name} is not an on-call shift`);
+  const standbyWindow = shiftWindow(cb.date, standby);
+  const start = cb.startMinute ?? 0;
+  if (!Number.isInteger(start) || start < 0 || start >= hoursToMinutes(standby.durationHours)) {
+    const endClock = formatTimeOfDay(standbyWindow.endMinute % 1440);
+    throw new Error(
+      `The call-back must start during the on-call shift (${standby.startTime}–${endClock}).`,
+    );
+  }
+  const window = {
+    startMinute: standbyWindow.startMinute + start,
+    endMinute: standbyWindow.startMinute + start + hoursToMinutes(cb.hoursWorked ?? 0),
+  };
+  // Two days either side covers a shift that started the day before and a 24-hour one.
+  const others = db
+    .select({ date: assignment.date, type: shiftType, firstName: nurseTable.firstName })
+    .from(assignment)
+    .innerJoin(shiftType, eq(assignment.shiftTypeId, shiftType.id))
+    .innerJoin(schedulePeriod, eq(assignment.periodId, schedulePeriod.id))
+    .innerJoin(nurseTable, eq(assignment.nurseId, nurseTable.id))
+    .where(
+      and(
+        eq(assignment.nurseId, cb.nurseId),
+        eq(shiftType.isOnCall, false),
+        inArray(schedulePeriod.status, ['published', 'archived']),
+        gte(assignment.date, addDays(cb.date, -2)),
+        lte(assignment.date, addDays(cb.date, 2)),
+        notExists(
+          db
+            .select({ one: callOff.id })
+            .from(callOff)
+            .where(
+              and(
+                eq(callOff.assignmentId, assignment.id),
+                inArray(callOff.status, ['open', 'uncovered']),
+              ),
+            ),
+        ),
+      ),
+    )
+    .orderBy(asc(assignment.date), asc(assignment.id))
+    .all();
+  const clash = others.find((o) => windowsOverlap(window, shiftWindow(o.date as IsoDate, o.type)));
+  if (clash) {
+    throw new Error(
+      `The call-back overlaps ${clash.firstName}'s ${clash.type.name} on ${describeDate(clash.date as IsoDate)}.`,
+    );
+  }
+}
+
+/**
+ * These nurses' timed call-backs dated (by their standby) in `[start, end]`, on any unit: worked
+ * time the hour caps count wherever it was worked, as core's `CallBack`. Each window is placed from
+ * the standby's shift type by core, never by subtracting timestamps. Older pay-only rows (no start
+ * time) are left out: there is no telling when those hours fell.
+ */
+export function callBacksForNurses(
+  db: DbLike,
+  nurseIds: readonly Id[],
+  start: IsoDate,
+  end: IsoDate,
+): CallBack[] {
+  if (nurseIds.length === 0) return [];
+  return (
+    db
+      .select({ row: table, standby: shiftType })
+      .from(table)
+      .innerJoin(shiftType, eq(table.shiftTypeId, shiftType.id))
+      .where(
+        and(
+          eq(table.kind, 'call_back'),
+          isNotNull(table.startMinute),
+          inArray(table.nurseId, [...nurseIds]),
+          gte(table.date, start),
+          lte(table.date, end),
+        ),
+      )
+      .orderBy(asc(table.date), asc(table.nurseId), sql`${table}.rowid`)
+      .all()
+      // A call-back of no hours covers no time on the clock.
+      .filter((r) => (r.row.hoursWorked ?? 0) > 0)
+      .map((r) => ({
+        nurseId: r.row.nurseId,
+        window: callBackWindow(r.row.date, r.standby, r.row.startMinute!, r.row.hoursWorked!),
+      }))
+  );
 }

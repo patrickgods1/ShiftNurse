@@ -129,6 +129,9 @@ beforeEach(() => {
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
       overtimeWindowAttribution: 'clock',
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
+      compTime: null,
     },
     ACTOR,
   );
@@ -179,6 +182,9 @@ describe('the pay configuration a published schedule keeps', () => {
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
       overtimeWindowAttribution: 'clock',
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
+      compTime: null,
     });
     expect(snap.config.holidays).toEqual([]);
     const audits = auditHistoryFor(handle.db, 'pay_config_snapshot', periodId);
@@ -186,6 +192,96 @@ describe('the pay configuration a published schedule keeps', () => {
     expect(audits[0]?.action).toBe('create');
     expect(audits[0]?.reason).toBeUndefined();
     expect(payConfigFor(handle.db, getPeriod(handle.db, periodId)!)).toEqual(snap.config);
+  });
+
+  it('keeps a short-rest premium and consecutive-shift tiers with the schedule', () => {
+    const tiers = [
+      { fullShiftHours: 8, afterShifts: 6, withinDays: 6 },
+      { fullShiftHours: 12, afterShifts: 4, withinDays: 4 },
+    ];
+    const shortRest = { minHoursOff: 6, scope: 'whole_shift' as const };
+    createDifferential(
+      handle.db,
+      { unitId, kind: 'short_rest', mode: 'multiplier', amount: 1.5, active: true, shortRest },
+      ACTOR,
+    );
+    createDifferential(
+      handle.db,
+      {
+        unitId,
+        kind: 'consecutive_shift',
+        mode: 'multiplier',
+        amount: 1.5,
+        active: true,
+        consecutive: { afterShifts: 4, withinDays: 4, tiers },
+      },
+      ACTOR,
+    );
+    publish();
+    const kept = latestPayConfigSnapshot(handle.db, periodId)!.config.differentials;
+    expect(kept.find((d) => d.kind === 'short_rest')?.shortRest).toEqual(shortRest);
+    expect(kept.find((d) => d.kind === 'consecutive_shift')?.consecutive).toEqual({
+      afterShifts: 4,
+      withinDays: 4,
+      tiers,
+    });
+  });
+
+  it('reads a snapshot taken before tiers and short rest existed as it was priced then', () => {
+    // A row written by an older release: a consecutive-shift premium with no `tiers`, no
+    // `shortRest` anywhere. It must read as the 12-hour reading and no short-rest premium.
+    publish();
+    const taken = latestPayConfigSnapshot(handle.db, periodId)!;
+    const old = {
+      ...taken.config,
+      differentials: [
+        {
+          id: 'old-consecutive',
+          unitId,
+          kind: 'consecutive_shift',
+          mode: 'multiplier',
+          amount: 1.5,
+          active: true,
+          consecutive: { afterShifts: 4, withinDays: 4 },
+        },
+      ],
+    };
+    handle.db
+      .insert(payConfigSnapshot)
+      .values({
+        id: 'old-snapshot',
+        periodId,
+        seq: 2,
+        takenAt: taken.takenAt,
+        takenBy: ACTOR,
+        reason: 'older release',
+        config: old,
+      })
+      .run();
+    const differentials = payConfigFor(handle.db, getPeriod(handle.db, periodId)!)!.differentials;
+    expect(differentials).toEqual(old.differentials);
+    expect(differentials[0]?.consecutive?.tiers).toBeUndefined();
+    expect(differentials[0]?.shortRest).toBeUndefined();
+  });
+
+  it('reads a snapshot taken before comp time existed as paying overtime in cash', () => {
+    publish();
+    const taken = latestPayConfigSnapshot(handle.db, periodId)!;
+    const { compTime: _omitted, ...oldSettings } = taken.config.paySettings;
+    handle.db
+      .insert(payConfigSnapshot)
+      .values({
+        id: 'pre-comp-time',
+        periodId,
+        seq: 2,
+        takenAt: taken.takenAt,
+        takenBy: ACTOR,
+        reason: 'older release',
+        config: { ...taken.config, paySettings: oldSettings },
+      })
+      .run();
+    const kept = payConfigFor(handle.db, getPeriod(handle.db, periodId)!)!;
+    expect(kept.paySettings.compTime).toBeNull();
   });
 
   it('prices a draft with today’s settings, so it has no kept configuration', () => {

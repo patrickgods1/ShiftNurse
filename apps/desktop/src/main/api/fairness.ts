@@ -142,9 +142,19 @@ export function importHistory(
     const nurses = listNursesForUnit(tx, unitId);
     const shiftTypes = listShiftTypesForUnit(tx, unitId);
     const nurseByEmployeeId = new Map<string, Nurse>(nurses.map((n) => [n.employeeId, n]));
-    const shiftTypeByAbbreviation = new Map<string, ShiftType>(
-      shiftTypes.map((s) => [s.abbreviation.toLowerCase(), s]),
-    );
+    // Only active types: a retired one may share its successor's abbreviation, and two active
+    // ones sharing it would book the file's shifts under whichever the map saw last.
+    const shiftTypeByAbbreviation = new Map<string, ShiftType>();
+    for (const s of shiftTypes) {
+      if (!s.active) continue;
+      const key = s.abbreviation.trim().toLowerCase();
+      if (shiftTypeByAbbreviation.has(key)) {
+        throw new Error(
+          `The abbreviation ${s.abbreviation.trim()} belongs to more than one active shift type on this unit, so the file cannot say which it means. Rename or retire one first.`,
+        );
+      }
+      shiftTypeByAbbreviation.set(key, s);
+    }
     const ctx = counterContext(tx, unitId, ruleSet);
 
     const entries: UpsertFairnessLedgerInput[] = [];
@@ -162,7 +172,7 @@ export function importHistory(
       };
       const assignments: Assignment[] = group.rows.map((r, i) => {
         const nurse = nurseByEmployeeId.get(r.employeeId);
-        const shiftType = shiftTypeByAbbreviation.get(r.shiftAbbreviation.toLowerCase());
+        const shiftType = shiftTypeByAbbreviation.get(r.shiftAbbreviation.trim().toLowerCase());
         // The preview already validated these; a mismatch here means the roster changed
         // between preview and import, which must not become a silently mis-attributed shift.
         if (!nurse) throw new Error(`Unknown employee id ${r.employeeId}`);
@@ -180,10 +190,9 @@ export function importHistory(
         };
       });
       const schedule = new ScheduleView({ period, assignments, nurses, shiftTypes });
-      // Only nurses who appear in this period's file: a nurse absent from a period may not
-      // have been on the unit yet, and a zero row would read as "worked no nights" rather
-      // than "no record".
-      entries.push(...periodLedgerRows(schedule, ctx));
+      // Only nurses who appear in this period's file: there is no reliable roster for a period
+      // that predates the app, and a nurse missing from it may not have been hired yet.
+      entries.push(...periodLedgerRows(schedule, ctx, { includeAvailableHomeNurses: false }));
     }
     const result = importHistoricalLedger(tx, unitId, entries, ACTOR);
     return {

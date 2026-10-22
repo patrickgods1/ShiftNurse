@@ -20,13 +20,17 @@
  * A pay period that began before the schedule is judged once the published history covers its
  * first day (`RuleContext.historyFrom`, `judgedPayPeriods`): the rule needs every day of it, both
  * for the weekends worked and for the pair off. One running past the schedule's end is left to the
- * next schedule, which holds its end. Known limits: while soft,
- * Generate does not price it, so it will not steer around a breach; the grid and compliance
- * report flag it. Made hard, `encodeDaysOffTogether` and `SolverModel` forbid it. It is monotone
- * under removal (taking away a weekend shift can only lift the condition, any other shift only
- * adds a day off), which is what `SolverModel.isLegal` relies on when it re-checks a removal.
+ * next schedule, which holds its end.
+ *
+ * While soft, both solvers price each finding (`daysOffTogether`, counted by
+ * `daysOffTogetherFindings` in `SolverModel` and by `daysOffTogetherTerms` in CP-SAT), so Generate
+ * steers toward a pair off without being made to; the grid and compliance report flag a breach.
+ * Made hard, `encodeDaysOffTogether` and `SolverModel` forbid it. It is monotone under removal
+ * (taking away a weekend shift can only lift the condition, any other shift only adds a day off),
+ * which is what `SolverModel.isLegal` relies on when it re-checks a removal.
  */
 
+import type { Nurse } from '../domain/entities.js';
 import {
   addDays,
   compareDates,
@@ -39,7 +43,7 @@ import {
   type WeekendDefinition,
   weekendKey,
 } from '../domain/time.js';
-import type { ScheduleView } from '../schedule/view.js';
+import type { AssignmentView, ScheduleView } from '../schedule/view.js';
 import { type DateWindow, judgedPayPeriods, type PayCalendar } from './hours-rules.js';
 import { isWorked, nurseName, type Rule, type Violation, violation } from './types.js';
 
@@ -77,13 +81,71 @@ export function payPeriodWeekends(
   return out;
 }
 
+/**
+ * One nurse's findings, from her worked timeline (lookback tail and another unit's shifts
+ * included) and the pay periods `payPeriodWeekends` judges. The rule reports them, and
+ * `SolverModel` counts them while the rule is soft, so the grid and Generate cannot disagree about
+ * how many there are.
+ */
+export function daysOffTogetherFindings(
+  timeline: readonly AssignmentView[],
+  nurse: Nurse,
+  payPeriods: readonly PayPeriodWeekends[],
+  def: WeekendDefinition,
+): Violation[] {
+  const violations: Violation[] = [];
+  const shifts = timeline.filter((v) => v.inPeriod);
+  const busy = new Set<IsoDate>(timeline.map((v) => v.assignment.date));
+
+  for (const pp of payPeriods) {
+    const worked = new Set<IsoDate | null>(
+      timeline
+        .filter((v) => dateInRange(v.assignment.date, pp.start, pp.end))
+        .map((v) => weekendKey(v.window, def) as IsoDate | null),
+    );
+    if (!pp.weekends.every((w) => worked.has(w))) continue;
+    let together = false;
+    for (let d = pp.start; compareDates(d, pp.end) < 0; d = addDays(d, 1)) {
+      if (!busy.has(d) && !busy.has(addDays(d, 1))) {
+        together = true;
+        break;
+      }
+    }
+    if (together) continue;
+
+    const inPayPeriod = shifts.filter((v) => dateInRange(v.assignment.date, pp.start, pp.end));
+    violations.push(
+      violation(
+        daysOffTogetherRule,
+        'soft',
+        'no_days_off_together',
+        `${nurseName(nurse)} works every weekend of the pay period ` +
+          `${describeDate(pp.start)} – ${describeDate(pp.end, { year: true })} and has no ` +
+          'two days off together in it.',
+        {
+          amount: 1,
+          nurseIds: [nurse.id],
+          dates: inPayPeriod.map((v) => v.assignment.date),
+          assignmentIds: inPayPeriod.map((v) => v.assignment.id),
+          details: {
+            payPeriodStart: pp.start,
+            payPeriodEnd: pp.end,
+            weekends: pp.weekends.length,
+          },
+        },
+      ),
+    );
+  }
+  return violations;
+}
+
 export const daysOffTogetherRule: Rule<DaysOffTogetherParams> = {
   id: 'days-off-together',
   name: 'Two days off together',
   description:
     'A nurse who works every weekend of a pay period gets two days off in a row inside it. A day ' +
-    'off is a day with no shift starting on it. Advisory: the grid flags a breach, but Generate ' +
-    'only avoids it if you make the rule hard.',
+    'off is a day with no shift starting on it. Advisory: Generate steers toward a pair off, and ' +
+    'the grid flags a breach.',
   severity: 'soft',
   category: 'equity',
   scope: 'nurse',
@@ -99,53 +161,13 @@ export const daysOffTogetherRule: Rule<DaysOffTogetherParams> = {
       ctx.historyFrom,
     );
     if (payPeriods.length === 0) return [];
-    const violations: Violation[] = [];
-
-    for (const nurse of ctx.nurses) {
-      const timeline = schedule.timelineFor(nurse.id).filter(isWorked);
-      const shifts = timeline.filter((v) => v.inPeriod);
-      const busy = new Set<IsoDate>(timeline.map((v) => v.assignment.date));
-
-      for (const pp of payPeriods) {
-        const worked = new Set<IsoDate | null>(
-          timeline
-            .filter((v) => dateInRange(v.assignment.date, pp.start, pp.end))
-            .map((v) => weekendKey(v.window, ctx.weekendDefinition) as IsoDate | null),
-        );
-        if (!pp.weekends.every((w) => worked.has(w))) continue;
-        let together = false;
-        for (let d = pp.start; compareDates(d, pp.end) < 0; d = addDays(d, 1)) {
-          if (!busy.has(d) && !busy.has(addDays(d, 1))) {
-            together = true;
-            break;
-          }
-        }
-        if (together) continue;
-
-        const inPayPeriod = shifts.filter((v) => dateInRange(v.assignment.date, pp.start, pp.end));
-        violations.push(
-          violation(
-            daysOffTogetherRule,
-            'soft',
-            'no_days_off_together',
-            `${nurseName(nurse)} works every weekend of the pay period ` +
-              `${describeDate(pp.start)} – ${describeDate(pp.end, { year: true })} and has no ` +
-              'two days off together in it.',
-            {
-              amount: 1,
-              nurseIds: [nurse.id],
-              dates: inPayPeriod.map((v) => v.assignment.date),
-              assignmentIds: inPayPeriod.map((v) => v.assignment.id),
-              details: {
-                payPeriodStart: pp.start,
-                payPeriodEnd: pp.end,
-                weekends: pp.weekends.length,
-              },
-            },
-          ),
-        );
-      }
-    }
-    return violations;
+    return ctx.nurses.flatMap((nurse) =>
+      daysOffTogetherFindings(
+        schedule.timelineFor(nurse.id).filter(isWorked),
+        nurse,
+        payPeriods,
+        ctx.weekendDefinition,
+      ),
+    );
   },
 };

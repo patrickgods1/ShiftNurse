@@ -54,16 +54,25 @@ import {
   dayNumber,
   type IsoDate,
   isWeekendWindow,
+  MINUTES_PER_HOUR,
   type ShiftWindow,
   shiftWindow,
   weekdayOf,
   weekendKey,
+  windowDurationMinutes,
 } from '../domain/time.js';
 import { hoursOverContract, isUndesirable } from '../fairness/ledger.js';
 import { seniorityMultipliers } from '../fairness/seniority.js';
 import { BURDEN_COMPONENTS, type BurdenComponent } from '../fairness/types.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
+import { completeWeekendFindings, completeWeekendsRule } from '../rules/complete-weekends.js';
 import { type CoverageParams, canTakeCharge, coverageRule } from '../rules/coverage-rules.js';
+import {
+  daysOffTogetherFindings,
+  daysOffTogetherRule,
+  type PayPeriodWeekends,
+  payPeriodWeekends,
+} from '../rules/days-off-together.js';
 import {
   type HolidayRotationFacts,
   holidayRotationFacts,
@@ -77,6 +86,7 @@ import {
   contractedHoursRule,
   type MaxHoursParams,
   maxHoursRule,
+  workWeekFor,
 } from '../rules/hours-rules.js';
 import {
   groupsForPeriod,
@@ -85,7 +95,13 @@ import {
   judgeFloor,
   type OnFloor,
 } from '../rules/incompatibility-rules.js';
+import { outsideMembership } from '../rules/membership.js';
 import { nightRecoveryRule } from '../rules/night-recovery.js';
+import {
+  type OnCallLimitParams,
+  onCallLimitFindings,
+  onCallLimitRule,
+} from '../rules/on-call-limit.js';
 import { pendingRequestOn, pendingTimeOffRule } from '../rules/pending-time-off.js';
 import {
   evaluatePrepared,
@@ -97,8 +113,24 @@ import {
   requireParams,
   resolveConfigs,
 } from '../rules/registry.js';
-import { isNightTour } from '../rules/tour-rotation.js';
-import type { RuleContext, RuleSet, RuleSeverity, Violation } from '../rules/types.js';
+import {
+  type ShortWorkRunsParams,
+  shortWorkRunFindings,
+  shortWorkRunsRule,
+} from '../rules/short-work-runs.js';
+import {
+  isNightTour,
+  type TourRotationParams,
+  tourRotationFindings,
+  tourRotationRule,
+} from '../rules/tour-rotation.js';
+import {
+  isWorked,
+  type RuleContext,
+  type RuleSet,
+  type RuleSeverity,
+  type Violation,
+} from '../rules/types.js';
 import {
   judgesWeekends,
   type WeekendPatternParams,
@@ -107,15 +139,17 @@ import {
 } from '../rules/weekend-pattern.js';
 import { coveringShift } from '../schedule/cover.js';
 import { isElsewhere } from '../schedule/elsewhere.js';
-import { workedHours } from '../schedule/holdover.js';
+import { workedHours, workedWindow } from '../schedule/holdover.js';
 import { floorSegments } from '../schedule/overlap.js';
 import { type AssignmentView, ScheduleView } from '../schedule/view.js';
 import { breachAllowance, isTolerated } from './gate.js';
 import {
   buildShifts,
   costContextFor,
+  type HoursPart,
   historyFairness,
   hoursBuckets,
+  type WorkCalendar,
   workCalendar,
 } from './model-setup.js';
 import { ruleContextForInput } from './rule-context.js';
@@ -155,6 +189,11 @@ export interface AddToken {
   coverageBefore: number;
   hoursBefore: number;
   recoveryBefore: number;
+  tourRotationBefore: number;
+  daysOffTogetherBefore: number;
+  completeWeekendBefore: number;
+  shortWorkRunBefore: number;
+  onCallLimitBefore: number;
   weekendBefore: number;
   /** The coverage of the shifts inside this one, in `innerShifts` order, when it has any. */
   innerBefore?: readonly number[];
@@ -225,6 +264,21 @@ export class SolverModel {
   /** Per nurse: day-side shifts worked too soon after nights (see `night-recovery.ts`). */
   private readonly recovery: number[];
   private recoverySum = 0;
+  /** Per nurse: tour-rotation findings (see `tour-rotation.ts`); all zero unless that rule is soft. */
+  private readonly tourRotation: number[];
+  private tourRotationSum = 0;
+  /** Per nurse: two-days-off-together findings (see `days-off-together.ts`); zero unless soft. */
+  private readonly daysOffTogether: number[];
+  private daysOffTogetherSum = 0;
+  /** Per nurse: weekends worked only in part (see `complete-weekends.ts`); zero unless soft. */
+  private readonly completeWeekend: number[];
+  private completeWeekendSum = 0;
+  /** Per nurse: runs of days worked too short (see `short-work-runs.ts`); zero unless soft. */
+  private readonly shortWorkRun: number[];
+  private shortWorkRunSum = 0;
+  /** Per nurse: on-call-limit findings (see `on-call-limit.ts`); zero unless that rule is soft. */
+  private readonly onCallLimit: number[];
+  private onCallLimitSum = 0;
   /** Worked shifts inside a pending time-off request (see `pending-time-off.ts`). */
   private pendingSum = 0;
   /** Per nurse: weekend-pattern breaches (see `weekend-pattern.ts`). */
@@ -257,19 +311,34 @@ export class SolverModel {
   private readonly onDate: number[][];
   /** nurse × date → on approved leave. Leave never changes during a solve. */
   private readonly onLeave: boolean[][];
-  /** nurse × work week → hours that count toward the weekly cap, lookback tail included. */
-  private readonly weekHours: number[][];
+  /** nurse × date → a float's day outside her membership of this unit; all false for a home nurse. */
+  private readonly outsideMembership: boolean[][];
   /**
-   * nurse × overtime window → hours that count toward the overtime threshold, lookback tail
+   * nurse × work week → whole minutes that count toward the weekly cap, lookback tail included,
+   * a week-crossing night split as the rule splits it (`WorkCalendar.partsOf`). Minutes, because
+   * by the clock a night gives a week 300 of them and real minutes are not whole hundredths.
+   */
+  private readonly weekMinutes: number[][];
+  /**
+   * nurse × overtime window → minutes that count toward the overtime threshold, lookback tail
    * included. The window is the work week, or the pay period when the rule set judges overtime
-   * over the pay period; kept apart from `weekHours` because the weekly cap binds either way.
+   * over the pay period; kept apart from `weekMinutes` because the weekly cap binds either way.
    */
-  private readonly overtimeHours: number[][];
+  private readonly overtimeMinutes: number[][];
   /**
-   * nurse × overtime window → paid leave that counts toward the overtime threshold (never the
-   * cap). All zero unless the rule set counts leave toward overtime.
+   * nurse × overtime window → paid leave minutes that count toward the overtime threshold (never
+   * the cap). All zero unless the rule set counts leave toward overtime.
    */
-  readonly overtimeLeaveHours: number[][];
+  readonly overtimeLeaveMinutes: number[][];
+  /**
+   * Work-week grid → shift index → its minutes by work week and by overtime window
+   * (`WorkCalendar.partsOf`). One grid per distinct `workWeekFor` week: the unit's, and the night
+   * nurses' when the rule sets one.
+   */
+  private readonly weekParts: readonly (readonly HoursPart[][])[];
+  private readonly overtimeParts: readonly (readonly HoursPart[][])[];
+  /** nurse index → her work-week grid, an index into `weekParts` and the per-grid arrays. */
+  private readonly gridOf: readonly number[];
 
   // --- Precomputed inputs ----------------------------------------------------
   // Public and read-only so the CP-SAT encoder (cpsat/) reads the same tables instead of
@@ -320,16 +389,8 @@ export class SolverModel {
   readonly hoursCapped: boolean[];
   readonly contractedProRata: number[];
   readonly maxHoursParams: MaxHoursParams;
-  /** date index → work-week index, counted from the week containing the period's first day. */
-  readonly weekOfDate: number[];
-  /** Same for any date, prior or in-period; negative before the first week. */
-  private readonly weekOf: (date: IsoDate) => number;
-  private readonly weekCount: number;
-  /** date index → overtime-window index, counted from the window containing the first day. */
-  private readonly overtimeOfDate: number[];
-  private readonly overtimeOf: (date: IsoDate) => number;
-  private readonly overtimeCount: number;
-  private readonly overtimeThreshold: number;
+  private readonly maxWeekMinutes: number;
+  private readonly overtimeThresholdMinutes: number;
   readonly histCarried: Record<BurdenComponent, number>[];
   /**
    * Each nurse's contracted share × exposure (decay-weighted pay periods available), rounded to
@@ -356,6 +417,27 @@ export class SolverModel {
   readonly recoveryDays: number;
   /** Points per day-side shift too soon after nights; 0 unless the rule is soft. */
   readonly recoveryPrice: number;
+  /** The tour-rotation limits while that rule is soft; undefined otherwise (nothing to count). */
+  readonly tourRotationParams: TourRotationParams | undefined;
+  /** Points per tour-rotation finding; 0 unless that rule is soft. */
+  readonly tourRotationPrice: number;
+  /**
+   * The pay periods two days off together judges, with their weekends, while that rule is soft;
+   * empty otherwise (nothing to count).
+   */
+  readonly daysOffPayPeriods: readonly PayPeriodWeekends[];
+  /** Points per two-days-off-together finding; 0 unless that rule is soft. */
+  readonly daysOffTogetherPrice: number;
+  /** Points per weekend worked only in part; 0 unless the complete-weekends rule is soft. */
+  readonly completeWeekendPrice: number;
+  /** The short-work-runs settings while that rule is soft; undefined otherwise (nothing to count). */
+  readonly shortWorkRunParams: ShortWorkRunsParams | undefined;
+  /** Points per run of days worked too short; 0 unless the short-work-runs rule is soft. */
+  readonly shortWorkRunPrice: number;
+  /** The on-call limits while that rule is soft; undefined otherwise (nothing to count). */
+  readonly onCallLimitParams: OnCallLimitParams | undefined;
+  /** Points per on-call-limit finding; 0 unless that rule is soft. */
+  readonly onCallLimitPrice: number;
   /** Points per worked shift inside a pending request; 0 unless that rule is soft. */
   readonly pendingPrice: number;
   /** The weekend-pattern limits while that rule is on; undefined while it is off. */
@@ -478,6 +560,33 @@ export class SolverModel {
         ? 0
         : Math.max(0, Math.floor(recoveryParams?.daysOffAfterNights ?? 0));
     this.recoveryPrice = recoverySeverity === 'soft' ? this.weights.nightRecovery : 0;
+    // --- Tour rotation: priced per finding while soft; a hard rule is the gate's to enforce. ---
+    const tourSeverity = severityOf(tourRotationRule.id);
+    this.tourRotationParams =
+      tourSeverity === 'soft' ? requireParams(tourRotationRule, configs) : undefined;
+    this.tourRotationPrice = tourSeverity === 'soft' ? this.weights.tourRotation : 0;
+    // --- Two days off together: priced per finding while soft; hard is the gate's to enforce. ---
+    const daysOffSoft = severityOf(daysOffTogetherRule.id) === 'soft';
+    this.daysOffPayPeriods = daysOffSoft
+      ? payPeriodWeekends(
+          { start: input.period.startDate, end: input.period.endDate },
+          this.ctx.unit,
+          this.ctx.weekendDefinition,
+          this.ctx.historyFrom,
+        )
+      : [];
+    this.daysOffTogetherPrice = daysOffSoft ? this.weights.daysOffTogether : 0;
+    // --- Complete weekends: priced per finding while soft; hard is the gate's to enforce. ---
+    this.completeWeekendPrice =
+      severityOf(completeWeekendsRule.id) === 'soft' ? this.weights.completeWeekend : 0;
+    // --- Short work runs: priced per finding while soft; hard is the gate's to enforce. ---
+    const shortRunsSoft = severityOf(shortWorkRunsRule.id) === 'soft';
+    this.shortWorkRunParams = shortRunsSoft ? requireParams(shortWorkRunsRule, configs) : undefined;
+    this.shortWorkRunPrice = shortRunsSoft ? this.weights.shortWorkRun : 0;
+    // --- On-call limits: priced per finding while soft; hard is the gate's to enforce. ---
+    const onCallSoft = severityOf(onCallLimitRule.id) === 'soft';
+    this.onCallLimitParams = onCallSoft ? requireParams(onCallLimitRule, configs) : undefined;
+    this.onCallLimitPrice = onCallSoft ? this.weights.onCallLimit : 0;
     this.pendingPrice =
       severityOf(pendingTimeOffRule.id) === 'soft' ? this.weights.pendingTimeOff : 0;
     // --- Weekends in a row and per schedule: priced while soft, gated while hard. ---
@@ -513,14 +622,38 @@ export class SolverModel {
     this.fteParams = paramsOf(contractedHoursRule, configs) ?? contractedHoursRule.defaultParams;
     const maxHours = paramsOf(maxHoursRule, configs) ?? maxHoursRule.defaultParams;
     this.maxHoursParams = maxHours;
-    const calendar = workCalendar(input, this.dates, maxHours);
-    this.weekOf = calendar.weekOf;
-    this.weekOfDate = calendar.weekOfDate;
-    this.weekCount = calendar.weekCount;
-    this.overtimeOf = calendar.overtimeOf;
-    this.overtimeOfDate = calendar.overtimeOfDate;
-    this.overtimeCount = calendar.overtimeCount;
-    this.overtimeThreshold = calendar.overtimeThreshold;
+    // The rule context carries the unit's attribution, so the counters split a night as the
+    // gate's own rule does.
+    // Each nurse is counted on her own work week (`workWeekFor`); nurses sharing a week share a
+    // grid, so without a night week there is exactly one, as before.
+    const gridKeys: string[] = [];
+    const calendars: WorkCalendar[] = [];
+    this.gridOf = this.nurses.map((nurse) => {
+      const week = workWeekFor(nurse, maxHours);
+      const key = `${week.startsOn}:${week.startMinute}`;
+      let g = gridKeys.indexOf(key);
+      if (g === -1) {
+        g = gridKeys.length;
+        gridKeys.push(key);
+        calendars.push(workCalendar(input, this.dates, maxHours, this.ctx, week));
+      }
+      return g;
+    });
+    if (calendars.length === 0) {
+      calendars.push(
+        workCalendar(input, this.dates, maxHours, this.ctx, workWeekFor(undefined, maxHours)),
+      );
+    }
+    // The cap and threshold are the rule's, the same on every grid.
+    this.maxWeekMinutes = calendars[0]!.maxWeekMinutes;
+    this.overtimeThresholdMinutes = calendars[0]!.overtimeThresholdMinutes;
+    const shiftParts = calendars.map((calendar) =>
+      shifts.map((shift) =>
+        calendar.partsOf(shiftWindow(shift.date, shift.shiftType), shift.shiftType.durationHours),
+      ),
+    );
+    this.weekParts = shiftParts.map((grid) => grid.map((p) => p.week));
+    this.overtimeParts = shiftParts.map((grid) => grid.map((p) => p.overtime));
 
     this.costCtx = costContextFor(input, this.ctx, maxHours);
 
@@ -594,30 +727,44 @@ export class SolverModel {
     this.onLeave = this.nurses.map((nurse) =>
       this.dates.map((date) => approvedLeaveOn(this.ctx, nurse.id, date) !== undefined),
     );
-    this.weekHours = Array.from({ length: n }, () => new Array<number>(this.weekCount).fill(0));
-    this.overtimeHours = Array.from({ length: n }, () =>
-      new Array<number>(this.overtimeCount).fill(0),
+    this.outsideMembership = this.nurses.map((nurse) =>
+      this.dates.map((date) => outsideMembership(this.ctx, nurse.id, date)),
     );
-    this.overtimeLeaveHours = this.nurses.map((nurse) => {
-      const windows = new Array<number>(this.overtimeCount).fill(0);
+    const calendarOf = (i: number) => calendars[this.gridOf[i]!]!;
+    this.weekMinutes = this.nurses.map((_, i) =>
+      new Array<number>(calendarOf(i).weekCount).fill(0),
+    );
+    this.overtimeMinutes = this.nurses.map((_, i) =>
+      new Array<number>(calendarOf(i).overtimeCount).fill(0),
+    );
+    this.overtimeLeaveMinutes = this.nurses.map((nurse, i) => {
+      const { overtimeOf, overtimeCount } = calendarOf(i);
+      const windows = new Array<number>(overtimeCount).fill(0);
       if (!maxHours.paidLeaveCountsTowardOvertime) return windows;
       for (const c of this.ctx.paidLeaveByNurse.get(nurse.id) ?? []) {
-        const w = this.overtimeOf(c.date);
-        if (w >= 0 && w < this.overtimeCount) windows[w]! += c.hours;
+        const w = overtimeOf(c.date);
+        if (w >= 0 && w < overtimeCount) windows[w]! += c.hours;
       }
-      return windows;
+      return windows.map((hours) => Math.round(hours * MINUTES_PER_HOUR));
     });
     for (const [i, list] of prior.entries()) {
+      const calendar = calendarOf(i);
       for (const a of list) {
         const st = this.shiftTypeById.get(a.shiftTypeId);
         if (!st || (st.isOnCall && !maxHours.onCallCountsTowardHours)) continue;
-        const week = this.weekOf(a.date);
         // A lookback shift held over counts what was worked; in-period rows are drafts, which
         // never carry a holdover (only a draft is generated).
-        const hours = workedHours(a, st);
-        if (week >= 0 && week < this.weekCount) this.weekHours[i]![week]! += hours;
-        const w = this.overtimeOf(a.date);
-        if (w >= 0 && w < this.overtimeCount) this.overtimeHours[i]![w]! += hours;
+        const parts = calendar.partsOf(workedWindow(a.date, st, a), workedHours(a, st));
+        for (const [week, minutes] of parts.week) this.weekMinutes[i]![week]! += minutes;
+        for (const [w, minutes] of parts.overtime) this.overtimeMinutes[i]![w]! += minutes;
+      }
+      // Call-backs are worked time the rule counts (recorded day-of, so always past here). Like a
+      // holdover's, the overtime counter ignores the hours they authorise: stricter, never looser.
+      for (const cb of this.ctx.callBacksByNurse.get(this.nurses[i]!.id) ?? []) {
+        const hours = windowDurationMinutes(cb.window) / MINUTES_PER_HOUR;
+        const parts = calendar.partsOf(cb.window, hours);
+        for (const [week, minutes] of parts.week) this.weekMinutes[i]![week]! += minutes;
+        for (const [w, minutes] of parts.overtime) this.overtimeMinutes[i]![w]! += minutes;
       }
     }
     // The half of a pair already behind the period: worked in the lookback tail (Christmas Eve
@@ -655,6 +802,11 @@ export class SolverModel {
       return offsets;
     });
     this.recovery = new Array<number>(n).fill(0);
+    this.tourRotation = new Array<number>(n).fill(0);
+    this.daysOffTogether = new Array<number>(n).fill(0);
+    this.completeWeekend = new Array<number>(n).fill(0);
+    this.shortWorkRun = new Array<number>(n).fill(0);
+    this.onCallLimit = new Array<number>(n).fill(0);
     this.priorWeekends = prior.map((list) => {
       const keys = new Set<IsoDate>();
       for (const a of list) {
@@ -691,12 +843,27 @@ export class SolverModel {
     // they touched, and an empty shift already owes its whole floor.
     this.hoursSum = 0;
     this.recoverySum = 0;
+    this.tourRotationSum = 0;
+    this.daysOffTogetherSum = 0;
+    this.completeWeekendSum = 0;
+    this.shortWorkRunSum = 0;
+    this.onCallLimitSum = 0;
     this.weekendSum = 0;
     for (let i = 0; i < n; i++) {
       this.hoursPenalty[i] = this.hoursPenaltyFor(i);
       this.hoursSum += this.hoursPenalty[i]!;
       this.recovery[i] = this.recoveryFor(i);
       this.recoverySum += this.recovery[i]!;
+      this.tourRotation[i] = this.tourRotationFor(i);
+      this.tourRotationSum += this.tourRotation[i]!;
+      this.daysOffTogether[i] = this.daysOffTogetherFor(i);
+      this.daysOffTogetherSum += this.daysOffTogether[i]!;
+      this.completeWeekend[i] = this.completeWeekendFor(i);
+      this.completeWeekendSum += this.completeWeekend[i]!;
+      this.shortWorkRun[i] = this.shortWorkRunFor(i);
+      this.shortWorkRunSum += this.shortWorkRun[i]!;
+      this.onCallLimit[i] = this.onCallLimitFor(i);
+      this.onCallLimitSum += this.onCallLimit[i]!;
       this.weekendPenalty[i] = this.weekendFor(i);
       this.weekendSum += this.weekendPenalty[i]!;
     }
@@ -830,8 +997,27 @@ export class SolverModel {
   }
 
   /**
+   * A nurse's hours in each judged work week, as the weekly cap counts them: what the parity
+   * tests hold against the rule's own count, so the pre-filter cannot drift from the rule.
+   * @internal
+   */
+  weekHoursOf(nurseIdx: number): number[] {
+    return this.weekMinutes[nurseIdx]!.map((minutes) => minutes / MINUTES_PER_HOUR);
+  }
+
+  /**
+   * The same for each overtime window (the work week, or the pay period under
+   * `overtimeByPayPeriod`), paid leave that counts toward overtime left out.
+   * @internal
+   */
+  overtimeHoursOf(nurseIdx: number): number[] {
+    return this.overtimeMinutes[nurseIdx]!.map((minutes) => minutes / MINUTES_PER_HOUR);
+  }
+
+  /**
    * The cheap pre-filter before the rule gate: right role for the slot, active, free that day,
-   * not on approved leave, and not already at the top of their hours tolerance. Everything it
+   * not on approved leave, inside a float's dates, and not already at the top of their hours
+   * tolerance. Everything it
    * rejects the gate would reject too; it exists so the gate runs on a shortlist.
    */
   eligible(nurseIdx: number, shift: Shift, role: NurseRole | null): boolean {
@@ -840,6 +1026,7 @@ export class SolverModel {
     if (role !== null && nurse.role !== role) return false;
     if (this.isOnDate(nurseIdx, shift.dateIdx)) return false;
     if (this.onLeave[nurseIdx]![shift.dateIdx]) return false;
+    if (this.outsideMembership[nurseIdx]![shift.dateIdx]) return false;
     if (this.hoursCapped[nurseIdx]) {
       const b = this.bucketOfDate[shift.dateIdx]!;
       const cap = this.hoursCap[nurseIdx]![b]!;
@@ -851,18 +1038,18 @@ export class SolverModel {
     // authorised hours (`authorisedOvertimeHours`); drafts are generated without overtime, so
     // this only ever leaves a shift to CP-SAT or the manager.
     if (!shift.shiftType.isOnCall || this.maxHoursParams.onCallCountsTowardHours) {
-      const hours = shift.shiftType.durationHours;
-      const week = this.weekOfDate[shift.dateIdx]!;
-      if (this.weekHours[nurseIdx]![week]! + hours > this.maxHoursParams.maxHoursPerWeek) {
-        return false;
+      const grid = this.gridOf[nurseIdx]!;
+      for (const [week, minutes] of this.weekParts[grid]![shift.idx]!) {
+        if (this.weekMinutes[nurseIdx]![week]! + minutes > this.maxWeekMinutes) return false;
       }
-      const w = this.overtimeOfDate[shift.dateIdx]!;
-      if (
-        this.maxHoursParams.requireOvertimeAuthorisation &&
-        this.overtimeHours[nurseIdx]![w]! + hours + this.overtimeLeaveHours[nurseIdx]![w]! >
-          this.overtimeThreshold
-      ) {
-        return false;
+      if (this.maxHoursParams.requireOvertimeAuthorisation) {
+        for (const [w, minutes] of this.overtimeParts[grid]![shift.idx]!) {
+          const counted =
+            this.overtimeMinutes[nurseIdx]![w]! +
+            minutes +
+            this.overtimeLeaveMinutes[nurseIdx]![w]!;
+          if (counted > this.overtimeThresholdMinutes) return false;
+        }
       }
     }
     return true;
@@ -1004,6 +1191,11 @@ export class SolverModel {
       coverageBefore: this.coverage[shift.idx]!,
       hoursBefore: this.hoursPenalty[n]!,
       recoveryBefore: this.recovery[n]!,
+      tourRotationBefore: this.tourRotation[n]!,
+      daysOffTogetherBefore: this.daysOffTogether[n]!,
+      completeWeekendBefore: this.completeWeekend[n]!,
+      shortWorkRunBefore: this.shortWorkRun[n]!,
+      onCallLimitBefore: this.onCallLimit[n]!,
       weekendBefore: this.weekendPenalty[n]!,
     };
     const inner = this.innerShifts[shift.idx]!;
@@ -1058,6 +1250,16 @@ export class SolverModel {
     this.hoursPenalty[n] = token.hoursBefore;
     this.recoverySum += token.recoveryBefore - this.recovery[n]!;
     this.recovery[n] = token.recoveryBefore;
+    this.tourRotationSum += token.tourRotationBefore - this.tourRotation[n]!;
+    this.tourRotation[n] = token.tourRotationBefore;
+    this.daysOffTogetherSum += token.daysOffTogetherBefore - this.daysOffTogether[n]!;
+    this.daysOffTogether[n] = token.daysOffTogetherBefore;
+    this.completeWeekendSum += token.completeWeekendBefore - this.completeWeekend[n]!;
+    this.completeWeekend[n] = token.completeWeekendBefore;
+    this.shortWorkRunSum += token.shortWorkRunBefore - this.shortWorkRun[n]!;
+    this.shortWorkRun[n] = token.shortWorkRunBefore;
+    this.onCallLimitSum += token.onCallLimitBefore - this.onCallLimit[n]!;
+    this.onCallLimit[n] = token.onCallLimitBefore;
     this.weekendSum += token.weekendBefore - this.weekendPenalty[n]!;
     this.weekendPenalty[n] = token.weekendBefore;
   }
@@ -1079,6 +1281,21 @@ export class SolverModel {
     const recovery = this.recoveryFor(n);
     this.recoverySum += recovery - this.recovery[n]!;
     this.recovery[n] = recovery;
+    const tourRotation = this.tourRotationFor(n);
+    this.tourRotationSum += tourRotation - this.tourRotation[n]!;
+    this.tourRotation[n] = tourRotation;
+    const daysOffTogether = this.daysOffTogetherFor(n);
+    this.daysOffTogetherSum += daysOffTogether - this.daysOffTogether[n]!;
+    this.daysOffTogether[n] = daysOffTogether;
+    const completeWeekend = this.completeWeekendFor(n);
+    this.completeWeekendSum += completeWeekend - this.completeWeekend[n]!;
+    this.completeWeekend[n] = completeWeekend;
+    const shortWorkRun = this.shortWorkRunFor(n);
+    this.shortWorkRunSum += shortWorkRun - this.shortWorkRun[n]!;
+    this.shortWorkRun[n] = shortWorkRun;
+    const onCallLimit = this.onCallLimitFor(n);
+    this.onCallLimitSum += onCallLimit - this.onCallLimit[n]!;
+    this.onCallLimit[n] = onCallLimit;
     const weekend = this.weekendFor(n);
     this.weekendSum += weekend - this.weekendPenalty[n]!;
     this.weekendPenalty[n] = weekend;
@@ -1091,8 +1308,13 @@ export class SolverModel {
     this.staffedByRole[shift.idx * NURSE_ROLES.length + ROLE_INDEX[this.nurses[n]!.role]]! += sign;
     this.onDate[n]![shift.dateIdx]! += sign;
     if (!st.isOnCall || this.maxHoursParams.onCallCountsTowardHours) {
-      this.weekHours[n]![this.weekOfDate[shift.dateIdx]!]! += sign * st.durationHours;
-      this.overtimeHours[n]![this.overtimeOfDate[shift.dateIdx]!]! += sign * st.durationHours;
+      const grid = this.gridOf[n]!;
+      for (const [week, minutes] of this.weekParts[grid]![shift.idx]!) {
+        this.weekMinutes[n]![week]! += sign * minutes;
+      }
+      for (const [w, minutes] of this.overtimeParts[grid]![shift.idx]!) {
+        this.overtimeMinutes[n]![w]! += sign * minutes;
+      }
     }
     if (!st.isOnCall || this.fteParams.onCallCountsTowardHours) {
       const b = this.bucketOfDate[shift.dateIdx]!;
@@ -1167,6 +1389,31 @@ export class SolverModel {
     return this.recoverySum;
   }
 
+  /** Tour-rotation findings, as the schedule stands; 0 unless the rule is soft. */
+  tourRotationBreaches(): number {
+    return this.tourRotationSum;
+  }
+
+  /** Two-days-off-together findings, as the schedule stands; 0 unless the rule is soft. */
+  daysOffTogetherBreaches(): number {
+    return this.daysOffTogetherSum;
+  }
+
+  /** Weekends worked only in part, as the schedule stands; 0 unless the rule is soft. */
+  completeWeekendBreaches(): number {
+    return this.completeWeekendSum;
+  }
+
+  /** Runs of days worked too short, as the schedule stands; 0 unless the rule is soft. */
+  shortWorkRunBreaches(): number {
+    return this.shortWorkRunSum;
+  }
+
+  /** On-call-limit findings, as the schedule stands; 0 unless the rule is soft. */
+  onCallLimitBreaches(): number {
+    return this.onCallLimitSum;
+  }
+
   /** Weekend-pattern breaches, as the schedule stands. */
   weekendBreaches(): number {
     return this.weekendSum;
@@ -1222,6 +1469,130 @@ export class SolverModel {
   }
 
   /**
+   * One nurse's tour-rotation findings, counted by the rule's own `tourRotationFindings` on her
+   * worked timeline, lookback tail included: one for too many tours however far over, one per
+   * shift started too soon after the shift she last stopped on another tour, one per shift off
+   * her permanent tour.
+   */
+  private tourRotationFor(n: number): number {
+    const params = this.tourRotationParams;
+    if (!params) return 0;
+    const nurse = this.nurses[n]!;
+    const view = new ScheduleView({
+      period: this.input.period,
+      assignments: this.byNurse[n]!,
+      priorAssignments: this.prior[n]!,
+      nurses: [nurse],
+      shiftTypes: this.shiftTypes,
+    });
+    const timeline = view.timelineFor(nurse.id).filter(isWorked);
+    if (timeline.length === 0) return 0;
+    return tourRotationFindings(timeline, nurse, params, this.ctx, this.input.period.startDate)
+      .length;
+  }
+
+  /**
+   * One nurse's two-days-off-together findings, counted by the rule's own
+   * `daysOffTogetherFindings` on her worked timeline, lookback tail and other units' shifts
+   * included (any of them makes a day busy): one per judged pay period whose every weekend she
+   * works with no two consecutive days off.
+   */
+  private daysOffTogetherFor(n: number): number {
+    if (this.daysOffPayPeriods.length === 0) return 0;
+    const nurse = this.nurses[n]!;
+    const view = new ScheduleView({
+      period: this.input.period,
+      assignments: this.byNurse[n]!,
+      priorAssignments: this.prior[n]!,
+      nurses: [nurse],
+      shiftTypes: this.shiftTypes,
+    });
+    const timeline = view.timelineFor(nurse.id).filter(isWorked);
+    if (timeline.length === 0) return 0;
+    return daysOffTogetherFindings(
+      timeline,
+      nurse,
+      this.daysOffPayPeriods,
+      this.ctx.weekendDefinition,
+    ).length;
+  }
+
+  /**
+   * One nurse's weekends worked only in part, counted by the rule's own `completeWeekendFindings`
+   * on her worked timeline, lookback tail included (it can work a weekend's first day): one per
+   * weekend this schedule works without every day of it.
+   */
+  private completeWeekendFor(n: number): number {
+    // Only a weekend this schedule works is judged, so a nurse with nothing in it has none.
+    if (this.completeWeekendPrice === 0 || this.byNurse[n]!.length === 0) return 0;
+    const nurse = this.nurses[n]!;
+    const view = new ScheduleView({
+      period: this.input.period,
+      assignments: this.byNurse[n]!,
+      priorAssignments: this.prior[n]!,
+      nurses: [nurse],
+      shiftTypes: this.shiftTypes,
+    });
+    return completeWeekendFindings(
+      view.timelineFor(nurse.id).filter(isWorked),
+      nurse,
+      this.ctx.weekendDefinition,
+      {
+        start: this.input.period.startDate,
+        end: this.input.period.endDate,
+        historyFrom: this.ctx.historyFrom,
+      },
+    ).length;
+  }
+
+  /**
+   * One nurse's runs of days worked too short, counted by the rule's own `shortWorkRunFindings` on
+   * her worked timeline, lookback tail and other units' shifts included (any of them makes a day
+   * worked): one per judged run, however short.
+   */
+  private shortWorkRunFor(n: number): number {
+    const params = this.shortWorkRunParams;
+    // Only a run holding a shift of this schedule is judged, so a nurse with none has none.
+    if (!params || this.byNurse[n]!.length === 0) return 0;
+    const nurse = this.nurses[n]!;
+    const view = new ScheduleView({
+      period: this.input.period,
+      assignments: this.byNurse[n]!,
+      priorAssignments: this.prior[n]!,
+      nurses: [nurse],
+      shiftTypes: this.shiftTypes,
+    });
+    return shortWorkRunFindings(view.timelineFor(nurse.id).filter(isWorked), nurse, params, {
+      start: this.input.period.startDate,
+      end: this.input.period.endDate,
+      historyFrom: this.ctx.historyFrom,
+    }).length;
+  }
+
+  /**
+   * One nurse's on-call-limit findings, counted by the rule's own `onCallLimitFindings` on her
+   * timeline, lookback tail and other units' call included (they count toward a week and a run):
+   * one per week or schedule over, one per window of days in a row past the limit.
+   */
+  private onCallLimitFor(n: number): number {
+    const params = this.onCallLimitParams;
+    // Only a count holding a turn on call in this schedule is judged: none, nothing to find.
+    if (!params || this.onCall[n]! === 0) return 0;
+    const nurse = this.nurses[n]!;
+    const view = new ScheduleView({
+      period: this.input.period,
+      assignments: this.byNurse[n]!,
+      priorAssignments: this.prior[n]!,
+      nurses: [nurse],
+      shiftTypes: this.shiftTypes,
+    });
+    return onCallLimitFindings(view.timelineFor(nurse.id), nurse, params, {
+      start: this.input.period.startDate,
+      end: this.input.period.endDate,
+    }).length;
+  }
+
+  /**
    * Exactly one charge nurse per worked shift when one is available — none on a shift run by
    * another's charge nurse. The first unlocked nurse on the roster who `canTakeCharge` gets it —
    * deterministic, and re-run after every change so a removed charge nurse hands the role to
@@ -1255,6 +1626,11 @@ export class SolverModel {
       this.holidaySum * this.holidayPrice +
       this.weekendSum * this.weekendPrice +
       this.recoverySum * this.recoveryPrice +
+      this.tourRotationSum * this.tourRotationPrice +
+      this.daysOffTogetherSum * this.daysOffTogetherPrice +
+      this.completeWeekendSum * this.completeWeekendPrice +
+      this.shortWorkRunSum * this.shortWorkRunPrice +
+      this.onCallLimitSum * this.onCallLimitPrice +
       this.pendingSum * this.pendingPrice +
       this.prefSum * this.weights.preference +
       this.costSum * this.weights.cost
@@ -1265,13 +1641,23 @@ export class SolverModel {
     const coverage = this.coverageSum;
     const incompatibility = this.incompatSum;
     const hours = this.hoursSum;
-    // The holiday rotation is fairness between nurses, so it is reported with it.
+    // The holiday rotation is fairness between nurses, so it is reported with it; so is a pair of
+    // days off for a nurse working every weekend, relief for the same weekend burden, and a cap on
+    // call, a burden shared across the team.
     const fairness =
-      this.fairness() + this.holidaySum * this.holidayPrice + this.weekendSum * this.weekendPrice;
-    // Days off after nights are about the nurse, so they are reported with preferences.
+      this.fairness() +
+      this.holidaySum * this.holidayPrice +
+      this.weekendSum * this.weekendPrice +
+      this.daysOffTogetherSum * this.daysOffTogetherPrice +
+      this.completeWeekendSum * this.completeWeekendPrice +
+      this.onCallLimitSum * this.onCallLimitPrice;
+    // Days off after nights, tour rotation and short work runs are about the nurse, so they are
+    // reported with preferences.
     const preferences =
       this.prefSum * this.weights.preference +
       this.recoverySum * this.recoveryPrice +
+      this.tourRotationSum * this.tourRotationPrice +
+      this.shortWorkRunSum * this.shortWorkRunPrice +
       this.pendingSum * this.pendingPrice;
     const cost = this.costSum * this.weights.cost;
     return {

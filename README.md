@@ -20,8 +20,8 @@ pickup) is modelled as *a request with a submitter and a decider*, with v1 alway
 surface on the same data model, not a rewrite.
 
 **Status:** pre-1.0. Milestones M1–M16 and M19–M43 are complete, with installers verified on
-macOS and on native Windows. M18 (release hardening) has one follow-up open; signed installers
-and auto-update are M17, deferred.
+macOS and on native Windows. M18 (release hardening) has one follow-up open. Signed installers
+and self-update (M17) will not be done: builds stay unsigned by owner decision (2026-10-19).
 
 See [ROADMAP.md](ROADMAP.md) for the full plan of record (locked-in decisions, milestone
 detail, verification steps) and [CLAUDE.md](CLAUDE.md) for the conventions and invariants
@@ -54,10 +54,31 @@ this codebase is held to. This document is the practical "how do I build/run/shi
   reason, which never appears on the schedule or in exports.
 - **Acuity-driven demand** — coverage floors, acuity tiers/ratios/HPPD, a same-weekday
   moving-average forecaster with seasonal index and back-test, and a census grid.
+- **Title 22 staffing record** — on the Demand page, "Staffing record (Title 22)…" exports a CSV
+  or PDF of what 22 CCR § 70217(c) asks a hospital to document: for each day and shift, the
+  required staff, the staff who actually worked, the variance (actual minus required) and the
+  census it was judged by (actual, forecast or floor only), by role (RN, LPN, CNA, and the pooled
+  licensed line where a licensed ratio governs). It covers dates a published or archived schedule
+  holds, up to today; a nurse floated to another unit or whose call-off is open or uncovered is not
+  counted as worked. The regulation asks for the records to be kept for at least one year: export
+  the period when it ends and keep the file. ShiftNurse never deletes published history.
 - **Fairness scoring** — per-nurse and unit-wide distribution of nights, weekends, holidays,
-  on-call and denied requests, weighted by seniority, with trend history.
+  on-call and denied requests, weighted by seniority, with trend history. A nurse available all period with no
+  shifts is booked as zero burden, so she is first in line next time.
 - **Cost & pricing** — pay rates, shift differentials, overtime rules, budget-vs-actual and
-  overtime-concentration reporting, and a running cost strip while editing the grid.
+  overtime-concentration reporting, and a running cost strip while editing the grid. Weekly
+  hours count each hour in the work week it was worked, as payroll pays it: a night that crosses
+  the week's start is split there. Settings › Rules › Weekly hour cap › "Work week starts at"
+  sets the time the week begins (29 CFR 778.105); set it to payroll's, often the shift change
+  nearest midnight (Saturday 19:00), so no night is split. The same time starts an 8/80 pay
+  period. The rule, Generate, pay and the overtime alerts all read it. "Night nurses' work week
+  starts on/at" gives nurses whose permanent tour is nights a week of their own (Providence
+  Portland–ONA Art. 7.A); each nurse is on one week, chosen by her tour, and left empty everyone
+  is on the unit's. Comp time in place of overtime pay is for public employers only (29 U.S.C.
+  § 207(o)): switch it on under Settings › Pay, record each nurse's election under Roster ›
+  nurse › Leave, and once a published schedule is over, bank it from the Dashboard's cost panel,
+  which credits the nurses' comp balances (overtime past the cap stays paid). Banked credits are
+  final; a wrong figure is corrected by entering payroll's comp balance.
 - **Time off, conflicts & exchanges** — a conflict-detection engine simulates every request
   against the schedule, ranks resolution options, supports policy-driven auto-resolve with an
   audit trail, and evaluates 1:1 trades and giveaways for hard-rule and fairness impact.
@@ -76,25 +97,21 @@ this codebase is held to. This document is the practical "how do I build/run/shi
 
 These are yours to do by hand until the app handles them (the same list is in Settings › About):
 
-- Some state limits stay with you: Oregon's cap of 7 patients per nursing assistant on day and evening shifts and 11 at night (ORS 441.768); labor and delivery and postpartum ratios, which turn on the patient (set them as acuity-tier ratios); and the emergencies that lift West Virginia's 16 hours in 24, which here holds until you switch "Most hours in any 24" off.
+- Some state limits stay with you: Oregon's CNA cap limits each aide's own patients; ShiftNurse checks it only when your CNAs together take every patient (Settings › Unit › State law); labor and delivery and postpartum ratios, which turn on the patient (set them as acuity-tier ratios); and the emergencies that lift West Virginia's 16 hours in 24, which here holds until you switch "Most hours in any 24" off.
 - Oregon's staffing-plan deviations: record and justify any departure from the unit's staffing plan yourself.
 - Leave accrual is projected from the last payroll figure under Settings › Leave: part-time accrual counts hours worked, not other paid hours, so re-enter payroll's figures now and then.
 - Military leave (120 hours a fiscal year), court leave and paid parental leave are leave types without entitlements of their own: check the hours available with HR.
 - FMLA leave already taken is counted at the nurse's current contract: if their FTE changed during the year, check the hours used with HR.
 - Pregnancy disability leave is counted per pregnancy through the certification you record. Without one it is counted over the last 12 months.
-- Break premiums are priced at the base rate: California pays them at the regular rate, which includes differentials, so add the difference in payroll.
-- Float staff: Generate may offer a float nurse on any day of the period, not only the dates of their membership; check the dates yourself.
-- Tour rotation limits (Settings › Rules) are checked on the grid, but Generate does not steer away from them while the rule is soft: make it hard to have Generate keep to them.
-- Most hours in any 24, long stretches of work and two days off together are checked on the grid, but Generate does not steer away from them while they are soft: make them hard to have Generate keep to them.
+- Most hours in any 24 and long stretches of work are checked on the grid, but Generate does not steer away from them while they are soft: make them hard to have Generate keep to them.
 - Leave bids and other requests are entered by the manager: nurses do not submit them in the app yet.
-- In-lieu-of holidays (federal, 5 U.S.C. § 6103(b)): when a nurse's regular day off falls on a holiday, their in-lieu day is not marked and work on it is not paid at the holiday premium here; holiday pay applies only to the calendar holiday.
-- Compensatory time earned instead of overtime pay: the app prices overtime and holds a comp-leave balance, but does not convert overtime worked into comp time earned; add earned comp time to the nurse's balance under Leave on their Roster page.
+- In-lieu-of holidays (federal, 5 U.S.C. § 6103(b)): ShiftNurse names each full-time nurse's in-lieu day when you turn it on in Settings › Unit, but does not pay work on that day at the holiday premium; holiday pay applies only to the calendar holiday.
 - California's shortened alternative-workweek day (Wage Order 5 § 3(B)(2)): when you require a 12-hour nurse to work fewer hours than scheduled, that day's overtime is past 8 hours at 1.5× and past 12 at 2×; the app prices the day by the unit's usual rules.
-- UC–CNA Art. 14 § O.1's premium of 1.5× for a work period not preceded by six hours off is not priced; the minimum-rest rule can refuse the turnaround instead.
-- UC–CNA values cite the 2022–2025 agreement; a 2025–2030 agreement was ratified on 22 November 2025 and its articles were not yet published when this was written, so check Article 14's numbers against it.
-- Title 22 § 70217(c)–(d): the written staffing plan with required versus actual staffing by shift and its one-year retention is not produced here; the Demand page and published schedules hold the figures.
+- Patient-by-patient assignment records (22 CCR § 70217(d)) are not kept here.
 
-The state presets in Settings › Unit are a starting point, not legal advice: check them against your contract and your state's law. Presets cover California (the full Title 22 ratio table, with an option for a health-care alternative workweek of 12-hour shifts, under which no nurse may be required past 12 hours in any 24, a declared emergency past 16, and 24 hours straight earns 8 off), Oregon (the ORS 441.765 ratio table), New York, Washington, Massachusetts, Illinois, Connecticut, Minnesota, New Jersey, Maine, Pennsylvania, New Hampshire, Rhode Island, West Virginia, Alaska and Texas, each citing its statute; they switch on the ban on mandatory overtime, the limits on long stretches of work and the rest owed after one, as each law has them. The federal VA preset (Title 38) sets the § 7459 cap on required hours (40 a week, 8 consecutive, or 12 on a compressed tour), 11 hours of rest between shifts, two weekends off in four, at most two tours a schedule, five consecutive shifts, two consecutive days off in any pay period in which every weekend is worked, a 28-day posting lead, overtime offered by roster, the § 7453 night, weekend and holiday premiums and overtime bases (premiums added on basic pay, no overtime premium on holiday hours, the weekend touching Friday night, on-call at 15% and a two-hour call-back minimum), and a leave policy (Title 5 FMLA, RN annual leave at 8 hours a pay period, sick leave at 4); its contract values are read from the VA–NNU 2023 Master Agreement (Arts. 13–14), so a unit under a different local (San Francisco's is NFFE Local 1) should check them against its own agreement; ratios stay with the unit. Mark a nurse 72/80 or Baylor on the roster form (which fills their worked FTE and hours) and the preset's per-plan overtime, the Baylor cap of 24 required hours, the 10-for-9 leave charge and the premium-free Baylor tour follow; the hourly rate is annual ÷ 1,872 for a 72/80 nurse or ÷ 1,248 for a Baylor nurse.
+**Holidays on a day off.** Settings › Unit › Holidays on a day off set to the federal rule makes publishing list, for each full-time nurse whose holiday falls on her day off, the workday that is her holiday (the day before; the day after for a Sunday holiday), as an information note that never blocks publishing. Part-time, per-diem, Baylor and 72/80 nurses have none. It changes no pay.
+
+The state presets in Settings › Unit are a starting point, not legal advice: check them against your contract and your state's law. Presets cover California (the full Title 22 ratio table, with an option for a health-care alternative workweek of 12-hour shifts, under which no nurse may be required past 12 hours in any 24, a declared emergency past 16, and 24 hours straight earns 8 off), Oregon (the ORS 441.765 ratio table and, when your CNAs take every patient, the ORS 441.768 nursing-assistant caps by shift), New York, Washington, Massachusetts, Illinois, Connecticut, Minnesota, New Jersey, Maine, Pennsylvania, New Hampshire, Rhode Island, West Virginia, Alaska and Texas, each citing its statute; they switch on the ban on mandatory overtime, the limits on long stretches of work and the rest owed after one, as each law has them. The federal VA preset (Title 38) sets the § 7459 cap on required hours (40 a week, 8 consecutive, or 12 on a compressed tour), 11 hours of rest between shifts, two weekends off in four, at most two tours a schedule, five consecutive shifts, two consecutive days off in any pay period in which every weekend is worked, a 28-day posting lead, overtime offered by roster, in-lieu holidays (5 U.S.C. § 6103(b)), the § 7453 night, weekend and holiday premiums and overtime bases (premiums added on basic pay, no overtime premium on holiday hours, the weekend touching Friday night, on-call at 15% and a two-hour call-back minimum), and a leave policy (Title 5 FMLA, RN annual leave at 8 hours a pay period, sick leave at 4); its contract values are read from the VA–NNU 2023 Master Agreement (Arts. 13–14), so a unit under a different local (San Francisco's is NFFE Local 1) should check them against its own agreement; ratios stay with the unit. Mark a nurse 72/80 or Baylor on the roster form (which fills their worked FTE and hours) and the preset's per-plan overtime, the Baylor cap of 24 required hours, the 10-for-9 leave charge and the premium-free Baylor tour follow; the hourly rate is annual ÷ 1,872 for a 72/80 nurse or ÷ 1,248 for a Baylor nurse.
 
 ## Installing
 
@@ -103,7 +120,7 @@ Download the installer for your computer from the
 with Apple silicon (M1 or later), `…-mac-x64.dmg` for an Intel Mac, `…-win-x64.exe` for 64-bit
 Windows 10 or 11.
 
-The builds are not code-signed yet, so your computer warns that it cannot verify the developer the
+Unsigned by owner decision (2026-10-19): the builds are not code-signed, so your computer warns that it cannot verify the developer the
 first time ShiftNurse opens:
 
 - **macOS**: open the `.dmg` and drag ShiftNurse to Applications, then open it once. macOS says
@@ -120,7 +137,8 @@ Each release lists the SHA-256 of every file in `SHA256SUMS`. To check a downloa
 `shasum -a 256 <file>` (macOS Terminal) or `certutil -hashfile <file> SHA256` (Windows PowerShell)
 and compare the output with the file's line. ShiftNurse keeps its database in your user folder;
 installing a newer version keeps it, and an update that changes the database backs it up first.
-Deploying to many computers? See [For hospital IT](#for-hospital-it).
+To verify where a download came from, run `gh attestation verify <file> -R patrickgods1/ShiftNurse`;
+releases carry build-provenance attestations. Deploying to many computers? See [For hospital IT](#for-hospital-it).
 
 ## For hospital IT
 
@@ -130,11 +148,14 @@ Deploying to many computers? See [For hospital IT](#for-hospital-it).
 script or a user-context deployment, not as SYSTEM. Silent uninstall: `"Uninstall ShiftNurse.exe" /S`
 in that folder. Uninstalling keeps the data folder.
 
-**Per-machine install.** Not available in this build. The installer is electron-builder's one-click
-per-user installer, which ignores `/allusers`. A per-machine installer is planned alongside code
-signing (M17). Ask the project if you need it sooner.
+**Per-machine install.** Not offered, by design. The installer is electron-builder's one-click
+per-user installer, which ignores `/allusers`: it needs no admin rights, and the manager installs
+updates. IT deploys it per user with `/S`, from a logon script or a user-context deployment.
 
-**Allowlisting an unsigned build.** The builds are not code-signed yet. Allowlist by file hash:
+**Verify a download.** `gh attestation verify <file> -R patrickgods1/ShiftNurse` checks a release
+file's build-provenance attestation.
+
+**Allowlisting an unsigned build.** The builds are not code-signed (owner decision, 2026-10-19). Allowlist by file hash:
 every release page lists each installer's SHA-256 in `SHA256SUMS`. AppLocker/WDAC hash rules and
 SmartScreen apply to the installer and to `ShiftNurse.exe`. The CP-SAT solver is a second
 executable at `resources\cpsat\cpsat-runner.exe` inside the install folder; allow it too, or
@@ -184,9 +205,9 @@ that names a medical condition stays in the file and in every backup made afterw
 reasons as you would for a grievance file.
 
 **Nothing is encrypted yet.** The database, its backups and the log are ordinary files, readable
-by anyone who can sign in as you or who has the disk. Encryption waits for signed builds (M17),
-because an unsigned app cannot keep a key in the system keychain without prompting on every
-update. Until then, use full-disk encryption (FileVault on macOS, BitLocker on Windows) and a
+by anyone who can sign in as you or who has the disk. Encryption at rest is deferred with no date:
+an unsigned app cannot keep a key in the system keychain without prompting on every
+update. The protection is full-disk encryption, so use it (FileVault on macOS, BitLocker on Windows) and a
 computer account only you use. Copy a backup off the computer only to storage your hospital
 approves for HR records. The log records the app's own messages (a failed backup, a solver
 crash); it rolls over at 5 MB and keeps three older files.
@@ -272,6 +293,7 @@ Run from the repo root unless noted.
 | `npm run dist` | Builds, then packages installers with electron-builder (see [Compiling executables](#compiling-executables)). |
 | `npm run smoke -w @shiftnurse/desktop` | Builds and boots the real app headlessly against a temp `userData`, asserts the preload bridge and dashboard rendered. `-- --screenshot <png>` captures the window. Run after touching main/preload/IPC. |
 | `npm run smoke:packaged -w @shiftnurse/desktop` | Same, but boots the packaged `.app`/`.exe` from `release/`. Run after any packaging change. With the CP-SAT runner installed the smoke run generates with every solver twice and takes a few minutes; an emulated x64 run on Apple silicon may need `SHIFTNURSE_SMOKE_TIMEOUT_MS=900000`. |
+| `npm run bench:conflicts` | Times conflict analysis on the scenario period and prints the median and an output hash (the hash must not change in a performance-only change). |
 | `npm run bench:solvers` | Runs every solver on the demo and two fixture units at three seeds and writes [docs/solver-bench.md](docs/solver-bench.md). Needs the CP-SAT runner; takes several minutes. Not part of `npm test`. |
 | `npm run fetch:cpsat -w @shiftnurse/desktop` | Downloads the pinned CP-SAT runner for this machine into `apps/desktop/.cpsat/host` (fails loudly, unlike the `postinstall` step). |
 
@@ -407,9 +429,9 @@ To do (repository settings): a tag ruleset for `v*` so only maintainers create t
 moves or deletes them.
 
 A dry run (the same builds and smoke tests, no release) runs on any pull request that touches
-packaging, or by hand: `gh workflow run release.yml`. Builds are **unsigned** for now — the
+packaging, or by hand: `gh workflow run release.yml`. Builds are **unsigned** by owner decision (2026-10-19) — the
 release notes explain macOS Gatekeeper's and Windows SmartScreen's one-time "open anyway" steps,
-and the workflow lists (commented out) the secrets that signing will need.
+and the workflow lists (commented out) the secrets that signing would need.
 
 ## Compiling executables
 
@@ -456,12 +478,12 @@ Notes:
   both let v0.1.0's first draft pass here and crash on every real install.
 - The packaged app is **fused** (`electronFuses` in `electron-builder.yml`): it cannot be run as
   plain Node (`ELECTRON_RUN_AS_NODE`), ignores `NODE_OPTIONS` and `--inspect`, and refuses an
-  `app.asar` changed after packaging. That matters once M17 signs it: a signed app that ran
+  `app.asar` changed after packaging. That would matter if the app were ever signed: a signed app that ran
   anyone's JavaScript would lend them its signature. `smoke:packaged` reads the fuses and fails
   before launching if one is wrong. Cookie encryption (no cookies to protect, and it would ask
   for Keychain access on an unsigned mac build) and file-protocol privileges (the window is a
   local file) stay at Electron's defaults on purpose.
-- Installers are unsigned (code signing, M17, is deferred), so Gatekeeper (macOS) and SmartScreen
+- Installers are unsigned (unsigned by owner decision, 2026-10-19; M17 will not be done), so Gatekeeper (macOS) and SmartScreen
   (Windows) warn on first launch — [Installing](#installing) has the steps users follow. Unsigned builds cannot update themselves; a
   packaged app checks GitHub's latest published release at launch and shows a banner linking
   to it.

@@ -385,3 +385,57 @@ describe('the weekend, the fairness weights and the name', () => {
     expect(missing).toEqual([]);
   });
 });
+
+describe('lining the work week up with the night shift change', () => {
+  const HOURS = 'max-hours-per-week';
+  const shift = (startTime: string, extra: object = {}) => ({
+    id: startTime,
+    unitId: 'unit-1',
+    active: true,
+    isOnCall: false,
+    withinShiftTypeId: null,
+    startTime,
+    ...extra,
+  });
+  const button = () =>
+    screen.findByRole('button', { name: 'Use the shift change nearest midnight' });
+
+  it('sets the weekday and the time from the shifts, ignoring a mid shift and on-call', async () => {
+    bridge.respond('shiftTypes', 'list', [
+      shift('07:00'),
+      shift('19:00'),
+      shift('23:30', { isOnCall: true }),
+      shift('00:00', { withinShiftTypeId: '19:00' }),
+    ] as never);
+    const card = await renderRules();
+    fireEvent.click(await button());
+
+    expect(
+      await screen.findByText('Saturday 19:00, the shift change nearest midnight.'),
+    ).toBeTruthy();
+    expect(
+      (card.ownerDocument.getElementById(`${HOURS}-workWeekStartsOn`) as HTMLSelectElement).value,
+    ).toBe('6');
+    expect(
+      (card.ownerDocument.getElementById(`${HOURS}-workWeekStartMinute`) as HTMLInputElement).value,
+    ).toBe('19:00');
+    expect(await screen.findByText('Unsaved changes')).toBeTruthy();
+
+    // Pressing again leaves Saturday 19:00 as it is.
+    fireEvent.click(await button());
+    expect(
+      (card.ownerDocument.getElementById(`${HOURS}-workWeekStartsOn`) as HTMLSelectElement).value,
+    ).toBe('6');
+    expect(
+      (card.ownerDocument.getElementById(`${HOURS}-workWeekStartMinute`) as HTMLInputElement).value,
+    ).toBe('19:00');
+  });
+
+  it('is disabled with a reason when the unit has no shift types', async () => {
+    bridge.respond('shiftTypes', 'list', [] as never);
+    await renderRules();
+    const b = (await button()) as HTMLButtonElement;
+    expect(b.disabled).toBe(true);
+    expect(b.title).toBe('Add shift types first.');
+  });
+});

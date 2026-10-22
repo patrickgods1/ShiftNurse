@@ -215,7 +215,7 @@ describe('tour rotation limits', () => {
   });
 });
 
-describe('career nurses exempt from rotation (UC–CNA Art. 14 § P.1.a)', () => {
+describe('career nurses exempt from rotation (UC–CNA Art. 14 § O.1.a)', () => {
   // The schedule starts Sun 4 Jan 2026: seniority from 1 Jan 2015 is 11 years, from 1 Jan 2017 nine.
   const ELEVEN_YEARS = { seniorityDate: isoDate('2015-01-01') };
   const NINE_YEARS = { seniorityDate: isoDate('2017-01-01') };

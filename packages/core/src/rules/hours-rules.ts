@@ -14,7 +14,7 @@
  * complete, only hours past the contract are judged: history can only add hours, never remove them.
  */
 
-import type { Assignment, Id, Unit } from '../domain/entities.js';
+import type { Assignment, CallBack, Id, Nurse, Unit } from '../domain/entities.js';
 import {
   addDays,
   compareDates,
@@ -23,12 +23,17 @@ import {
   describeDate,
   describeDateRange,
   type IsoDate,
+  MINUTES_PER_DAY,
+  MINUTES_PER_HOUR,
   type Weekday,
   weekdayOf,
+  windowDurationMinutes,
 } from '../domain/time.js';
 import { isElsewhere } from '../schedule/elsewhere.js';
 import { holdoverHours } from '../schedule/holdover.js';
+import { realMinutesIn } from '../schedule/real-minutes.js';
 import type { AssignmentView, ScheduleView } from '../schedule/view.js';
+import { minutesInWindow, windowBoundaryMinute, windowDayOf } from '../schedule/window-split.js';
 import { hoursText } from './format.js';
 import { leaveHoursBetween, type PaidLeaveCredit } from './paid-leave.js';
 import {
@@ -146,6 +151,59 @@ export function workWeeksIn(window: DateWindow, startsOn: Weekday): DateWindow[]
     out.push(week);
   }
   return out;
+}
+
+/**
+ * The dates naming the first and last overtime windows (weeks or pay periods) a schedule judges:
+ * the window-days of its first and last instants (`windowDayOf`). At a midnight start that is the
+ * schedule's own first and last dates. A week that starts at a time of day moves them: under a
+ * Saturday 19:00 start a schedule opening on a Saturday holds that morning, which belongs to the
+ * week from the Saturday before; judging from the schedule's first date would leave that week,
+ * and its published hours, unchecked. The rule, both solvers and the alerts select windows here.
+ */
+export function judgedSpan(window: DateWindow, startMinute = 0): DateWindow {
+  return {
+    start: windowDayOf(windowBoundaryMinute(window.start), startMinute),
+    end: windowDayOf(windowBoundaryMinute(window.end) + MINUTES_PER_DAY - 1, startMinute),
+  };
+}
+
+/**
+ * Where work weeks start, as the rule's params, pay's `CostContext` and the alerts' input all
+ * carry it: the unit's week, and optionally a separate one for nurses on permanent nights.
+ */
+export interface WorkWeekSettings {
+  workWeekStartsOn: Weekday;
+  workWeekStartMinute?: number;
+  nightWorkWeekStartsOn?: Weekday;
+  nightWorkWeekStartMinute?: number;
+}
+
+/** One nurse's work week: the weekday it starts on and the wall minute on that day. */
+export interface WorkWeek {
+  startsOn: Weekday;
+  startMinute: number;
+}
+
+/**
+ * The work week a nurse's weekly cap and overtime are judged on. A workweek belongs to the
+ * employee and may differ between groups (29 CFR 778.105), and contracts give night nurses their
+ * own so their nights are not split (Providence Portland–ONA Art. 7.A). It is chosen by the
+ * nurse's `permanentTour`, never per shift: a week chosen by the shift would let one stretch of
+ * hours be counted in two overlapping weeks, or in neither. A pay period keeps its anchor dates
+ * and takes only `startMinute`. With no night week set, everyone is on the unit's.
+ */
+export function workWeekFor(
+  nurse: Pick<Nurse, 'permanentTour'> | undefined,
+  settings: WorkWeekSettings,
+): WorkWeek {
+  if (settings.nightWorkWeekStartsOn !== undefined && nurse?.permanentTour === 'night') {
+    return {
+      startsOn: settings.nightWorkWeekStartsOn,
+      startMinute: settings.nightWorkWeekStartMinute ?? 0,
+    };
+  }
+  return { startsOn: settings.workWeekStartsOn, startMinute: settings.workWeekStartMinute ?? 0 };
 }
 
 /** The work week containing `date`, from the contract's week-start weekday. */
@@ -439,6 +497,25 @@ export interface MaxHoursParams {
   /** The contract's work-week start. 0 = Sunday. */
   workWeekStartsOn: Weekday;
   /**
+   * The time on `workWeekStartsOn` the work week begins, in minutes after midnight (0–1439). A
+   * week (or, with `overtimeByPayPeriod`, a pay period) dated `start..end` runs from that minute
+   * on `start` to the same minute after `end` (`windowBoundaryMinute`). Payroll often sets it at
+   * the shift change nearest midnight (Saturday 19:00 for 12-hour staff) so no night is split.
+   * Optional in a stored rule set: absent is midnight, the reading before it existed.
+   */
+  workWeekStartMinute?: number;
+  /**
+   * A separate work week for nurses whose `permanentTour` is nights (`workWeekFor`). Absent, they
+   * share the unit's. It moves only weekly windows: a pay period keeps its anchor dates.
+   */
+  nightWorkWeekStartsOn?: Weekday;
+  /**
+   * The time on `nightWorkWeekStartsOn` the night nurses' week begins (0–1439; absent, midnight),
+   * and the minute their pay periods begin on the usual dates. Read only with
+   * `nightWorkWeekStartsOn` set.
+   */
+  nightWorkWeekStartMinute?: number;
+  /**
    * When true, hours past the overtime threshold must be covered: by a shift marked as
    * authorised overtime, which authorises its whole week (or pay period), or by recorded holdover
    * time, which authorises only its own hours (`authorisedOvertimeHours`). Unauthorised overtime
@@ -466,14 +543,21 @@ export interface MaxHoursParams {
   payPeriodOvertimeThresholdHours: number;
 }
 
-/** The overtime window containing `date`. */
+/**
+ * The overtime window holding `at`: a shift's start (a wall minute), placed against the work
+ * week's start time, or a date, read as its midnight. `week` is the nurse's (`workWeekFor`);
+ * absent, the unit's.
+ */
 export function overtimeWindowOf(
-  date: IsoDate,
+  at: IsoDate | number,
   params: MaxHoursParams,
   calendar: PayCalendar,
+  week: WorkWeek = workWeekFor(undefined, params),
 ): DateWindow {
+  const minute = typeof at === 'number' ? at : windowBoundaryMinute(at);
+  const date = windowDayOf(minute, week.startMinute);
   if (params.overtimeByPayPeriod) return payPeriodWindow(payPeriodIndex(date, calendar), calendar);
-  return workWeekOf(date, params.workWeekStartsOn);
+  return workWeekOf(date, week.startsOn);
 }
 
 /** Hours past which one overtime window is overtime. */
@@ -514,7 +598,30 @@ interface WindowHours {
   assignmentIds: Id[];
 }
 
-function hoursIn(timeline: readonly AssignmentView[], window: DateWindow): WindowHours {
+/** What `hoursIn` needs to count a window as the unit's payroll does (21 Q1). */
+export type WindowReading = Pick<RuleContext, 'overtimeWindowAttribution' | 'dstTransitions'>;
+
+/**
+ * A window's hours, as `max-hours-per-week` counts them. The window runs from `startMinute` on its
+ * first date to the same minute after its last (`windowBoundaryMinute`). Without a pay attribution
+ * (no pay settings loaded) a shift counts whole in the window its start falls in, at its paid
+ * hours. With one, it counts real minutes, so the DST nights are 11 and 13 hours as payroll pays
+ * them; by the clock a night crossing the window's edge gives each side the minutes worked there,
+ * which is why a view that starts before the window can add to it (and is named, when in-period,
+ * since it makes the window worse). Either way only rows that start in the window authorise its
+ * overtime. At `startMinute` 0 "starts in" is "is dated in".
+ *
+ * `callBacks` (time called in from standby) count under the same reading as shifts, and one that
+ * starts in the window authorises its own hours, as a recorded holdover does: the manager called
+ * the nurse in. They never touch the period, so a window holding only history stays unjudged.
+ */
+function hoursIn(
+  timeline: readonly AssignmentView[],
+  window: DateWindow,
+  reading?: WindowReading,
+  startMinute = 0,
+  callBacks: readonly CallBack[] = [],
+): WindowHours {
   const out: WindowHours = {
     hours: 0,
     authorisedHours: 0,
@@ -522,20 +629,71 @@ function hoursIn(timeline: readonly AssignmentView[], window: DateWindow): Windo
     assignmentIds: [],
   };
   const rows: Assignment[] = [];
+  const attribution = reading?.overtimeWindowAttribution;
+  const tz = reading?.dstTransitions ?? [];
+  const opens = windowBoundaryMinute(window.start, startMinute);
+  const nextStart = addDays(window.end, 1);
+  let minutes = 0;
   for (const view of timeline) {
-    if (compareDates(view.assignment.date, window.start) < 0) continue;
-    if (compareDates(view.assignment.date, window.end) > 0) continue;
-    // `paidHours` is worked time, so the absolute cap counts a holdover whatever it authorises.
-    out.hours += view.paidHours;
-    rows.push(view.assignment);
+    // The window-day the shift starts on: its date, unless the week starts at a time of day.
+    const day = windowDayOf(view.window.startMinute, startMinute);
+    if (compareDates(day, window.end) > 0) continue;
+    const dated = compareDates(day, window.start) >= 0;
+    if (attribution === undefined) {
+      if (!dated) continue;
+      // `paidHours` is worked time, so the absolute cap counts a holdover whatever it authorises.
+      out.hours += view.paidHours;
+    } else if (attribution === 'start') {
+      if (!dated) continue;
+      minutes += realMinutesIn(view.window, tz);
+    } else {
+      if (!dated && view.window.endMinute <= opens) continue;
+      const worked = minutesInWindow(view, window.start, nextStart, tz, startMinute);
+      if (!dated && worked <= 0) continue;
+      minutes += worked;
+    }
+    if (dated) rows.push(view.assignment);
     if (view.inPeriod) {
       out.touchesPeriod = true;
       out.assignmentIds.push(view.assignment.id);
     }
   }
+  let calledInHours = 0;
+  for (const cb of callBacks) {
+    const day = windowDayOf(cb.window.startMinute, startMinute);
+    if (compareDates(day, window.end) > 0) continue;
+    const dated = compareDates(day, window.start) >= 0;
+    if (attribution === undefined) {
+      if (!dated) continue;
+      out.hours += windowDurationMinutes(cb.window) / MINUTES_PER_HOUR;
+    } else if (attribution === 'start') {
+      if (!dated) continue;
+      minutes += realMinutesIn(cb.window, tz);
+    } else {
+      if (!dated && cb.window.endMinute <= opens) continue;
+      minutes += minutesInWindow(cb, window.start, nextStart, tz, startMinute);
+    }
+    if (dated) calledInHours += windowDurationMinutes(cb.window) / MINUTES_PER_HOUR;
+  }
+  // Whole minutes, converted once: summed as float hours a 40-hour week could read 40.0000001.
+  if (attribution !== undefined) out.hours = minutes / MINUTES_PER_HOUR;
   // Lookback rows count: a holdover last period recorded in this week authorised its hours.
-  out.authorisedHours = authorisedOvertimeHours(rows);
+  out.authorisedHours = authorisedOvertimeHours(rows) + calledInHours;
   return out;
+}
+
+/**
+ * A window's hours as `max-hours-per-week` counts them (`hoursIn`), and whether an in-period row
+ * adds to them. For the compliance alerts that weigh one reading of a window against another.
+ */
+export function windowHours(
+  timeline: readonly AssignmentView[],
+  window: DateWindow,
+  reading: WindowReading | undefined,
+  startMinute: number,
+): { hours: number; touchesPeriod: boolean; assignmentIds: Id[] } {
+  const { hours, touchesPeriod, assignmentIds } = hoursIn(timeline, window, reading, startMinute);
+  return { hours, touchesPeriod, assignmentIds };
 }
 
 export const maxHoursRule: Rule<MaxHoursParams> = {
@@ -552,6 +710,7 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
     maxHoursPerWeek: 48,
     overtimeThresholdHours: 40,
     workWeekStartsOn: 0,
+    workWeekStartMinute: 0,
     requireOvertimeAuthorisation: true,
     onCallCountsTowardHours: false,
     paidLeaveCountsTowardOvertime: false,
@@ -581,6 +740,49 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
       hint: 'The first day of the work week used for the hour cap and weekly overtime.',
       why: 'Match payroll. If payroll counts Sunday to Saturday, pick Sunday.',
       input: 'weekday',
+    },
+    workWeekStartMinute: {
+      label: 'Work week starts at',
+      input: 'time-of-day',
+      integer: true,
+      min: 0,
+      max: 1439,
+      hint:
+        'The time on the first day when the work week begins. Midnight unless payroll starts the ' +
+        'week at a shift change.',
+      why:
+        'A work week may begin on any day and at any hour (29 CFR 778.105). Match payroll: it is ' +
+        'often the shift change nearest midnight, such as 19:00 Saturday, so no night is split ' +
+        'between two weeks. A change should be permanent; in the week it changes, payroll owes ' +
+        'the greater of the two counts (29 CFR 778.302).',
+    },
+    nightWorkWeekStartsOn: {
+      label: "Night nurses' work week starts on",
+      input: 'weekday',
+      optional: true,
+      hint: "Only for nurses whose permanent tour is nights. Leave empty to use the unit's work week.",
+      why:
+        'A work week may begin on any day and at any hour, and may differ for different groups ' +
+        'of employees (29 CFR 778.105). Some contracts give night nurses their own so their ' +
+        'nights stay whole: Providence Portland–ONA Art. 7.A starts it at 12:01 a.m. Saturday ' +
+        'or the night shift closest to it; Kaiser NW–OFNHP 10.A.2 sets one for nights on 7/70. ' +
+        'A nurse is on one week, chosen by her permanent tour, never by the shift.',
+    },
+    nightWorkWeekStartMinute: {
+      label: "Night nurses' work week starts at",
+      input: 'time-of-day',
+      optional: true,
+      integer: true,
+      min: 0,
+      max: 1439,
+      hint:
+        "The time on that day the night nurses' week begins; empty is midnight. With overtime " +
+        'by pay period, their pay periods begin at this time on the usual dates.',
+      why:
+        'Match payroll, which sets this per employee (29 CFR 778.105). Providence Portland–ONA ' +
+        'Art. 7.A begins the night week with the night shift closest to 12:01 a.m. Saturday, ' +
+        'such as 19:00 Friday or Saturday. A pay period cannot start on another weekday, so ' +
+        'only the time moves it.',
     },
     requireOvertimeAuthorisation: {
       label: 'Overtime must be authorised',
@@ -623,14 +825,32 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
   evaluate(schedule, params, ctx): Violation[] {
     const violations: Violation[] = [];
     const window = { start: schedule.period.startDate, end: schedule.period.endDate };
-    const weeks = workWeeksIn(window, params.workWeekStartsOn);
-    // Weekly overtime is judged in the cap's own loop, so a week over the cap reports that alone.
-    const payPeriods = params.overtimeByPayPeriod ? payPeriodsIn(window, ctx.unit, false) : [];
+    // At most two grids, the unit's and the night nurses', built once rather than per nurse:
+    // the solver evaluates this rule on one-nurse views millions of times.
+    const grids = new Map<string, { weeks: DateWindow[]; payPeriods: DateWindow[] }>();
+    const gridFor = (week: WorkWeek) => {
+      const key = `${week.startsOn}:${week.startMinute}`;
+      let grid = grids.get(key);
+      if (grid === undefined) {
+        const span = judgedSpan(window, week.startMinute);
+        grid = {
+          weeks: workWeeksIn(span, week.startsOn),
+          // Weekly overtime is judged in the cap's own loop, so a week over the cap reports that alone.
+          payPeriods: params.overtimeByPayPeriod ? payPeriodsIn(span, ctx.unit, false) : [],
+        };
+        grids.set(key, grid);
+      }
+      return grid;
+    };
 
     for (const nurse of ctx.nurses) {
+      const week = workWeekFor(nurse, params);
+      const startMinute = week.startMinute;
+      const { weeks, payPeriods } = gridFor(week);
       const timeline = schedule
         .timelineFor(nurse.id)
         .filter((v) => params.onCallCountsTowardHours || isWorked(v));
+      const callBacks = ctx.callBacksByNurse.get(nurse.id) ?? [];
 
       const unauthorised = (span: DateWindow, found: WindowHours) => {
         if (!params.requireOvertimeAuthorisation) return;
@@ -671,7 +891,7 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
       };
 
       for (const week of weeks) {
-        const found = hoursIn(timeline, week);
+        const found = hoursIn(timeline, week, ctx, startMinute, callBacks);
         if (!found.touchesPeriod) continue;
 
         if (found.hours > params.maxHoursPerWeek) {
@@ -701,7 +921,7 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
       }
 
       for (const pay of payPeriods) {
-        const found = hoursIn(timeline, pay);
+        const found = hoursIn(timeline, pay, ctx, startMinute, callBacks);
         if (found.touchesPeriod) unauthorised(pay, found);
       }
     }
@@ -711,24 +931,28 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
 };
 
 /**
- * Hours past the overtime threshold in the overtime window (work week or pay period) containing
- * `date`, counted as `max-hours-per-week` counts them: standby only when the rule counts it, paid
- * leave only when it counts toward overtime. Authorised or not — it is what the window adds to
+ * Hours past the overtime threshold in the nurse's own overtime window (`workWeekFor`; work week
+ * or pay period) holding `at` (a shift's start minute, or a date's midnight; `overtimeWindowOf`),
+ * counted as `max-hours-per-week` counts them: standby only when the rule counts it, paid leave only when it
+ * counts toward overtime, a week-crossing night by `reading` (the rule context; absent, the start
+ * week at declared hours). Authorised or not — it is what the window adds to
  * payroll. Used by the exchange evaluator to show what a trade does to each side's overtime.
  */
 export function overtimeHoursAround(
   schedule: ScheduleView,
   nurseId: Id,
-  date: IsoDate,
+  at: IsoDate | number,
   params: MaxHoursParams,
   calendar: PayCalendar,
   paidLeave: readonly PaidLeaveCredit[] | undefined,
+  reading?: WindowReading,
 ): number {
-  const window = overtimeWindowOf(date, params, calendar);
+  const week = workWeekFor(schedule.nursesById.get(nurseId), params);
+  const window = overtimeWindowOf(at, params, calendar, week);
   const timeline = schedule
     .timelineFor(nurseId)
     .filter((v) => params.onCallCountsTowardHours || isWorked(v));
-  const found = hoursIn(timeline, window);
+  const found = hoursIn(timeline, window, reading, week.startMinute);
   const leave = params.paidLeaveCountsTowardOvertime
     ? leaveHoursBetween(paidLeave, window.start, window.end)
     : 0;

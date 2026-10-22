@@ -22,6 +22,7 @@
 import type { DemandTable } from '../acuity/demand.js';
 import type {
   AvailabilityBlock,
+  CallBack,
   Credential,
   Holiday,
   Id,
@@ -34,6 +35,7 @@ import type {
   ShiftType,
   TimeOffRequest,
   Unit,
+  UnitMembership,
 } from '../domain/entities.js';
 import type { IsoDate, WeekendDefinition } from '../domain/time.js';
 import type { FairnessWeights } from '../fairness/types.js';
@@ -96,7 +98,11 @@ export type ViolationCode =
   | 'long_stretch'
   | 'rest_after_long_stretch'
   | 'no_days_off_together'
-  | 'off_plan_tour';
+  | 'off_plan_tour'
+  | 'outside_membership'
+  | 'split_weekend'
+  | 'short_work_run'
+  | 'too_much_on_call';
 
 /**
  * One nurse worked one past holiday. Derived from published schedules, or recorded by hand for
@@ -182,6 +188,11 @@ export interface RuleContext {
   /** Each nurse's recorded accommodations (recurring windows they cannot work). */
   availabilityBlocksByNurse: ReadonlyMap<Id, readonly AvailabilityBlock[]>;
   /**
+   * Each nurse's call-backs from standby, sorted by start: worked time the hour caps, long
+   * stretches and the weekly cap count (`schedule/call-backs.ts`), never in the period themselves.
+   */
+  callBacksByNurse: ReadonlyMap<Id, readonly CallBack[]>;
+  /**
    * The first date from which the lookback tail is known to be complete (`historyCompleteFrom`).
    * Undefined: the caller has not said, and a pay period that began before the schedule is judged
    * as before (`judgedPayPeriods`).
@@ -193,11 +204,20 @@ export interface RuleContext {
    */
   dstTransitions: readonly DstTransition[];
   /**
+   * Which week a shift crossing a week's (or pay period's) edge counts in for `max-hours-per-week`,
+   * the unit's pay setting (21 Q1): `'clock'` splits it at the midnight in real minutes, as payroll
+   * pays it; `'start'` keeps it whole in its start week, in real minutes. Undefined when no pay
+   * settings were loaded: the start week at declared hours, the reading before pay was consulted.
+   */
+  overtimeWindowAttribution?: 'clock' | 'start';
+  /**
    * The shift types each nurse has asked for (`prefer_shift_type` rows only). The one record of a
    * nurse's wish the rules can read: a career nurse exempt from forced rotation may work a tour
    * she asked for (`requestedTours`).
    */
   preferredShiftTypesByNurse: ReadonlyMap<Id, ReadonlySet<Id>>;
+  /** Each float's membership dates on this unit (`outsideMembership`). A home nurse has none. */
+  membershipByNurse: ReadonlyMap<Id, UnitMembership>;
 }
 
 /**
@@ -209,8 +229,9 @@ export interface ParamDoc {
   hint: string;
   why: string;
   /** An editor other than the one the default's type implies: a number that is a weekday, a
-   * string list drawn from the employment types. */
-  input?: 'weekday' | 'employment-types';
+   * number of minutes after midnight (`time-of-day`, edited as HH:MM), a string list drawn from
+   * the employment types. */
+  input?: 'weekday' | 'time-of-day' | 'employment-types';
   /** The parameter may be absent; the hint says what absence falls back to. */
   optional?: boolean;
   /** The smallest number that makes sense. Absent means 0. */

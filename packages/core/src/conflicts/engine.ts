@@ -151,7 +151,9 @@ export class ConflictEngine {
     const slots: Slot[] = [];
     for (const date of this.dates) {
       for (const shiftType of this.shiftTypes) {
-        if (!shiftType.active) continue;
+        // A demand row, not the live `active` flag, says the type was a shift that day: a past
+        // date of a published period is judged by the rules then, and a type retired since still
+        // has its rows. A type inactive under the judging rules has none.
         const row = this.demand.get(date, shiftType.id);
         if (!row) continue;
         for (const role of NURSE_ROLES) {
@@ -192,6 +194,15 @@ export class ConflictEngine {
           majorHolidayDates: this.baseCtx.majorHolidayDates,
           weekendDefinition: input.ruleSet.weekendDefinition,
           workWeekStartsOn: this.maxHoursParams.workWeekStartsOn,
+          ...(this.maxHoursParams.workWeekStartMinute
+            ? { workWeekStartMinute: this.maxHoursParams.workWeekStartMinute }
+            : {}),
+          ...(this.maxHoursParams.nightWorkWeekStartsOn !== undefined
+            ? { nightWorkWeekStartsOn: this.maxHoursParams.nightWorkWeekStartsOn }
+            : {}),
+          ...(this.maxHoursParams.nightWorkWeekStartMinute
+            ? { nightWorkWeekStartMinute: this.maxHoursParams.nightWorkWeekStartMinute }
+            : {}),
           ...(input.cost.premiumStacking ? { premiumStacking: input.cost.premiumStacking } : {}),
           ...(input.cost.holidayPayCoversOvertime !== undefined
             ? { holidayPayCoversOvertime: input.cost.holidayPayCoversOvertime }
@@ -308,13 +319,16 @@ export class SimState {
     this.assignments = assignments;
     this.timeOff = timeOff;
     this.ctx = engine.contextFor(timeOff);
-    this.view = new ScheduleView({
-      period: engine.input.period,
-      assignments,
-      priorAssignments: engine.input.priorAssignments,
-      nurses: engine.nurses,
-      shiftTypes: engine.shiftTypes,
-    });
+    // A candidate changes a nurse or two of its base: share the rest rather than re-sort it.
+    this.view = base
+      ? ScheduleView.derive(base.view, assignments)
+      : new ScheduleView({
+          period: engine.input.period,
+          assignments,
+          priorAssignments: engine.input.priorAssignments,
+          nurses: engine.nurses,
+          shiftTypes: engine.shiftTypes,
+        });
   }
 
   /** The whole period under every enabled rule — what detection reads. */

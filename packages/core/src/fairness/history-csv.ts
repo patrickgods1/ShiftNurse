@@ -68,9 +68,14 @@ export function parseHistoricalScheduleCsv(
   }
 
   const employeeIds = new Set(options.nurses.map((n) => n.employeeId));
+  // Callers pass the unit's active types; two sharing an abbreviation would make "last one wins"
+  // decide which shift a row means, so such a row is refused instead.
   const abbreviationByLower = new Map<string, string>();
+  const ambiguous = new Set<string>();
   for (const st of options.shiftTypes) {
-    abbreviationByLower.set(st.abbreviation.trim().toLowerCase(), st.abbreviation);
+    const key = st.abbreviation.trim().toLowerCase();
+    if (abbreviationByLower.has(key)) ambiguous.add(key);
+    abbreviationByLower.set(key, st.abbreviation);
   }
 
   // employeeId|date|abbreviation — exact-duplicate detection within this file.
@@ -104,7 +109,12 @@ export function parseHistoricalScheduleCsv(
     }
 
     const abbreviation = abbreviationByLower.get(shiftRaw.toLowerCase());
-    if (!abbreviation) {
+    if (ambiguous.has(shiftRaw.toLowerCase())) {
+      rowErrors.push({
+        line,
+        message: `Shift abbreviation "${shiftRaw}" belongs to more than one active shift type on this unit; rename or retire one first`,
+      });
+    } else if (!abbreviation) {
       rowErrors.push({ line, message: `Unknown shift abbreviation "${shiftRaw}"` });
     }
 
