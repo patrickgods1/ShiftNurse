@@ -4,7 +4,7 @@
 
 ## What is here
 
-- `packages/db` (M2, complete): 50-table Drizzle schema, generated migrations, `client.ts`
+- `packages/db` (M2, complete): 52-table Drizzle schema, generated migrations, `client.ts`
   (WAL, foreign keys ON, `transact`), `audit.ts`, `mappers.ts`, and repositories under
   `repositories/` — `roster`, `config` (unit, shift types, coverage, holidays, credential
   requirements), `acuity` (tiers, ratios, HPPD), `rulesets`, `schedule`, `timeoff`, `calloffs`,
@@ -26,7 +26,17 @@
   `workedFromSchedules` lists as working a holiday) and `paySpringForwardAsScheduled` /
   `breakPremiumRate` (migration `0051_pay_spring_and_break_rate`, nullable, null reads false /
   `'base'`; saves refuse a rate other than `'base'` or `'regular'`; the California preset proposes
-  `'regular'`).**
+  `'regular'`) and `compTime` (migration `0053_comp_time`: `comp_time_hours_per_overtime_hour` /
+  `comp_time_cap_hours`, both null = off; saves refuse a rate under 1 and a cap of 0 or less; it
+  changes no dollars, and no preset enables it).** The same migration adds `comp_time_election`
+  (a nurse's agreement, `ends_on` null = in force) and `comp_time_credit` (one per nurse and
+  period, append-only by trigger like 0049): a credit is final, and a wrong one is corrected by
+  entering payroll's comp balance.
+- **Comp time is banked once per period, whole** (`recordCompTimeCredits`, takes `ShiftNurseTx`):
+  every nurse's credit and its audit row (`comp_time_credit`, `nurseId` in the snapshot) in one
+  call, refused in words when the period already holds any credit. Main decides who is credited
+  and how much; `listCompTimeCreditsForPeriod` / `ForNurse` carry the period's end date, the day a
+  credit is earned on.
   `paySettingsSaved` says whether a unit has a row at all: `applyJurisdiction` offers the preset's
   pay settings (and a wider weekend) only to a unit that saved none, since a saved row may follow a
   contract the preset cannot see.

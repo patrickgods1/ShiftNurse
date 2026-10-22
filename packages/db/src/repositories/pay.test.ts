@@ -1113,6 +1113,7 @@ describe('cost configuration', () => {
           overtimeWindowAttribution: 'clock' as const,
           paySpringForwardAsScheduled: false,
           breakPremiumRate: 'base' as const,
+          compTime: null,
         },
         ACTOR,
       ),
@@ -1130,6 +1131,7 @@ describe('cost configuration', () => {
       overtimeWindowAttribution: 'clock' as const,
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base' as const,
+      compTime: null,
     };
     savePaySettings(handle.db, unitId, settings, ACTOR);
     expect(paySettingsSaved(handle.db, unitId)).toBe(true);
@@ -1153,6 +1155,7 @@ describe('cost configuration', () => {
           overtimeWindowAttribution: 'clock' as const,
           paySpringForwardAsScheduled: false,
           breakPremiumRate: 'base' as const,
+          compTime: null,
         },
         ACTOR,
       );
@@ -1190,6 +1193,7 @@ describe('cost configuration', () => {
         overtimeWindowAttribution: 'clock' as const,
         paySpringForwardAsScheduled: false,
         breakPremiumRate: 'base' as const,
+        compTime: null,
       },
       ACTOR,
     );
@@ -1227,6 +1231,7 @@ describe('cost configuration', () => {
         overtimeWindowAttribution: 'start',
         paySpringForwardAsScheduled: false,
         breakPremiumRate: 'base',
+        compTime: null,
       },
       ACTOR,
     );
@@ -1251,6 +1256,7 @@ describe('cost configuration', () => {
           overtimeWindowAttribution: 'weekly' as never,
           paySpringForwardAsScheduled: false,
           breakPremiumRate: 'base',
+          compTime: null,
         },
         ACTOR,
       ),
@@ -1268,6 +1274,7 @@ describe('cost configuration', () => {
     expect(getPaySettings(handle.db, unitId)).toMatchObject({
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base',
+      compTime: null,
     });
   });
 
@@ -1287,12 +1294,14 @@ describe('cost configuration', () => {
         overtimeWindowAttribution: 'clock',
         paySpringForwardAsScheduled: true,
         breakPremiumRate: 'regular',
+        compTime: null,
       },
       ACTOR,
     );
     expect(getPaySettings(handle.db, unitId)).toMatchObject({
       paySpringForwardAsScheduled: true,
       breakPremiumRate: 'regular',
+      compTime: null,
     });
     expect(auditHistoryFor(handle.db, 'pay_settings', unitId)[0]).toMatchObject({
       action: 'update',
@@ -1314,6 +1323,7 @@ describe('cost configuration', () => {
           overtimeWindowAttribution: 'clock',
           paySpringForwardAsScheduled: false,
           breakPremiumRate: 'overtime' as never,
+          compTime: null,
         },
         ACTOR,
       ),
@@ -1334,10 +1344,92 @@ describe('cost configuration', () => {
           overtimeWindowAttribution: 'clock' as const,
           paySpringForwardAsScheduled: false,
           breakPremiumRate: 'base' as const,
+          compTime: null,
         },
         ACTOR,
       ),
     ).toThrow('The reporting-pay notice must be between 0 and 24 hours');
+    expect(paySettingsSaved(handle.db, unitId)).toBe(false);
+  });
+
+  it('reads comp time as off on a unit that never chose it', () => {
+    expect(getPaySettings(handle.db, unitId).compTime).toBeNull();
+  });
+
+  it('saves comp time at one and a half hours with a 240-hour cap, and with no cap', () => {
+    const base = {
+      callBackMinimumHours: 1,
+      premiumStacking: 'compound' as const,
+      holidayPayCoversOvertime: false,
+      reportingPayNoticeHours: 2,
+      overtimeWindowAttribution: 'clock' as const,
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base' as const,
+    };
+    savePaySettings(
+      handle.db,
+      unitId,
+      { ...base, compTime: { hoursPerOvertimeHour: 1.5, capHours: 240 } },
+      ACTOR,
+    );
+    expect(getPaySettings(handle.db, unitId).compTime).toEqual({
+      hoursPerOvertimeHour: 1.5,
+      capHours: 240,
+    });
+    savePaySettings(
+      handle.db,
+      unitId,
+      { ...base, compTime: { hoursPerOvertimeHour: 1.5, capHours: null } },
+      ACTOR,
+    );
+    expect(getPaySettings(handle.db, unitId).compTime).toEqual({
+      hoursPerOvertimeHour: 1.5,
+      capHours: null,
+    });
+    expect(auditHistoryFor(handle.db, 'pay_settings', unitId)[0]).toMatchObject({
+      action: 'update',
+      before: { compTime: { hoursPerOvertimeHour: 1.5, capHours: 240 } },
+      after: { compTime: { hoursPerOvertimeHour: 1.5, capHours: null } },
+    });
+    savePaySettings(handle.db, unitId, { ...base, compTime: null }, ACTOR);
+    expect(getPaySettings(handle.db, unitId).compTime).toBeNull();
+  });
+
+  it('refuses comp time that banks less than an hour per overtime hour', () => {
+    expect(() =>
+      savePaySettings(
+        handle.db,
+        unitId,
+        {
+          callBackMinimumHours: 1,
+          premiumStacking: 'compound',
+          holidayPayCoversOvertime: false,
+          reportingPayNoticeHours: 2,
+          overtimeWindowAttribution: 'clock',
+          paySpringForwardAsScheduled: false,
+          breakPremiumRate: 'base',
+          compTime: { hoursPerOvertimeHour: 0.5, capHours: 240 },
+        },
+        ACTOR,
+      ),
+    ).toThrow('Comp time must bank at least one hour per overtime hour.');
+    expect(() =>
+      savePaySettings(
+        handle.db,
+        unitId,
+        {
+          callBackMinimumHours: 1,
+          premiumStacking: 'compound',
+          holidayPayCoversOvertime: false,
+          reportingPayNoticeHours: 2,
+          overtimeWindowAttribution: 'clock',
+          paySpringForwardAsScheduled: false,
+          breakPremiumRate: 'base',
+          compTime: { hoursPerOvertimeHour: 1.5, capHours: 0 },
+        },
+        ACTOR,
+      ),
+    ).toThrow(/more than zero/);
     expect(paySettingsSaved(handle.db, unitId)).toBe(false);
   });
 

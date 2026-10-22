@@ -13,10 +13,12 @@
  */
 
 import { is } from '@electron-toolkit/utils';
+import { today } from '@shiftnurse/core';
 import type { ShiftNurseDb } from '@shiftnurse/db';
 import { app } from 'electron';
 import type { ShiftNurseApi, UpdateInfo } from '../shared/api.js';
 import { availabilityBlocksApi } from './api/availability-blocks.js';
+import { bankCompTime } from './api/comp-time.js';
 import { configApi } from './api/config.js';
 import { costApi } from './api/cost.js';
 import { dashboardSummary } from './api/dashboard.js';
@@ -141,7 +143,10 @@ export function createApi(db: ShiftNurseDb, solverJobs: SolverJobs, host: AppHos
       ...fairnessApi(db),
       pickHistoryImportFile: (unitId) => pickHistoryImportFile(db, unitId),
     },
-    cost: costApi(db),
+    cost: {
+      ...costApi(db),
+      bankCompTime: (periodId) => bankCompTime(db, periodId, today()),
+    },
     ...requestsApi(db),
     dayOf: dayOfApi(db),
     floatOut: floatOutApi(db),

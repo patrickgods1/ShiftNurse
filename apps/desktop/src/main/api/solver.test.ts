@@ -9,6 +9,7 @@ import {
   addDays,
   type ComplianceAlert,
   PURE_SOLVERS,
+  today,
   type Violation,
 } from '@shiftnurse/core';
 import {
@@ -163,8 +164,10 @@ describe('previewing and comparing', () => {
     saveCandidate(f.handle.db, jobs, id, 1);
     const onGrid = buildScheduleValidation(f.handle.db, periodId);
     expect(said(preview.validation.result.violations)).toEqual(said(onGrid.result.violations));
-    expect(preview.cost.cost.totals).toEqual(costReport(f.handle.db, periodId).cost.totals);
-    expect(preview.cost.variance).toEqual(costReport(f.handle.db, periodId).variance);
+    expect(preview.cost.cost.totals).toEqual(
+      costReport(f.handle.db, periodId, today()).cost.totals,
+    );
+    expect(preview.cost.variance).toEqual(costReport(f.handle.db, periodId, today()).variance);
     // Saving gives the rows database ids; everything else about each alert must match.
     const alertSaid = (alerts: readonly ComplianceAlert[]) =>
       alerts.map(({ assignmentIds, ...rest }) => ({ ...rest, shifts: assignmentIds.length }));

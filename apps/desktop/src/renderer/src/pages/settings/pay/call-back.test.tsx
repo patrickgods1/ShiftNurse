@@ -22,6 +22,7 @@ beforeEach(() => {
     overtimeWindowAttribution: 'clock' as const,
     paySpringForwardAsScheduled: false,
     breakPremiumRate: 'base' as const,
+    compTime: null,
   });
   bridge.respond('cost', 'savePaySettings', {
     callBackMinimumHours: 4,
@@ -31,6 +32,7 @@ beforeEach(() => {
     overtimeWindowAttribution: 'clock' as const,
     paySpringForwardAsScheduled: false,
     breakPremiumRate: 'base' as const,
+    compTime: null,
   });
 });
 afterEach(() => {
@@ -68,6 +70,7 @@ describe('the call-back minimum in Settings › Pay', () => {
             overtimeWindowAttribution: 'clock' as const,
             paySpringForwardAsScheduled: false,
             breakPremiumRate: 'base' as const,
+            compTime: null,
           },
         ],
       ]),
@@ -83,6 +86,7 @@ describe('the call-back minimum in Settings › Pay', () => {
       overtimeWindowAttribution: 'start' as const,
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base' as const,
+      compTime: null,
     });
     renderWithApp(<CallBackSection unitId="u-1" />);
     fireEvent.change(await screen.findByLabelText('Call-back minimum hours'), {
@@ -94,6 +98,7 @@ describe('the call-back minimum in Settings › Pay', () => {
       overtimeWindowAttribution: 'start',
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base',
+      compTime: null,
     });
   });
 
@@ -131,6 +136,7 @@ describe('the call-back minimum in Settings › Pay', () => {
             overtimeWindowAttribution: 'clock' as const,
             paySpringForwardAsScheduled: false,
             breakPremiumRate: 'base' as const,
+            compTime: null,
           },
         ],
       ]),
@@ -201,6 +207,7 @@ describe('the call-back minimum in Settings › Pay', () => {
             overtimeWindowAttribution: 'clock' as const,
             paySpringForwardAsScheduled: false,
             breakPremiumRate: 'base' as const,
+            compTime: null,
           },
         ],
       ]),

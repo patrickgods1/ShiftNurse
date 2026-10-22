@@ -101,7 +101,8 @@ function toPayConfig(raw: unknown, periodId: Id): PayConfig {
     // Any field added to PaySettings later must decide how a snapshot taken without it reads:
     // the behaviour before the field existed, which is not necessarily today's default. Override
     // it here when the two differ. (`paySpringForwardAsScheduled` and `breakPremiumRate`: their
-    // defaults, false and 'base', are how a period was priced before migration 0051.)
+    // defaults, false and 'base', are how a period was priced before migration 0051; `compTime`
+    // null: comp time changes no dollars, and a snapshot from before 0053 had none.)
     paySettings: { ...DEFAULT_PAY_SETTINGS, ...value.paySettings },
     ...(value.holidayAttribution !== undefined && {
       holidayAttribution: value.holidayAttribution,

@@ -37,12 +37,31 @@ const certificationPatch = object({
   note: text.nullable(),
 }).partial();
 
+const compElectionInput = object({
+  unitId: id,
+  nurseId: id,
+  startsOn: isoDate,
+  endsOn: isoDate.optional(),
+  note: text.optional(),
+});
+
+/** Nurse and unit never change; `null` reopens the end or clears the note. */
+const compElectionPatch = object({
+  startsOn: isoDate,
+  endsOn: isoDate.nullable(),
+  note: text.nullable(),
+}).partial();
+
 export const leaveBalancesSchemas = {
   forNurse: z.tuple([id]),
   setBalance: z.tuple([id, balanceType, hours, isoDate]),
   addCertification: z.tuple([certificationInput]),
   updateCertification: z.tuple([id, certificationPatch]),
   removeCertification: z.tuple([id]),
+  compElections: z.tuple([id]),
+  addCompElection: z.tuple([compElectionInput]),
+  updateCompElection: z.tuple([id, compElectionPatch]),
+  removeCompElection: z.tuple([id]),
   checkRequest: z
     .tuple([id, requestType, isoDate, isoDate, hours])
     .superRefine(readRange(400, 2, 3)),

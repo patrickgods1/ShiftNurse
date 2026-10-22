@@ -4,7 +4,7 @@
  * keeps the home shift marked and locked (with the reason on a published period) and audits it.
  */
 
-import { addDays, isoDate, type Nurse } from '@shiftnurse/core';
+import { addDays, isoDate, type Nurse, today } from '@shiftnurse/core';
 import {
   auditHistoryFor,
   createAssignment,
@@ -273,9 +273,9 @@ describe('floating a nurse off a shift', () => {
   it('prices the floated shift as before: floating does not change what the period costs', () => {
     everyoneComesIn();
     const ana = f.rns[2]!;
-    const before = costReport(f.handle.db, f.seeded.draftPeriodId).cost.totals.total;
+    const before = costReport(f.handle.db, f.seeded.draftPeriodId, today()).cost.totals.total;
     send(ana.id, [ana.id]);
-    expect(costReport(f.handle.db, f.seeded.draftPeriodId).cost.totals.total).toBe(before);
+    expect(costReport(f.handle.db, f.seeded.draftPeriodId, today()).cost.totals.total).toBe(before);
   });
 
   it('does not offer a nurse already floated off for the next float', () => {

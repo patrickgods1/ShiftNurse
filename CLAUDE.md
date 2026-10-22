@@ -143,7 +143,8 @@ a message for a bare `git commit`. Details in `.githooks/CLAUDE.md`.
   type and its first grant), `fillCoverageWeek` (seven weekday floors set together),
   `duplicateShiftType` (a new type, its copied floors, credentials, forecasts and wishes, and the
   old type's retirement),
-  `publishSchedule` (version, status, ledger), `replaceAssignments` (delete and insert),
+  `publishSchedule` (version, status, ledger), `recordCompTimeCredits` (a period's comp credits
+  and their audit rows, banked once and final), `replaceAssignments` (delete and insert),
   `replaceNursePreferences`, `importFairnessLedgerEntries` and `upsertCensusForecasts` (a batch of
   days accepted as one decision) — takes `ShiftNurseTx`, so calling it outside a transaction is a
   type error rather than a docstring nobody read.

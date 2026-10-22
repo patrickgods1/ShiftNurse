@@ -205,7 +205,7 @@ function NurseDetailBody({
 
       <CredentialsSection nurseId={nurseId} />
       <AlsoWorksOnSection nurse={nurse} />
-      <LeaveSection nurseId={nurseId} />
+      <LeaveSection nurseId={nurseId} unitId={nurse.unitId} />
       <PreferencesSection nurseId={nurseId} unitId={nurse.unitId} />
     </>
   );

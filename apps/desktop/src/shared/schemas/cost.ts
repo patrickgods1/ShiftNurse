@@ -186,7 +186,14 @@ export const costSchemas = {
       overtimeWindowAttribution: z.enum(['clock', 'start']),
       paySpringForwardAsScheduled: z.boolean(),
       breakPremiumRate: z.enum(['base', 'regular']),
+      compTime: z
+        .object({
+          hoursPerOvertimeHour: z.number().min(1),
+          capHours: z.number().positive().nullable(),
+        })
+        .nullable(),
     }),
   ]),
   reprice: z.tuple([id, text]),
+  bankCompTime: z.tuple([id]),
 } satisfies ResourceSchemas<'cost'>;

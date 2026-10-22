@@ -860,6 +860,28 @@ describe('history the app never rewrites', () => {
     expect(() => run('DELETE FROM pay_config_snapshot')).toThrow(/cannot be deleted/);
   });
 
+  it('refuses to edit or delete banked comp time, and one credit per nurse per period', () => {
+    const credit = (id: string) =>
+      handle.db
+        .insert(s.compTimeCredit)
+        .values({
+          id,
+          nurseId,
+          periodId,
+          overtimeHours: 4,
+          creditedHours: 6,
+          paidOvertimeHours: 0,
+          createdAt: 1_000,
+        })
+        .run();
+    credit('credit-1');
+    expect(() => run("UPDATE comp_time_credit SET reason = 'x'")).toThrow(
+      /correct the nurse's comp balance under Leave instead/,
+    );
+    expect(() => run('DELETE FROM comp_time_credit')).toThrow(/banked from a published schedule/);
+    expect(() => credit('credit-2')).toThrow(/UNIQUE/);
+  });
+
   it('still saves new rules, publishes, republishes and logs changes', () => {
     const v2 = transact(handle.db, (tx) => saveRuleSet(tx, ruleDraft(unitId), ACTOR));
     expect(v2.version).toBe(2);

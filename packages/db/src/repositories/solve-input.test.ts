@@ -266,6 +266,7 @@ describe('the pay a period is costed under', () => {
         overtimeWindowAttribution: 'clock',
         paySpringForwardAsScheduled: false,
         breakPremiumRate: 'base',
+        compTime: null,
       },
       ACTOR,
     );
@@ -285,6 +286,7 @@ describe('the pay a period is costed under', () => {
         overtimeWindowAttribution: 'start',
         paySpringForwardAsScheduled: false,
         breakPremiumRate: 'base',
+        compTime: null,
       },
       ACTOR,
     );
@@ -313,6 +315,7 @@ describe('the pay a period is costed under', () => {
         ...getPaySettings(handle.db, unitId),
         paySpringForwardAsScheduled: true,
         breakPremiumRate: 'regular',
+        compTime: null,
       },
       ACTOR,
     );

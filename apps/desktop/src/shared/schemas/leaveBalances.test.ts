@@ -24,4 +24,22 @@ describe('leave balances arriving over IPC', () => {
   it('refuses an edit that tries to hand a certification to another nurse', () => {
     expect(s.updateCertification.safeParse(['c-1', { nurseId: 'n-2' }]).success).toBe(false);
   });
+
+  it('accepts a comp-time election, and an edit that reopens the end and clears the note', () => {
+    const election = { unitId: 'u-1', nurseId: 'n-1', startsOn: '2026-10-01' };
+    expect(s.addCompElection.safeParse([election]).success).toBe(true);
+    expect(s.addCompElection.safeParse([{ ...election, endsOn: '2027-03-31' }]).success).toBe(true);
+    expect(s.updateCompElection.safeParse(['c-1', { endsOn: null, note: null }]).success).toBe(
+      true,
+    );
+  });
+
+  it('refuses a comp-time election with a key it does not know, or an edit that moves the nurse', () => {
+    const election = { unitId: 'u-1', nurseId: 'n-1', startsOn: '2026-10-01' };
+    expect(s.addCompElection.safeParse([{ ...election, enteredBy: 'nurse' }]).success).toBe(false);
+    expect(s.addCompElection.safeParse([{ nurseId: 'n-1', startsOn: '2026-10-01' }]).success).toBe(
+      false,
+    );
+    expect(s.updateCompElection.safeParse(['c-1', { nurseId: 'n-2' }]).success).toBe(false);
+  });
 });

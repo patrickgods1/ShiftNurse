@@ -444,6 +444,7 @@ describe('applying a state preset', () => {
       overtimeWindowAttribution: 'clock' as const,
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base' as const,
+      compTime: null,
     });
     expect(getLatestRuleSet(handle.db, unit.id)?.weekendDefinition.mode).toBe('overlaps');
   });
@@ -458,6 +459,7 @@ describe('applying a state preset', () => {
       overtimeWindowAttribution: 'clock' as const,
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base' as const,
+      compTime: null,
     };
     transact(handle.db, (tx) => savePaySettings(tx, unit.id, own, ACTOR));
     applyState(unit.id, 'US-VA');

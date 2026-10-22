@@ -21,6 +21,7 @@ beforeEach(() => {
     overtimeWindowAttribution: 'clock' as const,
     paySpringForwardAsScheduled: false,
     breakPremiumRate: 'base' as const,
+    compTime: null,
   });
   bridge.respond('cost', 'savePaySettings', {
     callBackMinimumHours: 2,
@@ -30,6 +31,7 @@ beforeEach(() => {
     overtimeWindowAttribution: 'clock' as const,
     paySpringForwardAsScheduled: false,
     breakPremiumRate: 'base' as const,
+    compTime: null,
   });
 });
 afterEach(() => {
@@ -64,6 +66,7 @@ describe('premium stacking in Settings › Pay', () => {
             overtimeWindowAttribution: 'clock' as const,
             paySpringForwardAsScheduled: false,
             breakPremiumRate: 'base' as const,
+            compTime: null,
           },
         ],
       ]),
@@ -88,6 +91,7 @@ describe('premium stacking in Settings › Pay', () => {
             overtimeWindowAttribution: 'clock' as const,
             paySpringForwardAsScheduled: false,
             breakPremiumRate: 'base' as const,
+            compTime: null,
           },
         ],
       ]),
@@ -115,6 +119,7 @@ describe('premium stacking in Settings › Pay', () => {
             callBackMinimumHours: 4,
             premiumStacking: 'additive',
             holidayPayCoversOvertime: false,
+            compTime: null,
             extraField: 7,
           },
         ],
@@ -145,6 +150,7 @@ describe('week attribution in Settings › Pay', () => {
             overtimeWindowAttribution: 'start',
             paySpringForwardAsScheduled: false,
             breakPremiumRate: 'base',
+            compTime: null,
           },
         ],
       ]),
@@ -174,9 +180,72 @@ describe('the spring-forward night and missed breaks in Settings › Pay', () =>
             overtimeWindowAttribution: 'clock',
             paySpringForwardAsScheduled: true,
             breakPremiumRate: 'regular',
+            compTime: null,
           },
         ],
       ]),
     );
+  });
+});
+
+describe('comp time in Settings › Pay', () => {
+  it('is off until switched on, then asks for the rate and the cap', async () => {
+    renderWithApp(<StackingSection unitId="u-1" />);
+    const toggle = (await screen.findByLabelText(
+      'Comp time instead of overtime pay',
+    )) as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    expect(screen.queryByLabelText('Comp hours per overtime hour')).toBeNull();
+    fireEvent.click(toggle);
+    expect((screen.getByLabelText('Comp hours per overtime hour') as HTMLInputElement).value).toBe(
+      '1.5',
+    );
+  });
+
+  it('saves comp time at one and a half hours with no cap', async () => {
+    renderWithApp(<StackingSection unitId="u-1" />);
+    fireEvent.click(await screen.findByLabelText('Comp time instead of overtime pay'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('cost', 'savePaySettings')).toEqual([
+        [
+          'u-1',
+          {
+            callBackMinimumHours: 2,
+            premiumStacking: 'compound',
+            holidayPayCoversOvertime: false,
+            reportingPayNoticeHours: 2,
+            overtimeWindowAttribution: 'clock',
+            paySpringForwardAsScheduled: false,
+            breakPremiumRate: 'base',
+            compTime: { hoursPerOvertimeHour: 1.5, capHours: null },
+          },
+        ],
+      ]),
+    );
+  });
+
+  it('saves a 240-hour cap', async () => {
+    renderWithApp(<StackingSection unitId="u-1" />);
+    fireEvent.click(await screen.findByLabelText('Comp time instead of overtime pay'));
+    const cap = screen.getByLabelText('Most comp hours a nurse may hold');
+    fireEvent.change(cap, { target: { value: '240' } });
+    fireEvent.blur(cap);
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('cost', 'savePaySettings')[0]?.[1]).toMatchObject({
+        compTime: { hoursPerOvertimeHour: 1.5, capHours: 240 },
+      }),
+    );
+  });
+
+  it('will not save with comp time switched on and the rate left blank', async () => {
+    renderWithApp(<StackingSection unitId="u-1" />);
+    fireEvent.click(await screen.findByLabelText('Comp time instead of overtime pay'));
+    const rate = screen.getByLabelText('Comp hours per overtime hour');
+    fireEvent.change(rate, { target: { value: '' } });
+    fireEvent.blur(rate);
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(bridge.callsTo('cost', 'savePaySettings')).toEqual([]);
   });
 });

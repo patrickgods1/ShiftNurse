@@ -469,6 +469,7 @@ describe('the unit’s call-back minimum', () => {
       overtimeWindowAttribution: 'clock',
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base',
+      compTime: null,
     });
     savePaySettings(
       handle.db,
@@ -481,6 +482,7 @@ describe('the unit’s call-back minimum', () => {
         overtimeWindowAttribution: 'clock',
         paySpringForwardAsScheduled: false,
         breakPremiumRate: 'base',
+        compTime: null,
       },
       ACTOR,
     );
@@ -495,6 +497,7 @@ describe('the unit’s call-back minimum', () => {
         overtimeWindowAttribution: 'clock',
         paySpringForwardAsScheduled: false,
         breakPremiumRate: 'base',
+        compTime: null,
       },
       ACTOR,
     );
@@ -506,6 +509,7 @@ describe('the unit’s call-back minimum', () => {
       overtimeWindowAttribution: 'clock',
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base',
+      compTime: null,
     });
     expect(auditHistoryFor(handle.db, 'pay_settings', unitId)[0]).toMatchObject({
       before: { callBackMinimumHours: 4 },
@@ -525,6 +529,7 @@ describe('the unit’s call-back minimum', () => {
         overtimeWindowAttribution: 'clock',
         paySpringForwardAsScheduled: false,
         breakPremiumRate: 'base',
+        compTime: null,
       },
       ACTOR,
     );
@@ -536,6 +541,7 @@ describe('the unit’s call-back minimum', () => {
       overtimeWindowAttribution: 'clock',
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base',
+      compTime: null,
     });
     const entry = auditHistoryFor(handle.db, 'pay_settings', unitId)[0];
     expect(entry).toMatchObject({
@@ -558,6 +564,7 @@ describe('the unit’s call-back minimum', () => {
           overtimeWindowAttribution: 'clock',
           paySpringForwardAsScheduled: false,
           breakPremiumRate: 'base',
+          compTime: null,
         },
         ACTOR,
       ),
@@ -574,6 +581,7 @@ describe('the unit’s call-back minimum', () => {
           overtimeWindowAttribution: 'clock',
           paySpringForwardAsScheduled: false,
           breakPremiumRate: 'base',
+          compTime: null,
         },
         ACTOR,
       ),

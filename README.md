@@ -66,7 +66,11 @@ this codebase is held to. This document is the practical "how do I build/run/shi
   period. The rule, Generate, pay and the overtime alerts all read it. "Night nurses' work week
   starts on/at" gives nurses whose permanent tour is nights a week of their own (Providence
   Portland–ONA Art. 7.A); each nurse is on one week, chosen by her tour, and left empty everyone
-  is on the unit's.
+  is on the unit's. Comp time in place of overtime pay is for public employers only (29 U.S.C.
+  § 207(o)): switch it on under Settings › Pay, record each nurse's election under Roster ›
+  nurse › Leave, and once a published schedule is over, bank it from the Dashboard's cost panel,
+  which credits the nurses' comp balances (overtime past the cap stays paid). Banked credits are
+  final; a wrong figure is corrected by entering payroll's comp balance.
 - **Time off, conflicts & exchanges** — a conflict-detection engine simulates every request
   against the schedule, ranks resolution options, supports policy-driven auto-resolve with an
   audit trail, and evaluates 1:1 trades and giveaways for hard-rule and fairness impact.
@@ -95,7 +99,6 @@ These are yours to do by hand until the app handles them (the same list is in Se
 - Most hours in any 24 and long stretches of work are checked on the grid, but Generate does not steer away from them while they are soft: make them hard to have Generate keep to them.
 - Leave bids and other requests are entered by the manager: nurses do not submit them in the app yet.
 - In-lieu-of holidays (federal, 5 U.S.C. § 6103(b)): when a nurse's regular day off falls on a holiday, their in-lieu day is not marked and work on it is not paid at the holiday premium here; holiday pay applies only to the calendar holiday.
-- Compensatory time earned instead of overtime pay: the app prices overtime and holds a comp-leave balance, but does not convert overtime worked into comp time earned; add earned comp time to the nurse's balance under Leave on their Roster page.
 - California's shortened alternative-workweek day (Wage Order 5 § 3(B)(2)): when you require a 12-hour nurse to work fewer hours than scheduled, that day's overtime is past 8 hours at 1.5× and past 12 at 2×; the app prices the day by the unit's usual rules.
 - Title 22 § 70217(c)–(d): the written staffing plan with required versus actual staffing by shift and its one-year retention is not produced here; the Demand page and published schedules hold the figures.
 

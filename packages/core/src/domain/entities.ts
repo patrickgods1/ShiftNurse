@@ -824,6 +824,24 @@ export interface RestWaiver {
 }
 
 /**
+ * The dates over which a nurse has agreed, in advance, to take comp time instead of overtime pay
+ * on this unit. 29 U.S.C. § 207(o) (and 38 U.S.C. § 7453(e)(3) for the VA, "voluntarily requested
+ * in writing by the nurse") require the agreement before the work, so a credit is banked only for
+ * overtime dated inside an election; an open `endsOn` runs until the manager closes it.
+ */
+export interface CompTimeElection {
+  id: Id;
+  unitId: Id;
+  nurseId: Id;
+  /** Inclusive on both ends. */
+  startsOn: IsoDate;
+  endsOn?: IsoDate;
+  note?: string;
+  /** Always `'manager'` in v1. See {@link RequestOrigin}. */
+  enteredBy: RequestOrigin;
+}
+
+/**
  * Time a nurse on standby was called in and worked, on the wall-clock timeline. ORS 441.770(3)
  * starts the 12-in-24 count at "a shift or call response", so the hour caps, long stretches and
  * the weekly cap count it; it is not a shift (recorded day-of against the standby it interrupted,

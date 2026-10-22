@@ -114,6 +114,7 @@ describe('projecting a balance forward from payroll', () => {
       accruedHours: 24,
       usedHours: 0,
       forfeitedHours: 0,
+      earnedHours: 0,
       usedThisYearHours: 0,
     });
   });
@@ -253,6 +254,7 @@ describe('projecting a balance forward from payroll', () => {
       accruedHours: 0,
       usedHours: 0,
       forfeitedHours: 10,
+      earnedHours: 0,
       usedThisYearHours: 0,
     });
   });
@@ -272,6 +274,7 @@ describe('projecting a balance forward from payroll', () => {
       accruedHours: 8,
       usedHours: 0,
       forfeitedHours: 18,
+      earnedHours: 0,
       usedThisYearHours: 0,
     });
   });
@@ -298,6 +301,7 @@ describe('projecting a balance forward from payroll', () => {
       accruedHours: 1,
       usedHours: 0,
       forfeitedHours: 0,
+      earnedHours: 0,
       usedThisYearHours: 0,
     });
   });
@@ -339,6 +343,7 @@ describe('projecting a balance forward from payroll', () => {
       accruedHours: 16,
       usedHours: 36,
       forfeitedHours: 0,
+      earnedHours: 0,
       usedThisYearHours: 44,
     });
   });
@@ -367,6 +372,7 @@ describe('projecting a balance forward from payroll', () => {
       accruedHours: 0,
       usedHours: 16,
       forfeitedHours: 0,
+      earnedHours: 0,
       usedThisYearHours: 16,
     });
   });
@@ -400,6 +406,7 @@ describe('projecting a balance forward from payroll', () => {
       accruedHours: 10,
       usedHours: 0,
       forfeitedHours: 0,
+      earnedHours: 0,
       usedThisYearHours: 0,
     });
   });
@@ -424,6 +431,7 @@ describe('projecting a balance forward from payroll', () => {
         accruedHours: 8,
         usedHours: 0,
         forfeitedHours: 10,
+        earnedHours: 0,
         usedThisYearHours: 0,
       });
     });
@@ -448,6 +456,7 @@ describe('projecting a balance forward from payroll', () => {
         accruedHours: 4,
         usedHours: 10,
         forfeitedHours: 0,
+        earnedHours: 0,
         usedThisYearHours: 10,
       });
     });
@@ -544,6 +553,7 @@ describe('a front-loaded balance', () => {
       accruedHours: 0,
       usedHours: 0,
       forfeitedHours: 0,
+      earnedHours: 0,
       usedThisYearHours: 0,
     });
   });
@@ -615,5 +625,55 @@ describe('caps in hours or days, whichever is greater', () => {
     const old = projectBalance({ ...input, rule: hoursOnly });
     expect(old.hours).toBe(115);
     expect(old.accruedHours).toBe(0);
+  });
+});
+
+describe('comp time earned since payroll gave the figure', () => {
+  const comp = { ...base, balanceHours: 10, asOf: d('2026-10-17'), onDate: d('2026-10-30') };
+
+  it('raises the projection by the comp time credited on a day in between', () => {
+    // 10 held + 6 credited on 10-20 = 16.
+    const p = projectBalance({ ...comp, earned: [{ date: d('2026-10-20'), hours: 6 }] });
+    expect(p.hours).toBe(16);
+    expect(p.earnedHours).toBe(6);
+  });
+
+  it('does not count comp time credited on the request day itself yet', () => {
+    // Same window as use: after payroll's date, before the request's.
+    const p = projectBalance({ ...comp, earned: [{ date: d('2026-10-30'), hours: 6 }] });
+    expect(p.hours).toBe(10);
+    expect(p.earnedHours).toBe(0);
+  });
+
+  it('reports no earned hours when none was credited', () => {
+    expect(projectBalance(comp).earnedHours).toBe(0);
+  });
+
+  it('lets comp time credited on a day cover leave used the same day', () => {
+    // 10 + 6 earned - 14 used = 2. Earn applies first, so the balance is never negative midway.
+    const p = projectBalance({
+      ...comp,
+      earned: [{ date: d('2026-10-20'), hours: 6 }],
+      used: [{ date: d('2026-10-20'), hours: 14 }],
+    });
+    expect(p.hours).toBe(2);
+    expect(p.usedHours).toBe(14);
+  });
+
+  it('does not stop comp time at the accrual rule’s balance cap', () => {
+    // Capped at 80 and holding 78, a 12-hour credit still lands whole: comp time has its own
+    // cap, applied when it is credited. 78 + 12 = 90.
+    const p = projectBalance({
+      ...comp,
+      balanceHours: 78,
+      rule: {
+        balanceType: 'comp',
+        tiers: [{ fromYearsOfService: 0, hoursPerPayPeriod: 8 }],
+        balanceCapHours: 80,
+      },
+      earned: [{ date: d('2026-10-20'), hours: 12 }],
+    });
+    // The 10-31 period closes after the request day, so no accrual enters.
+    expect(p.hours).toBe(90);
   });
 });

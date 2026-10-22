@@ -807,6 +807,14 @@ export function getPaySettings(db: DbLike, unitId: Id): PaySettings {
         // Rows saved before migration 0051 pay the spring night as worked and breaks at base.
         paySpringForwardAsScheduled: row.paySpringForwardAsScheduled ?? false,
         breakPremiumRate: row.breakPremiumRate ?? 'base',
+        // Rows saved before migration 0053 have no rate: comp time is off.
+        compTime:
+          row.compTimeHoursPerOvertimeHour === null
+            ? null
+            : {
+                hoursPerOvertimeHour: row.compTimeHoursPerOvertimeHour,
+                capHours: row.compTimeCapHours ?? null,
+              },
       }
     : { ...DEFAULT_PAY_SETTINGS };
 }
@@ -855,6 +863,23 @@ export function savePaySettings(
   if (breakRate !== 'base' && breakRate !== 'regular') {
     throw new Error('Choose whether a missed break is paid at the base rate or the regular rate.');
   }
+  // IPC input is typed, not checked: a rate under one would bank fewer hours than were worked.
+  const compTime = settings.compTime ?? null;
+  if (compTime) {
+    if (!Number.isFinite(compTime.hoursPerOvertimeHour) || compTime.hoursPerOvertimeHour < 1) {
+      throw new Error('Comp time must bank at least one hour per overtime hour.');
+    }
+    if (
+      compTime.capHours !== null &&
+      !(Number.isFinite(compTime.capHours) && compTime.capHours > 0)
+    ) {
+      throw new Error(
+        'The most comp hours a nurse may hold must be more than zero, or blank for no cap.',
+      );
+    }
+  }
+  const compRate = compTime?.hoursPerOvertimeHour ?? null;
+  const compCap = compTime?.capHours ?? null;
   const springAsScheduled = settings.paySpringForwardAsScheduled === true;
   // A unit with no row has no stored settings: reading defaults as "before" would audit state
   // that never existed.
@@ -869,6 +894,7 @@ export function savePaySettings(
     overtimeWindowAttribution: attribution,
     paySpringForwardAsScheduled: springAsScheduled,
     breakPremiumRate: breakRate,
+    compTime: compTime ? { ...compTime } : null,
   };
   db.insert(paySettings)
     .values({
@@ -880,6 +906,8 @@ export function savePaySettings(
       overtimeWindowAttribution: attribution,
       paySpringForwardAsScheduled: springAsScheduled,
       breakPremiumRate: breakRate,
+      compTimeHoursPerOvertimeHour: compRate,
+      compTimeCapHours: compCap,
       updatedAt: Date.now(),
     })
     .onConflictDoUpdate({
@@ -892,6 +920,8 @@ export function savePaySettings(
         overtimeWindowAttribution: attribution,
         paySpringForwardAsScheduled: springAsScheduled,
         breakPremiumRate: breakRate,
+        compTimeHoursPerOvertimeHour: compRate,
+        compTimeCapHours: compCap,
         updatedAt: Date.now(),
       },
     })

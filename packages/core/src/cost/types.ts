@@ -276,6 +276,14 @@ export interface PaySettings {
    * Loews Hollywood Hotel (2021) 11 Cal.5th 858). Default `'base'`.
    */
   breakPremiumRate: 'base' | 'regular';
+  /**
+   * Comp time banked instead of overtime pay. Only public agencies may (29 U.S.C. § 207(o)): at
+   * not less than 1½ hours per overtime hour, by agreement before the work, held up to 240 hours
+   * (480 for public safety, emergency response and seasonal work). It changes no dollars here: the
+   * hours are banked after a period is published and ends. `capHours` null is no cap; null
+   * `compTime` is off, which is every private hospital. Default null.
+   */
+  compTime: { hoursPerOvertimeHour: number; capHours: number | null } | null;
 }
 
 /** What a unit that has never saved pay settings runs: no call-back minimum, FLSA stacking. */
@@ -287,6 +295,7 @@ export const DEFAULT_PAY_SETTINGS: PaySettings = {
   overtimeWindowAttribution: 'clock',
   paySpringForwardAsScheduled: false,
   breakPremiumRate: 'base',
+  compTime: null,
 };
 
 // ---------------------------------------------------------------------------

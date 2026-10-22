@@ -95,6 +95,7 @@ export type {
   CallOffStatus,
   CallOutcome,
   CensusForecast,
+  CompTimeElection,
   CoverageRequirement,
   Credential,
   Differential,
@@ -248,6 +249,7 @@ export type {
 // Seniority leave bidding: awards in seniority order, every denial reasoned
 export { awardBids, seniorityOrder } from './leave/bidding.js';
 export { leaveChargeHours } from './leave/charge.js';
+export { compTimeCredit } from './leave/comp-time.js';
 export type { FmlaEntitlementBasis, FmlaPeriod } from './leave/fmla.js';
 export {
   fmlaEligibility,

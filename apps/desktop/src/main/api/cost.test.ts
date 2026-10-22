@@ -441,6 +441,7 @@ describe('a published schedule keeps its price', () => {
           overtimeWindowAttribution: 'clock',
           paySpringForwardAsScheduled: false,
           breakPremiumRate: 'base',
+          compTime: null,
         },
         ACTOR,
       );

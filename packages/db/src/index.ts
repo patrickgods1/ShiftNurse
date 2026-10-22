@@ -44,6 +44,7 @@ export * from './repositories/availability-blocks.js';
 export * from './repositories/calloffs.js';
 export * from './repositories/cancellations.js';
 export * from './repositories/census.js';
+export * from './repositories/comp-time.js';
 export * from './repositories/config.js';
 export * from './repositories/conflicts.js';
 export * from './repositories/day-of-pay.js';

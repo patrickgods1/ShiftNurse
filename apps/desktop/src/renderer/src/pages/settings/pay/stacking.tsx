@@ -13,6 +13,7 @@ import { usePaySettings, useSavePaySettings } from '../../../api-cost.js';
 import { AsyncState } from '../../../components/async-state.js';
 import { EditorShell } from '../../../components/editor-shell.js';
 import { CheckField, describedBy, Field } from '../../../components/field-help.js';
+import { NumberField } from '../../../components/number-field.js';
 import { INPUT } from '../../../components/ui.js';
 
 export function StackingSection({ unitId }: { unitId: Id }) {
@@ -31,7 +32,23 @@ function StackingForm({ unitId, saved }: { unitId: Id; saved: PaySettings }) {
   const [attribution, setAttribution] = useState(saved.overtimeWindowAttribution);
   const [springAsScheduled, setSpringAsScheduled] = useState(saved.paySpringForwardAsScheduled);
   const [breakRate, setBreakRate] = useState(saved.breakPremiumRate);
+  // A settings row from before comp time existed has no field: that reads as off.
+  const [compOn, setCompOn] = useState(saved.compTime != null);
+  const [compRate, setCompRate] = useState<number | undefined>(
+    saved.compTime?.hoursPerOvertimeHour ?? 1.5,
+  );
+  const [compCap, setCompCap] = useState<number | undefined>(saved.compTime?.capHours ?? undefined);
+  const compTime: PaySettings['compTime'] =
+    compOn && compRate !== undefined
+      ? { hoursPerOvertimeHour: compRate, capHours: compCap ?? null }
+      : null;
+  const savedComp = saved.compTime ?? null;
+  const compDirty =
+    compOn !== (savedComp !== null) ||
+    (compOn &&
+      (compRate !== savedComp?.hoursPerOvertimeHour || (compCap ?? null) !== savedComp?.capHours));
   const dirty =
+    compDirty ||
     value !== saved.premiumStacking ||
     coversOvertime !== saved.holidayPayCoversOvertime ||
     attribution !== saved.overtimeWindowAttribution ||
@@ -48,6 +65,7 @@ function StackingForm({ unitId, saved }: { unitId: Id; saved: PaySettings }) {
       overtimeWindowAttribution: attribution,
       paySpringForwardAsScheduled: springAsScheduled,
       breakPremiumRate: breakRate,
+      compTime,
     });
   }
   function discard() {
@@ -56,6 +74,9 @@ function StackingForm({ unitId, saved }: { unitId: Id; saved: PaySettings }) {
     setAttribution(saved.overtimeWindowAttribution);
     setSpringAsScheduled(saved.paySpringForwardAsScheduled);
     setBreakRate(saved.breakPremiumRate);
+    setCompOn(savedComp !== null);
+    setCompRate(savedComp?.hoursPerOvertimeHour ?? 1.5);
+    setCompCap(savedComp?.capHours ?? undefined);
     save.reset();
   }
 
@@ -65,6 +86,8 @@ function StackingForm({ unitId, saved }: { unitId: Id; saved: PaySettings }) {
       <EditorShell
         label="Premium stacking"
         dirty={dirty}
+        // A blank rate would save as comp time off, silently undoing what the toggle says.
+        canSave={!(compOn && compRate === undefined)}
         saving={save.isPending}
         error={save.error}
         formId="stacking-form"
@@ -164,6 +187,42 @@ function StackingForm({ unitId, saved }: { unitId: Id; saved: PaySettings }) {
               </option>
             </select>
           </Field>
+          <CheckField
+            id="comp-time-on"
+            label="Comp time instead of overtime pay"
+            hint="Only public employers may give comp time instead of overtime pay (29 U.S.C. § 207(o)): at least 1½ hours per overtime hour, by agreement before the work, at most 240 hours held. VA nurses: only when the nurse asks in writing (38 U.S.C. § 7453(e)(3)). A private hospital must pay overtime in cash."
+          >
+            <input
+              id="comp-time-on"
+              type="checkbox"
+              checked={compOn}
+              aria-describedby={describedBy('comp-time-on', { hint: true })}
+              onChange={(e) => setCompOn(e.target.checked)}
+            />
+          </CheckField>
+          {compOn && (
+            <>
+              <NumberField
+                id="comp-time-rate"
+                label="Comp hours per overtime hour"
+                value={compRate}
+                min={1}
+                step={0.25}
+                allowBlank
+                onCommit={setCompRate}
+                hint="1.5 is the federal floor for public employers; a contract may give more."
+              />
+              <NumberField
+                id="comp-time-cap"
+                label="Most comp hours a nurse may hold"
+                value={compCap}
+                min={1}
+                allowBlank
+                onCommit={setCompCap}
+                hint="Blank for no cap. The federal limit is 240 hours for most work, 480 for public safety, emergency response and seasonal work."
+              />
+            </>
+          )}
         </form>
       </EditorShell>
     </section>

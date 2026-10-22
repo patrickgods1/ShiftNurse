@@ -131,6 +131,7 @@ beforeEach(() => {
       overtimeWindowAttribution: 'clock',
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base',
+      compTime: null,
     },
     ACTOR,
   );
@@ -183,6 +184,7 @@ describe('the pay configuration a published schedule keeps', () => {
       overtimeWindowAttribution: 'clock',
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base',
+      compTime: null,
     });
     expect(snap.config.holidays).toEqual([]);
     const audits = auditHistoryFor(handle.db, 'pay_config_snapshot', periodId);
@@ -260,6 +262,26 @@ describe('the pay configuration a published schedule keeps', () => {
     expect(differentials).toEqual(old.differentials);
     expect(differentials[0]?.consecutive?.tiers).toBeUndefined();
     expect(differentials[0]?.shortRest).toBeUndefined();
+  });
+
+  it('reads a snapshot taken before comp time existed as paying overtime in cash', () => {
+    publish();
+    const taken = latestPayConfigSnapshot(handle.db, periodId)!;
+    const { compTime: _omitted, ...oldSettings } = taken.config.paySettings;
+    handle.db
+      .insert(payConfigSnapshot)
+      .values({
+        id: 'pre-comp-time',
+        periodId,
+        seq: 2,
+        takenAt: taken.takenAt,
+        takenBy: ACTOR,
+        reason: 'older release',
+        config: { ...taken.config, paySettings: oldSettings },
+      })
+      .run();
+    const kept = payConfigFor(handle.db, getPeriod(handle.db, periodId)!)!;
+    expect(kept.paySettings.compTime).toBeNull();
   });
 
   it('prices a draft with today’s settings, so it has no kept configuration', () => {

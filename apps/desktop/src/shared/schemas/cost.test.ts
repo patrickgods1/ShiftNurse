@@ -259,6 +259,7 @@ describe('pay settings arriving over IPC', () => {
       overtimeWindowAttribution: 'clock',
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base',
+      compTime: null,
     };
     expect(save.safeParse(['u-1', { callBackMinimumHours: 2 }]).success).toBe(false);
     expect(save.safeParse(['u-1', full]).success).toBe(true);
@@ -277,6 +278,7 @@ describe('pay settings arriving over IPC', () => {
       reportingPayNoticeHours: 2,
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base',
+      compTime: null,
     };
     expect(save.safeParse(['u-1', full]).success).toBe(false);
     expect(save.safeParse(['u-1', { ...full, overtimeWindowAttribution: 'start' }]).success).toBe(
@@ -297,6 +299,7 @@ describe('pay settings arriving over IPC', () => {
       overtimeWindowAttribution: 'clock',
       paySpringForwardAsScheduled: true,
       breakPremiumRate: 'regular',
+      compTime: null,
     };
     expect(save.safeParse(['u-1', full]).success).toBe(true);
     const { paySpringForwardAsScheduled: _s, ...withoutSpring } = full;
@@ -304,6 +307,35 @@ describe('pay settings arriving over IPC', () => {
     const { breakPremiumRate: _b, ...withoutRate } = full;
     expect(save.safeParse(['u-1', withoutRate]).success).toBe(false);
     expect(save.safeParse(['u-1', { ...full, breakPremiumRate: 'overtime' }]).success).toBe(false);
+  });
+
+  it('takes comp time as off, or a rate of at least one hour with a positive cap or none', () => {
+    const save = costSchemas.savePaySettings;
+    const full = {
+      callBackMinimumHours: 2,
+      premiumStacking: 'compound',
+      holidayPayCoversOvertime: false,
+      reportingPayNoticeHours: 2,
+      overtimeWindowAttribution: 'clock',
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
+      compTime: { hoursPerOvertimeHour: 1.5, capHours: 240 },
+    };
+    expect(save.safeParse(['u-1', full]).success).toBe(true);
+    expect(
+      save.safeParse(['u-1', { ...full, compTime: { hoursPerOvertimeHour: 1.5, capHours: null } }])
+        .success,
+    ).toBe(true);
+    expect(
+      save.safeParse(['u-1', { ...full, compTime: { hoursPerOvertimeHour: 0.5, capHours: 240 } }])
+        .success,
+    ).toBe(false);
+    expect(
+      save.safeParse(['u-1', { ...full, compTime: { hoursPerOvertimeHour: 1.5, capHours: 0 } }])
+        .success,
+    ).toBe(false);
+    const { compTime: _c, ...withoutComp } = full;
+    expect(save.safeParse(['u-1', withoutComp]).success).toBe(false);
   });
 
   it('needs a reporting-pay notice of 0 to 24 hours whenever pay settings are saved', () => {
@@ -316,6 +348,7 @@ describe('pay settings arriving over IPC', () => {
       overtimeWindowAttribution: 'clock',
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base',
+      compTime: null,
     };
     expect(save.safeParse(['u-1', full]).success).toBe(true);
     expect(save.safeParse(['u-1', { ...full, reportingPayNoticeHours: 24 }]).success).toBe(true);

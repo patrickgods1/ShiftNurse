@@ -6,10 +6,15 @@
  * checked against it carried forward by the unit's leave policy (Settings › Leave), so a stale
  * number reads as stale. Only the balances a nurse has are listed; the rest are offered.
  * Every change is audited with what it was before. A certification is the record behind an FMLA
- * request; its dates are inclusive.
+ * request; its dates are inclusive. A comp-time election is the advance agreement 29 U.S.C.
+ * § 207(o) requires, and is offered only on a unit whose pay settings give comp time.
  */
 
-import type { FmlaCertificationRecord, LeaveBalanceRecord } from '@shared/api.js';
+import type {
+  CompTimeElectionRecord,
+  FmlaCertificationRecord,
+  LeaveBalanceRecord,
+} from '@shared/api.js';
 import {
   compareDates,
   type Id,
@@ -19,12 +24,17 @@ import {
   TIME_OFF_TYPE_LABELS,
 } from '@shiftnurse/core';
 import { useId, useState } from 'react';
+import { usePaySettings } from '../../api-cost.js';
 import {
   useAddCertification,
+  useAddCompElection,
+  useCompElections,
   useLeaveRecords,
   useRemoveCertification,
+  useRemoveCompElection,
   useSetLeaveBalance,
   useUpdateCertification,
+  useUpdateCompElection,
 } from '../../api-leave-balances.js';
 import { AsyncState } from '../../components/async-state.js';
 import { useConfirm } from '../../components/confirm.js';
@@ -33,8 +43,9 @@ import { errorMessage, INPUT, PRIMARY, SECONDARY, SMALL } from '../../components
 import { useUnsavedChanges } from '../../components/unsaved-changes.js';
 import { formatDate, formatSpan } from '../../format.js';
 
-export function LeaveSection({ nurseId }: { nurseId: Id }) {
+export function LeaveSection({ nurseId, unitId }: { nurseId: Id; unitId: Id }) {
   const records = useLeaveRecords(nurseId);
+  const paySettings = usePaySettings(unitId);
   // Types the manager has opened a row for but not yet saved: a balance on file always shows.
   const [adding, setAdding] = useState<readonly LeaveBalanceType[]>([]);
   const hasBalance = (type: LeaveBalanceType) =>
@@ -81,6 +92,7 @@ export function LeaveSection({ nurseId }: { nurseId: Id }) {
             </div>
           ) : null}
           <Certifications nurseId={nurseId} certifications={records.data.certifications} />
+          {paySettings.data?.compTime ? <CompElections nurseId={nurseId} unitId={unitId} /> : null}
         </>
       )}
     </section>
@@ -321,6 +333,188 @@ function CertificationForm({
         </button>
         <button type="submit" className={PRIMARY} disabled={pending || !!problem}>
           {pending ? 'Saving…' : 'Save certification'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function CompElections({ nurseId, unitId }: { nurseId: Id; unitId: Id }) {
+  const elections = useCompElections(nurseId);
+  const remove = useRemoveCompElection();
+  const confirm = useConfirm();
+  const [editing, setEditing] = useState<'new' | CompTimeElectionRecord | undefined>(undefined);
+  const span = (e: CompTimeElectionRecord) =>
+    e.endsOn ? formatSpan(e.startsOn, e.endsOn, '') : `from ${formatDate(e.startsOn)}, open-ended`;
+
+  const onRemove = async (e: CompTimeElectionRecord) => {
+    const ok = await confirm({
+      title: 'Remove this comp-time election?',
+      description: `${span(e)}. Overtime worked on these dates will no longer be banked as comp time.`,
+      confirmLabel: 'Remove election',
+    });
+    if (ok) remove.mutate(e.id);
+  };
+
+  const list = elections.data ?? [];
+  return (
+    <div className="mt-4" data-testid="comp-elections">
+      <div className="mb-1 flex items-center justify-between">
+        <h4 className="text-xs font-semibold text-text">Comp time instead of overtime</h4>
+        <button type="button" className={SMALL} onClick={() => setEditing('new')}>
+          Add election
+        </button>
+      </div>
+      <p className="mb-2 text-xs text-text-muted">
+        Overtime worked on these dates is banked as comp time once the schedule is published and
+        over (29 U.S.C. § 207(o) needs the agreement before the work).
+      </p>
+      {elections.isError ? (
+        <AsyncState status="error" label="Could not load elections" error={elections.error} />
+      ) : list.length === 0 && editing === undefined ? (
+        <p className="text-xs text-text-muted">None on file.</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {list.map((e) =>
+            typeof editing === 'object' && editing.id === e.id ? null : (
+              <li
+                key={e.id}
+                className="flex items-start justify-between gap-2 rounded-md border border-border p-2 text-xs"
+              >
+                <div>
+                  <div className="text-text">{span(e)}</div>
+                  {e.note ? <div className="text-text-muted">{e.note}</div> : null}
+                </div>
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    className={SMALL}
+                    aria-label={`Edit election ${span(e)}`}
+                    onClick={() => setEditing(e)}
+                  >
+                    Edit election
+                  </button>
+                  <button
+                    type="button"
+                    className={SMALL}
+                    aria-label={`Remove election ${span(e)}`}
+                    onClick={() => void onRemove(e)}
+                  >
+                    Remove election
+                  </button>
+                </div>
+              </li>
+            ),
+          )}
+        </ul>
+      )}
+      {errorMessage(remove.error) !== undefined ? (
+        <p role="alert" className="mt-1 text-xs text-danger">
+          {errorMessage(remove.error)}
+        </p>
+      ) : null}
+      {editing !== undefined ? (
+        <CompElectionForm
+          nurseId={nurseId}
+          unitId={unitId}
+          record={editing === 'new' ? undefined : editing}
+          onDone={() => setEditing(undefined)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function CompElectionForm({
+  nurseId,
+  unitId,
+  record,
+  onDone,
+}: {
+  nurseId: Id;
+  unitId: Id;
+  record: CompTimeElectionRecord | undefined;
+  onDone: () => void;
+}) {
+  const add = useAddCompElection();
+  const update = useUpdateCompElection();
+  const [startsOn, setStartsOn] = useState<IsoDate | ''>(record?.startsOn ?? '');
+  const [endsOn, setEndsOn] = useState<IsoDate | ''>(record?.endsOn ?? '');
+  const [note, setNote] = useState(record?.note ?? '');
+  const noteId = useId();
+  useUnsavedChanges(
+    'comp-time election',
+    startsOn !== (record?.startsOn ?? '') ||
+      endsOn !== (record?.endsOn ?? '') ||
+      note !== (record?.note ?? ''),
+  );
+
+  const problem = !startsOn
+    ? 'Enter the first day the agreement covers.'
+    : endsOn && compareDates(endsOn, startsOn) < 0
+      ? 'The last day is before the first.'
+      : undefined;
+  const pending = add.isPending || update.isPending;
+  const error = errorMessage(add.error ?? update.error);
+
+  function submit() {
+    if (problem || !startsOn) return;
+    const trimmed = note.trim();
+    if (record) {
+      update.mutate(
+        { id: record.id, patch: { startsOn, endsOn: endsOn || null, note: trimmed || null } },
+        { onSuccess: onDone },
+      );
+    } else {
+      add.mutate(
+        {
+          unitId,
+          nurseId,
+          startsOn,
+          ...(endsOn ? { endsOn } : {}),
+          ...(trimmed ? { note: trimmed } : {}),
+        },
+        { onSuccess: onDone },
+      );
+    }
+  }
+
+  return (
+    <form
+      className="mt-2 flex flex-col gap-2 rounded-md border border-border p-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        submit();
+      }}
+    >
+      <div className="grid grid-cols-2 gap-2">
+        <DateField label="Agreed from" value={startsOn} onChange={setStartsOn} />
+        <DateField label="Agreed through (blank: open-ended)" value={endsOn} onChange={setEndsOn} />
+      </div>
+      <label htmlFor={noteId} className="flex flex-col gap-1 text-xs text-text-muted">
+        Note (optional)
+        <input
+          id={noteId}
+          className={INPUT}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Written request signed 12 Dec"
+        />
+      </label>
+      {problem && (startsOn || endsOn) ? (
+        <p className="text-xs text-text-muted">{problem}</p>
+      ) : null}
+      {error !== undefined ? (
+        <p role="alert" className="text-xs text-danger">
+          {error}
+        </p>
+      ) : null}
+      <div className="flex flex-wrap justify-end gap-2">
+        <button type="button" className={SECONDARY} onClick={onDone}>
+          Cancel
+        </button>
+        <button type="submit" className={PRIMARY} disabled={pending || !!problem}>
+          {pending ? 'Saving…' : 'Save election'}
         </button>
       </div>
     </form>

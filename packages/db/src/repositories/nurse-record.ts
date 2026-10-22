@@ -97,6 +97,11 @@ function concernsOf(snapshot: unknown): string | undefined {
   if (typeof snapshot !== 'object' || snapshot === null) return undefined;
   const s = snapshot as Record<string, unknown>;
   if (typeof s.date === 'string') return s.date;
+  if (typeof s.startsOn === 'string') {
+    return typeof s.endsOn === 'string' && s.endsOn !== s.startsOn
+      ? `${s.startsOn} to ${s.endsOn}`
+      : s.startsOn;
+  }
   if (typeof s.startDate === 'string') {
     return typeof s.endDate === 'string' && s.endDate !== s.startDate
       ? `${s.startDate} to ${s.endDate}`

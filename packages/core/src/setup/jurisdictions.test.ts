@@ -1082,6 +1082,7 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
       overtimeWindowAttribution: 'clock',
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base',
+      compTime: null,
     });
   });
 
@@ -1097,6 +1098,7 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
           overtimeWindowAttribution: 'clock',
           paySpringForwardAsScheduled: false,
           breakPremiumRate: 'base',
+          compTime: null,
         },
       }),
     );
@@ -1380,5 +1382,13 @@ describe('where the VA preset’s contract values come from', () => {
       'max-consecutive-shifts',
       'days-off-together',
     ]);
+  });
+});
+
+describe('comp time in the state presets', () => {
+  it('no state preset turns comp time on', () => {
+    for (const [id, preset] of Object.entries(JURISDICTION_PRESETS)) {
+      expect(preset.paySettings?.compTime ?? null, id).toBeNull();
+    }
   });
 });

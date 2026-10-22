@@ -652,9 +652,16 @@
   date a year earlier (366 days when 29 February falls inside). `leave/policy.ts` validates a
   unit's `LeavePolicy`; absent, a unit runs `DEFAULT_LEAVE_POLICY` (Title I, rolling back, no
   accrual).
-- **Leave for a 72/80 nurse is charged 10 hours per 9 of absence.** 38 U.S.C. § 7456A(d):
-  `leave/charge.ts`'s `leaveChargeHours(scheduleKind, hours)` is applied where a leave balance is
+- **Annual and sick leave for a 72/80 nurse is charged 10 hours per 9 of absence.** 38 U.S.C.
+  § 7456A(b)(3) names only "sick leave or annual leave", so comp time and PTO are charged hour for
+  hour, not 10/9: `leave/charge.ts`'s `leaveChargeHours(scheduleKind, type, hours)` is applied where a leave balance is
   debited (`main/api/leave-balances.ts`: approved annual/sick use and the request's check), and the
   request dialog shows the charged figure. FMLA is not charged: its entitlement and use are both
   in worked hours. A request's stored `paidHours` stays the hours worked it covers — it is what
   counts toward the 72 — so charging at both ends would charge twice.
+- **Comp time earned is an `earned` event in `projectBalance`, dated when it is credited.**
+  `leave/comp-time.ts`'s `compTimeCredit` turns a period's overtime inside a nurse's election into
+  comp hours (rate × overtime, up to the cap less the balance projected to the period's last day)
+  and says how much overtime stays paid in cash. Main banks a finished published period
+  (`main/api/comp-time.ts`) and dates each credit on that period's last day, so a comp request
+  sees it from the next day (the projection's window is strict); same-day order is earn before use.

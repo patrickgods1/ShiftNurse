@@ -123,6 +123,7 @@ describe('the cost report’s day-of pay', () => {
     cost.savePaySettings(f.seeded.unitId, {
       ...cost.paySettings(f.seeded.unitId),
       breakPremiumRate: 'regular',
+      compTime: null,
     });
     // Her only shift that week is the night: every hour at $50 + $5, so the regular rate is $55.
     expect(report().dayOf.lines.map((l) => [l.kind, l.rate, l.amount])).toEqual([
@@ -144,6 +145,7 @@ describe('the cost report’s day-of pay', () => {
     cost.savePaySettings(f.seeded.unitId, {
       ...cost.paySettings(f.seeded.unitId),
       breakPremiumRate: 'regular',
+      compTime: null,
     });
     // Her night that week has a $55 regular rate, but nothing is dated the next day.
     scheduleApi(f.handle.db).createAssignment({
@@ -174,6 +176,7 @@ describe('the cost report’s day-of pay', () => {
       overtimeWindowAttribution: 'clock' as const,
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base' as const,
+      compTime: null,
     });
     const standby = createShiftType(
       f.handle.db,
@@ -211,6 +214,7 @@ describe('the cost report’s day-of pay', () => {
       overtimeWindowAttribution: 'clock' as const,
       paySpringForwardAsScheduled: false,
       breakPremiumRate: 'base' as const,
+      compTime: null,
     });
   });
 
