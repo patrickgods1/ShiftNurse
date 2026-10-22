@@ -28,6 +28,7 @@ import { ids } from '../ids.js';
 import { toAssignment, toSchedulePeriod } from '../mappers.js';
 import { assignment, nurse, schedulePeriod, shiftType } from '../schema.js';
 import { insertRows } from './bulk.js';
+import { requireWorksOnUnit } from './nurse-units.js';
 import { type PatchKeys, patchOf } from './patch.js';
 import { getLatestRuleSet } from './rulesets.js';
 
@@ -362,9 +363,19 @@ export interface CreateAssignmentInput {
  * The one place that decides whether a shift may sit where it is being put. Out-of-period rows
  * are invisible on the grid yet still feed FMLA hours, accrual and the next lookback, and a
  * foreign shift type is costed with the wrong differentials, so every writer asks before it
- * inserts. `typeUnitId` is undefined when the shift type does not exist.
+ * inserts. `typeUnitId` is undefined when the shift type does not exist. A float is placeable
+ * only on the days her membership covers: the roster lists her for the whole period once her
+ * dates touch it, so the grid's picker alone would let her be put on a day her own unit has her.
  */
-function placeableOrThrow(period: SchedulePeriod, date: string, typeUnitId: Id | undefined): void {
+function placeableOrThrow(
+  db: DbLike,
+  period: SchedulePeriod,
+  nurseId: Id,
+  date: string,
+  typeUnitId: Id | undefined,
+  /** `nurse::date` pairs already found on the roster, so a regenerate asks each one once. */
+  worksHere?: Set<string>,
+): void {
   if (!isIsoDate(date)) throw new Error(`"${date}" is not a date.`);
   if (!dateInRange(date, period.startDate, period.endDate)) {
     throw new Error(
@@ -373,6 +384,10 @@ function placeableOrThrow(period: SchedulePeriod, date: string, typeUnitId: Id |
   }
   if (typeUnitId !== period.unitId)
     throw new Error("That shift is not one of this unit's shift types.");
+  const key = `${nurseId}::${date}`;
+  if (worksHere?.has(key)) return;
+  requireWorksOnUnit(db, nurseId, period.unitId, { start: date, end: date });
+  worksHere?.add(key);
 }
 
 export function createAssignment(
@@ -384,7 +399,7 @@ export function createAssignment(
   const period = getPeriod(db, input.periodId);
   if (!period) throw new Error(`Schedule period ${input.periodId} not found`);
   const type = db.select().from(shiftType).where(eq(shiftType.id, input.shiftTypeId)).get();
-  placeableOrThrow(period, input.date, type?.unitId);
+  placeableOrThrow(db, period, input.nurseId, input.date, type?.unitId);
   const id = ids.assignment();
   const row = {
     id,
@@ -617,8 +632,18 @@ export function replaceAssignments(
       .all()
       .map((t) => [t.id, t.unitId] as const),
   );
+  // Echoed locked rows are checked too: a pinned shift outside a float's dates is fixed by hand,
+  // not carried through every regenerate.
+  const worksHere = new Set<string>();
   for (const input of assignments)
-    placeableOrThrow(period, input.date, typeUnits.get(input.shiftTypeId));
+    placeableOrThrow(
+      db,
+      period,
+      input.nurseId,
+      input.date,
+      typeUnits.get(input.shiftTypeId),
+      worksHere,
+    );
   const existing = db.select().from(assignment).where(eq(assignment.periodId, periodId)).all();
   const lockedRows = existing.filter((r) => r.isLocked);
   const unlockedRows = existing.filter((r) => !r.isLocked);

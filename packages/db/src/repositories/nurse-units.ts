@@ -9,10 +9,10 @@
  * nurse already holds on the unit, or the unit's own grid would hold a shift for someone it no
  * longer lists — and a `ScheduleView` throws on a nurse it does not know.
  *
- * Also here: the two reads that turn a membership into scheduling input — `listFloatNurses`
- * (who to append after the home roster) and `busyElsewhereFor` (the shifts those nurses, and the
- * home roster, work on other units, as core's `busyElsewhere` turns them into judged-but-never-
- * moved rows).
+ * Also here: the reads that turn a membership into scheduling input — `listFloatNurses`
+ * (who to append after the home roster), `listFloatMemberships` (the dates each of them may work
+ * here) and `busyElsewhereFor` (the shifts those nurses, and the home roster, work on other units,
+ * as core's `busyElsewhere` turns them into judged-but-never-moved rows).
  */
 
 import {
@@ -26,6 +26,7 @@ import {
   type IsoDate,
   type Nurse,
   type ShiftType,
+  type SolveInput,
 } from '@shiftnurse/core';
 import { and, asc, eq, gte, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
 import { recordAudit } from '../audit.js';
@@ -319,6 +320,42 @@ export function listFloatNurses(db: DbLike, unitId: Id, start: IsoDate, end: Iso
     .orderBy(sql`${table}.rowid`)
     .all()
     .map((r) => toNurse(r.nurse));
+}
+
+/** Core's `UnitMembership`, named through `SolveInput` because core's index does not export it. */
+type UnitMembership = NonNullable<SolveInput['memberships']>[number];
+
+/**
+ * The dates each nurse `listFloatNurses` returns may work on `unitId`, in the same order. The
+ * roster lists a float for the whole period once her membership touches it, so without these
+ * Generate, conflicts and day-of could put her on a day before she arrives or after she has gone
+ * back. Same filter as `listFloatNurses`: one float, one membership, never a home nurse.
+ */
+export function listFloatMemberships(
+  db: DbLike,
+  unitId: Id,
+  start: IsoDate,
+  end: IsoDate,
+): UnitMembership[] {
+  return db
+    .select({ nurseId: table.nurseId, startDate: table.startDate, endDate: table.endDate })
+    .from(table)
+    .innerJoin(nurseTable, eq(table.nurseId, nurseTable.id))
+    .where(
+      and(
+        eq(table.unitId, unitId),
+        ne(nurseTable.unitId, unitId),
+        or(isNull(table.startDate), lte(table.startDate, end)),
+        or(isNull(table.endDate), gte(table.endDate, start)),
+      ),
+    )
+    .orderBy(sql`${table}.rowid`)
+    .all()
+    .map((r) => ({
+      nurseId: r.nurseId,
+      ...(r.startDate ? { startDate: r.startDate as IsoDate } : {}),
+      ...(r.endDate ? { endDate: r.endDate as IsoDate } : {}),
+    }));
 }
 
 /**

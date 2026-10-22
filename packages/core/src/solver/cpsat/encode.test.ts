@@ -126,6 +126,36 @@ describe('variables', () => {
     expect(hasVariable(encoding, 'ada', '2026-01-05', DAY_12.id)).toBe(true);
   });
 
+  it('gives a float no variable outside her float dates, and every one inside them', () => {
+    // Bo floats in Thu 8 – Tue 13 Jan. Sun 11's night runs into Monday and is Sunday's shift;
+    // Tue 13's night ends on Wed 14, outside her dates, and is still Tuesday's to work.
+    const bo = makeNurse({ id: 'bo', firstName: 'Bo' });
+    const encoding = encodeCpsat(
+      unit([ada(), bo], {
+        memberships: [
+          { nurseId: 'bo', startDate: isoDate('2026-01-08'), endDate: isoDate('2026-01-13') },
+        ],
+      }),
+    );
+    const bosDays = [
+      ...new Set(encoding.shiftVars.filter((sv) => sv.nurseId === 'bo').map((sv) => sv.shift.date)),
+    ].sort();
+    expect(bosDays).toEqual([
+      '2026-01-08',
+      '2026-01-09',
+      '2026-01-10',
+      '2026-01-11',
+      '2026-01-12',
+      '2026-01-13',
+    ]);
+    expect(hasVariable(encoding, 'bo', '2026-01-13', NIGHT_12.id)).toBe(true);
+    // Ada is homed here: every one of the 14 days.
+    expect(
+      new Set(encoding.shiftVars.filter((sv) => sv.nurseId === 'ada').map((sv) => sv.shift.date))
+        .size,
+    ).toBe(14);
+  });
+
   it('keeps the night before leave off limits where a day off is a whole calendar day', () => {
     const encoding = encodeCpsat(
       unit([ada()], {
@@ -1716,6 +1746,23 @@ describe('agreement with the rule engine', () => {
 
   it('never calls a roster with random locked shifts legal when the rule engine does not', () => {
     expectLockedParity(withRandomLocks(parityInput(), new Rng(31)));
+  });
+
+  /** Bo floats in for the middle of the fortnight only, Thu 8 – Tue 13 Jan. */
+  const BO_MID_FORTNIGHT = {
+    memberships: [
+      { nurseId: 'bo', startDate: isoDate('2026-01-08'), endDate: isoDate('2026-01-13') },
+    ],
+  };
+
+  it('calls a random schedule illegal exactly when the rule engine does, with a float in for part of it', () => {
+    expectParity(parityInput(BO_MID_FORTNIGHT));
+  });
+
+  it('lets a locked shift outside a float’s dates stand, and never adds another', () => {
+    // Some of the random locks fall outside Bo's dates: the gate tolerates such a pinned breach,
+    // and the encoding must still accept the all-off roster around it.
+    expectLockedParity(withRandomLocks(parityInput(BO_MID_FORTNIGHT), new Rng(31)));
   });
 
   describe('can always leave every shift unassigned, whatever is locked', () => {

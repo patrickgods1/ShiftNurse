@@ -7,7 +7,6 @@
 import { addDays, isoDate, type Nurse } from '@shiftnurse/core';
 import {
   auditHistoryFor,
-  createAssignment,
   createNurse,
   createUnit,
   getAssignment,
@@ -16,6 +15,7 @@ import {
   listChanges,
   listFloatRecords,
   publishSchedule,
+  schema,
   transact,
   updateNurse,
 } from '@shiftnurse/db';
@@ -170,9 +170,12 @@ describe('floating a nurse off a shift', () => {
       { ...f.rns[0]!, id: undefined, unitId: other.id, employeeId: 'X-9001' } as never,
       ACTOR,
     );
-    createAssignment(
-      f.handle.db,
-      {
+    // Placing her is refused now (she has no float membership here), so the row is one an older
+    // file could hold, written straight into the table.
+    f.handle.db
+      .insert(schema.assignment)
+      .values({
+        id: 'assignment-stranger',
         periodId: f.seeded.draftPeriodId,
         nurseId: stranger.id,
         shiftTypeId: f.day.id,
@@ -181,9 +184,12 @@ describe('floating a nurse off a shift', () => {
         isLocked: false,
         isCharge: false,
         isOvertime: false,
-      },
-      ACTOR,
-    );
+        notes: null,
+        holdoverMinutes: 0,
+        holdoverMandated: null,
+        floatedTo: null,
+      })
+      .run();
     expect(() => api().order(request())).toThrow(/not on this period's roster/);
   });
 

@@ -1681,3 +1681,36 @@ describe('a shift short of its floor', () => {
     expect(spread).toBe(6_120);
   });
 });
+
+describe('a float’s dates on the unit', () => {
+  it('never shortlists a float for a day outside her float dates', () => {
+    // The period runs Sun 4 – Sat 17 Jan; Fran is here Thu 8 (day 4) to Tue 13 Jan (day 9).
+    const fran = makeNurse({ id: 'fran', isChargeEligible: true });
+    const hana = makeNurse({ id: 'hana', isChargeEligible: true });
+    const input = solveInputFrom({
+      startDate: isoDate('2026-01-04'),
+      endDate: isoDate('2026-01-17'),
+      nurses: [hana, fran],
+      shiftTypes: [DAY_12, NIGHT_12],
+      coverageRequirements: [...coverageAllWeek(DAY_12, 'RN', 1)],
+      memberships: [
+        { nurseId: 'fran', startDate: isoDate('2026-01-08'), endDate: isoDate('2026-01-13') },
+      ],
+    });
+    const model = new SolverModel(input);
+    const f = model.nurseIdx.get('fran')!;
+    const h = model.nurseIdx.get('hana')!;
+    const shortlisted = (n: number) =>
+      model.dates.filter((_, day) => model.eligible(n, model.shiftAt(day, DAY_12), null));
+    expect(shortlisted(f)).toEqual([
+      '2026-01-08',
+      '2026-01-09',
+      '2026-01-10',
+      '2026-01-11',
+      '2026-01-12',
+      '2026-01-13',
+    ]);
+    // A home nurse has no dates to keep inside: all 14 days.
+    expect(shortlisted(h)).toHaveLength(14);
+  });
+});

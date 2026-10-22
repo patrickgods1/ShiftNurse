@@ -27,6 +27,7 @@ import type {
   TimeOffRequest,
   Timestamp,
   Unit,
+  UnitMembership,
 } from '../domain/entities.js';
 import { DEFAULT_WEEKEND, type IsoDate, type WeekendDefinition } from '../domain/time.js';
 import { DEFAULT_FAIRNESS_WEIGHTS } from '../fairness/types.js';
@@ -43,6 +44,7 @@ import { contractedHoursRule, maxHoursRule } from './hours-rules.js';
 import { incompatibleBufferRule, incompatibleTogetherRule } from './incompatibility-rules.js';
 import { longStretchRule } from './long-stretch.js';
 import { mandatoryOvertimeRule } from './mandatory-overtime.js';
+import { worksWithinMembershipRule } from './membership.js';
 import { nightRecoveryRule } from './night-recovery.js';
 import { type PaidLeaveCredit, type PaidSickCall, paidLeaveCredits } from './paid-leave.js';
 import { describeParamProblems, RuleParamsError, ruleConfigProblems } from './param-validation.js';
@@ -73,6 +75,7 @@ import { weekendPatternRule } from './weekend-pattern.js';
 export const ALL_RULES: readonly Rule<never>[] = [
   timeOffRule,
   accommodationBlocksRule,
+  worksWithinMembershipRule,
   overlapRule,
   ratioComplianceRule,
   coverageRule,
@@ -278,6 +281,8 @@ export interface RuleContextInput {
   dstTransitions?: readonly DstTransition[];
   /** Nurses' stated preferences. Absent: nobody has asked for anything. */
   preferences?: readonly Preference[];
+  /** The floats' membership dates on this unit. Absent: nobody is limited. */
+  memberships?: readonly UnitMembership[];
 }
 
 /** Precompute the joins and indexes every rule needs, once per evaluation pass. */
@@ -342,7 +347,18 @@ export function buildRuleContext(input: RuleContextInput): RuleContext {
     historyFrom: input.historyFrom,
     dstTransitions: input.dstTransitions ?? [],
     preferredShiftTypesByNurse: preferredShiftTypes(input.preferences ?? []),
+    membershipByNurse: membershipsByNurse(input.memberships ?? []),
   };
+}
+
+/** One membership per float: two would leave it unclear which dates bind, so refuse them. */
+function membershipsByNurse(memberships: readonly UnitMembership[]): Map<Id, UnitMembership> {
+  const out = new Map<Id, UnitMembership>();
+  for (const m of memberships) {
+    if (out.has(m.nurseId)) throw new Error(`Nurse ${m.nurseId} has two memberships of this unit`);
+    out.set(m.nurseId, m);
+  }
+  return out;
 }
 
 function preferredShiftTypes(preferences: readonly Preference[]): Map<Id, Set<Id>> {

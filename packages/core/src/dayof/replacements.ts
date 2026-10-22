@@ -48,6 +48,7 @@ import { compareSeniority } from '../roster/seniority.js';
 import { approvedLeaveOn } from '../rules/availability-rules.js';
 import { canTakeCharge } from '../rules/coverage-rules.js';
 import { volunteeredOn } from '../rules/mandatory-overtime.js';
+import { outsideMembership } from '../rules/membership.js';
 import type { Violation } from '../rules/types.js';
 import {
   type ExcludedNurse,
@@ -110,6 +111,11 @@ export function findReplacements(input: ReplacementInput): ReplacementReport {
 
     if (approvedLeaveOn(world.ctx, nurse.id, date)) {
       excluded.push({ nurseId: nurse.id, label, reason: 'On approved leave' });
+      continue;
+    }
+
+    if (outsideMembership(world.ctx, nurse.id, date)) {
+      excluded.push({ nurseId: nurse.id, label, reason: 'Outside their float dates on this unit' });
       continue;
     }
 

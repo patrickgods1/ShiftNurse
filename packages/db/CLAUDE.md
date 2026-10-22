@@ -140,6 +140,12 @@
 - **One membership predicate.** `nurseWorksOnUnit`/`requireWorksOnUnit` (`nurse-units.ts`): home
   unit, or a float membership covering the dates. Every validator that asks 'does this nurse work
   here' uses it. Accommodations stay on the home unit and apply everywhere.
+- **A float works here only inside her membership dates.** `loadPeriodInput` fills
+  `SolveInput.memberships` from `listFloatMemberships` (the same filter, window and order as
+  `listFloatNurses`), which core's `works-within-membership` rule and both solvers read. Manual
+  placement asks `requireWorksOnUnit` for the shift's start date in `placeableOrThrow`, so every
+  `createAssignment` and `replaceAssignments` (echoed locked rows included: one outside the dates is
+  fixed by hand) refuses a day outside them.
 - **A floated shift stays (migration 0039, `assignment.floated_to`).** `markFloatedOff` locks and
   marks it, `updateAssignment` refuses to unlock it, and loaders turn it into busy time for
   judging (`splitFloatedOff`, `periodTailFor`): it never reaches `SolveInput.assignments`, and

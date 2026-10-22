@@ -67,7 +67,7 @@ import {
 import { holidayWorkFor, holidayWorkIn } from './holidays.js';
 import { listIncompatibilityGroups } from './incompatibility.js';
 import { ledgerSince } from './ledger.js';
-import { busyElsewhereFor, listFloatNurses } from './nurse-units.js';
+import { busyElsewhereFor, listFloatMemberships, listFloatNurses } from './nurse-units.js';
 import { listOvertimeVolunteersOverlapping } from './overtime-volunteers.js';
 import {
   getPaySettings,
@@ -271,6 +271,15 @@ export function rosterForPeriod(
     ...listNursesForUnit(db, period.unitId),
     ...listFloatNurses(db, period.unitId, start, end),
   ];
+}
+
+/** The dates each float in `rosterForPeriod` may work here, read over the same window. */
+function floatMembershipsFor(
+  db: DbLike,
+  period: Pick<SchedulePeriod, 'unitId' | 'startDate' | 'endDate'>,
+) {
+  const { start, end } = elsewhereWindow(period);
+  return listFloatMemberships(db, period.unitId, start, end);
 }
 
 /** What each nurse brings wherever they work, read for this period's roster. */
@@ -513,6 +522,8 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     ),
     restWaivers: records.restWaivers,
     availabilityBlocks: records.availabilityBlocks,
+    // The roster's window, so every float `rosterForPeriod` lists arrives with her dates.
+    memberships: floatMembershipsFor(db, period),
     dstTransitions: dstTransitionsForPeriod(period, PRIOR_ASSIGNMENT_LOOKBACK_DAYS),
     cost: {
       payRates: records.payRates,

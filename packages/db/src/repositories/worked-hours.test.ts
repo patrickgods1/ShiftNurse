@@ -10,6 +10,7 @@ import { type OpenedDatabase, openTestDatabase, transact } from '../client.js';
 import { assignment } from '../schema.js';
 import { cancelCallOff, markCallOffUncovered, reportCallOff } from './calloffs.js';
 import { createShiftType, createUnit } from './config.js';
+import { createNurseUnit } from './nurse-units.js';
 import { publishSchedule } from './publish.js';
 import { createNurse } from './roster.js';
 import { saveRuleSet } from './rulesets.js';
@@ -58,6 +59,7 @@ function unitWithShift(name: string, shift: { durationHours: number; isOnCall: b
     },
     ACTOR,
   );
+  createNurseUnit(db, { nurseId, unitId: unit.id }, ACTOR);
   createAssignment(db, { periodId: period.id, nurseId, shiftTypeId: type.id, date: night }, ACTOR);
   return { unit, type, period };
 }
