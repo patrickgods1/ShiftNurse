@@ -175,3 +175,24 @@ describe('who the shift cannot spare', () => {
     expect(() => removalBreaks(input, ['nope'])).toThrow('Unknown assignment nope.');
   });
 });
+
+describe('a past shift judged by the rules of its day', () => {
+  it('still names the only experienced RN as unsafe to remove on a shift type retired since', () => {
+    const exp = makeNurse({ id: 'exp' });
+    const nov1 = makeNurse({ id: 'nov1', isNovice: true });
+    const nov2 = makeNurse({ id: 'nov2', isNovice: true });
+    const rows = [exp, nov1, nov2].map((n) => assign(n.id, DAY_12, TUE));
+    const judged = inputWith({ nurses: [exp, nov1, nov2], assignments: rows });
+    // Main hands over the live types, Day 12 retired since, with the demand of that Tuesday.
+    const input = {
+      ...judged,
+      shiftTypes: judged.shiftTypes.map((t) => (t.id === DAY_12.id ? { ...t, active: false } : t)),
+    };
+    const breaks = removalBreaks(
+      input,
+      rows.map((r) => r.id),
+    );
+    expect([...breaks.keys()]).toEqual([rows[0]!.id]);
+    expect(breaks.get(rows[0]!.id)!.code).toBe('all_novice_shift');
+  });
+});

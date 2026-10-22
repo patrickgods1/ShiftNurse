@@ -14,6 +14,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import {
+  backfillDemandConfigVersions,
   backfillPayConfigSnapshots,
   DatabaseNewerThanAppError,
   type MigrationStatus,
@@ -84,6 +85,7 @@ export async function openAppDatabase(
   opened = candidate;
   recordPendingRestore(candidate.db);
   recordEarlierPayConfigs(candidate.db);
+  recordMissedDemandVersions(candidate.db);
   return opened.db;
 }
 
@@ -98,6 +100,20 @@ function recordEarlierPayConfigs(db: ShiftNurseDb): void {
     transact(db, (tx) => backfillPayConfigSnapshots(tx, 'manager'));
   } catch (err) {
     console.error(`[pay] could not record the pay settings of earlier schedules: ${err}`);
+  }
+}
+
+/**
+ * Record the demand rules (ratios, tiers, floors, ratio staffing, active shift types) of any unit
+ * whose change was saved without its version, and a first version for a unit with none: the first
+ * launch after versions were kept, or a restored older backup. Today's verdicts are unchanged; it
+ * stops a later edit from rewriting how past dates are judged. Never blocks startup.
+ */
+function recordMissedDemandVersions(db: ShiftNurseDb): void {
+  try {
+    transact(db, (tx) => backfillDemandConfigVersions(tx, 'manager'));
+  } catch (err) {
+    console.error(`[demand] could not record the demand rules of earlier changes: ${err}`);
   }
 }
 

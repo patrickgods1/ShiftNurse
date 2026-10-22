@@ -4,7 +4,7 @@
 
 ## What is here
 
-- `packages/db` (M2, complete): 50-table Drizzle schema, generated migrations, `client.ts`
+- `packages/db` (M2, complete): 52-table Drizzle schema, generated migrations, `client.ts`
   (WAL, foreign keys ON, `transact`), `audit.ts`, `mappers.ts`, and repositories under
   `repositories/` — `roster`, `config` (unit, shift types, coverage, holidays, credential
   requirements), `acuity` (tiers, ratios, HPPD), `rulesets`, `schedule`, `timeoff`, `calloffs`,
@@ -34,6 +34,23 @@
   `repricePeriod` takes a new snapshot with a strict reason. Pay rates are not snapshotted (they
   carry `effectiveFrom`). `backfillPayConfigSnapshots` covers periods published before the table
   existed.
+- **Demand rules are kept as they were on each date (`demand_config_version`, migration
+  `0050_demand_config_history`, append-only by trigger).** A version is the unit's active shift-type
+  ids, acuity tiers, active ratio rules, coverage floors and ratio staffing, as canonical JSON
+  (arrays by id); census and the HPPD target stay live. Every writer of those tables (`acuity.ts`,
+  `config.ts`, so the presets, `applyJurisdiction` and the seeds too) calls
+  `recordDemandConfigVersion` (`repositories/demand-history.ts`) after its write: it inserts only
+  when the canonical JSON differs from the last version, audits it, and clears the unit's
+  `demand_config_dirty` row. Triggers on those tables' demand columns fill that row, so a writer
+  that forgets fails the table-driven tripwire in `demand-history.test.ts`, and
+  `backfillDemandConfigVersions` (main's startup) records the missed version and a first version
+  for a unit with none. A step of many writes (`applySetupPreset`, `applyJurisdiction`,
+  `duplicateShiftType`, `fillCoverageWeek`, the demo and scenario seeds) runs in
+  `batchDemandVersions`, which holds the calls back and records one version per touched unit when
+  the outermost scope ends (nothing if it throws), so no partial version exists for a date before
+  the first to fall back on. `demandConfigOn` reads the version in force at the end of a date (the
+  earliest one before any). `demand-history.ts` imports no repository: `config.ts` and `acuity.ts`
+  call it.
 - **History is append-only in the file (migration `0049_history_is_append_only`):** `rule_set`,
   `rule_config`, `schedule_version`, `schedule_change` and `pay_config_snapshot` refuse UPDATE and
   DELETE, like `audit_log` (0013). They also abort FK cascades, so no unit or published period can

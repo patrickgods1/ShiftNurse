@@ -48,6 +48,19 @@ export * from './repositories/config.js';
 export * from './repositories/conflicts.js';
 export * from './repositories/day-of-pay.js';
 export * from './repositories/deactivation.js';
+export {
+  backfillDemandConfigVersions,
+  batchDemandVersions,
+  currentDemandConfig,
+  type DemandConfig,
+  type DemandConfigVersion,
+  type DemandJudging,
+  demandConfigOn,
+  demandInputsForDate,
+  demandTableFor,
+  latestDemandConfigVersion,
+  recordDemandConfigVersion,
+} from './repositories/demand-history.js';
 export * from './repositories/exchange.js';
 export * from './repositories/float-records.js';
 export * from './repositories/holdovers.js';

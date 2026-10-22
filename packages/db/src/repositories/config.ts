@@ -66,6 +66,7 @@ import {
   unit as unitTable,
 } from '../schema.js';
 import { listCensusHistory } from './census.js';
+import { batchDemandVersions, recordDemandConfigVersion } from './demand-history.js';
 import { auditedUpdate, type PatchKeys, patchOf } from './patch.js';
 import { listPreferencesForNurse, replaceNursePreferences } from './roster.js';
 
@@ -180,7 +181,7 @@ function validateWeekendsOff(count: number | null | undefined): void {
 }
 
 export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string): Unit {
-  return auditedUpdate<Unit, UnitPatch>(db, {
+  const after = auditedUpdate<Unit, UnitPatch>(db, {
     id,
     entityType: 'unit',
     entityLabel: 'unit',
@@ -222,6 +223,10 @@ export function updateUnit(db: DbLike, id: Id, patch: UnitPatch, actor: string):
     },
     actor,
   });
+  // Ratio staffing is the unit's only field in the demand rules; a name or policy edit skips the
+  // version read entirely.
+  if (patch.ratioStaffing !== undefined) recordDemandConfigVersion(db, id, actor);
+  return after;
 }
 
 // ---------------------------------------------------------------------------
@@ -312,6 +317,7 @@ export function createShiftType(
   db.insert(shiftTypeTable).values(row).run();
   const after = toShiftType(row as typeof shiftTypeTable.$inferSelect);
   recordAudit(db, { entityType: 'shift_type', entityId: id, action: 'create', actor, after });
+  recordDemandConfigVersion(db, after.unitId, actor);
   return after;
 }
 
@@ -440,7 +446,7 @@ export function updateShiftType(
   patch: ShiftTypePatch,
   actor: string,
 ): ShiftType {
-  return auditedUpdate<ShiftType, ShiftTypePatch>(db, {
+  const after = auditedUpdate<ShiftType, ShiftTypePatch>(db, {
     id,
     entityType: 'shift_type',
     entityLabel: 'shift type',
@@ -465,6 +471,8 @@ export function updateShiftType(
     },
     actor,
   });
+  recordDemandConfigVersion(db, after.unitId, actor);
+  return after;
 }
 
 /**
@@ -487,6 +495,7 @@ export function deactivateShiftType(db: DbLike, id: Id, actor: string): ShiftTyp
     before,
     after,
   });
+  recordDemandConfigVersion(db, after.unitId, actor);
   return after;
 }
 
@@ -537,6 +546,16 @@ export interface ShiftTypeDuplicateResult {
  * and mid shifts that have published history of their own (moving those would re-judge it).
  */
 export function duplicateShiftType(
+  tx: ShiftNurseTx,
+  id: Id,
+  changes: ShiftTypeDuplicateChanges,
+  actor: string,
+): ShiftTypeDuplicateResult {
+  // One version for the whole swap: never one with both types active, or the copy without floors.
+  return batchDemandVersions(tx, () => duplicate(tx, id, changes, actor));
+}
+
+function duplicate(
   tx: ShiftNurseTx,
   id: Id,
   changes: ShiftTypeDuplicateChanges,
@@ -762,20 +781,23 @@ export function fillCoverageWeek(
   const existing = listCoverageRequirementsForUnit(tx, input.unitId).filter(
     (r) => r.date === null && r.shiftTypeId === input.shiftTypeId && r.role === input.role,
   );
-  return ([0, 1, 2, 3, 4, 5, 6] as const).map((weekday) =>
-    upsertCoverageRequirement(
-      tx,
-      {
-        id: existing.find((r) => r.weekday === weekday)?.id,
-        unitId: input.unitId,
-        shiftTypeId: input.shiftTypeId,
-        weekday,
-        date: null,
-        role: input.role,
-        minCount: input.minCount,
-        targetCount: input.targetCount,
-      },
-      actor,
+  // One decision, one version of the demand rules, not seven half-filled weeks.
+  return batchDemandVersions(tx, () =>
+    ([0, 1, 2, 3, 4, 5, 6] as const).map((weekday) =>
+      upsertCoverageRequirement(
+        tx,
+        {
+          id: existing.find((r) => r.weekday === weekday)?.id,
+          unitId: input.unitId,
+          shiftTypeId: input.shiftTypeId,
+          weekday,
+          date: null,
+          role: input.role,
+          minCount: input.minCount,
+          targetCount: input.targetCount,
+        },
+        actor,
+      ),
     ),
   );
 }
@@ -830,6 +852,7 @@ export function upsertCoverageRequirement(
       before,
       after,
     });
+    recordDemandConfigVersion(db, after.unitId, actor);
     return after;
   }
   assertCoverageFloor(db, input);
@@ -853,6 +876,7 @@ export function upsertCoverageRequirement(
     actor,
     after,
   });
+  recordDemandConfigVersion(db, after.unitId, actor);
   return after;
 }
 
@@ -872,6 +896,7 @@ export function deleteCoverageRequirement(db: DbLike, id: Id, actor: string): vo
     actor,
     before,
   });
+  recordDemandConfigVersion(db, before.unitId, actor);
 }
 
 // ---------------------------------------------------------------------------

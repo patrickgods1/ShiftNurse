@@ -1270,6 +1270,42 @@ export const payConfigSnapshot = sqliteTable(
   (t) => [uniqueIndex('pay_config_snapshot_period_seq_idx').on(t.periodId, t.seq)],
 );
 
+/**
+ * The demand rules each unit had in force, effective-dated: active shift types, acuity tiers,
+ * active ratio rules, coverage floors and ratio staffing, as one canonical JSON `DemandConfig`
+ * (`repositories/demand-history.ts`). A past date is judged by the version in force at its end, so
+ * loosening a ratio today never rewrites what a published schedule was found short by. `seq`
+ * counts a unit's versions; `effective_at` is a real instant.
+ */
+// Append-only in the file: `demand_config_version_no_update` / `_no_delete` (migration 0050).
+export const demandConfigVersion = sqliteTable(
+  'demand_config_version',
+  {
+    id: text('id').primaryKey().$type<Id>(),
+    unitId: text('unit_id')
+      .notNull()
+      .references(() => unit.id, { onDelete: 'cascade' })
+      .$type<Id>(),
+    seq: integer('seq').notNull(),
+    effectiveAt: timestamp('effective_at').notNull(),
+    takenBy: text('taken_by').notNull(),
+    reason: text('reason'),
+    config: text('config', { mode: 'json' }).notNull(),
+  },
+  (t) => [uniqueIndex('demand_config_version_unit_seq_idx').on(t.unitId, t.seq)],
+);
+
+/**
+ * Units whose demand rules changed without a version being recorded. Filled only by triggers on
+ * the demand tables (migration 0050) and emptied by `recordDemandConfigVersion`, so a writer that
+ * forgets to record leaves a row behind instead of silently judging history with today's rules.
+ * No foreign key: the triggers also fire inside a unit's own cascade delete, where a key to the
+ * vanishing unit would abort it; readers skip a unit that no longer exists.
+ */
+export const demandConfigDirty = sqliteTable('demand_config_dirty', {
+  unitId: text('unit_id').primaryKey().$type<Id>(),
+});
+
 // ---------------------------------------------------------------------------
 // Conflicts
 // ---------------------------------------------------------------------------

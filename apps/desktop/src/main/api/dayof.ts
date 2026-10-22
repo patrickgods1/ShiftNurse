@@ -26,6 +26,7 @@ import {
   type DbLike,
   deleteAssignment,
   demandInputs,
+  demandInputsForDate,
   getAssignment,
   getCallOff,
   getCancellationPolicy,
@@ -140,25 +141,28 @@ function collectSlots(
   return [...byKey.values()];
 }
 
-/** Everything one date needs for its staffing check: the covering period's own assignments. */
-function planForDate(
-  db: DbLike,
-  unitId: Id,
-  shiftTypes: readonly ShiftType[],
-  nurses: readonly Nurse[],
-  date: IsoDate,
-) {
+/**
+ * Everything one date needs for its staffing check: the covering period's own assignments, judged
+ * by the demand rules in force that day (which shift types ran included), as the grid judges the
+ * period. A past date no schedule covers reads them as a published one would; only a draft's dates
+ * are a proposal under today's rules.
+ */
+function planForDate(db: DbLike, unitId: Id, nurses: readonly Nurse[], date: IsoDate) {
   const period = periodCoveringDate(db, unitId, date);
   const assignments = period ? listAssignmentsForPeriodOnDate(db, period.id, date) : [];
+  const demand = demandInputsForDate(db, period ?? { unitId, status: 'published' }, date, {
+    today: today(),
+    live: demandInputs(db, unitId, date, date),
+  });
   const checks = checkStaffing({
     date,
-    shiftTypes,
+    shiftTypes: demand.shiftTypes,
     nurses,
     assignments,
-    demand: demandInputs(db, unitId, date, date),
+    demand,
   });
   const census = listCensusForecastsInRange(db, unitId, date, date);
-  return { period, assignments, checks, census };
+  return { period, assignments, checks, census, shiftTypes: demand.shiftTypes };
 }
 
 function dayOfSummary(db: DbLike, unitId: Id, date?: IsoDate): DayOfSummary {
@@ -171,11 +175,16 @@ function dayOfSummary(db: DbLike, unitId: Id, date?: IsoDate): DayOfSummary {
   // so every slot is `other` rather than tagging tomorrow's Day shift current at 15:00.
   const around =
     d === today() ? shiftsAround(shiftTypes, d, minuteOfDay) : { current: [], next: undefined };
-  const slots = collectSlots(shiftTypes, d, around);
 
   // Spans every slot's date: late in the evening `next` is tomorrow's shift, and a float whose
   // membership starts tomorrow is not on a roster that ends today.
-  const dates = [...new Set(slots.map((s) => s.date))].sort();
+  const dates = [
+    ...new Set([
+      d,
+      ...around.current.map((s) => s.date),
+      ...(around.next ? [around.next.date] : []),
+    ]),
+  ].sort();
   const nurses = rosterForPeriod(db, { unitId, startDate: dates[0]!, endDate: dates.at(-1)! });
   const nurseById = new Map(nurses.map((n) => [n.id, n]));
 
@@ -186,8 +195,15 @@ function dayOfSummary(db: DbLike, unitId: Id, date?: IsoDate): DayOfSummary {
 
   const perDate = new Map<IsoDate, ReturnType<typeof planForDate>>();
   for (const slotDate of dates) {
-    perDate.set(slotDate, planForDate(db, unitId, shiftTypes, nurses, slotDate));
+    perDate.set(slotDate, planForDate(db, unitId, nurses, slotDate));
   }
+  // Each date lists the types its own rules ran: last night's shift, still running, is judged by
+  // yesterday's rules, and a type created today was no shift of yesterday's.
+  const ranOn = (slotDate: IsoDate, shiftTypeId: Id) =>
+    perDate.get(slotDate)!.shiftTypes.some((t) => t.id === shiftTypeId && t.active);
+  const slots = collectSlots(perDate.get(d)!.shiftTypes, d, around).filter((s) =>
+    ranOn(s.date, s.shiftTypeId),
+  );
 
   const shifts: TodayShiftView[] = slots.map((slot) => {
     const plan = perDate.get(slot.date);

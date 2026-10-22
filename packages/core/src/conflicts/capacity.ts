@@ -102,8 +102,9 @@ export function leaveCapacity(
       for (const d of input.demand) {
         if (d.date !== date) continue;
         const st = shiftTypes.get(d.shiftTypeId);
-        // Inside shifts (a mid 8 within the day 12) share the containing shift's staff.
-        if (!st || st.isOnCall || st.withinShiftTypeId !== null || !st.active) continue;
+        // Inside shifts (a mid 8 within the day 12) share the containing shift's staff. A demand
+        // row means the type ran that day under the rules judging it, retired since or not.
+        if (!st || st.isOnCall || st.withinShiftTypeId !== null) continue;
         const count = d.byRole[role]?.minCount ?? 0;
         needed += count;
         neededHours += count * st.durationHours;

@@ -21,8 +21,6 @@ import {
   type CostContext,
   compareDates,
   dateInRange,
-  datesInRange,
-  deriveDemand,
   type FairnessLedgerEntry,
   floatedOff,
   groupsForPeriod,
@@ -64,6 +62,7 @@ import {
   listShiftCredentialRequirementsForUnit,
   listShiftTypesForUnit,
 } from './config.js';
+import { demandTableFor } from './demand-history.js';
 import { holidayWorkFor, holidayWorkIn } from './holidays.js';
 import { listIncompatibilityGroups } from './incompatibility.js';
 import { ledgerSince } from './ledger.js';
@@ -457,8 +456,16 @@ function sameUnitOverlap(db: DbLike, period: SchedulePeriod, nurseIds: readonly 
   );
 }
 
-/** Shared loader behind the solver and the conflict detector: one definition of "the period". */
-export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput {
+/**
+ * Shared loader behind the solver and the conflict detector: one definition of "the period".
+ * Given `today`, a published or archived period's past dates are judged by the demand rules in
+ * force on each (`demandTableFor`); without it, as for Generate, every date reads live.
+ */
+export function loadPeriodInput(
+  db: DbLike,
+  period: SchedulePeriod,
+  options: { today?: IsoDate } = {},
+): SolveInput {
   const ruleSet = getRuleSet(db, period.ruleSetId);
   if (!ruleSet) throw new Error(`Period ${period.id} cites unknown rule set ${period.ruleSetId}`);
   const unitId = period.unitId;
@@ -483,7 +490,12 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     nurses,
     // Busy-time shift types are inactive: demand, coverage and the solvers leave them alone.
     shiftTypes: uniqueById([...demand.shiftTypes, ...tail.shiftTypes, ...split.busy.shiftTypes]),
-    demand: deriveDemand(datesInRange(period.startDate, period.endDate), demand).all(),
+    // The types keep their live `active` flags; which were active on a past date is the demand
+    // table's to say, and coverage judges only the types it has rows for.
+    demand: demandTableFor(db, period, {
+      live: demand,
+      ...(options.today !== undefined && { today: options.today }),
+    }).all(),
     assignments: split.onUnit,
     // Busy time rides with the lookback tail: judged by every nurse rule, never moved.
     priorAssignments: [...tail.priorAssignments, ...split.busy.assignments],

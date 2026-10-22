@@ -22,6 +22,7 @@ import {
   type SchedulePeriod,
   ScheduleView,
   type ShiftType,
+  today,
   type Unit,
 } from '@shiftnurse/core';
 import {
@@ -190,7 +191,8 @@ export function counterContext(
 export function buildConflictInput(db: DbLike, periodId: Id): ConflictInput {
   const period = periodOrThrow(db, periodId);
   const budget = getBudget(db, periodId);
-  return { ...loadPeriodInput(db, period), ...(budget ? { budget } : {}) };
+  // Judged as the grid judges it: a past date by the demand rules in force that day.
+  return { ...loadPeriodInput(db, period, { today: today() }), ...(budget ? { budget } : {}) };
 }
 
 const PERIOD_STATUS_PRIORITY: Record<SchedulePeriod['status'], number> = {

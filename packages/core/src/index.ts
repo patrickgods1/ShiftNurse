@@ -1,10 +1,17 @@
 // The public API: exactly what packages/db, the desktop app and the web client consume.
 // Everything else stays exported from its own module for core's internal use.
 
-export type { BindingConstraint, RatioStaffing, RoleDemand, ShiftDemand } from './acuity/demand.js';
+export type {
+  BindingConstraint,
+  DemandInputs,
+  RatioStaffing,
+  RoleDemand,
+  ShiftDemand,
+} from './acuity/demand.js';
 // Census and ratios to the staffing each shift needs
 export {
   coverageFloorFor,
+  DemandTable,
   deriveDemand,
   NURSE_ROLES,
   nursesRequiredForMix,

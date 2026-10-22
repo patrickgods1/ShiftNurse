@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { deriveDemand } from '../acuity/demand.js';
 import type { RatioRule } from '../domain/entities.js';
 import { isoDate } from '../domain/time.js';
 import {
@@ -23,6 +24,7 @@ import {
   TIER_HIGH,
   TIER_MODERATE,
   TIER_ROUTINE,
+  testRatioRules,
   testShiftTypes,
   timeOff,
 } from '../testing/fixtures.js';
@@ -1422,6 +1424,56 @@ describe('patient ratio compliance', () => {
       assignments: [assign(nurses[0]!.id, ON_CALL, '2026-01-05')],
     });
     expect(codes(s)).not.toContain('ratio_breach');
+  });
+});
+
+describe('a shift type retired since', () => {
+  const RETIRED_DAY_12 = { ...DAY_12, active: false };
+  const retiredTypes = [RETIRED_DAY_12, ...testShiftTypes.filter((t) => t.id !== DAY_12.id)];
+
+  it('stays silent about a retired shift type the unit no longer staffs', () => {
+    const nurse = makeNurse({ isChargeEligible: true });
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: retiredTypes,
+      coverageRequirements: coverageAllWeek(RETIRED_DAY_12, 'RN', 3),
+      censusForecasts: [census('2026-01-05', RETIRED_DAY_12, { [TIER_ROUTINE.id]: 20 })],
+      assignments: [assign(nurse.id, RETIRED_DAY_12, '2026-01-05', { isCharge: true })],
+    });
+    expect(codes(s)).not.toContain('understaffed');
+    expect(codes(s)).not.toContain('ratio_breach');
+  });
+
+  it('still flags a past day short under the rules that day, when the type was in use', () => {
+    const nurse = makeNurse({ isChargeEligible: true });
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: retiredTypes,
+      assignments: [assign(nurse.id, RETIRED_DAY_12, '2026-01-05', { isCharge: true })],
+    });
+    // The demand that day was derived while the Day 12 was active: a floor of 3 RNs, and 20
+    // routine patients at 1:5 needs 4 RNs. One was there.
+    const ctx = {
+      ...s.ctx,
+      demand: deriveDemand(s.dates, {
+        shiftTypes: testShiftTypes,
+        acuityTiers: [TIER_ROUTINE, TIER_MODERATE, TIER_HIGH],
+        ratioRules: testRatioRules,
+        coverageRequirements: coverageAllWeek(DAY_12, 'RN', 3),
+        censusForecasts: [census('2026-01-05', DAY_12, { [TIER_ROUTINE.id]: 20 })],
+      }),
+    };
+    const found = evaluateSchedule(s.schedule, s.ruleSet, ctx).violations.filter((v) =>
+      v.dates.includes(isoDate('2026-01-05')),
+    );
+    expect(found.find((v) => v.code === 'understaffed')?.details).toMatchObject({
+      staffed: 1,
+      required: 3,
+    });
+    expect(found.find((v) => v.code === 'ratio_breach')?.details).toMatchObject({
+      staffed: 1,
+      required: 4,
+    });
   });
 });
 

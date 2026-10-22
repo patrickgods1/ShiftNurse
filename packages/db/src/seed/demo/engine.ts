@@ -118,6 +118,7 @@ import {
   listShiftTypesForUnit,
   upsertCoverageRequirement,
 } from '../../repositories/config.js';
+import { batchDemandVersions } from '../../repositories/demand-history.js';
 import { recordHoldover } from '../../repositories/holdovers.js';
 import { createHoliday } from '../../repositories/holidays.js';
 import { createIncompatibilityGroup } from '../../repositories/incompatibility.js';
@@ -865,6 +866,12 @@ export function seedFromProfile(
   profile: DemoProfile,
   options: SeedOptions = {},
 ): SeedResult {
+  // Each unit (the demo and any float sibling) gets one complete version of its demand rules, not
+  // one per shift type and floor: the history predates it and is judged by the earliest version.
+  return batchDemandVersions(db, () => seedProfile(db, profile, options));
+}
+
+function seedProfile(db: ShiftNurseTx, profile: DemoProfile, options: SeedOptions): SeedResult {
   const rng = new Rng(options.seed ?? 20260926);
   const now = options.today ?? today();
   const historyPeriods = options.historyPeriods ?? 13; // six months of two-week pay periods
