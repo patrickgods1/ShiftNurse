@@ -310,13 +310,16 @@ export class SimState {
     this.assignments = assignments;
     this.timeOff = timeOff;
     this.ctx = engine.contextFor(timeOff);
-    this.view = new ScheduleView({
-      period: engine.input.period,
-      assignments,
-      priorAssignments: engine.input.priorAssignments,
-      nurses: engine.nurses,
-      shiftTypes: engine.shiftTypes,
-    });
+    // A candidate changes a nurse or two of its base: share the rest rather than re-sort it.
+    this.view = base
+      ? ScheduleView.derive(base.view, assignments)
+      : new ScheduleView({
+          period: engine.input.period,
+          assignments,
+          priorAssignments: engine.input.priorAssignments,
+          nurses: engine.nurses,
+          shiftTypes: engine.shiftTypes,
+        });
   }
 
   /** The whole period under every enabled rule — what detection reads. */

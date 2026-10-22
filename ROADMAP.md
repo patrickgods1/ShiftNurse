@@ -550,7 +550,9 @@ manager's experience and the contract rules a real hospital would check first. O
       in loops — 2.5 s → ~640 ms on the scenario period; auto-resolve applies independent fixes
       per analysis (minutes → seconds). Target was < 500 ms: the rest is one full `ScheduleView`
       per simulated fix, which needs a copy-on-write view (follow-up below)
-- [ ] Follow-up: copy-on-write `ScheduleView` for simulated fixes, to reach < 500 ms
+- [ ] Follow-up: copy-on-write `ScheduleView` for simulated fixes, to reach < 500 ms (M44 phase 5:
+      `ScheduleView.derive` landed, 1.17 s → ~505 ms median, output hash unchanged; the rest is
+      fairness scoring in `burden.ts`, shared with `scoreFairness`; box stays open until < 500 ms)
 - [x] Named core exports (243, from ~470); conflicts engine indexes and `resolve.ts` split into
       candidates and scoring; shared audited update in `packages/db`
 - [x] Verify: SA + LNS output hashes unchanged on fixed inputs after every solver-touching change;
