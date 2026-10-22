@@ -837,6 +837,8 @@ export interface DayOfPayRecord {
   break?: 'meal' | 'rest';
   scheduledHours?: number;
   hoursWorked?: number;
+  /** Call-back: minutes from the start of the standby shift. Absent on an older, pay-only row. */
+  startMinute?: number;
   note?: string;
   enteredBy: 'manager' | 'nurse';
   createdAt: number;
@@ -870,12 +872,15 @@ export type DayOfPayEntry =
       date: IsoDate;
       shiftTypeId?: Id;
       hoursWorked: number;
+      /** Minutes from the start of the standby shift to when the nurse began working. */
+      startMinute: number;
       note?: string;
     };
 
 /** What can be filled in afterwards: a send-home's or call-back's real hours, and the note. */
 export interface DayOfPayPatch {
   hoursWorked?: number;
+  startMinute?: number;
   note?: string | null;
 }
 

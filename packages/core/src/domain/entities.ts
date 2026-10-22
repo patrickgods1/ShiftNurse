@@ -4,7 +4,7 @@
  * this becomes a web app.
  */
 
-import type { IsoDate, Weekday } from './time.js';
+import type { IsoDate, ShiftWindow, Weekday } from './time.js';
 
 export type Id = string;
 
@@ -821,6 +821,18 @@ export interface RestWaiver {
   date: IsoDate;
   reason: string;
   createdAt: Timestamp;
+}
+
+/**
+ * Time a nurse on standby was called in and worked, on the wall-clock timeline. ORS 441.770(3)
+ * starts the 12-in-24 count at "a shift or call response", so the hour caps, long stretches and
+ * the weekly cap count it; it is not a shift (recorded day-of against the standby it interrupted,
+ * never scheduled or moved), so it never carries a finding of its own. `window` is the standby's
+ * start plus the recorded start minute, ending after the hours worked.
+ */
+export interface CallBack {
+  nurseId: Id;
+  window: ShiftWindow;
 }
 
 /**

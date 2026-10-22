@@ -826,8 +826,6 @@ The 2026-10-16 in-depth code review (`reports/ShiftNurse in depth code review.md
 
 Deferred by owner decision (not boxes):
 
-- On-call caps and call-back rest: a new rule after 1.0, once the contracts to model are chosen
-  (research: `research_notes/ShiftNurse audit and best practices/law_contracts_holidays.md`).
 - INRC-II pattern terms (minimum consecutive days, complete weekends, per-type consecutive
   limits) and pricing the soft rules Generate ignores while soft: an objective change that needs
   a bench study.

@@ -13,8 +13,14 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { Assignment, FairnessLedgerEntry, Nurse, Preference } from '../../domain/entities.js';
-import { addDays, isoDate } from '../../domain/time.js';
+import type {
+  Assignment,
+  CallBack,
+  FairnessLedgerEntry,
+  Nurse,
+  Preference,
+} from '../../domain/entities.js';
+import { addDays, isoDate, shiftWindow } from '../../domain/time.js';
 import {
   judgedSpan,
   payPeriodIndex,
@@ -1493,6 +1499,252 @@ describe('short work runs priced while soft', () => {
   });
 });
 
+/** `on-call-limit` on, soft or hard, at the given caps (none by default). */
+function onCallLimit(
+  severity: 'soft' | 'hard',
+  params: Record<string, unknown>,
+  base: RuleSet = defaultRuleSet(UNIT_ID),
+): RuleSet {
+  return {
+    ...base,
+    configs: base.configs.map((c) =>
+      c.ruleId === 'on-call-limit'
+        ? {
+            ...c,
+            enabled: true,
+            params: { ...c.params, ...params },
+            ...(severity === 'hard' ? { severityOverride: 'hard' as const } : {}),
+          }
+        : c,
+    ),
+  };
+}
+
+/** Ada alone on call, Sun 4 – Sat 17 Jan (weeks from Sunday: 4–10 and 11–17). */
+function onCallUnit(ruleSet: RuleSet, options: Partial<SolveScenarioOptions> = {}): SolveInput {
+  return unit([ada()], {
+    shiftTypes: [ON_CALL],
+    coverageRequirements: coverageAllWeek(ON_CALL, 'RN', 1),
+    ruleSet,
+    ...options,
+  });
+}
+
+describe('on-call limits made hard', () => {
+  const call = (date: string, extra: Partial<Assignment> = {}) =>
+    assign('ada', ON_CALL, date, extra);
+  const published = (date: string) => call(date, { periodId: 'prev' });
+  const hard = (params: Record<string, unknown>, options: Partial<SolveScenarioOptions> = {}) =>
+    encodeCpsat(onCallUnit(onCallLimit('hard', params), options));
+
+  it('forbids a third call in a week when the unit allows two, and allows it the next week', () => {
+    const encoding = hard({ maxOnCallPerWeek: 2 });
+    expect(
+      evaluate(
+        encoding,
+        ['2026-01-05', '2026-01-07', '2026-01-09'].map((d) => call(d)),
+      ).violated,
+    ).toEqual(['on call per week: Ada Test week of 2026-01-04']);
+    expect(
+      evaluate(
+        encoding,
+        ['2026-01-05', '2026-01-07', '2026-01-12'].map((d) => call(d)),
+      ).violated,
+    ).toEqual([]);
+  });
+
+  it('counts the call last schedule put in the same week', () => {
+    // Schedule from Wed 7; Mon 5 on call was published. Thu 8 makes 2 against 2; Fri 9 makes 3.
+    const encoding = hard(
+      { maxOnCallPerWeek: 2 },
+      { startDate: isoDate('2026-01-07'), priorAssignments: [published('2026-01-05')] },
+    );
+    expect(evaluate(encoding, [call('2026-01-08')]).violated).toEqual([]);
+    expect(evaluate(encoding, [call('2026-01-08'), call('2026-01-09')]).violated).toEqual([
+      'on call per week: Ada Test week of 2026-01-04',
+    ]);
+  });
+
+  it('lets a published week over its cap stand, and allows no more call in it', () => {
+    // Schedule from Wed 7; Mon 5 and Tue 6 on call, published: 2 against 1 already. All off is
+    // legal; Thu 8 would add to it; Mon 12 is the next week.
+    const encoding = hard(
+      { maxOnCallPerWeek: 1 },
+      {
+        startDate: isoDate('2026-01-07'),
+        priorAssignments: [published('2026-01-05'), published('2026-01-06')],
+      },
+    );
+    expect(evaluate(encoding, []).violated).toEqual([]);
+    expect(evaluate(encoding, [call('2026-01-08')]).violated.join('\n')).toMatch(
+      /on call per week: Ada Test week of 2026-01-04/,
+    );
+    expect(evaluate(encoding, [call('2026-01-12')]).violated).toEqual([]);
+  });
+
+  it('caps the schedule’s call and not the published tail’s', () => {
+    // Fri 2 and Sat 3 on call last schedule. Mon 5 and Wed 7 make 2 against 2; Fri 9 makes 3.
+    const encoding = hard(
+      { maxOnCallPerPeriod: 2 },
+      { priorAssignments: [published('2026-01-02'), published('2026-01-03')] },
+    );
+    expect(evaluate(encoding, [call('2026-01-05'), call('2026-01-07')]).violated).toEqual([]);
+    expect(
+      evaluate(
+        encoding,
+        ['2026-01-05', '2026-01-07', '2026-01-09'].map((d) => call(d)),
+      ).violated,
+    ).toEqual(['on call per schedule: Ada Test']);
+  });
+
+  it('forbids a second night on call in a row, the night before the schedule included', () => {
+    const encoding = hard(
+      { maxConsecutiveOnCallDays: 1 },
+      { priorAssignments: [published('2026-01-03')] },
+    );
+    expect(evaluate(encoding, [call('2026-01-05'), call('2026-01-07')]).violated).toEqual([]);
+    expect(evaluate(encoding, [call('2026-01-05'), call('2026-01-06')]).violated).toEqual([
+      'on call in a row: Ada Test 2 days from 2026-01-05',
+    ]);
+    expect(evaluate(encoding, [call('2026-01-04')]).violated).toEqual([
+      'on call in a row: Ada Test 2 days from 2026-01-03',
+    ]);
+  });
+
+  it('lets two locked nights on call in a row stand without making the model infeasible', () => {
+    const locked = ['2026-01-05', '2026-01-06'].map((d) => call(d, { isLocked: true }));
+    const encoding = hard({ maxConsecutiveOnCallDays: 1 }, { assignments: locked });
+    expect(encoding.builder.evaluate(new Map(), encoding.objectiveScale).violated).toEqual([]);
+    expect(evaluate(encoding, [...locked, call('2026-01-07')]).violated.join('\n')).toMatch(
+      /on call in a row/,
+    );
+    expect(evaluate(encoding, [...locked, call('2026-01-08')]).violated).toEqual([]);
+  });
+});
+
+describe('on-call limits priced while soft', () => {
+  /** The findings the grid shows, the annealer's count, and both solvers' price of the schedule. */
+  function judge(input: SolveInput, assignments: readonly Assignment[]) {
+    const encoding = encodeCpsat(input);
+    const evaluation = evaluate(encoding, assignments);
+    const model = new SolverModel(input);
+    for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+    const view = new ScheduleView({
+      period: input.period,
+      assignments,
+      priorAssignments: input.priorAssignments,
+      nurses: input.nurses,
+      shiftTypes: input.shiftTypes,
+    });
+    const grid = evaluateSchedule(view, input.ruleSet, model.ctx).violations.filter(
+      (v) => v.ruleId === 'on-call-limit',
+    ).length;
+    return {
+      grid,
+      sa: model.onCallLimitBreaches(),
+      saTotal: model.breakdown().total,
+      cpsat: evaluation.objective,
+      violated: evaluation.violated.filter((v) => v.includes('on call')),
+    };
+  }
+  const soft = (params: Record<string, unknown>, options: Partial<SolveScenarioOptions> = {}) =>
+    onCallUnit(onCallLimit('soft', params), options);
+  const call = (date: string, extra: Partial<Assignment> = {}) =>
+    assign('ada', ON_CALL, date, extra);
+  const published = (date: string) => call(date, { periodId: 'prev' });
+  const MON_WED_FRI = ['2026-01-05', '2026-01-07', '2026-01-09'];
+
+  it('charges Monday, Wednesday and Friday on call once against two a week, and forbids nothing', () => {
+    const result = judge(
+      soft({ maxOnCallPerWeek: 2 }),
+      MON_WED_FRI.map((d) => call(d)),
+    );
+    expect([result.grid, result.sa]).toEqual([1, 1]);
+    expect(result.violated).toEqual([]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('charges a week over by two once, as one finding', () => {
+    // Mon 5, Wed 7, Fri 9 against 1 a week: over by 2, still one finding.
+    const result = judge(
+      soft({ maxOnCallPerWeek: 1 }),
+      MON_WED_FRI.map((d) => call(d)),
+    );
+    expect([result.grid, result.sa]).toEqual([1, 1]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('charges each further night on call in a row', () => {
+    // Mon 5 – Thu 8 against 2 in a row: windows Mon–Wed and Tue–Thu, 2 findings.
+    const roster = ['2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08'].map((d) => call(d));
+    const result = judge(soft({ maxConsecutiveOnCallDays: 2 }), roster);
+    expect([result.grid, result.sa]).toEqual([2, 2]);
+    expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+  });
+
+  it('charges the schedule’s call against its cap, not the tail’s', () => {
+    // Fri 2 and Sat 3 published; Mon 5, Wed 7 and Fri 9 here: 3 against 2, one finding.
+    const input = soft(
+      { maxOnCallPerPeriod: 2 },
+      { priorAssignments: [published('2026-01-02'), published('2026-01-03')] },
+    );
+    const two = judge(input, [call('2026-01-05'), call('2026-01-07')]);
+    expect([two.grid, two.sa]).toEqual([0, 0]);
+    expect(two.cpsat).toBeCloseTo(two.saTotal, 0);
+    const three = judge(
+      input,
+      MON_WED_FRI.map((d) => call(d)),
+    );
+    expect([three.grid, three.sa]).toEqual([1, 1]);
+    expect(three.cpsat).toBeCloseTo(three.saTotal, 0);
+  });
+
+  it('charges a published week over its cap only once this schedule adds call to it', () => {
+    // Schedule from Wed 7; Mon 5 and Tue 6 on call, published, against 1 a week.
+    const input = soft(
+      { maxOnCallPerWeek: 1 },
+      {
+        startDate: isoDate('2026-01-07'),
+        priorAssignments: [published('2026-01-05'), published('2026-01-06')],
+      },
+    );
+    for (const [roster, expected] of [
+      [[], 0],
+      [[call('2026-01-12')], 0],
+      [[call('2026-01-08')], 1],
+    ] as const) {
+      const result = judge(input, roster);
+      expect([result.grid, result.sa], `${roster.length}`).toEqual([expected, expected]);
+      expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+    }
+  });
+
+  it('charges a locked week over its cap once, and still once when more call is added', () => {
+    const locked = ['2026-01-05', '2026-01-06'].map((d) => call(d, { isLocked: true }));
+    const input = soft({ maxOnCallPerWeek: 1 }, { assignments: locked });
+    for (const roster of [locked, [...locked, call('2026-01-08')]]) {
+      const result = judge(input, roster);
+      expect([result.grid, result.sa]).toEqual([1, 1]);
+      expect(result.cpsat).toBeCloseTo(result.saTotal, 0);
+    }
+  });
+
+  it('puts no price on on-call limits when the rule is hard or off', () => {
+    // Mon, Wed, Fri against 2 a week: hard, the constraint forbids it; off, nobody judges it.
+    // Either way the objective is the soft one less its single 40-point finding.
+    const roster = MON_WED_FRI.map((d) => call(d));
+    const priced = evaluate(encodeCpsat(soft({ maxOnCallPerWeek: 2 })), roster).objective;
+    for (const [severity, ruleSet] of [
+      ['hard', onCallLimit('hard', { maxOnCallPerWeek: 2 })],
+      ['off', defaultRuleSet(UNIT_ID)],
+    ] as const) {
+      const encoding = encodeCpsat(onCallUnit(ruleSet));
+      expect(encoding.solverModel.onCallLimitPrice, severity).toBe(0);
+      expect(evaluate(encoding, roster).objective, severity).toBeCloseTo(priced - 40, 0);
+    }
+  });
+});
+
 /** The rule on and hard at the given cap, with min-rest out of the way so the cap is what bites. */
 function hardHoursIn24(maxHours: number): RuleSet {
   const base = withParams(
@@ -2277,6 +2529,114 @@ describe('a holdover in the lookback and the weekly overtime cap', () => {
     });
     const rules = evaluateSchedule(view, input.ruleSet, model.ctx).hardViolations;
     expect(rules.filter((v) => v.code === 'unauthorised_overtime')).toEqual([]);
+  });
+});
+
+describe('a call-back in the lookback', () => {
+  // Ada was on call Tue 10 Mar 2026 from 19:00 (last schedule) and called in 02:00–05:00 Wed 11,
+  // the first day of this one; a day 12 that morning starts at 07:00. The encoding meets the
+  // call-back as a constant, and must forbid exactly what the rule engine then flags.
+  const callBack = (): CallBack => {
+    const start = shiftWindow(isoDate('2026-03-10'), ON_CALL).startMinute + 420;
+    return { nurseId: 'ada', window: { startMinute: start, endMinute: start + 180 } };
+  };
+  const wednesday = assign('ada', DAY_12, '2026-03-11');
+
+  function inputWith(
+    ruleSet: RuleSet,
+    withCallBack: boolean,
+    options: Partial<SolveScenarioOptions> = {},
+  ): SolveInput {
+    return solveInputFrom({
+      startDate: isoDate('2026-03-11'),
+      endDate: isoDate('2026-03-24'),
+      nurses: [makeNurse({ id: 'ada', firstName: 'Ada', contractedHoursPerPeriod: 120 })],
+      shiftTypes: [DAY_12, NIGHT_12, ON_CALL],
+      coverageRequirements: coverageAllWeek(DAY_12, 'RN', 1),
+      priorAssignments: [assign('ada', ON_CALL, '2026-03-10', { periodId: 'prev' })],
+      ...(withCallBack ? { callBacks: [callBack()] } : {}),
+      ruleSet,
+      ...options,
+    });
+  }
+
+  /** What the encoding refuses and what the rule engine flags, for the same roster. */
+  function judge(input: SolveInput, roster: readonly Assignment[], ruleId: string) {
+    const encoding = encodeCpsat(input);
+    const model = encoding.solverModel;
+    const view = new ScheduleView({
+      period: input.period,
+      assignments: roster,
+      priorAssignments: input.priorAssignments,
+      nurses: model.nurses,
+      shiftTypes: model.shiftTypes,
+    });
+    const rules = evaluateSchedule(view, input.ruleSet, model.ctx, { only: [ruleId] });
+    return { encoded: evaluate(encoding, roster).violated, rules: rules.hardViolations };
+  }
+
+  it('forbids the day 12 under a 12-hour cap in any 24: 3 + 12 = 15 hours', () => {
+    const called = judge(inputWith(hardHoursIn24(12), true), [wednesday], 'max-hours-in-24');
+    expect(called.encoded.join('\n')).toMatch(/hours in 24/);
+    expect(called.rules.map((v) => v.amount)).toEqual([3]);
+    const plain = judge(inputWith(hardHoursIn24(12), false), [wednesday], 'max-hours-in-24');
+    expect(plain.encoded).toEqual([]);
+    expect(plain.rules).toEqual([]);
+  });
+
+  it('forbids a 15-hour stretch when a 2-hour break does not end one, and allows it when it does', () => {
+    // 3h + 12h worked across a 120-minute gap, cap 14: one stretch with a 120-minute bridge, two
+    // with a 60-minute one.
+    const joined = judge(
+      inputWith(hardLongStretch({ maxConsecutiveHours: 14, maxBreakMinutesInStretch: 120 }), true),
+      [wednesday],
+      'long-stretch',
+    );
+    expect(joined.encoded.join('\n')).toMatch(/long stretch/);
+    expect(joined.rules.map((v) => v.amount)).toEqual([1]);
+    const apart = judge(
+      inputWith(hardLongStretch({ maxConsecutiveHours: 14, maxBreakMinutesInStretch: 60 }), true),
+      [wednesday],
+      'long-stretch',
+    );
+    expect(apart.encoded).toEqual([]);
+    expect(apart.rules).toEqual([]);
+  });
+
+  it('forbids the day 12 two hours after the call-back only where call-backs count for rest', () => {
+    const rest = (callBackCountsForRest: boolean) =>
+      withParams('min-rest-between-shifts', { minRestHours: 8, callBackCountsForRest });
+    const counted = judge(inputWith(rest(true), true), [wednesday], 'min-rest-between-shifts');
+    expect(counted.encoded.join('\n')).toMatch(/rest/);
+    expect(counted.rules.map((v) => v.amount)).toEqual([6]);
+    const ignored = judge(inputWith(rest(false), true), [wednesday], 'min-rest-between-shifts');
+    expect(ignored.encoded).toEqual([]);
+    expect(ignored.rules).toEqual([]);
+  });
+
+  it('adds its hours to the week: 24 published + 3 called in + 24 is past a 48-hour cap', () => {
+    // Day 12s Sun 8 and Mon 9 last schedule, Wed 11 and Thu 12 this one: 48h, the cap; 51h with
+    // the call-back. Counted whole and by the clock alike: it sits inside the week.
+    const ruleSet = withParams('max-hours-per-week', {
+      maxHoursPerWeek: 48,
+      overtimeThresholdHours: 48,
+    });
+    const roster = [wednesday, assign('ada', DAY_12, '2026-03-12')];
+    const prior = [
+      assign('ada', DAY_12, '2026-03-08', { periodId: 'prev' }),
+      assign('ada', DAY_12, '2026-03-09', { periodId: 'prev' }),
+      assign('ada', ON_CALL, '2026-03-10', { periodId: 'prev' }),
+    ];
+    const clock = { payRates: [], differentials: [], overtimeRules: [] };
+    for (const cost of [undefined, clock]) {
+      const options = { priorAssignments: prior, ...(cost ? { cost } : {}) };
+      const called = judge(inputWith(ruleSet, true, options), roster, 'max-hours-per-week');
+      expect(called.encoded.join('\n')).toMatch(/weekly hours/);
+      expect(called.rules.map((v) => v.amount)).toEqual([3]);
+      const plain = judge(inputWith(ruleSet, false, options), roster, 'max-hours-per-week');
+      expect(plain.encoded).toEqual([]);
+      expect(plain.rules).toEqual([]);
+    }
   });
 });
 
@@ -3302,6 +3662,37 @@ describe('agreement with the rule engine', () => {
     });
     expectParity(input);
     expectLockedParity(withRandomLocks(input, new Rng(31)));
+  });
+
+  it('agrees with the rules when on-call limits are hard', () => {
+    // Bo was on call Fri 2 and Sat 3, so her first week and her first night are already loaded;
+    // Ada is on call for 5 West on Thu 8, which counts toward her week and her nights in a row.
+    const WEST_CALL = { ...ON_CALL, id: 'west-oc', unitId: 'unit-west' };
+    const west = busyElsewhere(
+      [assign('ada', WEST_CALL, '2026-01-08', { id: 'w-ada', periodId: 'west' })],
+      [WEST_CALL],
+      '5 West',
+    );
+    const input = parityInput({
+      endDate: isoDate('2026-01-10'),
+      shiftTypes: [DAY_12, NIGHT_12, DAY_8, EVENING_8, ON_CALL, ...west.shiftTypes],
+      priorAssignments: [
+        assign('ada', NIGHT_12, '2026-01-03', { periodId: 'prev' }),
+        assign('bo', ON_CALL, '2026-01-02', { periodId: 'prev' }),
+        assign('bo', ON_CALL, '2026-01-03', { periodId: 'prev' }),
+        ...west.assignments,
+      ],
+      ruleSet: onCallLimit('hard', {
+        maxOnCallPerWeek: 2,
+        maxOnCallPerPeriod: 3,
+        maxConsecutiveOnCallDays: 1,
+      }),
+    });
+    expectParity(input);
+    const locked = withRandomLocks(input, new Rng(31));
+    expectLockedParity(locked);
+    const encoding = encodeCpsat(locked);
+    expect(encoding.builder.evaluate(new Map(), encoding.objectiveScale).violated).toEqual([]);
   });
 
   it('agrees with the rules on two days off in a pay period the schedule opens in', () => {
@@ -4853,6 +5244,53 @@ describe('parity with the annealer', () => {
       }
       // Most rosters must leave someone a short run, or this proves nothing.
       expect(short).toBeGreaterThan(40);
+    });
+  });
+
+  describe('on-call limits while soft', () => {
+    it('prices random rosters the same as the annealer', () => {
+      // Nurse 4 has Wed 14 on call locked, so constants meet variables; nurse 2 was on call Fri 2
+      // and Sat 3, so her first week and first night start loaded.
+      const rich = richInput();
+      const lockedCall = assign(rich.nurses[4]!.id, ON_CALL, '2026-01-14', { isLocked: true });
+      const input: SolveInput = {
+        ...rich,
+        assignments: [...rich.assignments, lockedCall],
+        priorAssignments: [
+          ...rich.priorAssignments,
+          assign(rich.nurses[2]!.id, ON_CALL, '2026-01-02', { periodId: 'prev' }),
+          assign(rich.nurses[2]!.id, ON_CALL, '2026-01-03', { periodId: 'prev' }),
+        ],
+        ruleSet: onCallLimit(
+          'soft',
+          { maxOnCallPerWeek: 1, maxOnCallPerPeriod: 2, maxConsecutiveOnCallDays: 1 },
+          rich.ruleSet,
+        ),
+      };
+      const encoding = encodeCpsat(input);
+      const rng = new Rng(53);
+      let over = 0;
+      for (let trial = 0; trial < 60; trial++) {
+        const seen = new Set<string>(input.assignments.map((a) => `${a.nurseId}|${a.date}`));
+        const assignments = [...input.assignments];
+        // On call first and often, so caps are passed in most rosters.
+        const vars = [...encoding.shiftVars].sort(
+          (a, b) => Number(b.shift.shiftType.isOnCall) - Number(a.shift.shiftType.isOnCall),
+        );
+        for (const sv of vars) {
+          const day = `${sv.nurseId}|${sv.shift.date}`;
+          if (seen.has(day) || !rng.chance(sv.shift.shiftType.isOnCall ? 0.3 : 0.5)) continue;
+          seen.add(day);
+          assignments.push(assign(sv.nurseId, sv.shift.shiftType, sv.shift.date));
+        }
+        const evaluation = evaluate(encoding, assignments);
+        const model = new SolverModel(input);
+        for (const a of assignments) if (!a.isLocked) model.add({ ...a, isCharge: false });
+        if (model.onCallLimitBreaches() > 0) over++;
+        expect(evaluation.objective, `trial ${trial}`).toBeCloseTo(model.breakdown().total, 0);
+      }
+      // Most rosters must put someone over a cap, or this proves nothing.
+      expect(over).toBeGreaterThan(40);
     });
   });
 

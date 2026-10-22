@@ -18,6 +18,7 @@ import {
   addDays,
   type BusyElsewhere,
   busyElsewhere,
+  type CallBack,
   type CostContext,
   compareDates,
   dateInRange,
@@ -64,6 +65,7 @@ import {
   listShiftCredentialRequirementsForUnit,
   listShiftTypesForUnit,
 } from './config.js';
+import { callBacksForNurses } from './day-of-pay.js';
 import { holidayWorkFor, holidayWorkIn } from './holidays.js';
 import { listIncompatibilityGroups } from './incompatibility.js';
 import { ledgerSince } from './ledger.js';
@@ -342,6 +344,8 @@ export interface PerNurseRecords {
   paidSickCalls: PaidSickCall[];
   restWaivers: RestWaiver[];
   availabilityBlocks: AvailabilityBlock[];
+  /** Timed call-backs from standby over the lookback tail and the period, on any unit. */
+  callBacks: CallBack[];
   payRates: PayRate[];
 }
 
@@ -397,6 +401,8 @@ export function perNurseRecordsFor(
       ...listAvailabilityBlocks(db, unit.id),
       ...availabilityBlocksElsewhere(db, unit.id, ids),
     ],
+    // Worked time wherever it was worked, over the same tail as the prior shifts it sits among.
+    callBacks: callBacksForNurses(db, ids, tail.start, tail.end),
     payRates: [
       ...listPayRatesForUnit(db, unit.id),
       ...listPayRatesForNurses(
@@ -574,6 +580,7 @@ export function loadPeriodInput(db: DbLike, period: SchedulePeriod): SolveInput 
     ),
     restWaivers: records.restWaivers,
     availabilityBlocks: records.availabilityBlocks,
+    callBacks: records.callBacks,
     dstTransitions: dstTransitionsForPeriod(period, PRIOR_ASSIGNMENT_LOOKBACK_DAYS),
     cost: {
       payRates: records.payRates,

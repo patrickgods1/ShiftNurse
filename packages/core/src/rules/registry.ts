@@ -12,6 +12,7 @@
 import type { DemandTable } from '../acuity/demand.js';
 import type {
   AvailabilityBlock,
+  CallBack,
   Credential,
   Holiday,
   Id,
@@ -45,6 +46,7 @@ import { incompatibleBufferRule, incompatibleTogetherRule } from './incompatibil
 import { longStretchRule } from './long-stretch.js';
 import { mandatoryOvertimeRule } from './mandatory-overtime.js';
 import { nightRecoveryRule } from './night-recovery.js';
+import { onCallLimitRule } from './on-call-limit.js';
 import { type PaidLeaveCredit, type PaidSickCall, paidLeaveCredits } from './paid-leave.js';
 import { describeParamProblems, RuleParamsError, ruleConfigProblems } from './param-validation.js';
 import { pendingTimeOffRule } from './pending-time-off.js';
@@ -94,6 +96,7 @@ export const ALL_RULES: readonly Rule<never>[] = [
   daysOffTogetherRule,
   completeWeekendsRule,
   shortWorkRunsRule,
+  onCallLimitRule,
   preceptorRule,
   tourRotationRule,
   scheduleKindToursRule,
@@ -272,6 +275,8 @@ export interface RuleContextInput {
   restWaivers?: readonly RestWaiver[];
   /** Recorded accommodations. Absent: nobody has one. */
   availabilityBlocks?: readonly AvailabilityBlock[];
+  /** Time nurses were called in from standby and worked. Absent: none. */
+  callBacks?: readonly CallBack[];
   /**
    * The first date from which `priorAssignments` is known to be complete (`historyCompleteFrom`).
    * Absent: the caller has not said, and a pay period that began before the schedule is judged as
@@ -348,6 +353,7 @@ export function buildRuleContext(input: RuleContextInput): RuleContext {
     ),
     restWaiversByNurse: restWaiverDates(input.restWaivers ?? []),
     availabilityBlocksByNurse: groupByNurse(input.availabilityBlocks ?? []),
+    callBacksByNurse: callBacksByNurse(input.callBacks ?? []),
     historyFrom: input.historyFrom,
     dstTransitions: input.dstTransitions ?? [],
     ...(input.overtimeWindowAttribution
@@ -375,6 +381,13 @@ function restWaiverDates(waivers: readonly RestWaiver[]): Map<Id, Set<IsoDate>> 
     if (existing) existing.add(w.date);
     else out.set(w.nurseId, new Set([w.date]));
   }
+  return out;
+}
+
+/** By nurse, each list in start order: the rules walk it beside the start-sorted timeline. */
+function callBacksByNurse(callBacks: readonly CallBack[]): Map<Id, CallBack[]> {
+  const out = groupByNurse(callBacks);
+  for (const list of out.values()) list.sort((a, b) => a.window.startMinute - b.window.startMinute);
   return out;
 }
 

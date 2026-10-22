@@ -47,6 +47,7 @@ import { encodeHolidayRotation } from './rules/holidays.js';
 import { encodeContractCap, encodeWeeklyHours } from './rules/hours.js';
 import { encodeHoursIn24 } from './rules/hours-in-24.js';
 import { encodeLongStretch } from './rules/long-stretch.js';
+import { encodeOnCallLimit } from './rules/on-call-limit.js';
 import { encodePendingTimeOff } from './rules/pending.js';
 import { encodePreceptor } from './rules/preceptor.js';
 import { encodeNightRecovery } from './rules/recovery.js';
@@ -108,6 +109,9 @@ export const CPSAT_ENCODERS: Readonly<Record<string, Encoder | 'by-construction'
   // Priced in the objective while soft (`shortWorkRunTerms`); every short run a variable would
   // start or join is forbidden when hard.
   'short-work-runs': encodeShortWorkRuns,
+  // Priced in the objective while soft (`onCallLimitTerms`); each week's, the schedule's and each
+  // window of days in a row's count of call capped when hard.
+  'on-call-limit': encodeOnCallLimit,
   // Every variable off a 72/80 or Baylor nurse's plan fixed to 0; a variable is never overtime.
   'schedule-kind-tours': encodeScheduleKindTours,
 };

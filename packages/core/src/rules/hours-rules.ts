@@ -14,7 +14,7 @@
  * complete, only hours past the contract are judged: history can only add hours, never remove them.
  */
 
-import type { Assignment, Id, Nurse, Unit } from '../domain/entities.js';
+import type { Assignment, CallBack, Id, Nurse, Unit } from '../domain/entities.js';
 import {
   addDays,
   compareDates,
@@ -27,6 +27,7 @@ import {
   MINUTES_PER_HOUR,
   type Weekday,
   weekdayOf,
+  windowDurationMinutes,
 } from '../domain/time.js';
 import { isElsewhere } from '../schedule/elsewhere.js';
 import { holdoverHours } from '../schedule/holdover.js';
@@ -609,12 +610,17 @@ export type WindowReading = Pick<RuleContext, 'overtimeWindowAttribution' | 'dst
  * which is why a view that starts before the window can add to it (and is named, when in-period,
  * since it makes the window worse). Either way only rows that start in the window authorise its
  * overtime. At `startMinute` 0 "starts in" is "is dated in".
+ *
+ * `callBacks` (time called in from standby) count under the same reading as shifts, and one that
+ * starts in the window authorises its own hours, as a recorded holdover does: the manager called
+ * the nurse in. They never touch the period, so a window holding only history stays unjudged.
  */
 function hoursIn(
   timeline: readonly AssignmentView[],
   window: DateWindow,
   reading?: WindowReading,
   startMinute = 0,
+  callBacks: readonly CallBack[] = [],
 ): WindowHours {
   const out: WindowHours = {
     hours: 0,
@@ -652,10 +658,27 @@ function hoursIn(
       out.assignmentIds.push(view.assignment.id);
     }
   }
+  let calledInHours = 0;
+  for (const cb of callBacks) {
+    const day = windowDayOf(cb.window.startMinute, startMinute);
+    if (compareDates(day, window.end) > 0) continue;
+    const dated = compareDates(day, window.start) >= 0;
+    if (attribution === undefined) {
+      if (!dated) continue;
+      out.hours += windowDurationMinutes(cb.window) / MINUTES_PER_HOUR;
+    } else if (attribution === 'start') {
+      if (!dated) continue;
+      minutes += realMinutesIn(cb.window, tz);
+    } else {
+      if (!dated && cb.window.endMinute <= opens) continue;
+      minutes += minutesInWindow(cb, window.start, nextStart, tz, startMinute);
+    }
+    if (dated) calledInHours += windowDurationMinutes(cb.window) / MINUTES_PER_HOUR;
+  }
   // Whole minutes, converted once: summed as float hours a 40-hour week could read 40.0000001.
   if (attribution !== undefined) out.hours = minutes / MINUTES_PER_HOUR;
   // Lookback rows count: a holdover last period recorded in this week authorised its hours.
-  out.authorisedHours = authorisedOvertimeHours(rows);
+  out.authorisedHours = authorisedOvertimeHours(rows) + calledInHours;
   return out;
 }
 
@@ -827,6 +850,7 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
       const timeline = schedule
         .timelineFor(nurse.id)
         .filter((v) => params.onCallCountsTowardHours || isWorked(v));
+      const callBacks = ctx.callBacksByNurse.get(nurse.id) ?? [];
 
       const unauthorised = (span: DateWindow, found: WindowHours) => {
         if (!params.requireOvertimeAuthorisation) return;
@@ -867,7 +891,7 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
       };
 
       for (const week of weeks) {
-        const found = hoursIn(timeline, week, ctx, startMinute);
+        const found = hoursIn(timeline, week, ctx, startMinute, callBacks);
         if (!found.touchesPeriod) continue;
 
         if (found.hours > params.maxHoursPerWeek) {
@@ -897,7 +921,7 @@ export const maxHoursRule: Rule<MaxHoursParams> = {
       }
 
       for (const pay of payPeriods) {
-        const found = hoursIn(timeline, pay, ctx, startMinute);
+        const found = hoursIn(timeline, pay, ctx, startMinute, callBacks);
         if (found.touchesPeriod) unauthorised(pay, found);
       }
     }

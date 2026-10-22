@@ -12,7 +12,9 @@ describe('a day-of pay entry arriving over IPC', () => {
     expect(record.safeParse([{ kind: 'sent_home', ...where, scheduledHours: 12 }]).success).toBe(
       true,
     );
-    expect(record.safeParse([{ kind: 'call_back', ...where, hoursWorked: 2 }]).success).toBe(true);
+    expect(
+      record.safeParse([{ kind: 'call_back', ...where, hoursWorked: 2, startMinute: 180 }]).success,
+    ).toBe(true);
   });
 
   it('refuses a break that is neither meal nor rest, and hours a call-back must carry', () => {
@@ -20,6 +22,8 @@ describe('a day-of pay entry arriving over IPC', () => {
       false,
     );
     expect(record.safeParse([{ kind: 'call_back', ...where }]).success).toBe(false);
+    // A call-back with hours but no time cannot count toward the nurse's hours in 24.
+    expect(record.safeParse([{ kind: 'call_back', ...where, hoursWorked: 2 }]).success).toBe(false);
   });
 
   it('refuses hours on a missed break, and an edit that tries to move the day', () => {

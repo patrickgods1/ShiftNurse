@@ -44,6 +44,7 @@ export function ruleContextForInput(
     ...(input.preceptorships ? { preceptorships: input.preceptorships } : {}),
     ...(input.restWaivers ? { restWaivers: input.restWaivers } : {}),
     ...(input.availabilityBlocks ? { availabilityBlocks: input.availabilityBlocks } : {}),
+    ...(input.callBacks ? { callBacks: input.callBacks } : {}),
     ...(input.historyFrom ? { historyFrom: input.historyFrom } : {}),
     ...(input.dstTransitions ? { dstTransitions: input.dstTransitions } : {}),
     // Only with pay settings loaded, defaulting as pay does: a fixture without them keeps the

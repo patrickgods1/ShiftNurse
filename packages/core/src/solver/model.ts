@@ -59,6 +59,7 @@ import {
   shiftWindow,
   weekdayOf,
   weekendKey,
+  windowDurationMinutes,
 } from '../domain/time.js';
 import { hoursOverContract, isUndesirable } from '../fairness/ledger.js';
 import { seniorityMultipliers } from '../fairness/seniority.js';
@@ -95,6 +96,11 @@ import {
   type OnFloor,
 } from '../rules/incompatibility-rules.js';
 import { nightRecoveryRule } from '../rules/night-recovery.js';
+import {
+  type OnCallLimitParams,
+  onCallLimitFindings,
+  onCallLimitRule,
+} from '../rules/on-call-limit.js';
 import { pendingRequestOn, pendingTimeOffRule } from '../rules/pending-time-off.js';
 import {
   evaluatePrepared,
@@ -186,6 +192,7 @@ export interface AddToken {
   daysOffTogetherBefore: number;
   completeWeekendBefore: number;
   shortWorkRunBefore: number;
+  onCallLimitBefore: number;
   weekendBefore: number;
   /** The coverage of the shifts inside this one, in `innerShifts` order, when it has any. */
   innerBefore?: readonly number[];
@@ -268,6 +275,9 @@ export class SolverModel {
   /** Per nurse: runs of days worked too short (see `short-work-runs.ts`); zero unless soft. */
   private readonly shortWorkRun: number[];
   private shortWorkRunSum = 0;
+  /** Per nurse: on-call-limit findings (see `on-call-limit.ts`); zero unless that rule is soft. */
+  private readonly onCallLimit: number[];
+  private onCallLimitSum = 0;
   /** Worked shifts inside a pending time-off request (see `pending-time-off.ts`). */
   private pendingSum = 0;
   /** Per nurse: weekend-pattern breaches (see `weekend-pattern.ts`). */
@@ -421,6 +431,10 @@ export class SolverModel {
   readonly shortWorkRunParams: ShortWorkRunsParams | undefined;
   /** Points per run of days worked too short; 0 unless the short-work-runs rule is soft. */
   readonly shortWorkRunPrice: number;
+  /** The on-call limits while that rule is soft; undefined otherwise (nothing to count). */
+  readonly onCallLimitParams: OnCallLimitParams | undefined;
+  /** Points per on-call-limit finding; 0 unless that rule is soft. */
+  readonly onCallLimitPrice: number;
   /** Points per worked shift inside a pending request; 0 unless that rule is soft. */
   readonly pendingPrice: number;
   /** The weekend-pattern limits while that rule is on; undefined while it is off. */
@@ -566,6 +580,10 @@ export class SolverModel {
     const shortRunsSoft = severityOf(shortWorkRunsRule.id) === 'soft';
     this.shortWorkRunParams = shortRunsSoft ? requireParams(shortWorkRunsRule, configs) : undefined;
     this.shortWorkRunPrice = shortRunsSoft ? this.weights.shortWorkRun : 0;
+    // --- On-call limits: priced per finding while soft; hard is the gate's to enforce. ---
+    const onCallSoft = severityOf(onCallLimitRule.id) === 'soft';
+    this.onCallLimitParams = onCallSoft ? requireParams(onCallLimitRule, configs) : undefined;
+    this.onCallLimitPrice = onCallSoft ? this.weights.onCallLimit : 0;
     this.pendingPrice =
       severityOf(pendingTimeOffRule.id) === 'soft' ? this.weights.pendingTimeOff : 0;
     // --- Weekends in a row and per schedule: priced while soft, gated while hard. ---
@@ -734,6 +752,14 @@ export class SolverModel {
         for (const [week, minutes] of parts.week) this.weekMinutes[i]![week]! += minutes;
         for (const [w, minutes] of parts.overtime) this.overtimeMinutes[i]![w]! += minutes;
       }
+      // Call-backs are worked time the rule counts (recorded day-of, so always past here). Like a
+      // holdover's, the overtime counter ignores the hours they authorise: stricter, never looser.
+      for (const cb of this.ctx.callBacksByNurse.get(this.nurses[i]!.id) ?? []) {
+        const hours = windowDurationMinutes(cb.window) / MINUTES_PER_HOUR;
+        const parts = calendar.partsOf(cb.window, hours);
+        for (const [week, minutes] of parts.week) this.weekMinutes[i]![week]! += minutes;
+        for (const [w, minutes] of parts.overtime) this.overtimeMinutes[i]![w]! += minutes;
+      }
     }
     // The half of a pair already behind the period: worked in the lookback tail (Christmas Eve
     // last period), or on record however long ago (Memorial Day for a Thanksgiving pair).
@@ -774,6 +800,7 @@ export class SolverModel {
     this.daysOffTogether = new Array<number>(n).fill(0);
     this.completeWeekend = new Array<number>(n).fill(0);
     this.shortWorkRun = new Array<number>(n).fill(0);
+    this.onCallLimit = new Array<number>(n).fill(0);
     this.priorWeekends = prior.map((list) => {
       const keys = new Set<IsoDate>();
       for (const a of list) {
@@ -814,6 +841,7 @@ export class SolverModel {
     this.daysOffTogetherSum = 0;
     this.completeWeekendSum = 0;
     this.shortWorkRunSum = 0;
+    this.onCallLimitSum = 0;
     this.weekendSum = 0;
     for (let i = 0; i < n; i++) {
       this.hoursPenalty[i] = this.hoursPenaltyFor(i);
@@ -828,6 +856,8 @@ export class SolverModel {
       this.completeWeekendSum += this.completeWeekend[i]!;
       this.shortWorkRun[i] = this.shortWorkRunFor(i);
       this.shortWorkRunSum += this.shortWorkRun[i]!;
+      this.onCallLimit[i] = this.onCallLimitFor(i);
+      this.onCallLimitSum += this.onCallLimit[i]!;
       this.weekendPenalty[i] = this.weekendFor(i);
       this.weekendSum += this.weekendPenalty[i]!;
     }
@@ -1157,6 +1187,7 @@ export class SolverModel {
       daysOffTogetherBefore: this.daysOffTogether[n]!,
       completeWeekendBefore: this.completeWeekend[n]!,
       shortWorkRunBefore: this.shortWorkRun[n]!,
+      onCallLimitBefore: this.onCallLimit[n]!,
       weekendBefore: this.weekendPenalty[n]!,
     };
     const inner = this.innerShifts[shift.idx]!;
@@ -1219,6 +1250,8 @@ export class SolverModel {
     this.completeWeekend[n] = token.completeWeekendBefore;
     this.shortWorkRunSum += token.shortWorkRunBefore - this.shortWorkRun[n]!;
     this.shortWorkRun[n] = token.shortWorkRunBefore;
+    this.onCallLimitSum += token.onCallLimitBefore - this.onCallLimit[n]!;
+    this.onCallLimit[n] = token.onCallLimitBefore;
     this.weekendSum += token.weekendBefore - this.weekendPenalty[n]!;
     this.weekendPenalty[n] = token.weekendBefore;
   }
@@ -1252,6 +1285,9 @@ export class SolverModel {
     const shortWorkRun = this.shortWorkRunFor(n);
     this.shortWorkRunSum += shortWorkRun - this.shortWorkRun[n]!;
     this.shortWorkRun[n] = shortWorkRun;
+    const onCallLimit = this.onCallLimitFor(n);
+    this.onCallLimitSum += onCallLimit - this.onCallLimit[n]!;
+    this.onCallLimit[n] = onCallLimit;
     const weekend = this.weekendFor(n);
     this.weekendSum += weekend - this.weekendPenalty[n]!;
     this.weekendPenalty[n] = weekend;
@@ -1363,6 +1399,11 @@ export class SolverModel {
   /** Runs of days worked too short, as the schedule stands; 0 unless the rule is soft. */
   shortWorkRunBreaches(): number {
     return this.shortWorkRunSum;
+  }
+
+  /** On-call-limit findings, as the schedule stands; 0 unless the rule is soft. */
+  onCallLimitBreaches(): number {
+    return this.onCallLimitSum;
   }
 
   /** Weekend-pattern breaches, as the schedule stands. */
@@ -1521,6 +1562,29 @@ export class SolverModel {
   }
 
   /**
+   * One nurse's on-call-limit findings, counted by the rule's own `onCallLimitFindings` on her
+   * timeline, lookback tail and other units' call included (they count toward a week and a run):
+   * one per week or schedule over, one per window of days in a row past the limit.
+   */
+  private onCallLimitFor(n: number): number {
+    const params = this.onCallLimitParams;
+    // Only a count holding a turn on call in this schedule is judged: none, nothing to find.
+    if (!params || this.onCall[n]! === 0) return 0;
+    const nurse = this.nurses[n]!;
+    const view = new ScheduleView({
+      period: this.input.period,
+      assignments: this.byNurse[n]!,
+      priorAssignments: this.prior[n]!,
+      nurses: [nurse],
+      shiftTypes: this.shiftTypes,
+    });
+    return onCallLimitFindings(view.timelineFor(nurse.id), nurse, params, {
+      start: this.input.period.startDate,
+      end: this.input.period.endDate,
+    }).length;
+  }
+
+  /**
    * Exactly one charge nurse per worked shift when one is available — none on a shift run by
    * another's charge nurse. The first unlocked nurse on the roster who `canTakeCharge` gets it —
    * deterministic, and re-run after every change so a removed charge nurse hands the role to
@@ -1558,6 +1622,7 @@ export class SolverModel {
       this.daysOffTogetherSum * this.daysOffTogetherPrice +
       this.completeWeekendSum * this.completeWeekendPrice +
       this.shortWorkRunSum * this.shortWorkRunPrice +
+      this.onCallLimitSum * this.onCallLimitPrice +
       this.pendingSum * this.pendingPrice +
       this.prefSum * this.weights.preference +
       this.costSum * this.weights.cost
@@ -1569,13 +1634,15 @@ export class SolverModel {
     const incompatibility = this.incompatSum;
     const hours = this.hoursSum;
     // The holiday rotation is fairness between nurses, so it is reported with it; so is a pair of
-    // days off for a nurse working every weekend, relief for the same weekend burden.
+    // days off for a nurse working every weekend, relief for the same weekend burden, and a cap on
+    // call, a burden shared across the team.
     const fairness =
       this.fairness() +
       this.holidaySum * this.holidayPrice +
       this.weekendSum * this.weekendPrice +
       this.daysOffTogetherSum * this.daysOffTogetherPrice +
-      this.completeWeekendSum * this.completeWeekendPrice;
+      this.completeWeekendSum * this.completeWeekendPrice +
+      this.onCallLimitSum * this.onCallLimitPrice;
     // Days off after nights, tour rotation and short work runs are about the nurse, so they are
     // reported with preferences.
     const preferences =

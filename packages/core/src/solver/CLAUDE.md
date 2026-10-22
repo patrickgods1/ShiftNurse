@@ -69,7 +69,7 @@
   writes holdover or overtime rows, so a price would mostly be about rows Generate never creates.
   INRC-II's pattern terms are priced when soft and enabled (`tourRotation` 45, `daysOffTogether` 40,
   `completeWeekend` 40, `shortWorkRun` 30 per finding; SA `*Breaches`, CP-SAT `*Terms`, the
-  findings shared with the rule). Per-shift-type consecutive limits are not added:
+  findings shared with the rule), and so are on-call caps (`onCallLimit` 40, fairness). Per-shift-type consecutive limits are not added:
   `max-consecutive-shifts`' `maxConsecutiveNights` is that limit for nights.
 - **Solver speed-ups must not change a schedule.** `SolverModel` caches fairness (cleared in
   `count`), staffing per shift and role, prepared rules (`prepareRules`/`evaluatePrepared`) and

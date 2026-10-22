@@ -265,6 +265,20 @@
   volunteered holdover time are left out), one finding per work week naming every in-period shift
   that adds to it; `max-hours-in-24` (hard, off by default) caps worked hours in any 24, checked at
   each window's start and end − 24h. Pay: `beyond_scheduled_tour` and `consecutive` overtime bases.
+- **A call-back from standby is worked time (ORS 441.770(3): "a shift or call response").**
+  `CallBack` (`nurseId`, wall `window`: the standby's start plus the recorded start minute, for the
+  hours worked; `schedule/call-backs.ts`'s `callBackWindow`) reaches the rules as
+  `RuleContext.callBacksByNurse` (`SolveInput.callBacks`, start-sorted). `max-hours-in-24` counts
+  its minutes and anchors on its start and end − 1440; `long-stretch` merges it into the timeline
+  (`withCallBacks`; guard assignment reads with `isCallBackItem`); `max-hours-per-week` counts it
+  under the rule's reading (whole in its start window at declared hours without pay settings,
+  split by the clock with them) and a call-back starting in a window authorises its own hours
+  there, as a holdover does. Rest counts it only with `min-rest-between-shifts`'
+  `callBackCountsForRest` (off: UC–CNA Art. 14 § N.3, WSNA § 7.10), against `minRestHours`, one
+  finding per shift (the larger shortfall). `no-mandatory-overtime` does not judge it. It is never
+  in the period: a finding needs an in-period shift and names only shifts. Recorded day-of, so the
+  solvers meet it as a constant: SA's gate through the context and its week counters, CP-SAT in
+  `encodeHoursIn24`, `encodeLongStretch`, the weekly caps and (with the param) `encodeRest`.
 - **Long stretches have a cap and a rest, from the state laws.** `long-stretch` (hard, nurse scope,
   off by default, no default numbers) judges each `workedStretches` stretch (holdovers in, standby
   out) against `maxConsecutiveHours` (an `Emergency:` note excuses it when `emergencyLiftsCap`) and,
@@ -359,6 +373,17 @@
   days off is not scattered through the grid. Runs touching the period's last day are not judged
   (the next period may extend them); lookback counts; another unit's shifts count as worked. While
   soft both solvers price each finding at `shortWorkRun` (preferences); hard, `encodeShortWorkRuns`.
+- **On-call caps are unit policy.** `rules/on-call-limit.ts` (`on-call-limit`, soft, nurse scope,
+  off by default, `too_much_on_call`): `maxOnCallPerWeek`, `maxOnCallPerPeriod` and
+  `maxConsecutiveOnCallDays` are optional and not defaulted (absent = no limit; UC–CNA Art. 14 § K
+  and WSNA only ask for call "distributed equitably", L-18), with its own `workWeekStartsOn`.
+  Call is `isOnCall`, by date; lookback and other units' call count toward a week and a run, a
+  schedule counts the call dated in it; a count is judged only when it holds an in-period turn, and
+  no employment type is exempt. One finding per week or schedule over (amount = how many over);
+  days in a row are judged per window of `max + 1` consecutive call dates (amount 1), so a run two
+  days too long is two findings — what both solvers can price exactly. While soft both solvers
+  price each finding at `onCallLimit` (40, fairness; SA `onCallLimitBreaches`, CP-SAT
+  `onCallLimitTerms`, one `onCallLimitParts`); hard, `encodeOnCallLimit` (`atMost`).
 - **Weekends off per year is an alert.** `complianceAlerts`' `weekends_off_per_year`
   (`publish/compliance.ts`) comes from `Unit.minWeekendsOffPerYear`: the ledger's weekends over the
   periods that began within the 52 weeks ending on the period's last day, plus this period's,

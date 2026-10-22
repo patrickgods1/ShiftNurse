@@ -41,6 +41,7 @@ import type { ScheduleCost } from '../cost/types.js';
 import type {
   Assignment,
   AvailabilityBlock,
+  CallBack,
   Credential,
   Differential,
   FairnessLedgerEntry,
@@ -138,6 +139,12 @@ export interface SolveInput {
   restWaivers?: readonly RestWaiver[];
   /** Recurring windows a nurse cannot work (accommodations), hard. Absent: none. */
   availabilityBlocks?: readonly AvailabilityBlock[];
+  /**
+   * Time nurses were called in from standby and worked, over the lookback tail and the period.
+   * Recorded day-of, so in a period being generated they are past: the solvers meet them as
+   * constants, as they meet the published tail. Absent: none.
+   */
+  callBacks?: readonly CallBack[];
   preferences: readonly Preference[];
   /** Ledger rows strictly before this period, for the burden index the seed and objective read. */
   ledgerHistory: readonly FairnessLedgerEntry[];
@@ -244,6 +251,14 @@ export interface ObjectiveWeights {
    * short; level with a middling preference (3 × 10), since it is a matter of how the week feels.
    */
   shortWorkRun: number;
+  /**
+   * Per on-call-limit finding while that rule is soft: a work week or a schedule with more call
+   * than the unit allows (one finding however far over), or each day on call in a row past its
+   * limit. Counted in the fairness bucket: call is a burden shared across the team. Level with a
+   * split weekend, below a weekend-pattern breach and an unfilled target, so the cap gives way
+   * before anything goes short.
+   */
+  onCallLimit: number;
   /** Per dollar of straight-time cost. */
   cost: number;
 }
@@ -264,6 +279,7 @@ export const DEFAULT_OBJECTIVE_WEIGHTS: ObjectiveWeights = {
   daysOffTogether: 40,
   completeWeekend: 40,
   shortWorkRun: 30,
+  onCallLimit: 40,
   cost: 0.05,
 };
 

@@ -1209,6 +1209,11 @@ export const dayOfPayEvent = sqliteTable(
     scheduledHours: real('scheduled_hours'),
     /** Sent home and call-back: the hours actually worked. */
     hoursWorked: real('hours_worked'),
+    /**
+     * Call-back only: minutes from the start of the standby shift (date, shift type) to when the
+     * nurse started working. Null on rows recorded before call-backs had a time (pay-only rows).
+     */
+    startMinute: integer('start_minute'),
     note: text('note'),
     /** 'manager' in v1; never inferred at read time. */
     enteredBy: text('entered_by').notNull().$type<'manager' | 'nurse'>(),

@@ -90,6 +90,7 @@ export type {
   AvailabilityBlock,
   Budget,
   CallAttempt,
+  CallBack,
   CallOff,
   CallOffStatus,
   CallOutcome,
@@ -408,6 +409,8 @@ export {
   type WeekendPatternParams,
   weekendBreaches,
 } from './rules/weekend-pattern.js';
+// Where a call-back from standby sits on the timeline (ORS 441.770(3): a call response counts)
+export { callBackWindow } from './schedule/call-backs.js';
 // Which dated shift covers which
 export { containingDate, coveringShift, withinShiftProblem } from './schedule/cover.js';
 export type { BusyElsewhere } from './schedule/elsewhere.js';

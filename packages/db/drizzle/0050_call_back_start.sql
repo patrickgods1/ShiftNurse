@@ -1,0 +1,1 @@
+ALTER TABLE `day_of_pay_event` ADD `start_minute` integer;

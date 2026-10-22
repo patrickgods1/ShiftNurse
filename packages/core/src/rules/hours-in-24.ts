@@ -20,12 +20,17 @@
  * Hours are hours worked: on the DST nights the real minutes (`schedule/real-minutes.ts`, D19),
  * the window itself on the wall clock.
  *
+ * A call-back from standby is worked time too (ORS 441.770(3) starts the count at "a shift or call
+ * response"): its minutes count and its start and end − 1440 are anchors, but it is never in the
+ * period, so a window is judged only when it holds an in-period shift.
+ *
  * Monotone under removal: dropping a shift can only lower every window's hours, which is what
  * `SolverModel.isLegal` relies on when it re-checks a removal. History is never flagged: a
  * breach is reported only if some shift in it is in the period.
  */
 
-import { MINUTES_PER_DAY, MINUTES_PER_HOUR } from '../domain/time.js';
+import type { CallBack } from '../domain/entities.js';
+import { MINUTES_PER_DAY, MINUTES_PER_HOUR, type ShiftWindow } from '../domain/time.js';
 import { type DstTransition, realMinutesIn } from '../schedule/real-minutes.js';
 import type { AssignmentView } from '../schedule/view.js';
 import { describeMinute, hoursText } from './format.js';
@@ -41,12 +46,12 @@ export interface MaxHoursIn24Params {
  * do not overlap on the clock (whether a shift is in the window is geometry, not a count).
  */
 function overlapMinutes(
-  view: AssignmentView,
+  window: ShiftWindow,
   from: number,
   transitions: readonly DstTransition[],
 ): number | null {
-  const lo = Math.max(view.window.startMinute, from);
-  const hi = Math.min(view.window.endMinute, from + MINUTES_PER_DAY);
+  const lo = Math.max(window.startMinute, from);
+  const hi = Math.min(window.endMinute, from + MINUTES_PER_DAY);
   if (hi <= lo) return null;
   return realMinutesIn({ startMinute: lo, endMinute: hi }, transitions);
 }
@@ -58,28 +63,35 @@ function overlapMinutes(
  * message, so callers that need time order sort themselves. This rule and the mandatory-overtime
  * caps both need the same scan, and two copies of the anchor argument are two chances to get it
  * wrong. The windows sit on the wall clock; the minutes are real ones under `transitions`.
- * `worked` must be sorted by start.
+ * `worked` must be sorted by start. `callBacks` add their minutes and anchors (after the shifts'),
+ * never a view.
  */
 export function* windowsIn24(
   worked: readonly AssignmentView[],
   extraAnchors: readonly number[] = [],
   transitions: readonly DstTransition[] = [],
+  callBacks: readonly CallBack[] = [],
 ): Iterable<{ from: number; minutes: number; views: AssignmentView[] }> {
   const anchors = new Set<number>(extraAnchors);
   for (const v of worked) {
     anchors.add(v.window.startMinute);
     anchors.add(v.window.endMinute - MINUTES_PER_DAY);
   }
+  for (const cb of callBacks) {
+    anchors.add(cb.window.startMinute);
+    anchors.add(cb.window.endMinute - MINUTES_PER_DAY);
+  }
   for (const from of anchors) {
     let minutes = 0;
     const views: AssignmentView[] = [];
     for (const v of worked) {
       if (v.window.startMinute >= from + MINUTES_PER_DAY) break;
-      const m = overlapMinutes(v, from, transitions);
+      const m = overlapMinutes(v.window, from, transitions);
       if (m === null) continue;
       minutes += m;
       views.push(v);
     }
+    for (const cb of callBacks) minutes += overlapMinutes(cb.window, from, transitions) ?? 0;
     yield { from, minutes, views };
   }
 }
@@ -124,6 +136,7 @@ export const maxHoursIn24Rule: Rule<MaxHoursIn24Params> = {
         worked,
         [],
         ctx.dstTransitions,
+        ctx.callBacksByNurse.get(nurse.id),
       )) {
         if (minutes <= limit) continue;
         const inPeriod = touching.filter((v) => v.inPeriod);

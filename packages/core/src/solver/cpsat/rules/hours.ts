@@ -7,9 +7,20 @@
  * The solver never marks a shift as authorised overtime or records a holdover, so a week may pass
  * the overtime threshold by the hours a constant's holdover adds, or without limit when a
  * constant is marked authorised overtime — exactly what the rule accepts.
+ *
+ * Call-backs from standby are constants in the weekly caps, counted as the rule counts them, and a
+ * call-back that starts in a window authorises its own hours there, as a holdover does.
  */
 
-import { addDays, compareDates, type IsoDate, MINUTES_PER_HOUR } from '../../../domain/time.js';
+import type { CallBack } from '../../../domain/entities.js';
+import {
+  addDays,
+  compareDates,
+  type IsoDate,
+  MINUTES_PER_HOUR,
+  type ShiftWindow,
+  windowDurationMinutes,
+} from '../../../domain/time.js';
 import {
   authorisedOvertimeHours,
   contractedHoursRule,
@@ -54,7 +65,12 @@ function within(e: TimelineEntry, start: IsoDate, end: IsoDate): boolean {
  * Whether an entry starts in the window dated [start, end] opening at `startMinute`
  * (`windowDayOf`): the weekly caps' membership, which at 0 is "is dated in it".
  */
-function startsWithin(e: TimelineEntry, start: IsoDate, end: IsoDate, startMinute: number) {
+function startsWithin(
+  e: { window: ShiftWindow },
+  start: IsoDate,
+  end: IsoDate,
+  startMinute: number,
+) {
   const day = windowDayOf(e.window.startMinute, startMinute);
   return compareDates(day, start) >= 0 && compareDates(day, end) <= 0;
 }
@@ -103,6 +119,35 @@ function minutesExpr(
   return e;
 }
 
+/**
+ * What a nurse's call-backs add to [start, end] as the rule counts them — whole minutes by the
+ * clock or by start with a pay attribution, hundredths of their hours by start without one — and
+ * the hours they authorise there (those that start in it).
+ */
+function callBackHours(
+  callBacks: readonly CallBack[],
+  start: IsoDate,
+  end: IsoDate,
+  reading: WeekReading,
+  byMinutes: boolean,
+): { counted: number; authorised: number } {
+  let counted = 0;
+  let authorised = 0;
+  const next = addDays(end, 1);
+  for (const cb of callBacks) {
+    const startsIn = startsWithin(cb, start, end, reading.startMinute);
+    if (startsIn) authorised += windowDurationMinutes(cb.window) / MINUTES_PER_HOUR;
+    if (!byMinutes) {
+      if (startsIn) counted += Math.round((windowDurationMinutes(cb.window) / 60) * HOURS);
+    } else if (reading.overtimeWindowAttribution === 'start') {
+      if (startsIn) counted += realMinutesIn(cb.window, reading.dstTransitions);
+    } else {
+      counted += minutesInWindow(cb, start, next, reading.dstTransitions, reading.startMinute);
+    }
+  }
+  return { counted, authorised };
+}
+
 /** Whether an entry adds to [start, end] as the rule counts it: starts in it, or worked in it. */
 function counts(entry: TimelineEntry, start: IsoDate, end: IsoDate, reading: WeekReading) {
   if (startsWithin(entry, start, end, reading.startMinute)) return true;
@@ -147,8 +192,12 @@ export function encodeWeeklyHours(ctx: EncodeContext, raw: Record<string, unknow
       dstTransitions: ctx.model.ctx.dstTransitions,
       startMinute: week.startMinute,
     };
-    const workedIn = (inWindow: TimelineEntry[], start: IsoDate, end: IsoDate) =>
-      byMinutes ? minutesExpr(inWindow, start, end, reading) : hoursExpr(inWindow);
+    const callBacks = ctx.model.ctx.callBacksByNurse.get(ctx.model.nurses[n]!.id) ?? [];
+    const workedIn = (inWindow: TimelineEntry[], start: IsoDate, end: IsoDate) => {
+      const e = byMinutes ? minutesExpr(inWindow, start, end, reading) : hoursExpr(inWindow);
+      e.constant += callBackHours(callBacks, start, end, reading, byMinutes).counted;
+      return e;
+    };
     const counted = ctx
       .timeline(n)
       .filter((e) => params.onCallCountsTowardHours || !e.shiftType.isOnCall);
@@ -157,11 +206,12 @@ export function encodeWeeklyHours(ctx: EncodeContext, raw: Record<string, unknow
     const overtimeCap = (inWindow: TimelineEntry[], start: IsoDate, end: IsoDate) => {
       // Constants only: a variable is a draft shift, which never carries overtime or a holdover.
       // Only rows that start in the window authorise it, as in the rule.
-      const authorised = authorisedOvertimeHours(
-        inWindow
-          .filter((e) => e.literal === null && startsWithin(e, start, end, reading.startMinute))
-          .map((e) => e.assignment!),
-      );
+      const authorised =
+        authorisedOvertimeHours(
+          inWindow
+            .filter((e) => e.literal === null && startsWithin(e, start, end, reading.startMinute))
+            .map((e) => e.assignment!),
+        ) + callBackHours(callBacks, start, end, reading, byMinutes).authorised;
       if (!params.requireOvertimeAuthorisation || authorised === Number.POSITIVE_INFINITY) {
         return null;
       }

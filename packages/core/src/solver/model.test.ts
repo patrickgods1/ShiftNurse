@@ -20,7 +20,7 @@ import type {
   Preference,
   Tour,
 } from '../domain/entities.js';
-import { isoDate } from '../domain/time.js';
+import { isoDate, shiftWindow } from '../domain/time.js';
 import { computeBurden } from '../fairness/burden.js';
 import { deriveCounters } from '../fairness/ledger.js';
 import { BURDEN_COMPONENTS, BURDEN_COUNTER } from '../fairness/types.js';
@@ -72,6 +72,8 @@ beforeEach(() => {
  * working the weekends is all it takes to leave them no pair off; one has two weekends pinned.
  * `completeWeekends`: complete weekends on (soft), so a Saturday or a Sunday alone is a finding.
  * `shortWorkRuns`: short work runs on (soft), so a lone day between days off is a finding.
+ * `onCall`: one RN on call every night, with on-call limits on (soft) at one a week, three a
+ * schedule and one day in a row, so any second call in a week or two nights running is a finding.
  */
 function scenario({
   mid = false,
@@ -83,6 +85,7 @@ function scenario({
   daysOff = false,
   completeWeekends = false,
   shortWorkRuns = false,
+  onCall = false,
   attribution = undefined as 'clock' | 'majority' | undefined,
 } = {}): SolveInput {
   const nurses: Nurse[] = [
@@ -155,17 +158,28 @@ function scenario({
             (completeWeekends && c.ruleId === 'complete-weekends') ||
             (shortWorkRuns && c.ruleId === 'short-work-runs')
           ? { ...c, enabled: true }
-          : tours && c.ruleId === 'tour-rotation'
+          : onCall && c.ruleId === 'on-call-limit'
             ? {
                 ...c,
                 enabled: true,
                 params: {
-                  maxToursPerPeriod: 1,
-                  minHoursBetweenTours: 48,
-                  permanentTourEnforced: true,
+                  ...c.params,
+                  maxOnCallPerWeek: 1,
+                  maxOnCallPerPeriod: 3,
+                  maxConsecutiveOnCallDays: 1,
                 },
               }
-            : c,
+            : tours && c.ruleId === 'tour-rotation'
+              ? {
+                  ...c,
+                  enabled: true,
+                  params: {
+                    maxToursPerPeriod: 1,
+                    minHoursBetweenTours: 48,
+                    permanentTourEnforced: true,
+                  },
+                }
+              : c,
     ),
   };
   return solveInputFrom({
@@ -178,16 +192,22 @@ function scenario({
       ...coverageAllWeek(DAY_12, 'LPN', 0, 1),
       ...coverageAllWeek(NIGHT_12, 'RN', 2, 2),
       ...(mid ? coverageAllWeek(MID_8, 'RN', 1, 1) : []),
+      ...(onCall ? coverageAllWeek(ON_CALL, 'RN', 1, 1) : []),
     ],
     ...(mid
       ? {
-          shiftTypes: [DAY_12, NIGHT_12, MID_8],
+          shiftTypes: [DAY_12, NIGHT_12, MID_8, ...(onCall ? [ON_CALL] : [])],
           shiftCredentialRequirements: [credentialRequirement(CRED_ACLS, 1, { shiftType: MID_8 })],
           nurseCredentials: [nurseCredential(nurses[0]!.id, CRED_ACLS)],
         }
       : {}),
     ...(daysOff
-      ? { shiftTypes: [...(mid ? [DAY_12, NIGHT_12, MID_8] : testShiftTypes), ...west.shiftTypes] }
+      ? {
+          shiftTypes: [
+            ...(mid ? [DAY_12, NIGHT_12, MID_8, ...(onCall ? [ON_CALL] : [])] : testShiftTypes),
+            ...west.shiftTypes,
+          ],
+        }
       : {}),
     preferences,
     ...(groups
@@ -215,7 +235,9 @@ function scenario({
       : {}),
     assignments: [pinned, ...pinnedWeekends],
     priorAssignments: [...(weekends ? [priorWeekend, prior] : [prior]), ...west.assignments],
-    ...(weekends || tours || daysOff || completeWeekends || shortWorkRuns ? { ruleSet } : {}),
+    ...(weekends || tours || daysOff || completeWeekends || shortWorkRuns || onCall
+      ? { ruleSet }
+      : {}),
     ...(pending
       ? {
           timeOff: [
@@ -390,6 +412,40 @@ function shortWorkRunsInput(severity: 'soft' | 'hard' | 'off' = 'soft'): SolveIn
     },
   });
 }
+
+/**
+ * One nurse on call, Sun 4 – Sat 17 Jan (weeks from Sunday: 4–10 and 11–17), with on-call limits
+ * on at `params`; soft unless `severity` says otherwise.
+ */
+function onCallInput(
+  params: Record<string, unknown>,
+  severity: 'soft' | 'hard' | 'off' = 'soft',
+): SolveInput {
+  const rules = defaultRuleSet(UNIT_ID);
+  return solveInputFrom({
+    startDate: isoDate('2026-01-04'),
+    endDate: isoDate('2026-01-17'),
+    nurses: [makeNurse({ id: 'cal', firstName: 'Cal' })],
+    shiftTypes: [ON_CALL],
+    coverageRequirements: coverageAllWeek(ON_CALL, 'RN', 1),
+    ruleSet: {
+      ...rules,
+      configs: rules.configs.map((c) =>
+        c.ruleId === 'on-call-limit'
+          ? {
+              ...c,
+              enabled: severity !== 'off',
+              ...(severity === 'hard' ? { severityOverride: 'hard' as const } : {}),
+              params: { ...c.params, ...params },
+            }
+          : c,
+      ),
+    },
+  });
+}
+
+/** Days from Sun 4 Jan: Mon 5, Wed 7 and Fri 9, all in the week of Sun 4. */
+const MON_WED_FRI = [1, 3, 5];
 
 /** Days from Sun 4 Jan: Mon 5, Tue 6, and Sat 17, the schedule's last day. */
 const MONDAY_5 = 1;
@@ -820,6 +876,61 @@ describe('SolverModel bookkeeping', () => {
     }
   });
 
+  it('keeps on-call limits priced right as call is given and taken', () => {
+    walk(scenario({ onCall: true }), 1);
+  });
+
+  it('prices a third call in a week once, at the on-call weight, with fairness', () => {
+    // Mon 5, Wed 7 and Fri 9 on call against 2 a week: one week over, one finding: 40 points.
+    const place = (model: SolverModel) => {
+      for (const day of MON_WED_FRI) model.add(model.make(0, model.shiftAt(day, ON_CALL)));
+      return model;
+    };
+    const priced = place(new SolverModel(onCallInput({ maxOnCallPerWeek: 2 })));
+    const free = place(new SolverModel(onCallInput({ maxOnCallPerWeek: 2 }), { onCallLimit: 0 }));
+    expect(priced.onCallLimitBreaches()).toBe(1);
+    expect(priced.breakdown().fairness - free.breakdown().fairness).toBeCloseTo(40, 6);
+    expect(priced.objective() - free.objective()).toBeCloseTo(40, 6);
+  });
+
+  it('prices each further night on call in a row, and none once the run is broken', () => {
+    // Mon 5, Tue 6, Wed 7 on call against 1 in a row: Mon–Tue and Tue–Wed, 2 findings: 80
+    // points. Taking Tuesday off leaves Mon 5 and Wed 7 apart: nothing.
+    const model = new SolverModel(onCallInput({ maxConsecutiveOnCallDays: 1 }));
+    const free = new SolverModel(onCallInput({ maxConsecutiveOnCallDays: 1 }), { onCallLimit: 0 });
+    const tuesday = model.make(0, model.shiftAt(TUESDAY_6, ON_CALL));
+    for (const m of [model, free]) {
+      m.add(m.make(0, m.shiftAt(MONDAY_5, ON_CALL)));
+      m.add(m.make(0, m.shiftAt(3, ON_CALL)));
+    }
+    const added = model.add(tuesday);
+    free.add(free.make(0, free.shiftAt(TUESDAY_6, ON_CALL)));
+    expect(model.onCallLimitBreaches()).toBe(2);
+    expect(model.objective() - free.objective()).toBeCloseTo(80, 6);
+    model.undoAdd(tuesday, added);
+    expect(model.onCallLimitBreaches()).toBe(0);
+    model.add(tuesday);
+    const removed = model.remove(tuesday);
+    expect(model.onCallLimitBreaches()).toBe(0);
+    model.undoRemove(tuesday, removed);
+    expect(model.onCallLimitBreaches()).toBe(2);
+  });
+
+  it('puts no price on on-call limits when the rule is hard or off', () => {
+    for (const severity of ['hard', 'off'] as const) {
+      const place = (model: SolverModel) => {
+        for (const day of MON_WED_FRI) model.add(model.make(0, model.shiftAt(day, ON_CALL)));
+        return model;
+      };
+      const params = { maxOnCallPerWeek: 2 };
+      const model = place(new SolverModel(onCallInput(params, severity)));
+      const free = place(new SolverModel(onCallInput(params, severity), { onCallLimit: 0 }));
+      expect(model.onCallLimitPrice, severity).toBe(0);
+      expect(model.onCallLimitBreaches(), severity).toBe(0);
+      expect(model.objective(), severity).toBeCloseTo(free.objective(), 6);
+    }
+  });
+
   it('keeps the price of incompatible nurses right as they are paired and parted', () => {
     // A change to the day 12 re-prices the hours the mid 8 shares with it, and the other way
     // round; checked every step for the same reason as the mid 8 above.
@@ -896,6 +1007,7 @@ describe('annealer cache drift', () => {
       daysOff: true,
       completeWeekends: true,
       shortWorkRuns: true,
+      onCall: true,
     });
     const model = new SolverModel(input);
     greedySeed(model);
@@ -2007,6 +2119,7 @@ describe('soft rules priced the way the grid judges them', () => {
     'days-off-together': (m) => m.daysOffTogetherBreaches(),
     'complete-weekends': (m) => m.completeWeekendBreaches(),
     'short-work-runs': (m) => m.shortWorkRunBreaches(),
+    'on-call-limit': (m) => m.onCallLimitBreaches(),
   };
 
   it('accounts for every soft rule in the registry', () => {
@@ -2040,6 +2153,7 @@ describe('soft rules priced the way the grid judges them', () => {
       { daysOff: true },
       { completeWeekends: true },
       { shortWorkRuns: true },
+      { onCall: true },
       // By the clock a night before Winter Day works it, and the Test day night works both halves
       // of that pair; by majority the night goes to the morning it ends on.
       { holidays: true, attribution: 'clock' as const },
@@ -2330,5 +2444,66 @@ describe('a shift short of its floor', () => {
     ]);
     expect(stripped).toBe(9_120);
     expect(spread).toBe(6_120);
+  });
+});
+
+describe('on-call limits made hard', () => {
+  const on = (model: SolverModel, day: number) => model.make(0, model.shiftAt(day, ON_CALL));
+
+  it('turns away a third call in a week, but takes it in the next week', () => {
+    // Mon 5 and Wed 7 on call against 2 a week: Fri 9 would be a third; Mon 12 is a new week.
+    const model = new SolverModel(onCallInput({ maxOnCallPerWeek: 2 }, 'hard'));
+    model.add(on(model, MONDAY_5));
+    model.add(on(model, 3));
+    expect(model.canAdd(0, on(model, 5))).toBe(false);
+    expect(model.canAdd(0, on(model, 8))).toBe(true);
+  });
+
+  it('turns away a second night on call in a row, and stays legal when call is taken away', () => {
+    const model = new SolverModel(onCallInput({ maxConsecutiveOnCallDays: 1 }, 'hard'));
+    const monday = on(model, MONDAY_5);
+    model.add(monday);
+    expect(model.canAdd(0, on(model, TUESDAY_6))).toBe(false);
+    expect(model.canAdd(0, on(model, 3))).toBe(true);
+    model.remove(monday);
+    expect(model.isLegal(0)).toBe(true);
+  });
+});
+
+describe('a call-back in the lookback', () => {
+  // Grace was on call Tue 10 Mar 2026 from 19:00 (last schedule) and called in 02:00–05:00 Wed 11,
+  // the first day of this one. Weeks start Sunday: the week of Sun 8 Mar is the first judged.
+  const input = (withCallBack: boolean) => {
+    const standby = assign('grace', ON_CALL, '2026-03-10', { periodId: 'prev' });
+    const start = shiftWindow(isoDate('2026-03-10'), ON_CALL).startMinute + 420;
+    const window = { startMinute: start, endMinute: start + 180 };
+    const base = withRuleParams(defaultRuleSet(UNIT_ID), { 'max-hours-in-24': { maxHours: 12 } });
+    return solveInputFrom({
+      startDate: isoDate('2026-03-11'),
+      endDate: isoDate('2026-03-24'),
+      nurses: [makeNurse({ id: 'grace', contractedHoursPerPeriod: 120 })],
+      priorAssignments: [standby],
+      ...(withCallBack ? { callBacks: [{ nurseId: 'grace', window }] } : {}),
+      ruleSet: {
+        ...base,
+        configs: base.configs.map((c) =>
+          c.ruleId === 'max-hours-in-24' ? { ...c, enabled: true, severityOverride: 'hard' } : c,
+        ),
+      },
+    });
+  };
+  const wednesdayDay = (model: SolverModel) =>
+    model.make(0, model.shiftAt(model.dateIdx.get(isoDate('2026-03-11'))!, DAY_12));
+
+  it('keeps the day 12 after it off her under a 12-hour cap: 3 + 12 = 15 hours in 24', () => {
+    const model = new SolverModel(input(true));
+    expect(model.canAdd(0, wednesdayDay(model))).toBe(false);
+    const fresh = new SolverModel(input(false));
+    expect(fresh.canAdd(0, wednesdayDay(fresh))).toBe(true);
+  });
+
+  it('counts its 3 hours toward the week it was worked', () => {
+    expect(new SolverModel(input(true)).weekHoursOf(0)[0]).toBe(3);
+    expect(new SolverModel(input(false)).weekHoursOf(0)[0]).toBe(0);
   });
 });

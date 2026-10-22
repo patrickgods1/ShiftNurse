@@ -10,6 +10,7 @@ import type {
   AcuityTier,
   Assignment,
   AvailabilityBlock,
+  CallBack,
   CensusForecast,
   CoverageRequirement,
   Credential,
@@ -262,6 +263,8 @@ export interface ScenarioOptions {
   restWaivers?: RestWaiver[];
   /** Recurring windows a nurse cannot work. */
   availabilityBlocks?: AvailabilityBlock[];
+  /** Time nurses were called in from standby and worked. */
+  callBacks?: CallBack[];
   /** How the unit keeps its ratios: a charge nurse without patients, break relief. */
   ratioStaffing?: RatioStaffing;
   acuityTiers?: AcuityTier[];
@@ -348,6 +351,7 @@ export function scenario(options: ScenarioOptions = {}): Scenario {
     ...(options.preceptorships ? { preceptorships: options.preceptorships } : {}),
     ...(options.restWaivers ? { restWaivers: options.restWaivers } : {}),
     ...(options.availabilityBlocks ? { availabilityBlocks: options.availabilityBlocks } : {}),
+    ...(options.callBacks ? { callBacks: options.callBacks } : {}),
     ...(options.historyFrom ? { historyFrom: options.historyFrom } : {}),
     ...(options.preferences ? { preferences: options.preferences } : {}),
     ...(options.dstTransitions ? { dstTransitions: options.dstTransitions } : {}),
@@ -430,6 +434,7 @@ export function solveInputFrom(options: SolveScenarioOptions = {}): SolveInput {
     ...(options.preceptorships ? { preceptorships: options.preceptorships } : {}),
     ...(options.restWaivers ? { restWaivers: options.restWaivers } : {}),
     ...(options.availabilityBlocks ? { availabilityBlocks: options.availabilityBlocks } : {}),
+    ...(options.callBacks ? { callBacks: options.callBacks } : {}),
     ...(options.cost ? { cost: options.cost } : {}),
   };
 }

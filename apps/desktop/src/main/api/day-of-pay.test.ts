@@ -9,6 +9,7 @@ import { addDays, isoDate } from '@shiftnurse/core';
 import {
   createNurse,
   createPayRate,
+  createShiftType,
   createUnit,
   deletePayRate,
   listDayOfPayEvents,
@@ -101,11 +102,29 @@ describe('the cost report’s day-of pay', () => {
       reportingPayNoticeHours: 2,
       overtimeWindowAttribution: 'clock' as const,
     });
+    const standby = createShiftType(
+      f.handle.db,
+      {
+        unitId: f.seeded.unitId,
+        name: 'Standby night',
+        abbreviation: 'SBN',
+        startTime: '19:00',
+        durationHours: 12,
+        isNight: true,
+        isOnCall: true,
+        color: '#333',
+        sortOrder: 9,
+        active: true,
+      },
+      'manager',
+    );
     record({
       kind: 'call_back',
       unitId: f.seeded.unitId,
       nurseId: pat.id,
       date: date(),
+      shiftTypeId: standby.id,
+      startMinute: 180,
       hoursWorked: 2,
     });
     const [line] = report().dayOf.lines;

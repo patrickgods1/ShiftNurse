@@ -38,6 +38,16 @@
   `rule_config`, `schedule_version`, `schedule_change` and `pay_config_snapshot` refuse UPDATE and
   DELETE, like `audit_log` (0013). They also abort FK cascades, so no unit or published period can
   be deleted. A migration that rebuilds or backfills one of them drops and re-creates its trigger.
+- **A call-back has a time (migration `0050_call_back_start`, `day_of_pay_event.start_minute`, nullable):**
+  minutes from the start of the standby shift the row's (nurse, date, shift type) names, so it can
+  count toward hours-in-24, long stretches and weekly hours. A new call-back requires it and the
+  repository refuses a start outside the standby's declared length or a window that overlaps the
+  nurse's own worked shift on any unit (published or archived, half-open); older rows stay valid as
+  pay-only (null). No `assignment_id`: ids change on backfill and moves.
+- **`loadPeriodInput` reads timed call-backs as `SolveInput.callBacks`** (`callBacksForNurses` in
+  `day-of-pay.ts`, through `perNurseRecordsFor`): the roster's `call_back` rows with a
+  `start_minute`, on any unit, dated over the lookback tail and the period, each window placed by
+  core's `callBackWindow` from the standby's shift type. Pay-only rows (null start) are skipped.
 - **Event writers (`reportCallOff`, `logCallAttempt`, `createTimeOffRequest`, `approveTimeOff`,
   `denyTimeOff`) take an optional `at` for past events: seeds and imports pass it, live paths never
   do. The audit row carries the same time. `localInstant` (`local-days.ts`) turns a local date and

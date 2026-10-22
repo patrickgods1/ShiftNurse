@@ -41,6 +41,7 @@ import {
 import { completeWeekendParts } from './rules/complete-weekends.js';
 import { isMovable, roleExpr } from './rules/coverage.js';
 import { daysOffParts } from './rules/days-off.js';
+import { onCallLimitParts } from './rules/on-call-limit.js';
 import { shortWorkRunParts } from './rules/short-work-runs.js';
 import { toursUsed } from './rules/tours.js';
 import { nurseWeekendExprs, weekendBreachExprs } from './rules/weekends.js';
@@ -60,6 +61,7 @@ export function encodeObjective(ctx: EncodeContext): void {
   daysOffTogetherTerms(ctx);
   completeWeekendTerms(ctx);
   shortWorkRunTerms(ctx);
+  onCallLimitTerms(ctx);
   perShiftTerms(ctx);
 }
 
@@ -672,6 +674,73 @@ function shortWorkRunTerms(ctx: EncodeContext): void {
         ctx.b.linear(sum(expr([[short, 1]]), scale(p.e, -1)), 0, Number.POSITIVE_INFINITY, label);
       }
       ctx.b.minimise(expr([[short, 1]]), price);
+    }
+  }
+}
+
+/**
+ * On-call limits, finding for finding as `SolverModel.onCallLimitFor` counts them with the rule's
+ * `onCallLimitFindings`; priced only while the rule is soft (`onCallLimitPrice`), a hard rule is
+ * `encodeOnCallLimit`'s constraint. One Boolean per judged count and window, from the hard
+ * encoder's own parts (`onCallLimitParts`), so a count over by three is one finding, as the rule
+ * reports it:
+ *
+ * - A count is a finding when it passes its cap and holds one of this schedule's turns. With the
+ *   constants within the cap, passing it takes a variable, so `U · over ≥ count − max` (U the most
+ *   it can pass by) says it. With the constants already past it, the count is judged as soon as
+ *   one is this schedule's: a constant if a locked turn is, else `U · over ≥ Σ variables`.
+ * - A window is a finding when every date is on call and one holds this schedule's turn:
+ *   `over ≥ Σ days + inPeriod[d] − (max + 1)` for each date d, at most 1 since each term is.
+ */
+function onCallLimitTerms(ctx: EncodeContext): void {
+  const { onCallLimitParams: params, onCallLimitPrice: price } = ctx.model;
+  if (!params || price === 0) return;
+  for (let n = 0; n < ctx.model.nurses.length; n++) {
+    const { counts, windows } = onCallLimitParts(ctx, n, params);
+    for (const { count, inPeriod, max, label } of counts) {
+      const vars = expr(count.terms);
+      const standing = count.constant > max;
+      if (standing && inPeriod.constant >= 1) {
+        ctx.b.minimise(expr([], 1), price);
+        continue;
+      }
+      // What must be positive for the count to be judged over: any variable once the constants
+      // are past the cap, else the count past it.
+      const need = standing ? vars : sum(count, expr([], -max));
+      const most = need.constant + need.terms.reduce((total, [, c]) => total + c, 0);
+      if (most <= 0) continue;
+      const over = ctx.b.auxiliary(`${label} price`, 0, 1, (value) =>
+        evalExpr(need, value) >= 1 ? 1 : 0,
+      );
+      ctx.b.linear(
+        sum(expr([[over, most]]), scale(need, -1)),
+        0,
+        Number.POSITIVE_INFINITY,
+        `${label} price`,
+      );
+      ctx.b.minimise(expr([[over, 1]]), price);
+    }
+    for (const { days, inPeriod, max, label } of windows) {
+      const all = sum(...days, expr([], -(max + 1)));
+      const parts = inPeriod.map((e) => sum(all, e));
+      if (parts.some((p) => p.terms.length === 0 && p.constant >= 1)) {
+        ctx.b.minimise(expr([], 1), price);
+        continue;
+      }
+      const live = parts.filter((p) => p.terms.length > 0);
+      if (live.length === 0) continue;
+      const over = ctx.b.auxiliary(`${label} price`, 0, 1, (value) =>
+        live.some((p) => evalExpr(p, value) >= 1) ? 1 : 0,
+      );
+      for (const p of live) {
+        ctx.b.linear(
+          sum(expr([[over, 1]]), scale(p, -1)),
+          0,
+          Number.POSITIVE_INFINITY,
+          `${label} price`,
+        );
+      }
+      ctx.b.minimise(expr([[over, 1]]), price);
     }
   }
 }

@@ -22,6 +22,7 @@
 import type { DemandTable } from '../acuity/demand.js';
 import type {
   AvailabilityBlock,
+  CallBack,
   Credential,
   Holiday,
   Id,
@@ -98,7 +99,8 @@ export type ViolationCode =
   | 'no_days_off_together'
   | 'off_plan_tour'
   | 'split_weekend'
-  | 'short_work_run';
+  | 'short_work_run'
+  | 'too_much_on_call';
 
 /**
  * One nurse worked one past holiday. Derived from published schedules, or recorded by hand for
@@ -183,6 +185,11 @@ export interface RuleContext {
   restWaiversByNurse: ReadonlyMap<Id, ReadonlySet<IsoDate>>;
   /** Each nurse's recorded accommodations (recurring windows they cannot work). */
   availabilityBlocksByNurse: ReadonlyMap<Id, readonly AvailabilityBlock[]>;
+  /**
+   * Each nurse's call-backs from standby, sorted by start: worked time the hour caps, long
+   * stretches and the weekly cap count (`schedule/call-backs.ts`), never in the period themselves.
+   */
+  callBacksByNurse: ReadonlyMap<Id, readonly CallBack[]>;
   /**
    * The first date from which the lookback tail is known to be complete (`historyCompleteFrom`).
    * Undefined: the caller has not said, and a pay period that began before the schedule is judged
