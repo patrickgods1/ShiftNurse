@@ -19,6 +19,8 @@ beforeEach(() => {
     holidayPayCoversOvertime: false,
     reportingPayNoticeHours: 2,
     overtimeWindowAttribution: 'clock' as const,
+    paySpringForwardAsScheduled: false,
+    breakPremiumRate: 'base' as const,
   });
   bridge.respond('cost', 'savePaySettings', {
     callBackMinimumHours: 2,
@@ -26,6 +28,8 @@ beforeEach(() => {
     holidayPayCoversOvertime: false,
     reportingPayNoticeHours: 2,
     overtimeWindowAttribution: 'clock' as const,
+    paySpringForwardAsScheduled: false,
+    breakPremiumRate: 'base' as const,
   });
 });
 afterEach(() => {
@@ -58,6 +62,8 @@ describe('premium stacking in Settings › Pay', () => {
             holidayPayCoversOvertime: false,
             reportingPayNoticeHours: 2,
             overtimeWindowAttribution: 'clock' as const,
+            paySpringForwardAsScheduled: false,
+            breakPremiumRate: 'base' as const,
           },
         ],
       ]),
@@ -80,6 +86,8 @@ describe('premium stacking in Settings › Pay', () => {
             holidayPayCoversOvertime: true,
             reportingPayNoticeHours: 2,
             overtimeWindowAttribution: 'clock' as const,
+            paySpringForwardAsScheduled: false,
+            breakPremiumRate: 'base' as const,
           },
         ],
       ]),
@@ -135,6 +143,37 @@ describe('week attribution in Settings › Pay', () => {
             holidayPayCoversOvertime: false,
             reportingPayNoticeHours: 2,
             overtimeWindowAttribution: 'start',
+            paySpringForwardAsScheduled: false,
+            breakPremiumRate: 'base',
+          },
+        ],
+      ]),
+    );
+  });
+});
+
+describe('the spring-forward night and missed breaks in Settings › Pay', () => {
+  it('saves the spring night as scheduled and breaks at the regular rate with the rest', async () => {
+    renderWithApp(<StackingSection unitId="u-1" />);
+    fireEvent.click(
+      await screen.findByLabelText('Pay the spring-forward night as the hours scheduled'),
+    );
+    fireEvent.change(screen.getByLabelText('Missed meal and rest breaks are paid at'), {
+      target: { value: 'regular' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(bridge.callsTo('cost', 'savePaySettings')).toEqual([
+        [
+          'u-1',
+          {
+            callBackMinimumHours: 2,
+            premiumStacking: 'compound',
+            holidayPayCoversOvertime: false,
+            reportingPayNoticeHours: 2,
+            overtimeWindowAttribution: 'clock',
+            paySpringForwardAsScheduled: true,
+            breakPremiumRate: 'regular',
           },
         ],
       ]),

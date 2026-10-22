@@ -358,6 +358,20 @@
       "when": 1792625207510,
       "tag": "0050_call_back_start",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "6",
+      "when": 1792631846806,
+      "tag": "0051_pay_spring_and_break_rate",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "6",
+      "when": 1792634647454,
+      "tag": "0052_pay_short_rest_and_tiers",
+      "breakpoints": true
     }
   ]
 }

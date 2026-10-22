@@ -264,6 +264,8 @@ describe('the pay a period is costed under', () => {
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 2,
         overtimeWindowAttribution: 'clock',
+        paySpringForwardAsScheduled: false,
+        breakPremiumRate: 'base',
       },
       ACTOR,
     );
@@ -281,6 +283,8 @@ describe('the pay a period is costed under', () => {
         holidayPayCoversOvertime: true,
         reportingPayNoticeHours: 2,
         overtimeWindowAttribution: 'start',
+        paySpringForwardAsScheduled: false,
+        breakPremiumRate: 'base',
       },
       ACTOR,
     );
@@ -293,6 +297,29 @@ describe('the pay a period is costed under', () => {
     expect(costContext(handle.db, unitId, defaultRuleSet(unitId)).overtimeWindowAttribution).toBe(
       'start',
     );
+  });
+
+  it('prices the spring night as scheduled and breaks at the regular rate once the unit says so', () => {
+    const unitId = seeded.unitId;
+    const ruleSet = defaultRuleSet(unitId);
+    expect(costContext(handle.db, unitId, ruleSet)).toMatchObject({
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
+    });
+    savePaySettings(
+      handle.db,
+      unitId,
+      {
+        ...getPaySettings(handle.db, unitId),
+        paySpringForwardAsScheduled: true,
+        breakPremiumRate: 'regular',
+      },
+      ACTOR,
+    );
+    expect(costContext(handle.db, unitId, ruleSet)).toMatchObject({
+      paySpringForwardAsScheduled: true,
+      breakPremiumRate: 'regular',
+    });
   });
 
   // Skipped off the pinned zone (phase 1's sentinel): the clock change is a host fact.

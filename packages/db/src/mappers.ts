@@ -504,10 +504,46 @@ export function toDifferential(r: typeof s.differential.$inferSelect): Different
           consecutive: {
             afterShifts: r.consecutiveAfterShifts,
             withinDays: r.consecutiveWithinDays,
+            ...optKey('tiers', consecutiveTiersOf(r.consecutiveTiers)),
           },
         }
       : {}),
+    ...(r.shortRestMinHoursOff !== null && r.shortRestScope !== null
+      ? { shortRest: { minHoursOff: r.shortRestMinHoursOff, scope: r.shortRestScope } }
+      : {}),
   };
+}
+
+type ConsecutiveTier = NonNullable<NonNullable<Differential['consecutive']>['tiers']>[number];
+
+/**
+ * A consecutive-shift premium's tiers from their JSON column. A damaged value read as "no tiers"
+ * would quietly fall back to the 12-hour reading and stop paying 8- and 10-hour runs.
+ */
+function consecutiveTiersOf(json: string | null): ConsecutiveTier[] | undefined {
+  if (json === null) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    value = undefined;
+  }
+  const isTier = (t: unknown): t is ConsecutiveTier =>
+    typeof t === 'object' &&
+    t !== null &&
+    ['fullShiftHours', 'afterShifts', 'withinDays'].every(
+      (k) => typeof (t as Record<string, unknown>)[k] === 'number',
+    );
+  if (!Array.isArray(value) || !value.every(isTier)) {
+    throw new Error(
+      'A consecutive-shift premium’s tiers are damaged and cannot be read. Restore a backup (Settings › Backups).',
+    );
+  }
+  return value.map(({ fullShiftHours, afterShifts, withinDays }) => ({
+    fullShiftHours,
+    afterShifts,
+    withinDays,
+  }));
 }
 
 export function toOvertimeRule(r: typeof s.overtimeRule.$inferSelect): OvertimeRule {

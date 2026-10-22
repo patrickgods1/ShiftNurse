@@ -439,6 +439,8 @@ describe('a published schedule keeps its price', () => {
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 2,
           overtimeWindowAttribution: 'clock',
+          paySpringForwardAsScheduled: false,
+          breakPremiumRate: 'base',
         },
         ACTOR,
       );

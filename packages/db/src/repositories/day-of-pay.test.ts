@@ -467,6 +467,8 @@ describe('the unit’s call-back minimum', () => {
       reportingPayNoticeHours: 2,
       // The default a unit that saved nothing is priced by (D17).
       overtimeWindowAttribution: 'clock',
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
     });
     savePaySettings(
       handle.db,
@@ -477,6 +479,8 @@ describe('the unit’s call-back minimum', () => {
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 2,
         overtimeWindowAttribution: 'clock',
+        paySpringForwardAsScheduled: false,
+        breakPremiumRate: 'base',
       },
       ACTOR,
     );
@@ -489,6 +493,8 @@ describe('the unit’s call-back minimum', () => {
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 2,
         overtimeWindowAttribution: 'clock',
+        paySpringForwardAsScheduled: false,
+        breakPremiumRate: 'base',
       },
       ACTOR,
     );
@@ -498,6 +504,8 @@ describe('the unit’s call-back minimum', () => {
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
       overtimeWindowAttribution: 'clock',
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
     });
     expect(auditHistoryFor(handle.db, 'pay_settings', unitId)[0]).toMatchObject({
       before: { callBackMinimumHours: 4 },
@@ -515,6 +523,8 @@ describe('the unit’s call-back minimum', () => {
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 2,
         overtimeWindowAttribution: 'clock',
+        paySpringForwardAsScheduled: false,
+        breakPremiumRate: 'base',
       },
       ACTOR,
     );
@@ -524,6 +534,8 @@ describe('the unit’s call-back minimum', () => {
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
       overtimeWindowAttribution: 'clock',
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
     });
     const entry = auditHistoryFor(handle.db, 'pay_settings', unitId)[0];
     expect(entry).toMatchObject({
@@ -544,6 +556,8 @@ describe('the unit’s call-back minimum', () => {
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 2,
           overtimeWindowAttribution: 'clock',
+          paySpringForwardAsScheduled: false,
+          breakPremiumRate: 'base',
         },
         ACTOR,
       ),
@@ -558,6 +572,8 @@ describe('the unit’s call-back minimum', () => {
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 2,
           overtimeWindowAttribution: 'clock',
+          paySpringForwardAsScheduled: false,
+          breakPremiumRate: 'base',
         },
         ACTOR,
       ),

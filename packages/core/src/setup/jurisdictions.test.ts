@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_PAY_SETTINGS } from '../cost/types.js';
 import {
   DEFAULT_LEAVE_POLICY,
   type Differential,
@@ -1079,6 +1080,8 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
       holidayPayCoversOvertime: true,
       reportingPayNoticeHours: 2,
       overtimeWindowAttribution: 'clock',
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
     });
   });
 
@@ -1092,6 +1095,8 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 2,
           overtimeWindowAttribution: 'clock',
+          paySpringForwardAsScheduled: false,
+          breakPremiumRate: 'base',
         },
       }),
     );
@@ -1127,10 +1132,20 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
     expect(fromRuleSet.weekendDefinition).toBeUndefined();
   });
 
-  it('proposes no pay settings or weekend for a state preset', () => {
-    const plan = planJurisdiction('CA', input());
+  it('proposes no pay settings or weekend for a state preset that sets no pay', () => {
+    const plan = planJurisdiction('OR', input());
     expect(plan.paySettings).toBeUndefined();
     expect(plan.weekendDefinition).toBeUndefined();
+  });
+
+  it('pays California’s missed breaks at the regular rate, for a unit with no pay settings', () => {
+    // Lab. Code § 226.7(c); Ferra v. Loews Hollywood Hotel (2021) 11 Cal.5th 858.
+    const plan = planJurisdiction('CA', input());
+    expect(plan.paySettings?.breakPremiumRate).toBe('regular');
+    expect(plan.paySettings?.premiumStacking).toBe('compound');
+    expect(plan.weekendDefinition).toBeUndefined();
+    const saved = planJurisdiction('CA', input({ paySettings: { ...DEFAULT_PAY_SETTINGS } }));
+    expect(saved.paySettings).toBeUndefined();
   });
 
   it('posts four weeks ahead and calls overtime from the rosters', () => {

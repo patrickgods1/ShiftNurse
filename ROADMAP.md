@@ -684,8 +684,8 @@ Art. 14). One PR per milestone; the documentation update that records them has n
       stale solver comments are corrected (verified 2026-10-06: `npm run check` 2,587 passed, 4
       tests that timed out under full-suite load pass alone; smoke PASS)
 - [x] M34 Pay model for California and UC: no pyramiding of overtime (Lab. Code § 510; UC–CNA
-      Art. 14 § M), `beyond_scheduled_days` overtime at 2× (Wage Order 5 § 3(B)(8)), additive
-      premium stacking (UC–CNA Art. 14 § N) and a minimum overtime increment (38 U.S.C.
+      Art. 14 § M; 2025–2030: § L.2.c.1), `beyond_scheduled_days` overtime at 2× (Wage Order 5 § 3(B)(8)), additive
+      premium stacking (UC–CNA Art. 14 § N; 2025–2030: § M) and a minimum overtime increment (38 U.S.C.
       § 7453(e)(2)); migration 0030 (verified 2026-10-06: `npm run check` 2,627 passed; smoke PASS)
 - [x] M35 Presets apply what the app can do: apply-time options (the VA's compressed tour,
       California's alternative workweek), the VA contract's rules and § 7453 premiums, and
@@ -714,8 +714,8 @@ Art. 14). One PR per milestone; the documentation update that records them has n
       the `holiday_appetite` preference with `holidayWorkPriority` (VA–NNU Art. 10 § 4.D.6;
       migration 0035), the VA preset's contract provenance and `ownContract` option
       (`Unit.jurisdictionChoices`, migration 0033), the `consecutive_shift` differential (UC–CNA
-      Art. 14 § I.3; migration 0034), California sick-leave use cap, front-loading and PDL,
-      `tour-rotation`'s `exemptAfterYearsOfService` (UC–CNA Art. 14 § P.1.a), the roster CSV's
+      Art. 14 § I.3; 2025–2030: § G.3; migration 0034), California sick-leave use cap, front-loading and PDL,
+      `tour-rotation`'s `exemptAfterYearsOfService` (UC–CNA Art. 14 § P.1.a; 2025–2030: § O.1.a), the roster CSV's
       `scheduled_days_per_week`, and the vitest `unit` / `solver-heavy` projects (verified
       2026-10-07: `npm run check` 2,920 passed, 2 skipped, 264 files; smoke PASS)
 - [x] M40 VA pay by statute (38 U.S.C. § 7453): `PaySettings.holidayPayCoversOvertime` (migration

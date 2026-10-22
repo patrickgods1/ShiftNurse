@@ -4,7 +4,9 @@ import {
   compareToBudget,
   costSchedule,
   type Id,
+  type IsoDate,
   priceDayOfEvents,
+  type ScheduleCost,
   type SchedulePeriod,
   type ScheduleView,
 } from '@shiftnurse/core';
@@ -83,12 +85,12 @@ export function costReportForView(
     known.add(nurseId);
     nurses.push(nurse);
   }
-  const dayOf = priceDayOfEvents(
-    events,
-    ctx,
-    nurses,
-    kept ? kept.config.paySettings : getPaySettings(db, period.unitId),
-  );
+  const settings = kept ? kept.config.paySettings : getPaySettings(db, period.unitId);
+  const dayOf = priceDayOfEvents(events, ctx, nurses, {
+    callBackMinimumHours: settings.callBackMinimumHours,
+    breakPremiumRate: settings.breakPremiumRate,
+    regularRateFor: regularRateLookup(cost),
+  });
   return {
     period,
     cost,
@@ -99,6 +101,25 @@ export function costReportForView(
       ? { takenAt: kept.takenAt, ...(kept.reason !== undefined && { reason: kept.reason }) }
       : undefined,
   };
+}
+
+/**
+ * The regular rate a missed break on a date is paid at: core's `regularRate` of the nurse's shift
+ * dated that day (shifts are dated by start day, and core has already placed each in the window its
+ * start lies in, which a date alone cannot do under a week starting at a time of day). No shift
+ * that day, no rate: core then pays the base rate.
+ */
+function regularRateLookup(cost: ScheduleCost): (nurseId: Id, date: IsoDate) => number | undefined {
+  const byDay = new Map<string, number>();
+  for (const a of cost.assignments) {
+    if (a.regularRate === undefined) continue;
+    const key = `${a.nurseId}|${a.date}`;
+    // Two shifts on one date can sit in different windows (a Saturday day and the night that
+    // opens the next week). The event does not say which shift the break was missed on, and a
+    // break premium must never be underpaid, so the higher rate wins.
+    byDay.set(key, Math.max(byDay.get(key) ?? 0, a.regularRate));
+  }
+  return (nurseId, date) => byDay.get(`${nurseId}|${date}`);
 }
 
 export function setPeriodBudget(db: ShiftNurseDb, periodId: Id, targetDollars: number) {

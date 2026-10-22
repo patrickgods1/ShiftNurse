@@ -265,6 +265,8 @@ export function costContext(
     premiumStacking: pay.premiumStacking,
     holidayPayCoversOvertime: pay.holidayPayCoversOvertime,
     overtimeWindowAttribution: pay.overtimeWindowAttribution,
+    paySpringForwardAsScheduled: pay.paySpringForwardAsScheduled,
+    breakPremiumRate: pay.breakPremiumRate,
     ...(period
       ? { dstTransitions: dstTransitionsForPeriod(period, PRIOR_ASSIGNMENT_LOOKBACK_DAYS) }
       : {}),

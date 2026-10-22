@@ -54,6 +54,55 @@ describe('pay settings arriving over IPC', () => {
     ).toBe(false);
   });
 
+  it('accepts the 2025–2030 tiers for 8s, 10s and 12s and refuses a fourth', () => {
+    const tier = (fullShiftHours: number, n: number) => ({
+      fullShiftHours,
+      afterShifts: n,
+      withinDays: n,
+    });
+    const premium = (tiers: unknown[]) => ({
+      unitId: 'u-1',
+      kind: 'consecutive_shift',
+      mode: 'multiplier',
+      amount: 1.5,
+      active: true,
+      consecutive: { afterShifts: 4, withinDays: 4, tiers },
+    });
+    const uc = [tier(8, 6), tier(10, 5), tier(12, 4)];
+    expect(costSchemas.createDifferential.safeParse([premium(uc)]).success).toBe(true);
+    expect(costSchemas.createDifferential.safeParse([premium([...uc, tier(9, 5)])]).success).toBe(
+      false,
+    );
+    expect(costSchemas.createDifferential.safeParse([premium([])]).success).toBe(false);
+    expect(
+      costSchemas.createDifferential.safeParse([premium([{ ...tier(8, 6), extra: 1 }])]).success,
+    ).toBe(false);
+  });
+
+  it('accepts the UC short-rest premium and refuses more than a day off or an unknown scope', () => {
+    const premium = {
+      unitId: 'u-1',
+      kind: 'short_rest',
+      mode: 'multiplier',
+      amount: 1.5,
+      active: true,
+      shortRest: { minHoursOff: 6, scope: 'whole_shift' },
+    };
+    expect(costSchemas.createDifferential.safeParse([premium]).success).toBe(true);
+    for (const shortRest of [
+      { minHoursOff: 0, scope: 'whole_shift' },
+      { minHoursOff: 25, scope: 'whole_shift' },
+      { minHoursOff: 6, scope: 'sometimes' },
+    ]) {
+      expect(costSchemas.createDifferential.safeParse([{ ...premium, shortRest }]).success).toBe(
+        false,
+      );
+    }
+    expect(costSchemas.updateDifferential.safeParse(['d-1', { shortRest: null }]).success).toBe(
+      true,
+    );
+  });
+
   it('refuses a multiplier below 1 at the door', () => {
     const holiday = { unitId: 'u', kind: 'holiday', mode: 'multiplier', amount: 0.5, active: true };
     const refused = costSchemas.createDifferential.safeParse([holiday]);
@@ -208,6 +257,8 @@ describe('pay settings arriving over IPC', () => {
       holidayPayCoversOvertime: true,
       reportingPayNoticeHours: 2,
       overtimeWindowAttribution: 'clock',
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
     };
     expect(save.safeParse(['u-1', { callBackMinimumHours: 2 }]).success).toBe(false);
     expect(save.safeParse(['u-1', full]).success).toBe(true);
@@ -224,6 +275,8 @@ describe('pay settings arriving over IPC', () => {
       premiumStacking: 'compound',
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
     };
     expect(save.safeParse(['u-1', full]).success).toBe(false);
     expect(save.safeParse(['u-1', { ...full, overtimeWindowAttribution: 'start' }]).success).toBe(
@@ -234,6 +287,25 @@ describe('pay settings arriving over IPC', () => {
     );
   });
 
+  it('needs the spring-forward and break-premium choices whenever pay settings are saved', () => {
+    const save = costSchemas.savePaySettings;
+    const full = {
+      callBackMinimumHours: 2,
+      premiumStacking: 'compound',
+      holidayPayCoversOvertime: false,
+      reportingPayNoticeHours: 2,
+      overtimeWindowAttribution: 'clock',
+      paySpringForwardAsScheduled: true,
+      breakPremiumRate: 'regular',
+    };
+    expect(save.safeParse(['u-1', full]).success).toBe(true);
+    const { paySpringForwardAsScheduled: _s, ...withoutSpring } = full;
+    expect(save.safeParse(['u-1', withoutSpring]).success).toBe(false);
+    const { breakPremiumRate: _b, ...withoutRate } = full;
+    expect(save.safeParse(['u-1', withoutRate]).success).toBe(false);
+    expect(save.safeParse(['u-1', { ...full, breakPremiumRate: 'overtime' }]).success).toBe(false);
+  });
+
   it('needs a reporting-pay notice of 0 to 24 hours whenever pay settings are saved', () => {
     const save = costSchemas.savePaySettings;
     const full = {
@@ -242,6 +314,8 @@ describe('pay settings arriving over IPC', () => {
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 0,
       overtimeWindowAttribution: 'clock',
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
     };
     expect(save.safeParse(['u-1', full]).success).toBe(true);
     expect(save.safeParse(['u-1', { ...full, reportingPayNoticeHours: 24 }]).success).toBe(true);

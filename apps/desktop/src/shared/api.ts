@@ -741,12 +741,16 @@ export type PayRateInput = Omit<PayRate, 'id'>;
 /** Scope (nurse or role) is fixed once created; re-scoping is a delete and a create. */
 export type PayRatePatch = Partial<Pick<PayRate, 'hourlyRate' | 'effectiveFrom'>>;
 export type DifferentialInput = Omit<Differential, 'id'>;
-/** `window: null` clears the clock window; `consecutive: null` a consecutive-shift trigger. */
+/**
+ * `window: null` clears the clock window; `consecutive: null` a consecutive-shift trigger;
+ * `shortRest: null` a short-rest one.
+ */
 export type DifferentialPatch = Partial<
   Pick<Differential, 'kind' | 'mode' | 'amount' | 'active'>
 > & {
   window?: Differential['window'] | null;
   consecutive?: Differential['consecutive'] | null;
+  shortRest?: Differential['shortRest'] | null;
 };
 export type OvertimeRuleInput = Omit<OvertimeRule, 'id'>;
 export type OvertimeRulePatch = Partial<
@@ -798,6 +802,17 @@ export interface PaySettings {
    * in the week it starts (`'start'`, some contracts). A unit that never chose reads `'clock'`.
    */
   overtimeWindowAttribution: 'clock' | 'start';
+  /**
+   * Pay the spring-forward night's straight time as the hours scheduled rather than the 11 worked
+   * (some contracts). Overtime still counts the hours worked. A unit that never chose reads false.
+   */
+  paySpringForwardAsScheduled: boolean;
+  /**
+   * The rate a missed meal or rest break is paid at: base, or the week's regular rate with
+   * differentials in it (Lab. Code § 226.7; Ferra v. Loews Hollywood Hotel (2021) 11 Cal.5th 858).
+   * A unit that never chose reads `'base'`.
+   */
+  breakPremiumRate: 'base' | 'regular';
 }
 
 /** The pay configuration a published period is priced under. Mirrors `PayConfig` in `@shiftnurse/db`. */

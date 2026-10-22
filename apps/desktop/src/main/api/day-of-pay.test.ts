@@ -93,6 +93,77 @@ describe('the cost report’s day-of pay', () => {
     expect(after.cost.totals.total).toBe(scheduleTotal);
   });
 
+  it('pays a missed meal at the week’s regular rate, night differential included, once the unit says so', () => {
+    const pat = nurseAtFifty();
+    const cost = costApi(f.handle.db);
+    // Only a $5 night differential, so the figures are hand sums.
+    for (const d of cost.differentials(f.seeded.unitId)) cost.deleteDifferential(d.id);
+    cost.createDifferential({
+      unitId: f.seeded.unitId,
+      kind: 'night',
+      mode: 'flat',
+      amount: 5,
+      active: true,
+    });
+    scheduleApi(f.handle.db).createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: pat.id,
+      shiftTypeId: f.night.id,
+      date: date(),
+    });
+    record({
+      kind: 'missed_break',
+      unitId: f.seeded.unitId,
+      nurseId: pat.id,
+      date: date(),
+      shiftTypeId: f.night.id,
+      break: 'meal',
+    });
+    expect(report().dayOf.lines.map((l) => [l.kind, l.amount])).toEqual([['missed_meal', 50]]);
+    cost.savePaySettings(f.seeded.unitId, {
+      ...cost.paySettings(f.seeded.unitId),
+      breakPremiumRate: 'regular',
+    });
+    // Her only shift that week is the night: every hour at $50 + $5, so the regular rate is $55.
+    expect(report().dayOf.lines.map((l) => [l.kind, l.rate, l.amount])).toEqual([
+      ['missed_meal', 55, 55],
+    ]);
+  });
+
+  it('pays a missed meal dated a day she has no shift at the base rate, even in a week she worked', () => {
+    const pat = nurseAtFifty();
+    const cost = costApi(f.handle.db);
+    for (const d of cost.differentials(f.seeded.unitId)) cost.deleteDifferential(d.id);
+    cost.createDifferential({
+      unitId: f.seeded.unitId,
+      kind: 'night',
+      mode: 'flat',
+      amount: 5,
+      active: true,
+    });
+    cost.savePaySettings(f.seeded.unitId, {
+      ...cost.paySettings(f.seeded.unitId),
+      breakPremiumRate: 'regular',
+    });
+    // Her night that week has a $55 regular rate, but nothing is dated the next day.
+    scheduleApi(f.handle.db).createAssignment({
+      periodId: f.seeded.draftPeriodId,
+      nurseId: pat.id,
+      shiftTypeId: f.night.id,
+      date: date(),
+    });
+    record({
+      kind: 'missed_break',
+      unitId: f.seeded.unitId,
+      nurseId: pat.id,
+      date: addDays(date(), 1),
+      break: 'meal',
+    });
+    expect(report().dayOf.lines.map((l) => [l.kind, l.rate, l.amount])).toEqual([
+      ['missed_meal', 50, 50],
+    ]);
+  });
+
   it('pays a call-back the unit’s minimum hours when the nurse worked less', () => {
     const pat = nurseAtFifty();
     costApi(f.handle.db).savePaySettings(f.seeded.unitId, {
@@ -101,6 +172,8 @@ describe('the cost report’s day-of pay', () => {
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
       overtimeWindowAttribution: 'clock' as const,
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base' as const,
     });
     const standby = createShiftType(
       f.handle.db,
@@ -136,6 +209,8 @@ describe('the cost report’s day-of pay', () => {
       holidayPayCoversOvertime: false,
       reportingPayNoticeHours: 2,
       overtimeWindowAttribution: 'clock' as const,
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base' as const,
     });
   });
 

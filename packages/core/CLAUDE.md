@@ -557,7 +557,7 @@
 - **Overtime does not pyramid when the rule says so.** `OvertimeRule.pyramiding: 'none'`
   (`cost/cost.ts`) makes `weekly` and `pay_period` rules count only straight-time hours toward
   their threshold, so hours already paid at a daily premium are not paid again (Cal. Lab. Code
-  § 510; UC–CNA Art. 14 § M). Absent, a window rule credits that way whenever a daily-style rule
+  § 510; UC–CNA Art. 14 § L.2.c.1). Absent, a window rule credits that way whenever a daily-style rule
   (a non-window basis) applies to the nurse, and stacks otherwise (D16; 29 CFR 778.202(c)); only an
   explicit `'stack'` counts daily premium hours again. Lookback shifts count their straight hours,
   or a week opened by the last schedule would start from zero. Pinned by hand: four 12s under
@@ -586,7 +586,7 @@
   `'compound'` (default) is the FLSA regular rate, `(base + flats) × Π multipliers`, with overtime
   on the week's (or 8/80 pay period's) weighted regular rate (D16, `cost/CLAUDE.md`); `'additive'`
   takes each multiplier's premium and the overtime premium on base pay alone, so nothing
-  compounds (UC–CNA Art. 14 § N forbids pyramiding of premiums; Title 38 pays differentials in
+  compounds (UC–CNA Art. 14 § M forbids pyramiding of premiums; Title 38 pays differentials in
   addition to overtime on basic pay). The default stays compound so no existing
   unit's payroll estimate moves.
 - **A preset may propose pay settings and a weekend, only where the unit set neither.**

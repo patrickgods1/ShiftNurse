@@ -274,7 +274,10 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'Sick leave accrues at 1 hour per 30 worked; the balance may be capped at 80 hours or 10 ' +
       'days and use at 40 hours or 5 days a year, whichever is greater — 120 and 60 hours for a ' +
       'nurse on 12-hour shifts (Lab. Code § 246(b), (d), as the Labor Commissioner reads it): the ' +
-      'statutory minimum, which a hospital PTO plan that meets it can replace.',
+      'statutory minimum, which a hospital PTO plan that meets it can replace. A missed meal or ' +
+      'rest break is paid an hour at the regular rate, differentials included (Lab. Code § 226.7; ' +
+      'Ferra v. Loews Hollywood Hotel (2021) 11 Cal.5th 858), proposed only to a unit that has ' +
+      'not saved its own pay settings.',
     ratioStaffing: {
       chargeNurseTakesPatients: false,
       breakMinutesPerNurse: 60,
@@ -372,6 +375,11 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
         },
       ],
     },
+    // Lab. Code § 226.7(c): "one additional hour of pay at the employee's regular rate of
+    // compensation for each workday that the meal or rest or recovery period is not provided";
+    // Ferra v. Loews Hollywood Hotel (2021) 11 Cal.5th 858 holds that is the overtime regular
+    // rate, differentials and other non-discretionary pay included.
+    paySettings: { breakPremiumRate: 'regular' },
   },
   OR: {
     label: 'Oregon',

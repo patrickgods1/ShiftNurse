@@ -944,6 +944,8 @@ export type DifferentialKind =
   | 'major_holiday'
   /** Only ever earned through `consecutive`; without it applies to nothing. */
   | 'consecutive_shift'
+  /** Only ever earned through `shortRest`; without it applies to nothing. */
+  | 'short_rest'
   | 'charge'
   | 'on_call'
   | 'call_back'
@@ -965,11 +967,29 @@ export interface Differential {
    */
   window?: { startTime: string; endTime: string; wholeShiftAtHours: number | null };
   /**
-   * A `consecutive_shift` premium's trigger (UC–CNA Art. 14 § I.3): once a run of consecutive
+   * A `consecutive_shift` premium's trigger (UC–CNA Art. 14 § G.3): once a run of consecutive
    * worked days holds more than `afterShifts` full (12-hour) shifts within `withinDays` days, every
    * further shift of the run earns it until a day off. Only `consecutive_shift` uses it.
+   *
+   * `tiers` (2025–2030 § G.3: six full 8s in six days, five 10s in five, four 12s in four) replace
+   * that single reading: a shift scheduled for at least a tier's `fullShiftHours` counts toward it,
+   * and the run earns once any tier passes its `afterShifts`. Absent, the one tier is
+   * `{ fullShiftHours: 12, afterShifts, withinDays }`; present, the top-level numbers are not read.
    */
-  consecutive?: { afterShifts: number; withinDays: number };
+  consecutive?: {
+    afterShifts: number;
+    withinDays: number;
+    tiers?: { fullShiftHours: number; afterShifts: number; withinDays: number }[];
+  };
+  /**
+   * A `short_rest` premium's trigger (UC–CNA 2025–2030 § N.1: "A work period not preceded by at
+   * least six (6) hours off will be paid at time and one-half"; WSNA § 7.10): a worked shift that
+   * starts less than `minHoursOff` after the latest worked shift before it ended (holdover
+   * included; standby and call-backs are not that work period, § N.3) earns it on every paid hour
+   * (`'whole_shift'`) or only on its minutes before the rest would have ended (`'within_window'`).
+   * Only `short_rest` uses it.
+   */
+  shortRest?: { minHoursOff: number; scope: 'whole_shift' | 'within_window' };
 }
 
 export interface OvertimeRule {
@@ -1007,7 +1027,7 @@ export interface OvertimeRule {
    * Whether hours another rule already pays as overtime still count toward this one's threshold.
    * Honoured only by 'weekly', 'pay_period' and 'weekend'. Under 'none' a shift adds only its straight hours
    * (those before any other basis's overtime starts): Cal. Lab. Code § 510 as the DLSE reads it
-   * does not count hours paid at a daily premium toward the weekly 40, and UC–CNA Art. 14 §M
+   * does not count hours paid at a daily premium toward the weekly 40, and UC–CNA Art. 14 § L.2.c.1
    * credits daily overtime toward the 80. Absent: 'none' when any daily-style rule (a non-window
    * basis) applies to the nurse, else 'stack' (D16; 29 CFR 778.202(c)); an explicit 'stack' counts
    * every worked hour regardless.

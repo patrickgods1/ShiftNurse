@@ -8,7 +8,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { Assignment, Differential, OvertimeRule, PayRate, Unit } from '../domain/entities.js';
-import { DEFAULT_WEEKEND, isoDate } from '../domain/time.js';
+import { DEFAULT_WEEKEND, dayNumber, isoDate } from '../domain/time.js';
 import {
   assign,
   DAY_8,
@@ -1236,7 +1236,7 @@ describe('overtime beyond the scheduled tour and past consecutive hours', () => 
 
 describe('California and UC overtime: daily premium hours do not pyramid into weekly', () => {
   // Cal. Lab. Code § 510 / DLSE: hours already paid at a daily premium are not counted again
-  // toward the weekly 40; UC–CNA Art. 14 §M credits daily overtime toward the 80.
+  // toward the weekly 40; UC–CNA Art. 14 § L.2.c.1 credits daily overtime toward the 80.
   const WEEKLY_40_NO_PYRAMID: OvertimeRule = { ...WEEKLY_40, pyramiding: 'none' };
   const DAILY_12_DOUBLE = overtimeRule('daily', 12, 2);
   const DAY_13 = {
@@ -1511,7 +1511,7 @@ describe('double time on a day beyond the regularly scheduled workdays', () => {
 });
 
 describe('premiums that add rather than compound', () => {
-  // UC–CNA Art. 14 §N: no duplication, pyramiding or compounding of premiums; Title 38 pays each
+  // UC–CNA Art. 14 § M: no duplication, pyramiding or compounding of premiums; Title 38 pays each
   // differential as a percentage of basic pay. $50 base, night +$6, charge +$3.
   const differentials = [
     differential('night', 'flat', 6),
@@ -2281,7 +2281,7 @@ describe('VA 72/80 and Baylor nurses on a unit with standard nurses', () => {
 });
 
 describe('UC–CNA consecutive-shift premium', () => {
-  // Art. 14 § I.3: more than four full 12s within four days is paid 1.5× until a day off. $50 base,
+  // Art. 14 § G.3: more than four full 12s within four days is paid 1.5× until a day off. $50 base,
   // no other differential, so the premium is $25 an hour on the shifts that earn it.
   const consecutiveShift: Differential = {
     ...differential('consecutive_shift', 'multiplier', 1.5),
@@ -2460,6 +2460,356 @@ describe('UC–CNA consecutive-shift premium', () => {
     expect(premiumLines(costs[4])).toEqual([
       { kind: 'consecutive_shift', hours: 13, rate: 25, amount: 325 },
     ]);
+  });
+
+  describe('tiers for 8- and 10-hour runs (2025–2030 § G.3)', () => {
+    // § G.3: six full 8s in six days, five 10s in five, or four 12s in four. A tier counts the
+    // shifts scheduled for at least its hours on the shift's own day and the `withinDays` before.
+    const ucTiers: Differential = {
+      ...consecutiveShift,
+      consecutive: {
+        afterShifts: 4,
+        withinDays: 4,
+        tiers: [
+          { fullShiftHours: 8, afterShifts: 6, withinDays: 6 },
+          { fullShiftHours: 10, afterShifts: 5, withinDays: 5 },
+          { fullShiftHours: 12, afterShifts: 4, withinDays: 4 },
+        ],
+      },
+    };
+    const twelveTierOnly: Differential = {
+      ...consecutiveShift,
+      consecutive: {
+        afterShifts: 4,
+        withinDays: 4,
+        tiers: [{ fullShiftHours: 12, afterShifts: 4, withinDays: 4 }],
+      },
+    };
+    const run = (shift: typeof DAY_8, days: number) => {
+      const nurse = makeNurse();
+      return scenario({
+        nurses: [nurse],
+        assignments: Array.from({ length: days }, (_, i) =>
+          assign(nurse.id, shift, isoDate(`2026-01-${String(5 + i).padStart(2, '0')}`)),
+        ),
+      });
+    };
+    const earnersUnder = (s: ReturnType<typeof run>, premium: Differential) =>
+      costSchedule(
+        s.schedule,
+        ctx({ payRates: [payRate(50)], differentials: [premium] }),
+      ).assignments.map((c) => premiumLines(c).length);
+
+    it('pays the seventh 8 in a row and not the sixth', () => {
+      // 8-hour tier, 6 within 6: the seventh day sees days one to seven, seven 8s > 6; the sixth
+      // sees six, not more than six. The 8s never reach the 10 or 12 tiers.
+      const s = run(DAY_8, 7);
+      expect(earnersUnder(s, ucTiers)).toEqual([0, 0, 0, 0, 0, 0, 1]);
+      // 8 hours × $25.
+      const costs = costSchedule(
+        s.schedule,
+        ctx({ payRates: [payRate(50)], differentials: [ucTiers] }),
+      ).assignments;
+      expect(premiumLines(costs[6])).toEqual([
+        { kind: 'consecutive_shift', hours: 8, rate: 25, amount: 200 },
+      ]);
+    });
+
+    it('pays the fifth 12 in a row and not the fourth', () => {
+      // The 12 tier crosses on the fifth (5 > 4); the 8 tier sees five 12s (not > 6), the 10 tier
+      // five (not > 5).
+      expect(earnersUnder(run(DAY_12, 5), ucTiers)).toEqual([0, 0, 0, 0, 1]);
+    });
+
+    it('pays a run of 12s the same under all three tiers as under the 12 tier alone', () => {
+      // Seven 12s: the 12 tier crosses on the fifth, the 10 tier on the sixth (6 > 5) and the 8
+      // tier on the seventh (7 > 6), so the earliest crossing decides: days five to seven.
+      const s = run(DAY_12, 7);
+      expect(earnersUnder(s, twelveTierOnly)).toEqual([0, 0, 0, 0, 1, 1, 1]);
+      expect(earnersUnder(s, ucTiers)).toEqual([0, 0, 0, 0, 1, 1, 1]);
+    });
+
+    const DAY_10: typeof DAY_12 = { ...DAY_12, id: 'st-d10', durationHours: 10 };
+    const runOf = (dates: [typeof DAY_12, string][]) => {
+      const nurse = makeNurse();
+      return scenario({
+        nurses: [nurse],
+        shiftTypes: [DAY_8, DAY_10, DAY_12],
+        assignments: dates.map(([shift, d]) => assign(nurse.id, shift, isoDate(d))),
+      });
+    };
+    const days = (shift: typeof DAY_12, n: number): [typeof DAY_12, string][] =>
+      Array.from({ length: n }, (_, i) => [shift, `2026-01-${String(5 + i).padStart(2, '0')}`]);
+
+    it('pays the sixth 10 in a row through the 10 tier, and counts 10s toward the 8 tier too', () => {
+      // 10 tier, 5 within 5: the sixth day sees days one to six, six 10s > 5; the fifth sees five.
+      // The 8 tier would cross only on the seventh (7 > 6); the 12 tier never (10 < 12).
+      const s = runOf(days(DAY_10, 7));
+      expect(earnersUnder(s, ucTiers)).toEqual([0, 0, 0, 0, 0, 1, 1]);
+      // With the 8 tier alone the same 10s count toward it: the seventh is the first past six.
+      const eightOnly: Differential = {
+        ...consecutiveShift,
+        consecutive: {
+          afterShifts: 6,
+          withinDays: 6,
+          tiers: [{ fullShiftHours: 8, afterShifts: 6, withinDays: 6 }],
+        },
+      };
+      expect(earnersUnder(s, eightOnly)).toEqual([0, 0, 0, 0, 0, 0, 1]);
+    });
+
+    it('starts every tier again after a day off', () => {
+      // Tiers {8: more than 2 in 6} and {12: more than 1 in 4}. Run A: 12, 8, 12 on three days —
+      // on the third the 12 tier sees two 12s (> 1), so it earns. Run B: 12, 8, a day off, 12 —
+      // without the reset the last day would see two 12s (12 tier) and three 8+ shifts (8 tier),
+      // both past; after the day off each tier holds one shift, so nothing earns.
+      const mixed: Differential = {
+        ...consecutiveShift,
+        consecutive: {
+          afterShifts: 1,
+          withinDays: 4,
+          tiers: [
+            { fullShiftHours: 8, afterShifts: 2, withinDays: 6 },
+            { fullShiftHours: 12, afterShifts: 1, withinDays: 4 },
+          ],
+        },
+      };
+      const unbroken = runOf([
+        [DAY_12, '2026-01-05'],
+        [DAY_8, '2026-01-06'],
+        [DAY_12, '2026-01-07'],
+      ]);
+      expect(earnersUnder(unbroken, mixed)).toEqual([0, 0, 1]);
+      const broken = runOf([
+        [DAY_12, '2026-01-05'],
+        [DAY_8, '2026-01-06'],
+        [DAY_12, '2026-01-08'],
+      ]);
+      expect(earnersUnder(broken, mixed)).toEqual([0, 0, 0]);
+    });
+  });
+});
+
+describe('a work period not preceded by enough rest (UC–CNA 2025–2030 § N.1, WSNA § 7.10)', () => {
+  // § N.1: "A work period not preceded by at least six (6) hours off will be paid at time and
+  // one-half." $50 base and no other differential, so the premium is $25 an hour where it applies.
+  const shortRest = (
+    minHoursOff: number,
+    scope: 'whole_shift' | 'within_window' = 'whole_shift',
+  ): Differential => ({
+    ...differential('short_rest', 'multiplier', 1.5),
+    shortRest: { minHoursOff, scope },
+  });
+  const premiumLines = (cost: { lines: CostLine[] } | undefined) =>
+    (cost?.lines ?? []).filter((l) => l.kind === 'short_rest');
+  const DAY_12_AT_4: typeof DAY_12 = { ...DAY_12, id: 'st-d12-04', startTime: '04:00' };
+  const TWELVE_AT_15: typeof DAY_12 = { ...DAY_12, id: 'st-12-15', startTime: '15:00' };
+  const priced = (s: ReturnType<typeof scenario>, premium: Differential) =>
+    costSchedule(s.schedule, ctx({ payRates: [payRate(50)], differentials: [premium] }))
+      .assignments;
+
+  it('pays the whole 12 at time and a half after only five hours off', () => {
+    // Evening 15:00–23:00, then a 12 from 04:00: 23:00 → 04:00 is 5 hours, under 6. Every one of
+    // the 12 hours earns it: 12 × $25 = $300.
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [EVENING_8, DAY_12_AT_4],
+      assignments: [
+        assign(nurse.id, EVENING_8, '2026-01-05'),
+        assign(nurse.id, DAY_12_AT_4, '2026-01-06'),
+      ],
+    });
+    const costs = priced(s, shortRest(6));
+    expect(premiumLines(costs[0])).toEqual([]);
+    expect(premiumLines(costs[1])).toEqual([
+      { kind: 'short_rest', hours: 12, rate: 25, amount: 300 },
+    ]);
+    expect(costs[1]?.total).toBe(900); // 12 × $75
+  });
+
+  it('pays only the hours before the rest would have ended', () => {
+    // Night 19:00–07:00, then a 12 from 15:00 under a 12-hour minimum: the rest would have ended
+    // at 07:00 + 12 = 19:00, so 15:00–19:00, 4 hours, earn it: 4 × $25 = $100.
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [NIGHT_12, TWELVE_AT_15],
+      assignments: [
+        assign(nurse.id, NIGHT_12, '2026-01-05'),
+        assign(nurse.id, TWELVE_AT_15, '2026-01-06'),
+      ],
+    });
+    const costs = priced(s, shortRest(12, 'within_window'));
+    expect(premiumLines(costs[1])).toEqual([
+      { kind: 'short_rest', hours: 4, rate: 25, amount: 100 },
+    ]);
+    expect(costs[1]?.total).toBe(700); // 12 × $50 + $100
+  });
+
+  it('pays nothing after exactly the minimum off', () => {
+    // Evening ends 23:00, the day 12 starts 07:00: 8 hours off against a minimum of 8.
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, EVENING_8, '2026-01-05'),
+        assign(nurse.id, DAY_12, '2026-01-06'),
+      ],
+    });
+    expect(priced(s, shortRest(8)).flatMap((c) => premiumLines(c))).toEqual([]);
+  });
+
+  it('does not count a call-back from standby as the work period before the next shift', () => {
+    // Day 8 ends 15:00; on call 19:00–07:00 and called in 01:00–03:00; day 12 at 07:00. The rest
+    // runs from 15:00, 16 hours (§ N.3), not from the end of the call-back or the standby.
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, DAY_8, '2026-01-05'),
+        assign(nurse.id, ON_CALL, '2026-01-05'),
+        assign(nurse.id, DAY_12, '2026-01-06'),
+      ],
+      callBacks: [
+        {
+          nurseId: nurse.id,
+          window: {
+            startMinute: dayNumber(isoDate('2026-01-06')) * 1440 + 60,
+            endMinute: dayNumber(isoDate('2026-01-06')) * 1440 + 180,
+          },
+        },
+      ],
+    });
+    expect(priced(s, shortRest(6)).flatMap((c) => premiumLines(c))).toEqual([]);
+  });
+
+  it('measures the rest from the end of a holdover', () => {
+    // Evening 15:00–23:00 held two hours to 01:00, then a day 12 at 07:00: 6 hours off against a
+    // minimum of 8 — without the holdover it would have been 8. 12 × $25 = $300.
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, EVENING_8, '2026-01-05', { holdoverMinutes: 120 }),
+        assign(nurse.id, DAY_12, '2026-01-06'),
+      ],
+    });
+    const costs = priced(s, shortRest(8));
+    expect(premiumLines(costs[1])).toEqual([
+      { kind: 'short_rest', hours: 12, rate: 25, amount: 300 },
+    ]);
+  });
+
+  it('measures the rest from the last schedule’s final shift', () => {
+    // The lookback evening ends 23:00 on the 3rd; the first 12 of this schedule starts 04:00 on
+    // the 4th: 5 hours off. 12 × $25 = $300.
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [EVENING_8, DAY_12_AT_4],
+      priorAssignments: [assign(nurse.id, EVENING_8, '2026-01-03', { periodId: 'period-0' })],
+      assignments: [assign(nurse.id, DAY_12_AT_4, '2026-01-04')],
+    });
+    const costs = priced(s, shortRest(6));
+    expect(costs).toHaveLength(1);
+    expect(premiumLines(costs[0])).toEqual([
+      { kind: 'short_rest', hours: 12, rate: 25, amount: 300 },
+    ]);
+  });
+
+  /** Day 8 07:00–15:00 on the 5th, then the night 12 from 19:00: 4 hours off. */
+  const dayThenNight = () => {
+    const nurse = makeNurse();
+    return scenario({
+      nurses: [nurse],
+      assignments: [
+        assign(nurse.id, DAY_8, '2026-01-05'),
+        assign(nurse.id, NIGHT_12, '2026-01-05'),
+      ],
+    });
+  };
+
+  it('pays the night’s hours before midnight and after it until the rest would have ended', () => {
+    // Under a 12-hour minimum the rest would have ended 15:00 + 12 = 03:00 on the 6th, so the
+    // night's 19:00–03:00 earns it: 5 hours before midnight and 3 after, 8 × $25 = $200.
+    const costs = priced(dayThenNight(), shortRest(12, 'within_window'));
+    expect(premiumLines(costs[1])).toEqual([
+      { kind: 'short_rest', hours: 8, rate: 25, amount: 200 },
+    ]);
+    expect(costs[1]?.total).toBe(800); // 12 × $50 + $200
+  });
+
+  it('prices the short-rest hours on base pay alone under additive stacking', () => {
+    // Night 07:00 end, then a 12 from 15:00 as charge nurse (+$2.50 flat), minimum 12: 15:00–19:00,
+    // 4 hours. Additive puts the 1.5× on the $50 base, not on $52.50: 4 × $25 = $100 (compound
+    // would have been 4 × $26.25). Total 12 × $50 + 12 × $2.50 + $100 = $600 + $30 + $100 = $730.
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [NIGHT_12, TWELVE_AT_15],
+      assignments: [
+        assign(nurse.id, NIGHT_12, '2026-01-05'),
+        assign(nurse.id, TWELVE_AT_15, '2026-01-06', { isCharge: true }),
+      ],
+    });
+    const costs = costSchedule(
+      s.schedule,
+      ctx({
+        payRates: [payRate(50)],
+        differentials: [shortRest(12, 'within_window'), CHARGE],
+        premiumStacking: 'additive',
+      }),
+    ).assignments;
+    expect(premiumLines(costs[1])).toEqual([
+      { kind: 'short_rest', hours: 4, rate: 25, amount: 100 },
+    ]);
+    expect(costs[1]?.total).toBe(730);
+  });
+
+  it('pays a flat short-rest premium on just the early hours', () => {
+    // $10 an hour flat, minimum 12, night ends 07:00, the 12 starts 15:00: 15:00–19:00 is 4 hours,
+    // 4 × $10 = $40, total 12 × $50 + $40 = $640.
+    const nurse = makeNurse();
+    const s = scenario({
+      nurses: [nurse],
+      shiftTypes: [NIGHT_12, TWELVE_AT_15],
+      assignments: [
+        assign(nurse.id, NIGHT_12, '2026-01-05'),
+        assign(nurse.id, TWELVE_AT_15, '2026-01-06'),
+      ],
+    });
+    const flat: Differential = {
+      ...differential('short_rest', 'flat', 10),
+      shortRest: { minHoursOff: 12, scope: 'within_window' },
+    };
+    const costs = priced(s, flat);
+    expect(premiumLines(costs[1])).toEqual([
+      { kind: 'short_rest', hours: 4, rate: 10, amount: 40 },
+    ]);
+    expect(costs[1]?.total).toBe(640);
+  });
+
+  it('compounds the early-hours premium on a night differential without raising the shift’s rate', () => {
+    // Night 1.1× on the whole night 12: running $50 × 1.1 = $55, a $5 line on 12 hours = $60.
+    // The short-rest line (minimum 12, 19:00–03:00, 8 hours) is half of that $55: $27.50 × 8 =
+    // $220. It stays out of the running rate, so the shift's straight rate is still $55.
+    // Total 12 × $50 + $60 + $220 = $880.
+    const nightTimes: Differential = diff('night', 'multiplier', 1.1);
+    const costs = costSchedule(
+      dayThenNight().schedule,
+      ctx({ payRates: [payRate(50)], differentials: [nightTimes, shortRest(12, 'within_window')] }),
+    ).assignments;
+    const night = costs[1]!;
+    // Rates are not rounded (1.1 is inexact in binary); amounts are, to the cent.
+    expect(night.lines.map((l) => [l.kind, l.hours, l.amount])).toEqual([
+      ['base', 12, 600],
+      ['night', 12, 60],
+      ['short_rest', 8, 220],
+    ]);
+    expect(night.lines[2]?.rate).toBeCloseTo(27.5, 9);
+    expect(night.straightRate).toBeCloseTo(55, 9);
+    expect(night.total).toBe(880);
   });
 });
 

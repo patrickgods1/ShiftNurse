@@ -20,6 +20,8 @@ beforeEach(() => {
     holidayPayCoversOvertime: true,
     reportingPayNoticeHours: 2,
     overtimeWindowAttribution: 'clock' as const,
+    paySpringForwardAsScheduled: false,
+    breakPremiumRate: 'base' as const,
   });
   bridge.respond('cost', 'savePaySettings', {
     callBackMinimumHours: 4,
@@ -27,6 +29,8 @@ beforeEach(() => {
     holidayPayCoversOvertime: true,
     reportingPayNoticeHours: 2,
     overtimeWindowAttribution: 'clock' as const,
+    paySpringForwardAsScheduled: false,
+    breakPremiumRate: 'base' as const,
   });
 });
 afterEach(() => {
@@ -62,6 +66,8 @@ describe('the call-back minimum in Settings › Pay', () => {
             holidayPayCoversOvertime: true,
             reportingPayNoticeHours: 2,
             overtimeWindowAttribution: 'clock' as const,
+            paySpringForwardAsScheduled: false,
+            breakPremiumRate: 'base' as const,
           },
         ],
       ]),
@@ -75,6 +81,8 @@ describe('the call-back minimum in Settings › Pay', () => {
       holidayPayCoversOvertime: true,
       reportingPayNoticeHours: 2,
       overtimeWindowAttribution: 'start' as const,
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base' as const,
     });
     renderWithApp(<CallBackSection unitId="u-1" />);
     fireEvent.change(await screen.findByLabelText('Call-back minimum hours'), {
@@ -84,6 +92,8 @@ describe('the call-back minimum in Settings › Pay', () => {
     await waitFor(() => expect(bridge.callsTo('cost', 'savePaySettings')).toHaveLength(1));
     expect(bridge.callsTo('cost', 'savePaySettings')[0]![1]).toMatchObject({
       overtimeWindowAttribution: 'start',
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
     });
   });
 
@@ -119,6 +129,8 @@ describe('the call-back minimum in Settings › Pay', () => {
             holidayPayCoversOvertime: true,
             reportingPayNoticeHours: 4,
             overtimeWindowAttribution: 'clock' as const,
+            paySpringForwardAsScheduled: false,
+            breakPremiumRate: 'base' as const,
           },
         ],
       ]),
@@ -187,6 +199,8 @@ describe('the call-back minimum in Settings › Pay', () => {
             holidayPayCoversOvertime: true,
             reportingPayNoticeHours: 6,
             overtimeWindowAttribution: 'clock' as const,
+            paySpringForwardAsScheduled: false,
+            breakPremiumRate: 'base' as const,
           },
         ],
       ]),

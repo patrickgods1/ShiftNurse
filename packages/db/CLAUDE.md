@@ -22,8 +22,11 @@
 - **Pay settings carry `holidayPayCoversOvertime` (migration 0036, nullable, null reads false)
   and `reportingPayNoticeHours` (migration 0037, nullable, null reads 2; saves refuse outside 0–24)
   and `overtimeWindowAttribution` (migration 0047, nullable, null reads `'clock'`; saves refuse
-  other values). `unit.holiday_attribution` (same migration, null reads `'start'`) decides who
-  `workedFromSchedules` lists as working a holiday.**
+  other values; `unit.holiday_attribution`, same migration, null reads `'start'`, decides who
+  `workedFromSchedules` lists as working a holiday) and `paySpringForwardAsScheduled` /
+  `breakPremiumRate` (migration `0051_pay_spring_and_break_rate`, nullable, null reads false /
+  `'base'`; saves refuse a rate other than `'base'` or `'regular'`; the California preset proposes
+  `'regular'`).**
   `paySettingsSaved` says whether a unit has a row at all: `applyJurisdiction` offers the preset's
   pay settings (and a wider weekend) only to a unit that saved none, since a saved row may follow a
   contract the preset cannot see.
@@ -44,6 +47,13 @@
   repository refuses a start outside the standby's declared length or a window that overlaps the
   nurse's own worked shift on any unit (published or archived, half-open); older rows stay valid as
   pay-only (null). No `assignment_id`: ids change on backfill and moves.
+- **Differentials carry consecutive-shift tiers and a short-rest trigger (migration
+  `0052_pay_short_rest_and_tiers`, plain ADD COLUMN, all nullable):** `consecutive_tiers` is JSON
+  (null = the 12-hour reading; saves refuse other than 1–3 tiers, a repeated `fullShiftHours` or a
+  number that is not a whole 1 or more; the mapper throws on damaged JSON);
+  `short_rest_min_hours_off` / `short_rest_scope` are both null or both set, required on
+  `short_rest` and refused elsewhere (hours more than 0 and at most 24). Pay snapshots taken
+  before it read the absent fields as absent, which is how they were priced.
 - **`loadPeriodInput` reads timed call-backs as `SolveInput.callBacks`** (`callBacksForNurses` in
   `day-of-pay.ts`, through `perNurseRecordsFor`): the roster's `call_back` rows with a
   `start_minute`, on any unit, dated over the lookback tail and the period, each window placed by

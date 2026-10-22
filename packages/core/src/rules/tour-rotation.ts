@@ -23,7 +23,7 @@
  * `SolverModel.isLegal` relies on when it re-checks a removal.
  * Overlapping shifts are the overlap rule's business and are skipped here.
  *
- * Career nurses (UC–CNA Art. 14 § P.1.a: ten years) are exempt from forced rotation: tours the
+ * Career nurses (UC–CNA Art. 14 § O.1.a: ten years) are exempt from forced rotation: tours the
  * schedule gives them are held to one, and to their permanent tour if they have one whatever the
  * unit's enforcement setting, but a tour they asked for (a preferred shift type on it,
  * `requestedTours`) is theirs to work. Holding them to one tour outright turned the protection
@@ -311,7 +311,7 @@ export const tourRotationRule: Rule<TourRotationParams> = {
       label: 'Exempt from rotation after (years)',
       hint:
         'Years of service after which a nurse is exempt from forced rotation and is kept on one ' +
-        'tour per schedule (UC–CNA Art. 14 § P.1.a: ten years). Leave blank to exempt nobody.',
+        'tour per schedule (UC–CNA Art. 14 § O.1.a: ten years). Leave blank to exempt nobody.',
       why:
         'Some contracts spare career nurses rotation altogether. Service counts from the hire ' +
         'date, or the seniority date when no hire date is set, to the first day of the schedule; ' +

@@ -655,6 +655,134 @@ describe('cost configuration', () => {
         consecutive,
       ]);
     });
+
+    const ucTiers = [
+      { fullShiftHours: 8, afterShifts: 6, withinDays: 6 },
+      { fullShiftHours: 10, afterShifts: 5, withinDays: 5 },
+      { fullShiftHours: 12, afterShifts: 4, withinDays: 4 },
+    ];
+
+    it('reads the 2025–2030 tiers for 8s, 10s and 12s back as saved', () => {
+      const created = createDifferential(
+        handle.db,
+        { ...base(), consecutive: { ...consecutive, tiers: ucTiers } },
+        ACTOR,
+      );
+      expect(listDifferentialsForUnit(handle.db, unitId)).toEqual([
+        { ...base(), id: created.id, consecutive: { ...consecutive, tiers: ucTiers } },
+      ]);
+    });
+
+    it('refuses no tiers, four tiers, two tiers of the same length and fractional numbers', () => {
+      const cases: [typeof ucTiers, RegExp][] = [
+        [[], /one to three tiers/],
+        [[...ucTiers, { fullShiftHours: 9, afterShifts: 5, withinDays: 5 }], /one to three tiers/],
+        [
+          [
+            { fullShiftHours: 12, afterShifts: 4, withinDays: 4 },
+            { fullShiftHours: 12, afterShifts: 3, withinDays: 3 },
+          ],
+          /same hours/,
+        ],
+        [[{ fullShiftHours: 7.5, afterShifts: 6, withinDays: 6 }], /whole number of at least 1/],
+        [[{ fullShiftHours: 8, afterShifts: 0, withinDays: 6 }], /whole number of at least 1/],
+      ];
+      for (const [tiers, message] of cases) {
+        expect(() =>
+          createDifferential(
+            handle.db,
+            { ...base(), consecutive: { ...consecutive, tiers } },
+            ACTOR,
+          ),
+        ).toThrow(message);
+      }
+      expect(listDifferentialsForUnit(handle.db, unitId)).toEqual([]);
+    });
+
+    it('adds tiers on an update and audits the trigger before and after', () => {
+      const created = createDifferential(handle.db, { ...base(), consecutive }, ACTOR);
+      const changed = updateDifferential(
+        handle.db,
+        created.id,
+        { consecutive: { ...consecutive, tiers: ucTiers } },
+        ACTOR,
+      );
+      expect(changed.consecutive?.tiers).toEqual(ucTiers);
+      const [update] = auditHistoryFor(handle.db, 'differential', created.id).filter(
+        (e) => e.action === 'update',
+      );
+      expect((update!.before as { consecutive?: unknown }).consecutive).toEqual(consecutive);
+      expect((update!.after as { consecutive?: unknown }).consecutive).toEqual({
+        ...consecutive,
+        tiers: ucTiers,
+      });
+    });
+  });
+
+  describe('the short-rest premium’s hours off', () => {
+    const shortRest = { minHoursOff: 6, scope: 'whole_shift' as const };
+    const base = () => ({
+      unitId,
+      kind: 'short_rest' as const,
+      mode: 'multiplier' as const,
+      amount: 1.5,
+      active: true,
+    });
+
+    it('reads the UC premium back with its six hours off', () => {
+      const created = createDifferential(handle.db, { ...base(), shortRest }, ACTOR);
+      expect(listDifferentialsForUnit(handle.db, unitId)).toEqual([
+        { ...base(), id: created.id, shortRest },
+      ]);
+    });
+
+    it('refuses the premium without its hours off', () => {
+      expect(() => createDifferential(handle.db, base(), ACTOR)).toThrow(/needs its hours off/);
+    });
+
+    it('refuses zero hours, more than a day, and an unknown scope', () => {
+      for (const minHoursOff of [0, -1, 24.5, Number.NaN]) {
+        expect(() =>
+          createDifferential(
+            handle.db,
+            { ...base(), shortRest: { ...shortRest, minHoursOff } },
+            ACTOR,
+          ),
+        ).toThrow(/more than 0 and at most 24/);
+      }
+      expect(() =>
+        createDifferential(
+          handle.db,
+          {
+            ...base(),
+            shortRest: { ...shortRest, scope: 'whenever' as unknown as 'whole_shift' },
+          },
+          ACTOR,
+        ),
+      ).toThrow(/whole shift or within the window/);
+      expect(listDifferentialsForUnit(handle.db, unitId)).toEqual([]);
+    });
+
+    it('refuses hours off on another kind of differential', () => {
+      expect(() =>
+        createDifferential(handle.db, { ...base(), kind: 'weekend', shortRest }, ACTOR),
+      ).toThrow(/only to a short-rest premium/);
+    });
+
+    it('changes the hours off on an update and audits what they were', () => {
+      const created = createDifferential(handle.db, { ...base(), shortRest }, ACTOR);
+      const within = { minHoursOff: 12, scope: 'within_window' as const };
+      const changed = updateDifferential(handle.db, created.id, { shortRest: within }, ACTOR);
+      expect(changed.shortRest).toEqual(within);
+      expect(() => updateDifferential(handle.db, created.id, { shortRest: null }, ACTOR)).toThrow(
+        /needs its hours off/,
+      );
+      const [update] = auditHistoryFor(handle.db, 'differential', created.id).filter(
+        (e) => e.action === 'update',
+      );
+      expect((update!.before as { shortRest?: unknown }).shortRest).toEqual(shortRest);
+      expect((update!.after as { shortRest?: unknown }).shortRest).toEqual(within);
+    });
   });
 
   describe('a differential the cost engine can price', () => {
@@ -983,6 +1111,8 @@ describe('cost configuration', () => {
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 2,
           overtimeWindowAttribution: 'clock' as const,
+          paySpringForwardAsScheduled: false,
+          breakPremiumRate: 'base' as const,
         },
         ACTOR,
       ),
@@ -998,6 +1128,8 @@ describe('cost configuration', () => {
       holidayPayCoversOvertime: true,
       reportingPayNoticeHours: 2,
       overtimeWindowAttribution: 'clock' as const,
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base' as const,
     };
     savePaySettings(handle.db, unitId, settings, ACTOR);
     expect(paySettingsSaved(handle.db, unitId)).toBe(true);
@@ -1019,6 +1151,8 @@ describe('cost configuration', () => {
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 2,
           overtimeWindowAttribution: 'clock' as const,
+          paySpringForwardAsScheduled: false,
+          breakPremiumRate: 'base' as const,
         },
         ACTOR,
       );
@@ -1054,6 +1188,8 @@ describe('cost configuration', () => {
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 4,
         overtimeWindowAttribution: 'clock' as const,
+        paySpringForwardAsScheduled: false,
+        breakPremiumRate: 'base' as const,
       },
       ACTOR,
     );
@@ -1089,6 +1225,8 @@ describe('cost configuration', () => {
         holidayPayCoversOvertime: false,
         reportingPayNoticeHours: 2,
         overtimeWindowAttribution: 'start',
+        paySpringForwardAsScheduled: false,
+        breakPremiumRate: 'base',
       },
       ACTOR,
     );
@@ -1111,12 +1249,75 @@ describe('cost configuration', () => {
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 2,
           overtimeWindowAttribution: 'weekly' as never,
+          paySpringForwardAsScheduled: false,
+          breakPremiumRate: 'base',
         },
         ACTOR,
       ),
     ).toThrow(
       'Choose whether a shift that crosses into a new work week counts each hour in the week it is worked or the whole shift in the week it starts.',
     );
+    expect(paySettingsSaved(handle.db, unitId)).toBe(false);
+  });
+
+  it('reads a row saved before migration 0051 as paying the spring night as worked and breaks at base', () => {
+    handle.db
+      .insert(s.paySettings)
+      .values({ unitId, callBackMinimumHours: 1, updatedAt: Date.now() })
+      .run();
+    expect(getPaySettings(handle.db, unitId)).toMatchObject({
+      paySpringForwardAsScheduled: false,
+      breakPremiumRate: 'base',
+    });
+  });
+
+  it('saves the spring night as scheduled and breaks at the regular rate, and audits what they were', () => {
+    handle.db
+      .insert(s.paySettings)
+      .values({ unitId, callBackMinimumHours: 1, updatedAt: Date.now() })
+      .run();
+    savePaySettings(
+      handle.db,
+      unitId,
+      {
+        callBackMinimumHours: 1,
+        premiumStacking: 'compound',
+        holidayPayCoversOvertime: false,
+        reportingPayNoticeHours: 2,
+        overtimeWindowAttribution: 'clock',
+        paySpringForwardAsScheduled: true,
+        breakPremiumRate: 'regular',
+      },
+      ACTOR,
+    );
+    expect(getPaySettings(handle.db, unitId)).toMatchObject({
+      paySpringForwardAsScheduled: true,
+      breakPremiumRate: 'regular',
+    });
+    expect(auditHistoryFor(handle.db, 'pay_settings', unitId)[0]).toMatchObject({
+      action: 'update',
+      before: { paySpringForwardAsScheduled: false, breakPremiumRate: 'base' },
+      after: { paySpringForwardAsScheduled: true, breakPremiumRate: 'regular' },
+    });
+  });
+
+  it('refuses a break premium rate it does not know', () => {
+    expect(() =>
+      savePaySettings(
+        handle.db,
+        unitId,
+        {
+          callBackMinimumHours: 1,
+          premiumStacking: 'compound',
+          holidayPayCoversOvertime: false,
+          reportingPayNoticeHours: 2,
+          overtimeWindowAttribution: 'clock',
+          paySpringForwardAsScheduled: false,
+          breakPremiumRate: 'overtime' as never,
+        },
+        ACTOR,
+      ),
+    ).toThrow('Choose whether a missed break is paid at the base rate or the regular rate.');
     expect(paySettingsSaved(handle.db, unitId)).toBe(false);
   });
 
@@ -1131,6 +1332,8 @@ describe('cost configuration', () => {
           holidayPayCoversOvertime: false,
           reportingPayNoticeHours: 25,
           overtimeWindowAttribution: 'clock' as const,
+          paySpringForwardAsScheduled: false,
+          breakPremiumRate: 'base' as const,
         },
         ACTOR,
       ),

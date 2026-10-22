@@ -1093,6 +1093,11 @@ export const differential = sqliteTable('differential', {
   /** A consecutive-shift premium's trigger (`Differential.consecutive`); both null or both set. */
   consecutiveAfterShifts: integer('consecutive_after_shifts'),
   consecutiveWithinDays: integer('consecutive_within_days'),
+  /** `Differential.consecutive.tiers` as JSON (2025–2030 § G.3); null = the 12-hour reading. */
+  consecutiveTiers: text('consecutive_tiers'),
+  /** A short-rest premium's trigger (`Differential.shortRest`); both null or both set. */
+  shortRestMinHoursOff: real('short_rest_min_hours_off'),
+  shortRestScope: text('short_rest_scope').$type<'whole_shift' | 'within_window'>(),
 });
 
 export const overtimeRule = sqliteTable('overtime_rule', {
@@ -1246,6 +1251,11 @@ export const paySettings = sqliteTable('pay_settings', {
   // Null means 'clock' (D17): each hour of a shift that crosses into a new work week or pay period
   // counts in the window it was worked in.
   overtimeWindowAttribution: text('overtime_window_attribution').$type<'clock' | 'start'>(),
+  // Null means false (D19): the spring-forward night's straight time is the 11 hours worked.
+  paySpringForwardAsScheduled: integer('pay_spring_forward_as_scheduled', { mode: 'boolean' }),
+  // Null means 'base': a missed meal or rest break pays an hour at the base rate. California owes
+  // the regular rate (Lab. Code § 226.7; Ferra v. Loews Hollywood Hotel (2021) 11 Cal.5th 858).
+  breakPremiumRate: text('break_premium_rate').$type<'base' | 'regular'>(),
   updatedAt: timestamp('updated_at').notNull(),
 });
 
