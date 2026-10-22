@@ -94,6 +94,8 @@ export interface Unit {
    * nurse's consent (VA, UC and Oregon contracts). Absent/false: a reason is enough.
    */
   requireConsentForPostedChanges?: boolean;
+  /** Holidays that fall on a full-time nurse's day off move to a workday. Absent: 'none'. */
+  inLieuHolidays?: InLieuHolidays;
   /**
    * Paper the unit's printouts use. Absent: whatever this computer's region uses (Letter in the
    * US, Canada, Mexico, the Philippines and parts of Latin America; A4 elsewhere). Not read by
@@ -105,6 +107,14 @@ export interface Unit {
 export type PaperSize = 'letter' | 'a4';
 
 export type OvertimeOrder = 'cost' | 'roster';
+
+/**
+ * Whether a holiday on a full-time nurse's non-workday moves to a nearby workday. 'federal' is the
+ * rule for VA and other federal employers (5 U.S.C. § 6103(b)): the day she would otherwise have
+ * worked becomes her holiday "in lieu of" the one she was off. Without it that day goes unmarked and
+ * is paid as an ordinary shift. Absent reads as 'none'.
+ */
+export type InLieuHolidays = 'none' | 'federal';
 
 export interface PerDiemCommitment {
   /** Weekend shifts each per-diem nurse commits to per four weeks (WSNA contracts: 2). */

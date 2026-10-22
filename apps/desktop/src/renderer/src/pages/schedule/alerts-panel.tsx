@@ -76,6 +76,10 @@ const KIND_INFO: Record<ComplianceAlertKind, { title: string; hint: string }> = 
     title: 'No slack on the ratio',
     hint: 'Shifts staffed exactly at the patient ratio: one call-off breaks it. Routine on a tight unit.',
   },
+  in_lieu_holiday: {
+    title: 'In-lieu holidays',
+    hint: "A full-time nurse's holiday fell on her day off, so a nearby workday is her holiday: give it off or record how it is paid.",
+  },
 };
 
 // String keys keep their insertion order, so this is the order above.
@@ -113,7 +117,13 @@ export function useAlertsPill({
   return {
     id: 'alerts',
     testId: 'alerts-panel',
-    tone: critical > 0 ? 'danger' : 'warn',
+    // Information is a day that is correct as scheduled; it should not colour the strip like a warning.
+    tone:
+      critical > 0
+        ? 'danger'
+        : alerts.every((a) => a.severity === 'information')
+          ? 'muted'
+          : 'warn',
     label: headline || `${alerts.length} alert${alerts.length === 1 ? '' : 's'}`,
     previewTag: <PreviewTag label={preview?.label} />,
     title: summary,

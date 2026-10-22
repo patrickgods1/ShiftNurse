@@ -41,6 +41,7 @@
   pay settings (and a wider weekend) only to a unit that saved none, since a saved row may follow a
   contract the preset cannot see.
 
+- **Units carry `in_lieu_holidays`** (migration `0054_in_lieu_holidays`, nullable, null reads `'none'`; saves refuse other than `'none'` or `'federal'`; the VA preset proposes `'federal'` to a unit with none). Main passes it to the publish alerts with premium pay off; no cost code reads it.
 - **A published period is priced under the pay configuration it was first published with
   (`pay_config_snapshot`, migration `0048_pay_config_snapshot`):** differentials, overtime rules,
   pay settings, the unit's holiday attribution and nearby holiday dates. Drafts are priced live.

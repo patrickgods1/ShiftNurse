@@ -610,6 +610,12 @@
   figures. `start_attribution_underpays` (DOL FLSA2005-17): under pay's `'start'`, each judged
   window touching the period where the clock count has more overtime than the start count; a
   surplus in another week does not offset it.
+- **An in-lieu holiday is information, not a violation.** `Unit.inLieuHolidays: 'federal'` (5 U.S.C.
+  § 6103(b); VA) makes `complianceAlerts` (given `ComplianceInput.inLieuHolidays`) emit `in_lieu_holiday`
+  at the new `'information'` severity, one per full-time nurse per holiday dated in the period that
+  falls on her non-workday. `leave/in-lieu.ts` reads the schedule as the basic workweek: a Sunday
+  holiday moves to the first worked day after it, any other to the last before it, within 6 days; an
+  on-call day is not worked, and part-time, per-diem and Baylor nurses get none. It changes no pay.
 - **An unpriced option is ranked at the unit's highest rate and never auto-applied.**
   `CostImpact.pessimisticDelta` prices unpriced shifts at the highest pay rate on file (overtime at
   the highest multiplier). The resolution ranking and the day-of list sort by it.

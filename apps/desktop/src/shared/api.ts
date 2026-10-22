@@ -52,6 +52,7 @@ import type {
   HppdTarget,
   Id,
   IncompatibilityGroup,
+  InLieuHolidays,
   IsoDate,
   JurisdictionChoices,
   JurisdictionId,
@@ -159,6 +160,8 @@ export type UnitPatch = Partial<Pick<Unit, 'name' | 'unitType' | 'ratioStaffing'
   overtimeOrder?: OvertimeOrder | null;
   /** `null` returns holiday dating to the day a shift starts. */
   holidayAttribution?: HolidayAttribution | null;
+  /** `null` leaves a holiday on a day off where it falls. */
+  inLieuHolidays?: InLieuHolidays | null;
   /** `null` stops checking per-diem commitments. */
   perDiemCommitment?: PerDiemCommitment | null;
   /** `null`: a reason is enough for a change to a posted schedule. */

@@ -1150,11 +1150,18 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
     expect(saved.paySettings).toBeUndefined();
   });
 
-  it('posts four weeks ahead and calls overtime from the rosters', () => {
+  it('posts four weeks ahead, calls overtime from the rosters and moves holidays in lieu', () => {
     expect(planJurisdiction('US-VA', input()).unit).toEqual({
       postingLeadDays: 28,
       overtimeOrder: 'roster',
+      inLieuHolidays: 'federal',
     });
+  });
+
+  it('keeps the in-lieu setting a unit already chose', () => {
+    expect(
+      planJurisdiction('US-VA', input({ inLieuHolidays: 'none' })).unit?.inLieuHolidays,
+    ).toBeUndefined();
   });
 
   it('gives 11 hours between tours and switches on the weekend, tour and stretch limits', () => {
@@ -1191,15 +1198,20 @@ describe('what the VA preset brings from Title 38 and the national contract', ()
   it('keeps a longer posting notice and a cost-first overtime order the unit already chose', () => {
     expect(planJurisdiction('US-VA', input({ postingLeadDays: 30 })).unit).toEqual({
       overtimeOrder: 'roster',
+      inLieuHolidays: 'federal',
     });
     expect(planJurisdiction('US-VA', input({ overtimeOrder: 'cost' })).unit).toEqual({
       postingLeadDays: 28,
+      inLieuHolidays: 'federal',
     });
   });
 
   it('raises a two-week posting notice to four', () => {
     expect(
-      planJurisdiction('US-VA', input({ postingLeadDays: 14, overtimeOrder: 'roster' })).unit,
+      planJurisdiction(
+        'US-VA',
+        input({ postingLeadDays: 14, overtimeOrder: 'roster', inLieuHolidays: 'federal' }),
+      ).unit,
     ).toEqual({ postingLeadDays: 28 });
   });
 });

@@ -386,6 +386,36 @@ describe('holiday attribution', () => {
   });
 });
 
+describe('in-lieu holidays', () => {
+  it('saves the federal in-lieu setting and audits the change', () => {
+    const unit = addUnit('4A Medicine-Surgery');
+    transact(handle.db, (tx) => updateUnit(tx, unit.id, { inLieuHolidays: 'federal' }, ACTOR));
+    expect(getHomeUnit(handle.db)!.inLieuHolidays).toBe('federal');
+    const row = recentAudit(handle.db, 20).find((a) => a.entityType === 'unit');
+    expect((row!.after as { inLieuHolidays?: string }).inLieuHolidays).toBe('federal');
+    expect((row!.before as { inLieuHolidays?: string } | null)?.inLieuHolidays).toBeUndefined();
+  });
+
+  it('clears the in-lieu setting back to holidays staying where they fall', () => {
+    const unit = addUnit('4A Medicine-Surgery');
+    transact(handle.db, (tx) => updateUnit(tx, unit.id, { inLieuHolidays: 'federal' }, ACTOR));
+    transact(handle.db, (tx) => updateUnit(tx, unit.id, { inLieuHolidays: null }, ACTOR));
+    expect(getHomeUnit(handle.db)!.inLieuHolidays).toBeUndefined();
+    const cleared = recentAudit(handle.db, 20).find((a) => a.entityType === 'unit');
+    expect((cleared!.before as { inLieuHolidays?: string }).inLieuHolidays).toBe('federal');
+  });
+
+  it('refuses an in-lieu setting it does not know', () => {
+    const unit = addUnit('4A Medicine-Surgery');
+    expect(() =>
+      transact(handle.db, (tx) =>
+        updateUnit(tx, unit.id, { inLieuHolidays: 'state' as never }, ACTOR),
+      ),
+    ).toThrow('In-lieu holidays must be “none” or “federal”.');
+    expect(getHomeUnit(handle.db)!.inLieuHolidays).toBeUndefined();
+  });
+});
+
 describe('paper size', () => {
   it('remembers that the unit prints on A4, and can go back to following the computer', () => {
     const unit = addUnit('4A Medicine-Surgery');

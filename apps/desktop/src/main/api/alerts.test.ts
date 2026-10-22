@@ -3,7 +3,7 @@
  * compliance pass, and a unit with none gets no such alert.
  */
 
-import { addDays, isoDate, type MaxHoursParams, resolveConfigs } from '@shiftnurse/core';
+import { addDays, isoDate, type MaxHoursParams, resolveConfigs, weekdayOf } from '@shiftnurse/core';
 import {
   adoptLatestRules,
   createHoliday,
@@ -134,6 +134,52 @@ describe('per-diem holiday commitment under the unit’s holiday attribution', (
   it('counts the night before the holiday when the day holding most of it is the holiday', () => {
     // 5 hours on the 5th (19:00 to 24:00) against 7 on the 6th: the holiday holds most.
     expect(dalia('majority')).toBe(false);
+  });
+});
+
+describe('in-lieu holiday alerts', () => {
+  const inLieuAlerts = () =>
+    alertsFor(f.handle.db, f.seeded.draftPeriodId).filter((a) => a.kind === 'in_lieu_holiday');
+
+  // A full-time nurse working Monday to Thursday around a Friday holiday: Thursday is her holiday.
+  function workMondayToThursdayAroundFridayHoliday() {
+    const { db } = f.handle;
+    const unitId = f.seeded.unitId;
+    transact(db, (tx) => {
+      for (const h of listHolidaysForUnit(db, unitId)) deleteHoliday(tx, h.id, ACTOR);
+    });
+    const monday = addDays(f.seeded.draftStart, (1 - weekdayOf(f.seeded.draftStart) + 7) % 7);
+    const friday = addDays(monday, 4);
+    createHoliday(db, { unitId, date: friday, name: 'Unit holiday', isMajor: false }, ACTOR);
+    const nurse = f.rns.find((n) => n.employmentType === 'full_time')!;
+    for (let i = 0; i < 4; i++) {
+      scheduleApi(db).createAssignment({
+        periodId: f.seeded.draftPeriodId,
+        nurseId: nurse.id,
+        shiftTypeId: f.day.id,
+        date: addDays(monday, i),
+      });
+    }
+    return { nurse, thursday: addDays(monday, 3) };
+  }
+
+  it('names the Thursday as the nurse’s holiday once the unit moves holidays federally', () => {
+    const { nurse, thursday } = workMondayToThursdayAroundFridayHoliday();
+    updateUnit(f.handle.db, f.seeded.unitId, { inLieuHolidays: 'federal' }, ACTOR);
+    // The scenario's draft already holds other nurses' shifts, so judge only this nurse's.
+    const found = inLieuAlerts().filter((a) => a.nurseId === nurse.id);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      severity: 'information',
+      date: thursday,
+    });
+    // Premium on the in-lieu day is unconfirmed, so the message asks how it is compensated.
+    expect(found[0]!.message).toContain('record how it is compensated');
+  });
+
+  it('says nothing about in-lieu days while the unit leaves holidays where they fall', () => {
+    workMondayToThursdayAroundFridayHoliday();
+    expect(inLieuAlerts()).toEqual([]);
   });
 });
 

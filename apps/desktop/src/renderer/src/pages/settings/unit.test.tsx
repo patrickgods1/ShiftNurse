@@ -325,3 +325,39 @@ describe('Settings › Unit holiday shifts', () => {
     expect(bridge.callsTo('units', 'update')[0]![1].holidayAttribution).toBeNull();
   });
 });
+
+describe('Settings › Unit holidays on a day off', () => {
+  it('saves the federal in-lieu rule', async () => {
+    renderWithApp(<UnitPanel />, { unit });
+    const select = (await screen.findByLabelText('Holidays on a day off')) as HTMLSelectElement;
+    expect(select.value).toBe('none');
+    fireEvent.change(select, { target: { value: 'federal' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(bridge.callsTo('units', 'update')).toHaveLength(1));
+    expect(bridge.callsTo('units', 'update')[0]![1].inLieuHolidays).toBe('federal');
+  });
+
+  it('sends null when the unit goes back to leaving holidays where they fall', async () => {
+    renderWithApp(<UnitPanel />, { unit: { ...unit, inLieuHolidays: 'federal' } });
+    const select = (await screen.findByLabelText('Holidays on a day off')) as HTMLSelectElement;
+    expect(select.value).toBe('federal');
+    fireEvent.change(select, { target: { value: 'none' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(bridge.callsTo('units', 'update')).toHaveLength(1));
+    expect(bridge.callsTo('units', 'update')[0]![1].inLieuHolidays).toBeNull();
+  });
+
+  it('puts the saved setting back on Discard', async () => {
+    renderWithApp(<UnitPanel />, { unit: { ...unit, inLieuHolidays: 'federal' } });
+    const select = (await screen.findByLabelText('Holidays on a day off')) as HTMLSelectElement;
+    const discard = screen.getByRole('button', { name: 'Discard' }) as HTMLButtonElement;
+    expect(discard.disabled).toBe(true);
+    fireEvent.change(select, { target: { value: 'none' } });
+    expect(discard.disabled).toBe(false);
+    fireEvent.click(discard);
+    expect(select.value).toBe('federal');
+    expect(discard.disabled).toBe(true);
+  });
+});

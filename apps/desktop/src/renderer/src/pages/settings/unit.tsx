@@ -14,6 +14,7 @@
 import {
   ACUITY_PRESETS,
   type HolidayAttribution,
+  type InLieuHolidays,
   type PaperSize,
   type PerDiemCommitment,
   type RatioStaffing,
@@ -71,6 +72,8 @@ export function UnitPoliciesForm() {
   const savedHolidayAttribution = unit.holidayAttribution ?? 'start';
   const [holidayAttribution, setHolidayAttribution] =
     useState<HolidayAttribution>(savedHolidayAttribution);
+  const savedInLieu = unit.inLieuHolidays ?? 'none';
+  const [inLieu, setInLieu] = useState<InLieuHolidays>(savedInLieu);
   const detected = useAppInfo().data?.defaultPaperSize;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the form when the saved unit changes.
@@ -88,6 +91,7 @@ export function UnitPoliciesForm() {
     setRequireConsent(savedConsent);
     setPaper(savedPaper);
     setHolidayAttribution(savedHolidayAttribution);
+    setInLieu(savedInLieu);
   }, [
     unit.id,
     unit.name,
@@ -99,6 +103,7 @@ export function UnitPoliciesForm() {
     unit.requireConsentForPostedChanges,
     unit.paperSize,
     unit.holidayAttribution,
+    unit.inLieuHolidays,
   ]);
 
   // A charge nurse who takes patients has none to spare for breaks, so the box only counts
@@ -132,6 +137,7 @@ export function UnitPoliciesForm() {
     requireConsent !== savedConsent ||
     paper !== savedPaper ||
     holidayAttribution !== savedHolidayAttribution ||
+    inLieu !== savedInLieu ||
     (commitmentOn &&
       (weekendShifts !== String(shownCommitment.weekendShiftsPer4Weeks) ||
         holidayShifts !== String(shownCommitment.holidayShiftsPerYear)));
@@ -155,6 +161,7 @@ export function UnitPoliciesForm() {
         requireConsentForPostedChanges: requireConsent ? true : null,
         paperSize: paper === '' ? null : paper,
         holidayAttribution: holidayAttribution === 'start' ? null : holidayAttribution,
+        inLieuHolidays: inLieu === 'none' ? null : inLieu,
       },
     });
   };
@@ -172,6 +179,7 @@ export function UnitPoliciesForm() {
     setRequireConsent(savedConsent);
     setPaper(savedPaper);
     setHolidayAttribution(savedHolidayAttribution);
+    setInLieu(savedInLieu);
     update.reset();
   };
 
@@ -444,6 +452,24 @@ export function UnitPoliciesForm() {
                 <option value="start">A shift counts for the day it starts (default)</option>
                 <option value="clock">Each hour counts for the day it is worked on</option>
                 <option value="majority">A shift counts for the day holding most of it</option>
+              </select>
+            </Field>
+            <Field
+              id="unit-in-lieu-holidays"
+              className="max-w-xl"
+              label="Holidays on a day off"
+              hint="Where a holiday falls on a full-time nurse's day off, publishing lists the workday that becomes her holiday."
+              tip="Federal rule (5 U.S.C. § 6103(b)): when a holiday falls on a full-time nurse's day off, her workday before it — after it, for a Sunday holiday — is her holiday. Publishing then lists each in-lieu day so you can give it off or record how it is paid. Part-time, per-diem, Baylor and 72/80 nurses are not covered."
+            >
+              <select
+                id="unit-in-lieu-holidays"
+                className={INPUT}
+                value={inLieu}
+                aria-describedby={describedBy('unit-in-lieu-holidays', { hint: true })}
+                onChange={(e) => setInLieu(e.target.value as InLieuHolidays)}
+              >
+                <option value="none">Not moved</option>
+                <option value="federal">Moved to a workday (federal rule)</option>
               </select>
             </Field>
             <fieldset className="flex max-w-xl flex-col gap-3 border-t border-border pt-3">

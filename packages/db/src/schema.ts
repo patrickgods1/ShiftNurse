@@ -29,6 +29,7 @@ import type {
   EmploymentType,
   HolidayAttribution,
   Id,
+  InLieuHolidays,
   IsoDate,
   JurisdictionChoices,
   LeaveBalanceType,
@@ -114,6 +115,8 @@ export const unit = sqliteTable(
     overtimeOrder: text('overtime_order').$type<OvertimeOrder>(),
     // Which day a shift that crosses midnight counts toward a holiday; null reads 'start' (D18).
     holidayAttribution: text('holiday_attribution').$type<HolidayAttribution>(),
+    // Whether a holiday on a full-time nurse's day off moves to a workday (federal); null reads 'none'.
+    inLieuHolidays: text('in_lieu_holidays').$type<InLieuHolidays>(),
     // Weekend/holiday shifts each per-diem nurse commits to (core's PerDiemCommitment); null = none.
     perDiemCommitment: text('per_diem_commitment', { mode: 'json' }).$type<PerDiemCommitment>(),
     // Whether a change to a posted schedule must record the nurse's consent; null = reason enough.

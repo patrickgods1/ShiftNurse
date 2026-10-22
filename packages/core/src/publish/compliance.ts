@@ -47,6 +47,7 @@ import {
   type WeekendDefinition,
   weekendKey,
 } from '../domain/time.js';
+import { inLieuHolidayDates } from '../leave/in-lieu.js';
 import { credentialLapsedOn } from '../rules/coverage-rules.js';
 import {
   type DateWindow,
@@ -79,8 +80,10 @@ export type ComplianceAlertKind =
   | 'per_diem_commitment'
   | 'weekends_off_per_year'
   | 'work_week_changeover'
-  | 'start_attribution_underpays';
-export type ComplianceSeverity = 'warning' | 'critical';
+  | 'start_attribution_underpays'
+  | 'in_lieu_holiday';
+/** `information` is for things to act on, not to fix: a day that is correct as scheduled. */
+export type ComplianceSeverity = 'information' | 'warning' | 'critical';
 
 export interface ComplianceAlert {
   kind: ComplianceAlertKind;
@@ -182,9 +185,19 @@ export interface ComplianceInput {
    * Uses `weekendDefinition` above.
    */
   weekendsOffPerYear?: { minimum: number; ledger: readonly FairnessLedgerEntry[] };
+  /**
+   * The unit's federal in-lieu-of holidays (`Unit.inLieuHolidays` 'federal'): the holidays to judge,
+   * and whether the unit pays holiday premium, which decides what the alert tells the manager the
+   * choice is. Absent means no check.
+   */
+  inLieuHolidays?: { holidays: readonly Holiday[]; premiumPay: boolean };
 }
 
-const SEVERITY_ORDER: Record<ComplianceSeverity, number> = { critical: 0, warning: 1 };
+const SEVERITY_ORDER: Record<ComplianceSeverity, number> = {
+  critical: 0,
+  warning: 1,
+  information: 2,
+};
 const KIND_ORDER: Record<ComplianceAlertKind, number> = {
   credential_expiry: 0,
   ratio_risk: 1,
@@ -195,6 +208,7 @@ const KIND_ORDER: Record<ComplianceAlertKind, number> = {
   late_posting: 6,
   per_diem_commitment: 7,
   weekends_off_per_year: 8,
+  in_lieu_holiday: 9,
 };
 
 /** How far past the period's end a lapsing credential is still worth a warning. */
@@ -760,6 +774,42 @@ function weekendsOffPerYear(input: ComplianceInput): ComplianceAlert[] {
   return alerts;
 }
 
+/**
+ * A full-time federal nurse's holiday on her day off moves to a day she is scheduled (5 U.S.C.
+ * § 6103(b)). That day is correct as scheduled, so this is information: the manager decides
+ * whether to give it off or pay or record it.
+ */
+function inLieuHoliday(input: ComplianceInput): ComplianceAlert[] {
+  const { schedule, inLieuHolidays } = input;
+  if (!inLieuHolidays) return [];
+  const { startDate, endDate } = schedule.period;
+  const judged = inLieuHolidays.holidays.filter((h) => dateInRange(h.date, startDate, endDate));
+  const alerts: ComplianceAlert[] = [];
+  for (const [nurseId, nurse] of schedule.nursesById) {
+    if (!nurse.active) continue;
+    const timeline = schedule.timelineFor(nurseId);
+    const dates = inLieuHolidayDates(nurse, timeline, judged);
+    for (const holiday of judged) {
+      const date = dates.get(holiday.id);
+      if (!date) continue;
+      const outcome = inLieuHolidays.premiumPay
+        ? 'it is paid at the holiday rate'
+        : 'record how it is compensated';
+      alerts.push({
+        kind: 'in_lieu_holiday',
+        severity: 'information',
+        nurseId,
+        date,
+        assignmentIds: timeline
+          .filter((v) => isWorked(v) && v.assignment.date === date)
+          .map((v) => v.assignment.id),
+        message: `${nurseName(nurse)}'s in-lieu day for ${holiday.name} is ${describeDate(date)}: give it off, or ${outcome}.`,
+      });
+    }
+  }
+  return alerts;
+}
+
 /** Every alert for the period, critical first, then by kind, then by date and nurse. */
 export function complianceAlerts(input: ComplianceInput): ComplianceAlert[] {
   const alerts = [
@@ -772,6 +822,7 @@ export function complianceAlerts(input: ComplianceInput): ComplianceAlert[] {
     ...latePosting(input),
     ...perDiemCommitment(input),
     ...weekendsOffPerYear(input),
+    ...inLieuHoliday(input),
   ];
   return alerts.sort(
     (a, b) =>

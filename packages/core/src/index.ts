@@ -110,6 +110,7 @@ export type {
   HppdTarget,
   Id,
   IncompatibilityGroup,
+  InLieuHolidays,
   LeaveBalanceType,
   LeavePolicy,
   LeaveYearStart,
@@ -267,6 +268,7 @@ export type {
 } from './leave/holiday-priority.js';
 // Contested holiday requests ranked by the contract's order; holiday volunteers by seniority
 export { holidayRequestPriority, holidayWorkPriority } from './leave/holiday-priority.js';
+export { inLieuHolidayDates } from './leave/in-lieu.js';
 export { validateLeavePolicy } from './leave/policy.js';
 export type { RequestClaimant, RequestPriorityInput } from './leave/request-priority.js';
 // Competing time-off requests ranked by equity (advice, never applied)
@@ -274,6 +276,7 @@ export { competingRequestPriority } from './leave/request-priority.js';
 export type {
   ComplianceAlert,
   ComplianceAlertKind,
+  ComplianceSeverity,
   GridSheet,
   NurseSheet,
   ScheduleDiff,

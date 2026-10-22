@@ -138,7 +138,8 @@ export function alertsForView(
     unit.postingLeadDays !== undefined && period.status === 'draft'
       ? { leadDays: unit.postingLeadDays, publishDate: today() }
       : undefined;
-  const holidays = unit.perDiemCommitment ? listHolidaysForUnit(db, period.unitId) : [];
+  const inLieu = unit.inLieuHolidays === 'federal';
+  const holidays = unit.perDiemCommitment || inLieu ? listHolidaysForUnit(db, period.unitId) : [];
   const previousWorkWeek = previousWorkWeekFor(db, period, workWeekSettingsOf(params), schedule);
   return complianceAlerts({
     ...(previousWorkWeek ? { previousWorkWeek } : {}),
@@ -151,6 +152,10 @@ export function alertsForView(
           ...(unit.holidayAttribution ? { holidayAttribution: unit.holidayAttribution } : {}),
         }
       : {}),
+    // premiumPay is always off: no VA text confirms holiday premium on the in-lieu day itself
+    // (VA Handbook 5007 Part V Ch. 6 para 1c(1) pays on "a holiday designated by Federal statute
+    // or Executive order"), so the alert names the day and pay stays on the calendar holiday.
+    ...(inLieu ? { inLieuHolidays: { holidays, premiumPay: false } } : {}),
     ...(unit.minWeekendsOffPerYear !== undefined
       ? {
           weekendsOffPerYear: {

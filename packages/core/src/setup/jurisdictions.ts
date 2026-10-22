@@ -58,6 +58,7 @@ import { DEFAULT_PAY_SETTINGS, type PaySettings } from '../cost/types.js';
 import {
   DEFAULT_LEAVE_POLICY,
   type Differential,
+  type InLieuHolidays,
   type JurisdictionChoices,
   type JurisdictionId,
   type LeavePolicy,
@@ -172,8 +173,12 @@ export interface JurisdictionPreset {
   enableRules: readonly PresetRule[];
   /** Added for each kind the unit pays no active differential for. */
   differentials?: readonly PresetDifferential[];
-  /** Posting notice only lengthens; the overtime order is set only on a unit that has none. */
-  unit?: { postingLeadDays?: number; overtimeOrder?: OvertimeOrder };
+  /** Posting notice only lengthens; the overtime order and in-lieu holidays are set only on a unit that has none. */
+  unit?: {
+    postingLeadDays?: number;
+    overtimeOrder?: OvertimeOrder;
+    inLieuHolidays?: InLieuHolidays;
+  };
   /** Proposed whole to a unit with no leave policy; never merged into one a manager set. */
   leavePolicy?: LeavePolicy;
   /** Proposed only to a unit that has never saved pay settings. */
@@ -731,7 +736,8 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       'carryover; 1 per 10 in pay status, 240, for part-time), sick leave at 4 hours a pay ' +
       'period (1 per 20 for part-time). VA LVNs and nursing assistants (hybrid Title 38) earn ' +
       'Title 5 leave: 4, 6 or 8 hours a pay period by service (10 h in the year’s last pay ' +
-      'period on the 6-hour tier).',
+      'period on the 6-hour tier). It also turns on in-lieu holidays (5 U.S.C. § 6103(b)): ' +
+      'publishing names the workday that is a full-time nurse’s holiday when the holiday falls on her day off.',
     options: [
       {
         id: COMPRESSED_TOUR,
@@ -885,7 +891,7 @@ export const JURISDICTION_PRESETS: Record<JurisdictionId, JurisdictionPreset> = 
       mode: 'overlaps',
     },
     // Art. 13: the schedule is posted four weeks ahead; Art. 14: overtime by the rosters.
-    unit: { postingLeadDays: 28, overtimeOrder: 'roster' },
+    unit: { postingLeadDays: 28, overtimeOrder: 'roster', inLieuHolidays: 'federal' },
     enableRules: [
       {
         ruleId: 'no-mandatory-overtime',
@@ -1019,6 +1025,7 @@ export interface JurisdictionPlanInput {
   differentials: readonly Differential[];
   postingLeadDays?: number;
   overtimeOrder?: OvertimeOrder;
+  inLieuHolidays?: InLieuHolidays;
   /** The unit's saved pay settings; absent when it has never saved a row. */
   paySettings?: PaySettings;
   /**
@@ -1044,7 +1051,11 @@ export interface JurisdictionPlan {
   /** Premiums of a kind the unit pays nothing for. */
   addDifferentials: Omit<Differential, 'id' | 'unitId'>[];
   /** Only the unit fields that change. */
-  unit?: { postingLeadDays?: number; overtimeOrder?: OvertimeOrder };
+  unit?: {
+    postingLeadDays?: number;
+    overtimeOrder?: OvertimeOrder;
+    inLieuHolidays?: InLieuHolidays;
+  };
   /** The whole row to save, `DEFAULT_PAY_SETTINGS` overlaid with the preset's: only for a unit with none. */
   paySettings?: PaySettings;
   /** The rule set's weekend after the preset, only when it changes. */
@@ -1176,6 +1187,8 @@ export function planPreset(
     unit.postingLeadDays = lead;
   const order = preset.unit?.overtimeOrder;
   if (order !== undefined && current.overtimeOrder === undefined) unit.overtimeOrder = order;
+  const inLieu = preset.unit?.inLieuHolidays;
+  if (inLieu !== undefined && current.inLieuHolidays === undefined) unit.inLieuHolidays = inLieu;
   if (Object.keys(unit).length > 0) plan.unit = unit;
 
   if (enableRules.length > 0) {
