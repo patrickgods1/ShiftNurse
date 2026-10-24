@@ -31,7 +31,7 @@
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.15",
+    "@biomejs/biome": "^2.6.2",
     "@types/node": "^22.20.5",
     "@vitest/coverage-v8": "^5.0.5",
     "concurrently": "^10.0.6",
